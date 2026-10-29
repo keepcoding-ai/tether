@@ -68,32 +68,18 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
   env.TETHER_CLAUDE_ARGS = '--model haiku'
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
-      const page = await app.firstWindow()
-      page.setDefaultTimeout(10_000)
-      await page.waitForSelector('#conn.on', { timeout: 30_000 })
-      return { app, page }
-    } catch (e) {
-      // A relaunch right after a window kill can still find Chromium's single-instance lock held by a dying
-      // helper of the old instance; the app then quits as a "second instance". Once more, after a pause.
-      if (attempt === 2 || !/Lock file can not be created|ECONNRESET|Target page, context or browser has been closed/.test(String(e))) throw e
-      await sleep(2_000)
-    }
-  }
+  const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
+  const page = await app.firstWindow()
+  page.setDefaultTimeout(10_000)
+  await page.waitForSelector('#conn.on', { timeout: 30_000 })
+  return { app, page }
 }
 
-/** Kills the Electron main process by PID (see app.layout.test.ts for why the launcher is handled apart), then
- *  waits for its helper processes (GPU, renderer, network) to be gone too: they hold the user-data lock and
- *  cache for a moment, and the next launch must not race them. The detached tetherd is a child of main as well
- *  and is left alone. */
-async function killElectron(app: ElectronApplication, keep: number[] = []): Promise<void> {
+/** Kills the Electron main process by PID (see app.layout.test.ts for why the launcher is handled apart) and
+ *  relaunches straight away, like the user does: the helpers of the dead instance (GPU, renderer, network) may
+ *  still hold Chromium's single-instance lock for a few seconds, and the app retries it (app.instance.test.ts). */
+async function killElectron(app: ElectronApplication): Promise<void> {
   const mainPid = await app.evaluate(() => process.pid)
-  // The daemon (spawned by main) and everything under it (conhost, claude and its helpers) are not helpers of the window.
-  const spare = new Set<number>()
-  for (const p of await processTree(mainPid)) if (keep.includes(p.pid) || /src[\\/]daemon[\\/]main\.ts/.test(p.cmd ?? '')) for (const q of await processTree(p.pid)) spare.add(q.pid)
-  const tree = (await processTree(mainPid)).filter(p => !spare.has(p.pid))
   const launcher = app.process()
   process.kill(mainPid)
   if (launcher.pid && launcher.pid !== mainPid) {
@@ -101,8 +87,6 @@ async function killElectron(app: ElectronApplication, keep: number[] = []): Prom
     if (launcher.exitCode === null) process.kill(launcher.pid)
   }
   await waitForExit(launcher)
-  const left = await waitGone(tree, 10_000)
-  for (const p of left) { try { process.kill(p.pid) } catch { /* gone meanwhile */ } }
 }
 
 const hooks = {
@@ -287,7 +271,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
 
     // ---- 3. window crash: kill the Electron main by PID; the agents must not notice ----
     await untilUptime(readyAt)
-    await killElectron(app, daemonPids)
+    await killElectron(app)
     app = undefined
     assert.ok(pidAlive(daemonPid), 'tetherd survived the window kill')
     for (const [id, pid] of pidsBefore) assert.ok(pidAlive(pid), `claude of ${id} (pid ${pid}) survived the window kill`)
@@ -306,7 +290,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
 
     // ---- 4. reboot: kill the daemon by PID; the next launch spawns a new one and resumes both sessions ----
     await untilUptime(readyAt)
-    await killElectron(app, daemonPids)
+    await killElectron(app)
     app = undefined
     process.kill(daemonPid)
     await waitUntil(() => !pidAlive(daemonPid), 10_000, 'tetherd to die')
@@ -336,7 +320,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     t.diagnostic(`evidence: ${JSON.stringify(evidence)}`)
   } finally {
     await untilUptime(readyAt)
-    if (app) await killElectron(app, daemonPids).catch(() => {})
+    if (app) await killElectron(app).catch(() => {})
     // Graceful shutdown first (the daemon kills its PTY trees); by PID when it does not answer.
     for (const pid of daemonPids) {
       if (!pidAlive(pid)) continue

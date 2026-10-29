@@ -269,23 +269,79 @@ ipcMain.on('shell:open-external', (_e, url: string) => {
 ipcMain.handle('clipboard:read', () => clipboard.readText())
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
 
-// One window per TETHER_HOME: a second launch (shortcut clicked twice) just brings the first one up.
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
-    if (!win) return
-    if (win.isMinimized()) win.restore()
-    win.show()
-    app.focus({ steal: true }) // Windows refuses plain focus from a process that is not in front
-    win.focus()
-  })
-  app.whenReady().then(() => {
-    createMenu()
-    createWindow()
-    win?.webContents.once('did-finish-load', () => { void connectDaemon() })
-  })
+// ---------- single instance ----------
+
+/** Written by the running instance whenever a second launch pokes it: proof that a live window took over. */
+const ackPath = join(app.getPath('userData'), 'second-instance.json')
+/**
+ * How long to keep asking for the lock. A dying instance's helpers (GPU, renderer, network) keep Chromium's
+ * lockfile open for up to ~9 s after the main process died; each refused request already blocks ~5 s inside
+ * Chromium (process_singleton_win.cc), so this gives three requests, ~15 s in all.
+ */
+const LOCK_RETRY_MS = 12_000
+const LOCK_RETRY_STEP_MS = 250
+const startedAt = Date.now()
+/** How many tries the lock took (E2E reads it: it tells a retried launch from a lucky one). */
+let lockAttempts = 0
+Object.defineProperty(globalThis, '__tetherLockAttempts', { get: () => lockAttempts })
+
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+
+/** True when a live instance answered our launch (its ack is newer than this process). */
+function ackedByLiveInstance(): boolean {
+  const ack = readJson<{ at?: number }>(ackPath, {})
+  return typeof ack.at === 'number' && ack.at >= startedAt
 }
+
+/**
+ * One window per TETHER_HOME. Chromium's lock is a file in userData that the helpers of a dying instance
+ * (window crashed or killed) keep open for several seconds after the main process is gone: a launch in
+ * that window gets the lock refused with nobody alive to focus, so it would quit silently. The lock is
+ * retried for a while; a refusal with a live window on the other side is told apart by that window's ack.
+ */
+async function acquireSingleInstance(): Promise<'acquired' | 'focused-other' | 'stale'> {
+  const deadline = Date.now() + LOCK_RETRY_MS
+  for (let attempt = 1; ; attempt++) {
+    if (app.requestSingleInstanceLock()) {
+      lockAttempts = attempt
+      if (attempt > 1) console.error(`tether: lock de instância única obtido após ${attempt} tentativas (${Date.now() - startedAt} ms)`)
+      return 'acquired'
+    }
+    if (attempt === 1) console.error(`tether: lock de instância única ocupado (recusado após ${Date.now() - startedAt} ms); tentando de novo por alguns segundos`)
+    await sleep(LOCK_RETRY_STEP_MS)
+    if (ackedByLiveInstance()) return 'focused-other'
+    if (Date.now() >= deadline) return 'stale'
+  }
+}
+
+function bringToFront(): void {
+  writeJson(ackPath, { at: Date.now(), pid: process.pid })
+  if (!win || hidden) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  app.focus({ steal: true }) // Windows refuses plain focus from a process that is not in front
+  win.focus()
+}
+
+async function start(): Promise<void> {
+  const outcome = await acquireSingleInstance()
+  if (outcome === 'focused-other') { app.quit(); return }
+  if (outcome === 'stale') {
+    const message = 'o tether ainda está fechando; tente de novo em alguns segundos'
+    console.error(`tether: ${message} (lock de instância única ocupado por ${LOCK_RETRY_MS / 1000} s em ${app.getPath('userData')})`)
+    await app.whenReady()
+    if (!hidden) await dialog.showMessageBox({ type: 'info', title: 'tether', message, buttons: ['OK'], noLink: true })
+    app.quit()
+    return
+  }
+  app.on('second-instance', bringToFront)
+  await app.whenReady()
+  createMenu()
+  createWindow()
+  win?.webContents.once('did-finish-load', () => { void connectDaemon() })
+}
+
+void start()
 
 // Closing the window never stops a slot: only the connection goes; the daemon keeps the PTYs.
 app.on('window-all-closed', () => {

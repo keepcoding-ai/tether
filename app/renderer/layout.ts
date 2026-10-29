@@ -5,7 +5,8 @@ import type { SerializedDockview } from 'dockview-core'
 type Node = SerializedDockview['grid']['root']
 type Leaf = { type: 'leaf'; data: { views: string[]; activeView?: string; id: string }; size?: number; visible?: boolean }
 
-function prune(node: Node, known: Set<string>): Node | null {
+/** `root`: the grid root must stay a branch (dockview refuses a leaf there), even with a single child left. */
+function prune(node: Node, known: Set<string>, root = false): Node | null {
   if (node.type === 'leaf') {
     const leaf = node as Leaf
     const views = leaf.data.views.filter(v => known.has(v))
@@ -15,13 +16,13 @@ function prune(node: Node, known: Set<string>): Node | null {
   }
   const children = (node.data as Node[]).map(c => prune(c, known)).filter((c): c is Node => c !== null)
   if (children.length === 0) return null
-  if (children.length === 1) return { ...children[0]!, ...(node.size !== undefined ? { size: node.size } : {}) }
+  if (children.length === 1 && !root) return { ...children[0]!, ...(node.size !== undefined ? { size: node.size } : {}) }
   return { ...node, data: children }
 }
 
 /** Returns the layout restricted to `known` panel ids, or null when nothing survives. */
 export function pruneLayout(layout: SerializedDockview, known: Set<string>): SerializedDockview | null {
-  const root = prune(layout.grid.root, known)
+  const root = prune(layout.grid.root, known, true)
   if (!root) return null
   const panels: SerializedDockview['panels'] = {}
   for (const [id, p] of Object.entries(layout.panels)) if (known.has(id)) panels[id] = p
