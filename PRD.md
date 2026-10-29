@@ -255,3 +255,57 @@ Uma **suíte de testes de ponta a ponta** que dirige os agentes reais num pseudo
 - **soul remoto (`-H`):** a sessão pode deixar de existir no servidor; tratar como C15.
 - **Mesma sessão em dois slots (C14):** apenas avisar, ou bloquear? Proposta: avisar e pedir confirmação.
 - **Retomar tudo de uma vez ao abrir a IDE** gasta recursos (vários agentes subindo juntos). Isso é decisão da fase 2: retomar sob demanda ou em lote.
+
+---
+
+# Fase 2 — o app
+
+## 11. Objetivo
+
+Um app de terminais para agentes, com:
+
+1. **Painéis livres pelo mouse:** dividir na vertical e na horizontal, arrastar painéis entre grupos, redimensionar, como no VSCodium.
+2. **Robustez:** a janela pode travar ou fechar sem matar os terminais. Se até o processo dos terminais morrer, cada painel volta na sessão certa (fase 1).
+3. **Cada painel lembra a sessão:** ao reabrir o app, o layout volta igual e cada painel retoma a sessão de Claude ou soul que estava nele.
+4. **Saber o que é cada painel:** cabeçalho com agente, título da sessão, pasta e estado.
+
+## 12. Arquitetura
+
+```
+┌──────────────── app (Electron) ────────────────┐        ┌────────── tetherd (Node) ───────────┐
+│ renderer: dockview (layout) + xterm.js/painel  │  pipe  │ um PTY (node-pty/ConPTY) por slot    │
+│ main: conecta ao tetherd; sobe se não existir  │◄──────►│ buffer de rolagem por slot           │
+│ layout salvo em <home>/layout.json             │ \.\pipe│ lança via adapters da fase 1         │
+└────────────────────────────────────────────────┘ tether │ observa <home>/slots/*.jsonl         │
+                                                          └──────────────────────────────────────┘
+```
+
+- **tetherd** é um processo separado e destacado da janela. Ele é dono dos PTYs. Fechar ou travar a janela não afeta os agentes; ao reabrir, o app **reconecta** e recebe o buffer de rolagem de cada painel.
+- Se o tetherd morrer (ou a máquina reiniciar), os PTYs morrem junto. Ao subir de novo, ele **retoma** cada slot pelo vínculo da fase 1.
+- O id do painel no layout **é** o `slotId`. Layout e vínculo ficam ligados sem tabela extra.
+- Stack: Electron (sem toolchain nativa: node-pty já tem binários prontos; Tauri exigiria Rust + MSVC, e Visual Studio está vetado), xterm.js, dockview-core. Tudo por projeto, nada instalado na máquina.
+
+## 13. Tipos de painel
+
+| Tipo | Lança | Retomada |
+|---|---|---|
+| Claude | `claude` via adapter | sessão exata (fase 1) |
+| soul | `soul` via adapter | sessão exata (fase 1) |
+| Shell | PowerShell ou Git Bash | novo shell na mesma pasta (sem sessão) |
+
+## 14. Requisitos do app
+
+- **RA1** Novo painel: botão/atalho → escolher tipo e pasta (pastas recentes primeiro).
+- **RA2** Split por arrastar a aba para as bordas de outro painel; split por atalho; fechar painel pergunta se encerra o agente ou só desanexa.
+- **RA3** Reabrir o app restaura layout + todos os painéis (reconectando se o tetherd vive; retomando se não).
+- **RA4** Cabeçalho do painel: ícone do agente, título da sessão (atualiza com `/rename`), pasta, estado (rodando / encerrado / não confirmado).
+- **RA5** Painel "não confirmado" mostra a escolha antes de retomar (regra 6.6.2).
+- **RA6** Desempenho: digitar sem atraso perceptível; 12 painéis abertos sem travar.
+- **RA7** Copiar/colar, links clicáveis, fonte e tema configuráveis no mínimo do VSCodium.
+- **RA8** Retomada em lote não sobe 12 agentes de uma vez: sobe em fila (no máximo 3 ao mesmo tempo); os outros aparecem como "retomando…".
+
+## 15. Prova da fase 2
+
+- E2E do tetherd (sem janela): criar slots, anexar, matar o cliente, reanexar → buffer e processo intactos; matar o tetherd → subir → slots retomados nas sessões certas.
+- E2E do app (Electron dirigido por Playwright): abrir, dividir em 4, fechar a janela à força, reabrir → mesmo layout, mesmos agentes vivos.
+- Uso real pelo Guga, uma etapa por vez.

@@ -1,0 +1,88 @@
+// Contract between tetherd (owns the PTYs) and its clients (the app, the CLI).
+// Transport: a named pipe (Windows) / unix socket, newline-delimited JSON, one message per line.
+// Terminal bytes travel as UTF-8 strings (node-pty emits strings).
+
+import type { AgentName, Binding } from '../core/event.ts'
+
+export const PROTOCOL_VERSION = 1
+
+/** Slot kinds: the two tracked agents, plus a plain shell (no session; "resume" = new shell in the same folder). */
+export type SlotKind = AgentName | 'shell'
+
+/** `\\.\pipe\tether-<user>` on Windows, `<home>/tetherd.sock` elsewhere; TETHER_PIPE overrides. */
+export function pipePath(home: string, user: string, platform: NodeJS.Platform = process.platform): string {
+  if (process.env.TETHER_PIPE) return process.env.TETHER_PIPE
+  return platform === 'win32' ? `\\\\.\\pipe\\tether-${user}` : `${home}/tetherd.sock`
+}
+
+export type SlotStatus =
+  | 'running'      // process alive in a PTY
+  | 'queued'       // waiting its turn in a batch resume (max 3 starting at once)
+  | 'starting'     // process spawned, agent not ready/confirmed yet
+  | 'exited'       // no process; can be started again (resume)
+  | 'unconfirmed'  // no process and the binding is not confirmed: the user must choose before starting
+  | 'error'        // cannot start: see `error`
+
+export interface SlotState {
+  slotId: string
+  kind: SlotKind
+  name?: string
+  /** Folder of the current binding, else the slot's creation folder. */
+  cwd: string
+  status: SlotStatus
+  pid?: number
+  binding?: Binding
+  /** Session title (binding.title) or undefined. */
+  title?: string
+  error?: { code: ErrorCode; message: string }
+}
+
+export type ErrorCode =
+  | 'unknown-slot'
+  | 'session-missing'   // the agent no longer has the bound session
+  | 'cwd-missing'       // the slot's folder does not exist
+  | 'already-open'      // the bound session is running in another slot
+  | 'unconfirmed'       // start refused: binding not confirmed; resend with choice
+  | 'spawn-failed'
+  | 'bad-request'
+
+// --- client → daemon ------------------------------------------------------------------------
+// Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
+
+export type Request =
+  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test' }
+  | { t: 'list'; id: number }
+  | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean }
+  /** Start the slot's process: resumes the binding; `choice: 'new'` starts a new session instead. */
+  | { t: 'start'; id: number; slotId: string; choice?: 'resume' | 'new' }
+  /** Subscribe to the slot's output. Reply carries the scrollback; then `data` events stream. */
+  | { t: 'attach'; id: number; slotId: string; cols: number; rows: number }
+  | { t: 'detach'; id: number; slotId: string }
+  | { t: 'resize'; id: number; slotId: string; cols: number; rows: number }
+  /** Kill the slot's process (the slot and its binding stay). */
+  | { t: 'stop'; id: number; slotId: string }
+  /** Stop and remove the slot from tether (agent session files are never touched). */
+  | { t: 'forget'; id: number; slotId: string }
+  | { t: 'rename-slot'; id: number; slotId: string; name: string }
+  /** Ask the daemon to exit (tests / upgrades). Running agents die with it; they resume on next start. */
+  | { t: 'shutdown'; id: number }
+
+/** Fire-and-forget (no reply): keystrokes. */
+export type Notice = { t: 'input'; slotId: string; data: string }
+
+export type ClientMessage = Request | Notice
+
+// --- daemon → client ------------------------------------------------------------------------
+
+export type Reply =
+  | { t: 'ok'; id: number; hello?: { v: number; pid: number; version: string }; slots?: SlotState[]; slot?: SlotState; scrollback?: string }
+  | { t: 'error'; id: number; code: ErrorCode; message: string }
+
+export type Event =
+  /** Output of an attached slot. */
+  | { t: 'data'; slotId: string; data: string }
+  /** Any change of a slot (status, binding, title, pid). Sent to every client. */
+  | { t: 'state'; slot: SlotState }
+  | { t: 'removed'; slotId: string }
+
+export type DaemonMessage = Reply | Event

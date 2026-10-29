@@ -151,3 +151,34 @@ No máximo 3 agentes Fable ao mesmo tempo; 8 tarefas no total.
 
 1. Aprovação para alterar `D:\atrium\workspace\soul-cli` (T5). Sem ela, o plano entrega o Claude completo e deixa o soul para depois.
 2. Ok para `git init` nesta pasta.
+
+---
+
+# Fase 2 — o app (ver PRD §11–15)
+
+Objetivo final: **entregar o app**. A fase 1 é a base dele e continua em paralelo.
+
+## Contrato
+
+`src/daemon/protocol.ts`: mensagens entre o `tetherd` (dono dos PTYs) e os clientes (app, CLI). NDJSON sobre named pipe.
+
+## Tarefas
+
+| Tarefa | Depende de | Arquivos | Modelo/esforço |
+|---|---|---|---|
+| **A1. App shell** — Electron + dockview + xterm.js; sobe/conecta ao tetherd; layout salvo; cabeçalho dos painéis; novo painel (tipo + pasta); desenvolvido contra um tetherd falso que segue o protocolo | protocolo | `app/**` | fable, high |
+| **A2. tetherd** — servidor do protocolo; PTY por slot (node-pty); buffer de rolagem (anel ~1 MB/slot); lança via adapters; observa os `.jsonl` e emite `state`; fila de retomada (3 por vez); sobe destacado; um só por usuário | T1, T2 | `src/daemon/**`, `test/unit/daemon.*` | fable, high |
+| **A3. Integração** — app ↔ tetherd real; E2E do tetherd (sem janela) e do app (Playwright Electron): split 4, kill da janela, reabrir = mesmo layout e mesmos agentes vivos; kill do tetherd = retomada certa | A1, A2, T6 | `test/e2e/app.*`, `test/e2e/daemon.*` | fable, high |
+| **A4. Empacotar** — `npm run app`, atalho no Menu Iniciar (sem instalador por enquanto), ícone | A3 | `scripts/`, `package.json` | fable, medium |
+
+**T4 (CLI) muda de papel:** vira cliente do tetherd (`tether ls/open/new` falam com o daemon; sem daemon, `new/open` rodam o agente no terminal atual) — útil fora do app e para depuração.
+
+## Ordem
+
+```
+agora:   T1 ║ T2 ║ T3 ║ T5 ║ A1 (contra tetherd falso)
+depois:  A2 (após T1+T2) ║ T4 ║ T6
+depois:  A3 ║ T7 ║ T8 ──► A4 ──► uso real
+```
+
+Entrega para o Guga usar, uma etapa por vez: (1) CLI com Claude; (2) app com painéis e reconexão; (3) app completo com soul.
