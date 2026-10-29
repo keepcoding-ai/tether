@@ -1,6 +1,7 @@
 // The narrow API the preload exposes to the renderer as `window.tether` (contextBridge).
 // Shared by the preload (implements it) and the renderer (consumes it).
 import type { Event as DaemonEvent, Notice, Reply, Request } from '../../src/daemon/protocol.ts'
+import type { ThemeSetting, ThemeState } from './theme.ts'
 
 /** A request without the `id`: the main process numbers them. */
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
@@ -29,6 +30,11 @@ export interface TetherApi {
   openExternal(url: string): void
   readClipboard(): Promise<string>
   writeClipboard(text: string): void
+  /** Current theme setting and the scheme it paints right now. */
+  getTheme(): Promise<ThemeState>
+  /** Persists the setting; the new state arrives through onTheme (also on every OS switch while `auto`). */
+  setTheme(setting: ThemeSetting): void
+  onTheme(listener: (state: ThemeState) => void): () => void
 }
 
 declare global {
