@@ -36,30 +36,45 @@ O app roda direto desta pasta do repositório; nada é instalado na máquina al�
 7. **Onde fica o estado:** `%LOCALAPPDATA%\tether` (`TETHER_HOME` sobrescreve): `slots\` (vínculos slot → sessão), `layout.json`, `recent-folders.json`, `tetherd.pid`, `tetherd.log` e `electron\` (cache do Electron).
 8. **Depois de mudar o código:** o atalho nunca recompila. Rode `npm run app:build` (ou `npm run app:install` de novo) e reabra o app; `npm run app` compila e abre numa tacada só, para desenvolvimento.
 
-## Uso planejado
+## Linha de comando (`tether`)
+
+`node bin/tether.mjs <comando>` (ou `tether` depois de `npm link`). A CLI é um cliente do `tetherd`: com o daemon rodando (o app o sobe sozinho), `new`/`open` criam e retomam slots dentro dele, visíveis no app; sem daemon, `ls`/`show`/`rm`/`rename` leem o disco e `new`/`open` rodam o agente **neste terminal** (`--here` força isso mesmo com o daemon de pé). Saída em português; código de saída 0 ok, 1 erro, 2 uso.
 
 ```powershell
-# cria um slot e abre o Claude nele
+# cria um slot e abre o Claude nele (no tetherd; veja no app ou com `tether attach`)
 tether new claude --name api --cwd D:\sources\api
 
-# cria um slot com o soul
+# a mesma coisa, mas rodando o Claude aqui neste terminal (args depois de `--` vão para o agente)
+tether new claude --name api --cwd D:\sources\api --here -- --model haiku
+
+# cria um slot com o soul, ou com um shell puro
 tether new soul --name pesquisa --cwd D:\atrium\workspace\agente-x
+tether new shell --name term --cwd D:\sources
 
-# depois de reiniciar: lista os slots e o que cada um estava fazendo
+# depois de reiniciar: lista os slots e o que cada um estava fazendo (--json: estado bruto)
 tether ls
-#  SLOT    NOME      AGENTE  SESSÃO     TÍTULO              ESTADO      ÚLTIMA ATIVIDADE
-#  a1b2    api       claude  0b6f…      refatorar parser    encerrado   há 2 h
-#  c3d4    pesquisa  soul    7e21…      revisão do PRD      encerrado   há 5 min
+#  SLOT      NOME      AGENTE  PASTA            SESSÃO     TÍTULO            ESTADO          ÚLTIMA ATIVIDADE
+#  a1b2c3d4  api       claude  …\sources\api    0b6f1234…  refatorar parser  parado          há 2 h
+#  c3d4e5f6  pesquisa  soul    …\agente-x       7e21aaaa…  revisão do PRD    não confirmado  há 5 min
 
-# retoma um slot
-tether open a1b2
+# retoma um slot (id, prefixo único do id ou nome); --new abre sessão nova; --here retoma neste terminal
+tether open api
+tether open c3d4 --new
 
-# histórico de sessões de um slot
-tether show a1b2
+# anexa este terminal a um slot do tetherd (Ctrl+] solta; o slot continua rodando)
+tether attach api
+
+# vínculo e histórico de eventos; encerrar; renomear; esquecer (pede confirmação, --yes pula)
+tether show api
+tether stop api
+tether rename api backend
+tether rm backend
 
 # confere o ambiente
 tether doctor
 ```
+
+Regras de confiança na retomada (PRD §6.6): o `open` recusa, com a correção na mensagem, um vínculo **não confirmado** (use `--new` ou `--resume-anyway`), uma sessão que o agente não tem mais (`--new`), uma pasta que sumiu (`tether rm`) e uma sessão já aberta em outro slot (`tether attach`). Variáveis: `TETHER_HOME` (pasta de estado) e `TETHER_PIPE` (pipe do daemon).
 
 ## Onde fica o estado
 
