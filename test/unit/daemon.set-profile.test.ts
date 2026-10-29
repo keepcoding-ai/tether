@@ -22,10 +22,11 @@ let cwd: string
 const SESSION = 'cccccccc-0000-4000-8000-000000000003'
 const MIN_AGE_MS = 1_500
 
-function inertPlan(cwd: string): LaunchPlan {
+/** An inert process; like a real adapter, the profile's args go on its command line (after `--`, so node ignores them). */
+function inertPlan(cwd: string, profileArgs: string[]): LaunchPlan {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
-  return { command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd, env }
+  return { command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)', '--', ...profileArgs], cwd, env }
 }
 
 /** What each launch was asked for: the resume (if any) and the profile's args. */
@@ -34,7 +35,7 @@ const fakeClaude: AgentAdapter = {
   name: 'claude',
   plan: (input: PlanInput) => {
     planned.push({ ...(input.resume ? { resume: input.resume.sessionId } : {}), profileArgs: input.profile?.args ?? [] })
-    return inertPlan(input.resume?.cwd ?? input.slot.cwd)
+    return inertPlan(input.resume?.cwd ?? input.slot.cwd, input.profile?.args ?? [])
   },
   sessionExists: async () => true,
   title: async (b) => b.title,
@@ -150,7 +151,11 @@ describe('set-profile with restart on a live agent', () => {
     const set = await c.client.request({ t: 'set-profile', slotId, profileId: 'claude-dev' })
     assert.equal(set.slot!.pid, slot!.pid, 'same process')
     assert.equal(set.slot!.profileId, 'claude-dev')
+    assert.equal(set.slot!.unsafe, undefined, 'the badge describes the RUNNING process, launched without the flag')
     assert.equal(meta(slotId).profileId, 'claude-dev')
+    await c.client.request({ t: 'stop', slotId })
+    const stopped = (await c.client.request({ t: 'list' })).slots!.find((s) => s.slotId === slotId)!
+    assert.equal(stopped.unsafe, true, 'nothing running: the badge describes what the next start gets')
     await c.client.request({ t: 'forget', slotId })
     c.close()
   })

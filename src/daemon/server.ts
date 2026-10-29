@@ -101,6 +101,8 @@ interface Slot {
   stopTitleWatch?: () => void
   /** A `set-profile` restart in progress (waiting for the agent's minimum age, or relaunching). */
   restarting?: true
+  /** Whether the CURRENT process was launched with --dangerously-skip-permissions (set at spawn). */
+  runUnsafe?: boolean
   scrollback: Scrollback
   attached: Set<Client>
   cols: number
@@ -209,7 +211,10 @@ class DaemonImpl implements Daemon {
     if (profile.id) s.profileId = profile.id
     if (profile.name) s.profileName = profile.name
     const extra = slot.meta.agent === 'shell' ? [] : defaultAgentArgs(slot.meta.agent)
-    if (isUnsafe([...(profile.launch?.args ?? []), ...slot.meta.args, ...extra])) s.unsafe = true
+    // While a process runs, the badge describes THAT launch (a profile switched "for the next start" does not
+    // make a Claude that still skips permissions look safe); otherwise it describes what the next start gets.
+    const unsafe = isAlive(slot) && slot.runUnsafe !== undefined ? slot.runUnsafe : isUnsafe([...(profile.launch?.args ?? []), ...slot.meta.args, ...extra])
+    if (unsafe) s.unsafe = true
     if (slot.restarting) s.restarting = true
     return s
   }
@@ -519,6 +524,7 @@ class DaemonImpl implements Daemon {
     slot.scrollback.clear()
     slot.error = undefined
     slot.spawnedAt = new Date().toISOString()
+    slot.runUnsafe = isUnsafe(plan.args)
     try {
       slot.pty = spawnPty(plan, {
         cols: slot.cols,

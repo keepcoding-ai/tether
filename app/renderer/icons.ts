@@ -37,6 +37,7 @@ import star from '@phosphor-icons/core/assets/regular/star.svg'
 import list from '@phosphor-icons/core/assets/regular/list.svg'
 import minus from '@phosphor-icons/core/assets/regular/minus.svg'
 import folder from '@phosphor-icons/core/assets/regular/folder.svg'
+import minusCircle from '@phosphor-icons/core/assets/regular/minus-circle.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -72,6 +73,7 @@ const SVG = {
   folder,
   list,
   minus,
+  'minus-circle': minusCircle,
   'pencil-simple': pencilSimple,
   'shield-warning': shieldWarning,
   'sliders-horizontal': slidersHorizontal,

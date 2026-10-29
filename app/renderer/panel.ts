@@ -83,6 +83,7 @@ export function panelTooltip(s: SlotState): string {
   const lines = [`${KIND_LABEL[s.kind]} · ${STATUS_LABEL[effectiveStatus(s)]}`, `Pasta: ${s.cwd}`, `Slot: ${s.slotId}`]
   if (s.profileName) lines.push(`Perfil: ${s.profileName}`)
   if (s.unsafe) lines.push(UNSAFE_TOOLTIP)
+  if (s.restarting) lines.push('Reiniciando com o novo perfil…')
   if (s.binding?.sessionId) lines.push(`Sessão: ${s.binding.sessionId}`)
   if (s.error) lines.push(`Erro: ${s.error.message}`)
   return lines.join('\n')
@@ -182,14 +183,22 @@ export interface PanelHost {
   onKey(ev: KeyboardEvent, panel: TerminalPanel): boolean
   /** The scheme painted right now (new terminals start with it; setScheme follows later switches). */
   getScheme(): ColorScheme
+  /** "Trocar perfil…" from the header pill. */
+  onSwitchProfile(slotId: string): void
+  /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
+  onTabMenu(slotId: string, ev: MouseEvent): void
 }
+
+/** The header pill's text: the profile's name, or what its absence means. */
+export const NO_PROFILE_LABEL = 'sem perfil'
+export const SWITCH_PROFILE_TOOLTIP = 'Trocar perfil…'
 
 export class TerminalPanel implements IContentRenderer {
   readonly element: HTMLElement
   readonly term: Terminal
   slotId = ''
   private readonly fit = new FitAddon()
-  private readonly head: { icon: HTMLElement; title: HTMLElement; profile: HTMLElement; unsafe: HTMLElement; cwd: HTMLElement; status: HTMLElement }
+  private readonly head: { icon: HTMLElement; title: HTMLElement; profile: HTMLButtonElement; unsafe: HTMLElement; cwd: HTMLElement; status: HTMLElement }
   private readonly termHost: HTMLElement
   private readonly overlay: HTMLElement
   private observer: ResizeObserver | undefined
@@ -207,7 +216,8 @@ export class TerminalPanel implements IContentRenderer {
     head.className = 'panel-head'
     const icon = document.createElement('span'); icon.className = 'icon'
     const title = document.createElement('span'); title.className = 'title'
-    const profile = document.createElement('span'); profile.className = 'profile'; profile.hidden = true
+    const profile = document.createElement('button'); profile.type = 'button'; profile.className = 'profile'; profile.hidden = true
+    profile.addEventListener('click', ev => { ev.stopPropagation(); if (this.slotId) this.host.onSwitchProfile(this.slotId) })
     const unsafe = unsafeBadge(true)
     const cwd = document.createElement('span'); cwd.className = 'cwd'
     const status = document.createElement('span'); status.className = 'status'
@@ -275,13 +285,18 @@ export class TerminalPanel implements IContentRenderer {
     else if (pending && status === 'exited') status = 'starting'
     setIcon(this.head.icon, KIND_ICON[s.kind])
     this.head.title.textContent = s.title ?? s.name ?? KIND_LABEL[s.kind]
-    this.head.profile.textContent = s.profileName ?? ''
-    this.head.profile.title = s.profileName ? `Perfil de lançamento: ${s.profileName}` : ''
-    this.head.profile.hidden = !s.profileName
+    // The pill is the way to "Trocar perfil…": shown on every agent panel, and on a shell only when it has a profile.
+    const profileLabel = s.profileName ?? (s.profileId ? `${s.profileId} (apagado)` : NO_PROFILE_LABEL)
+    this.head.profile.textContent = profileLabel
+    this.head.profile.classList.toggle('none', !s.profileName)
+    this.head.profile.title = `${s.profileName ? `Perfil de lançamento: ${s.profileName}` : s.profileId ? `O perfil ${s.profileId} foi apagado; o painel usa a cópia guardada dos argumentos` : 'Sem perfil de lançamento: só os argumentos do painel'}\n${SWITCH_PROFILE_TOOLTIP}`
+    this.head.profile.setAttribute('aria-label', `Perfil: ${profileLabel}. ${SWITCH_PROFILE_TOOLTIP}`)
+    this.head.profile.hidden = s.kind === 'shell' && !s.profileId
     this.head.unsafe.hidden = !s.unsafe
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
-    this.setStatus(status, STATUS_LABEL[status])
+    if (s.restarting) this.setStatus('starting', 'reiniciando…')
+    else this.setStatus(status, STATUS_LABEL[status])
     this.element.dataset.status = status
 
     const err = s.status === 'error' && s.error ? s.error : startError
@@ -421,6 +436,7 @@ export class SlotTab implements ITabRenderer {
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
     this.element.append(this.kind, this.text, this.unsafe, this.dot, close)
+    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
   }
 
   init(params: TabPartInitParameters): void {

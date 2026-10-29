@@ -283,8 +283,46 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .unsafe .ph { width: 14px; height: 14px; }
 .tether-tab .unsafe .ph { width: 13px; height: 13px; }
 .panel-head .unsafe { padding: 1px 7px 1px 5px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 16%, transparent); }
-.panel-head .profile { color: var(--fg-dim); font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: var(--bg-3); border: 1px solid var(--border); flex: none; }
+/* The profile pill is a button: "Trocar perfil…". Muted and dashed when the panel has none. */
+.panel-head .profile { font: inherit; font-size: 11.5px; line-height: 1.4; color: var(--fg-dim); padding: 1px 7px; border-radius: 999px; background: var(--bg-3); border: 1px solid var(--border); flex: none; cursor: pointer; }
+.panel-head .profile.none { background: transparent; border-style: dashed; font-style: italic; }
+.panel-head .profile:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--bg-3)); }
+.panel-head .profile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .panel-head .profile[hidden] { display: none; }
+
+/* --- context menu (tab right-click): the in-app menu's look, placed at the pointer --- */
+#ctx-menu {
+  position: fixed; z-index: 70; min-width: 220px; margin: 0; padding: 4px; list-style: none;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow);
+}
+#ctx-menu li { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 4px; cursor: pointer; outline: none; font-size: 12.5px; }
+#ctx-menu li .ph { width: 15px; height: 15px; color: var(--fg-dim); }
+#ctx-menu li:hover, #ctx-menu li:focus { background: var(--bg-hover-2); }
+#ctx-menu li.danger { color: var(--err); }
+#ctx-menu li.danger .ph { color: var(--err); }
+#app-menu li[aria-disabled="true"] { opacity: .45; cursor: default; }
+#app-menu li[aria-disabled="true"]:hover { background: none; }
+
+/* --- dialog option list (switch profile): radios between the context and the cards --- */
+dialog.ask .options { display: flex; flex-direction: column; gap: 4px; margin: 0 20px 14px; padding: 8px 10px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+dialog.ask .options legend { font-size: 11px; font-weight: 600; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .06em; padding: 0 4px; }
+dialog.ask .option { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
+dialog.ask .option:hover { background: var(--bg-hover); }
+dialog.ask .option:has(input:checked) { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+dialog.ask .option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+dialog.ask .option input[type="radio"] { margin: 0; accent-color: var(--accent); }
+dialog.ask .option .o-icon { display: inline-flex; color: var(--fg); }
+dialog.ask .option .o-icon .ph { width: 18px; height: 18px; }
+dialog.ask .option .o-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+dialog.ask .option .o-label { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+dialog.ask .option .o-current { font-size: 10px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 1px 7px; border-radius: 999px; letter-spacing: .03em; }
+dialog.ask .option .o-detail { font: 11px var(--mono); color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog.ask .option .o-mark { display: inline-flex; align-items: center; gap: 4px; color: var(--warn); font-size: 11px; font-weight: 600; flex: none; padding: 1px 7px 1px 5px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 16%, transparent); }
+dialog.ask .option .o-mark .ph { width: 13px; height: 13px; }
+dialog.ask .choices.armed .choice.default .choice-key { visibility: visible; }
+/* The current option is picked: the cards would do nothing, so they say so by fading. */
+dialog.ask .choices.inert .choice:disabled { opacity: .5; cursor: default; }
+dialog.ask .choices.inert .choice:disabled:hover { background: var(--bg-3); }
 
 /* --- in-app menu (toolbar, right side) --- */
 #btn-menu { padding: 4px 6px; }

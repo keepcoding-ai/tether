@@ -110,16 +110,52 @@ export function askDialog(spec: DialogSpec, host: HTMLElement = document.body): 
     }
 
     let remember: HTMLInputElement | undefined
+    let picked = spec.options?.selected
     const finish = (choice: string): void => {
       dlg.removeEventListener('keydown', onKey)
       dlg.close()
       dlg.remove()
-      resolve({ choice, remember: remember?.checked ?? false })
+      resolve({ choice, remember: remember?.checked ?? false, ...(spec.options ? { option: picked } : {}) })
     }
 
     const def = defaultChoice(spec)
     const esc = spec.choices.find(c => c.id === spec.escChoice && c.tone !== 'destructive')?.id
     const choices = renderChoices(spec.choices, finish, { defaultId: def, escId: esc })
+
+    // The option list: a radio group; the cards say what happens with the picked option, and do nothing on the current one.
+    let options: HTMLElement | undefined
+    if (spec.options) {
+      const templates = new Map(spec.choices.map(c => [c.id, c.consequence]))
+      const apply = (): void => {
+        const item = spec.options!.items.find(o => o.id === picked)
+        for (const btn of choices.querySelectorAll<HTMLButtonElement>('button.choice')) {
+          const text = templates.get(btn.dataset.choice!) ?? ''
+          btn.querySelector('.choice-consequence')!.textContent = text.replace(/\{option\}/g, item?.label ?? '')
+          btn.disabled = btn.dataset.choice !== esc && !!item?.current
+        }
+        choices.classList.toggle('inert', !!item?.current)
+        // The cards just came alive while the focus is on the list: the default one shows its Enter hint anyway.
+        choices.classList.toggle('armed', !item?.current)
+      }
+      options = document.createElement('fieldset'); options.className = 'options'
+      const legend = document.createElement('legend'); legend.textContent = spec.options.label
+      options.append(legend)
+      for (const o of spec.options.items) {
+        const row = document.createElement('label'); row.className = 'option'; row.dataset.option = o.id
+        const input = document.createElement('input'); input.type = 'radio'; input.name = `${id}-option`; input.value = o.id; input.checked = o.id === picked
+        input.addEventListener('change', () => { if (input.checked) { picked = o.id; apply() } })
+        const ic = document.createElement('span'); ic.className = 'o-icon'; ic.append(iconEl(o.icon))
+        const text = document.createElement('span'); text.className = 'o-text'
+        const label = document.createElement('span'); label.className = 'o-label'; label.textContent = o.label
+        if (o.current) { const cur = document.createElement('span'); cur.className = 'o-current'; cur.textContent = 'atual'; label.append(cur) }
+        text.append(label)
+        if (o.detail) { const d = document.createElement('span'); d.className = 'o-detail'; d.textContent = o.detail; d.title = o.detail; text.append(d) }
+        row.append(input, ic, text)
+        if (o.mark) { const m = document.createElement('span'); m.className = 'o-mark'; m.append(iconEl('shield-warning'), document.createTextNode(o.mark)); row.append(m) }
+        options.append(row)
+      }
+      apply()
+    }
 
     const foot = document.createElement('footer')
     if (spec.remember) {
@@ -138,24 +174,30 @@ export function askDialog(spec: DialogSpec, host: HTMLElement = document.body): 
     }
 
     const onKey = (ev: KeyboardEvent): void => {
-      if (roveWithArrows(choices, ev)) return
+      const target = ev.target as HTMLElement
+      // Arrows inside the option list move the radio selection (native); they rove the cards everywhere else.
+      if (!(target instanceof HTMLInputElement) && roveWithArrows(choices, ev)) return
       if (ev.key === 'Enter') {
-        const target = ev.target as HTMLElement
         if (target instanceof HTMLButtonElement) return // the focused card/button takes it (native click)
         ev.preventDefault()
-        if (def) finish(def)
+        const card = def ? choices.querySelector<HTMLButtonElement>(`button.choice[data-choice="${CSS.escape(def)}"]`) : undefined
+        if (def && !card?.disabled) finish(def)
       }
     }
     dlg.addEventListener('keydown', onKey)
     // Esc: the browser raises `cancel` on a modal dialog and would close it on its own; it is ours.
     dlg.addEventListener('cancel', ev => { ev.preventDefault(); finish(esc ?? 'cancel') })
 
-    dlg.append(head, desc, choices)
+    dlg.append(head, desc)
+    if (options) dlg.append(options)
+    dlg.append(choices)
     if (spec.remember || spec.cancelLabel) dlg.append(foot)
     host.append(dlg)
     dlg.showModal()
     const first = def ? choices.querySelector<HTMLButtonElement>(`button.choice[data-choice="${CSS.escape(def)}"]`) : choices.querySelector<HTMLButtonElement>('button.choice')
-    first?.focus()
+    // With an option list whose cards are inert (the current option is picked), the list is what needs the user first.
+    if (first && !first.disabled) first.focus()
+    else options?.querySelector<HTMLInputElement>('input:checked')?.focus()
   })
 }
 

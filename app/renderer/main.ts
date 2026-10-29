@@ -11,7 +11,7 @@ import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { pruneLayout } from './layout.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
-import { closePanelSituation, folderName, quitAllSituation } from './situations.ts'
+import { closePanelSituation, folderName, NO_PROFILE, quitAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 
 const COMPONENT = 'terminal'
 const TAB = 'slot-tab'
@@ -61,6 +61,8 @@ const host: PanelHost = {
     }
   },
   getScheme: () => theme.scheme,
+  onSwitchProfile: id => { void switchProfile(id) },
+  onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
 }
 
 // ---------- theme ----------
@@ -356,6 +358,94 @@ function openSlot(slotId: string): void {
   panel.api.setActive()
 }
 
+// ---------- switching a panel's profile ----------
+
+/** Slots with a `set-profile` request in flight (the dialog is not offered twice). */
+const pendingSwitches = new Set<string>()
+
+/**
+ * "Trocar perfil…": the dialog lists this agent's profiles; "agora" restarts the agent on the same session
+ * (the daemon waits for its minimum age and refuses with `unconfirmed` when the session is not known, which
+ * gets its own dialog), "na próxima abertura" only rewrites the slot's meta.
+ */
+async function switchProfile(slotId: string): Promise<void> {
+  const slot = slots.get(slotId)
+  if (!slot || pendingSwitches.has(slotId) || dialogOpen()) return
+  if (profiles.length === 0) await loadProfiles()
+  const answer = await askDialog(switchProfileSituation(slot, profiles))
+  if (answer.choice === 'cancel' || !answer.option) return
+  const profileId = answer.option === NO_PROFILE ? null : answer.option
+  const name = profileId ? (profiles.find(p => p.id === profileId)?.name ?? profileId) : 'Sem perfil'
+  await sendSetProfile(slot, profileId, name, answer.choice === 'now')
+}
+
+async function sendSetProfile(slot: SlotState, profileId: string | null, name: string, restart: boolean): Promise<void> {
+  const { slotId } = slot
+  pendingSwitches.add(slotId)
+  try {
+    const reply = await window.tether.request({ t: 'set-profile', slotId, profileId, restart })
+    if (reply.t === 'ok') { if (reply.slot) applyState(reply.slot); return }
+    const current = slots.get(slotId) ?? slot
+    if (reply.code === 'unconfirmed') {
+      const next = await askDialog(switchProfileUnconfirmedSituation(current, name))
+      if (next.choice === 'next') await sendSetProfile(current, profileId, name, false)
+      return
+    }
+    // The restart itself failed after the switch (session gone, already open…): the panel overlay shows that state.
+    if (restart && current.status === 'error') return
+    await askDialog(switchProfileFailedSituation(current, reply.message))
+  } finally {
+    pendingSwitches.delete(slotId)
+  }
+}
+
+// ---------- tab context menu ----------
+
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean }
+
+/** A floating menu at (x, y), closed by a click anywhere else, Esc, or picking an item. */
+function showContextMenu(x: number, y: number, items: MenuItem[]): void {
+  document.getElementById('ctx-menu')?.remove()
+  const menu = document.createElement('ul')
+  menu.id = 'ctx-menu'; menu.className = 'menu'; menu.setAttribute('role', 'menu')
+  const close = (): void => { menu.remove(); document.removeEventListener('click', onDoc, true); document.removeEventListener('keydown', onKey, true) }
+  const onDoc = (ev: Event): void => { if (!menu.contains(ev.target as Node)) close() }
+  const onKey = (ev: KeyboardEvent): void => {
+    const lis = [...menu.querySelectorAll<HTMLElement>('li[role=menuitem]')]
+    const i = lis.indexOf(document.activeElement as HTMLElement)
+    if (ev.key === 'Escape') { ev.preventDefault(); close() }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); lis[(i + 1) % lis.length]?.focus() }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); lis[(i - 1 + lis.length) % lis.length]?.focus() }
+    else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); lis[i]!.click() }
+  }
+  for (const item of items) {
+    const li = document.createElement('li'); li.setAttribute('role', 'menuitem'); li.tabIndex = -1
+    if (item.danger) li.classList.add('danger')
+    li.append(icon(item.icon), document.createTextNode(item.label))
+    li.addEventListener('click', ev => { ev.stopPropagation(); close(); item.run() })
+    menu.append(li)
+  }
+  document.body.append(menu)
+  // Keep it on screen: measure, then clamp to the window.
+  const r = menu.getBoundingClientRect()
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - r.width - 4))}px`
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - r.height - 4))}px`
+  document.addEventListener('click', onDoc, true)
+  document.addEventListener('keydown', onKey, true)
+  menu.querySelector<HTMLElement>('li[role=menuitem]')?.focus()
+}
+
+/** Right-click on a tab: switch the profile, close the panel. */
+function showTabMenu(slotId: string, x: number, y: number): void {
+  const slot = slots.get(slotId)
+  if (!slot) return
+  api.getPanel(slotId)?.api.setActive()
+  showContextMenu(x, y, [
+    { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
+    { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
+  ])
+}
+
 // ---------- profiles ----------
 
 /** The slot's profile for a new slot that should launch the same way; nothing when the profile is gone. */
@@ -475,15 +565,23 @@ function setupMenu(): void {
     btn.setAttribute('aria-expanded', String(open))
     if (open) menu.querySelector<HTMLElement>('li[role^=menuitem]')?.focus()
   }
-  btn.addEventListener('click', ev => { ev.stopPropagation(); toggle(menu.hidden) })
+  btn.addEventListener('click', ev => {
+    ev.stopPropagation()
+    // "Trocar perfil do painel…" acts on the active panel: greyed out when there is none.
+    const item = menu.querySelector<HTMLElement>('li[data-cmd="switch-profile"]')
+    if (item) item.setAttribute('aria-disabled', String(!api.activePanel))
+    toggle(menu.hidden)
+  })
   document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
   for (const li of menu.querySelectorAll<HTMLElement>('li[role^=menuitem]')) li.tabIndex = -1
   const run = (li: HTMLElement): void => {
+    if (li.getAttribute('aria-disabled') === 'true') return
     toggle(false)
     if (li.dataset.theme) { window.tether.setTheme(normalizeTheme(li.dataset.theme)); return }
     switch (li.dataset.cmd) {
       case 'new': void openNewDialog(); break
       case 'profiles': openProfiles(); break
+      case 'switch-profile': { const active = api.activePanel; if (active) void switchProfile(active.id); break }
       case 'restore-confirmations': window.tether.command('restore-confirmations'); break
       case 'close-window': window.tether.closeWindow(); break
       case 'quit-all': window.tether.command('quit-all'); break
@@ -566,6 +664,8 @@ declare global {
       profiles(): Profile[]
       /** Opens the profile manager (on a profile, or 'new'). */
       openProfiles(id?: string): void
+      /** Opens "Trocar perfil…" for a panel, as the header pill does. */
+      switchProfile(slotId: string): void
     }
   }
 }
@@ -594,6 +694,7 @@ function setupTestHooks(): void {
     closePanel: slotId => { void closePanel(slotId) },
     profiles: () => profiles,
     openProfiles,
+    switchProfile: slotId => { void switchProfile(slotId) },
   }
 }
 

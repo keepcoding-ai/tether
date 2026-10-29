@@ -23,7 +23,9 @@ export function isLive(s: SlotState): boolean {
 function panelContext(s: SlotState): DialogContext {
   const lines = [s.cwd]
   if (s.binding?.sessionId) lines.push(`sessão ${s.binding.sessionId.slice(0, 8)}`)
-  const status = s.status === 'running' ? { label: 'rodando agora', tone: 'ok' as const }
+  if (s.profileName) lines.push(`perfil ${s.profileName}`)
+  const status = s.restarting ? { label: 'reiniciando', tone: 'warn' as const }
+    : s.status === 'running' ? { label: 'rodando agora', tone: 'ok' as const }
     : s.status === 'starting' ? { label: 'iniciando', tone: 'warn' as const }
     : s.status === 'queued' ? { label: 'na fila para iniciar', tone: 'warn' as const }
     : { label: 'nada rodando', tone: 'dim' as const }
@@ -157,5 +159,98 @@ export function deleteProfileSituation(p: Profile, users: SlotState[]): DialogSp
 }
 
 const KIND_LABEL_OF: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
+
+/** The option id that means "no profile" in the switch-profile dialog (daemon: `profileId: null`). */
+export const NO_PROFILE = '__none__'
+
+/** The profile's command line as the list shows it (shell profiles show the executable's args too). */
+function profileArgsOf(p: Profile): string[] {
+  return p.agent === 'shell' && p.shell ? [...p.shell.args, ...p.args] : p.args
+}
+
+/**
+ * Switching the profile of an existing panel. What it communicates: "the panel keeps its slot and its
+ * conversation; what changes is how the agent is launched — now (a restart that resumes the same session)
+ * or at the next start." The list holds the profiles of THIS agent plus "no profile"; the current one is
+ * tagged and choosing it does nothing.
+ */
+export function switchProfileSituation(s: SlotState, profiles: Profile[]): DialogSpec {
+  const kind = s.kind
+  const shell = kind === 'shell'
+  const currentId = s.profileId ?? NO_PROFILE
+  const items = profiles.filter(p => p.agent === kind).map(p => {
+    const args = profileArgsOf(p)
+    return {
+      id: p.id, icon: KIND_ICON[kind], label: p.name,
+      detail: args.length ? args.join(' ') : (shell && !p.shell ? 'shell padrão' : 'sem argumentos'),
+      ...(p.args.includes('--dangerously-skip-permissions') ? { mark: 'sem permissões' } : {}),
+      ...(p.id === currentId ? { current: true } : {}),
+    }
+  })
+  items.push({ id: NO_PROFILE, icon: 'minus-circle', label: 'Sem perfil', detail: shell ? 'o shell padrão, sem argumentos de perfil' : 'só os argumentos do próprio painel', ...(currentId === NO_PROFILE ? { current: true } : {}) })
+  // The slot references a profile that no longer exists: it is not in the list, so nothing is "current" there.
+  const live = s.status === 'running' || s.status === 'starting'
+  const session = s.binding?.sessionId ? ` (sessão ${s.binding.sessionId.slice(0, 8)})` : ''
+  const choices = live
+    ? [
+        {
+          id: 'now', icon: 'arrow-clockwise', label: 'Trocar e reiniciar agora', tone: 'safe' as const,
+          consequence: shell
+            ? 'O shell fecha e um novo abre com o perfil {option} na mesma pasta. O que roda nele é finalizado.'
+            : `${SUBJECT_CAP[kind]} reinicia agora com o perfil {option} e continua a mesma conversa${session}. Uma resposta em andamento é interrompida.`,
+        },
+        {
+          id: 'next', icon: 'clock-counter-clockwise', label: 'Trocar na próxima abertura', tone: 'neutral' as const,
+          consequence: shell
+            ? 'Nada muda agora. O perfil {option} vale quando este painel abrir um shell de novo.'
+            : `Nada muda agora. O perfil {option} vale quando ${SUBJECT[kind]} for iniciado de novo neste painel.`,
+        },
+      ]
+    : [{ id: 'next', icon: 'check', label: 'Trocar o perfil', tone: 'safe' as const, consequence: `O perfil {option} vale no próximo início deste painel${shell ? '' : '; a conversa é a mesma'}.` }]
+  return {
+    situation: 'switch-profile',
+    tone: 'info',
+    icon: 'sliders-horizontal',
+    title: 'Trocar o perfil deste painel',
+    context: panelContext(s),
+    options: { label: 'Perfil', items, selected: items.some(o => o.id === currentId) ? currentId : NO_PROFILE },
+    choices,
+    cancelLabel: 'Cancelar',
+  }
+}
+
+/**
+ * The daemon refused the restart (`unconfirmed`): the running agent never reported which session it has, so
+ * a restart would have to guess. What it communicates: "nothing changed; the safe way is the next start."
+ */
+export function switchProfileUnconfirmedSituation(s: SlotState, profileName: string): DialogSpec {
+  return {
+    situation: 'switch-profile-unconfirmed',
+    tone: 'warn',
+    icon: 'warning',
+    title: `Não dá para reiniciar ${SUBJECT[s.kind]} com a mesma conversa`,
+    message: `${SUBJECT_CAP[s.kind]} deste painel não registrou qual sessão está rodando; reiniciar agora poderia perder a conversa. O perfil ainda não foi trocado.`,
+    context: panelContext(s),
+    choices: [
+      { id: 'next', icon: 'clock-counter-clockwise', label: 'Trocar na próxima abertura', consequence: `Nada muda agora. O perfil ${profileName} vale quando ${SUBJECT[s.kind]} for iniciado de novo neste painel.`, tone: 'safe' },
+      { id: 'keep', icon: 'x', label: 'Deixar como está', consequence: 'O painel continua com o perfil de antes.', tone: 'neutral' },
+    ],
+    escChoice: 'keep',
+  }
+}
+
+/** The daemon refused the switch for another reason: say it, with the one way out (nothing to decide). */
+export function switchProfileFailedSituation(s: SlotState, message: string): DialogSpec {
+  return {
+    situation: 'switch-profile-failed',
+    tone: 'danger',
+    icon: 'x-circle',
+    title: 'O perfil não foi trocado',
+    message,
+    context: panelContext(s),
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'O painel continua como estava.', tone: 'neutral' }],
+    escChoice: 'ok',
+  }
+}
 
 export const STANDALONE_SITUATIONS: Record<string, () => DialogSpec> = { 'still-closing': stillClosingSituation }
