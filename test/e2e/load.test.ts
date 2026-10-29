@@ -7,7 +7,6 @@
 // Haiku, one-word prompts. Run once: npm run test:e2e (or node --test test/e2e/load.test.ts).
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +15,7 @@ import { encodeProjectDir } from '../../src/agents/claude.ts'
 import { readEvents } from '../../src/core/store.ts'
 import { MAX_STARTING } from '../../src/daemon/server.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { killOwned } from '../kill.ts'
 import { openSlot, pidAlive, SuiteDaemon } from './daemon-driver.ts'
 import { aliveProcs, type Proc, type Terminal } from './harness.ts'
 
@@ -242,7 +242,7 @@ test('load: daemon killed by pid → new daemon, all slots resumed at once, zero
   for (const s of slots) await s.term!.ensureMinUptime() // never kill a Claude younger than 11 s (fullscreen canary)
   const treesBefore = await Promise.all(slots.map(s => s.term!.tree()))
   const oldPid = suite.pid
-  spawnSync('taskkill', ['/PID', String(oldPid), '/F'], { windowsHide: true })
+  assert.equal(await killOwned(suite.owned!), 'killed', 'daemon killed by identity (pid + creation time)')
   const gone = Date.now() + 15_000
   while (pidAlive(oldPid) && Date.now() < gone) await sleep(100)
   assert.ok(!pidAlive(oldPid), 'daemon pid gone')
@@ -250,7 +250,7 @@ test('load: daemon killed by pid → new daemon, all slots resumed at once, zero
   const deadline = Date.now() + 20_000
   while ((await aliveProcs(treesBefore.flat())).length && Date.now() < deadline) await sleep(300)
   orphansAfterKill = await aliveProcs(treesBefore.flat())
-  for (const p of orphansAfterKill) spawnSync('taskkill', ['/PID', String(p.pid), '/T', '/F'], { windowsHide: true })
+  for (const p of orphansAfterKill) await killOwned(p, { tree: true })
   for (const s of slots) s.term!.dispose()
   suite.pid = 0
 

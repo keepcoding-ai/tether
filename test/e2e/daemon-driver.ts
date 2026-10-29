@@ -1,12 +1,14 @@
 // Drives a tetherd slot with the harness: the daemon owns the PTY; this transport feeds the slot's `data`
 // events into the harness Screen and sends keystrokes with `input`. Exit = the daemon's `state` for the
 // slot losing its pid after the process was seen running; kill = the daemon's `stop`.
-import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { claim, killOwned, type Owned } from '../kill.ts'
 import { awaitReady, Terminal, type ExitInfo, type StartOptions, type Transport } from './harness.ts'
+
+const DAEMON_MAIN = resolve(import.meta.dirname, '../../src/daemon/main.ts')
 
 export class DaemonSlotTransport implements Transport {
   pid = 0
@@ -80,6 +82,8 @@ export async function openSlot(client: DaemonClient, slotId: string, opts: OpenO
 export class SuiteDaemon {
   client!: DaemonClient
   pid = 0
+  /** The daemon's identity (pid + creation time), claimed at connect: the only thing a kill may act on. */
+  owned: Owned | undefined
   readonly home: string
   readonly pipe: string
 
@@ -89,20 +93,22 @@ export class SuiteDaemon {
   async connect(): Promise<DaemonClient> {
     this.client = await DaemonClient.connect({ home: this.home, pipe: this.pipe, client: 'test' })
     this.pid = this.client.hello.pid
+    this.owned = await claim(this.pid, { cmdIncludes: DAEMON_MAIN, what: 'tetherd' })
     return this.client
   }
 
-  /** Asks the daemon to exit and waits until its pid is gone (kills it by pid as a last resort). */
+  /** Asks the daemon to exit and waits until its pid is gone (kills it by identity as a last resort). */
   async shutdown(timeoutMs = 20_000): Promise<void> {
     if (!this.pid) return
     try { await this.client.request({ t: 'shutdown' }) } catch { /* already gone */ }
     const deadline = Date.now() + timeoutMs
     while (pidAlive(this.pid) && Date.now() < deadline) await new Promise(r => setTimeout(r, 100))
     if (pidAlive(this.pid)) {
-      spawnSync('taskkill', ['/PID', String(this.pid), '/T', '/F'], { windowsHide: true })
-      throw new Error(`tetherd ${this.pid} did not exit on shutdown; killed`)
+      const outcome = this.owned ? await killOwned(this.owned, { tree: true }) : 'not-ours'
+      throw new Error(`tetherd ${this.pid} did not exit on shutdown; ${outcome}`)
     }
     this.pid = 0
+    this.owned = undefined
     this.client.close()
   }
 

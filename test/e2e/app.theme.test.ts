@@ -6,17 +6,19 @@
 //   3. "Automático" through the menu → the scheme is whatever Electron reports for the OS right now
 //      (nativeTheme.shouldUseDarkColors; the OS itself cannot be faked from here);
 //   4. "Escuro" again → window killed by PID → relaunch → comes up dark with the radio/select in sync.
-// Every kill goes through pid-guard.ts: only processes provably spawned by this test are killed.
+// Every kill goes through test/kill.ts: a process is claimed (pid + creation time) while it is known to be this
+// test's own and killed only while that identity still holds.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync, type ChildProcess } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
-import { killOwned, processInfo, type KillGuard } from './pid-guard.ts'
+import { claim, killOwned, type Owned } from '../kill.ts'
+import { killElectron } from './electron.ts'
 
 type ThemeState = { setting: 'light' | 'auto' | 'dark'; scheme: 'light' | 'dark' }
 type Hooks = {
@@ -41,12 +43,12 @@ const artifacts = join(root, 'test', 'e2e', 'artifacts')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const pipe = `\\\\.\\pipe\\tether-themetest-${process.pid}`
-const startedAt = Date.now()
+const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
-function waitForExit(child: ChildProcess): Promise<void> {
-  return new Promise(res => { if (child.exitCode !== null) res(); else child.once('exit', () => res()) })
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
 }
 
 async function launch(home: string): Promise<{ app: ElectronApplication; page: Page }> {
@@ -60,18 +62,6 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   page.setDefaultTimeout(10_000)
   await page.waitForSelector('#conn.on', { timeout: 30_000 })
   return { app, page }
-}
-
-/** Kills the Electron main by PID (see app.layout.test.ts for why not app.close()), guarded by pid-guard. */
-async function killElectron(app: ElectronApplication, guard: KillGuard): Promise<void> {
-  const mainPid = await app.evaluate(() => process.pid)
-  const launcher = app.process()
-  assert.equal(killOwned(mainPid, guard), 'killed', 'electron main is ours')
-  if (launcher.pid && launcher.pid !== mainPid) {
-    await Promise.race([waitForExit(launcher), sleep(3000)])
-    if (launcher.exitCode === null) killOwned(launcher.pid, guard)
-  }
-  await waitForExit(launcher)
 }
 
 async function createShellPanel(page: Page, cwd: string): Promise<void> {
@@ -156,15 +146,14 @@ test('app theme: claro / automático / escuro apply live to chrome, dockview and
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpdir(), 'tether-themetest-'))
-  const guard: KillGuard = { markers: [root, home, pipe], notBefore: startedAt }
-  const daemonPids: number[] = []
+  const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
     let page: Page
     ;({ app, page } = await launch(home))
     const daemonPid = (await hooks.daemonPid(page))!
-    assert.ok(daemonPid && processInfo(daemonPid), 'the app spawned a tetherd')
-    daemonPids.push(daemonPid)
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
 
     // Default: no settings.json → automático, following the OS.
     const initial = await hooks.theme(page)
@@ -211,7 +200,7 @@ test('app theme: claro / automático / escuro apply live to chrome, dockview and
     await hooks.clickMenu(app, 'theme-dark')
     await waitScheme(page, 'dark')
     assert.equal(savedTheme(home), 'dark')
-    await killElectron(app, guard)
+    await killElectron(app, root)
     app = undefined
     ;({ app, page } = await launch(home))
     assert.equal(await hooks.dataTheme(page), 'dark', 'comes up dark')
@@ -224,20 +213,20 @@ test('app theme: claro / automático / escuro apply live to chrome, dockview and
     await assertScheme(app, page, 'dark', restoredIds)
 
     // A corrupt settings.json is tolerated: back to automático.
-    await killElectron(app, guard)
+    await killElectron(app, root)
     app = undefined
     const { writeFileSync } = await import('node:fs')
     writeFileSync(join(home, 'settings.json'), '{ not json')
     ;({ app, page } = await launch(home))
     assert.equal((await hooks.theme(page)).setting, 'auto', 'corrupt settings.json → auto')
   } finally {
-    if (app) await killElectron(app, guard).catch(e => console.error(String(e)))
-    for (const pid of daemonPids) {
-      const r = killOwned(pid, guard)
-      if (r !== 'killed' && r !== 'gone') console.error(`tetherd cleanup: ${r}`)
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
     }
     const deadline = Date.now() + 10_000
-    while (Date.now() < deadline && daemonPids.some(p => processInfo(p))) await sleep(200)
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
     for (let i = 0; i < 5; i++) {
       try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
     }

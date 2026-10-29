@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { DaemonClient } from '../../src/daemon/client.ts'
+import { claim, killOwned } from '../kill.ts'
 import { pidAlive, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const MAIN = resolve(import.meta.dirname, '../../src/daemon/main.ts')
@@ -24,7 +25,7 @@ describe('tetherd process', () => {
     mkdirSync(cwd)
   })
   after(async () => {
-    if (daemonPid && pidAlive(daemonPid)) spawnSync('taskkill', ['/PID', String(daemonPid), '/T', '/F'], { windowsHide: true })
+    if (daemonPid && pidAlive(daemonPid)) await killOwned(await claim(daemonPid, { cmdIncludes: MAIN, what: 'tetherd' }), { tree: true })
     await removeHome(home)
   })
 

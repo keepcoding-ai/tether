@@ -8,6 +8,7 @@ import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { LaunchPlan } from '../../src/agents/types.ts'
+import { identify, killOwned, type Owned } from '../kill.ts'
 
 // ---------- Virtual screen (minimal VT100/xterm emulator, enough for ConPTY output) ----------
 
@@ -279,13 +280,6 @@ async function waitGone(procs: Proc[], ms: number): Promise<Proc[]> {
 
 const describe = (procs: Proc[]) => procs.map(p => `${p.pid} ${p.name}`).join(', ')
 
-function killTree(pid: number): Promise<void> {
-  return new Promise(resolve => {
-    if (process.platform === 'win32') execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve())
-    else execFile('pkill', ['-9', '-P', String(pid)], () => { try { process.kill(pid, 'SIGKILL') } catch {} resolve() })
-  })
-}
-
 // ---------- Terminal ----------
 
 export interface StartOptions {
@@ -407,10 +401,13 @@ export class LocalPtyTransport implements Transport {
   readonly pid: number
   private readonly p: pty.IPty
   private disposed = false
+  /** The child's identity (pid + creation time), captured right after the spawn: a kill acts on nothing else. */
+  private readonly owned: Promise<Owned | undefined>
 
   constructor(plan: LaunchPlan, cols: number, rows: number) {
     this.p = pty.spawn(plan.command, plan.args, { cols, rows, cwd: plan.cwd, env: plan.env, useConpty: true, name: 'xterm-256color' })
     this.pid = this.p.pid
+    this.owned = identify(this.pid).catch(() => undefined)
   }
 
   write(data: string): void { this.p.write(data) }
@@ -418,7 +415,11 @@ export class LocalPtyTransport implements Transport {
   resize(cols: number, rows: number): void { this.p.resize(cols, rows) }
   onData(cb: (data: string) => void): void { this.p.onData(cb) }
   onExit(cb: (e: ExitInfo) => void): void { this.p.onExit(e => cb({ exitCode: e.exitCode, signal: e.signal })) }
-  async kill(): Promise<void> { await killTree(this.pid); this.dispose() }
+  async kill(): Promise<void> {
+    const me = await this.owned
+    if (me) await killOwned(me, { tree: true })
+    this.dispose()
+  }
 
   /** Releases the ConPTY (closes the pseudo console, its reader thread and pipes). node-pty 1.1 leaves these open
    *  after the child exits, which keeps the Node event loop alive; its kill() releases them but forks a helper

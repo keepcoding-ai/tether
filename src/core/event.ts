@@ -58,6 +58,10 @@ export interface RunInfo {
   agentPid?: number
   /** Process start time as reported by the OS, to tell a reused PID apart. */
   startedAt: string
+  /** The agent's own start time (tetherd records it so a later tetherd can prove an orphan is this very process). */
+  agentStartedAt?: string
+  /** Who wrote it: tetherd (pid = the daemon) or absent = a CLI `--here` launcher. Only tetherd's own runs are ever reaped. */
+  by?: 'tetherd'
 }
 
 /** The slot's current session, derived from its events. */

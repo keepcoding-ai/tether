@@ -3,11 +3,10 @@
 // under TETHER_HOME. Closing the window only disconnects: the daemon keeps every slot running.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
-import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { DaemonClient, DaemonError } from '../../src/daemon/client.ts'
+import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '../../src/daemon/client.ts'
 import { pipePath, PROTOCOL_VERSION } from '../../src/daemon/protocol.ts'
 import type { Notice, Reply } from '../../src/daemon/protocol.ts'
 import { canonicalDir, tetherHome } from '../../src/core/paths.ts'
@@ -75,8 +74,12 @@ function findNode(): string | undefined {
   return undefined
 }
 
-/** Starts tetherd detached (own process group, no stdio, no console): it outlives this window. */
-function spawnDaemon(): number {
+/**
+ * How tetherd is started when nothing answers on the pipe: the shared helper (src/daemon/client.ts) puts it
+ * outside this process' tree, sharing no handles with the window (so "End task" on the app never reaches
+ * the agents), with the system node and the daemon's entry point resolved here.
+ */
+function daemonSpawnOptions(): SpawnOptions {
   const node = findNode()
   if (!node) {
     throw new Error('não encontrei o node (≥ 24) para subir o tetherd: ele precisa estar no PATH do usuário, '
@@ -85,12 +88,7 @@ function spawnDaemon(): number {
   if (!existsSync(daemonMain)) throw new Error(`tetherd não encontrado em ${daemonMain}`)
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_')) env[k] = v
-  env.TETHER_HOME = home
-  env.TETHER_PIPE = pipe
-  const child = spawn(node, [daemonMain], { detached: true, stdio: 'ignore', windowsHide: true, env })
-  child.unref()
-  if (child.pid === undefined) throw new Error('não consegui iniciar o tetherd')
-  return child.pid
+  return { home, pipe, execPath: node, mainPath: daemonMain, env }
 }
 
 function checkVersion(client: DaemonClient): DaemonClient {
@@ -105,20 +103,9 @@ async function connectOnce(): Promise<DaemonClient> {
     return checkVersion(await DaemonClient.open(pipe, 'app'))
   } catch (e) {
     if (e instanceof DaemonError) throw e // it answered: spawning another one would not fix a wrong version
+    if (e instanceof NotTetherError) throw new Error(`o canal ${pipe} está ocupado por um programa que não é o tetherd (${e.message})`)
   }
-  spawnDaemon()
-  const deadline = Date.now() + DAEMON_START_TIMEOUT_MS
-  let lastError: Error | undefined
-  while (Date.now() < deadline) {
-    try {
-      return checkVersion(await DaemonClient.open(pipe, 'app'))
-    } catch (e) {
-      if (e instanceof DaemonError) throw e
-      lastError = e as Error
-      await new Promise(r => setTimeout(r, 100))
-    }
-  }
-  throw new Error(`tetherd não respondeu em ${pipe}: ${lastError?.message ?? 'tempo esgotado'}`)
+  return checkVersion(await DaemonClient.connect({ ...daemonSpawnOptions(), client: 'app', startTimeoutMs: DAEMON_START_TIMEOUT_MS }))
 }
 
 function connectDaemon(): Promise<void> {
