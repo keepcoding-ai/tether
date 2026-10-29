@@ -134,7 +134,7 @@ function isSlotMeta(x: unknown): x is SlotMeta {
     isObject(x) &&
     x.v === 1 &&
     typeof x.slotId === 'string' &&
-    (x.agent === 'claude' || x.agent === 'soul') &&
+    (x.agent === 'claude' || x.agent === 'soul' || x.agent === 'shell') &&
     typeof x.cwd === 'string' &&
     Array.isArray(x.args) &&
     typeof x.createdAt === 'string'

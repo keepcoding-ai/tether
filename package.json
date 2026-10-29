@@ -14,11 +14,14 @@
     "typecheck": "tsc -p .",
     "test": "node --test \"test/unit/**/*.test.ts\"",
     "test:e2e": "node --test --test-concurrency=1 \"test/e2e/**/*.test.ts\"",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "daemon": "node src/daemon/main.ts"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
-    "node-pty": "^1.1.0",
     "typescript": "^5.9.3"
   }
 }
