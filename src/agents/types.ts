@@ -26,6 +26,11 @@ export interface AgentAdapter {
   sessionExists(binding: Binding): Promise<boolean | 'unknown'>
   /** The session's current title, if the agent keeps one where we can read it. */
   title(binding: Binding): Promise<string | undefined>
+  /**
+   * Follows the title while the session runs, for agents whose renames do not reach the slot's jsonl
+   * (Claude writes them to the transcript). `onTitle` fires on every change; the returned function stops it.
+   */
+  watchTitle?(binding: Binding, onTitle: (title: string) => void, intervalMs?: number): () => void
 }
 
 /** Env vars the launcher sets for every slot (adapters add their own). */

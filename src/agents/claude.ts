@@ -1,7 +1,7 @@
 // Claude Code adapter: how to launch `claude` in a slot so that it reports its sessions to
 // tether (hooks injected via --settings, never the user's global settings), and how to read
 // what Claude keeps on disk (transcript exists? current title?).
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, mkdirSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, delimiter } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -159,4 +159,34 @@ async function title(binding: Binding): Promise<string | undefined> {
   try { return lastCustomTitle(file) } catch { return undefined }
 }
 
-export const claudeAdapter: AgentAdapter = { name: 'claude', plan, sessionExists, title }
+export const TITLE_POLL_MS = 5_000
+
+/**
+ * A `/rename` lands in the transcript, not in the slot's jsonl, so the title is polled: one stat per tick,
+ * and the transcript is only re-read when its size changed (a session without a title would otherwise be
+ * read back to its first line every tick). The transcript may not exist yet at the first ticks.
+ */
+function watchTitle(binding: Binding, onTitle: (title: string) => void, intervalMs = TITLE_POLL_MS): () => void {
+  let lastSize = -1
+  let lastTitle: string | undefined
+  const tick = (): void => {
+    const file = findTranscript(binding)
+    if (!file) return
+    let size: number
+    try { size = statSync(file).size } catch { return }
+    if (size === lastSize) return
+    lastSize = size
+    let t: string | undefined
+    try { t = lastCustomTitle(file) } catch { return }
+    if (t !== undefined && t !== lastTitle) {
+      lastTitle = t
+      onTitle(t)
+    }
+  }
+  const timer = setInterval(tick, intervalMs)
+  timer.unref()
+  tick()
+  return () => clearInterval(timer)
+}
+
+export const claudeAdapter: AgentAdapter = { name: 'claude', plan, sessionExists, title, watchTitle }

@@ -5,8 +5,9 @@ import { existsSync, mkdirSync, rmSync, watch, writeFileSync, type FSWatcher } f
 import { createServer, type Server, type Socket } from 'node:net'
 import { claudeAdapter } from '../agents/claude.ts'
 import { shellAdapter } from '../agents/shell.ts'
-import type { LaunchPlan } from '../agents/types.ts'
-import type { Binding, SlotMeta } from '../core/event.ts'
+import { soulAdapter } from '../agents/soul.ts'
+import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
+import type { AgentName, Binding, SlotMeta } from '../core/event.ts'
 import { slotMetaPath, slotsDir } from '../core/paths.ts'
 import { createSlot, currentBinding, listSlots, newSlotId, readEvents, readSlot, removeSlot, SLOT_ID_RE } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
@@ -28,6 +29,8 @@ export const DAEMON_VERSION = '0.1.0'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
+/** Agent processes allowed in 'starting' at the same time (PRD RA8); the rest wait as 'queued'. */
+export const MAX_STARTING = 3
 const WATCH_DEBOUNCE_MS = 100
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 30
@@ -38,6 +41,12 @@ export interface DaemonOptions {
   log?: (msg: string) => void
   /** Called after a client's `shutdown` request has been honoured (PTYs killed, server closed). */
   onShutdown?: () => void
+  /** Replaces an agent's adapter (tests: a fake that launches an inert process instead of the agent). */
+  adapters?: Partial<Record<AgentName, AgentAdapter>>
+  /** Overrides READY_FALLBACK_MS (tests). */
+  readyFallbackMs?: number
+  /** How often a running Claude slot's title is polled from its transcript (tests shorten it). */
+  titlePollMs?: number
 }
 
 export interface Daemon {
@@ -67,6 +76,10 @@ interface Slot {
   /** ISO time of the last spawn; a start event at/after it confirms the agent is up. */
   spawnedAt?: string
   readyTimer?: NodeJS.Timeout
+  /** The choice the queued start was asked with (status 'queued' only). */
+  queuedChoice?: 'resume' | 'new'
+  /** Stops the adapter's title watch (running claude slots). */
+  stopTitleWatch?: () => void
   scrollback: Scrollback
   attached: Set<Client>
   cols: number
@@ -96,6 +109,11 @@ class DaemonImpl implements Daemon {
   private readonly slotMap = new Map<string, Slot>()
   private watcher: FSWatcher | undefined
   private readonly pending = new Map<string, NodeJS.Timeout>()
+  private readonly adapters: Record<AgentName, AgentAdapter>
+  private readonly readyFallbackMs: number
+  private readonly titlePollMs: number | undefined
+  /** Slots waiting for a 'starting' seat, in request order. */
+  private readonly queue: Slot[] = []
   private closing = false
 
   constructor(opts: DaemonOptions) {
@@ -103,6 +121,9 @@ class DaemonImpl implements Daemon {
     this.pipe = opts.pipe
     this.log = opts.log ?? (() => {})
     this.onShutdown = opts.onShutdown
+    this.adapters = { claude: claudeAdapter, soul: soulAdapter, ...opts.adapters }
+    this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
+    this.titlePollMs = opts.titlePollMs
     this.server = createServer((socket) => this.onConnection(socket))
   }
 
@@ -131,6 +152,7 @@ class DaemonImpl implements Daemon {
     this.closing = true
     this.watcher?.close()
     for (const t of this.pending.values()) clearTimeout(t)
+    this.queue.length = 0
     await Promise.all([...this.slotMap.values()].map((s) => this.stopSlot(s)))
     for (const c of this.clients) c.socket.destroy()
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
@@ -168,8 +190,10 @@ class DaemonImpl implements Daemon {
     slot.title = binding?.title
     if (slot.status === 'starting' && binding && slot.spawnedAt && binding.since >= slot.spawnedAt) this.setRunning(slot)
     if (broadcast) this.broadcastState(slot)
-    if (binding && !binding.title && binding.agent === 'claude') {
-      void claudeAdapter.title(binding).then((title) => {
+    this.unwatchTitle(slot) // the watch follows one binding; this one changed
+    if (isAlive(slot)) this.watchTitle(slot)
+    if (binding && !binding.title) {
+      void this.adapters[binding.agent].title(binding).then((title) => {
         if (!title || slot.binding !== binding || slot.title === title) return
         slot.title = title
         this.broadcastState(slot)
@@ -177,14 +201,40 @@ class DaemonImpl implements Daemon {
     }
   }
 
+  /** The agent confirmed it is up (its start event arrived) or the fallback expired: frees a 'starting' seat. */
   private setRunning(slot: Slot): void {
     if (slot.readyTimer) clearTimeout(slot.readyTimer)
     slot.readyTimer = undefined
     slot.status = 'running'
+    this.pump()
   }
 
-  private startSlot(slot: Slot, choice: 'resume' | 'new' | undefined): void {
-    if (slot.pty && !slot.pty.exit) return // idempotent: already up
+  // ---- title watch (agents whose renames bypass the slot jsonl) --------------------------------
+
+  private watchTitle(slot: Slot): void {
+    const binding = slot.binding
+    if (slot.stopTitleWatch || !binding || slot.meta.agent === 'shell') return
+    const adapter = this.adapters[slot.meta.agent]
+    if (!adapter.watchTitle) return
+    const stop = adapter.watchTitle(binding, (title) => {
+      if (slot.binding !== binding || slot.title === title) return
+      slot.title = title
+      this.broadcastState(slot)
+    }, this.titlePollMs)
+    slot.stopTitleWatch = (): void => {
+      slot.stopTitleWatch = undefined
+      stop()
+    }
+  }
+
+  private unwatchTitle(slot: Slot): void {
+    slot.stopTitleWatch?.()
+  }
+
+  // ---- starting, queueing, stopping ----------------------------------------------------------
+
+  /** Validates the start and returns the binding to resume (undefined = new session). */
+  private resumeFor(slot: Slot, choice: 'resume' | 'new' | undefined): Binding | undefined {
     const { meta } = slot
     const resume = choice === 'new' ? undefined : slot.binding
     if (resume && !resume.confirmed && !choice) throw new RequestError('unconfirmed', 'vínculo não confirmado: escolha retomar ou iniciar nova sessão')
@@ -197,6 +247,66 @@ class DaemonImpl implements Daemon {
         }
       }
     }
+    return resume
+  }
+
+  private startingCount(): number {
+    let n = 0
+    for (const s of this.slotMap.values()) if (s.status === 'starting') n++
+    return n
+  }
+
+  /**
+   * Starts the slot now, or queues it when MAX_STARTING agents are already 'starting' (a layout being
+   * restored launches many at once). Shell slots never queue: they are up as soon as they spawn.
+   */
+  private startSlot(slot: Slot, choice: 'resume' | 'new' | undefined): void {
+    if (slot.pty && !slot.pty.exit) return // idempotent: already up
+    if (slot.status === 'queued') return // already waiting its turn
+    const resume = this.resumeFor(slot, choice)
+    if (slot.meta.agent !== 'shell' && this.startingCount() >= MAX_STARTING) {
+      slot.status = 'queued'
+      slot.error = undefined
+      slot.queuedChoice = choice
+      this.queue.push(slot)
+      this.log(`slot ${slot.meta.slotId}: queued (${this.queue.length} waiting)`)
+      this.broadcastState(slot)
+      return
+    }
+    this.launch(slot, resume)
+  }
+
+  /** Launches queued slots while seats are free. A start that fails now is reported through the slot's state. */
+  private pump(): void {
+    while (this.queue.length > 0 && this.startingCount() < MAX_STARTING) {
+      const slot = this.queue.shift()!
+      if (slot.status !== 'queued') continue
+      const choice = slot.queuedChoice
+      slot.queuedChoice = undefined
+      try {
+        this.launch(slot, this.resumeFor(slot, choice))
+      } catch (e) {
+        if (slot.status === 'queued') {
+          const err = e instanceof RequestError ? e : new RequestError('spawn-failed', (e as Error).message)
+          this.fail(slot, err.code, err.message)
+        }
+      }
+    }
+  }
+
+  /** Takes the slot out of the queue (stop/forget while waiting). */
+  private dequeue(slot: Slot): void {
+    const i = this.queue.indexOf(slot)
+    if (i >= 0) this.queue.splice(i, 1)
+    if (slot.status === 'queued') {
+      slot.status = 'exited'
+      slot.queuedChoice = undefined
+      this.broadcastState(slot)
+    }
+  }
+
+  private launch(slot: Slot, resume: Binding | undefined): void {
+    const { meta } = slot
     let plan: LaunchPlan
     try {
       plan = this.planFor(meta, resume)
@@ -219,7 +329,9 @@ class DaemonImpl implements Daemon {
           if (slot.readyTimer) clearTimeout(slot.readyTimer)
           slot.readyTimer = undefined
           slot.status = 'exited'
+          this.unwatchTitle(slot)
           this.broadcastState(slot)
+          this.pump()
         },
       })
     } catch (e) {
@@ -234,10 +346,11 @@ class DaemonImpl implements Daemon {
           this.setRunning(slot)
           this.broadcastState(slot)
         }
-      }, READY_FALLBACK_MS)
+      }, this.readyFallbackMs)
       slot.readyTimer.unref()
     }
     this.broadcastState(slot)
+    this.watchTitle(slot)
   }
 
   private planFor(meta: SlotMeta, resume: Binding | undefined): LaunchPlan {
@@ -245,9 +358,8 @@ class DaemonImpl implements Daemon {
       case 'shell':
         return shellAdapter.plan({ slot: meta, cwd: resume?.cwd })
       case 'claude':
-        return claudeAdapter.plan({ slot: meta, home: this.home, resume, extraArgs: [] })
       case 'soul':
-        throw new Error('adapter do soul ainda não disponível')
+        return this.adapters[meta.agent].plan({ slot: meta, home: this.home, resume, extraArgs: [] })
     }
   }
 
@@ -259,6 +371,8 @@ class DaemonImpl implements Daemon {
   }
 
   private async stopSlot(slot: Slot): Promise<void> {
+    this.dequeue(slot)
+    this.unwatchTitle(slot)
     const pty = slot.pty
     if (!pty) return
     await pty.kill()
@@ -443,6 +557,11 @@ class DaemonImpl implements Daemon {
 
 function isKind(x: unknown): x is SlotKind {
   return x === 'claude' || x === 'soul' || x === 'shell'
+}
+
+/** The slot's process is up (spawned and not exited). */
+function isAlive(slot: Slot): boolean {
+  return slot.pty !== undefined && slot.pty.exit === undefined
 }
 
 function stateOf(slot: Slot): SlotState {
