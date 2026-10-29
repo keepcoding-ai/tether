@@ -15,7 +15,7 @@ Fonte da verdade do andamento do [PLAN.md](./PLAN.md). Atualizado a cada tarefa.
 | T8 Robustez e doctor | pendente | |
 | Onda 4 — suíte 3x verde, docs | pendente | |
 | A1 App shell (Electron + dockview + xterm) | em andamento (fatia A1a) | |
-| A2 tetherd | em andamento (fatia A2a) | |
+| A2 tetherd | A2a concluída (merge); A2b em andamento | A2a: 81/81 unit; prova real com Claude pelo agente; minha prova: shell sobrevive à desconexão do cliente (mesmo PID), histórico no novo cliente, shutdown sem órfãos |
 | A3 Integração app ↔ tetherd + E2E | pendente | |
 | A4 Empacotar (npm run app, atalho) | pendente | |
 
@@ -48,3 +48,5 @@ A semana de uso real (PRD §8) é do usuário.
 ## Ações do Guga
 
 - OK para fazer merge de `feat/session-report` no `develop` do soul-cli e instalar o soul novo na máquina (guardando o anterior).
+- Hook do Claude convertido para `.mjs`: mediana 227 ms → 152 ms via bash.
+- O `tetherd` considera o agente "rodando" pelo PTY que ele próprio segura; a verificação por PowerShell (liveness.ts) fica só para a CLI sem daemon.
