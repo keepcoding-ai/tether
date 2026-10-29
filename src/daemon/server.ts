@@ -237,7 +237,9 @@ class DaemonImpl implements Daemon {
   private resumeFor(slot: Slot, choice: 'resume' | 'new' | undefined): Binding | undefined {
     const { meta } = slot
     const resume = choice === 'new' ? undefined : slot.binding
-    if (resume && !resume.confirmed && !choice) throw new RequestError('unconfirmed', 'vínculo não confirmado: escolha retomar ou iniciar nova sessão')
+    if ((slot.status === 'unconfirmed' || (resume && !resume.confirmed)) && !choice) {
+      throw new RequestError('unconfirmed', 'vínculo não confirmado: escolha retomar ou iniciar nova sessão')
+    }
     const cwd = resume ? resume.cwd : meta.cwd
     if (!existsSync(cwd)) throw this.fail(slot, 'cwd-missing', `a pasta não existe: ${cwd}`)
     if (resume) {
@@ -260,10 +262,16 @@ class DaemonImpl implements Daemon {
    * Starts the slot now, or queues it when MAX_STARTING agents are already 'starting' (a layout being
    * restored launches many at once). Shell slots never queue: they are up as soon as they spawn.
    */
-  private startSlot(slot: Slot, choice: 'resume' | 'new' | undefined): void {
+  private async startSlot(slot: Slot, choice: 'resume' | 'new' | undefined): Promise<void> {
     if (slot.pty && !slot.pty.exit) return // idempotent: already up
     if (slot.status === 'queued') return // already waiting its turn
     const resume = this.resumeFor(slot, choice)
+    if (resume) {
+      // PRD C15: a resume of a session the agent no longer has must fail here, not inside the agent's TUI.
+      const exists = await this.adapters[resume.agent].sessionExists(resume)
+      if (exists === false) throw this.fail(slot, 'session-missing', `a sessão ${resume.sessionId} não existe mais no ${resume.agent}`)
+      if (slot.pty && !slot.pty.exit) return // another request started it while we checked
+    }
     if (slot.meta.agent !== 'shell' && this.startingCount() >= MAX_STARTING) {
       slot.status = 'queued'
       slot.error = undefined
@@ -330,6 +338,13 @@ class DaemonImpl implements Daemon {
           slot.readyTimer = undefined
           slot.status = 'exited'
           this.unwatchTitle(slot)
+          // PRD C18: an agent run that never reported its session (old version, hook removed, crashed before the
+          // hook) leaves the binding unconfirmed: the next start must be an explicit choice, never a silent guess.
+          this.refreshBinding(slot, false) // the hook's last line may land right before the exit
+          if (meta.agent !== 'shell' && !this.reportedThisRun(slot)) {
+            slot.status = 'unconfirmed'
+            this.log(`slot ${meta.slotId}: no start event for this run; binding unconfirmed`)
+          }
           this.broadcastState(slot)
           this.pump()
         },
@@ -361,6 +376,11 @@ class DaemonImpl implements Daemon {
       case 'soul':
         return this.adapters[meta.agent].plan({ slot: meta, home: this.home, resume, extraArgs: [] })
     }
+  }
+
+  /** A start event of the agent arrived at/after the last spawn (the binding describes what this run opened). */
+  private reportedThisRun(slot: Slot): boolean {
+    return slot.binding !== undefined && slot.spawnedAt !== undefined && slot.binding.since >= slot.spawnedAt
   }
 
   private fail(slot: Slot, code: ErrorCode, message: string): RequestError {
@@ -454,12 +474,12 @@ class DaemonImpl implements Daemon {
         createSlot(this.home, meta)
         const slot = this.load(meta)
         this.broadcastState(slot)
-        if (req.start) this.startSlot(slot, undefined)
+        if (req.start) await this.startSlot(slot, undefined)
         return { t: 'ok', id, slot: stateOf(slot) }
       }
       case 'start': {
         const slot = this.slot(req.slotId)
-        this.startSlot(slot, req.choice === 'new' || req.choice === 'resume' ? req.choice : undefined)
+        await this.startSlot(slot, req.choice === 'new' || req.choice === 'resume' ? req.choice : undefined)
         return { t: 'ok', id, slot: stateOf(slot) }
       }
       case 'attach': {
