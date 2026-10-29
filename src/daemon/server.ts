@@ -10,7 +10,8 @@ import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { canonicalDir, slotMetaPath, slotsDir } from '../core/paths.ts'
-import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun } from '../core/store.ts'
+import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
+import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import {
   PROTOCOL_VERSION,
@@ -122,6 +123,8 @@ class DaemonImpl implements Daemon {
   private readonly adapters: Record<AgentName, AgentAdapter>
   private readonly readyFallbackMs: number
   private readonly titlePollMs: number | undefined
+  /** <home>/profiles.json, re-read when it changes on disk (the CLI edits it while tetherd runs). */
+  private readonly profileStore: ProfileStore
   /** Slots waiting for a 'starting' seat, in request order. */
   private readonly queue: Slot[] = []
   private closing = false
@@ -136,6 +139,7 @@ class DaemonImpl implements Daemon {
     this.adapters = { claude: claudeAdapter, soul: soulAdapter, ...opts.adapters }
     this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
     this.titlePollMs = opts.titlePollMs
+    this.profileStore = new ProfileStore(opts.home)
     this.server = createServer((socket) => this.onConnection(socket))
   }
 
@@ -143,6 +147,8 @@ class DaemonImpl implements Daemon {
     mkdirSync(slotsDir(this.home), { recursive: true })
     this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
     await this.reapOrphans()
+    const profiles = this.profileStore.read()
+    if (profiles.problem) this.log(`profiles: ${profiles.problem}`)
     for (const meta of listSlots(this.home)) this.load(meta)
     this.startWatching()
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
@@ -158,7 +164,48 @@ class DaemonImpl implements Daemon {
   }
 
   slots(): SlotState[] {
-    return [...this.slotMap.values()].map(stateOf)
+    const profiles = this.profileStore.profiles()
+    return [...this.slotMap.values()].map((s) => this.stateOf(s, profiles))
+  }
+
+  // ---- profiles --------------------------------------------------------------------------------
+
+  /** The slot's profile as it applies now (current profile, else the snapshot). */
+  private profileOf(meta: SlotMeta, profiles = this.profileStore.profiles()): SlotProfile {
+    return slotProfile(meta, profiles)
+  }
+
+  /** Where the adapter looks for the slot's session files (the profile may point Claude at another CLAUDE_CONFIG_DIR). */
+  private lookupOf(slot: Slot): { env?: Record<string, string> } {
+    const env = this.profileOf(slot.meta).launch?.env
+    return env ? { env } : {}
+  }
+
+  private stateOf(slot: Slot, profiles = this.profileStore.profiles()): SlotState {
+    const s: SlotState = {
+      slotId: slot.meta.slotId,
+      kind: slot.meta.agent,
+      cwd: slot.binding?.cwd ?? slot.meta.cwd,
+      status: slot.status,
+    }
+    if (slot.meta.name) s.name = slot.meta.name
+    if (slot.pty && !slot.pty.exit) s.pid = slot.pty.pid
+    if (slot.binding) s.binding = slot.binding
+    if (slot.title) s.title = slot.title
+    if (slot.error) s.error = slot.error
+    const profile = this.profileOf(slot.meta, profiles)
+    if (profile.id) s.profileId = profile.id
+    if (profile.name) s.profileName = profile.name
+    const extra = slot.meta.agent === 'shell' ? [] : defaultAgentArgs(slot.meta.agent)
+    if (isUnsafe([...(profile.launch?.args ?? []), ...slot.meta.args, ...extra])) s.unsafe = true
+    return s
+  }
+
+  /** Every slot that uses the profile gets a fresh state (its name / unsafe badge may have changed). */
+  private broadcastProfiles(): void {
+    const profiles = this.profileStore.profiles()
+    this.broadcast({ t: 'profiles', profiles })
+    for (const slot of this.slotMap.values()) if (slot.meta.profileId) this.broadcast({ t: 'state', slot: this.stateOf(slot, profiles) })
   }
 
   listening(): boolean {
@@ -255,7 +302,7 @@ class DaemonImpl implements Daemon {
     this.unwatchTitle(slot) // the watch follows one binding; this one changed
     if (isAlive(slot)) this.watchTitle(slot)
     if (binding && !binding.title) {
-      void this.adapters[binding.agent].title(binding).then((title) => {
+      void this.adapters[binding.agent].title(binding, this.lookupOf(slot)).then((title) => {
         if (!title || slot.binding !== binding || slot.title === title) return
         slot.title = title
         this.broadcastState(slot)
@@ -287,7 +334,7 @@ class DaemonImpl implements Daemon {
       if (slot.binding !== binding || slot.title === title) return
       slot.title = title
       this.broadcastState(slot)
-    }, this.titlePollMs)
+    }, this.titlePollMs, this.lookupOf(slot))
     slot.stopTitleWatch = (): void => {
       slot.stopTitleWatch = undefined
       stop()
@@ -335,7 +382,7 @@ class DaemonImpl implements Daemon {
     const resume = this.resumeFor(slot, choice)
     if (resume) {
       // PRD C15: a resume of a session the agent no longer has must fail here, not inside the agent's TUI.
-      const exists = await this.adapters[resume.agent].sessionExists(resume)
+      const exists = await this.adapters[resume.agent].sessionExists(resume, this.lookupOf(slot))
       if (exists === false) throw this.fail(slot, 'session-missing', `a sessão ${resume.sessionId} não existe mais no ${resume.agent}`)
       if (slot.pty && !slot.pty.exit) return // another request started it while we checked
     }
@@ -434,13 +481,23 @@ class DaemonImpl implements Daemon {
     this.watchTitle(slot)
   }
 
+  /**
+   * The plan applies the slot's profile AS IT IS NOW (an edit takes effect on the next start) and refreshes the
+   * slot's snapshot of it, so a profile deleted later still launches the slot the way it last ran.
+   */
   private planFor(meta: SlotMeta, resume: Binding | undefined): LaunchPlan {
+    const profiles = this.profileStore.profiles()
+    const current = profiles.find((p) => p.id === meta.profileId)
+    if (current && snapshotProfile(meta, current)) {
+      try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot refresh the profile snapshot: ${(e as Error).message}`) }
+    }
+    const profile = this.profileOf(meta, profiles).launch
     switch (meta.agent) {
       case 'shell':
-        return shellAdapter.plan({ slot: meta, cwd: resume?.cwd })
+        return shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile })
       case 'claude':
       case 'soul':
-        return this.adapters[meta.agent].plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent) })
+        return this.adapters[meta.agent].plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
     }
   }
 
@@ -491,7 +548,7 @@ class DaemonImpl implements Daemon {
   }
 
   private broadcastState(slot: Slot): void {
-    this.broadcast({ t: 'state', slot: stateOf(slot) })
+    this.broadcast({ t: 'state', slot: this.stateOf(slot) })
   }
 
   private async onLine(client: Client, value: Record<string, unknown> | undefined, raw: string): Promise<void> {
@@ -537,23 +594,28 @@ class DaemonImpl implements Daemon {
           createdAt: new Date().toISOString(),
         }
         if (typeof req.name === 'string' && req.name) meta.name = req.name
+        if (req.profileId !== undefined) {
+          const profile = this.requireProfile(req.profileId)
+          if (profile.agent !== req.kind) throw new RequestError('bad-request', `o perfil "${profile.name}" é de ${profile.agent}, não de ${req.kind}`)
+          snapshotProfile(meta, profile)
+        }
         createSlot(this.home, meta)
         const slot = this.load(meta)
         this.broadcastState(slot)
         if (req.start) await this.startSlot(slot, undefined)
-        return { t: 'ok', id, slot: stateOf(slot) }
+        return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'start': {
         const slot = this.slot(req.slotId)
         await this.startSlot(slot, req.choice === 'new' || req.choice === 'resume' ? req.choice : undefined)
-        return { t: 'ok', id, slot: stateOf(slot) }
+        return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'attach': {
         const slot = this.slot(req.slotId)
         client.attached.add(slot.meta.slotId)
         slot.attached.add(client)
         this.resize(slot, req.cols, req.rows)
-        return { t: 'ok', id, slot: stateOf(slot), scrollback: slot.scrollback.text() }
+        return { t: 'ok', id, slot: this.stateOf(slot), scrollback: slot.scrollback.text() }
       }
       case 'detach': {
         const slot = this.slot(req.slotId)
@@ -569,7 +631,7 @@ class DaemonImpl implements Daemon {
       case 'stop': {
         const slot = this.slot(req.slotId)
         await this.stopSlot(slot)
-        return { t: 'ok', id, slot: stateOf(slot) }
+        return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'forget': {
         const slot = this.slot(req.slotId)
@@ -587,16 +649,48 @@ class DaemonImpl implements Daemon {
         else delete slot.meta.name
         writeFileSync(slotMetaPath(this.home, slot.meta.slotId), JSON.stringify(slot.meta, null, 2) + '\n')
         this.broadcastState(slot)
-        return { t: 'ok', id, slot: stateOf(slot) }
+        return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'shutdown': {
         this.log('shutdown requested')
         setImmediate(() => void this.close().then(() => this.onShutdown?.()))
         return { t: 'ok', id }
       }
+      case 'profiles-list': {
+        const read = this.profileStore.read()
+        return { t: 'ok', id, profiles: read.profiles, ...(read.problem ? { problem: read.problem } : {}) }
+      }
+      case 'profile-save': {
+        const input = req.profile as Partial<ProfileInput> | undefined
+        if (!input || typeof input !== 'object') throw new RequestError('bad-request', 'perfil obrigatório')
+        if (!isProfileAgent(input.agent)) throw new RequestError('invalid-profile', `agente inválido: ${String(input.agent)} (use claude, soul ou shell)`)
+        let saved: { profile: Profile; warnings: string[] }
+        try {
+          saved = this.profileStore.save({ ...input, agent: input.agent, name: String(input.name ?? ''), args: Array.isArray(input.args) ? input.args : [] })
+        } catch (e) {
+          if (e instanceof ProfileError) throw new RequestError('invalid-profile', e.message)
+          throw e
+        }
+        this.log(`profile ${saved.profile.id} saved (${saved.profile.agent} "${saved.profile.name}")`)
+        this.broadcastProfiles()
+        return { t: 'ok', id, profile: saved.profile, warnings: saved.warnings }
+      }
+      case 'profile-delete': {
+        const profile = this.requireProfile(req.profileId)
+        this.profileStore.delete(profile.id)
+        this.log(`profile ${profile.id} deleted`)
+        this.broadcastProfiles()
+        return { t: 'ok', id }
+      }
       default:
         throw new RequestError('bad-request', `mensagem desconhecida: ${String((req as { t?: unknown }).t)}`)
     }
+  }
+
+  private requireProfile(profileId: unknown): Profile {
+    const p = typeof profileId === 'string' ? this.profileStore.profiles().find((x) => x.id === profileId) : undefined
+    if (!p) throw new RequestError('unknown-profile', `perfil desconhecido: ${String(profileId)}`)
+    return p
   }
 
   private resize(slot: Slot, cols: unknown, rows: unknown): void {
@@ -648,19 +742,4 @@ function isKind(x: unknown): x is SlotKind {
 /** The slot's process is up (spawned and not exited). */
 function isAlive(slot: Slot): boolean {
   return slot.pty !== undefined && slot.pty.exit === undefined
-}
-
-function stateOf(slot: Slot): SlotState {
-  const s: SlotState = {
-    slotId: slot.meta.slotId,
-    kind: slot.meta.agent,
-    cwd: slot.binding?.cwd ?? slot.meta.cwd,
-    status: slot.status,
-  }
-  if (slot.meta.name) s.name = slot.meta.name
-  if (slot.pty && !slot.pty.exit) s.pid = slot.pty.pid
-  if (slot.binding) s.binding = slot.binding
-  if (slot.title) s.title = slot.title
-  if (slot.error) s.error = slot.error
-  return s
 }

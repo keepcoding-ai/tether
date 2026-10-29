@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import type { Binding } from '../core/event.ts'
 import { canonicalDir } from '../core/paths.ts'
-import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
+import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
 
 const HOOK_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.mjs')
 
@@ -65,14 +65,17 @@ export function cleanEnv(source: NodeJS.ProcessEnv = process.env): Record<string
 const PICKS_SESSION = new Set(['-c', '--continue', '-r', '--resume'])
 
 function plan(input: PlanInput): LaunchPlan {
-  const { slot, home, resume, extraArgs } = input
+  const { slot, home, resume, extraArgs, profile } = input
   const settings = ensureSettingsFile(home)
   const args = ['--settings', settings]
-  const own = [...slot.args, ...extraArgs]
+  // Profile args first (the baseline), the slot's own args, then this launch's: a repeated option takes its last value.
+  const own = [...(profile?.args ?? []), ...slot.args, ...extraArgs]
   if (resume) args.push('--resume', resume.sessionId)
   else if (!own.some((a) => PICKS_SESSION.has(a))) args.push('--session-id', randomUUID())
   args.push(...own)
   const env = cleanEnv()
+  // The profile's env goes on AFTER the CLAUDE* strip: an explicit CLAUDE_CONFIG_DIR (a second account) must reach Claude.
+  Object.assign(env, profile?.env ?? {})
   env[ENV_SLOT] = slot.slotId
   env[ENV_HOME] = home
   return {
@@ -87,8 +90,9 @@ function plan(input: PlanInput): LaunchPlan {
 
 // ---- reading Claude's files ----
 
-function claudeConfigDir(): string {
-  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+/** The slot's CLAUDE_CONFIG_DIR (its profile env) wins over ours; the default is ~/.claude. */
+function claudeConfigDir(opts?: LookupOptions): string {
+  return opts?.env?.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 }
 
 /** Claude's project folder name for a cwd: every non-alphanumeric character becomes '-'. */
@@ -97,9 +101,9 @@ export function encodeProjectDir(cwd: string): string {
 }
 
 /** Path of the session's transcript, or undefined when it is not on disk. */
-export function findTranscript(binding: Pick<Binding, 'sessionId' | 'cwd'>): string | undefined {
+export function findTranscript(binding: Pick<Binding, 'sessionId' | 'cwd'>, opts?: LookupOptions): string | undefined {
   if (!/^[A-Za-z0-9-]+$/.test(binding.sessionId)) return undefined
-  const projects = join(claudeConfigDir(), 'projects')
+  const projects = join(claudeConfigDir(opts), 'projects')
   const file = `${binding.sessionId}.jsonl`
   const direct = join(projects, encodeProjectDir(binding.cwd), file)
   if (existsSync(direct)) return direct
@@ -112,8 +116,8 @@ export function findTranscript(binding: Pick<Binding, 'sessionId' | 'cwd'>): str
   return undefined
 }
 
-async function sessionExists(binding: Binding): Promise<boolean | 'unknown'> {
-  return findTranscript(binding) !== undefined
+async function sessionExists(binding: Binding, opts?: LookupOptions): Promise<boolean | 'unknown'> {
+  return findTranscript(binding, opts) !== undefined
 }
 
 function titleOf(line: string): string | undefined {
@@ -160,8 +164,8 @@ export function lastCustomTitle(file: string): string | undefined {
   }
 }
 
-async function title(binding: Binding): Promise<string | undefined> {
-  const file = findTranscript(binding)
+async function title(binding: Binding, opts?: LookupOptions): Promise<string | undefined> {
+  const file = findTranscript(binding, opts)
   if (!file) return undefined
   try { return lastCustomTitle(file) } catch { return undefined }
 }
@@ -173,11 +177,11 @@ export const TITLE_POLL_MS = 5_000
  * and the transcript is only re-read when its size changed (a session without a title would otherwise be
  * read back to its first line every tick). The transcript may not exist yet at the first ticks.
  */
-function watchTitle(binding: Binding, onTitle: (title: string) => void, intervalMs = TITLE_POLL_MS): () => void {
+function watchTitle(binding: Binding, onTitle: (title: string) => void, intervalMs = TITLE_POLL_MS, opts?: LookupOptions): () => void {
   let lastSize = -1
   let lastTitle: string | undefined
   const tick = (): void => {
-    const file = findTranscript(binding)
+    const file = findTranscript(binding, opts)
     if (!file) return
     let size: number
     try { size = statSync(file).size } catch { return }

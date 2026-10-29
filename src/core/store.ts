@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -130,15 +131,30 @@ function isResumeRecipe(x: unknown): boolean {
 }
 
 function isSlotMeta(x: unknown): x is SlotMeta {
-  return (
-    isObject(x) &&
-    x.v === 1 &&
-    typeof x.slotId === 'string' &&
-    (x.agent === 'claude' || x.agent === 'soul' || x.agent === 'shell') &&
-    typeof x.cwd === 'string' &&
-    Array.isArray(x.args) &&
-    typeof x.createdAt === 'string'
-  )
+  if (
+    !isObject(x) ||
+    x.v !== 1 ||
+    typeof x.slotId !== 'string' ||
+    (x.agent !== 'claude' && x.agent !== 'soul' && x.agent !== 'shell') ||
+    typeof x.cwd !== 'string' ||
+    !Array.isArray(x.args) ||
+    typeof x.createdAt !== 'string'
+  ) return false
+  // Profile fields are optional (slots from before profiles existed have none); a malformed one makes the meta unreadable.
+  if (x.profileId !== undefined && typeof x.profileId !== 'string') return false
+  if (x.profileArgs !== undefined && !(Array.isArray(x.profileArgs) && x.profileArgs.every((a) => typeof a === 'string'))) return false
+  if (x.profileEnv !== undefined && !(isObject(x.profileEnv) && Object.values(x.profileEnv).every((v) => typeof v === 'string'))) return false
+  return true
+}
+
+/** Rewrites the slot's meta file (rename, profile snapshot). Atomic: temp + rename. */
+export function writeSlotMeta(home: string, meta: SlotMeta): void {
+  assertSlotId(meta.slotId)
+  ensureSlotsDir(home)
+  const path = slotMetaPath(home, meta.slotId)
+  const tmp = `${path}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(meta, null, 2) + '\n')
+  renameSync(tmp, path)
 }
 
 function isObject(x: unknown): x is Record<string, unknown> {
