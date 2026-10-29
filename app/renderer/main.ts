@@ -4,9 +4,13 @@
 import { createDockview, themeDark, themeLight, type DockviewApi, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
+import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
+import { askDialog, dialogOpen } from './dialog.ts'
+import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { pruneLayout } from './layout.ts'
-import { effectiveStatus, KIND_ICON, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, folderName, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
+import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
+import { closePanelSituation, folderName, quitAllSituation } from './situations.ts'
 
 const COMPONENT = 'terminal'
 const TAB = 'slot-tab'
@@ -25,6 +29,8 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined
 let connection: ConnectionState | undefined
 /** What is painted now; main owns the setting and pushes every change (user choice or OS switch). */
 let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' }
+/** Remembered dialog answers ("não perguntar de novo"); main owns the file and pushes every change. */
+let confirmations: Confirmations = {}
 
 const $ =<T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id)
@@ -119,16 +125,44 @@ function addPanel(slot: SlotState, position?: Position): IDockviewPanel {
   return panel
 }
 
-async function closePanel(slotId: string): Promise<void> {
+/**
+ * Closing a panel puts the situation to the user (app/renderer/situations.ts) unless an answer was
+ * remembered for it. `ask: false` is for the overlay's own "Fechar painel" card, whose consequence is
+ * already written on it: nothing is running, so the panel just goes (the slot stays in "Slots fechados").
+ */
+async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise<void> {
   const panel = api.getPanel(slotId)
   if (!panel) return
   const slot = slots.get(slotId)
-  const running = slot && (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued')
-  let choice: 'stop' | 'detach' | 'cancel' = 'detach'
-  if (running) choice = await window.tether.confirmClose(panel.title ?? slotId)
+  if (!slot) { api.removePanel(panel); return }
+  const spec = closePanelSituation(slot)
+  let choice: string | undefined = opts.ask === false ? 'detach' : confirmations[spec.situation]
+  // Only an answer the spec can remember is honoured: a destructive one never runs without asking.
+  if (choice !== 'detach' && choice !== spec.remember?.choice) choice = undefined
+  if (!choice) {
+    const answer = await askDialog(spec)
+    choice = answer.choice
+    if (answer.remember && spec.remember) {
+      confirmations = { ...confirmations, [spec.situation]: spec.remember.choice }
+      window.tether.rememberConfirmation(spec.situation, spec.remember.choice)
+    }
+  }
   if (choice === 'cancel') return
   if (choice === 'stop') await window.tether.request({ t: 'stop', slotId })
-  api.removePanel(panel)
+  if (choice === 'forget') await window.tether.request({ t: 'forget', slotId })
+  const still = api.getPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
+  if (still) api.removePanel(still)
+}
+
+/** Main asks for a situation to be put to the user (menu items live in main; the dialog lives here). */
+async function onAsk(req: AskRequest): Promise<void> {
+  switch (req.situation) {
+    case 'quit-all': {
+      const answer = await askDialog(quitAllSituation([...slots.values()]))
+      window.tether.answer(req.askId, answer)
+      return
+    }
+  }
 }
 
 function renderSlot(slotId: string): void {
@@ -164,7 +198,7 @@ async function onPanelAction(slotId: string, action: PanelAction): Promise<void>
     case 'start': return startSlot(slotId)
     case 'resume': return startSlot(slotId, 'resume')
     case 'new': return startSlot(slotId, 'new')
-    case 'close': return closePanel(slotId)
+    case 'close': return closePanel(slotId, { ask: false })
     case 'pick-folder': return moveToFolder(slotId)
   }
 }
@@ -247,13 +281,13 @@ async function onConnection(state: ConnectionState): Promise<void> {
   const conn = $('conn')
   conn.title = state.pipe
   if (!state.connected) {
-    conn.textContent = '● desconectado'
+    conn.replaceChildren(icon('plugs'), document.createTextNode('desconectado'))
     conn.className = 'conn off'
     $('overlay-msg').textContent = `${state.error} (${state.pipe})`
     $('overlay').hidden = false
     return
   }
-  conn.textContent = `● tetherd ${state.pid}`
+  conn.replaceChildren(icon('plugs-connected'), document.createTextNode(`tetherd ${state.pid}`))
   conn.className = 'conn on'
   $('overlay').hidden = true
   startErrors.clear()
@@ -287,15 +321,16 @@ function refreshClosedMenu(): void {
   for (const s of closed) {
     const status = STATUS_LABEL[effectiveStatus(s)]
     const li = document.createElement('li')
-    const icon = document.createElement('span'); icon.textContent = KIND_ICON[s.kind]
+    const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon(KIND_ICON[s.kind]))
     const name = document.createElement('span'); name.textContent = s.title ?? s.name ?? folderName(s.cwd)
     const cwd = document.createElement('span'); cwd.className = 'cwd'; cwd.textContent = `${s.cwd} · ${status}`
-    const forget = document.createElement('button'); forget.className = 'forget'; forget.textContent = 'Esquecer'; forget.title = 'Encerra e remove o slot do tether'
+    const forget = document.createElement('button'); forget.className = 'forget'; forget.title = 'Encerra e remove o slot do tether'
+    forget.append(icon('trash'), document.createTextNode('Esquecer'))
     forget.addEventListener('click', async ev => {
       ev.stopPropagation()
       await window.tether.request({ t: 'forget', slotId: s.slotId })
     })
-    li.append(icon, name, cwd, forget)
+    li.append(kind, name, cwd, forget)
     li.title = `Reabrir o painel (${KIND_LABEL[s.kind]}, ${status})`
     li.addEventListener('click', () => {
       list.hidden = true
@@ -378,6 +413,8 @@ async function splitActive(direction: 'right' | 'below'): Promise<void> {
 // ---------- wiring ----------
 
 function setupUi(): void {
+  // Static icons: <span data-icon="name"> in index.html becomes the inline SVG.
+  for (const el of document.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
   $('btn-new').addEventListener('click', () => { void openNewDialog() })
   $('btn-split-right').addEventListener('click', () => { void splitActive('right') })
   $('btn-split-down').addEventListener('click', () => { void splitActive('below') })
@@ -396,7 +433,7 @@ function setupUi(): void {
 
   document.addEventListener('keydown', ev => {
     if (!ev.ctrlKey || !ev.shiftKey || ev.altKey) return
-    if ($<HTMLDialogElement>('dlg-new').open) return
+    if ($<HTMLDialogElement>('dlg-new').open || dialogOpen()) return
     switch (ev.code) {
       case 'KeyT': ev.preventDefault(); void openNewDialog(); break
       case 'KeyD': ev.preventDefault(); void splitActive('right'); break
@@ -424,6 +461,10 @@ declare global {
       theme(): ThemeState
       /** The xterm palette a panel is using (its `theme.background`, etc). */
       termTheme(slotId: string): Record<string, string | undefined> | undefined
+      /** Remembered dialog answers as the renderer sees them. */
+      confirmations(): Confirmations
+      /** Asks to close a panel exactly as the tab's × does (dialog included). */
+      closePanel(slotId: string): void
     }
   }
 }
@@ -448,6 +489,8 @@ function setupTestHooks(): void {
     applyState,
     theme: () => theme,
     termTheme: slotId => panels.get(slotId)?.term.options.theme as Record<string, string | undefined> | undefined,
+    confirmations: () => confirmations,
+    closePanel: slotId => { void closePanel(slotId) },
   }
 }
 
@@ -458,3 +501,6 @@ window.tether.onEvent(onDaemonEvent)
 window.tether.onConnection(state => { void onConnection(state) })
 window.tether.onTheme(applyTheme)
 void window.tether.getTheme().then(applyTheme)
+window.tether.onConfirmations(c => { confirmations = c })
+void window.tether.getConfirmations().then(c => { confirmations = c })
+window.tether.onAsk(req => { void onAsk(req) })

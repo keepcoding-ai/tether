@@ -1,6 +1,7 @@
 // The narrow API the preload exposes to the renderer as `window.tether` (contextBridge).
 // Shared by the preload (implements it) and the renderer (consumes it).
 import type { Event as DaemonEvent, Notice, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
+import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 
 export type { Profile, ProfileInput }
@@ -9,8 +10,6 @@ export type { Profile, ProfileInput }
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
 
 export type ConnectionState = { connected: true; pipe: string; pid: number } | { connected: false; pipe: string; error: string }
-
-export type CloseChoice = 'stop' | 'detach' | 'cancel'
 
 /** The launch profiles; `problem` when the file had to be repaired or had entries skipped (show it, the backup is kept). */
 export type ProfilesList = { profiles: Profile[]; problem?: string }
@@ -30,10 +29,8 @@ export interface TetherApi {
   saveLayout(layout: unknown): Promise<void>
   recentFolders(): Promise<string[]>
   rememberFolder(folder: string): Promise<void>
-  /** Native folder picker; null when cancelled. */
+  /** The OS folder browser (the one native UI kept: it is the file system's); null when cancelled. */
   pickFolder(initial?: string): Promise<string | null>
-  /** Native dialog: stop the agent, only close the panel, or cancel. */
-  confirmClose(label: string): Promise<CloseChoice>
   /**
    * Launch profiles (<home>/profiles.json): through the daemon when connected (it validates and broadcasts a
    * `profiles` event to every client), straight from the file otherwise. A new slot takes one as `create.profileId`.
@@ -50,6 +47,20 @@ export interface TetherApi {
   /** Persists the setting; the new state arrives through onTheme (also on every OS switch while `auto`). */
   setTheme(setting: ThemeSetting): void
   onTheme(listener: (state: ThemeState) => void): () => void
+  /** Remembered dialog answers ("não perguntar de novo"); main pushes every change through onConfirmations. */
+  getConfirmations(): Promise<Confirmations>
+  rememberConfirmation(situation: string, choice: string): void
+  onConfirmations(listener: (c: Confirmations) => void): () => void
+  /** Main needs a situation put to the user (menu "Sair e encerrar tudo…"); the renderer answers with `answer`. */
+  onAsk(listener: (req: AskRequest) => void): () => void
+  answer(askId: number, answer: DialogAnswer): void
+  /** Standalone dialog window (before the main window exists): the situation to show (app/renderer/situations.ts), and the way to answer it. */
+  standaloneDialog(): Promise<string | null>
+  answerStandalone(answer: DialogAnswer): void
+  /** Standalone window: the height its content needs (the window is sized to the dialog). */
+  standaloneSize(height: number): void
+  /** Closes the window (keeps every slot running in the daemon). */
+  closeWindow(): void
 }
 
 declare global {

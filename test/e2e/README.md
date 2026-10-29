@@ -35,8 +35,12 @@ hidden window, the real tetherd spawned by the app on a private home/pipe). The 
 through the UI: "+ Novo painel" → Claude → trust dialog answered with the keyboard → one-word prompts → split →
 window killed by PID (same claude PIDs come back) → daemon killed by PID (both panels resume their session ids,
 read from the slot jsonl). It reads Claude's TUI off the panel's xterm buffer with the same dialect rules as the
-harness; `TETHER_CLAUDE_ARGS=--model haiku` pins the model. `cli.attach.test.ts` runs `tether attach` inside a
-node-pty against a shell slot (keys, resize, Ctrl+] detach).
+harness; `TETHER_CLAUDE_ARGS=--model haiku` pins the model. `app.dialogs.test.ts` proves the in-app dialogs
+(no OS message box): close panel (live/idle, Claude-like/shell copy, Esc/Enter/arrows, "encerrar" stops the
+slot), "não perguntar de novo" in settings.json and its menu restore, "sair e encerrar tudo", and the
+"ainda está fechando" window on a stuck single-instance lock (retry brings the app up); screenshots in both
+themes land in `artifacts/`. `cli.attach.test.ts` runs `tether attach` inside a node-pty against a shell slot
+(keys, resize, Ctrl+] detach).
 
 Run: `npm run test:e2e` (one file at a time; never two agents in parallel). `E2E_LOG_DIR=<dir>` keeps a JSONL
 log per session: raw PTY chunks (replayable through `Screen`) plus a `mark` line with the full screen at every

@@ -4,7 +4,9 @@
 //   renderer.js   browser bundle (ESM) with xterm + dockview-core
 //   dockview.css  dockview-core's stylesheet. The ESM build of dockview-core 8 ships no CSS file: the
 //                 styles exist only as a string injected by its UMD bundle, so they are extracted from it.
+//   dialog.js     browser bundle (ESM) of the standalone dialog window (shown before the main window exists)
 //   tether.ico/png the app icon (window, taskbar, Start Menu shortcut), drawn by app/icon.mjs
+// The Phosphor icons (@phosphor-icons/core) are inlined as strings: only the ones app/renderer/icons.ts imports.
 import { build } from 'esbuild'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -16,6 +18,7 @@ const out = join(here, 'dist')
 
 const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024' }
 // src/daemon/client.ts reads import.meta.url only as spawnDaemon's default mainPath (the app always passes one); CJS has none.
+const browser = { platform: 'browser', format: 'esm', loader: { '.svg': 'text' } }
 const node = { platform: 'node', format: 'cjs', external: ['electron'], logOverride: { 'empty-import-meta': 'silent' } }
 
 function extractDockviewCss() {
@@ -31,6 +34,7 @@ writeIcons(out)
 await Promise.all([
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),
-  build({ ...common, entryPoints: [join(here, 'renderer', 'main.ts')], outfile: join(out, 'renderer.js'), platform: 'browser', format: 'esm' }),
+  build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'main.ts')], outfile: join(out, 'renderer.js') }),
+  build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'dialog-window.ts')], outfile: join(out, 'dialog.js') }),
 ])
 console.log('app build ok → app/dist')

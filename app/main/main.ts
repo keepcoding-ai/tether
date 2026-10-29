@@ -12,7 +12,8 @@ import type { Notice, Reply } from '../../src/daemon/protocol.ts'
 import { canonicalDir, tetherHome } from '../../src/core/paths.ts'
 import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles } from '../../src/core/profile.ts'
 import type { ProfileInput } from '../../src/core/profile.ts'
-import type { CloseChoice, ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
+import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
+import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 
@@ -148,20 +149,35 @@ async function request(body: RequestBody): Promise<Reply> {
   }
 }
 
-/** "Sair e encerrar tudo": stops every slot, shuts the daemon down and quits (after confirmation). */
+// ---------- asking the user ----------
+// Every question goes through the in-app dialog (app/renderer/dialog.ts): main names the situation, the
+// renderer shows it and answers. No OS message box anywhere.
+
+let askSeq = 0
+const pendingAsks = new Map<number, (answer: DialogAnswer) => void>()
+
+/** Puts a situation to the user through the window; 'cancel' when there is no window to ask in. */
+function ask(situation: MainSituation): Promise<DialogAnswer> {
+  if (!win || win.webContents.isDestroyed()) return Promise.resolve({ choice: 'cancel', remember: false })
+  const askId = ++askSeq
+  return new Promise(resolve => {
+    pendingAsks.set(askId, resolve)
+    const req: AskRequest = { askId, situation }
+    win?.webContents.send('tether:ask', req)
+  })
+}
+ipcMain.on('dialog:answer', (_e, askId: number, answer: DialogAnswer) => {
+  pendingAsks.get(askId)?.(answer)
+  pendingAsks.delete(askId)
+})
+ipcMain.on('window:close', () => win?.close())
+
+/** "Sair e encerrar tudo": stops every slot, shuts the daemon down and quits (after the in-app dialog). */
 async function quitAll(): Promise<void> {
   if (!win) return
-  const r = await dialog.showMessageBox(win, {
-    type: 'warning',
-    title: 'Sair e encerrar tudo',
-    message: 'Encerrar todos os terminais e fechar o tetherd?',
-    detail: 'Cada agente é morto agora; ao abrir o tether de novo, os painéis voltam retomando as sessões. Para só fechar a janela e manter tudo rodando, feche-a normalmente.',
-    buttons: ['Encerrar tudo e sair', 'Cancelar'],
-    defaultId: 1,
-    cancelId: 1,
-    noLink: true,
-  })
-  if (r.response !== 0) return
+  const { choice } = await ask('quit-all')
+  if (choice === 'close-window') { win?.close(); return }
+  if (choice !== 'quit') return
   quittingAll = true
   if (daemon) {
     const list = await request({ t: 'list' })
@@ -175,9 +191,32 @@ async function quitAll(): Promise<void> {
 
 // ---------- theme ----------
 
-/** User settings (today only the theme) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
+/** User settings (theme, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
 const settingsPath = join(home, 'settings.json')
-type Settings = { theme?: unknown }
+type Settings = { theme?: unknown; confirmations?: unknown }
+
+/** Remembered answers per situation ("não perguntar de novo"); anything malformed reads as none. */
+function readConfirmations(): Confirmations {
+  const raw = readJson<Settings>(settingsPath, {}).confirmations
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Confirmations = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'string') out[k] = v
+  return out
+}
+
+function writeConfirmations(confirmations: Confirmations): void {
+  const settings = readJson<Settings>(settingsPath, {})
+  writeJson(settingsPath, { ...settings, confirmations })
+  win?.webContents.send('tether:confirmations', confirmations)
+}
+
+ipcMain.handle('confirmations:get', (): Confirmations => readConfirmations())
+ipcMain.on('confirmations:remember', (_e, situation: unknown, choice: unknown) => {
+  if (typeof situation !== 'string' || typeof choice !== 'string') return
+  writeConfirmations({ ...readConfirmations(), [situation]: choice })
+})
+/** Menu "Exibir → Voltar a perguntar": every dialog asks again. */
+function restoreConfirmations(): void { writeConfirmations({}) }
 
 function readThemeSetting(): ThemeSetting {
   return normalizeTheme(readJson<Settings>(settingsPath, {}).theme)
@@ -209,6 +248,7 @@ const initialTheme = readThemeSetting()
 nativeTheme.themeSource = initialTheme === 'auto' ? 'system' : initialTheme
 nativeTheme.on('updated', applyTheme)
 ipcMain.handle('theme:get', (): ThemeState => themeState())
+// Settings may change before any window exists (the standalone dialog): nothing to push then.
 ipcMain.on('theme:set', (_e, setting: unknown) => setTheme(normalizeTheme(setting)))
 
 function themeMenu(): Electron.MenuItemConstructorOptions {
@@ -257,13 +297,14 @@ function createMenu(): void {
       label: 'Arquivo',
       submenu: [
         { label: 'Fechar a janela (os terminais continuam no tetherd)', accelerator: 'CmdOrCtrl+Shift+W', click: () => win?.close() },
-        { label: 'Sair e encerrar tudo…', accelerator: 'CmdOrCtrl+Shift+Q', click: () => { void quitAll() } },
+        { id: 'quit-all', label: 'Sair e encerrar tudo…', accelerator: 'CmdOrCtrl+Shift+Q', click: () => { void quitAll() } },
       ],
     },
     {
       label: 'Exibir',
       submenu: [
         themeMenu(),
+        { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },
         { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' },
         { role: 'togglefullscreen', label: 'Tela cheia' },
@@ -309,21 +350,6 @@ ipcMain.handle('folder:pick', async (_e, initial?: string) => {
   })
   const picked = r.filePaths[0]
   return r.canceled || !picked ? null : canonicalDir(picked)
-})
-
-ipcMain.handle('panel:confirm-close', async (_e, label: string): Promise<CloseChoice> => {
-  if (!win) return 'cancel'
-  const r = await dialog.showMessageBox(win, {
-    type: 'question',
-    title: 'Fechar painel',
-    message: `Fechar o painel "${label}"?`,
-    detail: 'Encerrar o agente mata o processo. Só fechar o painel mantém o agente rodando no tetherd; ele fica em "Slots fechados".',
-    buttons: ['Encerrar o agente', 'Só fechar o painel', 'Cancelar'],
-    defaultId: 1,
-    cancelId: 2,
-    noLink: true,
-  })
-  return (['stop', 'detach', 'cancel'] as const)[r.response] ?? 'cancel'
 })
 
 // ---------- profiles ----------
@@ -425,21 +451,90 @@ function bringToFront(): void {
   win.focus()
 }
 
+// ---------- standalone dialog window ----------
+// For a situation that happens before the main window exists: a small frameless window with the same
+// dialog component (app/renderer/dialog.html + dialog-window.ts). The renderer asks which situation to
+// show and sends the answer back.
+
+let standaloneSituation: string | null = null
+ipcMain.handle('dialog:standalone', () => standaloneSituation)
+
+/**
+ * Resolves with the answer and a `close` for the window: it stays open until the caller has another window
+ * (closing the only window raises `window-all-closed`, which quits the app).
+ */
+function showStandaloneDialog(situation: string): Promise<{ answer: DialogAnswer; close(): void }> {
+  standaloneSituation = situation
+  const dlg = new BrowserWindow({
+    width: 520,
+    height: 360,
+    useContentSize: true,
+    title: 'tether',
+    icon: join(__dirname, 'tether.ico'),
+    backgroundColor: WINDOW_BACKGROUND[themeState().scheme],
+    show: false,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      ...(hidden ? { offscreen: true, backgroundThrottling: false } : {}),
+    },
+  })
+  if (hidden) dlg.webContents.setFrameRate(30)
+  dlg.setMenuBarVisibility(false)
+  const onTheme = (): void => { if (!dlg.isDestroyed()) dlg.webContents.send('tether:theme', themeState()) }
+  nativeTheme.on('updated', onTheme)
+  return new Promise(resolve => {
+    let done = false
+    const close = (): void => { if (!dlg.isDestroyed()) dlg.close() }
+    const finish = (answer: DialogAnswer): void => {
+      if (done) return
+      done = true
+      nativeTheme.removeListener('updated', onTheme)
+      ipcMain.removeListener('dialog:standalone-answer', onAnswer)
+      resolve({ answer, close })
+    }
+    const onAnswer = (_e: Electron.IpcMainEvent, answer: DialogAnswer): void => finish(answer)
+    ipcMain.on('dialog:standalone-answer', onAnswer)
+    // The page reports the height its dialog needs once it is laid out; the window takes it and shows up.
+    const onSize = (_e: Electron.IpcMainEvent, height: unknown): void => {
+      if (dlg.isDestroyed()) return
+      if (typeof height === 'number' && height > 0) dlg.setContentSize(520, Math.min(Math.ceil(height), 700))
+      if (!hidden) { dlg.center(); dlg.show() }
+    }
+    ipcMain.once('dialog:standalone-size', onSize)
+    dlg.on('closed', () => { ipcMain.removeListener('dialog:standalone-size', onSize); finish({ choice: 'cancel', remember: false }) })
+    void dlg.loadFile(join(__dirname, '..', 'renderer', 'dialog.html'))
+  })
+}
+
 async function start(): Promise<void> {
-  const outcome = await acquireSingleInstance()
-  if (outcome === 'focused-other') { app.quit(); return }
-  if (outcome === 'stale') {
+  let outcome = await acquireSingleInstance()
+  let closeStandalone: (() => void) | undefined
+  while (outcome === 'stale') {
+    // The previous instance is still releasing the lock and nobody is alive to focus: say so in the app's
+    // own dialog (stderr too, for a launch from a terminal) and let the user retry or leave.
     const message = 'o tether ainda está fechando; tente de novo em alguns segundos'
     console.error(`tether: ${message} (lock de instância única ocupado por ${LOCK_RETRY_MS / 1000} s em ${app.getPath('userData')})`)
     await app.whenReady()
-    if (!hidden) await dialog.showMessageBox({ type: 'info', title: 'tether', message, buttons: ['OK'], noLink: true })
-    app.quit()
-    return
+    closeStandalone?.()
+    const { answer, close } = await showStandaloneDialog('still-closing')
+    closeStandalone = close
+    if (answer.choice !== 'retry') { app.quit(); return }
+    outcome = await acquireSingleInstance()
   }
+  if (outcome === 'focused-other') { app.quit(); return }
   app.on('second-instance', bringToFront)
   await app.whenReady()
   createMenu()
   createWindow()
+  closeStandalone?.() // only now: with the main window up, closing it does not quit the app
   win?.webContents.once('did-finish-load', () => { void connectDaemon() })
 }
 

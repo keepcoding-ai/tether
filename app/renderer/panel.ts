@@ -7,7 +7,11 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { ITheme } from '@xterm/xterm'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
+import type { DialogChoice } from '../shared/dialog.ts'
 import { WINDOW_BACKGROUND, type ColorScheme } from '../shared/theme.ts'
+import { renderChoices, roveWithArrows } from './dialog.ts'
+import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
+import { folderName } from './situations.ts'
 
 /**
  * xterm palettes per scheme. Every key is set: `term.options.theme` replaces the whole object and any key
@@ -30,7 +34,6 @@ export const TERMINAL_THEME: Record<ColorScheme, ITheme> = {
   },
 }
 
-export const KIND_ICON: Record<SlotKind, string> = { claude: '✦', soul: '☽', shell: '>_' }
 export const KIND_LABEL: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
 export const STATUS_LABEL: Record<SlotStatus, string> = {
   running: 'rodando',
@@ -55,14 +58,9 @@ export function effectiveStatus(s: SlotState): SlotStatus {
   return s.status
 }
 
-export function folderName(cwd: string): string {
-  const parts = cwd.replace(/[\\/]+$/, '').split(/[\\/]/)
-  return parts[parts.length - 1] || cwd
-}
-
-/** Text shown in the tab: agent icon + session title (or slot name, or folder name). */
+/** Text shown in the tab (next to the agent's icon): session title, or slot name, or folder name. */
 export function panelTitle(s: SlotState): string {
-  return `${KIND_ICON[s.kind]} ${s.title ?? s.name ?? folderName(s.cwd)}`
+  return s.title ?? s.name ?? folderName(s.cwd)
 }
 
 export function panelTooltip(s: SlotState): string {
@@ -72,59 +70,87 @@ export function panelTooltip(s: SlotState): string {
   return lines.join('\n')
 }
 
+/** A choice on a panel overlay: the same card as the dialog's, whose id is the panel action it fires. */
+type OverlayChoice = DialogChoice & { id: PanelAction }
+
+/** An in-panel situation: same structure as the dialog (icon, title, text, choices with consequences), inside the panel. */
 interface OverlaySpec {
+  icon: IconName
   title: string
   text: string
   tone: 'info' | 'warn' | 'error'
-  buttons: Array<{ label: string; action: PanelAction; primary?: boolean }>
+  choices: OverlayChoice[]
 }
+
+const CLOSE: OverlayChoice = { id: 'close', icon: 'x', label: 'Fechar painel', consequence: 'O slot fica em Slots fechados.', tone: 'neutral' }
+const NEW_SESSION = (consequence: string): OverlayChoice => ({ id: 'new', icon: 'plus', label: 'Começar nova sessão', consequence, tone: 'safe' })
 
 /** What the overlay says for a daemon error code (from the slot's state or from a refused `start`). */
 export function errorOverlay(s: SlotState, err: SlotError): OverlaySpec {
-  const close = { label: 'Fechar painel', action: 'close' as const }
   switch (err.code) {
     case 'unconfirmed':
       return unconfirmedOverlay(s)
     case 'session-missing':
       return {
-        title: 'Sessão não encontrada', tone: 'error',
-        text: `${KIND_LABEL[s.kind]} não tem mais a sessão deste painel${s.binding?.sessionId ? ` (${s.binding.sessionId})` : ''}.`,
-        buttons: [{ label: 'Começar nova sessão', action: 'new', primary: true }, close],
+        icon: 'x-circle', title: 'Sessão não encontrada', tone: 'error',
+        text: `${KIND_LABEL[s.kind]} não tem mais a sessão deste painel${s.binding?.sessionId ? ` (${s.binding.sessionId.slice(0, 8)})` : ''}.`,
+        choices: [NEW_SESSION('Abre uma conversa nova nesta pasta.'), CLOSE],
       }
     case 'cwd-missing':
       return {
-        title: 'Pasta não existe', tone: 'error',
-        text: `A pasta deste painel não existe mais: ${s.cwd}`,
-        buttons: [{ label: 'Escolher outra pasta…', action: 'pick-folder', primary: true }, close],
+        icon: 'folder-open', title: 'A pasta não existe mais', tone: 'error',
+        text: s.cwd,
+        choices: [{ id: 'pick-folder', icon: 'folder-open', label: 'Escolher outra pasta…', consequence: 'Abre um slot novo do mesmo tipo na pasta escolhida, neste mesmo lugar.', tone: 'safe' }, CLOSE],
       }
     case 'already-open':
       return {
-        title: 'Sessão já aberta', tone: 'warn',
-        text: 'Esta sessão já está rodando em outro painel.',
-        buttons: [{ label: 'Começar nova sessão', action: 'new', primary: true }, close],
+        icon: 'warning', title: 'Esta sessão já está aberta em outro painel', tone: 'warn',
+        text: 'Duas cópias da mesma conversa não podem rodar ao mesmo tempo.',
+        choices: [NEW_SESSION('Uma conversa nova nesta pasta; a outra continua no painel dela.'), CLOSE],
       }
     case 'spawn-failed':
       return {
-        title: 'Não foi possível iniciar', tone: 'error',
-        text: `O processo não subiu: ${err.message}`,
-        buttons: [{ label: 'Tentar de novo', action: 'start', primary: true }, close],
+        icon: 'x-circle', title: 'O processo não subiu', tone: 'error',
+        text: err.message,
+        choices: [{ id: 'start', icon: 'arrow-clockwise', label: 'Tentar de novo', consequence: 'Tenta iniciar o processo outra vez.', tone: 'safe' }, CLOSE],
       }
     default:
       return {
-        title: 'Erro', tone: 'error',
+        icon: 'x-circle', title: 'Erro', tone: 'error',
         text: err.message,
-        buttons: [{ label: 'Tentar de novo', action: 'start', primary: true }, close],
+        choices: [{ id: 'start', icon: 'arrow-clockwise', label: 'Tentar de novo', consequence: 'Tenta iniciar o processo outra vez.', tone: 'safe' }, CLOSE],
       }
   }
 }
 
 function unconfirmedOverlay(s: SlotState): OverlaySpec {
-  const what = s.title ? `"${s.title}"` : s.binding?.sessionId ? `(${s.binding.sessionId})` : ''
+  const what = s.title ? ` "${s.title}"` : s.binding?.sessionId ? ` (${s.binding.sessionId.slice(0, 8)})` : ''
   return {
-    title: 'Sessão não confirmada', tone: 'warn',
-    text: `O tether não tem certeza de qual sessão de ${KIND_LABEL[s.kind]} este painel estava rodando ${what}`.trim() + '. O que fazer?',
-    buttons: [{ label: 'Retomar a última sessão', action: 'resume', primary: true }, { label: 'Começar nova sessão', action: 'new' }],
+    icon: 'question', title: 'Qual sessão este painel estava rodando?', tone: 'warn',
+    text: `O tether não tem certeza de qual sessão de ${KIND_LABEL[s.kind]} era a deste painel${what}.`,
+    choices: [
+      { id: 'resume', icon: 'clock-counter-clockwise', label: 'Retomar a última sessão', consequence: 'Continua a conversa mais recente desta pasta.', tone: 'safe' },
+      NEW_SESSION(`A conversa anterior continua no histórico de ${KIND_LABEL[s.kind]}.`),
+    ],
   }
+}
+
+function exitedOverlay(s: SlotState): OverlaySpec {
+  const shell = s.kind === 'shell'
+  return {
+    icon: 'stop-circle', title: shell ? 'O shell terminou' : `${KIND_LABEL[s.kind]} terminou`, tone: 'info',
+    text: shell ? 'Nenhum processo neste painel.' : 'Nenhum processo neste painel; a conversa está salva.',
+    choices: [
+      { id: 'start', icon: 'play', label: 'Iniciar de novo', consequence: shell ? 'Abre um shell novo na mesma pasta.' : 'Retoma a conversa deste slot.', tone: 'safe' },
+      CLOSE,
+    ],
+  }
+}
+
+const QUEUED: OverlaySpec = { icon: 'hourglass', title: 'Na fila', tone: 'info', text: 'Aguardando a vez para iniciar (no máximo 3 agentes sobem ao mesmo tempo).', choices: [] }
+const UNKNOWN: OverlaySpec = {
+  icon: 'x-circle', title: 'Slot desconhecido', tone: 'error', text: 'O tetherd não conhece mais este painel.',
+  choices: [{ id: 'close', icon: 'x', label: 'Fechar painel', consequence: 'Só remove o painel: não há slot por trás dele.', tone: 'safe' }],
 }
 
 export interface PanelHost {
@@ -215,11 +241,10 @@ export class TerminalPanel implements IContentRenderer {
   render(): void {
     const s = this.host.getSlot(this.slotId)
     if (!s) {
-      this.head.icon.textContent = '?'
+      setIcon(this.head.icon, 'question')
       this.head.title.textContent = this.slotId
-      this.head.status.textContent = 'desconhecido'
-      this.head.status.className = 'status error'
-      this.showOverlay({ title: 'Slot desconhecido', tone: 'error', text: 'O tetherd não conhece mais este painel.', buttons: [{ label: 'Fechar painel', action: 'close', primary: true }] })
+      this.setStatus('error', 'desconhecido')
+      this.showOverlay(UNKNOWN)
       return
     }
     const startError = this.host.getStartError(this.slotId)
@@ -228,39 +253,51 @@ export class TerminalPanel implements IContentRenderer {
     if (startError?.code === 'unconfirmed') status = 'unconfirmed'
     else if (startError && status === 'exited') status = 'error'
     else if (pending && status === 'exited') status = 'starting'
-    this.head.icon.textContent = KIND_ICON[s.kind]
+    setIcon(this.head.icon, KIND_ICON[s.kind])
     this.head.title.textContent = s.title ?? s.name ?? KIND_LABEL[s.kind]
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
-    this.head.status.textContent = STATUS_LABEL[status]
-    this.head.status.className = `status ${status}`
+    this.setStatus(status, STATUS_LABEL[status])
     this.element.dataset.status = status
 
     const err = s.status === 'error' && s.error ? s.error : startError
     if (status === 'unconfirmed') this.showOverlay(unconfirmedOverlay(s))
     else if (status === 'error' && err) this.showOverlay(errorOverlay(s, err))
-    else if (status === 'queued') this.showOverlay({ title: 'Na fila', tone: 'info', text: 'Aguardando a vez para iniciar (no máximo 3 agentes sobem ao mesmo tempo).', buttons: [] })
-    else if (status === 'exited') this.showOverlay({ title: 'Encerrado', tone: 'info', text: `O processo deste painel terminou.`, buttons: [{ label: 'Iniciar de novo', action: 'start', primary: true }, { label: 'Fechar painel', action: 'close' }] })
+    else if (status === 'queued') this.showOverlay(QUEUED)
+    else if (status === 'exited') this.showOverlay(exitedOverlay(s))
     else this.overlay.hidden = true
   }
 
+  private setStatus(status: string, label: string): void {
+    this.head.status.className = `status ${status}`
+    this.head.status.replaceChildren(icon('circle-fill', 'status-dot'), document.createTextNode(label))
+  }
+
+  /** The overlay re-renders on every state event; the same situation is left alone (focus and arrows stay put). */
+  private overlayKey = ''
+
   private showOverlay(spec: OverlaySpec): void {
+    const key = JSON.stringify(spec)
+    if (!this.overlay.hidden && key === this.overlayKey) return
+    this.overlayKey = key
     this.overlay.replaceChildren()
     this.overlay.className = `panel-overlay ${spec.tone}`
     const card = document.createElement('div'); card.className = 'card'
+    card.setAttribute('role', 'group')
+    card.setAttribute('aria-label', spec.title)
+    const head = document.createElement('header')
+    const badge = document.createElement('span'); badge.className = 'badge'; badge.append(icon(spec.icon))
     const h = document.createElement('h3'); h.textContent = spec.title
+    head.append(badge, h)
     const p = document.createElement('p'); p.textContent = spec.text
-    const actions = document.createElement('div'); actions.className = 'actions'
-    for (const b of spec.buttons) {
-      const btn = document.createElement('button')
-      btn.textContent = b.label
-      btn.dataset.action = b.action
-      if (b.primary) btn.className = 'primary'
-      btn.addEventListener('click', ev => { ev.stopPropagation(); this.host.onAction(this.slotId, b.action) })
-      actions.append(btn)
+    card.append(head, p)
+    if (spec.choices.length) {
+      const def = spec.choices.find(c => c.tone === 'safe')?.id
+      const choices = renderChoices(spec.choices, id => this.host.onAction(this.slotId, id as PanelAction), { defaultId: def })
+      for (const b of choices.querySelectorAll<HTMLButtonElement>('button.choice')) b.dataset.action = b.dataset.choice
+      choices.addEventListener('keydown', ev => { roveWithArrows(choices, ev) })
+      card.append(choices)
     }
-    card.append(h, p)
-    if (spec.buttons.length) card.append(actions)
     this.overlay.append(card)
     this.overlay.hidden = false
   }
@@ -333,10 +370,11 @@ export class TerminalPanel implements IContentRenderer {
   }
 }
 
-/** Tab: icon + title + status dot + close button; tooltip with folder, session id and status. */
+/** Tab: agent icon + title + status dot + close button; tooltip with folder, session id and status. */
 export class SlotTab implements ITabRenderer {
   readonly element: HTMLElement
   private api: DockviewPanelApi | undefined
+  private readonly kind: HTMLElement
   private readonly text: HTMLElement
   private readonly dot: HTMLElement
   private disposers: Array<() => void> = []
@@ -348,13 +386,15 @@ export class SlotTab implements ITabRenderer {
     this.onClose = onClose
     this.element = document.createElement('div')
     this.element.className = 'tether-tab'
-    this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.textContent = '●'
+    this.kind = document.createElement('span'); this.kind.className = 'kind'
+    this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.append(icon('circle-fill'))
     this.text = document.createElement('span'); this.text.className = 'text'
     const close = document.createElement('button')
-    close.className = 'close'; close.textContent = '×'; close.title = 'Fechar painel'
+    close.className = 'close'; close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
+    close.append(icon('x'))
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    this.element.append(this.dot, this.text, close)
+    this.element.append(this.kind, this.text, this.dot, close)
   }
 
   init(params: TabPartInitParameters): void {
@@ -366,6 +406,7 @@ export class SlotTab implements ITabRenderer {
   render(): void {
     if (!this.api) return
     const s = this.host.getSlot(this.api.id)
+    setIcon(this.kind, s ? KIND_ICON[s.kind] : 'question')
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.element.title = s ? panelTooltip(s) : `Slot ${this.api.id} (desconhecido)`

@@ -11,49 +11,49 @@
 <body>
   <header id="toolbar">
     <span id="brand">tether</span>
-    <button id="btn-new" title="Novo painel (Ctrl+Shift+T)">+ Novo painel</button>
-    <button id="btn-split-right" title="Dividir à direita (Ctrl+Shift+D)">⫿ Direita</button>
-    <button id="btn-split-down" title="Dividir abaixo (Ctrl+Shift+E)">⫽ Abaixo</button>
+    <button id="btn-new" title="Novo painel (Ctrl+Shift+T)"><span class="i" data-icon="plus"></span>Novo painel</button>
+    <button id="btn-split-right" title="Dividir à direita (Ctrl+Shift+D)"><span class="i" data-icon="square-split-horizontal"></span>Direita</button>
+    <button id="btn-split-down" title="Dividir abaixo (Ctrl+Shift+E)"><span class="i" data-icon="square-split-vertical"></span>Abaixo</button>
     <div class="dropdown">
-      <button id="btn-closed" title="Slots rodando no tetherd sem painel aberto">Slots fechados <span id="closed-count"></span> ▾</button>
+      <button id="btn-closed" title="Slots rodando no tetherd sem painel aberto"><span class="i" data-icon="tray"></span>Slots fechados <span id="closed-count"></span><span class="i caret" data-icon="caret-down"></span></button>
       <ul id="closed-list" hidden></ul>
     </div>
     <span id="spacer"></span>
-    <label id="theme" title="Tema (também em Exibir → Tema)">Tema
+    <label id="theme" title="Tema (também em Exibir → Tema)"><span class="i" data-icon="circle-half"></span>Tema
       <select id="theme-select">
         <option value="light">Claro</option>
         <option value="auto" selected>Automático</option>
         <option value="dark">Escuro</option>
       </select>
     </label>
-    <span id="conn" class="conn off" title="">● desconectado</span>
+    <span id="conn" class="conn off" title=""><span class="i" data-icon="plugs"></span>desconectado</span>
   </header>
 
   <main id="dock"></main>
 
   <div id="overlay" hidden>
     <div class="card">
-      <h2>Sem conexão com o tetherd</h2>
+      <header><span class="badge"><span class="i" data-icon="plugs"></span></span><h2>Sem conexão com o tetherd</h2></header>
       <p id="overlay-msg"></p>
       <p class="hint">O app tenta subir o tetherd sozinho (<code>node src/daemon/main.ts</code>); se ele não respondeu, veja <code>tetherd.log</code> na pasta do tether e tente de novo.</p>
-      <button id="btn-retry">Tentar de novo</button>
+      <div class="actions"><button id="btn-retry" class="primary"><span class="i" data-icon="arrow-clockwise"></span>Tentar de novo</button></div>
     </div>
   </div>
 
-  <dialog id="dlg-new">
+  <dialog id="dlg-new" class="form" aria-labelledby="dlg-title">
     <form id="form-new" method="dialog">
-      <h2 id="dlg-title">Novo painel</h2>
+      <header><span class="badge"><span class="i" data-icon="plus"></span></span><h2 id="dlg-title">Novo painel</h2></header>
       <fieldset>
         <legend>Tipo</legend>
-        <label><input type="radio" name="kind" value="claude" checked> <span class="icon">✦</span> Claude</label>
-        <label><input type="radio" name="kind" value="soul"> <span class="icon">☽</span> soul</label>
-        <label><input type="radio" name="kind" value="shell"> <span class="icon">&gt;_</span> Shell</label>
+        <label><input type="radio" name="kind" value="claude" checked> <span class="i" data-icon="sparkle"></span> Claude</label>
+        <label><input type="radio" name="kind" value="soul"> <span class="i" data-icon="ghost"></span> soul</label>
+        <label><input type="radio" name="kind" value="shell"> <span class="i" data-icon="terminal-window"></span> Shell</label>
       </fieldset>
       <label class="field">
         <span>Pasta</span>
         <span class="row">
           <input type="text" id="new-cwd" name="cwd" placeholder="D:\projetos\meu-app" spellcheck="false" required>
-          <button type="button" id="btn-browse">Procurar…</button>
+          <button type="button" id="btn-browse"><span class="i" data-icon="folder-open"></span>Procurar…</button>
         </span>
       </label>
       <div class="field">
@@ -61,10 +61,10 @@
         <ul id="recent-list" class="recent"></ul>
       </div>
       <p id="new-error" class="error" hidden></p>
-      <div class="actions">
-        <button type="button" id="btn-cancel">Cancelar</button>
-        <button type="submit" id="btn-create" class="primary">Abrir</button>
-      </div>
+      <footer class="actions">
+        <button type="button" id="btn-cancel">Cancelar <kbd>Esc</kbd></button>
+        <button type="submit" id="btn-create" class="primary">Abrir <kbd>Enter</kbd></button>
+      </footer>
     </form>
   </dialog>
 
