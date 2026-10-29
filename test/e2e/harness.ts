@@ -414,6 +414,8 @@ export class LocalPtyTransport implements Transport {
   }
 
   write(data: string): void { this.p.write(data) }
+  /** Resizes the pseudo-terminal (the child gets SIGWINCH / a ConPTY resize). */
+  resize(cols: number, rows: number): void { this.p.resize(cols, rows) }
   onData(cb: (data: string) => void): void { this.p.onData(cb) }
   onExit(cb: (e: ExitInfo) => void): void { this.p.onExit(e => cb({ exitCode: e.exitCode, signal: e.signal })) }
   async kill(): Promise<void> { await killTree(this.pid); this.dispose() }

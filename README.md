@@ -74,7 +74,7 @@ tether rm backend
 tether doctor
 ```
 
-Regras de confiança na retomada (PRD §6.6): o `open` recusa, com a correção na mensagem, um vínculo **não confirmado** (use `--new` ou `--resume-anyway`), uma sessão que o agente não tem mais (`--new`), uma pasta que sumiu (`tether rm`) e uma sessão já aberta em outro slot (`tether attach`). Variáveis: `TETHER_HOME` (pasta de estado) e `TETHER_PIPE` (pipe do daemon).
+Regras de confiança na retomada (PRD §6.6): o `open` recusa, com a correção na mensagem, um vínculo **não confirmado** (use `--new` ou `--resume-anyway`), uma sessão que o agente não tem mais (`--new`), uma pasta que sumiu (`tether rm`) e uma sessão já aberta em outro slot (`tether attach`). Variáveis: `TETHER_HOME` (pasta de estado), `TETHER_PIPE` (pipe do daemon) e `TETHER_CLAUDE_ARGS` / `TETHER_SOUL_ARGS` (argumentos acrescentados pelo `tetherd` a todo lançamento do agente, ex.: `--model haiku` nos testes).
 
 ## Onde fica o estado
 

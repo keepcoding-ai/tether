@@ -31,6 +31,13 @@ export const DAEMON_VERSION = '0.1.0'
 const READY_FALLBACK_MS = 15_000
 /** Agent processes allowed in 'starting' at the same time (PRD RA8); the rest wait as 'queued'. */
 export const MAX_STARTING = 3
+
+/** Args appended to every launch of an agent by this daemon, from `TETHER_CLAUDE_ARGS` / `TETHER_SOUL_ARGS`
+ *  (whitespace-separated). The app's dialog has no args field; this is how a dev/E2E run pins `--model haiku`. */
+export function defaultAgentArgs(agent: AgentName, env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env[`TETHER_${agent.toUpperCase()}_ARGS`]?.trim()
+  return raw ? raw.split(/\s+/) : []
+}
 const WATCH_DEBOUNCE_MS = 100
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 30
@@ -376,7 +383,7 @@ class DaemonImpl implements Daemon {
         return shellAdapter.plan({ slot: meta, cwd: resume?.cwd })
       case 'claude':
       case 'soul':
-        return this.adapters[meta.agent].plan({ slot: meta, home: this.home, resume, extraArgs: [] })
+        return this.adapters[meta.agent].plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent) })
     }
   }
 

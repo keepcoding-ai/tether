@@ -10,14 +10,35 @@ export interface AttachIo {
   stdout: NodeJS.WriteStream
 }
 
+/**
+ * The slot's ConPTY asks the terminal for win32-input-mode (`ESC[?9001h`, conhost's key-event encoding).
+ * Forwarded as-is, that request flips THIS terminal (Windows Terminal, another ConPTY) into that mode, and
+ * every key then reaches stdin as `ESC[Vk;Sc;Uc;Kd;Cs;Rc_` instead of its bytes: Ctrl+] is never seen and
+ * the slot gets key codes of this machine's keyboard layout. The request is dropped from the forwarded
+ * output; the slot's conhost takes plain VT input just as well. Stateful: the sequence may span two chunks.
+ */
+export function createOutputFilter(): (chunk: string) => string {
+  const MODE = /\x1b\[\?9001[hl]/g
+  const PARTIAL = /\x1b(?:\[(?:\?(?:9(?:0(?:0(?:1)?)?)?)?)?)?$/
+  let carry = ''
+  return (chunk: string): string => {
+    let s = carry + chunk
+    carry = ''
+    const tail = PARTIAL.exec(s)
+    if (tail) { carry = tail[0]; s = s.slice(0, s.length - tail[0].length) }
+    return s.replace(MODE, '')
+  }
+}
+
 /** Resolves when the user detaches or the slot's process exits. */
 export async function attach(client: DaemonClient, slotId: string, io: AttachIo = { stdin: process.stdin, stdout: process.stdout }): Promise<void> {
   const { stdin, stdout } = io
   if (!stdin.isTTY || !stdout.isTTY) throw new Error('attach precisa de um terminal interativo (stdin e stdout)')
   const size = (): { cols: number; rows: number } => ({ cols: stdout.columns || 80, rows: stdout.rows || 24 })
+  const filter = createOutputFilter()
   const reply = await client.request({ t: 'attach', slotId, ...size() })
   stdout.write(`[tether] anexado ao slot ${slotId} — Ctrl+] para desanexar\n`)
-  if (reply.scrollback) stdout.write(reply.scrollback)
+  if (reply.scrollback) stdout.write(filter(reply.scrollback))
 
   await new Promise<void>((resolve) => {
     let done = false
@@ -45,7 +66,7 @@ export async function attach(client: DaemonClient, slotId: string, io: AttachIo 
       client.input(slotId, text)
     }
     const onResize = (): void => { void client.request({ t: 'resize', slotId, ...size() }).catch(() => {}) }
-    const onData = (id: string, data: string): void => { if (id === slotId) stdout.write(data) }
+    const onData = (id: string, data: string): void => { if (id === slotId) stdout.write(filter(data)) }
     const onState = (slot: SlotState): void => {
       if (slot.slotId !== slotId) return
       if (slot.status === 'exited' || slot.status === 'unconfirmed' || slot.status === 'error') {
