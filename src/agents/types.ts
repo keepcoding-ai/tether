@@ -1,0 +1,33 @@
+import type { AgentName, Binding, SlotMeta } from '../core/event.ts'
+
+/** What the launcher runs: the full command, already decided by the adapter. */
+export interface LaunchPlan {
+  command: string
+  args: string[]
+  cwd: string
+  /** The COMPLETE environment for the child (the adapter starts from process.env and cleans what it must). */
+  env: Record<string, string>
+}
+
+export interface PlanInput {
+  slot: SlotMeta
+  /** TETHER_HOME in use (goes to the child so the reporter writes to the same place). */
+  home: string
+  /** Resume this session; absent = start a new one. */
+  resume?: Binding
+  /** Args typed by the user for this launch only. */
+  extraArgs: string[]
+}
+
+export interface AgentAdapter {
+  name: AgentName
+  plan(input: PlanInput): LaunchPlan
+  /** Does the agent still have this session? 'unknown' when it cannot be told locally (e.g. soul over -H). */
+  sessionExists(binding: Binding): Promise<boolean | 'unknown'>
+  /** The session's current title, if the agent keeps one where we can read it. */
+  title(binding: Binding): Promise<string | undefined>
+}
+
+/** Env vars the launcher sets for every slot (adapters add their own). */
+export const ENV_SLOT = 'TETHER_SLOT_ID'
+export const ENV_HOME = 'TETHER_HOME'
