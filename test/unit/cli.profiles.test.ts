@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { profilesPath, type Profile } from '../../src/core/profile.ts'
-import { readSlot } from '../../src/core/store.ts'
+import { createSlot, readSlot } from '../../src/core/store.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned } from '../kill.ts'
@@ -154,10 +154,58 @@ describe('tether profiles (CLI)', () => {
     assert.equal(slot!.unsafe, true)
     assert.match(tether(env, 'ls').stdout, /dev\s+claude\s+Haiku dev !/)
     assert.match(tether(env, 'show', 'dev').stdout, /atenção\s+roda sem confirmação de permissões/)
+    // profile set: through the daemon; a running shell keeps its pid with --next and gets a new one with --now
+    const setNext = tether(env, 'profile', 'set', 'dev', 'claude')
+    assert.equal(setNext.status, 0, setNext.stderr)
+    assert.match(setNext.stdout, /perfil "Claude"; vale no próximo início/)
+    assert.equal((await c.request({ t: 'list' })).slots!.find((s) => s.slotId === slot!.slotId)!.profileId, 'claude')
+    const setNone = tether(env, 'profile', 'set', 'dev', '--none')
+    assert.equal(setNone.status, 0, setNone.stderr)
+    assert.match(setNone.stdout, /nenhum perfil; vale no próximo início/)
+    assert.equal((await c.request({ t: 'list' })).slots!.find((s) => s.slotId === slot!.slotId)!.profileId, undefined)
+    const mismatch = tether(env, 'profile', 'set', 'dev', 'PowerShell')
+    assert.equal(mismatch.status, 2)
+    assert.match(mismatch.stderr, /é de shell, não de claude/)
+    const both = tether(env, 'profile', 'set', 'ps', 'PowerShell', '--now', '--next')
+    assert.equal(both.status, 2)
+    const bash = tether(env, 'profile', 'add', 'shell', 'Shell dois', '--shell', `"${process.execPath}" -e setInterval(()=>{},1000)`)
+    assert.equal(bash.status, 0, bash.stderr)
+    const keep = tether(env, 'profile', 'set', 'ps', 'Shell dois')
+    assert.equal(keep.status, 0, keep.stderr)
+    assert.match(keep.stdout, /continua rodando; para reiniciar já: tether profile set \S+ shell-dois --now/)
+    assert.equal((await c.request({ t: 'list' })).slots!.find((s) => s.slotId === ps.slotId)!.pid, ps.pid, '--next keeps the process')
+    const now = tether(env, 'profile', 'set', 'ps', 'PowerShell', '--now')
+    assert.equal(now.status, 0, now.stderr)
+    assert.match(now.stdout, /perfil "PowerShell"; shell reiniciado \(ativo, pid \d+\)/)
+    const after = (await c.request({ t: 'list' })).slots!.find((s) => s.slotId === ps.slotId)!
+    assert.notEqual(after.pid, ps.pid, '--now restarted the shell')
+    assert.equal(after.profileId, 'powershell')
+    assert.equal(tether(env, 'profile', 'rm', 'shell-dois', '--yes').status, 0)
     assert.equal(tether(env, 'profile', 'rm', 'haiku-dev', '--yes').status, 0)
     assert.ok(!(await c.request({ t: 'profiles-list' })).profiles!.some((p) => p.id === 'haiku-dev'))
     await c.request({ t: 'forget', slotId: ps.slotId })
     await c.request({ t: 'forget', slotId: slot!.slotId })
     c.close()
+  })
+
+  test('without a daemon: profile set writes the slot meta (id + snapshot; --none clears); --now needs the daemon', async () => {
+    // The daemon of the previous test is gone only at `after`; use a home of its own.
+    const h = tempHome()
+    const e = { TETHER_HOME: h, TETHER_PIPE: uniquePipe(h) }
+    const w = join(h, 'work')
+    mkdirSync(w)
+    createSlot(h, { v: 1, slotId: 'cc000001', name: 'frio', agent: 'claude', cwd: w, args: [], createdAt: new Date().toISOString() })
+    const r = tether(e, 'profile', 'set', 'frio', 'Claude modo dev')
+    assert.equal(r.status, 0, r.stderr)
+    assert.match(r.stderr, /tetherd parado/)
+    const m = readSlot(h, 'cc000001')!
+    assert.deepEqual([m.profileId, m.profileArgs], ['claude-dev', ['--dangerously-skip-permissions']])
+    assert.match(tether(e, 'ls').stdout, /frio\s+claude\s+Claude modo dev !/)
+    const now = tether(e, 'profile', 'set', 'frio', 'claude', '--now')
+    assert.equal(now.status, 1)
+    assert.match(now.stderr, /não há processo para reiniciar/)
+    assert.equal(tether(e, 'profile', 'set', 'frio', '--none').status, 0)
+    assert.equal(readSlot(h, 'cc000001')!.profileId, undefined)
+    await removeHome(h)
   })
 })

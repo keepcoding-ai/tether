@@ -27,10 +27,16 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 
-export const DAEMON_VERSION = '0.1.0'
+export const DAEMON_VERSION = '0.2.0'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
+/**
+ * Youngest an agent may be when a `set-profile` restart kills it: Claude counts a session that dies within 10 s
+ * of its start as a boot strike (two strikes disable its fullscreen for the whole machine), the house rule is
+ * 11 s, and the agent starts a little after the PTY spawn the age is measured from, hence one more second.
+ */
+export const MIN_AGENT_AGE_MS = 12_000
 /** Agent processes allowed in 'starting' at the same time (PRD RA8); the rest wait as 'queued'. */
 export const MAX_STARTING = 3
 
@@ -56,6 +62,8 @@ export interface DaemonOptions {
   readyFallbackMs?: number
   /** How often a running Claude slot's title is polled from its transcript (tests shorten it). */
   titlePollMs?: number
+  /** Overrides MIN_AGENT_AGE_MS (tests). */
+  minAgentAgeMs?: number
 }
 
 export interface Daemon {
@@ -91,6 +99,8 @@ interface Slot {
   queuedChoice?: 'resume' | 'new'
   /** Stops the adapter's title watch (running claude slots). */
   stopTitleWatch?: () => void
+  /** A `set-profile` restart in progress (waiting for the agent's minimum age, or relaunching). */
+  restarting?: true
   scrollback: Scrollback
   attached: Set<Client>
   cols: number
@@ -122,6 +132,7 @@ class DaemonImpl implements Daemon {
   private readonly pending = new Map<string, NodeJS.Timeout>()
   private readonly adapters: Record<AgentName, AgentAdapter>
   private readonly readyFallbackMs: number
+  private readonly minAgentAgeMs: number
   private readonly titlePollMs: number | undefined
   /** <home>/profiles.json, re-read when it changes on disk (the CLI edits it while tetherd runs). */
   private readonly profileStore: ProfileStore
@@ -138,6 +149,7 @@ class DaemonImpl implements Daemon {
     this.onShutdown = opts.onShutdown
     this.adapters = { claude: claudeAdapter, soul: soulAdapter, ...opts.adapters }
     this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
+    this.minAgentAgeMs = opts.minAgentAgeMs ?? MIN_AGENT_AGE_MS
     this.titlePollMs = opts.titlePollMs
     this.profileStore = new ProfileStore(opts.home)
     this.server = createServer((socket) => this.onConnection(socket))
@@ -198,7 +210,76 @@ class DaemonImpl implements Daemon {
     if (profile.name) s.profileName = profile.name
     const extra = slot.meta.agent === 'shell' ? [] : defaultAgentArgs(slot.meta.agent)
     if (isUnsafe([...(profile.launch?.args ?? []), ...slot.meta.args, ...extra])) s.unsafe = true
+    if (slot.restarting) s.restarting = true
     return s
+  }
+
+  /**
+   * Points the slot at another profile (or none) and rewrites its meta: the id plus a fresh snapshot of the
+   * profile's launch, or no profile fields at all. The next start applies it (planFor). Returns true when
+   * something changed.
+   */
+  private assignProfile(slot: Slot, profile: Profile | undefined): boolean {
+    const { meta } = slot
+    let changed: boolean
+    if (profile) changed = snapshotProfile(meta, profile)
+    else {
+      changed = meta.profileId !== undefined || meta.profileArgs !== undefined || meta.profileEnv !== undefined
+      delete meta.profileId
+      delete meta.profileArgs
+      delete meta.profileEnv
+    }
+    if (changed) writeSlotMeta(this.home, meta)
+    this.broadcastState(slot)
+    return changed
+  }
+
+  /** Puts the profile fields back as they were (a refused restart undoes the assignment). */
+  private restoreProfileFields(slot: Slot, saved: Pick<SlotMeta, 'profileId' | 'profileArgs' | 'profileEnv'>): void {
+    const { meta } = slot
+    if (saved.profileId === undefined) delete meta.profileId; else meta.profileId = saved.profileId
+    if (saved.profileArgs === undefined) delete meta.profileArgs; else meta.profileArgs = saved.profileArgs
+    if (saved.profileEnv === undefined) delete meta.profileEnv; else meta.profileEnv = saved.profileEnv
+    try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot restore the profile fields: ${(e as Error).message}`) }
+    this.broadcastState(slot)
+  }
+
+  /**
+   * Relaunches a live slot so the new profile's args take effect, resuming the SAME session: waits until the
+   * agent is at least minAgentAgeMs old (never kill a young Claude), requires the running agent to have
+   * reported its session (else `unconfirmed`: the restart would have to guess, and a guess can lose the
+   * conversation), kills the PTY tree, then starts the slot with its confirmed binding. A slot that exits by
+   * itself meanwhile is left exited: its next start already uses the new profile.
+   */
+  private async restartSlot(slot: Slot): Promise<void> {
+    const pty = slot.pty
+    if (!pty || pty.exit) return
+    if (slot.restarting) throw new RequestError('bad-request', `o slot ${slot.meta.slotId} já está reiniciando`)
+    slot.restarting = true
+    this.broadcastState(slot)
+    try {
+      if (slot.meta.agent !== 'shell') {
+        const deadline = (slot.spawnedAt ? Date.parse(slot.spawnedAt) : 0) + this.minAgentAgeMs
+        for (;;) {
+          if (slot.pty !== pty || pty.exit) return // exited by itself: the next start uses the new profile
+          const aged = Date.now() >= deadline
+          if (aged && this.reportedThisRun(slot)) break
+          // Still 'starting': the start event may land any moment. Once the ready fallback turns the slot
+          // 'running' without a report, there is nothing left to wait for (and the restart is refused below).
+          if (aged && slot.status !== 'starting') break
+          await new Promise((r) => setTimeout(r, 250))
+        }
+        if (!this.reportedThisRun(slot)) {
+          throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa. Troque o perfil na próxima abertura, ou encerre o slot e escolha a sessão ao iniciar`)
+        }
+      }
+      this.log(`slot ${slot.meta.slotId}: restarting pid ${pty.pid} with profile ${slot.meta.profileId ?? '(none)'}`)
+      await this.stopSlot(slot)
+      await this.startSlot(slot, slot.meta.agent === 'shell' ? undefined : 'resume')
+    } finally {
+      slot.restarting = undefined
+      this.broadcastState(slot)
+    }
   }
 
   /** Every slot that uses the profile gets a fresh state (its name / unsafe badge may have changed). */
@@ -681,6 +762,30 @@ class DaemonImpl implements Daemon {
         this.log(`profile ${profile.id} deleted`)
         this.broadcastProfiles()
         return { t: 'ok', id }
+      }
+      case 'set-profile': {
+        const slot = this.slot(req.slotId)
+        if (req.profileId !== null && typeof req.profileId !== 'string') throw new RequestError('bad-request', 'profileId obrigatório (ou null para nenhum perfil)')
+        const profile = req.profileId === null ? undefined : this.requireProfile(req.profileId)
+        if (profile && profile.agent !== slot.meta.agent) throw new RequestError('bad-request', `o perfil "${profile.name}" é de ${profile.agent}, não de ${slot.meta.agent}`)
+        const live = isAlive(slot)
+        // The refusal comes before anything is written: a slot whose agent never reported is left exactly as it was.
+        if (req.restart && live && slot.meta.agent !== 'shell' && slot.status === 'running' && !this.reportedThisRun(slot)) {
+          throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa. Troque o perfil na próxima abertura, ou encerre o slot e escolha a sessão ao iniciar`)
+        }
+        const before = { profileId: slot.meta.profileId, profileArgs: slot.meta.profileArgs, profileEnv: slot.meta.profileEnv }
+        const changed = this.assignProfile(slot, profile)
+        this.log(`slot ${slot.meta.slotId}: profile ${profile ? profile.id : '(none)'}${changed ? '' : ' (unchanged)'}${req.restart && live ? ', restarting' : ''}`)
+        if (req.restart && live) {
+          try {
+            await this.restartSlot(slot)
+          } catch (e) {
+            // A refusal (the agent turned out not to have reported) leaves the slot as it was, like the pre-flight one.
+            if (e instanceof RequestError && e.code === 'unconfirmed' && changed) this.restoreProfileFields(slot, before)
+            throw e
+          }
+        }
+        return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       default:
         throw new RequestError('bad-request', `mensagem desconhecida: ${String((req as { t?: unknown }).t)}`)

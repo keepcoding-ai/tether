@@ -9,8 +9,8 @@ import { exitCodeFor, formatReport, runDoctor } from '../doctor.ts'
 import type { Binding, SlotMeta } from '../core/event.ts'
 import { pidExists } from '../core/liveness.ts'
 import { canonicalDir, slotMetaPath } from '../core/paths.ts'
-import { findProfile, ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles, type Profile, type ProfileAgent, type ProfileInput } from '../core/profile.ts'
-import { createSlot, currentBinding, newSlotId, readEvents, readRun, readSlot, removeSlot } from '../core/store.ts'
+import { findProfile, ProfileError, readProfiles, removeProfile, snapshotProfile, upsertProfile, writeProfiles, type Profile, type ProfileAgent, type ProfileInput } from '../core/profile.ts'
+import { createSlot, currentBinding, newSlotId, readEvents, readRun, readSlot, removeSlot, writeSlotMeta } from '../core/store.ts'
 import { splitCommandLine } from '../agents/soul.ts'
 import { DaemonClient, DaemonError } from '../daemon/client.ts'
 import type { ErrorCode, SlotKind, SlotState } from '../daemon/protocol.ts'
@@ -41,6 +41,10 @@ export const USAGE = `uso: tether <comando> [opções]
               [--cwd p] [--shell "exe args"] [-- args do agente]
                                       altera um perfil (args e env dados substituem os atuais)
   profile rm <perfil> [--yes]         apaga um perfil (os slots que o usam guardam uma cópia)
+  profile set <slot> <perfil|--none> [--now|--next]
+                                      troca o perfil de um slot (--none: nenhum). Com o agente
+                                      rodando, --now reinicia já e retoma a mesma sessão;
+                                      --next (padrão) deixa para o próximo início
   doctor                              confere o ambiente
   help                                esta ajuda
 
@@ -515,7 +519,57 @@ async function cmdProfile(args: string[]): Promise<number> {
     case 'add': return await cmdProfileAdd(rest)
     case 'edit': return await cmdProfileEdit(rest)
     case 'rm': return await cmdProfileRm(rest)
-    default: throw new UsageError(`subcomando de profile desconhecido: ${sub ?? '(vazio)'} (use add, edit ou rm)`)
+    case 'set': return await cmdProfileSet(rest)
+    default: throw new UsageError(`subcomando de profile desconhecido: ${sub ?? '(vazio)'} (use add, edit, rm ou set)`)
+  }
+}
+
+/** `profile set <slot> <perfil|--none> [--now|--next]`: through the daemon when it answers (only it can restart), else the meta on disk. */
+async function cmdProfileSet(args: string[]): Promise<number> {
+  const p = parseArgs(args, { flags: ['none', 'now', 'next'] })
+  const ref = requireRef(p.positional)
+  if (p.flags.has('now') && p.flags.has('next')) throw new UsageError('--now e --next são excludentes')
+  const none = p.flags.has('none')
+  const profileRef = p.positional[1]
+  if (!none && !profileRef) throw new UsageError('informe o perfil (ou --none)')
+  if (none && profileRef) throw new UsageError('--none dispensa o perfil')
+  const ctx = context()
+  const { client, slots } = await loadSlots(ctx)
+  try {
+    const slot = resolveSlot(slots, ref)
+    const profiles = client ? (await client.request({ t: 'profiles-list' })).profiles ?? [] : readProfiles(ctx.home).profiles
+    const profile = none ? undefined : requireProfile(profiles, profileRef!)
+    if (profile && profile.agent !== slot.kind) throw new UsageError(`o perfil "${profile.name}" é de ${profile.agent}, não de ${slot.kind}`)
+    const live = slot.status === 'running' || slot.status === 'starting'
+    const restart = p.flags.has('now')
+    const label = profile ? `perfil "${profile.name}"` : 'nenhum perfil'
+    if (client) {
+      try {
+        const reply = await client.request({ t: 'set-profile', slotId: slot.slotId, profileId: profile ? profile.id : null, restart })
+        const s = reply.slot!
+        if (restart && live) out(`slot ${slot.slotId}: ${label}; ${slot.kind} reiniciado${s.binding ? `, sessão ${shortId(s.binding.sessionId)} retomada` : ''} (${statusLabel(s.status)}${s.pid ? `, pid ${s.pid}` : ''})\n`)
+        else if (live) out(`slot ${slot.slotId}: ${label}; vale no próximo início (o ${slot.kind} continua rodando; para reiniciar já: tether profile set ${slot.slotId} ${none ? '--none' : profile!.id} --now)\n`)
+        else out(`slot ${slot.slotId}: ${label}; vale no próximo início\n`)
+        return 0
+      } catch (e) {
+        if (e instanceof DaemonError) {
+          err(`tether: ${e.code === 'unconfirmed' ? `${e.message}.\n  na próxima abertura: tether profile set ${slot.slotId} ${none ? '--none' : profile!.id} --next` : e.message}\n`)
+          return 1
+        }
+        throw e
+      }
+    }
+    if (restart) throw new Error('tetherd parado: não há processo para reiniciar (sem --now o perfil é gravado para o próximo início)')
+    daemonDown()
+    const meta = readSlot(ctx.home, slot.slotId)
+    if (!meta) throw new SlotNotFound(`slot sem metadados no disco: ${slot.slotId}`)
+    if (profile) snapshotProfile(meta, profile)
+    else { delete meta.profileId; delete meta.profileArgs; delete meta.profileEnv }
+    writeSlotMeta(ctx.home, meta)
+    out(`slot ${slot.slotId}: ${label}; vale no próximo início\n`)
+    return 0
+  } finally {
+    client?.close()
   }
 }
 
