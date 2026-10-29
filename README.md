@@ -2,9 +2,9 @@
 
 **Cada terminal sabe qual sessão de agente ele estava rodando, e a retoma depois de qualquer reinício.**
 
-Funciona com **Claude Code** (`claude`) e **soul-cli** (`soul`).
+Funciona com **Claude Code** (`claude`) e **soul-cli** (`soul`), num app de terminais com painéis livres (Electron) e numa linha de comando.
 
-> Status: **fase 1, em planejamento.** Nada abaixo está implementado ainda. Veja o [PRD](./PRD.md).
+> Status: **app e gestão de sessões funcionando**, provados com testes de ponta a ponta contra o Claude e o soul reais. O soul precisa da versão com `SOUL_SESSION_REPORT` instalada (branch `feat/session-report` do soul-cli). Detalhes em [PROGRESS.md](./PROGRESS.md).
 
 ## O problema
 
@@ -21,7 +21,7 @@ O tether nunca deduz a sessão pela data ou pela pasta. Se o agente não confirm
 | Agente | Como avisa o tether |
 |---|---|
 | Claude Code | Hooks `SessionStart` / `SessionEnd`, injetados via `--settings` apenas nos processos lançados pelo tether. Suas configurações globais não mudam. |
-| soul-cli | Variável `SOUL_SESSION_REPORT` (a ser adicionada no soul-cli). |
+| soul-cli | Variável `SOUL_SESSION_REPORT`: o cliente do soul grava cada troca de sessão no arquivo do slot (branch `feat/session-report`). |
 
 ## Como usar (app, Windows)
 
@@ -81,15 +81,33 @@ Regras de confiança na retomada (PRD §6.6): o `open` recusa, com a correção 
 ```
 %LOCALAPPDATA%\tether\slots\<slotId>.jsonl   eventos de sessão do slot (append-only)
 %LOCALAPPDATA%\tether\slots\<slotId>.json    nome, agente e pasta do slot
+%LOCALAPPDATA%\tether\layout.json            layout dos painéis do app
 ```
 
-São arquivos de texto simples, legíveis e fáceis de inspecionar. O tether nunca altera os arquivos de sessão do Claude ou do soul.
+São arquivos de texto simples, legíveis e fáceis de inspecionar. O tether nunca altera os arquivos de sessão do Claude ou do soul, nem as configurações globais deles.
 
-## Roteiro
+## Arquitetura
 
-1. **Fase 1: gestão de sessões (atual).** Provar, com testes de ponta a ponta contra os agentes reais, que o vínculo slot → sessão está sempre certo em todos os cenários do [PRD](./PRD.md#5-cenários-que-precisam-funcionar).
-2. **Fase 2: a IDE.** Painéis divididos livremente com o mouse, robusta contra travamentos, usando o tether como base.
+```
+app (Electron: dockview + xterm.js)  ──pipe──►  tetherd (Node: um PTY por slot)  ──►  claude / soul / shell
+                                                       ▲
+                       hooks do Claude / SOUL_SESSION_REPORT gravam <slot>.jsonl
+```
+
+- **tetherd** segura os terminais num processo separado da janela: fechar ou travar o app não mata os agentes.
+- Se o tetherd morrer (ou a máquina reiniciar), cada slot é retomado pela sessão registrada no seu `.jsonl`.
+- Ao reabrir muitos painéis, no máximo 3 agentes sobem ao mesmo tempo; os outros esperam "na fila".
 
 ## Desenvolvimento
 
-Stack prevista: TypeScript em Node, com `node-pty` para os testes de ponta a ponta. Comandos de build e teste serão definidos na etapa E1.
+TypeScript executado direto pelo Node 24 (sem build), zero dependências de runtime além do `node-pty`.
+
+| Comando | O quê |
+|---|---|
+| `npm run check` | typecheck + testes unitários |
+| `npm run test:e2e` | ponta a ponta com o Claude real (`--model haiku`); a suíte do soul precisa de `TETHER_SOUL_CMD` apontando para o soul com `SOUL_SESSION_REPORT` |
+| `npm run test:app` | app + tetherd reais, janela escondida |
+| `npm run daemon` | sobe o tetherd à mão |
+| `npm run app` | compila e abre o app |
+
+Requisitos, cenários e decisões: [PRD.md](./PRD.md), [PLAN.md](./PLAN.md), [PROGRESS.md](./PROGRESS.md).
