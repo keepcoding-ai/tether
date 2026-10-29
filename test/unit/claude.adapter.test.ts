@@ -1,7 +1,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { claudeAdapter, cleanEnv, encodeProjectDir, findTranscript, lastCustomTitle } from '../../src/agents/claude.ts'
@@ -244,4 +244,32 @@ describe('sessionExists / title against a fake ~/.claude (CLAUDE_CONFIG_DIR)', (
     writeFileSync(file, '{"type":"custom-title","customTitle":"crlf"}\r\n{"type":"user"}\r\n')
     assert.equal(lastCustomTitle(file), 'crlf')
   })
+
+  test('watchTitle: fires on each change of the last custom-title, tolerates a transcript that appears later, stops on demand', async () => {
+    const seen: string[] = []
+    const stop = claudeAdapter.watchTitle!(b('D:\\late'), (t) => seen.push(t), 30)
+    await new Promise((r) => setTimeout(r, 100))
+    assert.deepEqual(seen, []) // no transcript yet, no error
+    const file = transcript('D--late', id, ['{"type":"user"}', '{"type":"custom-title","customTitle":"um"}'])
+    await waitFor(() => seen.length === 1)
+    assert.deepEqual(seen, ['um'])
+    appendFileSync(file, '{"type":"assistant"}\n') // size changed, title did not: no new call
+    await new Promise((r) => setTimeout(r, 100))
+    assert.deepEqual(seen, ['um'])
+    appendFileSync(file, '{"type":"custom-title","customTitle":"dois"}\n')
+    await waitFor(() => seen.length === 2)
+    assert.deepEqual(seen, ['um', 'dois'])
+    stop()
+    appendFileSync(file, '{"type":"custom-title","customTitle":"três"}\n')
+    await new Promise((r) => setTimeout(r, 150))
+    assert.deepEqual(seen, ['um', 'dois'])
+  })
 })
+
+async function waitFor(cond: () => boolean, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error('timeout')
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
