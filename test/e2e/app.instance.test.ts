@@ -168,18 +168,28 @@ test('single instance: immediate relaunch after a window kill, stale lock, secon
     assert.equal((await hooks.ids(page)).length, 1, 'the first window is untouched')
     t.diagnostic(`second launch while alive: exited in ${secondTook} ms, ack by pid ${ack.pid}`)
 
-    // ---- 4. a lock that never frees: give up after the retry window, message on stderr (no box in hidden mode) ----
+    // ---- 4. a lock that never frees: after the retry window the in-app "ainda está fechando" dialog comes up in
+    //         its own window (message on stderr too); "Fechar" quits. The retry path is proven in app.dialogs.test.ts.
     await killElectron(app, root)
     app = undefined
     await sleep(3000)
     const releaseForever = holdLock(home)
     const t3 = Date.now()
-    const stuck = await runBare(home)
+    const stuck = await _electron.launch({ executablePath: electronPath, args: [mainPath], env: appEnv(home) })
+    app = stuck
+    let stuckErr = ''
+    stuck.process().stderr?.on('data', d => { stuckErr += d })
+    const dlgWin = await stuck.firstWindow({ timeout: LOCK_RETRY_MS + 20_000 })
+    await dlgWin.locator('dialog.ask[data-dialog="still-closing"][open]').waitFor({ timeout: 10_000 })
     const stuckTook = Date.now() - t3
-    releaseForever()
     assert.ok(stuckTook >= LOCK_RETRY_MS, `gave up only after the retry window (${stuckTook} ms)`)
-    assert.match(stuck.stderr, GIVE_UP)
-    t.diagnostic(`stuck lock: gave up after ${stuckTook} ms with the message`)
+    const stuckClosed = stuck.waitForEvent('close', { timeout: 15_000 })
+    await dlgWin.locator('button.choice[data-choice="close"]').click()
+    await stuckClosed
+    app = undefined
+    releaseForever()
+    assert.match(stuckErr, GIVE_UP)
+    t.diagnostic(`stuck lock: dialog after ${stuckTook} ms, "Fechar" quit the app`)
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })

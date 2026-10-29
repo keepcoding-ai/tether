@@ -3,38 +3,41 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Event as DaemonEvent, Notice } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, TetherApi } from '../shared/api.ts'
+import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import type { ThemeState } from '../shared/theme.ts'
+
+function on<T>(channel: string, listener: (value: T) => void): () => void {
+  const handler = (_e: unknown, value: T): void => listener(value)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}
 
 const api: TetherApi = {
   request: body => ipcRenderer.invoke('tether:request', body),
   notice: (notice: Notice) => ipcRenderer.send('tether:notice', notice),
-  onEvent: listener => {
-    const handler = (_e: unknown, ev: DaemonEvent): void => listener(ev)
-    ipcRenderer.on('tether:event', handler)
-    return () => ipcRenderer.removeListener('tether:event', handler)
-  },
-  onConnection: listener => {
-    const handler = (_e: unknown, state: ConnectionState): void => listener(state)
-    ipcRenderer.on('tether:connection', handler)
-    return () => ipcRenderer.removeListener('tether:connection', handler)
-  },
+  onEvent: listener => on<DaemonEvent>('tether:event', listener),
+  onConnection: listener => on<ConnectionState>('tether:connection', listener),
   reconnect: () => ipcRenderer.send('tether:reconnect'),
   loadLayout: () => ipcRenderer.invoke('layout:load'),
   saveLayout: layout => ipcRenderer.invoke('layout:save', layout),
   recentFolders: () => ipcRenderer.invoke('recent:list'),
   rememberFolder: folder => ipcRenderer.invoke('recent:remember', folder),
   pickFolder: initial => ipcRenderer.invoke('folder:pick', initial),
-  confirmClose: label => ipcRenderer.invoke('panel:confirm-close', label),
   openExternal: url => ipcRenderer.send('shell:open-external', url),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   writeClipboard: text => ipcRenderer.send('clipboard:write', text),
   getTheme: () => ipcRenderer.invoke('theme:get'),
   setTheme: setting => ipcRenderer.send('theme:set', setting),
-  onTheme: listener => {
-    const handler = (_e: unknown, state: ThemeState): void => listener(state)
-    ipcRenderer.on('tether:theme', handler)
-    return () => ipcRenderer.removeListener('tether:theme', handler)
-  },
+  onTheme: listener => on<ThemeState>('tether:theme', listener),
+  getConfirmations: () => ipcRenderer.invoke('confirmations:get'),
+  rememberConfirmation: (situation, choice) => ipcRenderer.send('confirmations:remember', situation, choice),
+  onConfirmations: listener => on<Confirmations>('tether:confirmations', listener),
+  onAsk: listener => on<AskRequest>('tether:ask', listener),
+  answer: (askId, answer) => ipcRenderer.send('dialog:answer', askId, answer),
+  standaloneDialog: () => ipcRenderer.invoke('dialog:standalone'),
+  answerStandalone: answer => ipcRenderer.send('dialog:standalone-answer', answer),
+  standaloneSize: height => ipcRenderer.send('dialog:standalone-size', height),
+  closeWindow: () => ipcRenderer.send('window:close'),
 }
 
 contextBridge.exposeInMainWorld('tether', api)
