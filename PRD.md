@@ -1,6 +1,8 @@
 # PRD — tether (nome provisório)
 
-**Versão:** 0.1 (rascunho) · **Data:** 2026-10-28 · **Fase:** 1 de 2
+**Versão:** 0.2 · **Data:** 2026-10-29 · **Fases:** 1 (gestão de sessões) e 2 (o app), as duas implementadas
+
+> **O que mudou na implementação em relação a este texto:** a CLI virou cliente do `tetherd` (§6.5); "rodando" vem do PTY que o tetherd segura, não de PID + horário (§6.4); a meta de <100 ms do hook (RNF3) é inalcançável nesta máquina (Node vazio ≈ 0,1 s) e o hook ficou em ~0,15 s; o soul não reporta `/compact` (C7 não se aplica a ele); `-H` (soul remoto) não foi testado. Registro completo em [PROGRESS.md](./PROGRESS.md).
 
 ## 1. Contexto e problema
 
