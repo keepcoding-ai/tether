@@ -60,13 +60,17 @@ export function cleanEnv(source: NodeJS.ProcessEnv = process.env): Record<string
   return out
 }
 
+/** Args that make Claude pick the session itself; `--session-id` is refused next to them (unless forking). */
+const PICKS_SESSION = new Set(['-c', '--continue', '-r', '--resume'])
+
 function plan(input: PlanInput): LaunchPlan {
   const { slot, home, resume, extraArgs } = input
   const settings = ensureSettingsFile(home)
   const args = ['--settings', settings]
+  const own = [...slot.args, ...extraArgs]
   if (resume) args.push('--resume', resume.sessionId)
-  else args.push('--session-id', randomUUID())
-  args.push(...slot.args, ...extraArgs)
+  else if (!own.some((a) => PICKS_SESSION.has(a))) args.push('--session-id', randomUUID())
+  args.push(...own)
   const env = cleanEnv()
   env[ENV_SLOT] = slot.slotId
   env[ENV_HOME] = home
