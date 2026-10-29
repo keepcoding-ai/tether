@@ -21,6 +21,8 @@ Valem os acordos do Guga em `d:\atrium\mind\atlas\self\AGREEMENTS.md` (a cláusu
 - **Processo se mata por PID**, nunca por nome. Nada de modo watch em dev.
 - **soul-cli:** worktree só com justificativa anotada (aqui: não tocar o checkout em uso pelo Guga). Entrega do soul = rebuild + instalar na máquina guardando o anterior, com prova no soul instalado.
 
+- **"Lança/roda pra mim" = a versão mais nova.** Antes de abrir o app: correções em andamento entram primeiro (ou digo antes que ainda não entraram); `npm run app:build`; se `src/daemon`, `src/agents` ou `src/core` mudaram desde que o tetherd subiu, reinicio o tetherd (os slots retomam a sessão); confiro que o processo rodando é o build novo. Nunca abrir uma versão velha e explicar depois.
+
 ## Técnico
 
 - Node 24 roda `.ts` direto: imports com extensão `.ts`, só sintaxe apagável. Zero dependências de runtime.
