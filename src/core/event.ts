@@ -41,7 +41,8 @@ export interface SlotMeta {
   v: 1
   slotId: string
   name?: string
-  agent: AgentName
+  /** 'shell' = plain shell slot (no session, never emits events). */
+  agent: AgentName | 'shell'
   /** Folder the slot was created in. The binding's cwd wins once there is one. */
   cwd: string
   /** Extra agent args given at creation (e.g. soul's -a/-H). Kept for new sessions of this slot. */
