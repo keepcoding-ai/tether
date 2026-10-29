@@ -10,7 +10,7 @@ Fonte da verdade do andamento do [PLAN.md](./PLAN.md). Atualizado a cada tarefa.
 | T3 Harness E2E | concluída | merge ed10f0a; smoke E2E rodado por mim: 2/2 (51 s); fullscreen intacto |
 | T4 CLI e lançamento | pendente | |
 | T5 soul-cli `SOUL_SESSION_REPORT` | feita, aguarda OK do Guga p/ merge no develop + instalar | branch feat/session-report 0155b7a; 22/22 testes rodados por mim; prova ao vivo no agente serpente (startup, resume, continue, fork) |
-| T6 Cenários E2E Claude | pendente | |
+| T6 Cenários E2E Claude (via tetherd) | em andamento (fable, high) | |
 | T7 Adapter + cenários soul | pendente | |
 | T8 Robustez e doctor | pendente | |
 | Onda 4 — suíte 3x verde, docs | pendente | |
