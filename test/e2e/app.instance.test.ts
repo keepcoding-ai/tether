@@ -86,7 +86,7 @@ const hooks = {
 async function createShellPanel(page: Page, cwd: string): Promise<void> {
   await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check('input[name=kind][value=shell]')
+  await page.check('input[name=profile][value=powershell]')
   await page.fill('#new-cwd', cwd)
   await page.click('#btn-create')
   await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 1)
