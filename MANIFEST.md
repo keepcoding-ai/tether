@@ -32,13 +32,13 @@ Público: um desenvolvedor que abre vários agentes ao mesmo tempo e precisa vol
 
 Última verificação no `main` (commit `70f21b6` + este documento): `npx tsc -p .` e `npx tsc -p app/renderer` limpos, `npm test` 230/230, `npm run app:build` ok. O app instalado no Menu Iniciar roda esse build.
 
-**Não há remote git.** O repositório é local (`D:\sources\localhost\agentic-terminal`, branch `main`). Publicar exige criar o remote; nenhuma decisão foi tomada sobre onde.
+**Nome oficial: tether** (decidido em 2026-10-29; "agentic-terminal" era o nome da ideia e foi aposentado). O repositório mora em `D:\atrium\workspace\tether` (branch `develop`, modo do Atrium) com `origin` = `git@github.com:keepcoding-ai/tether.git`. O repositório remoto precisa ser criado no GitHub (privado, vazio) antes do primeiro push de `main` e `develop`.
 
 ## 3. Onde está cada coisa
 
 | O quê | Onde |
 |---|---|
-| Repositório | `D:\sources\localhost\agentic-terminal` (branch `main`) |
+| Repositório | `D:\atrium\workspace\tether` (branches `main` e `develop`; `origin` keepcoding-ai/tether). A cópia de origem em `D:\sources\localhost\agentic-terminal` ainda roda o app instalado até o atalho ser reapontado (§7.5) |
 | Requisitos e cenários | `PRD.md` (§5 cenários C1–C18, §11–15 app) |
 | Plano original | `PLAN.md` |
 | Histórico, provas e decisões | `PROGRESS.md` (seção "Decisões para validar" é obrigatória) |
@@ -121,6 +121,7 @@ O aviso sai do **cliente** do soul (camada certa: só ele sabe qual conversa est
 - O `bun run check` do soul-cli não fica verde nem no `develop` limpo (28 erros de tipo e 4 testes); critério usado: nenhuma falha nova.
 
 ### 7.5 Limpeza
+- Reapontar o app para `D:\atrium\workspace\tether`: `npm ci` (+ instalar binários de electron/esbuild se faltarem), `npm run app:install` daqui, reiniciar o `tetherd` (os slots retomam). Depois aposentar `D:\sources\localhost\agentic-terminal` (procurar links que saem dela antes de apagar).
 - Worktrees de agentes em `.claude\worktrees\` (todos já integrados ao `main`): remover. Antes de remover qualquer pasta, procurar links que saem dela (`find <pasta> -type l` + `readlink -f`) e desfazê-los primeiro.
 - `D:\atrium\workspace\soul-cli-tether`: tem **junctions** em `node_modules\@atrium` apontando para os pacotes reais — desfazer as junctions antes de apagar a pasta, senão a remoção atravessa e apaga os originais.
 - Branches de worktree no repositório do tether podem ser apagadas depois.
