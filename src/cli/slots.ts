@@ -3,6 +3,7 @@
 import { userInfo } from 'node:os'
 import { pidExists } from '../core/liveness.ts'
 import { tetherHome } from '../core/paths.ts'
+import { isUnsafe, slotProfile, type Profile } from '../core/profile.ts'
 import { currentBinding, listSlots, readEvents, readRun, readSlot } from '../core/store.ts'
 import type { SlotMeta } from '../core/event.ts'
 import { DaemonClient } from '../daemon/client.ts'
@@ -31,7 +32,7 @@ export async function tryConnect(ctx: Context): Promise<DaemonClient | undefined
  * A SlotState built from the store alone (no daemon): binding from the events; 'running' only when a
  * launcher recorded itself in the run file and that pid still exists (a `--here` run in some terminal).
  */
-export function stateFromStore(home: string, meta: SlotMeta): SlotState {
+export function stateFromStore(home: string, meta: SlotMeta, profiles: Profile[] = []): SlotState {
   const binding = currentBinding(readEvents(home, meta.slotId), meta)
   const run = readRun(home, meta.slotId)
   const alive = run !== undefined && pidExists(run.pid)
@@ -45,11 +46,15 @@ export function stateFromStore(home: string, meta: SlotMeta): SlotState {
   if (alive) s.pid = run.agentPid ?? run.pid
   if (binding) s.binding = binding
   if (binding?.title) s.title = binding.title
+  const profile = slotProfile(meta, profiles)
+  if (profile.id) s.profileId = profile.id
+  if (profile.name) s.profileName = profile.name
+  if (isUnsafe([...(profile.launch?.args ?? []), ...meta.args])) s.unsafe = true
   return s
 }
 
-export function statesFromStore(home: string): SlotState[] {
-  return listSlots(home).map((m) => stateFromStore(home, m))
+export function statesFromStore(home: string, profiles: Profile[] = []): SlotState[] {
+  return listSlots(home).map((m) => stateFromStore(home, m, profiles))
 }
 
 /** Timestamp of the slot's last event, else its creation time. */

@@ -3,6 +3,9 @@
 // Terminal bytes travel as UTF-8 strings (node-pty emits strings).
 
 import type { AgentName, Binding } from '../core/event.ts'
+import type { Profile, ProfileInput } from '../core/profile.ts'
+
+export type { Profile, ProfileInput }
 
 export const PROTOCOL_VERSION = 1
 
@@ -35,6 +38,11 @@ export interface SlotState {
   /** Session title (binding.title) or undefined. */
   title?: string
   error?: { code: ErrorCode; message: string }
+  /** The slot's launch profile (SlotMeta.profileId); `profileName` is its current name, absent when the profile is gone. */
+  profileId?: string
+  profileName?: string
+  /** The launch carries --dangerously-skip-permissions (profile, slot or TETHER_*_ARGS): the UI shows a badge. */
+  unsafe?: boolean
 }
 
 export type ErrorCode =
@@ -45,6 +53,8 @@ export type ErrorCode =
   | 'unconfirmed'       // start refused: binding not confirmed; resend with choice
   | 'spawn-failed'
   | 'bad-request'
+  | 'unknown-profile'   // create/profile-delete named a profile that does not exist
+  | 'invalid-profile'   // profile-save refused: the message lists every problem (Portuguese)
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
@@ -52,7 +62,8 @@ export type ErrorCode =
 export type Request =
   | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test' }
   | { t: 'list'; id: number }
-  | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean }
+  /** `profileId`: the launch profile (must be of `kind`); its args/env apply on every start, the slot keeps a snapshot. */
+  | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string }
   /** Start the slot's process: resumes the binding; `choice: 'new'` starts a new session instead. */
   | { t: 'start'; id: number; slotId: string; choice?: 'resume' | 'new' }
   /** Subscribe to the slot's output. Reply carries the scrollback; then `data` events stream. */
@@ -66,6 +77,12 @@ export type Request =
   | { t: 'rename-slot'; id: number; slotId: string; name: string }
   /** Ask the daemon to exit (tests / upgrades). Running agents die with it; they resume on next start. */
   | { t: 'shutdown'; id: number }
+  /** The launch profiles (<home>/profiles.json). Reply: `profiles`, plus `problem` when the file had to be repaired. */
+  | { t: 'profiles-list'; id: number }
+  /** Create (no id) or edit (id) a profile. Reply: the saved `profile` and `warnings`; `invalid-profile` lists the errors. */
+  | { t: 'profile-save'; id: number; profile: ProfileInput }
+  /** Remove a profile; slots that use it keep their snapshot. */
+  | { t: 'profile-delete'; id: number; profileId: string }
 
 /** Fire-and-forget (no reply): keystrokes. */
 export type Notice = { t: 'input'; slotId: string; data: string }
@@ -75,7 +92,20 @@ export type ClientMessage = Request | Notice
 // --- daemon → client ------------------------------------------------------------------------
 
 export type Reply =
-  | { t: 'ok'; id: number; hello?: { v: number; pid: number; version: string }; slots?: SlotState[]; slot?: SlotState; scrollback?: string }
+  | {
+      t: 'ok'
+      id: number
+      hello?: { v: number; pid: number; version: string }
+      slots?: SlotState[]
+      slot?: SlotState
+      scrollback?: string
+      profiles?: Profile[]
+      profile?: Profile
+      /** profile-save: things worth telling the user that did not block the save. */
+      warnings?: string[]
+      /** profiles-list: the file was unusable and repaired (backup kept), or had entries that were skipped. */
+      problem?: string
+    }
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 
 export type Event =
@@ -84,5 +114,7 @@ export type Event =
   /** Any change of a slot (status, binding, title, pid). Sent to every client. */
   | { t: 'state'; slot: SlotState }
   | { t: 'removed'; slotId: string }
+  /** The profile list changed (save/delete through any client). Sent to every client. */
+  | { t: 'profiles'; profiles: Profile[] }
 
 export type DaemonMessage = Reply | Event
