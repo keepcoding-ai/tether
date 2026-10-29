@@ -188,8 +188,8 @@ class DaemonImpl implements Daemon {
     if (!changed) return
     slot.binding = binding
     slot.title = binding?.title
-    if (slot.status === 'starting' && binding && slot.spawnedAt && binding.since >= slot.spawnedAt) this.setRunning(slot)
-    if (broadcast) this.broadcastState(slot)
+    if (slot.status === 'starting' && binding && slot.spawnedAt && binding.since >= slot.spawnedAt) this.setRunning(slot) // broadcasts
+    else if (broadcast) this.broadcastState(slot)
     this.unwatchTitle(slot) // the watch follows one binding; this one changed
     if (isAlive(slot)) this.watchTitle(slot)
     if (binding && !binding.title) {
@@ -201,11 +201,16 @@ class DaemonImpl implements Daemon {
     }
   }
 
-  /** The agent confirmed it is up (its start event arrived) or the fallback expired: frees a 'starting' seat. */
+  /**
+   * The agent confirmed it is up (its start event arrived) or the fallback expired: frees a 'starting' seat.
+   * The slot's `running` state goes out BEFORE the queue is pumped, or clients would see the next slot's
+   * `starting` first and count MAX_STARTING + 1 in 'starting' for a moment.
+   */
   private setRunning(slot: Slot): void {
     if (slot.readyTimer) clearTimeout(slot.readyTimer)
     slot.readyTimer = undefined
     slot.status = 'running'
+    this.broadcastState(slot)
     this.pump()
   }
 
@@ -357,10 +362,7 @@ class DaemonImpl implements Daemon {
     else {
       slot.status = 'starting'
       slot.readyTimer = setTimeout(() => {
-        if (slot.status === 'starting') {
-          this.setRunning(slot)
-          this.broadcastState(slot)
-        }
+        if (slot.status === 'starting') this.setRunning(slot)
       }, this.readyFallbackMs)
       slot.readyTimer.unref()
     }

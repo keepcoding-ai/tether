@@ -1,18 +1,18 @@
-import { test, describe, beforeEach, afterEach } from 'node:test'
+import { test, describe, after, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { claudeAdapter, cleanEnv, encodeProjectDir, findTranscript, lastCustomTitle } from '../../src/agents/claude.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
+import { tempDirs } from './tmp.helpers.ts'
 
 const HOOK = resolve(import.meta.dirname, '../../src/report/claude-hook.mjs')
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
-function tmp(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix))
-}
+const homes = tempDirs('tether-home-')
+const configs = tempDirs('tether-claude-')
+after(() => Promise.all([homes.cleanup(), configs.cleanup()]))
 
 const slot: SlotMeta = {
   v: 1,
@@ -49,7 +49,7 @@ describe('claudeAdapter.plan', () => {
   })
 
   test('new session: --settings file, --session-id uuid, then slot args, then extra args', () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     const plan = claudeAdapter.plan({ slot, home, extraArgs: ['-p', 'oi'] })
     const settings = join(home, 'claude-settings.json')
     assert.deepEqual(plan.args.slice(0, 3), ['--settings', settings, '--session-id'])
@@ -60,14 +60,14 @@ describe('claudeAdapter.plan', () => {
   })
 
   test('two new sessions get different ids', () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     const a = claudeAdapter.plan({ slot, home, extraArgs: [] }).args[3]
     const b = claudeAdapter.plan({ slot, home, extraArgs: [] }).args[3]
     assert.notEqual(a, b)
   })
 
   test('new session with -c / --continue / -r / --resume in the slot args: no --session-id (Claude refuses the pair)', () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     for (const flag of ['-c', '--continue', '-r', '--resume']) {
       const plan = claudeAdapter.plan({ slot: { ...slot, args: ['--model', 'haiku', flag] }, home, extraArgs: [] })
       assert.deepEqual(plan.args, ['--settings', join(home, 'claude-settings.json'), '--model', 'haiku', flag], flag)
@@ -77,14 +77,14 @@ describe('claudeAdapter.plan', () => {
   })
 
   test('resume: --resume <id> in the binding cwd, no --session-id', () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     const plan = claudeAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
     assert.deepEqual(plan.args, ['--settings', join(home, 'claude-settings.json'), '--resume', binding.sessionId, '--model', 'haiku'])
     assert.equal(plan.cwd, binding.cwd)
   })
 
   test('env: every CLAUDE* var removed (any case), everything else kept, TETHER vars set', () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     const plan = claudeAdapter.plan({ slot, home, extraArgs: [] })
     const claudeKeys = Object.keys(plan.env).filter(k => /^claude/i.test(k))
     assert.deepEqual(claudeKeys, [])
@@ -101,7 +101,7 @@ describe('claudeAdapter.plan', () => {
   })
 
   test('settings file: valid JSON, both hooks call the reporter by absolute forward-slash path', () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     claudeAdapter.plan({ slot, home, extraArgs: [] })
     const file = join(home, 'claude-settings.json')
     const settings = JSON.parse(readFileSync(file, 'utf8')) as {
@@ -121,7 +121,7 @@ describe('claudeAdapter.plan', () => {
   })
 
   test('settings file is written once and left alone afterwards', async () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     claudeAdapter.plan({ slot, home, extraArgs: [] })
     const file = join(home, 'claude-settings.json')
     const before = statSync(file).mtimeMs
@@ -132,7 +132,7 @@ describe('claudeAdapter.plan', () => {
   })
 
   test('settings file is rewritten when its content drifted', () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     mkdirSync(home, { recursive: true })
     writeFileSync(join(home, 'claude-settings.json'), '{"hooks":{}}')
     claudeAdapter.plan({ slot, home, extraArgs: [] })
@@ -141,7 +141,7 @@ describe('claudeAdapter.plan', () => {
   })
 
   test('command: on Windows an absolute path to claude.exe that spawns without a shell', { skip: process.platform !== 'win32' }, () => {
-    const home = tmp('tether-home-')
+    const home = homes.make()
     const plan = claudeAdapter.plan({ slot, home, extraArgs: [] })
     if (plan.command === 'claude') return // claude not installed here: the bare name is the fallback
     assert.match(plan.command, /[\\/]claude(\.exe|\.cmd)?$/i)
@@ -176,7 +176,7 @@ describe('sessionExists / title against a fake ~/.claude (CLAUDE_CONFIG_DIR)', (
 
   beforeEach(() => {
     savedConfigDir = process.env.CLAUDE_CONFIG_DIR
-    configDir = tmp('tether-claude-')
+    configDir = configs.make()
     process.env.CLAUDE_CONFIG_DIR = configDir
   })
   afterEach(() => {

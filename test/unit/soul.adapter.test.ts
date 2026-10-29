@@ -1,9 +1,8 @@
 // The soul adapter: how `soul` is found (TETHER_SOUL_CMD, the bash launcher on Windows), and the launch plan
 // for a new session (slot args + extra args) and for a resume (the binding's recipe, verbatim).
-import { test, describe, beforeEach, afterEach } from 'node:test'
+import { test, describe, after, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   commandFromScript,
@@ -17,6 +16,10 @@ import {
 import { ENV_HOME, ENV_SLOT } from '../../src/agents/types.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
 import { slotEventsPath } from '../../src/core/paths.ts'
+import { tempDirs } from './tmp.helpers.ts'
+
+const dirs = tempDirs('tether-soul-')
+after(() => dirs.cleanup())
 
 const slot: SlotMeta = {
   v: 1,
@@ -54,7 +57,7 @@ describe('command line helpers', () => {
   })
 
   test('commandFromScript: NODE= and CLI= lines become `node <cli>`; a missing NODE falls back to this node', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tether-soul-'))
+    const dir = dirs.make()
     const script = join(dir, 'soul')
     writeFileSync(script, [
       '#!/usr/bin/env bash',
@@ -79,7 +82,7 @@ describe('command line helpers', () => {
   })
 
   test('commandFromScript: a script without CLI= runs through bash', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tether-soul-'))
+    const dir = dirs.make()
     const script = join(dir, 'soul')
     writeFileSync(script, '#!/usr/bin/env bash\nexec something "$@"\n')
     const cmd = commandFromScript(script, { PATH: '' })

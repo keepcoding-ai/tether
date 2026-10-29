@@ -1,11 +1,11 @@
 // The Claude hook as Claude runs it: a child `node claude-hook.mjs <event>` with the payload on stdin.
-import { test, describe, before } from 'node:test'
+import { test, describe, after, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { TetherEvent } from '../../src/core/event.ts'
+import { tempDirs } from './tmp.helpers.ts'
 
 const HOOK = resolve(import.meta.dirname, '../../src/report/claude-hook.mjs')
 const CAPTURED = resolve(import.meta.dirname, '../../spike/captured-claude-events.jsonl')
@@ -16,9 +16,9 @@ interface Captured {
   payload: Record<string, unknown>
 }
 
-function tmpHome(): string {
-  return mkdtempSync(join(tmpdir(), 'tether-hook-'))
-}
+const homes = tempDirs('tether-hook-')
+const tmpHome = (): string => homes.make()
+after(() => homes.cleanup())
 
 function runHook(args: string[], stdin: string | undefined, env: Record<string, string | undefined>) {
   return spawnSync(process.execPath, [HOOK, ...args], {
