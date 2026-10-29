@@ -150,6 +150,28 @@ async function ask(term: Terminal, prompt: string): Promise<string> {
   return lastAnswer(term)
 }
 
+/** Teaches the slot its word. The rounds before it answered "responda apenas: ok" several times, so the word is
+ *  framed as a secret to keep, not as one more echo; the literal `${SEED_NEEDLE}${word}` is what names the
+ *  transcript afterwards (expectedIds). */
+const SEED_NEEDLE = 'fruta secreta deste terminal: ' // ASCII only: it is matched against the raw transcript JSON
+const seedPrompt = (word: string) => `${SEED_NEEDLE}${word}. Guarde-a para quando eu perguntar. Agora responda apenas: ${word}`
+const RECALL_PROMPTS = [
+  'qual é a fruta secreta deste terminal? responda só com o nome da fruta',
+  'não quero "ok": o nome da fruta secreta que pedi para guardar, só ele, uma palavra',
+]
+
+/** Asks for the slot's word; one re-ask with a sharper prompt (logged) if the first answer misses it. Returns the
+ *  last answer, so a second miss still fails the assertion. */
+async function recall(term: Terminal, slotId: string, word: string): Promise<string> {
+  let answer = ''
+  for (const [i, prompt] of RECALL_PROMPTS.entries()) {
+    answer = await ask(term, prompt)
+    if (new RegExp(word, 'i').test(plain(answer))) return answer
+    if (i === 0) console.log(`# slot ${slotId}: first recall answered ${JSON.stringify(answer)} instead of "${word}"; asking again`)
+  }
+  return answer
+}
+
 /** Transcripts of a folder (Claude's projects dir) whose text contains `needle`. */
 function transcriptsWith(cwd: string, needle: string): string[] {
   const dir = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects', encodeProjectDir(cwd))
@@ -160,7 +182,7 @@ function transcriptsWith(cwd: string, needle: string): string[] {
 /** The id each slot should be bound to, derived from Claude's files alone: the one transcript holding the slot's word. */
 function expectedIds(): string[] {
   return slots.map(s => {
-    const found = transcriptsWith(s.cwd, `responda apenas: ${s.word}`)
+    const found = transcriptsWith(s.cwd, `${SEED_NEEDLE}${s.word}`)
     assert.equal(found.length, 1, `exactly one transcript in ${s.cwd} holds "${s.word}": ${JSON.stringify(found)}`)
     return found[0]!
   })
@@ -208,8 +230,8 @@ test(`load: ${ROUNDS} rounds of random switches (/clear, /rename, prompt) per sl
       }
     }))
   }
-  // the word each slot must remember across the daemon kill; it also names the expected transcript
-  await Promise.all(slots.map(async s => assert.match(plain(await ask(s.term!, `responda apenas: ${s.word}`)), new RegExp(s.word, 'i'))))
+  // the word each slot must remember across the daemon kill; it also names the expected transcript (SEED_NEEDLE)
+  await Promise.all(slots.map(async s => assert.match(plain(await ask(s.term!, seedPrompt(s.word))), new RegExp(s.word, 'i'))))
   const ids = slots.map(s => starts(s.id).at(-1)!.sessionId)
   assert.equal(new Set(ids).size, SLOTS, 'all ids distinct after the rounds')
   assert.deepEqual((await Promise.all(slots.map(s => slotState(s.id)))).map(s => s.binding!.sessionId), expectedIds(), 'daemon bindings = transcripts holding each word')
@@ -245,7 +267,7 @@ test('load: daemon killed by pid → new daemon, all slots resumed at once, zero
   assert.equal(new Set(expected).size, SLOTS, 'no two slots share an id')
   for (const s of slots) assert.equal(starts(s.id).at(-1)!.source, 'resume')
   await Promise.all(slots.map(async s => {
-    const a = await ask(s.term!, 'qual fruta você respondeu antes? só ela') // the rounds also answered "ok": ask for the fruit
+    const a = await recall(s.term!, s.id, s.word)
     assert.match(plain(a), new RegExp(s.word, 'i'), `slot ${s.id} remembers "${s.word}"; answered: ${JSON.stringify(a)}`)
   }))
   await Promise.all(slots.map(async (s, i) => {
