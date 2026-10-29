@@ -34,6 +34,7 @@ export function renderChoices(choices: DialogChoice[], onPick: (id: string) => v
     btn.className = `choice ${c.tone}`
     btn.dataset.choice = c.id
     if (c.id === opts.defaultId) btn.classList.add('default')
+    if (c.id === opts.escId) btn.classList.add('esc')
     const icon = document.createElement('span'); icon.className = 'choice-icon'; icon.append(iconEl(c.icon))
     const text = document.createElement('span'); text.className = 'choice-text'
     const label = document.createElement('span'); label.className = 'choice-label'; label.textContent = c.label
@@ -117,7 +118,8 @@ export function askDialog(spec: DialogSpec, host: HTMLElement = document.body): 
     }
 
     const def = defaultChoice(spec)
-    const choices = renderChoices(spec.choices, finish, { defaultId: def })
+    const esc = spec.choices.find(c => c.id === spec.escChoice && c.tone !== 'destructive')?.id
+    const choices = renderChoices(spec.choices, finish, { defaultId: def, escId: esc })
 
     const foot = document.createElement('footer')
     if (spec.remember) {
@@ -146,7 +148,7 @@ export function askDialog(spec: DialogSpec, host: HTMLElement = document.body): 
     }
     dlg.addEventListener('keydown', onKey)
     // Esc: the browser raises `cancel` on a modal dialog and would close it on its own; it is ours.
-    dlg.addEventListener('cancel', ev => { ev.preventDefault(); finish('cancel') })
+    dlg.addEventListener('cancel', ev => { ev.preventDefault(); finish(esc ?? 'cancel') })
 
     dlg.append(head, desc, choices)
     if (spec.remember || spec.cancelLabel) dlg.append(foot)

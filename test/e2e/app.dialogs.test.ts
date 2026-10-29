@@ -299,6 +299,7 @@ test('in-app dialogs: close panel, remember, quit all, still closing (no native 
       assert.ok(Date.now() - t0 >= LOCK_RETRY_MS, 'the dialog comes only after the retry window')
       assert.equal(await win.evaluate(() => (document.querySelector('html') as { dataset: { theme?: string } }).dataset.theme), scheme, 'the standalone window follows the theme')
       assert.equal(await still.locator('button.choice.safe.default[data-choice="retry"]').count(), 1)
+      assert.equal(await still.locator('button.choice.esc[data-choice="close"] .choice-key').textContent(), 'Esc', '"Fechar" is the Esc choice and says so')
       await sleep(300)
       await win.screenshot({ path: join(artifacts, `dialog-still-closing-${scheme}.png`) })
       release()

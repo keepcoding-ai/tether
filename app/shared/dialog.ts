@@ -43,6 +43,8 @@ export interface DialogSpec {
   defaultChoice?: string
   /** Label of the cancel button (Esc). Omit it when the choices already include "do nothing". */
   cancelLabel?: string
+  /** The "do nothing" choice Esc takes when it is a card (never destructive): it shows the Esc hint. */
+  escChoice?: string
   /** "Não perguntar de novo": remembers `choice` for this situation (never a destructive one). */
   remember?: { choice: string; label: string }
 }

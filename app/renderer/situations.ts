@@ -124,6 +124,7 @@ export function stillClosingSituation(): DialogSpec {
       { id: 'retry', icon: 'arrow-clockwise', label: 'Tentar de novo', consequence: 'Tenta abrir a janela agora. Costuma funcionar depois de alguns segundos.', tone: 'safe' },
       { id: 'close', icon: 'x', label: 'Fechar', consequence: 'Não abre nada. Abra o tether de novo mais tarde.', tone: 'neutral' },
     ],
+    escChoice: 'close',
   }
 }
 
