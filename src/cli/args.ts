@@ -5,6 +5,8 @@ export interface ParsedArgs {
   positional: string[]
   options: Record<string, string>
   flags: Set<string>
+  /** Options that may repeat (`--env A=1 --env B=2`), every value in order. */
+  multi: Record<string, string[]>
   /** Everything after `--`, untouched. */
   rest: string[]
 }
@@ -24,12 +26,15 @@ export interface ArgSpec {
   valued?: string[]
   /** Boolean flags (`--json`). */
   flags?: string[]
+  /** Options that take a value and may repeat (`--env K=V`). */
+  multi?: string[]
 }
 
 export function parseArgs(argv: string[], spec: ArgSpec = {}): ParsedArgs {
   const valued = new Set(spec.valued ?? [])
   const flags = new Set(spec.flags ?? [])
-  const out: ParsedArgs = { positional: [], options: {}, flags: new Set(), rest: [] }
+  const multi = new Set(spec.multi ?? [])
+  const out: ParsedArgs = { positional: [], options: {}, flags: new Set(), multi: {}, rest: [] }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
     if (a === '--') {
@@ -42,7 +47,7 @@ export function parseArgs(argv: string[], spec: ArgSpec = {}): ParsedArgs {
     }
     const eq = a.indexOf('=')
     const name = eq >= 0 ? a.slice(2, eq) : a.slice(2)
-    if (valued.has(name)) {
+    if (valued.has(name) || multi.has(name)) {
       let value: string | undefined
       if (eq >= 0) value = a.slice(eq + 1)
       else {
@@ -50,7 +55,8 @@ export function parseArgs(argv: string[], spec: ArgSpec = {}): ParsedArgs {
         i++
       }
       if (value === undefined) throw new UsageError(`--${name} precisa de um valor`)
-      out.options[name] = value
+      if (multi.has(name)) (out.multi[name] ??= []).push(value)
+      else out.options[name] = value
       continue
     }
     if (flags.has(name)) {
