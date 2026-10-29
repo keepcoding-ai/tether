@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'">
+  <title>tether</title>
+  <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="../dist/dockview.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="toolbar">
+    <span id="brand">tether</span>
+    <button id="btn-new" title="Novo painel (Ctrl+Shift+T)">+ Novo painel</button>
+    <button id="btn-split-right" title="Dividir à direita (Ctrl+Shift+D)">⫿ Direita</button>
+    <button id="btn-split-down" title="Dividir abaixo (Ctrl+Shift+E)">⫽ Abaixo</button>
+    <div class="dropdown">
+      <button id="btn-closed" title="Slots rodando no tetherd sem painel aberto">Slots fechados <span id="closed-count"></span> ▾</button>
+      <ul id="closed-list" hidden></ul>
+    </div>
+    <span id="spacer"></span>
+    <span id="conn" class="conn off" title="">● desconectado</span>
+  </header>
+
+  <main id="dock"></main>
+
+  <div id="overlay" hidden>
+    <div class="card">
+      <h2>Sem conexão com o tetherd</h2>
+      <p id="overlay-msg"></p>
+      <p class="hint">O daemon dos terminais não respondeu. Suba o tetherd (ou <code>npm run app:fake</code> em desenvolvimento) e tente de novo.</p>
+      <button id="btn-retry">Tentar de novo</button>
+    </div>
+  </div>
+
+  <dialog id="dlg-new">
+    <form id="form-new" method="dialog">
+      <h2 id="dlg-title">Novo painel</h2>
+      <fieldset>
+        <legend>Tipo</legend>
+        <label><input type="radio" name="kind" value="claude" checked> <span class="icon">✦</span> Claude</label>
+        <label><input type="radio" name="kind" value="soul"> <span class="icon">☽</span> soul</label>
+        <label><input type="radio" name="kind" value="shell"> <span class="icon">&gt;_</span> Shell</label>
+      </fieldset>
+      <label class="field">
+        <span>Pasta</span>
+        <span class="row">
+          <input type="text" id="new-cwd" name="cwd" placeholder="D:\projetos\meu-app" spellcheck="false" required>
+          <button type="button" id="btn-browse">Procurar…</button>
+        </span>
+      </label>
+      <div class="field">
+        <span>Pastas recentes</span>
+        <ul id="recent-list" class="recent"></ul>
+      </div>
+      <p id="new-error" class="error" hidden></p>
+      <div class="actions">
+        <button type="button" id="btn-cancel">Cancelar</button>
+        <button type="submit" id="btn-create" class="primary">Abrir</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="../dist/renderer.js"></script>
+</body>
+</html>

@@ -10,7 +10,17 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "test", "bin"]
+  "include": [
+    "src",
+    "test",
+    "bin",
+    "app/main",
+    "app/preload",
+    "app/shared",
+    "app/fake-daemon"
+  ]
 }

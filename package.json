@@ -15,13 +15,25 @@
     "test": "node --test \"test/unit/**/*.test.ts\"",
     "test:e2e": "node --test --test-concurrency=1 \"test/e2e/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
-    "daemon": "node src/daemon/main.ts"
+    "daemon": "node src/daemon/main.ts",
+    "app:build": "node app/build.mjs",
+    "app": "node app/build.mjs && electron app/dist/main.cjs",
+    "app:fake": "node app/build.mjs && node app/run-fake.mjs",
+    "app:typecheck": "tsc -p app/renderer",
+    "test:app": "node --test --test-concurrency=1 \"test/e2e/app.*.test.ts\""
   },
   "dependencies": {
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "dockview-core": "^8.8.0",
+    "electron": "^45.1.0",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.64.1",
     "typescript": "^5.9.3"
   }
 }

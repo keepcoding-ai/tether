@@ -4,3 +4,5 @@ spike/settings.generated.json
 .tether-test/
 *.log
 .claude/worktrees/
+app/dist/
+test/e2e/artifacts/
