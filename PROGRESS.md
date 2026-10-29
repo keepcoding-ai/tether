@@ -24,7 +24,7 @@ Fonte da verdade do andamento do [PLAN.md](./PLAN.md). Atualizado a cada tarefa.
 - [ ] `npm run check` verde (typecheck + unitários)
 - [ ] `npm run test:e2e` verde 3 vezes seguidas (Claude e soul)
 - [ ] soul-cli: `bun run check` verde no branch da mudança
-- [ ] README com uso real; PRD atualizado
+- [x] README com uso real; PRD atualizado (commits de docs de 2026-10-29)
 - [ ] App (A1–A4): E2E do tetherd e do app verdes (split 4, kill da janela, reabrir = mesmo layout e agentes vivos; kill do tetherd = retomada certa)
 - [ ] App aberto e usado por mim como o Guga usaria (screenshot), com `npm run app` e atalho no Menu Iniciar
 - [ ] soul instalado na máquina com `SOUL_SESSION_REPORT` (anterior guardado), provado no app
