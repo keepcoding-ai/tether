@@ -6,3 +6,5 @@ spike/settings.generated.json
 .claude/worktrees/
 app/dist/
 test/e2e/artifacts/
+.claude/scheduled_tasks.lock
+test/e2e/artifacts/
