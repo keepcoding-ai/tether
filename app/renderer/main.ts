@@ -1,10 +1,11 @@
 // Renderer entry: dockview grid of terminal panels (panel id === slotId), toolbar, new-panel dialog,
-// keyboard shortcuts, layout persistence and the "closed slots" menu.
+// keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
+// panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
 import { createDockview, themeDark, type DockviewApi, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
 import { pruneLayout } from './layout.ts'
-import { KIND_ICON, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, folderName, panelTitle, type PanelHost } from './panel.ts'
+import { effectiveStatus, KIND_ICON, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, folderName, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 
 const COMPONENT = 'terminal'
 const TAB = 'slot-tab'
@@ -13,9 +14,14 @@ const SAVE_DEBOUNCE_MS = 300
 const slots = new Map<string, SlotState>()
 const panels = new Map<string, TerminalPanel>()
 const tabs = new Map<string, SlotTab>()
+/** Error of the last refused `start` per slot (the daemon does not store `already-open` / `unconfirmed`). */
+const startErrors = new Map<string, SlotError>()
+/** Slots with a `start` request in flight. */
+const pendingStarts = new Set<string>()
 let api: DockviewApi
 let layoutRestored = false
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+let connection: ConnectionState | undefined
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id)
@@ -27,6 +33,9 @@ const $ = <T extends HTMLElement>(id: string): T => {
 
 const host: PanelHost = {
   getSlot: id => slots.get(id),
+  getStartError: id => startErrors.get(id),
+  isStartPending: id => pendingStarts.has(id),
+  onAction: (id, action) => { void onPanelAction(id, action) },
   onKey: (ev, panel) => {
     if (ev.type !== 'keydown' || !ev.ctrlKey || !ev.shiftKey || ev.altKey) return false
     switch (ev.code) {
@@ -77,7 +86,9 @@ function scheduleSave(): void {
   saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(api.toJSON()) }, SAVE_DEBOUNCE_MS)
 }
 
-function addPanel(slot: SlotState, position?: { referencePanel: string; direction: 'right' | 'below' }): IDockviewPanel {
+type Position = { referencePanel: string; direction: 'right' | 'below' | 'within' }
+
+function addPanel(slot: SlotState, position?: Position): IDockviewPanel {
   slots.set(slot.slotId, slot)
   const panel = api.addPanel({
     id: slot.slotId,
@@ -103,17 +114,74 @@ async function closePanel(slotId: string): Promise<void> {
   api.removePanel(panel)
 }
 
+function renderSlot(slotId: string): void {
+  panels.get(slotId)?.render()
+  tabs.get(slotId)?.render()
+}
+
+// ---------- starting slots ----------
+
+/** Sends `start`; a refusal (unconfirmed, already-open, …) stays on the panel until the slot comes up. */
+async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<void> {
+  if (pendingStarts.has(slotId)) return
+  pendingStarts.add(slotId)
+  startErrors.delete(slotId)
+  renderSlot(slotId)
+  const reply = await window.tether.request({ t: 'start', slotId, ...(choice ? { choice } : {}) })
+  pendingStarts.delete(slotId)
+  if (reply.t === 'error') startErrors.set(slotId, { code: reply.code, message: reply.message })
+  else if (reply.slot) applyState(reply.slot)
+  renderSlot(slotId)
+}
+
+/** Starts every open panel whose slot is exited (the daemon queues agents beyond 3 at once). Unconfirmed ones wait for the user. */
+function autoStartPanels(): void {
+  for (const panel of api.panels) {
+    const slot = slots.get(panel.id)
+    if (slot && effectiveStatus(slot) === 'exited') void startSlot(slot.slotId)
+  }
+}
+
+async function onPanelAction(slotId: string, action: PanelAction): Promise<void> {
+  switch (action) {
+    case 'start': return startSlot(slotId)
+    case 'resume': return startSlot(slotId, 'resume')
+    case 'new': return startSlot(slotId, 'new')
+    case 'close': return closePanel(slotId)
+    case 'pick-folder': return moveToFolder(slotId)
+  }
+}
+
+/** The slot's folder is gone: open a fresh slot of the same kind in a folder the user picks, in the same place of the grid. */
+async function moveToFolder(slotId: string): Promise<void> {
+  const slot = slots.get(slotId)
+  const panel = api.getPanel(slotId)
+  if (!slot || !panel) return
+  const folder = await window.tether.pickFolder()
+  if (!folder) return
+  const reply = await window.tether.request({ t: 'create', kind: slot.kind, cwd: folder, start: true })
+  if (reply.t === 'error' || !reply.slot) {
+    startErrors.set(slotId, { code: reply.t === 'error' ? reply.code : 'bad-request', message: reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot' })
+    renderSlot(slotId)
+    return
+  }
+  await window.tether.rememberFolder(folder)
+  addPanel(reply.slot, { referencePanel: slotId, direction: 'within' })
+  api.removePanel(panel)
+  await window.tether.request({ t: 'forget', slotId })
+}
+
 // ---------- daemon events / state ----------
 
 function applyState(slot: SlotState): void {
   slots.set(slot.slotId, slot)
-  panels.get(slot.slotId)?.render()
+  if (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued') startErrors.delete(slot.slotId)
   const panel = api.getPanel(slot.slotId)
   if (panel) {
     const title = panelTitle(slot)
     if (panel.title !== title) panel.api.setTitle(title)
   }
-  tabs.get(slot.slotId)?.render()
+  renderSlot(slot.slotId)
   refreshClosedMenu()
 }
 
@@ -123,6 +191,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
+      startErrors.delete(ev.slotId)
       const panel = api.getPanel(ev.slotId)
       if (panel) api.removePanel(panel)
       refreshClosedMenu()
@@ -157,6 +226,7 @@ async function restoreLayout(): Promise<void> {
 // ---------- connection ----------
 
 async function onConnection(state: ConnectionState): Promise<void> {
+  connection = state
   const conn = $('conn')
   conn.title = state.pipe
   if (!state.connected) {
@@ -166,13 +236,15 @@ async function onConnection(state: ConnectionState): Promise<void> {
     $('overlay').hidden = false
     return
   }
-  conn.textContent = '● tetherd'
+  conn.textContent = `● tetherd ${state.pid}`
   conn.className = 'conn on'
   $('overlay').hidden = true
+  startErrors.clear()
   await refreshSlots()
   if (!layoutRestored) {
     await restoreLayout()
   } else {
+    // Reconnected (the daemon was restarted): drop panels it no longer knows, re-attach the rest.
     for (const panel of api.panels) {
       if (!slots.has(panel.id)) api.removePanel(panel)
     }
@@ -180,6 +252,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
     for (const t of tabs.values()) t.render()
     refreshClosedMenu()
   }
+  autoStartPanels()
 }
 
 // ---------- closed slots menu ----------
@@ -195,30 +268,38 @@ function refreshClosedMenu(): void {
     return
   }
   for (const s of closed) {
+    const status = STATUS_LABEL[effectiveStatus(s)]
     const li = document.createElement('li')
     const icon = document.createElement('span'); icon.textContent = KIND_ICON[s.kind]
     const name = document.createElement('span'); name.textContent = s.title ?? s.name ?? folderName(s.cwd)
-    const cwd = document.createElement('span'); cwd.className = 'cwd'; cwd.textContent = `${s.cwd} · ${STATUS_LABEL[s.status]}`
+    const cwd = document.createElement('span'); cwd.className = 'cwd'; cwd.textContent = `${s.cwd} · ${status}`
     const forget = document.createElement('button'); forget.className = 'forget'; forget.textContent = 'Esquecer'; forget.title = 'Encerra e remove o slot do tether'
     forget.addEventListener('click', async ev => {
       ev.stopPropagation()
       await window.tether.request({ t: 'forget', slotId: s.slotId })
     })
     li.append(icon, name, cwd, forget)
-    li.title = `Reabrir o painel (${KIND_LABEL[s.kind]}, ${STATUS_LABEL[s.status]})`
+    li.title = `Reabrir o painel (${KIND_LABEL[s.kind]}, ${status})`
     li.addEventListener('click', () => {
       list.hidden = true
-      const panel = addPanel(s)
-      if (s.status === 'exited') void window.tether.request({ t: 'start', slotId: s.slotId })
-      panel.api.setActive()
+      openSlot(s.slotId)
     })
     list.append(li)
   }
 }
 
+/** Opens a panel for a slot the daemon knows; an exited slot is started (an unconfirmed one shows the choice). */
+function openSlot(slotId: string): void {
+  const s = slots.get(slotId)
+  if (!s) return
+  const panel = api.getPanel(slotId) ?? addPanel(s)
+  if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+  panel.api.setActive()
+}
+
 // ---------- new panel dialog ----------
 
-interface NewPanelOptions { kind?: SlotKind; cwd?: string; position?: { referencePanel: string; direction: 'right' | 'below' } }
+interface NewPanelOptions { kind?: SlotKind; cwd?: string; position?: Position }
 
 async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   const dlg = $<HTMLDialogElement>('dlg-new')
@@ -315,6 +396,12 @@ declare global {
       activeId(): string | undefined
       slots(): SlotState[]
       text(slotId: string): string
+      connection(): ConnectionState | undefined
+      activate(slotId: string): void
+      /** Opens a panel for a slot the daemon already has (as the "closed slots" menu does). */
+      openSlot(slotId: string): void
+      /** Feeds a slot state as if the daemon had sent it (screenshots of states the daemon cannot produce on demand). */
+      applyState(slot: SlotState): void
     }
   }
 }
@@ -333,6 +420,10 @@ function setupTestHooks(): void {
       for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? '')
       return lines.join('\n').replace(/\n+$/, '')
     },
+    connection: () => connection,
+    activate: slotId => api.getPanel(slotId)?.api.setActive(),
+    openSlot,
+    applyState,
   }
 }
 
