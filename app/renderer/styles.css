@@ -1,16 +1,42 @@
+/* Theme: the renderer sets html[data-theme=light|dark] from the setting (app/shared/theme.ts). Before it
+   runs, prefers-color-scheme (driven by Electron's nativeTheme.themeSource) picks the same colors: no flash. */
 :root {
   --bg: #1b1b1f;
   --bg-2: #232329;
   --bg-3: #2c2c34;
+  --bg-hover: #363640;
+  --bg-hover-2: #3f3f4a;
   --fg: #d8d8dc;
   --fg-dim: #9a9aa3;
   --accent: #6aa6ff;
+  --accent-hover: #86b7ff;
+  --on-accent: #0d1320;
   --border: #35353d;
   --ok: #5fcf80;
   --warn: #e6b450;
   --err: #ef6a6a;
+  --veil: rgba(27, 27, 31, .78);
+  --backdrop: rgba(0, 0, 0, .6);
+  --shadow: 0 6px 20px rgba(0, 0, 0, .5);
   --mono: "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace;
   --ui: "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #fbfbfd; --bg-2: #f1f2f5; --bg-3: #e6e7ec; --bg-hover: #dcdde3; --bg-hover-2: #d2d3da;
+    --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
+    --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
+    --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #fbfbfd; --bg-2: #f1f2f5; --bg-3: #e6e7ec; --bg-hover: #dcdde3; --bg-hover-2: #d2d3da;
+  --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
+  --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
+  --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -49,9 +75,12 @@ button {
   font: inherit;
   cursor: pointer;
 }
-button:hover { background: #363640; }
-button.primary { background: var(--accent); color: #0d1320; border-color: var(--accent); }
-button.primary:hover { background: #86b7ff; }
+button:hover { background: var(--bg-hover); }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+button.primary:hover { background: var(--accent-hover); }
+
+#theme { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-dim); font-size: 12px; margin-right: 6px; }
+#theme select { background: var(--bg-3); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font: inherit; }
 
 .conn { font-size: 12px; }
 .conn.on { color: var(--ok); }
@@ -63,10 +92,10 @@ button.primary:hover { background: #86b7ff; }
   min-width: 320px; max-height: 60vh; overflow: auto;
   margin: 4px 0 0; padding: 4px; list-style: none;
   background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  box-shadow: var(--shadow);
 }
 #closed-list li { padding: 6px 8px; border-radius: 3px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
-#closed-list li:hover { background: #3f3f4a; }
+#closed-list li:hover { background: var(--bg-hover-2); }
 #closed-list li.empty { color: var(--fg-dim); cursor: default; }
 #closed-list li .cwd { color: var(--fg-dim); font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #closed-list li .forget { font-size: 11px; padding: 1px 6px; }
@@ -98,9 +127,9 @@ button.primary:hover { background: #86b7ff; }
 .panel-term .xterm .xterm-viewport { background-color: var(--bg) !important; }
 
 /* --- panel overlay (unconfirmed / error / exited / queued) --- */
-.panel-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(27,27,31,.78); }
+.panel-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--veil); }
 .panel-overlay[hidden] { display: none; }
-.panel-overlay .card { background: var(--bg-2); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 6px; padding: 14px 18px; max-width: 480px; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+.panel-overlay .card { background: var(--bg-2); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 6px; padding: 14px 18px; max-width: 480px; box-shadow: var(--shadow); }
 .panel-overlay.warn .card { border-left-color: var(--warn); }
 .panel-overlay.error .card { border-left-color: var(--err); }
 .panel-overlay h3 { margin: 0 0 6px; font-size: 14px; }
@@ -119,7 +148,7 @@ button.primary:hover { background: #86b7ff; }
 .tether-tab .dot.starting, .tether-tab .dot.queued, .tether-tab .dot.unconfirmed { color: var(--warn); }
 .tether-tab .dot.error { color: var(--err); }
 .tether-tab .close { background: none; border: 0; padding: 0 4px; color: var(--fg-dim); font-size: 14px; line-height: 1; border-radius: 3px; }
-.tether-tab .close:hover { background: #4a4a56; color: var(--fg); }
+.tether-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
 
 /* --- watermark (empty state) --- */
 .watermark { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--fg-dim); }
@@ -127,7 +156,7 @@ button.primary:hover { background: #86b7ff; }
 .watermark kbd { font-family: var(--mono); background: var(--bg-3); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; }
 
 /* --- overlay (no daemon) --- */
-#overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+#overlay { position: fixed; inset: 0; background: var(--backdrop); display: flex; align-items: center; justify-content: center; z-index: 100; }
 #overlay[hidden] { display: none; }
 #overlay .card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; max-width: 520px; }
 #overlay h2 { margin: 0 0 8px; color: var(--err); font-size: 16px; }
@@ -137,7 +166,7 @@ button.primary:hover { background: #86b7ff; }
 
 /* --- dialog --- */
 dialog { background: var(--bg-2); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 18px 22px; width: 560px; max-width: 90vw; }
-dialog::backdrop { background: rgba(0,0,0,.55); }
+dialog::backdrop { background: var(--backdrop); }
 dialog h2 { margin: 0 0 12px; font-size: 16px; }
 fieldset { border: 1px solid var(--border); border-radius: 4px; margin: 0 0 12px; padding: 8px 12px; display: flex; gap: 18px; }
 fieldset label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }

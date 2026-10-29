@@ -3,6 +3,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Event as DaemonEvent, Notice } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, TetherApi } from '../shared/api.ts'
+import type { ThemeState } from '../shared/theme.ts'
 
 const api: TetherApi = {
   request: body => ipcRenderer.invoke('tether:request', body),
@@ -27,6 +28,13 @@ const api: TetherApi = {
   openExternal: url => ipcRenderer.send('shell:open-external', url),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   writeClipboard: text => ipcRenderer.send('clipboard:write', text),
+  getTheme: () => ipcRenderer.invoke('theme:get'),
+  setTheme: setting => ipcRenderer.send('theme:set', setting),
+  onTheme: listener => {
+    const handler = (_e: unknown, state: ThemeState): void => listener(state)
+    ipcRenderer.on('tether:theme', handler)
+    return () => ipcRenderer.removeListener('tether:theme', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('tether', api)
