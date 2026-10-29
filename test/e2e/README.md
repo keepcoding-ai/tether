@@ -30,6 +30,14 @@ the farewell hint (`Terminal.resumeHint`; `resumeId` only when it is a uuid). `s
 C1–C14 and C17 for soul-cli through the daemon with `agent: 'soul'` (needs a soul that reports:
 `TETHER_SOUL_CMD="node <soul-cli>/bin/soul"` until it is installed).
 
+**App and CLI.** `app.layout.test.ts` and `app.claude.test.ts` drive the Electron app with Playwright (`_electron`,
+hidden window, the real tetherd spawned by the app on a private home/pipe). The Claude one is the user's flow
+through the UI: "+ Novo painel" → Claude → trust dialog answered with the keyboard → one-word prompts → split →
+window killed by PID (same claude PIDs come back) → daemon killed by PID (both panels resume their session ids,
+read from the slot jsonl). It reads Claude's TUI off the panel's xterm buffer with the same dialect rules as the
+harness; `TETHER_CLAUDE_ARGS=--model haiku` pins the model. `cli.attach.test.ts` runs `tether attach` inside a
+node-pty against a shell slot (keys, resize, Ctrl+] detach).
+
 Run: `npm run test:e2e` (one file at a time; never two agents in parallel). `E2E_LOG_DIR=<dir>` keeps a JSONL
 log per session: raw PTY chunks (replayable through `Screen`) plus a `mark` line with the full screen at every
 harness step (`trust`, `ready`, `type`, `accepted`, `idle`, `kill`, `exit`). When a wait fails, the error message
