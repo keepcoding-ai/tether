@@ -11,7 +11,7 @@
 // (fullscreen canary, see harness.ts). Windows stay hidden. Screenshots go to test/e2e/artifacts/.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync, type ChildProcess } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
@@ -19,8 +19,9 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { readEvents } from '../../src/core/store.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
-import { killTree } from '../../src/daemon/pty.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { claim, killOwned, type Owned } from '../kill.ts'
+import { killElectron } from './electron.ts'
 import { aliveProcs, CLAUDE_DIALECT, processTree, type Proc } from './harness.ts'
 
 // Browser-side globals used inside page.evaluate callbacks (this tsconfig has no DOM lib).
@@ -38,6 +39,7 @@ const root = resolve(import.meta.dirname, '..', '..')
 const artifacts = join(root, 'test', 'e2e', 'artifacts')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
+const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const pipe = `\\\\.\\pipe\\tether-appclaude-${process.pid}`
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Claude Code counts a fullscreen session that dies within 10 s as a boot strike (see harness.ts). */
@@ -57,10 +59,6 @@ async function waitUntil(cond: () => boolean | Promise<boolean>, timeoutMs: numb
   }
 }
 
-function waitForExit(child: ChildProcess): Promise<void> {
-  return new Promise(res => { if (child.exitCode !== null) res(); else child.once('exit', () => res()) })
-}
-
 async function launch(home: string): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_')) env[k] = v
@@ -73,20 +71,6 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   page.setDefaultTimeout(10_000)
   await page.waitForSelector('#conn.on', { timeout: 30_000 })
   return { app, page }
-}
-
-/** Kills the Electron main process by PID (see app.layout.test.ts for why the launcher is handled apart) and
- *  relaunches straight away, like the user does: the helpers of the dead instance (GPU, renderer, network) may
- *  still hold Chromium's single-instance lock for a few seconds, and the app retries it (app.instance.test.ts). */
-async function killElectron(app: ElectronApplication): Promise<void> {
-  const mainPid = await app.evaluate(() => process.pid)
-  const launcher = app.process()
-  process.kill(mainPid)
-  if (launcher.pid && launcher.pid !== mainPid) {
-    await Promise.race([waitForExit(launcher), sleep(3000)])
-    if (launcher.exitCode === null) process.kill(launcher.pid)
-  }
-  await waitForExit(launcher)
 }
 
 const hooks = {
@@ -219,7 +203,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpdir(), 'tether-appclaude-'))
   const work = mkdtempSync(join(tmpdir(), 'tether-appclaude-work-'))
-  const daemonPids: number[] = []
+  const daemons: Owned[] = []
   const trees: Proc[][] = []
   /** When each running Claude's prompt first appeared (never kill one younger than MIN_UPTIME_MS). */
   const readyAt = new Map<string, number>()
@@ -230,7 +214,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     ;({ app, page } = await launch(home))
     const daemonPid = (await hooks.daemonPid(page))!
     assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
-    daemonPids.push(daemonPid)
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
 
     // ---- 1. "+ Novo painel" → Claude in the temp folder ----
     await page.click('#btn-new')
@@ -271,7 +255,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
 
     // ---- 3. window crash: kill the Electron main by PID; the agents must not notice ----
     await untilUptime(readyAt)
-    await killElectron(app)
+    await killElectron(app, root)
     app = undefined
     assert.ok(pidAlive(daemonPid), 'tetherd survived the window kill')
     for (const [id, pid] of pidsBefore) assert.ok(pidAlive(pid), `claude of ${id} (pid ${pid}) survived the window kill`)
@@ -290,18 +274,18 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
 
     // ---- 4. reboot: kill the daemon by PID; the next launch spawns a new one and resumes both sessions ----
     await untilUptime(readyAt)
-    await killElectron(app)
+    await killElectron(app, root)
     app = undefined
-    process.kill(daemonPid)
+    assert.equal(await killOwned(daemons[0]!), 'killed', 'tetherd killed by identity')
     await waitUntil(() => !pidAlive(daemonPid), 10_000, 'tetherd to die')
     // The PTYs go with the daemon; the agents die once their console is gone (a real reboot kills them anyway).
     const orphans = await waitGone(trees.flat(), 15_000)
     evidence.claudeAfterDaemonKill = orphans.length ? `still alive, killed by the test: ${orphans.map(p => `${p.pid} ${p.name}`).join(', ')}` : 'gone with the daemon'
-    for (const p of orphans) await killTree(p.pid)
+    for (const p of orphans) await killOwned(p, { tree: true })
     ;({ app, page } = await launch(home))
     const daemonPid2 = (await hooks.daemonPid(page))!
     assert.ok(daemonPid2 && daemonPid2 !== daemonPid && pidAlive(daemonPid2), 'a new tetherd was spawned')
-    daemonPids.push(daemonPid2)
+    daemons.push(await claim(daemonPid2, { cmdIncludes: daemonMain, what: 'tetherd' }))
     await tabCount(page, 2)
     assert.deepEqual([...(await hooks.ids(page))].sort(), [id1, id2].sort(), 'same 2 slots after the daemon restart')
     for (const id of [id1, id2]) readyAt.set(id, await awaitClaude(page, id))
@@ -320,19 +304,19 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     t.diagnostic(`evidence: ${JSON.stringify(evidence)}`)
   } finally {
     await untilUptime(readyAt)
-    if (app) await killElectron(app).catch(() => {})
+    if (app) await killElectron(app, root).catch(() => {})
     // Graceful shutdown first (the daemon kills its PTY trees); by PID when it does not answer.
-    for (const pid of daemonPids) {
-      if (!pidAlive(pid)) continue
+    for (const d of daemons) {
+      if (!pidAlive(d.pid)) continue
       try {
         const client = await DaemonClient.connect({ home, pipe, client: 'test', spawn: false })
         await client.request({ t: 'shutdown' }).catch(() => {})
         client.close()
       } catch { /* not answering */ }
-      await waitUntil(() => !pidAlive(pid), 10_000, 'tetherd to exit').catch(() => { try { process.kill(pid) } catch { /* gone */ } })
+      await waitUntil(() => !pidAlive(d.pid), 10_000, 'tetherd to exit').catch(async () => { await killOwned(d, { tree: true }) })
     }
     const left = await waitGone(trees.flat(), 15_000)
-    for (const p of left) await killTree(p.pid)
+    for (const p of left) await killOwned(p, { tree: true })
     for (const dir of [home, work]) {
       for (let i = 0; i < 5; i++) { try { rmSync(dir, { recursive: true, force: true }); break } catch { await sleep(300) } }
     }

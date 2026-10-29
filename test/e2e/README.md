@@ -70,7 +70,9 @@ argument is typed (`/resume <id>`, `/rename x`). After Enter it waits until the 
 process exits), so the next `waitIdle` cannot fire early.
 
 **Kill / orphans.** `kill()` snapshots the process tree (`Get-CimInstance Win32_Process`, walked from the PTY child
-pid), runs `taskkill /PID <pid> /T /F`, closes the pseudo console and polls `tasklist` until every pid is gone
+pid), kills the child's tree **by identity** (`test/kill.ts`: the pid is killed only if it still has the creation
+time captured right after the spawn; every kill in `test/**` goes through that helper, so a pid reused by the user's
+own tetherd or agent is never touched), closes the pseudo console and polls `tasklist` until every pid is gone
 (15 s grace; `exit()` does the same wait after `/exit`). Process names are useless as a marker on a machine with
 other Claude sessions; the tree is the marker. A process is identified by pid **and** creation time (`Proc`):
 Windows reuses pids within seconds, and Claude Code keeps spawning short-lived `cmd /c tasklist | findstr`

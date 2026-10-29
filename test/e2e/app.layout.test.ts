@@ -9,13 +9,15 @@
 // Windows stay hidden (TETHER_E2E_HIDDEN=1). Screenshots go to test/e2e/artifacts/.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync, type ChildProcess } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { claim, killOwned, type Owned } from '../kill.ts'
+import { killElectron } from './electron.ts'
 
 // Browser-side globals used inside page.evaluate callbacks (this tsconfig has no DOM lib).
 type Hooks = {
@@ -40,6 +42,7 @@ const root = resolve(import.meta.dirname, '..', '..')
 const artifacts = join(root, 'test', 'e2e', 'artifacts')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
+const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const pipe = `\\\\.\\pipe\\tether-apptest-${process.pid}`
 
 type Layout = { grid: { root: Node }; panels: Record<string, unknown>; activeGroup?: string }
@@ -64,10 +67,6 @@ async function waitUntil(cond: () => boolean, timeoutMs: number, what: string): 
   }
 }
 
-function waitForExit(child: ChildProcess): Promise<void> {
-  return new Promise(res => { if (child.exitCode !== null) res(); else child.once('exit', () => res()) })
-}
-
 async function launch(home: string): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_')) env[k] = v
@@ -79,27 +78,6 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   page.setDefaultTimeout(10_000)
   await page.waitForSelector('#conn.on', { timeout: 30_000 })
   return { app, page }
-}
-
-/**
- * Kills the Electron main process by PID. On Windows the process Playwright spawns is a launcher whose
- * child is the real main process (the one with the window and the pipe connection), so the PID is read
- * from inside Electron; the launcher exits once its child is gone.
- * Also used for the final cleanup: `app.close()` would block until the daemon dies, because a child
- * spawned on Windows inherits every inheritable handle of its parent, so the detached tetherd holds
- * Playwright's CDP pipe (harmless for a daemon started from a shortcut or `npm run app`: no pipes there).
- */
-async function killElectron(app: ElectronApplication): Promise<void> {
-  const mainPid = await app.evaluate(() => process.pid)
-  const launcher = app.process()
-  process.kill(mainPid)
-  if (launcher.pid && launcher.pid !== mainPid) {
-    const exited = waitForExit(launcher)
-    const timeout = new Promise<void>(res => setTimeout(res, 3000))
-    await Promise.race([exited, timeout])
-    if (launcher.exitCode === null) process.kill(launcher.pid)
-  }
-  await waitForExit(launcher)
 }
 
 async function createPanel(page: Page, kind: 'claude' | 'soul' | 'shell', cwd: string, shot?: string): Promise<void> {
@@ -149,14 +127,14 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpdir(), 'tether-apptest-'))
-  const daemonPids: number[] = []
+  const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
     let page: Page
     ;({ app, page } = await launch(home))
     const daemonPid = (await hooks.daemonPid(page))!
     assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
-    daemonPids.push(daemonPid)
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
     assert.equal(readFileSync(join(home, 'tetherd.pid'), 'utf8').trim(), String(daemonPid), 'tetherd.pid matches the hello pid')
     await page.waitForSelector('.watermark')
     await page.screenshot({ path: join(artifacts, 'empty.png') })
@@ -182,7 +160,7 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     assert.equal(Object.keys(layoutBefore.panels).length, 4)
 
     // ---- 2. kill the window by PID: the daemon and its shells must not notice ----
-    await killElectron(app)
+    await killElectron(app, root)
     app = undefined
     assert.ok(pidAlive(daemonPid), 'tetherd survived the window kill')
     for (const [id, pid] of pidsBefore) assert.ok(pidAlive(pid), `shell of ${id} (pid ${pid}) survived the window kill`)
@@ -201,14 +179,14 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     await page.screenshot({ path: join(artifacts, 'four-panels-restored.png') })
 
     // ---- 3. kill the daemon by PID: the next launch spawns a new one and restarts the panels ----
-    await killElectron(app)
+    await killElectron(app, root)
     app = undefined
-    process.kill(daemonPid)
+    assert.equal(await killOwned(daemons[0]!), 'killed', 'tetherd killed by identity')
     await waitUntil(() => !pidAlive(daemonPid), 10_000, 'tetherd to die')
     ;({ app, page } = await launch(home))
     const daemonPid2 = (await hooks.daemonPid(page))!
     assert.ok(daemonPid2 && daemonPid2 !== daemonPid && pidAlive(daemonPid2), 'a new tetherd was spawned')
-    daemonPids.push(daemonPid2)
+    daemons.push(await claim(daemonPid2, { cmdIncludes: daemonMain, what: 'tetherd' }))
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 4, undefined, { timeout: 10_000 })
     assert.deepEqual([...(await hooks.ids(page))].sort(), [...ids].sort(), 'same 4 slots after the daemon restart')
     const pidsRestarted = await waitRunning(page, ids)
@@ -257,9 +235,9 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     await page.waitForSelector(`.panel[data-slot-id="${target}"][data-status="running"]`)
     assert.equal((await hooks.slots(page)).find(s => s.slotId === target)?.pid, pidsRestarted.get(target), 'start on a running slot is a no-op')
   } finally {
-    if (app) await killElectron(app).catch(() => {})
-    for (const pid of daemonPids) if (pidAlive(pid)) { try { process.kill(pid) } catch { /* already gone */ } }
-    await waitUntil(() => daemonPids.every(p => !pidAlive(p)), 10_000, 'tetherd processes to exit').catch(() => {})
+    if (app) await killElectron(app, root).catch(() => {})
+    for (const d of daemons) await killOwned(d, { tree: true })
+    await waitUntil(() => daemons.every(d => !pidAlive(d.pid)), 10_000, 'tetherd processes to exit').catch(() => {})
     for (let i = 0; i < 5; i++) {
       try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
     }

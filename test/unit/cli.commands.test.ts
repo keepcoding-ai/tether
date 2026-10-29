@@ -10,9 +10,11 @@ import { defaultShell } from '../../src/agents/shell.ts'
 import { createSlot, readSlot } from '../../src/core/store.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { claim, killOwned } from '../kill.ts'
 import { pidAlive, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const BIN = resolve(import.meta.dirname, '../../bin/tether.mjs')
+const DAEMON_MAIN = resolve(import.meta.dirname, '../../src/daemon/main.ts')
 
 interface Run { status: number | null; stdout: string; stderr: string }
 
@@ -54,7 +56,7 @@ describe('tether CLI', () => {
         await c.request({ t: 'shutdown' })
         await waitUntil(() => !pidAlive(daemonPid), 15_000, 'daemon gone')
       } catch {
-        spawnSync('taskkill', ['/PID', String(daemonPid), '/T', '/F'], { windowsHide: true })
+        await killOwned(await claim(daemonPid, { cmdIncludes: DAEMON_MAIN, what: 'tetherd' }), { tree: true })
       }
     }
     await removeHome(home)

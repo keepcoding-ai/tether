@@ -16,6 +16,8 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
+import { claim, killOwned, type Owned } from '../kill.ts'
+import { killElectron } from './electron.ts'
 
 declare const window: { __tether: { panelIds(): string[]; text(id: string): string; connection(): { connected: boolean; pid?: number } | undefined } }
 declare const document: { querySelectorAll(selector: string): { length: number } }
@@ -24,6 +26,7 @@ const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
+const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const pipe = `\\\\.\\pipe\\tether-appinstance-${process.pid}`
 const GIVE_UP = /o tether ainda está fechando; tente de novo em alguns segundos/
 /** The app's retry window for the lock (LOCK_RETRY_MS in app/main/main.ts). */
@@ -54,18 +57,6 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   page.setDefaultTimeout(10_000)
   await page.waitForSelector('#conn.on', { timeout: 30_000 })
   return { app, page }
-}
-
-/** Kills the Electron main by PID (see app.layout.test.ts) and returns as soon as the launcher is gone: the helpers are NOT awaited. */
-async function killElectron(app: ElectronApplication): Promise<void> {
-  const mainPid = await app.evaluate(() => process.pid)
-  const launcher = app.process()
-  process.kill(mainPid)
-  if (launcher.pid && launcher.pid !== mainPid) {
-    await Promise.race([waitForExit(launcher), sleep(3000)])
-    if (launcher.exitCode === null) process.kill(launcher.pid)
-  }
-  await waitForExit(launcher)
 }
 
 /** Runs the app bare (no Playwright) and resolves when it exits, with what it wrote. */
@@ -113,14 +104,14 @@ test('single instance: immediate relaunch after a window kill, stale lock, secon
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   const home = mkdtempSync(join(tmpdir(), 'tether-appinstance-'))
-  const daemonPids: number[] = []
+  const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
     let page: Page
     ;({ app, page } = await launch(home))
     const daemonPid = (await hooks.daemonPid(page))!
     assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
-    daemonPids.push(daemonPid)
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
     assert.equal(await hooks.lockAttempts(app), 1, 'a fresh home: the lock comes at the first try')
     await createShellPanel(page, root)
     const ids = await hooks.ids(page)
@@ -132,7 +123,7 @@ test('single instance: immediate relaunch after a window kill, stale lock, secon
     // ---- 1. window kill → relaunch at once, no wait for the dying helpers (3 rounds: the race is timing-dependent) ----
     let raced = 0
     for (let round = 1; round <= 3; round++) {
-      await killElectron(app)
+      await killElectron(app, root)
       app = undefined
       const t0 = Date.now()
       ;({ app, page } = await launch(home))
@@ -146,7 +137,7 @@ test('single instance: immediate relaunch after a window kill, stale lock, secon
     // ---- 2. deterministic stale lock: held by the test for 7 s after the kill; the app must wait it out ----
     // Chromium blocks ~5 s inside a refused requestSingleInstanceLock() before saying no: 7 s means the first
     // request is refused and the retry gets the lock (the unfixed app quit silently after the first refusal).
-    await killElectron(app)
+    await killElectron(app, root)
     app = undefined
     await sleep(3000) // let the old helpers go, so the lock below is the only obstacle
     const release = holdLock(home)
@@ -178,7 +169,7 @@ test('single instance: immediate relaunch after a window kill, stale lock, secon
     t.diagnostic(`second launch while alive: exited in ${secondTook} ms, ack by pid ${ack.pid}`)
 
     // ---- 4. a lock that never frees: give up after the retry window, message on stderr (no box in hidden mode) ----
-    await killElectron(app)
+    await killElectron(app, root)
     app = undefined
     await sleep(3000)
     const releaseForever = holdLock(home)
@@ -190,10 +181,10 @@ test('single instance: immediate relaunch after a window kill, stale lock, secon
     assert.match(stuck.stderr, GIVE_UP)
     t.diagnostic(`stuck lock: gave up after ${stuckTook} ms with the message`)
   } finally {
-    if (app) await killElectron(app).catch(() => {})
-    for (const pid of daemonPids) if (pidAlive(pid)) { try { process.kill(pid) } catch { /* already gone */ } }
+    if (app) await killElectron(app, root).catch(() => {})
+    for (const d of daemons) await killOwned(d, { tree: true })
     const deadline = Date.now() + 10_000
-    while (daemonPids.some(pidAlive) && Date.now() < deadline) await sleep(100)
+    while (daemons.some(d => pidAlive(d.pid)) && Date.now() < deadline) await sleep(100)
     for (let i = 0; i < 5; i++) {
       try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
     }
