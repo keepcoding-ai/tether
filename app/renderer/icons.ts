@@ -28,6 +28,15 @@ import tray from '@phosphor-icons/core/assets/regular/tray.svg'
 import warning from '@phosphor-icons/core/assets/regular/warning.svg'
 import x from '@phosphor-icons/core/assets/regular/x.svg'
 import xCircle from '@phosphor-icons/core/assets/regular/x-circle.svg'
+import check from '@phosphor-icons/core/assets/regular/check.svg'
+import copy from '@phosphor-icons/core/assets/regular/copy.svg'
+import pencilSimple from '@phosphor-icons/core/assets/regular/pencil-simple.svg'
+import shieldWarning from '@phosphor-icons/core/assets/regular/shield-warning.svg'
+import slidersHorizontal from '@phosphor-icons/core/assets/regular/sliders-horizontal.svg'
+import star from '@phosphor-icons/core/assets/regular/star.svg'
+import list from '@phosphor-icons/core/assets/regular/list.svg'
+import minus from '@phosphor-icons/core/assets/regular/minus.svg'
+import folder from '@phosphor-icons/core/assets/regular/folder.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -58,6 +67,15 @@ const SVG = {
   warning,
   x,
   'x-circle': xCircle,
+  check,
+  copy,
+  folder,
+  list,
+  minus,
+  'pencil-simple': pencilSimple,
+  'shield-warning': shieldWarning,
+  'sliders-horizontal': slidersHorizontal,
+  star,
 } as const
 
 export type IconName = keyof typeof SVG

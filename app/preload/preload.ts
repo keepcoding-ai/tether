@@ -26,6 +26,8 @@ const api: TetherApi = {
   listProfiles: () => ipcRenderer.invoke('profiles:list'),
   saveProfile: profile => ipcRenderer.invoke('profiles:save', profile),
   deleteProfile: profileId => ipcRenderer.invoke('profiles:delete', profileId),
+  onOpenProfiles: listener => on<void>('tether:open-profiles', () => listener()),
+  command: cmd => ipcRenderer.send('tether:command', cmd),
   openExternal: url => ipcRenderer.send('shell:open-external', url),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   writeClipboard: text => ipcRenderer.send('clipboard:write', text),

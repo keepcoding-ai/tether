@@ -2,7 +2,7 @@
 // Each one is written from what it has to communicate: what is at stake, what each choice does to it.
 // The copy is consequence-first and differs by what is actually there (an agent running, nothing
 // running, a shell with no session to resume).
-import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
+import type { Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import { KIND_ICON } from './icons.ts'
 
@@ -127,5 +127,35 @@ export function stillClosingSituation(): DialogSpec {
     escChoice: 'close',
   }
 }
+
+/**
+ * Deleting a launch profile. What it communicates: "the panels that use it are not touched (they keep the
+ * snapshot of its args); what goes is the choice for new panels." `users` = slots that reference it now.
+ */
+export function deleteProfileSituation(p: Profile, users: SlotState[]): DialogSpec {
+  const lines = [KIND_LABEL_OF[p.agent]]
+  const args = p.agent === 'shell' && p.shell ? [...p.shell.args, ...p.args] : p.args
+  if (args.length) lines.push(args.join(' '))
+  const status = users.length === 0
+    ? { label: 'nenhum painel usa', tone: 'dim' as const }
+    : { label: users.length === 1 ? '1 painel usa' : `${users.length} painéis usam`, tone: 'warn' as const }
+  const consequence = users.length === 0
+    ? 'O perfil some da lista. Nenhum painel depende dele.'
+    : `O perfil some da lista. ${users.length === 1 ? 'O painel que usa ele continua' : `Os ${users.length} painéis que usam ele continuam`} rodando com os últimos argumentos dele, inclusive ao retomar; só não dá mais para escolhê-lo em um painel novo.`
+  return {
+    situation: 'delete-profile',
+    tone: 'danger',
+    icon: 'trash',
+    title: `Apagar o perfil "${p.name}"?`,
+    context: { icon: KIND_ICON[p.agent], name: p.name, lines, status },
+    choices: [
+      { id: 'keep', icon: 'arrow-square-out', label: 'Manter o perfil', consequence: 'Nada muda.', tone: 'neutral' },
+      { id: 'delete', icon: 'trash', label: 'Apagar o perfil', consequence, tone: 'destructive' },
+    ],
+    escChoice: 'keep',
+  }
+}
+
+const KIND_LABEL_OF: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
 
 export const STANDALONE_SITUATIONS: Record<string, () => DialogSpec> = { 'still-closing': stillClosingSituation }

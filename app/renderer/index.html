@@ -14,6 +14,7 @@
     <button id="btn-new" title="Novo painel (Ctrl+Shift+T)"><span class="i" data-icon="plus"></span>Novo painel</button>
     <button id="btn-split-right" title="Dividir à direita (Ctrl+Shift+D)"><span class="i" data-icon="square-split-horizontal"></span>Direita</button>
     <button id="btn-split-down" title="Dividir abaixo (Ctrl+Shift+E)"><span class="i" data-icon="square-split-vertical"></span>Abaixo</button>
+    <button id="btn-profiles" title="Perfis de lançamento (também em Exibir → Perfis de lançamento…)"><span class="i" data-icon="sliders-horizontal"></span>Perfis</button>
     <div class="dropdown">
       <button id="btn-closed" title="Slots rodando no tetherd sem painel aberto"><span class="i" data-icon="tray"></span>Slots fechados <span id="closed-count"></span><span class="i caret" data-icon="caret-down"></span></button>
       <ul id="closed-list" hidden></ul>
@@ -27,6 +28,23 @@
       </select>
     </label>
     <span id="conn" class="conn off" title=""><span class="i" data-icon="plugs"></span>desconectado</span>
+    <div class="dropdown">
+      <button id="btn-menu" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"><span class="i" data-icon="list"></span></button>
+      <ul id="app-menu" class="menu" role="menu" hidden>
+        <li role="menuitem" data-cmd="new"><span class="i" data-icon="plus"></span>Novo painel<kbd>Ctrl+Shift+T</kbd></li>
+        <li role="menuitem" data-cmd="profiles"><span class="i" data-icon="sliders-horizontal"></span>Perfis de lançamento…</li>
+        <li class="sep" role="separator"></li>
+        <li class="label"><span class="i" data-icon="circle-half"></span>Tema</li>
+        <li role="menuitemradio" data-theme="light"><span class="i check" data-icon="check"></span>Claro</li>
+        <li role="menuitemradio" data-theme="auto"><span class="i check" data-icon="check"></span>Automático</li>
+        <li role="menuitemradio" data-theme="dark"><span class="i check" data-icon="check"></span>Escuro</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitem" data-cmd="restore-confirmations"><span class="i" data-icon="arrow-clockwise"></span>Voltar a perguntar antes de fechar painéis</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitem" data-cmd="close-window"><span class="i" data-icon="app-window"></span>Fechar a janela<kbd>Ctrl+Shift+W</kbd></li>
+        <li role="menuitem" data-cmd="quit-all" class="danger"><span class="i" data-icon="power"></span>Sair e encerrar tudo…<kbd>Ctrl+Shift+Q</kbd></li>
+      </ul>
+    </div>
   </header>
 
   <main id="dock"></main>
@@ -43,11 +61,10 @@
   <dialog id="dlg-new" class="form" aria-labelledby="dlg-title">
     <form id="form-new" method="dialog">
       <header><span class="badge"><span class="i" data-icon="plus"></span></span><h2 id="dlg-title">Novo painel</h2></header>
-      <fieldset>
-        <legend>Tipo</legend>
-        <label><input type="radio" name="kind" value="claude" checked> <span class="i" data-icon="sparkle"></span> Claude</label>
-        <label><input type="radio" name="kind" value="soul"> <span class="i" data-icon="ghost"></span> soul</label>
-        <label><input type="radio" name="kind" value="shell"> <span class="i" data-icon="terminal-window"></span> Shell</label>
+      <fieldset class="profiles">
+        <legend>Perfil</legend>
+        <div id="new-profiles" class="profile-groups"></div>
+        <button type="button" id="btn-manage-profiles" class="link"><span class="i" data-icon="sliders-horizontal"></span>Gerenciar perfis…</button>
       </fieldset>
       <label class="field">
         <span>Pasta</span>
@@ -66,6 +83,82 @@
         <button type="submit" id="btn-create" class="primary">Abrir <kbd>Enter</kbd></button>
       </footer>
     </form>
+  </dialog>
+
+  <dialog id="dlg-profiles" class="form manager" aria-labelledby="profiles-title">
+    <header>
+      <span class="badge"><span class="i" data-icon="sliders-horizontal"></span></span>
+      <div class="head-text">
+        <h2 id="profiles-title">Perfis de lançamento</h2>
+        <p class="sub">Como cada agente é iniciado: argumentos, variáveis de ambiente e pasta. Um perfil editado vale no próximo início dos painéis que o usam.</p>
+      </div>
+      <button type="button" id="btn-profiles-close" class="cancel" title="Fechar (Esc)"><span class="i" data-icon="x"></span></button>
+    </header>
+    <div class="manager-body">
+      <aside class="manager-list">
+        <div id="profiles-list" class="profile-groups selectable"></div>
+        <button type="button" id="btn-profile-new"><span class="i" data-icon="plus"></span>Novo perfil</button>
+      </aside>
+      <form id="form-profile" class="manager-form" novalidate>
+        <input type="hidden" name="id">
+        <label class="field">
+          <span>Nome</span>
+          <input type="text" name="name" class="ui" placeholder="Claude modo revisão" spellcheck="false" autocomplete="off">
+          <span class="field-error" data-for="name" hidden></span>
+        </label>
+        <div class="field">
+          <span>Agente</span>
+          <span class="row agents">
+            <label><input type="radio" name="agent" value="claude"> <span class="i" data-icon="sparkle"></span> Claude</label>
+            <label><input type="radio" name="agent" value="soul"> <span class="i" data-icon="ghost"></span> soul</label>
+            <label><input type="radio" name="agent" value="shell"> <span class="i" data-icon="terminal-window"></span> Shell</label>
+          </span>
+          <span class="field-error" data-for="agent" hidden></span>
+        </div>
+        <label class="field" data-only="shell" hidden>
+          <span>Executável do shell</span>
+          <span class="row">
+            <input type="text" name="shell" placeholder="C:\Program Files\Git\bin\bash.exe" spellcheck="false" autocomplete="off">
+          </span>
+          <span class="hint">Vazio: o shell padrão do tether (pwsh ou PowerShell).</span>
+          <span class="field-error" data-for="shell" hidden></span>
+        </label>
+        <label class="field">
+          <span>Argumentos</span>
+          <input type="text" name="args" placeholder="--dangerously-skip-permissions" spellcheck="false" autocomplete="off">
+          <span class="hint">Separados por espaço; aspas agrupam (<code>--add-dir "C:\Meus Projetos"</code>). Entram antes dos argumentos do painel.</span>
+          <span id="profile-args-preview" class="chips" aria-live="polite"></span>
+          <span class="field-error" data-for="args" hidden></span>
+        </label>
+        <div class="field">
+          <span>Variáveis de ambiente</span>
+          <div id="profile-env" class="env-rows"></div>
+          <button type="button" id="btn-profile-env-add" class="link"><span class="i" data-icon="plus"></span>Adicionar variável</button>
+          <span class="field-warning" data-for="env" hidden></span>
+          <span class="field-error" data-for="env" hidden></span>
+        </div>
+        <label class="field">
+          <span>Pasta padrão</span>
+          <span class="row">
+            <input type="text" name="cwd" placeholder="(a última pasta usada)" spellcheck="false" autocomplete="off">
+            <button type="button" id="btn-profile-cwd-browse"><span class="i" data-icon="folder-open"></span>Procurar…</button>
+          </span>
+          <span class="hint">Sugerida ao abrir um painel novo com este perfil.</span>
+          <span class="field-error" data-for="cwd" hidden></span>
+        </label>
+        <label class="field check">
+          <input type="checkbox" name="default"> <span class="i" data-icon="star"></span><span id="profile-default-label">Perfil padrão deste agente (pré-selecionado em Novo painel)</span>
+        </label>
+        <p class="field-error general" data-for="general" hidden></p>
+        <p id="profile-saved" class="saved" hidden><span class="i" data-icon="check"></span>Perfil salvo.</p>
+        <footer class="actions">
+          <button type="button" id="btn-profile-delete" class="danger"><span class="i" data-icon="trash"></span>Apagar…</button>
+          <button type="button" id="btn-profile-duplicate"><span class="i" data-icon="copy"></span>Duplicar</button>
+          <span class="spacer"></span>
+          <button type="submit" id="btn-profile-save" class="primary"><span class="i" data-icon="check"></span>Salvar <kbd>Ctrl+Enter</kbd></button>
+        </footer>
+      </form>
+    </div>
   </dialog>
 
   <script type="module" src="../dist/renderer.js"></script>

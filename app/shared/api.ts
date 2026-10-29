@@ -6,6 +6,8 @@ import type { ThemeSetting, ThemeState } from './theme.ts'
 
 export type { Profile, ProfileInput }
 
+export type MainCommand = 'quit-all' | 'restore-confirmations'
+
 /** A request without the `id`: the main process numbers them. */
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
 
@@ -39,6 +41,10 @@ export interface TetherApi {
   /** Create (no id) or edit (id) a profile; `ok: false` carries the validation errors in Portuguese. */
   saveProfile(profile: ProfileInput): Promise<ProfileSaved>
   deleteProfile(profileId: string): Promise<ProfileDeleted>
+  /** Menu "Exibir → Perfis de lançamento…": main asks the renderer to open the profile manager. */
+  onOpenProfiles(listener: () => void): () => void
+  /** In-app menu commands that live in main: "Sair e encerrar tudo…" (asks through onAsk) and "Voltar a perguntar". */
+  command(cmd: MainCommand): void
   openExternal(url: string): void
   readClipboard(): Promise<string>
   writeClipboard(text: string): void

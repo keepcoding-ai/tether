@@ -2,7 +2,7 @@
 // keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
 import { createDockview, themeDark, themeLight, type DockviewApi, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
-import type { Event as DaemonEvent, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
+import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
@@ -10,6 +10,7 @@ import { askDialog, dialogOpen } from './dialog.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { pruneLayout } from './layout.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
+import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
 import { closePanelSituation, folderName, quitAllSituation } from './situations.ts'
 
 const COMPONENT = 'terminal'
@@ -31,6 +32,10 @@ let connection: ConnectionState | undefined
 let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' }
 /** Remembered dialog answers ("não perguntar de novo"); main owns the file and pushes every change. */
 let confirmations: Confirmations = {}
+/** The launch profiles (<home>/profiles.json), as last listed or pushed by the daemon's `profiles` event. */
+let profiles: Profile[] = []
+let profilesProblem: string | undefined
+let manager: ProfileManager
 
 const $ =<T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id)
@@ -51,7 +56,7 @@ const host: PanelHost = {
       case 'KeyC': panel.copy(); return true
       case 'KeyV': void panel.paste(); return true
       // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener.
-      case 'KeyT': case 'KeyD': case 'KeyE': return true
+      case 'KeyT': case 'KeyD': case 'KeyE': case 'KeyQ': return true
       default: return false
     }
   },
@@ -69,6 +74,7 @@ function applyTheme(state: ThemeState): void {
   api.updateOptions({ theme: DOCK_THEME[state.scheme] })
   for (const p of panels.values()) p.setScheme(state.scheme)
   $<HTMLSelectElement>('theme-select').value = state.setting
+  for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))
 }
 
 function setupDock(): void {
@@ -210,7 +216,7 @@ async function moveToFolder(slotId: string): Promise<void> {
   if (!slot || !panel) return
   const folder = await window.tether.pickFolder()
   if (!folder) return
-  const reply = await window.tether.request({ t: 'create', kind: slot.kind, cwd: folder, start: true })
+  const reply = await window.tether.request({ t: 'create', kind: slot.kind, cwd: folder, start: true, ...profileOf(slot) })
   if (reply.t === 'error' || !reply.slot) {
     startErrors.set(slotId, { code: reply.t === 'error' ? reply.code : 'bad-request', message: reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot' })
     renderSlot(slotId)
@@ -239,6 +245,7 @@ function applyState(slot: SlotState): void {
 function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
     case 'data': panels.get(ev.slotId)?.write(ev.data); break
+    case 'profiles': setProfiles(ev.profiles, undefined); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
@@ -349,9 +356,51 @@ function openSlot(slotId: string): void {
   panel.api.setActive()
 }
 
+// ---------- profiles ----------
+
+/** The slot's profile for a new slot that should launch the same way; nothing when the profile is gone. */
+function profileOf(slot: SlotState): { profileId?: string } {
+  return slot.profileId && profiles.some(p => p.id === slot.profileId) ? { profileId: slot.profileId } : {}
+}
+
+function setProfiles(list: Profile[], problem: string | undefined): void {
+  profiles = list
+  profilesProblem = problem
+  if (manager.open) manager.refresh()
+  const dlg = $<HTMLDialogElement>('dlg-new')
+  if (dlg.open) renderNewProfiles(selectedProfileId())
+}
+
+async function loadProfiles(): Promise<void> {
+  const r = await window.tether.listProfiles()
+  setProfiles(r.profiles, r.problem)
+}
+
+function openProfiles(id?: string): void {
+  const dlg = $<HTMLDialogElement>('dlg-new')
+  if (dlg.open) dlg.close()
+  manager.show(id)
+}
+
 // ---------- new panel dialog ----------
 
-interface NewPanelOptions { kind?: SlotKind; cwd?: string; position?: Position }
+interface NewPanelOptions { kind?: SlotKind; profileId?: string; cwd?: string; position?: Position }
+
+function selectedProfileId(): string | undefined {
+  return $<HTMLFormElement>('form-new').querySelector<HTMLInputElement>('input[name=profile]:checked')?.value
+}
+
+/** The profile list of "Novo painel"; a profile's folder is suggested while the folder field still holds the suggestion. */
+function renderNewProfiles(selectedId: string | undefined): void {
+  const cwdInput = $<HTMLInputElement>('new-cwd')
+  renderProfileGroups($('new-profiles'), profiles, {
+    mode: 'radio', selectedId,
+    onPick: id => {
+      const p = profiles.find(x => x.id === id)
+      if (p?.cwd && cwdInput.value === cwdInput.dataset.suggested) { cwdInput.value = p.cwd; cwdInput.dataset.suggested = p.cwd }
+    },
+  })
+}
 
 async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   const dlg = $<HTMLDialogElement>('dlg-new')
@@ -359,10 +408,13 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   const cwdInput = $<HTMLInputElement>('new-cwd')
   const error = $('new-error')
   error.hidden = true
-  const kindInput = form.querySelector<HTMLInputElement>(`input[name=kind][value=${opts.kind ?? 'claude'}]`)
-  if (kindInput) kindInput.checked = true
+  if (profiles.length === 0) await loadProfiles()
+  const wanted = (opts.profileId && profiles.find(p => p.id === opts.profileId)) || defaultOf(profiles, opts.kind ?? 'claude') || profiles[0]
   const recent = await window.tether.recentFolders()
-  cwdInput.value = opts.cwd ?? recent[0] ?? ''
+  const suggested = opts.cwd ?? wanted?.cwd ?? recent[0] ?? ''
+  cwdInput.value = suggested
+  cwdInput.dataset.suggested = suggested
+  renderNewProfiles(wanted?.id)
   const list = $('recent-list')
   list.replaceChildren()
   if (recent.length === 0) {
@@ -376,10 +428,11 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   }
   const onSubmit = async (ev: SubmitEvent): Promise<void> => {
     ev.preventDefault()
-    const kind = (new FormData(form).get('kind') as SlotKind | null) ?? 'claude'
+    const profile = profiles.find(p => p.id === selectedProfileId())
+    if (!profile) { error.textContent = 'Escolha um perfil.'; error.hidden = false; return }
     const cwd = cwdInput.value.trim()
     if (!cwd) { error.textContent = 'Informe a pasta.'; error.hidden = false; return }
-    const reply = await window.tether.request({ t: 'create', kind, cwd, start: true })
+    const reply = await window.tether.request({ t: 'create', kind: profile.agent, cwd, start: true, profileId: profile.id })
     if (reply.t === 'error' || !reply.slot) {
       error.textContent = reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot'
       error.hidden = false
@@ -397,17 +450,57 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   cwdInput.select()
 }
 
-/** New panel of the same kind/folder as the active one, split to the given side. */
+/** New panel with the same profile and folder as the active one, split to the given side. */
 async function splitActive(direction: 'right' | 'below'): Promise<void> {
   const active = api.activePanel
   const slot = active ? slots.get(active.id) : undefined
   if (!active || !slot) { void openNewDialog(); return }
-  const reply = await window.tether.request({ t: 'create', kind: slot.kind, cwd: slot.cwd, start: true })
+  const reply = await window.tether.request({ t: 'create', kind: slot.kind, cwd: slot.cwd, start: true, ...profileOf(slot) })
   if (reply.t === 'error' || !reply.slot) {
-    void openNewDialog({ kind: slot.kind, cwd: slot.cwd, position: { referencePanel: active.id, direction } })
+    void openNewDialog({ kind: slot.kind, profileId: slot.profileId, cwd: slot.cwd, position: { referencePanel: active.id, direction } })
     return
   }
   addPanel(reply.slot, { referencePanel: active.id, direction }).api.setActive()
+}
+
+// ---------- in-app menu ----------
+// The native menu bar is hidden (autoHideMenuBar) and Alt does not reach it from a terminal: the same commands
+// live behind the toolbar's menu button. Theme and "voltar a perguntar" talk to main; quit-all asks through onAsk.
+
+function setupMenu(): void {
+  const btn = $('btn-menu')
+  const menu = $('app-menu')
+  const toggle = (open: boolean): void => {
+    menu.hidden = !open
+    btn.setAttribute('aria-expanded', String(open))
+    if (open) menu.querySelector<HTMLElement>('li[role^=menuitem]')?.focus()
+  }
+  btn.addEventListener('click', ev => { ev.stopPropagation(); toggle(menu.hidden) })
+  document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
+  for (const li of menu.querySelectorAll<HTMLElement>('li[role^=menuitem]')) li.tabIndex = -1
+  const run = (li: HTMLElement): void => {
+    toggle(false)
+    if (li.dataset.theme) { window.tether.setTheme(normalizeTheme(li.dataset.theme)); return }
+    switch (li.dataset.cmd) {
+      case 'new': void openNewDialog(); break
+      case 'profiles': openProfiles(); break
+      case 'restore-confirmations': window.tether.command('restore-confirmations'); break
+      case 'close-window': window.tether.closeWindow(); break
+      case 'quit-all': window.tether.command('quit-all'); break
+    }
+  }
+  menu.addEventListener('click', ev => {
+    const li = (ev.target as HTMLElement).closest<HTMLElement>('li[role^=menuitem]')
+    if (li) { ev.stopPropagation(); run(li) }
+  })
+  menu.addEventListener('keydown', ev => {
+    const items = [...menu.querySelectorAll<HTMLElement>('li[role^=menuitem]')]
+    const i = items.indexOf(document.activeElement as HTMLElement)
+    if (ev.key === 'Escape') { ev.preventDefault(); toggle(false); btn.focus() }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(i + 1) % items.length]?.focus() }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus() }
+    else if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (i >= 0) run(items[i]!) }
+  })
 }
 
 // ---------- wiring ----------
@@ -416,6 +509,9 @@ function setupUi(): void {
   // Static icons: <span data-icon="name"> in index.html becomes the inline SVG.
   for (const el of document.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
   $('btn-new').addEventListener('click', () => { void openNewDialog() })
+  $('btn-profiles').addEventListener('click', () => openProfiles())
+  $('btn-manage-profiles').addEventListener('click', () => openProfiles(selectedProfileId()))
+  setupMenu()
   $('btn-split-right').addEventListener('click', () => { void splitActive('right') })
   $('btn-split-down').addEventListener('click', () => { void splitActive('below') })
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
@@ -433,11 +529,12 @@ function setupUi(): void {
 
   document.addEventListener('keydown', ev => {
     if (!ev.ctrlKey || !ev.shiftKey || ev.altKey) return
-    if ($<HTMLDialogElement>('dlg-new').open || dialogOpen()) return
+    if ($<HTMLDialogElement>('dlg-new').open || manager.open || dialogOpen()) return
     switch (ev.code) {
       case 'KeyT': ev.preventDefault(); void openNewDialog(); break
       case 'KeyD': ev.preventDefault(); void splitActive('right'); break
       case 'KeyE': ev.preventDefault(); void splitActive('below'); break
+      case 'KeyQ': ev.preventDefault(); window.tether.command('quit-all'); break
     }
   })
 }
@@ -465,6 +562,10 @@ declare global {
       confirmations(): Confirmations
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
       closePanel(slotId: string): void
+      /** The launch profiles as the renderer sees them. */
+      profiles(): Profile[]
+      /** Opens the profile manager (on a profile, or 'new'). */
+      openProfiles(id?: string): void
     }
   }
 }
@@ -491,12 +592,25 @@ function setupTestHooks(): void {
     termTheme: slotId => panels.get(slotId)?.term.options.theme as Record<string, string | undefined> | undefined,
     confirmations: () => confirmations,
     closePanel: slotId => { void closePanel(slotId) },
+    profiles: () => profiles,
+    openProfiles,
   }
 }
 
 setupDock()
+manager = new ProfileManager({
+  profiles: () => profiles,
+  problem: () => profilesProblem,
+  slots: () => [...slots.values()],
+  pickFolder: initial => window.tether.pickFolder(initial),
+  save: input => window.tether.saveProfile(input),
+  delete: id => window.tether.deleteProfile(id),
+  reload: loadProfiles,
+})
 setupUi()
 setupTestHooks()
+void loadProfiles()
+window.tether.onOpenProfiles(() => openProfiles())
 window.tether.onEvent(onDaemonEvent)
 window.tether.onConnection(state => { void onConnection(state) })
 window.tether.onTheme(applyTheme)

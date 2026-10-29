@@ -171,6 +171,11 @@ ipcMain.on('dialog:answer', (_e, askId: number, answer: DialogAnswer) => {
   pendingAsks.delete(askId)
 })
 ipcMain.on('window:close', () => win?.close())
+/** The in-app menu (the native menu bar is hidden and Alt does not reach it from a terminal). */
+ipcMain.on('tether:command', (_e, cmd: unknown) => {
+  if (cmd === 'quit-all') void quitAll()
+  else if (cmd === 'restore-confirmations') restoreConfirmations()
+})
 
 /** "Sair e encerrar tudo": stops every slot, shuts the daemon down and quits (after the in-app dialog). */
 async function quitAll(): Promise<void> {
@@ -304,6 +309,7 @@ function createMenu(): void {
       label: 'Exibir',
       submenu: [
         themeMenu(),
+        { id: 'profiles', label: 'Perfis de lançamento…', click: () => win?.webContents.send('tether:open-profiles') },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },
         { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' },

@@ -63,8 +63,26 @@ export function panelTitle(s: SlotState): string {
   return s.title ?? s.name ?? folderName(s.cwd)
 }
 
+/** The unsafe marker (tab and header): the launch carries --dangerously-skip-permissions. */
+export const UNSAFE_LABEL = 'sem permissões'
+export const UNSAFE_TOOLTIP = 'Sem permissões: o Claude roda com --dangerously-skip-permissions e não pede confirmação antes de agir.'
+
+/** The marker element: shield icon + (optionally) the label; hidden unless the slot is unsafe. */
+export function unsafeBadge(withLabel: boolean): HTMLElement {
+  const el = document.createElement('span')
+  el.className = 'unsafe'
+  el.title = UNSAFE_TOOLTIP
+  el.setAttribute('aria-label', UNSAFE_TOOLTIP)
+  el.append(icon('shield-warning'))
+  if (withLabel) el.append(document.createTextNode(UNSAFE_LABEL))
+  el.hidden = true
+  return el
+}
+
 export function panelTooltip(s: SlotState): string {
   const lines = [`${KIND_LABEL[s.kind]} · ${STATUS_LABEL[effectiveStatus(s)]}`, `Pasta: ${s.cwd}`, `Slot: ${s.slotId}`]
+  if (s.profileName) lines.push(`Perfil: ${s.profileName}`)
+  if (s.unsafe) lines.push(UNSAFE_TOOLTIP)
   if (s.binding?.sessionId) lines.push(`Sessão: ${s.binding.sessionId}`)
   if (s.error) lines.push(`Erro: ${s.error.message}`)
   return lines.join('\n')
@@ -171,7 +189,7 @@ export class TerminalPanel implements IContentRenderer {
   readonly term: Terminal
   slotId = ''
   private readonly fit = new FitAddon()
-  private readonly head: { icon: HTMLElement; title: HTMLElement; cwd: HTMLElement; status: HTMLElement }
+  private readonly head: { icon: HTMLElement; title: HTMLElement; profile: HTMLElement; unsafe: HTMLElement; cwd: HTMLElement; status: HTMLElement }
   private readonly termHost: HTMLElement
   private readonly overlay: HTMLElement
   private observer: ResizeObserver | undefined
@@ -189,10 +207,12 @@ export class TerminalPanel implements IContentRenderer {
     head.className = 'panel-head'
     const icon = document.createElement('span'); icon.className = 'icon'
     const title = document.createElement('span'); title.className = 'title'
+    const profile = document.createElement('span'); profile.className = 'profile'; profile.hidden = true
+    const unsafe = unsafeBadge(true)
     const cwd = document.createElement('span'); cwd.className = 'cwd'
     const status = document.createElement('span'); status.className = 'status'
-    head.append(icon, title, cwd, status)
-    this.head = { icon, title, cwd, status }
+    head.append(icon, title, profile, unsafe, cwd, status)
+    this.head = { icon, title, profile, unsafe, cwd, status }
     this.termHost = document.createElement('div')
     this.termHost.className = 'panel-term'
     this.overlay = document.createElement('div')
@@ -255,6 +275,10 @@ export class TerminalPanel implements IContentRenderer {
     else if (pending && status === 'exited') status = 'starting'
     setIcon(this.head.icon, KIND_ICON[s.kind])
     this.head.title.textContent = s.title ?? s.name ?? KIND_LABEL[s.kind]
+    this.head.profile.textContent = s.profileName ?? ''
+    this.head.profile.title = s.profileName ? `Perfil de lançamento: ${s.profileName}` : ''
+    this.head.profile.hidden = !s.profileName
+    this.head.unsafe.hidden = !s.unsafe
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
     this.setStatus(status, STATUS_LABEL[status])
@@ -377,6 +401,7 @@ export class SlotTab implements ITabRenderer {
   private readonly kind: HTMLElement
   private readonly text: HTMLElement
   private readonly dot: HTMLElement
+  private readonly unsafe: HTMLElement
   private disposers: Array<() => void> = []
   private readonly host: PanelHost
   private readonly onClose: (slotId: string) => void
@@ -389,12 +414,13 @@ export class SlotTab implements ITabRenderer {
     this.kind = document.createElement('span'); this.kind.className = 'kind'
     this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.append(icon('circle-fill'))
     this.text = document.createElement('span'); this.text.className = 'text'
+    this.unsafe = unsafeBadge(false)
     const close = document.createElement('button')
     close.className = 'close'; close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
     close.append(icon('x'))
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    this.element.append(this.kind, this.text, this.dot, close)
+    this.element.append(this.kind, this.text, this.unsafe, this.dot, close)
   }
 
   init(params: TabPartInitParameters): void {
@@ -409,6 +435,7 @@ export class SlotTab implements ITabRenderer {
     setIcon(this.kind, s ? KIND_ICON[s.kind] : 'question')
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
+    this.unsafe.hidden = !s?.unsafe
     this.element.title = s ? panelTooltip(s) : `Slot ${this.api.id} (desconhecido)`
   }
 
