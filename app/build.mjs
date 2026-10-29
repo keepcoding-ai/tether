@@ -15,7 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const out = join(here, 'dist')
 
 const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024' }
-// src/daemon/client.ts reads import.meta.url (in its own spawnDaemon, which the app does not use); CJS has none.
+// src/daemon/client.ts reads import.meta.url only as spawnDaemon's default mainPath (the app always passes one); CJS has none.
 const node = { platform: 'node', format: 'cjs', external: ['electron'], logOverride: { 'empty-import-meta': 'silent' } }
 
 function extractDockviewCss() {

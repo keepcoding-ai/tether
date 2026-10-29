@@ -28,11 +28,16 @@ export async function processStartTime(pid: number): Promise<string | undefined>
 }
 
 /** True only when the pid exists AND was started when RunInfo says: a reused pid gives false. */
-export async function isAlive(run: RunInfo): Promise<boolean> {
-  if (!pidExists(run.pid)) return false
-  const now = await processStartTime(run.pid)
+export function isAlive(run: RunInfo): Promise<boolean> {
+  return isSameProcess(run.pid, run.startedAt)
+}
+
+/** True only when `pid` exists right now AND its OS start time is `startedAt`: the very process that was recorded. */
+export async function isSameProcess(pid: number, startedAt: string): Promise<boolean> {
+  if (!pidExists(pid)) return false
+  const now = await processStartTime(pid)
   if (now === undefined) return false
-  const recorded = normalize(run.startedAt)
+  const recorded = normalize(startedAt)
   return recorded !== undefined && now === recorded
 }
 

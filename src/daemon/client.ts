@@ -1,9 +1,10 @@
 // Typed client of tetherd for the app and the CLI: connect (spawning the daemon detached when it is not
 // running), send requests and await their replies, receive `state` / `data` / `removed` events.
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { connect, type Socket } from 'node:net'
 import { userInfo } from 'node:os'
+import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
@@ -23,7 +24,7 @@ export class DaemonError extends Error {
   }
 }
 
-export interface ClientOptions {
+export interface ClientOptions extends Partial<SpawnOptions> {
   home?: string
   pipe?: string
   client?: 'app' | 'cli' | 'test'
@@ -32,6 +33,19 @@ export interface ClientOptions {
   /** Max wait for the daemon to come up after spawning it (ms). Default 15 000. */
   startTimeoutMs?: number
 }
+
+/** Something answers on the pipe, but it is not a tetherd (no `hello` came back). The client never spawns over it. */
+export class NotTetherError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NotTetherError'
+  }
+}
+
+/** How many times a connection that answers nothing is retried before the pipe counts as taken by a stranger
+ *  (a tetherd that is just going down closes the socket before the hello too). */
+const FOREIGN_RETRIES = 3
+const FOREIGN_RETRY_MS = 300
 
 type Events = {
   state: [slot: SlotState]
@@ -59,20 +73,35 @@ export class DaemonClient extends EventEmitter<Events> {
     const home = opts.home ?? tetherHome()
     const pipe = opts.pipe ?? pipePath(home, userInfo().username)
     const kind = opts.client ?? 'cli'
-    try {
-      return await DaemonClient.open(pipe, kind)
-    } catch (e) {
-      if (opts.spawn === false) throw e
+    let foreign = 0
+    const foreignError = (e: NotTetherError): Error =>
+      new Error(`o canal ${pipe} está ocupado por um programa que não é o tetherd (${e.message}); feche-o ou use outro TETHER_PIPE`)
+    // Something listens but never says hello: a stranger owns the pipe (or a tetherd is shutting down right now).
+    // Spawning over it would only make the new daemon exit with "pipe taken"; retry a little, then give up clearly.
+    const tolerate = async (e: unknown): Promise<boolean> => {
+      if (!(e instanceof NotTetherError)) return false
+      if (++foreign >= FOREIGN_RETRIES) throw foreignError(e)
+      await new Promise((r) => setTimeout(r, FOREIGN_RETRY_MS))
+      return true
     }
-    spawnDaemon({ home, pipe })
+    for (;;) {
+      try {
+        return await DaemonClient.open(pipe, kind)
+      } catch (e) {
+        if (opts.spawn === false || e instanceof DaemonError) throw e // a tetherd answered (and refused): nothing to spawn
+        if (!(await tolerate(e))) break // nothing listening: start one
+      }
+    }
+    await spawnDaemon({ home, pipe, execPath: opts.execPath, mainPath: opts.mainPath, env: opts.env })
     const deadline = Date.now() + (opts.startTimeoutMs ?? 15_000)
     let lastError: Error | undefined
     while (Date.now() < deadline) {
       try {
         return await DaemonClient.open(pipe, kind)
       } catch (e) {
+        if (e instanceof DaemonError) throw e
         lastError = e as Error
-        await new Promise((r) => setTimeout(r, 100))
+        if (!(await tolerate(e))) await new Promise((r) => setTimeout(r, 100))
       }
     }
     throw new Error(`tetherd não respondeu em ${pipe}: ${lastError?.message ?? 'timeout'}`)
@@ -83,7 +112,7 @@ export class DaemonClient extends EventEmitter<Events> {
     const socket = await connectSocket(pipe)
     let client: DaemonClient | undefined
     const pendingHello = new Promise<Hello>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('sem resposta ao hello')), 5_000)
+      const timer = setTimeout(() => reject(new NotTetherError('sem resposta ao hello')), 5_000)
       const parser = new LineParser()
       const onData = (chunk: string): void => {
         for (const line of parser.push(chunk)) {
@@ -104,7 +133,7 @@ export class DaemonClient extends EventEmitter<Events> {
       }
       const onClose = (): void => {
         clearTimeout(timer)
-        reject(new Error('conexão fechada antes do hello'))
+        reject(new NotTetherError('conexão fechada antes do hello'))
       }
       socket.setEncoding('utf8')
       socket.on('data', onData)
@@ -200,15 +229,50 @@ export async function pingDaemon(pipe: string): Promise<Hello | undefined> {
   }
 }
 
-/** Starts tetherd detached from this process (own console-less process, nothing shared). Returns its pid. */
-export function spawnDaemon(opts: { home: string; pipe: string }): number | undefined {
-  const main = fileURLToPath(new URL('./main.ts', import.meta.url))
-  const child = spawn(process.execPath, [main], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-    env: { ...process.env, TETHER_HOME: opts.home, TETHER_PIPE: opts.pipe },
+export interface SpawnOptions {
+  home: string
+  pipe: string
+  /** The node that runs the daemon (default: this process' node). Electron passes a system node: its own cannot load node-pty. */
+  execPath?: string
+  /** The daemon's entry point (default: src/daemon/main.ts next to this file). */
+  mainPath?: string
+  /** Base environment (default: process.env). TETHER_HOME / TETHER_PIPE are always set from `home` / `pipe`. */
+  env?: NodeJS.ProcessEnv
+}
+
+/**
+ * Starts tetherd outside this process' tree, sharing nothing with it. Resolves with the daemon's pid once it
+ * was created (the pipe may still take a moment to answer).
+ *
+ * Windows: a plain detached spawn is not enough. The daemon would stay a child of the caller, so "End task"
+ * / `taskkill /T` on the app takes it (and every agent) down; and CreateProcess through libuv always inherits
+ * handles, so the daemon would hold whatever the app holds (Playwright's CDP pipe, for one). The daemon is
+ * therefore started by a short-lived `powershell Start-Process`: ShellExecuteEx creates the process without
+ * handle inheritance, and the PowerShell exits at once, leaving the daemon with a dead parent, outside any
+ * tree a kill could walk. Measured: handles not inherited, ~1.3 s. (Verified by test/unit/daemon.spawn.test.ts.)
+ */
+export function spawnDaemon(opts: SpawnOptions): Promise<number | undefined> {
+  const execPath = opts.execPath ?? process.execPath
+  const mainPath = opts.mainPath ?? fileURLToPath(new URL('./main.ts', import.meta.url))
+  const env: Record<string, string> = {}
+  for (const [k, v] of Object.entries(opts.env ?? process.env)) if (v !== undefined) env[k] = v
+  env.TETHER_HOME = opts.home
+  env.TETHER_PIPE = opts.pipe
+  if (process.platform !== 'win32') {
+    const child = spawn(execPath, [mainPath], { detached: true, stdio: 'ignore', env })
+    child.unref()
+    return Promise.resolve(child.pid)
+  }
+  const q = (s: string): string => `'${s.replace(/'/g, "''")}'`
+  const script =
+    `$p = Start-Process -FilePath ${q(execPath)} -ArgumentList ${q(`"${mainPath}"`)} -WorkingDirectory ${q(dirname(mainPath))} ` +
+    '-WindowStyle Hidden -PassThru; Write-Output $p.Id'
+  return new Promise((resolve, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      { env, windowsHide: true, timeout: 30_000, encoding: 'utf8' }, (err, stdout, stderr) => {
+        if (err) return reject(new Error(`não consegui iniciar o tetherd: ${stderr.trim() || err.message}`))
+        const pid = Number.parseInt(stdout.trim(), 10)
+        resolve(Number.isNaN(pid) ? undefined : pid)
+      })
   })
-  child.unref()
-  return child.pid
 }

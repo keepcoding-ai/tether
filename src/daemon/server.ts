@@ -7,9 +7,10 @@ import { claudeAdapter } from '../agents/claude.ts'
 import { shellAdapter } from '../agents/shell.ts'
 import { soulAdapter } from '../agents/soul.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
-import type { AgentName, Binding, SlotMeta } from '../core/event.ts'
+import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
+import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { canonicalDir, slotMetaPath, slotsDir } from '../core/paths.ts'
-import { createSlot, currentBinding, listSlots, newSlotId, readEvents, readSlot, removeSlot, SLOT_ID_RE } from '../core/store.ts'
+import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import {
   PROTOCOL_VERSION,
@@ -22,7 +23,7 @@ import {
   type SlotState,
   type SlotStatus,
 } from './protocol.ts'
-import { spawnPty, type PtyHandle } from './pty.ts'
+import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 
 export const DAEMON_VERSION = '0.1.0'
@@ -61,6 +62,8 @@ export interface Daemon {
   readonly pipe: string
   readonly pid: number
   slots(): SlotState[]
+  /** The server still accepts connections and is not closing (the state can be trusted). */
+  listening(): boolean
   /** Kills every PTY tree, drops the clients and closes the server. */
   close(): Promise<void>
 }
@@ -122,6 +125,8 @@ class DaemonImpl implements Daemon {
   /** Slots waiting for a 'starting' seat, in request order. */
   private readonly queue: Slot[] = []
   private closing = false
+  /** This process' OS start time: goes into every run file so a later tetherd can tell this one is gone. */
+  private startedAt = new Date().toISOString()
 
   constructor(opts: DaemonOptions) {
     this.home = opts.home
@@ -136,6 +141,8 @@ class DaemonImpl implements Daemon {
 
   async listen(): Promise<void> {
     mkdirSync(slotsDir(this.home), { recursive: true })
+    this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
+    await this.reapOrphans()
     for (const meta of listSlots(this.home)) this.load(meta)
     this.startWatching()
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
@@ -152,6 +159,54 @@ class DaemonImpl implements Daemon {
 
   slots(): SlotState[] {
     return [...this.slotMap.values()].map(stateOf)
+  }
+
+  listening(): boolean {
+    return this.server.listening && !this.closing
+  }
+
+  // ---- run files: who runs each slot, so a later tetherd can reap what this one leaves behind ----------
+
+  /** Records the agent's identity (pid + OS start time) once it is known; nothing is written if it already exited. */
+  private async recordRun(slot: Slot, pty: PtyHandle): Promise<void> {
+    const agentStartedAt = await processStartTime(pty.pid)
+    if (agentStartedAt === undefined || slot.pty !== pty || pty.exit) return
+    const run: RunInfo = { pid: this.pid, startedAt: this.startedAt, agentPid: pty.pid, agentStartedAt, by: 'tetherd' }
+    try { writeRun(this.home, slot.meta.slotId, run) } catch (e) { this.log(`slot ${slot.meta.slotId}: cannot write run file: ${(e as Error).message}`) }
+  }
+
+  /** Drops the slot's run file when it is this daemon's (a CLI `--here` launcher's file is left alone). */
+  private forgetRun(slotId: string): void {
+    const run = readRun(this.home, slotId)
+    if (run && run.by === 'tetherd') clearRun(this.home, slotId)
+  }
+
+  /**
+   * A tetherd that died hard (killed, crashed) may leave its agents alive when ConPTY does not take them down.
+   * Each slot's run file names the agent by pid AND start time: a process that matches both is provably the one
+   * that tetherd launched and is killed with its tree; a pid that now belongs to something else is never touched.
+   * Runs whose owning tetherd is still alive (same pid and start time) are left alone.
+   */
+  private async reapOrphans(): Promise<void> {
+    for (const meta of listSlots(this.home)) {
+      const id = meta.slotId
+      const run = readRun(this.home, id)
+      if (!run || run.by !== 'tetherd' || run.pid === this.pid) continue
+      if (run.agentPid === undefined || run.agentStartedAt === undefined) { clearRun(this.home, id); continue }
+      if (await isSameProcess(run.pid, run.startedAt)) {
+        this.log(`slot ${id}: run owned by live tetherd pid ${run.pid}; leaving it`)
+        continue
+      }
+      if (await isSameProcess(run.agentPid, run.agentStartedAt)) {
+        await killTree(run.agentPid)
+        this.log(`slot ${id}: reaped orphan pid ${run.agentPid} (started ${run.agentStartedAt}) left by tetherd pid ${run.pid}`)
+      } else if (pidExists(run.agentPid)) {
+        this.log(`slot ${id}: pid ${run.agentPid} is not the agent tetherd pid ${run.pid} launched (start time differs); not touched`)
+      } else {
+        this.log(`slot ${id}: agent pid ${run.agentPid} of dead tetherd pid ${run.pid} is already gone`)
+      }
+      clearRun(this.home, id)
+    }
   }
 
   async close(): Promise<void> {
@@ -346,6 +401,7 @@ class DaemonImpl implements Daemon {
         },
         onExit: (exit) => {
           this.log(`slot ${meta.slotId}: exited (code ${exit.exitCode})`)
+          this.forgetRun(meta.slotId)
           if (slot.readyTimer) clearTimeout(slot.readyTimer)
           slot.readyTimer = undefined
           slot.status = 'exited'
@@ -365,6 +421,7 @@ class DaemonImpl implements Daemon {
       throw this.fail(slot, 'spawn-failed', (e as Error).message)
     }
     this.log(`slot ${meta.slotId}: spawned pid ${slot.pty.pid} (${meta.agent}${resume ? ', resume ' + resume.sessionId : ''})`)
+    void this.recordRun(slot, slot.pty)
     if (meta.agent === 'shell') slot.status = 'running'
     else {
       slot.status = 'starting'
