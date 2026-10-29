@@ -14,6 +14,10 @@ Fonte da verdade do andamento do [PLAN.md](./PLAN.md). Atualizado a cada tarefa.
 | T7 Adapter + cenários soul | pendente | |
 | T8 Robustez e doctor | pendente | |
 | Onda 4 — suíte 3x verde, docs | pendente | |
+| A1 App shell (Electron + dockview + xterm) | pendente | |
+| A2 tetherd | pendente | |
+| A3 Integração app ↔ tetherd + E2E | pendente | |
+| A4 Empacotar (npm run app, atalho) | pendente | |
 
 ## Critério de parada (fase 1, parte automatizável)
 
@@ -21,7 +25,10 @@ Fonte da verdade do andamento do [PLAN.md](./PLAN.md). Atualizado a cada tarefa.
 - [ ] `npm run test:e2e` verde 3 vezes seguidas (Claude e soul)
 - [ ] soul-cli: `bun run check` verde no branch da mudança
 - [ ] README com uso real; PRD atualizado
-- [ ] Todas as linhas acima = concluída, com prova
+- [ ] App (A1–A4): E2E do tetherd e do app verdes (split 4, kill da janela, reabrir = mesmo layout e agentes vivos; kill do tetherd = retomada certa)
+- [ ] App aberto e usado por mim como o Guga usaria (screenshot), com `npm run app` e atalho no Menu Iniciar
+- [ ] soul instalado na máquina com `SOUL_SESSION_REPORT` (anterior guardado), provado no app
+- [ ] Todas as linhas da tabela = concluída, com prova
 
 A semana de uso real (PRD §8) é do usuário.
 
