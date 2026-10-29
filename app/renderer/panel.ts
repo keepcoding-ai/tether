@@ -1,20 +1,35 @@
-// One dockview panel = one slot: a header strip (agent, title, folder, status) over an xterm.
+// One dockview panel = one slot: a header strip (agent, title, folder, status) over an xterm, plus an
+// overlay for the states that need the user (unconfirmed binding, error, exited, queued).
 // Attaches on first layout, streams `data`, sends `input`/`resize`, detaches on dispose.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import type { SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
+import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 
 export const KIND_ICON: Record<SlotKind, string> = { claude: '✦', soul: '☽', shell: '>_' }
 export const KIND_LABEL: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
 export const STATUS_LABEL: Record<SlotStatus, string> = {
   running: 'rodando',
   queued: 'na fila',
-  starting: 'iniciando',
+  starting: 'iniciando…',
   exited: 'encerrado',
   unconfirmed: 'não confirmado',
   error: 'erro',
+}
+
+export type SlotError = { code: ErrorCode; message: string }
+
+/** What the user can do from a panel overlay. */
+export type PanelAction = 'start' | 'resume' | 'new' | 'pick-folder' | 'close'
+
+/**
+ * The status the panel shows. The daemon reports a slot whose binding was inferred (not confirmed by the
+ * agent) as `exited`; starting it is refused until the user chooses, so the panel treats it as `unconfirmed`.
+ */
+export function effectiveStatus(s: SlotState): SlotStatus {
+  if (s.status === 'exited' && s.binding && !s.binding.confirmed) return 'unconfirmed'
+  return s.status
 }
 
 export function folderName(cwd: string): string {
@@ -28,14 +43,74 @@ export function panelTitle(s: SlotState): string {
 }
 
 export function panelTooltip(s: SlotState): string {
-  const lines = [`${KIND_LABEL[s.kind]} · ${STATUS_LABEL[s.status]}`, `Pasta: ${s.cwd}`, `Slot: ${s.slotId}`]
+  const lines = [`${KIND_LABEL[s.kind]} · ${STATUS_LABEL[effectiveStatus(s)]}`, `Pasta: ${s.cwd}`, `Slot: ${s.slotId}`]
   if (s.binding?.sessionId) lines.push(`Sessão: ${s.binding.sessionId}`)
   if (s.error) lines.push(`Erro: ${s.error.message}`)
   return lines.join('\n')
 }
 
+interface OverlaySpec {
+  title: string
+  text: string
+  tone: 'info' | 'warn' | 'error'
+  buttons: Array<{ label: string; action: PanelAction; primary?: boolean }>
+}
+
+/** What the overlay says for a daemon error code (from the slot's state or from a refused `start`). */
+export function errorOverlay(s: SlotState, err: SlotError): OverlaySpec {
+  const close = { label: 'Fechar painel', action: 'close' as const }
+  switch (err.code) {
+    case 'unconfirmed':
+      return unconfirmedOverlay(s)
+    case 'session-missing':
+      return {
+        title: 'Sessão não encontrada', tone: 'error',
+        text: `${KIND_LABEL[s.kind]} não tem mais a sessão deste painel${s.binding?.sessionId ? ` (${s.binding.sessionId})` : ''}.`,
+        buttons: [{ label: 'Começar nova sessão', action: 'new', primary: true }, close],
+      }
+    case 'cwd-missing':
+      return {
+        title: 'Pasta não existe', tone: 'error',
+        text: `A pasta deste painel não existe mais: ${s.cwd}`,
+        buttons: [{ label: 'Escolher outra pasta…', action: 'pick-folder', primary: true }, close],
+      }
+    case 'already-open':
+      return {
+        title: 'Sessão já aberta', tone: 'warn',
+        text: 'Esta sessão já está rodando em outro painel.',
+        buttons: [{ label: 'Começar nova sessão', action: 'new', primary: true }, close],
+      }
+    case 'spawn-failed':
+      return {
+        title: 'Não foi possível iniciar', tone: 'error',
+        text: `O processo não subiu: ${err.message}`,
+        buttons: [{ label: 'Tentar de novo', action: 'start', primary: true }, close],
+      }
+    default:
+      return {
+        title: 'Erro', tone: 'error',
+        text: err.message,
+        buttons: [{ label: 'Tentar de novo', action: 'start', primary: true }, close],
+      }
+  }
+}
+
+function unconfirmedOverlay(s: SlotState): OverlaySpec {
+  const what = s.title ? `"${s.title}"` : s.binding?.sessionId ? `(${s.binding.sessionId})` : ''
+  return {
+    title: 'Sessão não confirmada', tone: 'warn',
+    text: `O tether não tem certeza de qual sessão de ${KIND_LABEL[s.kind]} este painel estava rodando ${what}`.trim() + '. O que fazer?',
+    buttons: [{ label: 'Retomar a última sessão', action: 'resume', primary: true }, { label: 'Começar nova sessão', action: 'new' }],
+  }
+}
+
 export interface PanelHost {
   getSlot(slotId: string): SlotState | undefined
+  /** The error of the last refused `start` (cleared when the slot comes up). */
+  getStartError(slotId: string): SlotError | undefined
+  /** A `start` was sent and not answered yet: show "iniciando…" instead of "encerrado". */
+  isStartPending(slotId: string): boolean
+  onAction(slotId: string, action: PanelAction): void
   /** Keys the terminal must not swallow (app shortcuts); return true when handled here. */
   onKey(ev: KeyboardEvent, panel: TerminalPanel): boolean
 }
@@ -47,6 +122,7 @@ export class TerminalPanel implements IContentRenderer {
   private readonly fit = new FitAddon()
   private readonly head: { icon: HTMLElement; title: HTMLElement; cwd: HTMLElement; status: HTMLElement }
   private readonly termHost: HTMLElement
+  private readonly overlay: HTMLElement
   private observer: ResizeObserver | undefined
   private attached = false
   private attaching: Promise<void> | undefined
@@ -68,7 +144,13 @@ export class TerminalPanel implements IContentRenderer {
     this.head = { icon, title, cwd, status }
     this.termHost = document.createElement('div')
     this.termHost.className = 'panel-term'
-    this.element.append(head, this.termHost)
+    this.overlay = document.createElement('div')
+    this.overlay.className = 'panel-overlay'
+    this.overlay.hidden = true
+    const body = document.createElement('div')
+    body.className = 'panel-body'
+    body.append(this.termHost, this.overlay)
+    this.element.append(head, body)
 
     this.term = new Terminal({
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
@@ -107,7 +189,7 @@ export class TerminalPanel implements IContentRenderer {
     if (params.api.isActive) requestAnimationFrame(() => this.term.focus())
   }
 
-  /** Current slot state applied to the header (called on init and on every `state` event). */
+  /** Current slot state applied to the header and the overlay (on init and on every `state` event). */
   render(): void {
     const s = this.host.getSlot(this.slotId)
     if (!s) {
@@ -115,14 +197,50 @@ export class TerminalPanel implements IContentRenderer {
       this.head.title.textContent = this.slotId
       this.head.status.textContent = 'desconhecido'
       this.head.status.className = 'status error'
+      this.showOverlay({ title: 'Slot desconhecido', tone: 'error', text: 'O tetherd não conhece mais este painel.', buttons: [{ label: 'Fechar painel', action: 'close', primary: true }] })
       return
     }
+    const startError = this.host.getStartError(this.slotId)
+    const pending = this.host.isStartPending(this.slotId)
+    let status = effectiveStatus(s)
+    if (startError?.code === 'unconfirmed') status = 'unconfirmed'
+    else if (startError && status === 'exited') status = 'error'
+    else if (pending && status === 'exited') status = 'starting'
     this.head.icon.textContent = KIND_ICON[s.kind]
     this.head.title.textContent = s.title ?? s.name ?? KIND_LABEL[s.kind]
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
-    this.head.status.textContent = s.error ? `${STATUS_LABEL[s.status]}: ${s.error.message}` : STATUS_LABEL[s.status]
-    this.head.status.className = `status ${s.status}`
+    this.head.status.textContent = STATUS_LABEL[status]
+    this.head.status.className = `status ${status}`
+    this.element.dataset.status = status
+
+    const err = s.status === 'error' && s.error ? s.error : startError
+    if (status === 'unconfirmed') this.showOverlay(unconfirmedOverlay(s))
+    else if (status === 'error' && err) this.showOverlay(errorOverlay(s, err))
+    else if (status === 'queued') this.showOverlay({ title: 'Na fila', tone: 'info', text: 'Aguardando a vez para iniciar (no máximo 3 agentes sobem ao mesmo tempo).', buttons: [] })
+    else if (status === 'exited') this.showOverlay({ title: 'Encerrado', tone: 'info', text: `O processo deste painel terminou.`, buttons: [{ label: 'Iniciar de novo', action: 'start', primary: true }, { label: 'Fechar painel', action: 'close' }] })
+    else this.overlay.hidden = true
+  }
+
+  private showOverlay(spec: OverlaySpec): void {
+    this.overlay.replaceChildren()
+    this.overlay.className = `panel-overlay ${spec.tone}`
+    const card = document.createElement('div'); card.className = 'card'
+    const h = document.createElement('h3'); h.textContent = spec.title
+    const p = document.createElement('p'); p.textContent = spec.text
+    const actions = document.createElement('div'); actions.className = 'actions'
+    for (const b of spec.buttons) {
+      const btn = document.createElement('button')
+      btn.textContent = b.label
+      btn.dataset.action = b.action
+      if (b.primary) btn.className = 'primary'
+      btn.addEventListener('click', ev => { ev.stopPropagation(); this.host.onAction(this.slotId, b.action) })
+      actions.append(btn)
+    }
+    card.append(h, p)
+    if (spec.buttons.length) card.append(actions)
+    this.overlay.append(card)
+    this.overlay.hidden = false
   }
 
   write(data: string): void {
@@ -222,7 +340,7 @@ export class SlotTab implements ITabRenderer {
     if (!this.api) return
     const s = this.host.getSlot(this.api.id)
     this.text.textContent = this.api.title ?? this.api.id
-    this.dot.className = `dot ${s?.status ?? 'error'}`
+    this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.element.title = s ? panelTooltip(s) : `Slot ${this.api.id} (desconhecido)`
   }
 

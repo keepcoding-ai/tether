@@ -20,7 +20,6 @@
     "bin",
     "app/main",
     "app/preload",
-    "app/shared",
-    "app/fake-daemon"
+    "app/shared"
   ]
 }

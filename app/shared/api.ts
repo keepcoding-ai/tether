@@ -5,7 +5,7 @@ import type { Event as DaemonEvent, Notice, Reply, Request } from '../../src/dae
 /** A request without the `id`: the main process numbers them. */
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
 
-export type ConnectionState = { connected: true; pipe: string } | { connected: false; pipe: string; error: string }
+export type ConnectionState = { connected: true; pipe: string; pid: number } | { connected: false; pipe: string; error: string }
 
 export type CloseChoice = 'stop' | 'detach' | 'cancel'
 

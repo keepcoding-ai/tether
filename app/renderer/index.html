@@ -28,7 +28,7 @@
     <div class="card">
       <h2>Sem conexão com o tetherd</h2>
       <p id="overlay-msg"></p>
-      <p class="hint">O daemon dos terminais não respondeu. Suba o tetherd (ou <code>npm run app:fake</code> em desenvolvimento) e tente de novo.</p>
+      <p class="hint">O app tenta subir o tetherd sozinho (<code>node src/daemon/main.ts</code>); se ele não respondeu, veja <code>tetherd.log</code> na pasta do tether e tente de novo.</p>
       <button id="btn-retry">Tentar de novo</button>
     </div>
   </div>
