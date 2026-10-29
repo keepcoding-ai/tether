@@ -21,12 +21,12 @@ Fonte da verdade do andamento do [PLAN.md](./PLAN.md). Atualizado a cada tarefa.
 
 ## Critério de parada (fase 1, parte automatizável)
 
-- [ ] `npm run check` verde (typecheck + unitários)
-- [ ] `npm run test:e2e` verde 3 vezes seguidas (Claude e soul)
-- [ ] soul-cli: `bun run check` verde no branch da mudança
+- [x] `npm run check` verde (typecheck + unitários): 146/146, tsc ok (rodado por mim após a A5)
+- [x] `npm run test:e2e` verde 3 vezes seguidas (Claude e soul): Claude 17/17 ×3, soul 14/14 ×3, carga ×3, app+Claude ×3 (a última de cada, rodada por mim)
+- [x] soul-cli: nenhuma falha nova em relação ao develop (critério ajustado; develop limpo já tem 28 erros de tipo e 4 testes quebrados); testes da mudança 22/22 rodados por mim
 - [x] README com uso real; PRD atualizado (commits de docs de 2026-10-29)
-- [ ] App (A1–A4): E2E do tetherd e do app verdes (split 4, kill da janela, reabrir = mesmo layout e agentes vivos; kill do tetherd = retomada certa)
-- [ ] App aberto e usado por mim como o Guga usaria (screenshot), com `npm run app` e atalho no Menu Iniciar
+- [x] App: E2E verdes — layout (4 painéis, kill da janela = mesmos PIDs, kill do tetherd = reiniciados) e app+Claude real (kill da janela = mesmos PIDs e memória; kill do tetherd = mesmas sessões e memória)
+- [x] App usado pela interface como o Guga usaria (Novo painel, dividir, digitar no Claude; janela escondida), screenshots revisados por mim; atalho no Menu Iniciar instalado e lido de volta
 - [ ] soul instalado na máquina com `SOUL_SESSION_REPORT` (anterior guardado), provado no app
 - [ ] Todas as linhas da tabela = concluída, com prova
 
@@ -65,3 +65,6 @@ A semana de uso real (PRD §8) é do usuário.
 - Teste de carga rodado por mim 2x: vínculos 100% corretos nas duas (todos os slots voltaram na própria sessão após kill do tetherd). Falhas foram do teste: (1) Haiku respondeu "ok" em vez da palavra; (2) falso órfão — PID reaproveitado faz csrss/winlogon/dwm parecerem filhos do Claude. Correção delegada.
 - soul: os prompts da suíte usam o tom da persona do agente Serpente (mestre de jogo), que recusa "responda só X". Se a persona mudar, esses prompts precisam de ajuste (`E2E_SOUL_DIR` troca o agente).
 - soul (não é defeito do tether): `/rename` digitado enquanto `/branch` ainda roda renomeia a conversa antiga. Registrado para o soul-cli.
+- A5: `TETHER_CLAUDE_ARGS` / `TETHER_SOUL_ARGS` acrescentam argumentos a todo lançamento (usado nos testes para `--model haiku`; o diálogo de novo painel não tem campo de argumentos).
+- A5: `tether attach` repassava o pedido de "win32-input-mode" do ConPTY e quebrava o teclado (Ctrl+] nunca chegava). Corrigido.
+- Defeito do app em correção: reabrir o tether segundos depois de a janela travar pode fechar em silêncio (trava de instância única presa por um processo auxiliar do Electron ~9 s).
