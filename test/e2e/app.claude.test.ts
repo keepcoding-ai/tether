@@ -22,6 +22,7 @@ import { DaemonClient } from '../../src/daemon/client.ts'
 import { killTree } from '../../src/daemon/pty.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { aliveProcs, CLAUDE_DIALECT, processTree, type Proc } from './harness.ts'
+import { killOwned, type KillGuard } from './pid-guard.ts'
 
 // Browser-side globals used inside page.evaluate callbacks (this tsconfig has no DOM lib).
 type Hooks = {
@@ -39,6 +40,8 @@ const artifacts = join(root, 'test', 'e2e', 'artifacts')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const pipe = `\\\\.\\pipe\\tether-appclaude-${process.pid}`
+/** Every kill is guarded: only processes launched from this checkout after the test started (a PID may be reused). */
+const guard: KillGuard = { markers: [root], notBefore: Date.now() }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Claude Code counts a fullscreen session that dies within 10 s as a boot strike (see harness.ts). */
 const MIN_UPTIME_MS = 11_000
@@ -81,10 +84,10 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 async function killElectron(app: ElectronApplication): Promise<void> {
   const mainPid = await app.evaluate(() => process.pid)
   const launcher = app.process()
-  process.kill(mainPid)
+  assert.equal(killOwned(mainPid, guard), 'killed', 'electron main is ours')
   if (launcher.pid && launcher.pid !== mainPid) {
     await Promise.race([waitForExit(launcher), sleep(3000)])
-    if (launcher.exitCode === null) process.kill(launcher.pid)
+    if (launcher.exitCode === null) killOwned(launcher.pid, guard)
   }
   await waitForExit(launcher)
 }
@@ -292,7 +295,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     await untilUptime(readyAt)
     await killElectron(app)
     app = undefined
-    process.kill(daemonPid)
+    assert.equal(killOwned(daemonPid, guard), 'killed', 'tetherd is ours')
     await waitUntil(() => !pidAlive(daemonPid), 10_000, 'tetherd to die')
     // The PTYs go with the daemon; the agents die once their console is gone (a real reboot kills them anyway).
     const orphans = await waitGone(trees.flat(), 15_000)
@@ -329,7 +332,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
         await client.request({ t: 'shutdown' }).catch(() => {})
         client.close()
       } catch { /* not answering */ }
-      await waitUntil(() => !pidAlive(pid), 10_000, 'tetherd to exit').catch(() => { try { process.kill(pid) } catch { /* gone */ } })
+      await waitUntil(() => !pidAlive(pid), 10_000, 'tetherd to exit').catch(() => { killOwned(pid, guard) })
     }
     const left = await waitGone(trees.flat(), 15_000)
     for (const p of left) await killTree(p.pid)

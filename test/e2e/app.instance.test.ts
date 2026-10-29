@@ -16,6 +16,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
+import { killOwned, type KillGuard } from './pid-guard.ts'
 
 declare const window: { __tether: { panelIds(): string[]; text(id: string): string; connection(): { connected: boolean; pid?: number } | undefined } }
 declare const document: { querySelectorAll(selector: string): { length: number } }
@@ -25,6 +26,8 @@ const root = resolve(import.meta.dirname, '..', '..')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const pipe = `\\\\.\\pipe\\tether-appinstance-${process.pid}`
+/** Every kill is guarded: only processes launched from this checkout after the test started (a PID may be reused). */
+const guard: KillGuard = { markers: [root], notBefore: Date.now() }
 const GIVE_UP = /o tether ainda está fechando; tente de novo em alguns segundos/
 /** The app's retry window for the lock (LOCK_RETRY_MS in app/main/main.ts). */
 const LOCK_RETRY_MS = 12_000
@@ -60,10 +63,10 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 async function killElectron(app: ElectronApplication): Promise<void> {
   const mainPid = await app.evaluate(() => process.pid)
   const launcher = app.process()
-  process.kill(mainPid)
+  assert.equal(killOwned(mainPid, guard), 'killed', 'electron main is ours')
   if (launcher.pid && launcher.pid !== mainPid) {
     await Promise.race([waitForExit(launcher), sleep(3000)])
-    if (launcher.exitCode === null) process.kill(launcher.pid)
+    if (launcher.exitCode === null) killOwned(launcher.pid, guard)
   }
   await waitForExit(launcher)
 }
@@ -191,7 +194,7 @@ test('single instance: immediate relaunch after a window kill, stale lock, secon
     t.diagnostic(`stuck lock: gave up after ${stuckTook} ms with the message`)
   } finally {
     if (app) await killElectron(app).catch(() => {})
-    for (const pid of daemonPids) if (pidAlive(pid)) { try { process.kill(pid) } catch { /* already gone */ } }
+    for (const pid of daemonPids) killOwned(pid, guard)
     const deadline = Date.now() + 10_000
     while (daemonPids.some(pidAlive) && Date.now() < deadline) await sleep(100)
     for (let i = 0; i < 5; i++) {
