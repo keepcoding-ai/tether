@@ -4,6 +4,7 @@
 import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import type { SlotMeta } from '../core/event.ts'
+import { canonicalDir } from '../core/paths.ts'
 import type { LaunchPlan } from './types.ts'
 
 export interface ShellPlanInput {
@@ -58,7 +59,7 @@ export function plan(input: ShellPlanInput): LaunchPlan {
   return {
     command: shell.command,
     args: shell.args,
-    cwd: input.cwd ?? slot.cwd,
+    cwd: canonicalDir(input.cwd ?? slot.cwd),
     env: envWithoutUndefined(process.env),
   }
 }

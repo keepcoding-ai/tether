@@ -7,6 +7,7 @@ import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import type { Binding } from '../core/event.ts'
+import { canonicalDir } from '../core/paths.ts'
 import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
 
 const HOOK_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.mjs')
@@ -77,7 +78,9 @@ function plan(input: PlanInput): LaunchPlan {
   return {
     command: resolveClaudeCommand(env),
     args,
-    cwd: resume ? resume.cwd : slot.cwd,
+    // Canonical even for slots/bindings recorded before the fix (a lower-case drive letter would hide
+    // the project's sessions from Claude's /resume picker).
+    cwd: canonicalDir(resume ? resume.cwd : slot.cwd),
     env,
   }
 }

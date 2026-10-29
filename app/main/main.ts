@@ -10,7 +10,7 @@ import { delimiter, join } from 'node:path'
 import { DaemonClient, DaemonError } from '../../src/daemon/client.ts'
 import { pipePath, PROTOCOL_VERSION } from '../../src/daemon/protocol.ts'
 import type { Notice, Reply } from '../../src/daemon/protocol.ts'
-import { tetherHome } from '../../src/core/paths.ts'
+import { canonicalDir, tetherHome } from '../../src/core/paths.ts'
 import type { CloseChoice, ConnectionState, RequestBody } from '../shared/api.ts'
 
 const home = tetherHome()
@@ -231,10 +231,20 @@ ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 ipcMain.handle('layout:load', () => readJson<unknown | null>(layoutPath, null))
 ipcMain.handle('layout:save', (_e, layout: unknown) => { writeJson(layoutPath, layout) })
 
-ipcMain.handle('recent:list', () => readJson<string[]>(recentPath, []))
+/** Recent folders in canonical form, deduped case-insensitively (entries saved before the fix may differ only in casing). */
+function recentFolders(): string[] {
+  const out: string[] = []
+  for (const f of readJson<string[]>(recentPath, [])) {
+    const dir = canonicalDir(f)
+    if (!out.some(o => o.toLowerCase() === dir.toLowerCase())) out.push(dir)
+  }
+  return out
+}
+ipcMain.handle('recent:list', () => recentFolders())
 ipcMain.handle('recent:remember', (_e, folder: string) => {
-  const list = readJson<string[]>(recentPath, []).filter(f => f.toLowerCase() !== folder.toLowerCase())
-  list.unshift(folder)
+  const dir = canonicalDir(folder)
+  const list = recentFolders().filter(f => f.toLowerCase() !== dir.toLowerCase())
+  list.unshift(dir)
   writeJson(recentPath, list.slice(0, RECENT_LIMIT))
 })
 
@@ -245,7 +255,8 @@ ipcMain.handle('folder:pick', async (_e, initial?: string) => {
     properties: ['openDirectory'],
     ...(initial ? { defaultPath: initial } : {}),
   })
-  return r.canceled ? null : (r.filePaths[0] ?? null)
+  const picked = r.filePaths[0]
+  return r.canceled || !picked ? null : canonicalDir(picked)
 })
 
 ipcMain.handle('panel:confirm-close', async (_e, label: string): Promise<CloseChoice> => {

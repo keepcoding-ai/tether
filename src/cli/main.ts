@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline'
 import { exitCodeFor, formatReport, runDoctor } from '../doctor.ts'
 import type { Binding, SlotMeta } from '../core/event.ts'
 import { pidExists } from '../core/liveness.ts'
-import { slotMetaPath } from '../core/paths.ts'
+import { canonicalDir, slotMetaPath } from '../core/paths.ts'
 import { createSlot, currentBinding, newSlotId, readEvents, readRun, readSlot, removeSlot } from '../core/store.ts'
 import { DaemonClient, DaemonError } from '../daemon/client.ts'
 import type { ErrorCode, SlotKind, SlotState } from '../daemon/protocol.ts'
@@ -227,7 +227,7 @@ function parseKind(x: string | undefined): SlotKind {
 async function cmdNew(args: string[]): Promise<number> {
   const p = parseArgs(args, { valued: ['name', 'cwd'], flags: ['here'] })
   const kind = parseKind(p.positional[0])
-  const cwd = resolve(p.options.cwd ?? process.cwd())
+  const cwd = canonicalDir(p.options.cwd ?? process.cwd())
   if (!existsSync(cwd)) throw new Error(`a pasta não existe: ${cwd}`)
   const name = p.options.name
   const ctx = context()
