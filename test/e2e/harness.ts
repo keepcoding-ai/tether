@@ -1,6 +1,7 @@
 // E2E harness: drives a real TUI agent (Claude Code, soul-cli) through a `Transport`: a local pseudo-terminal
 // (LocalPtyTransport, from a LaunchPlan) or a tetherd slot (test/e2e/daemon-driver.ts). It only knows how to
-// read a screen and type. See test/e2e/README.md for how idle/command detection works and why.
+// read a screen and type; what the input box, the busy state and the slash menu look like is the agent's
+// `AgentDialect` (StartOptions.agent, default claude). See test/e2e/README.md for how detection works and why.
 import * as pty from 'node-pty'
 import { execFile } from 'node:child_process'
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
@@ -292,18 +293,89 @@ export interface StartOptions {
    *  that dies within 10 s of its first frame as a boot "strike"; two strikes turn fullscreen off for the whole
    *  machine (fullscreenAutoDisabled in ~/.claude.json; /tui fullscreen resets it). */
   minUptimeBeforeKill?: number
+  /** Which TUI is on the other side (prompt box, busy signals, slash menu, exit hint); default 'claude'. */
+  agent?: AgentDialectName
 }
 
 export interface WaitOptions { timeout?: number }
 export interface IdleOptions extends WaitOptions { quietMs?: number }
 
-const PROMPT = /^❯/
+export type AgentDialectName = 'claude' | 'soul'
+
+/** How one agent's TUI shows its input box, its busy state, its slash-command menu and its farewell. */
+export interface AgentDialect {
+  /** Line `i` of the screen is the input box (its first line). */
+  isPrompt(lines: string[], i: number): boolean
+  /** The agent is working, judging by the screen and the window title. */
+  busy(screen: string, title: string): boolean
+  /** Text in the input box, given the screen lines and the index of the prompt line (whitespace collapsed). */
+  inputText(lines: string[], prompt: number): string
+  /** The slash command highlighted in the autocomplete menu, if one is open. */
+  menuHighlight(lines: string[], prompt: number): string | undefined
+  /** Session reference printed on exit ("claude --resume <id>" / soul --resume "<title>"): group 1. */
+  exitHint: RegExp
+}
+
 const TRUST = /trust this folder/i
 const TRUST_YES = /^\s*❯\s*Yes, I trust/m // dialog options are indented
-/** Visible while the agent is working (status bar hint; spinner line "✽ Doing…"; busy window-title glyphs). */
-const BUSY_STATUS = /esc to interrupt/
-const BUSY_SPINNER = /^[✽✻✶✢·*] \S[^\n]*…/m
-const BUSY_TITLE = /^[◐◑◒◓]/
+
+/** Claude Code: `❯` at column 0 is the input box; busy = status bar hint "esc to interrupt", spinner line
+ *  "✽ Doing…", window-title glyph ◐◑◒◓. The slash menu is the block right above the rule over the input box;
+ *  its items are indented ("  ❯ /compact  …"), unlike the transcript echo of an earlier command ("❯ /compact"). */
+const CLAUDE_BUSY_STATUS = /esc to interrupt/
+const CLAUDE_BUSY_SPINNER = /^[✽✻✶✢·*] \S[^\n]*…/m
+const CLAUDE_BUSY_TITLE = /^[◐◑◒◓]/
+export const CLAUDE_DIALECT: AgentDialect = {
+  isPrompt: (lines, i) => /^❯/.test(lines[i]!),
+  busy: (s, title) => CLAUDE_BUSY_STATUS.test(s) || CLAUDE_BUSY_SPINNER.test(s) || CLAUDE_BUSY_TITLE.test(title),
+  inputText: (lines, prompt) => lines.slice(prompt).join(' ').replace(/^❯/, '').replace(/\s+/g, ' ').trim(),
+  menuHighlight(lines, prompt) {
+    let i = prompt - 1
+    if (i < 0 || !/^─{10,}/.test(lines[i]!)) return undefined
+    for (i--; i >= 0 && lines[i]!.trim() !== ''; i--) {
+      const m = /^\s+❯ (\/\S+)/.exec(lines[i]!)
+      if (m) return m[1]
+    }
+    return undefined
+  },
+  exitHint: /--resume ([0-9a-f-]{36})/,
+}
+
+/** soul-cli: the input box is a frame: "│ ❯ text │" between "╭──" and "╰──" lines while the conversation has no
+ *  title; once it has one (after /rename, or a resumed one) the frame is two rules "──── title ──" / "────" with
+ *  the prompt line "  ❯ text" between them. So the prompt is a ❯ line right under a frame top. An empty box shows
+ *  a dim placeholder (Try "…"). Busy = status bar "Esc stops │ Enter queues after this turn", spinner line
+ *  " ● Doing…", braille spinner in the window title ("⠂ Agent"; idle is "✳ Agent"). The slash menu is the block
+ *  right below the frame ("  ❯ /exit   Exit the REPL"). On exit it prints `soul --resume "<title>"`. */
+const SOUL_BUSY_STATUS = /Esc stops │ Enter queues/
+const SOUL_BUSY_SPINNER = /^\s*[●✽✻✶✢·*] \S[^\n]*…/m
+const SOUL_BUSY_TITLE = /^[⠀-⣿]/
+const SOUL_PLACEHOLDER = /^Try ".*"$/
+const SOUL_FRAME_TOP = /^(╭─|─{10,})/
+const SOUL_FRAME_BOTTOM = /^(╰─|─{10,})/
+const SOUL_PROMPT_LINE = /^(│ )?\s*❯/
+export const SOUL_DIALECT: AgentDialect = {
+  isPrompt: (lines, i) => i > 0 && SOUL_PROMPT_LINE.test(lines[i]!) && SOUL_FRAME_TOP.test(lines[i - 1]!),
+  busy: (s, title) => SOUL_BUSY_STATUS.test(s) || SOUL_BUSY_SPINNER.test(s) || SOUL_BUSY_TITLE.test(title),
+  inputText(lines, prompt) {
+    const box: string[] = []
+    for (let i = prompt; i < lines.length && !SOUL_FRAME_BOTTOM.test(lines[i]!); i++) box.push(lines[i]!.replace(/^(│ )?\s*❯?/, '').replace(/│$/, ''))
+    const text = box.join(' ').replace(/\s+/g, ' ').trim()
+    return SOUL_PLACEHOLDER.test(text) ? '' : text
+  },
+  menuHighlight(lines, prompt) {
+    let i = prompt
+    while (i < lines.length && !SOUL_FRAME_BOTTOM.test(lines[i]!)) i++
+    for (i++; i < lines.length && lines[i]!.trim() !== ''; i++) {
+      const m = /^\s+❯ (\/\S+)/.exec(lines[i]!)
+      if (m) return m[1]
+    }
+    return undefined
+  },
+  exitHint: /soul --resume "([^"\n]*)"/,
+}
+
+export const DIALECTS: Record<AgentDialectName, AgentDialect> = { claude: CLAUDE_DIALECT, soul: SOUL_DIALECT }
 
 export interface ExitInfo { exitCode: number; signal?: number }
 
@@ -361,6 +433,9 @@ export class Terminal {
   signal: number | undefined
   /** Session id the agent printed on exit ("claude --resume <id>"), when it did. */
   resumeId: string | undefined
+  /** What the agent's farewell says to resume with (dialect.exitHint, group 1): the id for Claude, the title for soul. */
+  resumeHint: string | undefined
+  readonly dialect: AgentDialect
   readonly exited: Promise<ExitInfo>
   readonly screenBuf: Screen
   readonly transport: Transport
@@ -373,6 +448,7 @@ export class Terminal {
 
   constructor(transport: Transport, opts: StartOptions) {
     this.transport = transport; this.opts = opts
+    this.dialect = DIALECTS[opts.agent ?? 'claude']
     const cols = opts.cols ?? 120, rows = opts.rows ?? 40
     this.screenBuf = new Screen(cols, rows)
     this.typeDelay = opts.typeDelay ?? 10
@@ -385,8 +461,8 @@ export class Terminal {
     this.exited = new Promise(resolve => {
       transport.onExit(e => {
         this.exitCode = e.exitCode; this.signal = e.signal
-        const m = /--resume ([0-9a-f-]{36})/.exec(this.screenBuf.text())
-        if (m) this.resumeId = m[1]
+        const m = this.dialect.exitHint.exec(this.screenBuf.text())
+        if (m) { this.resumeHint = m[1]; if (/^[0-9a-f-]{36}$/.test(m[1]!)) this.resumeId = m[1] }
         this.mark('exit', { exitCode: e.exitCode, signal: e.signal })
         for (const l of this.listeners) l()
         resolve({ exitCode: e.exitCode, signal: e.signal })
@@ -410,39 +486,31 @@ export class Terminal {
     if (this.opts.log) appendFileSync(this.opts.log, JSON.stringify({ t: Date.now() - this.t0, mark: label, ...extra, title: this.title, screen: this.screen() }) + '\n')
   }
 
-  /** Lines of the screen; `prompt` is the index of the input box (last line starting with ❯), -1 if none. */
+  /** Lines of the screen; `prompt` is the index of the input box (last line matching the dialect's prompt), -1 if none. */
   private layout(): { lines: string[]; prompt: number } {
     const lines = this.screen().split('\n')
     let prompt = -1
-    for (let i = lines.length - 1; i >= 0; i--) if (PROMPT.test(lines[i]!)) { prompt = i; break }
+    for (let i = lines.length - 1; i >= 0; i--) if (this.dialect.isPrompt(lines, i)) { prompt = i; break }
     return { lines, prompt }
   }
 
-  /** Text currently in the input box (from the ❯ line to the end of the screen, whitespace collapsed). */
+  /** Text currently in the input box (whitespace collapsed; the dialect knows where the box ends). */
   inputText(): string {
     const { lines, prompt } = this.layout()
     if (prompt < 0) return ''
-    return lines.slice(prompt).join(' ').replace(/^❯/, '').replace(/\s+/g, ' ').trim()
+    return this.dialect.inputText(lines, prompt)
   }
 
-  /** The slash command highlighted in the autocomplete menu, if one is open. The menu is the block of non-blank
-   *  lines right above the rule over the input box; its items are indented ("  ❯ /compact  …"), unlike the
-   *  transcript echo of an earlier command ("❯ /compact" at column 0). */
+  /** The slash command highlighted in the autocomplete menu, if one is open (the dialect knows where the menu sits). */
   menuHighlight(): string | undefined {
     const { lines, prompt } = this.layout()
-    let i = prompt - 1
-    if (i < 0 || !/^─{10,}/.test(lines[i]!)) return undefined
-    for (i--; i >= 0 && lines[i]!.trim() !== ''; i--) {
-      const m = /^\s+❯ (\/\S+)/.exec(lines[i]!)
-      if (m) return m[1]
-    }
-    return undefined
+    if (prompt < 0) return undefined
+    return this.dialect.menuHighlight(lines, prompt)
   }
 
-  /** The agent is working: spinner, "esc to interrupt" hint or busy title glyph. */
+  /** The agent is working: spinner, busy status hint or busy title glyph (per dialect). */
   busy(): boolean {
-    const s = this.screen()
-    return BUSY_STATUS.test(s) || BUSY_SPINNER.test(s) || BUSY_TITLE.test(this.title)
+    return this.dialect.busy(this.screen(), this.title)
   }
 
   /** Input prompt visible, nothing pending in it, agent not busy, and no output for `quietMs`. */
@@ -563,8 +631,9 @@ export async function awaitReady(t: Terminal): Promise<Terminal> {
   const opts = t.opts
   const timeout = opts.startupTimeout ?? 60_000
   try {
-    // the trust dialog's "❯ No, exit" is indented; the input box's ❯ is at column 0
-    await t.waitFor(s => TRUST.test(s) || /^❯/m.test(s), { timeout, what: 'trust dialog or input prompt' })
+    // the trust dialog's "❯ No, exit" is indented; Claude's input box has ❯ at column 0, soul's is framed ("│ ❯")
+    const prompt = (s: string): boolean => { const lines = s.split('\n'); return lines.some((_, i) => t.dialect.isPrompt(lines, i)) }
+    await t.waitFor(s => TRUST.test(s) || prompt(s), { timeout, what: 'trust dialog or input prompt' })
     t.readyAt = Date.now()
     if (TRUST.test(t.screen())) {
       if (opts.trust === false) throw new Error('agent asked to trust the folder and trust:false was given')
@@ -580,7 +649,7 @@ export async function awaitReady(t: Terminal): Promise<Terminal> {
         if (attempt === 3) throw new Error(`trust dialog keeps resetting its selection\n--- screen ---\n${t.screen()}`)
       }
       t.write('\r')
-      await t.waitFor(s => !TRUST.test(s) && /^❯/m.test(s), { timeout, what: 'input prompt after trust' })
+      await t.waitFor(s => !TRUST.test(s) && prompt(s), { timeout, what: 'input prompt after trust' })
       t.readyAt = Date.now()
     }
     await t.waitIdle({ timeout })

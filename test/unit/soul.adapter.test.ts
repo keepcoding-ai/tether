@@ -128,14 +128,20 @@ describe('soulAdapter.plan', () => {
     assert.ok(!plan.args.includes('-r'))
   })
 
-  test('resume: the recipe args verbatim (no slot args), its cwd, its env added', () => {
+  test('resume: the recipe args first, then the slot args (minus -c), its cwd, its env added', () => {
     const home = 'D:\\tether-home'
     const plan = soulAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
-    assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio'])
+    assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', ...slot.args])
     assert.equal(plan.cwd, 'D:\\outra\\pasta')
     assert.equal(plan.env.SOUL_X, '1')
     assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath(home, slot.slotId))
     assert.equal(plan.env[ENV_SLOT], slot.slotId)
+  })
+
+  test('resume: a slot created with -c/--continue or --fork-session keeps the fork, drops the continue', () => {
+    const forked = { ...slot, args: ['-c', '--fork-session', '--continue', '-g'] }
+    const plan = soulAdapter.plan({ slot: forked, home: 'D:\\h', resume: binding, extraArgs: [] })
+    assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', '--fork-session', '-g'])
   })
 
   test('resume without a recipe: -r <id> plus the slot args, in the binding cwd', () => {

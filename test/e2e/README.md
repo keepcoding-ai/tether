@@ -24,6 +24,12 @@ slot's `data` events, keys sent with `input`, exit = the slot's `state` losing i
 home + pipe) and shuts it down. `claude.scenarios.test.ts` proves PRD §5 (C1–C18) through it; `awaitReady(t)`
 is the shared startup wait (trust dialog, first idle).
 
+**Dialects.** The harness is the same for both agents; what differs is an `AgentDialect` (`StartOptions.agent`,
+default `claude`): the prompt line, the busy signals, where the slash menu sits, what the input box contains and
+the farewell hint (`Terminal.resumeHint`; `resumeId` only when it is a uuid). `soul.scenarios.test.ts` proves
+C1–C14 and C17 for soul-cli through the daemon with `agent: 'soul'` (needs a soul that reports:
+`TETHER_SOUL_CMD="node <soul-cli>/bin/soul"` until it is installed).
+
 Run: `npm run test:e2e` (one file at a time; never two agents in parallel). `E2E_LOG_DIR=<dir>` keeps a JSONL
 log per session: raw PTY chunks (replayable through `Screen`) plus a `mark` line with the full screen at every
 harness step (`trust`, `ready`, `type`, `accepted`, `idle`, `kill`, `exit`). When a wait fails, the error message
@@ -67,6 +73,22 @@ children, so a pid-only check over a window reports phantom orphans. `aliveProcs
 Node process alive forever; its own `kill()` releases them but forks a helper that dies with "AttachConsole failed"
 once the console is gone. `dispose()` releases the internals directly (closes the pseudo console, stops the
 worker, destroys the sockets with error handlers attached). It runs 1.1 s after exit and inside `kill()`.
+
+## soul-cli dialect (observed on v0.1.187)
+
+- The input box is a frame: `╭──…` / `│ ❯ text │` / `╰──…` while the conversation has no title; with one (after
+  `/rename`, or a resumed conversation) it is two rules `──── title ──` / `  ❯ text` / `────`. The prompt is
+  therefore "a ❯ line right under a frame top", never `❯` at column 0. An empty box shows a dim placeholder
+  (`Try "fix typecheck errors"`), which `inputText()` treats as empty.
+- Busy = status bar `Esc stops │ Enter queues after this turn`, spinner line ` ● Schlepping…`, braille glyph in
+  the window title (`⠂ Agent`); idle shows `? for shortcuts` and `✳ Agent`. Answers are ` ● word` (indented).
+- The slash menu opens **below** the frame (`  ❯ /exit   Exit the REPL`); it closes once an argument is typed.
+- `/exit` ends the process and prints `soul --resume "<title>"` (a title, not an id): the id comes only from the
+  client's own report (`SOUL_SESSION_REPORT`). `/branch` answers "Failed to branch: No conversation to branch"
+  on an empty conversation and otherwise finishes **asynchronously** (~10 s after the prompt is back), so the
+  test waits for the start event in the jsonl, not for idle. `/new` keeps the old conversation open in a tab.
+- No fullscreen canary: `minUptimeBeforeKill: 0` is safe. Startup ~5 s; the launcher (`bin/soul`) re-spawns node
+  with a bigger heap, so the agent is a child of the pty root (the tree covers it).
 
 ## Claude Code quirks worth knowing
 
