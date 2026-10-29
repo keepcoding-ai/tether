@@ -37,6 +37,34 @@ export async function identify(pid: number): Promise<Owned | undefined> {
 }
 
 /**
+ * Every process with this image name whose command line contains `cmdIncludes` (a path only this test uses),
+ * never this process itself. What a test's "killall node" acts on: `killAllOwned(await findProcesses(...))`.
+ */
+export async function findProcesses(opts: { name: string; cmdIncludes: string }): Promise<Owned[]> {
+  const needle = opts.cmdIncludes.toLowerCase()
+  if (process.platform === 'win32') {
+    const q = (s: string): string => s.replace(/'/g, "''")
+    const out = await ps(`@(Get-CimInstance Win32_Process -Filter 'Name=''${q(opts.name)}''' | Select-Object ProcessId,Name,CommandLine,@{n='Created';e={$_.CreationDate.ToFileTime()}}) | ConvertTo-Json -Compress`)
+    if (!out.trim()) return []
+    const raw = JSON.parse(out) as { ProcessId: number; Name: string; CommandLine: string | null; Created: number | null }[] | { ProcessId: number; Name: string; CommandLine: string | null; Created: number | null }
+    const list = Array.isArray(raw) ? raw : [raw]
+    return list
+      .filter((p) => p.ProcessId !== process.pid && (p.CommandLine ?? '').toLowerCase().includes(needle))
+      .map((p) => ({ pid: p.ProcessId, created: p.Created ?? 0, name: p.Name, cmd: p.CommandLine ?? undefined }))
+  }
+  const out = await new Promise<string>((res, rej) => execFile('ps', ['-eo', 'pid=,lstart=,args='], (e, so) => (e ? rej(e) : res(so))))
+  const found: Owned[] = []
+  for (const line of out.split('\n')) {
+    const m = /^\s*(\d+)\s+(.{24})\s+(.*)$/.exec(line)
+    if (!m) continue
+    const pid = Number(m[1]); const cmd = m[3]!
+    const name = cmd.split(' ')[0]!.split('/').pop()!
+    if (pid !== process.pid && name === opts.name && cmd.toLowerCase().includes(needle)) found.push({ pid, created: Date.parse(m[2]!) || 0, name, cmd })
+  }
+  return found
+}
+
+/**
  * Claims `pid` as the test's own, recording its identity now. `cmdIncludes` (a path or pipe name only this
  * test uses) must appear in its command line, or the claim is refused: the pid is not what the test thinks.
  */

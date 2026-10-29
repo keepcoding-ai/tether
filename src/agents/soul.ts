@@ -11,9 +11,12 @@
 //      become the command (NODE in msys form, /c/..., is converted; when absent or missing on disk,
 //      the daemon's own node runs the CLI). A script without a CLI= line runs through Git Bash.
 //   3. Elsewhere, or when nothing is found: the bare `soul` (spawn resolves it).
+// Whichever node the command ends up with runs as <home>/bin/tether-soul.exe (core/exe.ts): a panel of the
+// soul survives a "kill every node.exe" and shows its own name in the Task Manager.
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { Binding } from '../core/event.ts'
+import { ensureRenamedNode, exeLog, isNodeExecutable, isRenamedNode } from '../core/exe.ts'
 import { canonicalDir, slotEventsPath } from '../core/paths.ts'
 import { findOnPath } from './shell.ts'
 import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
@@ -101,6 +104,17 @@ export function resolveSoulCommand(env: Record<string, string | undefined> = pro
   return { command: found, args: [] }
 }
 
+/**
+ * The command with its node replaced by <home>/bin/tether-soul.exe, when it is a node at all (a `soul.exe` or a
+ * bash launcher is left alone). The daemon may itself be a renamed node (tetherd.exe): the node it was made
+ * from is in TETHER_NODE, and the soul's copy comes from that one, never from another copy.
+ */
+export function withRenamedNode(cmd: Command, home: string, env: Record<string, string | undefined> = process.env, log: (msg: string) => void = exeLog(home, 'soul')): Command {
+  if (!isNodeExecutable(cmd.command)) return cmd
+  const source = isRenamedNode(cmd.command) ? (env.TETHER_NODE?.trim() || cmd.command) : cmd.command
+  return { command: ensureRenamedNode(home, 'tether-soul', source, log).path, args: cmd.args }
+}
+
 function envWithoutUndefined(source: NodeJS.ProcessEnv): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(source)) if (v !== undefined) out[k] = v
@@ -109,7 +123,7 @@ function envWithoutUndefined(source: NodeJS.ProcessEnv): Record<string, string> 
 
 function plan(input: PlanInput): LaunchPlan {
   const { slot, home, resume, extraArgs, profile } = input
-  const base = resolveSoulCommand()
+  const base = withRenamedNode(resolveSoulCommand(), home)
   const env = envWithoutUndefined(process.env)
   Object.assign(env, profile?.env ?? {})
   const profileArgs = profile?.args ?? []

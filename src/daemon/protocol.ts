@@ -95,7 +95,8 @@ export type Reply =
   | {
       t: 'ok'
       id: number
-      hello?: { v: number; pid: number; version: string }
+      /** `exec`: the executable the daemon runs as (tetherd.exe, or the plain node when the copy failed). */
+      hello?: { v: number; pid: number; version: string; exec?: string }
       slots?: SlotState[]
       slot?: SlotState
       scrollback?: string

@@ -8,6 +8,8 @@ import {
   checkClaude,
   checkClaudeEnv,
   checkDaemon,
+  checkExecutables,
+  checkStartTime,
   checkHome,
   checkHook,
   checkNode,
@@ -101,6 +103,32 @@ describe('doctor: home, daemon, soul', () => {
     assert.match(up.detail, /pid 4242/)
     assert.match(up.detail, /0\.1\.0/)
     assert.equal(checkDaemon('\\\\.\\pipe\\tether-x', undefined).level, 'AVISO')
+  })
+  test('executáveis: tetherd.exe + tether-soul.exe in place → OK naming the method; plain node running or fallback → AVISO', () => {
+    const ok = (name: 'tetherd' | 'tether-soul', method: 'hardlink' | 'copy') =>
+      ({ name, path: `C:\\h\\bin\\${name}.exe`, present: true, outdated: false, stamp: { source: 'C:\\n\\node.exe', size: 1, mtimeMs: 1, method } })
+    const up = checkExecutables({ tetherd: ok('tetherd', 'hardlink'), soul: ok('tether-soul', 'copy'), daemonExec: 'C:\\h\\bin\\tetherd.exe', soulIsNode: true })
+    assert.equal(up.level, 'OK')
+    assert.match(up.detail, /tetherd: link de C:\\n\\node\.exe; tether-soul: cópia de/)
+    assert.match(up.detail, /em execução como C:\\h\\bin\\tetherd\.exe/)
+    const noSoul = checkExecutables({ tetherd: ok('tetherd', 'hardlink'), soul: ok('tether-soul', 'copy'), daemonExec: undefined, soulIsNode: false })
+    assert.equal(noSoul.level, 'OK')
+    assert.ok(!noSoul.detail.includes('tether-soul'))
+    const plain = checkExecutables({ tetherd: ok('tetherd', 'copy'), soul: ok('tether-soul', 'copy'), daemonExec: 'C:\\n\\node.exe', soulIsNode: true })
+    assert.equal(plain.level, 'AVISO')
+    assert.match(plain.detail, /em execução como C:\\n\\node\.exe/)
+    const fallback = checkExecutables({ tetherd: { name: 'tetherd', path: 'x', present: false, outdated: true, stamp: { source: 'C:\\n\\node.exe', size: 0, mtimeMs: 0, method: 'fallback', reason: 'EACCES' } }, soul: ok('tether-soul', 'copy'), daemonExec: undefined, soulIsNode: false })
+    assert.equal(fallback.level, 'AVISO')
+    assert.match(fallback.detail, /node original \(EACCES\)/)
+    const outdated = checkExecutables({ tetherd: { ...ok('tetherd', 'copy'), outdated: true }, soul: ok('tether-soul', 'copy'), daemonExec: undefined, soulIsNode: false })
+    assert.equal(outdated.level, 'OK')
+    assert.match(outdated.detail, /desatualizada/)
+  })
+  test('horário de início: helper → OK with ms; one-shot → AVISO; nothing answered → ERRO', () => {
+    assert.equal(checkStartTime({ method: 'helper', ms: 12, answered: true }).level, 'OK')
+    assert.match(checkStartTime({ method: 'helper', ms: 12, answered: true }).detail, /residente \(12 ms/)
+    assert.equal(checkStartTime({ method: 'one-shot', ms: 1200, answered: true }).level, 'AVISO')
+    assert.equal(checkStartTime({ method: 'one-shot', ms: 1200, answered: false }).level, 'ERRO')
   })
   test('soul: missing → AVISO; no version → ERRO; source with/without SOUL_SESSION_REPORT; unreadable → "não verificável"', () => {
     assert.equal(checkSoul({ command: 'soul', found: false, versionOutput: undefined, sourceText: undefined }).level, 'AVISO')
