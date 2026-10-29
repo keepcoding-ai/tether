@@ -52,7 +52,7 @@ describe('cli: format', () => {
     assert.equal(shortId('0b6f1234-aaaa-bbbb'), '0b6f1234…')
     assert.equal(shortId(undefined), '-')
     assert.equal(statusLabel('unconfirmed'), 'não confirmado')
-    assert.equal(truncateStart('D:\\sources\\localhost\\agentic-terminal', 12), '…ic-terminal')
+    assert.equal(truncateStart('D:\\sources\\localhost\\tether-app', 12), '…\\tether-app')
   })
   test('table: columns padded to the widest cell, no trailing spaces', () => {
     const t = table(['A', 'BB'], [['xxx', 'y'], ['z', 'longer']])

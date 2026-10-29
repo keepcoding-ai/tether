@@ -155,14 +155,14 @@ describe('claudeAdapter.plan', () => {
 
 describe('encodeProjectDir (rule derived from real ~/.claude/projects names)', () => {
   test('known examples', () => {
-    assert.equal(encodeProjectDir('D:\\sources\\localhost\\agentic-terminal'), 'D--sources-localhost-agentic-terminal')
+    assert.equal(encodeProjectDir('D:\\sources\\localhost\\tether'), 'D--sources-localhost-tether')
     assert.equal(encodeProjectDir('D:\\atrium\\.tmp\\anvil'), 'D--atrium--tmp-anvil')
     assert.equal(encodeProjectDir('D:\\.tmp'), 'D---tmp')
     assert.equal(encodeProjectDir('/mnt/d/atrium'), '-mnt-d-atrium')
     assert.equal(encodeProjectDir('/home/guga'), '-home-guga')
     assert.equal(
-      encodeProjectDir('C:\\Users\\gugac\\AppData\\Local\\Temp\\claude\\D--sources-localhost-agentic-terminal\\5be339a3-3e3a-4a19-8353-e1659f996ae6\\scratchpad\\e0\\work'),
-      'C--Users-gugac-AppData-Local-Temp-claude-D--sources-localhost-agentic-terminal-5be339a3-3e3a-4a19-8353-e1659f996ae6-scratchpad-e0-work',
+      encodeProjectDir('C:\\Users\\gugac\\AppData\\Local\\Temp\\claude\\D--sources-localhost-tether\\5be339a3-3e3a-4a19-8353-e1659f996ae6\\scratchpad\\e0\\work'),
+      'C--Users-gugac-AppData-Local-Temp-claude-D--sources-localhost-tether-5be339a3-3e3a-4a19-8353-e1659f996ae6-scratchpad-e0-work',
     )
     assert.equal(encodeProjectDir('C:\\a b_c.d'), 'C--a-b-c-d')
   })
