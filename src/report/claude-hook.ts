@@ -1,0 +1,136 @@
+// Claude Code hook entry point. Claude runs it (via Git Bash on Windows) as:
+//   node "<abs path>/src/report/claude-hook.ts" SessionStart|SessionEnd
+// with the hook payload on stdin and the slot's env (TETHER_SLOT_ID, TETHER_HOME).
+//
+// Rules (PRD RNF3): never write to stdout (SessionStart stdout is injected into Claude's
+// context), never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
+// It does not import the core: it appends one JSON line itself.
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+import type { TetherEvent } from '../core/event.ts'
+
+/** Same rule as the core: TETHER_HOME, else %LOCALAPPDATA%\tether, else ~/.local/state/tether. */
+function tetherHome(): string {
+  const env = process.env.TETHER_HOME
+  if (env) return env
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
+    return join(local, 'tether')
+  }
+  return join(homedir(), '.local', 'state', 'tether')
+}
+
+function log(home: string, msg: string): void {
+  try {
+    mkdirSync(home, { recursive: true })
+    appendFileSync(join(home, 'tether.log'), `${new Date().toISOString()} claude-hook: ${msg}\n`)
+  } catch {
+    // nothing left to do
+  }
+}
+
+type Payload = Record<string, unknown>
+
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' && v !== '' ? v : undefined
+}
+
+/** Maps a Claude hook payload to a v1 event; undefined when it is not one we record. */
+export function toEvent(hookName: string, payload: Payload, slotId: string, ts: string): TetherEvent | undefined {
+  const sessionId = str(payload.session_id)
+  if (!sessionId) return undefined
+  const cwd = str(payload.cwd)
+  if (hookName === 'SessionStart') {
+    const ev: TetherEvent = {
+      v: 1,
+      ts,
+      slotId,
+      agent: 'claude',
+      kind: 'start',
+      source: str(payload.source) ?? 'unknown',
+      sessionId,
+    }
+    const title = str(payload.session_title)
+    if (title) ev.title = title
+    if (cwd) {
+      ev.cwd = cwd
+      ev.resume = { cwd, args: ['--resume', sessionId] }
+    }
+    ev.raw = payload
+    return ev
+  }
+  if (hookName === 'SessionEnd') {
+    const ev: TetherEvent = {
+      v: 1,
+      ts,
+      slotId,
+      agent: 'claude',
+      kind: 'end',
+      source: str(payload.reason) ?? 'unknown',
+      sessionId,
+    }
+    if (cwd) ev.cwd = cwd
+    ev.raw = payload
+    return ev
+  }
+  return undefined
+}
+
+function record(stdin: string): void {
+  const home = tetherHome()
+  try {
+    const slotId = process.env.TETHER_SLOT_ID
+    if (!slotId) return // not launched by tether: nothing to do
+    let payload: Payload
+    try {
+      const parsed: unknown = JSON.parse(stdin)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object')
+      payload = parsed as Payload
+    } catch (e) {
+      log(home, `slot ${slotId}: bad stdin (${(e as Error).message}): ${stdin.slice(0, 200)}`)
+      return
+    }
+    const hookName = process.argv[2] ?? str(payload.hook_event_name) ?? ''
+    const ev = toEvent(hookName, payload, slotId, new Date().toISOString())
+    if (!ev) {
+      log(home, `slot ${slotId}: ignored hook ${JSON.stringify(hookName)}`)
+      return
+    }
+    const dir = join(home, 'slots')
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(join(dir, `${slotId}.jsonl`), JSON.stringify(ev) + '\n')
+  } catch (e) {
+    log(home, `error: ${(e as Error)?.stack ?? String(e)}`)
+  }
+}
+
+function main(): void {
+  process.exitCode = 0
+  process.on('uncaughtException', () => process.exit(0))
+  process.on('unhandledRejection', () => process.exit(0))
+  let data = ''
+  let done = false
+  const finish = (): void => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    record(data)
+    process.exit(0)
+  }
+  // Safety net: a stdin that never ends (TTY, odd host) must not hang Claude.
+  const timer = setTimeout(finish, 3000)
+  try {
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', (c: string) => { data += c })
+    process.stdin.on('end', finish)
+    process.stdin.on('error', finish)
+    process.stdin.on('close', finish)
+  } catch {
+    finish()
+  }
+}
+
+// Only run when executed directly, so tests can import toEvent().
+const entry = process.argv[1]
+if (entry && /claude-hook\.ts$/i.test(entry)) main()
