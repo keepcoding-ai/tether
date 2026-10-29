@@ -4,10 +4,12 @@
 //   renderer.js   browser bundle (ESM) with xterm + dockview-core
 //   dockview.css  dockview-core's stylesheet. The ESM build of dockview-core 8 ships no CSS file: the
 //                 styles exist only as a string injected by its UMD bundle, so they are extracted from it.
+//   tether.ico/png the app icon (window, taskbar, Start Menu shortcut), drawn by app/icon.mjs
 import { build } from 'esbuild'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { writeIcons } from './icon.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const out = join(here, 'dist')
@@ -25,6 +27,7 @@ function extractDockviewCss() {
 }
 
 extractDockviewCss()
+writeIcons(out)
 await Promise.all([
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),

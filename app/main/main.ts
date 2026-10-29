@@ -15,6 +15,12 @@ import type { CloseChoice, ConnectionState, RequestBody } from '../shared/api.ts
 
 const home = tetherHome()
 const pipe = pipePath(home, userInfo().username)
+/** Taskbar grouping / pinning: the same id goes on the Start Menu shortcut (app/shortcut.ps1). */
+const APP_USER_MODEL_ID = 'studio.codr.tether'
+// Electron's own state (cache, GPU, the single-instance lock) lives under TETHER_HOME too: E2E runs with a
+// private home never collide with the user's running app.
+app.setPath('userData', join(home, 'electron'))
+app.setAppUserModelId(APP_USER_MODEL_ID)
 const layoutPath = join(home, 'layout.json')
 const recentPath = join(home, 'recent-folders.json')
 const RECENT_LIMIT = 12
@@ -52,7 +58,7 @@ function sendConnection(state: ConnectionState): void {
 /**
  * The Node that runs tetherd (`src/daemon/main.ts` needs Node ≥ 24 to load .ts; Electron's own Node
  * cannot be used: node-pty is built for the Node ABI). TETHER_NODE wins; `npm run app` leaves the npm
- * node in npm_node_execpath; else the first `node` on PATH.
+ * node in npm_node_execpath; else the first `node` on PATH (the Start Menu shortcut has only PATH).
  */
 function findNode(): string | undefined {
   const env = process.env
@@ -61,7 +67,7 @@ function findNode(): string | undefined {
   const name = process.platform === 'win32' ? 'node.exe' : 'node'
   for (const dir of (env.PATH ?? env.Path ?? '').split(delimiter)) {
     if (!dir) continue
-    const candidate = join(dir, name)
+    const candidate = join(dir.replace(/^"|"$/g, ''), name)
     if (existsSync(candidate)) return candidate
   }
   return undefined
@@ -70,7 +76,10 @@ function findNode(): string | undefined {
 /** Starts tetherd detached (own process group, no stdio, no console): it outlives this window. */
 function spawnDaemon(): number {
   const node = findNode()
-  if (!node) throw new Error('não encontrei o node para subir o tetherd (defina TETHER_NODE)')
+  if (!node) {
+    throw new Error('não encontrei o node (≥ 24) para subir o tetherd: ele precisa estar no PATH do usuário, '
+      + 'ou defina a variável de ambiente TETHER_NODE com o caminho completo do node.exe')
+  }
   if (!existsSync(daemonMain)) throw new Error(`tetherd não encontrado em ${daemonMain}`)
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_')) env[k] = v
@@ -179,6 +188,7 @@ function createWindow(): void {
     width: 1400,
     height: 900,
     title: 'tether',
+    icon: join(__dirname, 'tether.ico'),
     backgroundColor: '#1b1b1f',
     show: !hidden,
     autoHideMenuBar: true,
@@ -259,11 +269,23 @@ ipcMain.on('shell:open-external', (_e, url: string) => {
 ipcMain.handle('clipboard:read', () => clipboard.readText())
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
 
-app.whenReady().then(() => {
-  createMenu()
-  createWindow()
-  win?.webContents.once('did-finish-load', () => { void connectDaemon() })
-})
+// One window per TETHER_HOME: a second launch (shortcut clicked twice) just brings the first one up.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    app.focus({ steal: true }) // Windows refuses plain focus from a process that is not in front
+    win.focus()
+  })
+  app.whenReady().then(() => {
+    createMenu()
+    createWindow()
+    win?.webContents.once('did-finish-load', () => { void connectDaemon() })
+  })
+}
 
 // Closing the window never stops a slot: only the connection goes; the daemon keeps the PTYs.
 app.on('window-all-closed', () => {
