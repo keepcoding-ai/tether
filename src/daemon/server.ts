@@ -8,7 +8,7 @@ import { shellAdapter } from '../agents/shell.ts'
 import { soulAdapter } from '../agents/soul.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { AgentName, Binding, SlotMeta } from '../core/event.ts'
-import { slotMetaPath, slotsDir } from '../core/paths.ts'
+import { canonicalDir, slotMetaPath, slotsDir } from '../core/paths.ts'
 import { createSlot, currentBinding, listSlots, newSlotId, readEvents, readSlot, removeSlot, SLOT_ID_RE } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import {
@@ -475,7 +475,7 @@ class DaemonImpl implements Daemon {
           v: 1,
           slotId: newSlotId(this.home),
           agent: req.kind,
-          cwd: req.cwd,
+          cwd: canonicalDir(req.cwd),
           args: Array.isArray(req.args) ? req.args.filter((a): a is string => typeof a === 'string') : [],
           createdAt: new Date().toISOString(),
         }

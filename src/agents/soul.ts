@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { Binding } from '../core/event.ts'
-import { slotEventsPath } from '../core/paths.ts'
+import { canonicalDir, slotEventsPath } from '../core/paths.ts'
 import { findOnPath } from './shell.ts'
 import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
 
@@ -121,13 +121,13 @@ function plan(input: PlanInput): LaunchPlan {
     const recipe = resume.resume
     Object.assign(env, recipe.env ?? {})
     const own = slot.args.filter((a) => a !== '-c' && a !== '--continue')
-    return { command: base.command, args: [...base.args, ...recipe.args, ...own], cwd: recipe.cwd, env }
+    return { command: base.command, args: [...base.args, ...recipe.args, ...own], cwd: canonicalDir(recipe.cwd), env }
   }
   if (resume) {
     // A binding without a recipe (older event): the id alone, in the binding's folder.
-    return { command: base.command, args: [...base.args, '-r', resume.sessionId, ...slot.args], cwd: resume.cwd, env }
+    return { command: base.command, args: [...base.args, '-r', resume.sessionId, ...slot.args], cwd: canonicalDir(resume.cwd), env }
   }
-  return { command: base.command, args: [...base.args, ...slot.args, ...extraArgs], cwd: slot.cwd, env }
+  return { command: base.command, args: [...base.args, ...slot.args, ...extraArgs], cwd: canonicalDir(slot.cwd), env }
 }
 
 async function sessionExists(_binding: Binding): Promise<boolean | 'unknown'> {
