@@ -8,7 +8,7 @@ Fonte da verdade do andamento do [PLAN.md](./PLAN.md). Atualizado a cada tarefa.
 | T1 Núcleo de estado | concluída | merge 53f0acb; tsc ok; 32/32 testes isolados (liveness lenta sob carga, ver decisão) |
 | T2 Adapter Claude | concluída | merge 44c1fe6; 31/31 unit; smoke real (novo + resume) pelo agente |
 | T3 Harness E2E | concluída | merge ed10f0a; smoke E2E rodado por mim: 2/2 (51 s); fullscreen intacto |
-| T4 CLI e lançamento | pendente | |
+| T4 CLI (cliente do tetherd) | em andamento (fable, medium) | |
 | T5 soul-cli `SOUL_SESSION_REPORT` | feita, aguarda OK do Guga p/ merge no develop + instalar | branch feat/session-report 0155b7a; 22/22 testes rodados por mim; prova ao vivo no agente serpente (startup, resume, continue, fork) |
 | T6 Cenários E2E Claude (via tetherd) | concluída | merge; 101/101 unit; suíte E2E 17/17 rodada por mim (313 s) + 2 execuções verdes pelo agente = 3 seguidas; fullscreen intacto |
 | T7 Adapter + cenários soul | adapter concluído (A2b); cenários em andamento (fable, high) | |
