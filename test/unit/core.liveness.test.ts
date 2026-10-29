@@ -2,19 +2,54 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { test } from 'node:test'
-import { isAlive, pidExists, processStartTime } from '../../src/core/liveness.ts'
+import { isAlive, pidExists, processStartTime, startTimeHelperPid, startTimeMethod, startTimeStats, stopStartTimeHelper } from '../../src/core/liveness.ts'
 
-test('processStartTime of the current process is a normalized ISO UTC string, stable across calls, and fast enough', async () => {
+const isWin = process.platform === 'win32'
+
+test('processStartTime of the current process is a normalized ISO UTC string, stable across calls, and fast after the first', async () => {
   const t0 = performance.now()
   const a = await processStartTime(process.pid)
-  const elapsed = performance.now() - t0
+  const first = performance.now() - t0
+  const t1 = performance.now()
   const b = await processStartTime(process.pid)
+  const second = performance.now() - t1
   assert.ok(a, 'got a start time')
   assert.match(a, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
   assert.equal(a, b)
   assert.ok(Math.abs(Date.parse(a) - Date.now()) < 10 * 60_000, 'start time is recent')
-  // ~0.7s alone on Windows (one powershell.exe); the bound is loose because test files run in parallel.
-  assert.ok(elapsed < 5000, `took ${elapsed.toFixed(0)}ms`)
+  // Windows: the first query starts the resident PowerShell helper (~0.8 s idle, seconds under load, never a
+  // one-shot per query); from then on a query is ~10 ms idle, ~65 ms (p95 120 ms) under heavy load. The 1 s bound on
+  // the second call is what proves the helper answered: a one-shot powershell.exe alone takes 0.7-2 s.
+  assert.ok(first < 20_000, `first query took ${first.toFixed(0)}ms`)
+  assert.ok(second < 1000, `second query took ${second.toFixed(0)}ms (helper not in use?)`)
+  if (isWin) assert.equal(startTimeMethod(), 'helper')
+})
+
+test('Windows: the helper is restarted when it dies, and a stopped helper is started again by the next query', { skip: !isWin && 'Windows-only helper' }, async () => {
+  const a = await processStartTime(process.pid)
+  const pid = startTimeHelperPid()
+  assert.ok(pid && pidExists(pid), 'a helper is running')
+  const before = startTimeStats().helper
+  // Kill it the hard way (what a killall of powershell, or a crash, does): the next query must still answer, fast.
+  process.kill(pid) // our own child, by the pid we got from its handle moments ago
+  const t0 = performance.now()
+  const b = await processStartTime(process.pid)
+  const ms = performance.now() - t0
+  assert.equal(b, a)
+  assert.ok(ms < 20_000, `recovered in ${ms.toFixed(0)}ms`)
+  const again = startTimeHelperPid()
+  assert.ok(again && again !== pid && pidExists(again), 'a new helper')
+  assert.ok(startTimeStats().helper > before)
+  assert.equal(startTimeMethod(), 'helper')
+
+  stopStartTimeHelper()
+  assert.equal(startTimeHelperPid(), undefined)
+  assert.equal(await processStartTime(process.pid), a)
+  assert.ok(startTimeHelperPid(), 'started again on demand')
+  // Many queries at once go through the one helper, in order, each getting its own answer.
+  const all = await Promise.all([process.pid, process.ppid, process.pid, process.ppid, process.pid].map((p) => processStartTime(p)))
+  assert.deepEqual(all, [a, all[1], a, all[1], a])
+  assert.equal(startTimeStats().oneShot, 0, 'no one-shot fallback was needed')
 })
 
 test('isAlive: current process with its real start time → true; wrong start time (reused pid) → false', async () => {
