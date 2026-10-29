@@ -9,32 +9,45 @@ import { exitCodeFor, formatReport, runDoctor } from '../doctor.ts'
 import type { Binding, SlotMeta } from '../core/event.ts'
 import { pidExists } from '../core/liveness.ts'
 import { canonicalDir, slotMetaPath } from '../core/paths.ts'
+import { findProfile, ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles, type Profile, type ProfileAgent, type ProfileInput } from '../core/profile.ts'
 import { createSlot, currentBinding, newSlotId, readEvents, readRun, readSlot, removeSlot } from '../core/store.ts'
+import { splitCommandLine } from '../agents/soul.ts'
 import { DaemonClient, DaemonError } from '../daemon/client.ts'
 import type { ErrorCode, SlotKind, SlotState } from '../daemon/protocol.ts'
 import { parseArgs, UsageError } from './args.ts'
 import { attach } from './attach.ts'
 import { localTime, relativeTime, shortId, statusLabel, table, truncate, truncateStart } from './format.ts'
-import { adapters, planFor, runHere } from './here.ts'
+import { adapters, planFor, profileFor, runHere } from './here.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
 export const USAGE = `uso: tether <comando> [opções]
 
   ls [--json]                         lista os slots (--json: estado bruto)
   show <slot>                         vínculo e histórico de eventos do slot
-  new <claude|soul|shell> [--name n] [--cwd p] [--here] [-- args do agente]
-                                      cria um slot e abre o agente nele
+  new <claude|soul|shell> [--profile p] [--name n] [--cwd p] [--here] [-- args do agente]
+                                      cria um slot e abre o agente nele (--profile: perfil de
+                                      lançamento, pelo nome ou id; dispensa o agente)
   open <slot> [--new|--resume-anyway] [--here]
                                       retoma o slot (--new: nova sessão)
   attach <slot>                       anexa este terminal ao slot (Ctrl+] solta)
   stop <slot>                         encerra o processo do slot (o vínculo fica)
   rm <slot> [--yes]                   esquece o slot (não apaga a sessão do agente)
   rename <slot> <nome>                renomeia o slot
+  profiles [--json]                   lista os perfis de lançamento
+  profile add <claude|soul|shell> <nome> [--default] [--env K=V]... [--cwd p]
+              [--shell "exe args"] [-- args do agente]
+                                      cria um perfil
+  profile edit <perfil> [--name n] [--default|--no-default] [--env K=V]...
+              [--cwd p] [--shell "exe args"] [-- args do agente]
+                                      altera um perfil (args e env dados substituem os atuais)
+  profile rm <perfil> [--yes]         apaga um perfil (os slots que o usam guardam uma cópia)
   doctor                              confere o ambiente
   help                                esta ajuda
 
-<slot> aceita o id, um prefixo único do id ou o nome. --here roda o agente neste
-terminal em vez do tetherd (é o padrão quando o tetherd não está rodando).
+<slot> aceita o id, um prefixo único do id ou o nome; <perfil>, o id ou o nome.
+--here roda o agente neste terminal em vez do tetherd (é o padrão quando o
+tetherd não está rodando). O perfil vale a cada início do slot, inclusive na
+retomada: editar o perfil muda o próximo início.
 `
 
 const out = (text: string): void => { process.stdout.write(text) }
@@ -63,6 +76,8 @@ export async function main(argv: string[]): Promise<number> {
       case 'stop': return await cmdStop(rest)
       case 'rm': return await cmdRm(rest)
       case 'rename': return await cmdRename(rest)
+      case 'profiles': return await cmdProfiles(rest)
+      case 'profile': return await cmdProfile(rest)
       default:
         throw new UsageError(`comando desconhecido: ${command}`, true)
     }
@@ -81,9 +96,26 @@ export async function main(argv: string[]): Promise<number> {
 /** The slots as the daemon sees them, else from the store; the client stays open when there is one. */
 async function loadSlots(ctx: Context): Promise<{ client: DaemonClient | undefined; slots: SlotState[] }> {
   const client = await tryConnect(ctx)
-  if (!client) return { client: undefined, slots: statesFromStore(ctx.home) }
+  if (!client) return { client: undefined, slots: statesFromStore(ctx.home, readProfiles(ctx.home).profiles) }
   const reply = await client.request({ t: 'list' })
   return { client, slots: reply.slots ?? [] }
+}
+
+/** The profiles as the daemon sees them, else from the file; the client stays open when there is one. */
+async function loadProfiles(ctx: Context): Promise<{ client: DaemonClient | undefined; profiles: Profile[]; problem?: string }> {
+  const client = await tryConnect(ctx)
+  if (!client) {
+    const read = readProfiles(ctx.home)
+    return { client: undefined, profiles: read.profiles, ...(read.problem ? { problem: read.problem } : {}) }
+  }
+  const reply = await client.request({ t: 'profiles-list' })
+  return { client, profiles: reply.profiles ?? [], ...(reply.problem ? { problem: reply.problem } : {}) }
+}
+
+function requireProfile(profiles: Profile[], ref: string): Profile {
+  const p = findProfile(profiles, ref)
+  if (!p) throw new Error(`perfil não encontrado: ${ref} (veja \`tether profiles\`)`)
+  return p
 }
 
 function requireRef(positional: string[], what = 'slot'): string {
@@ -114,9 +146,10 @@ function explain(code: ErrorCode, message: string, slotId: string): string {
   }
 }
 
-function slotCreatedLine(slot: Pick<SlotState, 'slotId' | 'kind' | 'status'> & { name?: string }): string {
+function slotCreatedLine(slot: Pick<SlotState, 'slotId' | 'kind' | 'status'> & { name?: string; profileName?: string }): string {
   const name = slot.name ? ` "${slot.name}"` : ''
-  return `slot ${slot.slotId}${name} criado (${slot.kind}, ${statusLabel(slot.status)}).\n` +
+  const profile = slot.profileName ? `, perfil "${slot.profileName}"` : ''
+  return `slot ${slot.slotId}${name} criado (${slot.kind}${profile}, ${statusLabel(slot.status)}).\n` +
     `  abra no app, ou: tether attach ${slot.slotId}\n`
 }
 
@@ -167,13 +200,14 @@ async function cmdLs(args: string[]): Promise<number> {
     s.slotId,
     s.name ?? '-',
     s.kind,
+    truncate(s.profileName ?? (s.profileId ? `${s.profileId} (apagado)` : '-'), 24) + (s.unsafe ? ' !' : ''),
     truncateStart(s.cwd, 40),
     shortId(s.binding?.sessionId),
     truncate(s.title ?? '-', 32),
     statusLabel(s.status) + (s.error ? ` (${s.error.code})` : ''),
     relativeTime(lastActivity(ctx.home, s.slotId)),
   ])
-  out(table(['SLOT', 'NOME', 'AGENTE', 'PASTA', 'SESSÃO', 'TÍTULO', 'ESTADO', 'ÚLTIMA ATIVIDADE'], rows))
+  out(table(['SLOT', 'NOME', 'AGENTE', 'PERFIL', 'PASTA', 'SESSÃO', 'TÍTULO', 'ESTADO', 'ÚLTIMA ATIVIDADE'], rows))
   return 0
 }
 
@@ -194,6 +228,13 @@ async function cmdShow(args: string[]): Promise<number> {
   row('agente', slot.kind)
   row('pasta', slot.cwd)
   if (meta) row('criado', localTime(meta.createdAt))
+  if (slot.profileId) {
+    row('perfil', slot.profileName ? `${slot.profileName} (${slot.profileId})` : `${slot.profileId} (apagado; usando a cópia guardada no slot)`)
+    const snapshot = meta?.profileArgs ?? []
+    if (snapshot.length) row('', `args do perfil: ${snapshot.join(' ')}`)
+    if (meta?.profileEnv) row('', `env do perfil: ${Object.entries(meta.profileEnv).map(([k, v]) => `${k}=${v}`).join(' ')}`)
+  }
+  if (slot.unsafe) row('atenção', 'roda sem confirmação de permissões (--dangerously-skip-permissions)')
   if (meta && meta.args.length) row('args', meta.args.join(' '))
   row('estado', statusLabel(slot.status) + (slot.pid ? ` (pid ${slot.pid})` : ''))
   if (slot.error) row('erro', `${slot.error.message} (${slot.error.code})`)
@@ -225,31 +266,41 @@ function parseKind(x: string | undefined): SlotKind {
 }
 
 async function cmdNew(args: string[]): Promise<number> {
-  const p = parseArgs(args, { valued: ['name', 'cwd'], flags: ['here'] })
-  const kind = parseKind(p.positional[0])
-  const cwd = canonicalDir(p.options.cwd ?? process.cwd())
-  if (!existsSync(cwd)) throw new Error(`a pasta não existe: ${cwd}`)
-  const name = p.options.name
+  const p = parseArgs(args, { valued: ['name', 'cwd', 'profile'], flags: ['here'] })
   const ctx = context()
   const here = p.flags.has('here')
   const client = here ? undefined : await tryConnect(ctx)
-  if (client) {
-    try {
-      const reply = await client.request({ t: 'create', kind, cwd, ...(name ? { name } : {}), args: p.rest, start: true })
+  try {
+    // The profile names the agent; a kind given as well must agree with it.
+    let profile: Profile | undefined
+    if (p.options.profile !== undefined) {
+      const profiles = client ? (await client.request({ t: 'profiles-list' })).profiles ?? [] : readProfiles(ctx.home).profiles
+      profile = requireProfile(profiles, p.options.profile)
+      if (p.positional[0] !== undefined && p.positional[0] !== profile.agent) {
+        throw new UsageError(`o perfil "${profile.name}" é de ${profile.agent}, não de ${p.positional[0]}`)
+      }
+    }
+    const kind = profile?.agent ?? parseKind(p.positional[0])
+    const cwd = canonicalDir(p.options.cwd ?? profile?.cwd ?? process.cwd())
+    if (!existsSync(cwd)) throw new Error(`a pasta não existe: ${cwd}`)
+    const name = p.options.name
+    if (client) {
+      const reply = await client.request({ t: 'create', kind, cwd, ...(name ? { name } : {}), args: p.rest, start: true, ...(profile ? { profileId: profile.id } : {}) })
       out(slotCreatedLine(reply.slot!))
       return 0
-    } finally {
-      client.close()
     }
+    if (!here) err('tetherd parado: rodando neste terminal\n')
+    const meta: SlotMeta = { v: 1, slotId: newSlotId(ctx.home), agent: kind, cwd, args: p.rest, createdAt: new Date().toISOString() }
+    if (name) meta.name = name
+    if (profile) meta.profileId = profile.id // planFor takes the snapshot
+    createSlot(ctx.home, meta)
+    const plan = planFor(ctx.home, meta, undefined, [])
+    err(`slot ${meta.slotId}${name ? ` "${name}"` : ''} criado; ${kind}${profile ? ` (perfil "${profile.name}")` : ''} neste terminal (${plan.command})\n`)
+    const r = await runHere(ctx.home, meta.slotId, plan)
+    return r.exitCode
+  } finally {
+    client?.close()
   }
-  if (!here) err('tetherd parado: rodando neste terminal\n')
-  const meta: SlotMeta = { v: 1, slotId: newSlotId(ctx.home), agent: kind, cwd, args: p.rest, createdAt: new Date().toISOString() }
-  if (name) meta.name = name
-  createSlot(ctx.home, meta)
-  const plan = planFor(ctx.home, meta, undefined, [])
-  err(`slot ${meta.slotId}${name ? ` "${name}"` : ''} criado; ${kind} neste terminal (${plan.command})\n`)
-  const r = await runHere(ctx.home, meta.slotId, plan)
-  return r.exitCode
 }
 
 async function cmdOpen(args: string[]): Promise<number> {
@@ -294,7 +345,8 @@ async function openHere(ctx: Context, slot: SlotState, slots: SlotState[], choic
   if (binding) {
     if (!binding.confirmed && !choice) throw fail('unconfirmed', '')
     if (!existsSync(binding.cwd)) throw fail('cwd-missing', `a pasta não existe: ${binding.cwd}`)
-    const exists = await adapters[binding.agent].sessionExists(binding)
+    const env = profileFor(ctx.home, meta).launch?.env
+    const exists = await adapters[binding.agent].sessionExists(binding, env ? { env } : {})
     if (exists === false) throw fail('session-missing', `a sessão ${binding.sessionId} não existe mais no ${binding.agent}`)
     const other = slots.find((s) => s.slotId !== slot.slotId && s.pid !== undefined && s.binding?.sessionId === binding.sessionId)
     if (other) throw fail('already-open', `a sessão já está aberta no slot ${other.slotId}`)
@@ -376,6 +428,178 @@ async function cmdRm(args: string[]): Promise<number> {
       removeSlot(ctx.home, slot.slotId)
     }
     out(`slot ${slot.slotId} esquecido\n`)
+    return 0
+  } finally {
+    client?.close()
+  }
+}
+
+// ---- profiles ----------------------------------------------------------------------------------
+
+function envLine(env: Record<string, string> | undefined): string {
+  return env ? Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ') : '-'
+}
+
+async function cmdProfiles(args: string[]): Promise<number> {
+  const p = parseArgs(args, { flags: ['json'] })
+  const ctx = context()
+  const { client, profiles, problem } = await loadProfiles(ctx)
+  client?.close()
+  if (p.flags.has('json')) {
+    out(JSON.stringify(profiles, null, 2) + '\n')
+    return 0
+  }
+  if (problem) err(`atenção: ${problem}\n`)
+  if (profiles.length === 0) {
+    out('nenhum perfil. Crie um com: tether profile add claude "Claude" --default\n')
+    return 0
+  }
+  const rows = profiles.map((x) => [
+    x.id,
+    x.name,
+    x.agent,
+    x.default ? 'sim' : '-',
+    truncate((x.shell ? [x.shell.command, ...x.shell.args, ...x.args] : x.args).join(' ') || '-', 48),
+    truncate(envLine(x.env), 32),
+    truncateStart(x.cwd ?? '-', 32),
+  ])
+  out(table(['ID', 'NOME', 'AGENTE', 'PADRÃO', 'ARGS', 'ENV', 'PASTA'], rows))
+  return 0
+}
+
+function parseAgent(x: string | undefined): ProfileAgent {
+  if (x === 'claude' || x === 'soul' || x === 'shell') return x
+  throw new UsageError(`agente inválido: ${x ?? '(vazio)'} (use claude, soul ou shell)`)
+}
+
+function parseEnv(pairs: string[]): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const pair of pairs) {
+    const eq = pair.indexOf('=')
+    if (eq <= 0) throw new UsageError(`--env espera NOME=valor, recebeu ${JSON.stringify(pair)}`)
+    env[pair.slice(0, eq)] = pair.slice(eq + 1)
+  }
+  return env
+}
+
+function parseShell(line: string): { command: string; args: string[] } {
+  const [command, ...args] = splitCommandLine(line)
+  if (!command) throw new UsageError('--shell espera o executável (e seus args) entre aspas')
+  return { command, args }
+}
+
+/** Saves through the daemon when it answers (it validates and tells every client), else straight to the file. */
+async function saveProfile(ctx: Context, client: DaemonClient | undefined, input: ProfileInput): Promise<{ profile: Profile; warnings: string[] }> {
+  if (client) {
+    try {
+      const reply = await client.request({ t: 'profile-save', profile: input })
+      return { profile: reply.profile!, warnings: reply.warnings ?? [] }
+    } catch (e) {
+      if (e instanceof DaemonError) throw new Error(e.message)
+      throw e
+    }
+  }
+  try {
+    const r = upsertProfile(readProfiles(ctx.home).profiles, input)
+    writeProfiles(ctx.home, r.profiles)
+    return { profile: r.profile, warnings: r.warnings }
+  } catch (e) {
+    if (e instanceof ProfileError) throw new Error(e.message)
+    throw e
+  }
+}
+
+async function cmdProfile(args: string[]): Promise<number> {
+  const [sub, ...rest] = args
+  switch (sub) {
+    case 'add': return await cmdProfileAdd(rest)
+    case 'edit': return await cmdProfileEdit(rest)
+    case 'rm': return await cmdProfileRm(rest)
+    default: throw new UsageError(`subcomando de profile desconhecido: ${sub ?? '(vazio)'} (use add, edit ou rm)`)
+  }
+}
+
+function printSaved(profile: Profile, warnings: string[], verb: string): void {
+  for (const w of warnings) err(`atenção: ${w}\n`)
+  const what = profile.shell ? [profile.shell.command, ...profile.shell.args, ...profile.args] : profile.args
+  out(`perfil "${profile.name}" (${profile.id}, ${profile.agent}${profile.default ? ', padrão' : ''}) ${verb}` +
+    `${what.length ? `: ${profile.agent} ${what.join(' ')}` : ''}\n`)
+}
+
+async function cmdProfileAdd(args: string[]): Promise<number> {
+  const p = parseArgs(args, { valued: ['cwd', 'shell'], flags: ['default'], multi: ['env'] })
+  const agent = parseAgent(p.positional[0])
+  const name = p.positional[1]
+  if (!name) throw new UsageError('informe o nome do perfil')
+  const input: ProfileInput = { name, agent, args: p.rest }
+  if (p.multi.env) input.env = parseEnv(p.multi.env)
+  if (p.options.cwd) input.cwd = canonicalDir(p.options.cwd)
+  if (p.options.shell) {
+    if (agent !== 'shell') throw new UsageError('--shell só vale para perfis de shell')
+    input.shell = parseShell(p.options.shell)
+  }
+  if (p.flags.has('default')) input.default = true
+  const ctx = context()
+  const client = await tryConnect(ctx)
+  try {
+    const { profile, warnings } = await saveProfile(ctx, client, input)
+    printSaved(profile, warnings, 'criado')
+    return 0
+  } finally {
+    client?.close()
+  }
+}
+
+async function cmdProfileEdit(args: string[]): Promise<number> {
+  const p = parseArgs(args, { valued: ['name', 'cwd', 'shell'], flags: ['default', 'no-default', 'no-cwd', 'no-env'], multi: ['env'] })
+  const ref = requireRef(p.positional, 'perfil')
+  if (p.flags.has('default') && p.flags.has('no-default')) throw new UsageError('--default e --no-default são excludentes')
+  const ctx = context()
+  const { client, profiles } = await loadProfiles(ctx)
+  try {
+    const current = requireProfile(profiles, ref)
+    const input: ProfileInput = { ...current }
+    if (p.options.name !== undefined) input.name = p.options.name
+    if (args.includes('--')) input.args = p.rest
+    if (p.multi.env) input.env = parseEnv(p.multi.env)
+    if (p.flags.has('no-env')) delete input.env
+    if (p.options.cwd !== undefined) input.cwd = canonicalDir(p.options.cwd)
+    if (p.flags.has('no-cwd')) delete input.cwd
+    if (p.options.shell !== undefined) {
+      if (current.agent !== 'shell') throw new UsageError('--shell só vale para perfis de shell')
+      input.shell = parseShell(p.options.shell)
+    }
+    if (p.flags.has('default')) input.default = true
+    if (p.flags.has('no-default')) delete input.default
+    const { profile, warnings } = await saveProfile(ctx, client, input)
+    printSaved(profile, warnings, 'alterado')
+    return 0
+  } finally {
+    client?.close()
+  }
+}
+
+async function cmdProfileRm(args: string[]): Promise<number> {
+  const p = parseArgs(args, { flags: ['yes'] })
+  const ref = requireRef(p.positional, 'perfil')
+  const ctx = context()
+  const { client, profiles } = await loadProfiles(ctx)
+  try {
+    const profile = requireProfile(profiles, ref)
+    if (!p.flags.has('yes')) {
+      if (!process.stdin.isTTY) throw new UsageError('sem terminal para confirmar: use --yes')
+      const ok = await confirm(`apagar o perfil "${profile.name}" (${profile.agent})? Os slots que o usam guardam uma cópia. [s/N] `)
+      if (!ok) {
+        out('cancelado\n')
+        return 1
+      }
+    }
+    if (client) {
+      await client.request({ t: 'profile-delete', profileId: profile.id })
+    } else {
+      writeProfiles(ctx.home, removeProfile(profiles, profile.id))
+    }
+    out(`perfil "${profile.name}" apagado\n`)
     return 0
   } finally {
     client?.close()

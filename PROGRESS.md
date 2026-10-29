@@ -81,6 +81,7 @@ Tudo o que é provável sem o Guga está fechado com prova. Restam apenas os ite
 | Fatia | Estado | Prova |
 |---|---|---|
 | R1 Gestão de processos: tetherd fora da árvore do app (matar o app não mata agentes), um daemon por home sob corrida, pidfile/pipe velhos, limpeza de órfãos por identidade, autoproteção do daemon, kills de teste só por identidade | concluída (fable, high); integrada no main em 2026-10-29 | unit (daemon.spawn, daemon.guard); E2E app.tree (taskkill /T no electron → daemon e shells vivos → relançar reanexa), app.theme/app.layout/app.instance verdes; Claude real 1x (app.claude) |
+| R3 `killall node` não atinge o tether: tetherd roda como `tetherd.exe` e os painéis do soul como `tether-soul.exe` (cópias do node.exe em `<home>bin`, atualizadas quando o node muda); teste: `killall node` com app aberto → painéis seguem vivos; e horário de início de processo sem abrir PowerShell a cada consulta (hoje passa de 5 s sob carga e volta vazio: teste de liveness instável, limpeza de órfãos da R1 fica cega) | concluída | minha prova: killall E2E 3/3 (killall dos node.exe do teste mata o sentinela e deixa tetherd.exe, tether-soul.exe e slots servindo); 230/230 unit; ajudante de horário: p50 9 ms ocioso, 64 ms sob carga (antes 1,1–6 s) |
 | R2 Tratamento de erros: auditoria de todo caminho de falha (daemon, app, CLI), mensagens em português com ação, log, testes com injeção de falha | pendente | |
 - Tema Claro / Automático (padrão) / Escuro: integrado e verificado por mim (160/160 unit, app.theme + app.layout verdes; screenshot claro revisado: cores ANSI, texto dim e o laranja do Claude legíveis). Menu Exibir → Tema e seletor na barra; lembrado em `settings.json`; Automático segue o Windows ao vivo.
 
@@ -92,3 +93,14 @@ Tudo o que é provável sem o Guga está fechado com prova. Restam apenas os ite
 - **Autoproteção.** `uncaughtException`/`unhandledRejection` logam com stack; segue servindo enquanto o servidor escuta e os erros são raros (máx. 5 em 60 s), senão sai com linha clara (o próximo cliente sobe outro). Falha de spawn de um slot → `error spawn-failed`, daemon segue. SIGINT/SIGTERM/SIGHUP (console fechado)/SIGBREAK → fecha PTYs, remove pidfile (só se ainda é o seu), loga. Não provável por teste no Windows: a entrega dos sinais (`process.kill` no Windows mata sem sinal; CTRL_BREAK exige console compartilhado).
 - **Kill nos testes só por identidade.** `test/kill.ts`: `claim` guarda pid + hora de criação e confere a linha de comando com um caminho só do teste; `killOwned` mata só se a identidade ainda bate. Todo kill em `test/**` passa por ele; os `process.kill` restantes são sinal 0.
 - Prova: unit (daemon.spawn, daemon.guard), E2E app.tree (taskkill /T no electron → daemon e shells vivos por identidade → relançar reanexa → `app.close()` volta com o daemon vivo), suíte do app 2x, Claude real 1x (app.claude).
+
+## Diálogos próprios (pedido do Guga, 2026-10-29)
+
+Nenhuma caixa nativa do Windows no app; ícones Phosphor (`@phosphor-icons/core`, SVG embutido) no lugar dos caracteres de texto em toda a interface. Um componente de diálogo com estrutura fixa (situação com ícone/título/contexto; escolhas como cartões com ícone, ação e consequência; tom seguro/neutro/destrutivo; teclado; tema) e uma declaração por situação, escrita a partir do problema que ela comunica. Situações: fechar painel, sair e encerrar tudo, "ainda está fechando", fluxo de pasta (só o "Procurar…" continua nativo). Em andamento (fable, high).
+
+## Perfis de lançamento (pedido do Guga, 2026-10-29)
+
+Perfis nomeados (agente + argumentos + ambiente + pasta padrão) em `profiles.json`, com padrões "Claude", "Claude modo dev" (`--dangerously-skip-permissions`), "soul" (`-g`), PowerShell, Git Bash. O painel guarda o perfil e o reaplica ao retomar; argumentos que o tether controla são recusados.
+- P1 núcleo (store, validação, daemon, CLI): integrado. Prova minha: profiles E2E com Claude real 2/2 (painel "Claude modo dev" recebe --dangerously-skip-permissions e o mantém ao retomar a mesma sessão); 218/219 unit (a falha é o teste de liveness por PowerShell sob carga, ver R3).
+- P2 interface (escolha no Novo painel, tela de perfis, selo "sem permissões"): depois dos diálogos próprios.
+- R3: o hook do Claude continua em `node` (vive ~150 ms; um killall nessa janela perde no máximo um evento, e o próximo reporta de novo). Atualizar o Node com o tetherd no ar deixa a cópia desatualizada até o próximo start (o doctor avisa).

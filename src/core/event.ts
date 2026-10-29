@@ -48,6 +48,11 @@ export interface SlotMeta {
   /** Extra agent args given at creation (e.g. soul's -a/-H). Kept for new sessions of this slot. */
   args: string[]
   createdAt: string
+  /** The launch profile (core/profile.ts) applied, as it is now, on every start. Absent on slots created without one. */
+  profileId?: string
+  /** Snapshot of the profile's launch args/env from its last run: used when the profile no longer exists. */
+  profileArgs?: string[]
+  profileEnv?: Record<string, string>
 }
 
 /** Who is running the slot right now: <home>/slots/<slotId>.run.json (written by the launcher). */

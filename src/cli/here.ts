@@ -9,13 +9,25 @@ import { soulAdapter } from '../agents/soul.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { Binding, SlotMeta } from '../core/event.ts'
 import { processStartTime } from '../core/liveness.ts'
-import { clearRun, writeRun } from '../core/store.ts'
+import { readProfiles, slotProfile, snapshotProfile, type SlotProfile } from '../core/profile.ts'
+import { clearRun, writeRun, writeSlotMeta } from '../core/store.ts'
 
 export const adapters: Record<'claude' | 'soul', AgentAdapter> = { claude: claudeAdapter, soul: soulAdapter }
 
+/** The slot's profile as the daemon would apply it now (current profile, else the snapshot); refreshes the snapshot. */
+export function profileFor(home: string, meta: SlotMeta): SlotProfile {
+  const profiles = readProfiles(home).profiles
+  const current = profiles.find((p) => p.id === meta.profileId)
+  if (current && snapshotProfile(meta, current)) {
+    try { writeSlotMeta(home, meta) } catch { /* the launch still uses the current profile */ }
+  }
+  return slotProfile(meta, profiles)
+}
+
 export function planFor(home: string, meta: SlotMeta, resume: Binding | undefined, extraArgs: string[]): LaunchPlan {
-  if (meta.agent === 'shell') return shellAdapter.plan({ slot: meta, cwd: resume?.cwd })
-  return adapters[meta.agent].plan({ slot: meta, home, resume, extraArgs })
+  const profile = profileFor(home, meta).launch
+  if (meta.agent === 'shell') return shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile })
+  return adapters[meta.agent].plan({ slot: meta, home, resume, extraArgs, profile })
 }
 
 /** `.cmd`/`.bat` need a shell on Windows (Node refuses to spawn them directly); args are quoted for it. */

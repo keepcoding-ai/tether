@@ -1,13 +1,20 @@
 // The narrow API the preload exposes to the renderer as `window.tether` (contextBridge).
 // Shared by the preload (implements it) and the renderer (consumes it).
-import type { Event as DaemonEvent, Notice, Reply, Request } from '../../src/daemon/protocol.ts'
+import type { Event as DaemonEvent, Notice, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
 import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
+
+export type { Profile, ProfileInput }
 
 /** A request without the `id`: the main process numbers them. */
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
 
 export type ConnectionState = { connected: true; pipe: string; pid: number } | { connected: false; pipe: string; error: string }
+
+/** The launch profiles; `problem` when the file had to be repaired or had entries skipped (show it, the backup is kept). */
+export type ProfilesList = { profiles: Profile[]; problem?: string }
+export type ProfileSaved = { ok: true; profile: Profile; warnings: string[] } | { ok: false; message: string }
+export type ProfileDeleted = { ok: true } | { ok: false; message: string }
 
 export interface TetherApi {
   /** Sends a request to the daemon; resolves with the daemon's reply (an `error` reply resolves, it does not throw). */
@@ -24,6 +31,14 @@ export interface TetherApi {
   rememberFolder(folder: string): Promise<void>
   /** The OS folder browser (the one native UI kept: it is the file system's); null when cancelled. */
   pickFolder(initial?: string): Promise<string | null>
+  /**
+   * Launch profiles (<home>/profiles.json): through the daemon when connected (it validates and broadcasts a
+   * `profiles` event to every client), straight from the file otherwise. A new slot takes one as `create.profileId`.
+   */
+  listProfiles(): Promise<ProfilesList>
+  /** Create (no id) or edit (id) a profile; `ok: false` carries the validation errors in Portuguese. */
+  saveProfile(profile: ProfileInput): Promise<ProfileSaved>
+  deleteProfile(profileId: string): Promise<ProfileDeleted>
   openExternal(url: string): void
   readClipboard(): Promise<string>
   writeClipboard(text: string): void

@@ -5,12 +5,15 @@ import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import type { SlotMeta } from '../core/event.ts'
 import { canonicalDir } from '../core/paths.ts'
+import type { ProfileLaunch } from '../core/profile.ts'
 import type { LaunchPlan } from './types.ts'
 
 export interface ShellPlanInput {
   slot: SlotMeta
   /** Folder to open the shell in (the slot's cwd, or a different one for "resume here"). */
   cwd?: string
+  /** The slot's profile: its args name the shell the same way SlotMeta.args do (the slot's own args win). */
+  profile?: ProfileLaunch
 }
 
 /** Finds an executable on PATH (Windows: tries the PATHEXT-like extensions). Returns undefined when absent. */
@@ -54,13 +57,15 @@ function envWithoutUndefined(source: NodeJS.ProcessEnv): Record<string, string> 
 }
 
 export function plan(input: ShellPlanInput): LaunchPlan {
-  const { slot } = input
-  const shell = shellFromArgs(slot.args) ?? defaultShell()
+  const { slot, profile } = input
+  const shell = shellFromArgs(slot.args) ?? (profile ? shellFromArgs(profile.args) : undefined) ?? defaultShell()
+  const env = envWithoutUndefined(process.env)
+  Object.assign(env, profile?.env ?? {})
   return {
     command: shell.command,
     args: shell.args,
     cwd: canonicalDir(input.cwd ?? slot.cwd),
-    env: envWithoutUndefined(process.env),
+    env,
   }
 }
 

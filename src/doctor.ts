@@ -7,6 +7,8 @@ import { tmpdir, userInfo } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { cleanEnv, resolveClaudeCommand } from './agents/claude.ts'
 import { ENV_SOUL_REPORT, resolveSoulCommand } from './agents/soul.ts'
+import { inspectRenamedNode, isNodeExecutable, type ExeStatus } from './core/exe.ts'
+import { processStartTime, startTimeMethod, type StartTimeMethod } from './core/liveness.ts'
 import { parseEventLine } from './core/store.ts'
 import { tetherHome } from './core/paths.ts'
 import { pingDaemon, type Hello } from './daemon/client.ts'
@@ -97,6 +99,59 @@ export function checkSoul(p: SoulProbe): CheckResult {
   if (p.sourceText === undefined) return { level: 'AVISO', name: 'soul', detail: `${base}; suporte a ${ENV_SOUL_REPORT} não verificável sem conversa`, hint: 'abra o soul por um slot do tether e veja se o vínculo aparece' }
   if (p.sourceText.includes(ENV_SOUL_REPORT)) return { level: 'OK', name: 'soul', detail: `${base}, com ${ENV_SOUL_REPORT}` }
   return { level: 'AVISO', name: 'soul', detail: `${base} sem ${ENV_SOUL_REPORT}: o tether não saberá qual sessão está na tela`, hint: 'instale o soul com a mudança feat/session-report (bun run build + reinstalar)' }
+}
+
+export interface ExeFacts {
+  tetherd: ExeStatus
+  soul: ExeStatus
+  /** What the running daemon says it runs as (hello.exec); undefined when no daemon answers. */
+  daemonExec: string | undefined
+  /** The soul command as resolved now (undefined when the soul is not a node at all, e.g. soul.exe or bash). */
+  soulIsNode: boolean
+}
+
+/**
+ * The executables tether's long-lived processes run under. OK when the daemon runs as tetherd.exe and the
+ * soul's copy is in place (or not needed); AVISO when something runs as the plain node (a `killall node`
+ * would take it) or a copy is out of date / missing.
+ */
+export function checkExecutables(f: ExeFacts): CheckResult {
+  const name = 'executáveis'
+  const describe = (s: ExeStatus): string => {
+    if (s.stamp?.method === 'fallback') return `${s.name}: node original (${s.stamp.reason ?? 'sem motivo registrado'})`
+    if (!s.present) return `${s.name}: ainda não criado`
+    const how = s.stamp?.method === 'hardlink' ? 'link' : 'cópia'
+    return `${s.name}: ${how} de ${s.stamp?.source ?? '?'}${s.outdated ? ', desatualizada' : ''}`
+  }
+  const parts = [describe(f.tetherd)]
+  if (f.soulIsNode) parts.push(describe(f.soul))
+  const detail = parts.join('; ')
+  if (f.daemonExec && isNodeExecutable(f.daemonExec) && !/tetherd(\.exe)?$/i.test(f.daemonExec)) {
+    return { level: 'AVISO', name, detail: `tetherd em execução como ${f.daemonExec} (um "killall node" o derruba); ${detail}`, hint: 'veja <TETHER_HOME>/tetherd.log (linhas "tetherd: rodando com o node original"); reinicie o tetherd depois de corrigir' }
+  }
+  const broken = [f.tetherd, ...(f.soulIsNode ? [f.soul] : [])].filter((s) => s.stamp?.method === 'fallback')
+  if (broken.length > 0) return { level: 'AVISO', name, detail, hint: 'o tether roda com o node original até a cópia funcionar: confira permissões e espaço em <TETHER_HOME>/bin' }
+  const running = f.daemonExec ? ` (tetherd em execução como ${f.daemonExec})` : ''
+  return { level: 'OK', name, detail: `${detail}${running}` }
+}
+
+export interface StartTimeFacts {
+  method: StartTimeMethod
+  /** Time of the second query (the first pays the helper's start-up). */
+  ms: number
+  answered: boolean
+}
+
+/** How the OS start time of a process is read (the orphan reaper and the CLI's liveness check depend on it). */
+export function checkStartTime(f: StartTimeFacts): CheckResult {
+  const name = 'horário de início de processo'
+  if (!f.answered) return { level: 'ERRO', name, detail: 'nenhuma consulta respondeu', hint: 'o tether não consegue reconhecer processos pelo horário de início: confira se o powershell.exe está no PATH e funciona' }
+  switch (f.method) {
+    case 'helper': return { level: 'OK', name, detail: `ajudante PowerShell residente (${f.ms} ms por consulta)` }
+    case 'one-shot': return { level: 'AVISO', name, detail: `um powershell.exe por consulta (${f.ms} ms): o ajudante residente não respondeu`, hint: 'funciona, mas lento e sujeito a falhar sob carga; confira se o powershell.exe sobe normalmente' }
+    case 'ps': return { level: 'OK', name, detail: `ps (${f.ms} ms)` }
+    default: return { level: 'AVISO', name, detail: 'método desconhecido', hint: 'rode de novo' }
+  }
 }
 
 export function checkClaudeEnv(env: Record<string, string | undefined>): CheckResult {
@@ -234,7 +289,17 @@ export async function runDoctor(): Promise<CheckResult[]> {
   results.push(probeHome(home))
 
   const pipe = pipePath(home, userInfo().username)
-  results.push(checkDaemon(pipe, await pingDaemon(pipe)))
+  const hello = await pingDaemon(pipe)
+  results.push(checkDaemon(pipe, hello))
+
+  let soulIsNode = false
+  try { soulIsNode = isNodeExecutable(resolveSoulCommand().command) } catch { /* reported by probeSoul */ }
+  results.push(checkExecutables({ tetherd: inspectRenamedNode(home, 'tetherd'), soul: inspectRenamedNode(home, 'tether-soul'), daemonExec: hello?.exec, soulIsNode }))
+
+  await processStartTime(process.pid) // the first query starts the helper
+  const t0 = performance.now()
+  const answered = (await processStartTime(process.pid)) !== undefined
+  results.push(checkStartTime({ method: startTimeMethod(), ms: Math.round(performance.now() - t0), answered }))
 
   results.push(probeSoul())
   results.push(checkClaudeEnv(process.env))

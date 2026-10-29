@@ -10,7 +10,9 @@ import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '..
 import { pipePath, PROTOCOL_VERSION } from '../../src/daemon/protocol.ts'
 import type { Notice, Reply } from '../../src/daemon/protocol.ts'
 import { canonicalDir, tetherHome } from '../../src/core/paths.ts'
-import type { ConnectionState, RequestBody } from '../shared/api.ts'
+import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles } from '../../src/core/profile.ts'
+import type { ProfileInput } from '../../src/core/profile.ts'
+import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
@@ -118,6 +120,7 @@ function connectDaemon(): Promise<void> {
       client.on('state', slot => win?.webContents.send('tether:event', { t: 'state', slot }))
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
       client.on('removed', slotId => win?.webContents.send('tether:event', { t: 'removed', slotId }))
+      client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('close', () => {
         if (daemon !== client) return
         daemon = undefined
@@ -347,6 +350,45 @@ ipcMain.handle('folder:pick', async (_e, initial?: string) => {
   })
   const picked = r.filePaths[0]
   return r.canceled || !picked ? null : canonicalDir(picked)
+})
+
+// ---------- profiles ----------
+// Through the daemon when connected (one validator, every client told); straight from <home>/profiles.json otherwise.
+
+ipcMain.handle('profiles:list', async (): Promise<ProfilesList> => {
+  if (daemon) {
+    const r = await request({ t: 'profiles-list' })
+    if (r.t === 'ok') return { profiles: r.profiles ?? [], ...(r.problem ? { problem: r.problem } : {}) }
+  }
+  const read = readProfiles(home)
+  return { profiles: read.profiles, ...(read.problem ? { problem: read.problem } : {}) }
+})
+
+ipcMain.handle('profiles:save', async (_e, profile: ProfileInput): Promise<ProfileSaved> => {
+  if (daemon) {
+    const r = await request({ t: 'profile-save', profile })
+    return r.t === 'ok' ? { ok: true, profile: r.profile!, warnings: r.warnings ?? [] } : { ok: false, message: r.message }
+  }
+  try {
+    const r = upsertProfile(readProfiles(home).profiles, profile)
+    writeProfiles(home, r.profiles)
+    return { ok: true, profile: r.profile, warnings: r.warnings }
+  } catch (e) {
+    return { ok: false, message: e instanceof ProfileError || e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('profiles:delete', async (_e, profileId: string): Promise<ProfileDeleted> => {
+  if (daemon) {
+    const r = await request({ t: 'profile-delete', profileId })
+    return r.t === 'ok' ? { ok: true } : { ok: false, message: r.message }
+  }
+  try {
+    writeProfiles(home, removeProfile(readProfiles(home).profiles, profileId))
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) }
+  }
 })
 
 ipcMain.on('shell:open-external', (_e, url: string) => {

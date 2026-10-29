@@ -6,11 +6,12 @@ import { connect, type Socket } from 'node:net'
 import { userInfo } from 'node:os'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ensureRenamedNode, exeLog } from '../core/exe.ts'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
-import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type Reply, type Request, type SlotState } from './protocol.ts'
+import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
 
-export type Hello = { v: number; pid: number; version: string }
+export type Hello = { v: number; pid: number; version: string; exec?: string }
 export type OkReply = Extract<Reply, { t: 'ok' }>
 /** A request without its `id` (the client assigns one); still a discriminated union on `t`. */
 export type RequestBody = { [K in Request['t']]: Omit<Extract<Request, { t: K }>, 'id'> }[Request['t']]
@@ -51,6 +52,7 @@ type Events = {
   state: [slot: SlotState]
   data: [slotId: string, data: string]
   removed: [slotId: string]
+  profiles: [profiles: Profile[]]
   close: []
 }
 
@@ -185,6 +187,9 @@ export class DaemonClient extends EventEmitter<Events> {
       case 'removed':
         this.emit('removed', msg.slotId)
         return
+      case 'profiles':
+        this.emit('profiles', msg.profiles)
+        return
     }
   }
 
@@ -238,11 +243,18 @@ export interface SpawnOptions {
   mainPath?: string
   /** Base environment (default: process.env). TETHER_HOME / TETHER_PIPE are always set from `home` / `pipe`. */
   env?: NodeJS.ProcessEnv
+  /** Where to note what was done about the executable (default: a line in <home>/tetherd.log). */
+  log?: (msg: string) => void
 }
 
 /**
  * Starts tetherd outside this process' tree, sharing nothing with it. Resolves with the daemon's pid once it
  * was created (the pipe may still take a moment to answer).
+ *
+ * The daemon runs as <home>/bin/tetherd.exe, a copy of `execPath` kept up to date by ensureRenamedNode, so
+ * that killing every node.exe does not reach it; TETHER_NODE tells the daemon which node it was made from
+ * (the soul panels get their own copy, tether-soul.exe, from the same source). The copy failing is logged and
+ * the plain node runs instead.
  *
  * Windows: a plain detached spawn is not enough. The daemon would stay a child of the caller, so "End task"
  * / `taskkill /T` on the app takes it (and every agent) down; and CreateProcess through libuv always inherits
@@ -252,12 +264,14 @@ export interface SpawnOptions {
  * tree a kill could walk. Measured: handles not inherited, ~1.3 s. (Verified by test/unit/daemon.spawn.test.ts.)
  */
 export function spawnDaemon(opts: SpawnOptions): Promise<number | undefined> {
-  const execPath = opts.execPath ?? process.execPath
+  const node = opts.execPath ?? process.execPath
+  const execPath = ensureRenamedNode(opts.home, 'tetherd', node, opts.log ?? exeLog(opts.home, 'spawn')).path
   const mainPath = opts.mainPath ?? fileURLToPath(new URL('./main.ts', import.meta.url))
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(opts.env ?? process.env)) if (v !== undefined) env[k] = v
   env.TETHER_HOME = opts.home
   env.TETHER_PIPE = opts.pipe
+  env.TETHER_NODE = node
   if (process.platform !== 'win32') {
     const child = spawn(execPath, [mainPath], { detached: true, stdio: 'ignore', env })
     child.unref()
