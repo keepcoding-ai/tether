@@ -16,6 +16,14 @@ await t.kill()                        // taskkill /T /F + verify every pid of th
 
 Helpers: `cleanEnv(extra)` (process.env minus `CLAUDE*`), `tempDir(prefix)`, `processTree(pid)`, `alivePids(pids)`.
 
+**Transports.** `Terminal` reads and types through a `Transport` (`pid`, `write`, `onData`, `onExit`, `kill`,
+`dispose`). `LocalPtyTransport` is node-pty in this process (`startTerminal(plan)`); `daemon-driver.ts` has
+`DaemonSlotTransport`, which drives a tetherd slot the way the app does: `attach` + `start`, screen fed from the
+slot's `data` events, keys sent with `input`, exit = the slot's `state` losing its pid, kill = the daemon's `stop`.
+`openSlot(client, slotId, opts)` returns a ready `Terminal`; `SuiteDaemon` spawns a tetherd of its own (unique
+home + pipe) and shuts it down. `claude.scenarios.test.ts` proves PRD §5 (C1–C18) through it; `awaitReady(t)`
+is the shared startup wait (trust dialog, first idle).
+
 Run: `npm run test:e2e` (one file at a time; never two agents in parallel). `E2E_LOG_DIR=<dir>` keeps a JSONL
 log per session: raw PTY chunks (replayable through `Screen`) plus a `mark` line with the full screen at every
 harness step (`trust`, `ready`, `type`, `accepted`, `idle`, `kill`, `exit`). When a wait fails, the error message

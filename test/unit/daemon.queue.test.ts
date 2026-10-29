@@ -73,9 +73,9 @@ describe('resume queue', () => {
     const stillQueued = (await c.client.request({ t: 'list' })).slots!.find((s) => s.slotId === ids[MAX_STARTING + 1])!
     assert.equal(stillQueued.status, 'queued')
 
-    // an agent that exits also frees a seat
+    // an agent that exits also frees a seat (this one never reported a session: its binding stays unconfirmed)
     await c.client.request({ t: 'stop', slotId: ids[1]! })
-    await c.state(ids[1]!, (s) => s.status === 'exited')
+    await c.state(ids[1]!, (s) => s.status === 'unconfirmed')
     await c.state(ids[MAX_STARTING + 1]!, (s) => s.status === 'starting')
     assert.equal((await c.client.request({ t: 'list' })).slots!.filter((s) => s.status === 'queued').length, 0)
 

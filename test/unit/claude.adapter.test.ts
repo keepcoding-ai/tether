@@ -66,6 +66,16 @@ describe('claudeAdapter.plan', () => {
     assert.notEqual(a, b)
   })
 
+  test('new session with -c / --continue / -r / --resume in the slot args: no --session-id (Claude refuses the pair)', () => {
+    const home = tmp('tether-home-')
+    for (const flag of ['-c', '--continue', '-r', '--resume']) {
+      const plan = claudeAdapter.plan({ slot: { ...slot, args: ['--model', 'haiku', flag] }, home, extraArgs: [] })
+      assert.deepEqual(plan.args, ['--settings', join(home, 'claude-settings.json'), '--model', 'haiku', flag], flag)
+    }
+    const viaExtra = claudeAdapter.plan({ slot, home, extraArgs: ['-c'] })
+    assert.ok(!viaExtra.args.includes('--session-id'))
+  })
+
   test('resume: --resume <id> in the binding cwd, no --session-id', () => {
     const home = tmp('tether-home-')
     const plan = claudeAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
