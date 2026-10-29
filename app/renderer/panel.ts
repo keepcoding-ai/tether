@@ -5,7 +5,30 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import type { ITheme } from '@xterm/xterm'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
+import { WINDOW_BACKGROUND, type ColorScheme } from '../shared/theme.ts'
+
+/**
+ * xterm palettes per scheme. Every key is set: `term.options.theme` replaces the whole object and any key
+ * left out falls back to xterm's (dark) defaults. The light one follows VS Code's Light+ terminal colors,
+ * whose ANSI set stays legible on white (yellow/cyan/white are darkened on purpose); bright colors keep
+ * enough contrast for Claude Code's and soul's dim/bright text.
+ */
+export const TERMINAL_THEME: Record<ColorScheme, ITheme> = {
+  dark: {
+    background: WINDOW_BACKGROUND.dark, foreground: '#d8d8dc', cursor: '#d8d8dc', cursorAccent: WINDOW_BACKGROUND.dark,
+    selectionBackground: '#3a5a8a', selectionForeground: undefined,
+    black: '#1b1b1f', red: '#f14c4c', green: '#23d18b', yellow: '#f5f543', blue: '#3b8eea', magenta: '#d670d6', cyan: '#29b8db', white: '#e5e5e5',
+    brightBlack: '#6b6b75', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543', brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#ffffff',
+  },
+  light: {
+    background: WINDOW_BACKGROUND.light, foreground: '#24292f', cursor: '#24292f', cursorAccent: WINDOW_BACKGROUND.light,
+    selectionBackground: '#b4d5fe', selectionForeground: undefined,
+    black: '#000000', red: '#cd3131', green: '#107c10', yellow: '#8a6d00', blue: '#0451a5', magenta: '#bc05bc', cyan: '#0a7f99', white: '#555555',
+    brightBlack: '#5f6368', brightRed: '#cd3131', brightGreen: '#0f8a0f', brightYellow: '#946f00', brightBlue: '#0451a5', brightMagenta: '#bc05bc', brightCyan: '#0a7f99', brightWhite: '#777777',
+  },
+}
 
 export const KIND_ICON: Record<SlotKind, string> = { claude: '✦', soul: '☽', shell: '>_' }
 export const KIND_LABEL: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
@@ -113,6 +136,8 @@ export interface PanelHost {
   onAction(slotId: string, action: PanelAction): void
   /** Keys the terminal must not swallow (app shortcuts); return true when handled here. */
   onKey(ev: KeyboardEvent, panel: TerminalPanel): boolean
+  /** The scheme painted right now (new terminals start with it; setScheme follows later switches). */
+  getScheme(): ColorScheme
 }
 
 export class TerminalPanel implements IContentRenderer {
@@ -158,10 +183,7 @@ export class TerminalPanel implements IContentRenderer {
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: true,
-      theme: {
-        background: '#1b1b1f', foreground: '#d8d8dc', cursor: '#d8d8dc',
-        selectionBackground: '#3a5a8a', black: '#1b1b1f', brightBlack: '#6b6b75',
-      },
+      theme: TERMINAL_THEME[host.getScheme()],
     })
     this.term.loadAddon(this.fit)
     this.term.loadAddon(new WebLinksAddon((_ev, uri) => window.tether.openExternal(uri)))
@@ -248,6 +270,11 @@ export class TerminalPanel implements IContentRenderer {
   }
 
   focus(): void { this.term.focus() }
+
+  /** Repaints the terminal with the scheme's palette (live switch, scrollback kept). */
+  setScheme(scheme: ColorScheme): void {
+    this.term.options.theme = TERMINAL_THEME[scheme]
+  }
 
   async paste(): Promise<void> {
     const text = await window.tether.readClipboard()

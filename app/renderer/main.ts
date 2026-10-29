@@ -1,9 +1,10 @@
 // Renderer entry: dockview grid of terminal panels (panel id === slotId), toolbar, new-panel dialog,
 // keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
-import { createDockview, themeDark, type DockviewApi, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
+import { createDockview, themeDark, themeLight, type DockviewApi, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
+import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
 import { pruneLayout } from './layout.ts'
 import { effectiveStatus, KIND_ICON, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, folderName, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 
@@ -22,8 +23,10 @@ let api: DockviewApi
 let layoutRestored = false
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let connection: ConnectionState | undefined
+/** What is painted now; main owns the setting and pushes every change (user choice or OS switch). */
+let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' }
 
-const $ = <T extends HTMLElement>(id: string): T => {
+const $ =<T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id)
   if (!el) throw new Error(`elemento #${id} não existe`)
   return el as T
@@ -46,11 +49,25 @@ const host: PanelHost = {
       default: return false
     }
   },
+  getScheme: () => theme.scheme,
+}
+
+// ---------- theme ----------
+
+const DOCK_THEME: Record<ColorScheme, typeof themeDark> = { dark: themeDark, light: themeLight }
+
+/** Applies a theme state everywhere: CSS variables (html[data-theme]), dockview, every xterm, the toolbar select. */
+function applyTheme(state: ThemeState): void {
+  theme = state
+  document.documentElement.dataset.theme = state.scheme
+  api.updateOptions({ theme: DOCK_THEME[state.scheme] })
+  for (const p of panels.values()) p.setScheme(state.scheme)
+  $<HTMLSelectElement>('theme-select').value = state.setting
 }
 
 function setupDock(): void {
   api = createDockview($('dock'), {
-    theme: themeDark,
+    theme: DOCK_THEME[theme.scheme],
     defaultTabComponent: TAB,
     createComponent: () => {
       const panel = new TerminalPanel(host)
@@ -365,6 +382,7 @@ function setupUi(): void {
   $('btn-split-right').addEventListener('click', () => { void splitActive('right') })
   $('btn-split-down').addEventListener('click', () => { void splitActive('below') })
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
+  $<HTMLSelectElement>('theme-select').addEventListener('change', ev => window.tether.setTheme(normalizeTheme((ev.target as HTMLSelectElement).value)))
   $('btn-cancel').addEventListener('click', () => $<HTMLDialogElement>('dlg-new').close())
   $('btn-browse').addEventListener('click', async () => {
     const input = $<HTMLInputElement>('new-cwd')
@@ -402,6 +420,10 @@ declare global {
       openSlot(slotId: string): void
       /** Feeds a slot state as if the daemon had sent it (screenshots of states the daemon cannot produce on demand). */
       applyState(slot: SlotState): void
+      /** The theme state painted right now (setting + scheme). */
+      theme(): ThemeState
+      /** The xterm palette a panel is using (its `theme.background`, etc). */
+      termTheme(slotId: string): Record<string, string | undefined> | undefined
     }
   }
 }
@@ -424,6 +446,8 @@ function setupTestHooks(): void {
     activate: slotId => api.getPanel(slotId)?.api.setActive(),
     openSlot,
     applyState,
+    theme: () => theme,
+    termTheme: slotId => panels.get(slotId)?.term.options.theme as Record<string, string | undefined> | undefined,
   }
 }
 
@@ -432,3 +456,5 @@ setupUi()
 setupTestHooks()
 window.tether.onEvent(onDaemonEvent)
 window.tether.onConnection(state => { void onConnection(state) })
+window.tether.onTheme(applyTheme)
+void window.tether.getTheme().then(applyTheme)

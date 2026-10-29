@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { killOwned, type KillGuard } from './pid-guard.ts'
 
 // Browser-side globals used inside page.evaluate callbacks (this tsconfig has no DOM lib).
 type Hooks = {
@@ -41,6 +42,8 @@ const artifacts = join(root, 'test', 'e2e', 'artifacts')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const pipe = `\\\\.\\pipe\\tether-apptest-${process.pid}`
+/** Every kill is guarded: only processes launched from this checkout after the test started (a PID may be reused). */
+const guard: KillGuard = { markers: [root], notBefore: Date.now() }
 
 type Layout = { grid: { root: Node }; panels: Record<string, unknown>; activeGroup?: string }
 type Node = { type: 'leaf' | 'branch'; data: { views: string[] } | Node[] }
@@ -92,12 +95,12 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 async function killElectron(app: ElectronApplication): Promise<void> {
   const mainPid = await app.evaluate(() => process.pid)
   const launcher = app.process()
-  process.kill(mainPid)
+  assert.equal(killOwned(mainPid, guard), 'killed', 'electron main is ours')
   if (launcher.pid && launcher.pid !== mainPid) {
     const exited = waitForExit(launcher)
     const timeout = new Promise<void>(res => setTimeout(res, 3000))
     await Promise.race([exited, timeout])
-    if (launcher.exitCode === null) process.kill(launcher.pid)
+    if (launcher.exitCode === null) killOwned(launcher.pid, guard)
   }
   await waitForExit(launcher)
 }
@@ -203,7 +206,7 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     // ---- 3. kill the daemon by PID: the next launch spawns a new one and restarts the panels ----
     await killElectron(app)
     app = undefined
-    process.kill(daemonPid)
+    assert.equal(killOwned(daemonPid, guard), 'killed', 'tetherd is ours')
     await waitUntil(() => !pidAlive(daemonPid), 10_000, 'tetherd to die')
     ;({ app, page } = await launch(home))
     const daemonPid2 = (await hooks.daemonPid(page))!
@@ -258,7 +261,7 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     assert.equal((await hooks.slots(page)).find(s => s.slotId === target)?.pid, pidsRestarted.get(target), 'start on a running slot is a no-op')
   } finally {
     if (app) await killElectron(app).catch(() => {})
-    for (const pid of daemonPids) if (pidAlive(pid)) { try { process.kill(pid) } catch { /* already gone */ } }
+    for (const pid of daemonPids) killOwned(pid, guard)
     await waitUntil(() => daemonPids.every(p => !pidAlive(p)), 10_000, 'tetherd processes to exit').catch(() => {})
     for (let i = 0; i < 5; i++) {
       try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }

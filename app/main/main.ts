@@ -2,7 +2,7 @@
 // the pipe), a narrow IPC surface for the renderer (see app/shared/api.ts). Layout and recent folders live
 // under TETHER_HOME. Closing the window only disconnects: the daemon keeps every slot running.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
@@ -12,6 +12,8 @@ import { pipePath, PROTOCOL_VERSION } from '../../src/daemon/protocol.ts'
 import type { Notice, Reply } from '../../src/daemon/protocol.ts'
 import { canonicalDir, tetherHome } from '../../src/core/paths.ts'
 import type { CloseChoice, ConnectionState, RequestBody } from '../shared/api.ts'
+import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
+import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 
 const home = tetherHome()
 const pipe = pipePath(home, userInfo().username)
@@ -181,6 +183,58 @@ async function quitAll(): Promise<void> {
   app.quit()
 }
 
+// ---------- theme ----------
+
+/** User settings (today only the theme) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
+const settingsPath = join(home, 'settings.json')
+type Settings = { theme?: unknown }
+
+function readThemeSetting(): ThemeSetting {
+  return normalizeTheme(readJson<Settings>(settingsPath, {}).theme)
+}
+
+function themeState(): ThemeState {
+  const setting: ThemeSetting = nativeTheme.themeSource === 'system' ? 'auto' : nativeTheme.themeSource
+  return { setting, scheme: resolveScheme(setting, nativeTheme.shouldUseDarkColors) }
+}
+
+/** Pushes the painted scheme to the window (chrome background + renderer) and keeps the menu radios in sync. */
+function applyTheme(): void {
+  const state = themeState()
+  win?.setBackgroundColor(WINDOW_BACKGROUND[state.scheme])
+  win?.webContents.send('tether:theme', state)
+  // Radio items do not follow a later `checked = …`; the menu is rebuilt with the current setting instead.
+  if (app.isReady()) createMenu()
+}
+
+/** Electron resolves `auto` against the OS (`system`) and raises `updated` on every OS switch: live, no restart. */
+function setTheme(setting: ThemeSetting): void {
+  nativeTheme.themeSource = setting === 'auto' ? 'system' : setting
+  const settings = readJson<Settings>(settingsPath, {})
+  writeJson(settingsPath, { ...settings, theme: setting })
+  applyTheme()
+}
+
+const initialTheme = readThemeSetting()
+nativeTheme.themeSource = initialTheme === 'auto' ? 'system' : initialTheme
+nativeTheme.on('updated', applyTheme)
+ipcMain.handle('theme:get', (): ThemeState => themeState())
+ipcMain.on('theme:set', (_e, setting: unknown) => setTheme(normalizeTheme(setting)))
+
+function themeMenu(): Electron.MenuItemConstructorOptions {
+  const current = themeState().setting
+  return {
+    label: 'Tema',
+    submenu: THEME_SETTINGS.map(t => ({
+      id: `theme-${t}`,
+      label: THEME_LABEL[t],
+      type: 'radio' as const,
+      checked: t === current,
+      click: () => setTheme(t),
+    })),
+  }
+}
+
 // ---------- window ----------
 
 function createWindow(): void {
@@ -189,7 +243,7 @@ function createWindow(): void {
     height: 900,
     title: 'tether',
     icon: join(__dirname, 'tether.ico'),
-    backgroundColor: '#1b1b1f',
+    backgroundColor: WINDOW_BACKGROUND[themeState().scheme],
     show: !hidden,
     autoHideMenuBar: true,
     webPreferences: {
@@ -216,7 +270,15 @@ function createMenu(): void {
         { label: 'Sair e encerrar tudo…', accelerator: 'CmdOrCtrl+Shift+Q', click: () => { void quitAll() } },
       ],
     },
-    { label: 'Exibir', submenu: [{ role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' }, { role: 'togglefullscreen', label: 'Tela cheia' }] },
+    {
+      label: 'Exibir',
+      submenu: [
+        themeMenu(),
+        { type: 'separator' },
+        { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' },
+        { role: 'togglefullscreen', label: 'Tela cheia' },
+      ],
+    },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
