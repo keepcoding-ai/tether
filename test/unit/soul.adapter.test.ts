@@ -2,7 +2,7 @@
 // for a new session (slot args + extra args) and for a resume (the binding's recipe, verbatim).
 import { test, describe, after, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   commandFromScript,
@@ -12,9 +12,11 @@ import {
   resolveSoulCommand,
   soulAdapter,
   splitCommandLine,
+  withRenamedNode,
 } from '../../src/agents/soul.ts'
 import { ENV_HOME, ENV_SLOT } from '../../src/agents/types.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
+import { exePath, readStamp } from '../../src/core/exe.ts'
 import { slotEventsPath } from '../../src/core/paths.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
@@ -116,11 +118,13 @@ describe('soulAdapter.plan', () => {
     }
   })
 
-  test('new session: TETHER_SOUL_CMD + slot args + extra args, in the slot cwd, reporting to the slot jsonl', () => {
-    const home = 'D:\\tether-home'
+  // The plan makes <home>/bin/tether-soul.exe (core/exe.ts): the home must be a real temp folder, never a made-up path.
+  test('new session: TETHER_SOUL_CMD + slot args + extra args, in the slot cwd, reporting to the slot jsonl; the node runs as tether-soul.exe', () => {
+    const home = dirs.make()
     const plan = soulAdapter.plan({ slot, home, extraArgs: ['-n', 'nova'] })
     assert.deepEqual(plan.args, ['D:/fake/bin/soul', ...slot.args, '-n', 'nova'])
-    assert.ok(/node(\.exe)?$/i.test(plan.command), plan.command)
+    assert.equal(plan.command, exePath(home, 'tether-soul'), plan.command)
+    assert.ok(existsSync(plan.command), 'the renamed node is in place')
     assert.equal(plan.cwd, slot.cwd)
     assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath(home, slot.slotId))
     assert.equal(plan.env[ENV_SLOT], slot.slotId)
@@ -129,7 +133,7 @@ describe('soulAdapter.plan', () => {
   })
 
   test('resume: the recipe args first, then the slot args (minus -c), its cwd, its env added', () => {
-    const home = 'D:\\tether-home'
+    const home = dirs.make()
     const plan = soulAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
     assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', ...slot.args])
     assert.equal(plan.cwd, 'D:\\outra\\pasta')
@@ -140,15 +144,31 @@ describe('soulAdapter.plan', () => {
 
   test('resume: a slot created with -c/--continue or --fork-session keeps the fork, drops the continue', () => {
     const forked = { ...slot, args: ['-c', '--fork-session', '--continue', '-g'] }
-    const plan = soulAdapter.plan({ slot: forked, home: 'D:\\h', resume: binding, extraArgs: [] })
+    const plan = soulAdapter.plan({ slot: forked, home: dirs.make(), resume: binding, extraArgs: [] })
     assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', '--fork-session', '-g'])
   })
 
   test('resume without a recipe: -r <id> plus the slot args, in the binding cwd', () => {
     const { resume: _r, ...bare } = binding
-    const plan = soulAdapter.plan({ slot, home: 'D:\\h', resume: bare, extraArgs: [] })
+    const plan = soulAdapter.plan({ slot, home: dirs.make(), resume: bare, extraArgs: [] })
     assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-r', 'sess-1234', ...slot.args])
     assert.equal(plan.cwd, bare.cwd)
+  })
+
+  test('withRenamedNode: a node (or a tether copy of one) becomes tether-soul.exe from the real node; anything else is left alone', () => {
+    const home = dirs.make()
+    const log: string[] = []
+    const fromNode = withRenamedNode({ command: process.execPath, args: ['x'] }, home, {}, (m) => log.push(m))
+    assert.equal(fromNode.command, exePath(home, 'tether-soul'))
+    assert.deepEqual(fromNode.args, ['x'])
+    assert.equal(readStamp(home, 'tether-soul')?.source, process.execPath)
+    // The daemon running as tetherd.exe names its real node in TETHER_NODE: the copy comes from there, not from tetherd.exe.
+    const home2 = dirs.make()
+    const fromDaemon = withRenamedNode({ command: 'C:\\h\\bin\\tetherd.exe', args: [] }, home2, { TETHER_NODE: process.execPath })
+    assert.equal(fromDaemon.command, exePath(home2, 'tether-soul'))
+    assert.equal(readStamp(home2, 'tether-soul')?.source, process.execPath)
+    assert.deepEqual(withRenamedNode({ command: 'C:\\x\\soul.exe', args: [] }, home), { command: 'C:\\x\\soul.exe', args: [] })
+    assert.deepEqual(withRenamedNode({ command: 'bash', args: ['/c/soul'] }, home), { command: 'bash', args: ['/c/soul'] })
   })
 
   test('sessionExists is unknown (sessions live on the soul server); title comes from the binding', async () => {

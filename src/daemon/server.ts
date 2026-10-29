@@ -579,7 +579,7 @@ class DaemonImpl implements Daemon {
     const { id } = req
     switch (req.t) {
       case 'hello':
-        return { t: 'ok', id, hello: { v: PROTOCOL_VERSION, pid: this.pid, version: DAEMON_VERSION } }
+        return { t: 'ok', id, hello: { v: PROTOCOL_VERSION, pid: this.pid, version: DAEMON_VERSION, exec: process.execPath } }
       case 'list':
         return { t: 'ok', id, slots: this.slots() }
       case 'create': {

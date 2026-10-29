@@ -96,15 +96,16 @@ describe('soul', () => {
   const profile = { args: ['-g', '--model', 'cheap'], env: { SOUL_X: 'from-profile', SOUL_Y: 'y' } }
 
   test('new session: profile args, then the slot args, then the extra args; profile env applied; report var ours', () => {
-    const plan = soulAdapter.plan({ slot, home: 'D:\\h', extraArgs: ['-n', 'nova'], profile })
+    const home = dirs.make() // a real folder: the plan makes <home>/bin/tether-soul.exe
+    const plan = soulAdapter.plan({ slot, home, extraArgs: ['-n', 'nova'], profile })
     assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-P', 'guga@codr.studio', '-n', 'nova'])
     assert.equal(plan.env.SOUL_X, 'from-profile')
     assert.equal(plan.env.SOUL_Y, 'y')
-    assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath('D:\\h', slot.slotId))
+    assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath(home, slot.slotId))
   })
 
   test('resume: profile args BEFORE the recipe (the recipe finds the session and wins), slot args last; recipe env over profile env', () => {
-    const plan = soulAdapter.plan({ slot, home: 'D:\\h', resume: binding, extraArgs: [], profile })
+    const plan = soulAdapter.plan({ slot, home: dirs.make(), resume: binding, extraArgs: [], profile })
     assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', '-P', 'guga@codr.studio'])
     assert.equal(plan.env.SOUL_X, '1', 'the recipe\'s env wins over the profile\'s')
     assert.equal(plan.env.SOUL_Y, 'y')
@@ -113,13 +114,14 @@ describe('soul', () => {
 
   test('resume without a recipe: profile args, -r <id>, slot args', () => {
     const { resume: _r, ...bare } = binding
-    const plan = soulAdapter.plan({ slot, home: 'D:\\h', resume: bare, extraArgs: [], profile })
+    const plan = soulAdapter.plan({ slot, home: dirs.make(), resume: bare, extraArgs: [], profile })
     assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-r', 'sess-1234', '-P', 'guga@codr.studio'])
   })
 
   test('a profile env cannot redirect the report nor rename the slot (the identity is set last)', () => {
-    const plan = soulAdapter.plan({ slot, home: 'D:\\h', extraArgs: [], profile: { args: [], env: { [ENV_SOUL_REPORT]: 'C:\\elsewhere', [ENV_SLOT]: 'other' } } })
-    assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath('D:\\h', slot.slotId))
+    const home = dirs.make()
+    const plan = soulAdapter.plan({ slot, home, extraArgs: [], profile: { args: [], env: { [ENV_SOUL_REPORT]: 'C:\\elsewhere', [ENV_SLOT]: 'other' } } })
+    assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath(home, slot.slotId))
     assert.equal(plan.env[ENV_SLOT], slot.slotId)
   })
 })
