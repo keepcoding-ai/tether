@@ -1,6 +1,6 @@
-// E2E harness: drives a real TUI agent (Claude Code, soul-cli) inside a pseudo-terminal.
-// Agent-agnostic: it receives a LaunchPlan and only knows how to read a screen and type.
-// See test/e2e/README.md for how idle/command detection works and why.
+// E2E harness: drives a real TUI agent (Claude Code, soul-cli) through a `Transport`: a local pseudo-terminal
+// (LocalPtyTransport, from a LaunchPlan) or a tetherd slot (test/e2e/daemon-driver.ts). It only knows how to
+// read a screen and type. See test/e2e/README.md for how idle/command detection works and why.
 import * as pty from 'node-pty'
 import { execFile } from 'node:child_process'
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
@@ -213,20 +213,20 @@ function ps(script: string): Promise<string> {
   })
 }
 
-/** A process identity: pid plus creation time, because Windows reuses pids within seconds. */
-export interface Proc { pid: number; ppid: number; name: string; created: number }
+/** A process identity: pid plus creation time, because Windows reuses pids within seconds. `cmd` = its command line. */
+export interface Proc { pid: number; ppid: number; name: string; created: number; cmd?: string }
 
 async function allProcesses(): Promise<Proc[]> {
   if (process.platform !== 'win32') {
-    const out = await new Promise<string>((res, rej) => execFile('ps', ['-eo', 'pid=,ppid=,lstart=,comm='], (e, so) => (e ? rej(e) : res(so))))
+    const out = await new Promise<string>((res, rej) => execFile('ps', ['-eo', 'pid=,ppid=,lstart=,args='], (e, so) => (e ? rej(e) : res(so))))
     return out.trim().split('\n').map(l => {
       const m = /^\s*(\d+)\s+(\d+)\s+(.{24})\s+(.*)$/.exec(l)
-      return m ? { pid: +m[1]!, ppid: +m[2]!, created: Date.parse(m[3]!) || 0, name: m[4]! } : { pid: -1, ppid: -1, created: 0, name: '' }
+      return m ? { pid: +m[1]!, ppid: +m[2]!, created: Date.parse(m[3]!) || 0, name: m[4]!.split(' ')[0]!, cmd: m[4]! } : { pid: -1, ppid: -1, created: 0, name: '' }
     }).filter(p => p.pid >= 0)
   }
-  const out = await ps("Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,@{n='Created';e={$_.CreationDate.ToFileTime()}} | ConvertTo-Json -Compress")
-  const arr = JSON.parse(out || '[]') as { ProcessId: number; ParentProcessId: number; Name: string; Created: number | null }[]
-  return arr.map(p => ({ pid: p.ProcessId, ppid: p.ParentProcessId, name: p.Name, created: p.Created ?? 0 }))
+  const out = await ps("Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,@{n='Created';e={$_.CreationDate.ToFileTime()}} | ConvertTo-Json -Compress")
+  const arr = JSON.parse(out || '[]') as { ProcessId: number; ParentProcessId: number; Name: string; CommandLine: string | null; Created: number | null }[]
+  return arr.map(p => ({ pid: p.ProcessId, ppid: p.ParentProcessId, name: p.Name, created: p.Created ?? 0, cmd: p.CommandLine ?? undefined }))
 }
 
 /** The process and all its live descendants (one CIM query, ~1 s). */
@@ -305,50 +305,37 @@ const BUSY_STATUS = /esc to interrupt/
 const BUSY_SPINNER = /^[✽✻✶✢·*] \S[^\n]*…/m
 const BUSY_TITLE = /^[◐◑◒◓]/
 
-export class Terminal {
-  readonly pid: number
-  exitCode: number | undefined
-  signal: number | undefined
-  /** Session id the agent printed on exit ("claude --resume <id>"), when it did. */
-  resumeId: string | undefined
-  readonly exited: Promise<{ exitCode: number; signal?: number }>
-  readonly screenBuf: Screen
-  private readonly p: pty.IPty
-  private readonly listeners = new Set<() => void>()
-  private lastDataAt = Date.now()
-  private lastTyped = ''
-  private readonly t0 = Date.now()
-  private readonly typeDelay: number
-  readonly plan: LaunchPlan
-  readonly opts: StartOptions
+export interface ExitInfo { exitCode: number; signal?: number }
 
-  constructor(plan: LaunchPlan, opts: StartOptions) {
-    this.plan = plan; this.opts = opts
-    const cols = opts.cols ?? 120, rows = opts.rows ?? 40
-    this.screenBuf = new Screen(cols, rows)
-    this.typeDelay = opts.typeDelay ?? 10
+/** Where the terminal bytes come from and where keystrokes go: a local PTY, or a slot owned by tetherd. */
+export interface Transport {
+  /** Pid of the agent process (the root of the tree the harness snapshots and verifies). */
+  readonly pid: number
+  write(data: string): void
+  onData(cb: (data: string) => void): void
+  onExit(cb: (e: ExitInfo) => void): void
+  /** Kills the agent's process tree. The harness verifies afterwards that every pid is gone. */
+  kill(): Promise<void>
+  /** Releases what the transport holds locally (console, subscriptions); idempotent. */
+  dispose(): void
+}
+
+/** node-pty + ConPTY in this process. */
+export class LocalPtyTransport implements Transport {
+  readonly pid: number
+  private readonly p: pty.IPty
+  private disposed = false
+
+  constructor(plan: LaunchPlan, cols: number, rows: number) {
     this.p = pty.spawn(plan.command, plan.args, { cols, rows, cwd: plan.cwd, env: plan.env, useConpty: true, name: 'xterm-256color' })
     this.pid = this.p.pid
-    this.p.onData(d => {
-      this.lastDataAt = Date.now()
-      this.screenBuf.write(d)
-      if (opts.log) appendFileSync(opts.log, JSON.stringify({ t: Date.now() - this.t0, d }) + '\n')
-      for (const l of this.listeners) l()
-    })
-    this.exited = new Promise(resolve => {
-      this.p.onExit(e => {
-        this.exitCode = e.exitCode; this.signal = e.signal
-        const m = /--resume ([0-9a-f-]{36})/.exec(this.screenBuf.text())
-        if (m) this.resumeId = m[1]
-        this.mark('exit', { exitCode: e.exitCode, signal: e.signal })
-        for (const l of this.listeners) l()
-        resolve({ exitCode: e.exitCode, signal: e.signal })
-        setTimeout(() => this.dispose(), 1_100) // after node-pty's own 1 s flush window
-      })
-    })
   }
 
-  private disposed = false
+  write(data: string): void { this.p.write(data) }
+  onData(cb: (data: string) => void): void { this.p.onData(cb) }
+  onExit(cb: (e: ExitInfo) => void): void { this.p.onExit(e => cb({ exitCode: e.exitCode, signal: e.signal })) }
+  async kill(): Promise<void> { await killTree(this.pid); this.dispose() }
+
   /** Releases the ConPTY (closes the pseudo console, its reader thread and pipes). node-pty 1.1 leaves these open
    *  after the child exits, which keeps the Node event loop alive; its kill() releases them but forks a helper
    *  that fails noisily ("AttachConsole failed") once the console is gone. */
@@ -367,13 +354,56 @@ export class Terminal {
     ]
     for (const s of steps) { try { s() } catch {} }
   }
+}
+
+export class Terminal {
+  exitCode: number | undefined
+  signal: number | undefined
+  /** Session id the agent printed on exit ("claude --resume <id>"), when it did. */
+  resumeId: string | undefined
+  readonly exited: Promise<ExitInfo>
+  readonly screenBuf: Screen
+  readonly transport: Transport
+  private readonly listeners = new Set<() => void>()
+  private lastDataAt = Date.now()
+  private lastTyped = ''
+  private readonly t0 = Date.now()
+  private readonly typeDelay: number
+  readonly opts: StartOptions
+
+  constructor(transport: Transport, opts: StartOptions) {
+    this.transport = transport; this.opts = opts
+    const cols = opts.cols ?? 120, rows = opts.rows ?? 40
+    this.screenBuf = new Screen(cols, rows)
+    this.typeDelay = opts.typeDelay ?? 10
+    transport.onData(d => {
+      this.lastDataAt = Date.now()
+      this.screenBuf.write(d)
+      if (opts.log) appendFileSync(opts.log, JSON.stringify({ t: Date.now() - this.t0, d }) + '\n')
+      for (const l of this.listeners) l()
+    })
+    this.exited = new Promise(resolve => {
+      transport.onExit(e => {
+        this.exitCode = e.exitCode; this.signal = e.signal
+        const m = /--resume ([0-9a-f-]{36})/.exec(this.screenBuf.text())
+        if (m) this.resumeId = m[1]
+        this.mark('exit', { exitCode: e.exitCode, signal: e.signal })
+        for (const l of this.listeners) l()
+        resolve({ exitCode: e.exitCode, signal: e.signal })
+        setTimeout(() => this.dispose(), 1_100) // after node-pty's own 1 s flush window
+      })
+    })
+  }
+
+  get pid(): number { return this.transport.pid }
+  dispose(): void { this.transport.dispose() }
 
   get alive(): boolean { return this.exitCode === undefined }
   /** Current visible text (ANSI-free, trailing blanks trimmed). After exit: the main screen with the agent's farewell. */
   screen(): string { return this.screenBuf.text() }
   get title(): string { return this.screenBuf.title }
   /** Raw bytes to the PTY (keys: '\r' Enter, '\x1b[B' Down, '\x1b' Esc, '\x03' Ctrl+C). */
-  write(data: string): void { this.p.write(data) }
+  write(data: string): void { this.transport.write(data) }
 
   /** Writes a labelled marker (with the current screen) to the log. */
   mark(label: string, extra: Record<string, unknown> = {}): void {
@@ -464,7 +494,7 @@ export class Terminal {
     const timeout = opts.timeout ?? 15_000
     this.mark('type', { text })
     const norm = text.replace(/\s+/g, ' ').trim()
-    for (const ch of text) { this.p.write(ch); await sleep(this.typeDelay) }
+    for (const ch of text) { this.write(ch); await sleep(this.typeDelay) }
     await this.waitFor((_s, t) => t.inputText().includes(norm), { timeout: 5_000, what: `echo of "${text}"` })
     if (text.startsWith('/')) {
       // let the autocomplete menu settle (it closes once an argument is typed), then verify the highlight
@@ -475,7 +505,7 @@ export class Terminal {
     }
     if (opts.enter === false) return
     this.lastTyped = norm
-    this.p.write('\r')
+    this.write('\r')
     // accepted = the text left the input box (or the process ended, e.g. /exit)
     await this.waitFor((_s, t) => !t.inputText().includes(norm), { timeout, allowExit: true, what: `"${text}" to be accepted` })
     this.mark('accepted', { text })
@@ -501,13 +531,19 @@ export class Terminal {
   /** When the input prompt first became visible (set by startTerminal). */
   readyAt: number | undefined
 
+  /** Waits until the TUI has been up `minUptimeBeforeKill` (see StartOptions). Call before anything that may kill
+   *  the agent from outside the harness (e.g. shutting the daemon down). */
+  async ensureMinUptime(): Promise<void> {
+    const minUp = this.opts.minUptimeBeforeKill ?? 11_000
+    if (this.alive && this.readyAt !== undefined) { const wait = this.readyAt + minUp - Date.now(); if (wait > 0) { this.mark('waiting for min uptime', { wait }); await sleep(wait) } }
+  }
+
   /** Kills the whole process tree and verifies every pid is gone (see minUptimeBeforeKill). */
   async kill(): Promise<void> {
-    const minUp = this.opts.minUptimeBeforeKill ?? 11_000
-    if (this.alive && this.readyAt !== undefined) { const wait = this.readyAt + minUp - Date.now(); if (wait > 0) { this.mark('kill: waiting for min uptime', { wait }); await sleep(wait) } }
+    await this.ensureMinUptime()
     this.mark('kill')
     const procs = await this.tree()
-    if (this.alive) await killTree(this.pid)
+    if (this.alive) await this.transport.kill()
     this.dispose()
     const left = await waitGone(procs, 15_000)
     await Promise.race([this.exited, sleep(3_000)])
@@ -516,9 +552,15 @@ export class Terminal {
   }
 }
 
-/** Spawns the agent, accepts the trust dialog if it appears, and returns once the TUI is idle at its prompt. */
-export async function startTerminal(plan: LaunchPlan, opts: StartOptions = {}): Promise<Terminal> {
-  const t = new Terminal(plan, opts)
+/** Spawns the agent in a local PTY, accepts the trust dialog if it appears, and returns once the TUI is idle at its prompt. */
+export function startTerminal(plan: LaunchPlan, opts: StartOptions = {}): Promise<Terminal> {
+  return awaitReady(new Terminal(new LocalPtyTransport(plan, opts.cols ?? 120, opts.rows ?? 40), opts))
+}
+
+/** Waits for the agent's TUI on an already-running Terminal: accepts the trust dialog if it appears and returns once
+ *  the TUI is idle at its prompt. Kills the agent on failure. */
+export async function awaitReady(t: Terminal): Promise<Terminal> {
+  const opts = t.opts
   const timeout = opts.startupTimeout ?? 60_000
   try {
     // the trust dialog's "❯ No, exit" is indented; the input box's ❯ is at column 0
