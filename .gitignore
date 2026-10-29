@@ -3,3 +3,4 @@ spike/events.jsonl
 spike/settings.generated.json
 .tether-test/
 *.log
+.claude/worktrees/
