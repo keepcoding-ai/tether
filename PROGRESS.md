@@ -108,3 +108,18 @@ Perfis nomeados (agente + argumentos + ambiente + pasta padrão) em `profiles.js
 ## Passagem para o Atrium (2026-10-29)
 
 Diálogos próprios + ícones Phosphor integrados ao `main` (merge com perfis/R1/R3/tema resolvido; typecheck limpo, 230/230 unit, app compilado e aberto no atalho). A rodada final de E2E do app não foi completada (memória baixa, depois pausa). Continuação descrita em [MANIFEST.md](./MANIFEST.md) §7.
+
+## 7.1 concluída — prova dos diálogos próprios (2026-10-29)
+
+Rodada final de E2E do app feita um arquivo por vez, janela escondida (`TETHER_E2E_HIDDEN=1`), após `npm run app:build`:
+
+| Arquivo | Resultado |
+|---|---|
+| app.dialogs | verde (2x: antes e depois das correções abaixo); 10 capturas em `test/e2e/artifacts/`, incluindo `dialog-still-closing-light.png` que faltava |
+| app.instance | verde (relançamento imediato 3/3, lock preso, segunda instância, lock travado → diálogo → "Fechar" encerra) |
+| app.layout | verde (4 shells sobrevivem à morte da janela e do daemon) |
+| app.tree | verde (tetherd fora da árvore; `taskkill /T` no electron deixa daemon e shells vivos; relançar reanexa) |
+| app.theme | verde (claro/automático/escuro ao vivo e lembrados) |
+| app.claude | verde (Claude real, haiku: duas sessões respondem, mesmos PIDs após matar a janela, mesmas sessões após matar o daemon; canário `fullscreenAutoDisabled` ausente) |
+
+Revisão das capturas claro/escuro como designer: título diz a situação, contexto legível (nome, pasta, sessão, selo de estado), cartões com ícone + ação + consequência, destrutivo sempre por último e nunca padrão, tema correto nos dois esquemas. Dois defeitos pequenos corrigidos (commit `6a34fbb`): o cartão padrão ficava sem anel de foco quando o diálogo era aberto com o mouse (`:focus-visible` só após teclado; agora `.choice.default:focus` também desenha o anel) e o cartão "Fechar" do "ainda está fechando" fazia o papel do Esc sem dizê-lo (`DialogSpec.escChoice`: cartão de "não fazer nada", nunca destrutivo, mostra a dica Esc e recebe o Esc). Portões: `npx tsc -p .`, `npx tsc -p app/renderer`, 230/230 unit, `grep showMessageBox|showErrorBox` em `app/**/*.ts` vazio.
