@@ -230,15 +230,25 @@ async function allProcesses(): Promise<Proc[]> {
   return arr.map(p => ({ pid: p.ProcessId, ppid: p.ParentProcessId, name: p.Name, created: p.Created ?? 0, cmd: p.CommandLine ?? undefined }))
 }
 
+/** `root` and its descendants within `all`, by ppid. A ppid alone is not enough: Windows keeps the ppid of a
+ *  process whose parent is long gone (csrss/winlogon/dwm point at an smss that exited at boot) and reuses the
+ *  dead parent's pid within seconds, so a fresh claude process can inherit the whole session as "children".
+ *  A child was necessarily created after its parent, so a candidate created before the parent is a stranger.
+ *  An unknown creation time (0) falls back to the ppid alone. Pure; exported for the unit tests. */
+export function descendants(all: Proc[], root: number): Proc[] {
+  const out = new Map<number, Proc>()
+  const isChild = (q: Proc, parent: Proc) => q.ppid === parent.pid && (q.created === 0 || parent.created === 0 || q.created >= parent.created)
+  const walk = (parent: Proc) => { for (const q of all) if (!out.has(q.pid) && isChild(q, parent)) { out.set(q.pid, q); walk(q) } }
+  const self = all.find(p => p.pid === root)
+  if (!self) return []
+  out.set(root, self)
+  walk(self)
+  return [...out.values()]
+}
+
 /** The process and all its live descendants (one CIM query, ~1 s). */
 export async function processTree(root: number): Promise<Proc[]> {
-  const all = await allProcesses()
-  const out = new Map<number, Proc>()
-  const walk = (p: number) => { for (const q of all) if (q.ppid === p && !out.has(q.pid)) { out.set(q.pid, q); walk(q.pid) } }
-  const self = all.find(p => p.pid === root)
-  if (self) out.set(root, self)
-  walk(root)
-  return [...out.values()]
+  return descendants(await allProcesses(), root)
 }
 
 /** Which of these pids are listed right now (tasklist, ~100 ms). Pid-only: a reused pid counts as alive. */
