@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import type { Binding } from '../core/event.ts'
 import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
 
-const HOOK_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.ts')
+const HOOK_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.mjs')
 
 /** Settings injected with `--settings`: both hooks run the reporter. Forward slashes: the hook runs under Git Bash on Windows. */
 export function hookSettings(hookPath: string = HOOK_PATH): object {

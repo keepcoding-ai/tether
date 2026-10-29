@@ -1,4 +1,4 @@
-// The Claude hook as Claude runs it: a child `node claude-hook.ts <event>` with the payload on stdin.
+// The Claude hook as Claude runs it: a child `node claude-hook.mjs <event>` with the payload on stdin.
 import { test, describe, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { TetherEvent } from '../../src/core/event.ts'
 
-const HOOK = resolve(import.meta.dirname, '../../src/report/claude-hook.ts')
+const HOOK = resolve(import.meta.dirname, '../../src/report/claude-hook.mjs')
 const CAPTURED = resolve(import.meta.dirname, '../../spike/captured-claude-events.jsonl')
 
 interface Captured {

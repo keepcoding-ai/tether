@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { claudeAdapter, cleanEnv, encodeProjectDir, findTranscript, lastCustomTitle } from '../../src/agents/claude.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
 
-const HOOK = resolve(import.meta.dirname, '../../src/report/claude-hook.ts')
+const HOOK = resolve(import.meta.dirname, '../../src/report/claude-hook.mjs')
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 function tmp(prefix: string): string {
