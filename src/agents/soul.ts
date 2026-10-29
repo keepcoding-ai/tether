@@ -115,9 +115,13 @@ function plan(input: PlanInput): LaunchPlan {
   env[ENV_SLOT] = slot.slotId
   env[ENV_HOME] = home
   if (resume?.resume) {
+    // The recipe finds the session (-r, -a, -H, -g/--config-dir, -P...); the slot's own args still apply on top
+    // (--fork-session, --strategy, --model, -n: a repeated option takes its last value in soul), as in the Claude
+    // adapter. -c/--continue is dropped: it picks a session by itself and would contradict the -r of the recipe.
     const recipe = resume.resume
     Object.assign(env, recipe.env ?? {})
-    return { command: base.command, args: [...base.args, ...recipe.args], cwd: recipe.cwd, env }
+    const own = slot.args.filter((a) => a !== '-c' && a !== '--continue')
+    return { command: base.command, args: [...base.args, ...recipe.args, ...own], cwd: recipe.cwd, env }
   }
   if (resume) {
     // A binding without a recipe (older event): the id alone, in the binding's folder.
