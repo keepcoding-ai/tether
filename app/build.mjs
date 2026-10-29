@@ -13,6 +13,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 const out = join(here, 'dist')
 
 const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024' }
+// src/daemon/client.ts reads import.meta.url (in its own spawnDaemon, which the app does not use); CJS has none.
+const node = { platform: 'node', format: 'cjs', external: ['electron'], logOverride: { 'empty-import-meta': 'silent' } }
 
 function extractDockviewCss() {
   const umd = readFileSync(join(here, '..', 'node_modules', 'dockview-core', 'dist', 'dockview-core.js'), 'utf8')
@@ -24,8 +26,8 @@ function extractDockviewCss() {
 
 extractDockviewCss()
 await Promise.all([
-  build({ ...common, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs'), platform: 'node', format: 'cjs', external: ['electron'] }),
-  build({ ...common, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs'), platform: 'node', format: 'cjs', external: ['electron'] }),
+  build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
+  build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),
   build({ ...common, entryPoints: [join(here, 'renderer', 'main.ts')], outfile: join(out, 'renderer.js'), platform: 'browser', format: 'esm' }),
 ])
 console.log('app build ok → app/dist')
