@@ -14,6 +14,7 @@ import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
+import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 
@@ -196,9 +197,27 @@ async function quitAll(): Promise<void> {
 
 // ---------- theme ----------
 
-/** User settings (theme, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
+/** User settings (theme, terminal appearance, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
 const settingsPath = join(home, 'settings.json')
-type Settings = { theme?: unknown; confirmations?: unknown }
+type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown }
+
+// ---------- terminal appearance ----------
+// The renderer owns the dialog and applies the change to every xterm; main keeps the file and echoes the
+// normalized value so every window (and a relaunch) paints the same thing.
+
+function readTerminalAppearance(): TerminalAppearance {
+  return normalizeAppearance(readJson<Settings>(settingsPath, {}).terminal)
+}
+
+function setTerminalAppearance(value: unknown): void {
+  const appearance = normalizeAppearance(value)
+  const settings = readJson<Settings>(settingsPath, {})
+  writeJson(settingsPath, { ...settings, terminal: appearance })
+  win?.webContents.send('tether:terminal', appearance)
+}
+
+ipcMain.handle('terminal:get', (): TerminalAppearance => readTerminalAppearance())
+ipcMain.on('terminal:set', (_e, value: unknown) => setTerminalAppearance(value))
 
 /** Remembered answers per situation ("não perguntar de novo"); anything malformed reads as none. */
 function readConfirmations(): Confirmations {
@@ -309,6 +328,7 @@ function createMenu(): void {
       label: 'Exibir',
       submenu: [
         themeMenu(),
+        { id: 'terminal-theme', label: 'Tema do terminal…', click: () => win?.webContents.send('tether:open-terminal-theme') },
         { id: 'profiles', label: 'Perfis de lançamento…', click: () => win?.webContents.send('tether:open-profiles') },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },

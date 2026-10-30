@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Event as DaemonEvent, Notice } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, TetherApi } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
+import type { TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ThemeState } from '../shared/theme.ts'
 
 function on<T>(channel: string, listener: (value: T) => void): () => void {
@@ -35,6 +36,10 @@ const api: TetherApi = {
   getTheme: () => ipcRenderer.invoke('theme:get'),
   setTheme: setting => ipcRenderer.send('theme:set', setting),
   onTheme: listener => on<ThemeState>('tether:theme', listener),
+  getTerminalAppearance: () => ipcRenderer.invoke('terminal:get'),
+  setTerminalAppearance: appearance => ipcRenderer.send('terminal:set', appearance),
+  onTerminalAppearance: listener => on<TerminalAppearance>('tether:terminal', listener),
+  onOpenTerminalTheme: listener => on<void>('tether:open-terminal-theme', () => listener()),
   getConfirmations: () => ipcRenderer.invoke('confirmations:get'),
   rememberConfirmation: (situation, choice) => ipcRenderer.send('confirmations:remember', situation, choice),
   onConfirmations: listener => on<Confirmations>('tether:confirmations', listener),

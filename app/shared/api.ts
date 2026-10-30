@@ -2,6 +2,7 @@
 // Shared by the preload (implements it) and the renderer (consumes it).
 import type { Event as DaemonEvent, Notice, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
 import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
+import type { TerminalAppearance } from './terminal-theme.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 
 export type { Profile, ProfileInput }
@@ -55,6 +56,13 @@ export interface TetherApi {
   /** Persists the setting; the new state arrives through onTheme (also on every OS switch while `auto`). */
   setTheme(setting: ThemeSetting): void
   onTheme(listener: (state: ThemeState) => void): () => void
+  /** The terminal appearance (preset, font, weight, size, line height) as saved in settings.json, normalized. */
+  getTerminalAppearance(): Promise<TerminalAppearance>
+  /** Persists it; the normalized value comes back through onTerminalAppearance (to this and any other window). */
+  setTerminalAppearance(appearance: TerminalAppearance): void
+  onTerminalAppearance(listener: (appearance: TerminalAppearance) => void): () => void
+  /** Menu "Exibir → Tema do terminal…": main asks the renderer to open the dialog. */
+  onOpenTerminalTheme(listener: () => void): () => void
   /** Remembered dialog answers ("não perguntar de novo"); main pushes every change through onConfirmations. */
   getConfirmations(): Promise<Confirmations>
   rememberConfirmation(situation: string, choice: string): void

@@ -5,6 +5,7 @@ import { themeDark, themeLight, type IDockviewPanel, type SerializedDockview } f
 import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
+import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
 import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
 import { Desk } from './desk.ts'
@@ -15,6 +16,7 @@ import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, pane
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
 import { LEVELS, shortcutHint, type AppShortcut } from './shortcuts.ts'
 import { closePanelSituation, folderName, NO_PROFILE, quitAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 
 const COMPONENT = 'terminal'
 const TAB = 'slot-tab'
@@ -35,6 +37,11 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined
 let connection: ConnectionState | undefined
 /** What is painted now; main owns the setting and pushes every change (user choice or OS switch). */
 let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' }
+/** The terminal appearance in force (preset, font, weight, size, line height); main owns the file and echoes every change. */
+let appearance: TerminalAppearance = DEFAULT_APPEARANCE
+let themeDialog: TerminalThemeDialog
+/** The saved appearance read and its font loaded: no panel opens before this, so xterm measures the real glyphs. */
+const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; await loadTerminalFonts(a) })
 /** Remembered dialog answers ("não perguntar de novo"); main owns the file and pushes every change. */
 let confirmations: Confirmations = {}
 /** The launch profiles (<home>/profiles.json), as last listed or pushed by the daemon's `profiles` event. */
@@ -62,6 +69,7 @@ const host: PanelHost = {
     return shortcutOf(ev) !== undefined
   },
   getScheme: () => theme.scheme,
+  getAppearance: () => appearance,
   onSwitchProfile: id => { void switchProfile(id) },
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
 }
@@ -75,9 +83,32 @@ function applyTheme(state: ThemeState): void {
   theme = state
   document.documentElement.dataset.theme = state.scheme
   desk.setTheme(DOCK_THEME[state.scheme])
-  for (const p of panels.values()) p.setScheme(state.scheme)
+  for (const p of panels.values()) p.setAppearance(appearance, state.scheme)
+  themeDialog?.refresh()
   $<HTMLSelectElement>('theme-select').value = state.setting
   for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))
+}
+
+// ---------- terminal appearance ----------
+
+/** Puts an appearance on every pane (and the dialog's sample); the font must be loaded already. */
+function applyAppearance(a: TerminalAppearance): void {
+  appearance = a
+  for (const p of panels.values()) p.setAppearance(a, theme.scheme)
+  themeDialog?.refresh()
+}
+
+/** A change from the dialog: load the font first, paint, then persist (main echoes the normalized value). */
+async function changeAppearance(a: TerminalAppearance): Promise<void> {
+  await loadTerminalFonts(a)
+  applyAppearance(a)
+  window.tether.setTerminalAppearance(a)
+}
+
+/** Main pushed an appearance (the echo of ours, or another window's change): paint it once its font is loaded. */
+async function onAppearance(a: TerminalAppearance): Promise<void> {
+  if (!terminalFontsLoaded(a)) await loadTerminalFonts(a)
+  if (JSON.stringify(a) !== JSON.stringify(appearance)) applyAppearance(a)
 }
 
 function setupDock(): void {
@@ -322,6 +353,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
   conn.className = 'conn on'
   $('overlay').hidden = true
   startErrors.clear()
+  await appearanceReady
   await refreshSlots()
   if (!layoutRestored) {
     await restoreLayout()
@@ -696,6 +728,7 @@ function setupMenu(): void {
       case 'new-frame-edge': void openNewDialog({ target: { level: 'frame', placement: 'right' } }); break
       case 'new-frame': void openNewDialog({ target: { level: 'desk', placement: 'right' } }); break
       case 'profiles': openProfiles(); break
+      case 'terminal-theme': themeDialog.show(); break
       case 'switch-profile': { const active = desk.activePanel; if (active) void switchProfile(active.id); break }
       case 'restore-confirmations': window.tether.command('restore-confirmations'); break
       case 'close-window': window.tether.closeWindow(); break
@@ -746,7 +779,7 @@ function setupUi(): void {
   document.addEventListener('keydown', ev => {
     const shortcut = shortcutOf(ev)
     if (!shortcut) return
-    if ($<HTMLDialogElement>('dlg-new').open || manager.open || dialogOpen()) return
+    if ($<HTMLDialogElement>('dlg-new').open || manager.open || themeDialog.open || dialogOpen()) return
     ev.preventDefault()
     switch (shortcut.op) {
       case 'choose': void openNewDialog(); break
@@ -781,6 +814,22 @@ declare global {
       theme(): ThemeState
       /** The xterm palette a panel is using (its `theme.background`, etc). */
       termTheme(slotId: string): Record<string, string | undefined> | undefined
+      /** The xterm font options a panel is using, and which renderer it got. */
+      termOptions(slotId: string): { fontFamily: string; fontWeight: number | string; fontWeightBold: number | string; fontSize: number; lineHeight: number; letterSpacing: number; minimumContrastRatio: number; renderer: string } | undefined
+      /** The terminal appearance in force. */
+      terminalAppearance(): TerminalAppearance
+      /** Opens "Tema do terminal…" as the menu does. */
+      openTerminalTheme(): void
+      /** Whether the browser has the font face loaded (`document.fonts.check`). */
+      fontLoaded(spec: string): boolean
+      /** The dialog's sample terminal: its buffer text and options (undefined while the dialog is closed). */
+      sample(): { text: string; fontFamily: string; background: string | undefined } | undefined
+      /**
+       * What a terminal canvas (WebGL renderer) actually painted: the top-left `maxW`×`maxH` CSS px as a PNG data
+       * URL and how many of those pixels differ from the corner one. A window capture does not see a WebGL
+       * canvas in the offscreen (hidden) window, so this is how tests look at the rendering.
+       */
+      paint(selector: string, maxW: number, maxH: number): { png: string; painted: number; width: number; height: number } | undefined
       /** Remembered dialog answers as the renderer sees them. */
       confirmations(): Confirmations
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
@@ -833,6 +882,40 @@ function setupTestHooks(): void {
     applyState,
     theme: () => theme,
     termTheme: slotId => panels.get(slotId)?.term.options.theme as Record<string, string | undefined> | undefined,
+    termOptions: slotId => {
+      const p = panels.get(slotId)
+      if (!p) return undefined
+      const o = p.term.options
+      return { fontFamily: o.fontFamily!, fontWeight: o.fontWeight!, fontWeightBold: o.fontWeightBold!, fontSize: o.fontSize!, lineHeight: o.lineHeight!, letterSpacing: o.letterSpacing!, minimumContrastRatio: o.minimumContrastRatio!, renderer: p.renderer }
+    },
+    terminalAppearance: () => appearance,
+    openTerminalTheme: () => themeDialog.show(),
+    fontLoaded: spec => document.fonts.check(spec),
+    sample: () => {
+      const t = themeDialog.sampleTerminal
+      if (!t) return undefined
+      const buf = t.buffer.active
+      const lines: string[] = []
+      for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? '')
+      return { text: lines.join('\n').replace(/\n+$/, ''), fontFamily: t.options.fontFamily!, background: t.options.theme?.background }
+    },
+    paint: (selector, maxW, maxH) => {
+      // The WebGL addon appends its canvas after its 2D link layer: the last canvas is the one with the glyphs.
+      const canvases = document.querySelectorAll<HTMLCanvasElement>(`${selector} canvas`)
+      const src = canvases[canvases.length - 1]
+      if (!src) return undefined
+      const scale = src.width / Math.max(1, src.clientWidth)
+      const width = Math.min(src.width, Math.round(maxW * scale))
+      const height = Math.min(src.height, Math.round(maxH * scale))
+      const out = document.createElement('canvas')
+      out.width = width; out.height = height
+      const ctx = out.getContext('2d')!
+      ctx.drawImage(src, 0, 0, width, height, 0, 0, width, height)
+      const px = ctx.getImageData(0, 0, width, height).data
+      let painted = 0
+      for (let i = 4; i < px.length; i += 4) if (px[i] !== px[0] || px[i + 1] !== px[1] || px[i + 2] !== px[2]) painted++
+      return { png: out.toDataURL('image/png'), painted, width, height }
+    },
     confirmations: () => confirmations,
     closePanel: slotId => { void closePanel(slotId) },
     profiles: () => profiles,
@@ -883,10 +966,17 @@ manager = new ProfileManager({
   delete: id => window.tether.deleteProfile(id),
   reload: loadProfiles,
 })
+themeDialog = new TerminalThemeDialog({
+  appearance: () => appearance,
+  scheme: () => theme.scheme,
+  apply: a => { void changeAppearance(a) },
+})
 setupUi()
 setupTestHooks()
 void loadProfiles()
 window.tether.onOpenProfiles(() => openProfiles())
+window.tether.onOpenTerminalTheme(() => themeDialog.show())
+window.tether.onTerminalAppearance(a => { void onAppearance(a) })
 window.tether.onEvent(onDaemonEvent)
 window.tether.onConnection(state => { void onConnection(state) })
 window.tether.onTheme(applyTheme)

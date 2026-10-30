@@ -5,36 +5,24 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import type { ITheme } from '@xterm/xterm'
+import { WebglAddon } from '@xterm/addon-webgl'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
-import { WINDOW_BACKGROUND, type ColorScheme } from '../shared/theme.ts'
+import { terminalFontOptions, terminalTheme, type TerminalAppearance } from '../shared/terminal-theme.ts'
+import type { ColorScheme } from '../shared/theme.ts'
 import { renderChoices, roveWithArrows } from './dialog.ts'
 import { decodeOsc52 } from './clipboard.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
 import { paneShortcutOf } from './shortcuts.ts'
 import { folderName } from './situations.ts'
+import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
 
-/**
- * xterm palettes per scheme. Every key is set: `term.options.theme` replaces the whole object and any key
- * left out falls back to xterm's (dark) defaults. The light one follows VS Code's Light+ terminal colors,
- * whose ANSI set stays legible on white (yellow/cyan/white are darkened on purpose); bright colors keep
- * enough contrast for Claude Code's and soul's dim/bright text.
- */
-export const TERMINAL_THEME: Record<ColorScheme, ITheme> = {
-  dark: {
-    background: WINDOW_BACKGROUND.dark, foreground: '#d8d8dc', cursor: '#d8d8dc', cursorAccent: WINDOW_BACKGROUND.dark,
-    selectionBackground: '#3a5a8a', selectionForeground: undefined,
-    black: '#1b1b1f', red: '#f14c4c', green: '#23d18b', yellow: '#f5f543', blue: '#3b8eea', magenta: '#d670d6', cyan: '#29b8db', white: '#e5e5e5',
-    brightBlack: '#6b6b75', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543', brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#ffffff',
-  },
-  light: {
-    background: WINDOW_BACKGROUND.light, foreground: '#24292f', cursor: '#24292f', cursorAccent: WINDOW_BACKGROUND.light,
-    selectionBackground: '#b4d5fe', selectionForeground: undefined,
-    black: '#000000', red: '#cd3131', green: '#107c10', yellow: '#8a6d00', blue: '#0451a5', magenta: '#bc05bc', cyan: '#0a7f99', white: '#555555',
-    brightBlack: '#5f6368', brightRed: '#cd3131', brightGreen: '#0f8a0f', brightYellow: '#946f00', brightBlue: '#0451a5', brightMagenta: '#bc05bc', brightCyan: '#0a7f99', brightWhite: '#777777',
-  },
-}
+// The palette and the font come from the terminal appearance (app/shared/terminal-theme.ts: preset per
+// scheme over the window background, bundled font, weight, size, line height, contrast 4.5). The host owns
+// the current value; every panel is repainted through setAppearance when it or the scheme changes.
+
+/** Which xterm renderer a panel ended up with: WebGL draws box/block glyphs itself (no gaps at line height 1.2); DOM is the fallback. */
+export type TerminalRenderer = 'webgl' | 'dom'
 
 export const KIND_LABEL: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
 export const STATUS_LABEL: Record<SlotStatus, string> = {
@@ -183,8 +171,10 @@ export interface PanelHost {
   onAction(slotId: string, action: PanelAction): void
   /** Keys the terminal must not swallow (app shortcuts); return true when handled here. */
   onKey(ev: KeyboardEvent, panel: TerminalPanel): boolean
-  /** The scheme painted right now (new terminals start with it; setScheme follows later switches). */
+  /** The scheme painted right now (new terminals start with it; setAppearance follows later switches). */
   getScheme(): ColorScheme
+  /** The terminal appearance in force (preset, font, weight, size, line height). */
+  getAppearance(): TerminalAppearance
   /** "Trocar perfil…" from the header pill. */
   onSwitchProfile(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
@@ -209,6 +199,7 @@ export class TerminalPanel implements IContentRenderer {
   private lastSize = { cols: 0, rows: 0 }
   private fitTimer: ReturnType<typeof setTimeout> | undefined
   private readonly host: PanelHost
+  renderer: TerminalRenderer = 'dom'
 
   constructor(host: PanelHost) {
     this.host = host
@@ -236,12 +227,11 @@ export class TerminalPanel implements IContentRenderer {
     this.element.append(head, body)
 
     this.term = new Terminal({
-      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
-      fontSize: 13,
+      ...terminalFontOptions(host.getAppearance()),
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: true,
-      theme: TERMINAL_THEME[host.getScheme()],
+      theme: terminalTheme(host.getAppearance(), host.getScheme()),
     })
     this.term.loadAddon(this.fit)
     this.term.loadAddon(new WebLinksAddon((_ev, uri) => window.tether.openExternal(uri)))
@@ -275,6 +265,8 @@ export class TerminalPanel implements IContentRenderer {
     this.slotId = String(params.params.slotId ?? params.api.id)
     this.element.dataset.slotId = this.slotId
     this.term.open(this.termHost)
+    this.loadRenderer()
+    this.ensureFont()
     this.render()
     // Attach right away, even when the panel is a hidden tab (zero size): the scrollback must land and
     // `data` must flow whether or not the panel is visible. Fits only send `resize` afterwards.
@@ -368,9 +360,44 @@ export class TerminalPanel implements IContentRenderer {
 
   focus(): void { this.term.focus() }
 
-  /** Repaints the terminal with the scheme's palette (live switch, scrollback kept). */
-  setScheme(scheme: ColorScheme): void {
-    this.term.options.theme = TERMINAL_THEME[scheme]
+  /**
+   * WebGL after `open()`: xterm then draws box drawing and block glyphs itself (`customGlyphs`), so they
+   * join at any line height; the texture atlas also keeps a tall scrollback cheap. When the GPU is not
+   * there (software rendering, a lost context later) the DOM renderer carries on with the font's glyphs.
+   */
+  private loadRenderer(): void {
+    try {
+      // preserveDrawingBuffer: the canvas keeps its last frame, so a window capture (E2E screenshots) sees it.
+      const webgl = new WebglAddon(true)
+      webgl.onContextLoss(() => { webgl.dispose(); this.renderer = 'dom' })
+      this.term.loadAddon(webgl)
+      this.renderer = 'webgl'
+    } catch {
+      this.renderer = 'dom'
+    }
+  }
+
+  /**
+   * The renderer loads the appearance's font before any panel exists, so xterm measures the real glyphs.
+   * Should a panel still open with the font not ready (a face evicted, a slow disk), it is loaded now and
+   * the options are reapplied so the cells are measured again.
+   */
+  private ensureFont(): void {
+    const appearance = this.host.getAppearance()
+    if (terminalFontsLoaded(appearance)) return
+    void loadTerminalFonts(appearance).then(() => {
+      if (this.term.element === undefined) return
+      this.setAppearance(this.host.getAppearance(), this.host.getScheme(), { remeasure: true })
+    })
+  }
+
+  /** Repaints the terminal with the appearance's palette for the scheme and its font; refits (scrollback kept). */
+  setAppearance(appearance: TerminalAppearance, scheme: ColorScheme, opts: { remeasure?: boolean } = {}): void {
+    // xterm only measures again when a font option changes: a font that loaded after `open()` needs the nudge.
+    if (opts.remeasure) this.term.options.fontFamily = 'monospace'
+    applyAppearance(this.term, appearance, scheme)
+    this.term.refresh(0, this.term.rows - 1)
+    this.scheduleFit()
   }
 
   /**
