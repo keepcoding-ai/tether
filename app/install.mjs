@@ -1,12 +1,14 @@
 // `npm run app:install` / `npm run app:uninstall`: the launcher "tether" for the current user.
 //   Windows: a Start Menu shortcut (app/shortcut.ps1).
-//   macOS:   ~/Applications/Tether.app, a thin bundle (Info.plist + a shell launcher + tether.icns).
+//   macOS:   Tether.app, a thin bundle (Info.plist + a shell launcher + tether.icns), in /Applications when the
+//            user can write there (the Finder's "Applications" sidebar item is that folder), else ~/Applications.
 // Nothing else is installed; the app runs from this repo. Both launchers start Electron's own binary with
 // app/dist/main.cjs (no npm, no console window), so a build happens here first and must be redone by hand
 // (`npm run app:build` or `npm run app:install`) after code changes: the launcher never builds.
-//   node app/install.mjs install | uninstall | read [--prefix <dir>]   (--prefix: macOS only, default ~/Applications)
+//   node app/install.mjs install | uninstall | read [--prefix <dir>]
+//   (--prefix: macOS only; without it install picks /Applications or ~/Applications, uninstall/read look in both)
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -18,6 +20,29 @@ const require = createRequire(import.meta.url)
 /** Must match APP_USER_MODEL_ID in app/main/main.ts; on macOS it is the bundle's CFBundleIdentifier. */
 export const AUMID = 'studio.codr.tether'
 export const BUNDLE_NAME = 'Tether.app'
+/** LaunchServices' registration tool: refreshes the Finder/Spotlight view of a bundle without a re-login. */
+const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+
+/** Where a Tether.app may live on macOS, in lookup order: the system folder first, then the user's. */
+export function macPrefixes() {
+  return ['/Applications', join(homedir(), 'Applications')]
+}
+
+/** Whether the current user can create entries in `dir` (false when it does not exist). */
+export function isWritableDir(dir) {
+  try { accessSync(dir, constants.W_OK); return true } catch { return false }
+}
+
+/**
+ * The install prefix when --prefix is not given: /Applications when writable by the user, else ~/Applications.
+ * `writable` is injectable so the choice can be tested without depending on the machine.
+ * Returns { prefix, reason } with the reason in the user's language, ready to print.
+ */
+export function defaultMacPrefix({ writable = isWritableDir } = {}) {
+  const [system, user] = macPrefixes()
+  if (writable(system)) return { prefix: system, reason: `${system} é gravável pelo usuário` }
+  return { prefix: user, reason: `${system} não é gravável pelo usuário; usando ${user}` }
+}
 
 // ---------- macOS bundle ----------
 
@@ -140,6 +165,37 @@ export function uninstallMacBundle({ prefix }) {
   return true
 }
 
+/**
+ * Removes our Tether.app from every prefix in `prefixes` (default: both macOS folders), so no orphan copy is
+ * left when the default prefix changes. Returns the bundle paths removed. A foreign bundle throws, as in
+ * uninstallMacBundle, after the ones before it were removed.
+ */
+export function uninstallMacBundles({ prefixes = macPrefixes() } = {}) {
+  const removed = []
+  for (const prefix of prefixes) if (uninstallMacBundle({ prefix })) removed.push(join(prefix, BUNDLE_NAME))
+  return removed
+}
+
+/** readMacBundle over every prefix in `prefixes` (default: both macOS folders), in that order. */
+export function readMacBundles({ prefixes = macPrefixes() } = {}) {
+  return prefixes.map((prefix) => readMacBundle({ prefix }))
+}
+
+/**
+ * Tells LaunchServices about a bundle just written (or removed, with `remove`): the icon and Spotlight update
+ * without a re-login. Never fatal: returns undefined on success, else the failure's text for a warning.
+ */
+export function registerMacBundle(bundleDir, { remove = false, exec = spawnSync } = {}) {
+  try {
+    const r = exec(LSREGISTER, [remove ? '-u' : '-f', bundleDir], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    if (r.error) return r.error.message
+    if (r.status !== 0) return `código ${r.status}${r.stderr ? `: ${String(r.stderr).trim()}` : ''}`
+    return undefined
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e)
+  }
+}
+
 /** What is installed at <prefix>: { installed, bundleDir, identifier, launcher } (launcher: the script's text). */
 export function readMacBundle({ prefix }) {
   const bundleDir = join(prefix, BUNDLE_NAME)
@@ -173,10 +229,18 @@ function cliWindows(action) {
   run('powershell.exe', ps, 'atalho')
 }
 
+/** Prints the lsregister failure as a warning: the install/uninstall itself already succeeded. */
+function warnRegister(failure, bundleDir) {
+  if (failure) process.stderr.write(`aviso: não consegui registrar ${bundleDir} no LaunchServices (${failure}); o ícone pode demorar a aparecer\n`)
+}
+
+/** `prefix` is the --prefix given, or undefined: then install picks the default and uninstall/read look in both folders. */
 function cliMac(action, prefix) {
   const dist = join(root, 'app', 'dist')
   try {
     if (action === 'install') {
+      let reason
+      if (!prefix) ({ prefix, reason } = defaultMacPrefix())
       assertOursOrAbsent(join(prefix, BUNDLE_NAME)) // refuse before spending a build on it
       run(process.execPath, [join(here, 'build.mjs')], 'build do app')
       const bundleDir = installMacBundle({
@@ -184,16 +248,23 @@ function cliMac(action, prefix) {
         version: JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version,
         nodeDir: dirname(process.execPath),
       })
-      process.stdout.write(`instalado: ${bundleDir}\n`
-        + 'abra pelo Launchpad, Spotlight ou Finder (~/Applications). O app roda deste repositório: o atalho nunca builda;\n'
+      warnRegister(registerMacBundle(bundleDir), bundleDir)
+      process.stdout.write(`instalado: ${bundleDir}${reason ? ` (${reason})` : ''}\n`
+        + `abra pelo Launchpad, Spotlight ou Finder (${prefix}). O app roda deste repositório: o atalho nunca builda;\n`
         + 'depois de mudar o código rode `npm run app:build` (ou `npm run app:install`).\n')
     } else if (action === 'uninstall') {
-      const removed = uninstallMacBundle({ prefix })
-      process.stdout.write(removed ? `removido: ${join(prefix, BUNDLE_NAME)}\n` : `nada instalado em ${prefix}\n`)
+      const prefixes = prefix ? [prefix] : macPrefixes()
+      const removed = uninstallMacBundles({ prefixes })
+      for (const bundleDir of removed) warnRegister(registerMacBundle(bundleDir, { remove: true }), bundleDir)
+      if (removed.length === 0) process.stdout.write(`nada instalado em ${prefixes.join(' nem ')}\n`)
+      else process.stdout.write(`removido (${removed.length}): ${removed.join(', ')}\n`)
     } else {
-      const r = readMacBundle({ prefix })
-      if (!r.installed) process.stdout.write(`nada instalado em ${r.bundleDir}${r.identifier ? ` (há um bundle alheio: ${r.identifier})` : ''}\n`)
-      else process.stdout.write(`instalado: ${r.bundleDir}\n${r.launcher}`)
+      const prefixes = prefix ? [prefix] : macPrefixes()
+      const found = readMacBundles({ prefixes })
+      for (const r of found) {
+        if (!r.installed) process.stdout.write(`nada instalado em ${r.bundleDir}${r.identifier ? ` (há um bundle alheio: ${r.identifier})` : ''}\n`)
+        else process.stdout.write(`instalado: ${r.bundleDir}\n${r.launcher}`)
+      }
     }
   } catch (e) {
     if (e instanceof ForeignBundleError) { process.stderr.write(`${e.message}\n`); process.exit(1) }
@@ -204,14 +275,14 @@ function cliMac(action, prefix) {
 function cli(argv) {
   const action = argv[0]
   const flag = argv.indexOf('--prefix')
-  const prefix = flag >= 0 ? resolve(argv[flag + 1] ?? '') : join(homedir(), 'Applications')
+  const prefix = flag >= 0 ? resolve(argv[flag + 1] ?? '') : undefined
   if (!['install', 'uninstall', 'read'].includes(action) || (flag >= 0 && !argv[flag + 1])) {
     process.stderr.write('uso: node app/install.mjs install | uninstall | read [--prefix <dir>]\n')
     process.exit(2)
   }
   if (process.platform === 'win32') cliWindows(action)
   else if (process.platform === 'darwin') cliMac(action, prefix)
-  else { process.stderr.write('o atalho só existe no Windows (Menu Iniciar) e no macOS (~/Applications/Tether.app)\n'); process.exit(1) }
+  else { process.stderr.write('o atalho só existe no Windows (Menu Iniciar) e no macOS (Tether.app em /Applications ou ~/Applications)\n'); process.exit(1) }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) cli(process.argv.slice(2))

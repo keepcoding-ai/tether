@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { join } from 'node:path'
 import { tempDirs } from './tmp.helpers.ts'
 // @ts-expect-error app/install.mjs is plain JavaScript (no declaration file)
-import { AUMID, BUNDLE_NAME, ForeignBundleError, installMacBundle, readMacBundle, uninstallMacBundle } from '../../app/install.mjs'
+import { AUMID, BUNDLE_NAME, ForeignBundleError, defaultMacPrefix, installMacBundle, macPrefixes, readMacBundle, readMacBundles, registerMacBundle, uninstallMacBundle, uninstallMacBundles } from '../../app/install.mjs'
 // @ts-expect-error app/icon.mjs is plain JavaScript (no declaration file)
 import { encodeIcns, rasterize, readIcnsIndex } from '../../app/icon.mjs'
 
@@ -94,5 +94,46 @@ describe('install.mjs (macOS bundle)', { skip: process.platform !== 'darwin' && 
     assert.equal(uninstallMacBundle({ prefix: f.prefix }), true)
     assert.deepEqual(readdirSync(f.prefix), ['Other.app'])
     assert.equal(readMacBundle({ prefix: f.prefix }).installed, false)
+  })
+
+  test('default prefix: /Applications when the user can write there, else ~/Applications, each with its reason', () => {
+    const [system, user] = macPrefixes()
+    assert.equal(system, '/Applications')
+    assert.ok(user.endsWith('/Applications') && user !== system)
+    const asked: string[] = []
+    const yes = defaultMacPrefix({ writable: (dir: string) => { asked.push(dir); return true } })
+    assert.deepEqual(yes, { prefix: system, reason: '/Applications é gravável pelo usuário' })
+    const no = defaultMacPrefix({ writable: () => false })
+    assert.equal(no.prefix, user)
+    assert.match(no.reason, /não é gravável/)
+    assert.ok(no.reason.includes(user), 'the reason names the fallback folder')
+    assert.deepEqual(asked, [system], 'only the system folder is probed')
+  })
+
+  test('uninstallMacBundles removes our copies from every prefix and names each one; read lists both', () => {
+    const f = fixture()
+    const other = join(f.dir, 'OtherApplications')
+    installMacBundle(f.args)
+    installMacBundle({ ...f.args, prefix: other })
+    const prefixes = [f.prefix, other, join(f.dir, 'empty')]
+    const read = readMacBundles({ prefixes })
+    assert.deepEqual(read.map((r: { installed: boolean }) => r.installed), [true, true, false])
+    assert.deepEqual(read.map((r: { bundleDir: string }) => r.bundleDir), prefixes.map((p) => join(p, BUNDLE_NAME)))
+    const removed = uninstallMacBundles({ prefixes })
+    assert.deepEqual(removed, [f.bundle, join(other, BUNDLE_NAME)])
+    assert.ok(!existsSync(f.bundle) && !existsSync(join(other, BUNDLE_NAME)))
+    assert.deepEqual(uninstallMacBundles({ prefixes }), [], 'second pass finds nothing')
+  })
+
+  test('registerMacBundle calls lsregister -f / -u on the bundle and turns any failure into a warning text', () => {
+    const calls: { cmd: string, args: string[] }[] = []
+    const ok = (cmd: string, args: string[]) => { calls.push({ cmd, args }); return { status: 0 } }
+    assert.equal(registerMacBundle('/x/Tether.app', { exec: ok }), undefined)
+    assert.equal(registerMacBundle('/x/Tether.app', { remove: true, exec: ok }), undefined)
+    assert.deepEqual(calls.map((c) => c.args), [['-f', '/x/Tether.app'], ['-u', '/x/Tether.app']])
+    assert.ok(calls.every((c) => c.cmd.endsWith('/LaunchServices.framework/Support/lsregister')))
+    assert.match(registerMacBundle('/x/Tether.app', { exec: () => ({ status: 3, stderr: 'boom' }) }) as string, /código 3: boom/)
+    assert.match(registerMacBundle('/x/Tether.app', { exec: () => ({ error: new Error('ENOENT') }) }) as string, /ENOENT/)
+    assert.match(registerMacBundle('/x/Tether.app', { exec: () => { throw new Error('thrown') } }) as string, /thrown/)
   })
 })
