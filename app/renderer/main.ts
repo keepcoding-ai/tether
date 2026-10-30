@@ -12,13 +12,14 @@ import { Desk } from './desk.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { type DeskLayout, emptyLayout, type LayoutV2, migrateLayout, pruneLayoutV2 } from './layout.ts'
+import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
 import { LEVELS, shortcutHint, type AppShortcut } from './shortcuts.ts'
 import { closePanelSituation, folderName, NO_PROFILE, quitAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
-
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
+
 const COMPONENT = 'terminal'
 const TAB = 'slot-tab'
 const SAVE_DEBOUNCE_MS = 300
@@ -36,6 +37,14 @@ let layoutFile: LayoutV2 = emptyLayout()
 let layoutRestored = false
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let connection: ConnectionState | undefined
+/** The daemon answered and `slots` holds its list: panes attach and the loading stages move on. */
+let daemonIsReady = false
+let resolveDaemonReady: () => void = () => {}
+const daemonReadyPromise = new Promise<void>(r => { resolveDaemonReady = r })
+/** The renderer's view of the daemon's start queue (positions for "Na fila (Nº n)"). */
+const queue = new QueueOrder()
+/** The layout file read at startup and painted at once (before the daemon answers); pruned once it does. */
+let geometry: Promise<ReturnType<typeof migrateLayout>> | undefined
 /** What is painted now; main owns the setting and pushes every change (user choice or OS switch). */
 let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' }
 /** The terminal appearance in force (preset, font, weight, size, line height); main owns the file and echoes every change. */
@@ -73,6 +82,10 @@ const host: PanelHost = {
   getAppearance: () => appearance,
   onSwitchProfile: id => { void switchProfile(id) },
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
+  isDaemonReady: () => daemonIsReady,
+  daemonReady: () => daemonReadyPromise,
+  fontsReady: () => appearanceReady,
+  queuePosition: id => queue.position(id),
 }
 
 // ---------- theme ----------
@@ -172,7 +185,7 @@ function addPanel(slot: SlotState, target?: Target, reference?: string): IDockvi
     component: COMPONENT,
     tabComponent: TAB,
     title: panelTitle(slot),
-    params: { slotId: slot.slotId },
+    params: { slotId: slot.slotId, hint: hintOf(slot) },
   }, target, reference)
   panel.api.setActive()
   return panel
@@ -289,12 +302,16 @@ async function moveToFolder(slotId: string): Promise<void> {
 
 function applyState(slot: SlotState): void {
   slots.set(slot.slotId, slot)
+  queue.update(slot.slotId, slot.status === 'queued')
   if (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued') startErrors.delete(slot.slotId)
   const panel = desk.getPanel(slot.slotId)
   if (panel) {
     const title = panelTitle(slot)
     if (panel.title !== title) panel.api.setTitle(title)
+    updateHint(slot)
   }
+  // Every queued pane's position may have moved.
+  for (const id of slots.keys()) if (id !== slot.slotId && slots.get(id)?.status === 'queued') panels.get(id)?.render()
   renderSlot(slot.slotId)
   refreshClosedMenu()
 }
@@ -319,7 +336,18 @@ async function refreshSlots(): Promise<void> {
   const reply = await window.tether.request({ t: 'list' })
   if (reply.t === 'error') throw new Error(reply.message)
   slots.clear()
-  for (const s of reply.slots ?? []) slots.set(s.slotId, s)
+  queue.clear()
+  for (const s of reply.slots ?? []) { slots.set(s.slotId, s); queue.update(s.slotId, s.status === 'queued') }
+}
+
+/** Keeps the pane's layout hint (kind, folder, profile) in step with the slot, so the next launch paints it before the daemon answers. */
+function updateHint(slot: SlotState): void {
+  const panel = desk.getPanel(slot.slotId)
+  if (!panel) return
+  const params = (panel.params ?? {}) as { slotId?: string; hint?: PaneHint }
+  const hint = hintOf(slot)
+  if (sameHint(params.hint, hint)) return
+  panel.api.updateParameters({ ...params, slotId: slot.slotId, hint })
 }
 
 /**
@@ -328,23 +356,43 @@ async function refreshSlots(): Promise<void> {
  * pruned frame by frame; a frame whose JSON is refused still reopens every pane it named (Desk.loadView).
  */
 async function restoreLayout(): Promise<void> {
-  const raw = await window.tether.loadLayout()
-  const result = migrateLayout(raw)
+  const result = await (geometry ?? paintGeometry())
   let dirty = false
   if (result) {
     const pruned = pruneLayoutV2(result.layout, new Set(slots.keys()))
     layoutFile = pruned.layout
-    const mounted: DeskLayout = pruned.layout.desks.find(d => d.id === pruned.layout.activeDesk) ?? pruned.layout.desks[0]!
-    desk.fromJSON(mounted)
+    // The geometry painted at startup had every pane of the file; only when the daemon lost some is the
+    // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side,
+    // frame refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
+    if (pruned.kept !== pruned.total) desk.fromJSON(mountedDesk(pruned.layout))
     if (result.migrated) await window.tether.backupLayout()
     dirty = result.migrated || pruned.kept !== pruned.total
   } else {
     layoutFile = emptyLayout()
-    desk.fromEmpty()
   }
   layoutRestored = true
   if (dirty) scheduleSave()
+  // Panes that predate the hint get it now (saved with the next layout change).
+  for (const panel of desk.panels) { const s = slots.get(panel.id); if (s) updateHint(s) }
   refreshClosedMenu()
+}
+
+function mountedDesk(layout: LayoutV2): DeskLayout {
+  return layout.desks.find(d => d.id === layout.activeDesk) ?? layout.desks[0]!
+}
+
+/**
+ * Paints the whole geometry from <home>/layout.json at once — desks, frames, panes, tabs, titles, profile
+ * pills — without waiting for the daemon or the fonts: each pane shows its loading stage until its terminal
+ * is attached. Pruning (panes the daemon no longer knows) waits for the daemon (restoreLayout).
+ */
+function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
+  geometry ??= window.tether.loadLayout().then(raw => {
+    const result = migrateLayout(raw)
+    if (result && !layoutRestored) desk.fromJSON(mountedDesk(result.layout))
+    return result
+  }, err => { console.error('layout.json ilegível', err); return null })
+  return geometry!
 }
 
 // ---------- connection ----------
@@ -364,10 +412,13 @@ async function onConnection(state: ConnectionState): Promise<void> {
   conn.className = 'conn on'
   $('overlay').hidden = true
   startErrors.clear()
-  await appearanceReady
   await refreshSlots()
   if (!layoutRestored) {
     await restoreLayout()
+    daemonIsReady = true
+    resolveDaemonReady()
+    for (const p of panels.values()) p.render()
+    for (const t of tabs.values()) t.render()
   } else {
     // Reconnected (the daemon was restarted): drop panels it no longer knows, re-attach the rest.
     for (const panel of desk.panels) {
@@ -968,6 +1019,7 @@ function setupTestHooks(): void {
 }
 
 setupDock()
+void paintGeometry()
 manager = new ProfileManager({
   profiles: () => profiles,
   problem: () => profilesProblem,

@@ -157,7 +157,6 @@ function exitedOverlay(s: SlotState): OverlaySpec {
   }
 }
 
-const QUEUED: OverlaySpec = { icon: 'hourglass', title: 'Na fila', tone: 'info', text: 'Aguardando a vez para iniciar (no máximo 3 agentes sobem ao mesmo tempo).', choices: [] }
 const UNKNOWN: OverlaySpec = {
   icon: 'x-circle', title: 'Slot desconhecido', tone: 'error', text: 'O tetherd não conhece mais este painel.',
   choices: [{ id: 'close', icon: 'x', label: 'Fechar painel', consequence: 'Só remove o painel: não há slot por trás dele.', tone: 'safe' }],
@@ -180,8 +179,6 @@ export interface PanelHost {
   onSwitchProfile(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
   onTabMenu(slotId: string, ev: MouseEvent): void
-  /** What the layout file remembers of the pane (kind, folder, profile), painted before the daemon answers. */
-  getHint(slotId: string): PaneHint | undefined
   /** The daemon answered and its slot list is loaded. */
   isDaemonReady(): boolean
   /** Resolves once the daemon is ready (the pane attaches then). */
@@ -190,6 +187,12 @@ export interface PanelHost {
   fontsReady(): Promise<void>
   /** 1-based place in the start queue, when known. */
   queuePosition(slotId: string): number | undefined
+}
+
+/** The hint the layout keeps in a pane's params (main.ts addPanel/updateHint), when there is one. */
+function hintParam(params: Record<string, unknown> | undefined): PaneHint | undefined {
+  const h = params?.hint as PaneHint | undefined
+  return h && typeof h === 'object' && typeof h.kind === 'string' ? h : undefined
 }
 
 /** How long a running pane with an empty scrollback waits for its first output before showing the terminal anyway. */
@@ -299,6 +302,7 @@ export class TerminalPanel implements IContentRenderer {
     this.slotId = String(params.params.slotId ?? params.api.id)
     this.element.dataset.slotId = this.slotId
     this.layoutTitle = params.title
+    this.hint = hintParam(params.params)
     // The chrome (header, loading skeleton) paints now, from the layout's hint if the daemon has not answered.
     this.render()
     // Keyboard focus follows the active panel. dockview may activate the panel before this init runs,
@@ -307,8 +311,9 @@ export class TerminalPanel implements IContentRenderer {
     void this.boot(() => params.api.isActive)
   }
 
-  /** The tab title the layout file carried (the header's title before the daemon answers). */
+  /** The tab title and the hint the layout file carried (the header before the daemon answers). */
   private layoutTitle: string | undefined
+  private hint: PaneHint | undefined
 
   /**
    * The xterm opens once the font is loaded (so it measures the real glyphs), then attaches once the daemon
@@ -377,9 +382,9 @@ export class TerminalPanel implements IContentRenderer {
 
   /** The header from the layout's hint, before the daemon answers: kind, title, folder, profile pill. */
   private renderHint(): void {
-    const hint = this.host.getHint(this.slotId)
+    const hint = this.hint
     setIcon(this.head.icon, hint ? KIND_ICON[hint.kind] : 'question')
-    this.head.title.textContent = this.layoutTitle ?? (hint ? KIND_LABEL[hint.kind] : this.slotId)
+    this.head.title.textContent = hint ? KIND_LABEL[hint.kind] : this.layoutTitle ?? this.slotId
     this.head.profile.textContent = hint?.profileName ?? NO_PROFILE_LABEL
     this.head.profile.classList.toggle('none', !hint?.profileName)
     this.head.profile.hidden = !hint || (hint.kind === 'shell' && !hint.profileName)
@@ -601,6 +606,8 @@ export class SlotTab implements ITabRenderer {
   private readonly unsafe: HTMLElement
   private disposers: Array<() => void> = []
   private readonly host: PanelHost
+  /** What the layout file remembers of the pane, painted before the daemon answers. */
+  private hint: PaneHint | undefined
   private readonly onClose: (slotId: string) => void
 
   constructor(host: PanelHost, onClose: (slotId: string) => void) {
@@ -623,6 +630,7 @@ export class SlotTab implements ITabRenderer {
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
+    this.hint = hintParam(params.params)
     this.disposers.push(params.api.onDidTitleChange(() => this.render()).dispose)
     this.render()
   }
@@ -632,7 +640,7 @@ export class SlotTab implements ITabRenderer {
     const s = this.host.getSlot(this.api.id)
     if (!s && !this.host.isDaemonReady()) {
       // Before the daemon answers: the layout's hint and a "starting" dot.
-      const hint = this.host.getHint(this.api.id)
+      const hint = this.hint
       setIcon(this.kind, hint ? KIND_ICON[hint.kind] : 'question')
       this.text.textContent = this.api.title ?? this.api.id
       this.dot.className = 'dot starting'

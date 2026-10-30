@@ -272,6 +272,22 @@ html.standalone dialog.ask header { -webkit-app-region: drag; }
 .panel-overlay .choice { padding: 9px 12px; }
 .panel-overlay .choice-icon .ph { width: 18px; height: 18px; }
 
+/* --- panel loading: the pane is painted from the layout; this skeleton holds its place until the terminal has output --- */
+.panel-loading { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; background: var(--bg); opacity: 1; transition: opacity 160ms ease-out; pointer-events: none; }
+.panel-loading[hidden] { display: none; }
+.panel-loading.leaving { opacity: 0; }
+.panel-loading .stage { display: flex; align-items: center; gap: 10px; color: var(--fg-dim); font-size: 12px; }
+.panel-loading .badge { width: 26px; height: 26px; }
+.panel-loading .badge .ph { width: 15px; height: 15px; }
+.panel-loading .lines { display: flex; flex-direction: column; gap: 8px; }
+.panel-loading .lines span { display: block; height: 9px; border-radius: 4px; background: linear-gradient(90deg, var(--bg-2) 0%, var(--bg-3) 50%, var(--bg-2) 100%); background-size: 200% 100%; animation: panel-shimmer 1.4s linear infinite; }
+.panel-loading .lines span:nth-child(1) { width: 62%; }
+.panel-loading .lines span:nth-child(2) { width: 44%; }
+.panel-loading .lines span:nth-child(3) { width: 70%; }
+.panel-loading .lines span:nth-child(4) { width: 30%; }
+@keyframes panel-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .panel-loading .lines span { animation: none; } .panel-loading { transition: none; } }
+
 /* --- overlay (no daemon) --- */
 #overlay { position: fixed; inset: 0; background: var(--backdrop); display: flex; align-items: center; justify-content: center; z-index: 100; }
 #overlay[hidden] { display: none; }

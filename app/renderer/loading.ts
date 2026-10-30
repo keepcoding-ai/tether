@@ -2,7 +2,8 @@
 // output". Pure (unit-tested): the panel feeds what it knows, this says which stage — or none, when the pane
 // should show its terminal or one of its situation overlays (error, unconfirmed, exited).
 import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
-import type { IconName } from './icons.ts'
+/** Phosphor icons of the stages (a subset of icons.ts IconName; not imported: icons.ts pulls the SVG assets). */
+export type LoadingIcon = 'plugs' | 'hourglass' | 'terminal-window' | 'clock-counter-clockwise' | 'ghost' | 'sparkle'
 
 /** What the pane paints from the layout file before the daemon answers (kept in the pane's params). */
 export interface PaneHint {
@@ -16,7 +17,7 @@ export type LoadingStageId = 'connecting' | 'resuming' | 'starting-agent' | 'que
 
 export interface LoadingStage {
   id: LoadingStageId
-  icon: IconName
+  icon: LoadingIcon
   text: string
 }
 
