@@ -7,6 +7,10 @@
 //   level frame  Ctrl+Alt+Shift+Arrow   duplicate at the frame's edge (full height or width of the frame)
 //   level desk   Alt+Shift+Arrow        duplicate into a new frame at the desk's edge
 //   Ctrl+Shift+T chooser · Ctrl+Shift+Q quit all
+//
+// Pane chords (PANE_SHORTCUTS) live inside the terminal and never reach the document: Ctrl+C copies the
+// selection when there is one (without one it stays the terminal's ^C, which interrupts Claude, dev servers
+// and shells), Ctrl+Shift+C always copies, Ctrl+V / Ctrl+Shift+V paste.
 import type { Direction } from './create.ts'
 
 /** Where a new pane is born relative to the focus: beside the pane, at the frame's edge, or in a new frame at the desk's edge. */
@@ -53,6 +57,48 @@ function matches(chord: Chord, ev: KeyLike): boolean {
 export function shortcutOf(ev: KeyLike): AppShortcut | undefined {
   if (ev.metaKey) return undefined
   return SHORTCUTS.find(s => matches(s.chord, ev))?.command
+}
+
+/**
+ * What a clipboard chord does inside a pane:
+ *   copy        copy the selection to the clipboard and clear it; nothing is sent to the process
+ *   paste       paste the clipboard text (xterm's paste: bracketed paste honoured); with no text, nothing
+ *   paste-or-raw paste the clipboard text; with no text, send the raw key (^V) so Claude Code reads the
+ *               image from the clipboard itself (its image paste is triggered by the ^V it receives)
+ */
+export type PaneCommand = 'copy' | 'paste' | 'paste-or-raw'
+
+export interface PaneShortcutEntry {
+  chord: Chord
+  command: PaneCommand
+  /** Only with a selection; without one the chord is the terminal's (Ctrl+C = ^C). */
+  needsSelection?: boolean
+}
+
+export const PANE_SHORTCUTS: readonly PaneShortcutEntry[] = [
+  { chord: { ctrl: true, code: 'KeyC' }, command: 'copy', needsSelection: true },
+  { chord: { ctrl: true, shift: true, code: 'KeyC' }, command: 'copy' },
+  { chord: { ctrl: true, code: 'KeyV' }, command: 'paste-or-raw' },
+  { chord: { ctrl: true, shift: true, code: 'KeyV' }, command: 'paste' },
+]
+
+/**
+ * The pane command a keydown means given whether the terminal has a selection, or undefined when the key is
+ * the terminal's. Decided on keydown only: keypress/keyup of the same chord are never a command.
+ */
+export function paneShortcutOf(ev: KeyLike & { type?: string }, hasSelection: boolean): PaneCommand | undefined {
+  if (ev.type !== undefined && ev.type !== 'keydown') return undefined
+  if (ev.metaKey || ev.altKey) return undefined
+  const entry = PANE_SHORTCUTS.find(s => matches(s.chord, ev))
+  if (!entry) return undefined
+  if (entry.needsSelection && !hasSelection) return undefined
+  return entry.command
+}
+
+/** The hint for a pane command (its first chord), or '' when it has none. */
+export function paneShortcutHint(command: PaneCommand): string {
+  const entry = PANE_SHORTCUTS.find(s => s.command === command)
+  return entry ? chordLabel(entry.chord) : ''
 }
 
 const CODE_GLYPH: Record<string, string> = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓' }

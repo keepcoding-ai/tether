@@ -55,13 +55,10 @@ const host: PanelHost = {
   getStartError: id => startErrors.get(id),
   isStartPending: id => pendingStarts.has(id),
   onAction: (id, action) => { void onPanelAction(id, action) },
-  onKey: (ev, panel) => {
+  onKey: ev => {
     if (ev.type !== 'keydown') return false
-    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey) {
-      if (ev.code === 'KeyC') { panel.copy(); return true }
-      if (ev.code === 'KeyV') { void panel.paste(); return true }
-    }
     // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener.
+    // (Clipboard chords are the panel's own: app/renderer/shortcuts.ts PANE_SHORTCUTS.)
     return shortcutOf(ev) !== undefined
   },
   getScheme: () => theme.scheme,
@@ -796,6 +793,18 @@ declare global {
       switchProfile(slotId: string): void
       /** "Duplicar painel" relative to a panel (pane / frame / desk level), as the menus and the "+" do. */
       duplicate(slotId: string, direction: Direction, level?: Target['level']): void
+      /** The terminal's current selection text ('' when none). */
+      selection(slotId: string): string
+      /** Selects the first occurrence of `needle` in the terminal buffer (as a user would with the mouse); false when absent. */
+      selectText(slotId: string, needle: string): boolean
+      /** Cell size in CSS px (to aim the mouse at a given row/column). */
+      cellSize(slotId: string): { width: number; height: number } | undefined
+      /** Where the first occurrence of `needle` is on screen (viewport row/column), or undefined when absent or scrolled out. */
+      screenPos(slotId: string, needle: string): { row: number; col: number } | undefined
+      /** The mouse tracking mode the program asked for ('none' when it did not). */
+      mouseMode(slotId: string): string | undefined
+      /** Writes to the xterm as if the program had (tests: ConPTY does not forward every DECSET). */
+      inject(slotId: string, data: string): void
     }
   }
 }
@@ -830,6 +839,37 @@ function setupTestHooks(): void {
     openProfiles,
     switchProfile: slotId => { void switchProfile(slotId) },
     duplicate: (slotId, direction, level = 'pane') => { void duplicatePanel(slotId, { level, placement: direction }) },
+    selection: slotId => panels.get(slotId)?.term.getSelection() ?? '',
+    selectText: (slotId, needle) => {
+      const term = panels.get(slotId)?.term
+      if (!term) return false
+      const buf = term.buffer.active
+      for (let row = 0; row < buf.length; row++) {
+        const col = (buf.getLine(row)?.translateToString(true) ?? '').indexOf(needle)
+        if (col < 0) continue
+        term.select(col, row, needle.length)
+        return true
+      }
+      return false
+    },
+    screenPos: (slotId, needle) => {
+      const term = panels.get(slotId)?.term
+      if (!term) return undefined
+      const buf = term.buffer.active
+      for (let row = 0; row < buf.length; row++) {
+        const col = (buf.getLine(row)?.translateToString(true) ?? '').indexOf(needle)
+        if (col < 0) continue
+        const screenRow = row - buf.viewportY
+        return screenRow >= 0 && screenRow < term.rows ? { row: screenRow, col } : undefined
+      }
+      return undefined
+    },
+    mouseMode: slotId => panels.get(slotId)?.term.modes.mouseTrackingMode,
+    inject: (slotId, data) => panels.get(slotId)?.term.write(data),
+    cellSize: slotId => {
+      const term = panels.get(slotId)?.term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } } | undefined
+      return term?._core?._renderService?.dimensions?.css?.cell
+    },
   }
 }
 

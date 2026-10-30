@@ -10,7 +10,9 @@ import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemo
 import type { DialogChoice } from '../shared/dialog.ts'
 import { WINDOW_BACKGROUND, type ColorScheme } from '../shared/theme.ts'
 import { renderChoices, roveWithArrows } from './dialog.ts'
+import { decodeOsc52 } from './clipboard.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
+import { paneShortcutOf } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 
 /**
@@ -244,10 +246,29 @@ export class TerminalPanel implements IContentRenderer {
     this.term.loadAddon(this.fit)
     this.term.loadAddon(new WebLinksAddon((_ev, uri) => window.tether.openExternal(uri)))
     this.term.onData(data => { if (this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data }) })
-    this.term.onSelectionChange(() => {
-      if (this.term.hasSelection()) window.tether.writeClipboard(this.term.getSelection())
+    // xterm calls this for keydown, keypress and keyup of the same chord: a command is decided on keydown only.
+    // What is handled here is also prevented, so Chromium's own copy/paste on the textarea never runs on top
+    // of it (a native paste would reach xterm's `paste` listener and paste twice; a native copy would overwrite
+    // the clipboard with the selection xterm has just cleared).
+    this.term.attachCustomKeyEventHandler(ev => {
+      if (ev.type !== 'keydown') return true
+      const command = paneShortcutOf(ev, this.term.hasSelection())
+      if (command) {
+        ev.preventDefault()
+        if (command === 'copy') this.copy()
+        else void this.paste(command === 'paste-or-raw')
+        return false
+      }
+      const handled = this.host.onKey(ev, this)
+      if (handled) ev.preventDefault()
+      return !handled
     })
-    this.term.attachCustomKeyEventHandler(ev => !this.host.onKey(ev, this))
+    // OSC 52 from the program (Claude, tmux, neovim's clipboard provider): straight to the Windows clipboard.
+    this.term.parser.registerOscHandler(52, data => {
+      const text = decodeOsc52(data)
+      if (text !== undefined) window.tether.writeClipboard(text)
+      return true
+    })
   }
 
   init(params: GroupPanelPartInitParameters): void {
@@ -352,13 +373,22 @@ export class TerminalPanel implements IContentRenderer {
     this.term.options.theme = TERMINAL_THEME[scheme]
   }
 
-  async paste(): Promise<void> {
+  /**
+   * Pastes the clipboard text through xterm (bracketed paste when the program asked for it). With no text and
+   * `rawWhenEmpty`, the raw ^V goes to the process instead: Claude Code pastes an image from the clipboard
+   * when it receives that key, and a screenshot in the clipboard has no text form.
+   */
+  async paste(rawWhenEmpty = false): Promise<void> {
     const text = await window.tether.readClipboard()
     if (text) this.term.paste(text)
+    else if (rawWhenEmpty && this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data: '\x16' })
   }
 
+  /** Copies the selection to the clipboard and clears it; nothing without a selection. */
   copy(): void {
-    if (this.term.hasSelection()) window.tether.writeClipboard(this.term.getSelection())
+    if (!this.term.hasSelection()) return
+    window.tether.writeClipboard(this.term.getSelection())
+    this.term.clearSelection()
   }
 
   /** Re-attach after a daemon reconnect: replaces the screen by the daemon's scrollback. */
