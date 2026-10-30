@@ -38,6 +38,8 @@ describe('install.mjs (macOS bundle)', { skip: process.platform !== 'darwin' && 
     assert.equal(lint.status, 0, lint.stdout + lint.stderr)
     const text = readFileSync(plist, 'utf8')
     assert.match(text, new RegExp(`<key>CFBundleIdentifier</key>\\s*<string>${AUMID.replace(/\./g, '\\.')}</string>`))
+    assert.match(text, /<key>CFBundleName<\/key>\s*<string>Tether<\/string>/)
+    assert.match(text, /<key>CFBundleDisplayName<\/key>\s*<string>Tether<\/string>/)
     assert.match(text, /<key>CFBundleExecutable<\/key>\s*<string>tether<\/string>/)
     assert.match(text, /<key>CFBundleIconFile<\/key>\s*<string>tether<\/string>/)
     assert.match(text, /<key>CFBundleShortVersionString<\/key>\s*<string>9\.9\.9<\/string>/)

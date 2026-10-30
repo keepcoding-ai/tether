@@ -29,7 +29,7 @@ app.setPath('userData', join(home, 'electron'))
 app.setAppUserModelId(APP_USER_MODEL_ID)
 // The process runs from node_modules' Electron.app (Tether.app only wraps it: a launcher cannot change what
 // the OS attributes the process to), so the name and the Dock icon are set here, not read from a bundle.
-app.setName('tether')
+app.setName('Tether')
 const layoutPath = join(home, 'layout.json')
 const recentPath = join(home, 'recent-folders.json')
 const RECENT_LIMIT = 12

@@ -20,6 +20,8 @@ const require = createRequire(import.meta.url)
 /** Must match APP_USER_MODEL_ID in app/main/main.ts; on macOS it is the bundle's CFBundleIdentifier. */
 export const AUMID = 'studio.codr.tether'
 export const BUNDLE_NAME = 'Tether.app'
+/** What the Finder and the menu bar show; the executable and icon file names stay lowercase. */
+const DISPLAY_NAME = BUNDLE_NAME.replace(/\.app$/, '')
 /** LaunchServices' registration tool: refreshes the Finder/Spotlight view of a bundle without a re-login. */
 const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 
@@ -56,9 +58,9 @@ export function infoPlist({ version }) {
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>tether</string>
+  <string>${DISPLAY_NAME}</string>
   <key>CFBundleDisplayName</key>
-  <string>tether</string>
+  <string>${DISPLAY_NAME}</string>
   <key>CFBundleIdentifier</key>
   <string>${AUMID}</string>
   <key>CFBundleExecutable</key>
