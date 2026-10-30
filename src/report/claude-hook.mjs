@@ -1,12 +1,12 @@
 // Claude Code hook entry point. Claude runs it (via Git Bash on Windows) as:
-//   node "<abs path>/src/report/claude-hook.mjs" SessionStart|SessionEnd
+//   node "<abs path>/src/report/claude-hook.mjs" SessionStart|SessionEnd|Stop|Notification
 // with the hook payload on stdin and the slot's env (TETHER_SLOT_ID, TETHER_HOME).
 //
 // Rules (PRD RNF3): never write to stdout (SessionStart stdout is injected into Claude's
 // context), never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
 // Plain JS on purpose: Node's TypeScript loader added ~40% to the hook's run time.
 // It does not import the core: it appends one JSON line itself.
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -85,6 +85,22 @@ export function toEvent(hookName, payload, slotId, ts) {
   return undefined
 }
 
+/**
+ * Maps Stop / Notification to an attention report (<home>/slots/<slot>.attention, read by tetherd):
+ * Stop = the turn is over ('done'); Notification = Claude waits for the user ('waiting': a permission prompt,
+ * the idle prompt, a question). `auth_success` is only informative. Undefined for any other hook.
+ * @param {string} hookName @param {Payload} payload @param {string} ts
+ * @returns {{ ts: string, kind: 'done' | 'waiting', sessionId?: string } | undefined} */
+export function toAttention(hookName, payload, ts) {
+  /** @type {'done' | 'waiting' | undefined} */
+  let kind
+  if (hookName === 'Stop') kind = 'done'
+  else if (hookName === 'Notification') kind = str(payload.notification_type) === 'auth_success' ? undefined : 'waiting'
+  if (!kind) return undefined
+  const sessionId = str(payload.session_id)
+  return sessionId ? { ts, kind, sessionId } : { ts, kind }
+}
+
 /** @param {string} stdin */
 function record(stdin) {
   const home = tetherHome()
@@ -103,7 +119,18 @@ function record(stdin) {
       return
     }
     const hookName = process.argv[2] ?? str(payload.hook_event_name) ?? ''
-    const ev = toEvent(hookName, payload, slotId, new Date().toISOString())
+    const ts = new Date().toISOString()
+    const attention = toAttention(hookName, payload, ts)
+    if (attention) {
+      const dir = join(home, 'slots')
+      mkdirSync(dir, { recursive: true })
+      const path = join(dir, `${slotId}.attention`)
+      const tmp = `${path}.${process.pid}.tmp`
+      writeFileSync(tmp, JSON.stringify(attention))
+      renameSync(tmp, path)
+      return
+    }
+    const ev = toEvent(hookName, payload, slotId, ts)
     if (!ev) {
       log(home, `slot ${slotId}: ignored hook ${JSON.stringify(hookName)}`)
       return

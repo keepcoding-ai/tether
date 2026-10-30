@@ -1,11 +1,11 @@
 // The daemon in-process: slots on disk, a real shell slot in a PTY (never Claude here), scrollback replay,
 // binding updates picked up from the slot's jsonl, and clients that come and go without touching the slot.
 import assert from 'node:assert/strict'
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import type { TetherEvent } from '../../src/core/event.ts'
-import { slotEventsPath, slotMetaPath } from '../../src/core/paths.ts'
+import { slotAttentionPath, slotEventsPath, slotMetaPath } from '../../src/core/paths.ts'
 import { DaemonError } from '../../src/daemon/client.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { pidAlive, Recorder, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
@@ -180,5 +180,31 @@ describe('bindings from the slot jsonl', () => {
     await c.state('ext0001', (x) => x.status === 'exited')
     await c.client.request({ t: 'forget', slotId: 'ext0001' })
     c.close()
+  })
+})
+
+describe('attention', () => {
+  test('hook report sets it, seen clears it; a bare BEL sets waiting, typing clears it; an old report is ignored', async () => {
+    const c = await Recorder.connect(daemon.pipe)
+    const { slot } = await c.client.request({ t: 'create', kind: 'shell', cwd, start: true })
+    const id = slot!.slotId
+    await c.client.request({ t: 'attach', slotId: id, cols: 100, rows: 30 })
+    await c.see(id, /\S/)
+    const report = (kind: string, ts = new Date().toISOString()): void => writeFileSync(slotAttentionPath(home, id), JSON.stringify({ ts, kind }))
+    report('done')
+    await c.state(id, (s) => s.attention === 'done', 5_000, 'attention done')
+    await c.client.request({ t: 'seen', slotId: id })
+    await c.state(id, (s) => s.status === 'running' && s.attention === undefined, 5_000, 'cleared by seen')
+    report('waiting', '2000-01-01T00:00:00.000Z') // older than the run: ignored
+    await sleep(500)
+    assert.equal((await c.client.request({ t: 'list' })).slots!.find((s) => s.slotId === id)!.attention, undefined)
+    c.client.input(id, 'Write-Host ("bell" + [char]7)\r')
+    await c.state(id, (s) => s.attention === 'waiting', 10_000, 'BEL → waiting')
+    c.client.input(id, 'x')
+    await c.state(id, (s) => s.attention === undefined, 5_000, 'typing clears')
+    c.client.input(id, '\b')
+    await c.client.request({ t: 'forget', slotId: id })
+    assert.ok(!existsSync(slotAttentionPath(home, id)), 'forget removes the report')
+    c.client.close()
   })
 })

@@ -14,7 +14,7 @@ import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOpti
 const HOOK_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.mjs')
 
 /**
- * Settings injected with `--settings`: both hooks run the reporter. Forward slashes: the hook runs under Git Bash on Windows.
+ * Settings injected with `--settings`: every hook runs the reporter. Forward slashes: the hook runs under Git Bash on Windows.
  * The hook stays on the plain `node` (not on <home>/bin/tetherd.exe like the daemon): it lives ~150 ms per session
  * switch, so a "killall node" in that window loses at most one event (the next SessionStart/SessionEnd reports the
  * session again), while an absolute path into <home>/bin would make every Claude launched by tether depend on that
@@ -23,10 +23,11 @@ const HOOK_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report
  */
 export function hookSettings(hookPath: string = HOOK_PATH): object {
   const script = hookPath.replace(/\\/g, '/')
-  const hook = (event: 'SessionStart' | 'SessionEnd') => [
+  const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
   ]
-  return { hooks: { SessionStart: hook('SessionStart'), SessionEnd: hook('SessionEnd') } }
+  // Stop / Notification feed the attention badge (turn finished / waiting for the user).
+  return { hooks: { SessionStart: hook('SessionStart'), SessionEnd: hook('SessionEnd'), Stop: hook('Stop'), Notification: hook('Notification') } }
 }
 
 /** Writes <home>/claude-settings.json only when its content changed (atomic: temp + rename). Returns the path. */

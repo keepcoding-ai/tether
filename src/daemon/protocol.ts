@@ -59,6 +59,12 @@ export interface SlotState {
   restarting?: boolean
   /** A stop is waiting for the agent to be old enough to kill (young Claudes are never killed; see MIN_AGENT_AGE_MS). */
   stopping?: boolean
+  /**
+   * The agent finished its turn ('done') or waits for the user ('waiting'): Claude's Stop/Notification hooks,
+   * a heuristic for soul (output quiet after the user's turn, or BEL) and shells (BEL). Cleared by typing into
+   * the slot or by `seen`. Absent on daemons older than 0.3.0.
+   */
+  attention?: 'done' | 'waiting'
 }
 
 export type ErrorCode =
@@ -106,6 +112,8 @@ export type Request =
    * `unconfirmed` (nothing changed) when the running agent never reported its session, so no session is lost.
    */
   | { t: 'set-profile'; id: number; slotId: string; profileId: string | null; restart?: boolean }
+  /** The user looked at the slot's pane (it got the focus): clears `attention`. Daemons before 0.3.0 answer bad-request. */
+  | { t: 'seen'; id: number; slotId: string }
 
 /** Fire-and-forget (no reply): keystrokes. */
 export type Notice = { t: 'input'; slotId: string; data: string }

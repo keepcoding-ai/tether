@@ -1,15 +1,16 @@
 // tetherd: owns one PTY per slot, keeps each slot's scrollback, launches agents through the adapters and
 // watches <home>/slots/*.jsonl so every client sees the current binding. Speaks protocol.ts over a named
 // pipe / unix socket (NDJSON). "Running" means: this process holds the PTY and it has not exited.
-import { existsSync, mkdirSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
+import { AttentionState, attentionOptions, parseAttentionReport } from './attention.ts'
 import { claudeAdapter } from '../agents/claude.ts'
 import { shellAdapter } from '../agents/shell.ts'
 import { soulAdapter } from '../agents/soul.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
-import { canonicalDir, slotMetaPath, slotsDir } from '../core/paths.ts'
+import { canonicalDir, slotAttentionPath, slotMetaPath, slotsDir } from '../core/paths.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
 import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
@@ -29,7 +30,7 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 
-export const DAEMON_VERSION = '0.2.0'
+export const DAEMON_VERSION = '0.3.0'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
@@ -105,6 +106,11 @@ interface Slot {
   /** Whether the CURRENT process was launched with --dangerously-skip-permissions (set at spawn). */
   runUnsafe?: boolean
   scrollback: Scrollback
+  /** Finished / waiting for the user (see attention.ts); `attentionTimer` runs the idle heuristic. */
+  attention: AttentionState
+  attentionTimer?: NodeJS.Timeout
+  /** ts of the last hook report applied (the file is rewritten per report; older ones are ignored). */
+  attentionReportTs?: string
   attached: Set<Client>
   cols: number
   rows: number
@@ -220,6 +226,7 @@ class DaemonImpl implements Daemon {
     if (unsafe) s.unsafe = true
     if (slot.restarting) s.restarting = true
     if (slot.stopping) s.stopping = true
+    if (slot.attention.value) s.attention = slot.attention.value
     return s
   }
 
@@ -359,6 +366,7 @@ class DaemonImpl implements Daemon {
       meta,
       status: 'exited',
       scrollback: new Scrollback(),
+      attention: new AttentionState(attentionOptions(meta.agent)),
       attached: new Set(),
       cols: DEFAULT_COLS,
       rows: DEFAULT_ROWS,
@@ -520,6 +528,7 @@ class DaemonImpl implements Daemon {
       throw this.fail(slot, 'spawn-failed', (e as Error).message)
     }
     slot.scrollback.clear()
+    slot.attention.reset()
     slot.error = undefined
     slot.spawnedAt = new Date().toISOString()
     slot.runUnsafe = isUnsafe(plan.args)
@@ -529,6 +538,8 @@ class DaemonImpl implements Daemon {
         rows: slot.rows,
         onData: (data) => {
           slot.scrollback.push(data)
+          if (slot.attention.output(data, Date.now())) this.broadcastState(slot)
+          this.scheduleAttention(slot)
           for (const c of slot.attached) this.send(c, { t: 'data', slotId: meta.slotId, data })
         },
         onExit: (exit) => {
@@ -537,6 +548,8 @@ class DaemonImpl implements Daemon {
           if (slot.readyTimer) clearTimeout(slot.readyTimer)
           slot.readyTimer = undefined
           slot.status = 'exited'
+          slot.attention.reset()
+          if (slot.attentionTimer) clearTimeout(slot.attentionTimer)
           this.unwatchTitle(slot)
           // PRD C18: an agent run that never reported its session (old version, hook removed, crashed before the
           // hook) leaves the binding unconfirmed: the next start must be an explicit choice, never a silent guess.
@@ -695,7 +708,10 @@ class DaemonImpl implements Daemon {
     const msg = value as Partial<ClientMessage>
     if (msg.t === 'input') {
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
-      if (slot && typeof msg.data === 'string') slot.pty?.write(msg.data)
+      if (slot && typeof msg.data === 'string') {
+        slot.pty?.write(msg.data)
+        if (slot.attention.input(msg.data)) this.broadcastState(slot)
+      }
       return
     }
     const id = (msg as { id?: unknown }).id
@@ -751,6 +767,11 @@ class DaemonImpl implements Daemon {
         slot.attached.add(client)
         this.resize(slot, req.cols, req.rows)
         return { t: 'ok', id, slot: this.stateOf(slot), scrollback: slot.scrollback.text() }
+      }
+      case 'seen': {
+        const slot = this.slot(req.slotId)
+        if (slot.attention.seen()) this.broadcastState(slot)
+        return { t: 'ok', id }
       }
       case 'detach': {
         const slot = this.slot(req.slotId)
@@ -865,6 +886,8 @@ class DaemonImpl implements Daemon {
     try {
       this.watcher = watch(slotsDir(this.home), (_event, filename) => {
         if (typeof filename !== 'string') return
+        const a = /^([^.]+)\.attention$/.exec(filename)
+        if (a && SLOT_ID_RE.test(a[1]!)) { this.scheduleAttentionReport(a[1]!); return }
         const m = /^([^.]+)\.(jsonl|json)$/.exec(filename)
         if (!m || !SLOT_ID_RE.test(m[1]!)) return
         this.schedule(m[1]!)
@@ -873,6 +896,42 @@ class DaemonImpl implements Daemon {
     } catch (e) {
       this.log(`cannot watch ${slotsDir(this.home)}: ${(e as Error).message}`)
     }
+  }
+
+  /** Debounces the hook's attention file per slot (the write may be seen as several change events). */
+  private scheduleAttentionReport(slotId: string): void {
+    const key = `${slotId}.attention`
+    const prev = this.pending.get(key)
+    if (prev) clearTimeout(prev)
+    const t = setTimeout(() => {
+      this.pending.delete(key)
+      const slot = this.slotMap.get(slotId)
+      if (slot) this.applyAttentionReport(slot)
+    }, WATCH_DEBOUNCE_MS)
+    this.pending.set(key, t)
+  }
+
+  /** Applies the hook's last report when it is new and belongs to the current run of a live process. */
+  private applyAttentionReport(slot: Slot): void {
+    let text: string
+    try { text = readFileSync(slotAttentionPath(this.home, slot.meta.slotId), 'utf8') } catch { return }
+    const report = parseAttentionReport(text)
+    if (!report || (slot.attentionReportTs && report.ts <= slot.attentionReportTs)) return
+    slot.attentionReportTs = report.ts
+    if (!isAlive(slot) || (slot.spawnedAt && report.ts < slot.spawnedAt)) return
+    if (slot.attention.hook(report.kind)) this.broadcastState(slot)
+  }
+
+  /** Arms the idle heuristic's timer (soul) for the slot's next due time. */
+  private scheduleAttention(slot: Slot): void {
+    const due = slot.attention.dueAt()
+    if (due === undefined || slot.attentionTimer) return
+    slot.attentionTimer = setTimeout(() => {
+      slot.attentionTimer = undefined
+      if (slot.attention.poll(Date.now())) this.broadcastState(slot)
+      else this.scheduleAttention(slot)
+    }, Math.max(50, due - Date.now()))
+    slot.attentionTimer.unref()
   }
 
   /** Debounces per slot: the hook writes a line and the editor/CLI may write more right after. */

@@ -47,3 +47,8 @@ export function slotRunPath(home: string, slotId: string): string {
 export function logPath(home: string): string {
   return join(home, 'tether.log')
 }
+
+/** The Claude hook's last attention report (Stop / Notification): one small JSON object, rewritten each time. */
+export function slotAttentionPath(home: string, slotId: string): string {
+  return join(slotsDir(home), `${slotId}.attention`)
+}

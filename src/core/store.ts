@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import type { Binding, RunInfo, SlotMeta, TetherEvent } from './event.ts'
-import { slotEventsPath, slotMetaPath, slotRunPath, slotsDir } from './paths.ts'
+import { slotAttentionPath, slotEventsPath, slotMetaPath, slotRunPath, slotsDir } from './paths.ts'
 
 export const SLOT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
 
@@ -64,10 +64,10 @@ export function listSlots(home: string): SlotMeta[] {
   return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slotId.localeCompare(b.slotId))
 }
 
-/** Forgets the slot: removes tether's three files. Never touches the agent's session files. */
+/** Forgets the slot: removes tether's files. Never touches the agent's session files. */
 export function removeSlot(home: string, slotId: string): void {
   assertSlotId(slotId)
-  for (const p of [slotMetaPath(home, slotId), slotEventsPath(home, slotId), slotRunPath(home, slotId)]) {
+  for (const p of [slotMetaPath(home, slotId), slotEventsPath(home, slotId), slotRunPath(home, slotId), slotAttentionPath(home, slotId)]) {
     rmSync(p, { force: true })
   }
 }
