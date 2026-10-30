@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tether — prévia de temas do terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&family=Fira+Code:wght@300..700&family=IBM+Plex+Mono:wght@100;200;300;400;500;600;700&family=Source+Code+Pro:wght@200..900&family=Geist+Mono:wght@100..900&family=Ubuntu+Mono:wght@400;700&family=Ubuntu+Sans+Mono:wght@400..700&family=Roboto+Mono:wght@100..700&display=swap" rel="stylesheet">
+<style>
+  /* Fontes que não estão no Google Fonts: só aparecem se instaladas localmente. */
+  @font-face { font-family: "Cascadia Local"; src: local("Cascadia Mono"), local("Cascadia Code"), local("CascadiaMono-Regular"); font-weight: 200 700; }
+  @font-face { font-family: "Iosevka Local"; src: local("Iosevka"), local("Iosevka Term"); font-weight: 100 900; }
+  @font-face { font-family: "Commit Local"; src: local("CommitMono"), local("Commit Mono"); font-weight: 200 700; }
+  @font-face { font-family: "Monaspace Local"; src: local("Monaspace Neon"), local("MonaspaceNeon-Regular"); font-weight: 200 800; }
+
+  :root { --ui: "Segoe UI", system-ui, sans-serif; --page: #eef0f3; --card: #ffffff; --ink: #1f2328; --muted: #656d76; --line: #d0d7de; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --page: #111114; --card: #1b1b1f; --ink: #e6e6ea; --muted: #9a9aa5; --line: #2e2e36; color-scheme: dark; } }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 var(--ui); padding: 0 16px 48px; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--page); padding: 14px 0 10px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+  .controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  select, input[type=number] { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+  input[type=number] { width: 64px; }
+  .note { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; max-width: 980px; }
+  section.preset { margin-top: 28px; }
+  section.preset h2 { font-size: 15px; margin: 0 0 2px; }
+  section.preset p { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; max-width: 980px; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); gap: 14px; }
+  .term { border-radius: 8px; border: 1px solid var(--line); overflow-x: auto; }
+  .term .bar { font: 11.5px var(--ui); padding: 6px 12px; display: flex; justify-content: space-between; gap: 8px; opacity: .75; }
+  .term pre { margin: 0; padding: 4px 12px 12px; white-space: pre; font-variant-ligatures: var(--lig, none); }
+  .swatches { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 12px 12px; }
+  .sw { font: 10.5px var(--ui); padding: 2px 5px; border-radius: 4px; border: 1px solid rgba(127,127,127,.25); }
+  .sw.bad { outline: 2px solid #e5534b; }
+  h2.sec { font-size: 18px; margin: 30px 0 4px; padding-top: 6px; }
+  .secnote { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; max-width: 980px; }
+  .fctl { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 8px 0 4px; }
+  .fctl label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  .frow { margin-top: 20px; }
+  .frow h3 { font-size: 14.5px; margin: 0 0 6px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .frow h3 small { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .fgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr)); gap: 12px; }
+  .side .fgrid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 820px), 1fr)); }
+  .fcell { border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; min-width: 0; }
+  .fcell .lbl { font: 11.5px var(--ui); padding: 6px 10px; color: var(--muted); display: flex; justify-content: space-between; gap: 4px 10px; flex-wrap: wrap; }
+  .fcell .lbl b { color: var(--ink); }
+  .panes { display: grid; grid-template-columns: 1fr; }
+  .side .panes { grid-template-columns: 1fr 1fr; }
+  .fpane { overflow-x: auto; }
+  .fpane pre { margin: 0; padding: 8px 12px; white-space: pre; font-variant-ligatures: none; }
+  .fpane .tag { font: 10.5px var(--ui); padding: 3px 12px 0; opacity: .6; }
+  .fcell .na { padding: 30px 14px; text-align: center; color: var(--muted); font: 12.5px var(--ui); border-top: 1px dashed var(--line); }
+  .swgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; padding: 4px 12px 14px; }
+  .swb { border-radius: 6px; overflow: hidden; border: 1px solid rgba(127,127,127,.3); font-family: var(--ui); }
+  .swb.bad { outline: 2px solid #e5534b; outline-offset: -1px; }
+  .swb .chip { padding: 6px 7px; height: 46px; display: flex; flex-direction: column; justify-content: space-between; font-size: 10.5px; }
+  .swb .chip b { font-size: 12px; font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
+  .swb .on { padding: 4px 7px; display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; }
+  .swb .on .aa { font-size: 18px; font-weight: 700; }
+  .pin { font: 12px var(--ui); border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 2px 9px; cursor: pointer; margin-left: 8px; }
+  .pin.on { background: #0969da; color: #fff; border-color: #0969da; }
+  .cmp { margin-top: 14px; padding: 10px 12px 14px; border: 2px solid #0969da; border-radius: 10px; }
+  .cmp h2 { font-size: 16px; margin: 0 0 8px; }
+  .cmpgrid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); }
+  .cmpcol h3 { margin: 0 0 6px; font-size: 14.5px; }
+  .cmpcol .term { margin-bottom: 10px; }
+  .term.big pre { padding-top: 6px; }
+  nav.jump { display: flex; gap: 14px; font-size: 12.5px; margin-top: 6px; } nav.jump a { color: #0969da; }
+  /* Caixa e símbolos em células de 1ch: o webfont do Google não tem box drawing; o xterm desenha estes glifos sozinho (customGlyphs). */
+  .g { display: inline-block; width: 1ch; height: 1lh; vertical-align: top; position: relative; text-align: center; font-style: normal; }
+  .g::before { content: ""; position: absolute; box-sizing: border-box; border: 0 solid currentColor; }
+  .gh::before { left: 0; right: 0; top: 50%; border-top-width: 1px; }
+  .gv::before { top: 0; bottom: 0; left: 50%; border-left-width: 1px; }
+  .gtl::before { left: 50%; top: 50%; right: 0; bottom: 0; border-top-width: 1px; border-left-width: 1px; border-top-left-radius: 4px; }
+  .gtr::before { left: 0; top: 50%; right: 50%; bottom: 0; border-top-width: 1px; border-right-width: 1px; border-top-right-radius: 4px; }
+  .gbl::before { left: 50%; top: 0; right: 0; bottom: 50%; border-bottom-width: 1px; border-left-width: 1px; border-bottom-left-radius: 4px; }
+  .gbr::before { left: 0; top: 0; right: 50%; bottom: 50%; border-bottom-width: 1px; border-right-width: 1px; border-bottom-right-radius: 4px; }
+  .b { font-weight: var(--wb); } .i { font-style: italic; } .u { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>tether — prévia de temas do terminal</h1>
+    <nav class="jump"><a href="#fontes">Fontes lado a lado</a><a href="#temas">Temas</a></nav>
+  <div class="controls" style="margin-top:6px">
+    <label>Fonte (temas) <select id="font"></select></label>
+    <label>Peso <select id="weight"></select></label>
+    <label>Negrito <select id="weightBold"><option>500</option><option selected>600</option><option>700</option></select></label>
+    <label>Tamanho <input id="size" type="number" min="11" max="18" step="0.5" value="15"></label>
+    <label>Altura de linha <input id="lh" type="number" min="1" max="1.6" step="0.05" value="1.2"></label>
+    <label>Espaçamento <input id="ls" type="number" min="-1" max="2" step="0.5" value="0"></label>
+    <label>Ligaduras <select id="lig"><option value="none">não</option><option value="normal">sim</option></select></label>
+    <label>Fundo <select id="bg"><option value="tether">o do tether (#fbfbfd / #1b1b1f)</option><option value="preset">o do próprio preset</option></select></label>
+    <label>Comparar <input type="checkbox" id="cmp"> <span style="color:var(--ink)">fixe 2–3 presets com “fixar”</span></label>
+    <label>Mostrar <select id="only"><option value="both">claro e escuro</option><option value="light">só claro</option><option value="dark">só escuro</option></select></label>
+  </div>
+  <p class="note">O fundo do painel não está no escopo; por padrão a prévia usa o fundo atual do tether para julgar as cores sobre a superfície real. Os rótulos abaixo de cada amostra mostram o contraste WCAG de cada cor ANSI contra o fundo; em vermelho, abaixo de 4,5:1 (o piso que o <code>minimumContrastRatio</code> do VS Code/xterm corrigiria). Fontes marcadas com "(local)" só aparecem se estiverem instaladas nesta máquina.</p>
+</header>
+<main>
+  <section id="fontes"></section>
+  <section id="temas"><h2 class="sec">Temas de cor</h2><p class="secnote">Cada cartão mostra as 16 cores ANSI como amostras grandes: em cima a cor com seu hex; embaixo a cor sobre o fundo, com a razão de contraste WCAG (borda vermelha = abaixo de 4,5:1). Use “fixar” em 2–3 presets e ligue “Comparar” no topo para vê-los lado a lado, maiores.</p><div id="main"></div></section>
+</main>
+<script>
+const KEYS = ['black','red','green','yellow','blue','magenta','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'];
+const P = (bg, fg, sel, a) => { const o = { background: bg, foreground: fg, cursor: fg, selectionBackground: sel }; KEYS.forEach((k, i) => o[k] = a[i]); return o; };
+
+const PRESETS = [
+  { id: 'tether', name: 'tether atual', note: 'O que o app usa hoje: Dark+ do VS Code com o branco/amarelo puros; Light+ com amarelo e ciano escurecidos à mão.',
+    light: P('#fbfbfd', '#24292f', '#b4d5fe', ['#000000','#cd3131','#107c10','#8a6d00','#0451a5','#bc05bc','#0a7f99','#555555','#5f6368','#cd3131','#0f8a0f','#946f00','#0451a5','#bc05bc','#0a7f99','#777777']),
+    dark:  P('#1b1b1f', '#d8d8dc', '#3a5a8a', ['#1b1b1f','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#e5e5e5','#6b6b75','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#ffffff']) },
+  { id: 'vscode', name: 'VS Code Light+ / Dark+ (e Modern)', note: 'Padrão do terminal integrado do VS Code. Os temas "Modern" mudam o primeiro plano (#3b3b3b / #cccccc) e o fundo, mas herdam estas 16 cores. Feito para rodar com minimumContrastRatio 4.5 ligado.',
+    light: P('#ffffff', '#3b3b3b', '#add6ff', ['#000000','#cd3131','#107c10','#949800','#0451a5','#bc05bc','#0598bc','#555555','#666666','#f14c4c','#14ce14','#b5ba00','#3b8eea','#d670d6','#29b8db','#a5a5a5']),
+    dark:  P('#1f1f1f', '#cccccc', '#264f78', ['#000000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5','#666666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#e5e5e5']) },
+  { id: 'yaru', name: 'Ubuntu (Yaru / GNOME Terminal)', note: 'A paleta "GNOME" que o Ubuntu usa desde 22.04. No escuro é a cara do Ubuntu; no claro o amarelo vira marrom (#a2734c) e os brilhantes ficam fracos.',
+    light: P('#ffffff', '#171421', '#c0bfbc', ['#171421','#c01c28','#26a269','#a2734c','#12488b','#a347ba','#2aa1b3','#d0cfcc','#5e5c64','#f66151','#33d17a','#e9ad0c','#2a7bde','#c061cb','#33c7de','#ffffff']),
+    dark:  P('#300a24', '#ffffff', '#5e5c64', ['#171421','#c01c28','#26a269','#a2734c','#12488b','#a347ba','#2aa1b3','#d0cfcc','#5e5c64','#f66151','#33d17a','#e9ad0c','#2a7bde','#c061cb','#33c7de','#ffffff']) },
+  { id: 'github', name: 'GitHub Light / Dark', note: 'Paletas Primer do tema oficial do GitHub para VS Code (MIT). As melhores do grupo em contraste no claro: amarelo marrom-escuro, branco cinza-médio.',
+    light: P('#ffffff', '#1f2328', '#0969da33', ['#24292f','#cf222e','#116329','#4d2d00','#0969da','#8250df','#1b7c83','#6e7781','#57606a','#a40e26','#1a7f37','#633c01','#218bff','#a475f9','#3192aa','#8c959f']),
+    dark:  P('#0d1117', '#e6edf3', '#264f78', ['#484f58','#ff7b72','#3fb950','#d29922','#58a6ff','#bc8cff','#39c5cf','#b1bac4','#6e7681','#ffa198','#56d364','#e3b341','#79c0ff','#d2a8ff','#56d4dd','#ffffff']) },
+  { id: 'one', name: 'One Light / One Dark (Atom)', note: 'Cores suaves, muito conhecidas. No claro, amarelo (#c18401) e branco (#a0a1a7) ficam abaixo de 4,5:1.',
+    light: P('#fafafa', '#383a42', '#e5e5e6', ['#383a42','#e45649','#50a14f','#c18401','#4078f2','#a626a4','#0184bc','#a0a1a7','#4f525e','#e45649','#50a14f','#c18401','#4078f2','#a626a4','#0184bc','#ffffff']),
+    dark:  P('#282c34', '#abb2bf', '#3e4451', ['#3f4451','#e06c75','#98c379','#e5c07b','#61afef','#c678dd','#56b6c2','#d7dae0','#5c6370','#e06c75','#98c379','#e5c07b','#61afef','#c678dd','#56b6c2','#ffffff']) },
+  { id: 'catppuccin', name: 'Catppuccin Latte / Mocha', note: 'Pastel, muito popular entre devs. Mocha é excelente; Latte tem amarelo (#df8e1d) e verde (#40a02b) fracos no branco.',
+    light: P('#eff1f5', '#4c4f69', '#acb0be', ['#5c5f77','#d20f39','#40a02b','#df8e1d','#1e66f5','#ea76cb','#179299','#acb0be','#6c6f85','#de293e','#49af3d','#eea02d','#456eff','#fe85d8','#2d9fa8','#bcc0cc']),
+    dark:  P('#1e1e2e', '#cdd6f4', '#585b70', ['#45475a','#f38ba8','#a6e3a1','#f9e2af','#89b4fa','#f5c2e7','#94e2d5','#a6adc8','#585b70','#f37799','#89d88b','#ebd391','#74a8fc','#f2aede','#6bd7ca','#bac2de']) },
+  { id: 'rosepine', name: 'Rosé Pine Dawn / Moon', note: 'Elegante e de baixo contraste por desenho. Dawn é bonito mas falha muito em legibilidade (amarelo, ciano, branco) — melhor como opção de gosto, não como padrão.',
+    light: P('#faf4ed', '#575279', '#dfdad9', ['#f2e9e1','#b4637a','#286983','#ea9d34','#56949f','#907aa9','#d7827e','#575279','#9893a5','#b4637a','#286983','#ea9d34','#56949f','#907aa9','#d7827e','#575279']),
+    dark:  P('#232136', '#e0def4', '#44415a', ['#393552','#eb6f92','#3e8fb0','#f6c177','#9ccfd8','#c4a7e7','#ea9a97','#e0def4','#6e6a86','#eb6f92','#3e8fb0','#f6c177','#9ccfd8','#c4a7e7','#ea9a97','#e0def4']) },
+  { id: 'tokyo', name: 'Tokyo Night Day / Night', note: 'Moderno e saturado. Night é ótimo no escuro; Day tem preto ANSI cinza-claro (#b4b5b9) — depende do contraste mínimo.',
+    light: P('#e1e2e7', '#3760bf', '#b7c1e3', ['#b4b5b9','#f52a65','#587539','#8c6c3e','#2e7de9','#9854f1','#007197','#6172b0','#a1a6c5','#ff4774','#5c8524','#a27629','#358aff','#a463ff','#007ea8','#3760bf']),
+    dark:  P('#1a1b26', '#c0caf5', '#283457', ['#15161e','#f7768e','#9ece6a','#e0af68','#7aa2f7','#bb9af7','#7dcfff','#a9b1d6','#414868','#ff899d','#9fe044','#faba4a','#8db0ff','#c7a9ff','#a4daff','#c0caf5']) },
+  { id: 'solarized', name: 'Solarized Light / Dark', note: 'Clássico de 2011. Os "brilhantes" são tons de cinza da base (não cores), o que quebra apps que usam bright para destaque; contraste geral baixo.',
+    light: P('#fdf6e3', '#657b83', '#eee8d5', ['#073642','#dc322f','#859900','#b58900','#268bd2','#d33682','#2aa198','#eee8d5','#002b36','#cb4b16','#586e75','#657b83','#839496','#6c71c4','#93a1a1','#fdf6e3']),
+    dark:  P('#002b36', '#839496', '#073642', ['#073642','#dc322f','#859900','#b58900','#268bd2','#d33682','#2aa198','#eee8d5','#002b36','#cb4b16','#586e75','#657b83','#839496','#6c71c4','#93a1a1','#fdf6e3']) },
+];
+
+const FONTS = [
+  ['JetBrains Mono', '"JetBrains Mono"'], ['Ubuntu Sans Mono', '"Ubuntu Sans Mono"'], ['Ubuntu Mono', '"Ubuntu Mono"'],
+  ['Fira Code', '"Fira Code"'], ['IBM Plex Mono', '"IBM Plex Mono"'], ['Source Code Pro', '"Source Code Pro"'],
+  ['Geist Mono', '"Geist Mono"'], ['Roboto Mono', '"Roboto Mono"'], ['Cascadia Mono (local)', '"Cascadia Local"'],
+  ['Iosevka (local)', '"Iosevka Local"'], ['Commit Mono (local)', '"Commit Local"'], ['Monaspace Neon (local)', '"Monaspace Local"'],
+  ['Consolas (sistema)', 'Consolas'],
+];
+const WEIGHTS = [200, 250, 300, 350, 400, 450, 500];
+
+// Amostra: cada linha é uma lista de [cor, texto, flags]. cor: chave ANSI ou 'fg'; flags: b (bold), d (dim), i, u.
+const S = (c, t, f = '') => [c, t, f];
+const SAMPLE = [
+  [S('brightBlack', '╭───────────────────────────────────────────────────╮')],
+  [S('brightBlack', '│ '), S('red', '✻', 'b'), S('fg', ' Welcome to ', ''), S('fg', 'Claude Code', 'b'), S('brightBlack', '!                       │')],
+  [S('brightBlack', '│   '), S('fg', '/help for help, /status for your setup', 'd'), S('brightBlack', '        │')],
+  [S('brightBlack', '│   '), S('fg', 'cwd: D:\\atrium\\workspace\\tether', 'd'), S('brightBlack', '                │')],
+  [S('brightBlack', '╰───────────────────────────────────────────────────╯')],
+  [S('fg', '')],
+  [S('fg', '> ', 'b'), S('fg', 'deixa o terminal mais leve')],
+  [S('fg', '')],
+  [S('green', '●'), S('fg', ' '), S('fg', 'Update', 'b'), S('fg', '(app/renderer/panel.ts)')],
+  [S('fg', '  ⎿  ', 'd'), S('fg', 'Updated '), S('fg', 'panel.ts', 'b'), S('fg', ' with 2 additions and 1 removal')],
+  [S('brightBlack', '      236  '), S('fg', '    this.term = new Terminal({')],
+  [S('red', '      237 - '), S('red', "      fontFamily: '\"Cascadia Mono\", Consolas, monospace',")],
+  [S('green', '      237 + '), S('green', "      fontFamily: '\"JetBrains Mono\", monospace',")],
+  [S('green', '      238 + '), S('green', '      fontWeight: 350, lineHeight: 1.2,')],
+  [S('fg', '')],
+  [S('yellow', '●'), S('fg', ' '), S('fg', 'Bash', 'b'), S('fg', '(git status --short && npm install)')],
+  [S('fg', '  ⎿  ', 'd'), S('red', ' M'), S('fg', ' app/renderer/panel.ts')],
+  [S('fg', '     '), S('green', 'A '), S('fg', ' docs/terminal-theme-study.md')],
+  [S('fg', '     '), S('red', '??'), S('fg', ' docs/terminal-theme-preview.html')],
+  [S('fg', '     '), S('fg', 'npm ', ''), S('yellow', 'warn', 'b'), S('fg', ' '), S('magenta', 'deprecated'), S('fg', ' inflight@1.0.6: This module is not supported')],
+  [S('fg', '     '), S('fg', 'npm ', ''), S('red', 'ERR!', 'b'), S('fg', ' code ERESOLVE')],
+  [S('fg', '     '), S('red', 'error', 'b'), S('fg', ' TS2345: Argument of type '), S('cyan', "'string'"), S('fg', ' is not assignable')],
+  [S('fg', '')],
+  [S('fg', 'PS D:\\tether> ', ''), S('yellow', 'ls')],
+  [S('blue', 'app/', 'b'), S('fg', '  '), S('blue', 'docs/', 'b'), S('fg', '  '), S('green', 'build.sh', 'b'), S('fg', '  '), S('cyan', 'node_modules@', ''), S('fg', '  package.json  '), S('magenta', 'icon.png'), S('fg', '  '), S('brightBlack', '.gitignore')],
+  [S('fg', '')],
+  [S('brightBlack', '────────────────────────────────────────────────────')],
+  [S('fg', '> ', 'b'), S('fg', 'Try "refactor panel.ts"', 'd'), S('fg', '▌')],
+  [S('brightBlack', '────────────────────────────────────────────────────')],
+  [S('fg', '  ⏵⏵ ', 'd'), S('brightMagenta', 'accept edits on'), S('fg', ' (shift+tab to cycle)', 'd'), S('fg', '   '), S('brightBlue', 'opus'), S('fg', ' · '), S('brightGreen', '42% ctx'), S('fg', ' · '), S('brightYellow', 'Δ +12 -3'), S('fg', ' · '), S('brightCyan', 'main'), S('fg', ' · '), S('brightRed', '1 erro')],
+];
+
+const $ = id => document.getElementById(id);
+FONTS.forEach(([n, v], i) => $('font').add(new Option(n, v, i === 0, i === 0)));
+WEIGHTS.forEach(w => $('weight').add(new Option(String(w), String(w), w === 350, w === 350)));
+
+const GL = { '─': 'gh', '│': 'gv', '╭': 'gtl', '╮': 'gtr', '╰': 'gbl', '╯': 'gbr' };
+const cells = t => esc(t).replace(/[─│╭╮╰╯⎿●✻▌⏵Δ]/g, c => GL[c] ? `<i class="g ${GL[c]}"></i>` : `<i class="g">${c}</i>`);
+function lum(hex) {
+  const h = hex.slice(1, 7); const c = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+function ratio(a, b) { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+
+const pick = hex => lum(hex) > 0.4 ? '#111' : '#fff';
+const EXEMPT = ['black', 'white', 'brightWhite'];
+function swatchGrid(t, bg) {
+  return '<div class="swgrid">' + KEYS.map(k => {
+    const r = ratio(t[k], bg); const bad = r < 4.5 && !EXEMPT.includes(k);
+    return `<div class="swb ${bad ? 'bad' : ''}" title="${k} ${t[k]} sobre ${bg}"><div class="chip" style="background:${t[k]};color:${pick(t[k])}"><span>${k}</span><b>${t[k]}</b></div><div class="on" style="background:${bg};color:${t[k]}"><span class="aa">Aa</span><span>${r.toFixed(1)}:1${bad ? ' ⚠' : ''}</span></div></div>`;
+  }).join('') + '</div>';
+}
+
+function term(preset, scheme, big) {
+  const t = preset[scheme];
+  const bg = $('bg').value === 'tether' ? (scheme === 'light' ? '#fbfbfd' : '#1b1b1f') : t.background;
+  const html = SAMPLE.map(line => line.map(([c, txt, f]) => {
+    const color = c === 'fg' ? t.foreground : t[c];
+    const cls = [f.includes('b') ? 'b' : '', f.includes('i') ? 'i' : '', f.includes('u') ? 'u' : ''].join(' ').trim();
+    const st = `color:${color};${f.includes('d') ? 'opacity:.6;' : ''}`;
+    return `<span class="${cls}" style="${st}">${cells(txt)}</span>`;
+  }).join('')).join('\n');
+  const fgR = ratio(t.foreground, bg).toFixed(1);
+  return `<div class="term ${big ? 'big' : ''}" style="background:${bg};color:${t.foreground}"><div class="bar"><span>${scheme === 'light' ? 'claro' : 'escuro'} · fundo ${bg}</span><span>texto ${fgR}:1</span></div><pre>${html}</pre>${swatchGrid(t, bg)}</div>`;
+}
+
+const pinned = [];
+function terms(p, only, big) { return `${only !== 'dark' ? term(p, 'light', big) : ''}${only !== 'light' ? term(p, 'dark', big) : ''}`; }
+
+function render() {
+  const r = document.documentElement.style;
+  r.setProperty('--wb', $('weightBold').value);
+  r.setProperty('--lig', $('lig').value);
+  const only = $('only').value;
+  let cmp = '';
+  if ($('cmp').checked) {
+    const cols = pinned.map(id => PRESETS.find(p => p.id === id)).map(p => `<div class="cmpcol"><h3>${p.name}</h3>${terms(p, only, true)}</div>`).join('');
+    cmp = `<div class="cmp"><h2>Comparar (${pinned.length}/3)</h2>${pinned.length ? `<div class="cmpgrid">${cols}</div>` : '<p class="secnote">Nada fixado ainda. Clique em “fixar” no título de 2–3 presets abaixo (o quarto tira o mais antigo).</p>'}</div>`;
+  }
+  $('main').innerHTML = cmp + PRESETS.map(p => `<section class="preset"><h2>${p.name}<button class="pin ${pinned.includes(p.id) ? 'on' : ''}" data-pin="${p.id}">${pinned.includes(p.id) ? '★ fixado' : '☆ fixar'}</button></h2><p>${p.note}</p><div class="pair">${terms(p, only, false)}</div></section>`).join('');
+  const size = parseFloat($('size').value);
+  document.querySelectorAll('#main .term pre').forEach(pre => {
+    pre.style.fontFamily = `${$('font').value}, Consolas, monospace`;
+    pre.style.fontWeight = $('weight').value;
+    pre.style.fontSize = (pre.parentElement.classList.contains('big') ? size + 3 : size) + 'px';
+    pre.style.lineHeight = $('lh').value;
+    pre.style.letterSpacing = $('ls').value + 'px';
+  });
+}
+$('main').addEventListener('click', e => {
+  const b = e.target.closest('[data-pin]'); if (!b) return;
+  const id = b.dataset.pin, i = pinned.indexOf(id);
+  if (i >= 0) pinned.splice(i, 1); else { pinned.push(id); if (pinned.length > 3) pinned.shift(); }
+  render();
+});
+['font', 'weight', 'weightBold', 'size', 'lh', 'ls', 'lig', 'bg', 'only', 'cmp'].forEach(id => $(id).addEventListener('input', render));
+render();
+
+// ---------- Fontes lado a lado ----------
+const BW = 44;
+const padSegs = (segs, w) => { const n = segs.reduce((a, x) => a + [...x[1]].length, 0); return segs.concat([S('fg', ' '.repeat(Math.max(0, w - n)))]); };
+const FSAMPLE = [
+  [S('brightBlack', '╭' + '─'.repeat(BW - 2) + '╮')],
+  [S('brightBlack', '│ '), ...padSegs([S('red', '✻', 'b'), S('fg', ' Welcome to '), S('fg', 'Claude Code', 'b'), S('fg', '!')], BW - 4), S('brightBlack', ' │')],
+  [S('brightBlack', '╰' + '─'.repeat(BW - 2) + '╯')],
+  [S('fg', '> ', 'b'), S('fg', 'refatora o painel do terminal')],
+  [S('green', '●'), S('fg', ' '), S('fg', 'Update', 'b'), S('fg', '(app/renderer/panel.ts)')],
+  [S('fg', '  ⎿  Updated 1 file, 1 addition, 1 removal', 'd')],
+  [S('red', '  41 - fontFamily: "Cascadia Mono",')],
+  [S('green', '  41 + fontFamily: "JetBrains Mono",')],
+  [S('red', 'error', 'b'), S('fg', ' TS2345: '), S('cyan', "'string'"), S('fg', ' ilWM01lO0 {}[]')],
+];
+const FPAL = {
+  light: { bg: '#fbfbfd', foreground: '#24292f', brightBlack: '#5f6368', red: '#cd3131', green: '#107c10', cyan: '#0a7f99' },
+  dark: { bg: '#1b1b1f', foreground: '#d8d8dc', brightBlack: '#6b6b75', red: '#f14c4c', green: '#23d18b', cyan: '#29b8db' },
+};
+const range = (a, b) => ({ txt: `${a}–${b}`, has: w => w >= a && w <= b });
+const list = (...l) => ({ txt: l.join('/'), has: w => l.includes(w) });
+const FSPECS = [
+  { name: 'JetBrains Mono', fam: 'JetBrains Mono', lic: 'OFL 1.1', wt: range(100, 800), bold: 700 },
+  { name: 'Ubuntu Sans Mono', fam: 'Ubuntu Sans Mono', lic: 'Ubuntu Font Licence 1.0', wt: range(100, 700), bold: 700 },
+  { name: 'Ubuntu Mono', fam: 'Ubuntu Mono', lic: 'Ubuntu Font Licence 1.0', wt: list(400, 700), bold: 700 },
+  { name: 'IBM Plex Mono', fam: 'IBM Plex Mono', lic: 'OFL 1.1', wt: list(100, 200, 300, 400, 500, 600, 700), bold: 600 },
+  { name: 'Geist Mono', fam: 'Geist Mono', lic: 'OFL 1.1', wt: range(100, 900), bold: 600 },
+  { name: 'Fira Code', fam: 'Fira Code', lic: 'OFL 1.1', wt: range(300, 700), bold: 600 },
+  { name: 'Source Code Pro', fam: 'Source Code Pro', lic: 'OFL 1.1', wt: range(200, 900), bold: 600 },
+  { name: 'Roboto Mono', fam: 'Roboto Mono', lic: 'Apache 2.0', wt: range(100, 700), bold: 600 },
+  { name: 'Cascadia (local)', fam: 'Cascadia Local', lic: 'OFL 1.1 (só se instalada)', wt: range(200, 700), bold: 600 },
+];
+const FWEIGHTS = [300, 350, 400];
+const FTEXT = FSAMPLE.map(l => l.map(x => x[1]).join('')).join('\n');
+
+function fpane(scheme, f, w) {
+  const t = FPAL[scheme];
+  const html = FSAMPLE.map(line => line.map(([c, txt, fl]) => {
+    const color = c === 'fg' ? t.foreground : t[c];
+    return `<span class="${fl.includes('b') ? 'b' : ''}" style="color:${color};${fl.includes('d') ? 'opacity:.6;' : ''}">${cells(txt)}</span>`;
+  }).join('')).join('\n');
+  const sz = $('fsize').value;
+  return `<div class="fpane" data-scheme="${scheme}" style="background:${t.bg};color:${t.foreground}"><div class="tag">${scheme === 'light' ? 'claro #fbfbfd' : 'escuro #1b1b1f'}</div><pre data-fam="${f.fam}" data-w="${w}" style="font-family:'${f.fam}', monospace;font-weight:${w};font-size:${sz}px;line-height:1.2;--wb:${f.bold}">${html}</pre></div>`;
+}
+
+async function probe(f) {
+  try { await Promise.all(FWEIGHTS.concat(f.bold).map(w => document.fonts.load(`${w} 14px "${f.fam}"`, FTEXT))); } catch (e) { /* font absent */ }
+  const loaded = [...document.fonts].some(ff => ff.family.replace(/["']/g, '') === f.fam && ff.status === 'loaded');
+  return loaded && document.fonts.check(`400 14px "${f.fam}"`, 'Aa');
+}
+
+let fontOk = null;
+function renderFonts() {
+  if (!fontOk) return;
+  const mode = $('fmode').value;
+  $('fontes').className = mode === 'side' ? 'side' : '';
+  const sch = mode === 'light' ? ['light'] : mode === 'dark' ? ['dark'] : ['light', 'dark'];
+  $('fbody').innerHTML = FSPECS.map(f => {
+    if (!fontOk[f.fam]) return `<div class="frow"><h3>${f.name} <small>${f.lic}</small></h3><div class="fcell"><div class="na">não instalada — a fonte não carregou neste navegador (document.fonts.check = false)</div></div></div>`;
+    const cells = FWEIGHTS.map(w => {
+      const lbl = `<div class="lbl"><span><b>${f.name}</b> · peso <b>${w}</b></span><span>${f.lic}</span></div>`;
+      if (!f.wt.has(w)) return `<div class="fcell">${lbl}<div class="na">peso ${w} não existe nesta fonte<br>(pesos reais: ${f.wt.txt}) — nada simulado aqui</div></div>`;
+      return `<div class="fcell">${lbl}<div class="panes">${sch.map(sc => fpane(sc, f, w)).join('')}</div></div>`;
+    }).join('');
+    return `<div class="frow"><h3>${f.name} <small>${f.lic} · pesos: ${f.wt.txt}</small></h3><div class="fgrid">${cells}</div></div>`;
+  }).join('');
+}
+
+(async function initFonts() {
+  $('fontes').innerHTML = `<h2 class="sec">Fontes lado a lado</h2><p class="secnote">A mesma amostra (TUI estilo Claude Code: moldura, diff, erro, texto apagado) em cada fonte × peso (300, 350, 400), sobre os fundos reais do tether. Pesos que a fonte não tem aparecem como aviso, nunca simulados. Fontes ausentes são marcadas como “não instalada”.</p>
+  <div class="fctl"><label>Disposição <select id="fmode"><option value="stack">claro + escuro (empilhado)</option><option value="side">claro | escuro lado a lado</option><option value="light">só claro</option><option value="dark">só escuro</option></select></label><label>Tamanho <input id="fsize" type="number" min="10" max="18" step="0.5" value="13" style="width:64px"></label></div><div id="fbody"><p class="secnote">Carregando fontes…</p></div>`;
+  $('fmode').addEventListener('input', renderFonts); $('fsize').addEventListener('input', renderFonts);
+  await document.fonts.ready;
+  const res = await Promise.all(FSPECS.map(async f => [f.fam, await probe(f)]));
+  await document.fonts.ready;
+  fontOk = Object.fromEntries(res);
+  renderFonts();
+  window.__fontsReady = true;
+})();
+</script>
+</body>
+</html>
