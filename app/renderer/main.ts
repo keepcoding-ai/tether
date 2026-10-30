@@ -13,7 +13,7 @@ import { orphanedPanels, planRestore } from './layout.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { lineEditSequence } from './lineedit.ts'
 import { IS_MAC, isAppShortcut } from './shortcut.ts'
-import { closePanelSituation, folderName, quitAllSituation } from './situations.ts'
+import { closePanelSituation, folderName, quitAllSituation, reloadAllSituation } from './situations.ts'
 
 const COMPONENT = 'terminal'
 const TAB = 'slot-tab'
@@ -198,6 +198,13 @@ async function onAsk(req: AskRequest): Promise<void> {
   switch (req.situation) {
     case 'quit-all': {
       const answer = await askDialog(quitAllSituation([...slots.values()]))
+      window.tether.answer(req.askId, answer)
+      return
+    }
+    case 'reload-all': {
+      // What the person sees is what is at stake: the slots behind open panels, not every slot on disk.
+      const open = [...slots.values()].filter(s => api.getPanel(s.slotId))
+      const answer = await askDialog(reloadAllSituation(open))
       window.tether.answer(req.askId, answer)
       return
     }

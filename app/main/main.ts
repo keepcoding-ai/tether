@@ -41,14 +41,19 @@ let daemon: DaemonClient | undefined
 let connecting: Promise<void> | undefined
 let win: BrowserWindow | undefined
 let quittingAll = false
+/** Set when the daemon connection was lost: the next connection reloads the renderer so every panel restarts its slot. */
+let reloadOnReconnect = false
 
 function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
 }
 
+/** Atomic: temp + rename, so a crash mid-write never leaves a half file behind. */
 function writeJson(path: string, value: unknown): void {
   mkdirSync(home, { recursive: true })
-  writeFileSync(path, JSON.stringify(value, null, 2))
+  const tmp = `${path}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(value, null, 2))
+  renameSync(tmp, path)
 }
 
 // ---------- daemon ----------
@@ -127,11 +132,14 @@ function connectDaemon(): Promise<void> {
         if (daemon !== client) return
         daemon = undefined
         if (quittingAll) return
+        reloadOnReconnect = true
         sendConnection({ connected: false, pipe, error: 'conexão com o tetherd fechada' })
         // The daemon died (or was shut down): bring one back and let the renderer restart its panels.
         if (win) setTimeout(() => { void connectDaemon() }, 500)
       })
       sendConnection(connectionState())
+      // A restarted daemon has no agents running: a fresh page restores the layout and resumes each slot's session.
+      if (reloadOnReconnect) { reloadOnReconnect = false; win?.webContents.reloadIgnoringCache() }
     } catch (err) {
       sendConnection({ connected: false, pipe, error: err instanceof Error ? err.message : String(err) })
     } finally {
@@ -173,6 +181,25 @@ ipcMain.on('dialog:answer', (_e, askId: number, answer: DialogAnswer) => {
   pendingAsks.delete(askId)
 })
 ipcMain.on('window:close', () => win?.close())
+
+/**
+ * "Recarregar": the daemon restarts with the code on disk; the app reconnects (close handler) and reloads the
+ * renderer. It ends every agent first, so the person confirms it in the in-app dialog (which says how many run).
+ */
+async function reloadAll(): Promise<void> {
+  if (!daemon) { void connectDaemon(); return }
+  const { choice } = await ask('reload-all')
+  if (choice !== 'reload') return
+  if (!daemon) { void connectDaemon(); return }
+  await request({ t: 'shutdown' })
+}
+
+/** "Reiniciar o app": a fresh main process (new main.cjs); the daemon and its agents are left alone. */
+function relaunchApp(): void {
+  quittingAll = true // no reconnect attempt while going down
+  app.relaunch()
+  app.exit(0)
+}
 
 /** "Sair e encerrar tudo": stops every slot, shuts the daemon down and quits (after the in-app dialog). */
 async function quitAll(): Promise<void> {
@@ -328,6 +355,10 @@ function createMenu(): void {
         ...fontSizeMenu(),
         { type: 'separator' },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
+        { type: 'separator' },
+        // No accelerator on purpose: it ends every agent, and a key chord next to "reload page" invites accidents.
+        { id: 'reload-all', label: 'Recarregar… (encerra todos os agentes dos painéis, reinicia o tetherd e retoma as sessões)', click: () => { void reloadAll() } },
+        { id: 'relaunch-app', label: 'Reiniciar o app (código novo do processo principal)', click: relaunchApp },
         { type: 'separator' },
         { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' },
         { role: 'togglefullscreen', label: 'Tela cheia' },

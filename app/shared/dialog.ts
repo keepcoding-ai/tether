@@ -60,6 +60,6 @@ export interface DialogAnswer {
 export type Confirmations = Record<string, string>
 
 /** Situations the main process asks the renderer to put to the user. */
-export type MainSituation = 'quit-all'
+export type MainSituation = 'quit-all' | 'reload-all'
 
 export interface AskRequest { askId: number; situation: MainSituation }

@@ -109,6 +109,32 @@ export function quitAllSituation(slots: SlotState[]): DialogSpec {
 }
 
 /**
+ * "Recarregar" from the menu. What it communicates: "this is not a page reload: every agent in every panel
+ * is ended now, the tetherd restarts, and only then each panel resumes its session."
+ */
+export function reloadAllSituation(slots: SlotState[]): DialogSpec {
+  const live = slots.filter(isLive)
+  const names = live.map(s => s.title ?? s.name ?? folderName(s.cwd))
+  const shown = names.slice(0, 4)
+  if (names.length > 4) shown.push(`e mais ${names.length - 4}`)
+  const context: DialogContext = live.length === 0
+    ? { icon: 'tray', name: 'Nenhum agente rodando nos painéis', lines: ['Só o tetherd reinicia; os painéis retomam as sessões em seguida.'], status: { label: 'tudo parado', tone: 'dim' } }
+    : { icon: 'tray', name: live.length === 1 ? '1 agente rodando num painel' : `${live.length} agentes rodando nos painéis`, lines: shown, status: { label: 'rodando', tone: 'ok' } }
+  return {
+    situation: 'reload-all',
+    tone: 'danger',
+    icon: 'arrow-clockwise',
+    title: 'Recarregar o tether?',
+    message: 'Isto não é recarregar a tela: o tetherd é reiniciado e todos os agentes dos painéis são encerrados agora. Depois cada painel retoma a sessão de onde parou.',
+    context,
+    choices: [
+      { id: 'reload', icon: 'arrow-clockwise', label: 'Encerrar os agentes e recarregar', consequence: 'Todos os agentes param, o tetherd sobe de novo e os painéis retomam as sessões. O que estava sendo feito agora é interrompido.', tone: 'destructive' },
+    ],
+    cancelLabel: 'Não recarregar',
+  }
+}
+
+/**
  * A launch while the previous instance is still releasing the single-instance lock (shown in its own small
  * window: there is no main window yet). What it communicates: "nothing is broken and nothing was lost;
  * wait a moment and try again, or leave it."
