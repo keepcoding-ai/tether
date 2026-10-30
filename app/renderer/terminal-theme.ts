@@ -53,9 +53,14 @@ export const SAMPLE_LINES: string[] = [
   COLOR_WORDS.map((w, i) => `${ESC}${30 + i}m${w}${ESC}0m`).join(' '),
   COLOR_WORDS.map((w, i) => `${ESC}${90 + i}m${w}${ESC}0m`).join(' '),
   `normal  ${ESC}1mnegrito${ESC}0m  ${ESC}2mapagado${ESC}0m  ${ESC}3mitálico${ESC}0m  ${ESC}4msublinhado${ESC}0m  ${ESC}7minverso${ESC}0m  0O 1lI {} => !=`,
-  `╭──────────────╮ ┌───┬───┐  ${ESC}38;2;215;119;87m✻${ESC}0m Claude  ${ESC}32m✓${ESC}0m ok  ${ESC}31m✗${ESC}0m erro`,
-  `│ caixa  ▀▄█░▒▓ │ ├───┼───┤  $ npm run check`,
-  `╰──────────────╯ └───┴───┘  ${ESC}2m> _${ESC}0m`,
+  // Caixas só com glifos de largura 1, cada linha com a mesma largura (16 + 2 + 9 colunas); os símbolos
+  // de largura ambígua (✻ ✓ ✗) ficam em linhas próprias, depois das caixas, para não deslocar colunas.
+  '╭──────────────╮  ┌───┬───┐',
+  '│ caixa ▀▄█░▒▓ │  ├───┼───┤',
+  '╰──────────────╯  └───┴───┘',
+  `${ESC}38;2;215;119;87m✻${ESC}0m Claude  ${ESC}32m✓${ESC}0m ok  ${ESC}31m✗${ESC}0m erro`,
+  '$ npm run check',
+  `${ESC}2m> _${ESC}0m`,
 ]
 
 export class TerminalThemeDialog {
