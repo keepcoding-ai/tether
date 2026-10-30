@@ -356,3 +356,34 @@ Dois ajustes pedidos no meio da fase:
 
 - **Testes não põem mais ícone na bandeja do usuário.** `trayWanted(env)` (`app/shared/tray.ts`, unit-testado): sem Tray quando há `TETHER_HOME`, `TETHER_PIPE` ou `TETHER_E2E_HIDDEN=1`, ou `TETHER_NO_TRAY=1`; `TETHER_TRAY=1` volta a criá-lo (só o `app.tray` usa). Sem Tray, fechar a janela encerra o app (o comportamento antigo).
 - **"Sair" da bandeja não encerrava (relato do Guga).** Não reproduzi nas instâncias de teste: o `app.tray` ganhou dois testes (Sair mantendo agentes e Sair e encerrar tudo, com a janela escondida) que afirmam que o processo do app sai (e o tetherd sai ou sobrevive, conforme o caso), e passam. Causa provável no uso real: `app.quit()` esperando as idas e voltas com o daemon de "encerrar tudo" (um `stop` por slot, em sequência, ou um `shutdown` sem resposta). Conserto defensivo: `leaveWithin()` destrói a bandeja e chama `app.exit(0)` depois de 5 s (manter agentes) ou 20 s (encerrar tudo) se o processo ainda estiver de pé. Se o app do Guga (build anterior) ainda não sai com este build, é preciso o caso real: qual item, com a janela aberta ou escondida.
+
+## Fase 4 — Redesenho visual (planejada, 2026-10-30)
+
+Plano no PLAN.md ("Fase 4"): sete fatias (tokens/cartões → barra + cápsula → paleta de 12 matizes + migração → faixa de abas + ⋯ → barra de status → gaveta → polimento), cada uma com escopo, arquivos, riscos, testes e aceite por captura lado a lado com `docs/tether-preview.html`. Nada em `src/`: o tetherd do Guga não reinicia em nenhuma fatia. E2E novo `app.chrome` cresce fatia a fatia. Estado: **a começar** (nenhuma fatia em execução).
+
+| Fatia | Estado | Prova |
+|---|---|---|
+| F1 Tokens, superfícies e cartões (tema dockview próprio) | pendente | |
+| F2 Barra do topo e cápsula de mesas (faixa sai; linha da cor; popover de conexão; menu de tema) | pendente | |
+| F3 Paleta `--x-*` (12) e migração das cores das mesas | pendente | |
+| F4 Faixa de abas ("+N" MRU, toggle da barra, ⋯) | pendente | |
+| F5 Barra de status (selos por regra, ações só ícone) | pendente | |
+| F6 Gaveta (cartão a 16px, sem backdrop, barra própria, estado vazio) | pendente | |
+| F7 Polimento e acessibilidade | pendente | |
+
+Decisões para validar (defaults adotados; detalhe no PLAN.md §4 da fase):
+
+- Fase 4: **cor da mesa vira nome do matiz** no `layout.json` (`"blue"`); número continua lido como a paleta antiga de 8 (Cinza → `sky`).
+- Fase 4: **paleta gerada no build** (`app/shared/palette.ts` → `app/dist/palette.css`), com teste unitário de contraste ≥ 4,5:1 em todos os pares, nos dois esquemas.
+- Fase 4: **quem está visível na cápsula não é persistido**; o MRU é da sessão.
+- Fase 4: **overflow de abas pelo nativo do dockview restilizado como "+N"**; escolher no "+N" reordena a aba no layout (entra no lugar da usada há mais tempo).
+- Fase 4: **ponto de estado na aba só para estados não-"running"**; rodando, a aba fica limpa; o estado vive na barra de status (recolhida por padrão).
+- Fase 4: **"Reiniciar sessão" e "Renomear…" ficam fora** desta fase (sem request de reinício puro; o título vem do agente).
+- Fase 4: **gaveta vazia ao abrir continua abrindo um shell** (fase D); o convite de estado vazio aparece quando o último painel sai com ela aberta ou o shell automático não pode abrir.
+- Fase 4: **sem toggle "Borda dos quadros"** (só a linha da cor foi aprovada); o token fica.
+- Fase 4: **a margem de 16px fecha a gaveta** (substitui o backdrop); pílula, X, Esc e Ctrl+` continuam.
+- Fase 4: **popover de conexão no hover e no clique**, com serviço, canal, pid, versão e contagem de agentes.
+- Fase 4: **watermark sem o nome "tether"**, como a barra.
+- Fase 4: **arrastar para reordenar mesas sai** com a faixa; "Mover para a esquerda/direita" no menu cobre.
+- Fase 4: **fundo da janela = `--desk-bg`** (`WINDOW_BACKGROUND`).
+- Fase 4: **cartões de trás esmaecem com `opacity` + `blur(1.5px)`**; se pesar com WebGL, só `opacity`.
