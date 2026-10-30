@@ -18,6 +18,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
+import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
 import { ensureRenamedNode, exeLog, isNodeExecutable, isRenamedNode } from '../core/exe.ts'
 import { canonicalDir, slotEventsPath } from '../core/paths.ts'
@@ -162,7 +163,7 @@ function envWithoutUndefined(source: NodeJS.ProcessEnv): Record<string, string> 
 function plan(input: PlanInput): LaunchPlan {
   const { slot, home, resume, extraArgs, profile } = input
   const base = withRenamedNode(resolveSoulCommand(), home)
-  const env = envWithoutUndefined(process.env)
+  const env = withColorSupport(envWithoutUndefined(process.env))
   Object.assign(env, profile?.env ?? {})
   const profileArgs = profile?.args ?? []
   if (resume?.resume) {

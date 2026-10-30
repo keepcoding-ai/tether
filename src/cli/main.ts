@@ -6,14 +6,14 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { exitCodeFor, formatReport, runDoctor } from '../doctor.ts'
-import type { Binding, SlotMeta } from '../core/event.ts'
-import { pidExists } from '../core/liveness.ts'
+import type { Binding, RunInfo, SlotMeta } from '../core/event.ts'
+import { isSameProcess, pidExists } from '../core/liveness.ts'
 import { canonicalDir, slotMetaPath } from '../core/paths.ts'
-import { findProfile, ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles, type Profile, type ProfileAgent, type ProfileInput } from '../core/profile.ts'
-import { createSlot, currentBinding, newSlotId, readEvents, readRun, readSlot, removeSlot } from '../core/store.ts'
+import { findProfile, ProfileError, readProfiles, removeProfile, snapshotProfile, upsertProfile, writeProfiles, type Profile, type ProfileAgent, type ProfileInput } from '../core/profile.ts'
+import { createSlot, currentBinding, newSlotId, readEvents, readRun, readSlot, removeSlot, writeSlotMeta } from '../core/store.ts'
 import { splitCommandLine } from '../agents/soul.ts'
 import { DaemonClient, DaemonError } from '../daemon/client.ts'
-import type { ErrorCode, SlotKind, SlotState } from '../daemon/protocol.ts'
+import { KILL_WAIT_CAP_MS, MIN_AGENT_AGE_MS, type ErrorCode, type SlotKind, type SlotState } from '../daemon/protocol.ts'
 import { parseArgs, UsageError } from './args.ts'
 import { attach } from './attach.ts'
 import { localTime, relativeTime, shortId, statusLabel, table, truncate, truncateStart } from './format.ts'
@@ -42,6 +42,10 @@ export const USAGE = `uso: tether <comando> [opções]
               [--cwd p] [--shell "exe args"] [-- args do agente]
                                       altera um perfil (args e env dados substituem os atuais)
   profile rm <perfil> [--yes]         apaga um perfil (os slots que o usam guardam uma cópia)
+  profile set <slot> <perfil|--none> [--now|--next]
+                                      troca o perfil de um slot (--none: nenhum). Com o agente
+                                      rodando, --now reinicia já e retoma a mesma sessão;
+                                      --next (padrão) deixa para o próximo início
   daemon <status|restart|stop> [--force]
                                       gerencia o tetherd (restart/stop encerram todos os agentes; os apps
                                       reconectam; recusado de dentro de um slot dele sem --force)
@@ -173,7 +177,11 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
-/** Kills a process tree by pid (a `--here` run from another terminal). */
+/**
+ * Kills a process tree by pid. Only ever pointed at a `--here` launcher (pid = the CLI that runs one agent) or
+ * at an agent left by a dead tetherd; NEVER at a live tetherd, whose tree is every agent of every slot (that
+ * one goes down through the pipe's `shutdown` only).
+ */
 function killByPid(pid: number): Promise<void> {
   return new Promise((done) => {
     if (process.platform === 'win32') {
@@ -183,6 +191,29 @@ function killByPid(pid: number): Promise<void> {
       done()
     }
   })
+}
+
+/**
+ * Waits until the run's agent is at least MIN_AGENT_AGE_MS old and has reported this run (start event at/after
+ * the launch), capped at KILL_WAIT_CAP_MS: a Claude killed before it finishes starting counts as a boot strike.
+ */
+async function awaitKillable(home: string, slotId: string, run: RunInfo, meta: SlotMeta | undefined): Promise<void> {
+  if (meta?.agent === 'shell') return
+  const launchedAt = run.agentStartedAt ?? run.startedAt
+  const ageDeadline = Date.parse(launchedAt) + MIN_AGENT_AGE_MS
+  const cap = Date.now() + KILL_WAIT_CAP_MS
+  let warned = false
+  for (;;) {
+    const now = Date.now()
+    const binding = meta ? currentBinding(readEvents(home, slotId), meta) : undefined
+    if (now >= ageDeadline && binding && binding.since >= launchedAt) return
+    if (now >= cap || !pidExists(run.agentPid ?? run.pid)) return
+    if (!warned) {
+      warned = true
+      out(`aguardando o agente terminar de iniciar antes de encerrar (até ${Math.round(KILL_WAIT_CAP_MS / 1000)} s)…\n`)
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
 }
 
 // ---- ls / show ---------------------------------------------------------------------------------
@@ -400,12 +431,27 @@ async function cmdStop(args: string[]): Promise<number> {
   }
   daemonDown()
   const run = readRun(ctx.home, slot.slotId)
-  if (!run || !pidExists(run.pid)) {
+  if (!run) {
     out(`slot ${slot.slotId} já está parado\n`)
     return 0
   }
-  await killByPid(run.agentPid ?? run.pid)
-  out(`slot ${slot.slotId}: processo ${run.agentPid ?? run.pid} encerrado\n`)
+  // A run of tetherd: run.pid is the daemon itself, whose tree is every agent of every slot. It is never killed
+  // from here; a live daemon that does not answer is reported, a dead one may have left the agent alone.
+  if (run.by === 'tetherd') {
+    if (await isSameProcess(run.pid, run.startedAt)) throw new Error(`o tetherd (pid ${run.pid}) está no ar mas não respondeu; encerre pelo app, ou reinicie o tetherd`)
+    const agentAlive = run.agentPid !== undefined && (run.agentStartedAt ? await isSameProcess(run.agentPid, run.agentStartedAt) : pidExists(run.agentPid))
+    if (!agentAlive) {
+      out(`slot ${slot.slotId} já está parado\n`)
+      return 0
+    }
+  } else if (!(await isSameProcess(run.pid, run.startedAt))) {
+    out(`slot ${slot.slotId} já está parado\n`)
+    return 0
+  }
+  const target = run.agentPid ?? run.pid
+  await awaitKillable(ctx.home, slot.slotId, run, readSlot(ctx.home, slot.slotId))
+  await killByPid(target)
+  out(`slot ${slot.slotId}: processo ${target} encerrado\n`)
   return 0
 }
 
@@ -520,7 +566,57 @@ async function cmdProfile(args: string[]): Promise<number> {
     case 'add': return await cmdProfileAdd(rest)
     case 'edit': return await cmdProfileEdit(rest)
     case 'rm': return await cmdProfileRm(rest)
-    default: throw new UsageError(`subcomando de profile desconhecido: ${sub ?? '(vazio)'} (use add, edit ou rm)`)
+    case 'set': return await cmdProfileSet(rest)
+    default: throw new UsageError(`subcomando de profile desconhecido: ${sub ?? '(vazio)'} (use add, edit, rm ou set)`)
+  }
+}
+
+/** `profile set <slot> <perfil|--none> [--now|--next]`: through the daemon when it answers (only it can restart), else the meta on disk. */
+async function cmdProfileSet(args: string[]): Promise<number> {
+  const p = parseArgs(args, { flags: ['none', 'now', 'next'] })
+  const ref = requireRef(p.positional)
+  if (p.flags.has('now') && p.flags.has('next')) throw new UsageError('--now e --next são excludentes')
+  const none = p.flags.has('none')
+  const profileRef = p.positional[1]
+  if (!none && !profileRef) throw new UsageError('informe o perfil (ou --none)')
+  if (none && profileRef) throw new UsageError('--none dispensa o perfil')
+  const ctx = context()
+  const { client, slots } = await loadSlots(ctx)
+  try {
+    const slot = resolveSlot(slots, ref)
+    const profiles = client ? (await client.request({ t: 'profiles-list' })).profiles ?? [] : readProfiles(ctx.home).profiles
+    const profile = none ? undefined : requireProfile(profiles, profileRef!)
+    if (profile && profile.agent !== slot.kind) throw new UsageError(`o perfil "${profile.name}" é de ${profile.agent}, não de ${slot.kind}`)
+    const live = slot.status === 'running' || slot.status === 'starting'
+    const restart = p.flags.has('now')
+    const label = profile ? `perfil "${profile.name}"` : 'nenhum perfil'
+    if (client) {
+      try {
+        const reply = await client.request({ t: 'set-profile', slotId: slot.slotId, profileId: profile ? profile.id : null, restart })
+        const s = reply.slot!
+        if (restart && live) out(`slot ${slot.slotId}: ${label}; ${slot.kind} reiniciado${s.binding ? `, sessão ${shortId(s.binding.sessionId)} retomada` : ''} (${statusLabel(s.status)}${s.pid ? `, pid ${s.pid}` : ''})\n`)
+        else if (live) out(`slot ${slot.slotId}: ${label}; vale no próximo início (o ${slot.kind} continua rodando; para reiniciar já: tether profile set ${slot.slotId} ${none ? '--none' : profile!.id} --now)\n`)
+        else out(`slot ${slot.slotId}: ${label}; vale no próximo início\n`)
+        return 0
+      } catch (e) {
+        if (e instanceof DaemonError) {
+          err(`tether: ${e.code === 'unconfirmed' ? `${e.message}.\n  na próxima abertura: tether profile set ${slot.slotId} ${none ? '--none' : profile!.id} --next` : e.message}\n`)
+          return 1
+        }
+        throw e
+      }
+    }
+    if (restart) throw new Error('tetherd parado: não há processo para reiniciar (sem --now o perfil é gravado para o próximo início)')
+    daemonDown()
+    const meta = readSlot(ctx.home, slot.slotId)
+    if (!meta) throw new SlotNotFound(`slot sem metadados no disco: ${slot.slotId}`)
+    if (profile) snapshotProfile(meta, profile)
+    else { delete meta.profileId; delete meta.profileArgs; delete meta.profileEnv }
+    writeSlotMeta(ctx.home, meta)
+    out(`slot ${slot.slotId}: ${label}; vale no próximo início\n`)
+    return 0
+  } finally {
+    client?.close()
   }
 }
 

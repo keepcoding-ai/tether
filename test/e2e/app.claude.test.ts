@@ -219,7 +219,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     // ---- 1. "+ Novo painel" → Claude in the temp folder ----
     await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
-    await page.check('input[name=kind][value=claude]')
+    await page.check('input[name=profile][value=claude]')
     await page.fill('#new-cwd', work)
     await page.click('#btn-create')
     await tabCount(page, 1)

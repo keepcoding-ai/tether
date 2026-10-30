@@ -9,6 +9,18 @@ export type { Profile, ProfileInput }
 
 export const PROTOCOL_VERSION = 1
 
+/**
+ * Youngest an agent may be when tether kills it (stop, forget, shutdown, `set-profile` restart): Claude counts
+ * a session that dies before it finished starting as a boot strike (three strikes write `fullscreenAutoDisabled`
+ * to ~/.claude.json and fullscreen stays off for the whole machine), the house rule is 11 s, and the agent starts
+ * a little after the PTY spawn the age is measured from, hence one more second. Besides the age, a kill waits
+ * for the agent's start report (the SessionStart hook: the agent finished starting), up to KILL_WAIT_CAP_MS.
+ * A `stop` can therefore take that long to answer.
+ */
+export const MIN_AGENT_AGE_MS = 12_000
+/** Longest a kill waits for a young agent before killing it anyway, so a shutdown can never hang. */
+export const KILL_WAIT_CAP_MS = 30_000
+
 /** Slot kinds: the two tracked agents, plus a plain shell (no session; "resume" = new shell in the same folder). */
 export type SlotKind = AgentName | 'shell'
 
@@ -43,6 +55,10 @@ export interface SlotState {
   profileName?: string
   /** The launch carries --dangerously-skip-permissions (profile, slot or TETHER_*_ARGS): the UI shows a badge. */
   unsafe?: boolean
+  /** A `set-profile` restart is under way: waiting for the agent's minimum age, or relaunching with the new profile. */
+  restarting?: boolean
+  /** A stop is waiting for the agent to be old enough to kill (young Claudes are never killed; see MIN_AGENT_AGE_MS). */
+  stopping?: boolean
 }
 
 export type ErrorCode =
@@ -50,7 +66,7 @@ export type ErrorCode =
   | 'session-missing'   // the agent no longer has the bound session
   | 'cwd-missing'       // the slot's folder does not exist
   | 'already-open'      // the bound session is running in another slot
-  | 'unconfirmed'       // start refused: binding not confirmed; resend with choice
+  | 'unconfirmed'       // start refused: binding not confirmed; resend with choice (set-profile: restart refused)
   | 'spawn-failed'
   | 'bad-request'
   | 'unknown-profile'   // create/profile-delete named a profile that does not exist
@@ -83,6 +99,13 @@ export type Request =
   | { t: 'profile-save'; id: number; profile: ProfileInput }
   /** Remove a profile; slots that use it keep their snapshot. */
   | { t: 'profile-delete'; id: number; profileId: string }
+  /**
+   * Change the slot's launch profile (`null` = none: the slot's own args only). The profile must be of the slot's
+   * kind. The meta changes at once; the next start uses it. With `restart` and a live process: the process is
+   * killed (an agent only after its minimum age) and the SAME session resumed with the new args — refused with
+   * `unconfirmed` (nothing changed) when the running agent never reported its session, so no session is lost.
+   */
+  | { t: 'set-profile'; id: number; slotId: string; profileId: string | null; restart?: boolean }
 
 /** Fire-and-forget (no reply): keystrokes. */
 export type Notice = { t: 'input'; slotId: string; data: string }

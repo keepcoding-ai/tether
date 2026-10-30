@@ -1,35 +1,114 @@
-// Layout persistence helpers: drop panels the daemon does not know from a saved dockview layout,
-// collapsing the grid so dockview can restore what is left.
-import type { SerializedDockview } from 'dockview-core'
+// The persisted layout (<home>/layout.json), pure and unit-tested:
+//   v1  a single SerializedDockview (the whole app was one frame);
+//   v2  desks → frames (a gridview of frames, each frame its own dockview) → panes. `drawer` is reserved.
+// Reading migrates v1 → v2 without touching the frame's dockview JSON (byte for byte the old file: the user's
+// panes come back exactly). Pruning drops the panes the daemon no longer knows, frame by frame, and the frames
+// that end up empty; a frame's root must stay a branch (dockview refuses a leaf there).
+import type { SerializedDockview, SerializedGridviewComponent } from 'dockview-core'
+import type { Direction } from './create.ts'
 
-type Node = SerializedDockview['grid']['root']
-type Leaf = { type: 'leaf'; data: { views: string[]; activeView?: string; id: string }; size?: number; visible?: boolean }
+export const LAYOUT_VERSION = 2
+export const FRAME_COMPONENT = 'frame'
+
+/** The gridview JSON of a desk (frames as leaves), as dockview-core serializes it. */
+export type FrameGrid = SerializedGridviewComponent['grid']
+type GridNode = FrameGrid['root']
+type GridLeaf = { type: 'leaf'; data: { id: string; component: string; [k: string]: unknown }; size?: number; visible?: boolean }
+type GridBranch = { type: 'branch'; data: GridNode[]; size?: number; visible?: boolean }
+
+export interface DeskLayout {
+  id: string
+  name: string
+  /** Index in the desk palette (phase C paints it). */
+  color: number
+  frames: { grid: FrameGrid; views: Record<string, SerializedDockview> }
+  activeFrame?: string
+}
+
+export interface LayoutV2 {
+  v: 2
+  desks: DeskLayout[]
+  activeDesk: string
+  drawer: null
+}
+
+const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
+
+/** A v1 file: dockview's own serialization (a grid with a root, and a panels map). */
+export function isLayoutV1(raw: unknown): raw is SerializedDockview {
+  return isObject(raw) && !('v' in raw) && isObject(raw.grid) && isObject(raw.grid.root) && isObject(raw.panels)
+}
+
+export function isLayoutV2(raw: unknown): raw is LayoutV2 {
+  return isObject(raw) && raw.v === LAYOUT_VERSION && Array.isArray(raw.desks) && typeof raw.activeDesk === 'string'
+}
+
+/** A grid with a single frame filling the desk; sizes follow dockview's convention (root size = the orthogonal extent). */
+export function singleFrameGrid(frameId: string, width: number, height: number): FrameGrid {
+  return {
+    root: { type: 'branch', data: [{ type: 'leaf', data: { id: frameId, component: FRAME_COMPONENT }, size: width }], size: height },
+    width, height,
+    orientation: 'HORIZONTAL' as FrameGrid['orientation'],
+  }
+}
+
+/** A desk with one empty frame (a fresh app, or everything pruned). */
+export function emptyDesk(id = 'desk-1', name = 'Mesa 1'): DeskLayout {
+  const frameId = 'frame-1'
+  return { id, name, color: 0, frames: { grid: singleFrameGrid(frameId, 1200, 800), views: {} }, activeFrame: frameId }
+}
+
+export function emptyLayout(): LayoutV2 {
+  const desk = emptyDesk()
+  return { v: 2, desks: [desk], activeDesk: desk.id, drawer: null }
+}
+
+/**
+ * The layout in v2 form. A v1 file becomes "Mesa 1" with one frame whose view IS the old file; `migrated` says
+ * the caller must keep a `layout.v1.bak` before the first v2 write. Anything else (empty, corrupt) is null.
+ */
+export function migrateLayout(raw: unknown): { layout: LayoutV2; migrated: boolean } | null {
+  if (isLayoutV2(raw)) return { layout: raw, migrated: false }
+  if (isLayoutV1(raw)) {
+    const frameId = 'frame-1'
+    const width = typeof raw.grid.width === 'number' && raw.grid.width > 0 ? raw.grid.width : 1200
+    const height = typeof raw.grid.height === 'number' && raw.grid.height > 0 ? raw.grid.height : 800
+    const desk: DeskLayout = { id: 'desk-1', name: 'Mesa 1', color: 0, frames: { grid: singleFrameGrid(frameId, width, height), views: { [frameId]: raw } }, activeFrame: frameId }
+    return { layout: { v: 2, desks: [desk], activeDesk: desk.id, drawer: null }, migrated: true }
+  }
+  return null
+}
+
+// ---------- pruning ----------
+
+type DockNode = SerializedDockview['grid']['root']
+type DockLeaf = { type: 'leaf'; data: { views: string[]; activeView?: string; id: string }; size?: number; visible?: boolean }
 
 /** `root`: the grid root must stay a branch (dockview refuses a leaf there), even with a single child left. */
-function prune(node: Node, known: Set<string>, root = false): Node | null {
+function pruneDock(node: DockNode, known: Set<string>, root = false): DockNode | null {
   if (node.type === 'leaf') {
-    const leaf = node as Leaf
+    const leaf = node as DockLeaf
     const views = leaf.data.views.filter(v => known.has(v))
     if (views.length === 0) return null
     const activeView = leaf.data.activeView && views.includes(leaf.data.activeView) ? leaf.data.activeView : views[0]!
     return { ...leaf, data: { ...leaf.data, views, activeView } }
   }
-  const children = (node.data as Node[]).map(c => prune(c, known)).filter((c): c is Node => c !== null)
+  const children = (node.data as DockNode[]).map(c => pruneDock(c, known)).filter((c): c is DockNode => c !== null)
   if (children.length === 0) return null
   if (children.length === 1 && !root) return { ...children[0]!, ...(node.size !== undefined ? { size: node.size } : {}) }
   return { ...node, data: children }
 }
 
-/** Returns the layout restricted to `known` panel ids, or null when nothing survives. */
+/** A frame's dockview restricted to `known` panel ids, or null when nothing survives. */
 export function pruneLayout(layout: SerializedDockview, known: Set<string>): SerializedDockview | null {
-  const root = prune(layout.grid.root, known, true)
+  const root = pruneDock(layout.grid.root, known, true)
   if (!root) return null
   const panels: SerializedDockview['panels'] = {}
   for (const [id, p] of Object.entries(layout.panels)) if (known.has(id)) panels[id] = p
   const groupIds = new Set<string>()
-  const collect = (n: Node): void => {
-    if (n.type === 'leaf') groupIds.add((n as Leaf).data.id)
-    else for (const c of n.data as Node[]) collect(c)
+  const collect = (n: DockNode): void => {
+    if (n.type === 'leaf') groupIds.add((n as DockLeaf).data.id)
+    else for (const c of n.data as DockNode[]) collect(c)
   }
   collect(root)
   const out: SerializedDockview = { grid: { ...layout.grid, root }, panels }
@@ -41,6 +120,117 @@ export function panelIdsOf(layout: SerializedDockview): string[] {
   return Object.keys(layout.panels)
 }
 
+/** The frame ids in a grid, in reading order. */
+export function frameIdsOf(grid: FrameGrid): string[] {
+  const out: string[] = []
+  const walk = (n: GridNode): void => {
+    if (n.type === 'leaf') out.push((n as GridLeaf).data.id)
+    else for (const c of (n as GridBranch).data) walk(c)
+  }
+  walk(grid.root)
+  return out
+}
+
+/** Same collapse as the dockview prune: a leaf stays when `keep` says so; the root stays a branch. */
+function pruneGrid(node: GridNode, keep: (frameId: string) => boolean, root = false): GridNode | null {
+  if (node.type === 'leaf') return keep((node as GridLeaf).data.id) ? node : null
+  const children = (node as GridBranch).data.map(c => pruneGrid(c, keep)).filter((c): c is GridNode => c !== null)
+  if (children.length === 0) return null
+  if (children.length === 1 && !root) return { ...children[0]!, ...(node.size !== undefined ? { size: node.size } : {}) }
+  return { ...node, data: children }
+}
+
+/**
+ * The desk restricted to `known` panel ids: every frame's dockview is pruned; a frame left without panels (or
+ * without a view at all) is removed from the grid; when no frame survives, the desk is one empty frame.
+ */
+export function pruneDesk(desk: DeskLayout, known: Set<string>): DeskLayout {
+  const views: Record<string, SerializedDockview> = {}
+  for (const id of frameIdsOf(desk.frames.grid)) {
+    const view = desk.frames.views[id]
+    if (!view || !isLayoutV1(view)) continue
+    const pruned = pruneLayout(view, known)
+    if (pruned) views[id] = pruned
+  }
+  const root = pruneGrid(desk.frames.grid.root, id => id in views, true)
+  if (!root) return { ...desk, frames: emptyDesk(desk.id, desk.name).frames, activeFrame: 'frame-1' }
+  const grid: FrameGrid = { ...desk.frames.grid, root }
+  const activeFrame = desk.activeFrame && desk.activeFrame in views ? desk.activeFrame : frameIdsOf(grid)[0]
+  return { ...desk, frames: { grid, views }, activeFrame }
+}
+
+/** The layout restricted to `known` panel ids, desk by desk; `kept` = how many panels survived in total. */
+export function pruneLayoutV2(layout: LayoutV2, known: Set<string>): { layout: LayoutV2; kept: number; total: number } {
+  let kept = 0
+  let total = 0
+  for (const d of layout.desks) for (const v of Object.values(d.frames.views)) {
+    const ids = isLayoutV1(v) ? panelIdsOf(v) : []
+    total += ids.length
+    kept += ids.filter(id => known.has(id)).length
+  }
+  const desks = layout.desks.map(d => pruneDesk(d, known))
+  const activeDesk = desks.some(d => d.id === layout.activeDesk) ? layout.activeDesk : desks[0]!.id
+  return { layout: { ...layout, desks, activeDesk }, kept, total }
+}
+
+/** Every panel id in the layout, across desks and frames. */
+export function allPanelIds(layout: LayoutV2): string[] {
+  const out: string[] = []
+  for (const d of layout.desks) for (const v of Object.values(d.frames.views)) if (isLayoutV1(v)) out.push(...panelIdsOf(v))
+  return out
+}
+
+// ---------- inserting a frame at a desk edge ----------
+
+type Orientation = 'HORIZONTAL' | 'VERTICAL'
+const orthogonal = (o: Orientation): Orientation => o === 'HORIZONTAL' ? 'VERTICAL' : 'HORIZONTAL'
+const orientationOf = (d: Direction): Orientation => d === 'left' || d === 'right' ? 'HORIZONTAL' : 'VERTICAL'
+const after = (d: Direction): boolean => d === 'right' || d === 'below'
+
+/**
+ * How to add a frame at a desk edge so it spans the whole desk (gridview's `addPanel` only knows "beside a
+ * frame" or "at a location"): `location` is a gridview path; `wrapRoot` first puts the root inside a new
+ * orthogonal branch (the same move dockview makes for its own edge drops); `beside` splits a lone frame.
+ */
+export type FrameInsertion =
+  | { kind: 'location'; location: number[]; wrapRoot: boolean }
+  | { kind: 'beside'; referenceFrame: string; direction: Direction }
+
+export function frameInsertion(grid: FrameGrid, direction: Direction): FrameInsertion {
+  const wanted = orientationOf(direction)
+  const rootOrientation = grid.orientation as Orientation
+  // Descend through single-child wrappers (a branch whose only child is a branch): the visible grid is the inner one.
+  let node: GridNode = grid.root
+  let path: number[] = []
+  while (node.type === 'branch' && (node as GridBranch).data.length === 1 && (node as GridBranch).data[0]!.type === 'branch') {
+    node = (node as GridBranch).data[0]!
+    path = [...path, 0]
+  }
+  if (node.type === 'leaf') return { kind: 'beside', referenceFrame: (node as GridLeaf).data.id, direction }
+  const children = (node as GridBranch).data
+  const orientation = path.length % 2 === 0 ? rootOrientation : orthogonal(rootOrientation)
+  if (children.length === 0) return { kind: 'location', location: [...path, 0], wrapRoot: false }
+  if (orientation === wanted) return { kind: 'location', location: [...path, after(direction) ? children.length : 0], wrapRoot: false }
+  if (children.length === 1) return { kind: 'beside', referenceFrame: (children[0] as GridLeaf).data.id, direction }
+  // ≥ 2 frames laid out across the wanted axis: the new frame must sit beside all of them, as a sibling of this node.
+  if (path.length > 0) {
+    const parent = path.slice(0, -1)
+    return { kind: 'location', location: [...parent, after(direction) ? 1 : 0], wrapRoot: false }
+  }
+  return { kind: 'location', location: [after(direction) ? 1 : 0], wrapRoot: true }
+}
+
+/** A frame id not used by the grid. */
+export function nextFrameId(grid: FrameGrid): string {
+  const used = new Set(frameIdsOf(grid))
+  for (let i = 1; ; i++) if (!used.has(`frame-${i}`)) return `frame-${i}`
+}
+
+// ---------- restore policy ----------
+// layout.json is the person's arrangement and the one file the app cannot rebuild. A slot the daemon does not
+// list right now is not a change the person made: pruning is for display only and is never written back by the
+// app; an empty (or failed) list is not trusted at all.
+
 /**
  * Panel ids the daemon does not know, given what it answered. An empty list is never trusted: a daemon that
  * just came back (or a `list` that failed upstream) must not make the app drop every panel it is showing.
@@ -51,26 +241,36 @@ export function orphanedPanels(panelIds: Iterable<string>, known: Set<string>): 
 }
 
 export interface RestorePlan {
-  /** What to show; null when there is nothing restorable. */
-  layout: SerializedDockview | null
+  /** What to show (v2, a v1 file migrated); null when there is nothing restorable. */
+  layout: LayoutV2 | null
+  /** The file was v1 (the caller keeps a layout.v1.bak copy; the file itself is not rewritten for it). */
+  migrated: boolean
   /** Panels left out of the display because the daemon does not know their slot. Never a reason to save. */
   orphaned: string[]
 }
 
 /**
- * Decides what the saved layout becomes on screen. Pruning is for display only: a slot the daemon does not
- * list right now is not a change the person made, so nothing here is ever written back. With no known slots
- * at all the layout is shown untouched (each panel renders as "slot desconhecido" until the daemon knows it).
+ * Decides what the saved layout (v1 or v2) becomes on screen. Every pane known: the layout as read (the same
+ * object). Some unknown: pruned desk by desk and frame by frame (pruneLayoutV2) for display, the input left
+ * untouched. No known slot at all: shown untouched (each pane says "slot desconhecido" until the daemon knows it).
  */
 export function planRestore(saved: unknown, known: Set<string>): RestorePlan {
-  if (!isSerializedLayout(saved)) return { layout: null, orphaned: [] }
-  const orphaned = orphanedPanels(panelIdsOf(saved), known)
-  if (orphaned.length === 0) return { layout: saved, orphaned }
-  return { layout: pruneLayout(saved, known), orphaned }
+  const read = migrateLayout(saved)
+  if (!read) return { layout: null, migrated: false, orphaned: [] }
+  const orphaned = orphanedPanels(allPanelIds(read.layout), known)
+  if (orphaned.length === 0) return { layout: read.layout, migrated: read.migrated, orphaned }
+  return { layout: pruneLayoutV2(read.layout, known).layout, migrated: read.migrated, orphaned }
 }
 
-export function isSerializedLayout(x: unknown): x is SerializedDockview {
-  if (typeof x !== 'object' || x === null) return false
-  const l = x as Partial<SerializedDockview>
-  return typeof l.grid === 'object' && l.grid !== null && typeof l.grid.root === 'object' && typeof l.panels === 'object' && l.panels !== null
+/**
+ * Layout-change reasons that come from the app, not the person: a pane's parameters (the loading hint kept in
+ * step with the slot) and its title (the agent's session title). Alone they never schedule a save; they are
+ * written along with the next change the person makes. No reasons (the desk's own frame removal) = a change.
+ */
+const APP_REASONS: ReadonlySet<string> = new Set(['panelParameters', 'panelTitle'])
+
+export function isPersonChange(reasons: ReadonlySet<string> | undefined): boolean {
+  if (!reasons || reasons.size === 0) return true
+  for (const r of reasons) if (!APP_REASONS.has(r)) return true
+  return false
 }

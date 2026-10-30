@@ -6,12 +6,13 @@
 //                 styles exist only as a string injected by its UMD bundle, so they are extracted from it.
 //   dialog.js     browser bundle (ESM) of the standalone dialog window (shown before the main window exists)
 //   tether.ico/icns/png the app icon (window, taskbar, Start Menu shortcut, Tether.app bundle), drawn by app/icon.mjs
+//   tray.png, tray-active.png  the tray icon: the app icon at 32 px, and with a green dot while an agent runs
 // The Phosphor icons (@phosphor-icons/core) are inlined as strings: only the ones app/renderer/icons.ts imports.
 import { build } from 'esbuild'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { writeIcons } from './icon.mjs'
+import { writeIcons, writeTrayIcons } from './icon.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const out = join(here, 'dist')
@@ -31,6 +32,7 @@ function extractDockviewCss() {
 
 extractDockviewCss()
 writeIcons(out)
+writeTrayIcons(out)
 await Promise.all([
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),

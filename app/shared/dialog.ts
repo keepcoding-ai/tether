@@ -1,3 +1,5 @@
+import type { SlotState } from '../../src/daemon/protocol.ts'
+
 // The in-app dialog: one component, one fixed structure (situation → context → choices with consequences).
 // Every situation the app puts to the user is a DialogSpec (app/renderer/situations.ts); nothing goes
 // through the OS message box. Shared by the renderer (renders it), the main process (names the situation
@@ -28,6 +30,19 @@ export interface DialogContext {
   status?: { label: string; tone: 'ok' | 'warn' | 'dim' | 'err' }
 }
 
+/** One entry of a dialog's option list (a profile to switch to, say). */
+export interface DialogOption {
+  id: string
+  icon: string
+  label: string
+  /** Secondary line in monospace (the args). */
+  detail?: string
+  /** A short amber mark next to the label ("sem restrições"). */
+  mark?: string
+  /** What the panel has now: tagged "atual"; choosing it changes nothing, so the cards are disabled on it. */
+  current?: boolean
+}
+
 export interface DialogSpec {
   /** Situation id: the key of a remembered answer and the test selector (`[data-dialog=…]`). */
   situation: string
@@ -37,6 +52,11 @@ export interface DialogSpec {
   /** One or two sentences stating the situation (optional when the title and context say it all). */
   message?: string
   context?: DialogContext
+  /**
+   * A list to pick from before choosing (radio). `{option}` in a choice's consequence is replaced by the
+   * picked option's label; the answer carries the picked id as `option`.
+   */
+  options?: { label: string; items: DialogOption[]; selected: string }
   /** Ordered by tone by the component; exactly one may be `default`. */
   choices: DialogChoice[]
   /** The choice Enter takes (must be safe or neutral); the first safe choice when omitted. */
@@ -54,12 +74,15 @@ export interface DialogAnswer {
   choice: string
   /** The remember box was ticked (only possible with `spec.remember`). */
   remember: boolean
+  /** The picked option id (only with `spec.options`). */
+  option?: string
 }
 
 /** Remembered answers per situation, in settings.json (`confirmations`). */
 export type Confirmations = Record<string, string>
 
 /** Situations the main process asks the renderer to put to the user. */
-export type MainSituation = 'quit-all' | 'reload-all'
+export type MainSituation = 'quit-all' | 'reload-all' | 'restart-daemon' | 'tray-first-close'
 
-export interface AskRequest { askId: number; situation: MainSituation }
+/** `slots`: the daemon's slots as main sees them, so the dialog does not depend on the renderer having restored yet (the window may have just been recreated from the tray). */
+export interface AskRequest { askId: number; situation: MainSituation; slots?: SlotState[] }

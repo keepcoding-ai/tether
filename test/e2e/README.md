@@ -39,8 +39,12 @@ harness; `TETHER_CLAUDE_ARGS=--model haiku` pins the model. `app.dialogs.test.ts
 (no OS message box): close panel (live/idle, Claude-like/shell copy, Esc/Enter/arrows, "encerrar" stops the
 slot), "não perguntar de novo" in settings.json and its menu restore, "sair e encerrar tudo", and the
 "ainda está fechando" window on a stuck single-instance lock (retry brings the app up); screenshots in both
-themes land in `artifacts/`. `cli.attach.test.ts` runs `tether attach` inside a node-pty against a shell slot
-(keys, resize, Ctrl+] detach).
+themes land in `artifacts/`. `app.profiles.test.ts` proves the launch profiles in the UI (Novo painel by profile,
+the unsafe badge, the manager). `app.switch-profile.test.ts` proves "Trocar perfil…" on an existing panel: a Claude
+panel created without a profile answers a seed word, gets "Claude modo dev" with "Trocar e reiniciar agora" (a new
+claude process with `--dangerously-skip-permissions` AND `--resume <the same session id>`, recalls the word) and then
+"Claude" with "Trocar na próxima abertura" (meta only, same pid). `cli.attach.test.ts` runs `tether attach` inside a
+node-pty against a shell slot (keys, resize, Ctrl+] detach).
 
 Run: `npm run test:e2e` (one file at a time; never two agents in parallel). `E2E_LOG_DIR=<dir>` keeps a JSONL
 log per session: raw PTY chunks (replayable through `Screen`) plus a `mark` line with the full screen at every

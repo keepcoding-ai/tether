@@ -1,21 +1,27 @@
 // Electron main process: one window, one connection to tetherd (spawned detached when nothing answers on
 // the pipe), a narrow IPC surface for the renderer (see app/shared/api.ts). Layout and recent folders live
-// under TETHER_HOME. Closing the window only disconnects: the daemon keeps every slot running.
+// under TETHER_HOME. Closing the window hides the app to the system tray (the window is destroyed, so the
+// renderer's memory is freed; the process stays, still connected to the daemon, to feed the tray). The daemon
+// keeps every slot running whatever the app does.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '../../src/daemon/client.ts'
 import { pipePath, PROTOCOL_VERSION } from '../../src/daemon/protocol.ts'
-import type { Notice, Reply } from '../../src/daemon/protocol.ts'
+import type { Notice, Reply, SlotState } from '../../src/daemon/protocol.ts'
 import { canonicalDir, tetherHome } from '../../src/core/paths.ts'
 import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles } from '../../src/core/profile.ts'
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
-import { FONT_SIZE_LABEL, normalizeFontSize, type FontSizeCommand } from '../shared/font.ts'
+import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
+import { trayModel } from '../shared/tray.ts'
+import type { TrayCommand } from '../shared/tray.ts'
+import { createTray, type TrayController } from './tray.ts'
+import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 
@@ -46,6 +52,13 @@ let win: BrowserWindow | undefined
 let quittingAll = false
 /** Set when the daemon connection was lost: the next connection reloads the renderer so every panel restarts its slot. */
 let reloadOnReconnect = false
+/** The app is going away for real (menu, tray, OS): closing the window must not be turned into "hide". */
+let quitting = false
+/** The daemon is being restarted from the tray: its connection closing is expected, not a crash. */
+let restartingDaemon = false
+let tray: TrayController | undefined
+/** What the tray shows: the daemon's slots, kept up to date from the list at connect time and the state events. */
+const slotStates = new Map<string, SlotState>()
 
 function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
@@ -127,20 +140,27 @@ function connectDaemon(): Promise<void> {
     try {
       const client = await connectOnce()
       daemon = client
-      client.on('state', slot => win?.webContents.send('tether:event', { t: 'state', slot }))
+      client.on('state', slot => { slotStates.set(slot.slotId, slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
-      client.on('removed', slotId => win?.webContents.send('tether:event', { t: 'removed', slotId }))
+      client.on('removed', slotId => { slotStates.delete(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('close', () => {
         if (daemon !== client) return
         daemon = undefined
-        if (quittingAll) return
+        slotStates.clear()
+        updateTray()
+        if (quittingAll || quitting) return
+        // "Reiniciar serviço" (tray) brings its panels back through the renderer's reconnect path; any other
+        // loss (a crash, "Recarregar…", `tether daemon restart`) reloads the page on the next connection.
+        if (restartingDaemon) return
         reloadOnReconnect = true
         sendConnection({ connected: false, pipe, error: 'conexão com o tetherd fechada' })
-        // The daemon died (or was shut down): bring one back and let the renderer restart its panels.
-        if (win) setTimeout(() => { void connectDaemon() }, 500)
+        // The daemon died (or was shut down): bring one back (the tray keeps the app alive with no window)
+        // and let the renderer restart its panels.
+        setTimeout(() => { void connectDaemon() }, 500)
       })
       sendConnection(connectionState())
+      void syncSlots(client)
       // A restarted daemon has no agents running: a fresh page restores the layout and resumes each slot's session.
       if (reloadOnReconnect) { reloadOnReconnect = false; win?.webContents.reloadIgnoringCache() }
     } catch (err) {
@@ -151,6 +171,17 @@ function connectDaemon(): Promise<void> {
   })()
   return connecting
 }
+
+/** Loads the slot list for the tray (the renderer asks for its own copy). */
+async function syncSlots(client: DaemonClient): Promise<void> {
+  const list = await request({ t: 'list' })
+  if (daemon !== client || list.t !== 'ok') return
+  slotStates.clear()
+  for (const s of list.slots ?? []) slotStates.set(s.slotId, s)
+  updateTray()
+}
+
+function updateTray(): void { tray?.update(slotStates.values()) }
 
 async function request(body: RequestBody): Promise<Reply> {
   if (!daemon) return { t: 'error', id: -1, code: 'bad-request', message: 'sem conexão com o tetherd' }
@@ -175,7 +206,7 @@ function ask(situation: MainSituation): Promise<DialogAnswer> {
   const askId = ++askSeq
   return new Promise(resolve => {
     pendingAsks.set(askId, resolve)
-    const req: AskRequest = { askId, situation }
+    const req: AskRequest = { askId, situation, slots: [...slotStates.values()] }
     win?.webContents.send('tether:ask', req)
   })
 }
@@ -184,6 +215,11 @@ ipcMain.on('dialog:answer', (_e, askId: number, answer: DialogAnswer) => {
   pendingAsks.delete(askId)
 })
 ipcMain.on('window:close', () => win?.close())
+/** The in-app menu (the native menu bar is hidden and Alt does not reach it from a terminal). */
+ipcMain.on('tether:command', (_e, cmd: unknown) => {
+  if (cmd === 'quit-all') void quitAll()
+  else if (cmd === 'restore-confirmations') restoreConfirmations()
+})
 
 /**
  * "Recarregar": the daemon restarts with the code on disk; the app reconnects (close handler) and reloads the
@@ -199,18 +235,24 @@ async function reloadAll(): Promise<void> {
 
 /** "Reiniciar o app": a fresh main process (new main.cjs); the daemon and its agents are left alone. */
 function relaunchApp(): void {
-  quittingAll = true // no reconnect attempt while going down
+  // Going down for real: no reconnect attempt, and closing the window must not turn into "hide to the tray".
+  quittingAll = true
+  quitting = true
+  tray?.destroy() // app.exit skips before-quit, where the tray is normally removed
+  tray = undefined
   app.relaunch()
   app.exit(0)
 }
 
 /** "Sair e encerrar tudo": stops every slot, shuts the daemon down and quits (after the in-app dialog). */
 async function quitAll(): Promise<void> {
+  await openWindow() // from the tray there may be no window to ask in
   if (!win) return
   const { choice } = await ask('quit-all')
   if (choice === 'close-window') { win?.close(); return }
   if (choice !== 'quit') return
   quittingAll = true
+  quitting = true
   if (daemon) {
     const list = await request({ t: 'list' })
     if (list.t === 'ok') for (const s of list.slots ?? []) await request({ t: 'stop', slotId: s.slotId })
@@ -223,9 +265,27 @@ async function quitAll(): Promise<void> {
 
 // ---------- theme ----------
 
-/** User settings (theme, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
+/** User settings (theme, terminal appearance, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
 const settingsPath = join(home, 'settings.json')
-type Settings = { theme?: unknown; confirmations?: unknown; fontSize?: unknown }
+type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown }
+
+// ---------- terminal appearance ----------
+// The renderer owns the dialog and applies the change to every xterm; main keeps the file and echoes the
+// normalized value so every window (and a relaunch) paints the same thing.
+
+function readTerminalAppearance(): TerminalAppearance {
+  return normalizeAppearance(readJson<Settings>(settingsPath, {}).terminal)
+}
+
+function setTerminalAppearance(value: unknown): void {
+  const appearance = normalizeAppearance(value)
+  const settings = readJson<Settings>(settingsPath, {})
+  writeJson(settingsPath, { ...settings, terminal: appearance })
+  win?.webContents.send('tether:terminal', appearance)
+}
+
+ipcMain.handle('terminal:get', (): TerminalAppearance => readTerminalAppearance())
+ipcMain.on('terminal:set', (_e, value: unknown) => setTerminalAppearance(value))
 
 /** Remembered answers per situation ("não perguntar de novo"); anything malformed reads as none. */
 function readConfirmations(): Confirmations {
@@ -285,12 +345,7 @@ ipcMain.on('theme:set', (_e, setting: unknown) => setTheme(normalizeTheme(settin
 
 // ---------- font size ----------
 
-/** The renderer owns the terminals: it steps the size (keyboard or menu) and stores the result here. */
-ipcMain.handle('font-size:get', (): number => normalizeFontSize(readJson<Settings>(settingsPath, {}).fontSize))
-ipcMain.on('font-size:set', (_e, size: unknown) => {
-  const settings = readJson<Settings>(settingsPath, {})
-  writeJson(settingsPath, { ...settings, fontSize: normalizeFontSize(size) })
-})
+/** The size itself is appearance.fontSize ("Tema do terminal"): the renderer steps it and saves it through terminal:set. */
 
 /** Menu items without accelerators: the shortcuts (Cmd+=/-/0, Ctrl+Shift+=/-/0) are handled by the renderer itself. */
 function fontSizeMenu(): Electron.MenuItemConstructorOptions[] {
@@ -318,6 +373,9 @@ function themeMenu(): Electron.MenuItemConstructorOptions {
 
 // ---------- window ----------
 
+/** Resolves once the current window's page has loaded (its script has registered the IPC listeners). */
+let windowLoaded: Promise<void> = Promise.resolve()
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1400,
@@ -338,9 +396,157 @@ function createWindow(): void {
     },
   })
   if (hidden) win.webContents.setFrameRate(30)
-  win.on('closed', () => { win = undefined })
-  void win.loadFile(join(__dirname, '..', 'renderer', 'index.html'))
+  const created = win
+  created.on('close', e => {
+    if (quitting || !tray) return
+    e.preventDefault()
+    void hideToTray()
+  })
+  created.on('closed', () => {
+    if (win === created) win = undefined
+    // Nobody will answer the dialogs asked of a window that is gone.
+    for (const resolve of pendingAsks.values()) resolve({ choice: 'cancel', remember: false })
+    pendingAsks.clear()
+  })
+  windowLoaded = new Promise(resolve => {
+    created.webContents.once('did-finish-load', () => {
+      // A window recreated from the tray finds the daemon already connected: it only needs to be told.
+      if (daemon) sendConnection(connectionState())
+      else void connectDaemon()
+      resolve()
+    })
+  })
+  void created.loadFile(join(__dirname, '..', 'renderer', 'index.html'))
 }
+
+// ---------- tray ----------
+
+/** Bumped by every open: a hide waiting to destroy the window gives up when the user opened it again meanwhile. */
+let openEpoch = 0
+let hiding = false
+/** Longest renderer debounce (layout save) plus the IPC hop: the window is destroyed only after it. */
+const LAYOUT_FLUSH_MS = 500
+
+/**
+ * Closing the window = hiding the app to the tray. The BrowserWindow is destroyed (not just hidden) so the
+ * renderer's memory (xterm buffers, WebGL contexts) is freed; opening creates a new one, which restores from
+ * layout.json and re-attaches to the daemon exactly like a fresh launch. The first time, an in-app notice says
+ * where the app went.
+ */
+async function hideToTray(): Promise<void> {
+  if (hiding || !win) return
+  hiding = true
+  try {
+    const settings = readJson<Settings>(settingsPath, {})
+    if (settings.trayNoticeShown !== true) {
+      writeJson(settingsPath, { ...settings, trayNoticeShown: true })
+      await ask('tray-first-close')
+    }
+    const closing = win
+    if (!closing || closing.isDestroyed()) return
+    const epoch = ++openEpoch
+    closing.hide()
+    // The renderer saves the layout 300 ms after the last change; destroying now would lose it.
+    await sleep(LAYOUT_FLUSH_MS)
+    if (epoch !== openEpoch || closing.isDestroyed()) return
+    // Stop the daemon streaming terminal output to a renderer that is gone (a new window attaches again).
+    for (const slotId of slotStates.keys()) void request({ t: 'detach', slotId })
+    closing.destroy()
+  } finally {
+    hiding = false
+  }
+}
+
+/** Shows the window, creating it when the app is in the tray; `focusSlot` asks the renderer to focus that pane. */
+async function openWindow(focusSlot?: string): Promise<void> {
+  openEpoch++
+  if (!win) createWindow()
+  else showWindow()
+  await windowLoaded
+  if (focusSlot) win?.webContents.send('tether:focus-slot', focusSlot)
+}
+
+function showWindow(): void {
+  if (!win || hidden) return // E2E windows are offscreen: they exist, they are never put on the user's screen
+  if (win.isMinimized()) win.restore()
+  win.show()
+  app.focus({ steal: true }) // Windows refuses plain focus from a process that is not in front
+  win.focus()
+}
+
+/** Tray left click. */
+function toggleWindow(): void {
+  if (win && (hidden || win.isVisible()) && !win.isMinimized()) void hideToTray()
+  else void openWindow()
+}
+
+/** "Reiniciar serviço": graceful `shutdown` through the pipe, then a new tetherd; panels come back through the renderer's reconnect path. */
+async function restartDaemon(): Promise<void> {
+  if (restartingDaemon) return
+  await openWindow()
+  const { choice } = await ask('restart-daemon')
+  if (choice !== 'restart') return
+  restartingDaemon = true
+  try {
+    const old = daemon
+    if (old) {
+      await request({ t: 'shutdown' })
+      daemon = undefined
+      old.close()
+    }
+    slotStates.clear()
+    updateTray()
+    sendConnection({ connected: false, pipe, error: 'reiniciando o tetherd…' })
+    // The old daemon answers until its server is closed: wait for the pipe to go quiet before spawning.
+    const deadline = Date.now() + DAEMON_START_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      try { (await DaemonClient.open(pipe, 'app')).close() } catch { break }
+      await sleep(200)
+    }
+    await connectDaemon()
+  } finally {
+    restartingDaemon = false
+  }
+}
+
+/** "Sair (manter agentes)": only the app goes; tetherd and every slot keep running. */
+function quitKeepingAgents(): void {
+  quitting = true
+  daemon?.close()
+  daemon = undefined
+  app.quit()
+}
+
+function trayCommand(id: TrayCommand): void {
+  switch (id) {
+    case 'open': void openWindow(); break
+    case 'restart-daemon': void restartDaemon(); break
+    case 'quit-keep': quitKeepingAgents(); break
+    case 'quit-all': void quitAll(); break
+  }
+}
+
+function setupTray(): void {
+  try {
+    tray = createTray(__dirname, { toggle: toggleWindow, command: trayCommand, pane: slotId => { void openWindow(slotId) } })
+    updateTray()
+  } catch (err) {
+    tray = undefined // no tray: closing the window quits the app, as before
+    console.error(`tether: sem ícone de bandeja (${err instanceof Error ? err.message : String(err)})`)
+  }
+}
+
+/** E2E hooks (the menu itself is native and cannot be clicked by Playwright): the same functions the menu items call. */
+Object.defineProperty(globalThis, '__tetherTray', {
+  value: {
+    windowOpen: () => !!win && !win.isDestroyed(),
+    model: () => (tray ? tray.model() : trayModel([])),
+    hasTray: () => !!tray,
+    open: (slotId?: string) => openWindow(slotId),
+    toggle: () => toggleWindow(),
+    command: (id: TrayCommand) => trayCommand(id),
+  },
+})
 
 function createMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -357,6 +563,8 @@ function createMenu(): void {
         themeMenu(),
         ...fontSizeMenu(),
         { type: 'separator' },
+        { id: 'terminal-theme', label: 'Tema do terminal…', click: () => win?.webContents.send('tether:open-terminal-theme') },
+        { id: 'profiles', label: 'Perfis de lançamento…', click: () => win?.webContents.send('tether:open-profiles') },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },
         // No accelerator on purpose: it ends every agent, and a key chord next to "reload page" invites accidents.
@@ -378,8 +586,12 @@ ipcMain.on('tether:notice', (_e, notice: Notice) => daemon?.input(notice.slotId,
 ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 
+// layout.json keeps its previous content in layout.json.bak on every save and falls back to it (layout-file.ts).
 ipcMain.handle('layout:load', () => loadLayoutFile(layoutPath))
 ipcMain.handle('layout:save', (_e, layout: unknown) => { saveLayoutFile(layoutPath, layout) })
+// The renderer asks for this when it reads a v1 file: layout.json.bak rotates on every save, layout.v1.bak keeps the
+// last v1 content for good (a copy: layout.json itself is not touched until the person changes something).
+ipcMain.handle('layout:backup', () => { if (existsSync(layoutPath)) copyFileSync(layoutPath, join(home, 'layout.v1.bak')) })
 
 /** Recent folders in canonical form, deduped case-insensitively (entries saved before the fix may differ only in casing). */
 function recentFolders(): string[] {
@@ -501,11 +713,8 @@ async function acquireSingleInstance(): Promise<'acquired' | 'focused-other' | '
 
 function bringToFront(): void {
   writeJson(ackPath, { at: Date.now(), pid: process.pid })
-  if (!win || hidden) return
-  if (win.isMinimized()) win.restore()
-  win.show()
-  app.focus({ steal: true }) // Windows refuses plain focus from a process that is not in front
-  win.focus()
+  if (!app.isReady()) return
+  void openWindow() // creates the window when the app is hidden in the tray
 }
 
 // ---------- standalone dialog window ----------
@@ -592,14 +801,18 @@ async function start(): Promise<void> {
   if (process.platform === 'darwin') app.dock?.setIcon(join(__dirname, 'tether.png'))
   createMenu()
   createWindow()
+  setupTray()
   closeStandalone?.() // only now: with the main window up, closing it does not quit the app
-  win?.webContents.once('did-finish-load', () => { void connectDaemon() })
 }
 
 void start()
 
-// Closing the window never stops a slot: only the connection goes; the daemon keeps the PTYs.
+app.on('before-quit', () => { quitting = true; tray?.destroy(); tray = undefined })
+
+// With the tray the app outlives its window (the daemon keeps the PTYs either way); without one, closing the
+// window ends the app as it always did.
 app.on('window-all-closed', () => {
+  if (tray) return
   daemon?.close()
   daemon = undefined
   app.quit()

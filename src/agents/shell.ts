@@ -3,6 +3,7 @@
 // "--login", "-i"]); otherwise pwsh.exe if on PATH, else powershell.exe (Windows), else $SHELL or /bin/sh (macOS: $SHELL or /bin/zsh, as a login shell).
 import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
+import { withColorSupport } from './termenv.ts'
 import type { SlotMeta } from '../core/event.ts'
 import { canonicalDir } from '../core/paths.ts'
 import type { ProfileLaunch } from '../core/profile.ts'
@@ -61,7 +62,7 @@ function envWithoutUndefined(source: NodeJS.ProcessEnv): Record<string, string> 
 export function plan(input: ShellPlanInput): LaunchPlan {
   const { slot, profile } = input
   const shell = shellFromArgs(slot.args) ?? (profile ? shellFromArgs(profile.args) : undefined) ?? defaultShell()
-  const env = envWithoutUndefined(process.env)
+  const env = withColorSupport(envWithoutUndefined(process.env))
   Object.assign(env, profile?.env ?? {})
   return {
     command: shell.command,

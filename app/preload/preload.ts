@@ -5,6 +5,7 @@ import type { Event as DaemonEvent, Notice } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, TetherApi } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import type { FontSizeCommand } from '../shared/font.ts'
+import type { TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ThemeState } from '../shared/theme.ts'
 
 function on<T>(channel: string, listener: (value: T) => void): () => void {
@@ -21,21 +22,26 @@ const api: TetherApi = {
   reconnect: () => ipcRenderer.send('tether:reconnect'),
   loadLayout: () => ipcRenderer.invoke('layout:load'),
   saveLayout: layout => ipcRenderer.invoke('layout:save', layout),
+  backupLayout: () => ipcRenderer.invoke('layout:backup'),
   recentFolders: () => ipcRenderer.invoke('recent:list'),
   rememberFolder: folder => ipcRenderer.invoke('recent:remember', folder),
   pickFolder: initial => ipcRenderer.invoke('folder:pick', initial),
   listProfiles: () => ipcRenderer.invoke('profiles:list'),
   saveProfile: profile => ipcRenderer.invoke('profiles:save', profile),
   deleteProfile: profileId => ipcRenderer.invoke('profiles:delete', profileId),
+  onOpenProfiles: listener => on<void>('tether:open-profiles', () => listener()),
+  command: cmd => ipcRenderer.send('tether:command', cmd),
   openExternal: url => ipcRenderer.send('shell:open-external', url),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   writeClipboard: text => ipcRenderer.send('clipboard:write', text),
   getTheme: () => ipcRenderer.invoke('theme:get'),
   setTheme: setting => ipcRenderer.send('theme:set', setting),
   onTheme: listener => on<ThemeState>('tether:theme', listener),
-  getFontSize: () => ipcRenderer.invoke('font-size:get'),
-  setFontSize: size => ipcRenderer.send('font-size:set', size),
   onFontSizeCommand: listener => on<FontSizeCommand>('tether:font-size', listener),
+  getTerminalAppearance: () => ipcRenderer.invoke('terminal:get'),
+  setTerminalAppearance: appearance => ipcRenderer.send('terminal:set', appearance),
+  onTerminalAppearance: listener => on<TerminalAppearance>('tether:terminal', listener),
+  onOpenTerminalTheme: listener => on<void>('tether:open-terminal-theme', () => listener()),
   getConfirmations: () => ipcRenderer.invoke('confirmations:get'),
   rememberConfirmation: (situation, choice) => ipcRenderer.send('confirmations:remember', situation, choice),
   onConfirmations: listener => on<Confirmations>('tether:confirmations', listener),
@@ -44,6 +50,7 @@ const api: TetherApi = {
   standaloneDialog: () => ipcRenderer.invoke('dialog:standalone'),
   answerStandalone: answer => ipcRenderer.send('dialog:standalone-answer', answer),
   standaloneSize: height => ipcRenderer.send('dialog:standalone-size', height),
+  onFocusSlot: listener => on<string>('tether:focus-slot', listener),
   closeWindow: () => ipcRenderer.send('window:close'),
 }
 

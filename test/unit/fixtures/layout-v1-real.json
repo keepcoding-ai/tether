@@ -1,0 +1,122 @@
+{
+  "grid": {
+    "root": {
+      "type": "branch",
+      "data": [
+        {
+          "type": "branch",
+          "data": [
+            {
+              "type": "leaf",
+              "data": {
+                "views": [
+                  "54579de9",
+                  "56a733cc",
+                  "572e852a",
+                  "93dedba9",
+                  "0612e9f0",
+                  "7c2edcb6"
+                ],
+                "activeView": "56a733cc",
+                "id": "1"
+              },
+              "size": 1191
+            },
+            {
+              "type": "leaf",
+              "data": {
+                "views": [
+                  "4e5f0056",
+                  "044633e1"
+                ],
+                "activeView": "4e5f0056",
+                "id": "3"
+              },
+              "size": 297
+            }
+          ],
+          "size": 806
+        }
+      ],
+      "size": 1488
+    },
+    "width": 1488,
+    "height": 806,
+    "orientation": "VERTICAL"
+  },
+  "panels": {
+    "54579de9": {
+      "id": "54579de9",
+      "contentComponent": "terminal",
+      "tabComponent": "slot-tab",
+      "params": {
+        "slotId": "54579de9"
+      },
+      "title": "session:soul-awareness"
+    },
+    "56a733cc": {
+      "id": "56a733cc",
+      "contentComponent": "terminal",
+      "tabComponent": "slot-tab",
+      "params": {
+        "slotId": "56a733cc"
+      },
+      "title": "session:architect"
+    },
+    "572e852a": {
+      "id": "572e852a",
+      "contentComponent": "terminal",
+      "tabComponent": "slot-tab",
+      "params": {
+        "slotId": "572e852a"
+      },
+      "title": "session:selecao-de-house"
+    },
+    "93dedba9": {
+      "id": "93dedba9",
+      "contentComponent": "terminal",
+      "tabComponent": "slot-tab",
+      "params": {
+        "slotId": "93dedba9"
+      },
+      "title": "session:stations"
+    },
+    "0612e9f0": {
+      "id": "0612e9f0",
+      "contentComponent": "terminal",
+      "tabComponent": "slot-tab",
+      "params": {
+        "slotId": "0612e9f0"
+      },
+      "title": "session:commons-matriz-e-provider"
+    },
+    "7c2edcb6": {
+      "id": "7c2edcb6",
+      "contentComponent": "terminal",
+      "tabComponent": "slot-tab",
+      "params": {
+        "slotId": "7c2edcb6"
+      },
+      "title": "atrium"
+    },
+    "4e5f0056": {
+      "id": "4e5f0056",
+      "contentComponent": "terminal",
+      "tabComponent": "slot-tab",
+      "params": {
+        "slotId": "4e5f0056"
+      },
+      "title": "atrium"
+    },
+    "044633e1": {
+      "id": "044633e1",
+      "contentComponent": "terminal",
+      "tabComponent": "slot-tab",
+      "params": {
+        "slotId": "044633e1"
+      },
+      "title": "session:atrium-browser"
+    }
+  },
+  "activeGroup": "1"
+}

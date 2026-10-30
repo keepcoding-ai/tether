@@ -24,6 +24,7 @@ type Hooks = {
   panelIds(): string[]
   activeId(): string | undefined
   layout(): unknown
+  frameLayout(frameId?: string): unknown
   slots(): SlotState[]
   text(id: string): string
   connection(): { connected: boolean; pid?: number } | undefined
@@ -84,7 +85,8 @@ async function createPanel(page: Page, kind: 'claude' | 'soul' | 'shell', cwd: s
   const before = await page.locator('.tether-tab').count()
   await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check(`input[name=kind][value=${kind}]`)
+  // The dialog picks a profile, not a type: each kind's default profile on this machine (src/core/profile.ts defaults).
+  await page.check(`input[name=profile][value=${{ claude: 'claude', soul: 'soul', shell: 'powershell' }[kind]}]`)
   await page.fill('#new-cwd', cwd)
   if (shot) await page.screenshot({ path: join(artifacts, shot) })
   await page.click('#btn-create')
@@ -93,7 +95,8 @@ async function createPanel(page: Page, kind: 'claude' | 'soul' | 'shell', cwd: s
 
 const hooks = {
   ids: (page: Page) => page.evaluate(() => window.__tether.panelIds()),
-  layout: (page: Page) => page.evaluate(() => window.__tether.layout() as unknown as Layout),
+  /** The dockview JSON of the active frame (the only one in this test): v1-shaped, so the arrangement reads as before phase B. */
+  layout: (page: Page) => page.evaluate(() => window.__tether.frameLayout() as unknown as Layout),
   text: (page: Page, id: string) => page.evaluate(id => window.__tether.text(id), id),
   slots: (page: Page) => page.evaluate(() => window.__tether.slots()),
   daemonPid: async (page: Page) => (await page.evaluate(() => window.__tether.connection()))?.pid,

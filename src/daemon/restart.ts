@@ -4,6 +4,10 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { ENV_SLOT } from '../agents/types.ts'
 import { DaemonClient, pingDaemon, type Hello, type SpawnOptions } from './client.ts'
+import { KILL_WAIT_CAP_MS } from './protocol.ts'
+
+/** The old daemon may wait up to KILL_WAIT_CAP_MS for a young Claude before killing it, then stop the rest. */
+const STOP_TIMEOUT_MS = KILL_WAIT_CAP_MS + 15_000
 
 export interface RestartResult {
   /** The daemon that was replaced (undefined: none was running, a new one was just started). */
@@ -13,7 +17,7 @@ export interface RestartResult {
 }
 
 export interface RestartOptions extends SpawnOptions {
-  /** Max wait for the old daemon to go down (ms). It stops every agent first. Default 30 000. */
+  /** Max wait for the old daemon to go down (ms). It stops every agent first (a young Claude is waited for). Default STOP_TIMEOUT_MS (45 000). */
   stopTimeoutMs?: number
   /** Max wait for the new daemon to answer (ms). Default 15 000. */
   startTimeoutMs?: number
@@ -24,9 +28,10 @@ export async function restartDaemon(opts: RestartOptions): Promise<RestartResult
   if (previous) {
     const client = await DaemonClient.open(opts.pipe, 'cli')
     try { await client.request({ t: 'shutdown' }) } finally { client.close() }
-    const deadline = Date.now() + (opts.stopTimeoutMs ?? 30_000)
+    const stopTimeoutMs = opts.stopTimeoutMs ?? STOP_TIMEOUT_MS
+    const deadline = Date.now() + stopTimeoutMs
     while (await pingDaemon(opts.pipe)) {
-      if (Date.now() > deadline) throw new Error(`o tetherd (pid ${previous.pid}) não encerrou em ${(opts.stopTimeoutMs ?? 30_000) / 1000} s`)
+      if (Date.now() > deadline) throw new Error(`o tetherd (pid ${previous.pid}) não encerrou em ${stopTimeoutMs / 1000} s`)
       await sleep(150)
     }
   }

@@ -1,9 +1,11 @@
-// Terminal font size shared by the main process (settings.json, menu) and the renderer (every xterm).
-// One size for all panels; the keyboard steps it by 1 px between the bounds, "default" puts it back.
+// Stepping the terminal font size from the keyboard and the menu (Cmd +/-/0 on macOS, Ctrl+Shift +/-/0 elsewhere).
+// The size itself is the terminal appearance's fontSize ("Tema do terminal", settings.json `terminal`): same
+// default and bounds, one size for all panels; a step is 1 px, "default" puts the appearance's default back.
+import { DEFAULT_APPEARANCE, FONT_SIZE_RANGE } from './terminal-theme.ts'
 
-export const DEFAULT_FONT_SIZE = 13
-export const MIN_FONT_SIZE = 8
-export const MAX_FONT_SIZE = 32
+export const DEFAULT_FONT_SIZE = DEFAULT_APPEARANCE.fontSize
+export const MIN_FONT_SIZE = FONT_SIZE_RANGE.min
+export const MAX_FONT_SIZE = FONT_SIZE_RANGE.max
 export const FONT_SIZE_STEP = 1
 
 export type FontSizeCommand = 'increase' | 'decrease' | 'reset'
