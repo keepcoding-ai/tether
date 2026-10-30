@@ -82,7 +82,7 @@ export function defaultProfiles(env: NodeJS.ProcessEnv = process.env, platform: 
     { id: 'claude-dev', name: 'Claude modo dev', agent: 'claude', args: [UNSAFE_ARG] },
     { id: 'soul', name: 'soul', agent: 'soul', args: ['-g'], default: true },
   ]
-  const shell = defaultShell(env)
+  const shell = defaultShell(env, platform)
   if (platform === 'win32') {
     out.push({ id: 'powershell', name: 'PowerShell', agent: 'shell', args: [], shell, default: true })
     const bash = gitBashPath(env)
