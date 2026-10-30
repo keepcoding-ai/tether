@@ -156,3 +156,34 @@ export function writeIcons(outDir) {
   writeFileSync(join(outDir, 'tether.ico'), encodeIco(images))
   writeFileSync(join(outDir, 'tether.png'), encodePng(256, images.at(-1).rgba))
 }
+
+// ---------- tray ----------
+
+const TRAY_SIZE = 32
+const DOT = [0x3f, 0xcf, 0x6e] // green: an agent is running
+
+/** Paints an antialiased dot (centre/radius in the unit square) over straight-alpha RGBA pixels. */
+function overlayDot(rgba, size, cx, cy, r, color) {
+  for (let py = 0; py < size; py++) {
+    for (let pxx = 0; pxx < size; pxx++) {
+      const d = Math.hypot((pxx + 0.5) / size - cx, (py + 0.5) / size - cy)
+      const cover = Math.min(1, Math.max(0, (r - d) * size + 0.5))
+      if (cover <= 0) continue
+      const o = (py * size + pxx) * 4
+      const a0 = rgba[o + 3] / 255
+      const a = cover + a0 * (1 - cover)
+      for (let c = 0; c < 3; c++) rgba[o + c] = Math.round((color[c] * cover + rgba[o + c] * a0 * (1 - cover)) / a)
+      rgba[o + 3] = Math.round(a * 255)
+    }
+  }
+}
+
+/** Writes <outDir>/tray.png (the app icon, 32 px) and tray-active.png (the same with a green dot: an agent runs). */
+export function writeTrayIcons(outDir) {
+  const base = rasterize(TRAY_SIZE)
+  writeFileSync(join(outDir, 'tray.png'), encodePng(TRAY_SIZE, base))
+  const withDot = Uint8Array.from(base)
+  overlayDot(withDot, TRAY_SIZE, 0.74, 0.74, 0.27, BG) // dark ring so the dot reads on any panel colour
+  overlayDot(withDot, TRAY_SIZE, 0.74, 0.74, 0.2, DOT)
+  writeFileSync(join(outDir, 'tray-active.png'), encodePng(TRAY_SIZE, withDot))
+}
