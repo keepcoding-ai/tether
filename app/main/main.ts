@@ -3,7 +3,8 @@
 // under TETHER_HOME. Closing the window only disconnects: the daemon keeps every slot running.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '../../src/daemon/client.ts'
@@ -343,8 +344,8 @@ ipcMain.on('tether:notice', (_e, notice: Notice) => daemon?.input(notice.slotId,
 ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 
-ipcMain.handle('layout:load', () => readJson<unknown | null>(layoutPath, null))
-ipcMain.handle('layout:save', (_e, layout: unknown) => { writeJson(layoutPath, layout) })
+ipcMain.handle('layout:load', () => loadLayoutFile(layoutPath))
+ipcMain.handle('layout:save', (_e, layout: unknown) => { saveLayoutFile(layoutPath, layout) })
 
 /** Recent folders in canonical form, deduped case-insensitively (entries saved before the fix may differ only in casing). */
 function recentFolders(): string[] {

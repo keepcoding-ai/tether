@@ -9,7 +9,7 @@ import { DEFAULT_FONT_SIZE, normalizeFontSize, stepFontSize, type FontSizeComman
 import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
-import { pruneLayout } from './layout.ts'
+import { orphanedPanels, planRestore } from './layout.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { lineEditSequence } from './lineedit.ts'
 import { IS_MAC, isAppShortcut } from './shortcut.ts'
@@ -305,19 +305,24 @@ async function refreshSlots(): Promise<void> {
 }
 
 async function restoreLayout(): Promise<void> {
-  const saved = (await window.tether.loadLayout()) as SerializedDockview | null
-  if (saved && saved.grid && saved.panels) {
-    const pruned = pruneLayout(saved, new Set(slots.keys()))
-    if (pruned) {
-      try { api.fromJSON(pruned) } catch (err) { console.error('layout inválido, começando vazio', err); api.clear() }
-    }
+  const { layout, orphaned } = planRestore(await window.tether.loadLayout(), new Set(slots.keys()))
+  if (layout) {
+    try { api.fromJSON(layout) } catch (err) { console.error('layout inválido, começando vazio', err); api.clear() }
   }
+  // Only what the person does from here on is saved; a slot missing from the daemon's list is not a change of theirs.
+  if (orphaned.length) console.warn('painéis sem slot no tetherd, fora da tela até a próxima ação:', orphaned)
+  await discardPendingSave()
   layoutRestored = true
-  if (saved) {
-    const kept = Object.keys(saved.panels).filter(id => slots.has(id)).length
-    if (kept !== Object.keys(saved.panels).length) scheduleSave()
-  }
   refreshClosedMenu()
+}
+
+/**
+ * Drops the save scheduled by layout changes the app made on its own (restore, reconnection), not the person.
+ * dockview emits onDidLayoutChange from a microtask, so this waits a macrotask before clearing the timer.
+ */
+async function discardPendingSave(): Promise<void> {
+  await new Promise(r => setTimeout(r, 0))
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined }
 }
 
 // ---------- connection ----------
@@ -341,10 +346,13 @@ async function onConnection(state: ConnectionState): Promise<void> {
   if (!layoutRestored) {
     await restoreLayout()
   } else {
-    // Reconnected (the daemon was restarted): drop panels it no longer knows, re-attach the rest.
-    for (const panel of api.panels) {
-      if (!slots.has(panel.id)) api.removePanel(panel)
+    // Reconnected (the daemon was restarted): hide panels it no longer knows, re-attach the rest. An empty
+    // list is not trusted, and hiding is not a change the person made: the saved layout stays as it was.
+    for (const id of orphanedPanels(api.panels.map(p => p.id), new Set(slots.keys()))) {
+      const panel = api.getPanel(id)
+      if (panel) api.removePanel(panel)
     }
+    await discardPendingSave()
     for (const p of panels.values()) { p.render(); void p.reattach() }
     for (const t of tabs.values()) t.render()
     refreshClosedMenu()

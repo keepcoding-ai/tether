@@ -43,3 +43,48 @@ describe('pruneLayout', () => {
     assert.equal(pruneLayout(layout(branch([leaf('1', ['a'])]), ['a']), new Set()), null)
   })
 })
+
+// Restore policy: a slot the daemon does not list is hidden from the display, never written back; an empty
+// (or failed) list is not trusted and leaves the layout exactly as saved.
+import { orphanedPanels, planRestore } from '../../app/renderer/layout.ts'
+
+describe('planRestore', () => {
+  const two = () => layout(branch([leaf('1', ['a'], 700), leaf('2', ['b'], 700)], 800), ['a', 'b'])
+
+  test('daemon knows no slot at all: the saved layout is shown untouched, nothing is orphaned', () => {
+    const saved = two()
+    const plan = planRestore(saved, new Set())
+    assert.deepEqual(plan.layout, saved)
+    assert.deepEqual(plan.orphaned, [])
+  })
+
+  test('every panel known: the layout is the saved one (same object, no rewrite)', () => {
+    const saved = two()
+    const plan = planRestore(saved, new Set(['a', 'b']))
+    assert.equal(plan.layout, saved)
+    assert.deepEqual(plan.orphaned, [])
+  })
+
+  test('one slot missing: hidden from the display and reported, the saved object itself is not touched', () => {
+    const saved = two()
+    const before = JSON.stringify(saved)
+    const plan = planRestore(saved, new Set(['b']))
+    assert.deepEqual(Object.keys(plan.layout!.panels), ['b'])
+    assert.deepEqual(plan.orphaned, ['a'])
+    assert.equal(JSON.stringify(saved), before)
+  })
+
+  test('not a layout (null, garbage): nothing to show, nothing orphaned', () => {
+    assert.deepEqual(planRestore(null, new Set(['a'])), { layout: null, orphaned: [] })
+    assert.deepEqual(planRestore({ grid: 1 }, new Set(['a'])), { layout: null, orphaned: [] })
+  })
+})
+
+describe('orphanedPanels', () => {
+  test('empty known list hides nothing', () => {
+    assert.deepEqual(orphanedPanels(['a', 'b'], new Set()), [])
+  })
+  test('only the unknown ones', () => {
+    assert.deepEqual(orphanedPanels(['a', 'b', 'c'], new Set(['b'])), ['a', 'c'])
+  })
+})
