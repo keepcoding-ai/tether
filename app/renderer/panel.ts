@@ -333,6 +333,11 @@ export class TerminalPanel implements IContentRenderer {
     if (text) this.term.paste(text)
   }
 
+  /** Types raw bytes into the terminal's pty (same path as keyboard input). */
+  sendInput(data: string): void {
+    if (this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data })
+  }
+
   copy(): void {
     if (this.term.hasSelection()) window.tether.writeClipboard(this.term.getSelection())
   }

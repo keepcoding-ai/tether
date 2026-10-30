@@ -1,7 +1,7 @@
 // App keyboard shortcuts: Cmd on macOS (Ctrl stays free for the terminal, e.g. Ctrl+C = SIGINT),
 // Ctrl+Shift on Windows/Linux (plain Ctrl+C/V belong to the terminal there).
 
-const IS_MAC = /Mac|iPhone|iPad/i.test(
+export const IS_MAC = /Mac|iPhone|iPad/i.test(
   (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform,
 )
 

@@ -11,7 +11,8 @@ import { askDialog, dialogOpen } from './dialog.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { pruneLayout } from './layout.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
-import { isAppShortcut } from './shortcut.ts'
+import { lineEditSequence } from './lineedit.ts'
+import { IS_MAC, isAppShortcut } from './shortcut.ts'
 import { closePanelSituation, folderName, quitAllSituation } from './situations.ts'
 
 const COMPONENT = 'terminal'
@@ -51,7 +52,14 @@ const host: PanelHost = {
   onAction: (id, action) => { void onPanelAction(id, action) },
   onRename: (id, name) => { void renameSlot(id, name) },
   onKey: (ev, panel) => {
-    if (ev.type !== 'keydown' || !isAppShortcut(ev)) return false
+    if (ev.type !== 'keydown') return false
+    const seq = lineEditSequence(ev, IS_MAC)
+    if (seq !== undefined) {
+      ev.preventDefault()
+      panel.sendInput(seq)
+      return true
+    }
+    if (!isAppShortcut(ev)) return false
     switch (ev.code) {
       case 'KeyC': panel.copy(); return true
       case 'KeyV': void panel.paste(); return true
