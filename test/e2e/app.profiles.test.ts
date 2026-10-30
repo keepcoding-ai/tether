@@ -1,6 +1,6 @@
 // E2E of the launch profiles in the app (hidden windows, private home/pipe, real tetherd, real Claude on haiku):
 //   1. "Novo painel" lists the profiles grouped by agent (Claude / soul / Shell), preselects Claude's default,
-//      shows each profile's args small and the "sem permissões" mark on "Claude modo dev";
+//      shows each profile's args small and the "sem restrições" mark on "Claude modo dev";
 //   2. a panel opened with "Claude modo dev": the claude process' command line carries
 //      --dangerously-skip-permissions (+ --model haiku from TETHER_CLAUDE_ARGS), the tab and the header show
 //      the unsafe badge and the header names the profile;
@@ -248,7 +248,7 @@ test('profiles in the app: Novo painel by profile, unsafe badge, Git Bash, manag
     assert.ok(await page.isChecked('input[name=profile][value=claude]'), 'the Claude default profile is preselected')
     const dev = page.locator('.profile-option[data-id="claude-dev"]')
     assert.equal(await dev.locator('.p-args').textContent(), UNSAFE, 'the args are shown on the option')
-    assert.ok(await dev.locator('.p-unsafe').isVisible(), '"sem permissões" on the dev profile')
+    assert.ok(await dev.locator('.p-unsafe').isVisible(), '"sem restrições" on the dev profile')
     assert.equal(await page.locator('.profile-option[data-id="claude"] .p-unsafe').count(), 0, 'no mark on the plain profile')
     assert.ok(await page.locator('.profile-option[data-id="git-bash"]').isVisible(), 'Git Bash is offered')
     assert.equal(await page.locator('.profile-option[data-id="powershell"] .p-default').count(), 1, 'the shell default is marked')
@@ -298,7 +298,7 @@ test('profiles in the app: Novo painel by profile, unsafe badge, Git Bash, manag
     const head = page.locator(`.panel[data-slot-id="${idClaude}"] .panel-head`)
     assert.ok(await head.locator('.unsafe').isVisible(), 'the header shows the unsafe badge')
     assert.equal(await head.locator('.profile').textContent(), 'Claude modo dev', 'the header names the profile')
-    assert.match((await head.locator('.unsafe').getAttribute('title'))!, /sem permissões/i)
+    assert.match((await head.locator('.unsafe').getAttribute('title'))!, /sem restrições/i)
     assert.equal(await page.locator(`.panel[data-slot-id="${idBash}"] .panel-head .unsafe`).isVisible(), false, 'no badge on the shell')
     await shoot(page, 'profiles-unsafe-tab-dark')
     await setTheme(page, 'light')

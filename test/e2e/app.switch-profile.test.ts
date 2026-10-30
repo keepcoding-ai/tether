@@ -3,7 +3,7 @@
 // without losing its conversation.
 //   1. a Claude panel is created with no profile; it answers a seed word ("jabuticaba");
 //   2. after ≥ 11 s of uptime the header pill "sem perfil" opens the dialog: this agent's profiles + "Sem perfil"
-//      (current, cards inert), "Claude modo dev" marked "sem permissões"; screenshots light/dark;
+//      (current, cards inert), "Claude modo dev" marked "sem restrições"; screenshots light/dark;
 //   3. "Trocar e reiniciar agora" with "Claude modo dev": the panel shows "reiniciando…", a NEW claude process
 //      (different pid) runs with --dangerously-skip-permissions AND --resume <the same session id>, the binding
 //      keeps the id, the tab shows the unsafe badge, the header names the profile, and Claude recalls the word;
@@ -251,7 +251,7 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
     assert.deepEqual(optionIds, ['claude', 'claude-dev', '__none__'], 'this agent\'s profiles, then "Sem perfil"')
     assert.ok(await dlg.locator('.option[data-option="__none__"] input').isChecked(), '"Sem perfil" is the current one')
     assert.equal(await dlg.locator('.option[data-option="__none__"] .o-current').textContent(), 'atual')
-    assert.equal(await dlg.locator('.option[data-option="claude-dev"] .o-mark').textContent(), 'sem permissões')
+    assert.equal(await dlg.locator('.option[data-option="claude-dev"] .o-mark').textContent(), 'sem restrições')
     assert.equal(await dlg.locator('.option[data-option="claude-dev"] .o-detail').textContent(), UNSAFE)
     assert.ok(await dlg.locator('button.choice[data-choice="now"]').isDisabled(), 'the cards are inert on the current profile')
     assert.ok(await dlg.locator('button.choice[data-choice="next"]').isDisabled())

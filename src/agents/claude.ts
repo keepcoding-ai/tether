@@ -6,6 +6,7 @@ import { dirname, join, resolve, delimiter } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
 import { canonicalDir } from '../core/paths.ts'
 import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
@@ -80,7 +81,7 @@ function plan(input: PlanInput): LaunchPlan {
   if (resume) args.push('--resume', resume.sessionId)
   else if (!own.some((a) => PICKS_SESSION.has(a))) args.push('--session-id', randomUUID())
   args.push(...own)
-  const env = cleanEnv()
+  const env = withColorSupport(cleanEnv())
   // The profile's env goes on AFTER the CLAUDE* strip: an explicit CLAUDE_CONFIG_DIR (a second account) must reach Claude.
   Object.assign(env, profile?.env ?? {})
   env[ENV_SLOT] = slot.slotId

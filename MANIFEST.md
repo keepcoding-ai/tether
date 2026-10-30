@@ -105,7 +105,7 @@ Integrado sem a rodada final completa (interrompida por falta de memória e depo
 O núcleo está pronto (`src/core/profile.ts`; protocolo `profiles-list`, `profile-save`, `profile-delete`, evento `profiles`; `create` aceita `profileId`; `SlotState` traz `profileName` e `unsafe`; API do app `listProfiles/saveProfile/deleteProfile`). Falta:
 - **Novo painel:** escolher o perfil (pré-selecionar o `default` do agente) e passar `profileId` no `create`.
 - **Tela de perfis:** criar, editar, apagar, definir padrão; mostrar avisos de validação em português; usar o componente de diálogo e os ícones.
-- **Selo "sem permissões"** na aba/cabeçalho quando `unsafe` (perfil com `--dangerously-skip-permissions`).
+- **Selo "sem restrições"** na aba/cabeçalho quando `unsafe` (perfil com `--dangerously-skip-permissions`).
 - Padrões já criados: "Claude", "Claude modo dev" (`--dangerously-skip-permissions`), "soul" (`-g`), "PowerShell", "Git Bash".
 - E2E com janela escondida.
 

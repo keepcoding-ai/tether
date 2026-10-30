@@ -35,7 +35,7 @@ export interface DialogOption {
   label: string
   /** Secondary line in monospace (the args). */
   detail?: string
-  /** A short amber mark next to the label ("sem permissões"). */
+  /** A short amber mark next to the label ("sem restrições"). */
   mark?: string
   /** What the panel has now: tagged "atual"; choosing it changes nothing, so the cards are disabled on it. */
   current?: boolean

@@ -183,7 +183,7 @@ export function switchProfileSituation(s: SlotState, profiles: Profile[]): Dialo
     return {
       id: p.id, icon: KIND_ICON[kind], label: p.name,
       detail: args.length ? args.join(' ') : (shell && !p.shell ? 'shell padrão' : 'sem argumentos'),
-      ...(p.args.includes('--dangerously-skip-permissions') ? { mark: 'sem permissões' } : {}),
+      ...(p.args.includes('--dangerously-skip-permissions') ? { mark: 'sem restrições' } : {}),
       ...(p.id === currentId ? { current: true } : {}),
     }
   })

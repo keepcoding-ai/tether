@@ -15,6 +15,7 @@ import { decodeOsc52 } from './clipboard.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
 import { paneShortcutOf } from './shortcuts.ts'
 import { folderName } from './situations.ts'
+import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
 
 // The palette and the font come from the terminal appearance (app/shared/terminal-theme.ts: preset per
@@ -54,8 +55,8 @@ export function panelTitle(s: SlotState): string {
 }
 
 /** The unsafe marker (tab and header): the launch carries --dangerously-skip-permissions. */
-export const UNSAFE_LABEL = 'sem permissões'
-export const UNSAFE_TOOLTIP = 'Sem permissões: o Claude roda com --dangerously-skip-permissions e não pede confirmação antes de agir.'
+export const UNSAFE_LABEL = 'sem restrições'
+export const UNSAFE_TOOLTIP = 'Sem restrições: o Claude age sem pedir confirmação (--dangerously-skip-permissions).'
 
 /** The marker element: shield icon + (optionally) the label; hidden unless the slot is unsafe. */
 export function unsafeBadge(withLabel: boolean): HTMLElement {
@@ -179,7 +180,22 @@ export interface PanelHost {
   onSwitchProfile(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
   onTabMenu(slotId: string, ev: MouseEvent): void
+  /** What the layout file remembers of the pane (kind, folder, profile), painted before the daemon answers. */
+  getHint(slotId: string): PaneHint | undefined
+  /** The daemon answered and its slot list is loaded. */
+  isDaemonReady(): boolean
+  /** Resolves once the daemon is ready (the pane attaches then). */
+  daemonReady(): Promise<void>
+  /** Resolves once the terminal font is loaded: only the xterm waits for it, the chrome paints right away. */
+  fontsReady(): Promise<void>
+  /** 1-based place in the start queue, when known. */
+  queuePosition(slotId: string): number | undefined
 }
+
+/** How long a running pane with an empty scrollback waits for its first output before showing the terminal anyway. */
+const FIRST_OUTPUT_GRACE_MS = 1500
+/** The loading skeleton's fade-out (matches the CSS transition). */
+const LOADING_FADE_MS = 160
 
 /** The header pill's text: the profile's name, or what its absence means. */
 export const NO_PROFILE_LABEL = 'sem perfil'
@@ -193,6 +209,15 @@ export class TerminalPanel implements IContentRenderer {
   private readonly head: { icon: HTMLElement; title: HTMLElement; profile: HTMLButtonElement; unsafe: HTMLElement; cwd: HTMLElement; status: HTMLElement }
   private readonly termHost: HTMLElement
   private readonly overlay: HTMLElement
+  private readonly loading: { root: HTMLElement; icon: HTMLElement; text: HTMLElement }
+  /** The xterm is open in the DOM (after the font loaded). */
+  private opened = false
+  private disposed = false
+  /** Attached and showed its first output (or the grace period passed): the loading skeleton goes. */
+  private ready = false
+  private graceTimer: ReturnType<typeof setTimeout> | undefined
+  private fadeTimer: ReturnType<typeof setTimeout> | undefined
+  private loadingKey = ''
   private observer: ResizeObserver | undefined
   private attached = false
   private attaching: Promise<void> | undefined
@@ -221,9 +246,18 @@ export class TerminalPanel implements IContentRenderer {
     this.overlay = document.createElement('div')
     this.overlay.className = 'panel-overlay'
     this.overlay.hidden = true
+    const loading = document.createElement('div'); loading.className = 'panel-loading'
+    loading.setAttribute('role', 'status')
+    const loadingIcon = document.createElement('span'); loadingIcon.className = 'badge'
+    const loadingText = document.createElement('span'); loadingText.className = 'text'
+    const stageLine = document.createElement('div'); stageLine.className = 'stage'; stageLine.append(loadingIcon, loadingText)
+    const lines = document.createElement('div'); lines.className = 'lines'
+    for (let i = 0; i < 4; i++) lines.append(document.createElement('span'))
+    loading.append(stageLine, lines)
+    this.loading = { root: loading, icon: loadingIcon, text: loadingText }
     const body = document.createElement('div')
     body.className = 'panel-body'
-    body.append(this.termHost, this.overlay)
+    body.append(this.termHost, loading, this.overlay)
     this.element.append(head, body)
 
     this.term = new Terminal({
@@ -264,30 +298,51 @@ export class TerminalPanel implements IContentRenderer {
   init(params: GroupPanelPartInitParameters): void {
     this.slotId = String(params.params.slotId ?? params.api.id)
     this.element.dataset.slotId = this.slotId
-    this.term.open(this.termHost)
-    this.loadRenderer()
-    this.ensureFont()
+    this.layoutTitle = params.title
+    // The chrome (header, loading skeleton) paints now, from the layout's hint if the daemon has not answered.
     this.render()
-    // Attach right away, even when the panel is a hidden tab (zero size): the scrollback must land and
-    // `data` must flow whether or not the panel is visible. Fits only send `resize` afterwards.
-    void this.attach()
-    this.observer = new ResizeObserver(() => this.scheduleFit())
-    this.observer.observe(this.termHost)
-    this.scheduleFit()
     // Keyboard focus follows the active panel. dockview may activate the panel before this init runs,
     // so the current state is applied too (deferred: the element is not laid out yet).
     params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.term.focus()) })
-    if (params.api.isActive) requestAnimationFrame(() => this.term.focus())
+    void this.boot(() => params.api.isActive)
+  }
+
+  /** The tab title the layout file carried (the header's title before the daemon answers). */
+  private layoutTitle: string | undefined
+
+  /**
+   * The xterm opens once the font is loaded (so it measures the real glyphs), then attaches once the daemon
+   * is ready — even when the panel is a hidden tab (zero size): the scrollback must land and `data` must flow
+   * whether or not the panel is visible. Fits only send `resize` afterwards.
+   */
+  private async boot(isActive: () => boolean): Promise<void> {
+    await this.host.fontsReady()
+    if (this.disposed) return
+    this.term.open(this.termHost)
+    this.opened = true
+    this.loadRenderer()
+    this.ensureFont()
+    this.observer = new ResizeObserver(() => this.scheduleFit())
+    this.observer.observe(this.termHost)
+    this.scheduleFit()
+    if (isActive()) requestAnimationFrame(() => this.term.focus())
+    await this.host.daemonReady()
+    if (this.disposed) return
+    void this.attach()
   }
 
   /** Current slot state applied to the header and the overlay (on init and on every `state` event). */
   render(): void {
     const s = this.host.getSlot(this.slotId)
     if (!s) {
-      setIcon(this.head.icon, 'question')
-      this.head.title.textContent = this.slotId
-      this.setStatus('error', 'desconhecido')
-      this.showOverlay(UNKNOWN)
+      if (!this.host.isDaemonReady()) this.renderHint()
+      else {
+        setIcon(this.head.icon, 'question')
+        this.head.title.textContent = this.slotId
+        this.setStatus('error', 'desconhecido')
+        this.showOverlay(UNKNOWN)
+      }
+      this.renderLoading()
       return
     }
     const startError = this.host.getStartError(this.slotId)
@@ -315,9 +370,63 @@ export class TerminalPanel implements IContentRenderer {
     const err = s.status === 'error' && s.error ? s.error : startError
     if (status === 'unconfirmed') this.showOverlay(unconfirmedOverlay(s))
     else if (status === 'error' && err) this.showOverlay(errorOverlay(s, err))
-    else if (status === 'queued') this.showOverlay(QUEUED)
     else if (status === 'exited') this.showOverlay(exitedOverlay(s))
     else this.overlay.hidden = true
+    this.renderLoading()
+  }
+
+  /** The header from the layout's hint, before the daemon answers: kind, title, folder, profile pill. */
+  private renderHint(): void {
+    const hint = this.host.getHint(this.slotId)
+    setIcon(this.head.icon, hint ? KIND_ICON[hint.kind] : 'question')
+    this.head.title.textContent = this.layoutTitle ?? (hint ? KIND_LABEL[hint.kind] : this.slotId)
+    this.head.profile.textContent = hint?.profileName ?? NO_PROFILE_LABEL
+    this.head.profile.classList.toggle('none', !hint?.profileName)
+    this.head.profile.hidden = !hint || (hint.kind === 'shell' && !hint.profileName)
+    this.head.unsafe.hidden = !hint?.unsafe
+    this.head.cwd.textContent = hint?.cwd ?? ''
+    this.head.cwd.title = hint?.cwd ?? ''
+    this.setStatus('starting', 'conectando…')
+    this.element.dataset.status = 'starting'
+    this.overlay.hidden = true
+  }
+
+  /** The loading skeleton for the current stage; a quick fade when the terminal (or an overlay) takes over. */
+  private renderLoading(): void {
+    const stage = loadingStage({
+      daemonReady: this.host.isDaemonReady(),
+      slot: this.host.getSlot(this.slotId),
+      startPending: this.host.isStartPending(this.slotId),
+      startError: this.host.getStartError(this.slotId) !== undefined,
+      queuePosition: this.host.queuePosition(this.slotId),
+      ready: this.ready,
+    })
+    const root = this.loading.root
+    if (stage) {
+      if (this.fadeTimer) { clearTimeout(this.fadeTimer); this.fadeTimer = undefined }
+      root.classList.remove('leaving')
+      root.hidden = false
+      root.dataset.stage = stage.id
+      const key = `${stage.icon}|${stage.text}`
+      if (key !== this.loadingKey) {
+        this.loadingKey = key
+        setIcon(this.loading.icon, stage.icon)
+        this.loading.text.textContent = stage.text
+      }
+      return
+    }
+    if (root.hidden || root.classList.contains('leaving')) return
+    this.loadingKey = ''
+    root.classList.add('leaving')
+    this.fadeTimer = setTimeout(() => { this.fadeTimer = undefined; root.hidden = true; root.classList.remove('leaving') }, LOADING_FADE_MS)
+  }
+
+  /** The terminal has something to show: the loading skeleton fades out. */
+  private markReady(): void {
+    if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = undefined }
+    if (this.ready) return
+    this.ready = true
+    this.renderLoading()
   }
 
   private setStatus(status: string, label: string): void {
@@ -355,7 +464,9 @@ export class TerminalPanel implements IContentRenderer {
   }
 
   write(data: string): void {
-    if (this.attached) this.term.write(data)
+    if (!this.attached) return
+    this.term.write(data)
+    if (!this.ready && data.length > 0) this.markReady()
   }
 
   focus(): void { this.term.focus() }
@@ -420,8 +531,11 @@ export class TerminalPanel implements IContentRenderer {
 
   /** Re-attach after a daemon reconnect: replaces the screen by the daemon's scrollback. */
   async reattach(): Promise<void> {
+    if (!this.opened) return // boot() attaches once the font is in
     this.attached = false
+    this.ready = false
     this.term.reset()
+    this.render()
     await this.attach()
   }
 
@@ -448,18 +562,29 @@ export class TerminalPanel implements IContentRenderer {
       this.attaching = undefined
       if (reply.t === 'error') {
         this.term.writeln(`\x1b[31mNão foi possível anexar ao slot: ${reply.message}\x1b[0m`)
+        this.markReady()
         return
       }
       this.attached = true
-      if (reply.scrollback) this.term.write(reply.scrollback)
+      if (reply.scrollback) { this.term.write(reply.scrollback); this.markReady() }
+      else {
+        // An empty scrollback: wait for the first output; a running process that stays silent shows its terminal anyway.
+        this.graceTimer = setTimeout(() => {
+          this.graceTimer = undefined
+          if (this.host.getSlot(this.slotId)?.status === 'running') this.markReady()
+        }, FIRST_OUTPUT_GRACE_MS)
+      }
       this.scheduleFit()
     })
     return this.attaching
   }
 
   dispose(): void {
+    this.disposed = true
     this.observer?.disconnect()
     if (this.fitTimer) clearTimeout(this.fitTimer)
+    if (this.graceTimer) clearTimeout(this.graceTimer)
+    if (this.fadeTimer) clearTimeout(this.fadeTimer)
     if (this.attached && this.slotId) void window.tether.request({ t: 'detach', slotId: this.slotId })
     this.attached = false
     this.term.dispose()
@@ -505,6 +630,16 @@ export class SlotTab implements ITabRenderer {
   render(): void {
     if (!this.api) return
     const s = this.host.getSlot(this.api.id)
+    if (!s && !this.host.isDaemonReady()) {
+      // Before the daemon answers: the layout's hint and a "starting" dot.
+      const hint = this.host.getHint(this.api.id)
+      setIcon(this.kind, hint ? KIND_ICON[hint.kind] : 'question')
+      this.text.textContent = this.api.title ?? this.api.id
+      this.dot.className = 'dot starting'
+      this.unsafe.hidden = !hint?.unsafe
+      this.element.title = `${this.api.title ?? this.api.id}\nConectando ao serviço…`
+      return
+    }
     setIcon(this.kind, s ? KIND_ICON[s.kind] : 'question')
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
