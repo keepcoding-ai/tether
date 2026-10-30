@@ -130,7 +130,12 @@ async function createShell(page: Page, cwd: string, placement?: string): Promise
   await page.waitForSelector('#dlg-new[open]')
   await page.check('input[name=profile][value=powershell]')
   await page.fill('#new-cwd', cwd)
-  if (placement) await page.check(`input[name=placement][value="${placement}"]`)
+  if (placement) {
+    // The radio is visually hidden: the chip (label) is the control. `placement` is a target key, "level:placement".
+    const [level, where] = placement.split(':')
+    await page.click(`label.placement[data-level="${level}"][data-placement="${where}"]`)
+    assert.ok(await page.isChecked(`input[name=placement][value="${placement}"]`), `${placement} chosen`)
+  }
   await page.click('#btn-create')
   await waitTabs(page, before + 1)
 }
@@ -143,7 +148,8 @@ const newId = (before: string[], after: string[]): string => {
 
 const near = (a: number, b: number, tol: number, what: string): void => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`)
 
-test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the desk edge; "+"; chooser levels; relaunch; empty frame leaves', async () => {
+// Hard cap: a hung Electron main (no window, no CDP answer) must fail the test, not hold the runner forever.
+test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the desk edge; "+"; chooser levels; relaunch; empty frame leaves', { timeout: 300_000 }, async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
@@ -238,7 +244,8 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     assert.equal((await hooks.slots(page)).find(s => s.slotId === e)?.kind, 'shell', 'a duplicate of the focused pane')
     const f3 = (await hooks.rect(page, '.frame:has([data-slot-id="' + e + '"])'))!
     await page.mouse.move(f3.x + f3.width / 2, f3.y + f3.height / 2)
-    await page.mouse.move(f3.x + f3.width / 2, f3.y + 4)
+    // 8 px inside the frame: within its 14 px band, outside the desk's 6 px band (frame-3 sits on the desk's top edge).
+    await page.mouse.move(f3.x + f3.width / 2, f3.y + 8)
     await page.waitForSelector('.edge-plus.frame[data-frame="frame-3"][data-side="top"]:not([hidden])')
     assert.equal(await page.locator('.edge-plus.desk:not([hidden])').count(), 0, 'only the frame "+" shows inside the frame')
     await page.screenshot({ path: join(artifacts, 'frames-plus-frame.png') })
@@ -248,7 +255,7 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await page.screenshot({ path: join(artifacts, 'frames-chooser-levels.png') })
     assert.equal(await page.locator('.placement-group').count(), 3, 'three levels in "Onde"')
     await page.click('#btn-cancel')
-    await page.waitForSelector('#dlg-new:not([open])')
+    await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' }) // a closed <dialog> is not visible: wait for it to go, not to show
 
     // ---- 5. chooser: "Mesa · abaixo" opens a PowerShell in a frame spanning the desk ----
     await focusPane(page, a!)

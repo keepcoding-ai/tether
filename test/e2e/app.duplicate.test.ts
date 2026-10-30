@@ -219,7 +219,7 @@ async function cmdOf(pid: number, trees: Proc[][]): Promise<string> {
 }
 
 const placementChecked = (page: Page, placement: string): Promise<boolean> =>
-  page.locator(`label.placement[data-placement="${placement}"] input`).evaluate(el => (el as unknown as { checked: boolean }).checked)
+  page.locator(`label.placement[data-level="pane"][data-placement="${placement}"] input`).evaluate(el => (el as unknown as { checked: boolean }).checked)
 
 /** Opens the chooser, picks a profile, a folder and (when offered) a placement, submits; returns the new panel's id. */
 async function newPanelViaChooser(page: Page, profileId: string, cwd: string, placement?: string): Promise<string> {
@@ -229,7 +229,8 @@ async function newPanelViaChooser(page: Page, profileId: string, cwd: string, pl
   await page.check(`input[name=profile][value=${profileId}]`)
   await page.fill('#new-cwd', cwd)
   if (placement) {
-    await page.click(`label.placement[data-placement="${placement}"]`) // the radio itself is visually hidden: the chip is the control
+    // The radio itself is visually hidden: the chip is the control. Pane level: the same direction also exists at the frame and desk levels (phase B).
+    await page.click(`label.placement[data-level="pane"][data-placement="${placement}"]`)
     assert.ok(await placementChecked(page, placement), `placement ${placement} chosen`)
   }
   await page.click('#btn-create')
@@ -312,7 +313,8 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     await page.click('#btn-new')
     await page.locator('#dlg-new[open]').waitFor()
     assert.ok(await page.locator('#new-placement').isVisible(), 'the "Onde" row is offered relative to the active panel')
-    assert.equal(await page.locator('label.placement').count(), 5)
+    assert.equal(await page.locator('label.placement[data-level="pane"]').count(), 5, 'pane level: nesta aba + four directions')
+    assert.equal(await page.locator('.placement-group').count(), 3, 'three levels (pane / frame / desk)')
     assert.ok(await placementChecked(page, 'within'), '"nesta aba" is the default')
     await shoot(page, 'new-panel-chooser-placement-light')
     const id3 = await newPanelViaChooser(page, 'powershell', work, 'below')
@@ -351,7 +353,8 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     await page.locator(`.dv-groupview:has(.panel[data-slot-id="${id1}"]) .tether-tab`).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu')
     const items = await page.locator('#ctx-menu li').allTextContents()
-    assert.deepEqual(items, ['Novo painel…', 'Duplicar painel à direita', 'Duplicar painel abaixo', 'Trocar perfil…', 'Fechar painel…'])
+    // Phase B added the two frame-level entries (they open the chooser at that level).
+    assert.deepEqual(items, ['Novo painel…', 'Duplicar painel à direita', 'Duplicar painel abaixo', 'Novo painel na borda do quadro…', 'Novo quadro…', 'Trocar perfil…', 'Fechar painel…'])
     await page.click('#ctx-menu li:has-text("Novo painel…")')
     await page.locator('#dlg-new[open]').waitFor()
     assert.ok(await page.locator('#new-placement').isVisible())

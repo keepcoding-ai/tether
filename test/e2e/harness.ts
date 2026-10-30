@@ -227,7 +227,10 @@ async function allProcesses(): Promise<Proc[]> {
     }).filter(p => p.pid >= 0)
   }
   const out = await ps("Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,@{n='Created';e={$_.CreationDate.ToFileTime()}} | ConvertTo-Json -Compress")
-  const arr = JSON.parse(out || '[]') as { ProcessId: number; ParentProcessId: number; Name: string; CommandLine: string | null; Created: number | null }[]
+  // ConvertTo-Json (PowerShell 5.1) leaves some control characters unescaped inside strings; a process whose
+  // command line carries one (ANSI codes in an argument) would break the parse. -Compress emits no newlines, so
+  // every control character in the output sits inside a string and can be blanked.
+  const arr = JSON.parse(out.replace(/[\x00-\x1f]/g, ' ') || '[]') as { ProcessId: number; ParentProcessId: number; Name: string; CommandLine: string | null; Created: number | null }[]
   return arr.map(p => ({ pid: p.ProcessId, ppid: p.ParentProcessId, name: p.Name, created: p.Created ?? 0, cmd: p.CommandLine ?? undefined }))
 }
 
