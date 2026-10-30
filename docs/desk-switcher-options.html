@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>tether · seletor de mesas</title>
+<style>
+/* tokens reais do app (app/renderer/styles.css) */
+.dark{--bg:#1b1b1f;--bg-2:#232329;--bg-3:#2c2c34;--bg-hover:#363640;--fg:#d8d8dc;--fg-dim:#9a9aa3;--border:#35353d;--shadow:0 6px 20px rgba(0,0,0,.5);color-scheme:dark}
+.light{--bg:#fbfbfd;--bg-2:#f1f2f5;--bg-3:#e6e7ec;--bg-hover:#dcdde3;--fg:#24292f;--fg-dim:#5f6368;--border:#cfd1d8;--shadow:0 6px 20px rgba(0,0,0,.18);color-scheme:light}
+:root{--x-alert:oklch(0.70 0.19 50);--x-alert-foreground:#10131a}
+body{margin:0;padding:24px 32px 60px;font:13px "Segoe UI",system-ui,sans-serif;background:#e9eaee;color:#24292f}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:26px 0 4px}.why{margin:0 0 10px;color:#5f6368;max-width:960px}
+.pair{display:flex;flex-wrap:wrap;gap:14px}.stl{width:100%;font-weight:600;margin-top:8px}
+.win{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)}
+.tb{position:relative;z-index:2;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:42px;padding:0 8px;background:var(--bg-2);border-bottom:1px solid var(--border);border-radius:8px 8px 0 0}
+.tb .l,.tb .r{display:flex;gap:2px;color:var(--fg-dim)}.tb .r{justify-content:flex-end}
+.ib{width:28px;height:28px;display:grid;place-items:center;border-radius:6px}.ib:hover{background:var(--bg-hover)}
+.ib svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.desk{height:150px;position:relative;padding:10px 14px;color:var(--fg-dim);font:12px "Cascadia Mono",Consolas,monospace}
+.line .desk::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--cur)}
+/* o desenho escolhido: cápsula com contorno; inativa = matiz + texto da cor; ativa = preenchimento forte */
+.sw{position:relative;display:flex;align-items:center;gap:2px;padding:2px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--border);user-select:none}
+.seg{display:flex;align-items:center;gap:6px;height:26px;padding:0 12px;border-radius:999px;cursor:pointer;white-space:nowrap;font-weight:500;background:none;color:var(--tx);transition:transform .08s,filter .12s}
+.seg:not(.on):hover{background:var(--bg-hover)}.seg.on:hover{filter:brightness(1.08)}
+.seg:active{transform:translateY(1px) scale(.97)}
+.seg.on{background:var(--f);color:var(--fg2);font-weight:650}
+.cnt{min-width:16px;height:16px;padding:0 4px;border-radius:8px;font-size:10.5px;font-weight:700;line-height:16px;text-align:center;background:var(--x-alert);color:var(--x-alert-foreground);box-shadow:0 0 0 2px var(--bg-2)}
+.more{background:var(--bg-3);color:var(--fg-dim);font-weight:600}
+.menu{position:absolute;top:32px;right:0;z-index:5;min-width:190px;padding:4px;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);display:grid;gap:2px}
+.menu .seg{justify-content:space-between;border-radius:6px;padding:0 10px!important}
+/* faixa da paleta */
+table{border-collapse:collapse;font-size:12px}td,th{padding:5px 8px;text-align:left}
+.pal{border-radius:8px;overflow:hidden;display:inline-block;vertical-align:top;margin-right:14px;border:1px solid var(--border)}
+.pal td{background:var(--bg-2);color:var(--fg-dim)}.pal th{background:var(--bg-3);color:var(--fg)}.pal .seg{display:inline-flex}
+.bad{color:#d33;font-weight:700}.mk{color:var(--fg)}
+.sb{display:flex;align-items:flex-start;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px}
+.fr{flex:1;display:grid;gap:8px;align-content:start;color:var(--fg)}.fr.tall{min-height:250px}.fr p{margin:0;color:var(--fg-dim)}.fr .rule{color:var(--fg);font-weight:600}
+.ar{font-size:28px;color:var(--fg-dim);align-self:center}
+.sbbar{background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:7px;display:flex;justify-content:center}
+.sbbar .more{position:relative}.pick{outline:2px solid var(--fg);outline-offset:-2px;position:relative}.pick::after{content:"👆";position:absolute;right:-22px;top:4px;font-size:16px}
+.gap{font-size:11px;color:var(--fg-dim);padding:3px 10px;border-block:1px dashed var(--border);margin:2px 0}
+.sw.fixed .more,.sbbar .more{margin-left:auto}.sbbar .sw{width:330px}
+.mv{display:grid;gap:3px;font-size:12px}.mv .out{color:#b42318}.mv .out::before{content:"↓ "}.mv .in{color:#1a7f37}.mv .in::before{content:"↑ "}
+</style></head><body>
+<h1>Seletor de mesas — desenho escolhido</h1>
+<p class="why">Cápsula com contorno. Mesa inativa: sem fundo, só o texto na própria cor. Mesa atual: preenchimento forte da cor, com texto de contraste escolhido pela regra (L &lt; 0,55 → texto claro; L ≥ 0,55 → texto escuro). A paleta é a de 12 matizes (<code>--x-{cor}</code>). O selo de atenção usa o laranja <code>--x-alert</code> com um anel na cor da barra, para não se confundir com uma mesa laranja. Clique para trocar de mesa.</p>
+<div id="root"></div>
+<script>
+const H={red:[.62,.22,25],orange:[.70,.19,50],yellow:[.86,.17,95],lime:[.80,.22,125],green:[.70,.20,148],teal:[.72,.14,178],cyan:[.78,.13,200],sky:[.70,.16,230],blue:[.58,.22,260],purple:[.58,.24,295],magenta:[.65,.27,322],pink:[.68,.22,355]};
+const DARK='#10131a',LIGHT='#ffffff';
+// OKLCH -> linear sRGB -> relative luminance (WCAG)
+const lin=(L,C,h)=>{h*=Math.PI/180;const a=C*Math.cos(h),b=C*Math.sin(h),l=(L+.3963377774*a+.2158037573*b)**3,m=(L-.1055613458*a-.0638541728*b)**3,s=(L-.0894841775*a-1.2914855480*b)**3;return [4.0767416621*l-3.3077115913*m+.2309699292*s,-1.2684380046*l+2.6097574011*m-.3413193965*s,-.0041960863*l-.7034186147*m+1.7076147010*s].map(v=>Math.min(1,Math.max(0,v)))};
+const Y=([r,g,b])=>.2126*r+.7152*g+.0722*b,hexY=h=>Y([1,3,5].map(i=>{const v=parseInt(h.substr(i,2),16)/255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}));
+const cr=(a,b)=>(Math.max(a,b)+.05)/(Math.min(a,b)+.05),ok=(L,C,h)=>`oklch(${L.toFixed(3)} ${C.toFixed(3)} ${h})`;
+const T={light:{},dark:{}};let css='';
+for(const th of ['light','dark']){css+=`.${th}{`;for(const [n,[L,C,h]] of Object.entries(H)){
+  // fill: base; if its rule-picked foreground fails 4.5:1, fall back to -deep (L-0.08, same C, same hue)
+  let fL=L,mark='',fg=fL<.55?LIGHT:DARK,r=cr(Y(lin(fL,C,h)),hexY(fg));
+  if(r<4.5){fL=L-.08;fg=fL<.55?LIGHT:DARK;r=cr(Y(lin(fL,C,h)),hexY(fg));mark='deep'}
+  if(r<4.5){fg=fg===LIGHT?DARK:LIGHT;r=cr(Y(lin(fL,C,h)),hexY(fg));mark+='+fg'}
+  const tY=hexY(th==='light'?'#f1f2f5':'#232329');
+  // inactive text: no background, sits on the bar (--bg-2); same hue, walk L away from it until 4.5:1
+  let xL=th==='light'?.52:.80,xr;for(;;){xr=cr(Y(lin(xL,C*.9,h)),tY);if(xr>=4.5||xL<.2||xL>.97)break;xL+=th==='light'?-.02:.02}
+  T[th][n]={fr:r,xr,mark};
+  css+=`--x-${n}:${ok(fL,C,h)};--x-${n}-foreground:${fg};--x-${n}-text:${ok(xL,C*.9,h)};`}css+='}\n'}
+document.head.insertAdjacentHTML('beforeend',`<style>${css}</style>`);
+const sty=c=>`--f:var(--x-${c});--fg2:var(--x-${c}-foreground);--tx:var(--x-${c}-text)`;
+const P={plus:'M8 3v10M3 8h10',copy:'M5 5h8v8H5zM3 11V3h8',sl:'M3 5h10M3 11h10M6 3v4M10 9v4',tray:'M2 9h4l1 2h2l1-2h4v4H2zM2 9l2-6h8l2 6',bolt:'M9 2 4 9h4l-1 5 5-7H8z',plug:'M6 2v3M10 2v3M4 5h8v3a4 4 0 0 1-8 0zM8 12v3',half:'M8 2a6 6 0 1 0 0 12zM8 2a6 6 0 0 1 0 12',menu:'M3 4h10M3 8h10M3 12h10'};
+const ic=k=>`<span class="ib"><svg viewBox="0 0 16 16"><path d="${P[k]}"/></svg></span>`;
+const segH=(d,i,on)=>`<div class="seg${on?' on':''}" data-k="${i}" style="${sty(d[1])}"><span class="nm" >${d[0]}</span>${d[2]?`<span class="cnt">${d[2]}</span>`:''}</div>`;
+const root=document.getElementById('root'),add=h=>root.insertAdjacentHTML('beforeend',h);
+// 1. paleta
+add('<h2>1. Paleta — ativa e inativa, com contraste</h2><p class="why">Ativa: preenchimento sobre o seu texto. Inativa: texto sobre o fundo da barra. <span class="mk">deep</span> = a cor de base não passava 4,5:1, então o preenchimento usa a variante <code>-deep</code> (mesmo matiz).</p>');
+add(['light','dark'].map(th=>`<table class="pal ${th}"><tr><th>${th==='light'?'claro':'escuro'}</th><th>ativa</th><th></th><th>inativa</th><th></th></tr>${Object.keys(H).map(n=>{const t=T[th][n];return `<tr><td>${n}</td><td><span class="seg on" style="${sty(n)}">${n}</span></td><td class="${t.fr<4.5?'bad':''}">${t.fr.toFixed(1)}:1 <span class="mk">${t.mark}</span></td><td><span class="seg" style="${sty(n)}">${n}</span></td><td class="${t.xr<4.5?'bad':''}">${t.xr.toFixed(1)}:1</td></tr>`}).join('')}</table>`).join(''));
+// window
+function mk(th,desks,act,opts={}){const w=document.createElement('div');w.className=`win ${th}${opts.line?' line':''}`;w.D=desks;w.act=act;w.fixed=opts.width;w.forceOpen=opts.open;if(opts.width)w.style.width=opts.width+'px';
+w.innerHTML=`<div class="tb"><div class="l">${['plus','copy','sl','tray','bolt'].map(ic).join('')}</div><div class="sw"></div><div class="r">${['plug','half','menu'].map(ic).join('')}</div></div><div class="desk">$ claude · mesa <span class="cur"></span> <span class="stg"></span>${opts.note?' · '+opts.note:''}</div>`;
+w.addEventListener('click',e=>{const s=e.target.closest('.seg');if(!s)return;if(s.classList.contains('more'))w.open=!w.open;else{w.act=+s.dataset.k;w.open=false}lay(w)});return w}
+function lay(w){const sw=w.querySelector('.sw'),D=w.D,act=w.act,open=w.open||w.forceOpen;
+const wd=q=>[...w.querySelector(q).children].reduce((a,c)=>a+c.offsetWidth+2,0),avail=w.querySelector('.tb').clientWidth-32-2*Math.max(wd('.l'),wd('.r'));
+const render=(vis)=>{const hid=D.map((d,i)=>i).filter(i=>!vis.includes(i));
+sw.innerHTML=vis.map(i=>segH(D[i],i,i===act)).join('')+(hid.length?`<div class="seg more">+${hid.length}${hid.some(i=>D[i][2])?'<span class="cnt">!</span>':''}${open?`<div class="menu">${hid.map(i=>segH(D[i],i,false)).join('')}</div>`:''}</div>`:'');return sw.scrollWidth<=avail};
+const all=D.map((d,i)=>i);let stg='';
+if(!render(all)){stg='· +N';let vis=all.slice();while(vis.length>1){const drop=vis.filter(i=>i!==act).pop();vis=vis.filter(i=>i!==drop);if(render(vis))break}}
+w.style.setProperty('--cur',`var(--x-${D[act][1]})`);w.querySelector('.cur').textContent=D[act][0];w.querySelector('.stg').textContent=stg}
+const box=(h,ws)=>{add(h);const b=document.createElement('div');b.className='pair';root.append(b);ws.forEach(w=>{if(typeof w==='string')b.insertAdjacentHTML('beforeend',w);else{b.append(w);if(!w.fixed)w.style.width='calc(50% - 10px)';lay(w)}})};
+// 2. barra
+const D3=[['Cliente A','blue'],['tether','purple'],['Pessoal','green',3]],DO=[['Cliente A','blue'],['Financeiro','orange',4],['Estudos','yellow']];
+box('<h2>2. Na barra</h2><p class="why">Com a linha fina na cor da mesa atual no topo da área de trabalho.</p>',[mk('light',D3,1,{line:1}),mk('dark',D3,1,{line:1})]);
+box('<h2>Selo sobre mesa laranja</h2><p class="why">O selo tem anel na cor da barra; aqui ele aparece numa mesa laranja inativa e, depois, com a mesa laranja ativa.</p>',[mk('light',DO,2,{line:1}),mk('dark',DO,1,{line:1})]);
+// 3. overflow
+const D10=[['Cliente A','blue',0,'CA'],['Cliente B','teal',0,'CB'],['tether','purple'],['Atrium','magenta',2,'At'],['Pessoal','green'],['Estudos','yellow'],['Infra','sky'],['Rascunhos','red'],['Financeiro','orange',5],['Marketing','lime']];
+add('<h2>3. Muitas mesas</h2><p class="why">Quando todas cabem, aparecem todas. Quando não cabem, a barra mostra 3 e o resto fica no +N, fixo na ponta direita. Escolher uma mesa no +N a põe no lugar da mesa usada há mais tempo.</p>');
+box('<div class="stl">Etapa 1 — cabem todas · janela de 1320px</div>',['light','dark'].map(th=>mk(th,D10,2,{width:1320,line:1})));
+// FLIP: segments that stay slide from their old spot; new ones drop in
+// storyboard: static frames, light theme, 10 desks (index into D10)
+const sbBar=(vis,act,l,r,menu,pick)=>`<div class="sbbar light"><div class="sw">${l.length?`<div class="seg more">+${l.length}${l.some(i=>D10[i][2])?'<span class="cnt">!</span>':''}</div>`:''}${vis.map(i=>segH(D10[i],i,i===act)).join('')}${r.length?`<div class="seg more">+${r.length}${r.some(i=>D10[i][2])?'<span class="cnt">!</span>':''}${menu?`<div class="menu">${r.map(i=>segH(D10[i],i,false).replace('class="seg"',i===pick?'class="seg pick"':'class="seg"')).join('')}</div>`:''}</div>`:''}</div></div>`;
+const rg=(a,b)=>[...Array(b-a)].map((_,j)=>a+j);
+const sb=(t,after,moves,rule)=>`<div class="stl" style="margin-top:14px">${t} — o que acontece ao clicar em Financeiro no +7</div><div class="sb light">
+<div class="fr"><b>1 · Antes</b>${sbBar([0,1,2],2,[],rg(3,10))}<p>tether é a mesa atual; 7 mesas estão no +7.</p></div><div class="ar">→</div>
+<div class="fr tall"><b>2 · Clique</b>${sbBar([0,1,2],2,[],rg(3,10),1,8)}</div><div class="ar">→</div>
+<div class="fr"><b>3 · Depois</b>${after}<div class="mv">${moves}</div><p class="rule">${rule}</p></div></div>`;
+add(sb('B — uso recente',sbBar([0,8,2],8,[],[1,3,4,5,6,7,9]),'<span class="out">saiu → +7: Cliente B (a usada há mais tempo)</span><span class="in">entrou no lugar dela: Financeiro</span>','Financeiro entra no lugar da mesa usada há mais tempo (Cliente B), que vai para o +N; as outras não se mexem.'));
+add('<div class="stl" style="margin-top:22px">Agora experimente: o mesmo comportamento, clicável</div>');
+function flip(sw,fn){const old={};sw.querySelectorAll(':scope>.seg[data-k]').forEach(e=>old[e.dataset.k]=e.getBoundingClientRect().left);fn();
+sw.querySelectorAll(':scope>.seg[data-k]').forEach(e=>{const o=old[e.dataset.k],n=e.getBoundingClientRect().left;
+e.animate(o==null?[{opacity:0,transform:'translateY(-8px)'},{opacity:1,transform:'none'}]:[{transform:`translateX(${o-n}px)`},{transform:'none'}],{duration:320,easing:'cubic-bezier(.2,.8,.2,1)'})})}
+const moreH=(ids,side,open,vis)=>{if(!ids.length)return '';const it=i=>segH(D10[i],i,false);let m=ids.map(it).join('');
+ if(vis){const b=ids.filter(i=>i<vis[0]),a=ids.filter(i=>i>vis[vis.length-1]);m=b.map(it).join('')+`<div class="gap">na barra: ${vis.map(i=>D10[i][0]).join(', ')}</div>`+a.map(it).join('')}
+ return `<div class="seg more" data-side="${side}">+${ids.length}${ids.some(i=>D10[i][2])?'<span class="cnt">!</span>':''}${open?`<div class="menu">${m}</div>`:''}</div>`};
+function variant(th,kind){const w=mk(th,D10,2,{width:640,line:1});w.querySelector('.desk').lastChild.textContent='';
+const sw=w.querySelector('.sw'),wd=q=>[...w.querySelector(q).children].reduce((a,c)=>a+c.offsetWidth+2,0);
+// the scenario is fixed: the bar holds 3 desks, like the storyboard above
+
+const S=w.S={};S.reset=()=>{S.act=2;S.s=0;S.open='';S.V=null;S.t=0;S.used=D10.map((d,i)=>-i);S.used[2]=1};
+const draw=()=>{if(kind==='A'){for(let k=3;k>0;k--){let s=Math.min(Math.max(S.s,S.act-k+1),S.act,10-k);s=Math.max(0,s);const vis=[...Array(k)].map((_,j)=>s+j);
+  sw.innerHTML=vis.map(i=>segH(D10[i],i,i===S.act)).join('')+moreH(D10.map((d,i)=>i).filter(i=>!vis.includes(i)),'R',S.open==='R',vis);S.s=s;break}}
+ else{if(!S.V)S.V=[0,1,2];for(;;){const hid=D10.map((d,i)=>i).filter(i=>!S.V.includes(i));sw.innerHTML=S.V.map(i=>segH(D10[i],i,i===S.act)).join('')+moreH(hid,'R',S.open==='R');break;
+  const lru=S.V.filter(i=>i!==S.act).sort((a,b)=>S.used[a]-S.used[b])[0];S.V=S.V.filter(i=>i!==lru)}}
+ w.querySelector('.cur').textContent=D10[S.act][0];w.style.setProperty('--cur',`var(--x-${D10[S.act][1]})`)};
+w.onclick=null;w.addEventListener('click',e=>{e.stopImmediatePropagation();const s=e.target.closest('.seg');if(!s)return;
+ if(s.classList.contains('more')&&!e.target.closest('.menu')){S.open=S.open===s.dataset.side?'':s.dataset.side;draw();return}
+ const k=+s.dataset.k;S.open='';S.used[k]=++S.t+100;
+ if(kind==='B'&&!S.V.includes(k)){const lru=S.V.filter(i=>i!==S.act).sort((a,b)=>S.used[a]-S.used[b])[0];S.V[S.V.indexOf(lru)]=k}
+ S.act=k;flip(sw,draw)},true);
+w.reset=()=>{S.reset();flip(sw,draw)};S.reset();
+ // +N never moves: the capsule is sized once for the widest possible run, and +N sits at its right end
+ w.fixW=()=>{sw.innerHTML=D10.map((d,i)=>segH(d,i,true)).join('')+moreH([0,3],'R',false);const ws=[...sw.children].map(c=>c.offsetWidth),m=ws.pop();
+  sw.style.width=ws.sort((a,b)=>b-a).slice(0,3).reduce((a,b)=>a+b+2,0)+m+8+'px';sw.classList.add('fixed')};w.draw=draw;return w}
+[['B','B — uso recente (a fileira reordena)','A barra comporta 3 mesas. A mesa escolhida no +N entra no lugar da mesa visível usada há mais tempo. Um só +N.']].forEach(([k,t,why])=>{
+ add(`<div class="stl" style="margin-top:16px">${t} <button>Reiniciar</button></div><p class="why">${why}</p>`);const btn=root.lastElementChild.previousElementSibling.querySelector('button');
+ const ws=['light','dark'].map(th=>variant(th,k)),b=document.createElement('div');b.className='pair';root.append(b);b.append(...ws);ws.forEach(w=>{w.fixW();w.draw()});btn.onclick=()=>ws.forEach(w=>w.reset())});
+</script></body></html>
