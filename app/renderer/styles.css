@@ -18,6 +18,16 @@
   --veil: rgba(27, 27, 31, .78);
   --backdrop: rgba(0, 0, 0, .6);
   --shadow: 0 6px 20px rgba(0, 0, 0, .5);
+  /* Surfaces (phase 4, docs/tether-preview.html): the desk is the ground (also the toolbar), frames are cards on it. */
+  --desk-bg: #141418;
+  --frame-bg: #1e1e23;
+  --frame-border: rgba(255, 255, 255, .08);
+  --pane-divider: var(--border);
+  --gap: 8px;
+  --frame-radius: 10px;
+  --drawer-inset: 16px;
+  --x-alert: oklch(0.70 0.19 50);
+  --x-alert-foreground: #10131a;
   --mono: "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace;
   --ui: "Segoe UI", system-ui, sans-serif;
   --motion-fast: 160ms;
@@ -30,6 +40,7 @@
     --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
     --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
     --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
+    --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09);
     color-scheme: light;
   }
 }
@@ -38,6 +49,7 @@
   --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
   --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
   --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
+  --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09);
   color-scheme: light;
 }
 
@@ -54,7 +66,7 @@
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background: var(--desk-bg);
   color: var(--fg);
   font-family: var(--ui);
   font-size: 13px;
@@ -68,8 +80,7 @@ body { display: flex; flex-direction: column; }
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--border);
+  background: var(--desk-bg);
   user-select: none;
   flex: 0 0 auto;
 }
@@ -114,11 +125,67 @@ button.primary:hover { background: var(--accent-hover); }
 #dock { flex: 1; min-height: 0; }
 
 /* --- desk: a gridview of frames, each frame a dockview; the "+" near the borders --- */
-.desk { position: relative; padding: 4px; }
+/* Frames are cards floating on the desk: half the gap around the desk plus half around each card makes a full
+   --gap between cards and at the desk's border. The desk-level sashes (between cards) sit in that gutter;
+   dockview positions them 4 px wide on the boundary, so they are widened to the gutter and re-centred. */
+.desk { position: relative; padding: calc(var(--gap) / 2); background: var(--desk-bg); }
 .desk-grid { position: relative; height: 100%; width: 100%; }
 .frame { position: relative; }
-.frame-dock { position: absolute; inset: 0; }
-.desk-grid .dv-view { outline: 1px solid var(--border); outline-offset: -1px; }
+.frame-dock {
+  position: absolute; inset: calc(var(--gap) / 2); overflow: hidden;
+  background: var(--frame-bg); border: 1px solid var(--frame-border); border-radius: var(--frame-radius);
+}
+.desk-grid .dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash:not(.frame-dock *) { width: var(--gap); margin-left: calc(2px - var(--gap) / 2); }
+.desk-grid .dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash:not(.frame-dock *) { height: var(--gap); margin-top: calc(2px - var(--gap) / 2); }
+.desk-grid .dv-view:not(.frame-dock *)::before { background-color: transparent !important; }
+
+/* Our own dockview theme: one class for both schemes, every colour read from the tokens above (they switch with
+   html[data-theme]). Structure values copied from dockview 8's built-in themes (app/dist/dockview.css). */
+.dv-theme-tether {
+  --dv-paneview-active-outline-color: var(--accent);
+  --dv-tabs-and-actions-container-font-size: 13px;
+  --dv-tabs-and-actions-container-height: 35px;
+  --dv-drag-over-background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  --dv-drag-over-border-color: transparent;
+  --dv-edge-dock-indicator-color: var(--accent);
+  --dv-tabs-container-scrollbar-color: var(--fg-dim);
+  --dv-icon-hover-background-color: var(--bg-hover);
+  --dv-floating-box-shadow: var(--shadow);
+  --dv-floating-border: 1px solid var(--frame-border);
+  --dv-overlay-z-index: 999;
+  --dv-tab-font-size: inherit;
+  --dv-border-radius: 0px;
+  --dv-tab-margin: 0;
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: transparent;
+  --dv-active-sash-transition-duration: 0.1s;
+  --dv-active-sash-transition-delay: 0.5s;
+  --dv-spacing-padding: 0px;
+  --dv-tab-border-radius: 0px;
+  --dv-sash-border-radius: 0px;
+  --dv-dropdown-border-radius: 0px;
+  --dv-tab-close-icon-size: inherit;
+  --dv-floating-group-border: none;
+  --dv-drag-over-border: none;
+  --dv-floating-group-dragging-opacity: 0.5;
+  --dv-floating-titlebar-height: 22px;
+  --dv-floating-titlebar-background-color: var(--dv-tabs-and-actions-container-background-color);
+  --dv-floating-titlebar-border-bottom: var(--dv-floating-border);
+  --dv-group-view-background-color: var(--frame-bg);
+  --dv-tabs-and-actions-container-background-color: var(--bg-2);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--frame-bg);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg-2);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--frame-bg);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg-2);
+  --dv-tab-divider-color: var(--border);
+  --dv-activegroup-visiblepanel-tab-color: var(--fg);
+  --dv-activegroup-hiddenpanel-tab-color: var(--fg-dim);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--fg-dim);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--fg-dim);
+  --dv-separator-border: var(--pane-divider);
+  --dv-paneview-header-border-color: var(--border);
+  --dv-scrollbar-background-color: var(--bg-hover);
+}
 .edge-plus {
   position: absolute; z-index: 40; display: inline-flex; align-items: center; justify-content: center;
   padding: 0; border: 1px solid var(--accent); border-radius: 999px; background: var(--bg-2); color: var(--accent);
@@ -130,17 +197,17 @@ button.primary:hover { background: var(--accent-hover); }
 .edge-plus.frame .ph { width: 13px; height: 13px; }
 .edge-plus.desk { width: 28px; height: 28px; }
 .edge-plus.desk .ph { width: 18px; height: 18px; }
-.edge-plus[data-side="left"] { left: 2px; top: 50%; transform: translateY(-50%); }
-.edge-plus[data-side="right"] { right: 2px; top: 50%; transform: translateY(-50%); }
-.edge-plus[data-side="top"] { top: 2px; left: 50%; transform: translateX(-50%); }
-.edge-plus[data-side="bottom"] { bottom: 2px; left: 50%; transform: translateX(-50%); }
-.edge-plus.desk[data-side="left"] { left: -6px; }
-.edge-plus.desk[data-side="right"] { right: -6px; }
-.edge-plus.desk[data-side="top"] { top: -6px; }
-.edge-plus.desk[data-side="bottom"] { bottom: -6px; }
+.edge-plus[data-side="left"] { left: calc(var(--gap) / 2 + 2px); top: 50%; transform: translateY(-50%); }
+.edge-plus[data-side="right"] { right: calc(var(--gap) / 2 + 2px); top: 50%; transform: translateY(-50%); }
+.edge-plus[data-side="top"] { top: calc(var(--gap) / 2 + 2px); left: 50%; transform: translateX(-50%); }
+.edge-plus[data-side="bottom"] { bottom: calc(var(--gap) / 2 + 2px); left: 50%; transform: translateX(-50%); }
+.edge-plus.desk[data-side="left"] { left: calc(var(--gap) / 2 - 6px); }
+.edge-plus.desk[data-side="right"] { right: calc(var(--gap) / 2 - 6px); }
+.edge-plus.desk[data-side="top"] { top: calc(var(--gap) / 2 - 6px); }
+.edge-plus.desk[data-side="bottom"] { bottom: calc(var(--gap) / 2 - 6px); }
 
 /* --- panel (dockview content) --- */
-.panel { display: flex; flex-direction: column; height: 100%; background: var(--bg); }
+.panel { display: flex; flex-direction: column; height: 100%; background: var(--frame-bg); }
 /* The header folds with a grid-row transition (0fr to 1fr): an animatable height with no measured value. */
 .panel-details { display: grid; grid-template-rows: 0fr; flex: none; transition: grid-template-rows var(--motion-fast) ease-out; }
 .panel[data-details="true"] .panel-details { grid-template-rows: 1fr; }
@@ -159,7 +226,7 @@ button.primary:hover { background: var(--accent-hover); }
 .panel-term { flex: 1; min-height: 0; padding: 2px 0 0 4px; overflow: hidden; }
 .panel-term .xterm { height: 100%; }
 /* xterm.css paints the viewport black; the leftover below the last row must be the terminal's own background. */
-.panel-term .xterm .xterm-viewport { background-color: var(--bg) !important; }
+.panel-term .xterm .xterm-viewport { background-color: var(--frame-bg) !important; }
 
 /* --- watermark (empty state) --- */
 .watermark { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--fg-dim); }
@@ -286,7 +353,7 @@ html.standalone dialog.ask header { -webkit-app-region: drag; }
 .panel-overlay .choice-icon .ph { width: 18px; height: 18px; }
 
 /* --- panel loading: the pane is painted from the layout; this skeleton holds its place until the terminal has output --- */
-.panel-loading { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; background: var(--bg); opacity: 1; transition: opacity 160ms ease-out; pointer-events: none; }
+.panel-loading { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; background: var(--frame-bg); opacity: 1; transition: opacity 160ms ease-out; pointer-events: none; }
 .panel-loading[hidden] { display: none; }
 .panel-loading.leaving { opacity: 0; }
 .panel-loading .stage { display: flex; align-items: center; gap: 10px; color: var(--fg-dim); font-size: 12px; }

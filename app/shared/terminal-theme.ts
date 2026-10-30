@@ -1,9 +1,9 @@
 // Terminal appearance shared by the main process (settings.json) and the renderer (xterm options, the
 // "Tema do terminal" dialog): the colour presets (16 ANSI + foreground, cursor, selection, one pair per
 // scheme), the bundled fonts, and the user's choice (preset, font, weight, size, line height). The panel
-// background is not part of a preset: it is always the window's (app/shared/theme.ts), so the terminal
-// sits flush in the app in both schemes.
-import { WINDOW_BACKGROUND, type ColorScheme } from './theme.ts'
+// background is not part of a preset: it is always the frame card's (app/shared/theme.ts), so the terminal
+// sits flush in its card in both schemes.
+import { FRAME_BACKGROUND, type ColorScheme } from './theme.ts'
 
 export interface TerminalColors {
   foreground: string
@@ -195,7 +195,7 @@ export function normalizeAppearance(value: unknown): TerminalAppearance {
 /** The xterm `theme` for a scheme: the preset's colours over the window's own background. Every key set (a missing one would fall back to xterm's dark defaults). */
 export function terminalTheme(appearance: TerminalAppearance, scheme: ColorScheme): TerminalColors & { background: string; cursorAccent: string } {
   const c = presetOf(appearance.preset)[scheme]
-  return { ...c, background: WINDOW_BACKGROUND[scheme], cursorAccent: WINDOW_BACKGROUND[scheme] }
+  return { ...c, background: FRAME_BACKGROUND[scheme], cursorAccent: FRAME_BACKGROUND[scheme] }
 }
 
 export interface TerminalFontOptions {

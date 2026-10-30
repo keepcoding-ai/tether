@@ -6,7 +6,7 @@ import {
   boldWeightOf, DEFAULT_APPEARANCE, DEFAULT_FONT_ID, DEFAULT_PRESET_ID, fontLoadSpecs, fontOf, normalizeAppearance, presetOf,
   TERMINAL_FONTS, TERMINAL_PRESETS, terminalFontOptions, terminalTheme, weightLabel,
 } from '../../app/shared/terminal-theme.ts'
-import { WINDOW_BACKGROUND } from '../../app/shared/theme.ts'
+import { FRAME_BACKGROUND } from '../../app/shared/theme.ts'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -24,7 +24,7 @@ test('presets: unique ids, GitHub is the default, every colour of both schemes i
     for (const scheme of ['light', 'dark'] as const) {
       for (const k of KEYS) assert.match(p[scheme][k], HEX, `${p.id}.${scheme}.${k}`)
       // Foreground and background must differ: the window background is what the text sits on.
-      assert.notEqual(p[scheme].foreground.slice(0, 7), WINDOW_BACKGROUND[scheme], `${p.id}.${scheme}: foreground equals the background`)
+      assert.notEqual(p[scheme].foreground.slice(0, 7), FRAME_BACKGROUND[scheme], `${p.id}.${scheme}: foreground equals the background`)
     }
   }
 })
@@ -53,13 +53,13 @@ test('presetOf / fontOf: an unknown or missing id is the default', () => {
   assert.equal(fontOf('cascadia-mono').id, 'cascadia-mono')
 })
 
-test('terminalTheme: the preset colours over the window background, cursorAccent = background, every key set', () => {
+test('terminalTheme: the preset colours over the frame background, cursorAccent = background, every key set', () => {
   const t = terminalTheme(DEFAULT_APPEARANCE, 'light')
-  assert.equal(t.background, WINDOW_BACKGROUND.light)
-  assert.equal(t.cursorAccent, WINDOW_BACKGROUND.light)
+  assert.equal(t.background, FRAME_BACKGROUND.light)
+  assert.equal(t.cursorAccent, FRAME_BACKGROUND.light)
   assert.equal(t.red, presetOf('github').light.red)
   const d = terminalTheme({ ...DEFAULT_APPEARANCE, preset: 'catppuccin' }, 'dark')
-  assert.equal(d.background, WINDOW_BACKGROUND.dark)
+  assert.equal(d.background, FRAME_BACKGROUND.dark)
   assert.equal(d.foreground, '#cdd6f4')
   for (const k of [...KEYS, 'background', 'cursorAccent'] as const) assert.ok(typeof d[k] === 'string' && d[k], k)
 })

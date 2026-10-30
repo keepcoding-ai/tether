@@ -20,7 +20,7 @@ export class Drawer {
   readonly root: HTMLElement
   private readonly body: HTMLElement
   private readonly host: DrawerHost
-  private theme: DockviewTheme
+  private readonly theme: DockviewTheme
   private current!: Desk
   private opened = false
 
@@ -54,11 +54,6 @@ export class Drawer {
     this.root.toggleAttribute('inert', !open)
     this.root.setAttribute('aria-hidden', String(!open))
     if (!open) this.current.hidePlus()
-  }
-
-  setTheme(theme: DockviewTheme): void {
-    this.theme = theme
-    this.current.setTheme(theme)
   }
 
   toJSON(): DrawerLayout {

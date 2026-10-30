@@ -114,8 +114,9 @@ async function waitScheme(page: Page, scheme: 'light' | 'dark'): Promise<void> {
 }
 
 const EXPECTED = {
-  dark: { toolbar: 'rgb(35, 35, 41)', term: 'rgb(27, 27, 31)', termHex: '#1b1b1f', windowBg: '#1B1B1F', dockClass: 'dockview-theme-dark' },
-  light: { toolbar: 'rgb(241, 242, 245)', term: 'rgb(251, 251, 253)', termHex: '#fbfbfd', windowBg: '#FBFBFD', dockClass: 'dockview-theme-light' },
+  // Phase 4: toolbar and window = --desk-bg; terminal = --frame-bg (flush in its card); one dockview theme of ours.
+  dark: { toolbar: 'rgb(20, 20, 24)', term: 'rgb(30, 30, 35)', termHex: '#1e1e23', windowBg: '#141418', dockClass: 'dv-theme-tether' },
+  light: { toolbar: 'rgb(231, 233, 237)', term: 'rgb(251, 251, 253)', termHex: '#fbfbfd', windowBg: '#E7E9ED', dockClass: 'dv-theme-tether' },
 } as const
 
 /** Everything the scheme touches: toolbar, dockview class, every xterm (palette + painted viewport), window color. */

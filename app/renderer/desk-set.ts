@@ -28,7 +28,7 @@ interface Mounted { desk: Desk; layer: HTMLElement }
 export class DeskSet {
   private readonly container: HTMLElement
   private readonly host: DeskSetHost
-  private theme: DockviewTheme
+  private readonly theme: DockviewTheme
   private readonly mounted = new Map<string, Mounted>()
   /** Order, names and colours: the source of truth (each Desk's `meta` mirrors its entry). */
   private row: DeskInfo[] = []
@@ -184,11 +184,6 @@ export class DeskSet {
   get frameIds(): string[] { return this.active.frameIds }
   get activeFrame(): ReturnType<Desk['frameOf']> { return this.active.activeFrame }
   frameOf(slotId: string): ReturnType<Desk['frameOf']> { const id = this.deskOf(slotId); return id ? this.mounted.get(id)!.desk.frameOf(slotId) : undefined }
-
-  setTheme(theme: DockviewTheme): void {
-    this.theme = theme
-    for (const m of this.mounted.values()) m.desk.setTheme(theme)
-  }
 
   // ---------- persistence ----------
 

@@ -1,12 +1,12 @@
 // Renderer entry: dockview grid of terminal panels (panel id === slotId), toolbar, new-panel dialog,
 // keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
-import { themeDark, themeLight, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
+import { type DockviewTheme, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
-import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
+import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
@@ -108,14 +108,13 @@ const host: PanelHost = {
 
 // ---------- theme ----------
 
-const DOCK_THEME: Record<ColorScheme, typeof themeDark> = { dark: themeDark, light: themeLight }
+/** Our one dockview theme (styles.css `.dv-theme-tether`): its colours are the tokens, which follow html[data-theme]. */
+const DOCK_THEME: DockviewTheme = { name: 'tether', className: 'dv-theme-tether' }
 
 /** Applies a theme state everywhere: CSS variables (html[data-theme]), dockview, every xterm, the toolbar select. */
 function applyTheme(state: ThemeState): void {
   theme = state
   document.documentElement.dataset.theme = state.scheme
-  desks.setTheme(DOCK_THEME[state.scheme])
-  drawer?.setTheme(DOCK_THEME[state.scheme])
   for (const p of panels.values()) p.setAppearance(appearance, state.scheme)
   themeDialog?.refresh()
   $<HTMLSelectElement>('theme-select').value = state.setting
@@ -194,9 +193,9 @@ function setupDock(): void {
     onDesksChange: () => { renderStrip(); scheduleSave() },
     onSwitch: () => focusActivePane(),
     paneOptions: panel => ({ id: panel.id, component: COMPONENT, tabComponent: TAB, title: panel.title ?? panel.id, params: panel.params ?? { slotId: panel.id } }),
-  }, DOCK_THEME[theme.scheme])
+  }, DOCK_THEME)
   desks.fromEmpty()
-  drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onBackdrop: () => setDrawerOpen(false) }, DOCK_THEME[theme.scheme])
+  drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onBackdrop: () => setDrawerOpen(false) }, DOCK_THEME)
 }
 
 /** "Ctrl+Shift+T" as <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>. */

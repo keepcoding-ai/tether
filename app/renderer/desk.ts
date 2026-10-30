@@ -9,12 +9,13 @@ import { icon } from './icons.ts'
 import { type DeskLayout, emptyDesk, FRAME_COMPONENT, frameInsertion, isLayoutV1, nextFrameId, panelIdsOf } from './layout.ts'
 
 /**
- * How close to a border (px) the pointer must be for the "+" to show. The desk band is the 4 px gutter
- * (styles.css `.desk { padding }`) plus 2 px: any wider and it would swallow the top/left/right/bottom band
- * of a frame that sits on the desk's edge, whose own "+" would then be unreachable there.
+ * How close to a border (px) the pointer must be for the "+" to show. Frames are cards inset by half of
+ * `--gap` (8 px, styles.css) inside their `.frame` box, and the desk pads another half: the desk band is the whole
+ * outer gutter (8 px) up to the card's border, and the frame band (measured on the `.frame` box) is its 4 px half
+ * gutter plus 14 px into the card. Any wider desk band would swallow the band of a frame on the desk's edge.
  */
-const FRAME_EDGE_PX = 14
-const DESK_EDGE_PX = 6
+const FRAME_EDGE_PX = 18
+const DESK_EDGE_PX = 8
 
 type Side = 'left' | 'right' | 'top' | 'bottom'
 const SIDES: readonly Side[] = ['left', 'right', 'top', 'bottom']
@@ -56,7 +57,7 @@ class Frame extends GridviewPanel {
 
 export class Desk {
   readonly host: DeskHost
-  theme: DockviewTheme
+  readonly theme: DockviewTheme
   /** Identity of the desk in the layout file (name and color are phase C's). */
   meta: Pick<DeskLayout, 'id' | 'name' | 'color'> = { id: 'desk-1', name: 'Mesa 1', color: 0 }
   private readonly container: HTMLElement
@@ -209,13 +210,6 @@ export class Desk {
 
   removePanel(panel: IDockviewPanel): void {
     this.frameOf(panel.id)?.dock.removePanel(panel)
-  }
-
-  setTheme(theme: DockviewTheme): void {
-    this.container.classList.remove(this.theme.className)
-    this.theme = theme
-    this.container.classList.add(theme.className)
-    for (const f of this.frames.values()) f.dock.updateOptions({ theme })
   }
 
   // ---------- persistence ----------

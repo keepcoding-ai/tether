@@ -10,8 +10,11 @@ export const DEFAULT_THEME: ThemeSetting = 'auto'
 /** Labels shown in the menu and the toolbar. */
 export const THEME_LABEL: Record<ThemeSetting, string> = { light: 'Claro', auto: 'Automático', dark: 'Escuro' }
 
-/** Window chrome background per scheme: the BrowserWindow color (no flash on load) and the CSS `--bg`. */
-export const WINDOW_BACKGROUND: Record<ColorScheme, string> = { light: '#fbfbfd', dark: '#1b1b1f' }
+/** Window chrome background per scheme: the BrowserWindow color (no flash on load), the CSS `--desk-bg`. */
+export const WINDOW_BACKGROUND: Record<ColorScheme, string> = { light: '#e7e9ed', dark: '#141418' }
+
+/** Frame (card) background per scheme, the CSS `--frame-bg`: the terminal paints it, so it sits flush in its card. */
+export const FRAME_BACKGROUND: Record<ColorScheme, string> = { light: '#fbfbfd', dark: '#1e1e23' }
 
 /** Anything that is not one of the three settings (missing, corrupt file, old value) becomes the default. */
 export function normalizeTheme(value: unknown): ThemeSetting {
