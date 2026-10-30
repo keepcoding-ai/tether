@@ -28,6 +28,8 @@ export interface DeskHost {
   onPanelsChange(): void
   /** A "+" was used: `frameId` is the frame whose edge it was (undefined at the desk level). */
   onEdge(target: Target, op: 'duplicate' | 'choose', frameId: string | undefined): void
+  /** The focused pane of this desk may have changed (a pane or a frame got activated). */
+  onActivePanelChange?(): void
 }
 
 /** One frame: a gridview cell owning a dockview. */
@@ -81,7 +83,7 @@ export class Desk {
     })
     this.grid.onDidAddPanel(p => { this.frames.set(p.id, p as Frame) })
     this.grid.onDidRemovePanel(p => { this.frames.delete(p.id); this.framePlus.delete(p.id); if (this.activeFrameId === p.id) this.activeFrameId = undefined })
-    this.grid.onDidActivePanelChange(p => { if (p) this.activeFrameId = p.id })
+    this.grid.onDidActivePanelChange(p => { if (p) this.activeFrameId = p.id; host.onActivePanelChange?.() })
     this.grid.onDidLayoutChange(() => host.onLayoutChange())
     for (const side of SIDES) container.append(this.plusButton('desk', side, undefined))
     container.addEventListener('mousemove', ev => this.onMouseMove(ev))
@@ -100,13 +102,13 @@ export class Desk {
       // The last pane of a frame leaves: the frame goes with it, once dockview is done with the removal.
       queueMicrotask(() => this.removeIfEmpty(frame))
     })
-    frame.dock.onDidActivePanelChange(p => { if (p) this.activeFrameId = frame.id })
+    frame.dock.onDidActivePanelChange(p => { if (p) this.activeFrameId = frame.id; this.host.onActivePanelChange?.() })
     const view = this.pendingViews[frame.id]
     if (view) { delete this.pendingViews[frame.id]; this.loadView(frame, view) }
   }
 
   /** Restores a frame's dockview; if its JSON is refused, every pane it names is still opened, one by one. */
-  private loadView(frame: Frame, view: SerializedDockview): void {
+  loadView(frame: Frame, view: SerializedDockview): void {
     try { frame.dock.fromJSON(view); return } catch (err) { console.error(`quadro ${frame.id}: layout inválido, reabrindo os painéis um a um`, err) }
     frame.dock.clear()
     for (const id of panelIdsOf(view)) {
@@ -143,6 +145,26 @@ export class Desk {
     // dockview-core keeps the root wrap private; it is the move its own edge drops make (see frameInsertion).
     if (ins.wrapRoot) (this.grid as unknown as { component: { gridview: { insertOrthogonalSplitviewAtRoot(): void } } }).component.gridview.insertOrthogonalSplitviewAtRoot()
     return this.grid.addPanel({ id, component: FRAME_COMPONENT, location: ins.location }) as Frame
+  }
+
+  /**
+   * Takes a frame out of this desk (moving it to another desk): its dockview JSON, then its panes are removed
+   * (the frame goes with its last pane, unless it is the desk's only frame). Undefined when it does not exist.
+   */
+  takeFrame(frameId: string): SerializedDockview | undefined {
+    const frame = this.frames.get(frameId)
+    if (!frame) return undefined
+    const view = frame.dock.toJSON()
+    for (const p of [...frame.dock.panels]) frame.dock.removePanel(p)
+    return view
+  }
+
+  /** Puts a frame taken from another desk here: into the only frame when it is empty, else a new frame at the right edge. */
+  putFrame(view: SerializedDockview): void {
+    const only = this.frames.size === 1 ? [...this.frames.values()][0] : undefined
+    const frame = only && only.dock.panels.length === 0 ? only : this.addFrame('right')
+    this.loadView(frame, view)
+    this.activeFrameId = frame.id
   }
 
   private ensureFrame(): Frame {
@@ -203,6 +225,15 @@ export class Desk {
     for (const id of this.frameIds) { const f = this.frames.get(id); if (f) views[id] = f.dock.toJSON() }
     const grid = this.grid.toJSON().grid
     return { ...this.meta, frames: { grid, views }, ...(this.activeFrame ? { activeFrame: this.activeFrame.id } : {}) }
+  }
+
+  /** Disposes every frame (and their panes: each terminal detaches) and removes the desk's element. */
+  dispose(): void {
+    this.grid.clear()
+    this.grid.dispose()
+    this.frames.clear()
+    this.framePlus.clear()
+    this.container.remove()
   }
 
   clear(): void {

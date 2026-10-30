@@ -6,7 +6,13 @@
 //   level pane   Ctrl+Alt+Arrow         duplicate beside the focused pane (Ctrl+Shift+D / E: right / below aliases)
 //   level frame  Ctrl+Alt+Shift+Arrow   duplicate at the frame's edge (full height or width of the frame)
 //   level desk   Alt+Shift+Arrow        duplicate into a new frame at the desk's edge
+//   desks        Ctrl+Tab / Ctrl+Shift+Tab next / previous desk (sequential, wraps) · Ctrl+1…9 desk by position
+//                Ctrl+Alt+N new desk after the current one · Ctrl+Alt+Shift+N before it
 //   Ctrl+Shift+T chooser · Ctrl+Shift+Q quit all
+//
+// Desk chords vs the terminal: xterm sends nothing for Ctrl+Tab; Ctrl+1…9 have legacy control codes in xterm
+// (Ctrl+2 NUL, Ctrl+3…7 ESC…US, Ctrl+8 DEL) that nobody types on purpose (Esc, Backspace exist); on ABNT2
+// AltGr+N (= Ctrl+Alt+N) produces no character, so the chord takes nothing from typing.
 //
 // Pane chords (PANE_SHORTCUTS) live inside the terminal and never reach the document: Ctrl+C copies the
 // selection when there is one (without one it stays the terminal's ^C, which interrupts Claude, dev servers
@@ -21,6 +27,9 @@ export type AppShortcut =
   | { op: 'choose' }
   | { op: 'duplicate'; level: Level; direction: Direction }
   | { op: 'quit-all' }
+  | { op: 'desk-cycle'; step: 1 | -1 }
+  | { op: 'desk-go'; position: number }
+  | { op: 'desk-new'; side: 'before' | 'after' }
 
 /** The subset of KeyboardEvent the mapping needs (tests build it by hand). */
 export interface KeyLike { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; code: string }
@@ -47,6 +56,11 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   ...arrows({ ctrl: true, alt: true, shift: true }, 'frame'),
   ...arrows({ alt: true, shift: true }, 'desk'),
   { chord: { ctrl: true, shift: true, code: 'KeyQ' }, command: { op: 'quit-all' } },
+  { chord: { ctrl: true, code: 'Tab' }, command: { op: 'desk-cycle', step: 1 } },
+  { chord: { ctrl: true, shift: true, code: 'Tab' }, command: { op: 'desk-cycle', step: -1 } },
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((position): ShortcutEntry => ({ chord: { ctrl: true, code: `Digit${position}` }, command: { op: 'desk-go', position } })),
+  { chord: { ctrl: true, alt: true, code: 'KeyN' }, command: { op: 'desk-new', side: 'after' } },
+  { chord: { ctrl: true, alt: true, shift: true, code: 'KeyN' }, command: { op: 'desk-new', side: 'before' } },
 ]
 
 function matches(chord: Chord, ev: KeyLike): boolean {
@@ -116,6 +130,9 @@ export function chordLabel(chord: Chord): string {
 function sameCommand(a: AppShortcut, b: AppShortcut): boolean {
   if (a.op !== b.op) return false
   if (a.op === 'duplicate' && b.op === 'duplicate') return a.level === b.level && a.direction === b.direction
+  if (a.op === 'desk-cycle' && b.op === 'desk-cycle') return a.step === b.step
+  if (a.op === 'desk-go' && b.op === 'desk-go') return a.position === b.position
+  if (a.op === 'desk-new' && b.op === 'desk-new') return a.side === b.side
   return true
 }
 

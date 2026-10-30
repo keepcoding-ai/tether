@@ -604,6 +604,7 @@ export class SlotTab implements ITabRenderer {
   private readonly text: HTMLElement
   private readonly dot: HTMLElement
   private readonly unsafe: HTMLElement
+  private readonly attn: HTMLElement
   private disposers: Array<() => void> = []
   private readonly host: PanelHost
   /** What the layout file remembers of the pane, painted before the daemon answers. */
@@ -619,12 +620,13 @@ export class SlotTab implements ITabRenderer {
     this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.append(icon('circle-fill'))
     this.text = document.createElement('span'); this.text.className = 'text'
     this.unsafe = unsafeBadge(false)
+    this.attn = document.createElement('span'); this.attn.className = 'attn'
     const close = document.createElement('button')
     close.className = 'close'; close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
     close.append(icon('x'))
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    this.element.append(this.kind, this.text, this.unsafe, this.dot, close)
+    this.element.append(this.kind, this.attn, this.text, this.unsafe, this.dot, close)
     this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
   }
 
@@ -652,7 +654,10 @@ export class SlotTab implements ITabRenderer {
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.unsafe.hidden = !s?.unsafe
-    this.element.title = s ? panelTooltip(s) : `Slot ${this.api.id} (desconhecido)`
+    this.attn.className = `attn${s?.attention ? ` ${s.attention}` : ''}`
+    this.attn.title = s?.attention === 'waiting' ? 'Esperando você' : s?.attention === 'done' ? 'Terminou' : ''
+    this.element.dataset.attention = s?.attention ?? ''
+    this.element.title = s ? panelTooltip(s) + (s.attention === 'waiting' ? '\nEsperando você' : s.attention === 'done' ? '\nTerminou' : '') : `Slot ${this.api.id} (desconhecido)`
   }
 
   dispose(): void {

@@ -254,3 +254,39 @@ export function switchProfileFailedSituation(s: SlotState, message: string): Dia
 }
 
 export const STANDALONE_SITUATIONS: Record<string, () => DialogSpec> = { 'still-closing': stillClosingSituation }
+
+/**
+ * Closing a desk that still has panes. What it communicates: "these panes (and what runs in them) are on this
+ * desk; the safe way is to take them to another desk; the other way stops what runs and closes the panes."
+ * The slots are never forgotten: a closed pane stays under "Slots fechados".
+ */
+export function closeDeskSituation(deskName: string, slots: SlotState[], neighbourName: string): DialogSpec {
+  const live = slots.filter(isLive)
+  const names = slots.map(s => s.title ?? s.name ?? folderName(s.cwd))
+  const shown = names.slice(0, 4)
+  if (names.length > 4) shown.push(`e mais ${names.length - 4}`)
+  const panes = slots.length === 1 ? '1 painel' : `${slots.length} painéis`
+  const context: DialogContext = {
+    icon: 'cards',
+    name: `${deskName}: ${panes}`,
+    lines: shown,
+    status: live.length > 0
+      ? { label: live.length === 1 ? '1 processo rodando' : `${live.length} processos rodando`, tone: 'ok' }
+      : { label: 'nada rodando', tone: 'dim' },
+  }
+  const stop = live.length > 0
+    ? { id: 'stop', icon: 'stop-circle', label: 'Encerrar e fechar a mesa', consequence: 'Os processos dos painéis são finalizados agora e a mesa fecha. As conversas ficam salvas: os slots ficam em Slots fechados e retomam ao reabrir.', tone: 'destructive' as const }
+    : { id: 'stop', icon: 'x', label: 'Fechar os painéis e a mesa', consequence: 'Nada está rodando. Os painéis saem da tela e ficam em Slots fechados.', tone: 'neutral' as const }
+  return {
+    situation: 'close-desk',
+    tone: live.length > 0 ? 'warn' : 'info',
+    icon: live.length > 0 ? 'warning' : 'cards',
+    title: live.length > 0 ? `A mesa "${deskName}" tem agentes rodando` : `Fechar a mesa "${deskName}"?`,
+    context,
+    choices: [
+      { id: 'move', icon: 'arrow-square-out', label: `Mover os painéis para "${neighbourName}"`, consequence: 'Os painéis vão para a outra mesa, com tudo rodando como está, e esta mesa fecha.', tone: 'safe' },
+      stop,
+    ],
+    cancelLabel: 'Cancelar',
+  }
+}
