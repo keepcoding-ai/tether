@@ -135,11 +135,22 @@ export function resolveSoulCommand(env: Record<string, string | undefined> = pro
  * The command with its node replaced by <home>/bin/tether-soul.exe, when it is a node at all (a `soul.exe` or a
  * bash launcher is left alone). The daemon may itself be a renamed node (tetherd.exe): the node it was made
  * from is in TETHER_NODE, and the soul's copy comes from that one, never from another copy.
+ *
+ * On macOS no copy exists (core/exe.ts: dyld refuses it) and node-pty has no argv0 of its own (its argv[0] is
+ * always the file), so the name goes through the shell: `/bin/sh -c 'exec -a tether-soul "$0" "$@"' node args…`.
+ * /bin/sh there is bash (or zsh), both with `exec -a`; the shell is replaced by the node, not kept in between.
  */
 export function withRenamedNode(cmd: Command, home: string, env: Record<string, string | undefined> = process.env, log: (msg: string) => void = exeLog(home, 'soul')): Command {
   if (!isNodeExecutable(cmd.command)) return cmd
   const source = isRenamedNode(cmd.command) ? (env.TETHER_NODE?.trim() || cmd.command) : cmd.command
-  return { command: ensureRenamedNode(home, 'tether-soul', source, log).path, args: cmd.args }
+  const exe = ensureRenamedNode(home, 'tether-soul', source, log)
+  if (exe.argv0) return argv0Command(exe.argv0, exe.path, cmd.args)
+  return { command: exe.path, args: cmd.args }
+}
+
+/** `/bin/sh -c 'exec -a <name> "$0" "$@"' <file> <args…>`: runs `file` with `name` as its argv[0]. */
+export function argv0Command(name: string, file: string, args: string[]): Command {
+  return { command: '/bin/sh', args: ['-c', `exec -a ${name} "$0" "$@"`, file, ...args] }
 }
 
 function envWithoutUndefined(source: NodeJS.ProcessEnv): Record<string, string> {

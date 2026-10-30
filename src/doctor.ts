@@ -108,6 +108,8 @@ export interface ExeFacts {
   daemonExec: string | undefined
   /** The soul command as resolved now (undefined when the soul is not a node at all, e.g. soul.exe or bash). */
   soulIsNode: boolean
+  /** Where the check runs; macOS names its processes by argv0 over the real node (core/exe.ts). */
+  platform?: NodeJS.Platform
 }
 
 /**
@@ -117,6 +119,8 @@ export interface ExeFacts {
  */
 export function checkExecutables(f: ExeFacts): CheckResult {
   const name = 'executáveis'
+  const platform = f.platform ?? process.platform
+  if (platform === 'darwin') return checkExecutablesDarwin(f, name)
   const describe = (s: ExeStatus): string => {
     if (s.stamp?.method === 'fallback') return `${s.name}: node original (${s.stamp.reason ?? 'sem motivo registrado'})`
     if (!s.present) return `${s.name}: ainda não criado`
@@ -133,6 +137,22 @@ export function checkExecutables(f: ExeFacts): CheckResult {
   if (broken.length > 0) return { level: 'AVISO', name, detail, hint: 'o tether roda com o node original até a cópia funcionar: confira permissões e espaço em <TETHER_HOME>/bin' }
   const running = f.daemonExec ? ` (tetherd em execução como ${f.daemonExec})` : ''
   return { level: 'OK', name, detail: `${detail}${running}` }
+}
+
+/**
+ * macOS: no renamed file is expected (dyld refuses a link/copy of Homebrew's node); the daemon runs the real
+ * node named through argv0, and the soul the same through `exec -a`. A `<home>/bin/tetherd` or `tether-soul`
+ * still on disk is a leftover from before and would abort at launch: AVISO naming it.
+ */
+function checkExecutablesDarwin(f: ExeFacts, name: string): CheckResult {
+  const watched = [f.tetherd, ...(f.soulIsNode ? [f.soul] : [])]
+  const residue = watched.filter((s) => s.present)
+  const running = f.daemonExec ? `tetherd em execução pelo node real (${f.daemonExec}) com o nome por argv0` : 'tetherd roda pelo node real com o nome por argv0'
+  const soul = f.soulIsNode ? '; tether-soul idem (exec -a)' : ''
+  if (residue.length > 0) {
+    return { level: 'AVISO', name, detail: `${running}${soul}; resíduo que o dyld recusa: ${residue.map((s) => s.path).join(', ')}`, hint: 'apague o(s) arquivo(s) em <TETHER_HOME>/bin (o link/cópia do node não roda no macOS: "Library not loaded: @rpath/libnode")' }
+  }
+  return { level: 'OK', name, detail: `${running}${soul}` }
 }
 
 export interface StartTimeFacts {
