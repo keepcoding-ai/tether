@@ -353,8 +353,13 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     await page.locator(`.dv-groupview:has(.panel[data-slot-id="${id1}"]) .tether-tab`).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu')
     const items = await page.locator('#ctx-menu li').allTextContents()
-    // Phase B added the two frame-level entries (they open the chooser at that level).
-    assert.deepEqual(items, ['Novo painel…', 'Duplicar painel à direita', 'Duplicar painel abaixo', 'Novo painel na borda do quadro…', 'Novo quadro…', 'Trocar perfil…', 'Fechar painel…'])
+    // Phase B added the two frame-level entries (they open the chooser at that level); phases C and D the moves
+    // (to a desk, to the drawer); the pane header toggle sits before "Trocar perfil…" (collapsed by default).
+    assert.deepEqual(items, [
+      'Novo painel…', 'Duplicar painel à direita', 'Duplicar painel abaixo', 'Novo painel na borda do quadro…', 'Novo quadro…',
+      'Mover para a mesa…', 'Mover quadro para a mesa…', 'Mover para a gaveta', 'Mover quadro para a gaveta',
+      'Mostrar detalhes do painel', 'Trocar perfil…', 'Fechar painel…',
+    ])
     await page.click('#ctx-menu li:has-text("Novo painel…")')
     await page.locator('#dlg-new[open]').waitFor()
     assert.ok(await page.locator('#new-placement').isVisible())
