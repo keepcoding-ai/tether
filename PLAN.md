@@ -240,12 +240,13 @@ Com o mouse, um "+" fino aparece perto das bordas; o tamanho diz o nível (paine
 - **Aceite:** o Guga separa os painéis em duas mesas, troca com Ctrl+Tab e vê o selo quando o Claude da outra mesa termina.
 - **Como ficou:** `app/renderer/desks.ts` (fila pura), `desk-set.ts` (`DeskSet`, camadas empilhadas), `desk-strip.ts` (faixa), `Desk` reutilizável sem faixa (base da gaveta). Ctrl+Tab sequencial (não MRU). O hook grava `<slot>.attention` (não o `.jsonl`); `SlotState.attention` e `seen` opcionais, DAEMON_VERSION 0.3.0 (PROTOCOL_VERSION segue 1: nada quebra para clientes antigos). Atenção do soul = heurística de turno (Enter → ≥ 512 B → 4 s quieto) + BEL; shell = BEL. Fechar mesa com painéis sempre pergunta (mover é o padrão). Detalhes e provas no PROGRESS.md.
 
-## Fase D — gaveta
+## Fase D — gaveta (entregue)
 
 - **Modelo:** `drawer: { frames: {...} }` no `layout.json` (mesmo formato de uma mesa, sem nome/cor); `drawerOpen` não é persistido (abre sempre fechada).
 - **Daemon:** nada.
 - **UI:** camada fixa a 8 px das bordas com fundo escurecido, contendo um `Desk` sem faixa; `` Ctrl+` `` e botão na barra alternam; Esc fecha (se nenhum diálogo estiver aberto); o conteúdo fica montado e escondido quando fechada (`visibility:hidden`, mesmo tamanho); o foco volta ao painel que tinha foco na mesa. Um painel só existe num lugar: "Mover para a gaveta" / "Mover para a mesa" no clique direito da aba.
 - **Testes:** unit (modelo: mover painel mesa ↔ gaveta); E2E `app.drawer` (shell na gaveta segue vivo e recebendo saída com a gaveta fechada; Esc fecha; reabrir o app mantém a gaveta e seus painéis).
 - **Aceite:** o Guga guarda um shell de utilidades na gaveta, chama com `` Ctrl+` `` de qualquer mesa, fecha com Esc e o shell continua onde estava.
+- **Como ficou:** `app/renderer/drawer-rules.ts` (puro: estado aberta/fechada + foco de volta, regra do Esc, pasta do shell padrão, contagem de atenção), `drawer.ts` (`Drawer`: um `Desk` dentro do painel `#drawer`; fechada fica montada com `visibility:hidden` + `inert`, mesmo tamanho), `layout.ts` (`drawer: DrawerLayout | null`; `null` lê como gaveta vazia; `pruneDrawer`; um painel mora em um lugar só), `desk.ts` (`transferPanel`/`transferFrame`, usados também pelas mesas). `` Ctrl+` `` alterna (alias `Ctrl+Shift+G` para o teclado ABNT2); botão "Gaveta" na barra com selo de atenção; "Abrir gaveta" na bandeja (`TrayCommand` `open-drawer`); "Mover para a gaveta" / "Mover para a mesa atual" (painel e quadro) pelo clique direito da aba e pelo menu ≡. Daemon: nada. Regra do Esc, gaveta vazia e demais decisões: PROGRESS.md, "Fase D".
 
 Ordem: A → B → C → D, cada fase usada pelo Guga antes da seguinte. B e C mudam o formato do layout: a migração nunca descarta um painel que o daemon conhece.
