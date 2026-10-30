@@ -1,6 +1,7 @@
 // The persisted layout (<home>/layout.json), pure and unit-tested:
 //   v1  a single SerializedDockview (the whole app was one frame);
-//   v2  desks → frames (a gridview of frames, each frame its own dockview) → panes. `drawer` is reserved.
+//   v2  desks → frames (a gridview of frames, each frame its own dockview) → panes. `drawer` is the quick desk
+//        (same shape as a desk without name/colour; null in files written before it existed).
 // Reading migrates v1 → v2 without touching the frame's dockview JSON (byte for byte the old file: the user's
 // panes come back exactly). Pruning drops the panes the daemon no longer knows, frame by frame, and the frames
 // that end up empty; a frame's root must stay a branch (dockview refuses a leaf there).
@@ -25,11 +26,18 @@ export interface DeskLayout {
   activeFrame?: string
 }
 
+/** The drawer's content: the frames of a desk, without the identity (the drawer is one, shared by all desks). */
+export interface DrawerLayout {
+  frames: DeskLayout['frames']
+  activeFrame?: string
+}
+
 export interface LayoutV2 {
   v: 2
   desks: DeskLayout[]
   activeDesk: string
-  drawer: null
+  /** null = never used (files from before the drawer): reads as an empty drawer (`migrateLayout`). */
+  drawer: DrawerLayout | null
 }
 
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
@@ -58,9 +66,24 @@ export function emptyDesk(id = 'desk-1', name = 'Mesa 1'): DeskLayout {
   return { id, name, color: 0, frames: { grid: singleFrameGrid(frameId, 1200, 800), views: {} }, activeFrame: frameId }
 }
 
+/** A drawer with one empty frame. */
+export function emptyDrawer(): DrawerLayout {
+  const d = emptyDesk('drawer', 'Gaveta')
+  return { frames: d.frames, activeFrame: d.activeFrame }
+}
+
+export function isDrawerLayout(raw: unknown): raw is DrawerLayout {
+  return isObject(raw) && isObject(raw.frames) && isObject(raw.frames.grid) && isObject(raw.frames.grid.root) && isObject(raw.frames.views)
+}
+
+/** The drawer of a layout; a missing or malformed one is an empty drawer. */
+export function drawerOf(layout: Pick<LayoutV2, 'drawer'>): DrawerLayout {
+  return isDrawerLayout(layout.drawer) ? layout.drawer : emptyDrawer()
+}
+
 export function emptyLayout(): LayoutV2 {
   const desk = emptyDesk()
-  return { v: 2, desks: [desk], activeDesk: desk.id, drawer: null }
+  return { v: 2, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer() }
 }
 
 /**
@@ -68,13 +91,13 @@ export function emptyLayout(): LayoutV2 {
  * the caller must keep a `layout.v1.bak` before the first v2 write. Anything else (empty, corrupt) is null.
  */
 export function migrateLayout(raw: unknown): { layout: LayoutV2; migrated: boolean } | null {
-  if (isLayoutV2(raw)) return { layout: raw, migrated: false }
+  if (isLayoutV2(raw)) return { layout: { ...raw, drawer: drawerOf(raw) }, migrated: false }
   if (isLayoutV1(raw)) {
     const frameId = 'frame-1'
     const width = typeof raw.grid.width === 'number' && raw.grid.width > 0 ? raw.grid.width : 1200
     const height = typeof raw.grid.height === 'number' && raw.grid.height > 0 ? raw.grid.height : 800
     const desk: DeskLayout = { id: 'desk-1', name: 'Mesa 1', color: 0, frames: { grid: singleFrameGrid(frameId, width, height), views: { [frameId]: raw } }, activeFrame: frameId }
-    return { layout: { v: 2, desks: [desk], activeDesk: desk.id, drawer: null }, migrated: true }
+    return { layout: { v: 2, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer() }, migrated: true }
   }
   return null
 }
@@ -159,24 +182,37 @@ export function pruneDesk(desk: DeskLayout, known: Set<string>): DeskLayout {
   return { ...desk, frames: { grid, views }, activeFrame }
 }
 
-/** The layout restricted to `known` panel ids, desk by desk; `kept` = how many panels survived in total. */
-export function pruneLayoutV2(layout: LayoutV2, known: Set<string>): { layout: LayoutV2; kept: number; total: number } {
-  let kept = 0
-  let total = 0
-  for (const d of layout.desks) for (const v of Object.values(d.frames.views)) {
-    const ids = isLayoutV1(v) ? panelIdsOf(v) : []
-    total += ids.length
-    kept += ids.filter(id => known.has(id)).length
-  }
-  const desks = layout.desks.map(d => pruneDesk(d, known))
-  const activeDesk = desks.some(d => d.id === layout.activeDesk) ? layout.activeDesk : desks[0]!.id
-  return { layout: { ...layout, desks, activeDesk }, kept, total }
+/** The drawer restricted to `known` panel ids (an empty result is an empty drawer). */
+export function pruneDrawer(drawer: DrawerLayout, known: Set<string>): DrawerLayout {
+  const d = pruneDesk({ id: 'drawer', name: 'Gaveta', color: 0, frames: drawer.frames, activeFrame: drawer.activeFrame }, known)
+  return { frames: d.frames, ...(d.activeFrame ? { activeFrame: d.activeFrame } : {}) }
 }
 
-/** Every panel id in the layout, across desks and frames. */
+/** The panel ids of a set of frames' views. */
+function viewIds(frames: DeskLayout['frames']): string[] {
+  return Object.values(frames.views).flatMap(v => (isLayoutV1(v) ? panelIdsOf(v) : []))
+}
+
+/**
+ * The layout restricted to `known` panel ids, desk by desk and then the drawer; `kept` = how many panels survived
+ * in total. A pane lives in one place only: an id the desks hold is dropped from the drawer (a hand-edited or
+ * half-written file must not mount one terminal twice).
+ */
+export function pruneLayoutV2(layout: LayoutV2, known: Set<string>): { layout: LayoutV2; kept: number; total: number } {
+  const total = allPanelIds(layout).length
+  const desks = layout.desks.map(d => pruneDesk(d, known))
+  const activeDesk = desks.some(d => d.id === layout.activeDesk) ? layout.activeDesk : desks[0]!.id
+  const inDesks = new Set(desks.flatMap(d => viewIds(d.frames)))
+  const drawer = pruneDrawer(drawerOf(layout), new Set([...known].filter(id => !inDesks.has(id))))
+  const pruned: LayoutV2 = { ...layout, desks, activeDesk, drawer }
+  return { layout: pruned, kept: allPanelIds(pruned).length, total }
+}
+
+/** Every panel id in the layout, across desks, frames and the drawer. */
 export function allPanelIds(layout: LayoutV2): string[] {
   const out: string[] = []
-  for (const d of layout.desks) for (const v of Object.values(d.frames.views)) if (isLayoutV1(v)) out.push(...panelIdsOf(v))
+  for (const d of layout.desks) out.push(...viewIds(d.frames))
+  if (isDrawerLayout(layout.drawer)) out.push(...viewIds(layout.drawer.frames))
   return out
 }
 

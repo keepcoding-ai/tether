@@ -321,6 +321,37 @@ export class Desk {
   }
 }
 
+/**
+ * Moves a pane from one Desk to another (a desk to the drawer and back, or desk to desk): a tab in the target's
+ * active frame. The pane is removed first, so its terminal detaches before the new one attaches (the daemon
+ * keeps one subscription per client and slot); if the add fails, the pane goes back where it was. The slot's
+ * process is never touched.
+ */
+export function transferPanel(source: Desk, target: Desk, slotId: string, options: AddPanelOptions): boolean {
+  const panel = source.getPanel(slotId)
+  if (!panel || source === target) return false
+  source.removePanel(panel)
+  try { target.addPanel(options) } catch (err) {
+    console.error(`mover painel ${slotId}: falhou, voltando ao lugar de origem`, err)
+    source.addPanel(options)
+    return false
+  }
+  return true
+}
+
+/** Moves a whole frame (its split layout and panes) to another Desk, as a new frame at its right edge (or into its only, empty frame). */
+export function transferFrame(source: Desk, target: Desk, frameId: string): boolean {
+  if (source === target) return false
+  const view: SerializedDockview | undefined = source.takeFrame(frameId)
+  if (!view) return false
+  try { target.putFrame(view) } catch (err) {
+    console.error(`mover quadro ${frameId}: falhou, voltando ao lugar de origem`, err)
+    source.putFrame(view)
+    return false
+  }
+  return true
+}
+
 function nearestSide(r: DOMRect, x: number, y: number): { side: Side; distance: number } | undefined {
   if (r.width === 0 || r.height === 0) return undefined
   const candidates: Array<{ side: Side; distance: number }> = [

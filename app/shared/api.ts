@@ -77,6 +77,8 @@ export interface TetherApi {
   standaloneSize(height: number): void
   /** The tray menu picked a pane: focus it (waits for the layout to be restored; opens it when it was closed). */
   onFocusSlot(listener: (slotId: string) => void): () => void
+  /** The tray menu's "Abrir gaveta": open the drawer (waits for the layout to be restored). */
+  onOpenDrawer(listener: () => void): () => void
   /** Closes the window (keeps every slot running in the daemon). */
   closeWindow(): void
 }

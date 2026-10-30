@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SerializedDockview } from 'dockview-core'
-import { allPanelIds, emptyLayout, frameIdsOf, frameInsertion, isLayoutV1, isLayoutV2, migrateLayout, nextFrameId, pruneDesk, pruneLayout, pruneLayoutV2, singleFrameGrid, type DeskLayout, type FrameGrid } from '../../app/renderer/layout.ts'
+import { allPanelIds, drawerOf, emptyDrawer, emptyLayout, frameIdsOf, frameInsertion, isLayoutV1, isDrawerLayout, isLayoutV2, migrateLayout, nextFrameId, pruneDesk, pruneDrawer, pruneLayout, pruneLayoutV2, singleFrameGrid, type DeskLayout, type DrawerLayout, type FrameGrid, type LayoutV2 } from '../../app/renderer/layout.ts'
 
 type Node = SerializedDockview['grid']['root']
 const leaf = (id: string, views: string[], size = 100): Node => ({ type: 'leaf', data: { views, activeView: views[0]!, id }, size })
@@ -70,7 +70,7 @@ describe('migrateLayout', () => {
     assert.deepEqual(frameIdsOf(desk.frames.grid), ['frame-1'])
     assert.equal(desk.activeFrame, 'frame-1')
     assert.equal(JSON.stringify(desk.frames.views['frame-1']), before, 'the frame view IS the v1 file')
-    assert.equal(out.layout.drawer, null)
+    assert.deepEqual(out.layout.drawer, emptyDrawer(), 'a v1 file has no drawer: it reads as an empty one')
     assert.deepEqual(desk.frames.grid, singleFrameGrid('frame-1', 1400, 800))
   })
 
@@ -176,6 +176,70 @@ describe('pruneDesk / pruneLayoutV2', () => {
     assert.equal(out.kept, 2)
     assert.equal(out.total, 3)
     assert.equal(out.layout.activeDesk, 'desk-1')
+  })
+})
+
+describe('the drawer field', () => {
+  const drawerWith = (ids: string[]): DrawerLayout => ({
+    frames: { grid: grid(frameBranch([frameLeaf('frame-1', 1400)], 800)), views: { 'frame-1': layout(branch([leaf('1', ids, 1400)], 800), ids) } },
+    activeFrame: 'frame-1',
+  })
+  const deskWith = (ids: string[]): DeskLayout => ({
+    id: 'desk-1', name: 'Mesa 1', color: 0, activeFrame: 'frame-1',
+    frames: { grid: grid(frameBranch([frameLeaf('frame-1', 1400)], 800)), views: { 'frame-1': layout(branch([leaf('1', ids, 1400)], 800), ids) } },
+  })
+  const file = (desks: DeskLayout[], drawer: DrawerLayout | null): LayoutV2 => ({ v: 2, desks, activeDesk: desks[0]!.id, drawer })
+
+  test('a v2 file with drawer null (written before the drawer existed) reads as an empty drawer', () => {
+    const out = migrateLayout({ ...file([deskWith(['a'])], null) })!
+    assert.equal(out.migrated, false)
+    assert.deepEqual(out.layout.drawer, emptyDrawer())
+    assert.deepEqual(frameIdsOf(out.layout.drawer!.frames.grid), ['frame-1'])
+    assert.deepEqual(out.layout.drawer!.frames.views, {})
+  })
+
+  test('a missing or malformed drawer is an empty one; a good one is kept as it is', () => {
+    assert.deepEqual(drawerOf({ drawer: null }), emptyDrawer())
+    assert.deepEqual(drawerOf({ drawer: { frames: 7 } as unknown as DrawerLayout }), emptyDrawer())
+    assert.ok(!isDrawerLayout(undefined))
+    const good = drawerWith(['x'])
+    assert.equal(drawerOf({ drawer: good }), good)
+    assert.deepEqual(migrateLayout({ ...file([deskWith(['a'])], good) })!.layout.drawer, good)
+  })
+
+  test('the fresh layout carries an empty drawer', () => {
+    assert.deepEqual(emptyLayout().drawer, emptyDrawer())
+  })
+
+  test('panel ids count the panes of the drawer too', () => {
+    assert.deepEqual(allPanelIds(file([deskWith(['a'])], drawerWith(['x', 'y']))).sort(), ['a', 'x', 'y'])
+    assert.deepEqual(allPanelIds(file([deskWith(['a'])], null)), ['a'])
+  })
+
+  test('pruning drops the drawer panes the daemon forgot; kept/total span desks and drawer', () => {
+    const out = pruneLayoutV2(file([deskWith(['a'])], drawerWith(['x', 'y'])), new Set(['a', 'y']))
+    assert.equal(out.total, 3)
+    assert.equal(out.kept, 2)
+    assert.deepEqual(Object.keys(out.layout.drawer!.frames.views['frame-1']!.panels), ['y'])
+    assert.deepEqual(allPanelIds(out.layout).sort(), ['a', 'y'])
+  })
+
+  test('nothing known in the drawer: an empty drawer, never a drawer without a frame', () => {
+    const out = pruneDrawer(drawerWith(['x']), new Set())
+    assert.deepEqual(out, emptyDrawer())
+  })
+
+  test('a pane lives in one place: an id the desks hold is dropped from the drawer', () => {
+    const out = pruneLayoutV2(file([deskWith(['a', 'b'])], drawerWith(['b', 'c'])), new Set(['a', 'b', 'c']))
+    assert.deepEqual(allPanelIds(out.layout).sort(), ['a', 'b', 'c'])
+    assert.deepEqual(Object.keys(out.layout.drawer!.frames.views['frame-1']!.panels), ['c'])
+    assert.equal(out.kept, 3)
+    assert.equal(out.total, 4, 'the duplicate counts as lost: the caller rebuilds from the pruned layout')
+  })
+
+  test('an untouched drawer survives pruning byte for byte', () => {
+    const drawer = drawerWith(['x', 'y'])
+    assert.deepEqual(pruneDrawer(drawer, new Set(['x', 'y'])), drawer)
   })
 })
 

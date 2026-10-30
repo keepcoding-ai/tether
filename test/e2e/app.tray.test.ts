@@ -11,7 +11,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -68,6 +68,7 @@ function appEnv(home: string): Record<string, string> {
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
+  env.TETHER_TRAY = '1' // this is the one suite that exercises the tray: it opts back in
   return env
 }
 
@@ -213,3 +214,47 @@ test('tray: close hides to the tray (app + daemon alive), Abrir restores, restar
     assert.equal(existsSync(home), false, 'test home removed')
   }
 })
+
+/** "Sair" from the tray while the window is hidden (its usual state): the app process must end and leave no tray behind. */
+for (const mode of ['quit-keep', 'quit-all'] as const) {
+  test(`tray: "${mode === 'quit-keep' ? 'Sair (manter agentes)' : 'Sair e encerrar tudo'}" with the window hidden ends the app process`, async () => {
+    const home = mkdtempSync(join(tmpdir(), 'tether-apptray-'))
+    writeFileSync(join(home, 'settings.json'), JSON.stringify({ trayNoticeShown: true })) // no first-close notice in the way
+    const daemons: Owned[] = []
+    let app: ElectronApplication | undefined
+    try {
+      app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env: appEnv(home) })
+      const page = await ready(await app.firstWindow())
+      const mainPid = await app.evaluate(() => process.pid)
+      const daemonPid = (await daemonPidOf(page))!
+      daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+      assert.equal(await app.evaluate(() => (globalThis as unknown as G).__tetherTray.hasTray()), true, 'the tray icon exists')
+      await createShellPanel(page, root, 1)
+      await tray.close(app)
+      await waitUntil(async () => !(await tray.windowOpen(app!)), 5_000, 'the window to hide')
+      const closed = app.waitForEvent('close', { timeout: 30_000 })
+      if (mode === 'quit-all') {
+        const next = app.waitForEvent('window', { timeout: 30_000 })
+        await app.evaluate(() => { (globalThis as unknown as G).__tetherTray.command('quit-all') }).catch(() => {})
+        const p = await ready(await next)
+        await p.locator('dialog.ask[data-dialog="quit-all"][open]').waitFor()
+        await p.locator('button.choice[data-choice="quit"]').click()
+      } else {
+        await app.evaluate(() => { (globalThis as unknown as G).__tetherTray.command('quit-keep') }).catch(() => {})
+      }
+      await closed
+      app = undefined
+      await waitUntil(() => !pidAlive(mainPid), 15_000, 'the app process to exit (its tray icon goes with it)')
+      if (mode === 'quit-all') await waitUntil(() => !pidAlive(daemonPid), 15_000, 'tetherd to exit')
+      else assert.ok(pidAlive(daemonPid), 'tetherd survived the app')
+    } finally {
+      if (app) await killElectron(app, root).catch(() => {})
+      for (const d of daemons) await killOwned(d, { tree: true })
+      const deadline = Date.now() + 10_000
+      while (daemons.some(d => pidAlive(d.pid)) && Date.now() < deadline) await sleep(100)
+      for (let i = 0; i < 5; i++) {
+        try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+      }
+    }
+  })
+}

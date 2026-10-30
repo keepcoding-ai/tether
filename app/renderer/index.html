@@ -18,6 +18,7 @@
       <button id="btn-closed" title="Slots rodando no tetherd sem painel aberto"><span class="i" data-icon="tray"></span>Slots fechados <span id="closed-count"></span><span class="i caret" data-icon="caret-down"></span></button>
       <ul id="closed-list" hidden></ul>
     </div>
+    <button id="btn-drawer" title="Gaveta" aria-haspopup="dialog"><span class="i" data-icon="lightning"></span>Gaveta<span id="drawer-badge" class="drawer-badge" hidden></span></button>
     <span id="spacer"></span>
     <label id="theme" title="Tema (também em Exibir → Tema)"><span class="i" data-icon="circle-half"></span>Tema
       <select id="theme-select">
@@ -41,6 +42,10 @@
         <li role="menuitem" data-cmd="move-frame-desk"><span class="i" data-icon="arrow-square-out"></span>Mover quadro para a mesa…</li>
         <li role="menuitem" data-cmd="close-desk"><span class="i" data-icon="x"></span>Fechar mesa…</li>
         <li class="sep" role="separator"></li>
+        <li role="menuitem" data-cmd="toggle-drawer"><span class="i" data-icon="lightning"></span>Abrir gaveta<kbd>Ctrl+`</kbd></li>
+        <li role="menuitem" data-cmd="move-pane-drawer"><span class="i" data-icon="tray-arrow-down"></span>Mover painel para a gaveta</li>
+        <li role="menuitem" data-cmd="move-frame-drawer"><span class="i" data-icon="tray-arrow-down"></span>Mover quadro para a gaveta</li>
+        <li class="sep" role="separator"></li>
         <li role="menuitem" data-cmd="profiles"><span class="i" data-icon="sliders-horizontal"></span>Perfis de lançamento…</li>
         <li role="menuitem" data-cmd="switch-profile"><span class="i" data-icon="arrow-clockwise"></span>Trocar perfil do painel…</li>
         <li class="sep" role="separator"></li>
@@ -60,6 +65,22 @@
 
   <nav id="desk-strip"></nav>
   <main id="dock"></main>
+
+  <div id="drawer" class="drawer" data-open="false" inert aria-hidden="true">
+    <div class="drawer-backdrop"></div>
+    <section class="drawer-panel" role="dialog" aria-label="Gaveta">
+      <header class="drawer-head">
+        <span class="i drawer-icon" data-icon="lightning"></span>
+        <h2>Gaveta</h2>
+        <span class="drawer-note">compartilhada por todas as mesas</span>
+        <span class="drawer-gap"></span>
+        <button id="drawer-new" title="Novo painel…"><span class="i" data-icon="plus"></span>Novo painel…</button>
+        <button id="drawer-duplicate" title="Duplicar painel"><span class="i" data-icon="copy"></span>Duplicar painel</button>
+        <button id="drawer-close" class="icon" title="Fechar a gaveta" aria-label="Fechar a gaveta"><span class="i" data-icon="x"></span></button>
+      </header>
+      <div class="drawer-body"></div>
+    </section>
+  </div>
 
   <div id="overlay" hidden>
     <div class="card">

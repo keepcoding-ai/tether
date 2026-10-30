@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
-import { TRAY_PANE_LIMIT, trayModel, type TrayItem } from '../../app/shared/tray.ts'
+import { TRAY_PANE_LIMIT, trayModel, trayWanted, type TrayItem } from '../../app/shared/tray.ts'
 
 function slot(slotId: string, status: SlotStatus, extra: Partial<SlotState> = {}): SlotState {
   return { slotId, kind: 'shell', cwd: `D:/work/${slotId}`, status, ...extra }
@@ -12,7 +12,7 @@ const commands = (items: TrayItem[]) => items.flatMap(i => (i.kind === 'command'
 
 test('no slots: only the commands, tooltip says nothing runs, no badge', () => {
   const m = trayModel([])
-  assert.deepEqual(commands(m.items), ['open', 'restart-daemon', 'quit-keep', 'quit-all'])
+  assert.deepEqual(commands(m.items), ['open', 'open-drawer', 'restart-daemon', 'quit-keep', 'quit-all'])
   assert.equal(m.items[0]!.kind === 'command' && m.items[0]!.label, 'Abrir tether')
   assert.equal(panes(m.items).length, 0)
   assert.equal(m.tooltip, 'tether: nenhum agente rodando')
@@ -23,7 +23,7 @@ test('no slots: only the commands, tooltip says nothing runs, no badge', () => {
 test('commands are labelled in Portuguese and the pane list sits between two separators', () => {
   const m = trayModel([slot('a', 'running')])
   const labels = m.items.map(i => (i.kind === 'separator' ? '---' : i.label))
-  assert.deepEqual(labels, ['Abrir tether', '---', 'a (rodando)', '---', 'Reiniciar serviço…', 'Sair (manter agentes)', 'Sair e encerrar tudo…'])
+  assert.deepEqual(labels, ['Abrir tether', 'Abrir gaveta', '---', 'a (rodando)', '---', 'Reiniciar serviço…', 'Sair (manter agentes)', 'Sair e encerrar tudo…'])
 })
 
 test('panes: live first, then the rest; the label is title, else name, else folder, with the state', () => {
@@ -68,4 +68,13 @@ test('the folder name tolerates a trailing separator and a bare drive', () => {
     assert.equal(panes(trayModel([slot('a', 'exited', { cwd: `D:${sep}atrium${sep}` })]).items)[0]!.label, 'atrium (encerrado)')
     assert.equal(panes(trayModel([slot('a', 'exited', { cwd: `D:${sep}` })]).items)[0]!.label, 'D: (encerrado)')
   }
+})
+
+test('trayWanted: tests (private home/pipe, hidden window) get no tray unless they opt in; the user\'s app does', () => {
+  assert.equal(trayWanted({}), true, 'a plain launch has the tray')
+  assert.equal(trayWanted({ TETHER_HOME: 'C://x' }), false)
+  assert.equal(trayWanted({ TETHER_PIPE: 'pipe-x' }), false)
+  assert.equal(trayWanted({ TETHER_E2E_HIDDEN: '1' }), false)
+  assert.equal(trayWanted({ TETHER_HOME: 'C://x', TETHER_E2E_HIDDEN: '1', TETHER_TRAY: '1' }), true, 'the tray suite opts back in')
+  assert.equal(trayWanted({ TETHER_NO_TRAY: '1', TETHER_TRAY: '1' }), false, 'the explicit off wins')
 })

@@ -48,6 +48,9 @@ import arrowLineDown from '@phosphor-icons/core/assets/regular/arrow-line-down.s
 import arrowCounterClockwise from '@phosphor-icons/core/assets/regular/arrow-counter-clockwise.svg'
 import palette from '@phosphor-icons/core/assets/regular/palette.svg'
 import cards from '@phosphor-icons/core/assets/regular/cards.svg'
+import lightning from '@phosphor-icons/core/assets/regular/lightning.svg'
+import trayArrowDown from '@phosphor-icons/core/assets/regular/tray-arrow-down.svg'
+import trayArrowUp from '@phosphor-icons/core/assets/regular/tray-arrow-up.svg'
 import textAa from '@phosphor-icons/core/assets/regular/text-aa.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
@@ -100,6 +103,9 @@ const SVG = {
   palette,
   'text-aa': textAa,
   cards,
+  lightning,
+  'tray-arrow-down': trayArrowDown,
+  'tray-arrow-up': trayArrowUp,
 } as const
 
 export type IconName = keyof typeof SVG

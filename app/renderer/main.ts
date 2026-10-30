@@ -8,13 +8,15 @@ import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
 import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
-import type { DeskHost } from './desk.ts'
+import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
 import { DeskStrip, type DeskAttention } from './desk-strip.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
+import { Drawer } from './drawer.ts'
+import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
-import { emptyLayout, type LayoutV2, migrateLayout, pruneLayoutV2 } from './layout.ts'
+import { drawerOf, emptyLayout, type LayoutV2, migrateLayout, pruneLayoutV2 } from './layout.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
@@ -36,7 +38,16 @@ const startErrors = new Map<string, SlotError>()
 const pendingStarts = new Set<string>()
 let desks: DeskSet
 let strip: DeskStrip
-/** The whole file as last loaded: what the app does not mount yet (the drawer, phase D) is written back untouched. */
+let drawer: Drawer
+/** Open/closed and the pane that gets the keyboard back (app/renderer/drawer-rules.ts). Never persisted: the app starts with the drawer closed. */
+let drawerState: DrawerState = CLOSED
+/** The element that had the keyboard when the drawer opened, for when it was not a pane. */
+let drawerReturnEl: HTMLElement | undefined
+/** When the last Esc that counts toward a double Esc happened (a shell at its prompt, inside the drawer). */
+let lastEsc: number | undefined
+/** The drawer's default shell is being created. */
+let quickShellBusy = false
+/** The whole file as last loaded; what the app keeps in memory (desks, drawer) is rewritten from the live state. */
 let layoutFile: LayoutV2 = emptyLayout()
 let layoutRestored = false
 let saveTimer: ReturnType<typeof setTimeout> | undefined
@@ -76,8 +87,9 @@ const host: PanelHost = {
   getStartError: id => startErrors.get(id),
   isStartPending: id => pendingStarts.has(id),
   onAction: (id, action) => { void onPanelAction(id, action) },
-  onKey: ev => {
+  onKey: (ev, panel) => {
     if (ev.type !== 'keydown') return false
+    if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) return drawerEscapeInTerminal(panel)
     // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener.
     // (Clipboard chords are the panel's own: app/renderer/shortcuts.ts PANE_SHORTCUTS.)
     return shortcutOf(ev) !== undefined
@@ -101,6 +113,7 @@ function applyTheme(state: ThemeState): void {
   theme = state
   document.documentElement.dataset.theme = state.scheme
   desks.setTheme(DOCK_THEME[state.scheme])
+  drawer?.setTheme(DOCK_THEME[state.scheme])
   for (const p of panels.values()) p.setAppearance(appearance, state.scheme)
   themeDialog?.refresh()
   $<HTMLSelectElement>('theme-select').value = state.setting
@@ -129,8 +142,8 @@ async function onAppearance(a: TerminalAppearance): Promise<void> {
   if (JSON.stringify(a) !== JSON.stringify(appearance)) applyAppearance(a)
 }
 
-/** The host of one desk's frames: the same dockview options everywhere; a "+" acts in its own desk. */
-function deskHost(): DeskHost {
+/** The host of one desk's frames (or the drawer's): the same dockview options everywhere; a "+" acts in its own desk. */
+function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
   return {
     dockviewOptions: () => ({
       defaultTabComponent: TAB,
@@ -159,7 +172,7 @@ function deskHost(): DeskHost {
     }),
     onLayoutChange: () => scheduleSave(),
     onPanelsChange: () => { refreshClosedMenu(); renderStrip() },
-    onEdge: (target, op, frameId) => { void onEdge(target, op, frameId) },
+    onEdge: (target, op, frameId) => { void onEdge(target, op, frameId, scope === 'drawer' ? drawer.desk : undefined) },
     onActivePanelChange: () => markSeenIfWatched(),
   }
 }
@@ -181,6 +194,7 @@ function setupDock(): void {
     paneOptions: panel => ({ id: panel.id, component: COMPONENT, tabComponent: TAB, title: panel.title ?? panel.id, params: panel.params ?? { slotId: panel.id } }),
   }, DOCK_THEME[theme.scheme])
   desks.fromEmpty()
+  drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onBackdrop: () => setDrawerOpen(false) }, DOCK_THEME[theme.scheme])
 }
 
 /** "Ctrl+Shift+T" as <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>. */
@@ -188,9 +202,9 @@ function kbdHtml(hint: string): string {
   return hint.split('+').map(k => `<kbd>${k}</kbd>`).join('+')
 }
 
-/** The file to write: every desk as mounted now; what the app does not mount (the drawer) stays as loaded. */
+/** The file to write: every desk and the drawer as mounted now. */
 function layoutJSON(): LayoutV2 {
-  return { ...layoutFile, v: 2, ...desks.toJSON() }
+  return { ...layoutFile, v: 2, ...desks.toJSON(), drawer: drawer.toJSON() }
 }
 
 function scheduleSave(): void {
@@ -199,10 +213,15 @@ function scheduleSave(): void {
   saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(layoutJSON()) }, SAVE_DEBOUNCE_MS)
 }
 
-/** Adds the pane of a slot: relative to `reference` at `target`'s level, or in the active group of the active frame. */
-function addPanel(slot: SlotState, target?: Target, reference?: string): IDockviewPanel {
+/**
+ * Adds the pane of a slot: relative to `reference` at `target`'s level (in the reference's desk or the drawer), or in
+ * the active group of the active frame of where the user is (the drawer while it is open, else the visible desk).
+ * `into` forces the drawer.
+ */
+function addPanel(slot: SlotState, target?: Target, reference?: string, into?: 'drawer'): IDockviewPanel {
   slots.set(slot.slotId, slot)
-  const panel = desks.addPanel({
+  const useDrawer = into === 'drawer' || (reference ? inDrawer(reference) : drawer.isOpen)
+  const panel = (useDrawer ? drawer.desk : desks).addPanel({
     id: slot.slotId,
     component: COMPONENT,
     tabComponent: TAB,
@@ -219,10 +238,10 @@ function addPanel(slot: SlotState, target?: Target, reference?: string): IDockvi
  * already written on it: nothing is running, so the panel just goes (the slot stays in "Slots fechados").
  */
 async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise<void> {
-  const panel = desks.getPanel(slotId)
+  const panel = findPanel(slotId)
   if (!panel) return
   const slot = slots.get(slotId)
-  if (!slot) { desks.removePanel(panel); return }
+  if (!slot) { removeAnyPanel(panel); return }
   const spec = closePanelSituation(slot)
   let choice: string | undefined = opts.ask === false ? 'detach' : confirmations[spec.situation]
   // Only an answer the spec can remember is honoured: a destructive one never runs without asking.
@@ -238,8 +257,8 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   if (choice === 'cancel') return
   if (choice === 'stop') await window.tether.request({ t: 'stop', slotId })
   if (choice === 'forget') await window.tether.request({ t: 'forget', slotId })
-  const still = desks.getPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
-  if (still) desks.removePanel(still)
+  const still = findPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
+  if (still) removeAnyPanel(still)
 }
 
 /** Main asks for a situation to be put to the user (menu items live in main; the dialog lives here). */
@@ -284,12 +303,13 @@ function deskAttention(deskId: string): DeskAttention {
 function renderStrip(): void {
   if (!strip || !desks) return
   strip.render(desks.desks, desks.activeDeskId, deskAttention)
+  renderDrawerButton()
 }
 
-/** The pane the user is looking at: the active pane of the visible desk, with the window focused. */
+/** The pane the user is looking at: the active pane of the visible desk (the drawer's while it is open), with the window focused. */
 function watchedPane(): string | undefined {
   if (!document.hasFocus() || document.visibilityState !== 'visible') return undefined
-  return desks.activePanel?.id
+  return currentDesk().activePanel?.id
 }
 
 /** Attention on the pane in front of the user is already seen: tell the daemon (it clears it for every client). */
@@ -386,6 +406,206 @@ function activeTabPoint(): { x: number; y: number } {
   return r ? { x: r.left, y: r.bottom + 2 } : { x: 120, y: 80 }
 }
 
+// ---------- the drawer ----------
+
+/** The Desk new panes go to and the shortcuts act on: the drawer's while it is open, else the visible desk. */
+function currentDesk(): Desk {
+  return drawer?.isOpen ? drawer.desk : desks.active
+}
+
+/** A pane lives in one place: a desk or the drawer. */
+function findPanel(slotId: string): IDockviewPanel | undefined {
+  return desks.getPanel(slotId) ?? drawer?.desk.getPanel(slotId) // the drawer does not exist yet while the first desk is built
+}
+
+function allPanels(): IDockviewPanel[] {
+  return [...desks.panels, ...(drawer?.desk.panels ?? [])]
+}
+
+function inDrawer(slotId: string): boolean {
+  return drawer?.desk.getPanel(slotId) !== undefined
+}
+
+function removeAnyPanel(panel: IDockviewPanel): void {
+  if (drawer?.desk.getPanel(panel.id)) drawer.desk.removePanel(panel)
+  else desks.removePanel(panel)
+}
+
+/** The parts of the window behind the drawer: inert while it is open, so the keyboard cannot wander into them. */
+const BEHIND_DRAWER = ['toolbar', 'desk-strip', 'dock']
+
+function drawerAttention(): DeskAttention {
+  return countAttention(drawer.desk.panels.map(p => slots.get(p.id)?.attention))
+}
+
+/** The toolbar button: expanded state, the number of panes, and the attention badge of the drawer's panes. */
+function renderDrawerButton(): void {
+  if (!drawer) return
+  const btn = $('btn-drawer')
+  const badge = $('drawer-badge')
+  const att = drawerAttention()
+  const total = att.done + att.waiting
+  badge.hidden = total === 0
+  badge.className = `drawer-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
+  badge.textContent = String(total)
+  btn.setAttribute('aria-expanded', String(drawer.isOpen))
+  const n = drawer.desk.panels.length
+  const what = n === 0 ? 'vazia' : n === 1 ? '1 painel' : `${n} painéis`
+  const waiting = att.waiting > 0 ? ` · ${att.waiting} esperando você` : ''
+  const done = att.done > 0 ? ` · ${att.done} terminou` : ''
+  btn.title = `Gaveta (${shortcutHint({ op: 'drawer-toggle' })}): ${what}${waiting}${done}. Um espaço rápido, compartilhado por todas as mesas; fechada, os agentes dela seguem rodando.`
+}
+
+/** The pane that has the keyboard now, if it is one of the desks'. */
+function focusedDeskPane(): string | undefined {
+  const slotId = (document.activeElement as Element | null)?.closest?.('.panel')?.getAttribute('data-slot-id')
+  return slotId && desks.getPanel(slotId) ? slotId : desks.activePanel?.id
+}
+
+/** Opens or closes the drawer. Closing never stops anything; the focus goes back to the pane that had it. */
+function setDrawerOpen(open: boolean): void {
+  if (open === drawer.isOpen || (open && !layoutRestored)) return
+  lastEsc = undefined
+  if (open) {
+    drawerReturnEl = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+    drawerState = openDrawer(drawerState, focusedDeskPane())
+    // Menus of the toolbar belong to the desks behind: they close, they do not stay floating over the drawer.
+    $('app-menu').hidden = true
+    $('btn-menu').setAttribute('aria-expanded', 'false')
+    $('closed-list').hidden = true
+    desks.active.hidePlus()
+  } else {
+    drawerState = closeDrawer(drawerState)
+  }
+  for (const id of BEHIND_DRAWER) $(id).toggleAttribute('inert', open)
+  drawer.setOpen(open)
+  renderStrip()
+  if (open) {
+    if (drawer.desk.panels.length === 0) void quickShell()
+    requestAnimationFrame(focusDrawer)
+  } else {
+    requestAnimationFrame(restoreFocusAfterClose)
+  }
+  markSeenIfWatched()
+}
+
+function focusDrawer(): void {
+  if (!drawer.isOpen) return
+  const active = drawer.desk.activePanel
+  if (active) panels.get(active.id)?.focus()
+  else $('drawer-new').focus() // an empty drawer: the keyboard sits on its chrome, where Esc closes
+}
+
+function restoreFocusAfterClose(): void {
+  if (drawer.isOpen) return
+  const target = focusAfterClose(drawerState.returnTo, id => desks.getPanel(id) !== undefined, desks.activePanel?.id)
+  if (target) {
+    desks.getPanel(target)?.api.setActive()
+    panels.get(target)?.focus()
+    return
+  }
+  if (drawerReturnEl?.isConnected) drawerReturnEl.focus()
+}
+
+/**
+ * An empty drawer opens a shell (it is a quick desk: Ctrl+` and you are typing), in the folder of the pane you
+ * came from. Without a shell profile or a folder, or if the daemon refuses, the chooser opens instead.
+ */
+async function quickShell(): Promise<void> {
+  if (quickShellBusy) return
+  quickShellBusy = true
+  try {
+    if (profiles.length === 0) await loadProfiles()
+    const profile = defaultOf(profiles, 'shell')
+    const recent = await window.tether.recentFolders()
+    const cwd = quickCwd({ paneCwd: slots.get(drawerState.returnTo ?? '')?.cwd, profileCwd: profile?.cwd, recent: recent[0] })
+    if (!drawer.isOpen || drawer.desk.panels.length > 0) return // closed or filled meanwhile
+    if (!profile || !cwd) { void openNewDialog({ kind: 'shell' }); return }
+    const reply = await window.tether.request({ t: 'create', kind: 'shell', cwd, start: true, profileId: profile.id })
+    if (reply.t === 'error' || !reply.slot) { void openNewDialog({ kind: 'shell', cwd }); return }
+    addPanel(reply.slot, undefined, undefined, 'drawer')
+  } finally {
+    quickShellBusy = false
+  }
+}
+
+/** Something up that owns Esc: a dialog, a menu, an editor field. */
+function escBlocked(): boolean {
+  return dialogOpen() || manager.open || themeDialog.open
+    || document.querySelector('dialog[open], #ctx-menu, #desk-colors, input.desk-rename') !== null
+    || !$('app-menu').hidden || !$('closed-list').hidden
+}
+
+/**
+ * Esc inside a terminal of the drawer (app/renderer/drawer-rules.ts holds the rule). Returns true when the key
+ * was the drawer's (swallowed, the drawer closes); false hands it to the program, remembering it as a first Esc.
+ */
+function drawerEscapeInTerminal(panel: TerminalPanel): boolean {
+  if (!drawer.isOpen || !inDrawer(panel.slotId)) return false
+  const now = performance.now()
+  const action = escAction({
+    open: true,
+    blocked: escBlocked(),
+    focus: {
+      in: 'terminal',
+      kind: slots.get(panel.slotId)?.kind ?? 'claude', // unknown: treated as an agent, whose Esc is never taken
+      programOwnsScreen: panel.term.buffer.active.type === 'alternate' || panel.term.modes.mouseTrackingMode !== 'none',
+    },
+    now,
+    lastEsc,
+  })
+  lastEsc = action === 'arm' ? now : undefined
+  if (action !== 'close') return false
+  setDrawerOpen(false)
+  return true
+}
+
+/** Esc anywhere but a terminal (the drawer's header, its empty state): closes the drawer. */
+function drawerEscapeOutside(ev: KeyboardEvent): void {
+  if (ev.defaultPrevented || !drawer.isOpen || (ev.target as Element | null)?.closest?.('.xterm')) return
+  if (escAction({ open: true, blocked: escBlocked(), focus: { in: 'chrome' }, now: performance.now(), lastEsc: undefined }) !== 'close') return
+  ev.preventDefault()
+  setDrawerOpen(false)
+}
+
+// Moving work between the desks and the drawer: a pane (or its whole frame) is removed from one and added to the
+// other, the process is never touched (transferPanel / transferFrame in app/renderer/desk.ts).
+
+function afterDrawerMove(): void {
+  refreshClosedMenu()
+  renderStrip()
+  scheduleSave()
+}
+
+function movePaneToDrawer(slotId: string): void {
+  const source = desks.desk(desks.deskOf(slotId) ?? '')
+  const panel = source?.getPanel(slotId)
+  if (source && panel && transferPanel(source, drawer.desk, slotId, desks.paneOptions(panel))) afterDrawerMove()
+}
+
+function moveFrameToDrawer(slotId: string): void {
+  const source = desks.desk(desks.deskOf(slotId) ?? '')
+  const frame = source?.frameOf(slotId)
+  if (source && frame && transferFrame(source, drawer.desk, frame.id)) afterDrawerMove()
+}
+
+/** Out of the drawer and into the visible desk; the drawer closes and the moved pane gets the keyboard. */
+function surfaceFromDrawer(slotId: string): void {
+  afterDrawerMove()
+  drawerState = { ...drawerState, returnTo: slotId }
+  setDrawerOpen(false)
+}
+
+function movePaneFromDrawer(slotId: string): void {
+  const panel = drawer.desk.getPanel(slotId)
+  if (panel && transferPanel(drawer.desk, desks.active, slotId, desks.paneOptions(panel))) surfaceFromDrawer(slotId)
+}
+
+function moveFrameFromDrawer(slotId: string): void {
+  const frame = drawer.desk.frameOf(slotId)
+  if (frame && transferFrame(drawer.desk, desks.active, frame.id)) surfaceFromDrawer(slotId)
+}
+
 // ---------- starting slots ----------
 
 /** Sends `start`; a refusal (unconfirmed, already-open, …) stays on the panel until the slot comes up. */
@@ -403,7 +623,7 @@ async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<voi
 
 /** Starts every open panel whose slot is exited (the daemon queues agents beyond 3 at once). Unconfirmed ones wait for the user. */
 function autoStartPanels(): void {
-  for (const panel of desks.panels) {
+  for (const panel of allPanels()) {
     const slot = slots.get(panel.id)
     if (slot && effectiveStatus(slot) === 'exited') void startSlot(slot.slotId)
   }
@@ -422,7 +642,7 @@ async function onPanelAction(slotId: string, action: PanelAction): Promise<void>
 /** The slot's folder is gone: open a fresh slot of the same kind in a folder the user picks, in the same place of the grid. */
 async function moveToFolder(slotId: string): Promise<void> {
   const slot = slots.get(slotId)
-  const panel = desks.getPanel(slotId)
+  const panel = findPanel(slotId)
   if (!slot || !panel) return
   const folder = await window.tether.pickFolder()
   if (!folder) return
@@ -434,7 +654,7 @@ async function moveToFolder(slotId: string): Promise<void> {
   }
   await window.tether.rememberFolder(folder)
   addPanel(reply.slot, { level: 'pane', placement: 'within' }, slotId)
-  desks.removePanel(panel)
+  removeAnyPanel(panel)
   await window.tether.request({ t: 'forget', slotId })
 }
 
@@ -444,7 +664,7 @@ function applyState(slot: SlotState): void {
   slots.set(slot.slotId, slot)
   queue.update(slot.slotId, slot.status === 'queued')
   if (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued') startErrors.delete(slot.slotId)
-  const panel = desks.getPanel(slot.slotId)
+  const panel = findPanel(slot.slotId)
   if (panel) {
     const title = panelTitle(slot)
     if (panel.title !== title) panel.api.setTitle(title)
@@ -466,8 +686,8 @@ function onDaemonEvent(ev: DaemonEvent): void {
     case 'removed': {
       slots.delete(ev.slotId)
       startErrors.delete(ev.slotId)
-      const panel = desks.getPanel(ev.slotId)
-      if (panel) desks.removePanel(panel)
+      const panel = findPanel(ev.slotId)
+      if (panel) removeAnyPanel(panel)
       refreshClosedMenu()
       renderStrip()
       break
@@ -485,7 +705,7 @@ async function refreshSlots(): Promise<void> {
 
 /** Keeps the pane's layout hint (kind, folder, profile) in step with the slot, so the next launch paints it before the daemon answers. */
 function updateHint(slot: SlotState): void {
-  const panel = desks.getPanel(slot.slotId)
+  const panel = findPanel(slot.slotId)
   if (!panel) return
   const params = (panel.params ?? {}) as { slotId?: string; hint?: PaneHint }
   const hint = hintOf(slot)
@@ -507,7 +727,7 @@ async function restoreLayout(): Promise<void> {
     // The geometry painted at startup had every pane of the file; only when the daemon lost some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side,
     // frame refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
-    if (pruned.kept !== pruned.total) desks.load(pruned.layout)
+    if (pruned.kept !== pruned.total) { desks.load(pruned.layout); drawer.load(drawerOf(pruned.layout)) }
     if (result.migrated) await window.tether.backupLayout()
     dirty = result.migrated || pruned.kept !== pruned.total
   } else {
@@ -516,7 +736,7 @@ async function restoreLayout(): Promise<void> {
   layoutRestored = true
   if (dirty) scheduleSave()
   // Panes that predate the hint get it now (saved with the next layout change).
-  for (const panel of desks.panels) { const s = slots.get(panel.id); if (s) updateHint(s) }
+  for (const panel of allPanels()) { const s = slots.get(panel.id); if (s) updateHint(s) }
   refreshClosedMenu()
 }
 
@@ -528,7 +748,7 @@ async function restoreLayout(): Promise<void> {
 function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
   geometry ??= window.tether.loadLayout().then(raw => {
     const result = migrateLayout(raw)
-    if (result && !layoutRestored) desks.load(result.layout)
+    if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)) }
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
   return geometry!
@@ -560,8 +780,8 @@ async function onConnection(state: ConnectionState): Promise<void> {
     for (const t of tabs.values()) t.render()
   } else {
     // Reconnected (the daemon was restarted): drop panels it no longer knows, re-attach the rest.
-    for (const panel of desks.panels) {
-      if (!slots.has(panel.id)) desks.removePanel(panel)
+    for (const panel of allPanels()) {
+      if (!slots.has(panel.id)) removeAnyPanel(panel)
     }
     for (const p of panels.values()) { p.render(); void p.reattach() }
     for (const t of tabs.values()) t.render()
@@ -574,7 +794,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
 
 function refreshClosedMenu(): void {
   const list = $('closed-list')
-  const closed = [...slots.values()].filter(s => !desks.getPanel(s.slotId))
+  const closed = [...slots.values()].filter(s => !findPanel(s.slotId))
   $('closed-count').textContent = closed.length ? `(${closed.length})` : ''
   list.replaceChildren()
   if (closed.length === 0) {
@@ -608,6 +828,17 @@ function refreshClosedMenu(): void {
 function openSlot(slotId: string): void {
   const s = slots.get(slotId)
   if (!s) return
+  // A pane of the drawer opens the drawer; any other brings the user back to the desks (and to the pane's desk).
+  const inside = drawer.desk.getPanel(slotId)
+  if (inside) {
+    setDrawerOpen(true)
+    if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+    inside.api.setActive()
+    return
+  }
+  if (drawer.isOpen) setDrawerOpen(false)
+  const deskId = desks.deskOf(slotId)
+  if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
   const panel = desks.getPanel(slotId) ?? addPanel(s)
   if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
   panel.api.setActive()
@@ -694,15 +925,26 @@ function showContextMenu(x: number, y: number, items: MenuItem[]): void {
 function showTabMenu(slotId: string, x: number, y: number): void {
   const slot = slots.get(slotId)
   if (!slot) return
-  desks.getPanel(slotId)?.api.setActive()
+  findPanel(slotId)?.api.setActive()
+  // Where the pane can go: a desk pane to another desk or into the drawer; a drawer pane to the desk behind it.
+  const moves: MenuItem[] = inDrawer(slotId)
+    ? [
+      { icon: 'tray-arrow-up', label: 'Mover para a mesa atual', run: () => movePaneFromDrawer(slotId) },
+      { icon: 'tray-arrow-up', label: 'Mover quadro para a mesa atual', run: () => moveFrameFromDrawer(slotId) },
+    ]
+    : [
+      { icon: 'cards', label: 'Mover para a mesa…', run: () => showMoveMenu(x, y, to => movePaneToDesk(slotId, to)) },
+      { icon: 'cards', label: 'Mover quadro para a mesa…', run: () => showMoveMenu(x, y, to => moveFrameToDesk(slotId, to)) },
+      { icon: 'tray-arrow-down', label: 'Mover para a gaveta', run: () => movePaneToDrawer(slotId) },
+      { icon: 'tray-arrow-down', label: 'Mover quadro para a gaveta', run: () => moveFrameToDrawer(slotId) },
+    ]
   showContextMenu(x, y, [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'right' }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.below}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'below' }) } },
     { icon: 'square-half', label: 'Novo painel na borda do quadro…', run: () => { void openNewDialog({ reference: slotId, target: { level: 'frame', placement: 'right' } }) } },
     { icon: 'columns', label: `${NEW_FRAME_LABEL}…`, run: () => { void openNewDialog({ reference: slotId, target: { level: 'desk', placement: 'right' } }) } },
-    { icon: 'cards', label: 'Mover para a mesa…', run: () => showMoveMenu(x, y, to => movePaneToDesk(slotId, to)) },
-    { icon: 'cards', label: 'Mover quadro para a mesa…', run: () => showMoveMenu(x, y, to => moveFrameToDesk(slotId, to)) },
+    ...moves,
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
@@ -814,7 +1056,7 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   renderNewProfiles(wanted?.id)
   // The reference is fixed when the dialog opens: the active panel may change underneath (a slot exits) but the
   // user chose "where" looking at this one.
-  const reference = opts.reference && desks.getPanel(opts.reference) ? opts.reference : desks.activePanel?.id
+  const reference = opts.reference && findPanel(opts.reference) ? opts.reference : currentDesk().activePanel?.id
   renderPlacements(reference, opts.target ?? { level: 'pane', placement: 'within' })
   const list = $('recent-list')
   list.replaceChildren()
@@ -843,7 +1085,7 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
     form.removeEventListener('submit', onSubmit)
     const target = selectedTarget()
     dlg.close()
-    const stillThere = reference && desks.getPanel(reference) ? reference : undefined
+    const stillThere = reference && findPanel(reference) ? reference : undefined
     addPanel(reply.slot, stillThere ? target : undefined, stillThere).api.setActive()
   }
   form.addEventListener('submit', onSubmit)
@@ -863,26 +1105,26 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
  */
 async function duplicatePanel(slotId: string, target: Target): Promise<void> {
   const slot = slots.get(slotId)
-  if (!slot || !desks.getPanel(slotId)) return
+  if (!slot || !findPanel(slotId)) return
   const reply = await window.tether.request(duplicateRequest(slot, profiles))
   if (reply.t === 'error' || !reply.slot) {
     void openNewDialog({ kind: slot.kind, profileId: slot.profileId, cwd: slot.cwd, reference: slotId, target })
     return
   }
-  if (!desks.getPanel(slotId)) { addPanel(reply.slot).api.setActive(); return } // the source went away meanwhile
+  if (!findPanel(slotId)) { addPanel(reply.slot).api.setActive(); return } // the source went away meanwhile
   addPanel(reply.slot, target, slotId).api.setActive()
 }
 
 /** The keyboard/toolbar form: duplicates the focused panel; with no panel there is nothing to duplicate, so the chooser opens. */
 async function duplicateActive(target: Target): Promise<void> {
-  const active = desks.activePanel
+  const active = currentDesk().activePanel
   if (!active || !slots.has(active.id)) { void openNewDialog({ target }); return }
   await duplicatePanel(active.id, target)
 }
 
 /** A "+" near a border: the frame's active pane (or the desk's) is the reference; click duplicates, right-click chooses. */
-async function onEdge(target: Target, op: 'duplicate' | 'choose', frameId: string | undefined): Promise<void> {
-  const reference = (frameId ? desks.frames.get(frameId)?.dock.activePanel?.id : undefined) ?? desks.activePanel?.id
+async function onEdge(target: Target, op: 'duplicate' | 'choose', frameId: string | undefined, scope: Desk = currentDesk()): Promise<void> {
+  const reference = (frameId ? scope.frames.get(frameId)?.dock.activePanel?.id : undefined) ?? scope.activePanel?.id
   if (op === 'choose' || !reference || !slots.has(reference)) { void openNewDialog({ reference, target }); return }
   await duplicatePanel(reference, target)
 }
@@ -898,6 +1140,7 @@ const MENU_SHORTCUT: Record<string, AppShortcut> = {
   'duplicate-below': { op: 'duplicate', level: 'pane', direction: 'below' },
   'quit-all': { op: 'quit-all' },
   'new-desk': { op: 'desk-new', side: 'after' },
+  'toggle-drawer': { op: 'drawer-toggle' },
 }
 
 function setupMenu(): void {
@@ -935,6 +1178,9 @@ function setupMenu(): void {
       case 'move-pane-desk': { const a = desks.activePanel; if (a) { const p = activeTabPoint(); showMoveMenu(p.x, p.y, to => movePaneToDesk(a.id, to)) } break }
       case 'move-frame-desk': { const a = desks.activePanel; if (a) { const p = activeTabPoint(); showMoveMenu(p.x, p.y, to => moveFrameToDesk(a.id, to)) } break }
       case 'new-desk': desks.create('after'); break
+      case 'toggle-drawer': setDrawerOpen(!drawer.isOpen); break
+      case 'move-pane-drawer': { const a = desks.activePanel; if (a) movePaneToDrawer(a.id); break }
+      case 'move-frame-drawer': { const a = desks.activePanel; if (a) moveFrameToDrawer(a.id); break }
       case 'close-desk': void closeDesk(desks.activeDeskId); break
       case 'profiles': openProfiles(); break
       case 'terminal-theme': themeDialog.show(); break
@@ -964,6 +1210,10 @@ function setupUi(): void {
   // Static icons: <span data-icon="name"> in index.html becomes the inline SVG.
   for (const el of document.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
   $('btn-new').addEventListener('click', () => { void openNewDialog() })
+  $('btn-drawer').addEventListener('click', () => setDrawerOpen(!drawer.isOpen))
+  $('drawer-new').addEventListener('click', () => { void openNewDialog() })
+  $('drawer-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
+  $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
   $('btn-manage-profiles').addEventListener('click', () => openProfiles(selectedProfileId()))
   setupMenu()
@@ -986,17 +1236,21 @@ function setupUi(): void {
   document.addEventListener('click', ev => { if (!closedList.contains(ev.target as Node)) closedList.hidden = true })
 
   document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { drawerEscapeOutside(ev); return }
     const shortcut = shortcutOf(ev)
     if (!shortcut) return
     if ($<HTMLDialogElement>('dlg-new').open || manager.open || themeDialog.open || dialogOpen()) return
     ev.preventDefault()
+    if (shortcut.op === 'drawer-toggle' && ev.repeat) return // a held chord is one toggle
     switch (shortcut.op) {
       case 'choose': void openNewDialog(); break
       case 'duplicate': void duplicateActive({ level: shortcut.level, placement: shortcut.direction }); break
       case 'quit-all': window.tether.command('quit-all'); break
-      case 'desk-cycle': desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, shortcut.step)); break
-      case 'desk-go': { const id = deskAt(desks.desks, shortcut.position); if (id) desks.switchTo(id); break }
-      case 'desk-new': desks.create(shortcut.side); break
+      case 'drawer-toggle': setDrawerOpen(!drawer.isOpen); break
+      // The desks behind the drawer stay where they are while it is open.
+      case 'desk-cycle': if (!drawer.isOpen) desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, shortcut.step)); break
+      case 'desk-go': { const id = deskAt(desks.desks, shortcut.position); if (id && !drawer.isOpen) desks.switchTo(id); break }
+      case 'desk-new': if (!drawer.isOpen) desks.create(shortcut.side); break
     }
   })
   // Back to the window: the pane in front of the user is seen.
@@ -1082,6 +1336,16 @@ declare global {
       closeDesk(id: string): void
       movePaneToDesk(slotId: string, deskId: string): void
       moveFrameToDesk(slotId: string, deskId: string): void
+      /** The drawer: open or not, its panes, the attention counts of its panes. */
+      drawer(): { open: boolean; panes: string[]; frames: string[]; attention: DeskAttention }
+      toggleDrawer(): void
+      openDrawer(): void
+      closeDrawer(): void
+      inDrawer(slotId: string): boolean
+      movePaneToDrawer(slotId: string): void
+      movePaneFromDrawer(slotId: string): void
+      moveFrameToDrawer(slotId: string): void
+      moveFrameFromDrawer(slotId: string): void
     }
   }
 }
@@ -1105,7 +1369,7 @@ function setupTestHooks(): void {
       return lines.join('\n').replace(/\n+$/, '')
     },
     connection: () => connection,
-    activate: slotId => desks.getPanel(slotId)?.api.setActive(),
+    activate: slotId => findPanel(slotId)?.api.setActive(),
     openSlot,
     applyState,
     theme: () => theme,
@@ -1188,6 +1452,15 @@ function setupTestHooks(): void {
     closeDesk: id => { void closeDesk(id) },
     movePaneToDesk,
     moveFrameToDesk,
+    drawer: () => ({ open: drawer.isOpen, panes: drawer.desk.panels.map(p => p.id), frames: drawer.desk.frameIds, attention: drawerAttention() }),
+    toggleDrawer: () => setDrawerOpen(!drawer.isOpen),
+    openDrawer: () => setDrawerOpen(true),
+    closeDrawer: () => setDrawerOpen(false),
+    inDrawer,
+    movePaneToDrawer,
+    movePaneFromDrawer,
+    moveFrameToDrawer,
+    moveFrameFromDrawer,
     cellSize: slotId => {
       const term = panels.get(slotId)?.term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } } | undefined
       return term?._core?._renderService?.dimensions?.css?.cell
@@ -1225,6 +1498,12 @@ window.tether.onConfirmations(c => { confirmations = c })
 void window.tether.getConfirmations().then(c => { confirmations = c })
 window.tether.onAsk(req => { void onAsk(req) })
 // The tray menu picked a pane: wait for the layout to be restored (the window may have just been recreated), then focus it.
+window.tether.onOpenDrawer(() => {
+  void (async () => {
+    for (let i = 0; i < 100 && !layoutRestored; i++) await new Promise(r => setTimeout(r, 100))
+    setDrawerOpen(true)
+  })()
+})
 window.tether.onFocusSlot(slotId => {
   void (async () => {
     for (let i = 0; i < 100 && !(layoutRestored && slots.has(slotId)); i++) await new Promise(r => setTimeout(r, 100))

@@ -16,7 +16,7 @@ import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
-import { trayModel } from '../shared/tray.ts'
+import { trayModel, trayWanted } from '../shared/tray.ts'
 import type { TrayCommand } from '../shared/tray.ts'
 import { createTray, type TrayController } from './tray.ts'
 import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -206,6 +206,15 @@ ipcMain.on('tether:command', (_e, cmd: unknown) => {
 })
 
 /** "Sair e encerrar tudo": stops every slot, shuts the daemon down and quits (after the in-app dialog). */
+/**
+ * "Sair" must end the process: app.quit() waits for windows and handlers, and the daemon round trips of "quit all"
+ * can stall (many agents stopping one by one, a daemon that dies without answering). After `ms` the app leaves
+ * regardless, taking its tray icon with it (app.exit skips before-quit, so the icon is destroyed here).
+ */
+function leaveWithin(ms: number): void {
+  setTimeout(() => { tray?.destroy(); tray = undefined; app.exit(0) }, ms).unref()
+}
+
 async function quitAll(): Promise<void> {
   await openWindow() // from the tray there may be no window to ask in
   if (!win) return
@@ -214,6 +223,7 @@ async function quitAll(): Promise<void> {
   if (choice !== 'quit') return
   quittingAll = true
   quitting = true
+  leaveWithin(20_000)
   if (daemon) {
     const list = await request({ t: 'list' })
     if (list.t === 'ok') for (const s of list.slots ?? []) await request({ t: 'stop', slotId: s.slotId })
@@ -404,13 +414,17 @@ async function hideToTray(): Promise<void> {
   }
 }
 
-/** Shows the window, creating it when the app is in the tray; `focusSlot` asks the renderer to focus that pane. */
-async function openWindow(focusSlot?: string): Promise<void> {
+/**
+ * Shows the window, creating it when the app is in the tray; `focusSlot` asks the renderer to focus that pane,
+ * `drawer` to open the drawer (the renderer waits for its layout to be restored first).
+ */
+async function openWindow(focusSlot?: string, drawer = false): Promise<void> {
   openEpoch++
   if (!win) createWindow()
   else showWindow()
   await windowLoaded
   if (focusSlot) win?.webContents.send('tether:focus-slot', focusSlot)
+  if (drawer) win?.webContents.send('tether:open-drawer')
 }
 
 function showWindow(): void {
@@ -459,6 +473,7 @@ async function restartDaemon(): Promise<void> {
 /** "Sair (manter agentes)": only the app goes; tetherd and every slot keep running. */
 function quitKeepingAgents(): void {
   quitting = true
+  leaveWithin(5_000)
   daemon?.close()
   daemon = undefined
   app.quit()
@@ -467,6 +482,7 @@ function quitKeepingAgents(): void {
 function trayCommand(id: TrayCommand): void {
   switch (id) {
     case 'open': void openWindow(); break
+    case 'open-drawer': void openWindow(undefined, true); break
     case 'restart-daemon': void restartDaemon(); break
     case 'quit-keep': quitKeepingAgents(); break
     case 'quit-all': void quitAll(); break
@@ -474,6 +490,7 @@ function trayCommand(id: TrayCommand): void {
 }
 
 function setupTray(): void {
+  if (!trayWanted(process.env)) return // tests: no icon in the user's tray (closing the window quits the app)
   try {
     tray = createTray(__dirname, { toggle: toggleWindow, command: trayCommand, pane: slotId => { void openWindow(slotId) } })
     updateTray()

@@ -9,6 +9,10 @@
 //   desks        Ctrl+Tab / Ctrl+Shift+Tab next / previous desk (sequential, wraps) · Ctrl+1…9 desk by position
 //                Ctrl+Alt+N new desk after the current one · Ctrl+Alt+Shift+N before it
 //   Ctrl+Shift+T chooser · Ctrl+Shift+Q quit all
+//   drawer       Ctrl+` toggles it (VS Code's terminal chord); Ctrl+Shift+G is the alias for keyboards where `
+//                is a dead key (ABNT2 sends the grave accent from another key; its physical Backquote key is ')
+//
+// Ctrl+` vs the terminal: xterm maps it to NUL (the same byte as Ctrl+Space / Ctrl+2), which nobody types on purpose.
 //
 // Desk chords vs the terminal: xterm sends nothing for Ctrl+Tab; Ctrl+1…9 have legacy control codes in xterm
 // (Ctrl+2 NUL, Ctrl+3…7 ESC…US, Ctrl+8 DEL) that nobody types on purpose (Esc, Backspace exist); on ABNT2
@@ -30,6 +34,7 @@ export type AppShortcut =
   | { op: 'desk-cycle'; step: 1 | -1 }
   | { op: 'desk-go'; position: number }
   | { op: 'desk-new'; side: 'before' | 'after' }
+  | { op: 'drawer-toggle' }
 
 /** The subset of KeyboardEvent the mapping needs (tests build it by hand). */
 export interface KeyLike { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; code: string }
@@ -61,6 +66,8 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((position): ShortcutEntry => ({ chord: { ctrl: true, code: `Digit${position}` }, command: { op: 'desk-go', position } })),
   { chord: { ctrl: true, alt: true, code: 'KeyN' }, command: { op: 'desk-new', side: 'after' } },
   { chord: { ctrl: true, alt: true, shift: true, code: 'KeyN' }, command: { op: 'desk-new', side: 'before' } },
+  { chord: { ctrl: true, code: 'Backquote' }, command: { op: 'drawer-toggle' } },
+  { chord: { ctrl: true, shift: true, code: 'KeyG' }, command: { op: 'drawer-toggle' } },
 ]
 
 function matches(chord: Chord, ev: KeyLike): boolean {
@@ -115,7 +122,7 @@ export function paneShortcutHint(command: PaneCommand): string {
   return entry ? chordLabel(entry.chord) : ''
 }
 
-const CODE_GLYPH: Record<string, string> = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓' }
+const CODE_GLYPH: Record<string, string> = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Backquote: '`' }
 
 /** What the user reads for a chord: "Ctrl+Alt+Shift+→", "Ctrl+Shift+T". */
 export function chordLabel(chord: Chord): string {

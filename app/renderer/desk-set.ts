@@ -6,9 +6,9 @@
 // The renderer keeps talking about panes (getPanel, addPanel, activePanel…) and the set routes to the desk
 // that has the pane, or to the active desk. A Desk stays usable on its own (the drawer mounts one without a
 // strip); this file only adds the row.
-import type { AddPanelOptions, DockviewTheme, IDockviewPanel, SerializedDockview } from 'dockview-core'
+import type { AddPanelOptions, DockviewTheme, IDockviewPanel } from 'dockview-core'
 import type { Target } from './create.ts'
-import { Desk, type DeskHost } from './desk.ts'
+import { Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { closeDesk, type DeskInfo, insertDesk, moveDesk, recolorDesk, renameDesk, touchMru } from './desks.ts'
 import { emptyDesk, type DeskLayout, type LayoutV2 } from './layout.ts'
 
@@ -160,29 +160,20 @@ export class DeskSet {
     const source = from ? this.mounted.get(from)!.desk : undefined
     const panel = source?.getPanel(slotId)
     if (!source || !target || !panel || from === to) return false
-    const options = this.host.paneOptions(panel)
-    source.removePanel(panel)
-    try { target.addPanel(options) } catch (err) {
-      console.error(`mover painel ${slotId}: falhou, voltando à mesa de origem`, err)
-      source.addPanel(options)
-      return false
-    }
+    if (!transferPanel(source, target, slotId, this.host.paneOptions(panel))) return false
     this.host.onDesksChange()
     return true
   }
+
+  /** The options to re-create a pane elsewhere (the drawer moves use them too). */
+  paneOptions(panel: IDockviewPanel): AddPanelOptions { return this.host.paneOptions(panel) }
 
   /** Moves a whole frame (its split layout and panes) of desk `from` to desk `to`, as a new frame at its right edge. */
   moveFrame(from: string, frameId: string, to: string): boolean {
     const source = this.mounted.get(from)?.desk
     const target = this.mounted.get(to)?.desk
     if (!source || !target || from === to) return false
-    const view: SerializedDockview | undefined = source.takeFrame(frameId)
-    if (!view) return false
-    try { target.putFrame(view) } catch (err) {
-      console.error(`mover quadro ${frameId}: falhou, voltando à mesa de origem`, err)
-      source.putFrame(view)
-      return false
-    }
+    if (!transferFrame(source, target, frameId)) return false
     this.host.onDesksChange()
     return true
   }

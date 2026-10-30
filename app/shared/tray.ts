@@ -3,7 +3,7 @@
 import type { SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 
 /** Menu commands that are not a pane. */
-export type TrayCommand = 'open' | 'restart-daemon' | 'quit-keep' | 'quit-all'
+export type TrayCommand = 'open' | 'open-drawer' | 'restart-daemon' | 'quit-keep' | 'quit-all'
 
 export type TrayItem =
   | { kind: 'command'; id: TrayCommand; label: string }
@@ -22,6 +22,17 @@ export interface TrayModel {
   attention: number
   /** 'attention' (amber dot: an agent finished or waits for you) wins over 'active' (green dot: an agent runs). */
   badge: 'none' | 'active' | 'attention'
+}
+
+/**
+ * Whether this process creates a tray icon. Test runs (a private home or pipe, the hidden window) must never put an
+ * icon in the user's real tray: they get none unless the test opts back in with TETHER_TRAY=1; TETHER_NO_TRAY=1
+ * turns it off for anybody.
+ */
+export function trayWanted(env: Record<string, string | undefined>): boolean {
+  if (env.TETHER_NO_TRAY === '1') return false
+  if (env.TETHER_TRAY === '1') return true
+  return !(env.TETHER_E2E_HIDDEN === '1' || env.TETHER_HOME || env.TETHER_PIPE)
 }
 
 /** Longest list of panes in the menu; the rest is summarized. */
@@ -58,7 +69,7 @@ export function trayModel(slots: Iterable<SlotState>): TrayModel {
     .sort((a, b) => ORDER[a.s.status] - ORDER[b.s.status] || a.i - b.i)
     .map(x => x.s)
   const running = list.filter(s => s.status === 'running' || s.status === 'starting').length
-  const items: TrayItem[] = [{ kind: 'command', id: 'open', label: 'Abrir tether' }]
+  const items: TrayItem[] = [{ kind: 'command', id: 'open', label: 'Abrir tether' }, { kind: 'command', id: 'open-drawer', label: 'Abrir gaveta' }]
   if (list.length > 0) {
     items.push({ kind: 'separator' })
     for (const s of list.slice(0, TRAY_PANE_LIMIT)) {
