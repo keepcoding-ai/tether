@@ -24,6 +24,7 @@ type Hooks = {
   panelIds(): string[]
   activeId(): string | undefined
   layout(): unknown
+  frameLayout(frameId?: string): unknown
   slots(): SlotState[]
   text(id: string): string
   connection(): { connected: boolean; pid?: number } | undefined
@@ -94,7 +95,8 @@ async function createPanel(page: Page, kind: 'claude' | 'soul' | 'shell', cwd: s
 
 const hooks = {
   ids: (page: Page) => page.evaluate(() => window.__tether.panelIds()),
-  layout: (page: Page) => page.evaluate(() => window.__tether.layout() as unknown as Layout),
+  /** The dockview JSON of the active frame (the only one in this test): v1-shaped, so the arrangement reads as before phase B. */
+  layout: (page: Page) => page.evaluate(() => window.__tether.frameLayout() as unknown as Layout),
   text: (page: Page, id: string) => page.evaluate(id => window.__tether.text(id), id),
   slots: (page: Page) => page.evaluate(() => window.__tether.slots()),
   daemonPid: async (page: Page) => (await page.evaluate(() => window.__tether.connection()))?.pid,
