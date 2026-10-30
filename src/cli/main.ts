@@ -6,14 +6,14 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { exitCodeFor, formatReport, runDoctor } from '../doctor.ts'
-import type { Binding, SlotMeta } from '../core/event.ts'
-import { pidExists } from '../core/liveness.ts'
+import type { Binding, RunInfo, SlotMeta } from '../core/event.ts'
+import { isSameProcess, pidExists } from '../core/liveness.ts'
 import { canonicalDir, slotMetaPath } from '../core/paths.ts'
 import { findProfile, ProfileError, readProfiles, removeProfile, snapshotProfile, upsertProfile, writeProfiles, type Profile, type ProfileAgent, type ProfileInput } from '../core/profile.ts'
 import { createSlot, currentBinding, newSlotId, readEvents, readRun, readSlot, removeSlot, writeSlotMeta } from '../core/store.ts'
 import { splitCommandLine } from '../agents/soul.ts'
 import { DaemonClient, DaemonError } from '../daemon/client.ts'
-import type { ErrorCode, SlotKind, SlotState } from '../daemon/protocol.ts'
+import { KILL_WAIT_CAP_MS, MIN_AGENT_AGE_MS, type ErrorCode, type SlotKind, type SlotState } from '../daemon/protocol.ts'
 import { parseArgs, UsageError } from './args.ts'
 import { attach } from './attach.ts'
 import { localTime, relativeTime, shortId, statusLabel, table, truncate, truncateStart } from './format.ts'
@@ -172,7 +172,11 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
-/** Kills a process tree by pid (a `--here` run from another terminal). */
+/**
+ * Kills a process tree by pid. Only ever pointed at a `--here` launcher (pid = the CLI that runs one agent) or
+ * at an agent left by a dead tetherd; NEVER at a live tetherd, whose tree is every agent of every slot (that
+ * one goes down through the pipe's `shutdown` only).
+ */
 function killByPid(pid: number): Promise<void> {
   return new Promise((done) => {
     if (process.platform === 'win32') {
@@ -182,6 +186,29 @@ function killByPid(pid: number): Promise<void> {
       done()
     }
   })
+}
+
+/**
+ * Waits until the run's agent is at least MIN_AGENT_AGE_MS old and has reported this run (start event at/after
+ * the launch), capped at KILL_WAIT_CAP_MS: a Claude killed before it finishes starting counts as a boot strike.
+ */
+async function awaitKillable(home: string, slotId: string, run: RunInfo, meta: SlotMeta | undefined): Promise<void> {
+  if (meta?.agent === 'shell') return
+  const launchedAt = run.agentStartedAt ?? run.startedAt
+  const ageDeadline = Date.parse(launchedAt) + MIN_AGENT_AGE_MS
+  const cap = Date.now() + KILL_WAIT_CAP_MS
+  let warned = false
+  for (;;) {
+    const now = Date.now()
+    const binding = meta ? currentBinding(readEvents(home, slotId), meta) : undefined
+    if (now >= ageDeadline && binding && binding.since >= launchedAt) return
+    if (now >= cap || !pidExists(run.agentPid ?? run.pid)) return
+    if (!warned) {
+      warned = true
+      out(`aguardando o agente terminar de iniciar antes de encerrar (até ${Math.round(KILL_WAIT_CAP_MS / 1000)} s)…\n`)
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
 }
 
 // ---- ls / show ---------------------------------------------------------------------------------
@@ -399,12 +426,27 @@ async function cmdStop(args: string[]): Promise<number> {
   }
   daemonDown()
   const run = readRun(ctx.home, slot.slotId)
-  if (!run || !pidExists(run.pid)) {
+  if (!run) {
     out(`slot ${slot.slotId} já está parado\n`)
     return 0
   }
-  await killByPid(run.agentPid ?? run.pid)
-  out(`slot ${slot.slotId}: processo ${run.agentPid ?? run.pid} encerrado\n`)
+  // A run of tetherd: run.pid is the daemon itself, whose tree is every agent of every slot. It is never killed
+  // from here; a live daemon that does not answer is reported, a dead one may have left the agent alone.
+  if (run.by === 'tetherd') {
+    if (await isSameProcess(run.pid, run.startedAt)) throw new Error(`o tetherd (pid ${run.pid}) está no ar mas não respondeu; encerre pelo app, ou reinicie o tetherd`)
+    const agentAlive = run.agentPid !== undefined && (run.agentStartedAt ? await isSameProcess(run.agentPid, run.agentStartedAt) : pidExists(run.agentPid))
+    if (!agentAlive) {
+      out(`slot ${slot.slotId} já está parado\n`)
+      return 0
+    }
+  } else if (!(await isSameProcess(run.pid, run.startedAt))) {
+    out(`slot ${slot.slotId} já está parado\n`)
+    return 0
+  }
+  const target = run.agentPid ?? run.pid
+  await awaitKillable(ctx.home, slot.slotId, run, readSlot(ctx.home, slot.slotId))
+  await killByPid(target)
+  out(`slot ${slot.slotId}: processo ${target} encerrado\n`)
   return 0
 }
 
