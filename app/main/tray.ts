@@ -24,6 +24,7 @@ const escapeLabel = (label: string): string => label.replace(/&/g, '&&')
 export function createTray(assetDir: string, actions: TrayActions): TrayController {
   const idle = nativeImage.createFromPath(join(assetDir, 'tray.png'))
   const active = nativeImage.createFromPath(join(assetDir, 'tray-active.png'))
+  const attention = nativeImage.createFromPath(join(assetDir, 'tray-attention.png'))
   const tray = new Tray(idle)
   let current = trayModel([])
 
@@ -37,7 +38,7 @@ export function createTray(assetDir: string, actions: TrayActions): TrayControll
   }))
 
   const apply = (): void => {
-    tray.setImage(current.badge === 'active' ? active : idle)
+    tray.setImage(current.badge === 'attention' ? attention : current.badge === 'active' ? active : idle)
     tray.setToolTip(current.tooltip)
     tray.setContextMenu(build(current))
   }

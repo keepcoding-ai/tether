@@ -161,6 +161,7 @@ export function writeIcons(outDir) {
 
 const TRAY_SIZE = 32
 const DOT = [0x3f, 0xcf, 0x6e] // green: an agent is running
+const ATTENTION_DOT = [0xf0, 0xa8, 0x2c] // amber: an agent finished its turn or waits for the user
 
 /** Paints an antialiased dot (centre/radius in the unit square) over straight-alpha RGBA pixels. */
 function overlayDot(rgba, size, cx, cy, r, color) {
@@ -186,4 +187,9 @@ export function writeTrayIcons(outDir) {
   overlayDot(withDot, TRAY_SIZE, 0.74, 0.74, 0.27, BG) // dark ring so the dot reads on any panel colour
   overlayDot(withDot, TRAY_SIZE, 0.74, 0.74, 0.2, DOT)
   writeFileSync(join(outDir, 'tray-active.png'), encodePng(TRAY_SIZE, withDot))
+  // tray-attention.png: an amber dot — an agent finished its turn or waits for the user.
+  const withAttention = Uint8Array.from(base)
+  overlayDot(withAttention, TRAY_SIZE, 0.74, 0.74, 0.27, BG)
+  overlayDot(withAttention, TRAY_SIZE, 0.74, 0.74, 0.2, ATTENTION_DOT)
+  writeFileSync(join(outDir, 'tray-attention.png'), encodePng(TRAY_SIZE, withAttention))
 }

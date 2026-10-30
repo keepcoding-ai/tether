@@ -18,8 +18,10 @@ export interface TrayModel {
   tooltip: string
   /** Agents with a process (running or starting): the number the tooltip and the icon badge report. */
   running: number
-  /** 'active' paints the dot on the tray icon. Phase C adds 'attention' (finished / waiting for input). */
-  badge: 'none' | 'active'
+  /** Panes whose agent finished its turn or waits for the user (SlotState.attention). */
+  attention: number
+  /** 'attention' (amber dot: an agent finished or waits for you) wins over 'active' (green dot: an agent runs). */
+  badge: 'none' | 'active' | 'attention'
 }
 
 /** Longest list of panes in the menu; the rest is summarized. */
@@ -60,7 +62,8 @@ export function trayModel(slots: Iterable<SlotState>): TrayModel {
   if (list.length > 0) {
     items.push({ kind: 'separator' })
     for (const s of list.slice(0, TRAY_PANE_LIMIT)) {
-      items.push({ kind: 'pane', slotId: s.slotId, label: `${slotLabel(s)} (${STATUS_LABEL[s.status]})`, status: s.status })
+      const state = s.attention === 'waiting' ? 'espera você' : s.attention === 'done' ? 'terminou' : STATUS_LABEL[s.status]
+      items.push({ kind: 'pane', slotId: s.slotId, label: `${slotLabel(s)} (${state})`, status: s.status })
     }
     if (list.length > TRAY_PANE_LIMIT) items.push({ kind: 'info', label: `e mais ${list.length - TRAY_PANE_LIMIT}` })
   }
@@ -70,6 +73,8 @@ export function trayModel(slots: Iterable<SlotState>): TrayModel {
     { kind: 'command', id: 'quit-keep', label: 'Sair (manter agentes)' },
     { kind: 'command', id: 'quit-all', label: 'Sair e encerrar tudo…' },
   )
-  const tooltip = running === 0 ? 'tether: nenhum agente rodando' : `tether: ${plural(running, 'agente rodando', 'agentes rodando')}`
-  return { items, tooltip, running, badge: running > 0 ? 'active' : 'none' }
+  const attention = list.filter(s => s.attention !== undefined).length
+  let tooltip = running === 0 ? 'tether: nenhum agente rodando' : `tether: ${plural(running, 'agente rodando', 'agentes rodando')}`
+  if (attention > 0) tooltip += ` · ${plural(attention, 'esperando você', 'esperando você')}`
+  return { items, tooltip, running, attention, badge: attention > 0 ? 'attention' : running > 0 ? 'active' : 'none' }
 }
