@@ -8,9 +8,13 @@ import type { Direction, Target } from './create.ts'
 import { icon } from './icons.ts'
 import { type DeskLayout, emptyDesk, FRAME_COMPONENT, frameInsertion, isLayoutV1, nextFrameId, panelIdsOf } from './layout.ts'
 
-/** How close to a border (px) the pointer must be for the "+" to show. */
+/**
+ * How close to a border (px) the pointer must be for the "+" to show. The desk band is the 4 px gutter
+ * (styles.css `.desk { padding }`) plus 2 px: any wider and it would swallow the top/left/right/bottom band
+ * of a frame that sits on the desk's edge, whose own "+" would then be unreachable there.
+ */
 const FRAME_EDGE_PX = 14
-const DESK_EDGE_PX = 8
+const DESK_EDGE_PX = 6
 
 type Side = 'left' | 'right' | 'top' | 'bottom'
 const SIDES: readonly Side[] = ['left', 'right', 'top', 'bottom']
@@ -260,6 +264,9 @@ export class Desk {
   }
 
   private onMouseMove(ev: MouseEvent): void {
+    // Over a "+" already shown: keep it. Its centre may lie outside the band that revealed it (the desk's "+"
+    // overhangs the gutter), and re-arbitrating there would swap it for a frame's "+" under the pointer.
+    if ((ev.target as Element | null)?.closest?.('.edge-plus')) return
     const { clientX: x, clientY: y } = ev
     const near = nearestSide(this.container.getBoundingClientRect(), x, y)
     if (near && near.distance <= DESK_EDGE_PX) { this.showOnly(this.deskPlus, near.side); for (const m of this.framePlus.values()) this.showOnly(m, undefined); return }
