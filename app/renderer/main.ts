@@ -17,6 +17,7 @@ import { Drawer } from './drawer.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { drawerOf, emptyLayout, type LayoutV2, migrateLayout, pruneLayoutV2 } from './layout.ts'
+import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
@@ -97,6 +98,7 @@ const host: PanelHost = {
   getScheme: () => theme.scheme,
   getAppearance: () => appearance,
   onSwitchProfile: id => { void switchProfile(id) },
+  onToggleDetails: id => togglePaneDetails(id),
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
   isDaemonReady: () => daemonIsReady,
   daemonReady: () => daemonReadyPromise,
@@ -703,6 +705,14 @@ async function refreshSlots(): Promise<void> {
   for (const s of reply.slots ?? []) { slots.set(s.slotId, s); queue.update(s.slotId, s.status === 'queued') }
 }
 
+/** Shows or hides a pane's header details; the state is a layout param, saved with the layout. */
+function togglePaneDetails(slotId: string): void {
+  const panel = findPanel(slotId)
+  if (!panel) return
+  panel.api.updateParameters(withDetails(panel.params, !detailsOpen(panel.params)))
+  scheduleSave()
+}
+
 /** Keeps the pane's layout hint (kind, folder, profile) in step with the slot, so the next launch paints it before the daemon answers. */
 function updateHint(slot: SlotState): void {
   const panel = findPanel(slot.slotId)
@@ -925,7 +935,8 @@ function showContextMenu(x: number, y: number, items: MenuItem[]): void {
 function showTabMenu(slotId: string, x: number, y: number): void {
   const slot = slots.get(slotId)
   if (!slot) return
-  findPanel(slotId)?.api.setActive()
+  const panel = findPanel(slotId)
+  panel?.api.setActive()
   // Where the pane can go: a desk pane to another desk or into the drawer; a drawer pane to the desk behind it.
   const moves: MenuItem[] = inDrawer(slotId)
     ? [
@@ -945,6 +956,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'square-half', label: 'Novo painel na borda do quadro…', run: () => { void openNewDialog({ reference: slotId, target: { level: 'frame', placement: 'right' } }) } },
     { icon: 'columns', label: `${NEW_FRAME_LABEL}…`, run: () => { void openNewDialog({ reference: slotId, target: { level: 'desk', placement: 'right' } }) } },
     ...moves,
+    { icon: detailsOpen(panel?.params) ? 'caret-up' : 'caret-down', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
@@ -1247,6 +1259,7 @@ function setupUi(): void {
       case 'duplicate': void duplicateActive({ level: shortcut.level, placement: shortcut.direction }); break
       case 'quit-all': window.tether.command('quit-all'); break
       case 'drawer-toggle': setDrawerOpen(!drawer.isOpen); break
+      case 'pane-details': { const id = currentDesk().activePanel?.id; if (id) togglePaneDetails(id); break }
       // The desks behind the drawer stay where they are while it is open.
       case 'desk-cycle': if (!drawer.isOpen) desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, shortcut.step)); break
       case 'desk-go': { const id = deskAt(desks.desks, shortcut.position); if (id && !drawer.isOpen) desks.switchTo(id); break }
@@ -1313,6 +1326,8 @@ declare global {
       duplicate(slotId: string, direction: Direction, level?: Target['level']): void
       /** The terminal's current selection text ('' when none). */
       selection(slotId: string): string
+      /** The terminal's grid as xterm sized it (rows grow when the pane header collapses). */
+      termSize(slotId: string): { cols: number; rows: number } | undefined
       /** Selects the first occurrence of `needle` in the terminal buffer (as a user would with the mouse); false when absent. */
       selectText(slotId: string, needle: string): boolean
       /** Cell size in CSS px (to aim the mouse at a given row/column). */
@@ -1415,6 +1430,7 @@ function setupTestHooks(): void {
     switchProfile: slotId => { void switchProfile(slotId) },
     duplicate: (slotId, direction, level = 'pane') => { void duplicatePanel(slotId, { level, placement: direction }) },
     selection: slotId => panels.get(slotId)?.term.getSelection() ?? '',
+    termSize: slotId => { const t = panels.get(slotId)?.term; return t ? { cols: t.cols, rows: t.rows } : undefined },
     selectText: (slotId, needle) => {
       const term = panels.get(slotId)?.term
       if (!term) return false

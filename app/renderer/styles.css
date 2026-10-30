@@ -20,6 +20,8 @@
   --shadow: 0 6px 20px rgba(0, 0, 0, .5);
   --mono: "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace;
   --ui: "Segoe UI", system-ui, sans-serif;
+  --motion-fast: 160ms;
+  --icon-xs: 13px;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
@@ -139,6 +141,11 @@ button.primary:hover { background: var(--accent-hover); }
 
 /* --- panel (dockview content) --- */
 .panel { display: flex; flex-direction: column; height: 100%; background: var(--bg); }
+/* The header folds with a grid-row transition (0fr to 1fr): an animatable height with no measured value. */
+.panel-details { display: grid; grid-template-rows: 0fr; flex: none; transition: grid-template-rows var(--motion-fast) ease-out; }
+.panel[data-details="true"] .panel-details { grid-template-rows: 1fr; }
+.panel-details-inner { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .panel-details { transition: none; } }
 .panel-head {
   display: flex; align-items: center; gap: 8px;
   padding: 2px 8px; font-size: 12px; color: var(--fg-dim);
@@ -193,6 +200,11 @@ button.primary:hover { background: var(--accent-hover); }
 .tether-tab .close { background: none; border: 0; padding: 2px; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; }
 .tether-tab .close .ph { width: 13px; height: 13px; }
 .tether-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
+/* The details toggle shares the close button's look; it shows on the active tab and on hover/focus only. */
+.tether-tab .details-toggle { background: none; border: 0; padding: 2px; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; opacity: 0; }
+.tether-tab .details-toggle .ph { width: var(--icon-xs); height: var(--icon-xs); }
+.tether-tab .details-toggle:hover { background: var(--bg-hover-2); color: var(--fg); }
+.dv-active-tab .tether-tab .details-toggle, .tether-tab:hover .details-toggle, .tether-tab .details-toggle:focus-visible { opacity: 1; }
 
 /* --- the situation language: icon badge + title, context block, choice cards (dialogs and panel overlays) --- */
 .badge { width: 36px; height: 36px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }

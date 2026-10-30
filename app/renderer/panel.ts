@@ -13,7 +13,8 @@ import type { ColorScheme } from '../shared/theme.ts'
 import { renderChoices, roveWithArrows } from './dialog.ts'
 import { decodeOsc52 } from './clipboard.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
-import { paneShortcutOf } from './shortcuts.ts'
+import { detailsLabel, detailsOpen } from './pane-details.ts'
+import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
@@ -71,8 +72,10 @@ export function unsafeBadge(withLabel: boolean): HTMLElement {
 }
 
 export function panelTooltip(s: SlotState): string {
-  const lines = [`${KIND_LABEL[s.kind]} · ${STATUS_LABEL[effectiveStatus(s)]}`, `Pasta: ${s.cwd}`, `Slot: ${s.slotId}`]
+  const lines = [panelTitle(s), `${KIND_LABEL[s.kind]} · ${STATUS_LABEL[effectiveStatus(s)]}`, `Pasta: ${s.cwd}`, `Slot: ${s.slotId}`]
+  if (!s.profileName && !s.profileId) lines.push(`Perfil: ${NO_PROFILE_LABEL}`)
   if (s.profileName) lines.push(`Perfil: ${s.profileName}`)
+  else if (s.profileId) lines.push(`Perfil: ${s.profileId} (apagado)`)
   if (s.unsafe) lines.push(UNSAFE_TOOLTIP)
   if (s.restarting) lines.push('Reiniciando com o novo perfil…')
   if (s.binding?.sessionId) lines.push(`Sessão: ${s.binding.sessionId}`)
@@ -177,6 +180,8 @@ export interface PanelHost {
   getAppearance(): TerminalAppearance
   /** "Trocar perfil…" from the header pill. */
   onSwitchProfile(slotId: string): void
+  /** The toggle on the tab: show or hide the header details of the pane. */
+  onToggleDetails(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
   onTabMenu(slotId: string, ev: MouseEvent): void
   /** The daemon answered and its slot list is loaded. */
@@ -211,6 +216,7 @@ export class TerminalPanel implements IContentRenderer {
   private readonly fit = new FitAddon()
   private readonly head: { icon: HTMLElement; title: HTMLElement; profile: HTMLButtonElement; unsafe: HTMLElement; cwd: HTMLElement; status: HTMLElement }
   private readonly termHost: HTMLElement
+  private readonly details: HTMLElement
   private readonly overlay: HTMLElement
   private readonly loading: { root: HTMLElement; icon: HTMLElement; text: HTMLElement }
   /** The xterm is open in the DOM (after the font loaded). */
@@ -261,7 +267,17 @@ export class TerminalPanel implements IContentRenderer {
     const body = document.createElement('div')
     body.className = 'panel-body'
     body.append(this.termHost, loading, this.overlay)
-    this.element.append(head, body)
+    // The header sits in a grid wrapper whose row animates between 0fr and 1fr (styles.css); `inert` while
+    // collapsed keeps its pill out of the tab order.
+    const details = document.createElement('div')
+    details.className = 'panel-details'
+    const detailsInner = document.createElement('div')
+    detailsInner.className = 'panel-details-inner'
+    detailsInner.append(head)
+    details.append(detailsInner)
+    this.details = details
+    this.element.append(details, body)
+    this.setDetails(false)
 
     this.term = new Terminal({
       ...terminalFontOptions(host.getAppearance()),
@@ -303,6 +319,8 @@ export class TerminalPanel implements IContentRenderer {
     this.element.dataset.slotId = this.slotId
     this.layoutTitle = params.title
     this.hint = hintParam(params.params)
+    this.setDetails(detailsOpen(params.params))
+    params.api.onDidParametersChange(p => { if ('details' in p) this.setDetails(detailsOpen(p)) })
     // The chrome (header, loading skeleton) paints now, from the layout's hint if the daemon has not answered.
     this.render()
     // Keyboard focus follows the active panel. dockview may activate the panel before this init runs,
@@ -335,6 +353,23 @@ export class TerminalPanel implements IContentRenderer {
     if (this.disposed) return
     void this.attach()
   }
+
+  /**
+   * Expands or collapses the header. The terminal refits when the height transition ends (and while it runs,
+   * through the ResizeObserver); with reduced motion there is no transition, so it refits right away.
+   */
+  private setDetails(open: boolean): void {
+    if (this.element.dataset.details === String(open)) return
+    this.element.dataset.details = String(open)
+    this.details.inert = !open
+    this.details.setAttribute('aria-hidden', String(!open))
+    this.scheduleFit()
+    if (!this.detailsEnd) {
+      this.detailsEnd = ev => { if (ev.target === this.details) this.scheduleFit() }
+      this.details.addEventListener('transitionend', this.detailsEnd)
+    }
+  }
+  private detailsEnd: ((ev: TransitionEvent) => void) | undefined
 
   /** Current slot state applied to the header and the overlay (on init and on every `state` event). */
   render(): void {
@@ -605,6 +640,7 @@ export class SlotTab implements ITabRenderer {
   private readonly dot: HTMLElement
   private readonly unsafe: HTMLElement
   private readonly attn: HTMLElement
+  private readonly toggle: HTMLButtonElement
   private disposers: Array<() => void> = []
   private readonly host: PanelHost
   /** What the layout file remembers of the pane, painted before the daemon answers. */
@@ -626,15 +662,31 @@ export class SlotTab implements ITabRenderer {
     close.append(icon('x'))
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    this.element.append(this.kind, this.attn, this.text, this.unsafe, this.dot, close)
+    // The details toggle: a caret that points down while the header is hidden and up while it is shown.
+    this.toggle = document.createElement('button')
+    this.toggle.className = 'details-toggle'
+    this.toggle.addEventListener('pointerdown', ev => ev.stopPropagation())
+    this.toggle.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onToggleDetails(this.api.id) })
+    this.setDetails(false)
+    this.element.append(this.kind, this.attn, this.text, this.unsafe, this.dot, this.toggle, close)
     this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
   }
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
     this.hint = hintParam(params.params)
+    this.setDetails(detailsOpen(params.params))
+    this.disposers.push(params.api.onDidParametersChange(p => { if ('details' in p) this.setDetails(detailsOpen(p)) }).dispose)
     this.disposers.push(params.api.onDidTitleChange(() => this.render()).dispose)
     this.render()
+  }
+
+  private setDetails(open: boolean): void {
+    const label = `${detailsLabel(open)} (${shortcutHint({ op: 'pane-details' })})`
+    this.toggle.title = label
+    this.toggle.setAttribute('aria-label', detailsLabel(open))
+    this.toggle.setAttribute('aria-pressed', String(open))
+    this.toggle.replaceChildren(icon(open ? 'caret-up' : 'caret-down'))
   }
 
   render(): void {

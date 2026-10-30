@@ -5,6 +5,7 @@ import appWindow from '@phosphor-icons/core/assets/regular/app-window.svg'
 import arrowClockwise from '@phosphor-icons/core/assets/regular/arrow-clockwise.svg'
 import arrowSquareOut from '@phosphor-icons/core/assets/regular/arrow-square-out.svg'
 import caretDown from '@phosphor-icons/core/assets/regular/caret-down.svg'
+import caretUp from '@phosphor-icons/core/assets/regular/caret-up.svg'
 import circleFill from '@phosphor-icons/core/assets/fill/circle-fill.svg'
 import circleHalf from '@phosphor-icons/core/assets/regular/circle-half.svg'
 import clockCounterClockwise from '@phosphor-icons/core/assets/regular/clock-counter-clockwise.svg'
@@ -59,6 +60,7 @@ const SVG = {
   'arrow-clockwise': arrowClockwise,
   'arrow-square-out': arrowSquareOut,
   'caret-down': caretDown,
+  'caret-up': caretUp,
   'circle-fill': circleFill,
   'circle-half': circleHalf,
   'clock-counter-clockwise': clockCounterClockwise,

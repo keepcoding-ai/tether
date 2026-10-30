@@ -8,7 +8,7 @@
 //   level desk   Alt+Shift+Arrow        duplicate into a new frame at the desk's edge
 //   desks        Ctrl+Tab / Ctrl+Shift+Tab next / previous desk (sequential, wraps) · Ctrl+1…9 desk by position
 //                Ctrl+Alt+N new desk after the current one · Ctrl+Alt+Shift+N before it
-//   Ctrl+Shift+T chooser · Ctrl+Shift+Q quit all
+//   Ctrl+Shift+T chooser · Ctrl+Shift+Q quit all · Ctrl+Shift+H show/hide the active pane's header details
 //   drawer       Ctrl+` toggles it (VS Code's terminal chord); Ctrl+Shift+G is the alias for keyboards where `
 //                is a dead key (ABNT2 sends the grave accent from another key; its physical Backquote key is ')
 //
@@ -35,6 +35,7 @@ export type AppShortcut =
   | { op: 'desk-go'; position: number }
   | { op: 'desk-new'; side: 'before' | 'after' }
   | { op: 'drawer-toggle' }
+  | { op: 'pane-details' }
 
 /** The subset of KeyboardEvent the mapping needs (tests build it by hand). */
 export interface KeyLike { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; code: string }
@@ -68,6 +69,8 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   { chord: { ctrl: true, alt: true, shift: true, code: 'KeyN' }, command: { op: 'desk-new', side: 'before' } },
   { chord: { ctrl: true, code: 'Backquote' }, command: { op: 'drawer-toggle' } },
   { chord: { ctrl: true, shift: true, code: 'KeyG' }, command: { op: 'drawer-toggle' } },
+  // Ctrl+Shift+I is Chromium's DevTools chord (the hidden View menu keeps it); H is for "header".
+  { chord: { ctrl: true, shift: true, code: 'KeyH' }, command: { op: 'pane-details' } },
 ]
 
 function matches(chord: Chord, ev: KeyLike): boolean {
