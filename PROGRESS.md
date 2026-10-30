@@ -55,6 +55,10 @@ A semana de uso real (PRD §8) é do usuário.
 - Fase B: **quadro vazio some sozinho** (quando o último painel sai, inclusive por `forget`), exceto o último quadro da mesa (fica com a marca d'água). Uma mesa nunca fica sem quadro.
 - Fase B: **arrastar aba entre quadros não funciona ainda** (cada quadro é uma instância de dockview; o drop de outra instância exige tratar `onUnhandledDragOverEvent` + `onDidDrop` e mover o painel pela API). Pendência registrada.
 - Fase B: o `layout.json` é gravado sempre em v2; a migração guarda `layout.v1.bak` (sobrescrito se um build antigo voltar a gravar v1 e houver nova migração: a cópia espelha o último v1 visto).
+- Área de transferência: **copiar ao selecionar foi desligado.** Antes, qualquer seleção no terminal sobrescrevia a área de transferência (quem copiava um caminho no navegador e selecionava algo no terminal para olhar perdia a cópia). Agora copia só `Ctrl+C` com seleção (e limpa a seleção) ou `Ctrl+Shift+C`. Se o Guga gostava do copiar-ao-selecionar, é uma linha em `panel.ts` (`onSelectionChange`).
+- Área de transferência: **`Ctrl+V` cola o texto pelo xterm; sem texto na área de transferência manda o `^V` cru.** O Claude Code cola imagem quando recebe o `^V` (ele mesmo lê a imagem da área de transferência), e uma captura de tela não tem forma de texto — então o atalho serve aos dois casos. Consequência: um programa que usa `^V` literal (bloco visual do vim, quoted-insert do bash) só o recebe com a área de transferência sem texto; `Ctrl+Shift+V` nunca manda `^V`. Com texto, o paste é "bracketed" quando o programa pediu (o Claude recebe o colado como um bloco, não tecla a tecla).
+- Área de transferência: **OSC 52 escreve em qualquer `Pc`** (`c`, `p`, `s`, vazio: há uma só área de transferência no Windows) e **ignora a consulta `?`** (responder devolveria o conteúdo da área de transferência ao programa; nenhum programa nosso precisa disso).
+- Área de transferência: **o ConPTY desta máquina não repassa o `?1000h` do programa ao terminal** (um `Write-Host` da sequência deixa o xterm em modo `none`; o OSC 52 passa). Na prática, hoje o arraste simples sempre seleciona, mesmo com o Claude em tela cheia; `Shift`+arrastar é o padrão do xterm no Windows (`shouldForceSelection` = `shiftKey`) para quando o modo mouse chegar (o E2E prova o comportamento do xterm com o modo ligado de dentro do renderer).
 
 ## Ações do Guga
 
@@ -247,3 +251,25 @@ Capturas em `test/e2e/artifacts/`: `frames-migrated.png`, `frames-two.png`, `fra
 **Consertos na prova (E2E):** (1) o "+" da mesa sumia debaixo do ponteiro — o centro do botão fica a 8 px da borda, fora da faixa de 6 px que o revelou, e o `mousemove` seguinte trocava pelo "+" do quadro: agora o ponteiro sobre um "+" visível nunca re-arbitra (`Desk.onMouseMove`); faixa da mesa = calha de 4 px + 2 px (era 8 px e engolia a borda de um quadro encostado na mesa). (2) Relançar o app ~9 s depois de matar a janela travou o main do Electron antes de criar a janela (lock de instância única preso pelos helpers do main morto; sem janela, sem CDP, `app.evaluate` nunca responde): `killElectron` agora espera os filhos do main morto saírem (até 15 s, só espera, nunca mata) e, se o main não responder em 10 s, derruba o launcher que é nosso; `app.frames` tem teto de 5 min. (3) `harness.allProcesses`: `ConvertTo-Json` deixou passar um caractere de controle na linha de comando de um processo da máquina — os controles são apagados antes do `JSON.parse`. (4) Testes ajustados à fase B: `app.duplicate` lê as chips do nível painel (`data-level="pane"`) e os dois itens novos do menu da aba; `app.frames` clica a chip (o rádio é invisível) e espera o `<dialog>` fechar com `state: 'hidden'`.
 
 **tetherd:** não precisa reiniciar (nada em `src/daemon`, `src/agents`, `src/core`). O app precisa de `npm run app:build` (feito) e reabrir; na primeira abertura o `layout.json` do Guga vira v2 e `layout.v1.bak` fica ao lado.
+
+## Teclas de área de transferência no terminal (pedido do Guga, 2026-10-30)
+
+Fable (medium), branch `develop`, sem mudança no daemon. Dentro de um painel (`app/renderer/shortcuts.ts`, tabela `PANE_SHORTCUTS`; decisão em `paneShortcutOf(ev, hasSelection)`, só no `keydown`):
+
+- **`Ctrl+C` com seleção** copia, limpa a seleção e **não manda `^C`**; **sem seleção** é o `^C` de sempre (interrompe o Claude, servidores, shells). **`Ctrl+Shift+C`** sempre copia (sem seleção não faz nada e não manda nada).
+- **`Ctrl+V`** cola o texto da área de transferência pelo `term.paste` do xterm (bracketed paste honrado); sem texto, manda o `^V` cru (o Claude cola a imagem). **`Ctrl+Shift+V`** cola o texto, só.
+- O que o painel trata é também `preventDefault`: a cópia/colagem nativa do Chromium na textarea do xterm não roda em cima (uma colagem nativa chegaria ao listener `paste` do xterm e colaria duas vezes; uma cópia nativa sobrescreveria a área de transferência com a seleção já limpa).
+- **OSC 52** (`ESC ] 52 ; Pc ; Pd BEL`): `parser.registerOscHandler(52)` no painel, `decodeOsc52` puro em `app/renderer/clipboard.ts`, escrita pelo IPC `clipboard:write` que já existia. Sem dependência nova.
+- **Shift+arrastar** com o programa em modo mouse: padrão do xterm no Windows, conferido no código (`SelectionService.shouldForceSelection`), nada a configurar.
+- Copiar-ao-selecionar removido (decisão acima). `host.onKey` em `main.ts` ficou só com os atalhos do app; os de área de transferência são do painel. README atualizado.
+
+Prova (minha, `TETHER_CLAUDE_ARGS` desligado, janela escondida, home/pipe privados; a área de transferência do Windows é salva no início e restaurada no fim do E2E):
+
+| O quê | Resultado |
+|---|---|
+| `npx tsc -p .`, `npx tsc -p app/renderer` | limpos |
+| `npm test` | 294/294 (novo: `app.clipboard` 8 — Ctrl+C com/sem seleção, Ctrl+Shift+C, Ctrl+V/Ctrl+Shift+V, só keydown, outras teclas ficam com o terminal, dicas e nenhuma colisão com os atalhos do app; `decodeOsc52` com UTF-8, qualquer Pc, consulta/vazio/base64 inválido) |
+| `app.clipboard` (novo) | **verde** (41 s): PowerShell com `Write-Host marcador; ping -t localhost`; selecionar não copia; `Ctrl+C` com seleção → área de transferência = marcador, seleção limpa, o ping segue imprimindo e nenhum prompt novo (nenhum `^C` chegou); `Ctrl+C` sem seleção → o ping para e o prompt volta; `Ctrl+V` e `Ctrl+Shift+V` colam um `Write-Host` que roda; `Write-Host` de um OSC 52 → área de transferência com o texto (UTF-8); modo mouse `?1000h` → arraste simples não seleciona, `Shift`+arrastar seleciona e `Ctrl+Shift+C` copia |
+| `npm run app:build` | ok |
+
+**tetherd:** não precisa reiniciar (nada em `src/daemon`, `src/agents`, `src/core`). O app precisa de `npm run app:build` (feito) e reabrir.
