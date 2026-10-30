@@ -271,6 +271,16 @@ input[type="text"]:focus { outline: 1px solid var(--accent); }
 .recent li { padding: 5px 8px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
 .recent li:hover { background: var(--bg-3); }
 .recent li.empty { color: var(--fg-dim); cursor: default; font-family: var(--ui); }
+/* "Onde" row of Novo painel: one chip per placement relative to the panel named in the label. */
+#new-placement[hidden] { display: none; }
+#new-placement strong { color: var(--fg); font-weight: 600; }
+.placements { flex-wrap: wrap; gap: 6px; }
+.placement { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px 4px 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-3); cursor: pointer; font-size: 12.5px; }
+.placement:hover { background: var(--bg-hover); }
+.placement:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--bg-3)); color: var(--fg); }
+.placement:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.placement input { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
+.placement .ph { width: 15px; height: 15px; color: var(--accent); }
 .error { color: var(--err); }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .actions button { display: inline-flex; align-items: center; gap: 6px; }

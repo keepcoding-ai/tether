@@ -11,9 +11,8 @@
 <body>
   <header id="toolbar">
     <span id="brand">tether</span>
-    <button id="btn-new" title="Novo painel (Ctrl+Shift+T)"><span class="i" data-icon="plus"></span>Novo painel</button>
-    <button id="btn-split-right" title="Dividir à direita (Ctrl+Shift+D)"><span class="i" data-icon="square-split-horizontal"></span>Direita</button>
-    <button id="btn-split-down" title="Dividir abaixo (Ctrl+Shift+E)"><span class="i" data-icon="square-split-vertical"></span>Abaixo</button>
+    <button id="btn-new" title="Novo painel… (Ctrl+Shift+T): escolha o perfil, a pasta e onde abrir"><span class="i" data-icon="plus"></span>Novo painel…</button>
+    <button id="btn-duplicate" title="Duplicar painel (Ctrl+Alt+→)"><span class="i" data-icon="copy"></span>Duplicar painel</button>
     <button id="btn-profiles" title="Perfis de lançamento (também em Exibir → Perfis de lançamento…)"><span class="i" data-icon="sliders-horizontal"></span>Perfis</button>
     <div class="dropdown">
       <button id="btn-closed" title="Slots rodando no tetherd sem painel aberto"><span class="i" data-icon="tray"></span>Slots fechados <span id="closed-count"></span><span class="i caret" data-icon="caret-down"></span></button>
@@ -31,7 +30,10 @@
     <div class="dropdown">
       <button id="btn-menu" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"><span class="i" data-icon="list"></span></button>
       <ul id="app-menu" class="menu" role="menu" hidden>
-        <li role="menuitem" data-cmd="new"><span class="i" data-icon="plus"></span>Novo painel<kbd>Ctrl+Shift+T</kbd></li>
+        <li role="menuitem" data-cmd="new"><span class="i" data-icon="plus"></span>Novo painel…<kbd>Ctrl+Shift+T</kbd></li>
+        <li role="menuitem" data-cmd="duplicate-right"><span class="i" data-icon="copy"></span>Duplicar painel à direita<kbd>Ctrl+Alt+→</kbd></li>
+        <li role="menuitem" data-cmd="duplicate-below"><span class="i" data-icon="copy"></span>Duplicar painel abaixo<kbd>Ctrl+Alt+↓</kbd></li>
+        <li class="sep" role="separator"></li>
         <li role="menuitem" data-cmd="profiles"><span class="i" data-icon="sliders-horizontal"></span>Perfis de lançamento…</li>
         <li role="menuitem" data-cmd="switch-profile"><span class="i" data-icon="arrow-clockwise"></span>Trocar perfil do painel…</li>
         <li class="sep" role="separator"></li>
@@ -77,6 +79,10 @@
       <div class="field">
         <span>Pastas recentes</span>
         <ul id="recent-list" class="recent"></ul>
+      </div>
+      <div class="field" id="new-placement" hidden>
+        <span>Onde, em relação a <strong id="new-placement-ref"></strong></span>
+        <div id="new-placements" class="row placements"></div>
       </div>
       <p id="new-error" class="error" hidden></p>
       <footer class="actions">

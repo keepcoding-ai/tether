@@ -38,6 +38,11 @@ import list from '@phosphor-icons/core/assets/regular/list.svg'
 import minus from '@phosphor-icons/core/assets/regular/minus.svg'
 import folder from '@phosphor-icons/core/assets/regular/folder.svg'
 import minusCircle from '@phosphor-icons/core/assets/regular/minus-circle.svg'
+import tabs from '@phosphor-icons/core/assets/regular/tabs.svg'
+import arrowLineLeft from '@phosphor-icons/core/assets/regular/arrow-line-left.svg'
+import arrowLineRight from '@phosphor-icons/core/assets/regular/arrow-line-right.svg'
+import arrowLineUp from '@phosphor-icons/core/assets/regular/arrow-line-up.svg'
+import arrowLineDown from '@phosphor-icons/core/assets/regular/arrow-line-down.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -78,6 +83,11 @@ const SVG = {
   'shield-warning': shieldWarning,
   'sliders-horizontal': slidersHorizontal,
   star,
+  tabs,
+  'arrow-line-left': arrowLineLeft,
+  'arrow-line-right': arrowLineRight,
+  'arrow-line-up': arrowLineUp,
+  'arrow-line-down': arrowLineDown,
 } as const
 
 export type IconName = keyof typeof SVG

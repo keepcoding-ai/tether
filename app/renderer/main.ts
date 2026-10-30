@@ -6,6 +6,7 @@ import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../s
 import type { ConnectionState } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
+import { DIRECTION_ARROW, DUPLICATE_LABEL, duplicateRequest, NEW_PANEL_LABEL, PLACEMENT_LABEL, PLACEMENTS, positionOf, shortcutOf, type Direction, type Placement } from './create.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { pruneLayout } from './layout.ts'
@@ -51,14 +52,13 @@ const host: PanelHost = {
   isStartPending: id => pendingStarts.has(id),
   onAction: (id, action) => { void onPanelAction(id, action) },
   onKey: (ev, panel) => {
-    if (ev.type !== 'keydown' || !ev.ctrlKey || !ev.shiftKey || ev.altKey) return false
-    switch (ev.code) {
-      case 'KeyC': panel.copy(); return true
-      case 'KeyV': void panel.paste(); return true
-      // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener.
-      case 'KeyT': case 'KeyD': case 'KeyE': case 'KeyQ': return true
-      default: return false
+    if (ev.type !== 'keydown') return false
+    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey) {
+      if (ev.code === 'KeyC') { panel.copy(); return true }
+      if (ev.code === 'KeyV') { void panel.paste(); return true }
     }
+    // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener.
+    return shortcutOf(ev) !== undefined
   },
   getScheme: () => theme.scheme,
   onSwitchProfile: id => { void switchProfile(id) },
@@ -102,7 +102,7 @@ function setupDock(): void {
     createWatermarkComponent: () => {
       const el = document.createElement('div')
       el.className = 'watermark'
-      el.innerHTML = '<h1>tether</h1><p>Nenhum painel aberto.</p><p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> ou "+ Novo painel" para abrir um terminal.</p>'
+      el.innerHTML = `<h1>tether</h1><p>Nenhum painel aberto.</p><p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
       return { element: el, init: () => {} }
     },
   })
@@ -117,7 +117,7 @@ function scheduleSave(): void {
   saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(api.toJSON()) }, SAVE_DEBOUNCE_MS)
 }
 
-type Position = { referencePanel: string; direction: 'right' | 'below' | 'within' }
+type Position = { referencePanel: string; direction: Placement }
 
 function addPanel(slot: SlotState, position?: Position): IDockviewPanel {
   slots.set(slot.slotId, slot)
@@ -435,12 +435,15 @@ function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   menu.querySelector<HTMLElement>('li[role=menuitem]')?.focus()
 }
 
-/** Right-click on a tab: switch the profile, close the panel. */
+/** Right-click on a tab: the two ways to open a panel next to this one, switch the profile, close the panel. */
 function showTabMenu(slotId: string, x: number, y: number): void {
   const slot = slots.get(slotId)
   if (!slot) return
   api.getPanel(slotId)?.api.setActive()
   showContextMenu(x, y, [
+    { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
+    { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, 'right') } },
+    { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.below}`, run: () => { void duplicatePanel(slotId, 'below') } },
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
@@ -472,12 +475,46 @@ function openProfiles(id?: string): void {
   manager.show(id)
 }
 
-// ---------- new panel dialog ----------
+// ---------- new panel dialog ("Novo painel…": the chooser) ----------
 
-interface NewPanelOptions { kind?: SlotKind; profileId?: string; cwd?: string; position?: Position }
+/**
+ * `reference`: the panel the placement is relative to (the active one when absent); `placement`: what the
+ * "Onde" row starts on (a tab in the reference's group by default). Without any panel there is nothing to
+ * be relative to: the row is hidden and the new panel is simply the first.
+ */
+interface NewPanelOptions { kind?: SlotKind; profileId?: string; cwd?: string; reference?: string; placement?: Placement }
 
 function selectedProfileId(): string | undefined {
   return $<HTMLFormElement>('form-new').querySelector<HTMLInputElement>('input[name=profile]:checked')?.value
+}
+
+function selectedPlacement(): Placement {
+  const v = $<HTMLFormElement>('form-new').querySelector<HTMLInputElement>('input[name=placement]:checked')?.value
+  return (PLACEMENTS as readonly string[]).includes(v ?? '') ? v as Placement : 'within'
+}
+
+/** The "Onde" row of the chooser: one radio per placement, relative to `reference` (hidden when there is none). */
+function renderPlacements(reference: string | undefined, selected: Placement): void {
+  const field = $('new-placement')
+  const row = $('new-placements')
+  field.hidden = !reference
+  row.replaceChildren()
+  if (!reference) return
+  const ref = slots.get(reference)
+  $('new-placement-ref').textContent = ref ? panelTitle(ref) : reference
+  for (const p of PLACEMENTS) {
+    const label = document.createElement('label')
+    label.className = 'placement'
+    label.dataset.placement = p
+    const input = document.createElement('input')
+    input.type = 'radio'; input.name = 'placement'; input.value = p; input.checked = p === selected
+    label.append(input, icon(PLACEMENT_ICON[p]), document.createTextNode(PLACEMENT_LABEL[p]))
+    row.append(label)
+  }
+}
+
+const PLACEMENT_ICON: Record<Placement, IconName> = {
+  within: 'tabs', left: 'arrow-line-left', right: 'arrow-line-right', above: 'arrow-line-up', below: 'arrow-line-down',
 }
 
 /** The profile list of "Novo painel"; a profile's folder is suggested while the folder field still holds the suggestion. */
@@ -505,6 +542,10 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   cwdInput.value = suggested
   cwdInput.dataset.suggested = suggested
   renderNewProfiles(wanted?.id)
+  // The reference is fixed when the dialog opens: the active panel may change underneath (a slot exits) but the
+  // user chose "where" looking at this one.
+  const reference = opts.reference && api.getPanel(opts.reference) ? opts.reference : api.activePanel?.id
+  renderPlacements(reference, opts.placement ?? 'within')
   const list = $('recent-list')
   list.replaceChildren()
   if (recent.length === 0) {
@@ -530,8 +571,10 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
     }
     await window.tether.rememberFolder(cwd)
     form.removeEventListener('submit', onSubmit)
+    const placement = selectedPlacement()
     dlg.close()
-    addPanel(reply.slot, opts.position).api.setActive()
+    const position = reference && api.getPanel(reference) ? positionOf(reference, placement) : undefined
+    addPanel(reply.slot, position).api.setActive()
   }
   form.addEventListener('submit', onSubmit)
   dlg.addEventListener('close', () => form.removeEventListener('submit', onSubmit), { once: true })
@@ -540,17 +583,31 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   cwdInput.select()
 }
 
-/** New panel with the same profile and folder as the active one, split to the given side. */
-async function splitActive(direction: 'right' | 'below'): Promise<void> {
-  const active = api.activePanel
-  const slot = active ? slots.get(active.id) : undefined
-  if (!active || !slot) { void openNewDialog(); return }
-  const reply = await window.tether.request({ t: 'create', kind: slot.kind, cwd: slot.cwd, start: true, ...profileOf(slot) })
+// ---------- "Duplicar painel" ----------
+
+/**
+ * A new panel launched like `slotId` (agent, profile, folder), placed beside it. It is a new session: the
+ * daemon's `create` carries no binding, so Claude/soul start a fresh conversation in the same folder with
+ * the same profile. When the daemon refuses (folder gone, profile gone…), the chooser opens prefilled in
+ * the same place so the user can still get a panel there.
+ */
+async function duplicatePanel(slotId: string, direction: Direction): Promise<void> {
+  const slot = slots.get(slotId)
+  if (!slot || !api.getPanel(slotId)) return
+  const reply = await window.tether.request(duplicateRequest(slot, profiles))
   if (reply.t === 'error' || !reply.slot) {
-    void openNewDialog({ kind: slot.kind, profileId: slot.profileId, cwd: slot.cwd, position: { referencePanel: active.id, direction } })
+    void openNewDialog({ kind: slot.kind, profileId: slot.profileId, cwd: slot.cwd, reference: slotId, placement: direction })
     return
   }
-  addPanel(reply.slot, { referencePanel: active.id, direction }).api.setActive()
+  if (!api.getPanel(slotId)) { addPanel(reply.slot).api.setActive(); return } // the source went away meanwhile
+  addPanel(reply.slot, positionOf(slotId, direction)).api.setActive()
+}
+
+/** The keyboard/toolbar form: duplicates the focused panel; with no panel there is nothing to duplicate, so the chooser opens. */
+async function duplicateActive(direction: Direction): Promise<void> {
+  const active = api.activePanel
+  if (!active || !slots.has(active.id)) { void openNewDialog(); return }
+  await duplicatePanel(active.id, direction)
 }
 
 // ---------- in-app menu ----------
@@ -567,9 +624,8 @@ function setupMenu(): void {
   }
   btn.addEventListener('click', ev => {
     ev.stopPropagation()
-    // "Trocar perfil do painel…" acts on the active panel: greyed out when there is none.
-    const item = menu.querySelector<HTMLElement>('li[data-cmd="switch-profile"]')
-    if (item) item.setAttribute('aria-disabled', String(!api.activePanel))
+    // "Duplicar painel" and "Trocar perfil do painel…" act on the active panel: greyed out when there is none.
+    for (const item of menu.querySelectorAll<HTMLElement>('li[data-cmd="switch-profile"], li[data-cmd^="duplicate"]')) item.setAttribute('aria-disabled', String(!api.activePanel))
     toggle(menu.hidden)
   })
   document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
@@ -580,6 +636,8 @@ function setupMenu(): void {
     if (li.dataset.theme) { window.tether.setTheme(normalizeTheme(li.dataset.theme)); return }
     switch (li.dataset.cmd) {
       case 'new': void openNewDialog(); break
+      case 'duplicate-right': void duplicateActive('right'); break
+      case 'duplicate-below': void duplicateActive('below'); break
       case 'profiles': openProfiles(); break
       case 'switch-profile': { const active = api.activePanel; if (active) void switchProfile(active.id); break }
       case 'restore-confirmations': window.tether.command('restore-confirmations'); break
@@ -610,8 +668,9 @@ function setupUi(): void {
   $('btn-profiles').addEventListener('click', () => openProfiles())
   $('btn-manage-profiles').addEventListener('click', () => openProfiles(selectedProfileId()))
   setupMenu()
-  $('btn-split-right').addEventListener('click', () => { void splitActive('right') })
-  $('btn-split-down').addEventListener('click', () => { void splitActive('below') })
+  const dup = $('btn-duplicate')
+  dup.title = `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right} (Ctrl+Alt+${DIRECTION_ARROW.right}): outro painel com o mesmo perfil e a mesma pasta, numa sessão nova. Ctrl+Alt+${DIRECTION_ARROW.left}/${DIRECTION_ARROW.above}/${DIRECTION_ARROW.below} duplica para os outros lados.`
+  dup.addEventListener('click', () => { void duplicateActive('right') })
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
   $<HTMLSelectElement>('theme-select').addEventListener('change', ev => window.tether.setTheme(normalizeTheme((ev.target as HTMLSelectElement).value)))
   $('btn-cancel').addEventListener('click', () => $<HTMLDialogElement>('dlg-new').close())
@@ -626,13 +685,14 @@ function setupUi(): void {
   document.addEventListener('click', ev => { if (!closedList.contains(ev.target as Node)) closedList.hidden = true })
 
   document.addEventListener('keydown', ev => {
-    if (!ev.ctrlKey || !ev.shiftKey || ev.altKey) return
+    const shortcut = shortcutOf(ev)
+    if (!shortcut) return
     if ($<HTMLDialogElement>('dlg-new').open || manager.open || dialogOpen()) return
-    switch (ev.code) {
-      case 'KeyT': ev.preventDefault(); void openNewDialog(); break
-      case 'KeyD': ev.preventDefault(); void splitActive('right'); break
-      case 'KeyE': ev.preventDefault(); void splitActive('below'); break
-      case 'KeyQ': ev.preventDefault(); window.tether.command('quit-all'); break
+    ev.preventDefault()
+    switch (shortcut.op) {
+      case 'choose': void openNewDialog(); break
+      case 'duplicate': void duplicateActive(shortcut.direction); break
+      case 'quit-all': window.tether.command('quit-all'); break
     }
   })
 }
@@ -666,6 +726,8 @@ declare global {
       openProfiles(id?: string): void
       /** Opens "Trocar perfil…" for a panel, as the header pill does. */
       switchProfile(slotId: string): void
+      /** "Duplicar painel" beside a panel, as the tab menu does. */
+      duplicate(slotId: string, direction: Direction): void
     }
   }
 }
@@ -695,6 +757,7 @@ function setupTestHooks(): void {
     profiles: () => profiles,
     openProfiles,
     switchProfile: slotId => { void switchProfile(slotId) },
+    duplicate: (slotId, direction) => { void duplicatePanel(slotId, direction) },
   }
 }
 
