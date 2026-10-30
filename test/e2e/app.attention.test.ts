@@ -47,6 +47,7 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
+  env.TETHER_TRAY = '1' // attention asserts the tray badge: opt back in (see trayWanted in app/main)
   env.TETHER_CLAUDE_ARGS = '--model haiku'
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()
