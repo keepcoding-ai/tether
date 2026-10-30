@@ -5,11 +5,13 @@ import { createDockview, themeDark, themeLight, type DockviewApi, type IDockview
 import type { Event as DaemonEvent, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
+import { DEFAULT_FONT_SIZE, normalizeFontSize, stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { pruneLayout } from './layout.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
+import { isAppShortcut } from './shortcut.ts'
 import { closePanelSituation, folderName, quitAllSituation } from './situations.ts'
 
 const COMPONENT = 'terminal'
@@ -31,6 +33,8 @@ let connection: ConnectionState | undefined
 let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' }
 /** Remembered dialog answers ("não perguntar de novo"); main owns the file and pushes every change. */
 let confirmations: Confirmations = {}
+/** Terminal font size of every panel; main stores it (settings.json), the renderer steps it. */
+let fontSize = DEFAULT_FONT_SIZE
 
 const $ =<T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id)
@@ -45,17 +49,44 @@ const host: PanelHost = {
   getStartError: id => startErrors.get(id),
   isStartPending: id => pendingStarts.has(id),
   onAction: (id, action) => { void onPanelAction(id, action) },
+  onRename: (id, name) => { void renameSlot(id, name) },
   onKey: (ev, panel) => {
-    if (ev.type !== 'keydown' || !ev.ctrlKey || !ev.shiftKey || ev.altKey) return false
+    if (ev.type !== 'keydown' || !isAppShortcut(ev)) return false
     switch (ev.code) {
       case 'KeyC': panel.copy(); return true
       case 'KeyV': void panel.paste(); return true
       // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener.
       case 'KeyT': case 'KeyD': case 'KeyE': return true
-      default: return false
+      default: return fontSizeCommand(ev) !== undefined
     }
   },
   getScheme: () => theme.scheme,
+  getFontSize: () => fontSize,
+}
+
+// ---------- font size ----------
+
+/** Cmd+= / Cmd++ / Cmd+- / Cmd+0 on macOS, Ctrl+Shift+= / - / 0 elsewhere (the modifier is checked by the caller); numpad keys too. */
+function fontSizeCommand(ev: KeyboardEvent): FontSizeCommand | undefined {
+  switch (ev.code) {
+    case 'Equal': case 'NumpadAdd': return 'increase'
+    case 'Minus': case 'NumpadSubtract': return 'decrease'
+    case 'Digit0': case 'Numpad0': return 'reset'
+    default: return undefined
+  }
+}
+
+/** Applies a size to every terminal (each one refits and sends `resize`) and stores it. */
+function applyFontSize(size: number): void {
+  fontSize = normalizeFontSize(size)
+  for (const p of panels.values()) p.setFontSize(fontSize)
+}
+
+function runFontSizeCommand(command: FontSizeCommand): void {
+  const next = stepFontSize(fontSize, command)
+  if (next === fontSize) return
+  applyFontSize(next)
+  window.tether.setFontSize(next)
 }
 
 // ---------- theme ----------
@@ -168,6 +199,13 @@ async function onAsk(req: AskRequest): Promise<void> {
 function renderSlot(slotId: string): void {
   panels.get(slotId)?.render()
   tabs.get(slotId)?.render()
+}
+
+/** Custom name of a slot (empty removes it): the daemon stores it in the slot's meta and broadcasts the state. */
+async function renameSlot(slotId: string, name: string): Promise<void> {
+  const reply = await window.tether.request({ t: 'rename-slot', slotId, name })
+  if (reply.t === 'error') { console.error(`não foi possível renomear o painel ${slotId}: ${reply.message}`); return }
+  if (reply.slot) applyState(reply.slot)
 }
 
 // ---------- starting slots ----------
@@ -322,7 +360,7 @@ function refreshClosedMenu(): void {
     const status = STATUS_LABEL[effectiveStatus(s)]
     const li = document.createElement('li')
     const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon(KIND_ICON[s.kind]))
-    const name = document.createElement('span'); name.textContent = s.title ?? s.name ?? folderName(s.cwd)
+    const name = document.createElement('span'); name.textContent = panelTitle(s)
     const cwd = document.createElement('span'); cwd.className = 'cwd'; cwd.textContent = `${s.cwd} · ${status}`
     const forget = document.createElement('button'); forget.className = 'forget'; forget.title = 'Encerra e remove o slot do tether'
     forget.append(icon('trash'), document.createTextNode('Esquecer'))
@@ -432,12 +470,16 @@ function setupUi(): void {
   document.addEventListener('click', ev => { if (!closedList.contains(ev.target as Node)) closedList.hidden = true })
 
   document.addEventListener('keydown', ev => {
-    if (!ev.ctrlKey || !ev.shiftKey || ev.altKey) return
+    if (!isAppShortcut(ev)) return
     if ($<HTMLDialogElement>('dlg-new').open || dialogOpen()) return
     switch (ev.code) {
       case 'KeyT': ev.preventDefault(); void openNewDialog(); break
       case 'KeyD': ev.preventDefault(); void splitActive('right'); break
       case 'KeyE': ev.preventDefault(); void splitActive('below'); break
+      default: {
+        const command = fontSizeCommand(ev)
+        if (command) { ev.preventDefault(); runFontSizeCommand(command) }
+      }
     }
   })
 }
@@ -465,6 +507,10 @@ declare global {
       confirmations(): Confirmations
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
       closePanel(slotId: string): void
+      /** The terminal font size in use. */
+      fontSize(): number
+      /** Opens the tab's inline rename, as a double click does. */
+      startRename(slotId: string): void
     }
   }
 }
@@ -491,6 +537,8 @@ function setupTestHooks(): void {
     termTheme: slotId => panels.get(slotId)?.term.options.theme as Record<string, string | undefined> | undefined,
     confirmations: () => confirmations,
     closePanel: slotId => { void closePanel(slotId) },
+    fontSize: () => fontSize,
+    startRename: slotId => tabs.get(slotId)?.startRename(),
   }
 }
 
@@ -501,6 +549,8 @@ window.tether.onEvent(onDaemonEvent)
 window.tether.onConnection(state => { void onConnection(state) })
 window.tether.onTheme(applyTheme)
 void window.tether.getTheme().then(applyTheme)
+void window.tether.getFontSize().then(applyFontSize)
+window.tether.onFontSizeCommand(runFontSizeCommand)
 window.tether.onConfirmations(c => { confirmations = c })
 void window.tether.getConfirmations().then(c => { confirmations = c })
 window.tether.onAsk(req => { void onAsk(req) })

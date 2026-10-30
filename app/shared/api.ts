@@ -2,6 +2,7 @@
 // Shared by the preload (implements it) and the renderer (consumes it).
 import type { Event as DaemonEvent, Notice, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
 import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
+import type { FontSizeCommand } from './font.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 
 export type { Profile, ProfileInput }
@@ -47,6 +48,11 @@ export interface TetherApi {
   /** Persists the setting; the new state arrives through onTheme (also on every OS switch while `auto`). */
   setTheme(setting: ThemeSetting): void
   onTheme(listener: (state: ThemeState) => void): () => void
+  /** Terminal font size (settings.json, normalized by main); one size for every panel. */
+  getFontSize(): Promise<number>
+  setFontSize(size: number): void
+  /** Menu "Exibir → Aumentar/Diminuir/Tamanho padrão": main asks the renderer to step the size (it owns the terminals). */
+  onFontSizeCommand(listener: (command: FontSizeCommand) => void): () => void
   /** Remembered dialog answers ("não perguntar de novo"); main pushes every change through onConfirmations. */
   getConfirmations(): Promise<Confirmations>
   rememberConfirmation(situation: string, choice: string): void

@@ -58,13 +58,17 @@ export function effectiveStatus(s: SlotState): SlotStatus {
   return s.status
 }
 
-/** Text shown in the tab (next to the agent's icon): session title, or slot name, or folder name. */
+/**
+ * Text shown in the tab (next to the agent's icon): the slot name (chosen by the user: tab rename, CLI --name),
+ * else the session title (set by the agent), else the folder name.
+ */
 export function panelTitle(s: SlotState): string {
-  return s.title ?? s.name ?? folderName(s.cwd)
+  return s.name ?? s.title ?? folderName(s.cwd)
 }
 
 export function panelTooltip(s: SlotState): string {
   const lines = [`${KIND_LABEL[s.kind]} · ${STATUS_LABEL[effectiveStatus(s)]}`, `Pasta: ${s.cwd}`, `Slot: ${s.slotId}`]
+  if (s.name && s.title) lines.push(`Título: ${s.title}`)
   if (s.binding?.sessionId) lines.push(`Sessão: ${s.binding.sessionId}`)
   if (s.error) lines.push(`Erro: ${s.error.message}`)
   return lines.join('\n')
@@ -160,10 +164,14 @@ export interface PanelHost {
   /** A `start` was sent and not answered yet: show "iniciando…" instead of "encerrado". */
   isStartPending(slotId: string): boolean
   onAction(slotId: string, action: PanelAction): void
+  /** The user renamed the tab; an empty name removes the custom name (the session title shows again). */
+  onRename(slotId: string, name: string): void
   /** Keys the terminal must not swallow (app shortcuts); return true when handled here. */
   onKey(ev: KeyboardEvent, panel: TerminalPanel): boolean
   /** The scheme painted right now (new terminals start with it; setScheme follows later switches). */
   getScheme(): ColorScheme
+  /** The terminal font size in use (new terminals start with it; setFontSize follows later changes). */
+  getFontSize(): number
 }
 
 export class TerminalPanel implements IContentRenderer {
@@ -205,7 +213,7 @@ export class TerminalPanel implements IContentRenderer {
 
     this.term = new Terminal({
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
-      fontSize: 13,
+      fontSize: host.getFontSize(),
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: true,
@@ -254,7 +262,7 @@ export class TerminalPanel implements IContentRenderer {
     else if (startError && status === 'exited') status = 'error'
     else if (pending && status === 'exited') status = 'starting'
     setIcon(this.head.icon, KIND_ICON[s.kind])
-    this.head.title.textContent = s.title ?? s.name ?? KIND_LABEL[s.kind]
+    this.head.title.textContent = s.name ?? s.title ?? KIND_LABEL[s.kind]
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
     this.setStatus(status, STATUS_LABEL[status])
@@ -311,6 +319,13 @@ export class TerminalPanel implements IContentRenderer {
   /** Repaints the terminal with the scheme's palette (live switch, scrollback kept). */
   setScheme(scheme: ColorScheme): void {
     this.term.options.theme = TERMINAL_THEME[scheme]
+  }
+
+  /** Changes the font size and refits: the new cols/rows reach the daemon through the usual `resize`. */
+  setFontSize(size: number): void {
+    if (this.term.options.fontSize === size) return
+    this.term.options.fontSize = size
+    this.scheduleFit()
   }
 
   async paste(): Promise<void> {
@@ -395,6 +410,7 @@ export class SlotTab implements ITabRenderer {
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
     this.element.append(this.kind, this.text, this.dot, close)
+    this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
   }
 
   init(params: TabPartInitParameters): void {
@@ -410,6 +426,44 @@ export class SlotTab implements ITabRenderer {
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.element.title = s ? panelTooltip(s) : `Slot ${this.api.id} (desconhecido)`
+  }
+
+  /**
+   * Inline rename: an input takes the text's place with the current custom name (empty when the tab shows
+   * the session title or folder). Enter saves, Esc cancels, leaving the field saves; an empty name removes
+   * the custom one. The input swallows pointer and key events so dockview does not drag the tab and the
+   * app shortcuts stay quiet while typing.
+   */
+  startRename(): void {
+    if (!this.api || this.element.querySelector('input.rename')) return
+    const slot = this.host.getSlot(this.api.id)
+    if (!slot) return
+    const slotId = this.api.id
+    const input = document.createElement('input')
+    input.className = 'rename'
+    input.type = 'text'
+    input.value = slot.name ?? ''
+    input.placeholder = slot.title ?? folderName(slot.cwd)
+    input.title = 'Enter salva, Esc cancela; vazio volta ao título da sessão'
+    input.setAttribute('aria-label', 'Nome do painel')
+    let done = false
+    const finish = (save: boolean): void => {
+      if (done) return
+      done = true
+      const name = input.value.trim()
+      input.replaceWith(this.text)
+      if (save && name !== (slot.name ?? '')) this.host.onRename(slotId, name)
+    }
+    for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick'] as const) input.addEventListener(type, ev => ev.stopPropagation())
+    input.addEventListener('keydown', ev => {
+      ev.stopPropagation()
+      if (ev.key === 'Enter') { ev.preventDefault(); finish(true) }
+      else if (ev.key === 'Escape') { ev.preventDefault(); finish(false) }
+    })
+    input.addEventListener('blur', () => finish(true))
+    this.text.replaceWith(input)
+    input.focus()
+    input.select()
   }
 
   dispose(): void {

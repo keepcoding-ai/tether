@@ -14,6 +14,7 @@ import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
+import { FONT_SIZE_LABEL, normalizeFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 
@@ -193,7 +194,7 @@ async function quitAll(): Promise<void> {
 
 /** User settings (theme, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
 const settingsPath = join(home, 'settings.json')
-type Settings = { theme?: unknown; confirmations?: unknown }
+type Settings = { theme?: unknown; confirmations?: unknown; fontSize?: unknown }
 
 /** Remembered answers per situation ("não perguntar de novo"); anything malformed reads as none. */
 function readConfirmations(): Confirmations {
@@ -251,6 +252,25 @@ ipcMain.handle('theme:get', (): ThemeState => themeState())
 // Settings may change before any window exists (the standalone dialog): nothing to push then.
 ipcMain.on('theme:set', (_e, setting: unknown) => setTheme(normalizeTheme(setting)))
 
+// ---------- font size ----------
+
+/** The renderer owns the terminals: it steps the size (keyboard or menu) and stores the result here. */
+ipcMain.handle('font-size:get', (): number => normalizeFontSize(readJson<Settings>(settingsPath, {}).fontSize))
+ipcMain.on('font-size:set', (_e, size: unknown) => {
+  const settings = readJson<Settings>(settingsPath, {})
+  writeJson(settingsPath, { ...settings, fontSize: normalizeFontSize(size) })
+})
+
+/** Menu items without accelerators: the shortcuts (Cmd+=/-/0, Ctrl+Shift+=/-/0) are handled by the renderer itself. */
+function fontSizeMenu(): Electron.MenuItemConstructorOptions[] {
+  const commands: FontSizeCommand[] = ['increase', 'decrease', 'reset']
+  return commands.map(command => ({
+    id: `font-size-${command}`,
+    label: FONT_SIZE_LABEL[command],
+    click: () => win?.webContents.send('tether:font-size', command),
+  }))
+}
+
 function themeMenu(): Electron.MenuItemConstructorOptions {
   const current = themeState().setting
   return {
@@ -304,6 +324,8 @@ function createMenu(): void {
       label: 'Exibir',
       submenu: [
         themeMenu(),
+        ...fontSizeMenu(),
+        { type: 'separator' },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },
         { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' },
