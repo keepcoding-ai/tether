@@ -88,6 +88,7 @@ button.primary { background: var(--accent); color: var(--on-accent); border-colo
 button.primary:hover { background: var(--accent-hover); }
 
 #theme { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-dim); font-size: 12px; margin-right: 6px; }
+
 #theme select { background: var(--bg-3); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font: inherit; }
 
 .conn { font-size: 12px; }
@@ -504,7 +505,8 @@ dialog.term-theme > header .cancel .ph { width: 16px; height: 16px; }
 .term-theme-body fieldset { margin: 0; min-width: 0; flex-direction: column; gap: 6px; padding: 8px 10px 10px; }
 .term-theme-body fieldset legend { display: inline-flex; align-items: center; gap: 5px; }
 .term-theme-body fieldset.font .field { margin-bottom: 10px; }
-.term-theme-body fieldset.font select { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font: inherit; }
+.term-theme-body fieldset.font select.select { width: 100%; background: var(--bg); padding-block: 5px; }
+.term-theme-body fieldset.font select.select:hover { background: var(--bg-3); }
 .term-theme-body fieldset.font input[type="range"] { width: 100%; margin: 4px 0 0; accent-color: var(--accent); }
 .term-theme-body fieldset.font input[type="number"] { width: 72px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font: 13px var(--mono); }
 .term-theme-body fieldset.font .row.size { align-items: center; }
@@ -595,3 +597,53 @@ dialog.term-theme footer .spacer { flex: 1; }
 .drawer-badge.done { background: var(--ok); }
 .drawer-badge.waiting { background: var(--warn); }
 #btn-drawer[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 16%, var(--bg-3)); border-color: var(--accent); }
+
+/* --- select: Chromium's customizable select (appearance: base-select). The browser keeps keyboard, a11y and
+   placement; the trigger reads like the app buttons and the picker is the ≡ menu (surface, radius, item rows). --- */
+select.select, select.select::picker(select) { appearance: base-select; }
+select.select {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 0;
+  background: var(--bg-3); color: var(--fg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 4px 8px 4px 10px; font: inherit; font-size: 13px; cursor: pointer;
+  transition: background-color .12s, border-color .12s;
+}
+select.select:hover { background: var(--bg-hover); }
+select.select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+select.select:open { background: var(--bg-hover); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+select.select:disabled { opacity: .45; cursor: default; }
+select.select:disabled:hover { background: var(--bg-3); }
+select.select > button { all: unset; display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+select.select selectedcontent { display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+select.select selectedcontent .ph { width: 15px; height: 15px; color: var(--fg-dim); }
+/* Phosphor caret-down (regular), as a mask so it takes the text colour. */
+select.select::picker-icon {
+  content: ""; width: 12px; height: 12px; margin-left: 2px; background: var(--fg-dim);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath d='M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: rotate .12s;
+}
+select.select:open::picker-icon { rotate: 180deg; }
+select.select::picker(select) {
+  margin: 4px 0; padding: 4px; min-width: anchor-size(width);
+  background: var(--bg-3); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow);
+  transition: opacity .12s, display .12s allow-discrete, overlay .12s allow-discrete; opacity: 0;
+}
+select.select:open::picker(select) { opacity: 1; }
+@starting-style { select.select:open::picker(select) { opacity: 0; } }
+select.select option {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 4px; cursor: pointer;
+  background: none; color: var(--fg); font-size: 13px; font-weight: 400; outline: none;
+}
+select.select option .ph { width: 15px; height: 15px; color: var(--fg-dim); }
+/* One highlight at a time: while the pointer is in the picker, the keyboard-focused row yields to the hovered one. */
+select.select option:checked { background: none; }
+select.select option:hover, select.select option:focus-visible { background: var(--bg-hover-2); }
+select.select:has(option:hover) option:focus-visible:not(:hover) { background: none; }
+select.select option:disabled { opacity: .45; cursor: default; }
+/* The ≡ menu marks the chosen item with an accent check at the end; here the same check sits at the right. */
+select.select option::checkmark {
+  order: 1; margin-left: auto; content: ""; width: 15px; height: 15px; background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath d='M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+@media (prefers-reduced-motion: reduce) {
+  select.select, select.select::picker-icon, select.select::picker(select) { transition: none; }
+}

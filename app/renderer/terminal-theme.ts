@@ -100,6 +100,7 @@ export class TerminalThemeDialog {
       const opt = document.createElement('option')
       opt.value = f.id
       opt.textContent = f.label
+      opt.style.fontFamily = `"${f.family}", var(--mono)` // the picker previews each face
       opt.title = `${f.label} ${f.version} · ${f.license}`
       this.font.append(opt)
     }
