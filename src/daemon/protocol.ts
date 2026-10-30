@@ -9,6 +9,18 @@ export type { Profile, ProfileInput }
 
 export const PROTOCOL_VERSION = 1
 
+/**
+ * Youngest an agent may be when tether kills it (stop, forget, shutdown, `set-profile` restart): Claude counts
+ * a session that dies before it finished starting as a boot strike (three strikes write `fullscreenAutoDisabled`
+ * to ~/.claude.json and fullscreen stays off for the whole machine), the house rule is 11 s, and the agent starts
+ * a little after the PTY spawn the age is measured from, hence one more second. Besides the age, a kill waits
+ * for the agent's start report (the SessionStart hook: the agent finished starting), up to KILL_WAIT_CAP_MS.
+ * A `stop` can therefore take that long to answer.
+ */
+export const MIN_AGENT_AGE_MS = 12_000
+/** Longest a kill waits for a young agent before killing it anyway, so a shutdown can never hang. */
+export const KILL_WAIT_CAP_MS = 30_000
+
 /** Slot kinds: the two tracked agents, plus a plain shell (no session; "resume" = new shell in the same folder). */
 export type SlotKind = AgentName | 'shell'
 
@@ -45,6 +57,8 @@ export interface SlotState {
   unsafe?: boolean
   /** A `set-profile` restart is under way: waiting for the agent's minimum age, or relaunching with the new profile. */
   restarting?: boolean
+  /** A stop is waiting for the agent to be old enough to kill (young Claudes are never killed; see MIN_AGENT_AGE_MS). */
+  stopping?: boolean
 }
 
 export type ErrorCode =

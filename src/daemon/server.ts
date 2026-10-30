@@ -14,6 +14,8 @@ import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snap
 import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import {
+  KILL_WAIT_CAP_MS,
+  MIN_AGENT_AGE_MS,
   PROTOCOL_VERSION,
   type ClientMessage,
   type DaemonMessage,
@@ -31,12 +33,7 @@ export const DAEMON_VERSION = '0.2.0'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
-/**
- * Youngest an agent may be when a `set-profile` restart kills it: Claude counts a session that dies within 10 s
- * of its start as a boot strike (two strikes disable its fullscreen for the whole machine), the house rule is
- * 11 s, and the agent starts a little after the PTY spawn the age is measured from, hence one more second.
- */
-export const MIN_AGENT_AGE_MS = 12_000
+export { KILL_WAIT_CAP_MS, MIN_AGENT_AGE_MS }
 /** Agent processes allowed in 'starting' at the same time (PRD RA8); the rest wait as 'queued'. */
 export const MAX_STARTING = 3
 
@@ -62,8 +59,10 @@ export interface DaemonOptions {
   readyFallbackMs?: number
   /** How often a running Claude slot's title is polled from its transcript (tests shorten it). */
   titlePollMs?: number
-  /** Overrides MIN_AGENT_AGE_MS (tests). */
+  /** Overrides MIN_AGENT_AGE_MS (tests); 0 disables the young-agent guard. */
   minAgentAgeMs?: number
+  /** Overrides KILL_WAIT_CAP_MS (tests). */
+  killWaitCapMs?: number
 }
 
 export interface Daemon {
@@ -101,6 +100,8 @@ interface Slot {
   stopTitleWatch?: () => void
   /** A `set-profile` restart in progress (waiting for the agent's minimum age, or relaunching). */
   restarting?: true
+  /** A stop is waiting for the agent to be old enough to kill (see MIN_AGENT_AGE_MS). */
+  stopping?: true
   /** Whether the CURRENT process was launched with --dangerously-skip-permissions (set at spawn). */
   runUnsafe?: boolean
   scrollback: Scrollback
@@ -135,6 +136,7 @@ class DaemonImpl implements Daemon {
   private readonly adapters: Record<AgentName, AgentAdapter>
   private readonly readyFallbackMs: number
   private readonly minAgentAgeMs: number
+  private readonly killWaitCapMs: number
   private readonly titlePollMs: number | undefined
   /** <home>/profiles.json, re-read when it changes on disk (the CLI edits it while tetherd runs). */
   private readonly profileStore: ProfileStore
@@ -152,6 +154,7 @@ class DaemonImpl implements Daemon {
     this.adapters = { claude: claudeAdapter, soul: soulAdapter, ...opts.adapters }
     this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
     this.minAgentAgeMs = opts.minAgentAgeMs ?? MIN_AGENT_AGE_MS
+    this.killWaitCapMs = opts.killWaitCapMs ?? KILL_WAIT_CAP_MS
     this.titlePollMs = opts.titlePollMs
     this.profileStore = new ProfileStore(opts.home)
     this.server = createServer((socket) => this.onConnection(socket))
@@ -216,6 +219,7 @@ class DaemonImpl implements Daemon {
     const unsafe = isAlive(slot) && slot.runUnsafe !== undefined ? slot.runUnsafe : isUnsafe([...(profile.launch?.args ?? []), ...slot.meta.args, ...extra])
     if (unsafe) s.unsafe = true
     if (slot.restarting) s.restarting = true
+    if (slot.stopping) s.stopping = true
     return s
   }
 
@@ -251,7 +255,7 @@ class DaemonImpl implements Daemon {
 
   /**
    * Relaunches a live slot so the new profile's args take effect, resuming the SAME session: waits until the
-   * agent is at least minAgentAgeMs old (never kill a young Claude), requires the running agent to have
+   * agent may be killed (awaitKillable: never kill a young Claude), requires the running agent to have
    * reported its session (else `unconfirmed`: the restart would have to guess, and a guess can lose the
    * conversation), kills the PTY tree, then starts the slot with its confirmed binding. A slot that exits by
    * itself meanwhile is left exited: its next start already uses the new profile.
@@ -264,16 +268,8 @@ class DaemonImpl implements Daemon {
     this.broadcastState(slot)
     try {
       if (slot.meta.agent !== 'shell') {
-        const deadline = (slot.spawnedAt ? Date.parse(slot.spawnedAt) : 0) + this.minAgentAgeMs
-        for (;;) {
-          if (slot.pty !== pty || pty.exit) return // exited by itself: the next start uses the new profile
-          const aged = Date.now() >= deadline
-          if (aged && this.reportedThisRun(slot)) break
-          // Still 'starting': the start event may land any moment. Once the ready fallback turns the slot
-          // 'running' without a report, there is nothing left to wait for (and the restart is refused below).
-          if (aged && slot.status !== 'starting') break
-          await new Promise((r) => setTimeout(r, 250))
-        }
+        await this.awaitKillable(slot, pty)
+        if (slot.pty !== pty || pty.exit) return // exited by itself: the next start uses the new profile
         if (!this.reportedThisRun(slot)) {
           throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa. Troque o perfil na próxima abertura, ou encerre o slot e escolha a sessão ao iniciar`)
         }
@@ -345,10 +341,12 @@ class DaemonImpl implements Daemon {
   async close(): Promise<void> {
     if (this.closing) return
     this.closing = true
+    this.queue.length = 0
+    // Every slot is stopped in parallel (each waits for its own agent to be old enough) while the event files
+    // are still watched: a young Claude's start report must be seen to let its kill go ahead.
+    await Promise.all([...this.slotMap.values()].map((s) => this.stopSlot(s)))
     this.watcher?.close()
     for (const t of this.pending.values()) clearTimeout(t)
-    this.queue.length = 0
-    await Promise.all([...this.slotMap.values()].map((s) => this.stopSlot(s)))
     for (const c of this.clients) c.socket.destroy()
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
     this.log('closed')
@@ -600,11 +598,61 @@ class DaemonImpl implements Daemon {
     return new RequestError(code, message)
   }
 
+  /** Agents whose young death counts against the user (Claude's boot strikes); shells are killed at once. */
+  private guardsAge(slot: Slot): boolean {
+    return slot.meta.agent !== 'shell' && this.minAgentAgeMs > 0
+  }
+
+  /**
+   * The one wait before any kill of an agent: returns once the process is at least minAgentAgeMs old AND has
+   * reported this run (its start event was seen: the agent finished starting); or when the process is gone; or
+   * after killWaitCapMs, so a stop can never hang. The ready fallback does NOT release the kill: on a loaded
+   * machine Claude takes longer than READY_FALLBACK_MS to report, and killing it then is the boot strike this
+   * wait exists to prevent. Polls: the report arrives through the file watcher, which already updates the slot.
+   */
+  private async awaitKillable(slot: Slot, pty: PtyHandle, onWait?: () => void): Promise<void> {
+    if (!this.guardsAge(slot)) return
+    const ageDeadline = (slot.spawnedAt ? Date.parse(slot.spawnedAt) : 0) + this.minAgentAgeMs
+    const cap = Date.now() + this.killWaitCapMs
+    let waiting = false
+    while (slot.pty === pty && !pty.exit) {
+      const now = Date.now()
+      if (now >= ageDeadline && this.reportedThisRun(slot)) return
+      if (now >= cap) {
+        this.log(`slot ${slot.meta.slotId}: pid ${pty.pid} still not safe to kill after ${this.killWaitCapMs} ms; killing anyway`)
+        return
+      }
+      if (!waiting) {
+        waiting = true
+        this.log(`slot ${slot.meta.slotId}: pid ${pty.pid} is too young to kill (${now - (ageDeadline - this.minAgentAgeMs)} ms, ${slot.status}); waiting`)
+        onWait?.()
+      }
+      await new Promise((r) => setTimeout(r, 250))
+    }
+  }
+
+  /** Stops the slot's process: dequeues it, waits until its agent may be killed, then kills the PTY tree. */
   private async stopSlot(slot: Slot): Promise<void> {
     this.dequeue(slot)
-    this.unwatchTitle(slot)
     const pty = slot.pty
-    if (!pty) return
+    if (!pty) {
+      this.unwatchTitle(slot)
+      return
+    }
+    if (!pty.exit) {
+      // The first stop flags the slot `stopping` while it waits (clients show it); a second one joins the wait.
+      const first = !slot.stopping
+      try {
+        await this.awaitKillable(slot, pty, first ? () => { slot.stopping = true; this.broadcastState(slot) } : undefined)
+      } finally {
+        if (first && slot.stopping) {
+          slot.stopping = undefined
+          this.broadcastState(slot)
+        }
+      }
+    }
+    if (slot.pty !== pty) return // exited by itself and started again meanwhile: that run was not asked to stop
+    this.unwatchTitle(slot)
     await pty.kill()
     if (slot.pty === pty) slot.pty = undefined
   }

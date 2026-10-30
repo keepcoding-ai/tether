@@ -53,7 +53,7 @@ before(async () => {
   home = tempHome()
   cwd = join(home, 'work')
   mkdirSync(cwd)
-  daemon = await startDaemon({ home, pipe: uniquePipe(home), adapters: { claude: fakeClaude }, readyFallbackMs: 60_000, minAgentAgeMs: MIN_AGE_MS })
+  daemon = await startDaemon({ home, pipe: uniquePipe(home), adapters: { claude: fakeClaude }, readyFallbackMs: 60_000, minAgentAgeMs: MIN_AGE_MS, killWaitCapMs: 3_000 })
 })
 after(async () => {
   await daemon.close()

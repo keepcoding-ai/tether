@@ -44,7 +44,7 @@ before(async () => {
   transcript = join(configDir, 'projects', encodeProjectDir(cwd), `${SESSION}.jsonl`)
   mkdirSync(join(configDir, 'projects', encodeProjectDir(cwd)), { recursive: true })
   process.env.CLAUDE_CONFIG_DIR = configDir
-  daemon = await startDaemon({ home, pipe: uniquePipe(home), adapters: { claude: fakeClaude }, titlePollMs: POLL_MS })
+  daemon = await startDaemon({ home, pipe: uniquePipe(home), adapters: { claude: fakeClaude }, titlePollMs: POLL_MS, minAgentAgeMs: 0 })
 })
 after(async () => {
   await daemon.close()
