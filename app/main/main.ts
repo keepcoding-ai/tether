@@ -3,7 +3,7 @@
 // under TETHER_HOME. Closing the window only disconnects: the daemon keeps every slot running.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '../../src/daemon/client.ts'
@@ -329,6 +329,8 @@ ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 
 ipcMain.handle('layout:load', () => readJson<unknown | null>(layoutPath, null))
 ipcMain.handle('layout:save', (_e, layout: unknown) => { writeJson(layoutPath, layout) })
+// The renderer asks before its first write after a v1 → v2 migration: the file is still v1 at that moment.
+ipcMain.handle('layout:backup', () => { if (existsSync(layoutPath)) copyFileSync(layoutPath, join(home, 'layout.v1.bak')) })
 
 /** Recent folders in canonical form, deduped case-insensitively (entries saved before the fix may differ only in casing). */
 function recentFolders(): string[] {

@@ -1,11 +1,14 @@
 // The two ways a panel is born, as pure data (unit-tested; the renderer wires them to the UI):
-//   - "Novo painel…" (`choose`): the chooser dialog decides profile, folder and placement;
+//   - "Novo painel…" (`choose`): the chooser dialog decides profile, folder and where;
 //   - "Duplicar painel" (`duplicate`): a new slot with the focused panel's agent, profile and folder, placed
-//     beside it in a direction. It is a NEW session (the daemon's `create` never carries a binding): the
-//     conversation of the source panel is not shared, only the way it was launched.
-// Shortcuts: Ctrl+Alt+Arrow duplicates beside the focused panel; Ctrl+Shift+D / Ctrl+Shift+E stay as the
-// older aliases for right / below; Ctrl+Shift+T opens the chooser; Ctrl+Shift+Q is "Sair e encerrar tudo".
+//     relative to it. It is a NEW session (the daemon's `create` never carries a binding): the conversation
+//     of the source panel is not shared, only the way it was launched.
+// "Where" has three levels (app/renderer/shortcuts.ts holds the chords): beside the pane, at the edge of the
+// pane's frame (the new pane takes the frame's whole height or width), or in a new frame at the desk's edge.
 import type { Profile, Request, SlotState } from '../../src/daemon/protocol.ts'
+import { type Level, LEVELS } from './shortcuts.ts'
+
+export { shortcutOf, type AppShortcut, type KeyLike, type Level } from './shortcuts.ts'
 
 /** Where a new panel goes, relative to a reference panel (dockview's own words). */
 export type Direction = 'left' | 'right' | 'above' | 'below'
@@ -13,6 +16,13 @@ export type Placement = Direction | 'within'
 
 export const DIRECTIONS: readonly Direction[] = ['left', 'right', 'above', 'below']
 export const PLACEMENTS: readonly Placement[] = ['within', ...DIRECTIONS]
+
+/** A placement at a level: `within` only exists at the pane level (a tab in the pane's group). */
+export interface Target { level: Level; placement: Placement }
+
+/** Every target the chooser offers, grouped by level, in reading order. */
+export const TARGETS: readonly Target[] = LEVELS.flatMap(level =>
+  (level === 'pane' ? PLACEMENTS : DIRECTIONS).map(placement => ({ level, placement })))
 
 /** What the user reads for each placement (the chooser's "Onde" row, menu entries, tooltips). */
 export const PLACEMENT_LABEL: Record<Placement, string> = {
@@ -23,43 +33,30 @@ export const PLACEMENT_LABEL: Record<Placement, string> = {
   below: 'abaixo',
 }
 
+/** The level as the user reads it, in the chooser's "Onde" groups. */
+export const LEVEL_LABEL: Record<Level, string> = { pane: 'Painel', frame: 'Quadro', desk: 'Mesa' }
+
+/** What each level means, next to its label in the chooser. */
+export const LEVEL_HINT: Record<Level, string> = {
+  pane: 'ao lado do painel',
+  frame: 'na borda do quadro, ocupando a altura ou a largura inteira',
+  desk: 'num quadro novo, na borda da mesa',
+}
+
 /** The two operations as the user reads them (toolbar, menus, tooltips). */
 export const NEW_PANEL_LABEL = 'Novo painel…'
 export const DUPLICATE_LABEL = 'Duplicar painel'
+export const NEW_FRAME_LABEL = 'Novo quadro'
 
 /** The arrow glyph of a direction, for shortcut hints ("Ctrl+Alt+→"). */
 export const DIRECTION_ARROW: Record<Direction, string> = { left: '←', right: '→', above: '↑', below: '↓' }
 
-export type AppShortcut =
-  | { op: 'choose' }
-  | { op: 'duplicate'; direction: Direction }
-  | { op: 'quit-all' }
+/** `level:placement`, the value of a chooser radio; the inverse is `targetOf`. */
+export function targetKey(t: Target): string { return `${t.level}:${t.placement}` }
 
-/** The subset of KeyboardEvent the mapping needs (tests build it by hand). */
-export interface KeyLike { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; code: string }
-
-const ARROW_DIRECTION: Record<string, Direction> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'above', ArrowDown: 'below' }
-
-/**
- * The app command a key chord means, or undefined when it is not one of ours (the terminal keeps the key).
- * Meta (Win) is never part of an app chord: Ctrl+Win+Arrow is reserved for the frame level, and the OS owns
- * most Win chords anyway.
- */
-export function shortcutOf(ev: KeyLike): AppShortcut | undefined {
-  if (!ev.ctrlKey || ev.metaKey) return undefined
-  if (ev.altKey && !ev.shiftKey) {
-    const direction = ARROW_DIRECTION[ev.code]
-    return direction ? { op: 'duplicate', direction } : undefined
-  }
-  if (ev.shiftKey && !ev.altKey) {
-    switch (ev.code) {
-      case 'KeyT': return { op: 'choose' }
-      case 'KeyD': return { op: 'duplicate', direction: 'right' }
-      case 'KeyE': return { op: 'duplicate', direction: 'below' }
-      case 'KeyQ': return { op: 'quit-all' }
-    }
-  }
-  return undefined
+/** The target a radio value names, or undefined for anything that is not one. */
+export function targetOf(key: string | undefined): Target | undefined {
+  return TARGETS.find(t => targetKey(t) === key)
 }
 
 /**

@@ -1,17 +1,19 @@
 // Renderer entry: dockview grid of terminal panels (panel id === slotId), toolbar, new-panel dialog,
 // keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
-import { createDockview, themeDark, themeLight, type DockviewApi, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
+import { themeDark, themeLight, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { normalizeTheme, type ColorScheme, type ThemeState } from '../shared/theme.ts'
-import { DIRECTION_ARROW, DUPLICATE_LABEL, duplicateRequest, NEW_PANEL_LABEL, PLACEMENT_LABEL, PLACEMENTS, positionOf, shortcutOf, type Direction, type Placement } from './create.ts'
+import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
+import { Desk } from './desk.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
-import { pruneLayout } from './layout.ts'
+import { type DeskLayout, emptyLayout, type LayoutV2, migrateLayout, pruneLayoutV2 } from './layout.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
+import { LEVELS, shortcutHint, type AppShortcut } from './shortcuts.ts'
 import { closePanelSituation, folderName, NO_PROFILE, quitAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 
 const COMPONENT = 'terminal'
@@ -25,7 +27,9 @@ const tabs = new Map<string, SlotTab>()
 const startErrors = new Map<string, SlotError>()
 /** Slots with a `start` request in flight. */
 const pendingStarts = new Set<string>()
-let api: DockviewApi
+let desk: Desk
+/** The whole file as last loaded: the desks that are not mounted (phase C) are written back untouched. */
+let layoutFile: LayoutV2 = emptyLayout()
 let layoutRestored = false
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let connection: ConnectionState | undefined
@@ -73,62 +77,74 @@ const DOCK_THEME: Record<ColorScheme, typeof themeDark> = { dark: themeDark, lig
 function applyTheme(state: ThemeState): void {
   theme = state
   document.documentElement.dataset.theme = state.scheme
-  api.updateOptions({ theme: DOCK_THEME[state.scheme] })
+  desk.setTheme(DOCK_THEME[state.scheme])
   for (const p of panels.values()) p.setScheme(state.scheme)
   $<HTMLSelectElement>('theme-select').value = state.setting
   for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))
 }
 
 function setupDock(): void {
-  api = createDockview($('dock'), {
-    theme: DOCK_THEME[theme.scheme],
-    defaultTabComponent: TAB,
-    createComponent: () => {
-      const panel = new TerminalPanel(host)
-      const init = panel.init.bind(panel)
-      panel.init = params => { init(params); panels.set(panel.slotId, panel) }
-      const dispose = panel.dispose.bind(panel)
-      panel.dispose = () => { dispose(); if (panels.get(panel.slotId) === panel) panels.delete(panel.slotId) }
-      return panel
-    },
-    createTabComponent: () => {
-      const tab = new SlotTab(host, id => { void closePanel(id) })
-      const init = tab.init.bind(tab)
-      tab.init = params => { init(params); tabs.set(params.api.id, tab) }
-      const dispose = tab.dispose.bind(tab)
-      tab.dispose = () => { dispose(); for (const [id, t] of tabs) if (t === tab) tabs.delete(id) }
-      return tab
-    },
-    createWatermarkComponent: () => {
-      const el = document.createElement('div')
-      el.className = 'watermark'
-      el.innerHTML = `<h1>tether</h1><p>Nenhum painel aberto.</p><p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
-      return { element: el, init: () => {} }
-    },
-  })
-  api.onDidLayoutChange(() => scheduleSave())
-  api.onDidRemovePanel(() => refreshClosedMenu())
-  api.onDidAddPanel(() => refreshClosedMenu())
+  desk = new Desk($('dock'), {
+    dockviewOptions: () => ({
+      defaultTabComponent: TAB,
+      createComponent: () => {
+        const panel = new TerminalPanel(host)
+        const init = panel.init.bind(panel)
+        panel.init = params => { init(params); panels.set(panel.slotId, panel) }
+        const dispose = panel.dispose.bind(panel)
+        panel.dispose = () => { dispose(); if (panels.get(panel.slotId) === panel) panels.delete(panel.slotId) }
+        return panel
+      },
+      createTabComponent: () => {
+        const tab = new SlotTab(host, id => { void closePanel(id) })
+        const init = tab.init.bind(tab)
+        tab.init = params => { init(params); tabs.set(params.api.id, tab) }
+        const dispose = tab.dispose.bind(tab)
+        tab.dispose = () => { dispose(); for (const [id, t] of tabs) if (t === tab) tabs.delete(id) }
+        return tab
+      },
+      createWatermarkComponent: () => {
+        const el = document.createElement('div')
+        el.className = 'watermark'
+        el.innerHTML = `<h1>tether</h1><p>Nenhum painel aberto.</p><p>${kbdHtml(shortcutHint({ op: 'choose' }))} ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
+        return { element: el, init: () => {} }
+      },
+    }),
+    onLayoutChange: () => scheduleSave(),
+    onPanelsChange: () => refreshClosedMenu(),
+    onEdge: (target, op, frameId) => { void onEdge(target, op, frameId) },
+  }, DOCK_THEME[theme.scheme])
+  desk.fromEmpty()
+}
+
+/** "Ctrl+Shift+T" as <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>. */
+function kbdHtml(hint: string): string {
+  return hint.split('+').map(k => `<kbd>${k}</kbd>`).join('+')
+}
+
+/** The file to write: this desk replaces its entry; the others (not mounted) stay as loaded. */
+function layoutJSON(): LayoutV2 {
+  const current = desk.toJSON()
+  const desks = layoutFile.desks.some(d => d.id === current.id) ? layoutFile.desks.map(d => d.id === current.id ? current : d) : [...layoutFile.desks, current]
+  return { ...layoutFile, v: 2, desks, activeDesk: current.id }
 }
 
 function scheduleSave(): void {
   if (!layoutRestored) return
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(api.toJSON()) }, SAVE_DEBOUNCE_MS)
+  saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(layoutJSON()) }, SAVE_DEBOUNCE_MS)
 }
 
-type Position = { referencePanel: string; direction: Placement }
-
-function addPanel(slot: SlotState, position?: Position): IDockviewPanel {
+/** Adds the pane of a slot: relative to `reference` at `target`'s level, or in the active group of the active frame. */
+function addPanel(slot: SlotState, target?: Target, reference?: string): IDockviewPanel {
   slots.set(slot.slotId, slot)
-  const panel = api.addPanel({
+  const panel = desk.addPanel({
     id: slot.slotId,
     component: COMPONENT,
     tabComponent: TAB,
     title: panelTitle(slot),
     params: { slotId: slot.slotId },
-    ...(position ? { position } : {}),
-  })
+  }, target, reference)
   panel.api.setActive()
   return panel
 }
@@ -139,10 +155,10 @@ function addPanel(slot: SlotState, position?: Position): IDockviewPanel {
  * already written on it: nothing is running, so the panel just goes (the slot stays in "Slots fechados").
  */
 async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise<void> {
-  const panel = api.getPanel(slotId)
+  const panel = desk.getPanel(slotId)
   if (!panel) return
   const slot = slots.get(slotId)
-  if (!slot) { api.removePanel(panel); return }
+  if (!slot) { desk.removePanel(panel); return }
   const spec = closePanelSituation(slot)
   let choice: string | undefined = opts.ask === false ? 'detach' : confirmations[spec.situation]
   // Only an answer the spec can remember is honoured: a destructive one never runs without asking.
@@ -158,8 +174,8 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   if (choice === 'cancel') return
   if (choice === 'stop') await window.tether.request({ t: 'stop', slotId })
   if (choice === 'forget') await window.tether.request({ t: 'forget', slotId })
-  const still = api.getPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
-  if (still) api.removePanel(still)
+  const still = desk.getPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
+  if (still) desk.removePanel(still)
 }
 
 /** Main asks for a situation to be put to the user (menu items live in main; the dialog lives here). */
@@ -195,7 +211,7 @@ async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<voi
 
 /** Starts every open panel whose slot is exited (the daemon queues agents beyond 3 at once). Unconfirmed ones wait for the user. */
 function autoStartPanels(): void {
-  for (const panel of api.panels) {
+  for (const panel of desk.panels) {
     const slot = slots.get(panel.id)
     if (slot && effectiveStatus(slot) === 'exited') void startSlot(slot.slotId)
   }
@@ -214,7 +230,7 @@ async function onPanelAction(slotId: string, action: PanelAction): Promise<void>
 /** The slot's folder is gone: open a fresh slot of the same kind in a folder the user picks, in the same place of the grid. */
 async function moveToFolder(slotId: string): Promise<void> {
   const slot = slots.get(slotId)
-  const panel = api.getPanel(slotId)
+  const panel = desk.getPanel(slotId)
   if (!slot || !panel) return
   const folder = await window.tether.pickFolder()
   if (!folder) return
@@ -225,8 +241,8 @@ async function moveToFolder(slotId: string): Promise<void> {
     return
   }
   await window.tether.rememberFolder(folder)
-  addPanel(reply.slot, { referencePanel: slotId, direction: 'within' })
-  api.removePanel(panel)
+  addPanel(reply.slot, { level: 'pane', placement: 'within' }, slotId)
+  desk.removePanel(panel)
   await window.tether.request({ t: 'forget', slotId })
 }
 
@@ -235,7 +251,7 @@ async function moveToFolder(slotId: string): Promise<void> {
 function applyState(slot: SlotState): void {
   slots.set(slot.slotId, slot)
   if (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued') startErrors.delete(slot.slotId)
-  const panel = api.getPanel(slot.slotId)
+  const panel = desk.getPanel(slot.slotId)
   if (panel) {
     const title = panelTitle(slot)
     if (panel.title !== title) panel.api.setTitle(title)
@@ -252,8 +268,8 @@ function onDaemonEvent(ev: DaemonEvent): void {
     case 'removed': {
       slots.delete(ev.slotId)
       startErrors.delete(ev.slotId)
-      const panel = api.getPanel(ev.slotId)
-      if (panel) api.removePanel(panel)
+      const panel = desk.getPanel(ev.slotId)
+      if (panel) desk.removePanel(panel)
       refreshClosedMenu()
       break
     }
@@ -267,19 +283,28 @@ async function refreshSlots(): Promise<void> {
   for (const s of reply.slots ?? []) slots.set(s.slotId, s)
 }
 
+/**
+ * Loads <home>/layout.json: a v1 file (one dockview) is migrated to v2 (one desk, one frame, the old JSON as that
+ * frame's view) and backed up as layout.v1.bak before the first v2 write. Panes the daemon no longer knows are
+ * pruned frame by frame; a frame whose JSON is refused still reopens every pane it named (Desk.loadView).
+ */
 async function restoreLayout(): Promise<void> {
-  const saved = (await window.tether.loadLayout()) as SerializedDockview | null
-  if (saved && saved.grid && saved.panels) {
-    const pruned = pruneLayout(saved, new Set(slots.keys()))
-    if (pruned) {
-      try { api.fromJSON(pruned) } catch (err) { console.error('layout inválido, começando vazio', err); api.clear() }
-    }
+  const raw = await window.tether.loadLayout()
+  const result = migrateLayout(raw)
+  let dirty = false
+  if (result) {
+    const pruned = pruneLayoutV2(result.layout, new Set(slots.keys()))
+    layoutFile = pruned.layout
+    const mounted: DeskLayout = pruned.layout.desks.find(d => d.id === pruned.layout.activeDesk) ?? pruned.layout.desks[0]!
+    desk.fromJSON(mounted)
+    if (result.migrated) await window.tether.backupLayout()
+    dirty = result.migrated || pruned.kept !== pruned.total
+  } else {
+    layoutFile = emptyLayout()
+    desk.fromEmpty()
   }
   layoutRestored = true
-  if (saved) {
-    const kept = Object.keys(saved.panels).filter(id => slots.has(id)).length
-    if (kept !== Object.keys(saved.panels).length) scheduleSave()
-  }
+  if (dirty) scheduleSave()
   refreshClosedMenu()
 }
 
@@ -305,8 +330,8 @@ async function onConnection(state: ConnectionState): Promise<void> {
     await restoreLayout()
   } else {
     // Reconnected (the daemon was restarted): drop panels it no longer knows, re-attach the rest.
-    for (const panel of api.panels) {
-      if (!slots.has(panel.id)) api.removePanel(panel)
+    for (const panel of desk.panels) {
+      if (!slots.has(panel.id)) desk.removePanel(panel)
     }
     for (const p of panels.values()) { p.render(); void p.reattach() }
     for (const t of tabs.values()) t.render()
@@ -319,7 +344,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
 
 function refreshClosedMenu(): void {
   const list = $('closed-list')
-  const closed = [...slots.values()].filter(s => !api.getPanel(s.slotId))
+  const closed = [...slots.values()].filter(s => !desk.getPanel(s.slotId))
   $('closed-count').textContent = closed.length ? `(${closed.length})` : ''
   list.replaceChildren()
   if (closed.length === 0) {
@@ -353,7 +378,7 @@ function refreshClosedMenu(): void {
 function openSlot(slotId: string): void {
   const s = slots.get(slotId)
   if (!s) return
-  const panel = api.getPanel(slotId) ?? addPanel(s)
+  const panel = desk.getPanel(slotId) ?? addPanel(s)
   if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
   panel.api.setActive()
 }
@@ -439,11 +464,13 @@ function showContextMenu(x: number, y: number, items: MenuItem[]): void {
 function showTabMenu(slotId: string, x: number, y: number): void {
   const slot = slots.get(slotId)
   if (!slot) return
-  api.getPanel(slotId)?.api.setActive()
+  desk.getPanel(slotId)?.api.setActive()
   showContextMenu(x, y, [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
-    { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, 'right') } },
-    { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.below}`, run: () => { void duplicatePanel(slotId, 'below') } },
+    { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'right' }) } },
+    { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.below}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'below' }) } },
+    { icon: 'square-half', label: 'Novo painel na borda do quadro…', run: () => { void openNewDialog({ reference: slotId, target: { level: 'frame', placement: 'right' } }) } },
+    { icon: 'columns', label: `${NEW_FRAME_LABEL}…`, run: () => { void openNewDialog({ reference: slotId, target: { level: 'desk', placement: 'right' } }) } },
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
@@ -482,19 +509,18 @@ function openProfiles(id?: string): void {
  * "Onde" row starts on (a tab in the reference's group by default). Without any panel there is nothing to
  * be relative to: the row is hidden and the new panel is simply the first.
  */
-interface NewPanelOptions { kind?: SlotKind; profileId?: string; cwd?: string; reference?: string; placement?: Placement }
+interface NewPanelOptions { kind?: SlotKind; profileId?: string; cwd?: string; reference?: string; target?: Target }
 
 function selectedProfileId(): string | undefined {
   return $<HTMLFormElement>('form-new').querySelector<HTMLInputElement>('input[name=profile]:checked')?.value
 }
 
-function selectedPlacement(): Placement {
-  const v = $<HTMLFormElement>('form-new').querySelector<HTMLInputElement>('input[name=placement]:checked')?.value
-  return (PLACEMENTS as readonly string[]).includes(v ?? '') ? v as Placement : 'within'
+function selectedTarget(): Target {
+  return targetOf($<HTMLFormElement>('form-new').querySelector<HTMLInputElement>('input[name=placement]:checked')?.value) ?? { level: 'pane', placement: 'within' }
 }
 
-/** The "Onde" row of the chooser: one radio per placement, relative to `reference` (hidden when there is none). */
-function renderPlacements(reference: string | undefined, selected: Placement): void {
+/** The "Onde" rows of the chooser: one group per level (pane / frame / desk), relative to `reference`; hidden when there is none. */
+function renderPlacements(reference: string | undefined, selected: Target): void {
   const field = $('new-placement')
   const row = $('new-placements')
   field.hidden = !reference
@@ -502,14 +528,26 @@ function renderPlacements(reference: string | undefined, selected: Placement): v
   if (!reference) return
   const ref = slots.get(reference)
   $('new-placement-ref').textContent = ref ? panelTitle(ref) : reference
-  for (const p of PLACEMENTS) {
-    const label = document.createElement('label')
-    label.className = 'placement'
-    label.dataset.placement = p
-    const input = document.createElement('input')
-    input.type = 'radio'; input.name = 'placement'; input.value = p; input.checked = p === selected
-    label.append(input, icon(PLACEMENT_ICON[p]), document.createTextNode(PLACEMENT_LABEL[p]))
-    row.append(label)
+  for (const level of LEVELS) {
+    const group = document.createElement('div')
+    group.className = 'placement-group'
+    group.dataset.level = level
+    const head = document.createElement('span')
+    head.className = 'placement-level'
+    head.textContent = LEVEL_LABEL[level]
+    head.title = LEVEL_HINT[level]
+    group.append(head)
+    for (const t of TARGETS.filter(t => t.level === level)) {
+      const label = document.createElement('label')
+      label.className = 'placement'
+      label.dataset.placement = t.placement
+      label.dataset.level = level
+      const input = document.createElement('input')
+      input.type = 'radio'; input.name = 'placement'; input.value = targetKey(t); input.checked = targetKey(t) === targetKey(selected)
+      label.append(input, icon(PLACEMENT_ICON[t.placement]), document.createTextNode(PLACEMENT_LABEL[t.placement]))
+      group.append(label)
+    }
+    row.append(group)
   }
 }
 
@@ -544,8 +582,8 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   renderNewProfiles(wanted?.id)
   // The reference is fixed when the dialog opens: the active panel may change underneath (a slot exits) but the
   // user chose "where" looking at this one.
-  const reference = opts.reference && api.getPanel(opts.reference) ? opts.reference : api.activePanel?.id
-  renderPlacements(reference, opts.placement ?? 'within')
+  const reference = opts.reference && desk.getPanel(opts.reference) ? opts.reference : desk.activePanel?.id
+  renderPlacements(reference, opts.target ?? { level: 'pane', placement: 'within' })
   const list = $('recent-list')
   list.replaceChildren()
   if (recent.length === 0) {
@@ -571,10 +609,10 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
     }
     await window.tether.rememberFolder(cwd)
     form.removeEventListener('submit', onSubmit)
-    const placement = selectedPlacement()
+    const target = selectedTarget()
     dlg.close()
-    const position = reference && api.getPanel(reference) ? positionOf(reference, placement) : undefined
-    addPanel(reply.slot, position).api.setActive()
+    const stillThere = reference && desk.getPanel(reference) ? reference : undefined
+    addPanel(reply.slot, stillThere ? target : undefined, stillThere).api.setActive()
   }
   form.addEventListener('submit', onSubmit)
   dlg.addEventListener('close', () => form.removeEventListener('submit', onSubmit), { once: true })
@@ -591,32 +629,52 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
  * the same profile. When the daemon refuses (folder gone, profile gone…), the chooser opens prefilled in
  * the same place so the user can still get a panel there.
  */
-async function duplicatePanel(slotId: string, direction: Direction): Promise<void> {
+async function duplicatePanel(slotId: string, target: Target): Promise<void> {
   const slot = slots.get(slotId)
-  if (!slot || !api.getPanel(slotId)) return
+  if (!slot || !desk.getPanel(slotId)) return
   const reply = await window.tether.request(duplicateRequest(slot, profiles))
   if (reply.t === 'error' || !reply.slot) {
-    void openNewDialog({ kind: slot.kind, profileId: slot.profileId, cwd: slot.cwd, reference: slotId, placement: direction })
+    void openNewDialog({ kind: slot.kind, profileId: slot.profileId, cwd: slot.cwd, reference: slotId, target })
     return
   }
-  if (!api.getPanel(slotId)) { addPanel(reply.slot).api.setActive(); return } // the source went away meanwhile
-  addPanel(reply.slot, positionOf(slotId, direction)).api.setActive()
+  if (!desk.getPanel(slotId)) { addPanel(reply.slot).api.setActive(); return } // the source went away meanwhile
+  addPanel(reply.slot, target, slotId).api.setActive()
 }
 
 /** The keyboard/toolbar form: duplicates the focused panel; with no panel there is nothing to duplicate, so the chooser opens. */
-async function duplicateActive(direction: Direction): Promise<void> {
-  const active = api.activePanel
-  if (!active || !slots.has(active.id)) { void openNewDialog(); return }
-  await duplicatePanel(active.id, direction)
+async function duplicateActive(target: Target): Promise<void> {
+  const active = desk.activePanel
+  if (!active || !slots.has(active.id)) { void openNewDialog({ target }); return }
+  await duplicatePanel(active.id, target)
+}
+
+/** A "+" near a border: the frame's active pane (or the desk's) is the reference; click duplicates, right-click chooses. */
+async function onEdge(target: Target, op: 'duplicate' | 'choose', frameId: string | undefined): Promise<void> {
+  const reference = (frameId ? desk.frames.get(frameId)?.dock.activePanel?.id : undefined) ?? desk.activePanel?.id
+  if (op === 'choose' || !reference || !slots.has(reference)) { void openNewDialog({ reference, target }); return }
+  await duplicatePanel(reference, target)
 }
 
 // ---------- in-app menu ----------
 // The native menu bar is hidden (autoHideMenuBar) and Alt does not reach it from a terminal: the same commands
 // live behind the toolbar's menu button. Theme and "voltar a perguntar" talk to main; quit-all asks through onAsk.
 
+/** The chord a menu command is shown with (app/renderer/shortcuts.ts is the only place chords live). */
+const MENU_SHORTCUT: Record<string, AppShortcut> = {
+  'new': { op: 'choose' },
+  'duplicate-right': { op: 'duplicate', level: 'pane', direction: 'right' },
+  'duplicate-below': { op: 'duplicate', level: 'pane', direction: 'below' },
+  'quit-all': { op: 'quit-all' },
+}
+
 function setupMenu(): void {
   const btn = $('btn-menu')
   const menu = $('app-menu')
+  for (const li of menu.querySelectorAll<HTMLElement>('li[data-cmd]')) {
+    const cmd = MENU_SHORTCUT[li.dataset.cmd ?? '']
+    const kbd = li.querySelector('kbd')
+    if (cmd && kbd) kbd.textContent = shortcutHint(cmd)
+  }
   const toggle = (open: boolean): void => {
     menu.hidden = !open
     btn.setAttribute('aria-expanded', String(open))
@@ -625,7 +683,7 @@ function setupMenu(): void {
   btn.addEventListener('click', ev => {
     ev.stopPropagation()
     // "Duplicar painel" and "Trocar perfil do painel…" act on the active panel: greyed out when there is none.
-    for (const item of menu.querySelectorAll<HTMLElement>('li[data-cmd="switch-profile"], li[data-cmd^="duplicate"]')) item.setAttribute('aria-disabled', String(!api.activePanel))
+    for (const item of menu.querySelectorAll<HTMLElement>('li[data-cmd="switch-profile"], li[data-cmd^="duplicate"]')) item.setAttribute('aria-disabled', String(!desk.activePanel))
     toggle(menu.hidden)
   })
   document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
@@ -636,10 +694,12 @@ function setupMenu(): void {
     if (li.dataset.theme) { window.tether.setTheme(normalizeTheme(li.dataset.theme)); return }
     switch (li.dataset.cmd) {
       case 'new': void openNewDialog(); break
-      case 'duplicate-right': void duplicateActive('right'); break
-      case 'duplicate-below': void duplicateActive('below'); break
+      case 'duplicate-right': void duplicateActive({ level: 'pane', placement: 'right' }); break
+      case 'duplicate-below': void duplicateActive({ level: 'pane', placement: 'below' }); break
+      case 'new-frame-edge': void openNewDialog({ target: { level: 'frame', placement: 'right' } }); break
+      case 'new-frame': void openNewDialog({ target: { level: 'desk', placement: 'right' } }); break
       case 'profiles': openProfiles(); break
-      case 'switch-profile': { const active = api.activePanel; if (active) void switchProfile(active.id); break }
+      case 'switch-profile': { const active = desk.activePanel; if (active) void switchProfile(active.id); break }
       case 'restore-confirmations': window.tether.command('restore-confirmations'); break
       case 'close-window': window.tether.closeWindow(); break
       case 'quit-all': window.tether.command('quit-all'); break
@@ -669,8 +729,10 @@ function setupUi(): void {
   $('btn-manage-profiles').addEventListener('click', () => openProfiles(selectedProfileId()))
   setupMenu()
   const dup = $('btn-duplicate')
-  dup.title = `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right} (Ctrl+Alt+${DIRECTION_ARROW.right}): outro painel com o mesmo perfil e a mesma pasta, numa sessão nova. Ctrl+Alt+${DIRECTION_ARROW.left}/${DIRECTION_ARROW.above}/${DIRECTION_ARROW.below} duplica para os outros lados.`
-  dup.addEventListener('click', () => { void duplicateActive('right') })
+  const hint = (level: Target['level'], direction: Direction): string => shortcutHint({ op: 'duplicate', level, direction })
+  dup.title = `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right} (${hint('pane', 'right')}): outro painel com o mesmo perfil e a mesma pasta, numa sessão nova. Setas com os mesmos modificadores duplicam para os outros lados; ${hint('frame', 'right')} na borda do quadro; ${hint('desk', 'right')} num quadro novo.`
+  dup.addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
+  $('btn-new').title = `${NEW_PANEL_LABEL} (${shortcutHint({ op: 'choose' })}): escolha o perfil, a pasta e onde abrir`
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
   $<HTMLSelectElement>('theme-select').addEventListener('change', ev => window.tether.setTheme(normalizeTheme((ev.target as HTMLSelectElement).value)))
   $('btn-cancel').addEventListener('click', () => $<HTMLDialogElement>('dlg-new').close())
@@ -691,7 +753,7 @@ function setupUi(): void {
     ev.preventDefault()
     switch (shortcut.op) {
       case 'choose': void openNewDialog(); break
-      case 'duplicate': void duplicateActive(shortcut.direction); break
+      case 'duplicate': void duplicateActive({ level: shortcut.level, placement: shortcut.direction }); break
       case 'quit-all': window.tether.command('quit-all'); break
     }
   })
@@ -701,7 +763,13 @@ function setupUi(): void {
 declare global {
   interface Window {
     __tether: {
-      layout(): SerializedDockview
+      /** The layout as it would be saved (v2: desks → frames → panes). */
+      layout(): LayoutV2
+      /** A frame's dockview JSON (the active frame when no id is given). */
+      frameLayout(frameId?: string): SerializedDockview | undefined
+      frameIds(): string[]
+      activeFrameId(): string | undefined
+      frameOf(slotId: string): string | undefined
       panelIds(): string[]
       activeId(): string | undefined
       slots(): SlotState[]
@@ -726,17 +794,21 @@ declare global {
       openProfiles(id?: string): void
       /** Opens "Trocar perfil…" for a panel, as the header pill does. */
       switchProfile(slotId: string): void
-      /** "Duplicar painel" beside a panel, as the tab menu does. */
-      duplicate(slotId: string, direction: Direction): void
+      /** "Duplicar painel" relative to a panel (pane / frame / desk level), as the menus and the "+" do. */
+      duplicate(slotId: string, direction: Direction, level?: Target['level']): void
     }
   }
 }
 
 function setupTestHooks(): void {
   window.__tether = {
-    layout: () => api.toJSON(),
-    panelIds: () => api.panels.map(p => p.id),
-    activeId: () => api.activePanel?.id,
+    layout: () => layoutJSON(),
+    frameLayout: frameId => (frameId ? desk.frames.get(frameId) : desk.activeFrame)?.dock.toJSON(),
+    frameIds: () => desk.frameIds,
+    activeFrameId: () => desk.activeFrame?.id,
+    frameOf: slotId => desk.frameOf(slotId)?.id,
+    panelIds: () => desk.panels.map(p => p.id),
+    activeId: () => desk.activePanel?.id,
     slots: () => [...slots.values()],
     text: slotId => {
       const p = panels.get(slotId)
@@ -747,7 +819,7 @@ function setupTestHooks(): void {
       return lines.join('\n').replace(/\n+$/, '')
     },
     connection: () => connection,
-    activate: slotId => api.getPanel(slotId)?.api.setActive(),
+    activate: slotId => desk.getPanel(slotId)?.api.setActive(),
     openSlot,
     applyState,
     theme: () => theme,
@@ -757,7 +829,7 @@ function setupTestHooks(): void {
     profiles: () => profiles,
     openProfiles,
     switchProfile: slotId => { void switchProfile(slotId) },
-    duplicate: (slotId, direction) => { void duplicatePanel(slotId, direction) },
+    duplicate: (slotId, direction, level = 'pane') => { void duplicatePanel(slotId, { level, placement: direction }) },
   }
 }
 

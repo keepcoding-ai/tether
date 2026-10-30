@@ -20,6 +20,7 @@ const api: TetherApi = {
   reconnect: () => ipcRenderer.send('tether:reconnect'),
   loadLayout: () => ipcRenderer.invoke('layout:load'),
   saveLayout: layout => ipcRenderer.invoke('layout:save', layout),
+  backupLayout: () => ipcRenderer.invoke('layout:backup'),
   recentFolders: () => ipcRenderer.invoke('recent:list'),
   rememberFolder: folder => ipcRenderer.invoke('recent:remember', folder),
   pickFolder: initial => ipcRenderer.invoke('folder:pick', initial),
