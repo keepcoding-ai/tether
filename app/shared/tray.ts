@@ -38,7 +38,7 @@ const STATUS_LABEL: Record<SlotStatus, string> = {
 const ORDER: Record<SlotStatus, number> = { running: 0, starting: 1, queued: 2, unconfirmed: 3, error: 4, exited: 5 }
 
 function folderName(cwd: string): string {
-  const parts = cwd.replace(/[\/]+$/, '').split(/[\/]/)
+  const parts = cwd.replace(/[\\/]+$/, '').split(/[\\/]/)
   return parts[parts.length - 1] || cwd
 }
 

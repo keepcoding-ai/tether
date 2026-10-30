@@ -48,6 +48,7 @@ const api: TetherApi = {
   standaloneDialog: () => ipcRenderer.invoke('dialog:standalone'),
   answerStandalone: answer => ipcRenderer.send('dialog:standalone-answer', answer),
   standaloneSize: height => ipcRenderer.send('dialog:standalone-size', height),
+  onFocusSlot: listener => on<string>('tether:focus-slot', listener),
   closeWindow: () => ipcRenderer.send('window:close'),
 }
 

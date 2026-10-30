@@ -1,3 +1,5 @@
+import type { SlotState } from '../../src/daemon/protocol.ts'
+
 // The in-app dialog: one component, one fixed structure (situation → context → choices with consequences).
 // Every situation the app puts to the user is a DialogSpec (app/renderer/situations.ts); nothing goes
 // through the OS message box. Shared by the renderer (renders it), the main process (names the situation
@@ -80,6 +82,7 @@ export interface DialogAnswer {
 export type Confirmations = Record<string, string>
 
 /** Situations the main process asks the renderer to put to the user. */
-export type MainSituation = 'quit-all'
+export type MainSituation = 'quit-all' | 'restart-daemon' | 'tray-first-close'
 
-export interface AskRequest { askId: number; situation: MainSituation }
+/** `slots`: the daemon's slots as main sees them, so the dialog does not depend on the renderer having restored yet (the window may have just been recreated from the tray). */
+export interface AskRequest { askId: number; situation: MainSituation; slots?: SlotState[] }

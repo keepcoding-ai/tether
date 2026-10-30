@@ -18,6 +18,7 @@ import { LEVELS, shortcutHint, type AppShortcut } from './shortcuts.ts'
 import { closePanelSituation, folderName, NO_PROFILE, quitAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 
+import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 const COMPONENT = 'terminal'
 const TAB = 'slot-tab'
 const SAVE_DEBOUNCE_MS = 300
@@ -210,7 +211,17 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
 async function onAsk(req: AskRequest): Promise<void> {
   switch (req.situation) {
     case 'quit-all': {
-      const answer = await askDialog(quitAllSituation([...slots.values()]))
+      const answer = await askDialog(quitAllSituation(req.slots ?? [...slots.values()]))
+      window.tether.answer(req.askId, answer)
+      return
+    }
+    case 'restart-daemon': {
+      const answer = await askDialog(restartDaemonSituation(req.slots ?? [...slots.values()]))
+      window.tether.answer(req.askId, answer)
+      return
+    }
+    case 'tray-first-close': {
+      const answer = await askDialog(trayFirstCloseSituation())
       window.tether.answer(req.askId, answer)
       return
     }
@@ -984,3 +995,10 @@ void window.tether.getTheme().then(applyTheme)
 window.tether.onConfirmations(c => { confirmations = c })
 void window.tether.getConfirmations().then(c => { confirmations = c })
 window.tether.onAsk(req => { void onAsk(req) })
+// The tray menu picked a pane: wait for the layout to be restored (the window may have just been recreated), then focus it.
+window.tether.onFocusSlot(slotId => {
+  void (async () => {
+    for (let i = 0; i < 100 && !(layoutRestored && slots.has(slotId)); i++) await new Promise(r => setTimeout(r, 100))
+    openSlot(slotId)
+  })()
+})

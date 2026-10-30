@@ -75,6 +75,8 @@ export interface TetherApi {
   answerStandalone(answer: DialogAnswer): void
   /** Standalone window: the height its content needs (the window is sized to the dialog). */
   standaloneSize(height: number): void
+  /** The tray menu picked a pane: focus it (waits for the layout to be restored; opens it when it was closed). */
+  onFocusSlot(listener: (slotId: string) => void): () => void
   /** Closes the window (keeps every slot running in the daemon). */
   closeWindow(): void
 }
