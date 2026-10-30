@@ -359,11 +359,11 @@ Dois ajustes pedidos no meio da fase:
 
 ## Fase 4 — Redesenho visual (planejada, 2026-10-30)
 
-Plano no PLAN.md ("Fase 4"): sete fatias (tokens/cartões → barra + cápsula → paleta de 12 matizes + migração → faixa de abas + ⋯ → barra de status → gaveta → polimento), cada uma com escopo, arquivos, riscos, testes e aceite por captura lado a lado com `docs/tether-preview.html`. Nada em `src/`: o tetherd do Guga não reinicia em nenhuma fatia. E2E novo `app.chrome` cresce fatia a fatia. Estado: **a começar** (nenhuma fatia em execução).
+Plano no PLAN.md ("Fase 4"): sete fatias (tokens/cartões → barra + cápsula → paleta de 12 matizes + migração → faixa de abas + ⋯ → barra de status → gaveta → polimento), cada uma com escopo, arquivos, riscos, testes e aceite por captura lado a lado com `docs/tether-preview.html`. Nada em `src/`: o tetherd do Guga não reinicia em nenhuma fatia. E2E novo `app.chrome` cresce fatia a fatia. Estado: **F1 entregue**; F2 a seguir.
 
 | Fatia | Estado | Prova |
 |---|---|---|
-| F1 Tokens, superfícies e cartões (tema dockview próprio) | pendente | |
+| F1 Tokens, superfícies e cartões (tema dockview próprio) | entregue | tsc ×2 limpos; unitários 365/367 (as 2 falhas são de `daemon.set-profile`/perfis no protocolo, `src/` intocado); E2E um por vez, janela escondida: `app.chrome` (novo), `app.frames`, `app.layout`, `app.theme` (expectativas: barra/janela = `--desk-bg`, xterm = `--frame-bg`, classe `dv-theme-tether`), `app.drawer` verdes; `npm run app:build`; capturas `chrome-cards-{light,dark}.png` × `preview-{light,dark}.png` (`test/e2e/preview-shot.ts`). Desvios: o terminal pinta `--frame-bg` (novo `FRAME_BACKGROUND` em `app/shared/theme.ts`, lido por `terminal-theme.ts`), senão o xterm ficaria na cor da mesa dentro do cartão; `setTheme` do dockview removido (um tema só); a faixa de mesas segue com `--bg-2` e o `#fff` do seletor de cor (saem na F2); altura da faixa de abas segue 35px (F4) |
 | F2 Barra do topo e cápsula de mesas (faixa sai; linha da cor; popover de conexão; menu de tema) | pendente | |
 | F3 Paleta `--x-*` (12) e migração das cores das mesas | pendente | |
 | F4 Faixa de abas ("+N" MRU, toggle da barra, ⋯) | pendente | |
