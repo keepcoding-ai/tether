@@ -26,6 +26,7 @@ Público: um desenvolvedor que abre vários agentes ao mesmo tempo e precisa vol
 | R1 gestão de processos (daemon fora da árvore do app, um daemon por pipe, órfãos por identidade, autoproteção) | integrado |
 | R3 `killall node` não atinge o tether (`tetherd.exe`, `tether-soul.exe`) | integrado |
 | Perfis de lançamento — núcleo (store, validação, daemon, CLI) | integrado |
+| Quadros (fase B): `layout.json` v2 com migração do v1 (+ `layout.v1.bak`), um dockview por quadro num gridview, painel na borda do quadro / quadro na borda da mesa por atalho, "+" nas bordas, seletor com três níveis | integrado, provado (`app.frames`) |
 | Diálogos próprios (sem caixas nativas) + ícones Phosphor | integrado, **prova incompleta** (§7.1) |
 | CLI `tether` (ls, show, new, open, attach, stop, rm, rename, profiles, doctor) | integrado |
 | Atalho no Menu Iniciar, ícone, instância única | integrado |
@@ -63,7 +64,7 @@ app (Electron: dockview + xterm.js + Phosphor)  ──named pipe──►  tethe
 - `src/report/claude-hook.mjs` — hook do Claude; nunca escreve em stdout, sempre sai 0.
 - `src/daemon` — `tetherd`: protocolo NDJSON (`protocol.ts` é o contrato), PTY por slot, scrollback, fila (máx. 3 iniciando), vínculos, perfis, órfãos, autoproteção; `client.ts` com `spawnDaemon` (via `Start-Process`, fora da árvore e sem herdar handles).
 - `src/cli` — CLI `tether`; `src/doctor.ts`.
-- `app/` — Electron: `main` (janela, conexão, menu, tema, perfis IPC, instância única), `preload`, `renderer` (dockview, painéis xterm, diálogos `dialog.ts` + `situations.ts`, ícones `icons.ts`), `build.mjs` (esbuild one-shot; extrai o CSS do dockview do UMD), `install.mjs` (atalho).
+- `app/` — Electron: `main` (janela, conexão, menu, tema, perfis IPC, instância única), `preload`, `renderer` (`desk.ts` = mesa: gridview de quadros, cada quadro um dockview de painéis xterm; `layout.ts` = `layout.json` v2, migração v1 → v2, poda por quadro; `shortcuts.ts` = registro único dos atalhos; `create.ts` = as duas operações de novo painel e os alvos painel/quadro/mesa; diálogos `dialog.ts` + `situations.ts`; ícones `icons.ts`), `build.mjs` (esbuild one-shot; extrai o CSS do dockview do UMD), `install.mjs` (atalho).
 
 ## 5. Como rodar e testar
 

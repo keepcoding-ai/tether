@@ -206,8 +206,8 @@ Modelo de agrupamento do app, decidido com o Guga. Nomes fixos (interface em por
 |---|---|---|
 | Painel ao lado do painel em foco (duplicar) | `Ctrl+Alt+←/→/↑/↓` | `Ctrl+Shift+D` (direita) e `Ctrl+Shift+E` (abaixo) continuam como sinônimos |
 | Novo painel… (seletor, com "onde") | `Ctrl+Shift+T` | o seletor tem a linha "Onde" |
-| Painel na borda do quadro (duplicar) | `Ctrl+Alt+Shift+←/→/↑/↓` | fase B |
-| Quadro na borda da mesa (duplicar) | `Alt+Shift+←/→/↑/↓` | **`Ctrl+Win+←/→` é do próprio Windows (troca de área de trabalho virtual) e `Win+↑/↓` maximiza/minimiza: o sistema intercepta antes do app.** `Alt+Shift+seta` está livre nos shells e na TUI do Claude; alternativa, se colidir com a troca de layout de teclado (Alt+Shift com dois layouts instalados): prefixo `Ctrl+Alt+F` e depois a seta |
+| Painel na borda do quadro (duplicar) | `Ctrl+Alt+Shift+←/→/↑/↓` | fase B (entregue; registro único em `app/renderer/shortcuts.ts`) |
+| Quadro na borda da mesa (duplicar) | `Alt+Shift+←/→/↑/↓` | fase B (entregue). **`Ctrl+Win+←/→` é do próprio Windows (troca de área de trabalho virtual) e `Win+↑/↓` maximiza/minimiza: o sistema intercepta antes do app.** `Alt+Shift+seta` está livre nos shells e na TUI do Claude; alternativa, se colidir com a troca de layout de teclado (Alt+Shift com dois layouts instalados): prefixo `Ctrl+Alt+F` e depois a seta |
 | Mesa antes/depois da atual | `Ctrl+Alt+Shift+N` / `Ctrl+Alt+N` | fase C |
 | Trocar de mesa | `Ctrl+Tab` / `Ctrl+Shift+Tab` (ciclo) e `Ctrl+1…9` (direta) | fase C |
 | Gaveta | `` Ctrl+` `` | fase D |
@@ -222,13 +222,14 @@ Com o mouse, um "+" fino aparece perto das bordas; o tamanho diz o nível (paine
 - **Testes:** unit `app.create` (atalhos, corpo do `create`, posições); E2E `app.duplicate` (seletor, duplicar à direita com Claude real em sessão nova, "Onde" abaixo com PowerShell, duplicar à esquerda/acima, menus).
 - **Aceite:** no app, Ctrl+Alt+→ num painel do Claude abre outro Claude na mesma pasta e perfil, com conversa própria; "Novo painel…" pergunta perfil, pasta e onde; nenhuma entrada chamada "Direita"/"Abaixo" clona sem dizer.
 
-## Fase B — quadros dentro da mesa única + criação relativa
+## Fase B — quadros dentro da mesa única + criação relativa (entregue)
 
 - **Modelo (`layout.json` v2):** `{ v: 2, desks: [{ id, name, color, frames: { grid: SerializedGridview, views: Record<frameId, SerializedDockview> }, activeFrame }], activeDesk, drawer: null }`. Um quadro = uma instância própria de dockview (`createDockview`) dentro de uma célula de um **gridview** (`createGridview` do dockview-core) que é a mesa. Migração v1 → v2 na leitura: o `SerializedDockview` de hoje vira a mesa "Mesa 1" com um único quadro cujo `views[frame-1]` é o JSON antigo **byte a byte**; `pruneLayout` passa a rodar por quadro; gravação sempre em v2 (com cópia `layout.v1.bak` na primeira migração). Teste unitário da migração com o layout real do Guga como fixture.
 - **Daemon:** nada.
 - **UI:** `Desk` (gridview de quadros) e `Frame` (dockview + foco); foco único no app (painel em foco → quadro em foco); "novo na borda do quadro" = `addPanel` com posição relativa à raiz do grid do quadro (dockview aceita `direction` sem `referencePanel`/`referenceGroup`: ocupa a altura/largura inteira); "novo quadro na borda da mesa" = célula nova no gridview na direção; quadro vazio some. Linha "Onde" do seletor ganha os níveis (painel / quadro / mesa) como grupos. "+" fino ao passar o mouse perto das bordas internas (painel) e das bordas do quadro (um pouco maior). Arrastar aba entre quadros: dockview suporta drag entre instâncias; se o custo passar de uma fatia, vira pendência.
 - **Testes:** unit (`layout.v2`: migração, inserir quadro em cada borda, remover quadro vazio, prune por quadro); E2E `app.frames` com shells: Ctrl+Alt+Shift+→ ocupa a altura inteira; Alt+Shift+→ cria quadro; matar a janela e reabrir devolve mesas/quadros/painéis iguais (mesmos PIDs); o layout v1 do Guga reabre com o mesmo conjunto de painéis.
 - **Aceite:** o layout atual do Guga abre igual (um quadro); ele cria um quadro à direita e dois painéis nele; fecha e reabre o app e está tudo no lugar.
+- **Como ficou:** `app/renderer/layout.ts` (modelo v2, `migrateLayout`, `pruneDesk`/`pruneLayoutV2`, `frameInsertion`), `app/renderer/desk.ts` (`Desk` = gridview de `Frame`s, cada um com seu dockview; foco por quadro; "+" nas bordas), `app/renderer/shortcuts.ts` (registro único dos atalhos; `shortcutOf`/`shortcutHint`), `create.ts` ganhou `Target { level, placement }`. O "+" entre painéis (nível painel) ficou para depois: `Ctrl+Alt+setas` cobre. Arrastar aba entre quadros: pendência (dockview recusa o drop de outra instância sem `onUnhandledDragOverEvent`).
 
 ## Fase C — mesas, troca rápida e selos
 
