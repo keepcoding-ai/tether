@@ -21,12 +21,15 @@ import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 
 const home = tetherHome()
 const pipe = pipePath(home, userInfo().username)
-/** Taskbar grouping / pinning: the same id goes on the Start Menu shortcut (app/shortcut.ps1). */
+/** Taskbar grouping / pinning: the same id goes on the Start Menu shortcut (app/shortcut.ps1) and, on macOS, is the CFBundleIdentifier of Tether.app (app/install.mjs). */
 const APP_USER_MODEL_ID = 'studio.codr.tether'
 // Electron's own state (cache, GPU, the single-instance lock) lives under TETHER_HOME too: E2E runs with a
 // private home never collide with the user's running app.
 app.setPath('userData', join(home, 'electron'))
 app.setAppUserModelId(APP_USER_MODEL_ID)
+// The process runs from node_modules' Electron.app (Tether.app only wraps it: a launcher cannot change what
+// the OS attributes the process to), so the name and the Dock icon are set here, not read from a bundle.
+app.setName('tether')
 const layoutPath = join(home, 'layout.json')
 const recentPath = join(home, 'recent-folders.json')
 const RECENT_LIMIT = 12
@@ -586,6 +589,7 @@ async function start(): Promise<void> {
   if (outcome === 'focused-other') { app.quit(); return }
   app.on('second-instance', bringToFront)
   await app.whenReady()
+  if (process.platform === 'darwin') app.dock?.setIcon(join(__dirname, 'tether.png'))
   createMenu()
   createWindow()
   closeStandalone?.() // only now: with the main window up, closing it does not quit the app
