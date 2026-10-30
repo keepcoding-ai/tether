@@ -7,7 +7,6 @@ Projeto: rastrear e retomar sessões de Claude Code e soul-cli por slot de termi
 Valem os acordos do Guga em `d:\atrium\mind\atlas\self\AGREEMENTS.md` (a cláusula de Coordenação no topo vence em conflito). Resumo do que mais pesa aqui:
 
 - **Coordeno, não executo.** Toda edição de código-fonte vai por subagente, inclusive retoque pequeno. Meu: desenhar, brifar, provar, registrar, commitar.
-- **Modelo e esforço explícitos** em cada brief, com a razão. Neste projeto o Guga pediu **Fable** pelo nome para a implementação; tarefas mecânicas (ler, listar, grepar) podem ir em haiku. Em dúvida entre dois degraus, o de cima.
 - **No máximo 2 agentes em paralelo**, uma tarefa por agente, território de arquivos declarado. Fatias fechadas de até ~30 min; confiro cada agente a cada ~10 min. Brief com decisões tomadas, fatos do código, território, orçamento e regra de parada (2x o orçamento: para e registra). Não interrompo agente em execução: instrução nova vai no próximo brief.
 - **Provo pessoalmente** toda entrega antes de dizer que está pronta: rodo os testes e, quando possível, o fluxo real como o Guga usa.
 - **Não paro entre fases.** Decisão de engenharia é minha; produto com default razoável eu decido, registro em PROGRESS.md em "Decisões para validar" e sigo.
