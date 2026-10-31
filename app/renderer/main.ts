@@ -1,7 +1,7 @@
 // Renderer entry: dockview grid of terminal panels (panel id === slotId), toolbar, new-panel dialog,
 // keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
-import { type DockviewTheme, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
+import { type AddPanelOptions, type DockviewTheme, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
@@ -20,6 +20,8 @@ import { Drawer } from './drawer.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText, type ClosedGroups } from './closed-slots.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
+import { openMoveDialog } from './move-dialog.ts'
+import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
 import { drawerOf, emptyLayout, isPersonChange, type LayoutV2, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
@@ -27,7 +29,7 @@ import { TabStripActions } from './tab-strip.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
 import { LEVELS, shortcutHint, terminalInputOf, type AppShortcut } from './shortcuts.ts'
-import { closeDeskSituation, closePanelSituation, folderName, NO_PROFILE, quitAllSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 
@@ -435,22 +437,6 @@ function showDeskMenu(id: string, x: number, y: number): void {
   showContextMenu(x, y, items)
 }
 
-/** "Mover para a mesa…": the other desks, plus a new desk after the last one. */
-function showMoveMenu(x: number, y: number, move: (to: string) => void): void {
-  const from = desks.activeDeskId
-  const items: MenuItem[] = desks.desks.filter(d => d.id !== from).map(d => ({ icon: 'cards' as const, label: d.name, run: () => move(d.id) }))
-  items.push({
-    icon: 'plus', label: 'Nova mesa', run: () => {
-      const last = desks.desks[desks.desks.length - 1]!.id
-      const current = desks.activeDeskId
-      const created = desks.create('after', last)
-      desks.switchTo(current) // the pane goes there; the user stays where they are
-      move(created)
-    },
-  })
-  showContextMenu(x, y, items)
-}
-
 function movePaneToDesk(slotId: string, to: string): void {
   if (desks.movePanel(slotId, to)) { refreshClosedMenu(); renderStrip() }
 }
@@ -459,13 +445,6 @@ function moveFrameToDesk(slotId: string, to: string): void {
   const from = desks.deskOf(slotId)
   const frame = desks.frameOf(slotId)
   if (from && frame && desks.moveFrame(from, frame.id, to)) { refreshClosedMenu(); renderStrip() }
-}
-
-/** The menu position for keyboard/menu commands (no pointer): under the active pane's tab. */
-function activeTabPoint(): { x: number; y: number } {
-  const id = desks.activePanel?.id
-  const r = id ? tabs.get(id)?.element.getBoundingClientRect() : undefined
-  return r ? { x: r.left, y: r.bottom + 2 } : { x: 120, y: 80 }
 }
 
 // ---------- the drawer ----------
@@ -671,6 +650,143 @@ function movePaneFromDrawer(slotId: string): void {
 function moveFrameFromDrawer(slotId: string): void {
   const frame = drawer.desk.frameOf(slotId)
   if (frame && transferFrame(drawer.desk, desks.active, frame.id)) surfaceFromDrawer(slotId)
+}
+
+// ---------- "Mover…" (app/renderer/move-dialog.ts draws it, move-rules.ts maps the placement to an op) ----------
+
+/** The Desk of a scope of the dialog: the drawer's, or a desk's. */
+function scopeDesk(scope: string): Desk | undefined {
+  return scope === DRAWER_SCOPE ? drawer.desk : desks.desk(scope)
+}
+
+function scopeOf(slotId: string): string | undefined {
+  return inDrawer(slotId) ? DRAWER_SCOPE : desks.deskOf(slotId)
+}
+
+/** The destination tree from the live desks, frames and drawer. */
+function moveTree(): ScopeModel[] {
+  const framesOf = (d: Desk | undefined): { id: string; view: FrameViewJSON }[] =>
+    (d?.frameIds ?? []).flatMap(id => { const f = d!.frames.get(id); return f ? [{ id, view: f.dock.toJSON() as unknown as FrameViewJSON }] : [] })
+  return buildTree({
+    drawer: { frames: framesOf(drawer.desk) },
+    desks: desks.desks.map(d => ({ id: d.id, name: d.name, color: d.color, frames: framesOf(desks.desk(d.id)) })),
+    currentDesk: desks.activeDeskId,
+    titleOf: id => findPanel(id)?.api.title,
+  })
+}
+
+/** "Mover…" for a pane (pane ⋯ menu, right-click, the ≡ menu for the active pane, the drawer's tabs). */
+async function openMove(slotId: string, mode?: MoveMode): Promise<void> {
+  if (dialogOpen()) return
+  const scope = scopeOf(slotId)
+  const frame = scope ? scopeDesk(scope)?.frameOf(slotId) : undefined
+  if (!scope || !frame) return
+  const op = await openMoveDialog({
+    scopes: moveTree(),
+    source: { slotId, title: findPanel(slotId)?.api.title ?? slotId, scope, frameId: frame.id },
+    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] : 'question' },
+    ...(mode ? { mode } : {}),
+  })
+  if (op) await runMove(op, slotId)
+}
+
+const DOCK_POSITION = { left: 'left', right: 'right', above: 'top', below: 'bottom', within: 'center' } as const
+
+/**
+ * Runs a move. A pane is removed and re-added (its terminal detaches and attaches again: same slot, process, PID
+ * and scrollback; the daemon is never asked to do anything), or moved by dockview inside its own frame; a frame is
+ * taken (its dockview JSON) and loaded elsewhere. Any failure puts things back where they were; whatever happens,
+ * every pane that was open is still open afterwards (a lost one is re-added to where it came from). The result is
+ * saved as a person's change.
+ */
+async function runMove(op: MoveOp, slotId: string): Promise<boolean> {
+  const before = allPanels().map(p => ({ id: p.id, options: desks.paneOptions(p), scope: scopeOf(p.id) }))
+  let error: string | undefined
+  try { applyMove(op) } catch (err) { error = err instanceof Error ? err.message : String(err) }
+  for (const p of before) {
+    if (findPanel(p.id)) continue
+    console.error(`mover: o painel ${p.id} sumiu; reaberto onde estava`)
+    try { (scopeDesk(p.scope ?? '') ?? desks.active).addPanel(p.options) } catch (err) { console.error(`mover: não foi possível reabrir ${p.id}`, err) }
+    error ??= 'Um painel não chegou ao destino.'
+  }
+  refreshClosedMenu()
+  renderStrip()
+  scheduleSave()
+  if (error) {
+    await askDialog(moveFailedSituation(error))
+    return false
+  }
+  // Out of the drawer onto the desk behind it: the drawer closes and the moved pane gets the keyboard.
+  if (op.from === DRAWER_SCOPE && op.scope === desks.activeDeskId && drawer.isOpen) {
+    drawerState = { ...drawerState, returnTo: slotId }
+    setDrawerOpen(false)
+    return true
+  }
+  const visible = op.scope === (drawer.isOpen ? DRAWER_SCOPE : desks.activeDeskId)
+  if (visible && op.op.startsWith('pane')) { findPanel(slotId)?.api.setActive(); panels.get(slotId)?.focus() }
+  return true
+}
+
+/** One move (throws, having put things back, when it cannot be done). */
+function applyMove(op: MoveOp): void {
+  const source = scopeDesk(op.from)
+  const target = scopeDesk(op.scope)
+  if (!source || !target) throw new Error('A mesa de destino não existe mais.')
+  if (op.op === 'pane-beside' || op.op === 'pane-new-frame') {
+    const panel = source.getPanel(op.slotId)
+    const srcFrame = source.frameOf(op.slotId)
+    if (!panel || !srcFrame) throw new Error('O painel não está mais lá.')
+    if (op.op === 'pane-beside') {
+      const frame = target.frames.get(op.frameId)
+      const ref = frame?.dock.getPanel(op.reference)
+      if (!frame || !ref) throw new Error('O quadro de destino mudou; abra o Mover… de novo.')
+      if (frame === srcFrame) {
+        // Same frame: dockview moves the pane itself (nothing is re-created).
+        panel.api.moveTo({ group: ref.group, position: DOCK_POSITION[op.direction] })
+      } else {
+        const direction = op.direction
+        movePaneOut(source, srcFrame, panel, options => { frame.dock.addPanel(Object.assign({}, options, { position: { referencePanel: op.reference, direction } }) as AddPanelOptions) })
+      }
+      target.focusFrame(frame.id)
+    } else {
+      movePaneOut(source, srcFrame, panel, options => {
+        const frame = target.frameForNew(op.direction)
+        frame.dock.addPanel(options)
+        target.focusFrame(frame.id)
+      })
+    }
+    return
+  }
+  if (!source.frames.has(op.frameId)) throw new Error('O quadro não está mais lá.')
+  if (op.op === 'frame-beside' && !target.frames.has(op.referenceFrame)) throw new Error('O quadro de destino mudou; abra o Mover… de novo.')
+  const view = source.takeFrame(op.frameId)!
+  try {
+    const frame = op.op === 'frame-beside' ? target.addFrameBeside(op.referenceFrame, op.direction) : target.frameForNew(op.direction)
+    target.loadView(frame, view)
+    target.focusFrame(frame.id)
+  } catch (err) {
+    console.error(`mover quadro ${op.frameId}: falhou, voltando ao lugar de origem`, err)
+    // The emptied frame is still there (it goes in a microtask): the frame comes back into it, else at the edge.
+    const back = source.frames.get(op.frameId)
+    if (back && back.dock.panels.length === 0) source.loadView(back, view)
+    else source.putFrame(view)
+    throw err
+  }
+}
+
+/** Removes a pane and runs `add` elsewhere; if that throws, the pane goes back to its group (or its frame, or its desk). */
+function movePaneOut(source: Desk, srcFrame: NonNullable<ReturnType<Desk['frameOf']>>, panel: IDockviewPanel, add: (options: AddPanelOptions) => void): void {
+  const options = desks.paneOptions(panel)
+  const groupId = panel.group.id
+  source.removePanel(panel)
+  try { add(options) } catch (err) {
+    console.error(`mover painel ${panel.id}: falhou, voltando ao lugar de origem`, err)
+    const group = srcFrame.dock.groups.find(g => g.id === groupId)
+    if (group) srcFrame.dock.addPanel(Object.assign({}, options, { position: { referenceGroup: group } }) as AddPanelOptions)
+    else if (source.frames.has(srcFrame.id)) srcFrame.dock.addPanel(options)
+    else source.addPanel(options)
+    throw err
+  }
 }
 
 /** Custom name of a slot (empty removes it): the daemon stores it in the slot's meta and broadcasts the state. */
@@ -1143,18 +1259,6 @@ function showTabMenu(slotId: string, x: number, y: number): void {
   if (!slot) return
   const panel = findPanel(slotId)
   panel?.api.setActive()
-  // Where the pane can go: a desk pane to another desk or into the drawer; a drawer pane to the desk behind it.
-  const moves: MenuItem[] = inDrawer(slotId)
-    ? [
-      { icon: 'tray-arrow-up', label: 'Mover para a mesa atual', run: () => movePaneFromDrawer(slotId) },
-      { icon: 'tray-arrow-up', label: 'Mover quadro para a mesa atual', run: () => moveFrameFromDrawer(slotId) },
-    ]
-    : [
-      { icon: 'cards', label: 'Mover para a mesa…', run: () => showMoveMenu(x, y, to => movePaneToDesk(slotId, to)) },
-      { icon: 'cards', label: 'Mover quadro para a mesa…', run: () => showMoveMenu(x, y, to => moveFrameToDesk(slotId, to)) },
-      { icon: 'tray-arrow-down', label: 'Mover para a gaveta', run: () => movePaneToDrawer(slotId) },
-      { icon: 'tray-arrow-down', label: 'Mover quadro para a gaveta', run: () => moveFrameToDrawer(slotId) },
-    ]
   showContextMenu(x, y, [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'right' }) } },
@@ -1169,7 +1273,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'copy', label: 'Copiar pasta', run: () => copyFolder(slotId) },
     { icon: 'folder-open', label: 'Abrir pasta no Explorer', run: () => openFolder(slotId) },
     SEP,
-    ...moves,
+    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
     SEP,
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
@@ -1384,7 +1488,7 @@ function setupMenu(): void {
   btn.addEventListener('click', ev => {
     ev.stopPropagation()
     // "Duplicar painel" and "Trocar perfil do painel…" act on the active panel: greyed out when there is none.
-    for (const item of menu.querySelectorAll<HTMLElement>('li[data-cmd="switch-profile"], li[data-cmd^="duplicate"], li[data-cmd^="move-"]')) item.setAttribute('aria-disabled', String(!desks.activePanel))
+    for (const item of menu.querySelectorAll<HTMLElement>('li[data-cmd="switch-profile"], li[data-cmd^="duplicate"], li[data-cmd="move"]')) item.setAttribute('aria-disabled', String(!desks.activePanel))
     menu.querySelector<HTMLElement>('li[data-cmd="close-desk"]')?.setAttribute('aria-disabled', String(desks.desks.length <= 1))
     toggle(menu.hidden)
   })
@@ -1400,12 +1504,9 @@ function setupMenu(): void {
       case 'duplicate-below': void duplicateActive({ level: 'pane', placement: 'below' }); break
       case 'new-frame-edge': void openNewDialog({ target: { level: 'frame', placement: 'right' } }); break
       case 'new-frame': void openNewDialog({ target: { level: 'desk', placement: 'right' } }); break
-      case 'move-pane-desk': { const a = desks.activePanel; if (a) { const p = activeTabPoint(); showMoveMenu(p.x, p.y, to => movePaneToDesk(a.id, to)) } break }
-      case 'move-frame-desk': { const a = desks.activePanel; if (a) { const p = activeTabPoint(); showMoveMenu(p.x, p.y, to => moveFrameToDesk(a.id, to)) } break }
+      case 'move': { const a = desks.activePanel; if (a) void openMove(a.id); break }
       case 'new-desk': desks.create('after'); break
       case 'toggle-drawer': setDrawerOpen(!drawer.isOpen); break
-      case 'move-pane-drawer': { const a = desks.activePanel; if (a) movePaneToDrawer(a.id); break }
-      case 'move-frame-drawer': { const a = desks.activePanel; if (a) moveFrameToDrawer(a.id); break }
       case 'close-desk': void closeDesk(desks.activeDeskId); break
       case 'desk-actions': { const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4); break }
       case 'desk-line': window.tether.setUi({ ...ui, deskLine: !ui.deskLine }); break
@@ -1656,6 +1757,10 @@ declare global {
       /** Closes a desk exactly as its menu does (the dialog included when it has panes). */
       closeDesk(id: string): void
       movePaneToDesk(slotId: string, deskId: string): void
+      /** Opens the "Mover…" dialog for a pane. */
+      openMove(slotId: string, mode?: MoveMode): void
+      /** The dialog's destination tree as it would be built now. */
+      moveTree(): ScopeModel[]
       moveFrameToDesk(slotId: string, deskId: string): void
       /** The drawer: open or not, its panes, the attention counts of its panes. */
       drawer(): { open: boolean; panes: string[]; frames: string[]; attention: DeskAttention }
@@ -1777,6 +1882,8 @@ function setupTestHooks(): void {
     moveDesk: (id, to) => desks.move(id, to),
     closeDesk: id => { void closeDesk(id) },
     movePaneToDesk,
+    openMove: (slotId, mode) => { void openMove(slotId, mode) },
+    moveTree,
     moveFrameToDesk,
     drawer: () => ({ open: drawer.isOpen, panes: drawer.desk.panels.map(p => p.id), frames: drawer.desk.frameIds, attention: drawerAttention() }),
     toggleDrawer: () => setDrawerOpen(!drawer.isOpen),

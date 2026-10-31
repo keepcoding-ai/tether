@@ -279,6 +279,19 @@ export function switchProfileFailedSituation(s: SlotState, message: string): Dia
   }
 }
 
+/** A "Mover…" that could not be done: everything is back where it was (no pane is ever lost). */
+export function moveFailedSituation(message: string): DialogSpec {
+  return {
+    situation: 'move-failed',
+    tone: 'danger',
+    icon: 'x-circle',
+    title: 'Não foi possível mover',
+    message: `${message} Tudo continua onde estava.`,
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Os painéis seguem rodando, no mesmo lugar.', tone: 'neutral' }],
+    escChoice: 'ok',
+  }
+}
+
 export const STANDALONE_SITUATIONS: Record<string, () => DialogSpec> = { 'still-closing': stillClosingSituation }
 
 /**

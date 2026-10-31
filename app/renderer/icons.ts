@@ -59,6 +59,12 @@ import trayArrowUp from '@phosphor-icons/core/assets/regular/tray-arrow-up.svg'
 import rows from '@phosphor-icons/core/assets/regular/rows.svg'
 import dotsThree from '@phosphor-icons/core/assets/regular/dots-three.svg'
 import textAa from '@phosphor-icons/core/assets/regular/text-aa.svg'
+import magnifyingGlass from '@phosphor-icons/core/assets/regular/magnifying-glass.svg'
+import caretRight from '@phosphor-icons/core/assets/regular/caret-right.svg'
+import arrowLeft from '@phosphor-icons/core/assets/regular/arrow-left.svg'
+import arrowRight from '@phosphor-icons/core/assets/regular/arrow-right.svg'
+import arrowUp from '@phosphor-icons/core/assets/regular/arrow-up.svg'
+import arrowDown from '@phosphor-icons/core/assets/regular/arrow-down.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -120,6 +126,12 @@ const SVG = {
   'tray-arrow-up': trayArrowUp,
   rows,
   'dots-three': dotsThree,
+  'magnifying-glass': magnifyingGlass,
+  'caret-right': caretRight,
+  'arrow-left': arrowLeft,
+  'arrow-right': arrowRight,
+  'arrow-up': arrowUp,
+  'arrow-down': arrowDown,
 } as const
 
 export type IconName = keyof typeof SVG

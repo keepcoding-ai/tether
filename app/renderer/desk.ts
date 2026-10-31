@@ -170,6 +170,23 @@ export class Desk {
     this.activeFrameId = frame.id
   }
 
+  /** A new frame beside `referenceFrame` (the "Mover…" dialog's "ao lado do quadro"). */
+  addFrameBeside(referenceFrame: string, direction: Direction): Frame {
+    const id = nextFrameId(this.grid.toJSON().grid)
+    return this.grid.addPanel({ id, component: FRAME_COMPONENT, position: { referencePanel: referenceFrame, direction } }) as Frame
+  }
+
+  /** Where something moved to this desk's `direction` edge goes: the only frame when it is empty, else a new frame there. */
+  frameForNew(direction: Direction): Frame {
+    const only = this.frames.size === 1 ? [...this.frames.values()][0] : undefined
+    return only && only.dock.panels.length === 0 ? only : this.addFrame(direction)
+  }
+
+  /** Marks a frame as the one with the focus (after something was moved into it). */
+  focusFrame(frameId: string): void {
+    if (this.frames.has(frameId)) this.activeFrameId = frameId
+  }
+
   private ensureFrame(): Frame {
     return this.activeFrame ?? this.addFrame('right')
   }
