@@ -37,3 +37,21 @@ describe('soulFromLoginShell', { skip }, () => {
     assert.equal(soulFromLoginShell({ SHELL: shell }), undefined)
   })
 })
+
+// Windows: the installed launcher lives in Git Bash's ~/bin, which the app's (Windows) PATH does not have.
+describe('soulFromGitBash', { skip: process.platform !== 'win32' }, () => {
+  test('a launcher in %USERPROFILE%\bin is found and read like the one on PATH', async () => {
+    const { mkdirSync } = await import('node:fs')
+    const { soulFromGitBash } = await import('../../src/agents/soul.ts')
+    const home = dirs.make()
+    mkdirSync(join(home, 'bin'))
+    writeFileSync(join(home, 'bin', 'soul'), '#!/usr/bin/env bash\nCLI="D:/x/bin/soul"\nexec node "$CLI" "$@"\n')
+    const cmd = soulFromGitBash({ USERPROFILE: home, PATH: '' })
+    assert.deepEqual(cmd, { command: process.execPath, args: ['D:/x/bin/soul'] })
+  })
+  test('findGitBash never returns WSL bash from System32', async () => {
+    const { findGitBash } = await import('../../src/agents/soul.ts')
+    const found = findGitBash({ PATH: 'C:\Windows\System32' })
+    assert.ok(found === undefined || !/system32/i.test(found))
+  })
+})

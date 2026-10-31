@@ -607,6 +607,7 @@ class DaemonImpl implements Daemon {
   private fail(slot: Slot, code: ErrorCode, message: string): RequestError {
     slot.status = 'error'
     slot.error = { code, message }
+    this.log(`slot ${slot.meta.slotId}: ${code}: ${message}`)
     this.broadcastState(slot)
     return new RequestError(code, message)
   }

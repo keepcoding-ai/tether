@@ -12,12 +12,16 @@
 //      the daemon's own node runs the CLI). A script without a CLI= line runs through Git Bash.
 //   3. macOS, `soul` not on the daemon's PATH (an alias or a PATH set in the user's rc files): asked of the
 //      user's login shell; an alias/function runs through `$SHELL -lic 'soul "$@"'`.
-//   4. Elsewhere, or when nothing is found: the bare `soul` (spawn resolves it).
+//   4. Windows, `soul` not on the daemon's PATH: the installed launcher lives in Git Bash's ~/bin, which only
+//      Git Bash puts on PATH (the app and its daemon get the Windows PATH, without it). Looked up in
+//      %USERPROFILE%in, then asked of Git Bash's login shell (`bash -lic 'command -v soul'`); the script found
+//      goes through step 2. Without this, the bare `soul` fails to spawn and the panel never opens.
+//   5. Elsewhere, or when nothing is found: the bare `soul` (spawn resolves it).
 // Whichever node the command ends up with runs as <home>/bin/tether-soul.exe (core/exe.ts): a panel of the
 // soul survives a "kill every node.exe" and shows its own name in the Task Manager.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
 import { ensureRenamedNode, exeLog, isNodeExecutable, isRenamedNode } from '../core/exe.ts'
@@ -88,8 +92,47 @@ export function commandFromScript(script: string, env: Record<string, string | u
     const nodePath = node ? fromMsysPath(node) : undefined
     return { command: nodePath && existsSync(nodePath) ? nodePath : process.execPath, args: [cli] }
   }
-  const bash = findOnPath('bash', env) ?? 'bash'
+  const bash = findGitBash(env) ?? 'bash'
   return { command: bash, args: [script] }
+}
+
+/** Git for Windows' bash.exe (never WSL's System32ash.exe, which runs Linux, not the msys scripts). */
+export function findGitBash(env: Record<string, string | undefined>): string | undefined {
+  const candidates: string[] = []
+  const git = findOnPath('git', env)
+  if (git) candidates.push(join(dirname(git), '..', 'bin', 'bash.exe'), join(dirname(git), 'bash.exe'))
+  const onPath = findOnPath('bash', env)
+  if (onPath && !/[\\/]system32[\\/]/i.test(onPath)) candidates.push(onPath)
+  for (const root of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && join(env.LOCALAPPDATA, 'Programs')]) {
+    if (root) candidates.push(join(root, 'Git', 'bin', 'bash.exe'))
+  }
+  return candidates.find((c) => existsSync(c))
+}
+
+/** Windows: `soul` where Git Bash finds it (~/bin, or its login shell's PATH and aliases). Undefined when it cannot tell. */
+export function soulFromGitBash(env: Record<string, string | undefined>): Command | undefined {
+  const home = env.USERPROFILE || env.HOME
+  if (home) {
+    const inHomeBin = join(home, 'bin', 'soul')
+    if (existsSync(inHomeBin)) return fromFound(inHomeBin)
+  }
+  const bash = findGitBash(env)
+  if (!bash) return undefined
+  try {
+    const out = execFileSync(bash, ['-lic', 'command -v soul'], { env: env as NodeJS.ProcessEnv, encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
+    const line = out.trim().split('\n').pop()?.trim()
+    if (!line) return undefined
+    const path = fromMsysPath(line)
+    if (isAbsolute(path) && existsSync(path)) return fromFound(path)
+    return { command: bash, args: ['-lic', 'soul "$@"', 'soul'] } // alias or shell function
+  } catch {
+    return undefined
+  }
+
+  function fromFound(path: string): Command {
+    if (!/\.(exe|cmd|bat)$/i.test(path) && isScript(path)) return commandFromScript(path, env)
+    return { command: path, args: [] }
+  }
 }
 
 /** macOS: `soul` as the user's interactive login shell sees it (rc files, aliases). Undefined when it cannot tell. */
@@ -125,7 +168,10 @@ export function resolveSoulCommand(env: Record<string, string | undefined> = pro
     return { command, args: rest }
   }
   const found = findOnPath('soul', env)
-  if (!found) return (process.platform === 'darwin' ? soulFromLoginShell(env) : undefined) ?? { command: 'soul', args: [] }
+  if (!found) {
+    const fallback = process.platform === 'darwin' ? soulFromLoginShell(env) : process.platform === 'win32' ? soulFromGitBash(env) : undefined
+    return fallback ?? { command: 'soul', args: [] }
+  }
   if (process.platform === 'win32' && !/\.(exe|cmd|bat)$/i.test(found) && isScript(found)) {
     return commandFromScript(found, env)
   }
