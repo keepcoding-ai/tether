@@ -178,7 +178,10 @@ export class Desk {
 
   get panels(): IDockviewPanel[] {
     const out: IDockviewPanel[] = []
-    for (const id of this.frameIds) out.push(...(this.frames.get(id)?.dock.panels ?? []))
+    // A frame the grid already lists may not have its dockview yet (its init is still to run): it has no panes.
+    // Restoring one frame's layout fires onPanelsChange while a later frame is in that state; throwing here made
+    // dockview refuse the saved layout and fall back to reopening the panes one by one.
+    for (const id of this.frameIds) out.push(...((this.frames.get(id)?.dock as DockviewApi | undefined)?.panels ?? []))
     return out
   }
 

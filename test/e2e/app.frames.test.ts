@@ -75,6 +75,9 @@ async function waitUntil(cond: () => boolean, timeoutMs: number, what: string): 
   }
 }
 
+/** Renderer console errors of every launch: a layout refused by dockview (and reopened pane by pane) must fail the test. */
+const consoleErrors: string[] = []
+
 async function launch(home: string): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
@@ -86,7 +89,7 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   const page = await app.firstWindow()
   page.setDefaultTimeout(10_000)
   page.on('pageerror', e => console.error(`renderer error: ${e.message}`))
-  page.on('console', m => { if (m.type() === 'error') console.error(`renderer console: ${m.text()}`) })
+  page.on('console', m => { if (m.type() === 'error') { console.error(`renderer console: ${m.text()}`); consoleErrors.push(m.text()) } })
   await page.waitForSelector('#conn.on', { timeout: 30_000 })
   return { app, page }
 }
