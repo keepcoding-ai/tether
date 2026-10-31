@@ -86,19 +86,29 @@
 
   <main id="dock"></main>
 
-  <div id="drawer" class="drawer" data-open="false" inert aria-hidden="true">
-    <div class="drawer-backdrop"></div>
-    <section class="drawer-panel" role="dialog" aria-label="Gaveta">
-      <header class="drawer-head">
-        <span class="i drawer-icon" data-icon="lightning"></span>
-        <h2>Gaveta</h2>
-        <span class="drawer-note">compartilhada por todas as mesas</span>
-        <span class="drawer-gap"></span>
-        <button id="drawer-new" title="Novo painel…"><span class="i" data-icon="plus"></span>Novo painel…</button>
-        <button id="drawer-duplicate" title="Duplicar painel"><span class="i" data-icon="copy"></span>Duplicar painel</button>
-        <button id="drawer-close" class="icon" title="Fechar a gaveta" aria-label="Fechar a gaveta"><span class="i" data-icon="x"></span></button>
+  <div id="drawer" class="drawer" data-open="false" data-empty="false" inert aria-hidden="true">
+    <section class="drawer-card" role="dialog" aria-label="Gaveta">
+      <header class="drawer-bar">
+        <div class="db-left">
+          <button id="drawer-new" class="ib" title="Novo painel na gaveta (Ctrl+Shift+T)" aria-label="Novo painel na gaveta"><span class="i" data-icon="plus"></span></button>
+          <button id="drawer-duplicate" class="ib" title="Duplicar painel (Ctrl+Alt+→)" aria-label="Duplicar painel"><span class="i" data-icon="copy"></span></button>
+        </div>
+        <div class="db-mid">
+          <button id="drawer-pill" class="seg gav" title="Fechar gaveta (Esc)" aria-label="Fechar gaveta" aria-pressed="true"><span class="i" data-icon="lightning"></span>Gaveta</button>
+        </div>
+        <div class="db-right">
+          <button id="drawer-close" class="ib" title="Fechar a gaveta (Esc)" aria-label="Fechar a gaveta"><span class="i" data-icon="x"></span></button>
+        </div>
       </header>
-      <div class="drawer-body"></div>
+      <div class="drawer-body">
+        <div class="drawer-empty">
+          <div class="de-title">A gaveta está vazia</div>
+          <div class="de-actions">
+            <button id="drawer-empty-new" class="de-btn" type="button"><span class="i" data-icon="plus"></span>Novo painel…<span class="de-kbd"></span></button>
+            <button id="drawer-empty-quick" class="de-btn" type="button"><span class="i" data-icon="terminal-window"></span>Terminal rápido<span class="de-kbd"></span></button>
+          </div>
+        </div>
+      </div>
     </section>
   </div>
 

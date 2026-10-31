@@ -39,6 +39,7 @@ type Hooks = {
   recolorDesk(id: string, color: string): void
   switchState(): { visible: string[]; hidden: string[]; active: string }
   deskLine(): boolean
+  drawer(): { open: boolean; panes: string[] }
 }
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number }
 declare const window: { __tether: Hooks; innerWidth: number; getComputedStyle(el: unknown, pseudo?: string): Record<string, string> & { getPropertyValue(n: string): string } }
@@ -547,6 +548,126 @@ test('app chrome: pane tab strip, "+N" by recent use, status-bar toggle, "⋯" (
       }, { x: Math.floor(h.left), y: Math.floor(h.top), width: Math.ceil(h.width), height: Math.ceil(h.height) + 1 })
       writeFileSync(join(artifacts, `chrome-tabs-${scheme}.png`), Buffer.from(b64, 'base64'))
     }
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})
+
+// Slice 6 (the drawer as a full-window card, PLAN.md "Fatia 6"): the card sits 16 px from every edge, over the
+// toolbar, with no backdrop; its own slim bar has the toolbar's height, icon-only "Novo painel"/"Duplicar" on the
+// left, the pressed "Gaveta" pill on the true centre and the X on the right; the pill, the X, Esc and the 16 px
+// margin close it; the cards behind fade while it is open (opacity < 1) and are back to 1 after; when the last
+// pane leaves, the invitation shows. Screenshots chrome-drawer-{light,dark}.png and chrome-drawer-empty-dark.png.
+test('app chrome: the drawer is a full-window card with its own bar and an empty state (phase 4, slice 6)', async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  mkdirSync(artifacts, { recursive: true })
+  const home = mkdtempSync(join(tmpdir(), 'tether-chrome-drawer-'))
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home))
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    await createShell(page, root)
+    await sleep(500)
+
+    const opacityBehind = () => page.locator('.desk-set .frame-dock').first().evaluate(el => Number(window.getComputedStyle(el).opacity))
+    const drawerOpen = (open: boolean) => page.waitForFunction(o => (window.getComputedStyle(document.querySelector('#drawer')).visibility === 'visible') === o, open)
+    const drawerIsOpen = () => page.evaluate(() => window.__tether.drawer().open)
+    assert.equal(await opacityBehind(), 1)
+
+    await page.keyboard.press('Control+Backquote')
+    await drawerOpen(true)
+    await page.waitForFunction(() => document.querySelectorAll('.drawer .tether-tab').length === 1) // the quick shell
+    await sleep(500) // the 160 ms entrance and the fade behind are done
+
+    // The card: 16 px from every edge, over the toolbar (which has the same height as the bar).
+    const card = (await rects(page, '.drawer-card'))[0]!
+    const vp = { width: await page.evaluate(() => window.innerWidth), height: await page.evaluate(() => (window as unknown as { innerHeight: number }).innerHeight) }
+    assert.deepEqual([card.left, card.top, vp.width - card.right, vp.height - card.bottom], [16, 16, 16, 16])
+    const bar = (await rects(page, '.drawer-bar'))[0]!
+    const toolbar = (await rects(page, '#toolbar'))[0]!
+    assert.ok(Math.abs(bar.height - toolbar.height) <= 1, `the bar is the toolbar's height: ${bar.height} vs ${toolbar.height}`)
+    assert.equal(await page.evaluate(() => window.getComputedStyle(document.querySelector('.drawer-card')).boxShadow !== 'none'), true, 'the card is elevated')
+    assert.equal(await page.locator('.drawer-backdrop').count(), 0, 'no backdrop')
+
+    // The bar: icon-only buttons with labels, the pressed pill on the window's true centre, the X on the right.
+    for (const id of ['drawer-new', 'drawer-duplicate', 'drawer-close']) {
+      assert.ok(await page.locator(`#${id}`).getAttribute('aria-label'), `${id} has an aria-label`)
+      assert.equal(((await page.locator(`#${id}`).textContent()) ?? '').trim(), '', `${id} is icon-only`)
+    }
+    assert.equal(await page.locator('.drawer-bar .db-left button').count(), 2)
+    assert.equal(await page.locator('#drawer-pill').getAttribute('aria-pressed'), 'true')
+    assert.equal(await page.locator('#drawer-pill').getAttribute('title'), 'Fechar gaveta (Esc)')
+    assert.equal(((await page.locator('#drawer-pill').textContent()) ?? '').trim(), 'Gaveta')
+    const pill = (await rects(page, '.drawer-bar .db-mid'))[0]!
+    assert.ok(Math.abs((pill.left + pill.right) / 2 - vp.width / 2) <= 2, `the pill is centred: ${(pill.left + pill.right) / 2} vs ${vp.width / 2}`)
+    const x = (await rects(page, '#drawer-close'))[0]!
+    assert.ok(x.right <= card.right && card.right - x.right <= 12, 'the X is at the right end')
+    assert.equal(await page.locator('.drawer-head, .drawer-note').count(), 0, 'the old header and its note are gone')
+
+    // The cards behind fade while it is open; the drawer's own cards do not.
+    assert.ok(await opacityBehind() < 1, 'the cards behind are faded')
+    assert.equal(await page.locator('.drawer .frame-dock').first().evaluate(el => Number(window.getComputedStyle(el).opacity)), 1, 'the drawer\'s own cards are not')
+
+    // Light and dark shots (compare with the preview's .dcard/.dbar/.ddesk).
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.keyboard.press('Control+Backquote')
+      await drawerOpen(false)
+      await setTheme(page, scheme)
+      await page.keyboard.press('Control+Backquote')
+      await drawerOpen(true)
+      await page.mouse.move(400, 400)
+      await sleep(600)
+      await shot(app, `chrome-drawer-${scheme}`)
+    }
+
+    // Closing: the pill, the X, the 16 px margin; the cards behind are back to full.
+    for (const how of ['pill', 'x', 'margin'] as const) {
+      if (how === 'pill') await page.click('#drawer-pill')
+      else if (how === 'x') await page.click('#drawer-close')
+      else await page.mouse.click(8, 400)
+      await drawerOpen(false)
+      await sleep(300)
+      assert.equal(await opacityBehind(), 1, `${how}: the cards behind are back to full`)
+      assert.equal(await drawerIsOpen(), false)
+      await page.keyboard.press('Control+Backquote')
+      await drawerOpen(true)
+      await sleep(250)
+    }
+    await page.mouse.click(600, 400) // a click inside the card does not close it
+    await sleep(300)
+    assert.equal(await drawerIsOpen(), true)
+
+    // The empty state: closing the last pane keeps the drawer open and shows the invitation.
+    await page.locator('.drawer .tether-tab').first().hover()
+    await page.locator('.drawer .tether-tab .close').first().click()
+    await page.locator('dialog[open] button.choice[data-choice="detach"]').click()
+    await page.waitForSelector('.drawer[data-empty="true"] .drawer-empty .de-btn')
+    assert.equal(await drawerIsOpen(), true)
+    assert.deepEqual(await page.locator('.drawer-empty .de-btn').allTextContents(), ['Novo painel…Ctrl+Shift+T', 'Terminal rápidoCtrl+`'])
+    await sleep(400) // the theme is still dark from the shots above
+    await shot(app, 'chrome-drawer-empty-dark')
+    await page.click('#drawer-empty-new')
+    await page.waitForSelector('#dlg-new[open]')
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
+    assert.equal(await drawerIsOpen(), true, 'the chooser\'s Esc was the chooser\'s')
+    await page.click('#drawer-empty-quick')
+    await page.waitForFunction(() => document.querySelectorAll('.drawer .tether-tab').length === 1)
+    await page.waitForSelector('.drawer[data-empty="false"]')
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))
     for (const d of daemons) {

@@ -4,11 +4,14 @@
 //   2. a shell in the closed drawer keeps printing (same PID, same size: nothing resized);
 //   3. the Esc rule: one Esc on the chrome closes; in a shell at its prompt only a double Esc closes; on the
 //      alternate screen (vim) never; a dialog's Esc is the dialog's;
-//   4. clicking the backdrop closes, clicking inside does not; Ctrl+Tab stays quiet while it is open;
+//   4. a press on the 16 px margin (no backdrop any more) closes, clicking inside does not; Ctrl+Tab stays quiet;
 //   5. moving work: pane desk → drawer → current desk from the tab's menu (same PID, screen kept), a whole
 //      frame by the app's hooks, and the drawer is the same one from every desk;
 //   6. attention of a drawer pane shows on the toolbar button; the tray's "Abrir gaveta" opens it;
-//   7. window kill + relaunch: the drawer's panes come back in the drawer (closed), same PIDs, output flowing.
+//   7. window kill + relaunch: the drawer's panes come back in the drawer (closed), same PIDs, output flowing;
+//   8. the empty state (last pane leaves): the invitation shows, "Terminal rápido" opens a shell, the pill closes
+//      and the focus goes back to where it was.
+// The card itself (a full-window card over the toolbar, its own slim bar, the fading cards) is also in app.chrome.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -43,7 +46,7 @@ type Doc = {
   querySelector(selector: string): { clientWidth: number; clientHeight: number; hasAttribute(n: string): boolean; getAttribute(n: string): string | null; textContent: string | null; hidden: boolean } | null
   activeElement: { closest(selector: string): { getAttribute(n: string): string | null } | null; id: string } | null
 }
-declare const window: { __tether: Hooks; tether: { notice(n: unknown): void }; getComputedStyle(el: unknown): { visibility: string } }
+declare const window: { __tether: Hooks; tether: { notice(n: unknown): void }; getComputedStyle(el: unknown): { visibility: string; opacity: string } }
 declare const document: Doc
 type TrayHook = { command(id: string): void; model(): { items: { kind: string; id?: string; label?: string }[] } }
 
@@ -171,6 +174,13 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     await sleep(800)
     assert.equal((await h.drawer(page)).panes.length, 1, 'one quick shell, not more')
     assert.deepEqual(await h.ids(page), [a], 'the desk still holds only its own pane')
+    // the card: 16 px from every edge, over the toolbar; its bar replaces the old header (no "compartilhada…" note)
+    const card = await page.locator('.drawer-card').evaluate(el => { const r = (el as unknown as { getBoundingClientRect(): { left: number; top: number; right: number; bottom: number } }).getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom } })
+    const vp = await page.evaluate(() => ({ w: (window as unknown as { innerWidth: number }).innerWidth, h: (window as unknown as { innerHeight: number }).innerHeight }))
+    assert.deepEqual([card.left, card.top, vp.w - card.right, vp.h - card.bottom], [16, 16, 16, 16], 'the card sits 16 px from every edge')
+    assert.equal(await page.locator('.drawer-head, .drawer-note, .drawer-backdrop').count(), 0, 'no old header, no backdrop')
+    assert.equal(await page.locator('.drawer-bar #drawer-pill[aria-pressed="true"]').count(), 1, 'the pill is pressed')
+    assert.equal(await page.locator('.drawer[data-empty="true"]').count(), 0, 'a quick shell is on its way: no invitation')
     await page.screenshot({ path: join(artifacts, 'drawer-open.png') })
     const sizeOpen = await h.sizeOf(page, d)
     await typeInto(page, d, 'Write-Host marca-gaveta\r')
@@ -238,7 +248,7 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     await page.mouse.click(300, 300) // inside the panel
     await sleep(300)
     assert.equal((await h.drawer(page)).open, true, 'a click inside does not close it')
-    await page.mouse.click(3, 300) // the 8 px gap: the backdrop
+    await page.mouse.click(8, 300) // the 16 px margin, where the backdrop used to be
     await waitDrawer(page, false)
     await expectFocus(page, a)
 
@@ -303,6 +313,15 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     await waitDrawer(page, true)
     await page.click('#drawer-close')
     await waitDrawer(page, false)
+    // the pill closes it too, and the keyboard goes back to the pane it came from
+    await page.waitForFunction(() => window.__tether.drawer().open === false)
+    const before = await h.focused(page)
+    assert.ok(before, 'the keyboard is in a pane of the desks')
+    await page.click('#btn-drawer')
+    await waitDrawer(page, true)
+    await page.click('#drawer-pill')
+    await waitDrawer(page, false)
+    await expectFocus(page, before!)
 
     // ---- 7. relaunch ----
     console.log('step 7')
@@ -326,6 +345,25 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     await openDrawer(page)
     await expectFocus(page, d)
     await closeDrawerByShortcut(page)
+
+    // ---- 8. the empty state ----
+    console.log('step 8')
+    await openDrawer(page)
+    await expectFocus(page, d)
+    await page.locator('.drawer .tether-tab').first().hover()
+    await page.locator('.drawer .tether-tab .close').first().click()
+    await page.locator('dialog[open] button.choice[data-choice="detach"]').click()
+    await page.waitForFunction(() => window.__tether.drawer().panes.length === 0)
+    await page.waitForSelector('.drawer[data-empty="true"] .drawer-empty .de-btn')
+    assert.equal((await h.drawer(page)).open, true, 'closing the last pane does not close the drawer')
+    assert.match((await page.locator('.drawer-empty').textContent())!, /A gaveta está vazia/)
+    assert.deepEqual(await page.locator('.drawer-empty .de-btn').allTextContents(), ['Novo painel…Ctrl+Shift+T', 'Terminal rápidoCtrl+`'])
+    await page.screenshot({ path: join(artifacts, 'drawer-empty.png') })
+    await page.click('#drawer-empty-quick')
+    await page.waitForFunction(() => window.__tether.drawer().panes.length === 1)
+    assert.equal(await page.locator('.drawer[data-empty="true"]').count(), 0, 'the invitation is gone with a pane in')
+    await page.keyboard.press('Control+Backquote')
+    await waitDrawer(page, false)
   } finally {
     console.log('teardown')
     if (app) await killElectron(app, root).catch(() => {})

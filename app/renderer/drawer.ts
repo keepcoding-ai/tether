@@ -1,5 +1,6 @@
 // The drawer: one quick desk shared by all desks. It is a full Desk (frames, panes, the "+" near the borders)
-// inside a panel that slides over the app, 8 px from the window edges, on a dimmed and blurred backdrop.
+// inside an elevated card 16 px from every window edge, over the toolbar, with no backdrop: the cards behind fade
+// (styles.css) and a click on the 16 px margin closes it. The card has its own slim bar (index.html).
 //
 // Closed it stays mounted at the same size (`visibility:hidden`, `inert`; no `display:none`), so its terminals keep
 // receiving output and never get a `resize`: opening it shows terminals that are already up to date. This is the
@@ -13,8 +14,8 @@ import { type DrawerLayout, emptyDrawer } from './layout.ts'
 export interface DrawerHost {
   /** The host of the drawer's frames. */
   deskHost(): DeskHost
-  /** The backdrop (outside the panel) was clicked. */
-  onBackdrop(): void
+  /** The margin around the card (where a backdrop used to be) was clicked. */
+  onMargin(): void
 }
 
 export class Drawer {
@@ -30,7 +31,8 @@ export class Drawer {
     this.host = host
     this.theme = theme
     this.body = root.querySelector<HTMLElement>('.drawer-body')!
-    root.querySelector('.drawer-backdrop')!.addEventListener('mousedown', ev => { ev.preventDefault(); host.onBackdrop() })
+    // The layer is transparent and only the card is on top of it: a press that lands on the layer itself is the margin.
+    root.addEventListener('mousedown', ev => { if (ev.target === root) { ev.preventDefault(); host.onMargin() } })
     this.mountDesk()
     this.current.fromEmpty()
     this.setOpen(false)
@@ -44,6 +46,7 @@ export class Drawer {
     const el = document.createElement('div')
     el.className = 'drawer-desk'
     this.body.append(el)
+    el.toggleAttribute('inert', this.root.dataset.empty === 'true')
     this.current = new Desk(el, this.host.deskHost(), this.theme)
     this.current.meta = { id: 'drawer', name: 'Gaveta', color: DEFAULT_DESK_HUE }
   }
@@ -55,6 +58,15 @@ export class Drawer {
     this.root.toggleAttribute('inert', !open)
     this.root.setAttribute('aria-hidden', String(!open))
     if (!open) this.current.hidePlus()
+  }
+
+  /**
+   * Shows the invitation of an empty drawer (and hides the desk under it; it keeps its box, so nothing resizes).
+   * The desk is `inert` meanwhile: nothing in it is worth a Tab stop.
+   */
+  setEmpty(empty: boolean): void {
+    this.root.dataset.empty = String(empty)
+    this.body.querySelector('.drawer-desk')?.toggleAttribute('inert', empty)
   }
 
   toJSON(): DrawerLayout {
