@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Event as DaemonEvent, Notice } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, TetherApi } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
+import type { FontSizeCommand } from '../shared/font.ts'
 import type { TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ThemeState } from '../shared/theme.ts'
 
@@ -36,6 +37,7 @@ const api: TetherApi = {
   getTheme: () => ipcRenderer.invoke('theme:get'),
   setTheme: setting => ipcRenderer.send('theme:set', setting),
   onTheme: listener => on<ThemeState>('tether:theme', listener),
+  onFontSizeCommand: listener => on<FontSizeCommand>('tether:font-size', listener),
   getTerminalAppearance: () => ipcRenderer.invoke('terminal:get'),
   setTerminalAppearance: appearance => ipcRenderer.send('terminal:set', appearance),
   onTerminalAppearance: listener => on<TerminalAppearance>('tether:terminal', listener),

@@ -4,7 +4,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { decodeOsc52 } from '../../app/renderer/clipboard.ts'
-import { PANE_SHORTCUTS, paneShortcutHint, paneShortcutOf, SHORTCUTS, chordLabel, type Chord } from '../../app/renderer/shortcuts.ts'
+import { PANE_SHORTCUTS, paneShortcutHint, paneShortcutOf, SHORTCUTS, chordLabel, chordOn, type Chord } from '../../app/renderer/shortcuts.ts'
 
 type Mods = { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }
 const key = (code: string, m: Mods = {}, type = 'keydown') =>
@@ -45,14 +45,25 @@ describe('pane clipboard keys', () => {
     assert.equal(paneShortcutHint('copy'), 'Ctrl+C')
     assert.equal(paneShortcutHint('paste-or-raw'), 'Ctrl+V')
     assert.equal(paneShortcutHint('paste'), 'Ctrl+Shift+V')
-    const keyOf = (c: Chord): string => `${c.ctrl ? 'C' : ''}${c.alt ? 'A' : ''}${c.shift ? 'S' : ''}+${c.code}`
-    const app = new Set(SHORTCUTS.map(s => keyOf(s.chord)))
-    const seen = new Set<string>()
-    for (const { chord } of PANE_SHORTCUTS) {
-      assert.ok(!app.has(keyOf(chord)), `pane chord is also an app chord: ${chordLabel(chord)}`)
-      assert.ok(!seen.has(keyOf(chord)), `pane chord bound twice: ${chordLabel(chord)}`)
-      seen.add(keyOf(chord))
+    const keyOf = (c: Chord): string => `${c.ctrl ? 'C' : ''}${c.alt ? 'A' : ''}${c.shift ? 'S' : ''}${c.meta ? 'M' : ''}+${c.code}`
+    for (const mac of [false, true]) {
+      const app = new Set(SHORTCUTS.map(s => chordOn(s, mac)).filter((c): c is Chord => c !== null).map(keyOf))
+      const seen = new Set<string>()
+      for (const entry of PANE_SHORTCUTS) {
+        const chord = chordOn(entry, mac)
+        if (!chord) continue
+        assert.ok(!app.has(keyOf(chord)), `pane chord is also an app chord: ${chordLabel(chord, mac)}`)
+        assert.ok(!seen.has(keyOf(chord)), `pane chord bound twice: ${chordLabel(chord, mac)}`)
+        seen.add(keyOf(chord))
+      }
     }
+  })
+
+  test('Mac: Cmd+C copies, Cmd+V pastes, Ctrl+V stays the terminal\'s', () => {
+    assert.equal(paneShortcutOf(key('KeyC', { meta: true }), false, true), 'copy')
+    assert.equal(paneShortcutOf(key('KeyV', { meta: true }), false, true), 'paste')
+    assert.equal(paneShortcutOf(key('KeyV', { ctrl: true }), false, true), undefined)
+    assert.equal(paneShortcutOf(key('KeyC', { ctrl: true }), true, true), undefined)
   })
 })
 

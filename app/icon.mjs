@@ -1,12 +1,18 @@
-// Renders the app icon (two linked panes on a dark rounded square) straight into PNG/ICO files, with no
-// dependencies: a tiny supersampled rasterizer of rounded rectangles + a PNG encoder (node:zlib) + an ICO
-// container. Called by app/build.mjs; the shortcut and the window point at app/dist/tether.ico.
+// Renders the app icon (two linked panes on a dark rounded square) straight into PNG/ICO/ICNS files, with
+// no dependencies: a tiny supersampled rasterizer of rounded rectangles + a PNG encoder (node:zlib) + an
+// ICO container (Windows) + an ICNS container (macOS). Called by app/build.mjs; the Start Menu shortcut and
+// the window point at app/dist/tether.ico, the Tether.app bundle at app/dist/tether.icns.
 import { deflateSync } from 'node:zlib'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const SIZES = [16, 24, 32, 48, 64, 128, 256]
-const SUPERSAMPLE = 4
+/** ICO sizes (the format tops out at 256 px). */
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+/** ICNS sizes: the modern PNG-bearing types, 1x and 2x of 16/32/128/256/512 (see ICNS_TYPES). */
+const ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
+const SIZES = [...new Set([...ICO_SIZES, ...ICNS_SIZES])].sort((a, b) => a - b)
+/** Supersampling grid per axis; large images get a 2×2 grid (the edges are already smooth, 1024 px at 4×4 takes ~2 s). */
+const supersampleFor = (size) => (size >= 512 ? 2 : 4)
 
 const BG = [0x1b, 0x1b, 0x1f]
 const BG_EDGE = [0x3a, 0x3a, 0x44]
@@ -38,7 +44,7 @@ const layers = [
 /** RGBA pixels (top-down) of the icon at `size` px, antialiased by supersampling. */
 export function rasterize(size) {
   const px = new Uint8Array(size * size * 4)
-  const n = SUPERSAMPLE
+  const n = supersampleFor(size)
   for (let py = 0; py < size; py++) {
     for (let pxx = 0; pxx < size; pxx++) {
       let r = 0, g = 0, b = 0, a = 0
@@ -150,11 +156,65 @@ export function encodeIco(images) {
   return Buffer.concat([dir, ...entries, ...blobs])
 }
 
-/** Writes <outDir>/tether.ico (all sizes) and <outDir>/tether.png (256 px). */
+// ---------- ICNS ----------
+
+/**
+ * ICNS element types that carry a whole PNG as payload (macOS ≥ 10.7), by pixel size: the 1x and the @2x
+ * ("Retina") entry for each point size, exactly the set `iconutil -c icns` writes for a standard .iconset.
+ * The container is a plain TLV file: magic "icns", total length, then (type, length, payload) elements,
+ * every length big-endian and counting its own 8-byte header.
+ */
+export const ICNS_TYPES = {
+  16: ['icp4'],
+  32: ['icp5', 'ic11'],
+  64: ['ic12'],
+  128: ['ic07'],
+  256: ['ic08', 'ic13'],
+  512: ['ic09', 'ic14'],
+  1024: ['ic10'],
+}
+
+export function encodeIcns(images) {
+  const elements = []
+  for (const { size, rgba } of images) {
+    const types = ICNS_TYPES[size]
+    if (!types) continue
+    const png = encodePng(size, rgba)
+    for (const type of types) {
+      const header = Buffer.alloc(8)
+      header.write(type, 0, 4, 'latin1')
+      header.writeUInt32BE(8 + png.length, 4)
+      elements.push(header, png)
+    }
+  }
+  const total = 8 + elements.reduce((n, b) => n + b.length, 0)
+  const head = Buffer.alloc(8)
+  head.write('icns', 0, 4, 'latin1')
+  head.writeUInt32BE(total, 4)
+  return Buffer.concat([head, ...elements])
+}
+
+/** Parses an ICNS container into [{ type, length }] (lengths include the 8-byte element header); throws on a malformed file. */
+export function readIcnsIndex(buf) {
+  if (buf.length < 8 || buf.toString('latin1', 0, 4) !== 'icns') throw new Error('not an ICNS file')
+  if (buf.readUInt32BE(4) !== buf.length) throw new Error('ICNS length field does not match the file size')
+  const index = []
+  for (let o = 8; o < buf.length;) {
+    const length = buf.readUInt32BE(o + 4)
+    if (length < 8 || o + length > buf.length) throw new Error(`ICNS element at ${o} runs past the file`)
+    index.push({ type: buf.toString('latin1', o, o + 4), length })
+    o += length
+  }
+  return index
+}
+
+/** Writes <outDir>/tether.ico (Windows sizes), <outDir>/tether.icns (macOS sizes) and <outDir>/tether.png (256 px). */
 export function writeIcons(outDir) {
   const images = SIZES.map(size => ({ size, rgba: rasterize(size) }))
-  writeFileSync(join(outDir, 'tether.ico'), encodeIco(images))
-  writeFileSync(join(outDir, 'tether.png'), encodePng(256, images.at(-1).rgba))
+  const bySize = new Map(images.map(i => [i.size, i]))
+  writeFileSync(join(outDir, 'tether.ico'), encodeIco(ICO_SIZES.map(s => bySize.get(s))))
+  writeFileSync(join(outDir, 'tether.icns'), encodeIcns(ICNS_SIZES.map(s => bySize.get(s))))
+  writeFileSync(join(outDir, 'tether.png'), encodePng(256, bySize.get(256).rgba))
 }
 
 // ---------- tray ----------

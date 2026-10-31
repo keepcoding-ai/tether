@@ -10,9 +10,12 @@
 //      execs `"$NODE" "$CLI"`: ConPTY cannot run it, so the script is read and its NODE=/CLI= lines
 //      become the command (NODE in msys form, /c/..., is converted; when absent or missing on disk,
 //      the daemon's own node runs the CLI). A script without a CLI= line runs through Git Bash.
-//   3. Elsewhere, or when nothing is found: the bare `soul` (spawn resolves it).
+//   3. macOS, `soul` not on the daemon's PATH (an alias or a PATH set in the user's rc files): asked of the
+//      user's login shell; an alias/function runs through `$SHELL -lic 'soul "$@"'`.
+//   4. Elsewhere, or when nothing is found: the bare `soul` (spawn resolves it).
 // Whichever node the command ends up with runs as <home>/bin/tether-soul.exe (core/exe.ts): a panel of the
 // soul survives a "kill every node.exe" and shows its own name in the Task Manager.
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { withColorSupport } from './termenv.ts'
@@ -89,6 +92,30 @@ export function commandFromScript(script: string, env: Record<string, string | u
   return { command: bash, args: [script] }
 }
 
+/** macOS: `soul` as the user's interactive login shell sees it (rc files, aliases). Undefined when it cannot tell. */
+const loginShellCache = new Map<string, Command | undefined>()
+
+export function soulFromLoginShell(env: Record<string, string | undefined>): Command | undefined {
+  const shell = env.SHELL // no $SHELL, no lookup: an env that names no shell is not the user's session
+  if (!shell) return undefined
+  if (loginShellCache.has(shell)) return loginShellCache.get(shell)
+  const found = askLoginShell(shell, env)
+  if (found) loginShellCache.set(shell, found) // a miss is not cached: soul may get installed meanwhile
+  return found
+}
+
+function askLoginShell(shell: string, env: Record<string, string | undefined>): Command | undefined {
+  try {
+    const out = execFileSync(shell, ['-lic', 'command -v soul'], { env: env as NodeJS.ProcessEnv, encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] })
+    const line = out.trim().split('\n').pop()?.trim()
+    if (!line) return undefined
+    if (isAbsolute(line) && existsSync(line)) return { command: line, args: [] }
+    return { command: shell, args: ['-lic', 'soul "$@"', 'soul'] } // alias or shell function
+  } catch {
+    return undefined
+  }
+}
+
 export function resolveSoulCommand(env: Record<string, string | undefined> = process.env): Command {
   const custom = env[ENV_SOUL_CMD]?.trim()
   if (custom) {
@@ -98,7 +125,7 @@ export function resolveSoulCommand(env: Record<string, string | undefined> = pro
     return { command, args: rest }
   }
   const found = findOnPath('soul', env)
-  if (!found) return { command: 'soul', args: [] }
+  if (!found) return (process.platform === 'darwin' ? soulFromLoginShell(env) : undefined) ?? { command: 'soul', args: [] }
   if (process.platform === 'win32' && !/\.(exe|cmd|bat)$/i.test(found) && isScript(found)) {
     return commandFromScript(found, env)
   }
@@ -109,11 +136,22 @@ export function resolveSoulCommand(env: Record<string, string | undefined> = pro
  * The command with its node replaced by <home>/bin/tether-soul.exe, when it is a node at all (a `soul.exe` or a
  * bash launcher is left alone). The daemon may itself be a renamed node (tetherd.exe): the node it was made
  * from is in TETHER_NODE, and the soul's copy comes from that one, never from another copy.
+ *
+ * On macOS no copy exists (core/exe.ts: dyld refuses it) and node-pty has no argv0 of its own (its argv[0] is
+ * always the file), so the name goes through the shell: `/bin/sh -c 'exec -a tether-soul "$0" "$@"' node args…`.
+ * /bin/sh there is bash (or zsh), both with `exec -a`; the shell is replaced by the node, not kept in between.
  */
 export function withRenamedNode(cmd: Command, home: string, env: Record<string, string | undefined> = process.env, log: (msg: string) => void = exeLog(home, 'soul')): Command {
   if (!isNodeExecutable(cmd.command)) return cmd
   const source = isRenamedNode(cmd.command) ? (env.TETHER_NODE?.trim() || cmd.command) : cmd.command
-  return { command: ensureRenamedNode(home, 'tether-soul', source, log).path, args: cmd.args }
+  const exe = ensureRenamedNode(home, 'tether-soul', source, log)
+  if (exe.argv0) return argv0Command(exe.argv0, exe.path, cmd.args)
+  return { command: exe.path, args: cmd.args }
+}
+
+/** `/bin/sh -c 'exec -a <name> "$0" "$@"' <file> <args…>`: runs `file` with `name` as its argv[0]. */
+export function argv0Command(name: string, file: string, args: string[]): Command {
+  return { command: '/bin/sh', args: ['-c', `exec -a ${name} "$0" "$@"`, file, ...args] }
 }
 
 function envWithoutUndefined(source: NodeJS.ProcessEnv): Record<string, string> {

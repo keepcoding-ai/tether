@@ -2,6 +2,7 @@
 // Shared by the preload (implements it) and the renderer (consumes it).
 import type { Event as DaemonEvent, Notice, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
 import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
+import type { FontSizeCommand } from './font.ts'
 import type { TerminalAppearance } from './terminal-theme.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 
@@ -56,6 +57,8 @@ export interface TetherApi {
   /** Persists the setting; the new state arrives through onTheme (also on every OS switch while `auto`). */
   setTheme(setting: ThemeSetting): void
   onTheme(listener: (state: ThemeState) => void): () => void
+  /** Menu "Exibir → Aumentar/Diminuir/Tamanho padrão": main asks the renderer to step the size (it owns the terminals; the size is appearance.fontSize). */
+  onFontSizeCommand(listener: (command: FontSizeCommand) => void): () => void
   /** The terminal appearance (preset, font, weight, size, line height) as saved in settings.json, normalized. */
   getTerminalAppearance(): Promise<TerminalAppearance>
   /** Persists it; the normalized value comes back through onTerminalAppearance (to this and any other window). */

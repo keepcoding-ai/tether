@@ -9,28 +9,38 @@
 // executable. Windows refuses to replace an executable that is running: then the old one stays (logged) and
 // is replaced on a later start. When nothing works, the caller runs the plain node (logged; `tether doctor`
 // warns) rather than not running at all.
-import { appendFileSync, copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+//
+// macOS is the exception: no file is made there. Homebrew's `node` is a small stub that loads
+// `@rpath/libnode.dylib` with an LC_RPATH of `@loader_path` (and `@loader_path/../lib`), so a link or copy of it
+// anywhere else aborts in dyld at launch ("Library not loaded"). The process runs the real node and gets its
+// name through argv[0] instead (`argv0` of child_process.spawn; `exec -a` for a pty), which is what `ps`
+// shows. Processes are killed by pid there, so the killall motive does not apply.
+import { appendFileSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 
 export type ExeName = 'tetherd' | 'tether-soul'
 export type ExeMethod = 'hardlink' | 'copy'
+/** How the process gets its name: a renamed file, none at all (`fallback`), or argv[0] over the real node (`argv0`). */
+export type ExeHow = ExeMethod | 'fallback' | 'argv0'
 
 /** What <home>/bin/<name>.json remembers about the executable it sits next to. */
 export interface ExeStamp {
   source: string
   size: number
   mtimeMs: number
-  method: ExeMethod | 'fallback'
+  method: ExeHow
   reason?: string
 }
 
 export interface ExeResult {
-  /** What to run: the renamed executable, or `source` itself when it could not be made. */
+  /** What to run: the renamed executable, or `source` itself when it could not be made (or must not be: argv0). */
   path: string
-  method: ExeMethod | 'fallback'
+  method: ExeHow
   /** fresh = made now; current = already matched its source; stale = an older copy kept because it is in use. */
   state: 'fresh' | 'current' | 'stale'
   reason?: string
+  /** Set with method 'argv0': the name to give the process (its argv[0]) when running `path`. */
+  argv0?: ExeName
 }
 
 /** A logger for callers that have none: one line per message in <home>/tetherd.log, tagged with pid and `tag`. */
@@ -86,13 +96,57 @@ export function isNodeExecutable(path: string): boolean {
   return /^node(\.exe)?$/i.test(basename(path)) || isRenamedNode(path)
 }
 
+/** The temp names ensureRenamedNode writes before renaming into place: <name>[.exe][.json].<pid>.tmp. */
+const TEMP_NAME = /^(?:tetherd|tether-soul)(?:\.exe)?(?:\.json)?\.(\d+)\.tmp$/i
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/**
+ * Removes temp files left in <home>/bin by starts that died between writing and renaming (a crash, a kill). Only
+ * ours by name, never this process's own, and never one whose writer is still alive. Never throws.
+ */
+export function sweepOrphanTemps(home: string, log: (msg: string) => void = () => {}): string[] {
+  const removed: string[] = []
+  let names: string[]
+  try { names = readdirSync(exeDir(home)) } catch { return removed }
+  for (const n of names) {
+    const m = TEMP_NAME.exec(n)
+    if (!m) continue
+    const pid = Number.parseInt(m[1]!, 10)
+    if (pid === process.pid || isAlive(pid)) continue
+    const path = join(exeDir(home), n)
+    try {
+      rmSync(path, { force: true })
+      removed.push(path)
+      log(`bin: removido o temporário órfão ${path} (pid ${pid} já não existe)`)
+    } catch (e) {
+      log(`bin: não consegui remover o temporário órfão ${path}: ${(e as Error).message}`)
+    }
+  }
+  return removed
+}
+
+/** Why no renamed executable is made on macOS (the stamp's reason and doctor's text). */
+export function argv0Reason(source: string): string {
+  return `no macOS o node (${source}) carrega @rpath/libnode.dylib por @loader_path: um link ou cópia fora de ${dirname(source)} aborta no dyld; o processo roda pelo node real e recebe o nome por argv0`
+}
+
 /**
  * Makes sure <home>/bin/<name>[.exe] is an up-to-date copy of `source` and returns what to run. Never throws:
  * a failure to make the copy returns `source` itself as 'fallback' (and records why in the stamp for doctor).
- * Cheap when nothing changed: one stat of the source and one read of the stamp.
+ * Cheap when nothing changed: one stat of the source and one read of the stamp. On darwin nothing is made
+ * (see the header): `source` comes back with `argv0` set, for the caller to name the process.
  */
-export function ensureRenamedNode(home: string, name: ExeName, source: string, log: (msg: string) => void = () => {}): ExeResult {
+export function ensureRenamedNode(home: string, name: ExeName, source: string, log: (msg: string) => void = () => {}, platform: NodeJS.Platform = process.platform): ExeResult {
   const target = exePath(home, name)
+  sweepOrphanTemps(home, log)
   let src: ReturnType<typeof statSync>
   try {
     src = statSync(source)
@@ -100,6 +154,18 @@ export function ensureRenamedNode(home: string, name: ExeName, source: string, l
     return fallback(`${source} não existe ou não pode ser lido: ${(e as Error).message}`)
   }
   const stamp = readStamp(home, name)
+  if (platform === 'darwin') {
+    const reason = argv0Reason(source)
+    if (stamp?.method === 'argv0' && stamp.source === source && stamp.size === src.size && stamp.mtimeMs === src.mtimeMs) {
+      return { path: source, method: 'argv0', state: 'current', reason, argv0: name }
+    }
+    try {
+      mkdirSync(exeDir(home), { recursive: true })
+      writeStamp(home, name, { source, size: src.size, mtimeMs: src.mtimeMs, method: 'argv0', reason })
+    } catch (e) { log(`${name}: não consegui gravar ${stampPath(home, name)}: ${(e as Error).message}`) }
+    log(`${name}: rodando pelo node real (${source}) com o nome por argv0`)
+    return { path: source, method: 'argv0', state: 'fresh', reason, argv0: name }
+  }
   const previous: ExeMethod | undefined = stamp?.method === 'copy' || stamp?.method === 'hardlink' ? stamp.method : undefined
   if (previous && isCurrent(stamp, source, src.size, src.mtimeMs, target)) return { path: target, method: previous, state: 'current' }
 
@@ -158,20 +224,23 @@ export interface ExeStatus {
   stamp: ExeStamp | undefined
   /** The stamp's source changed since the copy was made (or there is no stamp): the next start remakes it. */
   outdated: boolean
+  /** argv0 is the method (macOS) and yet a renamed file sits at `path`: a leftover dyld refuses to run. */
+  residue: boolean
 }
 
-export function inspectRenamedNode(home: string, name: ExeName): ExeStatus {
+export function inspectRenamedNode(home: string, name: ExeName, platform: NodeJS.Platform = process.platform): ExeStatus {
   const path = exePath(home, name)
   const present = existsSync(path)
   const stamp = readStamp(home, name)
+  const argv0 = platform === 'darwin' || stamp?.method === 'argv0'
   let outdated = !stamp || stamp.method === 'fallback'
   if (stamp && stamp.method !== 'fallback') {
     try {
       const s = statSync(stamp.source)
-      outdated = s.size !== stamp.size || s.mtimeMs !== stamp.mtimeMs || !present
+      outdated = s.size !== stamp.size || s.mtimeMs !== stamp.mtimeMs || (!present && !argv0)
     } catch {
       outdated = true
     }
   }
-  return { name, path, present, stamp, outdated }
+  return { name, path, present, stamp, outdated, residue: argv0 && present }
 }

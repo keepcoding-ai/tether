@@ -378,7 +378,7 @@ Decisões para validar (defaults adotados; detalhe no PLAN.md §4 da fase):
 - Fase 4: **quem está visível na cápsula não é persistido**; o MRU é da sessão.
 - Fase 4: **overflow de abas pelo nativo do dockview restilizado como "+N"**; escolher no "+N" reordena a aba no layout (entra no lugar da usada há mais tempo).
 - Fase 4: **ponto de estado na aba só para estados não-"running"**; rodando, a aba fica limpa; o estado vive na barra de status (recolhida por padrão).
-- Fase 4: **"Reiniciar sessão" e "Renomear…" ficam fora** desta fase (sem request de reinício puro; o título vem do agente).
+- Fase 4: **"Reiniciar sessão" fica fora** desta fase (sem request de reinício puro). Renomear a aba já existe (duplo clique, vindo do merge com a Francine): o plano da faixa de abas deve contar com ele.
 - Fase 4: **gaveta vazia ao abrir continua abrindo um shell** (fase D); o convite de estado vazio aparece quando o último painel sai com ela aberta ou o shell automático não pode abrir.
 - Fase 4: **sem toggle "Borda dos quadros"** (só a linha da cor foi aprovada); o token fica.
 - Fase 4: **a margem de 16px fecha a gaveta** (substitui o backdrop); pílula, X, Esc e Ctrl+` continuam.
@@ -387,3 +387,46 @@ Decisões para validar (defaults adotados; detalhe no PLAN.md §4 da fase):
 - Fase 4: **arrastar para reordenar mesas sai** com a faixa; "Mover para a esquerda/direita" no menu cobre.
 - Fase 4: **fundo da janela = `--desk-bg`** (`WINDOW_BACKGROUND`).
 - Fase 4: **cartões de trás esmaecem com `opacity` + `blur(1.5px)`**; se pesar com WebGL, só `opacity`.
+
+## Mac: o tetherd que não nascia, e o layout que se apagava (2026-10-30)
+
+A Francine relatou o Tether "fechando sozinho e abrindo sem nenhum painel". São dois defeitos independentes.
+
+**1. O executável renomeado não nasce no Mac.** `ensureRenamedNode` hardlinka o node em `<home>/bin/tetherd` para dar nome próprio ao processo — desenho de Windows (Task Manager, `killall node.exe`). O `node` do Homebrew é um stub de 68 KB que carrega `@rpath/libnode.141.dylib` com `LC_RPATH` só `@loader_path` e `@loader_path/../lib`: fora da pasta original, o dyld aborta no launch. Reproduzido (`~/.local/state/tether/bin/tetherd -e …` → `Library not loaded`, inclusive com `env -i`), com 27 relatórios `tetherd-*.ips` em `~/Library/Logs/DiagnosticReports` (`termination.namespace: DYLD`, "terminated at launch"). Conserto (`f861c89`): no darwin nada é copiado para `bin/` — roda o node real e o nome vai pelo `argv0` do `spawn`; o soul usa `/bin/sh -c 'exec -a tether-soul "$0" "$@"'` porque o node-pty não aceita `argv0` (`src/unix/pty.cc:383` faz `argv[0] = strdup(file)`). `.tmp` órfão é varrido; o doctor aponta o hardlink residual. Prova minha: `argv0=tetherd` e `argv0=tether-soul` com `execPath` do node real, e `ensureRenamedNode` em home temporária devolve `method: 'argv0'` deixando só o stamp em `bin/`.
+
+**2. O layout era destruído pela ausência do daemon.** Às 14:23:30Z um `shutdown` (prova do `tether daemon restart` em construção) parou os 15 agentes — inclusive a sessão que falava com ela. O daemon ficou 10 min fora; na volta o app podou o layout contra uma lista de slots vazia e **gravou** o resultado: ~15 painéis lado a lado viraram um. Os 19 slots no disco sobreviveram; só a disposição morreu. Conserto (`faf39a9`): poda só na exibição, `known` vazio não poda nada, nenhuma gravação sem ação da pessoa, `layout.json.bak` atômico com fallback. E (`a834d1d`): `tether daemon restart|stop` recusam de dentro de um slot do próprio daemon (`--force` para insistir), o item "Recarregar" perdeu o `Cmd+Shift+R` e pede confirmação dizendo quantos agentes encerra. Prova minha: 19 unitários novos verdes; `ownSlotOf` contra a lista do daemon vivo reconhece o slot `861509e8` e recusaria.
+
+Dívida que ficou (anterior a hoje): 5 unitários falham no Mac por fixture de caminho Windows (`C:\…`, `D:\…`) e pelo `spawn-failed` do node-pty, que no Mac não rejeita síncrono. Linha de base em `a834d1d` falhava 8; nenhuma falha nova. Prova viva (reiniciar o tetherd) é da Francine: reiniciar mata todas as sessões abertas.
+
+## Instalador do Mac: Tether.app (2026-10-30)
+
+Pedido da Francine: abrir o Tether sem linha de comando. `app/install.mjs` ganhou o lado macOS (o Windows segue no atalho do Menu Iniciar): `node app/install.mjs install|uninstall|read [--prefix <dir>]` monta `~/Applications/Tether.app` — bundle leve (Info.plist + lançador `/bin/sh` + `tether.icns`), **sem empacotar o Electron**, lançando o Electron do repo com `app/dist/main.cjs`. Mesmo contrato do Windows: o atalho nunca builda. Idempotente por tmp+rename, recusa bundle alheio pelo `CFBundleIdentifier`, `uninstall` só apaga o nosso. `app/icon.mjs` passou a emitir `.icns` (container escrito à mão, 10 tamanhos até 1024, sem dependência) e `app/main/main.ts` faz `app.setName('tether')` + `app.dock.setIcon` no darwin. Commits `fea04ce`, `1d1ec4a`, `fedb0fb`.
+
+**Identidade no Dock — medido, não escolhido por gosto.** `Contents/MacOS/tether` como symlink para o binário do Electron dá a identidade certa (LaunchServices lê `tether`/`studio.codr.tether`), mas **mata todos os helpers** (GPU, rede, renderer): o sandbox dos helpers é escrito contra o caminho do bundle principal e eles vivem de verdade dentro do `Electron.app`; só `--no-sandbox` revive, o que não se aceita. Ficou o lançador com `exec -a`, que roda limpo e deixa o SO atribuir o processo ao `Electron.app` — daí o `setName`/`setIcon` no runtime. Copiar o binário está fora: é o mesmo defeito de dyld/@rpath consertado hoje no `tetherd`. Se o nome "Electron" no Dock incomodar, o caminho completo é empacotar o Electron dentro do bundle (pacote grande) — decisão da Francine.
+
+Provas minhas: `plutil -lint` OK no plist instalado, `file` → "Mac OS X icon" (39 KB), 8/8 unitários novos (`app.icon`, `app.install-mac`), typecheck limpo, instalado de verdade em `~/Applications/Tether.app`. A prova visual (ícone, nome, abrir pelo Launchpad) é da Francine.
+
+## Merge de origin/develop com o Mac e o instalador (2026-10-30)
+
+Merge (não rebase) dos 30 commits do Guga (quadros/layout v2, bandeja, tema do terminal, teclas de área de transferência, tela de carregamento/termenv, `tether stop` que não mata o tetherd) sobre os 15 do Mac. Doze conflitos, cada um decidido à mão. O que mudou de comportamento ao juntar:
+
+- **Layout v2 com a política de não-destruição.** `planRestore` agora lê v1 ou v2 e poda por mesa/quadro **só na tela**; lista vazia do daemon não poda nada; restaurar e reconectar descartam o save que o dockview agenda. Saiu o `scheduleSave()` que gravava após a poda e após a migração: o arquivo v1 continua v1 até a pessoa mexer (a cópia `layout.v1.bak` é feita na leitura, sem tocar o `layout.json`). `layout.json.bak` atômico (`app/main/layout-file.ts`) segue nos handlers `layout:load`/`layout:save`.
+- **Dica e título de painel não gravam sozinhos.** A dica de carregamento (`updateParameters`) e o título vindo do agente disparam `onDidLayoutChange`; com o filtro `isPersonChange` (razões `panelParameters`/`panelTitle`) eles vão junto da próxima mudança da pessoa, em vez de regravar o layout podado sem ação dela.
+- **Tamanho da fonte = `appearance.fontSize`.** O zoom do teclado/menu (Cmd +/-/0 no Mac, Ctrl+Shift +/-/0 nos outros) dá passos no tamanho do "Tema do terminal" (padrão 14, 9–28); a chave `fontSize` antiga do settings.json deixou de ser lida.
+- **Atalhos do Mac por cima do registro.** O registro do Guga (Ctrl, igual em todas as plataformas) vale também no Mac; por cima, Cmd+T/D/E, Cmd+C/V e Cmd +/-/0 (`app/renderer/shortcut.ts`), e a edição de linha do Mac antes de tudo.
+- **"Reiniciar o app"** marca `quitting` e tira a bandeja antes do `app.exit`: com "fechar a janela esconde o app", ele continua saindo de verdade.
+- **`tether daemon restart`** espera até 45 s pelo tetherd antigo (o `shutdown` agora pode esperar até 30 s por um Claude jovem).
+- Prova: `typecheck`, `app:typecheck`, `app:build` verdes; unitários 361, 16 falhas, todas pré-existentes num dos dois lados (caminhos `C:\`/`D:\` e `spawn-failed` do node-pty no Mac), nenhuma nova. E2E não rodado (máquina em uso).
+- **Pendente na máquina:** `@xterm/addon-webgl` (dependência nova do Guga) precisa de `npm install` na árvore principal antes do próximo `app:build`.
+
+## Merge das fases C/D com o Mac da Francine (2026-10-30)
+
+Merge (não rebase) de origin/develop (16 commits da Francine: Mac, instalador, zoom de fonte, renomear aba, edição de linha, layout que não se apaga, `tether daemon restart`) sobre o develop local (fases C e D, cabeçalho recolhível, select, plano da fase 4). Nada de um lado se perdeu:
+
+- **Não-destruição do layout sobre mesas e gaveta.** `planRestore`/`orphanedPanels` passam por todas as mesas e pela gaveta (`pruneLayoutV2`, `allPanelIds`); a poda é só na tela (`desks.load` + `drawer.load`), restaurar e reconectar não gravam, e reconectar esconde painéis desconhecidos de qualquer mesa ou da gaveta. `isPersonChange` filtra o `onLayoutChange` das mesas e da gaveta. Recolher/mostrar o cabeçalho (`details`) é ação da pessoa: grava explicitamente, apesar de ser `panelParameters`. Sem nada para podar, `planRestore` devolve o próprio objeto salvo (o `drawer: null` antigo segue lendo como gaveta vazia).
+- **Um registro de atalhos só** (`app/renderer/shortcuts.ts`; `shortcut.ts` e `lineedit.ts` deixam de existir). Entradas com modificador neutro `mod` (Ctrl no Windows/Linux, Cmd no Mac) e `mac:` para diferença real; dicas e menus saem da mesma tabela por plataforma (⌘⌥⇧⌃ no Mac). Os chords do Windows ficaram exatamente como eram; o zoom (Ctrl+Shift+= / - / 0) entrou no registro como `font-size`. No Mac: Cmd+T/D/E, Cmd+C/V, Cmd+= / - / 0, Ctrl+Tab e Ctrl+` literais (Cmd+Tab e Cmd+` são do sistema), edição de linha só no Mac (`TERMINAL_INPUTS`).
+- **Colisões checadas:** nenhuma entre os atalhos da Francine e os nossos em nenhuma plataforma (o teste do registro checa duplicidade nas duas).
+- **Shift+Enter no Windows:** manda ESC CR (o "nova linha sem enviar" do Claude Code, o mesmo que o `/terminal-setup` dele configura) nos painéis de agente; no painel de shell fica o CR do xterm (PowerShell não entende ESC CR). No Mac, em todos os painéis, como ela fez.
+- **Renomear com duplo clique e zoom** funcionam com mesas, gaveta e o cabeçalho recolhível (a aba ganhou o selo de atenção e o botão do cabeçalho junto do duplo clique; a dica da aba mostra título, perfil e o título da sessão quando há nome próprio).
+- **Bandeja:** "Reiniciar o app" sai de verdade; `trayWanted` mantido (testes sem ícone).
+- Decisão para validar: no Mac, Ctrl+C com seleção não copia mais (Cmd+C copia; Ctrl+C é sempre do terminal).
