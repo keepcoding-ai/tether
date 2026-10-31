@@ -511,10 +511,10 @@ function renderDrawerButton(): void {
   badge.textContent = String(total)
   btn.setAttribute('aria-expanded', String(drawer.isOpen))
   const n = drawer.desk.panels.length
-  const what = n === 0 ? 'vazia' : n === 1 ? '1 painel' : `${n} painéis`
-  const waiting = att.waiting > 0 ? ` · ${att.waiting} esperando você` : ''
   // The invitation shows when nothing is in the drawer and no quick shell is on its way (that one has the stage).
   drawer.setEmpty(n === 0 && !quickShellBusy)
+  const what = n === 0 ? 'vazia' : n === 1 ? '1 painel' : `${n} painéis`
+  const waiting = att.waiting > 0 ? ` · ${att.waiting} esperando você` : ''
   const done = att.done > 0 ? ` · ${att.done} terminou` : ''
   btn.title = `Gaveta (${shortcutHint({ op: 'drawer-toggle' })}): ${what}${waiting}${done}. Um espaço rápido, compartilhado por todas as mesas; fechada, os agentes dela seguem rodando.`
 }
@@ -542,9 +542,9 @@ function setDrawerOpen(open: boolean): void {
     drawerState = closeDrawer(drawerState)
   }
   for (const id of BEHIND_DRAWER) $(id).toggleAttribute('inert', open)
+  document.body.classList.toggle('drawer-open', open)
   drawer.setOpen(open)
   renderStrip()
-  document.body.classList.toggle('drawer-open', open)
   if (open) {
     if (drawer.desk.panels.length === 0) { void quickShell(); renderDrawerButton() }
     requestAnimationFrame(focusDrawer)
@@ -591,9 +591,9 @@ async function quickShell(): Promise<void> {
     addPanel(reply.slot, undefined, undefined, 'drawer')
   } finally {
     quickShellBusy = false
+    renderDrawerButton()
   }
 }
-    renderDrawerButton()
 
 /** Something up that owns Esc: a dialog, a menu, an editor field. */
 function escBlocked(): boolean {
@@ -1406,6 +1406,11 @@ function setupUi(): void {
   $('btn-new').addEventListener('click', () => { void openNewDialog() })
   $('btn-drawer').addEventListener('click', () => setDrawerOpen(!drawer.isOpen))
   $('drawer-new').addEventListener('click', () => { void openNewDialog() })
+  $('drawer-empty-new').addEventListener('click', () => { void openNewDialog() })
+  $('drawer-empty-quick').addEventListener('click', () => { void quickShell() })
+  $('drawer-pill').addEventListener('click', () => setDrawerOpen(false))
+  $('drawer-empty-new').querySelector('.de-kbd')!.innerHTML = kbdHtml(shortcutHint({ op: 'choose' }))
+  $('drawer-empty-quick').querySelector('.de-kbd')!.innerHTML = kbdHtml(shortcutHint({ op: 'drawer-toggle' }))
   $('drawer-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
   $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
@@ -1423,11 +1428,6 @@ function setupUi(): void {
   $('btn-browse').addEventListener('click', async () => {
     const input = $<HTMLInputElement>('new-cwd')
     const picked = await window.tether.pickFolder(input.value.trim() || undefined)
-  $('drawer-empty-new').addEventListener('click', () => { void openNewDialog() })
-  $('drawer-empty-quick').addEventListener('click', () => { void quickShell() })
-  $('drawer-pill').addEventListener('click', () => setDrawerOpen(false))
-  $('drawer-empty-new').querySelector('.de-kbd')!.innerHTML = kbdHtml(shortcutHint({ op: 'choose' }))
-  $('drawer-empty-quick').querySelector('.de-kbd')!.innerHTML = kbdHtml(shortcutHint({ op: 'drawer-toggle' }))
     if (picked) input.value = picked
   })
   const closedBtn = $('btn-closed')
