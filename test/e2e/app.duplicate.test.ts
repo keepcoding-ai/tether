@@ -260,8 +260,8 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     await page.waitForFunction(() => window.__tether.profiles().length >= 3)
 
     // ---- 1. the toolbar names the two operations; Ctrl+Shift+T opens the chooser; no "Onde" row without a panel ----
-    assert.equal((await page.locator('#btn-new').textContent())!.trim(), 'Novo painel…')
-    assert.equal((await page.locator('#btn-duplicate').textContent())!.trim(), 'Duplicar painel')
+    assert.equal(await page.locator('#btn-new').getAttribute('aria-label'), 'Novo painel…')
+    assert.equal(await page.locator('#btn-duplicate').getAttribute('aria-label'), 'Duplicar painel')
     assert.equal(await page.locator('#btn-split-right, #btn-split-down').count(), 0, 'the old "Direita"/"Abaixo" clone buttons are gone')
     await page.keyboard.press('Control+Shift+T')
     await page.locator('#dlg-new[open]').waitFor()

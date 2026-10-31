@@ -5,11 +5,18 @@
 //   3. panes inside a card are separated by the --pane-divider line; the desk-level gutter draws no line;
 //   4. the "+" still appears at a card's edge (frame) and in the outer gutter (desk), on the card's border;
 //   5. small screenshots chrome-cards-{light,dark}.png (compare with preview-{light,dark}.png, preview-shot.ts).
+// Slice 2 (toolbar and capsule):
+//   6. icon-only sides (4 left, 3 right) with aria-labels, no "tether" name, the drawer pill in the capsule;
+//   7. the capsule on the window's true centre (±2 px) at 1280 and 900 px, sides asymmetric;
+//   8. 10 desks at 900 px: "+N" shows, the active desk stays visible, a pick replaces the visible desk used longest ago;
+//   9. the theme icon menu, the connection popover (pipe, pid, version, agents, "Reiniciar serviço");
+//  10. the desk colour line follows the active desk; the ≡ toggle turns it off and it stays off after a relaunch;
+//  11. screenshots chrome-bar-{light,dark}.png with the preview's five desks.
 // Every kill goes through test/kill.ts (pid + creation time).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -24,9 +31,17 @@ type Hooks = {
   connection(): { connected: boolean; pid?: number } | undefined
   activate(id: string): void
   activeId(): string | undefined
+  desks(): { id: string; name: string; color: number }[]
+  activeDesk(): string
+  switchDesk(id: string): void
+  createDesk(side: 'before' | 'after', relativeTo?: string): string
+  renameDesk(id: string, name: string): void
+  recolorDesk(id: string, color: number): void
+  switchState(): { visible: string[]; hidden: string[]; active: string }
+  deskLine(): boolean
 }
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number }
-declare const window: { __tether: Hooks; getComputedStyle(el: unknown, pseudo?: string): Record<string, string> & { getPropertyValue(n: string): string } }
+declare const window: { __tether: Hooks; innerWidth: number; getComputedStyle(el: unknown, pseudo?: string): Record<string, string> & { getPropertyValue(n: string): string } }
 declare const document: {
   querySelectorAll(selector: string): ArrayLike<{ getBoundingClientRect(): Rect }> & { length: number }
   querySelector(selector: string): { getBoundingClientRect(): Rect } | null
@@ -129,7 +144,46 @@ async function assertScheme(app: ElectronApplication, page: Page, scheme: 'light
   assert.equal(divider, want.border, `${scheme}: pane divider`)
 }
 
-test('app chrome: tokens, cards on the desk, pane divider and edge "+" (phase 4, slice 1)', async () => {
+/** Slice 2: icon-only toolbar sides (4 left, 3 right), no "tether" name, every icon button labelled. */
+async function toolbarChecks(page: Page): Promise<void> {
+  const text = await page.locator('#toolbar').innerText()
+  assert.ok(!/tether(?!d)/i.test(text.replace(/Mesa \d+/g, '')), `no "tether" in the toolbar: ${JSON.stringify(text)}`)
+  const sides = await page.evaluate(() => {
+    const read = (sel: string) => Array.from(document.querySelectorAll(sel) as unknown as ArrayLike<{ innerText: string; getAttribute(n: string): string | null }>).map(b => ({ text: b.innerText.trim(), label: b.getAttribute('aria-label') ?? '' }))
+    return { left: read('#toolbar .tb-left button.ib'), right: read('#toolbar .tb-right button.ib') }
+  })
+  assert.equal(sides.left.length, 4, 'four icons on the left')
+  assert.equal(sides.right.length, 3, 'three icons on the right')
+  for (const b of [...sides.left, ...sides.right]) {
+    assert.equal(b.text, '', `icon only: ${JSON.stringify(b)}`)
+    assert.ok(b.label.length > 0, `aria-label: ${JSON.stringify(b)}`)
+  }
+  assert.equal(await page.locator('#brand, #desk-strip, #theme-select').count(), 0, 'old toolbar pieces are gone')
+  assert.equal(await page.locator('#desk-switch #btn-drawer #drawer-badge').count(), 1, 'the drawer pill lives in the capsule')
+}
+
+/** The capsule's centre is the window's centre (±2 px), and it overlaps neither side. */
+async function assertCentred(page: Page, width: number): Promise<void> {
+  const r = await page.evaluate(() => {
+    const box = (sel: string) => { const b = document.querySelector(sel)!.getBoundingClientRect(); return { left: b.left, right: b.right } }
+    return { cap: box('#desk-switch'), left: box('#toolbar .tb-left'), right: box('#toolbar .tb-right'), w: (globalThis as unknown as { innerWidth: number }).innerWidth }
+  })
+  assert.ok(Math.abs(r.w - width) <= 2, `window width ${r.w} ~ ${width}`)
+  const centre = (r.cap.left + r.cap.right) / 2
+  assert.ok(Math.abs(centre - r.w / 2) <= 2, `capsule centred at ${r.w}: ${centre} vs ${r.w / 2} (${JSON.stringify(r)})`)
+  assert.ok(r.left.right <= r.cap.left && r.cap.right <= r.right.left, `capsule clear of the sides: ${JSON.stringify(r)}`)
+}
+
+/** The desk line is on and painted in the active segment's fill. */
+async function assertDeskLine(page: Page): Promise<void> {
+  const line = await page.locator('#dock').evaluate(el => { const s = window.getComputedStyle(el, '::before'); return { bg: s.backgroundColor, h: s.height, content: s.content } })
+  const fill = await page.locator('#desk-switch .seg.on').evaluate(el => window.getComputedStyle(el).backgroundColor)
+  assert.equal(line.content, '""', 'the line is on')
+  assert.equal(line.h, '2px')
+  assert.equal(line.bg, fill, 'the line has the active desk colour')
+}
+
+test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 and 2)', async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
@@ -187,6 +241,101 @@ test('app chrome: tokens, cards on the desk, pane divider and edge "+" (phase 4,
       await assertScheme(app, page, scheme)
       await shot(app, `chrome-cards-${scheme}`)
     }
+
+    // ---------- slice 2: toolbar, capsule, connection popover, theme menu, desk line ----------
+    await toolbarChecks(page)
+    // The preview's desks (docs/tether-preview.html), for the side-by-side screenshots.
+    const PREVIEW: [string, number][] = [['Cliente A', 0], ['tether', 4], ['Atrium', 6], ['Pessoal', 1], ['Financeiro', 2]]
+    await page.evaluate(([name, color]) => { const id = window.__tether.desks()[0]!.id; window.__tether.renameDesk(id, name); window.__tether.recolorDesk(id, color) }, PREVIEW[0]!)
+    for (const [name, color] of PREVIEW.slice(1)) {
+      await page.evaluate(([name, color]) => { const all = window.__tether.desks(); const id = window.__tether.createDesk('after', all[all.length - 1]!.id); window.__tether.renameDesk(id, name); window.__tether.recolorDesk(id, color) }, [name, color] as [string, number])
+    }
+    await page.evaluate(() => window.__tether.switchDesk(window.__tether.desks()[1]!.id))
+    await sleep(300)
+    await assertCentred(page, 1280)
+    const st5 = await page.evaluate(() => window.__tether.switchState())
+    assert.equal(st5.hidden.length, 0, 'five desks fit at 1280')
+    await assertDeskLine(page)
+    for (const scheme of ['dark', 'light'] as const) {
+      await setTheme(page, scheme)
+      await shot(app, `chrome-bar-${scheme}`)
+    }
+
+    // The theme icon menu switches the scheme.
+    await page.click('#btn-theme')
+    await page.waitForSelector('#theme-menu:not([hidden])')
+    await page.click('#theme-menu li[data-theme="dark"]')
+    await page.waitForFunction(() => (document.documentElement as { dataset: Record<string, string> }).dataset.theme === 'dark')
+    assert.equal(await page.locator('#theme-menu li[data-theme="dark"]').getAttribute('aria-checked'), 'true')
+    assert.equal(await page.locator('#app-menu li[data-theme="dark"]').getAttribute('aria-checked'), 'true', 'the ≡ radios follow')
+
+    // The connection popover: on hover, pinned by a click, closed by Esc; pipe, pid and version from hello.
+    await page.hover('#conn')
+    await page.waitForSelector('#conn-pop', { state: 'visible' })
+    const popText = await page.locator('#conn-pop').innerText()
+    assert.ok(popText.includes(pipe), `popover shows the pipe: ${popText}`)
+    assert.ok(popText.includes(String(daemonPid)), 'popover shows the pid')
+    assert.match(await page.locator('#conn-version').innerText(), /^\d+\.\d+/, 'popover shows the version')
+    assert.match(await page.locator('#conn-agents').innerText(), /3 rodando · 0 aguardando/)
+    assert.equal(await page.locator('#conn-restart').innerText(), 'Reiniciar serviço')
+    await page.click('#conn')
+    await page.mouse.move(400, 300)
+    await page.waitForSelector('#conn-pop', { state: 'visible' })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#conn-pop', { state: 'hidden' })
+
+    // 10 desks at 900 px: the "+N" shows, the active desk stays visible, the capsule stays centred.
+    await page.evaluate(() => { for (let i = 0; i < 5; i++) { const all = window.__tether.desks(); window.__tether.switchDesk(window.__tether.createDesk('after', all[all.length - 1]!.id)) } })
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(900, 800))
+    await page.waitForFunction(() => Math.abs(window.innerWidth - 900) <= 2)
+    await sleep(400)
+    const before = await page.evaluate(() => window.__tether.switchState())
+    assert.ok(before.hidden.length > 0, `"+N" at 900 px: ${JSON.stringify(before)}`)
+    assert.ok(before.visible.includes(before.active), 'the active desk is visible')
+    assert.equal(await page.locator('#desk-switch .desk-more').innerText(), `+${before.hidden.length}`)
+    await assertCentred(page, 900)
+    // Picking in the "+N": the picked desk takes the place of the visible desk used longest ago; the others stay.
+    // The desks were used in creation order, so the one used longest ago is the visible one created first,
+    // except the preview's second desk ("tether"), used after the first five were created.
+    const order = (await page.evaluate(() => window.__tether.desks())).map(d => d.id)
+    const used = [order[0], order[2], order[3], order[4], order[1], ...order.slice(5)]
+    const lru = used.find(id => before.visible.includes(id!) && id !== before.active)!
+    const picked = before.hidden[0]!
+    await page.click('#desk-switch .desk-more')
+    await page.waitForSelector('#ctx-menu')
+    const name = (await page.evaluate(() => window.__tether.desks())).find(d => d.id === picked)!.name
+    await page.click(`#ctx-menu li:text-is("${name}")`)
+    await page.waitForFunction(id => window.__tether.activeDesk() === id, picked)
+    const after = await page.evaluate(() => window.__tether.switchState())
+    // Names differ in width: a wider pick can push out more than one; those are still the ones used longest ago.
+    const out = before.visible.length + 1 - after.visible.length
+    assert.ok(out >= 1, `something left: ${JSON.stringify({ before, after })}`)
+    const dropped = new Set(used.filter(id => before.visible.includes(id!) && id !== before.active).slice(0, out))
+    assert.ok(dropped.has(lru))
+    const want = order.filter(id => (before.visible.includes(id) && !dropped.has(id)) || id === picked)
+    assert.deepEqual(after.visible, want, `MRU pick: ${JSON.stringify({ before, after, lru, picked })}`)
+    await assertCentred(page, 900)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1280, 800))
+    await page.waitForFunction(() => Math.abs(window.innerWidth - 1280) <= 2)
+    await sleep(300)
+
+    // The desk line: off through ≡, saved in settings.json, still off after a relaunch.
+    await assertDeskLine(page)
+    await page.click('#btn-menu')
+    await page.click('#app-menu li[data-cmd="desk-line"]')
+    await page.waitForFunction(() => !window.__tether.deskLine())
+    assert.equal(await page.locator('#dock').evaluate(el => window.getComputedStyle(el, '::before').content), 'none', 'the line is gone')
+    assert.equal(JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui?.deskLine, false, 'settings.json ui.deskLine')
+    await killElectron(app, root)
+    app = undefined
+    ;({ app, page } = await launch(home))
+    await page.waitForFunction(() => window.__tether.desks().length > 1)
+    assert.equal(await page.evaluate(() => window.__tether.deskLine()), false, 'still off after relaunch')
+    assert.equal(await page.locator('#app-menu li[data-cmd="desk-line"]').getAttribute('aria-checked'), 'false')
+    await page.click('#btn-menu')
+    await page.click('#app-menu li[data-cmd="desk-line"]')
+    await page.waitForFunction(() => window.__tether.deskLine())
+    await assertDeskLine(page)
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))
     for (const d of daemons) {

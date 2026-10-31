@@ -140,9 +140,9 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
     // ---- the turn ends while desk 1 is hidden: badge on desk 1, dot on the tab, amber tray ----
     await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.attention === 'done', id, { timeout: 120_000 })
     assert.match(await text(page, id), /tamarindo/i)
-    await page.waitForSelector('#desk-strip .desk-chip[data-desk="desk-1"] .desk-badge.done')
-    assert.equal(await page.locator('#desk-strip .desk-chip[data-desk="desk-1"] .desk-badge').textContent(), '1')
-    assert.equal(await page.locator('#desk-strip .desk-chip[data-desk="desk-2"] .desk-badge').count(), 0)
+    await page.waitForSelector('#desk-switch .seg[data-desk="desk-1"] .desk-badge.done')
+    assert.equal(await page.locator('#desk-switch .seg[data-desk="desk-1"] .desk-badge').textContent(), '1')
+    assert.equal(await page.locator('#desk-switch .seg[data-desk="desk-2"] .desk-badge').count(), 0)
     assert.equal(await page.locator(`.tether-tab[data-attention="done"] .attn.done`).count(), 1)
     const tray = await app.evaluate(() => (globalThis as unknown as { __tetherTray: { model(): { badge: string; tooltip: string; attention: number } } }).__tetherTray.model())
     assert.equal(tray.badge, 'attention')
@@ -166,7 +166,7 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
       await page.keyboard.press('Backspace')
       await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.attention === undefined, id, { timeout: 5_000 })
     }
-    await page.waitForFunction(() => document.querySelectorAll('#desk-strip .desk-badge').length === 0)
+    await page.waitForFunction(() => document.querySelectorAll('#desk-switch .desk-segs .desk-badge').length === 0)
     assert.equal(await page.locator('.tether-tab .attn.done').count(), 0)
     const trayAfter = await app.evaluate(() => (globalThis as unknown as { __tetherTray: { model(): { badge: string } } }).__tetherTray.model())
     assert.equal(trayAfter.badge, 'active', 'the tray is back to "an agent runs"')

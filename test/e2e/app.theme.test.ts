@@ -33,7 +33,7 @@ type Hooks = {
 declare const window: { __tether: Hooks; getComputedStyle(el: unknown): { backgroundColor: string; color: string } }
 declare const document: {
   querySelectorAll(selector: string): { length: number }
-  querySelector(selector: string): { value?: string } | null
+  querySelector(selector: string): { value?: string; getAttribute(n: string): string | null } | null
   documentElement: { dataset: Record<string, string | undefined> }
 }
 
@@ -101,7 +101,7 @@ const hooks = {
   termBg: (page: Page, id: string) => page.evaluate(id => window.__tether.termTheme(id)?.background, id),
   daemonPid: async (page: Page) => (await page.evaluate(() => window.__tether.connection()))?.pid,
   bg: (page: Page, selector: string) => page.locator(selector).first().evaluate(el => window.getComputedStyle(el).backgroundColor),
-  selectValue: (page: Page) => page.evaluate(() => document.querySelector('#theme-select')?.value),
+  selectValue: (page: Page) => page.evaluate(() => document.querySelector('#theme-menu li[aria-checked="true"]')?.getAttribute('data-theme')),
   dataTheme: (page: Page) => page.evaluate(() => document.documentElement.dataset.theme),
   clickMenu: (app: ElectronApplication, id: string) => app.evaluate(({ Menu }, id) => { Menu.getApplicationMenu()?.getMenuItemById(id)?.click() }, id),
   menuChecked: (app: ElectronApplication, id: string) => app.evaluate(({ Menu }, id) => Menu.getApplicationMenu()?.getMenuItemById(id)?.checked, id),
@@ -174,14 +174,17 @@ test('app theme: claro / automático / escuro apply live to chrome, dockview and
     // 1. Escuro through the menu.
     await hooks.clickMenu(app, 'theme-dark')
     await assertScheme(app, page, 'dark', ids)
-    assert.equal(await hooks.selectValue(page), 'dark', 'toolbar select follows the menu')
+    assert.equal(await hooks.selectValue(page), 'dark', 'toolbar theme menu follows the menu')
     assert.equal(await hooks.menuChecked(app, 'theme-dark'), true)
     assert.equal(savedTheme(home), 'dark', 'settings.json remembers escuro')
     await sleep(300) // xterm repaint
     await page.screenshot({ path: join(artifacts, 'theme-dark.png') })
 
-    // 2. Claro through the toolbar select.
-    await page.selectOption('#theme-select', 'light')
+    // 2. Claro through the toolbar's theme icon menu.
+    await page.click('#btn-theme')
+    await page.waitForSelector('#theme-menu:not([hidden])')
+    await page.click('#theme-menu li[data-theme="light"]')
+    await page.waitForSelector('#theme-menu', { state: 'hidden' })
     await assertScheme(app, page, 'light', ids)
     assert.equal(await hooks.menuChecked(app, 'theme-light'), true, 'menu radio follows the toolbar')
     assert.equal(await hooks.menuChecked(app, 'theme-dark'), false)
