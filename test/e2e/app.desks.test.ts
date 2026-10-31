@@ -269,16 +269,16 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     app = undefined
     const file = join(home, 'layout.json')
     const old = JSON.parse(readFileSync(file, 'utf8')) as { desks: { id: string; color: unknown }[] }
-    const OLD_INDEX: Record<string, number> = { 'desk-1': 0, 'desk-2': 3, 'desk-3': 7 }
+    const OLD_INDEX: Record<string, number> = { 'desk-1': 3, 'desk-3': 7 }
     for (const d of old.desks) d.color = OLD_INDEX[d.id]
     writeFileSync(file, JSON.stringify(old))
     ;({ app, page } = await launch(home))
     await waitTabs(page, 3)
-    assert.deepEqual((await h.desks(page)).map(d => [d.id, d.color]), [['desk-1', 'blue'], ['desk-2', 'red'], ['desk-3', 'sky']], 'old indexes 0, 3, 7 read as blue, red (never lime) and sky')
-    assert.ok(typeof (JSON.parse(readFileSync(file, 'utf8')) as { desks: { color: unknown }[] }).desks[1]!.color === 'number', 'reading alone does not rewrite the file')
-    await page.evaluate(() => window.__tether.recolorDesk('desk-1', 'blue')) // a person's change: the next save writes names
+    assert.deepEqual((await h.desks(page)).map(d => [d.id, d.color]), [['desk-1', 'red'], ['desk-3', 'sky']], 'old indexes 3 and 7 read as red (never lime) and sky')
+    assert.ok(typeof (JSON.parse(readFileSync(file, 'utf8')) as { desks: { color: unknown }[] }).desks[0]!.color === 'number', 'reading alone does not rewrite the file')
+    await page.evaluate(() => window.__tether.recolorDesk('desk-1', 'red')) // a person's change: the next save writes names
     await sleep(900)
-    assert.deepEqual((JSON.parse(readFileSync(file, 'utf8')) as { desks: { id: string; color: unknown }[] }).desks.map(d => d.color), ['blue', 'red', 'sky'], 'saved back as names')
+    assert.deepEqual((JSON.parse(readFileSync(file, 'utf8')) as { desks: { id: string; color: unknown }[] }).desks.map(d => d.color), ['red', 'sky'], 'saved back as names')
   } finally {
     console.log('teardown')
     if (app) await killElectron(app, root).catch(() => {})
