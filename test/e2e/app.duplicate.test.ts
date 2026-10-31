@@ -358,7 +358,7 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
       'Novo painel…', 'Duplicar painel à direita', 'Duplicar painel abaixo', 'Novo painel na borda do quadro…', 'Novo quadro…',
       'Renomear…', 'Trocar perfil…',
       'Mostrar barra de status', 'Copiar pasta', 'Abrir pasta no Explorer',
-      'Mover para a mesa…', 'Mover quadro para a mesa…', 'Mover para a gaveta', 'Mover quadro para a gaveta',
+      'Mover…',
       'Fechar painel…',
     ]
     assert.deepEqual(items, want)

@@ -5,7 +5,7 @@
 //   3. the Esc rule: one Esc on the chrome closes; in a shell at its prompt only a double Esc closes; on the
 //      alternate screen (vim) never; a dialog's Esc is the dialog's;
 //   4. a press on the 16 px margin (no backdrop any more) closes, clicking inside does not; Ctrl+Tab stays quiet;
-//   5. moving work: pane desk → drawer → current desk from the tab's menu (same PID, screen kept), a whole
+//   5. moving work: pane desk → drawer → current desk by the tab's "Mover…" (same PID, screen kept), a whole
 //      frame by the app's hooks, and the drawer is the same one from every desk;
 //   6. attention of a drawer pane shows on the toolbar button; the tray's "Abrir gaveta" opens it;
 //   7. window kill + relaunch: the drawer's panes come back in the drawer (closed), same PIDs, output flowing;
@@ -260,7 +260,11 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     await page.waitForFunction(id => window.__tether.text(id).includes('marca-b'), b)
     await page.locator(`.panel[data-slot-id="${b}"]`).first().waitFor()
     await page.locator(`.desk-layer[data-desk="${desk1}"] .tether-tab`).nth(1).click({ button: 'right' })
-    await page.click('#ctx-menu li:has-text("Mover para a gaveta")')
+    await page.click('#ctx-menu li:has-text("Mover…")')
+    await page.waitForSelector('dialog.move[open]')
+    await page.click('dialog.move .mv-row[data-scope="drawer"]:not(.f)')
+    await page.click('dialog.move .oz.right')
+    await page.click('#mv-go')
     await page.waitForFunction(id => window.__tether.drawer().panes.includes(id), b)
     assert.ok(!(await h.ids(page)).includes(b), 'a pane is in one place only')
     await page.waitForFunction(id => window.__tether.text(id).includes('marca-b'), b) // the new terminal got the scrollback
@@ -272,13 +276,17 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     assert.deepEqual([...(await h.drawer(page)).panes].sort(), [d, b].sort(), 'the same drawer from desk 2')
     await page.locator('.drawer .tether-tab').nth(1).click({ button: 'right' }) // b: the second tab
     const items = await page.locator('#ctx-menu li').allTextContents()
-    assert.ok(items.some(t => t.includes('Mover para a mesa atual')) && items.some(t => t.includes('Mover quadro para a mesa atual')), 'the drawer\'s tab offers the way out')
-    assert.ok(!items.some(t => t.includes('Mover para a gaveta')))
+    assert.ok(items.some(t => t.includes('Mover…')), 'the drawer\'s tab offers the way out')
     await page.keyboard.press('Escape') // closes the menu only
     await page.waitForFunction(() => document.querySelectorAll('#ctx-menu').length === 0)
     assert.equal((await h.drawer(page)).open, true)
     await page.locator('.drawer .tether-tab').nth(1).click({ button: 'right' })
-    await page.click('#ctx-menu li:has-text("Mover para a mesa atual")')
+    await page.click('#ctx-menu li:has-text("Mover…")')
+    await page.waitForSelector('dialog.move[open]')
+    const here = await page.evaluate(() => window.__tether.activeDesk())
+    await page.click(`dialog.move .mv-row[data-scope="${here}"]:not(.f)`)
+    await page.click('dialog.move .oz.right')
+    await page.click('#mv-go')
     await waitDrawer(page, false)
     assert.equal(await page.evaluate(id => window.__tether.deskOf(id), b), await page.evaluate(() => window.__tether.activeDesk()), 'it lands on the desk the user is on')
     assert.ok(!(await h.drawer(page)).panes.includes(b))

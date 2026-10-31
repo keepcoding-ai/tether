@@ -2,7 +2,7 @@
 //   1. three desks with one PowerShell each: Ctrl+Alt+N creates a desk after the current one;
 //   2. switching by Ctrl+1…3 and Ctrl+Tab / Ctrl+Shift+Tab; only the active layer is visible;
 //   3. a shell on a hidden desk keeps printing into its terminal (same PID, same size: nothing resized);
-//   4. "Mover para a mesa…" from the tab's menu moves a pane (same PID, its screen still there);
+//   4. "Mover…" from the tab's menu moves a pane (as a tab of desk 1) (same PID, its screen still there);
 //   5. strip: rename in place, recolour, Ctrl+Alt+Shift+N before;
 //   6. closing a desk with a running shell asks with the app's dialog: "move" keeps it on the neighbour desk;
 //      "stop" ends it (the slot stays under "Slots fechados"); an empty desk closes without asking;
@@ -167,16 +167,18 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     assert.deepEqual(await sizeOf(a), sizeA, 'the hidden pane keeps its size (no resize sent to the shell)')
     assert.equal((await pidsOf(page, [a]))[a], pids[a], 'same shell')
 
-    // ---- 4. "Mover para a mesa…" from the tab's menu ----
+    // ---- 4. "Mover…" from the tab's menu: a tab of desk 1's frame ----
     console.log('step 4')
     await typeInto(page, c, 'Write-Host marca-c\r')
     await page.waitForFunction(id => window.__tether.text(id).includes('marca-c'), c)
     const tabC = page.locator('.desk-layer[data-desk="desk-3"] .tether-tab')
     await tabC.click({ button: 'right' })
-    await page.click('#ctx-menu li:has-text("Mover para a mesa…")')
-    await page.waitForSelector('#ctx-menu li:has-text("Mesa 1")')
+    await page.click('#ctx-menu li:has-text("Mover…")')
+    await page.waitForSelector('dialog.move[open]')
+    await page.click('dialog.move .mv-row.f[data-scope="desk-1"]')
+    await page.click('dialog.move .mv-pn .z-tab')
     await page.screenshot({ path: join(artifacts, 'desks-move-menu.png') })
-    await page.click('#ctx-menu li:has-text("Mesa 1")')
+    await page.click('#mv-go')
     await page.waitForFunction(id => window.__tether.deskOf(id) === 'desk-1', c)
     await page.waitForFunction(id => window.__tether.text(id).includes('marca-c'), c) // the new terminal got the scrollback
     assert.equal((await pidsOf(page, [c]))[c], pids[c], 'moving never touches the process')

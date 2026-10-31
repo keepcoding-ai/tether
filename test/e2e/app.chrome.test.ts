@@ -528,7 +528,7 @@ test('app chrome: pane tab strip, "+N" by recent use, status-bar toggle, "⋯" (
     await page.click('.tab-actions [data-action="pane-menu"]')
     await page.waitForSelector('#ctx-menu')
     const items = await page.locator('#ctx-menu li[role=menuitem]').allTextContents()
-    for (const want of ['Novo painel…', 'Renomear…', 'Trocar perfil…', 'Mostrar barra de status', 'Mover para a gaveta', 'Fechar painel…']) assert.ok(items.includes(want), `"⋯" has ${want}: ${JSON.stringify(items)}`)
+    for (const want of ['Novo painel…', 'Renomear…', 'Trocar perfil…', 'Mostrar barra de status', 'Mover…', 'Fechar painel…']) assert.ok(items.includes(want), `"⋯" has ${want}: ${JSON.stringify(items)}`)
     assert.ok(!items.some(i => /Reiniciar/.test(i)), 'no "Reiniciar sessão"')
     assert.ok(await page.locator('#ctx-menu li.sep').count() >= 3, 'grouped')
     await page.click('#ctx-menu li:text-is("Renomear…")')
