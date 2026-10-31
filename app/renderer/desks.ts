@@ -22,6 +22,26 @@ export const DESK_COLORS: readonly { name: string; css: string }[] = [
 
 export const MAX_DESK_NAME = 40
 
+/**
+ * How a desk paints in the capsule and the desk line: `fill` (active segment, desk line), `foreground` (text on
+ * the fill) and `text` (an inactive segment's name, on the toolbar). Every consumer reads these three CSS values
+ * only (as --seg-fill / --seg-fg / --seg-text and --desk-line-color), so moving to the --x-{hue} palette is a
+ * change here alone. Until then they derive from the 8 colours above.
+ */
+export interface DeskTokens { fill: string; foreground: string; text: string }
+
+export function deskTokens(color: number): DeskTokens {
+  const css = colorOf(color)
+  const [r, g, b] = [1, 3, 5].map(i => {
+    const v = parseInt(css.slice(i, i + 2), 16) / 255
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+  }) as [number, number, number]
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  // White or near-black, whichever contrasts more with the fill.
+  const foreground = (1.05) / (y + 0.05) >= (y + 0.05) / 0.0565 ? '#ffffff' : '#10131a'
+  return { fill: css, foreground, text: `color-mix(in oklab, ${css} 72%, var(--fg))` }
+}
+
 export function colorOf(color: number): string {
   return DESK_COLORS[((color % DESK_COLORS.length) + DESK_COLORS.length) % DESK_COLORS.length]!.css
 }

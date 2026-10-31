@@ -50,6 +50,8 @@ import arrowCounterClockwise from '@phosphor-icons/core/assets/regular/arrow-cou
 import palette from '@phosphor-icons/core/assets/regular/palette.svg'
 import cards from '@phosphor-icons/core/assets/regular/cards.svg'
 import lightning from '@phosphor-icons/core/assets/regular/lightning.svg'
+import sun from '@phosphor-icons/core/assets/regular/sun.svg'
+import moon from '@phosphor-icons/core/assets/regular/moon.svg'
 import trayArrowDown from '@phosphor-icons/core/assets/regular/tray-arrow-down.svg'
 import trayArrowUp from '@phosphor-icons/core/assets/regular/tray-arrow-up.svg'
 import textAa from '@phosphor-icons/core/assets/regular/text-aa.svg'
@@ -106,6 +108,8 @@ const SVG = {
   'text-aa': textAa,
   cards,
   lightning,
+  sun,
+  moon,
   'tray-arrow-down': trayArrowDown,
   'tray-arrow-up': trayArrowUp,
 } as const

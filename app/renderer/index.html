@@ -10,26 +10,43 @@
 </head>
 <body>
   <header id="toolbar">
-    <span id="brand">tether</span>
-    <button id="btn-new" title="Novo painel… (Ctrl+Shift+T): escolha o perfil, a pasta e onde abrir"><span class="i" data-icon="plus"></span>Novo painel…</button>
-    <button id="btn-duplicate" title="Duplicar painel (Ctrl+Alt+→)"><span class="i" data-icon="copy"></span>Duplicar painel</button>
-    <button id="btn-profiles" title="Perfis de lançamento (também em Exibir → Perfis de lançamento…)"><span class="i" data-icon="sliders-horizontal"></span>Perfis</button>
-    <div class="dropdown">
-      <button id="btn-closed" title="Slots rodando no tetherd sem painel aberto"><span class="i" data-icon="tray"></span>Slots fechados <span id="closed-count"></span><span class="i caret" data-icon="caret-down"></span></button>
-      <ul id="closed-list" hidden></ul>
+    <div class="tb-left">
+      <button id="btn-new" class="ib" title="Novo painel… (Ctrl+Shift+T)" aria-label="Novo painel…"><span class="i" data-icon="plus"></span></button>
+      <button id="btn-duplicate" class="ib" title="Duplicar painel (Ctrl+Alt+→)" aria-label="Duplicar painel"><span class="i" data-icon="copy"></span></button>
+      <button id="btn-profiles" class="ib" title="Perfis de lançamento" aria-label="Perfis de lançamento"><span class="i" data-icon="sliders-horizontal"></span></button>
+      <div class="dropdown">
+        <button id="btn-closed" class="ib" title="Slots fechados: rodando no tetherd sem painel aberto" aria-label="Slots fechados"><span class="i" data-icon="tray"></span><span id="closed-count" class="ib-count"></span></button>
+        <ul id="closed-list" hidden></ul>
+      </div>
     </div>
-    <button id="btn-drawer" title="Gaveta" aria-haspopup="dialog"><span class="i" data-icon="lightning"></span>Gaveta<span id="drawer-badge" class="drawer-badge" hidden></span></button>
-    <span id="spacer"></span>
-    <label id="theme" title="Tema (também em Exibir → Tema)"><span class="i" data-icon="circle-half"></span>Tema
-      <select id="theme-select">
-        <option value="light">Claro</option>
-        <option value="auto" selected>Automático</option>
-        <option value="dark">Escuro</option>
-      </select>
-    </label>
-    <span id="conn" class="conn" title=""><span class="i" data-icon="plugs"></span>conectando…</span>
+    <div id="desk-switch">
+      <button id="btn-drawer" class="seg gav" title="Gaveta" aria-haspopup="dialog"><span class="i" data-icon="lightning"></span>Gaveta<span id="drawer-badge" class="cnt drawer-badge" hidden></span></button>
+      <span class="sw-div" aria-hidden="true"></span>
+    </div>
+    <div class="tb-right">
+      <div class="dropdown" id="conn-wrap">
+        <button id="conn" class="ib conn" aria-label="Conexão com o tetherd" aria-haspopup="dialog" aria-expanded="false"><span class="i" data-icon="plugs"></span></button>
+        <div id="conn-pop" class="popover" role="dialog" aria-label="Conexão">
+          <dl>
+            <dt>serviço</dt><dd id="conn-state">conectando…</dd>
+            <dt>canal</dt><dd id="conn-pipe"></dd>
+            <dt>processo</dt><dd id="conn-pid">—</dd>
+            <dt>versão</dt><dd id="conn-version">—</dd>
+            <dt>agentes</dt><dd id="conn-agents">—</dd>
+          </dl>
+          <button id="conn-restart" type="button"><span class="i" data-icon="arrow-clockwise"></span>Reiniciar serviço</button>
+        </div>
+      </div>
+      <div class="dropdown">
+        <button id="btn-theme" class="ib" title="Tema" aria-label="Tema" aria-haspopup="menu" aria-expanded="false"><span class="i" data-icon="circle-half"></span></button>
+        <ul id="theme-menu" class="menu" role="menu" hidden>
+          <li role="menuitemradio" data-theme="light"><span class="i" data-icon="sun"></span>Claro<span class="i check" data-icon="check"></span></li>
+          <li role="menuitemradio" data-theme="auto"><span class="i" data-icon="circle-half"></span>Automático<span class="i check" data-icon="check"></span></li>
+          <li role="menuitemradio" data-theme="dark"><span class="i" data-icon="moon"></span>Escuro<span class="i check" data-icon="check"></span></li>
+        </ul>
+      </div>
     <div class="dropdown">
-      <button id="btn-menu" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"><span class="i" data-icon="list"></span></button>
+      <button id="btn-menu" class="ib" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"><span class="i" data-icon="list"></span></button>
       <ul id="app-menu" class="menu" role="menu" hidden>
         <li role="menuitem" data-cmd="new"><span class="i" data-icon="plus"></span>Novo painel…<kbd>Ctrl+Shift+T</kbd></li>
         <li role="menuitem" data-cmd="duplicate-right"><span class="i" data-icon="copy"></span>Duplicar painel à direita<kbd>Ctrl+Alt+→</kbd></li>
@@ -40,6 +57,7 @@
         <li role="menuitem" data-cmd="new-desk"><span class="i" data-icon="cards"></span>Nova mesa<kbd>Ctrl+Alt+N</kbd></li>
         <li role="menuitem" data-cmd="move-pane-desk"><span class="i" data-icon="arrow-square-out"></span>Mover painel para a mesa…</li>
         <li role="menuitem" data-cmd="move-frame-desk"><span class="i" data-icon="arrow-square-out"></span>Mover quadro para a mesa…</li>
+        <li role="menuitem" data-cmd="desk-actions"><span class="i" data-icon="pencil-simple"></span>Mesa atual: renomear, cor, mover…</li>
         <li role="menuitem" data-cmd="close-desk"><span class="i" data-icon="x"></span>Fechar mesa…</li>
         <li class="sep" role="separator"></li>
         <li role="menuitem" data-cmd="toggle-drawer"><span class="i" data-icon="lightning"></span>Abrir gaveta<kbd>Ctrl+`</kbd></li>
@@ -53,6 +71,7 @@
         <li role="menuitemradio" data-theme="light"><span class="i check" data-icon="check"></span>Claro</li>
         <li role="menuitemradio" data-theme="auto"><span class="i check" data-icon="check"></span>Automático</li>
         <li role="menuitemradio" data-theme="dark"><span class="i check" data-icon="check"></span>Escuro</li>
+        <li role="menuitemcheckbox" data-cmd="desk-line" aria-checked="true"><span class="i check" data-icon="check"></span>Linha da cor da mesa</li>
         <li role="menuitem" data-cmd="terminal-theme"><span class="i" data-icon="palette"></span>Tema do terminal…</li>
         <li class="sep" role="separator"></li>
         <li role="menuitem" data-cmd="restore-confirmations"><span class="i" data-icon="arrow-clockwise"></span>Voltar a perguntar antes de fechar painéis</li>
@@ -61,9 +80,9 @@
         <li role="menuitem" data-cmd="quit-all" class="danger"><span class="i" data-icon="power"></span>Sair e encerrar tudo…<kbd>Ctrl+Shift+Q</kbd></li>
       </ul>
     </div>
+    </div>
   </header>
 
-  <nav id="desk-strip"></nav>
   <main id="dock"></main>
 
   <div id="drawer" class="drawer" data-open="false" inert aria-hidden="true">

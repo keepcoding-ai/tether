@@ -11,7 +11,9 @@ import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
-import { DeskStrip, type DeskAttention } from './desk-strip.ts'
+import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
+import { deskTokens } from './desks.ts'
+import { DEFAULT_UI, type UiSettings } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
@@ -39,7 +41,9 @@ const startErrors = new Map<string, SlotError>()
 /** Slots with a `start` request in flight. */
 const pendingStarts = new Set<string>()
 let desks: DeskSet
-let strip: DeskStrip
+let strip: DeskSwitch
+/** Chrome preferences (settings.json `ui`). */
+let ui: UiSettings = DEFAULT_UI
 let drawer: Drawer
 /** Open/closed and the pane that gets the keyboard back (app/renderer/drawer-rules.ts). Never persisted: the app starts with the drawer closed. */
 let drawerState: DrawerState = CLOSED
@@ -138,8 +142,19 @@ function applyTheme(state: ThemeState): void {
   document.documentElement.dataset.theme = state.scheme
   for (const p of panels.values()) p.setAppearance(appearance, state.scheme)
   themeDialog?.refresh()
-  $<HTMLSelectElement>('theme-select').value = state.setting
-  for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))
+  for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme], #theme-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))
+  const btn = $('btn-theme')
+  btn.replaceChildren(icon(state.setting === 'light' ? 'sun' : state.setting === 'dark' ? 'moon' : 'circle-half'))
+  btn.title = `Tema: ${THEME_LABEL[state.setting]}`
+}
+
+const THEME_LABEL: Record<ThemeState['setting'], string> = { light: 'Claro', auto: 'Automático', dark: 'Escuro' }
+
+/** Applies the chrome preferences: the desk colour line and its check in the ≡ menu. */
+function applyUi(next: UiSettings): void {
+  ui = next
+  document.body.classList.toggle('desk-line', ui.deskLine)
+  document.querySelector('#app-menu li[data-cmd="desk-line"]')?.setAttribute('aria-checked', String(ui.deskLine))
 }
 
 // ---------- terminal appearance ----------
@@ -201,14 +216,14 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
 }
 
 function setupDock(): void {
-  strip = new DeskStrip($('desk-strip'), {
+  const bar = $('toolbar')
+  strip = new DeskSwitch($('desk-switch'), bar, [bar.querySelector<HTMLElement>('.tb-left')!, bar.querySelector<HTMLElement>('.tb-right')!], {
     switchTo: id => desks.switchTo(id),
-    create: (side, relativeTo) => { desks.create(side, relativeTo || undefined) },
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
-    move: (id, to) => desks.move(id, to),
     menu: (id, x, y) => showDeskMenu(id, x, y),
-    hint: (what, position) => what === 'new' ? shortcutHint({ op: 'desk-new', side: 'after' }) : shortcutHint({ op: 'desk-go', position: position ?? 1 }),
+    overflowMenu: (entries, x, y, pick) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) }))),
+    hint: position => shortcutHint({ op: 'desk-go', position }),
   })
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
@@ -333,6 +348,8 @@ function deskAttention(deskId: string): DeskAttention {
 function renderStrip(): void {
   if (!strip || !desks) return
   strip.render(desks.desks, desks.activeDeskId, deskAttention)
+  const active = desks.desks.find(d => d.id === desks.activeDeskId)
+  if (active) $('dock').style.setProperty('--desk-line-color', deskTokens(active.color).fill)
   renderDrawerButton()
 }
 
@@ -352,7 +369,7 @@ function markSeenIfWatched(): void {
 function focusActivePane(): void {
   const active = desks.activePanel
   // Deferred, and never over a desk being renamed in the strip (a double-click switches first, then renames).
-  if (active) requestAnimationFrame(() => { if (!(document.activeElement as Element | null)?.closest('#desk-strip, #desk-colors')) panels.get(active.id)?.focus() })
+  if (active) requestAnimationFrame(() => { if (!(document.activeElement as Element | null)?.closest('#desk-switch, #desk-colors')) panels.get(active.id)?.focus() })
   renderStrip()
   markSeenIfWatched()
 }
@@ -462,7 +479,7 @@ function removeAnyPanel(panel: IDockviewPanel): void {
 }
 
 /** The parts of the window behind the drawer: inert while it is open, so the keyboard cannot wander into them. */
-const BEHIND_DRAWER = ['toolbar', 'desk-strip', 'dock']
+const BEHIND_DRAWER = ['toolbar', 'dock']
 
 function drawerAttention(): DeskAttention {
   return countAttention(drawer.desk.panels.map(p => slots.get(p.id)?.attention))
@@ -503,6 +520,7 @@ function setDrawerOpen(open: boolean): void {
     $('app-menu').hidden = true
     $('btn-menu').setAttribute('aria-expanded', 'false')
     $('closed-list').hidden = true
+    closeToolbarPopups()
     desks.active.hidePlus()
   } else {
     drawerState = closeDrawer(drawerState)
@@ -816,16 +834,16 @@ async function discardPendingSave(): Promise<void> {
 async function onConnection(state: ConnectionState): Promise<void> {
   connection = state
   const conn = $('conn')
-  conn.title = state.pipe
+  renderConnection()
   if (!state.connected) {
-    conn.replaceChildren(icon('plugs'), document.createTextNode('desconectado'))
-    conn.className = 'conn off'
+    conn.replaceChildren(icon('plugs'))
+    conn.className = 'ib conn off'
     $('overlay-msg').textContent = `${state.error} (${state.pipe})`
     $('overlay').hidden = false
     return
   }
-  conn.replaceChildren(icon('plugs-connected'), document.createTextNode(`tetherd ${state.pid}`))
-  conn.className = 'conn on'
+  conn.replaceChildren(icon('plugs-connected'))
+  conn.className = 'ib conn on'
   $('overlay').hidden = true
   startErrors.clear()
   await refreshSlots()
@@ -855,7 +873,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
 function refreshClosedMenu(): void {
   const list = $('closed-list')
   const closed = [...slots.values()].filter(s => !findPanel(s.slotId))
-  $('closed-count').textContent = closed.length ? `(${closed.length})` : ''
+  $('closed-count').textContent = closed.length ? String(closed.length) : ''
   list.replaceChildren()
   if (closed.length === 0) {
     const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'Nenhum slot fechado'
@@ -1244,6 +1262,8 @@ function setupMenu(): void {
       case 'move-pane-drawer': { const a = desks.activePanel; if (a) movePaneToDrawer(a.id); break }
       case 'move-frame-drawer': { const a = desks.activePanel; if (a) moveFrameToDrawer(a.id); break }
       case 'close-desk': void closeDesk(desks.activeDeskId); break
+      case 'desk-actions': { const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4); break }
+      case 'desk-line': window.tether.setUi({ ...ui, deskLine: !ui.deskLine }); break
       case 'profiles': openProfiles(); break
       case 'terminal-theme': themeDialog.show(); break
       case 'switch-profile': { const active = desks.activePanel; if (active) void switchProfile(active.id); break }
@@ -1266,6 +1286,72 @@ function setupMenu(): void {
   })
 }
 
+// ---------- toolbar: theme menu and connection popover ----------
+
+/** The theme icon's menu (Claro · Automático · Escuro): same look and keys as the ≡ menu. */
+function setupThemeMenu(): void {
+  const btn = $('btn-theme')
+  const menu = $('theme-menu')
+  const items = (): HTMLElement[] => [...menu.querySelectorAll<HTMLElement>('li[data-theme]')]
+  for (const li of items()) li.tabIndex = -1
+  const toggle = (open: boolean): void => {
+    menu.hidden = !open
+    btn.setAttribute('aria-expanded', String(open))
+    if (open) (menu.querySelector<HTMLElement>('li[aria-checked="true"]') ?? items()[0])?.focus()
+  }
+  btn.addEventListener('click', ev => { ev.stopPropagation(); toggle(menu.hidden) })
+  document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
+  const pick = (li: HTMLElement): void => { toggle(false); window.tether.setTheme(normalizeTheme(li.dataset.theme ?? 'auto')) }
+  menu.addEventListener('click', ev => { const li = (ev.target as HTMLElement).closest<HTMLElement>('li[data-theme]'); if (li) { ev.stopPropagation(); pick(li) } })
+  menu.addEventListener('keydown', ev => {
+    const list = items()
+    const i = list.indexOf(document.activeElement as HTMLElement)
+    if (ev.key === 'Escape') { ev.preventDefault(); toggle(false); btn.focus() }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); list[(i + 1) % list.length]?.focus() }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); list[(i - 1 + list.length) % list.length]?.focus() }
+    else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); pick(list[i]!) }
+  })
+}
+
+/** The connection icon's popover: shows on hover, and stays open on click until a click outside or Esc. */
+function setupConnectionPopover(): void {
+  const wrap = $('conn-wrap')
+  const btn = $('conn')
+  wrap.addEventListener('mouseenter', () => renderConnection())
+  btn.addEventListener('click', ev => {
+    ev.stopPropagation()
+    const open = !wrap.classList.contains('pinned')
+    renderConnection()
+    wrap.classList.toggle('pinned', open)
+    btn.setAttribute('aria-expanded', String(open))
+  })
+  document.addEventListener('click', ev => { if (!wrap.contains(ev.target as Node)) { wrap.classList.remove('pinned'); btn.setAttribute('aria-expanded', 'false') } })
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && wrap.classList.contains('pinned')) { wrap.classList.remove('pinned'); btn.setAttribute('aria-expanded', 'false') } }, true)
+  $('conn-restart').addEventListener('click', ev => { ev.stopPropagation(); closeToolbarPopups(); window.tether.command('restart-daemon') })
+}
+
+function closeToolbarPopups(): void {
+  $('conn-wrap').classList.remove('pinned')
+  $('conn').setAttribute('aria-expanded', 'false')
+  $('theme-menu').hidden = true
+  $('btn-theme').setAttribute('aria-expanded', 'false')
+}
+
+/** Fills the connection popover from the last connection state and the slots. */
+function renderConnection(): void {
+  const state = connection
+  if (!state) return
+  $('conn-pipe').textContent = state.pipe
+  $('conn').title = state.connected ? `tetherd conectado (${state.pipe})` : `tetherd desconectado (${state.pipe})`
+  $('conn-state').textContent = state.connected ? 'tetherd · conectado' : `tetherd · desconectado (${state.error})`
+  $('conn-pid').textContent = state.connected ? String(state.pid) : '—'
+  $('conn-version').textContent = state.connected ? state.version : '—'
+  const all = [...slots.values()]
+  const running = all.filter(isLiveSlot).length
+  const waiting = all.filter(s => s.attention === 'waiting').length
+  $('conn-agents').textContent = state.connected ? `${running} rodando · ${waiting} aguardando` : '—'
+}
+
 // ---------- wiring ----------
 
 function setupUi(): void {
@@ -1285,7 +1371,8 @@ function setupUi(): void {
   dup.addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
   $('btn-new').title = `${NEW_PANEL_LABEL} (${shortcutHint({ op: 'choose' })}): escolha o perfil, a pasta e onde abrir`
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
-  $<HTMLSelectElement>('theme-select').addEventListener('change', ev => window.tether.setTheme(normalizeTheme((ev.target as HTMLSelectElement).value)))
+  setupThemeMenu()
+  setupConnectionPopover()
   $('btn-cancel').addEventListener('click', () => $<HTMLDialogElement>('dlg-new').close())
   $('btn-browse').addEventListener('click', async () => {
     const input = $<HTMLInputElement>('new-cwd')
@@ -1365,6 +1452,10 @@ declare global {
       paint(selector: string, maxW: number, maxH: number): { png: string; painted: number; width: number; height: number } | undefined
       /** Remembered dialog answers as the renderer sees them. */
       confirmations(): Confirmations
+      /** The capsule: visible desks, the ones behind the "+N", the active one. */
+      switchState(): { visible: string[]; hidden: string[]; active: string }
+      /** The desk colour line: on/off (settings `ui.deskLine`). */
+      deskLine(): boolean
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
       closePanel(slotId: string): void
       /** The terminal font size in use (appearance.fontSize). */
@@ -1479,6 +1570,8 @@ function setupTestHooks(): void {
       return { png: out.toDataURL('image/png'), painted, width, height }
     },
     confirmations: () => confirmations,
+    switchState: () => strip.state(),
+    deskLine: () => ui.deskLine,
     closePanel: slotId => { void closePanel(slotId) },
     fontSize: () => appearance.fontSize,
     startRename: slotId => tabs.get(slotId)?.startRename(),
@@ -1568,6 +1661,8 @@ window.tether.onConnection(state => { void onConnection(state) })
 window.tether.onTheme(applyTheme)
 void window.tether.getTheme().then(applyTheme)
 window.tether.onFontSizeCommand(runFontSizeCommand)
+window.tether.onUi(applyUi)
+void window.tether.getUi().then(applyUi)
 window.tether.onConfirmations(c => { confirmations = c })
 void window.tether.getConfirmations().then(c => { confirmations = c })
 window.tether.onAsk(req => { void onAsk(req) })
