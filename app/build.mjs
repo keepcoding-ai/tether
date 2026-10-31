@@ -4,6 +4,7 @@
 //   renderer.js   browser bundle (ESM) with xterm + dockview-core
 //   dockview.css  dockview-core's stylesheet. The ESM build of dockview-core 8 ships no CSS file: the
 //                 styles exist only as a string injected by its UMD bundle, so they are extracted from it.
+//   palette.css   the 12 desk hues (--x-{hue}, -foreground, -text) for both schemes, generated from app/shared/palette.ts
 //   dialog.js     browser bundle (ESM) of the standalone dialog window (shown before the main window exists)
 //   tether.ico/icns/png the app icon (window, taskbar, Start Menu shortcut, Tether.app bundle), drawn by app/icon.mjs
 //   tray.png, tray-active.png, tray-attention.png  the tray icon (32 px): plain, green dot while an agent runs, amber dot when one finished or waits for you
@@ -13,6 +14,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeIcons, writeTrayIcons } from './icon.mjs'
+import { paletteCss } from './shared/palette.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const out = join(here, 'dist')
@@ -31,6 +33,7 @@ function extractDockviewCss() {
 }
 
 extractDockviewCss()
+writeFileSync(join(out, 'palette.css'), paletteCss())
 writeIcons(out)
 writeTrayIcons(out)
 await Promise.all([

@@ -6,44 +6,66 @@
 // desk is the one the strip shows next to the current one. Closing a desk goes to the desk used before it
 // (the MRU list), else to its neighbour.
 
-export interface DeskInfo { id: string; name: string; color: number }
+import { HUE_NAMES, type HueName } from '../shared/palette.ts'
 
-/** The desk palette: index → CSS colour (readable on both themes; the strip paints a bar and a dot with it). */
-export const DESK_COLORS: readonly { name: string; css: string }[] = [
-  { name: 'Azul', css: '#4f8fe8' },
-  { name: 'Verde', css: '#3fae66' },
-  { name: 'Âmbar', css: '#d99a2b' },
-  { name: 'Vermelho', css: '#e05a5a' },
-  { name: 'Roxo', css: '#9a6ee0' },
-  { name: 'Ciano', css: '#2fa9b8' },
-  { name: 'Rosa', css: '#d9609f' },
-  { name: 'Cinza', css: '#8a8f99' },
+export interface DeskInfo { id: string; name: string; color: DeskHue }
+
+export type DeskHue = HueName
+
+/** The picker's hues, in order, with the Portuguese label shown as the swatch tooltip. */
+export const DESK_HUES: readonly { hue: DeskHue; label: string }[] = [
+  { hue: 'red', label: 'Vermelho' },
+  { hue: 'orange', label: 'Laranja' },
+  { hue: 'yellow', label: 'Amarelo' },
+  { hue: 'lime', label: 'Lima' },
+  { hue: 'green', label: 'Verde' },
+  { hue: 'teal', label: 'Verde-água' },
+  { hue: 'cyan', label: 'Ciano' },
+  { hue: 'sky', label: 'Céu' },
+  { hue: 'blue', label: 'Azul' },
+  { hue: 'purple', label: 'Roxo' },
+  { hue: 'magenta', label: 'Magenta' },
+  { hue: 'pink', label: 'Rosa' },
 ]
+
+export const DEFAULT_DESK_HUE: DeskHue = 'blue'
+
+/**
+ * The order new desks draw their colour in: the first eight are the old palette's order (Azul, Verde, Âmbar,
+ * Vermelho, Roxo, Ciano, Rosa, Cinza), so a fresh app still starts blue; the other four follow.
+ */
+const SPREAD: readonly DeskHue[] = ['blue', 'green', 'orange', 'red', 'purple', 'cyan', 'pink', 'sky', 'yellow', 'lime', 'teal', 'magenta']
+
+/**
+ * The OLD 8-colour palette (index → hue), the only meaning a NUMBER has in layout.json. Each old colour maps to
+ * its nearest hue; Cinza had no equivalent and becomes sky, the closest to a neutral cool tone. An index never
+ * means a position in the 12 (3 is red, not lime).
+ */
+export const OLD_PALETTE_HUES: readonly DeskHue[] = ['blue', 'green', 'orange', 'red', 'purple', 'cyan', 'pink', 'sky']
+
+/** Reads a stored desk colour: a hue name stays; a number is an index of the old palette (wrapping, as it did); anything else is blue. */
+export function readDeskColor(raw: unknown): DeskHue {
+  if (typeof raw === 'string') return (HUE_NAMES as readonly string[]).includes(raw) ? raw as DeskHue : DEFAULT_DESK_HUE
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const n = OLD_PALETTE_HUES.length
+    return OLD_PALETTE_HUES[((Math.trunc(raw) % n) + n) % n]!
+  }
+  return DEFAULT_DESK_HUE
+}
 
 export const MAX_DESK_NAME = 40
 
 /**
  * How a desk paints in the capsule and the desk line: `fill` (active segment, desk line), `foreground` (text on
  * the fill) and `text` (an inactive segment's name, on the toolbar). Every consumer reads these three CSS values
- * only (as --seg-fill / --seg-fg / --seg-text and --desk-line-color), so moving to the --x-{hue} palette is a
- * change here alone. Until then they derive from the 8 colours above.
+ * only (as --seg-fill / --seg-fg / --seg-text and --desk-line-color); they are the generated palette's custom
+ * properties (app/shared/palette.ts → app/dist/palette.css).
  */
 export interface DeskTokens { fill: string; foreground: string; text: string }
 
-export function deskTokens(color: number): DeskTokens {
-  const css = colorOf(color)
-  const [r, g, b] = [1, 3, 5].map(i => {
-    const v = parseInt(css.slice(i, i + 2), 16) / 255
-    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
-  }) as [number, number, number]
-  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b
-  // White or near-black, whichever contrasts more with the fill.
-  const foreground = (1.05) / (y + 0.05) >= (y + 0.05) / 0.0565 ? '#ffffff' : '#10131a'
-  return { fill: css, foreground, text: `color-mix(in oklab, ${css} 72%, var(--fg))` }
-}
-
-export function colorOf(color: number): string {
-  return DESK_COLORS[((color % DESK_COLORS.length) + DESK_COLORS.length) % DESK_COLORS.length]!.css
+export function deskTokens(color: DeskHue): DeskTokens {
+  const hue = readDeskColor(color)
+  return { fill: `var(--x-${hue})`, foreground: `var(--x-${hue}-foreground)`, text: `var(--x-${hue}-text)` }
 }
 
 /** `desk-N` with the smallest N not in use. */
@@ -58,12 +80,12 @@ export function nextDeskName(desks: readonly DeskInfo[]): string {
   for (let i = 1; ; i++) if (!used.has(`Mesa ${i}`)) return `Mesa ${i}`
 }
 
-/** The least used colour (lowest index on a tie): new desks spread over the palette. */
-export function nextDeskColor(desks: readonly DeskInfo[]): number {
-  const count = DESK_COLORS.map(() => 0)
-  for (const d of desks) count[((d.color % count.length) + count.length) % count.length]!++
-  let best = 0
-  for (let i = 1; i < count.length; i++) if (count[i]! < count[best]!) best = i
+/** The least used hue (first in the spread order on a tie): new desks spread over the 12. */
+export function nextDeskColor(desks: readonly DeskInfo[]): DeskHue {
+  const count = new Map<DeskHue, number>(SPREAD.map(h => [h, 0]))
+  for (const d of desks) count.set(d.color, (count.get(d.color) ?? 0) + 1)
+  let best = SPREAD[0]!
+  for (const h of SPREAD) if (count.get(h)! < count.get(best)!) best = h
   return best
 }
 
@@ -86,8 +108,8 @@ export function renameDesk(desks: readonly DeskInfo[], id: string, name: string)
   return clean ? desks.map(d => d.id === id ? { ...d, name: clean } : d) : [...desks]
 }
 
-export function recolorDesk(desks: readonly DeskInfo[], id: string, color: number): DeskInfo[] {
-  const c = ((Math.trunc(color) % DESK_COLORS.length) + DESK_COLORS.length) % DESK_COLORS.length
+export function recolorDesk(desks: readonly DeskInfo[], id: string, color: unknown): DeskInfo[] {
+  const c = readDeskColor(color)
   return desks.map(d => d.id === id ? { ...d, color: c } : d)
 }
 

@@ -11,7 +11,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -20,7 +20,7 @@ import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
-type DeskRow = { id: string; name: string; color: number; panes: string[]; attention: { done: number; waiting: number } }
+type DeskRow = { id: string; name: string; color: string; panes: string[]; attention: { done: number; waiting: number } }
 type Hooks = {
   panelIds(): string[]
   activeId(): string | undefined
@@ -32,7 +32,7 @@ type Hooks = {
   activeDesk(): string
   deskOf(slotId: string): string | undefined
   switchDesk(id: string): void
-  recolorDesk(id: string, color: number): void
+  recolorDesk(id: string, color: string): void
   closeDesk(id: string): void
 }
 declare const window: { __tether: Hooks; tether: { notice(n: unknown): void } }
@@ -140,6 +140,7 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     const desks3 = await h.desks(page)
     assert.deepEqual(desks3.map(d => [d.id, d.name, d.panes]), [['desk-1', 'Mesa 1', [a]], ['desk-2', 'Mesa 2', [b]], ['desk-3', 'Mesa 3', [c]]])
     assert.equal(new Set(desks3.map(d => d.color)).size, 3, 'each new desk gets its own colour')
+    assert.deepEqual(desks3.map(d => d.color), ['blue', 'green', 'orange'], 'a fresh app starts blue, then the old order')
     const pids = await pidsOf(page, [a, b, c])
     await page.screenshot({ path: join(artifacts, 'desks-three.png') })
 
@@ -190,8 +191,9 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     await page.waitForSelector('#desk-switch .seg[data-desk="desk-1"]:has-text("Cliente X")')
     await page.click('#desk-switch .seg[data-desk="desk-2"]', { button: 'right' })
     await page.click('#ctx-menu li:has-text("Cor…")')
-    await page.click('#desk-colors .swatch[data-color="6"]')
-    assert.equal((await h.desks(page)).find(d => d.id === 'desk-2')!.color, 6)
+    assert.equal(await page.locator('#desk-colors .swatch').count(), 12, 'the picker offers the 12 hues')
+    await page.click('#desk-colors .swatch[data-color="cyan"]')
+    assert.equal((await h.desks(page)).find(d => d.id === 'desk-2')!.color, 'cyan')
     // Reordering is in the desk's menu (no drag): desk-1 moves right, then back left.
     await page.click('#desk-switch .seg[data-desk="desk-1"]', { button: 'right' })
     await page.click('#ctx-menu li:has-text("Mover para a direita")')
@@ -242,10 +244,10 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     // ---- 7. relaunch ----
     console.log('step 7')
     await page.keyboard.press('Control+1'); await expectActive(page, 'desk-1')
-    await page.evaluate(() => window.__tether.recolorDesk('desk-3', 4))
+    await page.evaluate(() => window.__tether.recolorDesk('desk-3', 'purple'))
     await sleep(800) // debounced save
     const before = await h.desks(page)
-    const saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as { desks: { id: string; name: string; color: number }[]; activeDesk: string }
+    const saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as { desks: { id: string; name: string; color: string }[]; activeDesk: string }
     assert.deepEqual(saved.desks.map(x => [x.id, x.name, x.color]), before.map(x => [x.id, x.name, x.color]))
     assert.equal(saved.activeDesk, 'desk-1')
     await killElectron(app, root)
@@ -260,6 +262,23 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     assert.deepEqual(pidsAfter, { [a]: pids[a], [b]: pids[b], [c]: pids[c] }, 'same PIDs through the window kill')
     await page.waitForFunction(id => window.__tether.text(id).includes('tick-40'), a)
     await page.screenshot({ path: join(artifacts, 'desks-restored.png') })
+
+    // ---- 8. a layout.json written before the 12-hue palette: numbers read as the old palette, saved back as names ----
+    console.log('step 8')
+    await killElectron(app, root)
+    app = undefined
+    const file = join(home, 'layout.json')
+    const old = JSON.parse(readFileSync(file, 'utf8')) as { desks: { id: string; color: unknown }[] }
+    const OLD_INDEX: Record<string, number> = { 'desk-1': 0, 'desk-2': 3, 'desk-3': 7 }
+    for (const d of old.desks) d.color = OLD_INDEX[d.id]
+    writeFileSync(file, JSON.stringify(old))
+    ;({ app, page } = await launch(home))
+    await waitTabs(page, 3)
+    assert.deepEqual((await h.desks(page)).map(d => [d.id, d.color]), [['desk-1', 'blue'], ['desk-2', 'red'], ['desk-3', 'sky']], 'old indexes 0, 3, 7 read as blue, red (never lime) and sky')
+    assert.ok(typeof (JSON.parse(readFileSync(file, 'utf8')) as { desks: { color: unknown }[] }).desks[1]!.color === 'number', 'reading alone does not rewrite the file')
+    await page.evaluate(() => window.__tether.recolorDesk('desk-1', 'blue')) // a person's change: the next save writes names
+    await sleep(900)
+    assert.deepEqual((JSON.parse(readFileSync(file, 'utf8')) as { desks: { id: string; color: unknown }[] }).desks.map(d => d.color), ['blue', 'red', 'sky'], 'saved back as names')
   } finally {
     console.log('teardown')
     if (app) await killElectron(app, root).catch(() => {})

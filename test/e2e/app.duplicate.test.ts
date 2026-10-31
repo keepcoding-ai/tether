@@ -352,14 +352,23 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     // Panel 1 is alone in its group: its tab is the one in the group that holds its content.
     await page.locator(`.dv-groupview:has(.panel[data-slot-id="${id1}"]) .tether-tab`).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu')
-    const items = await page.locator('#ctx-menu li').allTextContents()
-    // Phase B added the two frame-level entries (they open the chooser at that level); phases C and D the moves
-    // (to a desk, to the drawer); the pane header toggle sits before "Trocar perfil…" (collapsed by default).
-    assert.deepEqual(items, [
+    const items = await page.locator('#ctx-menu li[role=menuitem]').allTextContents()
+    // Grouped (separators between): open next to it; name and profile; the status bar; where it lives; close.
+    const want = [
       'Novo painel…', 'Duplicar painel à direita', 'Duplicar painel abaixo', 'Novo painel na borda do quadro…', 'Novo quadro…',
+      'Renomear…', 'Trocar perfil…',
+      'Mostrar detalhes do painel',
       'Mover para a mesa…', 'Mover quadro para a mesa…', 'Mover para a gaveta', 'Mover quadro para a gaveta',
-      'Mostrar detalhes do painel', 'Trocar perfil…', 'Fechar painel…',
-    ])
+      'Fechar painel…',
+    ]
+    assert.deepEqual(items, want)
+    assert.equal(await page.locator('#ctx-menu li.sep').count(), 4)
+    // "⋯" at the strip's right end opens the same menu (one source).
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !document.querySelector('#ctx-menu'))
+    await page.locator(`.dv-groupview:has(.panel[data-slot-id="${id1}"]) .dv-right-actions-container [data-action="pane-menu"]`).click()
+    await page.waitForSelector('#ctx-menu')
+    assert.deepEqual(await page.locator('#ctx-menu li[role=menuitem]').allTextContents(), want)
     await page.click('#ctx-menu li:has-text("Novo painel…")')
     await page.locator('#dlg-new[open]').waitFor()
     assert.ok(await page.locator('#new-placement').isVisible())

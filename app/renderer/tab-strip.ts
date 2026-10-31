@@ -1,0 +1,194 @@
+// The fixed right end of a pane's tab strip (dockview `createRightHeaderActionComponent`, one per group):
+// "+N" (the tabs that do not fit), the status-bar toggle and "⋯" (the pane menu). They act on the group's
+// active panel and never move: the tab list shrinks to its left.
+//
+// Overflow is measured here, not by dockview's own list (`disableTabsOverflowList`): the native one counts the
+// tabs scrolled out of a scrolling strip, so which tabs hide follows the scroll position, not use. Here the
+// strip never scrolls: tabs shrink to a minimum width, then the tab used longest ago is hidden
+// (`.tab-hidden` on dockview's `.dv-tab`), and picking one in the "+N" moves it (`moveTo`, saved with the
+// layout) into the place of the visible tab used longest ago. Rules in tab-strip-rules.ts.
+import type { IDockviewGroupPanel, IDockviewPanel, IGroupHeaderProps, IHeaderActionsRenderer } from 'dockview-core'
+import { icon, type IconName } from './icons.ts'
+import { detailsLabel, detailsOpen } from './pane-details.ts'
+import { shortcutHint } from './shortcuts.ts'
+import { fitTabs, hiddenTabs, pickIndex, touchTab } from './tab-strip-rules.ts'
+
+/** One hidden tab as the "+N" lists it. */
+export interface HiddenTab { id: string; icon: IconName; label: string; attention: boolean }
+
+export interface TabStripHost {
+  /** What the "+N" shows for a pane: agent icon, title, attention. */
+  describe(id: string): { icon: IconName; label: string; attention: boolean }
+  /** The "+N" list at (x, y); `pick` brings one back. */
+  showHidden(x: number, y: number, tabs: HiddenTab[], pick: (id: string) => void): void
+  /** "⋯": the pane menu (the same one as a right-click on the tab). */
+  paneMenu(id: string, x: number, y: number): void
+  toggleDetails(id: string): void
+}
+
+/** The title of the "⋯" button. */
+export const PANE_MENU_LABEL = 'Menu do painel'
+
+export class TabStripActions implements IHeaderActionsRenderer {
+  readonly element: HTMLElement
+  private readonly more: HTMLButtonElement
+  private readonly toggle: HTMLButtonElement
+  private readonly dots: HTMLButtonElement
+  private group: IDockviewGroupPanel | undefined
+  /** Use stamps of this group's tabs (session only). */
+  private readonly used = new Map<string, number>()
+  private hidden: string[] = []
+  private disposers: Array<() => void> = []
+  private paramsSub: (() => void) | undefined
+  private frame = 0
+
+  private readonly host: TabStripHost
+
+  constructor(host: TabStripHost) {
+    this.host = host
+    this.element = document.createElement('div')
+    this.element.className = 'tab-actions'
+    this.more = document.createElement('button')
+    this.more.className = 'tab-more'; this.more.dataset.action = 'more'; this.more.hidden = true
+    this.toggle = document.createElement('button')
+    this.toggle.className = 'tab-act'; this.toggle.dataset.action = 'status-bar'
+    this.toggle.append(icon('rows'))
+    this.dots = document.createElement('button')
+    this.dots.className = 'tab-act'; this.dots.dataset.action = 'pane-menu'
+    this.dots.title = PANE_MENU_LABEL; this.dots.setAttribute('aria-label', PANE_MENU_LABEL); this.dots.setAttribute('aria-haspopup', 'menu')
+    this.dots.append(icon('dots-three'))
+    this.element.append(this.more, this.toggle, this.dots)
+    // Buttons, not drag handles: dockview must not start a group drag from here.
+    this.element.addEventListener('pointerdown', ev => ev.stopPropagation())
+    this.more.addEventListener('click', ev => { ev.stopPropagation(); this.openHidden() })
+    this.toggle.addEventListener('click', ev => { ev.stopPropagation(); const id = this.activeId(); if (id) this.host.toggleDetails(id) })
+    this.dots.addEventListener('click', ev => {
+      ev.stopPropagation()
+      const id = this.activeId()
+      const r = this.dots.getBoundingClientRect()
+      if (id) this.host.paneMenu(id, r.right - 4, r.bottom + 2)
+    })
+  }
+
+  init(params: IGroupHeaderProps): void {
+    this.group = params.group
+    const g = params.api
+    const active = (): void => {
+      const p = this.group?.activePanel
+      if (p) touchTab(this.used, p.id)
+      this.watchParams(p)
+      this.paintToggle()
+      this.measure()
+    }
+    this.disposers.push(g.onDidActivePanelChange(active).dispose)
+    this.disposers.push(params.containerApi.onDidRemovePanel(p => { this.used.delete(p.id); this.schedule() }).dispose)
+    active()
+    // Tabs added, removed, reordered or retitled, and attention changes: measure again. Only these are
+    // observed (not `class`), so hiding a tab does not trigger a new pass.
+    const mo = new MutationObserver(() => this.schedule())
+    const ro = new ResizeObserver(() => this.schedule())
+    queueMicrotask(() => {
+      const head = this.header()
+      if (!head) return
+      mo.observe(head, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-attention', 'data-slot'] })
+      ro.observe(head)
+      this.measure()
+    })
+    this.disposers.push(() => mo.disconnect(), () => ro.disconnect())
+  }
+
+  /** The hidden tabs (for tests and the "+N"). */
+  hiddenIds(): readonly string[] { return this.hidden }
+
+  private activeId(): string | undefined { return this.group?.activePanel?.id }
+
+  private header(): HTMLElement | null { return this.element.closest<HTMLElement>('.dv-tabs-and-actions-container') }
+
+  private watchParams(p: IDockviewPanel | undefined): void {
+    this.paramsSub?.()
+    this.paramsSub = p ? p.api.onDidParametersChange(() => this.paintToggle()).dispose : undefined
+  }
+
+  private paintToggle(): void {
+    const p = this.group?.activePanel
+    this.element.hidden = !p
+    const open = detailsOpen(p?.params)
+    this.toggle.title = `${detailsLabel(open)} (${shortcutHint({ op: 'pane-details' })})`
+    this.toggle.setAttribute('aria-label', detailsLabel(open))
+    this.toggle.setAttribute('aria-pressed', String(open))
+  }
+
+  private schedule(): void {
+    if (this.frame) return
+    this.frame = requestAnimationFrame(() => { this.frame = 0; this.measure() })
+  }
+
+  /** The strip's tabs in their DOM order, by panel id. */
+  private tabs(head: HTMLElement): Map<string, HTMLElement> {
+    const m = new Map<string, HTMLElement>()
+    for (const el of head.querySelectorAll<HTMLElement>('.dv-tabs-container > .dv-tab')) {
+      const id = el.querySelector<HTMLElement>('[data-slot]')?.dataset.slot
+      if (id) m.set(id, el)
+    }
+    return m
+  }
+
+  private measure(): void {
+    const head = this.header()
+    const list = head?.querySelector<HTMLElement>('.dv-tabs-container')
+    if (!head || !list) return
+    const els = this.tabs(head)
+    const order = [...els.keys()]
+    const apply = (vis: readonly string[]): void => {
+      const v = new Set(vis)
+      for (const [id, el] of els) el.classList.toggle('tab-hidden', !v.has(id))
+      this.more.hidden = vis.length === order.length
+      this.more.textContent = `+${order.length - vis.length}`
+    }
+    const fits = (vis: readonly string[]): boolean => { apply(vis); return list.scrollWidth <= list.clientWidth + 1 }
+    const vis = fitTabs(order, this.activeId(), this.used, fits)
+    apply(vis)
+    this.hidden = hiddenTabs(order, vis)
+    this.paintMore()
+  }
+
+  private paintMore(): void {
+    const n = this.hidden.length
+    const attention = this.hidden.some(id => this.host.describe(id).attention)
+    this.more.classList.toggle('attention', attention)
+    if (attention) { const dot = document.createElement('span'); dot.className = 'more-dot'; this.more.append(dot) }
+    const label = n === 1 ? '1 aba escondida' : `${n} abas escondidas`
+    this.more.title = label
+    this.more.setAttribute('aria-label', label)
+  }
+
+  private openHidden(): void {
+    const head = this.header()
+    if (!head || this.hidden.length === 0) return
+    const r = this.more.getBoundingClientRect()
+    const list = this.hidden.map(id => ({ id, ...this.host.describe(id) }))
+    this.host.showHidden(r.left, r.bottom + 2, list, id => this.pick(id))
+  }
+
+  /** Picking in the "+N": the tab moves into the place of the visible tab used longest ago and becomes active. */
+  private pick(id: string): void {
+    const g = this.group
+    const head = this.header()
+    const panel = g?.panels.find(p => p.id === id)
+    if (!g || !head || !panel) return
+    const order = [...this.tabs(head).keys()]
+    const visible = order.filter(x => !this.hidden.includes(x))
+    const index = pickIndex(order, visible, id, this.activeId(), this.used)
+    if (index !== undefined) panel.api.moveTo({ group: g as Parameters<typeof panel.api.moveTo>[0]["group"], index })
+    touchTab(this.used, id)
+    panel.api.setActive()
+    this.measure()
+  }
+
+  dispose(): void {
+    if (this.frame) cancelAnimationFrame(this.frame)
+    this.paramsSub?.()
+    for (const d of this.disposers) d()
+    this.disposers = []
+  }
+}

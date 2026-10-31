@@ -54,6 +54,8 @@ import sun from '@phosphor-icons/core/assets/regular/sun.svg'
 import moon from '@phosphor-icons/core/assets/regular/moon.svg'
 import trayArrowDown from '@phosphor-icons/core/assets/regular/tray-arrow-down.svg'
 import trayArrowUp from '@phosphor-icons/core/assets/regular/tray-arrow-up.svg'
+import rows from '@phosphor-icons/core/assets/regular/rows.svg'
+import dotsThree from '@phosphor-icons/core/assets/regular/dots-three.svg'
 import textAa from '@phosphor-icons/core/assets/regular/text-aa.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
@@ -112,6 +114,8 @@ const SVG = {
   moon,
   'tray-arrow-down': trayArrowDown,
   'tray-arrow-up': trayArrowUp,
+  rows,
+  'dots-three': dotsThree,
 } as const
 
 export type IconName = keyof typeof SVG

@@ -9,7 +9,7 @@
 import type { AddPanelOptions, DockviewTheme, IDockviewPanel } from 'dockview-core'
 import type { Target } from './create.ts'
 import { Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
-import { closeDesk, type DeskInfo, insertDesk, moveDesk, recolorDesk, renameDesk, touchMru } from './desks.ts'
+import { closeDesk, type DeskHue, type DeskInfo, insertDesk, moveDesk, readDeskColor, recolorDesk, renameDesk, touchMru } from './desks.ts'
 import { emptyDesk, type DeskLayout, type LayoutV2 } from './layout.ts'
 
 export interface DeskSetHost {
@@ -99,7 +99,7 @@ export class DeskSet {
   }
 
   rename(id: string, name: string): void { this.row = renameDesk(this.row, id, name); this.syncMeta(); this.host.onDesksChange() }
-  recolor(id: string, color: number): void { this.row = recolorDesk(this.row, id, color); this.syncMeta(); this.host.onDesksChange() }
+  recolor(id: string, color: DeskHue): void { this.row = recolorDesk(this.row, id, color); this.syncMeta(); this.host.onDesksChange() }
   move(id: string, to: number): void { this.row = moveDesk(this.row, id, to); this.host.onDesksChange() }
 
   /**
@@ -207,7 +207,7 @@ export class DeskSet {
     for (const d of layout.desks) {
       if (seen.has(d.id)) continue // a duplicated id would make two desks share one name: keep the first
       seen.add(d.id)
-      const info: DeskInfo = { id: d.id, name: d.name || d.id, color: typeof d.color === 'number' ? d.color : 0 }
+      const info: DeskInfo = { id: d.id, name: d.name || d.id, color: readDeskColor(d.color) }
       this.row.push(info)
       this.mount(info).desk.fromJSON(d)
     }

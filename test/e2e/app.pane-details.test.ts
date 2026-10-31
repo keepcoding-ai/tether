@@ -112,13 +112,13 @@ test('pane details: collapsed by default, three ways to toggle, refit, persisten
     assert.match(tip, /rodando/)
     assert.match(tip, /Perfil:/)
     assert.ok(tip.startsWith(await page.locator('.tether-tab .text').innerText()), 'the tooltip opens with the title')
-    const toggle = page.locator('.tether-tab .details-toggle')
+    const toggle = page.locator('.dv-right-actions-container [data-action="status-bar"]')
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false')
     assert.match((await toggle.getAttribute('title'))!, /Mostrar detalhes do painel \(Ctrl\+Shift\+H\)/)
     const collapsedRows = await settledRows(page, id)
     assert.ok(collapsedRows > 5)
 
-    // ---- 2. the tab's button opens it; the grid gives rows to the header ----
+    // ---- 2. the strip's status-bar toggle opens it; the grid gives rows to the header ----
     await toggle.click()
     await waitDetails(page, id, true)
     await page.waitForFunction(id => (document.querySelector(`.panel[data-slot-id="${id}"] .panel-details`)?.clientHeight ?? 0) > 10, id)
@@ -151,7 +151,7 @@ test('pane details: collapsed by default, three ways to toggle, refit, persisten
     ;({ app, page } = await launch(home))
     await page.waitForSelector(`.panel[data-slot-id="${id}"]`)
     await waitDetails(page, id, true)
-    assert.equal(await page.locator('.tether-tab .details-toggle').getAttribute('aria-pressed'), 'true')
+    assert.equal(await page.locator('.dv-right-actions-container [data-action="status-bar"]').getAttribute('aria-pressed'), 'true')
 
     // ---- 6. a missing folder still shows on a collapsed pane; the collapsed state survives too ----
     await tabMenu(page, 'Ocultar detalhes do painel')
@@ -176,7 +176,7 @@ test('pane details: collapsed by default, three ways to toggle, refit, persisten
     await page.evaluate(id => window.__tether.activate(id), id) // a background tab is mounted only once active
     await page.waitForSelector(`.panel[data-slot-id="${id}"]`)
     await waitDetails(page, id, false)
-    assert.equal(await page.locator(`.tether-tab .details-toggle`).first().getAttribute('aria-pressed'), 'false')
+    assert.equal(await page.locator('.dv-right-actions-container [data-action="status-bar"]').first().getAttribute('aria-pressed'), 'false')
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     if (daemon) await killOwned(daemon)

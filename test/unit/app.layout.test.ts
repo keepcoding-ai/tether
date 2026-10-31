@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SerializedDockview } from 'dockview-core'
-import { allPanelIds, drawerOf, emptyDrawer, emptyLayout, frameIdsOf, frameInsertion, isLayoutV1, isDrawerLayout, isLayoutV2, isPersonChange, migrateLayout, nextFrameId, orphanedPanels, planRestore, pruneDesk, pruneDrawer, pruneLayout, pruneLayoutV2, singleFrameGrid, type DeskLayout, type DrawerLayout, type FrameGrid, type LayoutV2 } from '../../app/renderer/layout.ts'
+import { allPanelIds, drawerOf, emptyDrawer, emptyLayout, frameIdsOf, frameInsertion, isLayoutV1, isDrawerLayout, isLayoutV2, isPersonChange, migrateLayout, nextFrameId, orphanedPanels, planRestore, pruneDesk, pruneDrawer, pruneLayout, pruneLayoutV2, readDeskColors, singleFrameGrid, type DeskLayout, type DrawerLayout, type FrameGrid, type LayoutV2 } from '../../app/renderer/layout.ts'
 
 type Node = SerializedDockview['grid']['root']
 const leaf = (id: string, views: string[], size = 100): Node => ({ type: 'leaf', data: { views, activeView: views[0]!, id }, size })
@@ -116,7 +116,7 @@ describe('migrateLayout', () => {
 
 describe('pruneDesk / pruneLayoutV2', () => {
   const twoFrames = (): DeskLayout => ({
-    id: 'desk-1', name: 'Mesa 1', color: 0, activeFrame: 'frame-2',
+    id: 'desk-1', name: 'Mesa 1', color: 'blue', activeFrame: 'frame-2',
     frames: {
       grid: grid(frameBranch([frameLeaf('frame-1', 700), frameLeaf('frame-2', 700)], 800)),
       views: {
@@ -186,7 +186,7 @@ describe('the drawer field', () => {
     activeFrame: 'frame-1',
   })
   const deskWith = (ids: string[]): DeskLayout => ({
-    id: 'desk-1', name: 'Mesa 1', color: 0, activeFrame: 'frame-1',
+    id: 'desk-1', name: 'Mesa 1', color: 'blue', activeFrame: 'frame-1',
     frames: { grid: grid(frameBranch([frameLeaf('frame-1', 1400)], 800)), views: { 'frame-1': layout(branch([leaf('1', ids, 1400)], 800), ids) } },
   })
   const file = (desks: DeskLayout[], drawer: DrawerLayout | null): LayoutV2 => ({ v: 2, desks, activeDesk: desks[0]!.id, drawer })
@@ -290,7 +290,7 @@ describe('planRestore', () => {
   const twoFramesV2 = (): LayoutV2 => ({
     v: 2, activeDesk: 'desk-1', drawer: null,
     desks: [{
-      id: 'desk-1', name: 'Mesa 1', color: 0, activeFrame: 'frame-1',
+      id: 'desk-1', name: 'Mesa 1', color: 'blue', activeFrame: 'frame-1',
       frames: {
         grid: grid(frameBranch([frameLeaf('frame-1', 700), frameLeaf('frame-2', 700)], 800)),
         views: { 'frame-1': two(), 'frame-2': layout(branch([leaf('1', ['c'], 1400)], 800), ['c']) },
@@ -397,5 +397,56 @@ describe('orphanedPanels', () => {
   })
   test('only the unknown ones', () => {
     assert.deepEqual(orphanedPanels(['a', 'b', 'c'], new Set(['b'])), ['a', 'c'])
+  })
+})
+
+// The desk colour on disk: a hue name; a number is an index of the OLD 8-colour palette; anything else is blue.
+describe('desk colour read/write', () => {
+  const oneDesk = (color: unknown): unknown => ({
+    v: 2, activeDesk: 'desk-1', drawer: null,
+    desks: [{ id: 'desk-1', name: 'Mesa 1', color, frames: emptyLayout().desks[0]!.frames, activeFrame: 'frame-1' }],
+  })
+  const colorAfterRead = (color: unknown): string => migrateLayout(oneDesk(color))!.layout.desks[0]!.color
+
+  test('a number reads as the old palette index: 3 is red (never lime), grey (7) is sky', () => {
+    assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7].map(colorAfterRead), ['blue', 'green', 'orange', 'red', 'purple', 'cyan', 'pink', 'sky'])
+  })
+
+  test('numbers keep the old wrap-around and truncation; junk is blue', () => {
+    assert.equal(colorAfterRead(8), 'blue')
+    assert.equal(colorAfterRead(11), 'red')
+    assert.equal(colorAfterRead(-1), 'sky')
+    assert.equal(colorAfterRead(3.9), 'red')
+    for (const junk of ['pink-ish', '', null, undefined, {}, [], true, Number.NaN, Infinity]) assert.equal(colorAfterRead(junk), 'blue', String(junk))
+  })
+
+  test('a hue name stays as it is, all 12', () => {
+    for (const hue of ['red', 'orange', 'yellow', 'lime', 'green', 'teal', 'cyan', 'sky', 'blue', 'purple', 'magenta', 'pink']) assert.equal(colorAfterRead(hue), hue)
+  })
+
+  test('reading a file with names returns the very same desks (no rewrite, planRestore keeps the saved object)', () => {
+    const saved = oneDesk('lime') as LayoutV2
+    assert.equal(migrateLayout(saved)!.layout.desks, saved.desks)
+    assert.equal(readDeskColors(saved.desks), saved.desks)
+    assert.equal(planRestore(saved, new Set()).layout, saved)
+  })
+
+  test('an old numeric file reads as names and the saved object is left untouched (the next save writes names)', () => {
+    const saved = oneDesk(4) as LayoutV2
+    const before = JSON.stringify(saved)
+    const plan = planRestore(saved, new Set())
+    assert.equal(plan.layout!.desks[0]!.color, 'purple')
+    assert.equal(JSON.stringify(saved), before)
+    assert.equal(JSON.parse(JSON.stringify(plan.layout)).desks[0].color, 'purple')
+  })
+
+  test('only the desks that need it are rebuilt; the empty layout and a v1 file start blue', () => {
+    const base = emptyLayout().desks[0]!
+    const mixed = [{ ...base, color: 'red' as const }, { ...base, id: 'desk-2', color: 1 as unknown as 'red' }]
+    const out = readDeskColors(mixed)
+    assert.equal(out[0], mixed[0])
+    assert.equal(out[1]!.color, 'green')
+    assert.equal(base.color, 'blue')
+    assert.equal(migrateLayout({ grid: { root: { type: 'branch', data: [] }, width: 1, height: 1, orientation: 'HORIZONTAL' }, panels: {} })!.layout.desks[0]!.color, 'blue')
   })
 })

@@ -7,6 +7,7 @@
 // styles.css (reduced motion respected there).
 import type { DockviewTheme } from 'dockview-core'
 import { Desk, type DeskHost } from './desk.ts'
+import { DEFAULT_DESK_HUE } from './desks.ts'
 import { type DrawerLayout, emptyDrawer } from './layout.ts'
 
 export interface DrawerHost {
@@ -44,7 +45,7 @@ export class Drawer {
     el.className = 'drawer-desk'
     this.body.append(el)
     this.current = new Desk(el, this.host.deskHost(), this.theme)
-    this.current.meta = { id: 'drawer', name: 'Gaveta', color: 0 }
+    this.current.meta = { id: 'drawer', name: 'Gaveta', color: DEFAULT_DESK_HUE }
   }
 
   /** Shows or hides the panel (state attribute for CSS; inert keeps focus and clicks out while closed). */
@@ -65,7 +66,7 @@ export class Drawer {
   load(layout: DrawerLayout): void {
     this.current.dispose()
     this.mountDesk()
-    this.current.fromJSON({ id: 'drawer', name: 'Gaveta', color: 0, frames: layout.frames, ...(layout.activeFrame ? { activeFrame: layout.activeFrame } : {}) })
+    this.current.fromJSON({ id: 'drawer', name: 'Gaveta', color: DEFAULT_DESK_HUE, frames: layout.frames, ...(layout.activeFrame ? { activeFrame: layout.activeFrame } : {}) })
   }
 
   fromEmpty(): void { this.load(emptyDrawer()) }

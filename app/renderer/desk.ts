@@ -5,6 +5,7 @@
 // desk's edge (a new frame there); click duplicates, right-click or Shift+click opens the chooser.
 import { createDockview, createGridview, GridviewPanel, type AddPanelOptions, type DockviewApi, type DockviewComponentOptions, type DockviewTheme, type GridviewApi, type IDockviewPanel, type IFrameworkPart, type SerializedDockview } from 'dockview-core'
 import type { Direction, Target } from './create.ts'
+import { DEFAULT_DESK_HUE } from './desks.ts'
 import { icon } from './icons.ts'
 import { type DeskLayout, emptyDesk, FRAME_COMPONENT, frameInsertion, isLayoutV1, nextFrameId, panelIdsOf } from './layout.ts'
 
@@ -60,7 +61,7 @@ export class Desk {
   readonly host: DeskHost
   readonly theme: DockviewTheme
   /** Identity of the desk in the layout file (name and color are phase C's). */
-  meta: Pick<DeskLayout, 'id' | 'name' | 'color'> = { id: 'desk-1', name: 'Mesa 1', color: 0 }
+  meta: Pick<DeskLayout, 'id' | 'name' | 'color'> = { id: 'desk-1', name: 'Mesa 1', color: DEFAULT_DESK_HUE }
   private readonly container: HTMLElement
   private readonly grid: GridviewApi
   readonly frames = new Map<string, Frame>()

@@ -31,12 +31,12 @@ type Hooks = {
   connection(): { connected: boolean; pid?: number } | undefined
   activate(id: string): void
   activeId(): string | undefined
-  desks(): { id: string; name: string; color: number }[]
+  desks(): { id: string; name: string; color: string }[]
   activeDesk(): string
   switchDesk(id: string): void
   createDesk(side: 'before' | 'after', relativeTo?: string): string
   renameDesk(id: string, name: string): void
-  recolorDesk(id: string, color: number): void
+  recolorDesk(id: string, color: string): void
   switchState(): { visible: string[]; hidden: string[]; active: string }
   deskLine(): boolean
 }
@@ -118,6 +118,17 @@ async function shot(app: ElectronApplication, name: string): Promise<void> {
   writeFileSync(join(artifacts, `${name}.png`), Buffer.from(b64, 'base64'))
 }
 
+/** A small PNG of the toolbar only (half size). */
+async function shotBar(app: ElectronApplication, page: Page, name: string): Promise<void> {
+  await page.mouse.move(400, 400)
+  const r = (await rects(page, '#toolbar'))[0]!
+  const b64 = await app.evaluate(async ({ BrowserWindow }, rect) => {
+    const img = await BrowserWindow.getAllWindows()[0]!.webContents.capturePage(rect)
+    return img.resize({ width: Math.round(img.getSize().width / 2), quality: 'best' }).toPNG().toString('base64')
+  }, { x: Math.floor(r.left), y: Math.floor(r.top), width: Math.ceil(r.width), height: Math.ceil(r.height) })
+  writeFileSync(join(artifacts, `${name}.png`), Buffer.from(b64, 'base64'))
+}
+
 async function assertScheme(app: ElectronApplication, page: Page, scheme: 'light' | 'dark'): Promise<void> {
   const want = TOKENS[scheme]
   for (const n of ['--desk-bg', '--frame-bg', '--frame-border'] as const) assert.equal(await token(page, n), want[n], `${scheme}: ${n}`)
@@ -183,7 +194,51 @@ async function assertDeskLine(page: Page): Promise<void> {
   assert.equal(line.bg, fill, 'the line has the active desk colour')
 }
 
-test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 and 2)', async () => {
+/**
+ * Slice 3: the capsule paints with the generated --x-{hue} variables, not with literal colours. A probe element
+ * resolves each variable through the same engine, so the comparison is exact in any colour syntax.
+ */
+async function assertPaletteTokens(page: Page, scheme: 'light' | 'dark'): Promise<void> {
+  assert.equal(await page.evaluate(() => (document.documentElement as { dataset: Record<string, string> }).dataset.theme), scheme)
+  const r = await page.evaluate(() => {
+    const doc = document as unknown as { createElement(t: string): { style: Record<string, string> }; body: { append(e: unknown): void }; querySelectorAll(s: string): Iterable<{ dataset: Record<string, string>; classList: { contains(c: string): boolean } }> }
+    const resolve = (prop: 'backgroundColor' | 'color', value: string): string => {
+      const el = doc.createElement('i')
+      el.style[prop === 'color' ? 'color' : 'background'] = value
+      doc.body.append(el)
+      const out = window.getComputedStyle(el)[prop] as string
+      ;(el as unknown as { remove(): void }).remove()
+      return out
+    }
+    const hues = window.__tether.desks().reduce<Record<string, string>>((m, d) => { m[d.id] = d.color; return m }, {})
+    return Array.from(doc.querySelectorAll('#desk-switch .seg[data-desk]')).map(seg => {
+      const hue = hues[seg.dataset.desk!]!
+      const cs = window.getComputedStyle(seg)
+      const name = window.getComputedStyle((seg as unknown as { querySelector(s: string): unknown }).querySelector('.seg-name'))
+      return {
+        desk: seg.dataset.desk!, hue, on: seg.classList.contains('on'),
+        bg: cs.backgroundColor, color: cs.color, nameColor: name.color,
+        fill: resolve('backgroundColor', `var(--x-${hue})`), fg: resolve('color', `var(--x-${hue}-foreground)`), text: resolve('color', `var(--x-${hue}-text)`),
+        raw: ['', '-foreground', '-text'].map(k => window.getComputedStyle(document.documentElement).getPropertyValue(`--x-${hue}${k}`).trim()),
+      }
+    })
+  })
+  assert.ok(r.length >= 5, 'the capsule shows the desks')
+  for (const x of r) {
+    assert.ok(x.raw.every(v => v.length > 0), `${scheme} ${x.hue}: the three --x variables exist`)
+    if (x.on) {
+      assert.equal(x.bg, x.fill, `${scheme} ${x.hue}: the active segment fills with --x-${x.hue}`)
+      assert.equal(x.color, x.fg, `${scheme} ${x.hue}: its text is --x-${x.hue}-foreground`)
+    } else {
+      assert.equal(x.nameColor, x.text, `${scheme} ${x.hue}: an inactive name is --x-${x.hue}-text`)
+    }
+  }
+  assert.ok(r.some(x => x.on) && r.some(x => !x.on), 'both an active and an inactive segment were checked')
+  // The attention badge keeps --x-alert (orange) with its own foreground.
+  assert.ok((await token(page, '--x-alert')).startsWith('oklch('), `${scheme}: --x-alert`)
+}
+
+test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 3)', async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
@@ -245,10 +300,10 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 and
     // ---------- slice 2: toolbar, capsule, connection popover, theme menu, desk line ----------
     await toolbarChecks(page)
     // The preview's desks (docs/tether-preview.html), for the side-by-side screenshots.
-    const PREVIEW: [string, number][] = [['Cliente A', 0], ['tether', 4], ['Atrium', 6], ['Pessoal', 1], ['Financeiro', 2]]
+    const PREVIEW: [string, string][] = [['Cliente A', 'blue'], ['tether', 'purple'], ['Atrium', 'pink'], ['Pessoal', 'green'], ['Financeiro', 'orange']]
     await page.evaluate(([name, color]) => { const id = window.__tether.desks()[0]!.id; window.__tether.renameDesk(id, name); window.__tether.recolorDesk(id, color) }, PREVIEW[0]!)
     for (const [name, color] of PREVIEW.slice(1)) {
-      await page.evaluate(([name, color]) => { const all = window.__tether.desks(); const id = window.__tether.createDesk('after', all[all.length - 1]!.id); window.__tether.renameDesk(id, name); window.__tether.recolorDesk(id, color) }, [name, color] as [string, number])
+      await page.evaluate(([name, color]) => { const all = window.__tether.desks(); const id = window.__tether.createDesk('after', all[all.length - 1]!.id); window.__tether.renameDesk(id, name); window.__tether.recolorDesk(id, color) }, [name, color] as [string, string])
     }
     await page.evaluate(() => window.__tether.switchDesk(window.__tether.desks()[1]!.id))
     await sleep(300)
@@ -259,6 +314,7 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 and
     for (const scheme of ['dark', 'light'] as const) {
       await setTheme(page, scheme)
       await shot(app, `chrome-bar-${scheme}`)
+      await assertPaletteTokens(page, scheme)
     }
 
     // The theme icon menu switches the scheme.
@@ -319,6 +375,29 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 and
     await page.waitForFunction(() => Math.abs(window.innerWidth - 1280) <= 2)
     await sleep(300)
 
+    // Slice 3: all 12 hues on the capsule (12 desks, one per hue), both schemes: tokens in use, picker offering 12,
+    // and small captures of the toolbar for the side-by-side with docs/desk-switcher-options.html.
+    await page.evaluate(() => { while (window.__tether.desks().length < 12) { const all = window.__tether.desks(); window.__tether.createDesk('after', all[all.length - 1]!.id) } })
+    const HUES = ['red', 'orange', 'yellow', 'lime', 'green', 'teal', 'cyan', 'sky', 'blue', 'purple', 'magenta', 'pink']
+    await page.evaluate(hues => { window.__tether.desks().forEach((d, i) => window.__tether.recolorDesk(d.id, hues[i]!)) }, HUES)
+    await page.evaluate(() => window.__tether.switchDesk(window.__tether.desks()[8]!.id)) // blue: a "-deep" fill
+    await sleep(400)
+    assert.deepEqual((await page.evaluate(() => window.__tether.desks())).map(d => d.color), HUES, 'one desk per hue')
+    for (const scheme of ['dark', 'light'] as const) {
+      await setTheme(page, scheme)
+      await assertPaletteTokens(page, scheme)
+      await shotBar(app, page, `chrome-palette-${scheme}`)
+    }
+    await page.evaluate(() => window.__tether.switchDesk(window.__tether.desks()[1]!.id)) // orange: the attention badge must still stand apart
+    await sleep(300)
+    await shotBar(app, page, 'chrome-palette-light-orange')
+    await page.click('#desk-switch .seg.on', { button: 'right' })
+    await page.click('#ctx-menu li:has-text("Cor…")')
+    assert.equal(await page.locator('#desk-colors .swatch').count(), 12, 'the picker offers the 12 hues')
+    assert.deepEqual(await page.locator('#desk-colors .swatch').evaluateAll(els => els.map(e => (e as unknown as { dataset: Record<string, string> }).dataset.color!)), HUES)
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#desk-colors', { state: 'detached' })
+
     // The desk line: off through ≡, saved in settings.json, still off after a relaunch.
     await assertDeskLine(page)
     await page.click('#btn-menu')
@@ -336,6 +415,138 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 and
     await page.click('#app-menu li[data-cmd="desk-line"]')
     await page.waitForFunction(() => window.__tether.deskLine())
     await assertDeskLine(page)
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})
+
+// Slice 4 (the pane tab strip, PLAN.md "Fatia 4"): 9 tabs in one narrow frame. The "+N", the status-bar toggle
+// and "⋯" sit fixed at the strip's right end; the active tab is never hidden; picking in the "+N" puts the tab
+// in place of the visible tab used longest ago (moveTo) and the others stay; the toggle follows Ctrl+Shift+H and
+// does not move "⋯"; "⋯" holds "Renomear…"; screenshots chrome-tabs-{light,dark}.png of the strip.
+test('app chrome: pane tab strip, "+N" by recent use, status-bar toggle, "⋯" (phase 4, slice 4)', async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  mkdirSync(artifacts, { recursive: true })
+  const home = mkdtempSync(join(tmpdir(), 'tether-chrome-tabs-'))
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home))
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    for (let i = 0; i < 9; i++) await createShell(page, root)
+    assert.equal(await page.evaluate(() => window.__tether.frameIds().length), 1, 'one frame, nine tabs')
+
+    type Strip = { order: string[]; hidden: string[]; more: string; active: string | undefined; head: Rect; actions: Rect; dots: Rect; pressed: string | null }
+    const strip = (): Promise<Strip> => page.evaluate(() => {
+      const d = document as unknown as { querySelector(s: string): HTMLLike | null; querySelectorAll(s: string): ArrayLike<HTMLLike> }
+      type HTMLLike = { getBoundingClientRect(): Rect; classList: { contains(c: string): boolean }; querySelector(s: string): HTMLLike | null; dataset: Record<string, string>; hidden: boolean; textContent: string | null; getAttribute(n: string): string | null }
+      type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number }
+      const r = (e: HTMLLike | null): Rect => { const b = e!.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, width: b.width, height: b.height } }
+      const tabs = Array.from(d.querySelectorAll('.dv-tabs-container > .dv-tab'))
+      const more = d.querySelector('.tab-actions .tab-more')!
+      return {
+        order: tabs.map(t => t.querySelector('[data-slot]')!.dataset.slot!),
+        hidden: tabs.filter(t => t.classList.contains('tab-hidden')).map(t => t.querySelector('[data-slot]')!.dataset.slot!),
+        more: more.hidden ? '' : (more.textContent ?? ''),
+        active: window.__tether.activeId(),
+        head: r(d.querySelector('.dv-tabs-and-actions-container')),
+        actions: r(d.querySelector('.tab-actions')),
+        dots: r(d.querySelector('.tab-actions [data-action="pane-menu"]')),
+        pressed: d.querySelector('.tab-actions [data-action="status-bar"]')!.getAttribute('aria-pressed'),
+      }
+    })
+
+    // Wide: all nine fit (they shrink), no "+N"; the actions end at the strip's right edge.
+    await sleep(300)
+    let s = await strip()
+    assert.equal(s.order.length, 9)
+    assert.ok(Math.abs(s.actions.right - s.head.right) <= 1, `actions fixed at the right: ${JSON.stringify(s)}`)
+    assert.ok(Math.abs(s.head.height - 32) <= 1, `strip height 32: ${s.head.height}`)
+
+    // Narrow: "+N" appears with the count, the active tab stays visible, the actions stay at the right edge.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(700, 700))
+    await page.waitForFunction(() => Math.abs(window.innerWidth - 700) <= 2)
+    await sleep(400)
+    s = await strip()
+    assert.ok(s.hidden.length > 0, `"+N" at 700 px: ${JSON.stringify(s)}`)
+    assert.equal(s.more, `+${s.hidden.length}`)
+    assert.ok(!s.hidden.includes(s.active!), 'the active tab is visible')
+    assert.ok(Math.abs(s.actions.right - s.head.right) <= 1, 'actions still at the right edge')
+
+    // Use the visible tabs, all but the first: the first one becomes the one used longest ago.
+    const visible = s.order.filter(id => !s.hidden.includes(id))
+    for (const id of visible.slice(1)) { await page.evaluate(id => window.__tether.activate(id), id); await page.waitForFunction(id => window.__tether.activeId() === id, id) }
+    await sleep(200)
+    s = await strip()
+    const lru = visible[0]!
+    const lruIndex = s.order.indexOf(lru)
+    const picked = s.hidden[0]!
+    const dotsBefore = s.dots
+    await page.click('.tab-actions .tab-more')
+    await page.waitForSelector('#ctx-menu')
+    assert.equal(await page.locator('#ctx-menu li[role=menuitem]').count(), s.hidden.length, 'the "+N" lists the hidden tabs')
+    await page.locator('#ctx-menu li[role=menuitem]').first().click()
+    await page.waitForFunction(id => window.__tether.activeId() === id, picked)
+    await sleep(300)
+    const after = await strip()
+    assert.ok(!after.hidden.includes(picked), 'the picked tab shows')
+    assert.ok(after.hidden.includes(lru), `the tab used longest ago left: ${JSON.stringify({ s, after, lru, picked })}`)
+    assert.equal(after.order.indexOf(picked), lruIndex, 'the picked tab took its place (moveTo)')
+    for (const id of visible.slice(1)) assert.ok(!after.hidden.includes(id), `the others stay: ${id}`)
+    assert.ok(Math.abs(after.dots.left - dotsBefore.left) <= 1, '"⋯" did not move')
+
+    // The status-bar toggle: opens the active pane's header, "⋯" stays in place; Ctrl+Shift+H closes it.
+    const panelOpen = (id: string) => page.evaluate(id => (document.querySelector(`.panel[data-slot-id="${id}"]`) as unknown as { dataset: Record<string, string> }).dataset.details, id)
+    assert.equal(after.pressed, 'false')
+    await page.click('.tab-actions [data-action="status-bar"]')
+    await page.waitForFunction(id => (document.querySelector(`.panel[data-slot-id="${id}"]`) as unknown as { dataset: Record<string, string> }).dataset.details === 'true', picked)
+    let t = await strip()
+    assert.equal(t.pressed, 'true')
+    assert.ok(Math.abs(t.dots.left - dotsBefore.left) <= 1, '"⋯" stays in place with the toggle on')
+    await page.locator(`.panel[data-slot-id="${picked}"] .panel-term`).click()
+    await page.keyboard.press('Control+Shift+H')
+    await page.waitForFunction(id => (document.querySelector(`.panel[data-slot-id="${id}"]`) as unknown as { dataset: Record<string, string> }).dataset.details === 'false', picked)
+    t = await strip()
+    assert.equal(t.pressed, 'false')
+    assert.equal(await panelOpen(picked), 'false')
+
+    // "⋯": the pane menu, grouped, with "Renomear…" (inline rename on the tab).
+    await page.click('.tab-actions [data-action="pane-menu"]')
+    await page.waitForSelector('#ctx-menu')
+    const items = await page.locator('#ctx-menu li[role=menuitem]').allTextContents()
+    for (const want of ['Novo painel…', 'Renomear…', 'Trocar perfil…', 'Mostrar detalhes do painel', 'Mover para a gaveta', 'Fechar painel…']) assert.ok(items.includes(want), `"⋯" has ${want}: ${JSON.stringify(items)}`)
+    assert.ok(!items.some(i => /Reiniciar/.test(i)), 'no "Reiniciar sessão"')
+    assert.ok(await page.locator('#ctx-menu li.sep').count() >= 3, 'grouped')
+    await page.click('#ctx-menu li:text-is("Renomear…")')
+    await page.waitForSelector('.tether-tab input.rename')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.tether-tab input.rename', { state: 'detached' })
+
+    // Screenshots of the strip, light and dark, to compare with the preview's .tabs/.tr/.tmore.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(900, 600))
+    await page.waitForFunction(() => Math.abs(window.innerWidth - 900) <= 2)
+    for (const scheme of ['light', 'dark'] as const) {
+      await setTheme(page, scheme)
+      const h = (await strip()).head
+      const b64 = await app.evaluate(async ({ BrowserWindow }, rect) => {
+        const img = await BrowserWindow.getAllWindows()[0]!.webContents.capturePage(rect)
+        return img.toPNG().toString('base64')
+      }, { x: Math.floor(h.left), y: Math.floor(h.top), width: Math.ceil(h.width), height: Math.ceil(h.height) + 1 })
+      writeFileSync(join(artifacts, `chrome-tabs-${scheme}.png`), Buffer.from(b64, 'base64'))
+    }
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))
     for (const d of daemons) {

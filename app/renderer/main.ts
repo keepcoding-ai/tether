@@ -12,7 +12,7 @@ import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_L
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
-import { deskTokens } from './desks.ts'
+import { deskTokens, readDeskColor } from './desks.ts'
 import { DEFAULT_UI, type UiSettings } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
@@ -22,6 +22,7 @@ import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { drawerOf, emptyLayout, isPersonChange, type LayoutV2, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
+import { TabStripActions } from './tab-strip.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
 import { LEVELS, shortcutHint, terminalInputOf, type AppShortcut } from './shortcuts.ts'
@@ -200,10 +201,21 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
         tab.dispose = () => { dispose(); for (const [id, t] of tabs) if (t === tab) tabs.delete(id) }
         return tab
       },
+      // The tab strip measures its own overflow ("+N", tab-strip.ts): dockview's scroll-based list is off.
+      disableTabsOverflowList: true,
+      createRightHeaderActionComponent: () => new TabStripActions({
+        describe: id => {
+          const s = slots.get(id)
+          return { icon: s ? KIND_ICON[s.kind] : 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
+        },
+        showHidden: (x, y, list, pick) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) }))),
+        paneMenu: (id, x, y) => showTabMenu(id, x, y),
+        toggleDetails: id => togglePaneDetails(id),
+      }),
       createWatermarkComponent: () => {
         const el = document.createElement('div')
         el.className = 'watermark'
-        el.innerHTML = `<h1>tether</h1><p>Nenhum painel aberto.</p><p>${kbdHtml(shortcutHint({ op: 'choose' }))} ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
+        el.innerHTML = `<p>Nenhum painel aberto.</p><p>${kbdHtml(shortcutHint({ op: 'choose' }))} ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
         return { element: el, init: () => {} }
       },
     }),
@@ -410,7 +422,7 @@ function showDeskMenu(id: string, x: number, y: number): void {
   const index = desks.desks.findIndex(d => d.id === id)
   const items: MenuItem[] = [
     { icon: 'pencil-simple', label: 'Renomear', run: () => strip.startRename(id) },
-    { icon: 'palette', label: 'Cor…', run: () => strip.pickColor(id, desks.desks[index]?.color ?? 0, x, y) },
+    { icon: 'palette', label: 'Cor…', run: () => strip.pickColor(id, desks.desks[index]?.color ?? 'blue', x, y) },
     { icon: 'arrow-line-left', label: 'Nova mesa antes', run: () => { desks.create('before', id) } },
     { icon: 'arrow-line-right', label: 'Nova mesa depois', run: () => { desks.create('after', id) } },
   ]
@@ -965,10 +977,13 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 
 // ---------- tab context menu ----------
 
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean }
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean }
+/** A thin line between groups of items. */
+const SEP = 'sep' as const
+type MenuEntry = MenuItem | typeof SEP
 
 /** A floating menu at (x, y), closed by a click anywhere else, Esc, or picking an item. */
-function showContextMenu(x: number, y: number, items: MenuItem[]): void {
+function showContextMenu(x: number, y: number, items: MenuEntry[]): void {
   document.getElementById('ctx-menu')?.remove()
   const menu = document.createElement('ul')
   menu.id = 'ctx-menu'; menu.className = 'menu'; menu.setAttribute('role', 'menu')
@@ -983,9 +998,11 @@ function showContextMenu(x: number, y: number, items: MenuItem[]): void {
     else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); lis[i]!.click() }
   }
   for (const item of items) {
+    if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
     const li = document.createElement('li'); li.setAttribute('role', 'menuitem'); li.tabIndex = -1
     if (item.danger) li.classList.add('danger')
     li.append(icon(item.icon), document.createTextNode(item.label))
+    if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
     li.addEventListener('click', ev => { ev.stopPropagation(); close(); item.run() })
     menu.append(li)
   }
@@ -999,7 +1016,10 @@ function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   menu.querySelector<HTMLElement>('li[role=menuitem]')?.focus()
 }
 
-/** Right-click on a tab: the two ways to open a panel next to this one, switch the profile, close the panel. */
+/**
+ * The pane menu: right-click on a tab and the "⋯" at the tab strip's right end (one source). Grouped: open
+ * next to it, name and profile, the status bar, where it lives, close.
+ */
 function showTabMenu(slotId: string, x: number, y: number): void {
   const slot = slots.get(slotId)
   if (!slot) return
@@ -1023,9 +1043,14 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.below}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'below' }) } },
     { icon: 'square-half', label: 'Novo painel na borda do quadro…', run: () => { void openNewDialog({ reference: slotId, target: { level: 'frame', placement: 'right' } }) } },
     { icon: 'columns', label: `${NEW_FRAME_LABEL}…`, run: () => { void openNewDialog({ reference: slotId, target: { level: 'desk', placement: 'right' } }) } },
-    ...moves,
-    { icon: detailsOpen(panel?.params) ? 'caret-up' : 'caret-down', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
+    SEP,
+    { icon: 'pencil-simple', label: 'Renomear…', run: () => tabs.get(slotId)?.startRename() },
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
+    SEP,
+    { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
+    SEP,
+    ...moves,
+    SEP,
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
 }
@@ -1485,13 +1510,13 @@ declare global {
       /** Writes to the xterm as if the program had (tests: ConPTY does not forward every DECSET). */
       inject(slotId: string, data: string): void
       /** The row of desks with each desk's panes and attention counts, and the active desk. */
-      desks(): { id: string; name: string; color: number; panes: string[]; attention: DeskAttention }[]
+      desks(): { id: string; name: string; color: string; panes: string[]; attention: DeskAttention }[]
       activeDesk(): string
       deskOf(slotId: string): string | undefined
       switchDesk(id: string): void
       createDesk(side: 'before' | 'after', relativeTo?: string): string
       renameDesk(id: string, name: string): void
-      recolorDesk(id: string, color: number): void
+      recolorDesk(id: string, color: string): void
       moveDesk(id: string, to: number): void
       /** Closes a desk exactly as its menu does (the dialog included when it has panes). */
       closeDesk(id: string): void
@@ -1613,7 +1638,7 @@ function setupTestHooks(): void {
     switchDesk: id => desks.switchTo(id),
     createDesk: (side, relativeTo) => desks.create(side, relativeTo),
     renameDesk: (id, name) => desks.rename(id, name),
-    recolorDesk: (id, color) => desks.recolor(id, color),
+    recolorDesk: (id, color) => desks.recolor(id, readDeskColor(color)),
     moveDesk: (id, to) => desks.move(id, to),
     closeDesk: id => { void closeDesk(id) },
     movePaneToDesk,

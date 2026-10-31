@@ -13,7 +13,7 @@ import type { ColorScheme } from '../shared/theme.ts'
 import { renderChoices, roveWithArrows } from './dialog.ts'
 import { decodeOsc52 } from './clipboard.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
-import { detailsLabel, detailsOpen } from './pane-details.ts'
+import { detailsOpen } from './pane-details.ts'
 import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
@@ -186,7 +186,7 @@ export interface PanelHost {
   getAppearance(): TerminalAppearance
   /** "Trocar perfil…" from the header pill. */
   onSwitchProfile(slotId: string): void
-  /** The toggle on the tab: show or hide the header details of the pane. */
+  /** The status-bar toggle at the tab strip's right end (and Ctrl+Shift+H): show or hide the pane's header. */
   onToggleDetails(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
   onTabMenu(slotId: string, ev: MouseEvent): void
@@ -642,7 +642,11 @@ export class TerminalPanel implements IContentRenderer {
   }
 }
 
-/** Tab: agent icon + title + status dot + close button; tooltip with folder, session id and status. */
+/**
+ * Tab: agent icon + title + unsafe shield + attention dot + status dot (not shown while running) + close button
+ * (active tab and hover only); tooltip with folder, session id and status. The status-bar toggle and the pane
+ * menu live at the strip's fixed right end (tab-strip.ts).
+ */
 export class SlotTab implements ITabRenderer {
   readonly element: HTMLElement
   private api: DockviewPanelApi | undefined
@@ -651,7 +655,6 @@ export class SlotTab implements ITabRenderer {
   private readonly dot: HTMLElement
   private readonly unsafe: HTMLElement
   private readonly attn: HTMLElement
-  private readonly toggle: HTMLButtonElement
   private disposers: Array<() => void> = []
   private readonly host: PanelHost
   /** What the layout file remembers of the pane, painted before the daemon answers. */
@@ -673,13 +676,7 @@ export class SlotTab implements ITabRenderer {
     close.append(icon('x'))
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    // The details toggle: a caret that points down while the header is hidden and up while it is shown.
-    this.toggle = document.createElement('button')
-    this.toggle.className = 'details-toggle'
-    this.toggle.addEventListener('pointerdown', ev => ev.stopPropagation())
-    this.toggle.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onToggleDetails(this.api.id) })
-    this.setDetails(false)
-    this.element.append(this.kind, this.attn, this.text, this.unsafe, this.dot, this.toggle, close)
+    this.element.append(this.kind, this.text, this.unsafe, this.attn, this.dot, close)
     this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
     this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
   }
@@ -687,18 +684,10 @@ export class SlotTab implements ITabRenderer {
   init(params: TabPartInitParameters): void {
     this.api = params.api
     this.hint = hintParam(params.params)
-    this.setDetails(detailsOpen(params.params))
-    this.disposers.push(params.api.onDidParametersChange(p => { if ('details' in p) this.setDetails(detailsOpen(p)) }).dispose)
+    // The tab strip's actions (tab-strip.ts) find the panel id of each tab through this attribute.
+    this.element.dataset.slot = params.api.id
     this.disposers.push(params.api.onDidTitleChange(() => this.render()).dispose)
     this.render()
-  }
-
-  private setDetails(open: boolean): void {
-    const label = `${detailsLabel(open)} (${shortcutHint({ op: 'pane-details' })})`
-    this.toggle.title = label
-    this.toggle.setAttribute('aria-label', detailsLabel(open))
-    this.toggle.setAttribute('aria-pressed', String(open))
-    this.toggle.replaceChildren(icon(open ? 'caret-up' : 'caret-down'))
   }
 
   render(): void {

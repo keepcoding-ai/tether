@@ -192,7 +192,7 @@ button.primary:hover { background: var(--accent-hover); }
 .dv-theme-tether {
   --dv-paneview-active-outline-color: var(--accent);
   --dv-tabs-and-actions-container-font-size: 13px;
-  --dv-tabs-and-actions-container-height: 35px;
+  --dv-tabs-and-actions-container-height: 32px;
   --dv-drag-over-background-color: color-mix(in srgb, var(--accent) 22%, transparent);
   --dv-drag-over-border-color: transparent;
   --dv-edge-dock-indicator-color: var(--accent);
@@ -300,24 +300,44 @@ button.primary:hover { background: var(--accent-hover); }
 .status.error .ph { color: var(--err); }
 .panel-head .icon .ph { width: 15px; height: 15px; }
 
-/* --- custom tab --- */
-.tether-tab { display: flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; height: 100%; max-width: 260px; }
-.tether-tab .kind .ph { width: 14px; height: 14px; opacity: .9; }
-.tether-tab .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* --- custom tab (the preview's .tab): shrinks to a minimum width, the active one never shrinks --- */
+.dv-theme-tether .dv-tabs-and-actions-container > .dv-scrollable,
+.dv-theme-tether .dv-tabs-and-actions-container > .dv-tabs-container { flex: 0 1 auto; min-width: 0; }
+.dv-theme-tether .dv-tabs-container { overflow: hidden; }
+.dv-theme-tether .dv-tabs-container > .dv-tab { flex: 0 1 auto; min-width: 112px; max-width: 200px; padding: 0; }
+.dv-theme-tether .dv-tabs-container > .dv-tab.dv-active-tab { flex-shrink: 0; }
+.dv-theme-tether .dv-tabs-container > .dv-tab.tab-hidden { display: none; }
+.tether-tab { display: flex; align-items: center; gap: 7px; padding: 0 8px 0 11px; height: 100%; min-width: 0; white-space: nowrap; }
+.tether-tab .kind { display: inline-flex; flex: none; }
+.tether-tab .kind .ph { width: 14px; height: 14px; }
+.tether-tab .text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tether-tab input.rename { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 4px; width: 140px; min-width: 0; outline: none; }
+.tether-tab .dot { display: inline-flex; flex: none; }
 .tether-tab .dot .ph { width: 7px; height: 7px; }
-.tether-tab .dot.running { color: var(--ok); }
+/* Running is the normal state: no dot. The others keep theirs. */
+.tether-tab .dot.running { display: none; }
 .tether-tab .dot.exited { color: var(--fg-dim); }
 .tether-tab .dot.starting, .tether-tab .dot.queued, .tether-tab .dot.unconfirmed { color: var(--warn); }
 .tether-tab .dot.error { color: var(--err); }
-.tether-tab .close { background: none; border: 0; padding: 2px; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; }
+.tether-tab .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
 .tether-tab .close .ph { width: 13px; height: 13px; }
 .tether-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
-/* The details toggle shares the close button's look; it shows on the active tab and on hover/focus only. */
-.tether-tab .details-toggle { background: none; border: 0; padding: 2px; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; opacity: 0; }
-.tether-tab .details-toggle .ph { width: var(--icon-xs); height: var(--icon-xs); }
-.tether-tab .details-toggle:hover { background: var(--bg-hover-2); color: var(--fg); }
-.dv-active-tab .tether-tab .details-toggle, .tether-tab:hover .details-toggle, .tether-tab .details-toggle:focus-visible { opacity: 1; }
+.dv-active-tab .tether-tab .close, .tether-tab:hover .close, .tether-tab .close:focus-visible { visibility: visible; }
+
+/* --- the fixed right end of the tab strip: "+N", status-bar toggle, "⋯" (tab-strip.ts; the preview's .tr) --- */
+.dv-theme-tether .dv-right-actions-container { flex: none; height: 100%; }
+.tab-actions { display: flex; align-items: center; gap: 1px; height: 100%; padding: 0 4px; border-left: 1px solid var(--border); }
+.tab-actions[hidden] { display: none; }
+.tab-actions button { font: inherit; border: 0; background: none; color: var(--fg-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.tab-act { width: 26px; height: 24px; border-radius: 5px; padding: 0; }
+.tab-act .ph { width: 15px; height: 15px; }
+.tab-act:hover, .tab-act[aria-pressed="true"] { background: var(--bg-hover); color: var(--fg); }
+.tab-more { gap: 5px; height: 22px; padding: 0 8px; border-radius: 5px; font-size: 12px; font-weight: 600; }
+.tab-more[hidden] { display: none; }
+.tab-more:hover { background: var(--bg-hover); color: var(--fg); }
+.tab-more .more-dot, .menu .attn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--x-alert); flex: none; }
+.menu .attn-dot { margin-left: auto; }
+#ctx-menu li.sep { height: 1px; padding: 0; margin: 4px 2px; background: var(--border); cursor: default; }
 
 /* --- the situation language: icon badge + title, context block, choice cards (dialogs and panel overlays) --- */
 .badge { width: 36px; height: 36px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
@@ -661,8 +681,8 @@ dialog.term-theme footer .spacer { flex: 1; }
 
 /* Desks (phase C): the strip of desks above the frames, and the stacked layers (one per desk). Inactive layers
    stay mounted at the same size with visibility:hidden, so their terminals keep receiving output. */
-.desk-colors { position: fixed; z-index: 60; display: grid; grid-template-columns: repeat(4, 24px); gap: 6px; padding: 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
-.desk-colors .swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid transparent; background: var(--desk-color); color: #fff; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.desk-colors { position: fixed; z-index: 60; display: grid; grid-template-columns: repeat(6, 24px); gap: 6px; padding: 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+.desk-colors .swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid transparent; background: var(--desk-color); color: var(--desk-color-fg); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .desk-colors .swatch:hover, .desk-colors .swatch:focus { border-color: var(--fg); outline: none; }
 .desk-colors .swatch .ph { width: 14px; height: 14px; }
 #dock.desk-set { position: relative; }

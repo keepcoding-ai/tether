@@ -7,6 +7,7 @@
 // that end up empty; a frame's root must stay a branch (dockview refuses a leaf there).
 import type { SerializedDockview, SerializedGridviewComponent } from 'dockview-core'
 import type { Direction } from './create.ts'
+import { type DeskHue, DEFAULT_DESK_HUE, readDeskColor } from './desks.ts'
 
 export const LAYOUT_VERSION = 2
 export const FRAME_COMPONENT = 'frame'
@@ -20,8 +21,8 @@ type GridBranch = { type: 'branch'; data: GridNode[]; size?: number; visible?: b
 export interface DeskLayout {
   id: string
   name: string
-  /** Index in the desk palette (phase C paints it). */
-  color: number
+  /** The desk's hue name (palette.ts). Files from before the 12-hue palette hold a number: an index of the old 8 (`readDeskColor`). */
+  color: DeskHue
   frames: { grid: FrameGrid; views: Record<string, SerializedDockview> }
   activeFrame?: string
 }
@@ -63,7 +64,7 @@ export function singleFrameGrid(frameId: string, width: number, height: number):
 /** A desk with one empty frame (a fresh app, or everything pruned). */
 export function emptyDesk(id = 'desk-1', name = 'Mesa 1'): DeskLayout {
   const frameId = 'frame-1'
-  return { id, name, color: 0, frames: { grid: singleFrameGrid(frameId, 1200, 800), views: {} }, activeFrame: frameId }
+  return { id, name, color: DEFAULT_DESK_HUE, frames: { grid: singleFrameGrid(frameId, 1200, 800), views: {} }, activeFrame: frameId }
 }
 
 /** A drawer with one empty frame. */
@@ -87,16 +88,25 @@ export function emptyLayout(): LayoutV2 {
 }
 
 /**
+ * Every desk with its colour read as a hue name (a number is the old palette's index, anything unknown is blue).
+ * The same array comes back when nothing needed reading, so an up-to-date file stays the very same object.
+ */
+export function readDeskColors(desks: readonly DeskLayout[]): DeskLayout[] {
+  if (desks.every(d => readDeskColor(d.color) === d.color)) return desks as DeskLayout[]
+  return desks.map(d => readDeskColor(d.color) === d.color ? d : { ...d, color: readDeskColor(d.color) })
+}
+
+/**
  * The layout in v2 form. A v1 file becomes "Mesa 1" with one frame whose view IS the old file; `migrated` says
  * the caller must keep a `layout.v1.bak` before the first v2 write. Anything else (empty, corrupt) is null.
  */
 export function migrateLayout(raw: unknown): { layout: LayoutV2; migrated: boolean } | null {
-  if (isLayoutV2(raw)) return { layout: { ...raw, drawer: drawerOf(raw) }, migrated: false }
+  if (isLayoutV2(raw)) return { layout: { ...raw, desks: readDeskColors(raw.desks), drawer: drawerOf(raw) }, migrated: false }
   if (isLayoutV1(raw)) {
     const frameId = 'frame-1'
     const width = typeof raw.grid.width === 'number' && raw.grid.width > 0 ? raw.grid.width : 1200
     const height = typeof raw.grid.height === 'number' && raw.grid.height > 0 ? raw.grid.height : 800
-    const desk: DeskLayout = { id: 'desk-1', name: 'Mesa 1', color: 0, frames: { grid: singleFrameGrid(frameId, width, height), views: { [frameId]: raw } }, activeFrame: frameId }
+    const desk: DeskLayout = { id: 'desk-1', name: 'Mesa 1', color: DEFAULT_DESK_HUE, frames: { grid: singleFrameGrid(frameId, width, height), views: { [frameId]: raw } }, activeFrame: frameId }
     return { layout: { v: 2, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer() }, migrated: true }
   }
   return null
@@ -184,7 +194,7 @@ export function pruneDesk(desk: DeskLayout, known: Set<string>): DeskLayout {
 
 /** The drawer restricted to `known` panel ids (an empty result is an empty drawer). */
 export function pruneDrawer(drawer: DrawerLayout, known: Set<string>): DrawerLayout {
-  const d = pruneDesk({ id: 'drawer', name: 'Gaveta', color: 0, frames: drawer.frames, activeFrame: drawer.activeFrame }, known)
+  const d = pruneDesk({ id: 'drawer', name: 'Gaveta', color: DEFAULT_DESK_HUE, frames: drawer.frames, activeFrame: drawer.activeFrame }, known)
   return { frames: d.frames, ...(d.activeFrame ? { activeFrame: d.activeFrame } : {}) }
 }
 
@@ -295,7 +305,7 @@ export function planRestore(saved: unknown, known: Set<string>): RestorePlan {
   if (!read) return { layout: null, migrated: false, orphaned: [] }
   const orphaned = orphanedPanels(allPanelIds(read.layout), known)
   // Nothing to prune: the saved v2 object itself (its `drawer` may be null; drawerOf reads that as empty).
-  if (orphaned.length === 0) return { layout: isLayoutV2(saved) ? saved : read.layout, migrated: read.migrated, orphaned }
+  if (orphaned.length === 0) return { layout: isLayoutV2(saved) && read.layout.desks === saved.desks ? saved : read.layout, migrated: read.migrated, orphaned }
   return { layout: pruneLayoutV2(read.layout, known).layout, migrated: read.migrated, orphaned }
 }
 

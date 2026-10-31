@@ -10,7 +10,7 @@
 // and the room is the toolbar minus twice the WIDER side (the capsule sits on the window's true centre, so it
 // may only grow as far as the wider side lets it on both sides). A ResizeObserver watches the toolbar and its
 // two sides only, never the capsule, and lays out in the next frame: repainting the capsule cannot re-trigger it.
-import { colorOf, DESK_COLORS, deskTokens, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
+import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
 import { fitDesks, overflowDesks, pickFromOverflow, touchUsed, type LastUsed } from './desk-switch-rules.ts'
 import { icon } from './icons.ts'
 
@@ -20,7 +20,7 @@ export interface DeskAttention { done: number; waiting: number }
 export interface DeskSwitchHost {
   switchTo(id: string): void
   rename(id: string, name: string): void
-  recolor(id: string, color: number): void
+  recolor(id: string, color: DeskHue): void
   menu(id: string, x: number, y: number): void
   /** The "+N" menu: one entry per hidden desk; `pick` switches to it. */
   overflowMenu(entries: { id: string; name: string; attention: number }[], x: number, y: number, pick: (id: string) => void): void
@@ -219,8 +219,8 @@ export class DeskSwitch {
     input.select()
   }
 
-  /** A small palette at (x, y): picking a swatch recolours the desk; a click elsewhere or Esc closes it. */
-  pickColor(id: string, current: number, x: number, y: number): void {
+  /** The 12 hues at (x, y): picking a swatch recolours the desk; a click elsewhere or Esc closes it. */
+  pickColor(id: string, current: DeskHue, x: number, y: number): void {
     document.getElementById('desk-colors')?.remove()
     const pop = document.createElement('div')
     pop.id = 'desk-colors'
@@ -230,19 +230,21 @@ export class DeskSwitch {
     const close = (): void => { pop.remove(); document.removeEventListener('click', onDoc, true); document.removeEventListener('keydown', onKey, true) }
     const onDoc = (ev: Event): void => { if (!pop.contains(ev.target as Node)) close() }
     const onKey = (ev: KeyboardEvent): void => { if (ev.key === 'Escape') { ev.preventDefault(); close() } }
-    DESK_COLORS.forEach((c, i) => {
+    for (const { hue, label } of DESK_HUES) {
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'swatch'
-      b.dataset.color = String(i)
-      b.style.setProperty('--desk-color', colorOf(i))
-      b.title = c.name
+      b.dataset.color = hue
+      b.style.setProperty('--desk-color', `var(--x-${hue})`)
+      b.style.setProperty('--desk-color-fg', `var(--x-${hue}-foreground)`)
+      b.title = label
       b.setAttribute('role', 'option')
-      b.setAttribute('aria-selected', String(i === current))
-      if (i === current) b.append(icon('check'))
-      b.addEventListener('click', ev => { ev.stopPropagation(); close(); this.host.recolor(id, i) })
+      b.setAttribute('aria-label', label)
+      b.setAttribute('aria-selected', String(hue === current))
+      if (hue === current) b.append(icon('check'))
+      b.addEventListener('click', ev => { ev.stopPropagation(); close(); this.host.recolor(id, hue) })
       pop.append(b)
-    })
+    }
     document.body.append(pop)
     const r = pop.getBoundingClientRect()
     pop.style.left = `${Math.max(4, Math.min(x, window.innerWidth - r.width - 4))}px`

@@ -4,10 +4,11 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { trayModel } from '../../app/shared/tray.ts'
-import { cleanDeskName, closeDesk, colorOf, cycleDesk, DESK_COLORS, deskAt, type DeskInfo, insertDesk, MAX_DESK_NAME, moveDesk, neighbourDesk, nextDeskColor, nextDeskId, nextDeskName, recolorDesk, renameDesk, touchMru } from '../../app/renderer/desks.ts'
+import { cleanDeskName, closeDesk, cycleDesk, DESK_HUES, deskAt, deskTokens, type DeskInfo, OLD_PALETTE_HUES, readDeskColor, insertDesk, MAX_DESK_NAME, moveDesk, neighbourDesk, nextDeskColor, nextDeskId, nextDeskName, recolorDesk, renameDesk, touchMru } from '../../app/renderer/desks.ts'
 import { shortcutHint, shortcutOf } from '../../app/renderer/shortcuts.ts'
 
-const row = (...ids: string[]): DeskInfo[] => ids.map((id, i) => ({ id, name: `Mesa ${i + 1}`, color: i }))
+const SPREAD = ['blue', 'green', 'orange', 'red', 'purple', 'cyan', 'pink', 'sky', 'yellow', 'lime', 'teal', 'magenta'] as const
+const row = (...ids: string[]): DeskInfo[] => ids.map((id, i) => ({ id, name: `Mesa ${i + 1}`, color: SPREAD[i % SPREAD.length]! }))
 const ids = (desks: DeskInfo[]): string[] => desks.map(d => d.id)
 
 describe('desk model', () => {
@@ -15,30 +16,51 @@ describe('desk model', () => {
     const desks = row('desk-1', 'desk-3')
     assert.equal(nextDeskId(desks), 'desk-2')
     assert.equal(nextDeskName(desks), 'Mesa 3')
-    assert.equal(nextDeskColor(desks), 2)
+    assert.equal(nextDeskColor(desks), 'orange')
     const after = insertDesk(desks, 'desk-1', 'after')
     assert.deepEqual(ids(after.desks), ['desk-1', 'desk-2', 'desk-3'])
-    assert.deepEqual(after.desk, { id: 'desk-2', name: 'Mesa 3', color: 2 })
+    assert.deepEqual(after.desk, { id: 'desk-2', name: 'Mesa 3', color: 'orange' })
     assert.deepEqual(ids(insertDesk(desks, 'desk-1', 'before').desks), ['desk-2', 'desk-1', 'desk-3'])
     assert.deepEqual(ids(insertDesk(desks, 'nope', 'before').desks), ['desk-1', 'desk-3', 'desk-2'], 'unknown reference: at the end')
     assert.deepEqual(ids(insertDesk(desks, 'desk-3', 'after').desks), ['desk-1', 'desk-3', 'desk-2'])
   })
 
-  test('colours: every colour used once before any repeats; colorOf wraps', () => {
+  test('colours: the 12 hues are all used once before any repeats, starting blue (as the old first desk)', () => {
     let desks: DeskInfo[] = []
-    for (let i = 0; i < DESK_COLORS.length; i++) desks = insertDesk(desks, undefined, 'after').desks
-    assert.deepEqual(desks.map(d => d.color), DESK_COLORS.map((_, i) => i))
-    assert.equal(colorOf(DESK_COLORS.length + 1), DESK_COLORS[1]!.css)
-    assert.equal(colorOf(-1), DESK_COLORS[DESK_COLORS.length - 1]!.css)
+    for (let i = 0; i < DESK_HUES.length; i++) desks = insertDesk(desks, undefined, 'after').desks
+    assert.deepEqual(desks.map(d => d.color), [...SPREAD])
+    assert.deepEqual([...desks.map(d => d.color)].sort(), DESK_HUES.map(h => h.hue).sort())
+    assert.equal(insertDesk(desks, undefined, 'after').desk.color, 'blue', 'the 13th starts the second round')
   })
 
-  test('rename trims and refuses empty; recolor clamps into the palette', () => {
+  test('the picker offers the 12 hues with Portuguese labels, in wheel order', () => {
+    assert.deepEqual(DESK_HUES.map(h => h.label), ['Vermelho', 'Laranja', 'Amarelo', 'Lima', 'Verde', 'Verde-água', 'Ciano', 'Céu', 'Azul', 'Roxo', 'Magenta', 'Rosa'])
+    assert.deepEqual(DESK_HUES.map(h => h.hue), ['red', 'orange', 'yellow', 'lime', 'green', 'teal', 'cyan', 'sky', 'blue', 'purple', 'magenta', 'pink'])
+  })
+
+  test('migration table: the old 8-colour index to the nearest hue (Cinza to sky); an index is never a position in the 12', () => {
+    assert.deepEqual([...OLD_PALETTE_HUES], ['blue', 'green', 'orange', 'red', 'purple', 'cyan', 'pink', 'sky'])
+    assert.equal(readDeskColor(3), 'red')
+    assert.equal(readDeskColor(7), 'sky')
+    assert.equal(readDeskColor(9), 'green', 'wraps over 8 like the old palette did')
+    assert.equal(readDeskColor('lime'), 'lime')
+    for (const junk of ['nope', null, undefined, {}, Number.NaN]) assert.equal(readDeskColor(junk), 'blue')
+  })
+
+  test('tokens are the generated palette variables, nothing computed in JS', () => {
+    assert.deepEqual(deskTokens('teal'), { fill: 'var(--x-teal)', foreground: 'var(--x-teal-foreground)', text: 'var(--x-teal-text)' })
+    assert.deepEqual(deskTokens('nope' as 'blue'), deskTokens('blue'), 'an invalid name paints blue')
+  })
+
+  test('rename trims and refuses empty; recolor takes a hue name (anything else reads as in a layout file)', () => {
     const desks = row('a', 'b')
     assert.equal(renameDesk(desks, 'a', '  Cliente   X ')[0]!.name, 'Cliente X')
     assert.equal(renameDesk(desks, 'a', '   ')[0]!.name, 'Mesa 1')
     assert.equal(cleanDeskName('x'.repeat(100))!.length, MAX_DESK_NAME)
-    assert.equal(recolorDesk(desks, 'b', 3)[1]!.color, 3)
-    assert.equal(recolorDesk(desks, 'b', DESK_COLORS.length + 2)[1]!.color, 2)
+    assert.equal(recolorDesk(desks, 'b', 'pink')[1]!.color, 'pink')
+    assert.equal(recolorDesk(desks, 'b', 'nope')[1]!.color, 'blue')
+    assert.equal(recolorDesk(desks, 'b', 3)[1]!.color, 'red', 'a number is the old palette')
+    assert.equal(recolorDesk(desks, 'zz', 'pink')[1]!.color, 'green', 'unknown desk: nothing changes')
   })
 
   test('reorder: moves one desk, the rest keep their order; out-of-range clamps', () => {
