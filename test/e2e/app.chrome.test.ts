@@ -12,6 +12,10 @@
 //   9. the theme icon menu, the connection popover (pipe, pid, version, agents, "Reiniciar serviço");
 //  10. the desk colour line follows the active desk; the ≡ toggle turns it off and it stays off after a relaunch;
 //  11. screenshots chrome-bar-{light,dark}.png with the preview's five desks.
+// Slice 7 (polish and accessibility): the last test in this file: aria on the new controls, Tab order, arrows/Home/End/
+// Enter/Esc and focus return in the theme menu, the connection popover, the capsule's "+N" and the tab strip's "+N"/"⋯",
+// the roving tabindex of the capsule, the FLIP (none under reduced motion), the "+N" text colour, drawer frames as cards
+// with the 8 px gap (also after a relaunch), screenshots chrome-a11y-{drawer,tabs}-{light,dark}.png.
 // Every kill goes through test/kill.ts (pid + creation time).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -806,6 +810,310 @@ test('app chrome: the drawer is a full-window card with its own bar and an empty
     await page.click('#drawer-empty-quick')
     await page.waitForFunction(() => document.querySelectorAll('.drawer .tether-tab').length === 1)
     await page.waitForSelector('.drawer[data-empty="false"]')
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})
+
+// Slice 7 (polish and accessibility, PLAN.md "Fatia 7"): aria on the new controls (capsule tabs, the "+N" buttons,
+// theme menu, connection popover, tab-strip actions, status bar, drawer pill); Tab order bar -> capsule -> right side;
+// arrows, Home/End, Enter, Esc and the focus coming back in the theme menu, the capsule's "+N", the tab strip's "+N"
+// and "⋯" and the connection popover; the capsule's tabs on a roving tabindex; the FLIP reorder (320 ms, none under
+// prefers-reduced-motion); and the drawer's frames as cards on the desk surface with the --gap around and between them,
+// also after a relaunch. Screenshots chrome-a11y-{drawer,tabs}-{light,dark}.png, small.
+test('app chrome: aria, keyboard in the new menus, focus return, FLIP, drawer frames as cards (phase 4, slice 7)', { timeout: 420_000 }, async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  mkdirSync(artifacts, { recursive: true })
+  const home = mkdtempSync(join(tmpdir(), 'tether-chrome-a11y-'))
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  // DOM probes as strings: the file's `document` type is narrow on purpose.
+  const probe = <T>(page: Page, expr: string): Promise<T> => page.evaluate(`(() => { ${expr} })()`) as Promise<T>
+  const focusId = (page: Page): Promise<string> => probe(page, `const e = document.activeElement; if (!e) return ''; return e.id ? '#' + e.id : e.tagName.toLowerCase() + '.' + (e.getAttribute('class') || '').split(' ').join('.')`)
+  const attr = (page: Page, sel: string, name: string): Promise<string | null> => probe(page, `return document.querySelector(${JSON.stringify(sel)})?.getAttribute(${JSON.stringify(name)}) ?? null`)
+  const press = (page: Page, key: string) => page.keyboard.press(key)
+  const focusedDesk = (page: Page): Promise<string | undefined> => probe(page, `return document.activeElement?.dataset?.desk`)
+  const menuItems = (page: Page): Promise<string[]> => probe(page, `return [...document.querySelectorAll('#ctx-menu li[role=menuitem]')].map(l => l.textContent)`)
+  const focusedItem = (page: Page): Promise<string> => probe(page, `return document.activeElement?.closest('#ctx-menu') ? document.activeElement.textContent : ''`)
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home))
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    await createShell(page, root)
+    await sleep(400)
+
+    // ---- aria on the new controls ----
+    assert.equal(await attr(page, '#desk-switch .desk-segs', 'role'), 'tablist')
+    assert.equal(await attr(page, '#desk-switch .seg[data-desk]', 'role'), 'tab')
+    assert.equal(await attr(page, '#desk-switch .seg.on', 'aria-selected'), 'true')
+    assert.equal(await attr(page, '#desk-switch .seg.on', 'tabindex'), '0', 'roving tabindex: the active tab is the Tab stop')
+    assert.equal(await attr(page, '#btn-theme', 'aria-haspopup'), 'menu')
+    assert.equal(await attr(page, '#btn-theme', 'aria-expanded'), 'false')
+    assert.equal(await attr(page, '#btn-theme', 'aria-controls'), 'theme-menu')
+    assert.equal(await attr(page, '#theme-menu', 'role'), 'menu')
+    assert.equal(await attr(page, '#conn', 'aria-haspopup'), 'dialog')
+    assert.equal(await attr(page, '#conn', 'aria-expanded'), 'false')
+    assert.equal(await attr(page, '#conn', 'aria-controls'), 'conn-pop')
+    assert.equal(await attr(page, '#btn-drawer', 'aria-controls'), 'drawer')
+    assert.equal(await attr(page, '#btn-drawer', 'aria-expanded'), 'false')
+    assert.equal(await attr(page, '.tab-actions [data-action="status-bar"]', 'aria-pressed'), 'false')
+    assert.equal(await attr(page, '.tab-actions [data-action="pane-menu"]', 'aria-haspopup'), 'menu')
+    assert.equal(await attr(page, '.tab-actions [data-action="pane-menu"]', 'aria-expanded'), 'false')
+    assert.equal(await attr(page, '.status-bar', 'role'), 'group')
+    assert.equal(await attr(page, '.status-bar', 'aria-label'), 'Barra de status')
+    assert.equal(await attr(page, '#drawer-pill', 'aria-pressed'), 'true')
+    // Every control without text carries a name.
+    assert.deepEqual(await probe<string[]>(page, `return [...document.querySelectorAll('button')].filter(b => !b.textContent.trim() && !b.getAttribute('aria-label') && !b.getAttribute('aria-labelledby')).map(b => b.id || b.className)`), [], 'every icon-only button has an aria-label')
+
+    // ---- Tab order: bar -> capsule (the pill, then the active tab) -> right side ----
+    await page.locator('#btn-closed').focus()
+    const stops: string[] = []
+    for (let i = 0; i < 3; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
+    assert.equal(stops[0], '#btn-drawer')
+    assert.match(stops[1]!, /^div\.seg\.on$/, `the active capsule tab is a Tab stop: ${JSON.stringify(stops)}`)
+    assert.equal(stops[2], '#conn')
+
+    // ---- Theme menu: keys and focus return ----
+    await page.locator('#btn-theme').focus()
+    await press(page, 'Enter')
+    await page.waitForSelector('#theme-menu:not([hidden])')
+    assert.equal(await attr(page, '#btn-theme', 'aria-expanded'), 'true')
+    assert.equal(await probe<string>(page, `return document.activeElement.closest('#theme-menu') ? document.activeElement.dataset.theme : ''`) !== '', true, 'focus goes into the menu')
+    await press(page, 'End')
+    assert.equal(await probe(page, `return document.activeElement.dataset.theme`), 'dark')
+    await press(page, 'Home')
+    assert.equal(await probe(page, `return document.activeElement.dataset.theme`), 'light')
+    await press(page, 'ArrowUp')
+    assert.equal(await probe(page, `return document.activeElement.dataset.theme`), 'dark', 'arrows wrap')
+    await press(page, 'Escape')
+    await page.waitForSelector('#theme-menu', { state: 'hidden' })
+    assert.equal(await attr(page, '#btn-theme', 'aria-expanded'), 'false')
+    assert.equal(await focusId(page), '#btn-theme', 'Esc returns the focus to the button')
+    await press(page, 'Enter')
+    await page.waitForSelector('#theme-menu:not([hidden])')
+    await press(page, 'Home')
+    await press(page, 'Enter') // light
+    await page.waitForFunction(() => (document.documentElement as unknown as { dataset: Record<string, string> }).dataset.theme === 'light')
+    await page.waitForSelector('#theme-menu', { state: 'hidden' })
+    assert.equal(await focusId(page), '#btn-theme', 'a keyboard pick returns the focus to the button')
+
+    // ---- Connection popover: open by key, Tab inside, Esc returns ----
+    await page.locator('#conn').focus()
+    await press(page, 'Enter')
+    await page.waitForSelector('#conn-wrap.pinned')
+    assert.equal(await attr(page, '#conn', 'aria-expanded'), 'true')
+    await press(page, 'Tab')
+    assert.equal(await focusId(page), '#conn-restart')
+    await press(page, 'Escape')
+    await page.waitForSelector('#conn-wrap.pinned', { state: 'detached' })
+    assert.equal(await attr(page, '#conn', 'aria-expanded'), 'false')
+    assert.equal(await focusId(page), '#conn', 'Esc returns the focus to the connection button')
+
+    // ---- Capsule: 10 desks at 900 px, roving tabindex, "+N" ----
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(900, 700))
+    await page.waitForFunction(() => Math.abs(window.innerWidth - 900) <= 2)
+    for (let i = 0; i < 9; i++) await page.evaluate(() => window.__tether.createDesk('after'))
+    await page.waitForFunction(() => window.__tether.switchState().hidden.length > 0)
+    await sleep(400)
+    const order = await probe<string[]>(page, `return [...document.querySelectorAll('#desk-switch .seg[data-desk]')].map(s => s.dataset.desk)`)
+    assert.ok(order.length >= 2, 'at least two visible tabs')
+    await page.locator('#desk-switch .seg.on').focus()
+    const startAt = order.indexOf((await focusedDesk(page))!)
+    await press(page, 'Home')
+    assert.equal(await focusedDesk(page), order[0])
+    await press(page, 'End')
+    assert.equal(await focusedDesk(page), order[order.length - 1])
+    await press(page, 'ArrowRight')
+    assert.equal(await focusedDesk(page), order[0], 'arrows wrap')
+    await press(page, 'ArrowRight')
+    assert.equal(await focusedDesk(page), order[1])
+    assert.equal(await probe(page, `return document.activeElement.tabIndex`), 0, 'roving: the focused tab is the Tab stop')
+    assert.ok(startAt >= 0)
+    await press(page, 'Enter')
+    await page.waitForFunction(id => window.__tether.activeDesk() === id, order[1]!)
+    await sleep(300)
+
+    // The "+N": Down opens, Home/End/arrows, Esc returns; Enter picks and the FLIP runs (not under reduced motion).
+    const more = '#desk-switch .desk-more'
+    await probe(page, `window.__flip = 0; const o = Element.prototype.animate; Element.prototype.animate = function (k, opt) { if (Array.isArray(k) && k.some(f => f.transform && f.transform !== 'none')) window.__flip++; return o.call(this, k, opt) }`)
+    const hiddenBefore = await page.evaluate(() => window.__tether.switchState().hidden)
+    assert.ok(hiddenBefore.length >= 2, `at least two hidden desks: ${hiddenBefore.length}`)
+    await page.locator(more).focus()
+    assert.equal(await attr(page, more, 'aria-expanded'), 'false')
+    await press(page, 'ArrowDown')
+    await page.waitForSelector('#ctx-menu')
+    assert.equal(await attr(page, more, 'aria-expanded'), 'true')
+    assert.equal((await menuItems(page)).length, hiddenBefore.length)
+    const items = await menuItems(page)
+    assert.equal(await focusedItem(page), items[0], 'the first entry is focused')
+    await press(page, 'End')
+    assert.equal(await focusedItem(page), items[items.length - 1])
+    await press(page, 'Home')
+    assert.equal(await focusedItem(page), items[0])
+    await press(page, 'ArrowUp')
+    assert.equal(await focusedItem(page), items[items.length - 1], 'arrows wrap')
+    await press(page, 'Escape')
+    await page.waitForSelector('#ctx-menu', { state: 'detached' })
+    assert.equal(await attr(page, more, 'aria-expanded'), 'false')
+    assert.match(await focusId(page), /desk-more/, 'Esc returns the focus to the "+N"')
+    await press(page, 'Enter')
+    await page.waitForSelector('#ctx-menu')
+    await press(page, 'Enter') // picks the first hidden desk
+    await page.waitForFunction(id => window.__tether.activeDesk() === id, hiddenBefore[0]!)
+    await sleep(500)
+    assert.ok(await probe<number>(page, `return window.__flip`) > 0, 'the capsule animated the reorder (FLIP)')
+    // Reduced motion: the same kind of pick, no animation.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await probe(page, `window.__flip = 0`)
+    const hiddenNow = await page.evaluate(() => window.__tether.switchState().hidden)
+    await page.locator(more).focus()
+    await press(page, 'ArrowDown')
+    await page.waitForSelector('#ctx-menu')
+    await press(page, 'End')
+    await press(page, 'Enter')
+    await page.waitForFunction(id => window.__tether.activeDesk() === id, hiddenNow[hiddenNow.length - 1]!)
+    await sleep(500)
+    assert.equal(await probe(page, `return window.__flip`), 0, 'no FLIP under prefers-reduced-motion')
+    await page.emulateMedia({ reducedMotion: null })
+    // The ring is visible on a focused capsule tab.
+    await page.locator('#desk-switch .seg.on').focus()
+    await press(page, 'ArrowRight')
+    assert.notEqual(await probe(page, `return getComputedStyle(document.activeElement).outlineStyle`), 'none', 'a focus ring on the capsule tab')
+
+    // ---- Tab strip: "+N" and "⋯" ----
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(600, 700))
+    await page.waitForFunction(() => Math.abs(window.innerWidth - 600) <= 2)
+    for (let i = 0; i < 10; i++) await createShell(page, root)
+    await page.waitForFunction(() => { const m = document.querySelector('.desk-layer:not(.inactive) .tab-actions .tab-more') as unknown as { hidden: boolean } | null; return !!m && !m.hidden })
+    await sleep(400)
+    const tmore = '.desk-layer:not(.inactive) .tab-actions .tab-more'
+    assert.equal(await attr(page, tmore, 'aria-haspopup'), 'menu')
+    assert.equal(await attr(page, tmore, 'aria-expanded'), 'false')
+    assert.match((await attr(page, tmore, 'aria-label')) ?? '', /abas? escondidas?/)
+    await page.locator(tmore).focus()
+    await press(page, 'ArrowDown')
+    await page.waitForSelector('#ctx-menu')
+    assert.equal(await attr(page, tmore, 'aria-expanded'), 'true')
+    const titems = await menuItems(page)
+    await press(page, 'End')
+    assert.equal(await focusedItem(page), titems[titems.length - 1])
+    await press(page, 'Home')
+    assert.equal(await focusedItem(page), titems[0])
+    await press(page, 'Escape')
+    await page.waitForSelector('#ctx-menu', { state: 'detached' })
+    assert.equal(await attr(page, tmore, 'aria-expanded'), 'false')
+    assert.match(await focusId(page), /tab-more/, 'Esc returns the focus to the strip\'s "+N"')
+    const dots = '.desk-layer:not(.inactive) .tab-actions [data-action="pane-menu"]'
+    await page.locator(dots).focus()
+    await press(page, 'ArrowDown')
+    await page.waitForSelector('#ctx-menu')
+    assert.equal(await attr(page, dots, 'aria-expanded'), 'true')
+    await press(page, 'Escape')
+    await page.waitForSelector('#ctx-menu', { state: 'detached' })
+    assert.equal(await attr(page, dots, 'aria-expanded'), 'false')
+    assert.equal(await probe(page, `return document.activeElement.dataset.action`), 'pane-menu', 'Esc returns the focus to "⋯"')
+    assert.notEqual(await probe(page, `return getComputedStyle(document.activeElement).outlineStyle`), 'none', 'a focus ring on the strip button')
+    // The "+N" text is the neutral dim token (not a tint): its computed colour is --fg-dim, and it is 12px/600.
+    const dim = await token(page, '--fg-dim')
+    const tc = await probe<{ color: string; size: string; weight: string; will: string }>(page, `const s = getComputedStyle(document.querySelector('.desk-layer:not(.inactive) .tab-actions .tab-more')); return { color: s.color, size: s.fontSize, weight: s.fontWeight, will: s.willChange }`)
+    const rgb = await probe<string>(page, `const d = document.createElement('i'); d.style.color = ${JSON.stringify(dim)}; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c`)
+    assert.equal(tc.color, rgb, '"+N" colour is --fg-dim')
+    assert.equal(tc.size, '12px'); assert.equal(tc.weight, '600'); assert.equal(tc.will, 'transform')
+    for (const scheme of ['light', 'dark'] as const) {
+      await setTheme(page, scheme)
+      const h = (await rects(page, '.desk-layer:not(.inactive) .dv-tabs-and-actions-container'))[0]!
+      const b64 = await app.evaluate(async ({ BrowserWindow }, rect) => {
+        const img = await BrowserWindow.getAllWindows()[0]!.webContents.capturePage(rect)
+        return img.toPNG().toString('base64')
+      }, { x: Math.floor(h.left), y: Math.floor(h.top), width: Math.ceil(h.width), height: Math.ceil(h.height) + 1 })
+      writeFileSync(join(artifacts, `chrome-a11y-tabs-${scheme}.png`), Buffer.from(b64, 'base64'))
+      // The "+N" glyphs are grey, not tinted: the average chroma of its non-background pixels stays low (it was ~50-60
+      // with the coloured LCD anti-aliasing fringes, which read as a purple/green tint).
+      const m = (await rects(page, tmore))[0]!
+      const chroma = await app.evaluate(async ({ BrowserWindow }, rect) => {
+        const img = await BrowserWindow.getAllWindows()[0]!.webContents.capturePage(rect)
+        const bm = img.toBitmap(); const { width, height } = img.getSize()
+        const bg = [bm[2]!, bm[1]!, bm[0]!]
+        let n = 0, sum = 0
+        for (let i = 0; i < width * height; i++) {
+          const r = bm[i * 4 + 2]!, g = bm[i * 4 + 1]!, b = bm[i * 4]!
+          if (Math.abs(r - bg[0]!) + Math.abs(g - bg[1]!) + Math.abs(b - bg[2]!) < 30) continue
+          n++; sum += Math.max(r, g, b) - Math.min(r, g, b)
+        }
+        return { n, avg: n ? sum / n : 0 }
+      }, { x: Math.floor(m.left), y: Math.floor(m.top), width: Math.ceil(m.width), height: Math.ceil(m.height) })
+      assert.ok(chroma.n > 0 && chroma.avg < 25, `${scheme}: the "+N" text is neutral grey: ${JSON.stringify(chroma)}`)
+    }
+
+    // ---- Drawer: frames are cards on the desk surface, --gap (8 px) around and between them ----
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1280, 800))
+    await page.waitForFunction(() => Math.abs(window.innerWidth - 1280) <= 2)
+    // Two frames in the drawer: a second frame on its desk by the hooks (level 'desk'), then both frames moved into the drawer.
+    const ids0 = await page.evaluate(() => window.__tether.panelIds())
+    await page.evaluate(id => (window as unknown as { __tether: { duplicate(id: string, d: string, l: string): void } }).__tether.duplicate(id, 'right', 'desk'), ids0[0]!)
+    await page.waitForFunction(n => window.__tether.panelIds().length === n + 1, ids0.length)
+    const ids1 = await page.evaluate(() => window.__tether.panelIds())
+    const second = ids1.find(i => !ids0.includes(i))!
+    for (const id of [ids0[0]!, second]) {
+      await page.evaluate(id => (window as unknown as { __tether: { moveFrameToDrawer(id: string): void } }).__tether.moveFrameToDrawer(id), id)
+      await page.waitForFunction(id => (window as unknown as { __tether: { inDrawer(id: string): boolean } }).__tether.inDrawer(id), id)
+    }
+    const gaps = async (): Promise<void> => {
+      const body = (await rects(page, '.drawer-body'))[0]!
+      const bar = (await rects(page, '.drawer-bar'))[0]!
+      const docks = await rects(page, '.drawer .frame-dock')
+      assert.equal(docks.length, 2, 'two frames in the drawer')
+      const near = (a: number, b: number, what: string): void => assert.ok(Math.abs(a - b) <= 1.5, `${what}: ${a} vs ${b}`)
+      near(Math.min(...docks.map(d => d.left)) - body.left, 8, 'left gap')
+      near(body.right - Math.max(...docks.map(d => d.right)), 8, 'right gap')
+      near(Math.min(...docks.map(d => d.top)) - bar.bottom, 8, 'top gap under the bar')
+      near(body.bottom - Math.max(...docks.map(d => d.bottom)), 8, 'bottom gap')
+      const [a, b] = [...docks].sort((p, q) => p.left - q.left || p.top - q.top) as [Rect, Rect]
+      const between = Math.max(b.left - a.right, b.top - a.bottom)
+      near(between, 8, 'gap between the frames')
+      const s = await probe<{ radius: string; border: string; frame: string; deskBg: string; bodyBg: string }>(page, `const d = document.querySelector('.drawer .frame-dock'); const c = getComputedStyle(d); return { radius: c.borderTopLeftRadius, border: c.borderTopWidth, frame: c.backgroundColor, deskBg: getComputedStyle(document.querySelector('.drawer-desk')).backgroundColor, bodyBg: getComputedStyle(document.querySelector('.drawer-card')).backgroundColor }`)
+      assert.equal(s.radius, '10px', 'cards are rounded')
+      assert.equal(s.border, '1px')
+      assert.notEqual(s.frame, s.deskBg, 'the card is not the surface it sits on')
+      assert.equal(s.deskBg, s.bodyBg, 'the surface is the desk colour')
+    }
+    const drawerOpen = (open: boolean) => page.waitForFunction(o => (window.getComputedStyle(document.querySelector('#drawer')).visibility === 'visible') === o, open)
+    await press(page, 'Control+Backquote')
+    await drawerOpen(true)
+    await sleep(600)
+    assert.equal(await attr(page, '#btn-drawer', 'aria-expanded'), 'true')
+    await gaps()
+    for (const scheme of ['light', 'dark'] as const) {
+      await press(page, 'Control+Backquote'); await drawerOpen(false)
+      await setTheme(page, scheme)
+      await press(page, 'Control+Backquote'); await drawerOpen(true)
+      await page.mouse.move(640, 790)
+      await sleep(600)
+      await shot(app, `chrome-a11y-drawer-${scheme}`)
+    }
+    await sleep(900) // debounced save
+
+    // After a relaunch the restored drawer has the same geometry.
+    await killElectron(app, root)
+    app = undefined
+    ;({ app, page } = await launch(home))
+    await page.waitForFunction(() => (window as unknown as { __tether: { drawer(): { panes: string[] } } }).__tether.drawer().panes.length >= 2)
+    await press(page, 'Control+Backquote')
+    await drawerOpen(true)
+    await sleep(600)
+    await gaps()
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))
     for (const d of daemons) {

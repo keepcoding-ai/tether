@@ -10,6 +10,12 @@
 // and the room is the toolbar minus twice the WIDER side (the capsule sits on the window's true centre, so it
 // may only grow as far as the wider side lets it on both sides). A ResizeObserver watches the toolbar and its
 // two sides only, never the capsule, and lays out in the next frame: repainting the capsule cannot re-trigger it.
+//
+// Keyboard and a11y: the row is a tablist with a roving tabindex (the active tab is the Tab stop); Left/Right/
+// Home/End move the focus, Enter/Space switch, Shift+F10 or the menu key open the desk's menu, Down on the "+N"
+// opens its menu. When the capsule is repainted with focus inside it, the focus follows the same desk. A reorder
+// (the "+N" swapping who is visible) slides the surviving segments to their new places (FLIP, 320 ms) unless
+// the person asked for reduced motion.
 import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
 import { fitDesks, overflowDesks, pickFromOverflow, touchUsed, type LastUsed } from './desk-switch-rules.ts'
 import { icon } from './icons.ts'
@@ -23,13 +29,15 @@ export interface DeskSwitchHost {
   recolor(id: string, color: DeskHue): void
   menu(id: string, x: number, y: number): void
   /** The "+N" menu: one entry per hidden desk; `pick` switches to it. */
-  overflowMenu(entries: { id: string; name: string; attention: number }[], x: number, y: number, pick: (id: string) => void): void
+  overflowMenu(entries: { id: string; name: string; attention: number }[], x: number, y: number, pick: (id: string) => void, opener: HTMLElement): void
   /** Hint shown in a segment's tooltip ("Ctrl+1"). */
   hint(position: number): string
 }
 
 /** Breathing room between the capsule and each side, px. */
 const SIDE_MARGIN = 12
+/** Duration of the reorder animation, ms. */
+const FLIP_MS = 320
 
 export class DeskSwitch {
   readonly element: HTMLElement
@@ -56,13 +64,16 @@ export class DeskSwitch {
     this.segs.className = 'desk-segs'
     this.segs.setAttribute('role', 'tablist')
     this.segs.setAttribute('aria-label', 'Mesas')
+    this.segs.addEventListener('keydown', ev => this.onSegKey(ev))
     this.more = document.createElement('button')
     this.more.type = 'button'
     this.more.className = 'seg desk-more'
     this.more.setAttribute('aria-haspopup', 'menu')
+    this.more.setAttribute('aria-expanded', 'false')
     this.more.hidden = true
     this.more.addEventListener('mousedown', ev => ev.preventDefault())
     this.more.addEventListener('click', ev => { ev.stopPropagation(); this.openOverflow() })
+    this.more.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.openOverflow() } })
     this.measure = document.createElement('div')
     this.measure.className = 'desk-measure'
     this.measure.setAttribute('aria-hidden', 'true')
@@ -110,7 +121,11 @@ export class DeskSwitch {
     if (this.visible.length === 0) this.visible = [...order]
     this.measure.replaceChildren()
     const shown = new Set(this.visible)
+    const before = this.segRects()
+    const focused = this.segs.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.desk : undefined
     this.segs.replaceChildren(...this.desks.flatMap((d, i) => shown.has(d.id) ? [this.segment(d, i, false)] : []))
+    if (focused) this.segs.querySelector<HTMLElement>(`.seg[data-desk="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true })
+    this.flip(before)
     const hidden = overflowDesks(order, this.visible)
     this.more.hidden = hidden.length === 0
     const waiting = hidden.reduce((n, id) => { const a = this.attention(id); return n + a.done + a.waiting }, 0)
@@ -165,6 +180,8 @@ export class DeskSwitch {
     if (measuring) return seg
     seg.setAttribute('role', 'tab')
     seg.setAttribute('aria-selected', String(active))
+    seg.tabIndex = active ? 0 : -1
+    seg.setAttribute('aria-label', `${d.name}${total === 0 ? '' : `, ${total} com atenção`}`)
     const go = index < 9 ? ` (${this.host.hint(index + 1)})` : ''
     const what = total === 0 ? '' : `\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
     seg.title = `${d.name}${go}${what}\nDuplo clique renomeia; clique direito: mais opções.`
@@ -184,7 +201,52 @@ export class DeskSwitch {
       // The picked desk takes the place of the visible desk used longest ago; the others stay.
       this.visible = pickFromOverflow(order, this.visible, id, this.active, this.lastUsed)
       this.host.switchTo(id)
-    })
+    }, this.more)
+  }
+
+  /** Keys of the tablist: Left/Right/Home/End move the focus, Enter/Space switch, the menu key opens the desk's menu. */
+  private onSegKey(ev: KeyboardEvent): void {
+    const target = ev.target as HTMLElement
+    if (target.closest('input')) return // renaming: the input owns its keys
+    const tabs = [...this.segs.querySelectorAll<HTMLElement>('.seg[data-desk]')]
+    const i = tabs.indexOf(target.closest<HTMLElement>('.seg[data-desk]')!)
+    if (i < 0) return
+    const go = (n: number): void => { ev.preventDefault(); const t = tabs[(n + tabs.length) % tabs.length]; if (t) { for (const s of tabs) s.tabIndex = s === t ? 0 : -1; t.focus() } }
+    if (ev.key === 'ArrowRight') go(i + 1)
+    else if (ev.key === 'ArrowLeft') go(i - 1)
+    else if (ev.key === 'Home') go(0)
+    else if (ev.key === 'End') go(tabs.length - 1)
+    else if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); this.host.switchTo(tabs[i]!.dataset.desk!) }
+    else if (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey)) {
+      ev.preventDefault()
+      const r = tabs[i]!.getBoundingClientRect()
+      this.host.menu(tabs[i]!.dataset.desk!, r.left, r.bottom + 4)
+    }
+  }
+
+  /** The left edge of every visible segment inside the row, by desk id. */
+  private segRects(): Map<string, number> {
+    const m = new Map<string, number>()
+    const base = this.segs.getBoundingClientRect().left // relative to the row: a window resize recentres the capsule, which is not a reorder
+    for (const el of this.segs.querySelectorAll<HTMLElement>('.seg[data-desk]')) m.set(el.dataset.desk!, el.getBoundingClientRect().left - base)
+    return m
+  }
+
+  /**
+   * FLIP: the segments that were visible before and still are slide from where they were to where they are now.
+   * Segments that appear fade in. Nothing runs under prefers-reduced-motion, nor before the first paint.
+   */
+  private flip(before: Map<string, number>): void {
+    if (before.size === 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const base = this.segs.getBoundingClientRect().left
+    for (const el of this.segs.querySelectorAll<HTMLElement>('.seg[data-desk]')) {
+      const was = before.get(el.dataset.desk!)
+      if (typeof el.animate !== 'function') return
+      if (was === undefined) { el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FLIP_MS, easing: 'ease-out' }); continue }
+      const dx = was - (el.getBoundingClientRect().left - base)
+      if (Math.abs(dx) < 1) continue
+      el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: FLIP_MS, easing: 'cubic-bezier(.2, .8, .2, 1)' })
+    }
   }
 
   /** Puts an input in the desk's segment: Enter keeps the name, Esc or an empty name keeps the old one. */

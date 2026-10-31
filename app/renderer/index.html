@@ -21,7 +21,7 @@
       </div>
     </div>
     <div id="desk-switch">
-      <button id="btn-drawer" class="seg gav" title="Gaveta" aria-haspopup="dialog"><span class="i" data-icon="lightning"></span>Gaveta<span id="drawer-badge" class="cnt drawer-badge" hidden></span></button>
+      <button id="btn-drawer" class="seg gav" title="Gaveta" aria-haspopup="dialog" aria-controls="drawer"><span class="i" data-icon="lightning"></span>Gaveta<span id="drawer-badge" class="cnt drawer-badge" hidden></span></button>
       <span class="sw-div" aria-hidden="true"></span>
     </div>
     <div class="tb-right">
@@ -40,7 +40,7 @@
       </div>
       <div class="dropdown">
         <button id="btn-theme" class="ib" title="Tema" aria-label="Tema" aria-haspopup="menu" aria-expanded="false"><span class="i" data-icon="circle-half"></span></button>
-        <ul id="theme-menu" class="menu" role="menu" hidden>
+        <ul id="theme-menu" class="menu" role="menu" aria-label="Tema" hidden>
           <li role="menuitemradio" data-theme="light"><span class="i" data-icon="sun"></span>Claro<span class="i check" data-icon="check"></span></li>
           <li role="menuitemradio" data-theme="auto"><span class="i" data-icon="circle-half"></span>Automático<span class="i check" data-icon="check"></span></li>
           <li role="menuitemradio" data-theme="dark"><span class="i" data-icon="moon"></span>Escuro<span class="i check" data-icon="check"></span></li>
@@ -156,7 +156,7 @@
         <h2 id="profiles-title">Perfis de lançamento</h2>
         <p class="sub">Como cada agente é iniciado: argumentos, variáveis de ambiente e pasta. Um perfil editado vale no próximo início dos painéis que o usam.</p>
       </div>
-      <button type="button" id="btn-profiles-close" class="cancel" title="Fechar (Esc)"><span class="i" data-icon="x"></span></button>
+      <button type="button" id="btn-profiles-close" class="cancel" title="Fechar (Esc)" aria-label="Fechar"><span class="i" data-icon="x"></span></button>
     </header>
     <div class="manager-body">
       <aside class="manager-list">
@@ -232,7 +232,7 @@
         <h2 id="term-theme-title">Tema do terminal</h2>
         <p class="sub">Cores e fonte de todos os painéis. Cada mudança vale na hora e fica guardada; o fundo segue o tema do app (Claro / Automático / Escuro).</p>
       </div>
-      <button type="button" id="btn-term-theme-close" class="cancel" title="Fechar (Esc)"><span class="i" data-icon="x"></span></button>
+      <button type="button" id="btn-term-theme-close" class="cancel" title="Fechar (Esc)" aria-label="Fechar"><span class="i" data-icon="x"></span></button>
     </header>
     <div class="term-theme-body">
       <fieldset class="presets">

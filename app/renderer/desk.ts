@@ -299,6 +299,7 @@ export class Desk {
     const direction = SIDE_DIRECTION[side]
     const what = level === 'desk' ? 'Novo quadro' : 'Novo painel na borda do quadro'
     btn.title = `${what}: clique duplica o painel em foco; clique direito (ou Shift+clique) escolhe.`
+    btn.setAttribute('aria-label', what)
     btn.addEventListener('mousedown', ev => ev.preventDefault()) // the terminal keeps the keyboard focus
     btn.addEventListener('click', ev => { ev.stopPropagation(); this.hidePlus(); this.host.onEdge({ level, placement: direction }, ev.shiftKey ? 'choose' : 'duplicate', frameId) })
     btn.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.hidePlus(); this.host.onEdge({ level, placement: direction }, 'choose', frameId) })

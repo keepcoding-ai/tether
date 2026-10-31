@@ -254,6 +254,7 @@ export class TerminalPanel implements IContentRenderer {
     // The status bar (the preview's `.stb`): state as icons, information as text, three pinned icon-only actions.
     const head = document.createElement('div')
     head.className = 'status-bar'
+    head.setAttribute('role', 'group'); head.setAttribute('aria-label', 'Barra de status')
     const status = document.createElement('span'); status.className = 'status'; status.setAttribute('role', 'img')
     const bell = document.createElement('span'); bell.className = 'bell'; bell.setAttribute('role', 'img'); bell.hidden = true
     bell.append(icon('bell'))

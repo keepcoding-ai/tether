@@ -19,10 +19,10 @@ export interface HiddenTab { id: string; icon: IconName; label: string; attentio
 export interface TabStripHost {
   /** What the "+N" shows for a pane: agent icon, title, attention. */
   describe(id: string): { icon: IconName; label: string; attention: boolean }
-  /** The "+N" list at (x, y); `pick` brings one back. */
-  showHidden(x: number, y: number, tabs: HiddenTab[], pick: (id: string) => void): void
-  /** "⋯": the pane menu (the same one as a right-click on the tab). */
-  paneMenu(id: string, x: number, y: number): void
+  /** The "+N" list at (x, y); `pick` brings one back. `opener` is the "+N" button (aria-expanded, focus return). */
+  showHidden(x: number, y: number, tabs: HiddenTab[], pick: (id: string) => void, opener: HTMLElement): void
+  /** "⋯": the pane menu (the same one as a right-click on the tab). `opener` is the "⋯" button. */
+  paneMenu(id: string, x: number, y: number, opener: HTMLElement): void
   toggleDetails(id: string): void
 }
 
@@ -50,23 +50,26 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.element.className = 'tab-actions'
     this.more = document.createElement('button')
     this.more.className = 'tab-more'; this.more.dataset.action = 'more'; this.more.hidden = true
+    this.more.type = 'button'; this.more.setAttribute('aria-haspopup', 'menu'); this.more.setAttribute('aria-expanded', 'false')
     this.toggle = document.createElement('button')
-    this.toggle.className = 'tab-act'; this.toggle.dataset.action = 'status-bar'
+    this.toggle.className = 'tab-act'; this.toggle.dataset.action = 'status-bar'; this.toggle.type = 'button'
     this.toggle.append(icon('rows'))
     this.dots = document.createElement('button')
     this.dots.className = 'tab-act'; this.dots.dataset.action = 'pane-menu'
-    this.dots.title = PANE_MENU_LABEL; this.dots.setAttribute('aria-label', PANE_MENU_LABEL); this.dots.setAttribute('aria-haspopup', 'menu')
+    this.dots.title = PANE_MENU_LABEL; this.dots.setAttribute('aria-label', PANE_MENU_LABEL); this.dots.setAttribute('aria-haspopup', 'menu'); this.dots.setAttribute('aria-expanded', 'false'); this.dots.type = 'button'
     this.dots.append(icon('dots-three'))
     this.element.append(this.more, this.toggle, this.dots)
     // Buttons, not drag handles: dockview must not start a group drag from here.
     this.element.addEventListener('pointerdown', ev => ev.stopPropagation())
     this.more.addEventListener('click', ev => { ev.stopPropagation(); this.openHidden() })
+    this.more.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.openHidden() } })
+    this.dots.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.dots.click() } })
     this.toggle.addEventListener('click', ev => { ev.stopPropagation(); const id = this.activeId(); if (id) this.host.toggleDetails(id) })
     this.dots.addEventListener('click', ev => {
       ev.stopPropagation()
       const id = this.activeId()
       const r = this.dots.getBoundingClientRect()
-      if (id) this.host.paneMenu(id, r.right - 4, r.bottom + 2)
+      if (id) this.host.paneMenu(id, r.right - 4, r.bottom + 2, this.dots)
     })
   }
 
@@ -145,9 +148,13 @@ export class TabStripActions implements IHeaderActionsRenderer {
       this.more.hidden = vis.length === order.length
       this.more.textContent = `+${order.length - vis.length}`
     }
+    // The trial passes show and hide the "+N" (its width changes the room); a hidden element loses the focus, so a
+    // keyboard user sitting on it would be thrown to <body> by any re-measure. Put it back when it is still there.
+    const hadFocus = document.activeElement === this.more
     const fits = (vis: readonly string[]): boolean => { apply(vis); return list.scrollWidth <= list.clientWidth + 1 }
     const vis = fitTabs(order, this.activeId(), this.used, fits)
     apply(vis)
+    if (hadFocus && !this.more.hidden && document.activeElement !== this.more) this.more.focus({ preventScroll: true })
     this.hidden = hiddenTabs(order, vis)
     this.paintMore()
   }
@@ -167,7 +174,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
     if (!head || this.hidden.length === 0) return
     const r = this.more.getBoundingClientRect()
     const list = this.hidden.map(id => ({ id, ...this.host.describe(id) }))
-    this.host.showHidden(r.left, r.bottom + 2, list, id => this.pick(id))
+    this.host.showHidden(r.left, r.bottom + 2, list, id => this.pick(id), this.more)
   }
 
   /** Picking in the "+N": the tab moves into the place of the visible tab used longest ago and becomes active. */

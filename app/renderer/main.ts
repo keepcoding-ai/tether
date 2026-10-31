@@ -213,8 +213,8 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
           const s = slots.get(id)
           return { icon: s ? KIND_ICON[s.kind] : 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
         },
-        showHidden: (x, y, list, pick) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) }))),
-        paneMenu: (id, x, y) => showTabMenu(id, x, y),
+        showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
+        paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
         toggleDetails: id => togglePaneDetails(id),
       }),
       createWatermarkComponent: () => {
@@ -239,7 +239,7 @@ function setupDock(): void {
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
-    overflowMenu: (entries, x, y, pick) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) }))),
+    overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
     hint: position => shortcutHint({ op: 'desk-go', position }),
   })
   desks = new DeskSet($('dock'), {
@@ -1216,19 +1216,38 @@ interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolea
 const SEP = 'sep' as const
 type MenuEntry = MenuItem | typeof SEP
 
-/** A floating menu at (x, y), closed by a click anywhere else, Esc, or picking an item. */
-function showContextMenu(x: number, y: number, items: MenuEntry[]): void {
+/** The button that opens the next context menu when the opener cannot be passed (the "⋯" goes through showTabMenu). */
+let menuOpener: HTMLElement | undefined
+
+/**
+ * A floating menu at (x, y), closed by a click anywhere else, Esc, or picking an item. `opener` is the button that
+ * opened it: it reads aria-expanded while the menu is up, and Esc (or a pick that leaves nothing focused) gives the
+ * focus back to it. Keys: Up/Down (wrapping), Home/End, Enter/Space, Esc, Tab (closes).
+ */
+function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpener?: HTMLElement): void {
+  const opener = explicitOpener ?? menuOpener
+  menuOpener = undefined
+  const active = document.activeElement
+  const owner = opener ?? (active instanceof HTMLElement && active !== document.body ? active : undefined)
   document.getElementById('ctx-menu')?.remove()
   const menu = document.createElement('ul')
   menu.id = 'ctx-menu'; menu.className = 'menu'; menu.setAttribute('role', 'menu')
-  const close = (): void => { menu.remove(); document.removeEventListener('click', onDoc, true); document.removeEventListener('keydown', onKey, true) }
-  const onDoc = (ev: Event): void => { if (!menu.contains(ev.target as Node)) close() }
+  opener?.setAttribute('aria-expanded', 'true')
+  const close = (refocus: boolean): void => {
+    menu.remove(); document.removeEventListener('click', onDoc, true); document.removeEventListener('keydown', onKey, true)
+    opener?.setAttribute('aria-expanded', 'false')
+    if (refocus && owner?.isConnected) owner.focus()
+  }
+  const onDoc = (ev: Event): void => { if (!menu.contains(ev.target as Node)) close(false) }
   const onKey = (ev: KeyboardEvent): void => {
     const lis = [...menu.querySelectorAll<HTMLElement>('li[role=menuitem]')]
     const i = lis.indexOf(document.activeElement as HTMLElement)
-    if (ev.key === 'Escape') { ev.preventDefault(); close() }
+    if (ev.key === 'Escape') { ev.preventDefault(); close(true) }
+    else if (ev.key === 'Tab') { ev.preventDefault(); close(true) }
     else if (ev.key === 'ArrowDown') { ev.preventDefault(); lis[(i + 1) % lis.length]?.focus() }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); lis[(i - 1 + lis.length) % lis.length]?.focus() }
+    else if (ev.key === 'Home') { ev.preventDefault(); lis[0]?.focus() }
+    else if (ev.key === 'End') { ev.preventDefault(); lis[lis.length - 1]?.focus() }
     else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); lis[i]!.click() }
   }
   for (const item of items) {
@@ -1237,7 +1256,11 @@ function showContextMenu(x: number, y: number, items: MenuEntry[]): void {
     if (item.danger) li.classList.add('danger')
     li.append(icon(item.icon), document.createTextNode(item.label))
     if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
-    li.addEventListener('click', ev => { ev.stopPropagation(); close(); item.run() })
+    li.addEventListener('click', ev => {
+      ev.stopPropagation(); close(false); item.run()
+      // The item left nothing focused (it did not open a dialog or move to a pane): back to the opener.
+      if (document.activeElement === document.body && owner?.isConnected) owner.focus()
+    })
     menu.append(li)
   }
   document.body.append(menu)
@@ -1528,6 +1551,9 @@ function setupMenu(): void {
     if (ev.key === 'Escape') { ev.preventDefault(); toggle(false); btn.focus() }
     else if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(i + 1) % items.length]?.focus() }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus() }
+    else if (ev.key === 'Home') { ev.preventDefault(); items[0]?.focus() }
+    else if (ev.key === 'End') { ev.preventDefault(); items[items.length - 1]?.focus() }
+    else if (ev.key === 'Tab') toggle(false)
     else if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (i >= 0) run(items[i]!) }
   })
 }
@@ -1545,6 +1571,7 @@ function setupThemeMenu(): void {
     btn.setAttribute('aria-expanded', String(open))
     if (open) (menu.querySelector<HTMLElement>('li[aria-checked="true"]') ?? items()[0])?.focus()
   }
+  btn.setAttribute('aria-controls', 'theme-menu')
   btn.addEventListener('click', ev => { ev.stopPropagation(); toggle(menu.hidden) })
   document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
   const pick = (li: HTMLElement): void => { toggle(false); window.tether.setTheme(normalizeTheme(li.dataset.theme ?? 'auto')) }
@@ -1555,7 +1582,10 @@ function setupThemeMenu(): void {
     if (ev.key === 'Escape') { ev.preventDefault(); toggle(false); btn.focus() }
     else if (ev.key === 'ArrowDown') { ev.preventDefault(); list[(i + 1) % list.length]?.focus() }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); list[(i - 1 + list.length) % list.length]?.focus() }
-    else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); pick(list[i]!) }
+    else if (ev.key === 'Home') { ev.preventDefault(); list[0]?.focus() }
+    else if (ev.key === 'End') { ev.preventDefault(); list[list.length - 1]?.focus() }
+    else if (ev.key === 'Tab') toggle(false)
+    else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); pick(list[i]!); btn.focus() }
   })
 }
 
@@ -1572,7 +1602,13 @@ function setupConnectionPopover(): void {
     btn.setAttribute('aria-expanded', String(open))
   })
   document.addEventListener('click', ev => { if (!wrap.contains(ev.target as Node)) { wrap.classList.remove('pinned'); btn.setAttribute('aria-expanded', 'false') } })
-  document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && wrap.classList.contains('pinned')) { wrap.classList.remove('pinned'); btn.setAttribute('aria-expanded', 'false') } }, true)
+  btn.setAttribute('aria-controls', 'conn-pop')
+  document.addEventListener('keydown', ev => {
+    if (ev.key !== 'Escape' || !wrap.classList.contains('pinned')) return
+    const inside = wrap.contains(document.activeElement) && document.activeElement !== btn
+    wrap.classList.remove('pinned'); btn.setAttribute('aria-expanded', 'false')
+    if (inside) btn.focus() // the focus was on a button inside the popover, which is about to disappear
+  }, true)
   $('conn-restart').addEventListener('click', ev => { ev.stopPropagation(); closeToolbarPopups(); window.tether.command('restart-daemon') })
 }
 
