@@ -1018,6 +1018,93 @@ async function onConnection(state: ConnectionState): Promise<void> {
 
 // ---------- closed slots menu ----------
 
+/** The running slot whose "Esquecer" is waiting for the inline confirmation (one at a time). */
+let askingForget: string | undefined
+/** Slots with a forget in flight (the daemon may wait for a young Claude before killing it). */
+const forgetting = new Set<string>()
+
+function closedGroups(): ClosedGroups {
+  return groupClosed(slots.values(), id => findPanel(id) !== undefined)
+}
+
+function closedButton(cls: string, label: string, iconName?: IconName, title?: string): HTMLButtonElement {
+  const b = document.createElement('button')
+  b.className = cls
+  if (iconName) b.append(icon(iconName))
+  if (label) b.append(document.createTextNode(label))
+  if (title) b.title = title
+  return b
+}
+
+function closedGroupTitle(text: string, count: number): HTMLElement {
+  const gt = document.createElement('div'); gt.className = 'cl-gt'
+  const label = document.createElement('span'); label.textContent = text
+  const n = document.createElement('span'); n.className = 'n'; n.textContent = String(count)
+  gt.append(label, n)
+  return gt
+}
+
+function closedRow(s: SlotState, group: 'running' | 'ended'): HTMLElement {
+  const row = document.createElement('div')
+  row.className = `cl-row ${group}`
+  row.dataset.slot = s.slotId
+  if (group === 'running' && askingForget === s.slotId) row.classList.add('asking')
+  const led = document.createElement('span'); led.className = 'led'
+  const kind = document.createElement('span'); kind.className = `kind ${s.kind}`; kind.append(icon(KIND_ICON[s.kind]))
+  const tx = document.createElement('div'); tx.className = 'tx'
+  const title = document.createElement('span'); title.className = 'tt'; title.textContent = panelTitle(s)
+  const cwd = document.createElement('span'); cwd.className = 'cw'; cwd.textContent = s.cwd; cwd.title = s.cwd
+  tx.append(title, cwd)
+  const acts = document.createElement('div'); acts.className = 'acts'
+  const open = group === 'running'
+    ? closedButton('open primary', 'Abrir', 'arrow-square-out', `Abrir em um painel (${KIND_LABEL[s.kind]} segue rodando)`)
+    : closedButton('open', 'Reabrir', 'arrow-clockwise', `Reabrir o painel (${KIND_LABEL[s.kind]}, ${STATUS_LABEL[effectiveStatus(s)]})`)
+  open.addEventListener('click', ev => { ev.stopPropagation(); $('closed-list').hidden = true; $('btn-closed').setAttribute('aria-expanded', 'false'); openSlot(s.slotId) })
+  const trash = closedButton('ic forget', '', 'trash', group === 'running' ? 'Encerrar e esquecer' : 'Esquecer')
+  trash.setAttribute('aria-label', group === 'running' ? 'Encerrar e esquecer o slot' : 'Esquecer o slot')
+  trash.addEventListener('click', ev => {
+    ev.stopPropagation()
+    if (group === 'running') { askingForget = s.slotId; refreshClosedMenu() } // kills a live process: ask first
+    else void forgetClosed(s.slotId)
+  })
+  acts.append(open, trash)
+  const cf = document.createElement('div'); cf.className = 'cf'
+  const msg = document.createElement('span'); msg.className = 'm'; msg.textContent = 'Encerra o processo. Esquecer?'
+  const cancel = closedButton('cancel', 'Cancelar')
+  cancel.addEventListener('click', ev => { ev.stopPropagation(); askingForget = undefined; refreshClosedMenu() })
+  const yes = closedButton('danger confirm', 'Esquecer')
+  yes.disabled = forgetting.has(s.slotId)
+  yes.addEventListener('click', ev => { ev.stopPropagation(); void forgetClosed(s.slotId) })
+  cf.append(msg, cancel, yes)
+  row.append(led, kind, tx, acts, cf)
+  return row
+}
+
+/** Forgets a slot through the daemon (it kills by identity and waits for a young Claude, as the other forget paths do). */
+async function forgetClosed(slotId: string): Promise<void> {
+  if (forgetting.has(slotId)) return
+  forgetting.add(slotId)
+  try {
+    await window.tether.request({ t: 'forget', slotId })
+  } finally {
+    forgetting.delete(slotId)
+    if (askingForget === slotId) askingForget = undefined
+    refreshClosedMenu()
+  }
+}
+
+/** "Esquecer todos os encerrados": asked once; only the slots still ended when the answer comes are forgotten. */
+async function forgetAllEnded(): Promise<void> {
+  const count = closedGroups().ended.length
+  if (count === 0 || dialogOpen()) return
+  $('closed-list').hidden = true
+  $('btn-closed').setAttribute('aria-expanded', 'false')
+  const answer = await askDialog(forgetEndedSituation(count))
+  if (answer.choice !== 'forget') return
+  const ids = closedGroups().ended.map(s => s.slotId)
+  await Promise.all(ids.map(id => forgetClosed(id)))
+}
+
 function refreshClosedMenu(): void {
   const list = $('closed-list')
   const g = closedGroups()
@@ -1145,93 +1232,6 @@ function showContextMenu(x: number, y: number, items: MenuEntry[]): void {
     else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); lis[i]!.click() }
   }
   for (const item of items) {
-/** The running slot whose "Esquecer" is waiting for the inline confirmation (one at a time). */
-let askingForget: string | undefined
-/** Slots with a forget in flight (the daemon may wait for a young Claude before killing it). */
-const forgetting = new Set<string>()
-
-function closedGroups(): ClosedGroups {
-  return groupClosed(slots.values(), id => findPanel(id) !== undefined)
-}
-
-function closedButton(cls: string, label: string, iconName?: IconName, title?: string): HTMLButtonElement {
-  const b = document.createElement('button')
-  b.className = cls
-  if (iconName) b.append(icon(iconName))
-  if (label) b.append(document.createTextNode(label))
-  if (title) b.title = title
-  return b
-}
-
-function closedGroupTitle(text: string, count: number): HTMLElement {
-  const gt = document.createElement('div'); gt.className = 'cl-gt'
-  const label = document.createElement('span'); label.textContent = text
-  const n = document.createElement('span'); n.className = 'n'; n.textContent = String(count)
-  gt.append(label, n)
-  return gt
-}
-
-function closedRow(s: SlotState, group: 'running' | 'ended'): HTMLElement {
-  const row = document.createElement('div')
-  row.className = `cl-row ${group}`
-  row.dataset.slot = s.slotId
-  if (group === 'running' && askingForget === s.slotId) row.classList.add('asking')
-  const led = document.createElement('span'); led.className = 'led'
-  const kind = document.createElement('span'); kind.className = `kind ${s.kind}`; kind.append(icon(KIND_ICON[s.kind]))
-  const tx = document.createElement('div'); tx.className = 'tx'
-  const title = document.createElement('span'); title.className = 'tt'; title.textContent = panelTitle(s)
-  const cwd = document.createElement('span'); cwd.className = 'cw'; cwd.textContent = s.cwd; cwd.title = s.cwd
-  tx.append(title, cwd)
-  const acts = document.createElement('div'); acts.className = 'acts'
-  const open = group === 'running'
-    ? closedButton('open primary', 'Abrir', 'arrow-square-out', `Abrir em um painel (${KIND_LABEL[s.kind]} segue rodando)`)
-    : closedButton('open', 'Reabrir', 'arrow-clockwise', `Reabrir o painel (${KIND_LABEL[s.kind]}, ${STATUS_LABEL[effectiveStatus(s)]})`)
-  open.addEventListener('click', ev => { ev.stopPropagation(); $('closed-list').hidden = true; $('btn-closed').setAttribute('aria-expanded', 'false'); openSlot(s.slotId) })
-  const trash = closedButton('ic forget', '', 'trash', group === 'running' ? 'Encerrar e esquecer' : 'Esquecer')
-  trash.setAttribute('aria-label', group === 'running' ? 'Encerrar e esquecer o slot' : 'Esquecer o slot')
-  trash.addEventListener('click', ev => {
-    ev.stopPropagation()
-    if (group === 'running') { askingForget = s.slotId; refreshClosedMenu() } // kills a live process: ask first
-    else void forgetClosed(s.slotId)
-  })
-  acts.append(open, trash)
-  const cf = document.createElement('div'); cf.className = 'cf'
-  const msg = document.createElement('span'); msg.className = 'm'; msg.textContent = 'Encerra o processo. Esquecer?'
-  const cancel = closedButton('cancel', 'Cancelar')
-  cancel.addEventListener('click', ev => { ev.stopPropagation(); askingForget = undefined; refreshClosedMenu() })
-  const yes = closedButton('danger confirm', 'Esquecer')
-  yes.disabled = forgetting.has(s.slotId)
-  yes.addEventListener('click', ev => { ev.stopPropagation(); void forgetClosed(s.slotId) })
-  cf.append(msg, cancel, yes)
-  row.append(led, kind, tx, acts, cf)
-  return row
-}
-
-/** Forgets a slot through the daemon (it kills by identity and waits for a young Claude, as the other forget paths do). */
-async function forgetClosed(slotId: string): Promise<void> {
-  if (forgetting.has(slotId)) return
-  forgetting.add(slotId)
-  try {
-    await window.tether.request({ t: 'forget', slotId })
-  } finally {
-    forgetting.delete(slotId)
-    if (askingForget === slotId) askingForget = undefined
-    refreshClosedMenu()
-  }
-}
-
-/** "Esquecer todos os encerrados": asked once; only the slots still ended when the answer comes are forgotten. */
-async function forgetAllEnded(): Promise<void> {
-  const count = closedGroups().ended.length
-  if (count === 0 || dialogOpen()) return
-  $('closed-list').hidden = true
-  $('btn-closed').setAttribute('aria-expanded', 'false')
-  const answer = await askDialog(forgetEndedSituation(count))
-  if (answer.choice !== 'forget') return
-  const ids = closedGroups().ended.map(s => s.slotId)
-  await Promise.all(ids.map(id => forgetClosed(id)))
-}
-
     if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
     const li = document.createElement('li'); li.setAttribute('role', 'menuitem'); li.tabIndex = -1
     if (item.danger) li.classList.add('danger')
