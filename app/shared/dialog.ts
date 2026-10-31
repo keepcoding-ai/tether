@@ -82,7 +82,7 @@ export interface DialogAnswer {
 export type Confirmations = Record<string, string>
 
 /** Situations the main process asks the renderer to put to the user. */
-export type MainSituation = 'quit-all' | 'restart-daemon' | 'tray-first-close'
+export type MainSituation = 'quit-all' | 'reload-all' | 'restart-daemon' | 'tray-first-close'
 
 /** `slots`: the daemon's slots as main sees them, so the dialog does not depend on the renderer having restored yet (the window may have just been recreated from the tray). */
 export interface AskRequest { askId: number; situation: MainSituation; slots?: SlotState[] }

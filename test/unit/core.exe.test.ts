@@ -3,14 +3,15 @@
 // the real node.exe: the copy runs, reports its new name, and loads node-pty (same binary, same ABI).
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { copyFileSync, existsSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { ensureRenamedNode, exePath, inspectRenamedNode, isNodeExecutable, isRenamedNode, readStamp } from '../../src/core/exe.ts'
+import { ensureRenamedNode, exePath, inspectRenamedNode, isNodeExecutable, isRenamedNode, readStamp, sweepOrphanTemps } from '../../src/core/exe.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
 const ROOT = resolve(import.meta.dirname, '../..')
 const isWin = process.platform === 'win32'
+const isDarwin = process.platform === 'darwin'
 const tmp = tempDirs('tether-exe-')
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -28,7 +29,8 @@ describe('name tests', () => {
   })
 })
 
-describe('ensureRenamedNode with the real node', () => {
+// Not on macOS: no copy is made there (dyld refuses a link/copy of Homebrew's node); see the darwin block below.
+describe('ensureRenamedNode with the real node', { skip: isDarwin }, () => {
   let home: string
   const log: string[] = []
   before(() => { home = tmp.make() })
@@ -66,7 +68,7 @@ describe('ensureRenamedNode with the real node', () => {
   })
 })
 
-describe('ensureRenamedNode refresh and failure paths (a fake source: a copy of node)', () => {
+describe('ensureRenamedNode refresh and failure paths (a fake source: a copy of node)', { skip: isDarwin }, () => {
   let home: string
   let source: string
   let running: ChildProcess | undefined
@@ -149,5 +151,76 @@ describe('ensureRenamedNode refresh and failure paths (a fake source: a copy of 
     const r = ensureRenamedNode(home, 'tetherd', source)
     assert.equal(r.state, 'fresh')
     assert.ok(readFileSync(join(home, 'bin', 'tetherd.json'), 'utf8').includes('"source"'))
+  })
+})
+
+describe('ensureRenamedNode on darwin: nothing in bin/, the name goes by argv0', () => {
+  test('returns the source with argv0 set, writes only the stamp, and a second call is current', () => {
+    const home = tmp.make()
+    const log: string[] = []
+    const r = ensureRenamedNode(home, 'tetherd', process.execPath, (m) => log.push(m), 'darwin')
+    assert.equal(r.path, process.execPath, 'runs the real node')
+    assert.equal(r.method, 'argv0')
+    assert.equal(r.argv0, 'tetherd')
+    assert.equal(r.state, 'fresh')
+    assert.match(r.reason!, /@rpath\/libnode|dyld/)
+    assert.ok(!existsSync(exePath(home, 'tetherd')), 'no renamed executable is made')
+    assert.deepEqual(readdirSync(join(home, 'bin')), ['tetherd.json'], 'only the stamp lives in bin/')
+    const stamp = readStamp(home, 'tetherd')
+    assert.equal(stamp?.method, 'argv0')
+    assert.equal(stamp?.source, process.execPath)
+    assert.match(stamp?.reason ?? '', /argv0/)
+    assert.match(log.at(-1)!, /tetherd: rodando pelo node real/)
+    const again = ensureRenamedNode(home, 'tetherd', process.execPath, undefined, 'darwin')
+    assert.equal(again.state, 'current')
+    assert.equal(again.argv0, 'tetherd')
+    const status = inspectRenamedNode(home, 'tetherd', 'darwin')
+    assert.ok(!status.present && !status.outdated && !status.residue && status.stamp?.method === 'argv0')
+  })
+
+  test('a leftover renamed file is reported as residue by inspect and never run', () => {
+    const home = tmp.make()
+    mkdirSync(join(home, 'bin'), { recursive: true })
+    writeFileSync(exePath(home, 'tetherd'), 'stale link')
+    const r = ensureRenamedNode(home, 'tetherd', process.execPath, undefined, 'darwin')
+    assert.equal(r.path, process.execPath)
+    assert.equal(readFileSync(exePath(home, 'tetherd'), 'utf8'), 'stale link', 'the leftover is left alone (it may be a running one)')
+    assert.ok(inspectRenamedNode(home, 'tetherd', 'darwin').residue)
+  })
+
+  test('missing source is still the fallback, as elsewhere', () => {
+    const home = tmp.make()
+    const r = ensureRenamedNode(home, 'tetherd', join(home, 'no-such-node'), undefined, 'darwin')
+    assert.equal(r.method, 'fallback')
+    assert.equal(r.argv0, undefined)
+  })
+})
+
+describe('orphan temp files in bin/', () => {
+  test('tetherd.<dead pid>.tmp and tetherd.json.<dead pid>.tmp go; our own pid, a live pid and other names stay', () => {
+    const home = tmp.make()
+    const bin = join(home, 'bin')
+    mkdirSync(bin, { recursive: true })
+    const dead = 2 ** 22 - 7 // past any real pid on these systems (pid_max 99998 on macOS, 4194304 default max on Linux)
+    for (const n of [`tetherd.${dead}.tmp`, `tether-soul.exe.${dead}.tmp`, `tetherd.json.${dead}.tmp`, `tetherd.${process.pid}.tmp`, `tetherd.${process.ppid}.tmp`, 'other.1.tmp', 'tetherd.json']) writeFileSync(join(bin, n), 'x')
+    const log: string[] = []
+    const removed = sweepOrphanTemps(home, (m) => log.push(m))
+    assert.deepEqual(removed.map((p) => basename(p)).sort(), [`tether-soul.exe.${dead}.tmp`, `tetherd.${dead}.tmp`, `tetherd.json.${dead}.tmp`])
+    assert.deepEqual(readdirSync(bin).sort(), ['other.1.tmp', `tetherd.${process.pid}.tmp`, `tetherd.${process.ppid}.tmp`, 'tetherd.json'].sort())
+    assert.equal(log.length, 3)
+    assert.match(log[0]!, /temporário órfão/)
+  })
+
+  test('ensureRenamedNode sweeps them on its way (darwin branch, no bin file of its own)', () => {
+    const home = tmp.make()
+    const bin = join(home, 'bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(join(bin, 'tetherd.4194297.tmp'), 'x')
+    ensureRenamedNode(home, 'tetherd', process.execPath, undefined, 'darwin')
+    assert.deepEqual(readdirSync(bin), ['tetherd.json'])
+  })
+
+  test('a missing bin/ is not an error', () => {
+    assert.deepEqual(sweepOrphanTemps(tmp.make()), [])
   })
 })

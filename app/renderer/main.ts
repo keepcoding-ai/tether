@@ -5,6 +5,7 @@ import { type DockviewTheme, type IDockviewPanel, type SerializedDockview } from
 import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
+import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
@@ -16,13 +17,13 @@ import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
-import { drawerOf, emptyLayout, type LayoutV2, migrateLayout, pruneLayoutV2 } from './layout.ts'
+import { drawerOf, emptyLayout, isPersonChange, type LayoutV2, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
-import { LEVELS, shortcutHint, type AppShortcut } from './shortcuts.ts'
-import { closeDeskSituation, closePanelSituation, folderName, NO_PROFILE, quitAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { LEVELS, shortcutHint, terminalInputOf, type AppShortcut } from './shortcuts.ts'
+import { closeDeskSituation, closePanelSituation, folderName, NO_PROFILE, quitAllSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 
@@ -88,11 +89,19 @@ const host: PanelHost = {
   getStartError: id => startErrors.get(id),
   isStartPending: id => pendingStarts.has(id),
   onAction: (id, action) => { void onPanelAction(id, action) },
+  onRename: (id, name) => { void renameSlot(id, name) },
   onKey: (ev, panel) => {
     if (ev.type !== 'keydown') return false
     if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) return drawerEscapeInTerminal(panel)
+    // Line editing (macOS: Cmd/Option + arrows, Backspace; Shift+Enter everywhere in an agent pane): bytes for the prompt, not app chords.
+    const seq = terminalInputOf(ev, slots.get(panel.slotId)?.kind !== 'shell')
+    if (seq !== undefined) {
+      ev.preventDefault()
+      panel.sendInput(seq)
+      return true
+    }
     // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener.
-    // (Clipboard chords are the panel's own: app/renderer/shortcuts.ts PANE_SHORTCUTS.)
+    // (Clipboard chords are the panel's own: shortcuts.ts PANE_SHORTCUTS.)
     return shortcutOf(ev) !== undefined
   },
   getScheme: () => theme.scheme,
@@ -104,6 +113,18 @@ const host: PanelHost = {
   daemonReady: () => daemonReadyPromise,
   fontsReady: () => appearanceReady,
   queuePosition: id => queue.position(id),
+}
+
+// ---------- font size ----------
+
+/**
+ * Keyboard and menu steps of the terminal font size. The size is the appearance's ("Tema do terminal"): main
+ * stores it and echoes it back (onTerminalAppearance), which repaints every panel and refits it.
+ */
+function runFontSizeCommand(command: FontSizeCommand): void {
+  const next = stepFontSize(appearance.fontSize, command)
+  if (next === appearance.fontSize) return
+  window.tether.setTerminalAppearance({ ...appearance, fontSize: next })
 }
 
 // ---------- theme ----------
@@ -171,7 +192,8 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
         return { element: el, init: () => {} }
       },
     }),
-    onLayoutChange: () => scheduleSave(),
+    // Only changes the person can make are saved: a hint or title the app updates is not one (isPersonChange).
+    onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
     onPanelsChange: () => { refreshClosedMenu(); renderStrip() },
     onEdge: (target, op, frameId) => { void onEdge(target, op, frameId, scope === 'drawer' ? drawer.desk : undefined) },
     onActivePanelChange: () => markSeenIfWatched(),
@@ -277,6 +299,13 @@ async function onAsk(req: AskRequest): Promise<void> {
     }
     case 'tray-first-close': {
       const answer = await askDialog(trayFirstCloseSituation())
+      window.tether.answer(req.askId, answer)
+      return
+    }
+    case 'reload-all': {
+      // What the person sees is what is at stake: the slots behind open panels, not every slot on disk.
+      const open = [...slots.values()].filter(s => findPanel(s.slotId))
+      const answer = await askDialog(reloadAllSituation(open))
       window.tether.answer(req.askId, answer)
       return
     }
@@ -607,6 +636,13 @@ function moveFrameFromDrawer(slotId: string): void {
   if (frame && transferFrame(drawer.desk, desks.active, frame.id)) surfaceFromDrawer(slotId)
 }
 
+/** Custom name of a slot (empty removes it): the daemon stores it in the slot's meta and broadcasts the state. */
+async function renameSlot(slotId: string, name: string): Promise<void> {
+  const reply = await window.tether.request({ t: 'rename-slot', slotId, name })
+  if (reply.t === 'error') { console.error(`não foi possível renomear o painel ${slotId}: ${reply.message}`); return }
+  if (reply.slot) applyState(reply.slot)
+}
+
 // ---------- starting slots ----------
 
 /** Sends `start`; a refusal (unconfirmed, already-open, …) stays on the panel until the slot comes up. */
@@ -729,22 +765,25 @@ function updateHint(slot: SlotState): void {
  */
 async function restoreLayout(): Promise<void> {
   const result = await (geometry ?? paintGeometry())
-  let dirty = false
-  if (result) {
-    const pruned = pruneLayoutV2(result.layout, new Set(slots.keys()))
-    layoutFile = pruned.layout
-    // The geometry painted at startup had every pane of the file; only when the daemon lost some is the
-    // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side,
-    // frame refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
-    if (pruned.kept !== pruned.total) { desks.load(pruned.layout); drawer.load(drawerOf(pruned.layout)) }
-    if (result.migrated) await window.tether.backupLayout()
-    dirty = result.migrated || pruned.kept !== pruned.total
+  // Pruning is for display only (planRestore): a pane whose slot the daemon does not list right now is not a
+  // change the person made, an empty list prunes nothing, and nothing here writes layout.json.
+  const { layout, orphaned } = planRestore(result?.layout ?? null, new Set(slots.keys()))
+  if (layout) {
+    layoutFile = layout
+    // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
+    // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
+    // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
+    if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)) }
+    // A v1 file is copied to layout.v1.bak now; layout.json itself stays v1 until the person changes something.
+    if (result?.migrated) await window.tether.backupLayout()
   } else {
     layoutFile = emptyLayout()
   }
+  // Only what the person does from here on is saved; a slot missing from the daemon's list is not a change of theirs.
+  if (orphaned.length) console.warn('painéis sem slot no tetherd, fora da tela até a próxima ação:', orphaned)
+  await discardPendingSave()
   layoutRestored = true
-  if (dirty) scheduleSave()
-  // Panes that predate the hint get it now (saved with the next layout change).
+  // Panes that predate the hint get it now (saved with the next change the person makes).
   for (const panel of allPanels()) { const s = slots.get(panel.id); if (s) updateHint(s) }
   refreshClosedMenu()
 }
@@ -761,6 +800,15 @@ function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
   return geometry!
+}
+
+/**
+ * Drops the save scheduled by layout changes the app made on its own (restore, reconnection), not the person.
+ * dockview emits onDidLayoutChange from a microtask, so this waits a macrotask before clearing the timer.
+ */
+async function discardPendingSave(): Promise<void> {
+  await new Promise(r => setTimeout(r, 0))
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined }
 }
 
 // ---------- connection ----------
@@ -788,10 +836,13 @@ async function onConnection(state: ConnectionState): Promise<void> {
     for (const p of panels.values()) p.render()
     for (const t of tabs.values()) t.render()
   } else {
-    // Reconnected (the daemon was restarted): drop panels it no longer knows, re-attach the rest.
-    for (const panel of allPanels()) {
-      if (!slots.has(panel.id)) removeAnyPanel(panel)
+    // Reconnected (the daemon was restarted): hide panels it no longer knows, re-attach the rest. An empty
+    // list is not trusted, and hiding is not a change the person made: the saved layout stays as it was.
+    for (const id of orphanedPanels(allPanels().map(p => p.id), new Set(slots.keys()))) {
+      const panel = findPanel(id)
+      if (panel) removeAnyPanel(panel)
     }
+    await discardPendingSave()
     for (const p of panels.values()) { p.render(); void p.reattach() }
     for (const t of tabs.values()) t.render()
     refreshClosedMenu()
@@ -815,7 +866,7 @@ function refreshClosedMenu(): void {
     const status = STATUS_LABEL[effectiveStatus(s)]
     const li = document.createElement('li')
     const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon(KIND_ICON[s.kind]))
-    const name = document.createElement('span'); name.textContent = s.title ?? s.name ?? folderName(s.cwd)
+    const name = document.createElement('span'); name.textContent = panelTitle(s)
     const cwd = document.createElement('span'); cwd.className = 'cwd'; cwd.textContent = `${s.cwd} · ${status}`
     const forget = document.createElement('button'); forget.className = 'forget'; forget.title = 'Encerra e remove o slot do tether'
     forget.append(icon('trash'), document.createTextNode('Esquecer'))
@@ -1258,6 +1309,7 @@ function setupUi(): void {
       case 'duplicate': void duplicateActive({ level: shortcut.level, placement: shortcut.direction }); break
       case 'quit-all': window.tether.command('quit-all'); break
       case 'drawer-toggle': setDrawerOpen(!drawer.isOpen); break
+      case 'font-size': runFontSizeCommand(shortcut.command); break
       case 'pane-details': { const id = currentDesk().activePanel?.id; if (id) togglePaneDetails(id); break }
       // The desks behind the drawer stay where they are while it is open.
       case 'desk-cycle': if (!drawer.isOpen) desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, shortcut.step)); break
@@ -1315,6 +1367,10 @@ declare global {
       confirmations(): Confirmations
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
       closePanel(slotId: string): void
+      /** The terminal font size in use (appearance.fontSize). */
+      fontSize(): number
+      /** Opens the tab's inline rename, as a double click does. */
+      startRename(slotId: string): void
       /** The launch profiles as the renderer sees them. */
       profiles(): Profile[]
       /** Opens the profile manager (on a profile, or 'new'). */
@@ -1424,6 +1480,8 @@ function setupTestHooks(): void {
     },
     confirmations: () => confirmations,
     closePanel: slotId => { void closePanel(slotId) },
+    fontSize: () => appearance.fontSize,
+    startRename: slotId => tabs.get(slotId)?.startRename(),
     profiles: () => profiles,
     openProfiles,
     switchProfile: slotId => { void switchProfile(slotId) },
@@ -1509,6 +1567,7 @@ window.tether.onEvent(onDaemonEvent)
 window.tether.onConnection(state => { void onConnection(state) })
 window.tether.onTheme(applyTheme)
 void window.tether.getTheme().then(applyTheme)
+window.tether.onFontSizeCommand(runFontSizeCommand)
 window.tether.onConfirmations(c => { confirmations = c })
 void window.tether.getConfirmations().then(c => { confirmations = c })
 window.tether.onAsk(req => { void onAsk(req) })

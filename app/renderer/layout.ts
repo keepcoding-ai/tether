@@ -261,3 +261,53 @@ export function nextFrameId(grid: FrameGrid): string {
   const used = new Set(frameIdsOf(grid))
   for (let i = 1; ; i++) if (!used.has(`frame-${i}`)) return `frame-${i}`
 }
+
+// ---------- restore policy ----------
+// layout.json is the person's arrangement and the one file the app cannot rebuild. A slot the daemon does not
+// list right now is not a change the person made: pruning is for display only and is never written back by the
+// app; an empty (or failed) list is not trusted at all.
+
+/**
+ * Panel ids the daemon does not know, given what it answered. An empty list is never trusted: a daemon that
+ * just came back (or a `list` that failed upstream) must not make the app drop every panel it is showing.
+ */
+export function orphanedPanels(panelIds: Iterable<string>, known: Set<string>): string[] {
+  if (known.size === 0) return []
+  return [...panelIds].filter(id => !known.has(id))
+}
+
+export interface RestorePlan {
+  /** What to show (v2, a v1 file migrated); null when there is nothing restorable. */
+  layout: LayoutV2 | null
+  /** The file was v1 (the caller keeps a layout.v1.bak copy; the file itself is not rewritten for it). */
+  migrated: boolean
+  /** Panels left out of the display because the daemon does not know their slot. Never a reason to save. */
+  orphaned: string[]
+}
+
+/**
+ * Decides what the saved layout (v1 or v2) becomes on screen. Every pane known: the layout as read (the same
+ * object). Some unknown: pruned desk by desk and frame by frame (pruneLayoutV2) for display, the input left
+ * untouched. No known slot at all: shown untouched (each pane says "slot desconhecido" until the daemon knows it).
+ */
+export function planRestore(saved: unknown, known: Set<string>): RestorePlan {
+  const read = migrateLayout(saved)
+  if (!read) return { layout: null, migrated: false, orphaned: [] }
+  const orphaned = orphanedPanels(allPanelIds(read.layout), known)
+  // Nothing to prune: the saved v2 object itself (its `drawer` may be null; drawerOf reads that as empty).
+  if (orphaned.length === 0) return { layout: isLayoutV2(saved) ? saved : read.layout, migrated: read.migrated, orphaned }
+  return { layout: pruneLayoutV2(read.layout, known).layout, migrated: read.migrated, orphaned }
+}
+
+/**
+ * Layout-change reasons that come from the app, not the person: a pane's parameters (the loading hint kept in
+ * step with the slot) and its title (the agent's session title). Alone they never schedule a save; they are
+ * written along with the next change the person makes. No reasons (the desk's own frame removal) = a change.
+ */
+const APP_REASONS: ReadonlySet<string> = new Set(['panelParameters', 'panelTitle'])
+
+export function isPersonChange(reasons: ReadonlySet<string> | undefined): boolean {
+  if (!reasons || reasons.size === 0) return true
+  for (const r of reasons) if (!APP_REASONS.has(r)) return true
+  return false
+}

@@ -24,7 +24,8 @@ const SIDE_DIRECTION: Record<Side, Direction> = { left: 'left', right: 'right', 
 export interface DeskHost {
   /** The options of every frame's dockview (components, tab, watermark); the desk adds the theme. */
   dockviewOptions(): Omit<DockviewComponentOptions, 'theme'>
-  onLayoutChange(): void
+  /** `reasons`: why dockview says the layout changed (undefined when the desk itself changed it). */
+  onLayoutChange(reasons?: ReadonlySet<string>): void
   /** A pane was added to or removed from some frame. */
   onPanelsChange(): void
   /** A "+" was used: `frameId` is the frame whose edge it was (undefined at the desk level). */
@@ -85,7 +86,7 @@ export class Desk {
     this.grid.onDidAddPanel(p => { this.frames.set(p.id, p as Frame) })
     this.grid.onDidRemovePanel(p => { this.frames.delete(p.id); this.framePlus.delete(p.id); if (this.activeFrameId === p.id) this.activeFrameId = undefined })
     this.grid.onDidActivePanelChange(p => { if (p) this.activeFrameId = p.id; host.onActivePanelChange?.() })
-    this.grid.onDidLayoutChange(() => host.onLayoutChange())
+    this.grid.onDidLayoutChange(e => host.onLayoutChange(e.reasons))
     for (const side of SIDES) container.append(this.plusButton('desk', side, undefined))
     container.addEventListener('mousemove', ev => this.onMouseMove(ev))
     container.addEventListener('mouseleave', () => this.hidePlus())
@@ -96,7 +97,7 @@ export class Desk {
   /** Dockview events of a frame, wired once its dockview exists (during the frame's init). */
   wireFrame(frame: Frame): void {
     this.frames.set(frame.id, frame)
-    frame.dock.onDidLayoutChange(() => this.host.onLayoutChange())
+    frame.dock.onDidLayoutChange(e => this.host.onLayoutChange(e.reasons))
     frame.dock.onDidAddPanel(() => this.host.onPanelsChange())
     frame.dock.onDidRemovePanel(() => {
       this.host.onPanelsChange()

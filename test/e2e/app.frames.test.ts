@@ -194,9 +194,8 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await sleep(800)
     assert.ok(existsSync(join(home, 'layout.v1.bak')), 'layout.v1.bak written')
     assert.equal(readFileSync(join(home, 'layout.v1.bak'), 'utf8'), v1Text, 'the backup is the v1 file byte for byte')
-    const rewritten = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutV2
-    assert.equal(rewritten.v, 2, 'layout.json rewritten as v2')
-    assert.deepEqual(Object.keys(rewritten.desks[0]!.frames.views['frame-1']!.panels).sort(), [a, b].sort())
+    // Restoring is not a change the person made: layout.json stays v1 until they change something (planRestore).
+    assert.equal(readFileSync(join(home, 'layout.json'), 'utf8'), v1Text, 'layout.json untouched by the restore')
     await page.screenshot({ path: join(artifacts, 'frames-migrated.png') })
 
     // ---- 2. Ctrl+Alt+Shift+↓: a pane at the frame's bottom edge, spanning its width ----
@@ -205,6 +204,10 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await waitTabs(page, 3)
     const c = newId([a!, b], await hooks.ids(page))
     assert.equal(await hooks.frameOf(page, c), 'frame-1', 'same frame')
+    await sleep(800) // debounced save of the person's first change
+    const rewritten = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutV2
+    assert.equal(rewritten.v, 2, 'the first change rewrites layout.json as v2')
+    assert.deepEqual(Object.keys(rewritten.desks[0]!.frames.views['frame-1']!.panels).sort(), [a, b, c].sort())
     const layoutC = await hooks.frameLayout(page, 'frame-1')
     const topLevel = (layoutC.grid.root.data as Node[])
     assert.ok(topLevel.some(n => n.type === 'leaf' && (n.data as { views: string[] }).views.includes(c)), `the new pane is a direct child of the frame's root: ${JSON.stringify(shape(layoutC.grid.root))}`)

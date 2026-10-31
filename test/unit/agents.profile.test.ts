@@ -87,6 +87,14 @@ describe('claude', () => {
 })
 
 describe('soul', () => {
+  // On macOS the real node runs through `/bin/sh -c 'exec -a tether-soul "$0" "$@"' <node>` (withRenamedNode): the
+  // soul's own args come after that prefix; elsewhere they are the whole list.
+  const soulArgs = (plan: { command: string; args: string[] }): string[] => {
+    if (process.platform !== 'darwin') return plan.args
+    assert.equal(plan.command, '/bin/sh')
+    assert.deepEqual(plan.args.slice(0, 2), ['-c', 'exec -a tether-soul "$0" "$@"'])
+    return plan.args.slice(3)
+  }
   withEnv({ [ENV_SOUL_CMD]: 'node D:/fake/bin/soul', SOUL_X: undefined })
   const slot: SlotMeta = { v: 1, slotId: 'soul-1', agent: 'soul', cwd: 'D:\\agentes\\serpente', args: ['-P', 'guga@codr.studio'], createdAt: '2026-10-29T00:00:00.000Z' }
   const binding: Binding = {
@@ -98,7 +106,7 @@ describe('soul', () => {
   test('new session: profile args, then the slot args, then the extra args; profile env applied; report var ours', () => {
     const home = dirs.make() // a real folder: the plan makes <home>/bin/tether-soul.exe
     const plan = soulAdapter.plan({ slot, home, extraArgs: ['-n', 'nova'], profile })
-    assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-P', 'guga@codr.studio', '-n', 'nova'])
+    assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-P', 'guga@codr.studio', '-n', 'nova'])
     assert.equal(plan.env.SOUL_X, 'from-profile')
     assert.equal(plan.env.SOUL_Y, 'y')
     assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath(home, slot.slotId))
@@ -106,7 +114,7 @@ describe('soul', () => {
 
   test('resume: profile args BEFORE the recipe (the recipe finds the session and wins), slot args last; recipe env over profile env', () => {
     const plan = soulAdapter.plan({ slot, home: dirs.make(), resume: binding, extraArgs: [], profile })
-    assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', '-P', 'guga@codr.studio'])
+    assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', '-P', 'guga@codr.studio'])
     assert.equal(plan.env.SOUL_X, '1', 'the recipe\'s env wins over the profile\'s')
     assert.equal(plan.env.SOUL_Y, 'y')
     assert.equal(plan.cwd, 'D:\\outra\\pasta')
@@ -115,7 +123,7 @@ describe('soul', () => {
   test('resume without a recipe: profile args, -r <id>, slot args', () => {
     const { resume: _r, ...bare } = binding
     const plan = soulAdapter.plan({ slot, home: dirs.make(), resume: bare, extraArgs: [], profile })
-    assert.deepEqual(plan.args, ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-r', 'sess-1234', '-P', 'guga@codr.studio'])
+    assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-r', 'sess-1234', '-P', 'guga@codr.studio'])
   })
 
   test('a profile env cannot redirect the report nor rename the slot (the identity is set last)', () => {

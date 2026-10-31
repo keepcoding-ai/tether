@@ -5,7 +5,7 @@
 //   dockview.css  dockview-core's stylesheet. The ESM build of dockview-core 8 ships no CSS file: the
 //                 styles exist only as a string injected by its UMD bundle, so they are extracted from it.
 //   dialog.js     browser bundle (ESM) of the standalone dialog window (shown before the main window exists)
-//   tether.ico/png the app icon (window, taskbar, Start Menu shortcut), drawn by app/icon.mjs
+//   tether.ico/icns/png the app icon (window, taskbar, Start Menu shortcut, Tether.app bundle), drawn by app/icon.mjs
 //   tray.png, tray-active.png, tray-attention.png  the tray icon (32 px): plain, green dot while an agent runs, amber dot when one finished or waits for you
 // The Phosphor icons (@phosphor-icons/core) are inlined as strings: only the ones app/renderer/icons.ts imports.
 import { build } from 'esbuild'

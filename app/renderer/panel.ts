@@ -50,9 +50,12 @@ export function effectiveStatus(s: SlotState): SlotStatus {
   return s.status
 }
 
-/** Text shown in the tab (next to the agent's icon): session title, or slot name, or folder name. */
+/**
+ * Text shown in the tab (next to the agent's icon): the slot name (chosen by the user: tab rename, CLI --name),
+ * else the session title (set by the agent), else the folder name.
+ */
 export function panelTitle(s: SlotState): string {
-  return s.title ?? s.name ?? folderName(s.cwd)
+  return s.name ?? s.title ?? folderName(s.cwd)
 }
 
 /** The unsafe marker (tab and header): the launch carries --dangerously-skip-permissions. */
@@ -73,6 +76,7 @@ export function unsafeBadge(withLabel: boolean): HTMLElement {
 
 export function panelTooltip(s: SlotState): string {
   const lines = [panelTitle(s), `${KIND_LABEL[s.kind]} · ${STATUS_LABEL[effectiveStatus(s)]}`, `Pasta: ${s.cwd}`, `Slot: ${s.slotId}`]
+  if (s.name && s.title) lines.push(`Título: ${s.title}`)
   if (!s.profileName && !s.profileId) lines.push(`Perfil: ${NO_PROFILE_LABEL}`)
   if (s.profileName) lines.push(`Perfil: ${s.profileName}`)
   else if (s.profileId) lines.push(`Perfil: ${s.profileId} (apagado)`)
@@ -172,6 +176,8 @@ export interface PanelHost {
   /** A `start` was sent and not answered yet: show "iniciando…" instead of "encerrado". */
   isStartPending(slotId: string): boolean
   onAction(slotId: string, action: PanelAction): void
+  /** The user renamed the tab; an empty name removes the custom name (the session title shows again). */
+  onRename(slotId: string, name: string): void
   /** Keys the terminal must not swallow (app shortcuts); return true when handled here. */
   onKey(ev: KeyboardEvent, panel: TerminalPanel): boolean
   /** The scheme painted right now (new terminals start with it; setAppearance follows later switches). */
@@ -392,7 +398,7 @@ export class TerminalPanel implements IContentRenderer {
     else if (startError && status === 'exited') status = 'error'
     else if (pending && status === 'exited') status = 'starting'
     setIcon(this.head.icon, KIND_ICON[s.kind])
-    this.head.title.textContent = s.title ?? s.name ?? KIND_LABEL[s.kind]
+    this.head.title.textContent = s.name ?? s.title ?? KIND_LABEL[s.kind]
     // The pill is the way to "Trocar perfil…": shown on every agent panel, and on a shell only when it has a profile.
     const profileLabel = s.profileName ?? (s.profileId ? `${s.profileId} (apagado)` : NO_PROFILE_LABEL)
     this.head.profile.textContent = profileLabel
@@ -562,6 +568,11 @@ export class TerminalPanel implements IContentRenderer {
     else if (rawWhenEmpty && this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data: '\x16' })
   }
 
+  /** Types raw bytes into the terminal's pty (same path as keyboard input). */
+  sendInput(data: string): void {
+    if (this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data })
+  }
+
   /** Copies the selection to the clipboard and clears it; nothing without a selection. */
   copy(): void {
     if (!this.term.hasSelection()) return
@@ -669,6 +680,7 @@ export class SlotTab implements ITabRenderer {
     this.toggle.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onToggleDetails(this.api.id) })
     this.setDetails(false)
     this.element.append(this.kind, this.attn, this.text, this.unsafe, this.dot, this.toggle, close)
+    this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
     this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
   }
 
@@ -710,6 +722,44 @@ export class SlotTab implements ITabRenderer {
     this.attn.title = s?.attention === 'waiting' ? 'Esperando você' : s?.attention === 'done' ? 'Terminou' : ''
     this.element.dataset.attention = s?.attention ?? ''
     this.element.title = s ? panelTooltip(s) + (s.attention === 'waiting' ? '\nEsperando você' : s.attention === 'done' ? '\nTerminou' : '') : `Slot ${this.api.id} (desconhecido)`
+  }
+
+  /**
+   * Inline rename: an input takes the text's place with the current custom name (empty when the tab shows
+   * the session title or folder). Enter saves, Esc cancels, leaving the field saves; an empty name removes
+   * the custom one. The input swallows pointer and key events so dockview does not drag the tab and the
+   * app shortcuts stay quiet while typing.
+   */
+  startRename(): void {
+    if (!this.api || this.element.querySelector('input.rename')) return
+    const slot = this.host.getSlot(this.api.id)
+    if (!slot) return
+    const slotId = this.api.id
+    const input = document.createElement('input')
+    input.className = 'rename'
+    input.type = 'text'
+    input.value = slot.name ?? ''
+    input.placeholder = slot.title ?? folderName(slot.cwd)
+    input.title = 'Enter salva, Esc cancela; vazio volta ao título da sessão'
+    input.setAttribute('aria-label', 'Nome do painel')
+    let done = false
+    const finish = (save: boolean): void => {
+      if (done) return
+      done = true
+      const name = input.value.trim()
+      input.replaceWith(this.text)
+      if (save && name !== (slot.name ?? '')) this.host.onRename(slotId, name)
+    }
+    for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick'] as const) input.addEventListener(type, ev => ev.stopPropagation())
+    input.addEventListener('keydown', ev => {
+      ev.stopPropagation()
+      if (ev.key === 'Enter') { ev.preventDefault(); finish(true) }
+      else if (ev.key === 'Escape') { ev.preventDefault(); finish(false) }
+    })
+    input.addEventListener('blur', () => finish(true))
+    this.text.replaceWith(input)
+    input.focus()
+    input.select()
   }
 
   dispose(): void {

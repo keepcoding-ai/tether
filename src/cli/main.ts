@@ -17,6 +17,7 @@ import { KILL_WAIT_CAP_MS, MIN_AGENT_AGE_MS, type ErrorCode, type SlotKind, type
 import { parseArgs, UsageError } from './args.ts'
 import { attach } from './attach.ts'
 import { localTime, relativeTime, shortId, statusLabel, table, truncate, truncateStart } from './format.ts'
+import { ownSlotOf, restartDaemon, selfShutdownMessage } from '../daemon/restart.ts'
 import { adapters, planFor, profileFor, runHere } from './here.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
@@ -45,6 +46,9 @@ export const USAGE = `uso: tether <comando> [opções]
                                       troca o perfil de um slot (--none: nenhum). Com o agente
                                       rodando, --now reinicia já e retoma a mesma sessão;
                                       --next (padrão) deixa para o próximo início
+  daemon <status|restart|stop> [--force]
+                                      gerencia o tetherd (restart/stop encerram todos os agentes; os apps
+                                      reconectam; recusado de dentro de um slot dele sem --force)
   doctor                              confere o ambiente
   help                                esta ajuda
 
@@ -82,6 +86,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'rename': return await cmdRename(rest)
       case 'profiles': return await cmdProfiles(rest)
       case 'profile': return await cmdProfile(rest)
+      case 'daemon': return await cmdDaemon(rest)
       default:
         throw new UsageError(`comando desconhecido: ${command}`, true)
     }
@@ -724,5 +729,61 @@ async function cmdRename(args: string[]): Promise<number> {
     return 0
   } finally {
     client?.close()
+  }
+}
+
+// ---- daemon ------------------------------------------------------------------------------------
+
+async function cmdDaemon(args: string[]): Promise<number> {
+  const p = parseArgs(args, { flags: ['force'] })
+  const sub = p.positional[0]
+  const ctx = context()
+  switch (sub) {
+    case 'status': {
+      const client = await tryConnect(ctx)
+      if (!client) { out(`tetherd parado (${ctx.pipe})\n`); return 1 }
+      const slots = (await client.request({ t: 'list' })).slots ?? []
+      client.close()
+      const running = slots.filter((s) => s.status === 'running').length
+      out(`tetherd pid ${client.hello.pid} (${client.hello.version}), ${running} de ${slots.length} slots rodando\n  ${ctx.pipe}\n`)
+      return 0
+    }
+    case 'restart': {
+      if (await refusesSelfShutdown(ctx, 'restart', p.flags.has('force'))) return 1
+      const { previous, current } = await restartDaemon({ home: ctx.home, pipe: ctx.pipe })
+      out(previous
+        ? `tetherd reiniciado: pid ${previous.pid} → ${current.pid}\n  os agentes foram encerrados; os apps abertos reconectam e retomam as sessões\n`
+        : `tetherd estava parado; subiu o pid ${current.pid}\n`)
+      return 0
+    }
+    case 'stop': {
+      if (await refusesSelfShutdown(ctx, 'stop', p.flags.has('force'))) return 1
+      const client = await tryConnect(ctx)
+      if (!client) { out('tetherd já está parado\n'); return 0 }
+      await client.request({ t: 'shutdown' })
+      client.close()
+      out(`tetherd (pid ${client.hello.pid}) encerrando; os agentes dos slots foram parados\n`)
+      return 0
+    }
+    default:
+      throw new UsageError('use: tether daemon status | restart | stop [--force]')
+  }
+}
+
+/**
+ * A restart/stop asked from a terminal that the target daemon itself runs (one of its slots) would kill the
+ * session asking for it: refused unless --force. Nothing to refuse when no daemon answers.
+ */
+async function refusesSelfShutdown(ctx: Context, action: 'restart' | 'stop', force: boolean): Promise<boolean> {
+  if (force) return false
+  const client = await tryConnect(ctx)
+  if (!client) return false
+  try {
+    const slotId = ownSlotOf((await client.request({ t: 'list' })).slots ?? [])
+    if (!slotId) return false
+    err(selfShutdownMessage(action, slotId))
+    return true
+  } finally {
+    client.close()
   }
 }

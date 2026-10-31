@@ -265,7 +265,8 @@ export interface SpawnOptions {
  */
 export function spawnDaemon(opts: SpawnOptions): Promise<number | undefined> {
   const node = opts.execPath ?? process.execPath
-  const execPath = ensureRenamedNode(opts.home, 'tetherd', node, opts.log ?? exeLog(opts.home, 'spawn')).path
+  const exe = ensureRenamedNode(opts.home, 'tetherd', node, opts.log ?? exeLog(opts.home, 'spawn'))
+  const execPath = exe.path
   const mainPath = opts.mainPath ?? fileURLToPath(new URL('./main.ts', import.meta.url))
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(opts.env ?? process.env)) if (v !== undefined) env[k] = v
@@ -273,7 +274,8 @@ export function spawnDaemon(opts: SpawnOptions): Promise<number | undefined> {
   env.TETHER_PIPE = opts.pipe
   env.TETHER_NODE = node
   if (process.platform !== 'win32') {
-    const child = spawn(execPath, [mainPath], { detached: true, stdio: 'ignore', env })
+    // macOS: the real node with its name in argv[0] (see core/exe.ts); elsewhere the renamed file names itself.
+    const child = spawn(execPath, [mainPath], { detached: true, stdio: 'ignore', env, ...(exe.argv0 ? { argv0: exe.argv0 } : {}) })
     child.unref()
     return Promise.resolve(child.pid)
   }

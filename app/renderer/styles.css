@@ -259,6 +259,7 @@ button.primary:hover { background: var(--accent-hover); }
 .tether-tab { display: flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; height: 100%; max-width: 260px; }
 .tether-tab .kind .ph { width: 14px; height: 14px; opacity: .9; }
 .tether-tab .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tether-tab input.rename { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 4px; width: 140px; min-width: 0; outline: none; }
 .tether-tab .dot .ph { width: 7px; height: 7px; }
 .tether-tab .dot.running { color: var(--ok); }
 .tether-tab .dot.exited { color: var(--fg-dim); }

@@ -1,6 +1,6 @@
 // Shell adapter: a plain interactive shell in the slot's folder. No session to track; "resume" = a new shell
 // in the same cwd. The user may pick the shell with SlotMeta.args (e.g. ["C:\\Program Files\\Git\\bin\\bash.exe",
-// "--login", "-i"]); otherwise pwsh.exe if on PATH, else powershell.exe (Windows), else $SHELL or /bin/sh.
+// "--login", "-i"]); otherwise pwsh.exe if on PATH, else powershell.exe (Windows), else $SHELL or /bin/sh (macOS: $SHELL or /bin/zsh, as a login shell).
 import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { withColorSupport } from './termenv.ts'
@@ -32,12 +32,14 @@ export function findOnPath(name: string, env: Record<string, string | undefined>
 }
 
 /** The default shell command and its args. */
-export function defaultShell(env: Record<string, string | undefined> = process.env): { command: string; args: string[] } {
-  if (process.platform === 'win32') {
+export function defaultShell(env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
+  if (platform === 'win32') {
     const pwsh = findOnPath('pwsh', env)
     if (pwsh) return { command: pwsh, args: ['-NoLogo'] }
     return { command: findOnPath('powershell', env) ?? 'powershell.exe', args: ['-NoLogo'] }
   }
+  // macOS: the user's login shell, started as a login shell (a GUI app's PATH lacks what ~/.zprofile adds).
+  if (platform === 'darwin') return { command: env.SHELL || '/bin/zsh', args: ['-l'] }
   return { command: env.SHELL || '/bin/sh', args: [] }
 }
 

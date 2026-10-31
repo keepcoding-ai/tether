@@ -5,7 +5,8 @@
 // keeps every slot running whatever the app does.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '../../src/daemon/client.ts'
@@ -16,6 +17,7 @@ import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
+import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
 import type { TrayCommand } from '../shared/tray.ts'
 import { createTray, type TrayController } from './tray.ts'
@@ -25,12 +27,15 @@ import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 
 const home = tetherHome()
 const pipe = pipePath(home, userInfo().username)
-/** Taskbar grouping / pinning: the same id goes on the Start Menu shortcut (app/shortcut.ps1). */
+/** Taskbar grouping / pinning: the same id goes on the Start Menu shortcut (app/shortcut.ps1) and, on macOS, is the CFBundleIdentifier of Tether.app (app/install.mjs). */
 const APP_USER_MODEL_ID = 'studio.codr.tether'
 // Electron's own state (cache, GPU, the single-instance lock) lives under TETHER_HOME too: E2E runs with a
 // private home never collide with the user's running app.
 app.setPath('userData', join(home, 'electron'))
 app.setAppUserModelId(APP_USER_MODEL_ID)
+// The process runs from node_modules' Electron.app (Tether.app only wraps it: a launcher cannot change what
+// the OS attributes the process to), so the name and the Dock icon are set here, not read from a bundle.
+app.setName('Tether')
 const layoutPath = join(home, 'layout.json')
 const recentPath = join(home, 'recent-folders.json')
 const RECENT_LIMIT = 12
@@ -45,6 +50,8 @@ let daemon: DaemonClient | undefined
 let connecting: Promise<void> | undefined
 let win: BrowserWindow | undefined
 let quittingAll = false
+/** Set when the daemon connection was lost: the next connection reloads the renderer so every panel restarts its slot. */
+let reloadOnReconnect = false
 /** The app is going away for real (menu, tray, OS): closing the window must not be turned into "hide". */
 let quitting = false
 /** The daemon is being restarted from the tray: its connection closing is expected, not a crash. */
@@ -57,9 +64,12 @@ function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
 }
 
+/** Atomic: temp + rename, so a crash mid-write never leaves a half file behind. */
 function writeJson(path: string, value: unknown): void {
   mkdirSync(home, { recursive: true })
-  writeFileSync(path, JSON.stringify(value, null, 2))
+  const tmp = `${path}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(value, null, 2))
+  renameSync(tmp, path)
 }
 
 // ---------- daemon ----------
@@ -139,7 +149,11 @@ function connectDaemon(): Promise<void> {
         daemon = undefined
         slotStates.clear()
         updateTray()
-        if (quittingAll || quitting || restartingDaemon) return
+        if (quittingAll || quitting) return
+        // "Reiniciar serviço" (tray) brings its panels back through the renderer's reconnect path; any other
+        // loss (a crash, "Recarregar…", `tether daemon restart`) reloads the page on the next connection.
+        if (restartingDaemon) return
+        reloadOnReconnect = true
         sendConnection({ connected: false, pipe, error: 'conexão com o tetherd fechada' })
         // The daemon died (or was shut down): bring one back (the tray keeps the app alive with no window)
         // and let the renderer restart its panels.
@@ -147,6 +161,8 @@ function connectDaemon(): Promise<void> {
       })
       sendConnection(connectionState())
       void syncSlots(client)
+      // A restarted daemon has no agents running: a fresh page restores the layout and resumes each slot's session.
+      if (reloadOnReconnect) { reloadOnReconnect = false; win?.webContents.reloadIgnoringCache() }
     } catch (err) {
       sendConnection({ connected: false, pipe, error: err instanceof Error ? err.message : String(err) })
     } finally {
@@ -204,6 +220,29 @@ ipcMain.on('tether:command', (_e, cmd: unknown) => {
   if (cmd === 'quit-all') void quitAll()
   else if (cmd === 'restore-confirmations') restoreConfirmations()
 })
+
+/**
+ * "Recarregar": the daemon restarts with the code on disk; the app reconnects (close handler) and reloads the
+ * renderer. It ends every agent first, so the person confirms it in the in-app dialog (which says how many run).
+ */
+async function reloadAll(): Promise<void> {
+  if (!daemon) { void connectDaemon(); return }
+  const { choice } = await ask('reload-all')
+  if (choice !== 'reload') return
+  if (!daemon) { void connectDaemon(); return }
+  await request({ t: 'shutdown' })
+}
+
+/** "Reiniciar o app": a fresh main process (new main.cjs); the daemon and its agents are left alone. */
+function relaunchApp(): void {
+  // Going down for real: no reconnect attempt, and closing the window must not turn into "hide to the tray".
+  quittingAll = true
+  quitting = true
+  tray?.destroy() // app.exit skips before-quit, where the tray is normally removed
+  tray = undefined
+  app.relaunch()
+  app.exit(0)
+}
 
 /** "Sair e encerrar tudo": stops every slot, shuts the daemon down and quits (after the in-app dialog). */
 /**
@@ -313,6 +352,20 @@ nativeTheme.on('updated', applyTheme)
 ipcMain.handle('theme:get', (): ThemeState => themeState())
 // Settings may change before any window exists (the standalone dialog): nothing to push then.
 ipcMain.on('theme:set', (_e, setting: unknown) => setTheme(normalizeTheme(setting)))
+
+// ---------- font size ----------
+
+/** The size itself is appearance.fontSize ("Tema do terminal"): the renderer steps it and saves it through terminal:set. */
+
+/** Menu items without accelerators: the shortcuts (Cmd+=/-/0, Ctrl+Shift+=/-/0) are handled by the renderer itself. */
+function fontSizeMenu(): Electron.MenuItemConstructorOptions[] {
+  const commands: FontSizeCommand[] = ['increase', 'decrease', 'reset']
+  return commands.map(command => ({
+    id: `font-size-${command}`,
+    label: FONT_SIZE_LABEL[command],
+    click: () => win?.webContents.send('tether:font-size', command),
+  }))
+}
 
 function themeMenu(): Electron.MenuItemConstructorOptions {
   const current = themeState().setting
@@ -525,9 +578,15 @@ function createMenu(): void {
       label: 'Exibir',
       submenu: [
         themeMenu(),
+        ...fontSizeMenu(),
+        { type: 'separator' },
         { id: 'terminal-theme', label: 'Tema do terminal…', click: () => win?.webContents.send('tether:open-terminal-theme') },
         { id: 'profiles', label: 'Perfis de lançamento…', click: () => win?.webContents.send('tether:open-profiles') },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
+        { type: 'separator' },
+        // No accelerator on purpose: it ends every agent, and a key chord next to "reload page" invites accidents.
+        { id: 'reload-all', label: 'Recarregar… (encerra todos os agentes dos painéis, reinicia o tetherd e retoma as sessões)', click: () => { void reloadAll() } },
+        { id: 'relaunch-app', label: 'Reiniciar o app (código novo do processo principal)', click: relaunchApp },
         { type: 'separator' },
         { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' },
         { role: 'togglefullscreen', label: 'Tela cheia' },
@@ -544,9 +603,11 @@ ipcMain.on('tether:notice', (_e, notice: Notice) => daemon?.input(notice.slotId,
 ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 
-ipcMain.handle('layout:load', () => readJson<unknown | null>(layoutPath, null))
-ipcMain.handle('layout:save', (_e, layout: unknown) => { writeJson(layoutPath, layout) })
-// The renderer asks before its first write after a v1 → v2 migration: the file is still v1 at that moment.
+// layout.json keeps its previous content in layout.json.bak on every save and falls back to it (layout-file.ts).
+ipcMain.handle('layout:load', () => loadLayoutFile(layoutPath))
+ipcMain.handle('layout:save', (_e, layout: unknown) => { saveLayoutFile(layoutPath, layout) })
+// The renderer asks for this when it reads a v1 file: layout.json.bak rotates on every save, layout.v1.bak keeps the
+// last v1 content for good (a copy: layout.json itself is not touched until the person changes something).
 ipcMain.handle('layout:backup', () => { if (existsSync(layoutPath)) copyFileSync(layoutPath, join(home, 'layout.v1.bak')) })
 
 /** Recent folders in canonical form, deduped case-insensitively (entries saved before the fix may differ only in casing). */
@@ -754,6 +815,7 @@ async function start(): Promise<void> {
   if (outcome === 'focused-other') { app.quit(); return }
   app.on('second-instance', bringToFront)
   await app.whenReady()
+  if (process.platform === 'darwin') app.dock?.setIcon(join(__dirname, 'tether.png'))
   createMenu()
   createWindow()
   setupTray()
