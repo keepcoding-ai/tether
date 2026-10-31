@@ -262,15 +262,24 @@ button.primary:hover { background: var(--accent-hover); }
 .panel[data-details="true"] .panel-details { grid-template-rows: 1fr; }
 .panel-details-inner { min-height: 0; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .panel-details { transition: none; } }
-.panel-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 2px 8px; font-size: 12px; color: var(--fg-dim);
+.status-bar {
+  display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 4px 0 10px;
+  font-size: 11.5px; color: var(--fg-dim);
   background: var(--bg-2); border-bottom: 1px solid var(--border);
   white-space: nowrap; overflow: hidden; user-select: none;
 }
-.panel-head .icon { color: var(--fg); }
-.panel-head .title { color: var(--fg); font-weight: 600; }
-.panel-head .cwd { flex: 1; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 11px; }
+.status-bar .sp { flex: 1; min-width: 0; }
+.status-bar .status, .status-bar .bell, .status-bar .info-profile, .status-bar .unsafe { flex: none; }
+.status-bar .bell { display: inline-flex; color: var(--x-alert); }
+.status-bar .bell[hidden] { display: none; }
+.status-bar .bell .ph { width: 13px; height: 13px; }
+.status-bar .info-profile[hidden] { display: none; }
+.status-bar .info-profile.none { font-style: italic; }
+.status-bar .info-cwd { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 11px; }
+.status-bar .sb-action { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--fg-dim); cursor: pointer; }
+.status-bar .sb-action .ph { width: 15px; height: 15px; }
+.status-bar .sb-action:hover { background: var(--bg-hover); color: var(--fg); }
+.status-bar .sb-action[hidden] { display: none; }
 .panel-body { position: relative; flex: 1; min-height: 0; display: flex; }
 .panel-term { flex: 1; min-height: 0; padding: 2px 0 0 4px; overflow: hidden; }
 .panel-term .xterm { height: 100%; }
@@ -290,16 +299,16 @@ button.primary:hover { background: var(--accent-hover); }
 #closed-list li .forget { display: inline-flex; align-items: center; gap: 4px; }
 #closed-list li .forget .ph { width: 13px; height: 13px; }
 
-/* --- panel head status: a filled dot (icon) coloured by state --- */
+/* --- status bar state: a filled dot (icon) coloured by state --- */
 .status { display: inline-flex; align-items: center; gap: 5px; }
-.status .ph { width: 8px; height: 8px; }
+.status { flex: none; }
+.status .ph { width: 7px; height: 7px; }
 .status.running { color: var(--fg); }
 .status.running .ph { color: var(--ok); }
 .status.starting .ph, .status.queued .ph { color: var(--warn); }
 .status.exited .ph { color: var(--fg-dim); }
 .status.unconfirmed .ph { color: var(--warn); }
 .status.error .ph { color: var(--err); }
-.panel-head .icon .ph { width: 15px; height: 15px; }
 
 /* --- custom tab (the preview's .tab): shrinks to a minimum width, the active one never shrinks --- */
 .dv-theme-tether .dv-tabs-and-actions-container > .dv-scrollable,
@@ -491,13 +500,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .unsafe[hidden] { display: none; }
 .unsafe .ph { width: 14px; height: 14px; }
 .tether-tab .unsafe .ph { width: 13px; height: 13px; }
-.panel-head .unsafe { padding: 1px 7px 1px 5px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 16%, transparent); }
-/* The profile pill is a button: "Trocar perfil…". Muted and dashed when the panel has none. */
-.panel-head .profile { font: inherit; font-size: 11.5px; line-height: 1.4; color: var(--fg-dim); padding: 1px 7px; border-radius: 999px; background: var(--bg-3); border: 1px solid var(--border); flex: none; cursor: pointer; }
-.panel-head .profile.none { background: transparent; border-style: dashed; font-style: italic; }
-.panel-head .profile:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--bg-3)); }
-.panel-head .profile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.panel-head .profile[hidden] { display: none; }
+.status-bar .unsafe { padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--warn) 14%, transparent); }
 
 /* --- context menu (tab right-click): the in-app menu's look, placed at the pointer --- */
 #ctx-menu {

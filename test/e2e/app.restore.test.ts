@@ -134,7 +134,7 @@ test('restore: panes painted before the daemon answers, loading stages, then ter
     assert.equal(await page.evaluate(() => window.__tether.connection()), undefined, 'no daemon connection yet')
     const early = await page.evaluate(() => [...document.querySelectorAll('.panel[data-slot-id]')].map(p => {
       const l = p.querySelector('.panel-loading')
-      return { id: p.dataset.slotId!, stage: l && !l.hidden ? l.dataset.stage : undefined, text: l?.textContent ?? '', cwd: p.querySelector('.panel-head .cwd')?.textContent ?? '' }
+      return { id: p.dataset.slotId!, stage: l && !l.hidden ? l.dataset.stage : undefined, text: l?.textContent ?? '', cwd: p.querySelector('.status-bar .info-cwd')?.textContent ?? '' }
     }))
     assert.deepEqual(early.map(e => e.id).sort(), [...ids].sort(), 'every pane of the layout is in the DOM')
     for (const e of early) {

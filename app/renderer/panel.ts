@@ -184,8 +184,12 @@ export interface PanelHost {
   getScheme(): ColorScheme
   /** The terminal appearance in force (preset, font, weight, size, line height). */
   getAppearance(): TerminalAppearance
-  /** "Trocar perfil…" from the header pill. */
+  /** "Trocar perfil…" from the status bar's pinned action. */
   onSwitchProfile(slotId: string): void
+  /** "Abrir pasta no Explorer" from the status bar's pinned action. */
+  onOpenFolder(slotId: string): void
+  /** "Copiar pasta" from the status bar's pinned action. */
+  onCopyFolder(slotId: string): void
   /** The status-bar toggle at the tab strip's right end (and Ctrl+Shift+H): show or hide the pane's header. */
   onToggleDetails(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
@@ -211,16 +215,18 @@ const FIRST_OUTPUT_GRACE_MS = 1500
 /** The loading skeleton's fade-out (matches the CSS transition). */
 const LOADING_FADE_MS = 160
 
-/** The header pill's text: the profile's name, or what its absence means. */
+/** The status bar's profile text: the profile's name, or what its absence means. */
 export const NO_PROFILE_LABEL = 'sem perfil'
 export const SWITCH_PROFILE_TOOLTIP = 'Trocar perfil…'
+export const OPEN_FOLDER_TOOLTIP = 'Abrir pasta no Explorer'
+export const COPY_FOLDER_TOOLTIP = 'Copiar pasta'
 
 export class TerminalPanel implements IContentRenderer {
   readonly element: HTMLElement
   readonly term: Terminal
   slotId = ''
   private readonly fit = new FitAddon()
-  private readonly head: { icon: HTMLElement; title: HTMLElement; profile: HTMLButtonElement; unsafe: HTMLElement; cwd: HTMLElement; status: HTMLElement }
+  private readonly head: { status: HTMLElement; bell: HTMLElement; profile: HTMLElement; unsafe: HTMLElement; cwd: HTMLElement; openFolder: HTMLButtonElement; copyFolder: HTMLButtonElement; switchProfile: HTMLButtonElement }
   private readonly termHost: HTMLElement
   private readonly details: HTMLElement
   private readonly overlay: HTMLElement
@@ -245,17 +251,28 @@ export class TerminalPanel implements IContentRenderer {
     this.host = host
     this.element = document.createElement('div')
     this.element.className = 'panel'
+    // The status bar (the preview's `.stb`): state as icons, information as text, three pinned icon-only actions.
     const head = document.createElement('div')
-    head.className = 'panel-head'
-    const icon = document.createElement('span'); icon.className = 'icon'
-    const title = document.createElement('span'); title.className = 'title'
-    const profile = document.createElement('button'); profile.type = 'button'; profile.className = 'profile'; profile.hidden = true
-    profile.addEventListener('click', ev => { ev.stopPropagation(); if (this.slotId) this.host.onSwitchProfile(this.slotId) })
+    head.className = 'status-bar'
+    const status = document.createElement('span'); status.className = 'status'; status.setAttribute('role', 'img')
+    const bell = document.createElement('span'); bell.className = 'bell'; bell.setAttribute('role', 'img'); bell.hidden = true
+    bell.append(icon('bell'))
+    const profile = document.createElement('span'); profile.className = 'info-profile'; profile.hidden = true
+    const cwd = document.createElement('span'); cwd.className = 'info-cwd'
     const unsafe = unsafeBadge(true)
-    const cwd = document.createElement('span'); cwd.className = 'cwd'
-    const status = document.createElement('span'); status.className = 'status'
-    head.append(icon, title, profile, unsafe, cwd, status)
-    this.head = { icon, title, profile, unsafe, cwd, status }
+    const spacer = document.createElement('span'); spacer.className = 'sp'
+    const action = (name: string, ic: IconName, label: string, run: () => void): HTMLButtonElement => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'sb-action'; b.dataset.action = name
+      b.title = label; b.setAttribute('aria-label', label); b.append(icon(ic))
+      b.addEventListener('click', ev => { ev.stopPropagation(); run() })
+      return b
+    }
+    const switchProfile = action('switch-profile', 'swap', SWITCH_PROFILE_TOOLTIP, () => { if (this.slotId) this.host.onSwitchProfile(this.slotId) })
+    switchProfile.hidden = true
+    const openFolder = action('open-folder', 'folder-open', OPEN_FOLDER_TOOLTIP, () => { if (this.slotId) this.host.onOpenFolder(this.slotId) })
+    const copyFolder = action('copy-folder', 'copy', COPY_FOLDER_TOOLTIP, () => { if (this.slotId) this.host.onCopyFolder(this.slotId) })
+    head.append(status, bell, profile, cwd, unsafe, spacer, switchProfile, openFolder, copyFolder)
+    this.head = { status, bell, profile, unsafe, cwd, openFolder, copyFolder, switchProfile }
     this.termHost = document.createElement('div')
     this.termHost.className = 'panel-term'
     this.overlay = document.createElement('div')
@@ -383,8 +400,6 @@ export class TerminalPanel implements IContentRenderer {
     if (!s) {
       if (!this.host.isDaemonReady()) this.renderHint()
       else {
-        setIcon(this.head.icon, 'question')
-        this.head.title.textContent = this.slotId
         this.setStatus('error', 'desconhecido')
         this.showOverlay(UNKNOWN)
       }
@@ -397,18 +412,25 @@ export class TerminalPanel implements IContentRenderer {
     if (startError?.code === 'unconfirmed') status = 'unconfirmed'
     else if (startError && status === 'exited') status = 'error'
     else if (pending && status === 'exited') status = 'starting'
-    setIcon(this.head.icon, KIND_ICON[s.kind])
-    this.head.title.textContent = s.name ?? s.title ?? KIND_LABEL[s.kind]
-    // The pill is the way to "Trocar perfil…": shown on every agent panel, and on a shell only when it has a profile.
+    // The profile is plain text; "Trocar perfil…" is the pinned action. Both show on every agent panel, and on a shell only when it has a profile.
     const profileLabel = s.profileName ?? (s.profileId ? `${s.profileId} (apagado)` : NO_PROFILE_LABEL)
     this.head.profile.textContent = profileLabel
     this.head.profile.classList.toggle('none', !s.profileName)
-    this.head.profile.title = `${s.profileName ? `Perfil de lançamento: ${s.profileName}` : s.profileId ? `O perfil ${s.profileId} foi apagado; o painel usa a cópia guardada dos argumentos` : 'Sem perfil de lançamento: só os argumentos do painel'}\n${SWITCH_PROFILE_TOOLTIP}`
-    this.head.profile.setAttribute('aria-label', `Perfil: ${profileLabel}. ${SWITCH_PROFILE_TOOLTIP}`)
-    this.head.profile.hidden = s.kind === 'shell' && !s.profileId
+    const profileTip = s.profileName ? `Perfil de lançamento: ${s.profileName}` : s.profileId ? `O perfil ${s.profileId} foi apagado; o painel usa a cópia guardada dos argumentos` : 'Sem perfil de lançamento: só os argumentos do painel'
+    this.head.profile.title = profileTip
+    const showProfile = !(s.kind === 'shell' && !s.profileId)
+    this.head.profile.hidden = !showProfile
+    this.head.switchProfile.hidden = !showProfile
+    this.head.switchProfile.title = `${profileTip}\n${SWITCH_PROFILE_TOOLTIP}`
+    this.head.switchProfile.setAttribute('aria-label', `Perfil: ${profileLabel} · ${SWITCH_PROFILE_TOOLTIP}`)
     this.head.unsafe.hidden = !s.unsafe
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
+    const bellTip = s.attention === 'waiting' ? 'Esperando você' : s.attention === 'done' ? 'Terminou' : ''
+    this.head.bell.hidden = !s.attention
+    this.head.bell.className = `bell${s.attention ? ` ${s.attention}` : ''}`
+    this.head.bell.title = bellTip
+    this.head.bell.setAttribute('aria-label', bellTip)
     if (s.restarting) this.setStatus('starting', 'reiniciando…')
     else this.setStatus(status, STATUS_LABEL[status])
     this.element.dataset.status = status
@@ -421,15 +443,16 @@ export class TerminalPanel implements IContentRenderer {
     this.renderLoading()
   }
 
-  /** The header from the layout's hint, before the daemon answers: kind, title, folder, profile pill. */
+  /** The status bar from the layout's hint, before the daemon answers: folder, profile, unsafe. */
   private renderHint(): void {
     const hint = this.hint
-    setIcon(this.head.icon, hint ? KIND_ICON[hint.kind] : 'question')
-    this.head.title.textContent = hint ? KIND_LABEL[hint.kind] : this.layoutTitle ?? this.slotId
+    const showProfile = !!hint && !(hint.kind === 'shell' && !hint.profileName)
     this.head.profile.textContent = hint?.profileName ?? NO_PROFILE_LABEL
     this.head.profile.classList.toggle('none', !hint?.profileName)
-    this.head.profile.hidden = !hint || (hint.kind === 'shell' && !hint.profileName)
+    this.head.profile.hidden = !showProfile
+    this.head.switchProfile.hidden = !showProfile
     this.head.unsafe.hidden = !hint?.unsafe
+    this.head.bell.hidden = true
     this.head.cwd.textContent = hint?.cwd ?? ''
     this.head.cwd.title = hint?.cwd ?? ''
     this.setStatus('starting', 'conectando…')
@@ -476,8 +499,11 @@ export class TerminalPanel implements IContentRenderer {
   }
 
   private setStatus(status: string, label: string): void {
+    // Icon only: the label is the tooltip and the accessible name.
     this.head.status.className = `status ${status}`
-    this.head.status.replaceChildren(icon('circle-fill', 'status-dot'), document.createTextNode(label))
+    this.head.status.title = label
+    this.head.status.setAttribute('aria-label', label)
+    this.head.status.replaceChildren(icon('circle-fill', 'status-dot'))
   }
 
   /** The overlay re-renders on every state event; the same situation is left alone (focus and arrows stay put). */

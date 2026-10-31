@@ -227,9 +227,12 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
     const id = created.slot!.slotId
     await page.evaluate(id => window.__tether.openSlot(id), id)
     await page.waitForFunction(n => document.querySelectorAll('.tether-tab').length === n, 1, { timeout: 15_000 })
-    const head = page.locator(`.panel[data-slot-id="${id}"] .panel-head`)
-    await head.locator('.profile').waitFor()
-    assert.equal(await head.locator('.profile').textContent(), 'sem perfil', 'the pill says the panel has no profile')
+    const head = page.locator(`.panel[data-slot-id="${id}"] .status-bar`)
+    await head.locator('.info-profile').waitFor()
+    // The status bar starts collapsed: a user opens it with the strip's toggle, then uses the pinned icon.
+    await page.locator('.dv-right-actions-container [data-action="status-bar"]').click()
+    await page.waitForFunction(id => (document.querySelector(`.panel[data-slot-id="${id}"] .panel-details`) as unknown as { clientHeight: number }).clientHeight > 10, id)
+    assert.equal(await head.locator('.info-profile').textContent(), 'sem perfil', 'the pill says the panel has no profile')
     assert.equal(await head.locator('.unsafe').isVisible(), false, 'no badge: plain launch')
     readyAt.set(id, await awaitClaude(page, id))
     const pid1 = await waitRunning(page, id)
@@ -244,7 +247,7 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
 
     // ---- 2. the dialog from the header pill (after ≥ 11 s of uptime: the daemon waits anyway, the test makes the rule visible) ----
     await untilUptime(readyAt)
-    await head.locator('.profile').click()
+    await head.locator('[data-action="switch-profile"]').click()
     let dlg = hooks.dialog(page, 'switch-profile')
     await dlg.waitFor()
     const optionIds = await dlg.locator('.option').evaluateAll(els => els.map(e => (e as { dataset: { option?: string } }).dataset.option))
@@ -266,7 +269,7 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
     await dlg.waitFor({ state: 'detached' })
     assert.equal((await hooks.slot(page, id))!.pid, pid1, 'Esc: nothing happened')
     await setTheme(page, 'light')
-    await head.locator('.profile').click()
+    await head.locator('[data-action="switch-profile"]').click()
     dlg = hooks.dialog(page, 'switch-profile')
     await dlg.waitFor()
     await dlg.locator('.option[data-option="claude-dev"] input').check()
@@ -279,7 +282,7 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
     // The daemon waits for the agent's minimum age with `restarting` on, then kills and relaunches: the header says
     // "reiniciando…" meanwhile (the agent is already old enough here, so that moment can be too short to catch).
     await page.waitForFunction((args: { id: string; pid1: number }) => { const s = window.__tether.slots().find(x => x.slotId === args.id); return s?.restarting === true || (typeof s?.pid === 'number' && s.pid !== args.pid1) }, { id, pid1 }, { timeout: 15_000 })
-    if ((await hooks.slot(page, id))?.restarting) assert.equal(await head.locator('.status').textContent(), 'reiniciando…', 'the header shows the restart')
+    if ((await hooks.slot(page, id))?.restarting) assert.equal(await head.locator('.status').getAttribute('title'), 'reiniciando…', 'the header shows the restart')
     else t.diagnostic('restart too quick to catch the "reiniciando…" state (the agent was already past its minimum age)')
     await page.waitForFunction((args: { id: string; pid1: number }) => { const s = window.__tether.slots().find(x => x.slotId === args.id); return typeof s?.pid === 'number' && s.pid !== args.pid1 }, { id, pid1 }, { timeout: 60_000 })
     readyAt.set(id, await awaitClaude(page, id)) // the bypass-permissions dialog shows up on the first unsafe run
@@ -295,7 +298,7 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
     const starts = readEvents(home, id).filter(e => e.kind === 'start')
     assert.equal(starts.at(-1)?.sessionId, session, 'the jsonl shows the new run started the same session')
     assert.equal(starts.at(-1)?.source, 'resume')
-    assert.equal(await head.locator('.profile').textContent(), 'Claude modo dev', 'the header names the new profile')
+    assert.equal(await head.locator('.info-profile').textContent(), 'Claude modo dev', 'the header names the new profile')
     assert.ok(await head.locator('.unsafe').isVisible(), 'the header shows the unsafe badge')
     assert.equal(await page.locator('.tether-tab').filter({ has: page.locator('.unsafe:visible') }).count(), 1, 'the tab shows the unsafe badge')
     const recalled = await ask(page, id, 'qual palavra você respondeu antes? só ela')
@@ -305,7 +308,7 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
     t.diagnostic(`restarted: pid ${pid1} → ${pid2}, same session ${session}, recalled ${JSON.stringify(recalled)}`)
 
     // ---- 4. "Trocar na próxima abertura" back to "Claude": meta changes, pid does not, badge stays (process still unsafe) ----
-    await head.locator('.profile').click()
+    await head.locator('[data-action="switch-profile"]').click()
     dlg = hooks.dialog(page, 'switch-profile')
     await dlg.waitFor()
     assert.ok(await dlg.locator('.option[data-option="claude-dev"] input').isChecked(), 'the current profile is preselected')
@@ -320,7 +323,7 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
     assert.equal(next.profileName, 'Claude')
     assert.equal(next.unsafe, true, 'the badge still describes the running process')
     assert.deepEqual([readSlot(home, id)!.profileId, readSlot(home, id)!.profileArgs], ['claude', []], 'the meta on disk changed')
-    assert.equal(await head.locator('.profile').textContent(), 'Claude')
+    assert.equal(await head.locator('.info-profile').textContent(), 'Claude')
     assert.ok(await head.locator('.unsafe').isVisible())
     t.diagnostic('next: meta changed, same pid, badge kept')
 

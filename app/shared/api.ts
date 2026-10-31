@@ -51,6 +51,8 @@ export interface TetherApi {
   /** In-app menu commands that live in main: "Sair e encerrar tudo…" (asks through onAsk) and "Voltar a perguntar". */
   command(cmd: MainCommand): void
   openExternal(url: string): void
+  /** Opens a folder in the file manager (Explorer). Validates that the path exists and is a directory; never runs anything. */
+  openPath(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   readClipboard(): Promise<string>
   writeClipboard(text: string): void
   /** Current theme setting and the scheme it paints right now. */

@@ -33,8 +33,8 @@ describe('pane details params', () => {
   })
 
   test('the label names the next state', () => {
-    assert.equal(detailsLabel(false), 'Mostrar detalhes do painel')
-    assert.equal(detailsLabel(true), 'Ocultar detalhes do painel')
+    assert.equal(detailsLabel(false), 'Mostrar barra de status')
+    assert.equal(detailsLabel(true), 'Ocultar barra de status')
   })
 
   test('the shortcut is Ctrl+Shift+H and leaves DevTools (Ctrl+Shift+I) alone', () => {

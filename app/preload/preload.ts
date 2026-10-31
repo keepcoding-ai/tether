@@ -33,6 +33,7 @@ const api: TetherApi = {
   onOpenProfiles: listener => on<void>('tether:open-profiles', () => listener()),
   command: cmd => ipcRenderer.send('tether:command', cmd),
   openExternal: url => ipcRenderer.send('shell:open-external', url),
+  openPath: path => ipcRenderer.invoke('shell:open-path', path),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   writeClipboard: text => ipcRenderer.send('clipboard:write', text),
   getTheme: () => ipcRenderer.invoke('theme:get'),

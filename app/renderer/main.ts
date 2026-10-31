@@ -113,6 +113,8 @@ const host: PanelHost = {
   getAppearance: () => appearance,
   onSwitchProfile: id => { void switchProfile(id) },
   onToggleDetails: id => togglePaneDetails(id),
+  onOpenFolder: id => openFolder(id),
+  onCopyFolder: id => copyFolder(id),
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
   isDaemonReady: () => daemonIsReady,
   daemonReady: () => daemonReadyPromise,
@@ -775,6 +777,19 @@ async function refreshSlots(): Promise<void> {
 }
 
 /** Shows or hides a pane's header details; the state is a layout param, saved with the layout. */
+/** "Abrir pasta no Explorer": main checks that the folder exists and is a directory; a failure is only logged (a missing folder already shows its own situation). */
+function openFolder(slotId: string): void {
+  const slot = slots.get(slotId)
+  if (!slot) return
+  void window.tether.openPath(slot.cwd).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) })
+}
+
+/** "Copiar pasta": the slot's folder to the clipboard. */
+function copyFolder(slotId: string): void {
+  const slot = slots.get(slotId)
+  if (slot) window.tether.writeClipboard(slot.cwd)
+}
+
 function togglePaneDetails(slotId: string): void {
   const panel = findPanel(slotId)
   if (!panel) return
@@ -1022,7 +1037,7 @@ function showContextMenu(x: number, y: number, items: MenuEntry[]): void {
 
 /**
  * The pane menu: right-click on a tab and the "⋯" at the tab strip's right end (one source). Grouped: open
- * next to it, name and profile, the status bar, where it lives, close.
+ * next to it, name and profile, the status bar and its folder entries, where it lives, close.
  */
 function showTabMenu(slotId: string, x: number, y: number): void {
   const slot = slots.get(slotId)
@@ -1052,6 +1067,8 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
     SEP,
     { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
+    { icon: 'copy', label: 'Copiar pasta', run: () => copyFolder(slotId) },
+    { icon: 'folder-open', label: 'Abrir pasta no Explorer', run: () => openFolder(slotId) },
     SEP,
     ...moves,
     SEP,

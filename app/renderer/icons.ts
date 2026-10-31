@@ -30,6 +30,8 @@ import warning from '@phosphor-icons/core/assets/regular/warning.svg'
 import x from '@phosphor-icons/core/assets/regular/x.svg'
 import xCircle from '@phosphor-icons/core/assets/regular/x-circle.svg'
 import check from '@phosphor-icons/core/assets/regular/check.svg'
+import bell from '@phosphor-icons/core/assets/regular/bell.svg'
+import swap from '@phosphor-icons/core/assets/regular/swap.svg'
 import copy from '@phosphor-icons/core/assets/regular/copy.svg'
 import pencilSimple from '@phosphor-icons/core/assets/regular/pencil-simple.svg'
 import shieldWarning from '@phosphor-icons/core/assets/regular/shield-warning.svg'
@@ -90,6 +92,8 @@ const SVG = {
   'x-circle': xCircle,
   check,
   copy,
+  bell,
+  swap,
   folder,
   list,
   minus,

@@ -216,7 +216,7 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     const errId = created.slotId!
     await page.evaluate(id => window.__tether.openSlot(id), errId)
     await page.waitForSelector(`.panel[data-slot-id="${errId}"][data-status="error"] .panel-overlay button[data-action="pick-folder"]`)
-    await page.waitForSelector(`.panel[data-slot-id="${errId}"] .panel-head .status.error`)
+    await page.waitForSelector(`.panel[data-slot-id="${errId}"] .status-bar .status.error`)
     await page.screenshot({ path: join(artifacts, 'panel-error.png') })
     await page.click(`.panel[data-slot-id="${errId}"] .panel-overlay button[data-action="close"]`)
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 4)

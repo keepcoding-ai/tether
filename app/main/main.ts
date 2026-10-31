@@ -5,7 +5,7 @@
 // keeps every slot running whatever the app does.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -689,6 +689,16 @@ ipcMain.handle('profiles:delete', async (_e, profileId: string): Promise<Profile
 
 ipcMain.on('shell:open-external', (_e, url: string) => {
   if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+})
+// Opens a folder in Explorer: only an existing directory (a file would be launched by its handler, which is
+// running something). The path is never interpreted: shell.openPath gets it as is and nothing else is spawned.
+ipcMain.handle('shell:open-path', async (_e, path: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
+  if (typeof path !== 'string' || path.trim() === '') return { ok: false, message: 'Caminho inválido.' }
+  let isDir = false
+  try { isDir = statSync(path).isDirectory() } catch { return { ok: false, message: 'A pasta não existe.' } }
+  if (!isDir) return { ok: false, message: 'O caminho não é uma pasta.' }
+  const err = await shell.openPath(path)
+  return err ? { ok: false, message: err } : { ok: true }
 })
 ipcMain.handle('clipboard:read', () => clipboard.readText())
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))

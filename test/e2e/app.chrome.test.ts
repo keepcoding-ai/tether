@@ -528,7 +528,7 @@ test('app chrome: pane tab strip, "+N" by recent use, status-bar toggle, "⋯" (
     await page.click('.tab-actions [data-action="pane-menu"]')
     await page.waitForSelector('#ctx-menu')
     const items = await page.locator('#ctx-menu li[role=menuitem]').allTextContents()
-    for (const want of ['Novo painel…', 'Renomear…', 'Trocar perfil…', 'Mostrar detalhes do painel', 'Mover para a gaveta', 'Fechar painel…']) assert.ok(items.includes(want), `"⋯" has ${want}: ${JSON.stringify(items)}`)
+    for (const want of ['Novo painel…', 'Renomear…', 'Trocar perfil…', 'Mostrar barra de status', 'Mover para a gaveta', 'Fechar painel…']) assert.ok(items.includes(want), `"⋯" has ${want}: ${JSON.stringify(items)}`)
     assert.ok(!items.some(i => /Reiniciar/.test(i)), 'no "Reiniciar sessão"')
     assert.ok(await page.locator('#ctx-menu li.sep').count() >= 3, 'grouped')
     await page.click('#ctx-menu li:text-is("Renomear…")')
@@ -547,6 +547,144 @@ test('app chrome: pane tab strip, "+N" by recent use, status-bar toggle, "⋯" (
         return img.toPNG().toString('base64')
       }, { x: Math.floor(h.left), y: Math.floor(h.top), width: Math.ceil(h.width), height: Math.ceil(h.height) + 1 })
       writeFileSync(join(artifacts, `chrome-tabs-${scheme}.png`), Buffer.from(b64, 'base64'))
+    }
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})
+
+// Slice 5 (the pane status bar, PLAN.md "Fatia 5"): collapsed by default and 26px open; state as icons only
+// (dot, bell), information as text only (profile, folder in mono with an ellipsis), icon+text only for "sem
+// restrições"; three icon-only actions pinned right with tooltips ("Trocar perfil…", "Abrir pasta no Explorer",
+// "Copiar pasta"); "Copiar pasta" and "Abrir pasta no Explorer" are also in the "⋯" menu; situations show while
+// the bar is collapsed; `shell:open-path` refuses a missing path and a file. Screenshots chrome-status-{light,dark}.png.
+test('app chrome: pane status bar (phase 4, slice 5)', async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  mkdirSync(artifacts, { recursive: true })
+  const home = mkdtempSync(join(tmpdir(), 'tether-chrome-status-'))
+  const work = join(home, 'trabalho-com-um-nome-de-pasta-bem-comprido-para-forcar-as-reticencias-na-barra-de-status')
+  mkdirSync(work, { recursive: true })
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home))
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    await createShell(page, work)
+    const shellId = (await page.evaluate(() => window.__tether.panelIds()))[0]!
+    await page.waitForFunction(id => (window as unknown as Win).__tether.slots().find(s => s.slotId === id)?.status === 'running', shellId, { timeout: 30_000 })
+    const bar = page.locator(`.panel[data-slot-id="${shellId}"] .status-bar`)
+    type Win = { tether: { writeClipboard(t: string): void; readClipboard(): Promise<string>; openPath(p: string): Promise<{ ok: boolean }>; request(r: unknown): Promise<{ t: string; message?: string; slot?: { slotId: string } }> }; __tether: { openSlot(id: string): void; slots(): { slotId: string; status: string; unsafe?: boolean }[] } }
+    type Dom = { querySelector(s: string): { clientHeight: number } | null }
+    const detailsH = (id: string) => page.evaluate(id => (document as unknown as Dom).querySelector(`.panel[data-slot-id="${id}"] .panel-details`)!.clientHeight, id)
+    const waitBar = (id: string) => page.waitForFunction(id => (document as unknown as Dom).querySelector(`.panel[data-slot-id="${id}"] .panel-details`)!.clientHeight === 26, id)
+    const writeClip = (text: string) => page.evaluate(text => (window as unknown as Win).tether.writeClipboard(text), text)
+    const clipIs = (text: string) => page.waitForFunction(text => (window as unknown as Win).tether.readClipboard().then(t => t === text), text)
+    const openPath = (path: string) => page.evaluate(path => (window as unknown as Win).tether.openPath(path), path)
+    const toggle = '.dv-right-actions-container [data-action="status-bar"]'
+
+    // Collapsed by default; the toggle opens it at 26px.
+    assert.equal(await detailsH(shellId), 0, 'collapsed by default')
+    await page.click(toggle)
+    await waitBar(shellId)
+
+    // State as an icon only: the dot has no text, its tooltip says "rodando".
+    const dot = bar.locator('.status')
+    assert.equal((await dot.textContent())!.trim(), '', 'the state dot has no text')
+    assert.equal(await dot.locator('svg').count(), 1, 'the state dot is an icon')
+    assert.equal(await dot.getAttribute('title'), 'rodando')
+    assert.equal(await bar.locator('.bell').isVisible(), false, 'no bell without attention')
+    // Information as text only: the profile name and the folder in mono with an ellipsis.
+    const prof = bar.locator('.info-profile')
+    assert.equal(await prof.locator('svg').count(), 0, 'the profile is text only')
+    assert.ok((await prof.textContent())!.length > 0)
+    const cwd = bar.locator('.info-cwd')
+    assert.equal(await cwd.textContent(), work)
+    const cwdStyle = await cwd.evaluate(el => { const c = window.getComputedStyle(el); return { ff: c.fontFamily, to: c.textOverflow } })
+    assert.match(cwdStyle.ff ?? '', /Cascadia|Consolas|mono/i, 'the folder is mono')
+    assert.equal(cwdStyle.to, 'ellipsis')
+    assert.equal(await bar.locator('.unsafe').isVisible(), false, '"sem restrições" only on unsafe profiles')
+
+    // Pinned icon-only actions on the right, each with a tooltip.
+    const want: Array<[string, string]> = [['switch-profile', 'Trocar perfil'], ['open-folder', 'Abrir pasta no Explorer'], ['copy-folder', 'Copiar pasta']]
+    const cwdBox = (await cwd.boundingBox())!
+    let prevLeft = cwdBox.x + cwdBox.width
+    for (const [action, tip] of want) {
+      const b = bar.locator(`[data-action="${action}"]`)
+      assert.equal(((await b.textContent()) ?? '').trim(), '', `${action} is icon only`)
+      assert.match((await b.getAttribute('title'))!, new RegExp(tip))
+      const box = (await b.boundingBox())!
+      assert.ok(box.x >= prevLeft - 1, `${action} sits to the right of the information`)
+      prevLeft = box.x
+    }
+    const barBox = (await bar.boundingBox())!
+    const lastBox = (await bar.locator('[data-action="copy-folder"]').boundingBox())!
+    assert.ok(barBox.x + barBox.width - (lastBox.x + lastBox.width) <= 8, 'the actions are pinned at the right end')
+
+    // "Copiar pasta" puts the folder in the clipboard (the action and the "⋯" entry).
+    await writeClip('antes')
+    await bar.locator('[data-action="copy-folder"]').click()
+    await clipIs(work)
+    await writeClip('antes')
+    await page.click('.tab-actions [data-action="pane-menu"]')
+    await page.waitForSelector('#ctx-menu')
+    const items = await page.locator('#ctx-menu li[role=menuitem]').allTextContents()
+    assert.ok(items.includes('Abrir pasta no Explorer'), `"⋯" has "Abrir pasta no Explorer": ${JSON.stringify(items)}`)
+    await page.click('#ctx-menu li:text-is("Copiar pasta")')
+    await clipIs(work)
+
+    // shell:open-path only opens an existing directory (the valid case would open Explorer: not exercised here).
+    const missing = await openPath(join(home, 'nao-existe'))
+    assert.equal(missing.ok, false, 'a missing path is refused')
+    writeFileSync(join(work, 'arquivo.txt'), 'x')
+    const file = await openPath(join(work, 'arquivo.txt'))
+    assert.equal(file.ok, false, 'a file is refused (it would be launched, not shown)')
+    assert.equal((await openPath('')).ok, false, 'an empty path is refused')
+
+    // "sem restrições": icon + text, warn tone, only on the unsafe profile. The slot is not started (situations on a
+    // collapsed pane are covered by app.pane-details).
+    const created = await page.evaluate(cwd => (window as unknown as Win).tether.request({ t: 'create', kind: 'claude', cwd, profileId: 'claude-dev' }), work)
+    assert.equal(created.t, 'ok', `create: ${created.message}`)
+    const unsafeId = created.slot!.slotId
+    await page.evaluate(id => (window as unknown as Win).__tether.openSlot(id), unsafeId)
+    await page.waitForSelector(`.panel[data-slot-id="${unsafeId}"]`)
+    await page.evaluate(id => window.__tether.activate(id), unsafeId)
+    await page.waitForFunction(id => (window as unknown as Win).__tether.slots().find(s => s.slotId === id)?.unsafe === true, unsafeId)
+    assert.equal(await detailsH(unsafeId), 0, 'the new pane starts collapsed')
+    await page.click(toggle)
+    await waitBar(unsafeId)
+    const ubar = page.locator(`.panel[data-slot-id="${unsafeId}"] .status-bar`)
+    const badge = ubar.locator('.unsafe')
+    assert.ok(await badge.isVisible(), '"sem restrições" shows')
+    assert.equal((await badge.textContent())!.trim(), 'sem restrições')
+    assert.equal(await badge.locator('svg').count(), 1, 'icon + text')
+    const bg = await badge.evaluate(el => window.getComputedStyle(el).backgroundColor)
+    assert.notEqual(bg, 'rgba(0, 0, 0, 0)', 'warn-tinted background')
+
+    // Screenshots of the shell pane's bar, light and dark, to compare with the preview's .stb.
+    await page.evaluate(id => window.__tether.activate(id), shellId)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(900, 600))
+    await page.waitForFunction(() => Math.abs(window.innerWidth - 900) <= 2)
+    for (const scheme of ['light', 'dark'] as const) {
+      await setTheme(page, scheme)
+      const r = (await bar.boundingBox())!
+      const b64 = await app.evaluate(async ({ BrowserWindow }, rect) => {
+        const img = await BrowserWindow.getAllWindows()[0]!.webContents.capturePage(rect)
+        return img.toPNG().toString('base64')
+      }, { x: Math.floor(r.x), y: Math.floor(r.y), width: Math.ceil(r.width), height: Math.ceil(r.height) })
+      writeFileSync(join(artifacts, `chrome-status-${scheme}.png`), Buffer.from(b64, 'base64'))
     }
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))

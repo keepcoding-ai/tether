@@ -114,7 +114,7 @@ test('pane details: collapsed by default, three ways to toggle, refit, persisten
     assert.ok(tip.startsWith(await page.locator('.tether-tab .text').innerText()), 'the tooltip opens with the title')
     const toggle = page.locator('.dv-right-actions-container [data-action="status-bar"]')
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false')
-    assert.match((await toggle.getAttribute('title'))!, /Mostrar detalhes do painel \(Ctrl\+Shift\+H\)/)
+    assert.match((await toggle.getAttribute('title'))!, /Mostrar barra de status \(Ctrl\+Shift\+H\)/)
     const collapsedRows = await settledRows(page, id)
     assert.ok(collapsedRows > 5)
 
@@ -127,15 +127,16 @@ test('pane details: collapsed by default, three ways to toggle, refit, persisten
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true')
     const openRows = await settledRows(page, id)
     assert.ok(openRows < collapsedRows, `rows shrink when the header opens (${collapsedRows} -> ${openRows})`)
-    assert.ok(await page.locator(`.panel[data-slot-id="${id}"] .panel-head .profile`).isVisible(), 'the profile pill is reachable')
+    assert.ok(await page.locator(`.panel[data-slot-id="${id}"] .status-bar [data-action="switch-profile"]`).isVisible(), 'the switch-profile action is reachable')
+    await page.waitForFunction(id => (document.querySelector(`.panel[data-slot-id="${id}"] .panel-details`)?.clientHeight ?? 0) === 26, id) // the open status bar is 26px tall
     await page.screenshot({ path: join(artifacts, 'pane-details-open.png') })
 
     // ---- 3. the tab menu closes it; the rows come back ----
-    await tabMenu(page, 'Ocultar detalhes do painel')
+    await tabMenu(page, 'Ocultar barra de status')
     await waitDetails(page, id, false)
     assert.equal(await settledRows(page, id), collapsedRows, 'rows grow back when collapsed')
     await page.screenshot({ path: join(artifacts, 'pane-details-collapsed.png') })
-    await tabMenu(page, 'Mostrar detalhes do painel')
+    await tabMenu(page, 'Mostrar barra de status')
     await waitDetails(page, id, true)
 
     // ---- 4. the shortcut, from inside the terminal ----
@@ -154,7 +155,7 @@ test('pane details: collapsed by default, three ways to toggle, refit, persisten
     assert.equal(await page.locator('.dv-right-actions-container [data-action="status-bar"]').getAttribute('aria-pressed'), 'true')
 
     // ---- 6. a missing folder still shows on a collapsed pane; the collapsed state survives too ----
-    await tabMenu(page, 'Ocultar detalhes do painel')
+    await tabMenu(page, 'Ocultar barra de status')
     await waitDetails(page, id, false)
     const missing = join(home, 'pasta-que-nao-existe')
     const created = await page.evaluate(async cwd => {
