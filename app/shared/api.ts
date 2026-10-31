@@ -5,15 +5,16 @@ import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
 import type { FontSizeCommand } from './font.ts'
 import type { TerminalAppearance } from './terminal-theme.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
+import type { UiSettings } from './ui-settings.ts'
 
 export type { Profile, ProfileInput }
 
-export type MainCommand = 'quit-all' | 'restore-confirmations'
+export type MainCommand = 'quit-all' | 'restore-confirmations' | 'restart-daemon'
 
 /** A request without the `id`: the main process numbers them. */
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
 
-export type ConnectionState = { connected: true; pipe: string; pid: number } | { connected: false; pipe: string; error: string }
+export type ConnectionState = { connected: true; pipe: string; pid: number; version: string } | { connected: false; pipe: string; error: string }
 
 /** The launch profiles; `problem` when the file had to be repaired or had entries skipped (show it, the backup is kept). */
 export type ProfilesList = { profiles: Profile[]; problem?: string }
@@ -66,6 +67,11 @@ export interface TetherApi {
   onTerminalAppearance(listener: (appearance: TerminalAppearance) => void): () => void
   /** Menu "Exibir → Tema do terminal…": main asks the renderer to open the dialog. */
   onOpenTerminalTheme(listener: () => void): () => void
+  /** Chrome preferences (settings.json `ui`), normalized. */
+  getUi(): Promise<UiSettings>
+  /** Persists them; the normalized value comes back through onUi. */
+  setUi(ui: UiSettings): void
+  onUi(listener: (ui: UiSettings) => void): () => void
   /** Remembered dialog answers ("não perguntar de novo"); main pushes every change through onConfirmations. */
   getConfirmations(): Promise<Confirmations>
   rememberConfirmation(situation: string, choice: string): void

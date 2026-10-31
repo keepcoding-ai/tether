@@ -17,6 +17,7 @@ import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
+import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
 import type { TrayCommand } from '../shared/tray.ts'
@@ -75,7 +76,7 @@ function writeJson(path: string, value: unknown): void {
 // ---------- daemon ----------
 
 function connectionState(): ConnectionState {
-  return daemon ? { connected: true, pipe, pid: daemon.hello.pid } : { connected: false, pipe, error: 'sem conexão' }
+  return daemon ? { connected: true, pipe, pid: daemon.hello.pid, version: daemon.hello.version } : { connected: false, pipe, error: 'sem conexão' }
 }
 
 function sendConnection(state: ConnectionState): void {
@@ -219,6 +220,7 @@ ipcMain.on('window:close', () => win?.close())
 ipcMain.on('tether:command', (_e, cmd: unknown) => {
   if (cmd === 'quit-all') void quitAll()
   else if (cmd === 'restore-confirmations') restoreConfirmations()
+  else if (cmd === 'restart-daemon') void restartDaemon()
 })
 
 /**
@@ -277,7 +279,7 @@ async function quitAll(): Promise<void> {
 
 /** User settings (theme, terminal appearance, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
 const settingsPath = join(home, 'settings.json')
-type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown }
+type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown }
 
 // ---------- terminal appearance ----------
 // The renderer owns the dialog and applies the change to every xterm; main keeps the file and echoes the
@@ -296,6 +298,14 @@ function setTerminalAppearance(value: unknown): void {
 
 ipcMain.handle('terminal:get', (): TerminalAppearance => readTerminalAppearance())
 ipcMain.on('terminal:set', (_e, value: unknown) => setTerminalAppearance(value))
+
+/** Chrome preferences (`ui`): the renderer applies them, main keeps the file and echoes the normalized value. */
+ipcMain.handle('ui:get', (): UiSettings => normalizeUi(readJson<Settings>(settingsPath, {}).ui))
+ipcMain.on('ui:set', (_e, value: unknown) => {
+  const ui = normalizeUi(value)
+  writeJson(settingsPath, { ...readJson<Settings>(settingsPath, {}), ui })
+  win?.webContents.send('tether:ui', ui)
+})
 
 /** Remembered answers per situation ("não perguntar de novo"); anything malformed reads as none. */
 function readConfirmations(): Confirmations {

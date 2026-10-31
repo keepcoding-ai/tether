@@ -7,6 +7,7 @@ import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import type { FontSizeCommand } from '../shared/font.ts'
 import type { TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ThemeState } from '../shared/theme.ts'
+import type { UiSettings } from '../shared/ui-settings.ts'
 
 function on<T>(channel: string, listener: (value: T) => void): () => void {
   const handler = (_e: unknown, value: T): void => listener(value)
@@ -42,6 +43,9 @@ const api: TetherApi = {
   setTerminalAppearance: appearance => ipcRenderer.send('terminal:set', appearance),
   onTerminalAppearance: listener => on<TerminalAppearance>('tether:terminal', listener),
   onOpenTerminalTheme: listener => on<void>('tether:open-terminal-theme', () => listener()),
+  getUi: () => ipcRenderer.invoke('ui:get'),
+  setUi: ui => ipcRenderer.send('ui:set', ui),
+  onUi: listener => on<UiSettings>('tether:ui', listener),
   getConfirmations: () => ipcRenderer.invoke('confirmations:get'),
   rememberConfirmation: (situation, choice) => ipcRenderer.send('confirmations:remember', situation, choice),
   onConfirmations: listener => on<Confirmations>('tether:confirmations', listener),
