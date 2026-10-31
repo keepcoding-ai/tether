@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark"><head><meta charset="utf-8"><title>tether · slots fechados</title>
+<style>
+:root[data-theme="dark"]{--bg:#1b1b1f;--bg-2:#232329;--bg-3:#2c2c34;--bg-hover:#363640;--fg:#d8d8dc;--fg-dim:#9a9aa3;--accent:#6aa6ff;--border:#35353d;--shadow:0 6px 20px rgba(0,0,0,.5);color-scheme:dark;
+ --t-red:#ff7b72;--t-green:#3fb950;--desk-bg:#141418;--frame-bg:#1e1e23;--on-accent:#10131a}
+:root[data-theme="light"]{--bg:#fbfbfd;--bg-2:#f1f2f5;--bg-3:#e6e7ec;--bg-hover:#dcdde3;--fg:#24292f;--fg-dim:#5f6368;--accent:#1f6fe0;--border:#cfd1d8;--shadow:0 6px 20px rgba(0,0,0,.18);color-scheme:light;
+ --t-red:#cf222e;--t-green:#116329;--desk-bg:#e7e9ed;--frame-bg:#fbfbfd;--on-accent:#fff}
+:root{--mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;--ui:"Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{font:13px var(--ui);background:var(--desk-bg);color:var(--fg);overflow:hidden}
+svg.i{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.stage{display:flex;gap:64px;justify-content:center;padding:60px 20px 0}
+.mock{display:flex;gap:2px;align-items:center;position:relative;padding:0 8px;height:42px;border-radius:8px;background:var(--bg-2);color:var(--fg-dim)}
+.ib{position:relative;width:30px;height:30px;display:grid;place-items:center;border-radius:6px;cursor:pointer;border:0;background:none;color:inherit;padding:0;font:inherit}
+.ib:hover,.ib.on{background:var(--bg-hover);color:var(--fg)}
+/* badges */
+.bg{position:absolute;top:-3px;right:-9px;display:flex;height:14px;border-radius:7px;overflow:hidden;font-size:9.5px;font-weight:700;line-height:14px;box-shadow:0 0 0 2px var(--bg-2)}
+.bg b{padding:0 4px;min-width:13px;text-align:center}
+.bg .r{background:var(--t-green);color:var(--on-accent)}:root[data-theme=dark] .bg .r{color:#08130a}
+.bg .e{background:var(--bg-hover);color:var(--fg-dim)}
+.bdot{position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%;background:var(--t-green);box-shadow:0 0 0 2px var(--bg-2)}
+.bdot::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:1.5px solid var(--t-green);animation:pl 1.8s ease-out infinite}
+@keyframes pl{from{opacity:.7;transform:scale(.6)}to{opacity:0;transform:scale(1.7)}}
+/* dropdown */
+.dd{position:absolute;top:40px;left:0;width:440px;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);color:var(--fg);z-index:6;display:flex;flex-direction:column;overflow:hidden;animation:dIn .14s cubic-bezier(.2,.8,.2,1)}
+.dd[hidden]{display:none}@keyframes dIn{from{opacity:0;transform:translateY(-3px)}}
+.hd{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;color:var(--fg-dim)}
+.hd .rn{color:var(--t-green);font-weight:650}
+.gt{display:flex;align-items:center;gap:7px;padding:8px 12px 5px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.gt .n{margin-left:auto;font-weight:600;letter-spacing:0}
+.run-g{padding-bottom:3px;background:color-mix(in srgb,var(--t-green) 8%,var(--bg-2));border-bottom:1px solid var(--border);box-shadow:inset 2px 0 0 var(--t-green)}
+.run-g .gt{color:var(--t-green)}
+.end-s{overflow-y:auto;max-height:260px;padding-bottom:4px;scrollbar-width:thin;scrollbar-color:var(--bg-hover) transparent}
+.end-s .gt{position:sticky;top:0;background:var(--bg-2);z-index:1}
+.row{display:flex;align-items:center;gap:8px;min-height:38px;margin:0 4px 2px;padding:4px 6px 4px 8px;border-radius:6px}
+.row:hover{background:var(--bg-hover)}
+.led{width:7px;height:7px;border-radius:50%;flex:none}
+.run .led{background:var(--t-green);box-shadow:0 0 0 3px color-mix(in srgb,var(--t-green) 25%,transparent)}
+.end .led{box-shadow:inset 0 0 0 1.5px var(--fg-dim);opacity:.45}
+.row .ag{color:#d97757}.row .sh{color:var(--fg-dim)}
+.row svg.i{width:15px;height:15px}
+.tx{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px}
+.tt{white-space:nowrap}.cw{color:var(--fg-dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.run .tt{font-weight:500}
+.end,.end .tt{color:var(--fg-dim)}.end .cw{opacity:.7}.end svg.i.k{opacity:.55}
+.end:hover,.end:hover .tt{color:var(--fg)}
+.acts{display:flex;align-items:center;gap:3px;flex:none}
+.bt{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:5px;border:1px solid var(--border);background:var(--frame-bg);color:var(--fg);font:inherit;font-size:12px;cursor:pointer}
+.bt:hover{background:var(--bg-3)}
+.bt.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}.bt.pri:hover{background:var(--accent);filter:brightness(1.1)}
+.bt.dng{background:var(--t-red);border-color:var(--t-red);color:#fff;font-weight:600}:root[data-theme=dark] .bt.dng{color:#1b1b1f}.bt.dng:hover{background:var(--t-red);filter:brightness(1.1)}
+.bt svg.i{width:13px;height:13px}
+.ic{width:24px;height:24px;display:grid;place-items:center;border-radius:5px;border:0;background:none;color:var(--fg-dim);cursor:pointer;padding:0}
+.ic:hover{background:var(--bg-3);color:var(--t-red)}.ic svg.i{width:14px;height:14px}
+.end .acts .bt{visibility:hidden}.end:hover .acts .bt,.end:focus-within .acts .bt{visibility:visible}
+.cf{display:none;align-items:center;gap:8px;flex:1;min-width:0}.cf .m{color:var(--fg);font-size:12px;margin-right:auto}
+.row.asking .tx,.row.asking .acts,.row.asking .led,.row.asking svg.k{display:none}.row.asking .cf{display:flex}
+.row.asking{background:color-mix(in srgb,var(--t-red) 11%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t-red) 45%,transparent)}
+.ft{border-top:1px solid var(--border);padding:4px}
+.fb{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border:0;border-radius:5px;background:none;color:var(--fg-dim);font:inherit;font-size:12px;cursor:pointer}
+.fb:hover{background:var(--bg-hover);color:var(--t-red)}.fb svg.i{width:14px;height:14px}
+.tg{position:fixed;top:8px;right:10px;width:30px;height:30px;display:grid;place-items:center;border-radius:6px;border:0;background:none;color:var(--fg-dim);cursor:pointer}.tg:hover{background:var(--bg-hover);color:var(--fg)}
+</style></head><body>
+<button class="tg" id="theme" title="Tema"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor" stroke="none"/></svg></button>
+<div class="stage">
+ <div class="mock">
+  <button class="ib" title="Novo painel"><svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
+  <button class="ib on" id="b1" title="Slots fechados"><svg class="i" viewBox="0 0 16 16"><path d="M2.5 9.5h3l1 1.5h3l1-1.5h3M2.5 9.5v3h11v-3l-2-6h-7z"/></svg><span class="bg"></span></button>
+  <div class="dd" id="dd"></div>
+ </div>
+ <div class="mock">
+  <button class="ib" title="Novo painel"><svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
+  <button class="ib" title="Slots fechados"><svg class="i" viewBox="0 0 16 16"><path d="M2.5 9.5h3l1 1.5h3l1-1.5h3M2.5 9.5v3h11v-3l-2-6h-7z"/></svg><span class="bdot"></span></button>
+ </div>
+</div>
+<script>
+const AG='<svg class="i k ag" viewBox="0 0 16 16"><path d="M8 2v12M2 8h12M3.8 3.8l8.4 8.4M12.2 3.8l-8.4 8.4"/></svg>',
+SH='<svg class="i k sh" viewBox="0 0 16 16"><path d="M3 4.5l3.5 3.5L3 11.5M8 12h5"/></svg>',
+TR='<svg class="i" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v4M9 7v4"/></svg>',
+OP='<svg class="i" viewBox="0 0 16 16"><path d="M6.5 3.5h-3v9h9v-3M9 3h4v4M13 3L7.5 8.5"/></svg>',
+RE='<svg class="i" viewBox="0 0 16 16"><path d="M3 8a5 5 0 1 0 1.6-3.7M3 2.5v3h3"/></svg>';
+const run=[[AG,'atrium','D:\\atrium'],[AG,'revisão PRP 12','D:\\atrium\\workspace\\tether']];
+const end=[[AG,'hammer · chat streaming','D:\\atrium\\workspace\\hammer'],[SH,'pwsh','D:\\atrium\\workspace\\tether'],[AG,'processa · tenant','D:\\atrium\\workspace\\3rd-party-tenants\\processa'],[AG,'desk-strip','D:\\atrium\\workspace\\tether'],[SH,'npm run dev','D:\\atrium\\workspace\\atrium'],[AG,'selecao-de-house F8','D:\\atrium'],[AG,'rtk · filtros','D:\\atrium\\workspace\\hands\\repo\\rtk'],[SH,'pwsh','D:\\atrium'],[AG,'medicao do glow','D:\\atrium\\workspace\\tether'],[AG,'fábrica de pacotes','D:\\atrium\\mind\\effort'],[SH,'git log','D:\\atrium\\workspace\\hammer'],[AG,'agenda · 30/10','D:\\atrium\\mind\\calendar']];
+const dd=document.getElementById('dd');
+function row(r,cls,i){return `<div class="row ${cls}" data-i="${i}"><span class="led"></span>${r[0]}<div class="tx"><span class="tt">${r[1]}</span><span class="cw">${r[2]}</span></div>
+<div class="acts">${cls=='run'?`<button class="bt pri">${OP}Abrir</button>`:`<button class="bt">${RE}Reabrir</button>`}<button class="ic" data-f title="Esquecer">${TR}</button></div>
+<div class="cf"><span class="m">Encerra o processo. Esquecer?</span><button class="bt" data-c>Cancelar</button><button class="bt dng" data-y>Esquecer</button></div></div>`}
+function render(){
+ const n=end.length,rn=run.length;
+ dd.innerHTML=`<div class="hd"><span class="rn">${rn} rodando</span> · ${n} encerrados</div>
+ ${rn?`<div class="run-g"><div class="gt"><span>Rodando sem painel</span><span class="n">${rn}</span></div>${run.map((r,i)=>row(r,'run',i)).join('')}</div>`:''}
+ <div class="end-s"><div class="gt"><span>Encerrados</span><span class="n">${n}</span></div>${end.map((r,i)=>row(r,'end',i)).join('')}</div>
+ <div class="ft"><button class="fb" data-all>${TR}Esquecer todos os encerrados</button></div>`;
+ document.querySelector('#b1 .bg').innerHTML=`<b class="r">${rn}</b><b class="e">${n}</b>`;
+}
+dd.addEventListener('click',e=>{const t=e.target,row=t.closest('.row');
+ if(t.closest('[data-all]')){end.length=0;render();return}
+ if(!row)return;const i=+row.dataset.i,isRun=row.classList.contains('run');
+ if(t.closest('[data-f]')){ if(isRun){dd.querySelectorAll('.asking').forEach(r=>r.classList.remove('asking'));row.classList.add('asking')} else {end.splice(i,1);render()} }
+ else if(t.closest('[data-c]'))row.classList.remove('asking');
+ else if(t.closest('[data-y]')){run.splice(i,1);render()}
+});
+document.getElementById('b1').onclick=()=>{dd.hidden=!dd.hidden;document.getElementById('b1').classList.toggle('on',!dd.hidden)};
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme=='dark'?'light':'dark'};
+if(location.hash=='#light')document.documentElement.dataset.theme='light';
+render();
+if(location.hash=='#ask')document.querySelector('.run .ic').click();
+</script></body></html>

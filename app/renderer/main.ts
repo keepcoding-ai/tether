@@ -18,6 +18,7 @@ import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
+import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText, type ClosedGroups } from './closed-slots.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { drawerOf, emptyLayout, isPersonChange, type LayoutV2, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
@@ -903,33 +904,44 @@ async function onConnection(state: ConnectionState): Promise<void> {
 
 function refreshClosedMenu(): void {
   const list = $('closed-list')
-  const closed = [...slots.values()].filter(s => !findPanel(s.slotId))
-  $('closed-count').textContent = closed.length ? String(closed.length) : ''
+  const g = closedGroups()
+  if (askingForget && !g.running.some(s => s.slotId === askingForget)) askingForget = undefined
+  const badge = badgeParts(g)
+  $('closed-count-run').textContent = badge.running
+  $('closed-count-end').textContent = badge.ended
+  const btn = $('btn-closed')
+  btn.title = buttonTitle(g)
+  btn.setAttribute('aria-label', buttonTitle(g))
+  // Keep the scroll of the ended list across the live re-renders.
+  const scroll = list.querySelector('.cl-ended')?.scrollTop ?? 0
   list.replaceChildren()
-  if (closed.length === 0) {
-    const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'Nenhum slot fechado'
-    list.append(li)
-    return
+
+  const hd = document.createElement('div'); hd.className = 'cl-hd'
+  if (g.running.length > 0) {
+    const rn = document.createElement('span'); rn.className = 'rn'; rn.textContent = `${g.running.length} rodando`
+    hd.append(rn)
+    if (g.ended.length > 0) hd.append(document.createTextNode(` · ${g.ended.length} ${g.ended.length === 1 ? 'encerrado' : 'encerrados'}`))
+  } else {
+    hd.textContent = headerText(g)
   }
-  for (const s of closed) {
-    const status = STATUS_LABEL[effectiveStatus(s)]
-    const li = document.createElement('li')
-    const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon(KIND_ICON[s.kind]))
-    const name = document.createElement('span'); name.textContent = panelTitle(s)
-    const cwd = document.createElement('span'); cwd.className = 'cwd'; cwd.textContent = `${s.cwd} · ${status}`
-    const forget = document.createElement('button'); forget.className = 'forget'; forget.title = 'Encerra e remove o slot do tether'
-    forget.append(icon('trash'), document.createTextNode('Esquecer'))
-    forget.addEventListener('click', async ev => {
-      ev.stopPropagation()
-      await window.tether.request({ t: 'forget', slotId: s.slotId })
-    })
-    li.append(kind, name, cwd, forget)
-    li.title = `Reabrir o painel (${KIND_LABEL[s.kind]}, ${status})`
-    li.addEventListener('click', () => {
-      list.hidden = true
-      openSlot(s.slotId)
-    })
-    list.append(li)
+  list.append(hd)
+  if (g.running.length === 0 && g.ended.length === 0) return
+
+  if (g.running.length > 0) {
+    const grp = document.createElement('div'); grp.className = 'cl-run'; grp.dataset.group = 'running'
+    grp.append(closedGroupTitle('Rodando sem painel', g.running.length), ...g.running.map(s => closedRow(s, 'running')))
+    list.append(grp)
+  }
+  if (g.ended.length > 0) {
+    const grp = document.createElement('div'); grp.className = 'cl-ended'; grp.dataset.group = 'ended'
+    grp.append(closedGroupTitle('Encerrados', g.ended.length), ...g.ended.map(s => closedRow(s, 'ended')))
+    list.append(grp)
+    grp.scrollTop = scroll
+    const ft = document.createElement('div'); ft.className = 'cl-ft'
+    const all = closedButton('fb forget-all', 'Esquecer todos os encerrados', 'trash')
+    all.addEventListener('click', ev => { ev.stopPropagation(); void forgetAllEnded() })
+    ft.append(all)
+    list.append(ft)
   }
 }
 
@@ -1017,6 +1029,93 @@ function showContextMenu(x: number, y: number, items: MenuEntry[]): void {
     else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); lis[i]!.click() }
   }
   for (const item of items) {
+/** The running slot whose "Esquecer" is waiting for the inline confirmation (one at a time). */
+let askingForget: string | undefined
+/** Slots with a forget in flight (the daemon may wait for a young Claude before killing it). */
+const forgetting = new Set<string>()
+
+function closedGroups(): ClosedGroups {
+  return groupClosed(slots.values(), id => findPanel(id) !== undefined)
+}
+
+function closedButton(cls: string, label: string, iconName?: IconName, title?: string): HTMLButtonElement {
+  const b = document.createElement('button')
+  b.className = cls
+  if (iconName) b.append(icon(iconName))
+  if (label) b.append(document.createTextNode(label))
+  if (title) b.title = title
+  return b
+}
+
+function closedGroupTitle(text: string, count: number): HTMLElement {
+  const gt = document.createElement('div'); gt.className = 'cl-gt'
+  const label = document.createElement('span'); label.textContent = text
+  const n = document.createElement('span'); n.className = 'n'; n.textContent = String(count)
+  gt.append(label, n)
+  return gt
+}
+
+function closedRow(s: SlotState, group: 'running' | 'ended'): HTMLElement {
+  const row = document.createElement('div')
+  row.className = `cl-row ${group}`
+  row.dataset.slot = s.slotId
+  if (group === 'running' && askingForget === s.slotId) row.classList.add('asking')
+  const led = document.createElement('span'); led.className = 'led'
+  const kind = document.createElement('span'); kind.className = `kind ${s.kind}`; kind.append(icon(KIND_ICON[s.kind]))
+  const tx = document.createElement('div'); tx.className = 'tx'
+  const title = document.createElement('span'); title.className = 'tt'; title.textContent = panelTitle(s)
+  const cwd = document.createElement('span'); cwd.className = 'cw'; cwd.textContent = s.cwd; cwd.title = s.cwd
+  tx.append(title, cwd)
+  const acts = document.createElement('div'); acts.className = 'acts'
+  const open = group === 'running'
+    ? closedButton('open primary', 'Abrir', 'arrow-square-out', `Abrir em um painel (${KIND_LABEL[s.kind]} segue rodando)`)
+    : closedButton('open', 'Reabrir', 'arrow-clockwise', `Reabrir o painel (${KIND_LABEL[s.kind]}, ${STATUS_LABEL[effectiveStatus(s)]})`)
+  open.addEventListener('click', ev => { ev.stopPropagation(); $('closed-list').hidden = true; $('btn-closed').setAttribute('aria-expanded', 'false'); openSlot(s.slotId) })
+  const trash = closedButton('ic forget', '', 'trash', group === 'running' ? 'Encerrar e esquecer' : 'Esquecer')
+  trash.setAttribute('aria-label', group === 'running' ? 'Encerrar e esquecer o slot' : 'Esquecer o slot')
+  trash.addEventListener('click', ev => {
+    ev.stopPropagation()
+    if (group === 'running') { askingForget = s.slotId; refreshClosedMenu() } // kills a live process: ask first
+    else void forgetClosed(s.slotId)
+  })
+  acts.append(open, trash)
+  const cf = document.createElement('div'); cf.className = 'cf'
+  const msg = document.createElement('span'); msg.className = 'm'; msg.textContent = 'Encerra o processo. Esquecer?'
+  const cancel = closedButton('cancel', 'Cancelar')
+  cancel.addEventListener('click', ev => { ev.stopPropagation(); askingForget = undefined; refreshClosedMenu() })
+  const yes = closedButton('danger confirm', 'Esquecer')
+  yes.disabled = forgetting.has(s.slotId)
+  yes.addEventListener('click', ev => { ev.stopPropagation(); void forgetClosed(s.slotId) })
+  cf.append(msg, cancel, yes)
+  row.append(led, kind, tx, acts, cf)
+  return row
+}
+
+/** Forgets a slot through the daemon (it kills by identity and waits for a young Claude, as the other forget paths do). */
+async function forgetClosed(slotId: string): Promise<void> {
+  if (forgetting.has(slotId)) return
+  forgetting.add(slotId)
+  try {
+    await window.tether.request({ t: 'forget', slotId })
+  } finally {
+    forgetting.delete(slotId)
+    if (askingForget === slotId) askingForget = undefined
+    refreshClosedMenu()
+  }
+}
+
+/** "Esquecer todos os encerrados": asked once; only the slots still ended when the answer comes are forgotten. */
+async function forgetAllEnded(): Promise<void> {
+  const count = closedGroups().ended.length
+  if (count === 0 || dialogOpen()) return
+  $('closed-list').hidden = true
+  $('btn-closed').setAttribute('aria-expanded', 'false')
+  const answer = await askDialog(forgetEndedSituation(count))
+  if (answer.choice !== 'forget') return
+  const ids = closedGroups().ended.map(s => s.slotId)
+  await Promise.all(ids.map(id => forgetClosed(id)))
+}
+
     if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
     const li = document.createElement('li'); li.setAttribute('role', 'menuitem'); li.tabIndex = -1
     if (item.danger) li.classList.add('danger')
@@ -1432,8 +1531,18 @@ function setupUi(): void {
   })
   const closedBtn = $('btn-closed')
   const closedList = $('closed-list')
-  closedBtn.addEventListener('click', ev => { ev.stopPropagation(); closedList.hidden = !closedList.hidden })
-  document.addEventListener('click', ev => { if (!closedList.contains(ev.target as Node)) closedList.hidden = true })
+  closedBtn.addEventListener('click', ev => {
+    ev.stopPropagation()
+    closedList.hidden = !closedList.hidden
+    closedBtn.setAttribute('aria-expanded', String(!closedList.hidden))
+    if (closedList.hidden) { askingForget = undefined; refreshClosedMenu() }
+  })
+  document.addEventListener('click', ev => {
+    if (closedList.contains(ev.target as Node)) return
+    closedList.hidden = true
+    closedBtn.setAttribute('aria-expanded', 'false')
+    if (askingForget) { askingForget = undefined; refreshClosedMenu() }
+  })
 
   document.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') { drawerEscapeOutside(ev); return }
