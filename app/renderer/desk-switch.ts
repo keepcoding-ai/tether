@@ -25,6 +25,8 @@ export interface DeskAttention { done: number; waiting: number }
 
 export interface DeskSwitchHost {
   switchTo(id: string): void
+  /** The "+" at the end of the capsule: a new desk, straight away, which becomes the active one. */
+  create(): void
   rename(id: string, name: string): void
   recolor(id: string, color: DeskHue): void
   menu(id: string, x: number, y: number): void
@@ -44,6 +46,7 @@ export class DeskSwitch {
   private readonly host: DeskSwitchHost
   private readonly segs: HTMLElement
   private readonly more: HTMLButtonElement
+  private readonly add: HTMLButtonElement
   private readonly measure: HTMLElement
   private readonly bar: HTMLElement
   private readonly sides: readonly HTMLElement[]
@@ -74,10 +77,18 @@ export class DeskSwitch {
     this.more.addEventListener('mousedown', ev => ev.preventDefault())
     this.more.addEventListener('click', ev => { ev.stopPropagation(); this.openOverflow() })
     this.more.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.openOverflow() } })
+    this.add = document.createElement('button')
+    this.add.type = 'button'
+    this.add.className = 'seg desk-add'
+    this.add.title = 'Nova mesa'
+    this.add.setAttribute('aria-label', 'Nova mesa')
+    this.add.append(icon('plus'))
+    this.add.addEventListener('mousedown', ev => ev.preventDefault())
+    this.add.addEventListener('click', ev => { ev.stopPropagation(); this.host.create() })
     this.measure = document.createElement('div')
     this.measure.className = 'desk-measure'
     this.measure.setAttribute('aria-hidden', 'true')
-    element.append(this.segs, this.more, this.measure)
+    element.append(this.segs, this.more, this.add, this.measure)
     const ro = new ResizeObserver(() => this.schedule())
     ro.observe(bar)
     for (const s of sides) ro.observe(s)

@@ -125,6 +125,9 @@ body { display: flex; flex-direction: column; }
 .seg.desk-more { position: relative; color: var(--fg-dim); font-weight: 600; padding: 0 10px; }
 .seg.desk-more:hover { color: var(--fg); }
 .seg.desk-more[hidden] { display: none; }
+.seg.desk-add { color: var(--fg-dim); padding: 0 8px; }
+.seg.desk-add:hover { color: var(--fg); }
+.seg.desk-add .ph { width: 14px; height: 14px; }
 .seg.desk-more .more-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--x-alert); }
 /* An invisible copy of every segment, at its natural width: desk-switch.ts measures it to decide who fits. */
 #desk-switch .desk-measure { position: absolute; left: 0; top: 0; display: flex; gap: 2px; width: max-content; visibility: hidden; pointer-events: none; }

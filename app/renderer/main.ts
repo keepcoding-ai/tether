@@ -236,6 +236,7 @@ function setupDock(): void {
   const bar = $('toolbar')
   strip = new DeskSwitch($('desk-switch'), bar, [bar.querySelector<HTMLElement>('.tb-left')!, bar.querySelector<HTMLElement>('.tb-right')!], {
     switchTo: id => desks.switchTo(id),
+    create: () => { if (!drawer.isOpen) desks.create('after', desks.desks.at(-1)?.id) },
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
