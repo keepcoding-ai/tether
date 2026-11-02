@@ -373,7 +373,9 @@ button.primary:hover { background: var(--accent-hover); }
 .tether-tab .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
 .tether-tab .close .ph { width: 13px; height: 13px; }
 .tether-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
-.dv-active-tab .tether-tab .close, .tether-tab:hover .close, .tether-tab .close:focus-visible { visibility: visible; }
+/* `inherit`, not `visible`: a visible child of a visibility:hidden ancestor still paints, so the active tab of an
+   inactive desk layer (or of the closed drawer) would draw its × over the tab strip of the desk on screen. */
+.dv-active-tab .tether-tab .close, .tether-tab:hover .close, .tether-tab .close:focus-visible { visibility: inherit; }
 
 /* --- the fixed right end of the tab strip: "+N", status-bar toggle, "⋯" (tab-strip.ts; the preview's .tr) --- */
 .dv-theme-tether .dv-right-actions-container { flex: none; height: 100%; }
