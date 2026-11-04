@@ -5,6 +5,9 @@
 //   dockview.css  dockview-core's stylesheet. The ESM build of dockview-core 8 ships no CSS file: the
 //                 styles exist only as a string injected by its UMD bundle, so they are extracted from it.
 //   palette.css   the 12 desk hues (--x-{hue}, -foreground, -text) for both schemes, generated from app/shared/palette.ts
+//   renderer.css  the stylesheets Monaco's modules import (esbuild gathers CSS imported from JS into a sibling file);
+//                 codicon.ttf (its icon font) is copied next to it
+//   editor.worker.js  Monaco's editor web worker (classic script; app/renderer/monaco.ts points MonacoEnvironment at it)
 //   dialog.js     browser bundle (ESM) of the standalone dialog window (shown before the main window exists)
 //   tether.ico/icns/png the app icon (window, taskbar, Start Menu shortcut, Tether.app bundle), drawn by app/icon.mjs
 //   tray.png, tray-active.png, tray-attention.png  the tray icon (32 px): plain, green dot while an agent runs, amber dot when one finished or waits for you
@@ -21,7 +24,7 @@ const out = join(here, 'dist')
 
 const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024' }
 // src/daemon/client.ts reads import.meta.url only as spawnDaemon's default mainPath (the app always passes one); CJS has none.
-const browser = { platform: 'browser', format: 'esm', loader: { '.svg': 'text' } }
+const browser = { platform: 'browser', format: 'esm', loader: { '.svg': 'text', '.ttf': 'file' }, assetNames: '[name]' }
 const node = { platform: 'node', format: 'cjs', external: ['electron'], logOverride: { 'empty-import-meta': 'silent' } }
 
 function extractDockviewCss() {
@@ -40,6 +43,7 @@ await Promise.all([
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),
   build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'main.ts')], outfile: join(out, 'renderer.js') }),
+  build({ ...common, platform: 'browser', format: 'iife', entryPoints: [join(here, '..', 'node_modules', 'monaco-editor', 'esm', 'vs', 'editor', 'editor.worker.js')], outfile: join(out, 'editor.worker.js') }),
   build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'dialog-window.ts')], outfile: join(out, 'dialog.js') }),
 ])
 console.log('app build ok → app/dist')
