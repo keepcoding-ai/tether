@@ -21,6 +21,7 @@ function stubHost(calls: string[]): CommandHost {
     setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
     openProfiles: log('openProfiles'), restoreConfirmations: log('restoreConfirmations'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
     restartDaemon: log('restartDaemon'), showPalette: log('showPalette'),
+    newNote: log('newNote'), openNote: log('openNote'), saveNoteAs: log('saveNoteAs'),
   }
 }
 
