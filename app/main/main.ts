@@ -154,7 +154,7 @@ function connectDaemon(): Promise<void> {
         updateTray()
         if (quittingAll || quitting) return
         // "Reiniciar serviço" (tray) brings its panels back through the renderer's reconnect path; any other
-        // loss (a crash, "Recarregar…", `tether daemon restart`) reloads the page on the next connection.
+        // loss (a crash, "Reiniciar tudo…", `tether daemon restart`) reloads the page on the next connection.
         if (restartingDaemon) return
         reloadOnReconnect = true
         sendConnection({ connected: false, pipe, error: 'conexão com o tetherd fechada' })
@@ -230,7 +230,7 @@ ipcMain.on('tether:command', (_e, cmd: unknown) => {
 })
 
 /**
- * "Recarregar": the daemon restarts with the code on disk; the app reconnects (close handler) and reloads the
+ * "Reiniciar tudo": the daemon restarts with the code on disk; the app reconnects (close handler) and reloads the
  * renderer. It ends every agent first, so the person confirms it in the in-app dialog (which says how many run).
  */
 async function reloadAll(): Promise<void> {
@@ -601,8 +601,8 @@ function createMenu(): void {
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },
         // No accelerator on purpose: it ends every agent, and a key chord next to "reload page" invites accidents.
-        { id: 'reload-all', label: 'Recarregar… (encerra todos os agentes dos painéis, reinicia o tetherd e retoma as sessões)', click: () => { void reloadAll() } },
-        { id: 'relaunch-app', label: 'Reiniciar o app (código novo do processo principal)', click: relaunchApp },
+        { id: 'reload-all', label: 'Reiniciar tudo… (app e tetherd; encerra os agentes e retoma as sessões)', click: () => { void reloadAll() } },
+        { id: 'relaunch-app', label: 'Reiniciar o app (os agentes continuam rodando)', click: relaunchApp },
         { type: 'separator' },
         { role: 'toggleDevTools', label: 'Ferramentas de desenvolvedor' },
         { role: 'togglefullscreen', label: 'Tela cheia' },

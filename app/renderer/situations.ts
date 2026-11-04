@@ -111,7 +111,7 @@ export function quitAllSituation(slots: SlotState[]): DialogSpec {
 }
 
 /**
- * "Recarregar" from the menu. What it communicates: "this is not a page reload: every agent in every panel
+ * "Reiniciar tudo" from the menu. What it communicates: "this is not a page reload: every agent in every panel
  * is ended now, the tetherd restarts, and only then each panel resumes its session."
  */
 export function reloadAllSituation(slots: SlotState[]): DialogSpec {
@@ -126,13 +126,13 @@ export function reloadAllSituation(slots: SlotState[]): DialogSpec {
     situation: 'reload-all',
     tone: 'danger',
     icon: 'arrow-clockwise',
-    title: 'Recarregar o tether?',
-    message: 'Isto não é recarregar a tela: o tetherd é reiniciado e todos os agentes dos painéis são encerrados agora. Depois cada painel retoma a sessão de onde parou.',
+    title: 'Reiniciar tudo?',
+    message: 'Isto reinicia o app e o tetherd: o tetherd é reiniciado e todos os agentes dos painéis são encerrados agora. Depois cada painel retoma a sessão de onde parou.',
     context,
     choices: [
-      { id: 'reload', icon: 'arrow-clockwise', label: 'Encerrar os agentes e recarregar', consequence: 'Todos os agentes param, o tetherd sobe de novo e os painéis retomam as sessões. O que estava sendo feito agora é interrompido.', tone: 'destructive' },
+      { id: 'reload', icon: 'arrow-clockwise', label: 'Encerrar os agentes e reiniciar tudo', consequence: 'Todos os agentes param, o tetherd sobe de novo e os painéis retomam as sessões. O que estava sendo feito agora é interrompido.', tone: 'destructive' },
     ],
-    cancelLabel: 'Não recarregar',
+    cancelLabel: 'Não reiniciar',
   }
 }
 

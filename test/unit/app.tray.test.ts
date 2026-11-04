@@ -23,7 +23,7 @@ test('no slots: only the commands, tooltip says nothing runs, no badge', () => {
 test('commands are labelled in Portuguese and the pane list sits between two separators', () => {
   const m = trayModel([slot('a', 'running')])
   const labels = m.items.map(i => (i.kind === 'separator' ? '---' : i.label))
-  assert.deepEqual(labels, ['Abrir tether', 'Abrir gaveta', '---', 'a (rodando)', '---', 'Reiniciar serviço…', 'Sair (manter agentes)', 'Sair e encerrar tudo…'])
+  assert.deepEqual(labels, ['Abrir tether', 'Abrir gaveta', '---', 'a (rodando)', '---', 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', 'Sair (manter agentes)', 'Sair e encerrar tudo…'])
 })
 
 test('panes: live first, then the rest; the label is title, else name, else folder, with the state', () => {

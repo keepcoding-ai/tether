@@ -9,7 +9,7 @@
 //   6. icon-only sides (4 left, 3 right) with aria-labels, no "tether" name, the drawer pill in the capsule;
 //   7. the capsule on the window's true centre (±2 px) at 1280 and 900 px, sides asymmetric;
 //   8. 10 desks at 900 px: "+N" shows, the active desk stays visible, a pick replaces the visible desk used longest ago;
-//   9. the theme icon menu, the connection popover (pipe, pid, version, agents, "Reiniciar serviço");
+//   9. the theme icon menu, the connection popover (pipe, pid, version, agents, "Reiniciar o tetherd");
 //  10. the desk colour line follows the active desk; the ≡ toggle turns it off and it stays off after a relaunch;
 //  11. screenshots chrome-bar-{light,dark}.png with the preview's five desks.
 // Slice 7 (polish and accessibility): the last test in this file: aria on the new controls, Tab order, arrows/Home/End/
@@ -338,7 +338,7 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     assert.ok(popText.includes(String(daemonPid)), 'popover shows the pid')
     assert.match(await page.locator('#conn-version').innerText(), /^\d+\.\d+/, 'popover shows the version')
     assert.match(await page.locator('#conn-agents').innerText(), /3 rodando · 0 aguardando/)
-    assert.equal(await page.locator('#conn-restart').innerText(), 'Reiniciar serviço')
+    assert.equal(await page.locator('#conn-restart').innerText(), 'Reiniciar o tetherd')
     await page.click('#conn')
     await page.mouse.move(400, 300)
     await page.waitForSelector('#conn-pop', { state: 'visible' })

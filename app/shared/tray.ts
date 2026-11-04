@@ -80,7 +80,7 @@ export function trayModel(slots: Iterable<SlotState>): TrayModel {
   }
   items.push(
     { kind: 'separator' },
-    { kind: 'command', id: 'restart-daemon', label: 'Reiniciar serviço…' },
+    { kind: 'command', id: 'restart-daemon', label: 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)' },
     { kind: 'command', id: 'quit-keep', label: 'Sair (manter agentes)' },
     { kind: 'command', id: 'quit-all', label: 'Sair e encerrar tudo…' },
   )

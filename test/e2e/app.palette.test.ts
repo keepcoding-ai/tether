@@ -192,7 +192,7 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter 
     await paletteOpen(page, true)
     await page.keyboard.type('reiniciar')
     await page.waitForFunction(() => window.__tether.palette().shown.includes('app.relaunch'))
-    assert.equal(await page.locator('#palette-list .pal-item[data-command="app.relaunch"] .pal-title').innerText(), 'Reiniciar o app')
+    assert.equal(await page.locator('#palette-list .pal-item[data-command="app.relaunch"] .pal-title').innerText(), 'Reiniciar o app (os agentes continuam rodando)')
     await page.keyboard.press('Escape')
     await paletteOpen(page, false)
 

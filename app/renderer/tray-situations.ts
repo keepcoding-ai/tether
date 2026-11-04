@@ -19,7 +19,7 @@ export function trayFirstCloseSituation(): DialogSpec {
   }
 }
 
-/** "Reiniciar serviço" from the tray: it kills the agents' processes, so say so and what comes back. */
+/** "Reiniciar o tetherd" from the tray: it kills the agents' processes, so say so and what comes back. */
 export function restartDaemonSituation(slots: SlotState[]): DialogSpec {
   const live = slots.filter(s => s.status === 'running' || s.status === 'starting' || s.status === 'queued')
   const shown = live.slice(0, 4).map(slotLabel)
@@ -31,12 +31,12 @@ export function restartDaemonSituation(slots: SlotState[]): DialogSpec {
     situation: 'restart-daemon',
     tone: 'danger',
     icon: 'arrow-clockwise',
-    title: 'Reiniciar o serviço?',
+    title: 'Reiniciar o tetherd?',
     message: 'O tetherd é quem mantém os terminais e os agentes vivos. Reiniciá-lo interrompe o que está rodando.',
     context,
     choices: [
       { id: 'keep', icon: 'app-window', label: 'Manter como está', consequence: 'Nada é interrompido.', tone: 'safe' },
-      { id: 'restart', icon: 'arrow-clockwise', label: 'Reiniciar o serviço', consequence: 'Os agentes em execução são interrompidos agora. As conversas ficam salvas e os painéis são retomados assim que o serviço subir.', tone: 'destructive' },
+      { id: 'restart', icon: 'arrow-clockwise', label: 'Reiniciar o tetherd', consequence: 'Os agentes em execução são interrompidos agora. As conversas ficam salvas e os painéis são retomados assim que o serviço subir.', tone: 'destructive' },
     ],
     cancelLabel: 'Cancelar',
   }
