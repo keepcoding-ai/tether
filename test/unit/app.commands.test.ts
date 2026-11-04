@@ -22,6 +22,7 @@ function stubHost(calls: string[]): CommandHost {
     openProfiles: log('openProfiles'), restoreConfirmations: log('restoreConfirmations'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
     restartDaemon: log('restartDaemon'), showPalette: log('showPalette'),
     newNote: log('newNote'), openNote: log('openNote'), saveNoteAs: log('saveNoteAs'),
+    splitEmpty: log('splitEmpty'), newEmptyDesk: log('newEmptyDesk'),
   }
 }
 
