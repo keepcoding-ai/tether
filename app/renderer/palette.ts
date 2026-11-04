@@ -2,14 +2,14 @@
 // window with a search field and the commands the registry offers right now, ranked by palette-rules.ts.
 // Keys: type to filter, ↑/↓ (wrapping) and PageUp/PageDown move, Enter runs, Esc closes, a click on an item
 // runs it, a click outside closes. The chords of the two modes switch the mode while the box is open. The
-// matched letters are highlighted, the key hint sits at the right of each row, the recently used ones come
-// first with a "recente" tag. A modal <dialog>, so the terminals get no key while it is up; the backdrop is
+// matched ranges are highlighted, the key hint sits at the right of each row; the order is VS Code's: the
+// recently used first, then the others by title, under two separators. A modal <dialog>, so the terminals get no key while it is up; the backdrop is
 // clear (the box is a tool over the work, the way VS Code shows it), and the look is the app's dialog language.
 import type { CommandRegistry } from './commands.ts'
-import { highlightRuns } from './fuzzy.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import { initialInput, parsePaletteInput, rankCommands, type PaletteMode, type RankedCommand } from './palette-rules.ts'
 import { shortcutOf } from './shortcuts.ts'
+import { rangeRuns } from './word-filter.ts'
 
 const PAGE = 8
 const ICON_SET = new Set<string>(ICON_NAMES)
@@ -118,7 +118,17 @@ export class CommandPalette {
     }
     this.empty.hidden = true
     const base = ++this.seq
+    const sepBefore = new Map<number, string>()
+    const firstRecent = this.ranked.findIndex(r => r.section === 'recent')
+    const firstOther = this.ranked.findIndex(r => r.section === 'other')
+    if (firstRecent >= 0) sepBefore.set(firstRecent, 'usados recentemente')
+    if (firstOther >= 0) sepBefore.set(firstOther, 'outros comandos')
     this.ranked.forEach((r, i) => {
+      const label = sepBefore.get(i)
+      if (label) {
+        const sep = document.createElement('li'); sep.className = 'pal-sep'; sep.setAttribute('role', 'presentation'); sep.textContent = label
+        this.list.append(sep)
+      }
       const li = document.createElement('li')
       li.id = `pal-opt-${base}-${i}`
       li.setAttribute('role', 'option')
@@ -129,14 +139,20 @@ export class CommandPalette {
       if (r.command.icon) ic.append(iconEl(r.command.icon))
       const text = document.createElement('span'); text.className = 'pal-text'
       const title = document.createElement('span'); title.className = 'pal-title'
-      for (const run of highlightRuns(r.command.title, r.match.positions)) {
+      for (const run of rangeRuns(r.command.title, r.title)) {
         if (run.hit) { const b = document.createElement('b'); b.textContent = run.text; title.append(b) }
         else title.append(document.createTextNode(run.text))
       }
       text.append(title)
-      if (r.command.group) { const g = document.createElement('span'); g.className = 'pal-group'; g.textContent = r.command.group; text.append(g) }
+      if (r.command.group) {
+        const g = document.createElement('span'); g.className = 'pal-group'
+        for (const run of rangeRuns(r.command.group, r.group)) {
+          if (run.hit) { const b = document.createElement('b'); b.textContent = run.text; g.append(b) }
+          else g.append(document.createTextNode(run.text))
+        }
+        text.append(g)
+      }
       li.append(ic, text)
-      if (r.recent && query === '') { const tag = document.createElement('span'); tag.className = 'pal-tag'; tag.textContent = 'recente'; li.append(tag) }
       const hint = this.registry.hint(r.command)
       if (hint) { const kbd = document.createElement('kbd'); kbd.textContent = hint; li.append(kbd) }
       this.list.append(li)
@@ -146,9 +162,9 @@ export class CommandPalette {
 
   private select(i: number, scroll = true): void {
     this.selected = i
-    const items = this.list.children
+    const items = this.list.querySelectorAll<HTMLElement>('li.pal-item')
     for (let k = 0; k < items.length; k++) {
-      const li = items[k] as HTMLElement
+      const li = items[k]!
       const on = k === i
       li.classList.toggle('selected', on)
       li.setAttribute('aria-selected', String(on))

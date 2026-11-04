@@ -1,11 +1,11 @@
 // The command palette's rules, pure (app/renderer/palette.ts puts them on screen): what the text in the box
-// means, and how the commands are ranked for it.
+// means, and how the commands are ordered and filtered for it.
 //
 // One box, two modes, as in VS Code: text starting with `>` is a command search; anything else is quick open
 // (files in the focused pane's folder), which arrives in a later delivery. Ctrl+Shift+P opens the box with `>`
 // already typed; Ctrl+P opens it empty. Deleting the `>` turns one into the other.
 import type { Command } from './commands.ts'
-import { fuzzyMatch, type FuzzyMatch } from './fuzzy.ts'
+import { clipRanges, wordFilter, type Range } from './word-filter.ts'
 
 export type PaletteMode = 'commands' | 'quick-open'
 
@@ -24,26 +24,43 @@ export function initialInput(mode: PaletteMode): string {
 
 export interface RankedCommand {
   command: Command
-  match: FuzzyMatch
-  /** Among the recently used (shown with the "recente" tag when the query is empty). */
-  recent: boolean
+  /** "recent": in the history (shown first, last run on top); "other": the rest, alphabetical by title. */
+  section: 'recent' | 'other'
+  /** Highlighted ranges in the title and in the group (the match may have come through "group: title"). */
+  title: Range[]
+  group: Range[]
 }
 
 const collator = new Intl.Collator('pt-BR', { sensitivity: 'base' })
 
 /**
- * The commands for a query, best first. Empty query: the recently used ones first (most recent first), then the
- * others by title (as VS Code lists them: a scannable catalogue). With a query: by score, a recent one wins a tie,
- * then by title.
+ * The commands for a query, in the order of VS Code's palette: the history first (most recently run on top,
+ * no frequency counting), then the other commands by title. A query only filters; it never reorders. A command
+ * matches by its title or by "group: title" (the way VS Code matches "Category: Label").
  */
 export function rankCommands(commands: readonly Command[], query: string, recents: readonly string[]): RankedCommand[] {
   const rank = new Map(recents.map((id, i) => [id, i]))
-  const out: RankedCommand[] = []
+  const q = query.trim()
+  const recent: RankedCommand[] = []
+  const other: RankedCommand[] = []
   for (const command of commands) {
-    const match = fuzzyMatch(query, command.title)
-    if (match) out.push({ command, match, recent: rank.has(command.id) })
+    let title: Range[] = [], group: Range[] = []
+    if (q !== '') {
+      const direct = wordFilter(q, command.title)
+      if (direct) title = direct
+      else {
+        if (!command.group) continue
+        const whole = `${command.group}: ${command.title}`
+        const via = wordFilter(q, whole)
+        if (!via) continue
+        group = clipRanges(via, 0, command.group.length)
+        title = clipRanges(via, command.group.length + 2, whole.length)
+      }
+    }
+    const isRecent = rank.has(command.id)
+    ;(isRecent ? recent : other).push({ command, section: isRecent ? 'recent' : 'other', title, group })
   }
-  const recency = (r: RankedCommand): number => rank.get(r.command.id) ?? Number.POSITIVE_INFINITY
-  out.sort((a, b) => (b.match.score - a.match.score) || (recency(a) - recency(b)) || collator.compare(a.command.title, b.command.title))
-  return out
+  recent.sort((a, b) => rank.get(a.command.id)! - rank.get(b.command.id)!)
+  other.sort((a, b) => collator.compare(a.command.title, b.command.title))
+  return [...recent, ...other]
 }

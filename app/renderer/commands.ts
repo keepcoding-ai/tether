@@ -50,7 +50,7 @@ export type RunSource = 'palette' | 'key' | 'menu' | 'cli' | 'test'
 export type RunOutcome = 'ran' | 'unknown' | 'unavailable'
 
 /** How many recently used commands the palette remembers. */
-export const RECENT_LIMIT = 12
+export const RECENT_LIMIT = 50
 
 const ID_SHAPE = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/
 

@@ -2,9 +2,9 @@
 // a PowerShell pane in focus.
 //   1. Ctrl+Shift+P from inside the terminal opens the box with ">" typed, every available command listed by
 //      title, the key hint next to the ones that have a chord;
-//   2. "nvmesa" (letters apart) ranks "Nova mesa" first with the matched letters highlighted; Enter runs it
+//   2. "nova mesa" filters to "Nova mesa" with the matched ranges highlighted; Enter runs it
 //      (a second desk exists) and closes the box; the focus goes back to the terminal;
-//   3. reopened, "Nova mesa" comes first with the "recente" tag; Esc closes;
+//   3. reopened, "Nova mesa" comes first under the "usados recentemente" separator; Esc closes;
 //   4. Ctrl+P opens the quick-open mode (empty field, the hint about files); typing ">" turns it into the command
 //      mode; "tema escuro" + Enter switches the theme;
 //   5. commands that need a pane are greyed in the ≡ menu (whose hints come from the registry) when no pane is active;
@@ -97,7 +97,7 @@ const paletteState = (page: Page) => page.evaluate(() => window.__tether.palette
 const paletteOpen = (page: Page, open: boolean) => page.waitForFunction(o => window.__tether.palette().open === o, open)
 const focusInTerminal = (page: Page) => page.evaluate(() => !!document.activeElement?.closest('.xterm'))
 
-test('app palette: Ctrl+Shift+P / Ctrl+P, fuzzy search, Enter runs, recents, the ≡ menu reads the registry, Ctrl+letter stays the terminal\'s', async () => {
+test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter runs, recents, the ≡ menu reads the registry, Ctrl+letter stays the terminal\'s', async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
@@ -134,12 +134,12 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, fuzzy search, Enter runs, recents, the
     assert.equal(await page.locator('#palette-list .pal-item.selected').getAttribute('data-command'), st.shown[0], 'the first row is selected')
 
     // 2. Letters apart: "nvmesa" → "Nova mesa" first, highlighted; Enter runs it and closes the box.
-    await page.keyboard.type('nvmesa')
+    await page.keyboard.type('nova mesa')
     await page.waitForFunction(() => window.__tether.palette().shown[0] === 'desk.new')
     st = await paletteState(page)
     assert.ok(!st.shown.includes('pane.close'), 'what does not match is out')
     const marks = await page.locator('#palette-list .pal-item[data-command="desk.new"] .pal-title b').allInnerTexts()
-    assert.deepEqual(marks.join(''), 'Nvmesa', `highlighted letters: ${JSON.stringify(marks)}`)
+    assert.deepEqual(marks.join(''), 'Nova mesa', `highlighted letters: ${JSON.stringify(marks)}`)
     const desksBefore = (await page.evaluate(() => window.__tether.desks())).length
     await page.keyboard.press('Enter')
     await paletteOpen(page, false)
@@ -152,7 +152,8 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, fuzzy search, Enter runs, recents, the
     await paletteOpen(page, true)
     st = await paletteState(page)
     assert.equal(st.shown[0], 'desk.new', 'recently used first')
-    assert.equal(await page.locator('#palette-list .pal-item[data-command="desk.new"] .pal-tag').textContent(), 'recente')
+    assert.deepEqual(await page.locator('#palette-list .pal-sep').allInnerTexts(), ['usados recentemente', 'outros comandos'])
+    assert.equal(await page.locator('#palette-list > :first-child').getAttribute('class'), 'pal-sep')
     assert.ok(st.shown.includes('desk.close') && st.shown.includes('desk.go.2'), 'two desks: closing and going to the second are offered now')
     await page.keyboard.press('Escape')
     await paletteOpen(page, false)
