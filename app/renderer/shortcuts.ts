@@ -13,6 +13,8 @@
 //   desks        Ctrl+Tab / Ctrl+Shift+Tab next / previous desk (sequential, wraps) · Ctrl+1…9 desk by position
 //                Ctrl+Alt+N new desk after the current one · Ctrl+Alt+Shift+N before it
 //   Ctrl+Shift+T chooser · Ctrl+Shift+Q quit all · Ctrl+Shift+H show/hide the active pane's header details
+//   Ctrl+Shift+P command palette · Ctrl+P quick open (commands.ts / palette.ts; key-capture.ts says why the
+//                terminal does not get Ctrl+P)
 //   drawer       Ctrl+` toggles it (VS Code's terminal chord); Ctrl+Shift+G is the alias for keyboards where `
 //                is a dead key (ABNT2 sends the grave accent from another key; its physical Backquote key is ')
 //   font size    Ctrl+Shift+= / - / 0 (numpad too)
@@ -54,6 +56,8 @@ export type AppShortcut =
   | { op: 'drawer-toggle' }
   | { op: 'pane-details' }
   | { op: 'font-size'; command: FontSizeCommand }
+  | { op: 'palette' }
+  | { op: 'quick-open' }
 
 /** The subset of KeyboardEvent the mapping needs (tests build it by hand). */
 export interface KeyLike { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; code: string }
@@ -113,6 +117,10 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   { chord: { mod: true, shift: true, code: 'KeyG' }, command: { op: 'drawer-toggle' } },
   // Ctrl+Shift+I is Chromium's DevTools chord (the hidden View menu keeps it); H is for "header".
   { chord: { mod: true, shift: true, code: 'KeyH' }, command: { op: 'pane-details' } },
+  // The palette and quick open, VS Code's chords. Ctrl+P is a plain Ctrl+letter, the terminal's territory: the
+  // app takes it anyway, by the explicit list in key-capture.ts (TERMINAL_CAPTURE).
+  { chord: { mod: true, shift: true, code: 'KeyP' }, command: { op: 'palette' } },
+  { chord: { mod: true, code: 'KeyP' }, command: { op: 'quick-open' } },
   ...fontSize(['Equal', 'NumpadAdd'], 'increase'),
   ...fontSize(['Minus', 'NumpadSubtract'], 'decrease'),
   ...fontSize(['Digit0', 'Numpad0'], 'reset'),
@@ -221,7 +229,8 @@ export function chordLabel(chord: Chord, mac = IS_MAC): string {
   return parts.join('+')
 }
 
-function sameCommand(a: AppShortcut, b: AppShortcut): boolean {
+/** Two shortcut ops that mean the same command (payload included). */
+export function sameShortcut(a: AppShortcut, b: AppShortcut): boolean {
   if (a.op !== b.op) return false
   if (a.op === 'duplicate' && b.op === 'duplicate') return a.level === b.level && a.direction === b.direction
   if (a.op === 'desk-cycle' && b.op === 'desk-cycle') return a.step === b.step
@@ -234,7 +243,7 @@ function sameCommand(a: AppShortcut, b: AppShortcut): boolean {
 /** The hint for a command (its first chord in the registry on the platform), or '' when it has none. */
 export function shortcutHint(command: AppShortcut, mac = IS_MAC): string {
   for (const e of SHORTCUTS) {
-    const c = sameCommand(e.command, command) ? chordOn(e, mac) : null
+    const c = sameShortcut(e.command, command) ? chordOn(e, mac) : null
     if (c) return chordLabel(c, mac)
   }
   return ''
