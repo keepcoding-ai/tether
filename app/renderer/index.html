@@ -48,34 +48,37 @@
       </div>
     <div class="dropdown">
       <button id="btn-menu" class="ib" title="Menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"><span class="i" data-icon="list"></span></button>
+      <!-- Every item runs a command of the registry (app/renderer/app-commands.ts); the key hints come from it. -->
       <ul id="app-menu" class="menu" role="menu" hidden>
-        <li role="menuitem" data-cmd="new"><span class="i" data-icon="plus"></span>Novo painel…<kbd>Ctrl+Shift+T</kbd></li>
-        <li role="menuitem" data-cmd="duplicate-right"><span class="i" data-icon="copy"></span>Duplicar painel à direita<kbd>Ctrl+Alt+→</kbd></li>
-        <li role="menuitem" data-cmd="duplicate-below"><span class="i" data-icon="copy"></span>Duplicar painel abaixo<kbd>Ctrl+Alt+↓</kbd></li>
-        <li role="menuitem" data-cmd="new-frame-edge"><span class="i" data-icon="square-half"></span>Novo painel na borda do quadro…</li>
-        <li role="menuitem" data-cmd="new-frame"><span class="i" data-icon="columns"></span>Novo quadro…</li>
+        <li role="menuitem" data-command="palette.show"><span class="i" data-icon="magnifying-glass"></span>Paleta de comandos…</li>
         <li class="sep" role="separator"></li>
-        <li role="menuitem" data-cmd="new-desk"><span class="i" data-icon="cards"></span>Nova mesa<kbd>Ctrl+Alt+N</kbd></li>
-        <li role="menuitem" data-cmd="move"><span class="i" data-icon="arrow-square-out"></span>Mover…</li>
-        <li role="menuitem" data-cmd="desk-actions"><span class="i" data-icon="pencil-simple"></span>Mesa atual: renomear, cor, mover…</li>
-        <li role="menuitem" data-cmd="close-desk"><span class="i" data-icon="x"></span>Fechar mesa…</li>
+        <li role="menuitem" data-command="pane.new"><span class="i" data-icon="plus"></span>Novo painel…</li>
+        <li role="menuitem" data-command="pane.duplicate.pane.right"><span class="i" data-icon="copy"></span>Duplicar painel à direita</li>
+        <li role="menuitem" data-command="pane.duplicate.pane.below"><span class="i" data-icon="copy"></span>Duplicar painel abaixo</li>
+        <li role="menuitem" data-command="pane.new-at-frame-edge"><span class="i" data-icon="square-half"></span>Novo painel na borda do quadro…</li>
+        <li role="menuitem" data-command="frame.new"><span class="i" data-icon="columns"></span>Novo quadro…</li>
         <li class="sep" role="separator"></li>
-        <li role="menuitem" data-cmd="toggle-drawer"><span class="i" data-icon="lightning"></span>Abrir gaveta<kbd>Ctrl+`</kbd></li>
+        <li role="menuitem" data-command="desk.new"><span class="i" data-icon="cards"></span>Nova mesa</li>
+        <li role="menuitem" data-command="pane.move"><span class="i" data-icon="arrow-square-out"></span>Mover…</li>
+        <li role="menuitem" data-command="desk.actions"><span class="i" data-icon="pencil-simple"></span>Mesa atual: renomear, cor, mover…</li>
+        <li role="menuitem" data-command="desk.close"><span class="i" data-icon="x"></span>Fechar mesa…</li>
         <li class="sep" role="separator"></li>
-        <li role="menuitem" data-cmd="profiles"><span class="i" data-icon="sliders-horizontal"></span>Perfis de lançamento…</li>
-        <li role="menuitem" data-cmd="switch-profile"><span class="i" data-icon="arrow-clockwise"></span>Trocar perfil do painel…</li>
+        <li role="menuitem" data-command="drawer.toggle"><span class="i" data-icon="lightning"></span>Abrir gaveta</li>
+        <li class="sep" role="separator"></li>
+        <li role="menuitem" data-command="profiles.manage"><span class="i" data-icon="sliders-horizontal"></span>Perfis de lançamento…</li>
+        <li role="menuitem" data-command="pane.switch-profile"><span class="i" data-icon="arrow-clockwise"></span>Trocar perfil do painel…</li>
         <li class="sep" role="separator"></li>
         <li class="label"><span class="i" data-icon="circle-half"></span>Tema</li>
-        <li role="menuitemradio" data-theme="light"><span class="i check" data-icon="check"></span>Claro</li>
-        <li role="menuitemradio" data-theme="auto"><span class="i check" data-icon="check"></span>Automático</li>
-        <li role="menuitemradio" data-theme="dark"><span class="i check" data-icon="check"></span>Escuro</li>
-        <li role="menuitemcheckbox" data-cmd="desk-line" aria-checked="true"><span class="i check" data-icon="check"></span>Linha da cor da mesa</li>
-        <li role="menuitem" data-cmd="terminal-theme"><span class="i" data-icon="palette"></span>Tema do terminal…</li>
+        <li role="menuitemradio" data-theme="light" data-command="theme.light"><span class="i check" data-icon="check"></span>Claro</li>
+        <li role="menuitemradio" data-theme="auto" data-command="theme.auto"><span class="i check" data-icon="check"></span>Automático</li>
+        <li role="menuitemradio" data-theme="dark" data-command="theme.dark"><span class="i check" data-icon="check"></span>Escuro</li>
+        <li role="menuitemcheckbox" data-command="ui.desk-line" aria-checked="true"><span class="i check" data-icon="check"></span>Linha da cor da mesa</li>
+        <li role="menuitem" data-command="terminal.theme"><span class="i" data-icon="palette"></span>Tema do terminal…</li>
         <li class="sep" role="separator"></li>
-        <li role="menuitem" data-cmd="restore-confirmations"><span class="i" data-icon="arrow-clockwise"></span>Voltar a perguntar antes de fechar painéis</li>
+        <li role="menuitem" data-command="confirmations.restore"><span class="i" data-icon="arrow-clockwise"></span>Voltar a perguntar antes de fechar painéis</li>
         <li class="sep" role="separator"></li>
-        <li role="menuitem" data-cmd="close-window"><span class="i" data-icon="app-window"></span>Fechar a janela<kbd>Ctrl+Shift+W</kbd></li>
-        <li role="menuitem" data-cmd="quit-all" class="danger"><span class="i" data-icon="power"></span>Sair e encerrar tudo…<kbd>Ctrl+Shift+Q</kbd></li>
+        <li role="menuitem" data-command="window.close"><span class="i" data-icon="app-window"></span>Fechar a janela</li>
+        <li role="menuitem" data-command="app.quit-all" class="danger"><span class="i" data-icon="power"></span>Sair e encerrar tudo…</li>
       </ul>
     </div>
     </div>
@@ -117,6 +120,17 @@
       <div class="actions"><button id="btn-retry" class="primary"><span class="i" data-icon="arrow-clockwise"></span>Tentar de novo</button></div>
     </div>
   </div>
+
+  <!-- The command palette (app/renderer/palette.ts): Ctrl+Shift+P = commands (">"), Ctrl+P = quick open. -->
+  <dialog id="palette" class="palette" aria-label="Paleta de comandos">
+    <div class="pal-field">
+      <span class="i" data-icon="magnifying-glass"></span>
+      <input id="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" placeholder="Digite um comando; > procura comandos" spellcheck="false" autocomplete="off">
+      <kbd>Esc</kbd>
+    </div>
+    <ul id="palette-list" role="listbox" aria-label="Comandos"></ul>
+    <p class="pal-empty" hidden></p>
+  </dialog>
 
   <dialog id="dlg-new" class="form" aria-labelledby="dlg-title">
     <form id="form-new" method="dialog">

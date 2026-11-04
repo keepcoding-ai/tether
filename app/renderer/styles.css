@@ -507,6 +507,38 @@ html.standalone dialog.ask header { -webkit-app-region: drag; }
 #overlay-msg { font-family: var(--mono); font-size: 12px; word-break: break-all; }
 #overlay button { display: inline-flex; align-items: center; gap: 6px; }
 
+/* --- command palette (Ctrl+Shift+P / Ctrl+P): a box at the top, the dialog language, no veil over the work --- */
+dialog.palette {
+  position: fixed; top: 48px; margin: 0 auto; padding: 0; width: 600px; max-width: 92vw;
+  background: var(--bg-2); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+  overflow: hidden;
+}
+dialog.palette::backdrop { background: transparent; }
+.pal-field { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--fg-dim); }
+.pal-field .ph { width: 18px; height: 18px; flex: none; }
+/* More specific than the global input[type="text"] (mono, bordered): the field is bare, the box is its frame. */
+dialog.palette .pal-field input[type="text"] { flex: 1; min-width: 0; background: none; border: 0; border-radius: 0; padding: 2px 0; color: var(--fg); font: 14px var(--ui); }
+dialog.palette .pal-field input[type="text"]:focus { outline: none; }
+.pal-field input::placeholder { color: var(--fg-dim); }
+#palette-list { list-style: none; margin: 0; padding: 6px; max-height: min(52vh, 480px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--bg-hover) transparent; }
+#palette-list:empty { display: none; }
+.pal-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.pal-item:hover { background: var(--bg-hover); }
+.pal-item.selected { background: color-mix(in srgb, var(--accent) 16%, var(--bg-3)); }
+.pal-icon { display: inline-flex; flex: none; width: 16px; height: 16px; color: var(--fg-dim); }
+.pal-icon .ph { width: 16px; height: 16px; }
+.pal-item.danger .pal-title, .pal-item.danger .pal-icon { color: var(--err); }
+.pal-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; overflow: hidden; }
+.pal-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-title b { color: var(--accent); font-weight: 600; }
+.pal-group { color: var(--fg-dim); font-size: 11.5px; white-space: nowrap; }
+.pal-tag { flex: none; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-dim); background: var(--bg-3); border-radius: 999px; padding: 1px 7px; }
+.pal-item.selected .pal-tag { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.pal-empty { margin: 0; padding: 14px 16px; color: var(--fg-dim); font-size: 12.5px; line-height: 1.5; }
+.pal-empty[hidden] { display: none; }
+@media (prefers-reduced-motion: no-preference) { dialog.palette[open] { animation: pal-in var(--motion-fast) ease-out; } }
+@keyframes pal-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
 /* --- form dialog (Novo painel) --- */
 dialog.form { background: var(--bg-2); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; width: 560px; max-width: 90vw; box-shadow: var(--shadow); }
 dialog.form::backdrop { background: var(--backdrop); }
@@ -608,7 +640,7 @@ dialog.ask .choices.inert .choice:disabled:hover { background: var(--bg-3); }
 #app-menu li.sep { height: 1px; padding: 0; margin: 4px 2px; background: var(--border); cursor: default; }
 #app-menu li.label { color: var(--fg-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; cursor: default; padding-bottom: 2px; }
 #app-menu li.label:hover { background: none; }
-#app-menu li[data-theme] .check, #app-menu li[data-cmd="desk-line"] .check, #theme-menu li .check { visibility: hidden; }
+#app-menu li[data-theme] .check, #app-menu li[data-command="ui.desk-line"] .check, #theme-menu li .check { visibility: hidden; }
 #app-menu li[aria-checked="true"] .check, #theme-menu li[aria-checked="true"] .check { visibility: visible; }
 #app-menu li[aria-checked="true"] .check .ph, #theme-menu li[aria-checked="true"] .check .ph { color: var(--accent); }
 #theme-menu li .check { margin-left: auto; }

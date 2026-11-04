@@ -8,7 +8,12 @@ import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
+import { appCommands, type CommandHost } from './app-commands.ts'
+import { CommandRegistry, type CommandContext } from './commands.ts'
 import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
+import { terminalKeyOwner } from './key-capture.ts'
+import { CommandPalette } from './palette.ts'
+import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
@@ -28,7 +33,7 @@ import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
-import { LEVELS, shortcutHint, terminalInputOf, type AppShortcut } from './shortcuts.ts'
+import { LEVELS, shortcutHint, terminalInputOf } from './shortcuts.ts'
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -84,6 +89,23 @@ let profiles: Profile[] = []
 let profilesProblem: string | undefined
 let manager: ProfileManager
 
+// ---------- commands ----------
+// Every action is a command (app/renderer/app-commands.ts); the ≡ menu, the chords and the palette read the registry.
+
+const RECENT_COMMANDS_KEY = 'tether.commands.recent'
+
+function commandContext(): CommandContext {
+  const active = document.activeElement
+  const focus: CommandContext['focus'] = active?.closest('.xterm') ? 'terminal' : active?.closest('[data-editor]') ? 'editor' : 'none'
+  return { pane: !!currentDesk().activePanel, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus }
+}
+
+const commands = new CommandRegistry(commandContext, {
+  load: () => { try { const v = JSON.parse(localStorage.getItem(RECENT_COMMANDS_KEY) ?? '[]'); return Array.isArray(v) ? v : [] } catch { return [] } },
+  save: ids => { try { localStorage.setItem(RECENT_COMMANDS_KEY, JSON.stringify(ids)) } catch { /* storage unavailable: recents live for the session */ } },
+})
+let palette: CommandPalette
+
 const $ =<T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id)
   if (!el) throw new Error(`elemento #${id} não existe`)
@@ -108,9 +130,10 @@ const host: PanelHost = {
       panel.sendInput(seq)
       return true
     }
-    // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener.
+    // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener,
+    // which runs the command. Plain Ctrl+letter stays the terminal's unless key-capture.ts lists it.
     // (Clipboard chords are the panel's own: shortcuts.ts PANE_SHORTCUTS.)
-    return shortcutOf(ev) !== undefined
+    return terminalKeyOwner(ev).owner === 'app'
   },
   getScheme: () => theme.scheme,
   getAppearance: () => appearance,
@@ -160,7 +183,7 @@ const THEME_LABEL: Record<ThemeState['setting'], string> = { light: 'Claro', aut
 function applyUi(next: UiSettings): void {
   ui = next
   document.body.classList.toggle('desk-line', ui.deskLine)
-  document.querySelector('#app-menu li[data-cmd="desk-line"]')?.setAttribute('aria-checked', String(ui.deskLine))
+  document.querySelector('#app-menu li[data-command="ui.desk-line"]')?.setAttribute('aria-checked', String(ui.deskLine))
 }
 
 // ---------- terminal appearance ----------
@@ -1486,23 +1509,52 @@ async function onEdge(target: Target, op: 'duplicate' | 'choose', frameId: strin
 // The native menu bar is hidden (autoHideMenuBar) and Alt does not reach it from a terminal: the same commands
 // live behind the toolbar's menu button. Theme and "voltar a perguntar" talk to main; quit-all asks through onAsk.
 
-/** The chord a menu command is shown with (app/renderer/shortcuts.ts is the only place chords live). */
-const MENU_SHORTCUT: Record<string, AppShortcut> = {
-  'new': { op: 'choose' },
-  'duplicate-right': { op: 'duplicate', level: 'pane', direction: 'right' },
-  'duplicate-below': { op: 'duplicate', level: 'pane', direction: 'below' },
-  'quit-all': { op: 'quit-all' },
-  'new-desk': { op: 'desk-new', side: 'after' },
-  'toggle-drawer': { op: 'drawer-toggle' },
+/** What the app's commands do (app/renderer/app-commands.ts declares them over this host). */
+const commandHost: CommandHost = {
+  newPanel: opts => { void openNewDialog(opts) },
+  duplicateActive: target => { void duplicateActive(target) },
+  activePane: () => { const a = currentDesk().activePanel; return a && slots.has(a.id) ? a.id : undefined },
+  renamePane: id => tabs.get(id)?.startRename(),
+  switchProfile: id => { void switchProfile(id) },
+  toggleDetails: id => togglePaneDetails(id),
+  copyFolder: id => copyFolder(id),
+  openFolder: id => openFolder(id),
+  movePane: id => { void openMove(id) },
+  closePane: id => { void closePanel(id) },
+  createDesk: side => { desks.create(side) },
+  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, step)),
+  goToDesk: position => { const id = deskAt(desks.desks, position); if (id) desks.switchTo(id) },
+  deskActions: () => { const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },
+  closeDesk: () => { void closeDesk(desks.activeDeskId) },
+  toggleDrawer: () => setDrawerOpen(!drawer.isOpen),
+  quickShell: () => { void quickShell() },
+  setTheme: setting => window.tether.setTheme(normalizeTheme(setting)),
+  toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
+  openTerminalTheme: () => themeDialog.show(),
+  fontSize: command => runFontSizeCommand(command),
+  openProfiles: () => openProfiles(),
+  restoreConfirmations: () => window.tether.command('restore-confirmations'),
+  closeWindow: () => window.tether.closeWindow(),
+  quitAll: () => window.tether.command('quit-all'),
+  restartDaemon: () => window.tether.command('restart-daemon'),
+  showPalette: mode => palette.show(mode),
 }
 
+/** Something modal of ours is up: app chords stay quiet (the palette has its own keys). */
+function modalOpen(): boolean {
+  return $<HTMLDialogElement>('dlg-new').open || manager.open || themeDialog.open || dialogOpen() || palette.open
+}
+
+/** The ≡ menu: every item names a command; the hint, the greying and the run come from the registry. */
 function setupMenu(): void {
   const btn = $('btn-menu')
   const menu = $('app-menu')
-  for (const li of menu.querySelectorAll<HTMLElement>('li[data-cmd]')) {
-    const cmd = MENU_SHORTCUT[li.dataset.cmd ?? '']
-    const kbd = li.querySelector('kbd')
-    if (cmd && kbd) kbd.textContent = shortcutHint(cmd)
+  const items = [...menu.querySelectorAll<HTMLElement>('li[data-command]')]
+  for (const li of items) {
+    const id = li.dataset.command!
+    if (!commands.get(id)) throw new Error(`menu item without a command: ${id}`)
+    const hint = commands.hint(id)
+    if (hint) { const kbd = document.createElement('kbd'); kbd.textContent = hint; li.append(kbd) }
   }
   const toggle = (open: boolean): void => {
     menu.hidden = !open
@@ -1511,9 +1563,9 @@ function setupMenu(): void {
   }
   btn.addEventListener('click', ev => {
     ev.stopPropagation()
-    // "Duplicar painel" and "Trocar perfil do painel…" act on the active panel: greyed out when there is none.
-    for (const item of menu.querySelectorAll<HTMLElement>('li[data-cmd="switch-profile"], li[data-cmd^="duplicate"], li[data-cmd="move"]')) item.setAttribute('aria-disabled', String(!desks.activePanel))
-    menu.querySelector<HTMLElement>('li[data-cmd="close-desk"]')?.setAttribute('aria-disabled', String(desks.desks.length <= 1))
+    // Items whose command is unavailable now (no active pane, a single desk…) are greyed out, not hidden.
+    const ctx = commandContext()
+    for (const li of items) li.setAttribute('aria-disabled', String(!commands.isAvailable(commands.get(li.dataset.command!)!, ctx)))
     toggle(menu.hidden)
   })
   document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
@@ -1521,26 +1573,7 @@ function setupMenu(): void {
   const run = (li: HTMLElement): void => {
     if (li.getAttribute('aria-disabled') === 'true') return
     toggle(false)
-    if (li.dataset.theme) { window.tether.setTheme(normalizeTheme(li.dataset.theme)); return }
-    switch (li.dataset.cmd) {
-      case 'new': void openNewDialog(); break
-      case 'duplicate-right': void duplicateActive({ level: 'pane', placement: 'right' }); break
-      case 'duplicate-below': void duplicateActive({ level: 'pane', placement: 'below' }); break
-      case 'new-frame-edge': void openNewDialog({ target: { level: 'frame', placement: 'right' } }); break
-      case 'new-frame': void openNewDialog({ target: { level: 'desk', placement: 'right' } }); break
-      case 'move': { const a = desks.activePanel; if (a) void openMove(a.id); break }
-      case 'new-desk': desks.create('after'); break
-      case 'toggle-drawer': setDrawerOpen(!drawer.isOpen); break
-      case 'close-desk': void closeDesk(desks.activeDeskId); break
-      case 'desk-actions': { const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4); break }
-      case 'desk-line': window.tether.setUi({ ...ui, deskLine: !ui.deskLine }); break
-      case 'profiles': openProfiles(); break
-      case 'terminal-theme': themeDialog.show(); break
-      case 'switch-profile': { const active = desks.activePanel; if (active) void switchProfile(active.id); break }
-      case 'restore-confirmations': window.tether.command('restore-confirmations'); break
-      case 'close-window': window.tether.closeWindow(); break
-      case 'quit-all': window.tether.command('quit-all'); break
-    }
+    if (li.dataset.command) void commands.run(li.dataset.command, 'menu')
   }
   menu.addEventListener('click', ev => {
     const li = (ev.target as HTMLElement).closest<HTMLElement>('li[role^=menuitem]')
@@ -1652,6 +1685,8 @@ function setupUi(): void {
   $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
   $('btn-manage-profiles').addEventListener('click', () => openProfiles(selectedProfileId()))
+  commands.register(...appCommands(commandHost))
+  palette = new CommandPalette($<HTMLDialogElement>('palette'), commands)
   setupMenu()
   const dup = $('btn-duplicate')
   const hint = (level: Target['level'], direction: Direction): string => shortcutHint({ op: 'duplicate', level, direction })
@@ -1682,25 +1717,20 @@ function setupUi(): void {
     if (askingForget) { askingForget = undefined; refreshClosedMenu() }
   })
 
+  // The keyboard dispatch: a chord names a shortcut op (shortcuts.ts), the op names a command (the registry), the
+  // command decides whether it is available now. Inside a terminal the key-capture policy applies first, the same
+  // one the panel used to keep xterm away from the key (a key xterm kept, such as Ctrl+K, is never run here).
   document.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') { drawerEscapeOutside(ev); return }
-    const shortcut = shortcutOf(ev)
+    const target = ev.target instanceof Element ? ev.target : undefined
+    const shortcut = target?.closest('.xterm') ? (o => o.owner === 'app' ? o.shortcut : undefined)(terminalKeyOwner(ev)) : shortcutOf(ev)
     if (!shortcut) return
-    if ($<HTMLDialogElement>('dlg-new').open || manager.open || themeDialog.open || dialogOpen()) return
+    if (modalOpen()) return
+    const command = commands.byShortcut(shortcut)
+    if (!command) return
     ev.preventDefault()
-    if (shortcut.op === 'drawer-toggle' && ev.repeat) return // a held chord is one toggle
-    switch (shortcut.op) {
-      case 'choose': void openNewDialog(); break
-      case 'duplicate': void duplicateActive({ level: shortcut.level, placement: shortcut.direction }); break
-      case 'quit-all': window.tether.command('quit-all'); break
-      case 'drawer-toggle': setDrawerOpen(!drawer.isOpen); break
-      case 'font-size': runFontSizeCommand(shortcut.command); break
-      case 'pane-details': { const id = currentDesk().activePanel?.id; if (id) togglePaneDetails(id); break }
-      // The desks behind the drawer stay where they are while it is open.
-      case 'desk-cycle': if (!drawer.isOpen) desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, shortcut.step)); break
-      case 'desk-go': { const id = deskAt(desks.desks, shortcut.position); if (id && !drawer.isOpen) desks.switchTo(id); break }
-      case 'desk-new': if (!drawer.isOpen) desks.create(shortcut.side); break
-    }
+    if (command.ignoreRepeat && ev.repeat) return // a held chord is one toggle
+    void commands.run(command.id, 'key')
   })
   // Back to the window: the pane in front of the user is seen.
   window.addEventListener('focus', () => markSeenIfWatched())
@@ -1809,6 +1839,14 @@ declare global {
       movePaneFromDrawer(slotId: string): void
       moveFrameToDrawer(slotId: string): void
       moveFrameFromDrawer(slotId: string): void
+      /** The command registry as the palette sees it: every command with its hint and whether it is available now. */
+      commands(): { id: string; title: string; hint: string; available: boolean }[]
+      /** Runs a command by id, as the CLI will (`tether run <id>`). */
+      runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
+      /** The palette: open or not, its mode, the ids on screen in order, the field's text. */
+      palette(): { open: boolean; mode?: PaletteMode; shown: string[]; input: string }
+      /** Opens the palette as the chord does. */
+      showPalette(mode?: PaletteMode): void
     }
   }
 }
@@ -1931,6 +1969,10 @@ function setupTestHooks(): void {
     movePaneFromDrawer,
     moveFrameToDrawer,
     moveFrameFromDrawer,
+    commands: () => { const ctx = commandContext(); return commands.all().map(c => ({ id: c.id, title: c.title, hint: commands.hint(c), available: commands.isAvailable(c, ctx) })) },
+    runCommand: id => commands.run(id, 'cli'),
+    palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
+    showPalette: (mode = 'commands') => palette.show(mode),
     cellSize: slotId => {
       const term = panels.get(slotId)?.term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } } | undefined
       return term?._core?._renderService?.dimensions?.css?.cell
