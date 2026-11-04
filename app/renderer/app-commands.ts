@@ -42,6 +42,12 @@ export interface CommandHost {
   closeWindow(): void
   quitAll(): void
   restartDaemon(): void
+  /** Ends every agent (confirmed in the in-app dialog), restarts the tetherd and resumes the sessions. */
+  reloadAll(): void
+  /** A fresh main process; the tetherd and its agents stay. */
+  relaunchApp(): void
+  toggleDevTools(): void
+  toggleFullscreen(): void
   showPalette(mode: PaletteMode): void
   /** Notes (F5): a new note next to the active pane, a file picked from the disk, the focused note saved under another name. */
   newNote(): void
@@ -131,6 +137,10 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'profiles.manage', title: 'Perfis de lançamento…', group: GROUP.app, icon: 'sliders-horizontal', run: () => host.openProfiles() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },
     { id: 'daemon.restart', title: 'Reiniciar o serviço (tetherd)…', group: GROUP.app, icon: 'plugs', run: () => host.restartDaemon() },
+    { id: 'app.reload-all', title: 'Recarregar… (encerra os agentes, reinicia o tetherd e retoma)', group: GROUP.app, icon: 'arrows-clockwise', danger: true, run: () => host.reloadAll() },
+    { id: 'app.relaunch', title: 'Reiniciar o app', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.relaunchApp() },
+    { id: 'app.devtools', title: 'Ferramentas de desenvolvedor', group: GROUP.app, icon: 'bug', run: () => host.toggleDevTools() },
+    { id: 'window.fullscreen', title: 'Tela cheia', group: GROUP.app, icon: 'arrows-out-simple', run: () => host.toggleFullscreen() },
     { id: 'window.close', title: 'Fechar a janela', group: GROUP.app, icon: 'app-window', displayChord: { mod: true, shift: true, code: 'KeyW' }, run: () => host.closeWindow() },
     { id: 'app.quit-all', title: 'Sair e encerrar tudo…', group: GROUP.app, icon: 'power', shortcut: { op: 'quit-all' }, danger: true, run: () => host.quitAll() },
   ]

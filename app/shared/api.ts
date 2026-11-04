@@ -9,7 +9,7 @@ import type { UiSettings } from './ui-settings.ts'
 
 export type { Profile, ProfileInput }
 
-export type MainCommand = 'quit-all' | 'restore-confirmations' | 'restart-daemon'
+export type MainCommand = 'quit-all' | 'restore-confirmations' | 'restart-daemon' | 'reload-all' | 'relaunch-app' | 'toggle-devtools' | 'toggle-fullscreen'
 
 /** A request without the `id`: the main process numbers them. */
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never

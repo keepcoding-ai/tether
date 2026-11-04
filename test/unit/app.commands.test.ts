@@ -20,7 +20,7 @@ function stubHost(calls: string[]): CommandHost {
     toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'),
     setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
     openProfiles: log('openProfiles'), restoreConfirmations: log('restoreConfirmations'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
-    restartDaemon: log('restartDaemon'), showPalette: log('showPalette'),
+    restartDaemon: log('restartDaemon'), reloadAll: log('reloadAll'), relaunchApp: log('relaunchApp'), toggleDevTools: log('toggleDevTools'), toggleFullscreen: log('toggleFullscreen'), showPalette: log('showPalette'),
     newNote: log('newNote'), openNote: log('openNote'), saveNoteAs: log('saveNoteAs'),
     splitEmpty: log('splitEmpty'), newEmptyDesk: log('newEmptyDesk'),
   }
@@ -182,5 +182,53 @@ describe('the app commands and the icon set', () => {
     const names = new Set([...src.matchAll(/^\s+(?:'([a-z-]+)'|([a-z]+))(?::\s*\w+)?,\s*$/gm)].map(m => m[1] ?? m[2]!))
     assert.ok(names.has('plus') && names.has('magnifying-glass'), `icons.ts parsed: ${names.size} names`)
     for (const c of appCommands(stubHost([]))) if (c.icon) assert.ok(names.has(c.icon), `${c.id}: icon "${c.icon}" is not in icons.ts`)
+  })
+})
+
+describe('the native menu (app/main/main.ts) and the registry', () => {
+  // Every native menu item with an id maps to the command that does the same; a new item fails here until it is mapped.
+  const MENU_TO_COMMAND: Record<string, string> = {
+    'quit-all': 'app.quit-all',
+    'terminal-theme': 'terminal.theme',
+    'profiles': 'profiles.manage',
+    'restore-confirmations': 'confirmations.restore',
+    'reload-all': 'app.reload-all',
+    'relaunch-app': 'app.relaunch',
+    'font-size-increase': 'font.increase',
+    'font-size-decrease': 'font.decrease',
+    'font-size-reset': 'font.reset',
+    'theme-light': 'theme.light',
+    'theme-auto': 'theme.auto',
+    'theme-dark': 'theme.dark',
+  }
+  // Items without an id: the window close (a click) and the Electron roles, which act on webContents/the window in main.
+  const WITHOUT_ID: Record<string, string> = {
+    'Fechar a janela': 'window.close',
+    'role:toggleDevTools': 'app.devtools',
+    'role:togglefullscreen': 'window.fullscreen',
+  }
+  const main = readFileSync(join(import.meta.dirname, '..', '..', 'app', 'main', 'main.ts'), 'utf8')
+  const ids = new Set(appCommands(stubHost([])).map(c => c.id))
+
+  test('every native menu item with an id has its command, and the mapping covers the whole template', () => {
+    const fromSource = new Set<string>()
+    for (const m of main.matchAll(/\bid: '([a-z-]+)'/g)) fromSource.add(m[1]!)
+    for (const m of main.matchAll(/\bid: `([a-z-]+)-\$\{(\w+)\}`/g)) {
+      const prefix = m[1]!
+      for (const k of Object.keys(MENU_TO_COMMAND)) if (k.startsWith(`${prefix}-`)) fromSource.add(k)
+    }
+    // only the ids of the menu template (tray items etc. are not in main.ts's createMenu/themeMenu/fontSizeMenu)
+    const menuIds = [...fromSource].filter(id => id in MENU_TO_COMMAND || main.includes(`{ id: '${id}', label:`))
+    for (const id of menuIds) assert.ok(id in MENU_TO_COMMAND, `native menu item "${id}" has no mapped command`)
+    for (const [menuId, commandId] of Object.entries(MENU_TO_COMMAND)) assert.ok(ids.has(commandId), `${menuId} -> ${commandId} is not in the registry`)
+  })
+
+  test('items without an id (the window close and the Electron roles) have commands too', () => {
+    for (const [what, commandId] of Object.entries(WITHOUT_ID)) {
+      assert.ok(ids.has(commandId), `${what} -> ${commandId} is not in the registry`)
+      const needle = what.startsWith('role:') ? `role: '${what.slice(5)}'` : `label: '${what}`
+      assert.ok(main.includes(needle), `${what} is no longer in the native menu: update this list`)
+    }
+    assert.equal(appCommands(stubHost([])).find(c => c.id === 'app.reload-all')?.danger, true)
   })
 })

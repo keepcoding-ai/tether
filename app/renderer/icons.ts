@@ -1,6 +1,9 @@
 // Phosphor icons (@phosphor-icons/core, MIT), inlined at build time: only the SVGs imported here end up in
 // the bundle (esbuild `text` loader, app/build.mjs). Every file carries fill="currentColor", so an icon
 // takes the colour of its text and follows the theme. One weight (regular); `fill` only for the status dot.
+import arrowsClockwise from '@phosphor-icons/core/assets/regular/arrows-clockwise.svg'
+import arrowsOutSimple from '@phosphor-icons/core/assets/regular/arrows-out-simple.svg'
+import bug from '@phosphor-icons/core/assets/regular/bug.svg'
 import appWindow from '@phosphor-icons/core/assets/regular/app-window.svg'
 import arrowClockwise from '@phosphor-icons/core/assets/regular/arrow-clockwise.svg'
 import arrowSquareOut from '@phosphor-icons/core/assets/regular/arrow-square-out.svg'
@@ -72,6 +75,9 @@ import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
   'app-window': appWindow,
+  'arrows-clockwise': arrowsClockwise,
+  'arrows-out-simple': arrowsOutSimple,
+  bug,
   'arrow-clockwise': arrowClockwise,
   'arrow-square-out': arrowSquareOut,
   'caret-down': caretDown,

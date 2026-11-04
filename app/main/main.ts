@@ -223,6 +223,10 @@ ipcMain.on('tether:command', (_e, cmd: unknown) => {
   if (cmd === 'quit-all') void quitAll()
   else if (cmd === 'restore-confirmations') restoreConfirmations()
   else if (cmd === 'restart-daemon') void restartDaemon()
+  else if (cmd === 'reload-all') void reloadAll()
+  else if (cmd === 'relaunch-app') relaunchApp()
+  else if (cmd === 'toggle-devtools') win?.webContents.toggleDevTools()
+  else if (cmd === 'toggle-fullscreen') win?.setFullScreen(!win.isFullScreen())
 })
 
 /**

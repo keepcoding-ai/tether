@@ -186,6 +186,16 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter 
     await page.keyboard.press('Escape')
     await paletteOpen(page, false)
 
+    // 4b. The native menu's actions are commands too: "reiniciar" lists "Reiniciar o app" (never run here: it would
+    //     relaunch the app under test), and the reload carries the danger mark.
+    await page.keyboard.press('Control+Shift+P')
+    await paletteOpen(page, true)
+    await page.keyboard.type('reiniciar')
+    await page.waitForFunction(() => window.__tether.palette().shown.includes('app.relaunch'))
+    assert.equal(await page.locator('#palette-list .pal-item[data-command="app.relaunch"] .pal-title').innerText(), 'Reiniciar o app')
+    await page.keyboard.press('Escape')
+    await paletteOpen(page, false)
+
     // 5. The ≡ menu: hints from the registry; pane items greyed without a pane.
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
