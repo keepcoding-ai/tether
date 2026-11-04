@@ -39,9 +39,13 @@ export interface CommandHost {
   quitAll(): void
   restartDaemon(): void
   showPalette(mode: PaletteMode): void
+  /** Notes (F5): a new note next to the active pane, a file picked from the disk, the focused note saved under another name. */
+  newNote(): void
+  openNote(): void
+  saveNoteAs(): void
 }
 
-export const GROUP = { pane: 'Painel', frame: 'Quadro', desk: 'Mesa', drawer: 'Gaveta', look: 'Aparência', app: 'App' } as const
+export const GROUP = { pane: 'Painel', frame: 'Quadro', desk: 'Mesa', drawer: 'Gaveta', look: 'Aparência', app: 'App', note: 'Nota' } as const
 
 /** The level's wording in a duplicate title: "à direita" (pane), "na borda do quadro, à direita", "num quadro novo, à direita". */
 const LEVEL_WORDING: Record<Level, string> = { pane: '', frame: 'na borda do quadro, ', desk: 'num quadro novo, ' }
@@ -72,6 +76,10 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.open-folder', title: 'Abrir pasta do painel no Explorer', group: GROUP.pane, icon: 'folder-open', ...pane, run: withPane(id => host.openFolder(id)) },
     { id: 'pane.move', title: 'Mover painel…', group: GROUP.pane, icon: 'arrow-square-out', ...pane, run: withPane(id => host.movePane(id)) },
     { id: 'pane.close', title: 'Fechar painel…', group: GROUP.pane, icon: 'x', ...pane, run: withPane(id => host.closePane(id)) },
+    // ----- note -----
+    { id: 'note.new', title: 'Nova nota', group: GROUP.note, icon: 'note-pencil', run: () => host.newNote() },
+    { id: 'note.open', title: 'Abrir nota…', group: GROUP.note, icon: 'folder-open', run: () => host.openNote() },
+    { id: 'note.save-as', title: 'Salvar nota como…', group: GROUP.note, icon: 'floppy-disk', when: ctx => ctx.focus === 'editor', run: () => host.saveNoteAs() },
     // ----- desk -----
     { id: 'desk.new', title: 'Nova mesa', group: GROUP.desk, icon: 'cards', shortcut: { op: 'desk-new', side: 'after' }, when: ctx => !ctx.drawerOpen, run: () => host.createDesk('after') },
     { id: 'desk.new-before', title: 'Nova mesa antes desta', group: GROUP.desk, icon: 'arrow-line-left', shortcut: { op: 'desk-new', side: 'before' }, when: ctx => !ctx.drawerOpen, run: () => host.createDesk('before') },

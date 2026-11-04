@@ -58,6 +58,17 @@ const api: TetherApi = {
   onFocusSlot: listener => on<string>('tether:focus-slot', listener),
   onOpenDrawer: listener => on<void>('tether:open-drawer', () => listener()),
   closeWindow: () => ipcRenderer.send('window:close'),
+  notePrepare: paneCwd => ipcRenderer.invoke('note:prepare', paneCwd),
+  noteRead: path => ipcRenderer.invoke('note:read', path),
+  noteWrite: (path, text) => ipcRenderer.invoke('note:write', path, text),
+  noteFlush: (path, text) => ipcRenderer.send('note:flush', path, text),
+  noteRename: (from, to) => ipcRenderer.invoke('note:rename', from, to),
+  noteWatch: path => ipcRenderer.send('note:watch', path),
+  noteUnwatch: path => ipcRenderer.send('note:unwatch', path),
+  onNoteChanged: listener => on<string>('tether:note-changed', listener),
+  notePickOpen: initialDir => ipcRenderer.invoke('note:pick-open', initialDir),
+  notePickSaveAs: currentPath => ipcRenderer.invoke('note:pick-save-as', currentPath),
+  noteGitignore: (repoRoot, add) => ipcRenderer.invoke('note:gitignore', repoRoot, add),
 }
 
 contextBridge.exposeInMainWorld('tether', api)

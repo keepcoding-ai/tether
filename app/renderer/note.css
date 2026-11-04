@@ -1,0 +1,59 @@
+/* The note tab (app/renderer/note-panel.ts): a Monaco editor filling the pane, under the same frame card as a
+   terminal. The editor's colours come from its theme (monaco.ts reads the tokens); this file only places it and
+   dresses the few bits that are ours: the empty/loading state, the tab's dirty mark and the "read only" note. */
+.note-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--frame-bg);
+  outline: none;
+}
+.note-panel .note-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+/* Monaco measures its container: the host must have a real size and no padding. */
+.note-panel .note-editor .monaco-editor,
+.note-panel .note-editor .monaco-editor .overflow-guard {
+  border-radius: 0;
+}
+.note-panel .note-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--fg-dim);
+  background: var(--frame-bg);
+  pointer-events: none;
+  z-index: 2;
+  text-align: center;
+}
+.note-panel .note-state[hidden] { display: none; }
+.note-panel .note-state .card {
+  max-width: 420px;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+.note-panel .note-state .card .i svg { width: 28px; height: 28px; }
+.note-panel .note-state .card h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg); }
+.note-panel .note-state .card p { margin: 0; font-size: 12px; }
+.note-panel .note-state .card code { font-family: var(--mono); font-size: 11px; word-break: break-all; }
+
+/* The tab: the dirty dot (unsaved text still in the debounce) replaces the status dot's place. */
+.tether-tab.note .dot { display: none; }
+.tether-tab.note .dirty {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--fg-dim);
+  flex: none;
+  margin-left: 2px;
+}
+.tether-tab.note .dirty[hidden] { display: none; }
+
+/* Monaco's context menu and widgets sit over dockview's layers. */
+.monaco-editor .context-view { z-index: 50; }
+.monaco-aria-container { position: absolute; left: -999em; }

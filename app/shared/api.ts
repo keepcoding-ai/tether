@@ -21,6 +21,12 @@ export type ProfilesList = { profiles: Profile[]; problem?: string }
 export type ProfileSaved = { ok: true; profile: Profile; warnings: string[] } | { ok: false; message: string }
 export type ProfileDeleted = { ok: true } | { ok: false; message: string }
 
+/** A new note file, created empty; `askGitignore` names the repository whose `.gitignore` lacks `.tether/`. */
+export type NotePrepared = { path: string; askGitignore?: string }
+export type NoteRead = { ok: true; text: string; mtimeMs: number } | { ok: false; missing: boolean; message: string }
+export type NoteWritten = { ok: true; mtimeMs: number } | { ok: false; message: string }
+export type NoteRenamed = { ok: true } | { ok: false; message: string }
+
 export interface TetherApi {
   /** Sends a request to the daemon; resolves with the daemon's reply (an `error` reply resolves, it does not throw). */
   request(body: RequestBody): Promise<Reply>
@@ -92,6 +98,25 @@ export interface TetherApi {
   onOpenDrawer(listener: () => void): () => void
   /** Closes the window (keeps every slot running in the daemon). */
   closeWindow(): void
+  /**
+   * Notes (app/main/note-files.ts). `notePrepare` creates the empty file for a new note under the pane's folder
+   * (`<cwd>/.tether/notes/`) or the person's (`~/.tether/notes/`). Reads and writes are by absolute path; a write is
+   * atomic. `noteFlush` is the fire-and-forget write of a page going away (beforeunload cannot await).
+   */
+  notePrepare(paneCwd?: string): Promise<NotePrepared>
+  noteRead(path: string): Promise<NoteRead>
+  noteWrite(path: string, text: string): Promise<NoteWritten>
+  noteFlush(path: string, text: string): void
+  noteRename(from: string, to: string): Promise<NoteRenamed>
+  /** Watches a note's file; `onNoteChanged` reports a change on disk (our own save included: the renderer compares). */
+  noteWatch(path: string): void
+  noteUnwatch(path: string): void
+  onNoteChanged(listener: (path: string) => void): () => void
+  /** The OS file dialogs (the agreed exception to the in-app dialogs for files): null when cancelled. */
+  notePickOpen(initialDir?: string): Promise<string | null>
+  notePickSaveAs(currentPath: string): Promise<string | null>
+  /** The answer to "add .tether/ to .gitignore?" for a repository: add it, or remember the refusal for that repository. */
+  noteGitignore(repoRoot: string, add: boolean): Promise<void>
 }
 
 declare global {

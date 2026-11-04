@@ -11,7 +11,11 @@ import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { appCommands, type CommandHost } from './app-commands.ts'
 import { CommandRegistry, type CommandContext } from './commands.ts'
 import { DUPLICATE_LABEL, duplicateRequest, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
-import { terminalKeyOwner } from './key-capture.ts'
+import { editorKeyOwner, terminalKeyOwner } from './key-capture.ts'
+import { defineTheme, monaco } from './monaco.ts'
+import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
+import { paneCwdOfNote } from './note-rules.ts'
+import { cleanNoteName, isNotePanelId, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../shared/notes.ts'
 import { CommandPalette } from './palette.ts'
 import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
@@ -34,7 +38,7 @@ import { TabStripActions } from './tab-strip.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
 import { LEVELS, shortcutHint, terminalInputOf } from './shortcuts.ts'
-import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, noteConflictSituation, noteGitignoreSituation, quitAllSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 
@@ -45,6 +49,11 @@ const SAVE_DEBOUNCE_MS = 300
 const slots = new Map<string, SlotState>()
 const panels = new Map<string, TerminalPanel>()
 const tabs = new Map<string, SlotTab>()
+/** The note panes (F5): no slot behind them, a file each (app/renderer/note-panel.ts). */
+const notes = new Map<string, NotePanel>()
+const noteTabs = new Map<string, NoteTab>()
+/** Removes the editor actions registered as commands by the last note that got the focus. */
+let editorCommandsOff: (() => void) | undefined
 /** Error of the last refused `start` per slot (the daemon does not store `already-open` / `unconfirmed`). */
 const startErrors = new Map<string, SlotError>()
 /** Slots with a `start` request in flight. */
@@ -94,9 +103,28 @@ let manager: ProfileManager
 
 const RECENT_COMMANDS_KEY = 'tether.commands.recent'
 
+/** Where the keyboard goes back to once a transient surface (the palette, a menu, a dialog, the toolbar) is left. */
+const TRANSIENT_FOCUS = '#palette, .menu, #ctx-menu, dialog, #toolbar'
+
+function focusOwnerOf(el: Element | null | undefined): CommandContext['focus'] {
+  return el?.closest('.xterm') ? 'terminal' : el?.closest('[data-editor]') ? 'editor' : 'none'
+}
+
+/**
+ * The last owner of the keyboard that was not transient. The palette's own field has the focus while it lists
+ * the commands: the editor's actions (available with `focus === 'editor'`) must still count the note as focused.
+ */
+let focusOwner: CommandContext['focus'] = 'none'
+document.addEventListener('focusin', ev => {
+  const t = ev.target instanceof Element ? ev.target : null
+  if (t?.closest(TRANSIENT_FOCUS)) return
+  focusOwner = focusOwnerOf(t)
+})
+
 function commandContext(): CommandContext {
   const active = document.activeElement
-  const focus: CommandContext['focus'] = active?.closest('.xterm') ? 'terminal' : active?.closest('[data-editor]') ? 'editor' : 'none'
+  const transient = !active || active === document.body || active.closest(TRANSIENT_FOCUS)
+  const focus = transient ? focusOwner : focusOwnerOf(active)
   return { pane: !!currentDesk().activePanel, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus }
 }
 
@@ -170,6 +198,8 @@ function applyTheme(state: ThemeState): void {
   theme = state
   document.documentElement.dataset.theme = state.scheme
   for (const p of panels.values()) p.setAppearance(appearance, state.scheme)
+  // The note editors: one theme for every Monaco editor, rebuilt from the tokens just painted.
+  monaco.editor.setTheme(defineTheme(state.scheme))
   themeDialog?.refresh()
   for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme], #theme-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))
   const btn = $('btn-theme')
@@ -192,6 +222,7 @@ function applyUi(next: UiSettings): void {
 function applyAppearance(a: TerminalAppearance): void {
   appearance = a
   for (const p of panels.values()) p.setAppearance(a, theme.scheme)
+  for (const n of notes.values()) n.setAppearance(a)
   themeDialog?.refresh()
 }
 
@@ -213,7 +244,15 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
   return {
     dockviewOptions: () => ({
       defaultTabComponent: TAB,
-      createComponent: () => {
+      createComponent: ({ name }) => {
+        if (name === NOTE_COMPONENT) {
+          const note = new NotePanel(noteHost)
+          const init = note.init.bind(note)
+          note.init = params => { init(params); notes.set(note.id, note) }
+          const dispose = note.dispose.bind(note)
+          note.dispose = () => { dispose(); if (notes.get(note.id) === note) notes.delete(note.id) }
+          return note
+        }
         const panel = new TerminalPanel(host)
         const init = panel.init.bind(panel)
         panel.init = params => { init(params); panels.set(panel.slotId, panel) }
@@ -221,7 +260,15 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
         panel.dispose = () => { dispose(); if (panels.get(panel.slotId) === panel) panels.delete(panel.slotId) }
         return panel
       },
-      createTabComponent: () => {
+      createTabComponent: ({ name }) => {
+        if (name === NOTE_TAB) {
+          const tab = new NoteTab(noteHost, id => notes.get(id)?.dirty ?? false)
+          const init = tab.init.bind(tab)
+          tab.init = params => { init(params); noteTabs.set(params.api.id, tab) }
+          const dispose = tab.dispose.bind(tab)
+          tab.dispose = () => { dispose(); for (const [id, t] of noteTabs) if (t === tab) noteTabs.delete(id) }
+          return tab
+        }
         const tab = new SlotTab(host, id => { void closePanel(id) })
         const init = tab.init.bind(tab)
         tab.init = params => { init(params); tabs.set(params.api.id, tab) }
@@ -234,7 +281,7 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
       createRightHeaderActionComponent: () => new TabStripActions({
         describe: id => {
           const s = slots.get(id)
-          return { icon: s ? KIND_ICON[s.kind] : 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
+          return { icon: s ? KIND_ICON[s.kind] : notes.has(id) ? 'note-pencil' : 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
@@ -270,7 +317,9 @@ function setupDock(): void {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); scheduleSave() },
     onSwitch: () => focusActivePane(),
-    paneOptions: panel => ({ id: panel.id, component: COMPONENT, tabComponent: TAB, title: panel.title ?? panel.id, params: panel.params ?? { slotId: panel.id } }),
+    paneOptions: panel => isNotePanelId(panel.id)
+      ? { id: panel.id, component: NOTE_COMPONENT, tabComponent: NOTE_TAB, title: panel.title ?? panel.id, params: panel.params ?? {} }
+      : { id: panel.id, component: COMPONENT, tabComponent: TAB, title: panel.title ?? panel.id, params: panel.params ?? { slotId: panel.id } },
   }, DOCK_THEME)
   desks.fromEmpty()
   drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onMargin: () => setDrawerOpen(false) }, DOCK_THEME)
@@ -406,11 +455,16 @@ function markSeenIfWatched(): void {
   if (id && slots.get(id)?.attention) void window.tether.request({ t: 'seen', slotId: id })
 }
 
+/** The keyboard to a pane, whatever it is: a terminal or a note. */
+function focusPane(id: string): void {
+  (panels.get(id) ?? notes.get(id))?.focus()
+}
+
 /** After a desk switch: the keyboard goes to the desk's active pane (and its badge, if any, is seen). */
 function focusActivePane(): void {
   const active = desks.activePanel
   // Deferred, and never over a desk being renamed in the strip (a double-click switches first, then renames).
-  if (active) requestAnimationFrame(() => { if (!(document.activeElement as Element | null)?.closest('#desk-switch, #desk-colors')) panels.get(active.id)?.focus() })
+  if (active) requestAnimationFrame(() => { if (!(document.activeElement as Element | null)?.closest('#desk-switch, #desk-colors')) focusPane(active.id) })
   renderStrip()
   markSeenIfWatched()
 }
@@ -561,7 +615,7 @@ function setDrawerOpen(open: boolean): void {
 function focusDrawer(): void {
   if (!drawer.isOpen) return
   const active = drawer.desk.activePanel
-  if (active) panels.get(active.id)?.focus()
+  if (active) focusPane(active.id)
   else $('drawer-pill').focus() // an empty drawer: the keyboard sits on its bar, where Esc closes
 }
 
@@ -570,7 +624,7 @@ function restoreFocusAfterClose(): void {
   const target = focusAfterClose(drawerState.returnTo, id => desks.getPanel(id) !== undefined, desks.activePanel?.id)
   if (target) {
     desks.getPanel(target)?.api.setActive()
-    panels.get(target)?.focus()
+    focusPane(target)
     return
   }
   if (drawerReturnEl?.isConnected) drawerReturnEl.focus()
@@ -708,7 +762,7 @@ async function openMove(slotId: string, mode?: MoveMode): Promise<void> {
   const op = await openMoveDialog({
     scopes: moveTree(),
     source: { slotId, title: findPanel(slotId)?.api.title ?? slotId, scope, frameId: frame.id },
-    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] : 'question' },
+    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] : notes.has(id) ? 'note-pencil' : 'question' },
     ...(mode ? { mode } : {}),
   })
   if (op) await runMove(op, slotId)
@@ -747,7 +801,7 @@ async function runMove(op: MoveOp, slotId: string): Promise<boolean> {
     return true
   }
   const visible = op.scope === (drawer.isOpen ? DRAWER_SCOPE : desks.activeDeskId)
-  if (visible && op.op.startsWith('pane')) { findPanel(slotId)?.api.setActive(); panels.get(slotId)?.focus() }
+  if (visible && op.op.startsWith('pane')) { findPanel(slotId)?.api.setActive(); focusPane(slotId) }
   return true
 }
 
@@ -1303,8 +1357,13 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
  */
 function showTabMenu(slotId: string, x: number, y: number): void {
   const slot = slots.get(slotId)
-  if (!slot) return
   const panel = findPanel(slotId)
+  if (!slot) {
+    if (!notes.has(slotId)) return
+    panel?.api.setActive()
+    showNoteMenu(slotId, x, y)
+    return
+  }
   panel?.api.setActive()
   showContextMenu(x, y, [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
@@ -1324,6 +1383,153 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     SEP,
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
+}
+
+/** The note's tab menu: new things next to it, the file (rename, save as, its folder), where it lives, close. */
+function showNoteMenu(id: string, x: number, y: number): void {
+  const note = notes.get(id)
+  if (!note) return
+  showContextMenu(x, y, [
+    { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: id }) } },
+    { icon: 'note-pencil', label: 'Nova nota', run: () => { void newNote() } },
+    SEP,
+    { icon: 'pencil-simple', label: 'Renomear…', run: () => noteTabs.get(id)?.startRename() },
+    { icon: 'floppy-disk', label: 'Salvar nota como…', run: () => { void saveNoteAs(id) } },
+    { icon: 'copy', label: 'Copiar caminho da nota', run: () => window.tether.writeClipboard(note.path) },
+    { icon: 'folder-open', label: 'Abrir pasta da nota no Explorer', run: () => { void window.tether.openPath(noteDirOf(note.path)).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) }) } },
+    SEP,
+    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
+    SEP,
+    { icon: 'x', label: 'Fechar nota', run: () => closeNote(id) },
+  ])
+}
+
+// ---------- notes (F5) ----------
+// A note is a pane with a file instead of a slot (app/renderer/note-panel.ts). Its text is written by the panel
+// itself; here live the ways a note is born (new, opened from the disk), its file operations through the tab, and
+// what the layout keeps of it (the view state goes to the pane params and is saved with the layout).
+
+/** What the panels need from the renderer. */
+const noteHost: NoteHost = {
+  getScheme: () => theme.scheme,
+  getAppearance: () => appearance,
+  onFocus: (panel, focused) => {
+    // The actions stay registered while the focus is on a transient surface (the palette lists them); the next
+    // focused note replaces them, and a disposed note removes its own.
+    if (focused) { editorCommandsOff?.(); editorCommandsOff = commands.register(...panel.commands()); editorCommandsOwner = panel }
+    else if (editorCommandsOwner === panel && !panel.editor) { editorCommandsOff?.(); editorCommandsOff = undefined; editorCommandsOwner = undefined }
+  },
+  onViewChange: panel => {
+    const p = findPanel(panel.id)
+    if (!p) return
+    const view = panel.viewState()
+    p.api.updateParameters(withNote(p.params, { path: panel.path, ...(view ? { view } : {}) }))
+    scheduleSave()
+  },
+  onDirtyChange: panel => noteTabs.get(panel.id)?.render(),
+  askConflict: panel => askDialog(noteConflictSituation(panel.path)).then(a => (a.choice === 'reload' ? 'reload' : 'keep')),
+  onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
+  onRename: (id, name) => { void renameNote(id, name) },
+  onClose: id => closeNote(id),
+}
+let editorCommandsOwner: NotePanel | undefined
+
+/** Adds the pane of a note (in the reference's group, or the active one of where the user is). */
+function addNotePanel(path: string, reference?: string): IDockviewPanel {
+  const id = newNotePanelId()
+  const useDrawer = reference ? inDrawer(reference) : drawer.isOpen
+  const panel = (useDrawer ? drawer.desk : desks).addPanel({
+    id, component: NOTE_COMPONENT, tabComponent: NOTE_TAB, title: noteTitle(path), params: withNote(undefined, { path }),
+  }, undefined, reference)
+  panel.api.setActive()
+  scheduleSave()
+  return panel
+}
+
+/** The folder a new note belongs to: the active pane's opening folder (a terminal's cwd; a note's own repository), or none. */
+function paneCwdForNote(): string | undefined {
+  const active = currentDesk().activePanel
+  if (!active) return undefined
+  const slot = slots.get(active.id)
+  if (slot) return slot.cwd
+  const note = notes.get(active.id)
+  return note ? paneCwdOfNote(note.path) : undefined
+}
+
+/** "Nova nota": a file under the active pane's folder (`.tether/notes/`), opened beside it; in a git repository, the `.gitignore` question once. */
+async function newNote(): Promise<void> {
+  const reference = currentDesk().activePanel?.id
+  const prepared = await window.tether.notePrepare(paneCwdForNote())
+  const panel = addNotePanel(prepared.path, reference)
+  requestAnimationFrame(() => focusPane(panel.id))
+  if (prepared.askGitignore) {
+    const answer = await askDialog(noteGitignoreSituation(prepared.askGitignore))
+    await window.tether.noteGitignore(prepared.askGitignore, answer.choice === 'add')
+    focusPane(panel.id)
+  }
+}
+
+/** The open note showing `path`, if any (paths compared case-insensitively: Windows). */
+function noteByPath(path: string): NotePanel | undefined {
+  const key = path.toLowerCase()
+  for (const n of notes.values()) if (n.path.toLowerCase() === key) return n
+  return undefined
+}
+
+/** "Abrir nota…": the OS file dialog; a file already open is focused instead of opened twice. */
+async function openNote(path?: string): Promise<void> {
+  const reference = currentDesk().activePanel?.id
+  const picked = path ?? await window.tether.notePickOpen(paneCwdForNote())
+  if (!picked) return
+  const existing = noteByPath(picked)
+  if (existing) { findPanel(existing.id)?.api.setActive(); existing.focus(); return }
+  const panel = addNotePanel(picked, reference)
+  requestAnimationFrame(() => focusPane(panel.id))
+}
+
+/** "Salvar nota como…": the OS save dialog; the note moves to the chosen file (the old one stays as it was). */
+async function saveNoteAs(id = activeNoteId()): Promise<void> {
+  const note = id ? notes.get(id) : undefined
+  if (!note) return
+  const picked = await window.tether.notePickSaveAs(note.path)
+  if (!picked || picked === note.path) { note.focus(); return }
+  await note.saveAs(picked)
+  noteTabs.get(note.id)?.render()
+  note.focus()
+}
+
+/** The active pane when it is a note (the keyboard's last owner when the active pane is not conclusive). */
+function activeNoteId(): string | undefined {
+  const active = currentDesk().activePanel
+  if (active && notes.has(active.id)) return active.id
+  if (editorCommandsOwner && notes.has(editorCommandsOwner.id)) return editorCommandsOwner.id
+  return undefined
+}
+
+/** The tab's rename: the file is renamed in its folder (`.md` added when missing); a refusal keeps the old name. */
+async function renameNote(id: string, typed: string): Promise<void> {
+  const note = notes.get(id)
+  const name = cleanNoteName(typed)
+  if (!note || !name || name === noteTitle(note.path)) return
+  const dir = noteDirOf(note.path)
+  const sep = note.path.includes('\\') ? '\\' : '/'
+  const to = dir ? `${dir}${sep}${name}` : name
+  const r = await window.tether.noteRename(note.path, to)
+  if (!r.ok) { console.warn(`renomear nota: ${r.message}`); return }
+  note.setPath(to)
+  noteTabs.get(id)?.render()
+}
+
+/** The tab's ×: the pane goes (its text is already on disk; the panel flushes what is pending). */
+function closeNote(id: string): void {
+  const panel = findPanel(id)
+  if (panel) removeAnyPanel(panel)
+}
+
+/** Main's watcher saw the file change: the note that shows it decides (reload, keep, or ask). */
+function onNoteChanged(path: string): void {
+  const note = noteByPath(path)
+  if (note) void note.onExternalChange()
 }
 
 // ---------- profiles ----------
@@ -1513,12 +1719,12 @@ async function onEdge(target: Target, op: 'duplicate' | 'choose', frameId: strin
 const commandHost: CommandHost = {
   newPanel: opts => { void openNewDialog(opts) },
   duplicateActive: target => { void duplicateActive(target) },
-  activePane: () => { const a = currentDesk().activePanel; return a && slots.has(a.id) ? a.id : undefined },
-  renamePane: id => tabs.get(id)?.startRename(),
+  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id)) ? a.id : undefined },
+  renamePane: id => (notes.has(id) ? noteTabs.get(id)?.startRename() : tabs.get(id)?.startRename()),
   switchProfile: id => { void switchProfile(id) },
-  toggleDetails: id => togglePaneDetails(id),
-  copyFolder: id => copyFolder(id),
-  openFolder: id => openFolder(id),
+  toggleDetails: id => { if (!notes.has(id)) togglePaneDetails(id) },
+  copyFolder: id => { const n = notes.get(id); if (n) window.tether.writeClipboard(noteDirOf(n.path)); else copyFolder(id) },
+  openFolder: id => { const n = notes.get(id); if (n) void window.tether.openPath(noteDirOf(n.path)); else openFolder(id) },
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
   createDesk: side => { desks.create(side) },
@@ -1538,6 +1744,9 @@ const commandHost: CommandHost = {
   quitAll: () => window.tether.command('quit-all'),
   restartDaemon: () => window.tether.command('restart-daemon'),
   showPalette: mode => palette.show(mode),
+  newNote: () => { void newNote() },
+  openNote: () => { void openNote() },
+  saveNoteAs: () => { void saveNoteAs() },
 }
 
 /** Something modal of ours is up: app chords stay quiet (the palette has its own keys). */
@@ -1723,7 +1932,10 @@ function setupUi(): void {
   document.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') { drawerEscapeOutside(ev); return }
     const target = ev.target instanceof Element ? ev.target : undefined
-    const shortcut = target?.closest('.xterm') ? (o => o.owner === 'app' ? o.shortcut : undefined)(terminalKeyOwner(ev)) : shortcutOf(ev)
+    // Inside a note's editor the editor's chords win (key-capture.ts editorKeyOwner); Monaco already stopped the ones it handled.
+    const shortcut = target?.closest('.xterm') ? (o => o.owner === 'app' ? o.shortcut : undefined)(terminalKeyOwner(ev))
+      : target?.closest('[data-editor]') ? (o => o.owner === 'app' ? o.shortcut : undefined)(editorKeyOwner(ev))
+      : shortcutOf(ev)
     if (!shortcut) return
     if (modalOpen()) return
     const command = commands.byShortcut(shortcut)
@@ -1735,6 +1947,9 @@ function setupUi(): void {
   // Back to the window: the pane in front of the user is seen.
   window.addEventListener('focus', () => markSeenIfWatched())
   document.addEventListener('visibilitychange', () => markSeenIfWatched())
+  // The page goes (window closed, reload): every note's pending text is written.
+  window.addEventListener('beforeunload', () => { for (const n of notes.values()) n.flush() })
+  window.tether.onNoteChanged(onNoteChanged)
 }
 
 // Test hooks (Playwright reads these through page.evaluate).
@@ -1847,6 +2062,15 @@ declare global {
       palette(): { open: boolean; mode?: PaletteMode; shown: string[]; input: string }
       /** Opens the palette as the chord does. */
       showPalette(mode?: PaletteMode): void
+      /** The note panes: file, text, what is on disk, cursor, selections, scroll, focus. */
+      notes(): NoteSnapshot[]
+      note(id: string): NoteSnapshot | undefined
+      /** "Nova nota" as the command does (beside the active pane, the folder rule applied). */
+      newNote(): Promise<void>
+      /** Opens a note by path, as "Abrir nota…" does after the file dialog. */
+      openNote(path: string): Promise<void>
+      /** The ids of the editor actions registered as commands right now. */
+      editorCommandIds(): string[]
     }
   }
 }
@@ -1973,6 +2197,11 @@ function setupTestHooks(): void {
     runCommand: id => commands.run(id, 'cli'),
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
+    notes: () => [...notes.values()].map(n => n.snapshot()),
+    note: id => notes.get(id)?.snapshot(),
+    newNote,
+    openNote: path => openNote(path),
+    editorCommandIds: () => commands.all().filter(c => c.id.startsWith('editor.')).map(c => c.id),
     cellSize: slotId => {
       const term = panels.get(slotId)?.term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } } | undefined
       return term?._core?._renderService?.dimensions?.css?.cell
