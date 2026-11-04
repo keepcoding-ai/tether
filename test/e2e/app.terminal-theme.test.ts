@@ -185,7 +185,7 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
 
     // 2. The dialog from the ≡ menu; the sample shows the palette and the box drawing.
     await page.click('#btn-menu')
-    await page.click('#app-menu li[data-cmd="terminal-theme"]')
+    await page.click('#app-menu li[data-command="terminal.theme"]')
     await page.waitForSelector('#dlg-term-theme[open]')
     const sample = (await hooks.sample(page))!
     assert.match(sample.text, /vermelho .*verde .*amarelo/)

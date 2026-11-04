@@ -406,7 +406,7 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     // The desk line: off through ≡, saved in settings.json, still off after a relaunch.
     await assertDeskLine(page)
     await page.click('#btn-menu')
-    await page.click('#app-menu li[data-cmd="desk-line"]')
+    await page.click('#app-menu li[data-command="ui.desk-line"]')
     await page.waitForFunction(() => !window.__tether.deskLine())
     assert.equal(await page.locator('#dock').evaluate(el => window.getComputedStyle(el, '::before').content), 'none', 'the line is gone')
     assert.equal(JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui?.deskLine, false, 'settings.json ui.deskLine')
@@ -415,9 +415,9 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     ;({ app, page } = await launch(home))
     await page.waitForFunction(() => window.__tether.desks().length > 1)
     assert.equal(await page.evaluate(() => window.__tether.deskLine()), false, 'still off after relaunch')
-    assert.equal(await page.locator('#app-menu li[data-cmd="desk-line"]').getAttribute('aria-checked'), 'false')
+    assert.equal(await page.locator('#app-menu li[data-command="ui.desk-line"]').getAttribute('aria-checked'), 'false')
     await page.click('#btn-menu')
-    await page.click('#app-menu li[data-cmd="desk-line"]')
+    await page.click('#app-menu li[data-command="ui.desk-line"]')
     await page.waitForFunction(() => window.__tether.deskLine())
     await assertDeskLine(page)
   } finally {

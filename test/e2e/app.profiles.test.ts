@@ -372,7 +372,7 @@ test('profiles in the app: Novo painel by profile, unsafe badge, Git Bash, manag
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
     assert.equal(await page.getAttribute('#btn-menu', 'aria-expanded'), 'true')
-    await page.click('#app-menu li[data-cmd="quit-all"]')
+    await page.click('#app-menu li[data-command="app.quit-all"]')
     let quit = hooks.dialog(page, 'quit-all')
     await quit.waitFor()
     assert.equal(await quit.locator('button.choice.safe.default[data-choice="close-window"]').count(), 1)

@@ -163,7 +163,7 @@ test('move dialog: pane beside / as a tab / drawer in and out / whole frame, sam
     // ---- 3. b as a tab of c's group, from the ≡ menu (b is the active pane of desk 1) ----
     console.log('step 3')
     await page.click('#btn-menu')
-    await page.click('#app-menu li[data-cmd="move"]')
+    await page.click('#app-menu li[data-command="pane.move"]')
     await dialogOpen(page)
     await page.click('dialog.move .mv-row.f[data-scope="desk-2"]')
     const cGroup = (await h.tree(page)).find(s => s.id === 'desk-2')!.frames[0]!

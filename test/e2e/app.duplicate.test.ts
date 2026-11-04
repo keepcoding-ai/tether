@@ -344,9 +344,9 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     // ---- 5. both operations in the ≡ menu and in the tab menu; the tab's "Novo painel…" is relative to that tab ----
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    assert.equal(await page.locator('#app-menu li[data-cmd="new"]').textContent(), 'Novo painel…Ctrl+Shift+T')
-    assert.equal(await page.locator('#app-menu li[data-cmd="duplicate-right"]').getAttribute('aria-disabled'), 'false')
-    assert.equal(await page.locator('#app-menu li[data-cmd="duplicate-below"]').count(), 1)
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new"]').textContent(), 'Novo painel…Ctrl+Shift+T')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.duplicate.pane.right"]').getAttribute('aria-disabled'), 'false')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.duplicate.pane.below"]').count(), 1)
     await page.keyboard.press('Escape')
     await page.waitForSelector('#app-menu[hidden]', { state: 'attached' })
     // Panel 1 is alone in its group: its tab is the one in the group that holds its content.
