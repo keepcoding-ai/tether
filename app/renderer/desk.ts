@@ -234,6 +234,21 @@ export class Desk {
     this.frameOf(panel.id)?.dock.removePanel(panel)
   }
 
+  /**
+   * Puts a new pane where `oldId` is (same group, same tab index) and removes the old one: how an empty pane
+   * becomes what the person chose in it. Undefined when `oldId` is not here.
+   */
+  replacePanel(oldId: string, options: AddPanelOptions): IDockviewPanel | undefined {
+    const frame = this.frameOf(oldId)
+    const old = frame?.dock.getPanel(oldId)
+    if (!frame || !old) return undefined
+    const index = old.group.panels.indexOf(old)
+    const panel = frame.dock.addPanel({ ...options, position: { referencePanel: oldId, direction: 'within', ...(index >= 0 ? { index } : {}) } } as AddPanelOptions)
+    frame.dock.removePanel(old)
+    this.activeFrameId = frame.id
+    return panel
+  }
+
   // ---------- persistence ----------
 
   toJSON(): DeskLayout {

@@ -47,6 +47,11 @@ export const LEVEL_HINT: Record<Level, string> = {
 export const NEW_PANEL_LABEL = 'Novo painel…'
 export const DUPLICATE_LABEL = 'Duplicar painel'
 export const NEW_FRAME_LABEL = 'Novo quadro'
+/** The empty pane (app/shared/empty.ts): "Dividir à direita (vazio)", "Novo quadro vazio à direita", "Nova mesa vazia". */
+export const SPLIT_EMPTY_LABEL = 'Dividir'
+export const EMPTY_SUFFIX = '(vazio)'
+export const NEW_EMPTY_FRAME_LABEL = 'Novo quadro vazio'
+export const NEW_EMPTY_DESK_LABEL = 'Nova mesa vazia'
 
 /** The arrow glyph of a direction, for shortcut hints ("Ctrl+Alt+→"). */
 export const DIRECTION_ARROW: Record<Direction, string> = { left: '←', right: '→', above: '↑', below: '↓' }

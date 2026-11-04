@@ -149,6 +149,12 @@ export class DeskSet {
     if (id) this.mounted.get(id)!.desk.removePanel(panel)
   }
 
+  /** A new pane in the place of `oldId` (Desk.replacePanel), in whichever desk holds it. */
+  replacePanel(oldId: string, options: AddPanelOptions): IDockviewPanel | undefined {
+    const id = this.deskOf(oldId)
+    return id ? this.mounted.get(id)!.desk.replacePanel(oldId, options) : undefined
+  }
+
   /**
    * Moves a pane to desk `to` (a tab in the target's active frame). The pane is removed first, so its terminal
    * detaches before the new one attaches (the daemon keeps one subscription per client and slot); if the add

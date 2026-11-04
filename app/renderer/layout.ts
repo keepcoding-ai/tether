@@ -7,7 +7,7 @@
 // that end up empty; a frame's root must stay a branch (dockview refuses a leaf there).
 import type { SerializedDockview, SerializedGridviewComponent } from 'dockview-core'
 import type { Direction } from './create.ts'
-import { isNotePanelId } from '../shared/notes.ts'
+import { isSlotlessPanelId } from '../shared/empty.ts'
 import { type DeskHue, DEFAULT_DESK_HUE, readDeskColor } from './desks.ts'
 
 export const LAYOUT_VERSION = 2
@@ -281,17 +281,17 @@ export function nextFrameId(grid: FrameGrid): string {
 /**
  * Panel ids the daemon does not know, given what it answered. An empty list is never trusted: a daemon that
  * just came back (or a `list` that failed upstream) must not make the app drop every panel it is showing.
- * A note pane (app/shared/notes.ts) has no slot by design: it is never an orphan.
+ * A note pane (app/shared/notes.ts) or an empty pane (app/shared/empty.ts) has no slot by design: never an orphan.
  */
 export function orphanedPanels(panelIds: Iterable<string>, known: Set<string>): string[] {
   if (known.size === 0) return []
-  return [...panelIds].filter(id => !known.has(id) && !isNotePanelId(id))
+  return [...panelIds].filter(id => !known.has(id) && !isSlotlessPanelId(id))
 }
 
-/** `known` plus every note pane of the layout: what pruning keeps. */
-function knownWithNotes(layout: LayoutV2, known: Set<string>): Set<string> {
+/** `known` plus every slotless pane (notes, empty panes) of the layout: what pruning keeps. */
+function knownWithSlotless(layout: LayoutV2, known: Set<string>): Set<string> {
   const out = new Set(known)
-  for (const id of allPanelIds(layout)) if (isNotePanelId(id)) out.add(id)
+  for (const id of allPanelIds(layout)) if (isSlotlessPanelId(id)) out.add(id)
   return out
 }
 
@@ -315,7 +315,7 @@ export function planRestore(saved: unknown, known: Set<string>): RestorePlan {
   const orphaned = orphanedPanels(allPanelIds(read.layout), known)
   // Nothing to prune: the saved v2 object itself (its `drawer` may be null; drawerOf reads that as empty).
   if (orphaned.length === 0) return { layout: isLayoutV2(saved) && read.layout.desks === saved.desks ? saved : read.layout, migrated: read.migrated, orphaned }
-  return { layout: pruneLayoutV2(read.layout, knownWithNotes(read.layout, known)).layout, migrated: read.migrated, orphaned }
+  return { layout: pruneLayoutV2(read.layout, knownWithSlotless(read.layout, known)).layout, migrated: read.migrated, orphaned }
 }
 
 /**

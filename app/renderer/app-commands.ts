@@ -3,7 +3,7 @@
 // the tests name them); titles are what the palette and the menu show. Add an action here first: the palette,
 // the menu and the chord follow.
 import type { Command } from './commands.ts'
-import { DIRECTIONS, DUPLICATE_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, type Direction, type Target } from './create.ts'
+import { DIRECTIONS, DUPLICATE_LABEL, EMPTY_SUFFIX, NEW_EMPTY_DESK_LABEL, NEW_EMPTY_FRAME_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
 import type { FontSizeCommand } from '../shared/font.ts'
 import type { ThemeSetting } from '../shared/theme.ts'
 import type { Level } from './shortcuts.ts'
@@ -12,6 +12,10 @@ import type { PaletteMode } from './palette-rules.ts'
 export interface CommandHost {
   newPanel(opts?: { target?: Target }): void
   duplicateActive(target: Target): void
+  /** An empty pane (app/shared/empty.ts) relative to the active pane: beside it, at its frame's edge, or in a new frame at the desk's edge. */
+  splitEmpty(target: Target): void
+  /** A new desk after the current one, holding one empty pane. */
+  newEmptyDesk(): void
   /** The pane the pane-level commands act on (the current desk's active pane), or undefined. */
   activePane(): string | undefined
   renamePane(id: string): void
@@ -63,12 +67,29 @@ export function appCommands(host: CommandHost): Command[] {
     ...pane,
     run: () => host.duplicateActive({ level, placement: direction }),
   })))
+  // The empty pane: "Dividir à direita (vazio)" beside the pane (the chord), "Dividir na borda do quadro, à direita (vazio)"
+  // (no chord: the frame level's +Shift is taken), "Novo quadro vazio à direita" (a frame at the desk's edge).
+  const splits = (['pane', 'frame'] as const).flatMap(level => DIRECTIONS.map((direction: Direction): Command => ({
+    id: `pane.split-empty.${level}.${direction}`,
+    title: `${SPLIT_EMPTY_LABEL} ${LEVEL_WORDING[level]}${PLACEMENT_LABEL[direction]} ${EMPTY_SUFFIX}`,
+    group: GROUP.pane, icon: 'plus',
+    ...(level === 'pane' ? { shortcut: { op: 'split-empty', direction } as const } : {}),
+    run: () => host.splitEmpty({ level, placement: direction }),
+  })))
+  const emptyFrames = DIRECTIONS.map((direction: Direction): Command => ({
+    id: `frame.new-empty.${direction}`,
+    title: `${NEW_EMPTY_FRAME_LABEL} ${PLACEMENT_LABEL[direction]}`,
+    group: GROUP.frame, icon: 'columns',
+    run: () => host.splitEmpty({ level: 'desk', placement: direction }),
+  }))
   return [
     // ----- pane -----
     { id: 'pane.new', title: NEW_PANEL_LABEL, group: GROUP.pane, icon: 'plus', shortcut: { op: 'choose' }, run: () => host.newPanel() },
     ...duplicates,
+    ...splits,
     { id: 'pane.new-at-frame-edge', title: 'Novo painel na borda do quadro…', group: GROUP.pane, icon: 'square-half', run: () => host.newPanel({ target: { level: 'frame', placement: 'right' } }) },
     { id: 'frame.new', title: `${NEW_FRAME_LABEL}…`, group: GROUP.frame, icon: 'columns', run: () => host.newPanel({ target: { level: 'desk', placement: 'right' } }) },
+    ...emptyFrames,
     { id: 'pane.rename', title: 'Renomear painel…', group: GROUP.pane, icon: 'pencil-simple', ...pane, run: withPane(id => host.renamePane(id)) },
     { id: 'pane.switch-profile', title: 'Trocar perfil do painel…', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.switchProfile(id)) },
     { id: 'pane.details', title: 'Mostrar ou ocultar a barra de status do painel', group: GROUP.pane, icon: 'rows', shortcut: { op: 'pane-details' }, ...pane, run: withPane(id => host.toggleDetails(id)) },
@@ -83,6 +104,7 @@ export function appCommands(host: CommandHost): Command[] {
     // ----- desk -----
     { id: 'desk.new', title: 'Nova mesa', group: GROUP.desk, icon: 'cards', shortcut: { op: 'desk-new', side: 'after' }, when: ctx => !ctx.drawerOpen, run: () => host.createDesk('after') },
     { id: 'desk.new-before', title: 'Nova mesa antes desta', group: GROUP.desk, icon: 'arrow-line-left', shortcut: { op: 'desk-new', side: 'before' }, when: ctx => !ctx.drawerOpen, run: () => host.createDesk('before') },
+    { id: 'desk.new-empty', title: NEW_EMPTY_DESK_LABEL, group: GROUP.desk, icon: 'cards', when: ctx => !ctx.drawerOpen, run: () => host.newEmptyDesk() },
     { id: 'desk.next', title: 'Próxima mesa', group: GROUP.desk, icon: 'arrow-right', shortcut: { op: 'desk-cycle', step: 1 }, when: ctx => !ctx.drawerOpen && ctx.desks > 1, run: () => host.cycleDesk(1) },
     { id: 'desk.previous', title: 'Mesa anterior', group: GROUP.desk, icon: 'arrow-left', shortcut: { op: 'desk-cycle', step: -1 }, when: ctx => !ctx.drawerOpen && ctx.desks > 1, run: () => host.cycleDesk(-1) },
     ...DESK_POSITIONS.map((position): Command => ({

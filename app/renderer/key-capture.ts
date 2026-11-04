@@ -31,18 +31,19 @@ export type KeyOwner = { owner: 'terminal' } | { owner: 'app'; shortcut: AppShor
 export type EditorKeyOwner = { owner: 'editor' } | { owner: 'app'; shortcut: AppShortcut }
 
 /**
- * Inside the note's editor (Monaco), the chords VS Code gives the editor win over the app's: every Alt + arrow
- * combination (Ctrl+Alt+↑/↓ add a cursor, Ctrl+Shift+Alt+arrows select a column, Shift+Alt+↑/↓ copy the line,
- * Shift+Alt+←/→ shrink/expand the selection, Alt+↑/↓ move the line). Those are the app's "duplicate" chords at
- * the three levels; with a note in focus they are left to the editor, and duplicating goes by the palette, the
- * menu or the mouse. Every other app chord (Ctrl+Shift+T, Ctrl+Tab, Ctrl+1…9, Ctrl+`, Ctrl+Shift+P, Ctrl+P, the
- * font size) is the app's, as in VS Code where they belong to the workbench, not the editor. Monaco stops the
- * propagation of the keys it binds itself, so this rule only matters for the chords it leaves alone.
+ * Inside the note's editor (Monaco), the chords VS Code gives the editor win over the app's: every chord on an
+ * arrow key (Ctrl+Alt+↑/↓ add a cursor, Ctrl+Shift+Alt+arrows select a column, Shift+Alt+↑/↓ copy the line,
+ * Shift+Alt+←/→ shrink/expand the selection, Alt+↑/↓ move the line, Ctrl+Shift+arrows select by word). Those are
+ * the app's "duplicate" chords at the three levels and the "split empty" chord; with a note in focus they are
+ * left to the editor, and splitting goes by the palette, the menu or the mouse. Every other app chord
+ * (Ctrl+Shift+T, Ctrl+Tab, Ctrl+1…9, Ctrl+`, Ctrl+Shift+P, Ctrl+P, the font size) is the app's, as in VS Code
+ * where they belong to the workbench, not the editor. Monaco stops the propagation of the keys it binds itself,
+ * so this rule only matters for the chords it leaves alone.
  */
 export function editorKeyOwner(ev: KeyLike, mac = IS_MAC): EditorKeyOwner {
   const shortcut = shortcutOf(ev, mac)
   if (!shortcut) return { owner: 'editor' }
-  if (ev.altKey && /^Arrow(Up|Down|Left|Right)$/.test(ev.code)) return { owner: 'editor' }
+  if (/^Arrow(Up|Down|Left|Right)$/.test(ev.code)) return { owner: 'editor' }
   return { owner: 'app', shortcut }
 }
 

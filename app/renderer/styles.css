@@ -1052,3 +1052,22 @@ dialog.ask.move .primary { display: inline-flex; align-items: center; gap: 8px; 
 dialog.ask.move .primary kbd { color: var(--on-accent); background: color-mix(in srgb, var(--on-accent) 15%, transparent); border-color: color-mix(in srgb, var(--on-accent) 35%, transparent); }
 dialog.ask.move .primary:disabled { opacity: .45; cursor: not-allowed; background: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .mv-row .chev .ph, .mv-pn .pv, .mv-dia .z, .mv-dia .oz { transition: none; } }
+
+/* --- the chooser's "Onde": what each level means, visible under its label --- */
+.placement-group { position: relative; padding-bottom: 14px; }
+.placement-hint { position: absolute; left: 0; bottom: 0; font-size: 10.5px; color: var(--fg-dim); white-space: nowrap; }
+
+/* --- empty pane (app/renderer/empty-panel.ts): the chooser inside the pane, the dialog's pieces without the "Onde" row --- */
+.empty-panel { height: 100%; min-height: 0; overflow: auto; background: var(--frame-bg); color: var(--fg); display: flex; justify-content: center; }
+.empty-panel .chooser { width: 100%; max-width: 520px; margin: 0 auto; padding: 18px 22px 22px; display: flex; flex-direction: column; align-self: flex-start; }
+.empty-panel .chooser h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.empty-panel .chooser h3 .ph { width: 16px; height: 16px; color: var(--accent); }
+.empty-panel .chooser .profile-groups { margin-bottom: 14px; }
+.empty-panel .chooser .error { margin: 0 0 8px; color: var(--err); font-size: 12px; }
+.empty-panel .chooser .error[hidden] { display: none; }
+.empty-panel .chooser footer.actions { margin-top: 4px; }
+.tether-tab.empty .kind .ph { color: var(--fg-dim); }
+.tether-tab.empty .text { color: var(--fg-dim); font-style: italic; }
+.empty-panel .chooser .row { min-width: 0; }
+.empty-panel .chooser input[type="text"] { min-width: 0; width: 0; }
+.empty-panel .chooser .recent li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

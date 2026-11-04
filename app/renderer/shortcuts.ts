@@ -10,6 +10,11 @@
 //   level pane   Ctrl+Alt+Arrow         duplicate beside the focused pane (Ctrl+Shift+D / E: right / below aliases)
 //   level frame  Ctrl+Alt+Shift+Arrow   duplicate at the frame's edge (full height or width of the frame)
 //   level desk   Alt+Shift+Arrow        duplicate into a new frame at the desk's edge
+//   split empty  Ctrl+Shift+Arrow       an empty pane (chooser inside it) beside the focused pane. "Duplicate + Shift"
+//                was the wish, but the pane level's +Shift is already the frame level; Ctrl+Shift+Arrow is the free
+//                arrow chord of the app's own Ctrl+Shift family (xterm has no use for it; PSReadLine's
+//                Ctrl+Shift+←/→ word selection is what it costs). The frame and desk levels of the empty pane
+//                have no chord: the palette, the chooser's "Vazio" and the "+" at the edges reach them.
 //   desks        Ctrl+Tab / Ctrl+Shift+Tab next / previous desk (sequential, wraps) · Ctrl+1…9 desk by position
 //                Ctrl+Alt+N new desk after the current one · Ctrl+Alt+Shift+N before it
 //   Ctrl+Shift+T chooser · Ctrl+Shift+Q quit all · Ctrl+Shift+H show/hide the active pane's header details
@@ -49,6 +54,7 @@ export const LEVELS: readonly Level[] = ['pane', 'frame', 'desk']
 export type AppShortcut =
   | { op: 'choose' }
   | { op: 'duplicate'; level: Level; direction: Direction }
+  | { op: 'split-empty'; direction: Direction }
   | { op: 'quit-all' }
   | { op: 'desk-cycle'; step: 1 | -1 }
   | { op: 'desk-go'; position: number }
@@ -105,6 +111,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   { chord: { mod: true, shift: true, code: 'KeyE' }, mac: { meta: true, code: 'KeyE' }, command: { op: 'duplicate', level: 'pane', direction: 'below' } },
   ...arrows({ mod: true, alt: true, shift: true }, 'frame'),
   ...arrows({ alt: true, shift: true }, 'desk'),
+  ...DIRECTIONS.map((direction): ShortcutEntry => ({ chord: { mod: true, shift: true, code: ARROW_CODE[direction] }, command: { op: 'split-empty', direction } })),
   { chord: { mod: true, shift: true, code: 'KeyQ' }, command: { op: 'quit-all' } },
   // Cmd+Tab is the Mac's app switcher: the desk cycle keeps a literal Ctrl everywhere.
   { chord: { ctrl: true, code: 'Tab' }, command: { op: 'desk-cycle', step: 1 } },
@@ -233,6 +240,7 @@ export function chordLabel(chord: Chord, mac = IS_MAC): string {
 export function sameShortcut(a: AppShortcut, b: AppShortcut): boolean {
   if (a.op !== b.op) return false
   if (a.op === 'duplicate' && b.op === 'duplicate') return a.level === b.level && a.direction === b.direction
+  if (a.op === 'split-empty' && b.op === 'split-empty') return a.direction === b.direction
   if (a.op === 'desk-cycle' && b.op === 'desk-cycle') return a.step === b.step
   if (a.op === 'desk-go' && b.op === 'desk-go') return a.position === b.position
   if (a.op === 'desk-new' && b.op === 'desk-new') return a.side === b.side
