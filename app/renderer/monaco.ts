@@ -93,6 +93,15 @@ monaco.languages.setMonarchTokensProvider('json', {
   },
 })
 
+/**
+ * Monaco caches the width of a character per font key. An editor created before its web font loaded cached the
+ * fallback font's widths, so the caret (placed by those widths) drifts right of the painted text as the line grows.
+ * Dropping the cache makes every editor measure the font that is rendered now.
+ */
+export function remeasureEditorFonts(): void {
+  monaco.editor.remeasureFonts()
+}
+
 export const THEME_NAME: Record<ColorScheme, string> = { light: 'tether-light', dark: 'tether-dark' }
 
 /** `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()` → `#rrggbb[aa]` (Monaco wants hex); anything else → undefined. */

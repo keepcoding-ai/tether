@@ -18,7 +18,7 @@ import { editorChordCommand, editorKeybindings, runEditorChord } from './monaco-
 import { formatKeybindingsFile, mergeKeybindings, overridesFor, parseKeybindingsFile } from './keybindings-rules.ts'
 import { KeybindingsPanel, KeybindingsTab, type FixedBinding, type KeybindingsHost, type KeybindingsSnapshot } from './keybindings-panel.ts'
 import { isKeybindingsPanelId, KEYBINDINGS_COMPONENT, KEYBINDINGS_TAB, KEYBINDINGS_TITLE, newKeybindingsPanelId, type KeybindingsFileState } from '../shared/keybindings.ts'
-import { defineTheme, monaco } from './monaco.ts'
+import { defineTheme, monaco, remeasureEditorFonts } from './monaco.ts'
 import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
 import { paneCwdOfNote } from './note-rules.ts'
 import { PreviewPanel, PreviewTab, type PreviewHost, type PreviewSnapshot } from './preview-panel.ts'
@@ -114,7 +114,10 @@ let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-sc
 let appearance: TerminalAppearance = DEFAULT_APPEARANCE
 let themeDialog: TerminalThemeDialog
 /** The saved appearance read and its font loaded: no panel opens before this, so xterm measures the real glyphs. */
-const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; await loadTerminalFonts(a) })
+const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; await loadTerminalFonts(a); remeasureEditorFonts() })
+// Note editors can be created (a restored layout) before the web font is in: Monaco then caches the fallback
+// font's character widths and draws the caret off the text. Whenever a face finishes loading, measure again.
+document.fonts.addEventListener('loadingdone', () => remeasureEditorFonts())
 /** Remembered dialog answers ("não perguntar de novo"); main owns the file and pushes every change. */
 let confirmations: Confirmations = {}
 /** The launch profiles (<home>/profiles.json), as last listed or pushed by the daemon's `profiles` event. */
@@ -281,13 +284,14 @@ function applyAppearance(a: TerminalAppearance): void {
 async function changeAppearance(a: TerminalAppearance): Promise<void> {
   await loadTerminalFonts(a)
   applyAppearance(a)
+  remeasureEditorFonts()
   window.tether.setTerminalAppearance(a)
 }
 
 /** Main pushed an appearance (the echo of ours, or another window's change): paint it once its font is loaded. */
 async function onAppearance(a: TerminalAppearance): Promise<void> {
   if (!terminalFontsLoaded(a)) await loadTerminalFonts(a)
-  if (JSON.stringify(a) !== JSON.stringify(appearance)) applyAppearance(a)
+  if (JSON.stringify(a) !== JSON.stringify(appearance)) { applyAppearance(a); remeasureEditorFonts() }
 }
 
 /** The host of one desk's frames (or the drawer's): the same dockview options everywhere; a "+" acts in its own desk. */
