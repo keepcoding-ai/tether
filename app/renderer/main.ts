@@ -21,7 +21,7 @@ import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empt
 import { type Choice, rememberProfile } from './chooser-rules.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
 import { CommandPalette } from './palette.ts'
-import { QuickOpen, quickOpenFailedSituation } from './quick-open.ts'
+import { type OpenFileOptions, QuickOpen, quickOpenFailedSituation } from './quick-open.ts'
 import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
@@ -193,6 +193,7 @@ const host: PanelHost = {
   onToggleDetails: id => togglePaneDetails(id),
   onOpenFolder: id => openFolder(id),
   onCopyFolder: id => copyFolder(id),
+  onOpenLink: (id, target) => openTerminalLink(id, target),
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
   isDaemonReady: () => daemonIsReady,
   daemonReady: () => daemonReadyPromise,
@@ -1685,7 +1686,7 @@ async function openNote(path?: string): Promise<void> {
  * Quick Open's text file: in the focused pane's tab group (or beside it), as a note tab that remembers the root it
  * was opened from (the next Ctrl+P from it searches the same folder); a tab already showing the file is focused.
  */
-function openQuickOpenFile(path: string, opts: { side: boolean; position?: { line: number; column?: number }; root: string }): void {
+function openQuickOpenFile(path: string, opts: OpenFileOptions): void {
   const existing = noteByPath(path)
   if (existing) {
     findPanel(existing.id)?.api.setActive()
@@ -1693,12 +1694,24 @@ function openQuickOpenFile(path: string, opts: { side: boolean; position?: { lin
     if (opts.position) existing.reveal(opts.position)
     return
   }
-  const reference = currentDesk().activePanel?.id
+  const reference = opts.reference ?? currentDesk().activePanel?.id
   const options = { ...notePanelOptions(path), params: withNote(undefined, { path, ...(opts.root ? { cwd: opts.root } : {}) }) }
   const panel = addPaneOptions(options, opts.side ? { level: 'pane', placement: 'right' } : undefined, reference)
   scheduleSave()
   if (opts.position) notes.get(panel.id)?.reveal(opts.position)
   requestAnimationFrame(() => focusPane(panel.id))
+}
+
+/**
+ * A path printed in a terminal was Ctrl+clicked (app/renderer/terminal-links.ts): a folder opens in the Explorer; a file
+ * opens the way Quick Open opens it, in the clicked pane's tab group, at the line and column the text names.
+ */
+function openTerminalLink(slotId: string, target: { path: string; isDirectory: boolean; position?: { line: number; column?: number } }): void {
+  if (target.isDirectory) {
+    void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(quickOpenFailedSituation(r.message)) })
+    return
+  }
+  void quickOpen.openFile(target.path, { side: false, root: paneCwdOf(slotId) ?? '', reference: slotId, ...(target.position ? { position: target.position } : {}) })
 }
 
 const quickOpen = new QuickOpen({

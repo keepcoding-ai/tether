@@ -7,6 +7,7 @@ import type { TerminalAppearance } from './terminal-theme.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 import type { UiSettings } from './ui-settings.ts'
 import type { QuickOpenResult, QuickOpenTarget } from './quick-open.ts'
+import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 
 export type { Profile, ProfileInput }
 
@@ -132,6 +133,8 @@ export interface TetherApi {
   quickOpenInspect(path: string): Promise<QuickOpenTarget>
   /** Opens a binary or too large file with the system's program (never one that would run). */
   quickOpenExternal(path: string): Promise<{ ok: true } | { ok: false; message: string }>
+  /** Ctrl+click on terminal paths (app/main/terminal-links-main.ts): the first candidate that exists, read against the pane's opening folder `cwd`; null when none does. */
+  resolveTerminalLink(cwd: string | undefined, candidates: string[]): Promise<ResolvedPath | null>
 }
 
 declare global {

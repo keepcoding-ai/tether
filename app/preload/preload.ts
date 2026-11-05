@@ -74,6 +74,7 @@ const api: TetherApi = {
   quickOpenEnd: () => ipcRenderer.send('quickopen:end'),
   quickOpenInspect: path => ipcRenderer.invoke('quickopen:inspect', path),
   quickOpenExternal: path => ipcRenderer.invoke('quickopen:open-external', path),
+  resolveTerminalLink: (cwd, candidates) => ipcRenderer.invoke('terminallinks:resolve', cwd, candidates),
 }
 
 contextBridge.exposeInMainWorld('tether', api)

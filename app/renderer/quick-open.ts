@@ -20,9 +20,19 @@ export interface QuickOpenHost {
   /** The focused pane's opening folder (a terminal's cwd, a note's folder, an empty pane's suggestion); undefined without a pane. */
   paneCwd(): string | undefined
   /** Opens a text file in a note tab: in the focused pane's group, or beside it (`side`); an open tab of the file is focused instead. */
-  openText(path: string, opts: { side: boolean; position?: LineColumn; root: string }): void
+  openText(path: string, opts: OpenFileOptions): void
   /** Something to say to the person (a file that could not be opened). */
   notify(message: string): void
+}
+
+/** Where and how a file opens (shared by Quick Open and a Ctrl+click on a path in a terminal). */
+export interface OpenFileOptions {
+  side: boolean
+  position?: LineColumn
+  /** The folder the file was reached from: the note remembers it as the root of its next Ctrl+P. */
+  root: string
+  /** The pane whose tab group receives the tab (default: the focused pane). */
+  reference?: string
 }
 
 export interface QuickOpenSearch {
@@ -131,11 +141,18 @@ export class QuickOpen {
   /** Opens the file of a row. */
   async open(path: string, side: boolean): Promise<void> {
     const position = this.last?.position
-    const root = this.last?.result.root ?? ''
+    await this.openFile(path, { side, root: this.last?.result.root ?? '', ...(position ? { position } : {}) })
+  }
+
+  /**
+   * Opens a file: text in a note tab (Monaco; a tab already showing it is focused and positioned), binary or above
+   * 5 MB with the system's program, never one that would run (main refuses it); what cannot be opened is said.
+   */
+  async openFile(path: string, opts: OpenFileOptions): Promise<void> {
     const target = await window.tether.quickOpenInspect(path)
     if (target.kind === 'text') {
       this.remember(path)
-      this.host.openText(path, { side, root, ...(position ? { position } : {}) })
+      this.host.openText(path, opts)
       return
     }
     if (target.kind === 'missing') { this.host.notify(`O arquivo não existe mais: ${path}`); return }

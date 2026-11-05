@@ -5,6 +5,7 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { terminalLinkProvider, type TerminalLinkTarget } from './terminal-links.ts'
 import { WebglAddon } from '@xterm/addon-webgl'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
@@ -190,6 +191,8 @@ export interface PanelHost {
   onOpenFolder(slotId: string): void
   /** "Copiar pasta" from the status bar's pinned action. */
   onCopyFolder(slotId: string): void
+  /** A path printed in the pane's terminal was Ctrl+clicked. */
+  onOpenLink(slotId: string, target: TerminalLinkTarget): void
   /** The status-bar toggle at the tab strip's right end (and Ctrl+Shift+H): show or hide the pane's header. */
   onToggleDetails(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
@@ -312,6 +315,11 @@ export class TerminalPanel implements IContentRenderer {
     })
     this.term.loadAddon(this.fit)
     this.term.loadAddon(new WebLinksAddon((_ev, uri) => window.tether.openExternal(uri)))
+    // Ctrl+click on a path that exists (relative ones read against the folder this pane was opened in).
+    this.term.registerLinkProvider(terminalLinkProvider(this.term, {
+      openingCwd: () => this.host.getSlot(this.slotId)?.cwd ?? this.hint?.cwd,
+      open: target => this.host.onOpenLink(this.slotId, target),
+    }))
     this.term.onData(data => { if (this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data }) })
     // xterm calls this for keydown, keypress and keyup of the same chord: a command is decided on keydown only.
     // What is handled here is also prevented, so Chromium's own copy/paste on the textarea never runs on top
