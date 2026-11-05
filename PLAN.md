@@ -204,11 +204,11 @@ Modelo de agrupamento do app, decidido com o Guga. Nomes fixos (interface em por
 
 | Gesto | Atalho | Observação |
 |---|---|---|
-| Painel ao lado do painel em foco (duplicar) | `Ctrl+Alt+←/→/↑/↓` | `Ctrl+Shift+D` (direita) e `Ctrl+Shift+E` (abaixo) continuam como sinônimos |
-| Aba vazia no grupo em foco (o seletor dentro dela) | `Ctrl+Shift+T` | F5: "Novo painel…" (o mesmo seletor numa janela, com a linha "Onde") ficou sem chord: ≡, "+" do topo, paleta |
+| Painel ao lado do painel em foco (duplicar) | `Ctrl+Alt+←/→/↑/↓` | F5 (entrega 5): os apelidos passaram a `Ctrl+` (direita) e `Ctrl+K Ctrl+` (abaixo), os do VS Code; `Ctrl+Shift+D/E` saíram |
+| Aba vazia no grupo em foco (o seletor dentro dela) | `Ctrl+N` | F5 (entrega 5): `Ctrl+Shift+T` passou a reabrir o último painel fechado, como no VS Code e nos navegadores; `Ctrl+N` é capturado também no terminal. Antes: "Novo painel…" (o mesmo seletor numa janela, com a linha "Onde") ficou sem chord: ≡, "+" do topo, paleta |
 | Painel na borda do quadro (duplicar) | `Ctrl+Alt+Shift+←/→/↑/↓` | fase B (entregue; registro único em `app/renderer/shortcuts.ts`) |
 | Quadro na borda da mesa (duplicar) | `Alt+Shift+←/→/↑/↓` | fase B (entregue). **`Ctrl+Win+←/→` é do próprio Windows (troca de área de trabalho virtual) e `Win+↑/↓` maximiza/minimiza: o sistema intercepta antes do app.** `Alt+Shift+seta` está livre nos shells e na TUI do Claude; alternativa, se colidir com a troca de layout de teclado (Alt+Shift com dois layouts instalados): prefixo `Ctrl+Alt+F` e depois a seta |
-| Mesa antes/depois da atual | `Ctrl+Alt+Shift+N` / `Ctrl+Alt+N` | fase C |
+| Mesa depois da atual | `Ctrl+Shift+N` | fase C (era `Ctrl+Alt+N`; F5, entrega 5: "nova janela" do VS Code; "antes desta" ficou sem tecla, na paleta e no menu da mesa) |
 | Trocar de mesa | `Ctrl+Tab` / `Ctrl+Shift+Tab` (ciclo) e `Ctrl+1…9` (direta) | fase C |
 | Gaveta | `` Ctrl+` `` | fase D |
 
