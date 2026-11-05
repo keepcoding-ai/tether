@@ -217,7 +217,9 @@ export function defineTheme(scheme: ColorScheme, tokens: Record<string, string> 
 }
 
 let themeProbe: HTMLElement | undefined
-const STATIC_VSCODE_TOKEN = /^--vscode-(strokeThickness|cornerRadius|shadow|spacing)/
+// Only what the context menu and the widgets hung from <body> paint with. Mirroring every variable Monaco defines (~2000)
+// puts them all inline on :root, and a theme switch then stalls rendering for seconds.
+const MIRRORED_VSCODE_VAR = /^--vscode-(menu|widget|foreground|focusBorder|descriptionForeground|disabledForeground|editorWidget|editorSuggestWidget|editorHoverWidget|list-(hover|active|focus)|keybindingLabel|font)/
 
 /**
  * Monaco scopes its theme variables (`--vscode-*`) to `.monaco-editor`, but with `fixedOverflowWidgets` its
@@ -236,8 +238,7 @@ export function mirrorThemeVars(): void {
   const root = document.documentElement.style
   for (let i = 0; i < style.length; i++) {
     const name = style[i]!
-    // The probe inherits the design tokens styles.css declares on :root (resolved): copying them back would freeze them.
-    if (name.startsWith('--vscode-') && !STATIC_VSCODE_TOKEN.test(name)) root.setProperty(name, style.getPropertyValue(name))
+    if (MIRRORED_VSCODE_VAR.test(name)) root.setProperty(name, style.getPropertyValue(name))
   }
 }
 

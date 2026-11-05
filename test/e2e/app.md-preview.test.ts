@@ -180,7 +180,7 @@ test('app md-preview: Ctrl+Shift+V, GFM, nothing hostile runs, live, scroll sync
     assert.equal(open.hint, 'Ctrl+Shift+V')
     assert.equal(open.available, true)
     assert.equal(cmds.find(c => c.id === 'markdown.preview.side')?.title, 'Prévia: abrir ao lado')
-    assert.equal(cmds.find(c => c.id === 'markdown.preview.side')?.hint, '', 'Ctrl+K V comes with delivery 5')
+    assert.equal(cmds.find(c => c.id === 'markdown.preview.side')?.hint, 'Ctrl+K V', 'the VS Code chord for Open Preview to the Side (keybindings scheme, F5 delivery 5)')
     assert.ok(await page.locator('.tab-act[data-action="md-preview-side"]:visible').count() >= 1, 'the strip has the preview button for a markdown note')
     await page.keyboard.press('Control+Shift+V')
     await page.waitForFunction(() => window.__tether.previews().length === 1)
