@@ -22,6 +22,7 @@ type Hooks = {
 declare const window: { innerWidth: number; innerHeight: number; __tether: Hooks; tether: { setTheme(s: string): Promise<unknown> } }
 declare const document: {
   documentElement: { dataset: Record<string, string | undefined> }
+  querySelectorAll(sel: string): { length: number }
   elementFromPoint(x: number, y: number): { closest(s: string): unknown } | null
   querySelector(s: string): { getBoundingClientRect(): { left: number; top: number; right: number; bottom: number } } | null
 }
