@@ -880,10 +880,11 @@ test('app chrome: aria, keyboard in the new menus, focus return, FLIP, drawer fr
     // ---- Tab order: bar -> capsule (the pill, then the active tab) -> right side ----
     await page.locator('#btn-closed').focus()
     const stops: string[] = []
-    for (let i = 0; i < 3; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
+    for (let i = 0; i < 4; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
     assert.equal(stops[0], '#btn-drawer')
     assert.match(stops[1]!, /^div\.seg\.on$/, `the active capsule tab is a Tab stop: ${JSON.stringify(stops)}`)
-    assert.equal(stops[2], '#conn')
+    assert.equal(stops[2], 'button.seg.desk-add', 'the capsule plus button (new desk) is the next stop')
+    assert.equal(stops[3], '#conn')
 
     // ---- Theme menu: keys and focus return ----
     await page.locator('#btn-theme').focus()
