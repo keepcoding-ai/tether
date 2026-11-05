@@ -1,4 +1,6 @@
-// The extensions with an Electron-main entry (extensions/<id>/main.ts). Not activated yet: the main host comes in slice 0b.
+// The extensions with an Electron-main entry (extensions/<id>/main.ts), in activation order; activated by
+// app/main/ext-host.ts at startup. Add `{ manifest, activate }` of extensions/<id>/main.ts here.
+import type { TetherMain } from '../app/main/ext-api.ts'
 import type { ExtensionEntry } from './types.ts'
 
-export const extensions: readonly ExtensionEntry<unknown>[] = []
+export const extensions: readonly ExtensionEntry<TetherMain>[] = []

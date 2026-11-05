@@ -28,6 +28,9 @@ import { KEYBINDINGS_FILE, type KeybindingsFileState } from '../shared/keybindin
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeWindowState, resolveWindowState, type WindowState } from '../shared/window-state.ts'
 import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
+import { readExtensionsSettings, writeExtensionsSettings } from '../shared/vscode-configuration-registry.ts'
+import { extensions as mainExtensions } from '../../extensions/index.main.ts'
+import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
 import type { TrayCommand } from '../shared/tray.ts'
@@ -330,7 +333,21 @@ async function quitAll(): Promise<void> {
 
 /** User settings (theme, terminal appearance, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
 const settingsPath = join(home, 'settings.json')
-type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown }
+type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown }
+
+// ---------- extensions (F9) ----------
+// The main side of the extensions (extensions/index.main.ts) and the core channels of their settings and listing
+// (app/main/ext-host.ts). The handlers exist from the start; activation runs when the app is ready, before the window.
+const extensionHost = new MainExtensionHost(mainExtensions, {
+  home,
+  dist: __dirname,
+  ipc: ipcMain as unknown as MainHostDeps['ipc'],
+  broadcast: (channel, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(channel, ...args) },
+  window: () => win,
+  readSettings: () => readExtensionsSettings(readJson<Settings>(settingsPath, {}).extensions),
+  writeSettings: s => writeJson(settingsPath, { ...readJson<Settings>(settingsPath, {}), extensions: writeExtensionsSettings(s) }),
+  log: msg => appLog(msg),
+})
 
 // ---------- terminal appearance ----------
 // The renderer owns the dialog and applies the change to every xterm; main keeps the file and echoes the
@@ -1021,6 +1038,7 @@ async function start(): Promise<void> {
   await app.whenReady()
   if (process.platform === 'darwin') app.dock?.setIcon(join(__dirname, 'tether.png'))
   createMenu()
+  extensionHost.activate()
   createWindow()
   setupTray()
   closeStandalone?.() // only now: with the main window up, closing it does not quit the app

@@ -1,13 +1,13 @@
 // The extension model's static discovery (F9 §2.5): every extensions/<id>/ entry file (renderer.ts, main.ts,
 // daemon.ts) must be listed in its host's committed index, the manifest's `hosts` must match the files, and the
 // import rule holds (an extension never imports app/renderer/main.ts; the core imports extensions only through the
-// indexes). Also the renderer host's activation (app/renderer/ext-host.ts): order by `requires`, a failure is isolated.
+// indexes). Also the renderer host's activation (app/shared/ext-activation.ts): order by `requires`, a failure is isolated.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { activateExtensions, activationOrder } from '../../app/renderer/ext-host.ts'
+import { activateExtensions, activationOrder } from '../../app/shared/ext-activation.ts'
 import { DisposableStore, toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { HOSTS, type ExtensionEntry, type Host } from '../../extensions/types.ts'
 

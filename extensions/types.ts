@@ -3,6 +3,7 @@
 // Discovery is static: one committed index per host (index.renderer.ts, index.main.ts, index.daemon.ts); a unit test
 // fails when a folder's entry is missing from its index (test/unit/ext.index.test.ts). Pure: read by all three hosts.
 import type { IDisposable } from '../app/shared/vscode-lifecycle.ts'
+import type { SettingSchema } from '../app/shared/vscode-configuration-registry.ts'
 
 export type Host = 'renderer' | 'main' | 'daemon'
 export const HOSTS: readonly Host[] = ['renderer', 'main', 'daemon']
@@ -24,6 +25,8 @@ export interface ExtensionManifest {
   contributes?: {
     /** Pane type ids this extension registers: the layout knows they exist. */
     paneTypes?: readonly string[]
+    /** Settings (schema + default), stored in settings.json under `extensions.<id>.<key>`; read by every host it runs in. */
+    settings?: Readonly<Record<string, SettingSchema>>
   }
 }
 

@@ -52,10 +52,12 @@ import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
 import { emptyLayout as emptyPaneLayout, htmlPreviewLayout, keybindingsLayout, mdPreviewLayout, noteLayout, previewPaneOptions, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
-import { activateExtensions } from './ext-host.ts'
+import { activateExtensions } from '../shared/ext-activation.ts'
 import type { TetherUi } from './ext-api.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
-import { DisposableStore } from '../shared/vscode-lifecycle.ts'
+import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
+import { uiIpc } from '../shared/ext-ipc.ts'
+import { ConfigurationRegistry, readExtensionsSettings, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, formatKeys, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
@@ -2961,10 +2963,47 @@ function registerCorePaneTypes(): void {
 }
 
 /** The extensions' renderer side (extensions/index.renderer.ts): activated once at startup, after the core types. */
+// Their settings come from settings.json `extensions` (read synchronously once: activation cannot wait) and follow
+// main's broadcasts; the ones listed in `extensions.disabled` are skipped (that takes effect at the next start).
 const extensionStore = new DisposableStore()
+const configuration = new ConfigurationRegistry()
+let extSettings: ExtensionsSettings = { disabled: [], values: {} }
+const extSettingListeners = new Map<string, Set<(value: SettingValue) => void>>()
+let rendererActivation: { active: string[]; disabled: string[]; failed: { id: string; error: string }[] } = { active: [], disabled: [], failed: [] }
+
+function onExtSetting(change: { id: string; key: string; value: SettingValue }): void {
+  extSettings = withSetting(extSettings, change.id, change.key, change.value)
+  for (const l of extSettingListeners.get(`${change.id}.${change.key}`) ?? []) l(configuration.read(extSettings, change.id, change.key) ?? change.value)
+}
+
 function activateRendererExtensions(): void {
-  const apiFor = (id: string): TetherUi => ({ id, panes: { register: type => extensionStore.add(paneTypes.register(type)) } })
-  activateExtensions(extensions, apiFor, extensionStore)
+  extSettings = readExtensionsSettings(window.tether.extSettingsSync())
+  window.tether.onExtSetting(onExtSetting)
+  for (const e of extensions) {
+    const settings = e.manifest.contributes?.settings
+    if (settings && !extSettings.disabled.includes(e.manifest.id)) extensionStore.add(configuration.registerConfiguration({ id: e.manifest.id, properties: settings }))
+  }
+  const apiFor = (id: string): TetherUi => ({
+    id,
+    panes: { register: type => extensionStore.add(paneTypes.register(type)) },
+    ipc: () => uiIpc(id, window.tether.ext),
+    settings: {
+      get: <T extends SettingValue>(key: string) => configuration.read(extSettings, id, key) as T | undefined,
+      set: (key, value) => {
+        const schema = configuration.schemaOf(id, key)
+        const v = schema ? configuration.read({ disabled: [], values: { [id]: { [key]: value } } }, id, key)! : value
+        window.tether.setExtSetting(id, key, v)
+      },
+      onChange: (key, listener) => {
+        const full = `${id}.${key}`
+        let set = extSettingListeners.get(full)
+        if (!set) { set = new Set(); extSettingListeners.set(full, set) }
+        set.add(listener)
+        return extensionStore.add(toDisposable(() => { set.delete(listener) }))
+      },
+    },
+  })
+  rendererActivation = activateExtensions(extensions, apiFor, extensionStore, extSettings.disabled)
 }
 
 registerCorePaneTypes()

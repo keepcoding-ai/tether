@@ -9,6 +9,8 @@ import type { TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ThemeState } from '../shared/theme.ts'
 import type { UiSettings } from '../shared/ui-settings.ts'
 import type { KeybindingsFileState } from '../shared/keybindings.ts'
+import type { ExtSettingChange } from '../shared/api.ts'
+import { extChannel } from '../shared/ext-ipc.ts'
 
 function on<T>(channel: string, listener: (value: T) => void): () => void {
   const handler = (_e: unknown, value: T): void => listener(value)
@@ -82,6 +84,21 @@ const api: TetherApi = {
   openHtmlInBrowser: path => ipcRenderer.invoke('htmlpreview:open-in-browser', path),
   onHtmlPreviewReport: listener => on<PreviewReport>('tether:html-preview-report', listener),
   onHtmlPreviewKey: listener => on<PreviewKey>('tether:html-preview-key', listener),
+  // The bus names every channel through extChannel: an extension reaches only `ext:<its id>:…`, never a core channel.
+  ext: {
+    invoke: (id, channel, ...args) => ipcRenderer.invoke(extChannel(id, channel), ...args),
+    send: (id, channel, ...args) => ipcRenderer.send(extChannel(id, channel), ...args),
+    on: (id, channel, listener) => {
+      const handler = (_e: unknown, ...args: unknown[]): void => listener(...args)
+      const name = extChannel(id, channel)
+      ipcRenderer.on(name, handler)
+      return () => ipcRenderer.removeListener(name, handler)
+    },
+  },
+  extSettingsSync: () => ipcRenderer.sendSync('extsettings:get-sync'),
+  setExtSetting: (id, key, value) => ipcRenderer.send('extsettings:set', id, key, value),
+  onExtSetting: listener => on<ExtSettingChange>('tether:ext-setting', listener),
+  listMainExtensions: () => ipcRenderer.invoke('extensions:list'),
 }
 
 contextBridge.exposeInMainWorld('tether', api)

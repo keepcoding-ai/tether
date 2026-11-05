@@ -9,6 +9,14 @@ import type { UiSettings } from './ui-settings.ts'
 import type { QuickOpenResult, QuickOpenTarget } from './quick-open.ts'
 import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
+import type { ExtTransport } from './ext-ipc.ts'
+import type { ExtensionsSettings, SettingValue } from './vscode-configuration-registry.ts'
+import type { ExtensionManifest } from '../../extensions/types.ts'
+
+/** A change of one extension setting (`extensions.<id>.<key>` of settings.json). */
+export interface ExtSettingChange { id: string; key: string; value: SettingValue }
+/** Main's side of the "Extensões" screen: its manifests, the disabled list, and what failed to activate there. */
+export interface MainExtensionsList { manifests: ExtensionManifest[]; disabled: string[]; failed: { id: string; error: string }[] }
 
 export type { Profile, ProfileInput }
 
@@ -154,6 +162,13 @@ export interface TetherApi {
   onHtmlPreviewReport(listener: (report: PreviewReport) => void): () => void
   /** HTML previews: a chord pressed inside the page, to be replayed on the pane. */
   onHtmlPreviewKey(listener: (key: PreviewKey) => void): () => void
+  /** The extensions' IPC bus (app/shared/ext-ipc.ts): channels `ext:<id>:<channel>`; extensions use it through TetherUi.ipc. */
+  ext: ExtTransport
+  /** settings.json's `extensions` object, read synchronously once before the renderer's extensions activate. */
+  extSettingsSync(): ExtensionsSettings
+  setExtSetting(id: string, key: string, value: SettingValue): void
+  onExtSetting(listener: (change: ExtSettingChange) => void): () => void
+  listMainExtensions(): Promise<MainExtensionsList>
 }
 
 declare global {
