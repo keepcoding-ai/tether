@@ -2,11 +2,11 @@
 // `theme.dark`), a title the user reads, an optional chord and an optional availability rule (`when`). The
 // palette (Ctrl+Shift+P), the ≡ menu and the keyboard dispatch all read from here: one action, one place.
 //
-// Chords stay in app/renderer/shortcuts.ts (the key table): a command names its chord by the shortcut op, and
-// the hint shown next to it is the first chord bound to that op on the platform. The registry is dynamic on
+// Chords stay in app/renderer/shortcuts.ts (the key table, keyed by command id; the user's keybindings.json lays
+// over it): the hint shown next to a command is the first key bound to its id on the platform. The registry is dynamic on
 // purpose: a focused editor (the note tab) registers its own commands and removes them on blur with the
 // function `register` returns; the CLI will be able to `tether run <id>` through `run`.
-import { chordLabel, sameShortcut, shortcutHint, type AppShortcut, type Chord } from './shortcuts.ts'
+import { chordLabel, shortcutHint, type Chord } from './shortcuts.ts'
 
 /** A Phosphor icon name of icons.ts (IconName). Not imported: icons.ts pulls the SVG assets, and this module stays pure for the unit tests. */
 export type CommandIcon = string
@@ -22,6 +22,8 @@ export interface CommandContext {
   focus: 'terminal' | 'editor' | 'none'
   /** The active pane is a markdown note (`note`) or the preview of one (`preview`); absent for any other pane. */
   markdown?: 'note' | 'preview'
+  /** The active pane is the "Atalhos de teclado" screen (its own keys: record, delete). */
+  keybindings?: boolean
 }
 
 export interface Command {
@@ -32,8 +34,6 @@ export interface Command {
   /** The group shown after the title in the palette ("Painel", "Mesa"…). */
   group?: string
   icon?: CommandIcon
-  /** The chord, by its op in the shortcut registry (shortcuts.ts); the dispatch and the hint follow it. */
-  shortcut?: AppShortcut
   /** A chord to show when the key is handled elsewhere (a native menu accelerator): display only, never dispatched here. */
   displayChord?: Chord
   /** Availability; absent = always. An unavailable command is hidden from the palette, greyed in the menu, and ignored by its chord. */
@@ -104,17 +104,12 @@ export class CommandRegistry {
     return this.all().filter(c => this.isAvailable(c, ctx))
   }
 
-  /** The command bound to a shortcut op (the first registered with it), available or not. */
-  byShortcut(op: AppShortcut): Command | undefined {
-    for (const c of this.commands.values()) if (c.shortcut && sameShortcut(c.shortcut, op)) return c
-    return undefined
-  }
-
   /** The key hint shown next to a command ('' when it has none on this platform). */
   hint(command: Command | string, mac?: boolean): string {
     const c = typeof command === 'string' ? this.commands.get(command) : command
     if (!c) return ''
-    if (c.shortcut) { const h = shortcutHint(c.shortcut, mac); if (h) return h }
+    const h = shortcutHint(c.id, mac)
+    if (h) return h
     return c.displayChord ? chordLabel(c.displayChord, mac) : ''
   }
 

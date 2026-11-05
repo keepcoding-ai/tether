@@ -6,6 +6,7 @@
 // When the person picks something, the pane is replaced in the same group, at the same index, by what they chose.
 import { isNotePanelId } from './notes.ts'
 import { isPreviewPanelId } from './preview.ts'
+import { isKeybindingsPanelId } from './keybindings.ts'
 
 export const EMPTY_COMPONENT = 'empty'
 export const EMPTY_TAB = 'empty-tab'
@@ -20,9 +21,9 @@ export function isEmptyPanelId(id: string): boolean {
   return id.startsWith(EMPTY_PANEL_PREFIX)
 }
 
-/** A pane that has no slot behind it (a note, a markdown preview, an empty pane): never an orphan for the restore, never pruned. */
+/** A pane that has no slot behind it (a note, a markdown preview, an empty pane, the shortcuts screen): never an orphan for the restore, never pruned. */
 export function isSlotlessPanelId(id: string): boolean {
-  return isNotePanelId(id) || isEmptyPanelId(id) || isPreviewPanelId(id)
+  return isNotePanelId(id) || isEmptyPanelId(id) || isPreviewPanelId(id) || isKeybindingsPanelId(id)
 }
 
 /** A fresh pane id: time-ordered plus a random tail (two panes in the same millisecond). */

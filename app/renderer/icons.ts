@@ -46,6 +46,7 @@ import minus from '@phosphor-icons/core/assets/regular/minus.svg'
 import folder from '@phosphor-icons/core/assets/regular/folder.svg'
 import minusCircle from '@phosphor-icons/core/assets/regular/minus-circle.svg'
 import tabs from '@phosphor-icons/core/assets/regular/tabs.svg'
+import keyboard from '@phosphor-icons/core/assets/regular/keyboard.svg'
 import arrowLineLeft from '@phosphor-icons/core/assets/regular/arrow-line-left.svg'
 import squareHalf from '@phosphor-icons/core/assets/regular/square-half.svg'
 import columns from '@phosphor-icons/core/assets/regular/columns.svg'
@@ -144,6 +145,7 @@ const SVG = {
   'sliders-horizontal': slidersHorizontal,
   star,
   tabs,
+  keyboard,
   'arrow-line-left': arrowLineLeft,
   'square-half': squareHalf,
   columns,

@@ -64,7 +64,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.element.className = 'tab-actions'
     this.add = document.createElement('button')
     this.add.className = 'tab-act add'; this.add.dataset.action = 'add-tab'; this.add.type = 'button'
-    const addTitle = `${ADD_TAB_LABEL} (${shortcutHint({ op: 'new-tab' })})`
+    const addTitle = `${ADD_TAB_LABEL} (${shortcutHint('pane.new-tab')})`
     this.add.title = addTitle; this.add.setAttribute('aria-label', ADD_TAB_LABEL)
     this.add.append(icon('plus'))
     this.more = document.createElement('button')
@@ -142,7 +142,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.element.hidden = !p
     this.preview.hidden = !p || !this.host.canPreview(p.id)
     const open = detailsOpen(p?.params)
-    this.toggle.title = `${detailsLabel(open)} (${shortcutHint({ op: 'pane-details' })})`
+    this.toggle.title = `${detailsLabel(open)} (${shortcutHint('pane.details')})`
     this.toggle.setAttribute('aria-label', detailsLabel(open))
     this.toggle.setAttribute('aria-pressed', String(open))
   }

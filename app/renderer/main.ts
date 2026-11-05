@@ -10,8 +10,14 @@ import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { appCommands, type CommandHost } from './app-commands.ts'
 import { CommandRegistry, type CommandContext } from './commands.ts'
-import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
-import { editorKeyOwner, terminalKeyOwner } from './key-capture.ts'
+import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
+import { terminalKeyOwner } from './key-capture.ts'
+import { ChordDispatcher, scopeOf as keyScopeOf } from './chord-dispatch.ts'
+import { ChordPill } from './chord-pill.ts'
+import { editorChordCommand, editorKeybindings, runEditorChord } from './monaco-chords.ts'
+import { formatKeybindingsFile, mergeKeybindings, overridesFor, parseKeybindingsFile } from './keybindings-rules.ts'
+import { KeybindingsPanel, KeybindingsTab, type FixedBinding, type KeybindingsHost, type KeybindingsSnapshot } from './keybindings-panel.ts'
+import { isKeybindingsPanelId, KEYBINDINGS_COMPONENT, KEYBINDINGS_TAB, KEYBINDINGS_TITLE, newKeybindingsPanelId, type KeybindingsFileState } from '../shared/keybindings.ts'
 import { defineTheme, monaco } from './monaco.ts'
 import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
 import { paneCwdOfNote } from './note-rules.ts'
@@ -46,7 +52,7 @@ import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
-import { shortcutHint, terminalInputOf } from './shortcuts.ts'
+import { chordOn, formatKeys, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, noteConflictSituation, noteGitignoreSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -68,6 +74,8 @@ const noteTabs = new Map<string, NoteTab>()
 const previews = new Map<string, PreviewPane>()
 /** The empty panes (F5): a reserved place with the chooser inside (app/renderer/empty-panel.ts). */
 const empties = new Map<string, EmptyPanel>()
+/** The "Atalhos de teclado" screens (F5, delivery 5; one is the rule, the map keeps the layout honest). */
+const keybindingsPanels = new Map<string, KeybindingsPanel>()
 /** Removes the editor actions registered as commands by the last note that got the focus. */
 let editorCommandsOff: (() => void) | undefined
 /** Error of the last refused `start` per slot (the daemon does not store `already-open` / `unconfirmed`). */
@@ -162,7 +170,8 @@ function commandContext(): CommandContext {
   // `markdown`: the commands of the preview family (Ctrl+Shift+V, "abrir prévia", "abrir o arquivo-fonte") act on a note with a previewable
   // file (markdown or HTML) or on a preview of either kind; the host picks the kind from the file.
   const markdown = activeId && notes.has(activeId) && isPreviewablePath(notes.get(activeId)!.path) ? 'note' : activeId && previews.has(activeId) ? 'preview' : undefined
-  return { pane: !!activeId, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(markdown ? { markdown } : {}) }
+  const keybindings = !!activeId && keybindingsPanels.has(activeId)
+  return { pane: !!activeId, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(markdown ? { markdown } : {}), ...(keybindings ? { keybindings } : {}) }
 }
 
 const commands = new CommandRegistry(commandContext, {
@@ -195,9 +204,11 @@ const host: PanelHost = {
       panel.sendInput(seq)
       return true
     }
-    // App shortcuts: keep xterm from sending them as input; the event still bubbles to the document listener,
-    // which runs the command. Plain Ctrl+letter stays the terminal's unless key-capture.ts lists it.
+    // App shortcuts never get here: the dispatcher (capture phase, setupUi) stops them before xterm. What arrives is
+    // the terminal's, by the table's scopes, except the key the dispatcher let through on purpose (Ctrl+K twice = ^K),
+    // which the single-key policy would read as the prefix again.
     // (Clipboard chords are the panel's own: shortcuts.ts PANE_SHORTCUTS.)
+    if (ev === letThrough) return false
     return terminalKeyOwner(ev).owner === 'app'
   },
   getScheme: () => theme.scheme,
@@ -293,6 +304,14 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
           empty.dispose = () => { dispose(); if (empties.get(empty.id) === empty) empties.delete(empty.id) }
           return empty
         }
+        if (name === KEYBINDINGS_COMPONENT) {
+          const screen = new KeybindingsPanel(keybindingsHost)
+          const init = screen.init.bind(screen)
+          screen.init = params => { init(params); keybindingsPanels.set(screen.id, screen) }
+          const dispose = screen.dispose.bind(screen)
+          screen.dispose = () => { dispose(); if (keybindingsPanels.get(screen.id) === screen) keybindingsPanels.delete(screen.id) }
+          return screen
+        }
         if (name === HTML_PREVIEW_COMPONENT) {
           const preview = new HtmlPreviewPanel(htmlPreviewHost)
           const init = preview.init.bind(preview)
@@ -327,6 +346,7 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
       createTabComponent: ({ name }) => {
         if (name === EMPTY_TAB) return new EmptyTab(emptyHost)
         if (name === PREVIEW_TAB) return new PreviewTab(previewHost)
+        if (name === KEYBINDINGS_TAB) return new KeybindingsTab(keybindingsHost)
         if (name === NOTE_TAB) {
           const tab = new NoteTab(noteHost, id => notes.get(id)?.dirty ?? false)
           const init = tab.init.bind(tab)
@@ -359,7 +379,7 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
       createWatermarkComponent: () => {
         const el = document.createElement('div')
         el.className = 'watermark'
-        el.innerHTML = `<p>Nenhum painel aberto.</p><p>${kbdHtml(shortcutHint({ op: 'new-tab' }))} ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
+        el.innerHTML = `<p>Nenhum painel aberto.</p><p>${kbdHtml(shortcutHint('pane.new-tab'))} ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
         return { element: el, init: () => {} }
       },
     }),
@@ -380,7 +400,7 @@ function setupDock(): void {
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
     overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
-    hint: position => shortcutHint({ op: 'desk-go', position }),
+    hint: position => shortcutHint(`desk.go.${position}`),
   })
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
@@ -392,6 +412,8 @@ function setupDock(): void {
         ? previewPaneOptions(panel.id, previewParams(panel.params)?.path ?? '', previewKindOf(panel.params), panel.params, panel.title ?? undefined)
       : isEmptyPanelId(panel.id)
         ? { id: panel.id, component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: panel.params ?? withEmpty(undefined) }
+      : isKeybindingsPanelId(panel.id)
+        ? { id: panel.id, component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, title: KEYBINDINGS_TITLE, params: {} }
         : { id: panel.id, component: COMPONENT, tabComponent: TAB, title: panel.title ?? panel.id, params: panel.params ?? { slotId: panel.id } },
   }, DOCK_THEME)
   desks.fromEmpty()
@@ -468,6 +490,7 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   const panel = findPanel(slotId)
   if (!panel) return
   const slot = slots.get(slotId)
+  rememberClosed(slotId)
   if (!slot) { removeAnyPanel(panel); return }
   const spec = closePanelSituation(slot)
   let choice: string | undefined = opts.ask === false ? 'detach' : confirmations[spec.situation]
@@ -561,7 +584,7 @@ function markSeenIfWatched(): void {
 
 /** The keyboard to a pane, whatever it is: a terminal or a note. */
 function focusPane(id: string): void {
-  (panels.get(id) ?? notes.get(id) ?? previews.get(id) ?? empties.get(id))?.focus()
+  (panels.get(id) ?? notes.get(id) ?? previews.get(id) ?? empties.get(id) ?? keybindingsPanels.get(id))?.focus()
 }
 
 /** After a desk switch: the keyboard goes to the desk's active pane (and its badge, if any, is seen). */
@@ -678,7 +701,7 @@ function renderDrawerButton(): void {
   const what = n === 0 ? 'vazia' : n === 1 ? '1 painel' : `${n} painéis`
   const waiting = att.waiting > 0 ? ` · ${att.waiting} esperando você` : ''
   const done = att.done > 0 ? ` · ${att.done} terminou` : ''
-  btn.title = `Gaveta (${shortcutHint({ op: 'drawer-toggle' })}): ${what}${waiting}${done}. Um espaço rápido, compartilhado por todas as mesas; fechada, os agentes dela seguem rodando.`
+  btn.title = `Gaveta (${shortcutHint('drawer.toggle')}): ${what}${waiting}${done}. Um espaço rápido, compartilhado por todas as mesas; fechada, os agentes dela seguem rodando.`
 }
 
 /** The pane that has the keyboard now, if it is one of the desks'. */
@@ -1465,6 +1488,17 @@ function showTabMenu(slotId: string, x: number, y: number): void {
   if (!slot) {
     if (empties.has(slotId)) { panel?.api.setActive(); showEmptyMenu(slotId, x, y); return }
     if (previews.has(slotId)) { panel?.api.setActive(); showPreviewMenu(slotId, x, y); return }
+    if (keybindingsPanels.has(slotId)) {
+      panel?.api.setActive()
+      showContextMenu(x, y, [
+        { icon: 'note-pencil', label: 'Abrir keybindings.json', run: () => openKeybindingsFile() },
+        SEP,
+        { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
+        SEP,
+        { icon: 'x', label: 'Fechar', run: () => closeNote(slotId) },
+      ])
+      return
+    }
     if (!notes.has(slotId)) return
     panel?.api.setActive()
     showNoteMenu(slotId, x, y)
@@ -1816,7 +1850,39 @@ async function renameNote(id: string, typed: string): Promise<void> {
 /** The tab's ×: the pane goes (its text is already on disk; the panel flushes what is pending). */
 function closeNote(id: string): void {
   const panel = findPanel(id)
+  rememberClosed(id)
   if (panel) removeAnyPanel(panel)
+}
+
+// ---------- reopen the last closed pane (Ctrl+Shift+T) ----------
+// What closing leaves behind, newest last: a slot (it stays in the tetherd, "Rodando sem painel" / "Encerrados", and
+// reopening RESUMES it, as the closed-slots menu does) or a note's file. Reopening takes the newest that still makes
+// sense (the slot still exists and has no pane; the note is not open).
+type ClosedPane = { kind: 'slot'; slotId: string } | { kind: 'note'; path: string }
+const closedPanes: ClosedPane[] = []
+
+function rememberClosed(id: string): void {
+  const entry: ClosedPane | undefined = slots.has(id) ? { kind: 'slot', slotId: id } : notes.has(id) ? { kind: 'note', path: notes.get(id)!.path } : undefined
+  if (!entry) return
+  const same = (a: ClosedPane, b: ClosedPane): boolean => a.kind === b.kind && (a.kind === 'slot' ? a.slotId === (b as { slotId: string }).slotId : a.path === (b as { path: string }).path)
+  const i = closedPanes.findIndex(c => same(c, entry))
+  if (i !== -1) closedPanes.splice(i, 1)
+  closedPanes.push(entry)
+  if (closedPanes.length > 50) closedPanes.shift()
+}
+
+function reopenClosed(): void {
+  while (closedPanes.length) {
+    const c = closedPanes.pop()!
+    if (c.kind === 'slot') {
+      if (!slots.has(c.slotId) || findPanel(c.slotId)) continue
+      openSlot(c.slotId)
+      return
+    }
+    if (noteByPath(c.path)) continue
+    void openNote(c.path)
+    return
+  }
 }
 
 /** Main's watcher saw the file change: the note that shows it decides (reload, keep, or ask). */
@@ -2100,7 +2166,7 @@ const commandHost: CommandHost = {
   duplicateActive: target => { void duplicateActive(target) },
   splitEmpty: (target, origin) => splitEmpty(target, origin),
   newEmptyDesk: () => newEmptyDesk(),
-  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id) || previews.has(a.id) || empties.has(a.id)) ? a.id : undefined },
+  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id) || previews.has(a.id) || empties.has(a.id) || keybindingsPanels.has(a.id)) ? a.id : undefined },
   renamePane: id => (notes.has(id) ? noteTabs.get(id)?.startRename() : tabs.get(id)?.startRename()),
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
@@ -2128,10 +2194,34 @@ const commandHost: CommandHost = {
   relaunchApp: () => window.tether.command('relaunch-app'),
   toggleDevTools: () => window.tether.command('toggle-devtools'),
   toggleFullscreen: () => window.tether.command('toggle-fullscreen'),
-  showPalette: mode => palette.show(mode),
+  showPalette: (mode, query) => palette.show(mode, query),
   newNote: () => { void newNote() },
   openNote: () => { void openNote() },
   saveNoteAs: () => { void saveNoteAs() },
+  saveNote: () => { const id = activeNoteId(); if (id) void notes.get(id)?.save() },
+  reopenClosed: () => reopenClosed(),
+  cycleTab: step => {
+    const active = currentDesk().activePanel
+    if (!active) return
+    const list = active.group.panels
+    const next = list[(list.indexOf(active) + step + list.length) % list.length]
+    if (next && next !== active) { next.api.setActive(); requestAnimationFrame(() => focusPane(next.id)) }
+  },
+  goToTab: position => {
+    const active = currentDesk().activePanel
+    if (!active) return
+    const list = active.group.panels
+    const next = position === 'last' ? list[list.length - 1] : list[position - 1]
+    if (next && next !== active) { next.api.setActive(); requestAnimationFrame(() => focusPane(next.id)) }
+  },
+  focusNeighbour: direction => focusNeighbour(direction),
+  closeFrameTabs: () => {
+    const active = currentDesk().activePanel
+    if (!active) return
+    void (async () => { for (const p of [...active.group.panels]) await closePanel(p.id) })()
+  },
+  showKeybindings: () => openKeybindings(),
+  recordKeybinding: () => { const a = currentDesk().activePanel?.id; if (a) keybindingsPanels.get(a)?.recordSelected() },
   markdownPreview: side => openPreview({ side }),
   markdownSource: () => { const a = currentDesk().activePanel?.id; if (a && previews.has(a)) openPreviewSource(a) },
 }
@@ -2141,6 +2231,161 @@ function modalOpen(): boolean {
   return $<HTMLDialogElement>('dlg-new').open || manager.open || themeDialog.open || dialogOpen() || palette.open
 }
 
+/** Ctrl+K Ctrl+arrows: the visible pane whose box is next to the active one's in that direction (across frames; the drawer when it is open). */
+function focusNeighbour(direction: Direction): void {
+  const desk = currentDesk()
+  const active = desk.activePanel
+  if (!active) return
+  const rectOf = (p: IDockviewPanel): DOMRect => p.group.element.getBoundingClientRect()
+  const a = rectOf(active)
+  const ax = a.left + a.width / 2, ay = a.top + a.height / 2
+  let best: { panel: IDockviewPanel; score: number } | undefined
+  for (const p of desk.panels) {
+    if (p.group === active.group || p.group.activePanel !== p) continue
+    const r = rectOf(p)
+    if (r.width === 0 || r.height === 0) continue
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+    const primary = direction === 'right' ? cx - ax : direction === 'left' ? ax - cx : direction === 'below' ? cy - ay : ay - cy
+    if (primary <= 1) continue
+    const secondary = direction === 'right' || direction === 'left' ? Math.abs(cy - ay) : Math.abs(cx - ax)
+    const score = primary + secondary * 0.3
+    if (!best || score < best.score) best = { panel: p, score }
+  }
+  if (!best) return
+  best.panel.api.setActive()
+  requestAnimationFrame(() => focusPane(best!.panel.id))
+}
+
+// ---------- keyboard shortcuts: the table, the file, the screen (F5, delivery 5) ----------
+// The table in force is shortcuts.ts' defaults with <TETHER_HOME>/keybindings.json laid over (keybindings-rules.ts). Main
+// hands the text over at start and on every change on disk; the screen writes the smallest file for what it changed
+// and applies the table at once (the watcher's echo re-reads the same thing).
+
+let keybindingsFile: { path: string; error?: { message: string; line?: number }; warnings: string[] } = { path: '', warnings: [] }
+
+function applyKeybindingsFile(state: KeybindingsFileState): void {
+  const file: typeof keybindingsFile = { path: state.path, warnings: [] }
+  let entries: ReturnType<typeof parseKeybindingsFile> extends infer R ? (R extends { ok: true; entries: infer E } ? E : never) : never = []
+  if (state.text !== null) {
+    const parsed = parseKeybindingsFile(state.text)
+    if (!parsed.ok) file.error = { message: parsed.message, ...(parsed.line ? { line: parsed.line } : {}) }
+    else { entries = parsed.entries; file.warnings.push(...parsed.warnings) }
+  }
+  const known = new Set(commands.all().map(c => c.id))
+  const merged = mergeKeybindings(entries, known)
+  file.warnings.push(...merged.warnings)
+  keybindingsFile = file
+  setKeyTable(new KeyTable(merged.bindings))
+  paintKeyHints()
+  for (const s of keybindingsPanels.values()) s.refresh()
+}
+
+/** The screen changed the table: in force now, and written as the smallest file. */
+function applyKeybindings(bindings: Keybinding[]): void {
+  setKeyTable(new KeyTable(bindings))
+  paintKeyHints()
+  void window.tether.keybindingsWrite(formatKeybindingsFile(overridesFor(bindings))).then(r => { if (!r.ok) console.error(`keybindings.json: ${r.message}`) })
+}
+
+/** The hints that read the table (menus, tooltips): painted at start and again when the table changes. */
+function paintKeyHints(): void {
+  const menu = document.getElementById('app-menu')
+  if (menu) for (const li of menu.querySelectorAll<HTMLElement>('li[data-command]')) {
+    li.querySelector('kbd')?.remove()
+    const hint = commands.hint(li.dataset.command!)
+    if (hint) { const kbd = document.createElement('kbd'); kbd.textContent = hint; li.append(kbd) }
+  }
+  const quick = $('drawer-empty-quick').querySelector('.de-kbd')
+  if (quick) quick.innerHTML = kbdHtml(shortcutHint('drawer.toggle'))
+  const hint = (level: Target['level'], direction: Direction): string => shortcutHint(`pane.duplicate.${level}.${direction}`) || '—'
+  const dupTitle = `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right} (${hint('pane', 'right')}): outro painel com o mesmo perfil e a mesma pasta, numa sessão nova. Setas com os mesmos modificadores duplicam para os outros lados; ${hint('frame', 'right')} na borda do quadro; ${hint('desk', 'right')} num quadro novo.`
+  $('btn-duplicate').title = dupTitle
+  $('drawer-duplicate').title = dupTitle
+  const newTab = shortcutHint('pane.new-tab')
+  $('btn-new').title = `${NEW_PANEL_LABEL}: escolha o perfil, a pasta e onde abrir.${newTab ? ` ${newTab} abre uma aba vazia no grupo ativo, com o seletor dentro.` : ''}`
+  renderStrip()
+}
+
+/** Monaco's keybindings for the screen, read once from an editor (an open note's, or a throwaway one). */
+let editorBindingsCache: FixedBinding[] | undefined
+function editorFixedBindings(): FixedBinding[] {
+  if (editorBindingsCache) return editorBindingsCache
+  let editor = [...notes.values()].find(n => n.editor)?.editor
+  let throwaway: ReturnType<typeof monaco.editor.create> | undefined
+  if (!editor) {
+    const el = document.createElement('div')
+    el.style.cssText = 'position:absolute;left:-9999px;width:200px;height:100px'
+    document.body.append(el)
+    throwaway = monaco.editor.create(el, { value: '', language: 'markdown' })
+    editor = throwaway
+  }
+  try {
+    const seen = new Set<string>()
+    editorBindingsCache = editorKeybindings(editor).filter(k => !seen.has(`${k.command}|${k.keys}`) && seen.add(`${k.command}|${k.keys}`))
+      .map(k => ({ command: k.command, title: k.label, group: 'Editor', keys: null, label: k.keys, where: ['note'] as const, source: 'editor' as const }))
+      .map(f => ({ ...f, where: [...f.where] }))
+  } finally {
+    if (throwaway) { throwaway.dispose(); throwaway.getDomNode()?.parentElement?.remove() }
+  }
+  return editorBindingsCache
+}
+
+const keybindingsHost: KeybindingsHost = {
+  commands: () => commands.all().filter(c => !c.id.startsWith('editor.')).map(c => ({ id: c.id, title: c.title, ...(c.group ? { group: c.group } : {}), ...(c.danger ? { danger: true } : {}), ...(c.displayChord ? { displayChord: c.displayChord } : {}) })),
+  table: () => keyTable(),
+  apply: bindings => applyKeybindings(bindings),
+  resetAll: () => applyKeybindings(new KeyTable([]).bindings.length ? [] : mergeKeybindings([], new Set(commands.all().map(c => c.id))).bindings),
+  fileState: () => keybindingsFile,
+  openFile: () => openKeybindingsFile(),
+  fixedBindings: () => {
+    const native: FixedBinding[] = commands.all().filter(c => c.displayChord).map(c => ({ command: c.id, title: c.title, group: c.group ?? 'App', keys: [chordOn({ chord: c.displayChord! })!], where: ['window', 'terminal', 'note'], source: 'nativo' }))
+    const pane: FixedBinding[] = [
+      { command: 'terminal.copy', title: 'Copiar (com seleção; sem ela é o ^C do programa)', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[0]!) ?? chordOn(PANE_SHORTCUTS[1]!)!], where: ['terminal'], source: 'painel' },
+      { command: 'terminal.copy-always', title: 'Copiar a seleção', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[2]!)!], where: ['terminal'], source: 'painel' },
+      { command: 'terminal.paste', title: 'Colar (Ctrl+V sem texto manda o ^V ao Claude Code: imagem)', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[3]!) ?? chordOn(PANE_SHORTCUTS[4]!)!], where: ['terminal'], source: 'painel' },
+      { command: 'terminal.paste-always', title: 'Colar', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[5]!)!], where: ['terminal'], source: 'painel' },
+      { command: 'terminal.newline', title: 'Nova linha sem enviar (Claude Code)', group: 'Terminal', keys: [chordOn(TERMINAL_INPUTS[0]!) ?? chordOn(TERMINAL_INPUTS[1]!)!], where: ['terminal'], source: 'painel' },
+    ].filter(f => f.keys[0]) as FixedBinding[]
+    let editor: FixedBinding[] = []
+    try { editor = editorFixedBindings() } catch (err) { console.warn(`editor keybindings: ${err instanceof Error ? err.message : String(err)}`) }
+    return [...native, ...pane, ...editor]
+  },
+  onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
+  onClose: id => closeNote(id),
+}
+
+/** Ctrl+K Ctrl+S: the screen as a tab of the active group (one screen: a second call brings it forward). */
+function openKeybindings(): void {
+  const existing = keybindingsPanels.keys().next().value as string | undefined
+  if (existing && findPanel(existing)) {
+    findPanel(existing)!.api.setActive()
+    requestAnimationFrame(() => focusPane(existing))
+    return
+  }
+  const reference = currentDesk().activePanel?.id
+  const options: AddPanelOptions = { id: newKeybindingsPanelId(), component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, title: KEYBINDINGS_TITLE, params: {} }
+  const panel = addPaneOptions(options, reference && findPanel(reference) ? { level: 'pane', placement: 'within' } : undefined, reference && findPanel(reference) ? reference : undefined)
+  scheduleSave()
+  requestAnimationFrame(() => focusPane(panel.id))
+}
+
+/** "Abrir keybindings.json": the file as a note tab beside the screen (an empty file is created first so the tab has something to show). */
+function openKeybindingsFile(): void {
+  void (async () => {
+    const state = await window.tether.keybindingsRead()
+    if (state.text === null) await window.tether.keybindingsWrite(formatKeybindingsFile([]))
+    await openNote(state.path)
+  })()
+}
+
+const dispatcher = new ChordDispatcher({
+  modalOpen,
+  editorChord: (first, second) => { const id = currentDesk().activePanel?.id; const ed = id ? notes.get(id)?.editor : undefined; return !!ed && !!editorChordCommand(ed, first, second) },
+})
+let pill: ChordPill
+/** The keydown the dispatcher let through to the terminal (Ctrl+K twice = ^K): the panel's own policy must not take it back. */
+let letThrough: KeyboardEvent | undefined
+
 /** The ≡ menu: every item names a command; the hint, the greying and the run come from the registry. */
 function setupMenu(): void {
   const btn = $('btn-menu')
@@ -2149,9 +2394,8 @@ function setupMenu(): void {
   for (const li of items) {
     const id = li.dataset.command!
     if (!commands.get(id)) throw new Error(`menu item without a command: ${id}`)
-    const hint = commands.hint(id)
-    if (hint) { const kbd = document.createElement('kbd'); kbd.textContent = hint; li.append(kbd) }
   }
+  // The key hints are painted by paintKeyHints (they follow the table).
   const toggle = (open: boolean): void => {
     menu.hidden = !open
     btn.setAttribute('aria-expanded', String(open))
@@ -2275,19 +2519,15 @@ function setupUi(): void {
   $('drawer-empty-new').addEventListener('click', () => { void openNewDialog() })
   $('drawer-empty-quick').addEventListener('click', () => { void quickShell() })
   $('drawer-pill').addEventListener('click', () => setDrawerOpen(false))
-  $('drawer-empty-new').querySelector('.de-kbd')!.remove() // "Novo painel…" has no chord now (Ctrl+Shift+T is the new empty tab)
-  $('drawer-empty-quick').querySelector('.de-kbd')!.innerHTML = kbdHtml(shortcutHint({ op: 'drawer-toggle' }))
+  $('drawer-empty-new').querySelector('.de-kbd')!.remove() // "Novo painel…" has no chord (Ctrl+N is the new empty tab)
   $('drawer-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
   $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
   commands.register(...appCommands(commandHost))
   palette = new CommandPalette($<HTMLDialogElement>('palette'), commands, quickOpen)
   setupMenu()
-  const dup = $('btn-duplicate')
-  const hint = (level: Target['level'], direction: Direction): string => shortcutHint({ op: 'duplicate', level, direction })
-  dup.title = `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right} (${hint('pane', 'right')}): outro painel com o mesmo perfil e a mesma pasta, numa sessão nova. Setas com os mesmos modificadores duplicam para os outros lados; ${hint('frame', 'right')} na borda do quadro; ${hint('desk', 'right')} num quadro novo.`
-  dup.addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
-  $('btn-new').title = `${NEW_PANEL_LABEL}: escolha o perfil, a pasta e onde abrir. ${shortcutHint({ op: 'new-tab' })} abre uma aba vazia no grupo ativo, com o seletor dentro.`
+  $('btn-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
+  paintKeyHints() // the tooltips and the menu hints that read the key table (painted again when the table changes)
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
   setupThemeMenu()
   setupConnectionPopover()
@@ -2311,26 +2551,57 @@ function setupUi(): void {
     if (askingForget) { askingForget = undefined; refreshClosedMenu() }
   })
 
-  // The keyboard dispatch: a chord names a shortcut op (shortcuts.ts), the op names a command (the registry), the
-  // command decides whether it is available now. Inside a terminal the key-capture policy applies first, the same
-  // one the panel used to keep xterm away from the key (a key xterm kept, such as Ctrl+K, is never run here).
+  // The keyboard dispatch (chord-dispatch.ts): a key in a scope (terminal, note, window) resolves through the key
+  // table to a command id, or opens a two-key chord (the pill shows it). It runs in the CAPTURE phase so a key that
+  // is the app's never reaches xterm or Monaco; what is not the app's passes untouched. Inside a note, a chord on an
+  // arrow key stays the editor's (key-capture.ts editorKeyOwner), and the second key of a chord goes to the editor
+  // first (monaco-chords.ts). The screen's own capture boxes (recording a key, searching by key) take every key.
+  pill = new ChordPill({ titleOf: id => commands.get(id)?.title, groupOf: id => commands.get(id)?.group, showKeybindings: () => openKeybindings() })
   document.addEventListener('keydown', ev => {
-    if (ev.key === 'Escape') { drawerEscapeOutside(ev); return }
     const target = ev.target instanceof Element ? ev.target : undefined
-    // Inside a note's editor the editor's chords win (key-capture.ts editorKeyOwner); Monaco already stopped the ones it handled.
-    const shortcut = target?.closest('.xterm') ? (o => o.owner === 'app' ? o.shortcut : undefined)(terminalKeyOwner(ev))
-      : target?.closest('[data-editor]') ? (o => o.owner === 'app' ? o.shortcut : undefined)(editorKeyOwner(ev))
-      : shortcutOf(ev)
-    if (!shortcut) return
-    if (modalOpen()) return
-    const command = commands.byShortcut(shortcut)
-    if (!command) return
-    // A chord another surface uses too (Ctrl+Shift+V pastes) is left to it while the command has nothing to do.
-    if (command.keepKeyWhenUnavailable && !commands.isAvailable(command)) return
-    ev.preventDefault()
-    if (command.ignoreRepeat && ev.repeat) return // a held chord is one toggle
-    void commands.run(command.id, 'key')
-  })
+    if (target?.closest('.kb-veil, .kb-live')) { if (dispatcher.waiting) { dispatcher.cancel(); pill.hide() } return }
+    const where = keyScopeOf(target)
+    if (where === 'note' && !dispatcher.waiting && /^Arrow(Up|Down|Left|Right)$/.test(ev.code)) return
+    const action = dispatcher.press(ev, where)
+    const take = (): void => { ev.preventDefault(); ev.stopPropagation() }
+    switch (action.type) {
+      case 'pass': return
+      case 'wait': take(); return
+      case 'cancel': take(); pill.hide(); return
+      case 'pass-prefix-key': letThrough = ev; pill.hide(); return
+      case 'prefix': take(); pill.wait(action.first, action.next, where === 'terminal'); return
+      case 'editor': {
+        take(); pill.hide()
+        const id = currentDesk().activePanel?.id
+        const ed = id ? notes.get(id)?.editor : undefined
+        if (ed) runEditorChord(ed, action.keys[0]!, ev)
+        return
+      }
+      case 'unknown': take(); pill.unknown(action.keys); return
+      case 'run': {
+        const command = commands.get(action.command)
+        const chord = action.keys.length > 1
+        // A binding to a command that does not exist (a feature not built yet, an old file): a chord is swallowed and
+        // told; a single key passes as if unbound.
+        if (!command) { if (chord) { take(); pill.unknown(action.keys) } return }
+        if (!commands.isAvailable(command)) {
+          if (command.keepKeyWhenUnavailable && !chord) return
+          take(); pill.hide(); return
+        }
+        take()
+        if (command.ignoreRepeat && ev.repeat) return // a held key is one toggle
+        if (chord) pill.done(action.keys, command.id); else pill.hide()
+        void commands.run(command.id, 'key')
+      }
+    }
+  }, true)
+  // Esc outside a terminal closes the drawer (the dispatcher left it alone: no chord was pending).
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape') drawerEscapeOutside(ev) })
+  // A pending prefix does not survive a click or the window losing the focus.
+  document.addEventListener('mousedown', () => { if (dispatcher.waiting) { dispatcher.cancel(); pill.hide() } }, true)
+  window.addEventListener('blur', () => { dispatcher.cancel(); pill.hide() })
+  window.tether.onKeybindingsChanged(applyKeybindingsFile)
+  void window.tether.keybindingsRead().then(applyKeybindingsFile)
   // Back to the window: the pane in front of the user is seen.
   window.addEventListener('focus', () => markSeenIfWatched())
   document.addEventListener('visibilitychange', () => markSeenIfWatched())
@@ -2470,6 +2741,13 @@ declare global {
       htmlPreviewRect(id: string): { x: number; y: number; width: number; height: number } | undefined
       htmlPreviewAction(id: string, action: 'reload'): void
       /** The note panes: file, text, what is on disk, cursor, selections, scroll, focus. */
+      /** The "Atalhos de teclado" screens, the chord pill and the key table (keys as the file writes them). */
+      keybindings(): KeybindingsSnapshot[]
+      pill(): { state: string; text: string; continuations: number }
+      keyTable(): { keys: string; command: string; where: string[]; source: string }[]
+      keybindingsFile(): { path: string; error?: { message: string; line?: number }; warnings: string[] }
+      openKeybindings(): void
+      closedPanes(): number
       notes(): NoteSnapshot[]
       note(id: string): NoteSnapshot | undefined
       /** "Nova nota" as the command does (beside the active pane, the folder rule applied). */
@@ -2633,6 +2911,12 @@ function setupTestHooks(): void {
     htmlPreview: id => { const p = previews.get(id); return p instanceof HtmlPreviewPanel ? p.snapshot() : undefined },
     htmlPreviewRect: id => { const p = previews.get(id); return p instanceof HtmlPreviewPanel ? p.viewRect() : undefined },
     htmlPreviewAction: (id, action) => { const p = previews.get(id); if (!(p instanceof HtmlPreviewPanel)) return; if (action === 'reload') p.reload() },
+    keybindings: () => [...keybindingsPanels.values()].map(s => s.snapshot()),
+    pill: () => pill.snapshot(),
+    keyTable: () => keyTable().bindings.map(b => ({ keys: formatKeys(b.keys), command: b.command, where: [...b.where], source: b.source })),
+    keybindingsFile: () => keybindingsFile,
+    openKeybindings: () => openKeybindings(),
+    closedPanes: () => closedPanes.length,
     notes: () => [...notes.values()].map(n => n.snapshot()),
     note: id => notes.get(id)?.snapshot(),
     newNote,

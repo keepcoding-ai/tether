@@ -8,7 +8,7 @@
 import type { Profile, Request, SlotState } from '../../src/daemon/protocol.ts'
 import { type Level, LEVELS } from './shortcuts.ts'
 
-export { shortcutOf, type AppShortcut, type KeyLike, type Level } from './shortcuts.ts'
+export { shortcutOf, type KeyLike, type Level } from './shortcuts.ts'
 
 /** Where a new panel goes, relative to a reference panel (dockview's own words). */
 export type Direction = 'left' | 'right' | 'above' | 'below'

@@ -8,6 +8,7 @@ import type { FontSizeCommand } from '../shared/font.ts'
 import type { TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ThemeState } from '../shared/theme.ts'
 import type { UiSettings } from '../shared/ui-settings.ts'
+import type { KeybindingsFileState } from '../shared/keybindings.ts'
 
 function on<T>(channel: string, listener: (value: T) => void): () => void {
   const handler = (_e: unknown, value: T): void => listener(value)
@@ -75,6 +76,9 @@ const api: TetherApi = {
   quickOpenInspect: path => ipcRenderer.invoke('quickopen:inspect', path),
   quickOpenExternal: path => ipcRenderer.invoke('quickopen:open-external', path),
   resolveTerminalLink: (cwd, candidates) => ipcRenderer.invoke('terminallinks:resolve', cwd, candidates),
+  keybindingsRead: () => ipcRenderer.invoke('keybindings:read'),
+  keybindingsWrite: text => ipcRenderer.invoke('keybindings:write', text),
+  onKeybindingsChanged: listener => on<KeybindingsFileState>('tether:keybindings-changed', listener),
   openHtmlInBrowser: path => ipcRenderer.invoke('htmlpreview:open-in-browser', path),
   onHtmlPreviewReport: listener => on<PreviewReport>('tether:html-preview-report', listener),
   onHtmlPreviewKey: listener => on<PreviewKey>('tether:html-preview-key', listener),

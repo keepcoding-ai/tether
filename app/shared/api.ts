@@ -7,6 +7,7 @@ import type { TerminalAppearance } from './terminal-theme.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 import type { UiSettings } from './ui-settings.ts'
 import type { QuickOpenResult, QuickOpenTarget } from './quick-open.ts'
+import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 
 export type { Profile, ProfileInput }
@@ -140,6 +141,13 @@ export interface TetherApi {
   quickOpenExternal(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   /** Ctrl+click on terminal paths (app/main/terminal-links-main.ts): the first candidate that exists, read against the pane's opening folder `cwd`; null when none does. */
   resolveTerminalLink(cwd: string | undefined, candidates: string[]): Promise<ResolvedPath | null>
+  /**
+   * The user's keyboard shortcuts (<TETHER_HOME>/keybindings.json; the renderer owns the format, app/renderer/keybindings-rules.ts).
+   * Main reads and writes the text and reports every change on disk through `onKeybindingsChanged` (our own write included).
+   */
+  keybindingsRead(): Promise<KeybindingsFileState>
+  keybindingsWrite(text: string): Promise<{ ok: true } | { ok: false; message: string }>
+  onKeybindingsChanged(listener: (state: KeybindingsFileState) => void): () => void
   /** HTML previews, "Abrir no navegador": the page file with the system's program (only an existing .html file). */
   openHtmlInBrowser(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   /** HTML previews: the files the isolated page loaded from its folder, and what was refused. */

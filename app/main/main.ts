@@ -24,6 +24,7 @@ import { registerQuickOpen } from './quick-open-main.ts'
 import { registerTerminalLinks } from './terminal-links-main.ts'
 import { guardHtmlPreviews, registerHtmlPreviewOpen } from './html-preview-main.ts'
 import { NOTE_EXTENSION } from '../shared/notes.ts'
+import { KEYBINDINGS_FILE, type KeybindingsFileState } from '../shared/keybindings.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
@@ -783,6 +784,31 @@ ipcMain.handle('note:rename', (_e, from: unknown, to: unknown): NoteRenamed => {
 })
 ipcMain.on('note:watch', (_e, path: unknown) => { if (isPath(path)) noteWatchers.watch(path) })
 ipcMain.on('note:unwatch', (_e, path: unknown) => { if (isPath(path)) noteWatchers.unwatch(path) })
+
+// ---------- keyboard shortcuts (F5, delivery 5) ----------
+// <TETHER_HOME>/keybindings.json is the renderer's (format, defaults, merge: app/renderer/keybindings-rules.ts); main
+// only hands the text over, writes it atomically, and reports every change on disk (a save from the screen, an edit by
+// hand in a note tab or outside) so the renderer re-reads.
+const keybindingsPath = join(home, KEYBINDINGS_FILE)
+function keybindingsState(): KeybindingsFileState {
+  try { return { path: keybindingsPath, text: readFileSync(keybindingsPath, 'utf8') } } catch { return { path: keybindingsPath, text: null } }
+}
+ipcMain.handle('keybindings:read', (): KeybindingsFileState => keybindingsState())
+ipcMain.handle('keybindings:write', (_e, text: unknown): { ok: true } | { ok: false; message: string } => {
+  if (typeof text !== 'string') return { ok: false, message: 'Texto inválido.' }
+  try {
+    mkdirSync(home, { recursive: true })
+    const tmp = `${keybindingsPath}.${process.pid}.tmp`
+    writeFileSync(tmp, text)
+    renameSync(tmp, keybindingsPath)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+  }
+})
+// The same watcher class the notes use (one per folder, debounced): the file's folder is the home itself.
+const keybindingsWatchers = new NoteWatchers(() => win?.webContents.send('tether:keybindings-changed', keybindingsState()))
+try { mkdirSync(home, { recursive: true }); keybindingsWatchers.watch(keybindingsPath) } catch { /* no watcher: the screen still reads on open */ }
 ipcMain.handle('note:pick-open', async (_e, initialDir: unknown): Promise<string | null> => {
   if (!win) return null
   const r = await dialog.showOpenDialog(win, {

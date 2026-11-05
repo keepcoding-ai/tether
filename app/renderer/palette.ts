@@ -70,9 +70,9 @@ export class CommandPalette {
     return this.dialog.open ? parsePaletteInput(this.input.value).mode : undefined
   }
 
-  /** Opens the box in a mode (or switches the mode of an open box). */
-  show(mode: PaletteMode): void {
-    this.input.value = initialInput(mode)
+  /** Opens the box in a mode (or switches the mode of an open box); `query` pre-fills the search ("Tema" for Ctrl+K Ctrl+T). */
+  show(mode: PaletteMode, query = ''): void {
+    this.input.value = initialInput(mode) + query
     if (!this.dialog.open) this.dialog.showModal()
     if (mode === 'quick-open') { this.quickOpen?.begin(); delete this.dialog.dataset.mode } // a fresh list, not the last query's
     this.input.focus()
@@ -90,10 +90,10 @@ export class CommandPalette {
   }
 
   private onKey(ev: KeyboardEvent): void {
-    const op = shortcutOf(ev)
-    if (op?.op === 'palette' || op?.op === 'quick-open') {
+    const id = shortcutOf(ev)
+    if (id === 'palette.show' || id === 'palette.quick-open') {
       ev.preventDefault(); ev.stopPropagation()
-      const mode: PaletteMode = op.op === 'palette' ? 'commands' : 'quick-open'
+      const mode: PaletteMode = id === 'palette.show' ? 'commands' : 'quick-open'
       if (this.mode !== mode) this.show(mode)
       return
     }

@@ -10,12 +10,13 @@
   <link rel="stylesheet" href="../dist/renderer.css">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="note.css">
+  <link rel="stylesheet" href="keybindings.css">
 </head>
 <body>
   <header id="toolbar">
     <div class="tb-left">
       <button id="btn-new" class="ib" title="Novo painel…" aria-label="Novo painel…"><span class="i" data-icon="plus"></span></button>
-      <button id="btn-duplicate" class="ib" title="Duplicar painel (Ctrl+Alt+→)" aria-label="Duplicar painel"><span class="i" data-icon="copy"></span></button>
+      <button id="btn-duplicate" class="ib" title="Duplicar painel" aria-label="Duplicar painel"><span class="i" data-icon="copy"></span></button>
       <button id="btn-profiles" class="ib" title="Perfis de lançamento" aria-label="Perfis de lançamento"><span class="i" data-icon="sliders-horizontal"></span></button>
       <div class="dropdown">
         <button id="btn-closed" class="ib" title="Slots fechados: rodando no tetherd sem painel aberto" aria-label="Slots fechados"><span class="i" data-icon="tray"></span><span id="closed-count" class="ib-count"><b id="closed-count-run" class="r"></b><b id="closed-count-end" class="e"></b></span></button>
@@ -82,6 +83,7 @@
         <li role="menuitemcheckbox" data-command="ui.desk-line" aria-checked="true"><span class="i check" data-icon="check"></span>Linha da cor da mesa</li>
         <li role="menuitem" data-command="terminal.theme"><span class="i" data-icon="palette"></span>Tema do terminal…</li>
         <li class="sep" role="separator"></li>
+        <li role="menuitem" data-command="keybindings.show"><span class="i" data-icon="keyboard"></span>Atalhos de teclado</li>
         <li role="menuitem" data-command="confirmations.restore"><span class="i" data-icon="arrow-clockwise"></span>Voltar a perguntar antes de fechar painéis</li>
         <li class="sep" role="separator"></li>
         <li role="menuitem" data-command="window.close"><span class="i" data-icon="app-window"></span>Fechar a janela</li>
@@ -98,7 +100,7 @@
       <header class="drawer-bar">
         <div class="db-left">
           <button id="drawer-new" class="ib" title="Novo painel na gaveta" aria-label="Novo painel na gaveta"><span class="i" data-icon="plus"></span></button>
-          <button id="drawer-duplicate" class="ib" title="Duplicar painel (Ctrl+Alt+→)" aria-label="Duplicar painel"><span class="i" data-icon="copy"></span></button>
+          <button id="drawer-duplicate" class="ib" title="Duplicar painel" aria-label="Duplicar painel"><span class="i" data-icon="copy"></span></button>
         </div>
         <div class="db-mid">
           <button id="drawer-pill" class="seg gav" title="Fechar gaveta (Esc)" aria-label="Fechar gaveta" aria-pressed="true"><span class="i" data-icon="lightning"></span>Gaveta</button>
