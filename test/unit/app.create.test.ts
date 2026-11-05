@@ -26,8 +26,8 @@ describe('shortcutOf', () => {
     assert.deepEqual(shortcutOf(altShift('ArrowUp')), { op: 'duplicate', level: 'desk', direction: 'above' })
   })
 
-  test('Ctrl+Shift+T opens the chooser; D / E stay as the right / below duplicate aliases; Q quits all', () => {
-    assert.deepEqual(shortcutOf(ctrlShift('KeyT')), { op: 'choose' })
+  test('Ctrl+Shift+T adds an empty tab (the chooser inside it); D / E stay as the right / below duplicate aliases; Q quits all', () => {
+    assert.deepEqual(shortcutOf(ctrlShift('KeyT')), { op: 'new-tab' })
     assert.deepEqual(shortcutOf(ctrlShift('KeyD')), { op: 'duplicate', level: 'pane', direction: 'right' })
     assert.deepEqual(shortcutOf(ctrlShift('KeyE')), { op: 'duplicate', level: 'pane', direction: 'below' })
     assert.deepEqual(shortcutOf(ctrlShift('KeyQ')), { op: 'quit-all' })

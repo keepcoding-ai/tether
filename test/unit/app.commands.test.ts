@@ -13,7 +13,7 @@ const CTX: CommandContext = { pane: true, desks: 3, drawerOpen: false, focus: 't
 function stubHost(calls: string[]): CommandHost {
   const log = (name: string) => (...args: unknown[]): void => { calls.push([name, ...args.map(a => JSON.stringify(a))].join(' ')) }
   return {
-    newPanel: log('newPanel'), duplicateActive: log('duplicateActive'), activePane: () => 'slot-1',
+    newPanel: log('newPanel'), newTab: log('newTab'), duplicateActive: log('duplicateActive'), activePane: () => 'slot-1',
     renamePane: log('renamePane'), switchProfile: log('switchProfile'), toggleDetails: log('toggleDetails'),
     copyFolder: log('copyFolder'), openFolder: log('openFolder'), movePane: log('movePane'), closePane: log('closePane'),
     createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), deskActions: log('deskActions'), closeDesk: log('closeDesk'),

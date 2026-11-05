@@ -33,7 +33,7 @@ describe('shortcut registry', () => {
   test('Mac: app chords on Cmd, Ctrl+Tab and Ctrl+` kept literal (Cmd+Tab / Cmd+` are the OS\'s)', () => {
     const ev = (code: string, m: { meta?: boolean; ctrl?: boolean; shift?: boolean; alt?: boolean } = {}) =>
       ({ code, metaKey: !!m.meta, ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt })
-    assert.deepEqual(shortcutOf(ev('KeyT', { meta: true }), true), { op: 'choose' })
+    assert.deepEqual(shortcutOf(ev('KeyT', { meta: true }), true), { op: 'new-tab' })
     assert.deepEqual(shortcutOf(ev('KeyD', { meta: true }), true), { op: 'duplicate', level: 'pane', direction: 'right' })
     assert.deepEqual(shortcutOf(ev('Tab', { ctrl: true }), true), { op: 'desk-cycle', step: 1 })
     assert.equal(shortcutOf(ev('Tab', { meta: true }), true), undefined)
@@ -42,7 +42,7 @@ describe('shortcut registry', () => {
     assert.equal(shortcutOf(ev('KeyT', { ctrl: true, shift: true }), true), undefined, 'Ctrl stays the terminal\'s')
     assert.deepEqual(shortcutOf(ev('Equal', { meta: true }), true), { op: 'font-size', command: 'increase' })
     assert.deepEqual(shortcutOf(ev('Equal', { meta: true, shift: true }), true), { op: 'font-size', command: 'increase' })
-    assert.equal(shortcutHint({ op: 'choose' }, true), '⌘T')
+    assert.equal(shortcutHint({ op: 'new-tab' }, true), '⌘T')
     assert.equal(shortcutHint({ op: 'duplicate', level: 'frame', direction: 'below' }, true), '⌥⇧⌘↓')
     assert.equal(shortcutHint({ op: 'drawer-toggle' }, true), '⌃`')
   })
@@ -58,7 +58,7 @@ describe('shortcut registry', () => {
   })
 
   test('hints: the three levels and the chooser, as the user reads them', () => {
-    assert.equal(shortcutHint({ op: 'choose' }), 'Ctrl+Shift+T')
+    assert.equal(shortcutHint({ op: 'new-tab' }), 'Ctrl+Shift+T')
     assert.equal(shortcutHint({ op: 'duplicate', level: 'pane', direction: 'right' }), 'Ctrl+Alt+→')
     assert.equal(shortcutHint({ op: 'duplicate', level: 'frame', direction: 'below' }), 'Ctrl+Alt+Shift+↓')
     assert.equal(shortcutHint({ op: 'duplicate', level: 'desk', direction: 'left' }), 'Alt+Shift+←')

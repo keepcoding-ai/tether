@@ -5,7 +5,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Profile } from '../../src/daemon/protocol.ts'
 import { appCommands, type CommandHost } from '../../app/renderer/app-commands.ts'
-import { choiceNeedsFolder, choiceOf, EMPTY_CHOICE, leadingChoices, NOTE_NEW_CHOICE, NOTE_OPEN_CHOICE } from '../../app/renderer/chooser-rules.ts'
+import { choiceNeedsFolder, choiceOf, chooserItems, EMPTY_ITEM, NOTE_NEW_ITEM, NOTE_OPEN_ITEM } from '../../app/renderer/chooser-rules.ts'
 import { CommandRegistry, type CommandContext } from '../../app/renderer/commands.ts'
 import { editorKeyOwner, terminalKeyOwner } from '../../app/renderer/key-capture.ts'
 import { emptyLayout, orphanedPanels, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
@@ -84,11 +84,12 @@ describe('an empty pane survives the restore', () => {
 })
 
 describe('what a chooser pick means (dialog and empty pane alike)', () => {
-  test('the leading groups: the dialog offers Vazio and Nota; inside an empty pane only Nota', () => {
-    assert.deepEqual(leadingChoices('dialog').map(g => g.label), ['Vazio', 'Nota'])
-    assert.deepEqual(leadingChoices('empty').map(g => g.label), ['Nota'])
-    assert.deepEqual(leadingChoices('dialog').flatMap(g => g.items.map(i => i.value)), [EMPTY_CHOICE.value, NOTE_NEW_CHOICE.value, NOTE_OPEN_CHOICE.value])
-    for (const item of leadingChoices('dialog').flatMap(g => g.items)) assert.ok(item.value.startsWith('kind:') && item.name && item.hint, item.value)
+  test('the items besides the profiles: the notes everywhere; the empty pane only in the contextless popup', () => {
+    const popup = chooserItems(PROFILES, { empty: true }).filter(i => i.kind !== 'profile')
+    const pane = chooserItems(PROFILES, { empty: false }).filter(i => i.kind !== 'profile')
+    assert.deepEqual(popup.map(i => i.id), [NOTE_NEW_ITEM.id, NOTE_OPEN_ITEM.id, EMPTY_ITEM.id])
+    assert.deepEqual(pane.map(i => i.id), [NOTE_NEW_ITEM.id, NOTE_OPEN_ITEM.id])
+    for (const item of popup) assert.ok(item.id.startsWith('kind:') && item.name && item.hint, item.id)
   })
 
   test('choiceOf: a profile by id, a kind by its value, nothing for the unknown', () => {
