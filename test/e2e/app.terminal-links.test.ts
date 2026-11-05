@@ -1,6 +1,7 @@
 // E2E of Ctrl+click on paths printed in a terminal (F5): against the real tetherd on a private home/pipe, hidden window,
 // a PowerShell pane opened in a temporary folder.
-//   1. a relative `src/app.ts:3` printed by the shell: the pointer shows only while Ctrl is down; a click without Ctrl
+//   1. a relative `src/app.ts:3` printed by the shell, as in VS Code: underlined and "Seguir link (Ctrl + clique)" as soon as the
+//      pointer is over it, the hand pointer only while Ctrl is down; a click without Ctrl
 //      opens nothing; Ctrl+click opens a note tab in the SHELL's tab group, cursor on line 3;
 //   2. clicking again with the shell focused focuses that tab (no duplicate); `src/app.ts(4,2): error` moves the cursor to
 //      4:2; an absolute path outside the folder opens too;
@@ -33,6 +34,7 @@ type Hooks = {
   text(id: string): string
   screenPos(id: string, needle: string): { row: number; col: number } | undefined
   cellSize(id: string): { width: number; height: number } | undefined
+  linkHover(id: string): { underline: boolean; hand: boolean; title: string } | undefined
   termSize(id: string): { cols: number; rows: number } | undefined
 }
 declare const window: { __tether: Hooks }
@@ -106,6 +108,7 @@ async function pointOf(page: Page, id: string, needle: string, offset = 2): Prom
 const pointerShown = (page: Page): Promise<boolean> => page.evaluate(() => document.querySelector('.xterm.xterm-cursor-pointer, .xterm-cursor-pointer') !== null)
 
 /** Moves over the text (with or without Ctrl) and waits for the link provider's answer, then reports whether the pointer shows. */
+let lastHover: { underline: boolean; hand: boolean; title: string } | undefined
 async function hover(page: Page, p: { x: number; y: number }, ctrl: boolean): Promise<boolean> {
   await page.mouse.move(5, 5)
   if (ctrl) await page.keyboard.down('Control')
@@ -114,6 +117,7 @@ async function hover(page: Page, p: { x: number; y: number }, ctrl: boolean): Pr
   await page.mouse.move(p.x + 10, p.y); await sleep(100); await page.mouse.move(p.x, p.y)
   await sleep(400)
   const shown = await pointerShown(page)
+  lastHover = await page.evaluate(() => { const id = window.__tether.panelIds()[0]!; return window.__tether.linkHover(id) })
   if (ctrl) await page.keyboard.up('Control')
   return shown
 }
@@ -175,7 +179,12 @@ test('app terminal links: Ctrl+click opens the printed path (opening folder, tab
     const rel = await print(page, shell!, 'sr', 'c/app.ts:3')
     const relPoint = await pointOf(page, shell!, rel)
     assert.equal(await hover(page, relPoint, true), true, 'the pointer shows over the path while Ctrl is down')
+    assert.deepEqual(lastHover, { underline: true, hand: true, title: 'Seguir link (Ctrl + clique)' }, 'with Ctrl: underlined, hand, tooltip')
     assert.equal(await hover(page, relPoint, false), false, 'no pointer without Ctrl')
+    assert.deepEqual(lastHover, { underline: true, hand: false, title: 'Seguir link (Ctrl + clique)' }, 'without Ctrl: still underlined, with the tooltip, no hand')
+    await page.mouse.move(5, 5)
+    await sleep(300)
+    assert.deepEqual(await page.evaluate(id => window.__tether.linkHover(id), shell!), { underline: false, hand: false, title: '' }, 'leaving the path clears underline and tooltip')
     await page.mouse.move(relPoint.x, relPoint.y); await page.mouse.down(); await page.mouse.up()
     await sleep(500)
     assert.equal((await notes(page)).length, 0, 'a plain click opens nothing')

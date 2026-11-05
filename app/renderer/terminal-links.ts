@@ -1,8 +1,9 @@
 // Ctrl+click on a path printed in a terminal (xterm link provider). Detection is VS Code's (app/shared/
 // vscode-terminal-link-detector.ts); whether a candidate exists is asked of main (app/main/terminal-links-main.ts),
 // which reads a relative path against the folder the pane was OPENED in. Only a path that exists becomes a link.
-// Like VS Code the link is underlined and shows the pointer only while Ctrl (Cmd on macOS) is down; a click without
-// it does nothing here (the web links of @xterm/addon-web-links are another provider and are untouched).
+// Like VS Code: a path is underlined as soon as the pointer is over it and says "Seguir link (Ctrl + clique)" (the pane's
+// tooltip); the hand pointer shows only while Ctrl (Cmd on macOS) is down, and only a click with it follows the link. A
+// click without it does nothing here (the web links of @xterm/addon-web-links are another provider and are untouched).
 import type { IBufferRange, ILink, ILinkDecorations, ILinkProvider, Terminal } from '@xterm/xterm'
 import type { LineColumn } from '../shared/quick-open.ts'
 import { type DetectedLink, provideLocalLinks } from '../shared/vscode-terminal-link-detector.ts'
@@ -24,6 +25,9 @@ export interface TerminalLinkHost {
 const IS_MAC = /Macintosh/.test(navigator.userAgent)
 const isModifierDown = (ev: MouseEvent | KeyboardEvent): boolean => (IS_MAC ? ev.metaKey : ev.ctrlKey)
 
+/** The tooltip VS Code shows over a link ("Follow link (ctrl + click)"). */
+export const FOLLOW_LINK_TIP = `Seguir link (${IS_MAC ? 'Cmd' : 'Ctrl'} + clique)`
+
 class PathLink implements ILink {
   readonly range: IBufferRange
   readonly text: string
@@ -32,10 +36,12 @@ class PathLink implements ILink {
   private cleanup: (() => void) | undefined
   private readonly detected: DetectedLink
   private readonly open: (target: TerminalLinkTarget) => void
+  private readonly tip: (text: string | undefined) => void
 
-  constructor(detected: DetectedLink, open: (target: TerminalLinkTarget) => void) {
+  constructor(detected: DetectedLink, open: (target: TerminalLinkTarget) => void, tip: (text: string | undefined) => void) {
     this.detected = detected
     this.open = open
+    this.tip = tip
     this.range = detected.bufferRange
     this.text = detected.text
   }
@@ -48,12 +54,14 @@ class PathLink implements ILink {
 
   hover(event: MouseEvent): void {
     this.cleanup?.()
-    const set = (on: boolean): void => {
-      if (this.decorations.pointerCursor !== on) this.decorations.pointerCursor = on
-      if (this.decorations.underline !== on) this.decorations.underline = on
+    // Underlined while hovered, whatever the keys; the hand only with the modifier.
+    const set = (hand: boolean): void => {
+      if (this.decorations.pointerCursor !== hand) this.decorations.pointerCursor = hand
+      if (!this.decorations.underline) this.decorations.underline = true
     }
     const onKey = (e: KeyboardEvent): void => { if (!e.repeat) set(isModifierDown(e)) }
     const onMove = (e: MouseEvent): void => set(isModifierDown(e))
+    this.tip(FOLLOW_LINK_TIP)
     document.addEventListener('keydown', onKey)
     document.addEventListener('keyup', onKey)
     document.addEventListener('mousemove', onMove)
@@ -71,6 +79,7 @@ class PathLink implements ILink {
   leave(): void {
     this.cleanup?.()
     this.cleanup = undefined
+    this.tip(undefined)
     this.decorations.pointerCursor = false
     this.decorations.underline = false
   }
@@ -78,13 +87,15 @@ class PathLink implements ILink {
 
 export function terminalLinkProvider(term: Terminal, host: TerminalLinkHost): ILinkProvider {
   const os = /Windows/.test(navigator.userAgent) ? 'windows' : 'posix'
+  // xterm has no tooltip of its own for a link: the pane's element carries it while a path is hovered.
+  const tip = (text: string | undefined): void => { if (text) term.element?.setAttribute('title', text); else term.element?.removeAttribute('title') }
   return {
     provideLinks(bufferLineNumber, callback) {
       const cwd = host.openingCwd()
       provideLocalLinks(term, bufferLineNumber, os, async candidates => {
         try { return await window.tether.resolveTerminalLink(cwd, candidates) } catch (err) { console.error('terminal links:', err); return null }
       }).then(
-        links => callback(links.length > 0 ? links.map(l => new PathLink(l, t => host.open(t))) : undefined),
+        links => callback(links.length > 0 ? links.map(l => new PathLink(l, t => host.open(t), tip)) : undefined),
         err => { console.error('terminal links:', err); callback(undefined) },
       )
     },
