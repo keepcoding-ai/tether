@@ -19,6 +19,7 @@ import hourglass from '@phosphor-icons/core/assets/regular/hourglass.svg'
 import info from '@phosphor-icons/core/assets/regular/info.svg'
 import play from '@phosphor-icons/core/assets/regular/play.svg'
 import plugs from '@phosphor-icons/core/assets/regular/plugs.svg'
+import puzzlePiece from '@phosphor-icons/core/assets/regular/puzzle-piece.svg'
 import plugsConnected from '@phosphor-icons/core/assets/regular/plugs-connected.svg'
 import plus from '@phosphor-icons/core/assets/regular/plus.svg'
 import power from '@phosphor-icons/core/assets/regular/power.svg'
@@ -118,6 +119,7 @@ const SVG = {
   info,
   play,
   plugs,
+  'puzzle-piece': puzzlePiece,
   'plugs-connected': plugsConnected,
   plus,
   power,

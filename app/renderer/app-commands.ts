@@ -80,6 +80,8 @@ export interface CommandHost {
   /** The "Atalhos de teclado" screen (a tab); `recordKeybinding` records the row selected in it. */
   showKeybindings(): void
   recordKeybinding(): void
+  /** The "Extensões" screen (a tab; one at a time). */
+  showExtensions(): void
 }
 
 export const GROUP = { pane: 'Painel', frame: 'Quadro', desk: 'Mesa', drawer: 'Gaveta', look: 'Aparência', app: 'App', note: 'Nota' } as const
@@ -179,6 +181,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'palette.quick-open', title: 'Ir para…', group: GROUP.app, icon: 'magnifying-glass', run: () => host.showPalette('quick-open') },
     { id: 'keybindings.show', title: 'Atalhos de teclado', group: GROUP.app, icon: 'keyboard', run: () => host.showKeybindings() },
     { id: 'keybindings.record', title: 'Atalhos de teclado: gravar o atalho da linha selecionada', group: GROUP.app, icon: 'keyboard', when: ctx => !!ctx.keybindings, run: () => host.recordKeybinding() },
+    { id: 'extensions.show', title: 'Extensões', group: GROUP.app, icon: 'puzzle-piece', run: () => host.showExtensions() },
     { id: 'profiles.manage', title: 'Perfis de lançamento…', group: GROUP.app, icon: 'sliders-horizontal', run: () => host.openProfiles() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },
     { id: 'daemon.restart', title: 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'plugs', run: () => host.restartDaemon() },

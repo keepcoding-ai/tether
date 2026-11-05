@@ -224,7 +224,8 @@
                   "type": "leaf",
                   "data": {
                     "views": [
-                      "keybindings:mh1k2g0"
+                      "keybindings:mh1k2g0",
+                      "extensions:mh1k2g1"
                     ],
                     "activeView": "keybindings:mh1k2g0",
                     "id": "1"
@@ -245,6 +246,13 @@
               "tabComponent": "keybindings-tab",
               "params": {},
               "title": "Atalhos de teclado"
+            },
+            "extensions:mh1k2g1": {
+              "id": "extensions:mh1k2g1",
+              "contentComponent": "extensions",
+              "tabComponent": "extensions-tab",
+              "params": {},
+              "title": "Extensões"
             }
           },
           "activeGroup": "1"

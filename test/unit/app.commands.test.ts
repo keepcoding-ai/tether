@@ -4,6 +4,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { CORE_APP_MENU } from '../../app/renderer/app-menu.ts'
 import { appCommands, type CommandHost } from '../../app/renderer/app-commands.ts'
 import { CommandRegistry, isCommandId, RECENT_LIMIT, type Command, type CommandContext } from '../../app/renderer/commands.ts'
 import { keysLabel, PREFIX_COMMAND, resolvedDefaults, shortcutHint } from '../../app/renderer/shortcuts.ts'
@@ -24,7 +25,7 @@ function stubHost(calls: string[]): CommandHost {
     newNote: log('newNote'), openNote: log('openNote'), saveNoteAs: log('saveNoteAs'), markdownPreview: log('markdownPreview'), markdownSource: log('markdownSource'),
     splitEmpty: log('splitEmpty'), newEmptyDesk: log('newEmptyDesk'),
     saveNote: log('saveNote'), reopenClosed: log('reopenClosed'), cycleTab: log('cycleTab'), goToTab: log('goToTab'), focusNeighbour: log('focusNeighbour'),
-    closeFrameTabs: log('closeFrameTabs'), showKeybindings: log('showKeybindings'), recordKeybinding: log('recordKeybinding'),
+    closeFrameTabs: log('closeFrameTabs'), showKeybindings: log('showKeybindings'), recordKeybinding: log('recordKeybinding'), showExtensions: log('showExtensions'),
   }
 }
 
@@ -166,9 +167,8 @@ describe('the app commands', () => {
     assert.deepEqual(calls, ['duplicateActive {"level":"frame","placement":"below"}', 'goToDesk 3', 'setTheme "dark"', 'closePane "slot-1"', 'showPalette "quick-open"'])
   })
 
-  test('the ≡ menu (index.html) names only commands that exist', () => {
-    const html = readFileSync(join(import.meta.dirname, '..', '..', 'app', 'renderer', 'index.html'), 'utf8')
-    const named = [...html.matchAll(/data-command="([^"]+)"/g)].map(m => m[1]!)
+  test('the ≡ menu (app/renderer/app-menu.ts) names only commands that exist', () => {
+    const named = CORE_APP_MENU.map(i => i.command)
     assert.ok(named.length >= 20, `menu items found: ${named.length}`)
     for (const id of named) assert.ok(byId.has(id), `menu item without a command: ${id}`)
     assert.ok(named.includes('palette.show'), 'the palette is reachable from the menu')

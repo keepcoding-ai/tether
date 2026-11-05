@@ -3,6 +3,7 @@
 import type { AddPanelOptions } from 'dockview-core'
 import { EMPTY_COMPONENT, EMPTY_PANEL_PREFIX, EMPTY_TAB, EMPTY_TITLE, withEmpty } from '../shared/empty.ts'
 import { KEYBINDINGS_COMPONENT, KEYBINDINGS_PANEL_PREFIX, KEYBINDINGS_TAB, KEYBINDINGS_TITLE } from '../shared/keybindings.ts'
+import { EXTENSIONS_COMPONENT, EXTENSIONS_PANEL_PREFIX, EXTENSIONS_TAB, EXTENSIONS_TITLE } from '../shared/extensions-screen.ts'
 import { NOTE_COMPONENT, NOTE_PANEL_PREFIX, NOTE_TAB } from '../shared/notes.ts'
 import { HTML_PREVIEW_COMPONENT, PREVIEW_COMPONENT, PREVIEW_PANEL_PREFIX, PREVIEW_TAB, previewKindOf, previewParams, previewTitle, withPreview } from '../shared/preview.ts'
 import type { PaneLayout, SavedPane } from './pane-registry.ts'
@@ -48,5 +49,10 @@ export const keybindingsLayout: PaneLayout = {
   optionsOf: p => ({ id: p.id, component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, title: KEYBINDINGS_TITLE, params: {} }),
 }
 
+export const extensionsLayout: PaneLayout = {
+  id: 'extensions', idPrefix: EXTENSIONS_PANEL_PREFIX, component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, hasSlot: false,
+  optionsOf: p => ({ id: p.id, component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, title: EXTENSIONS_TITLE, params: {} }),
+}
+
 /** In registration order: the fallback (terminal) last only by convention; lookup does not depend on order. */
-export const CORE_PANE_LAYOUTS: readonly PaneLayout[] = [emptyLayout, keybindingsLayout, htmlPreviewLayout, mdPreviewLayout, noteLayout, terminalLayout]
+export const CORE_PANE_LAYOUTS: readonly PaneLayout[] = [emptyLayout, keybindingsLayout, extensionsLayout, htmlPreviewLayout, mdPreviewLayout, noteLayout, terminalLayout]

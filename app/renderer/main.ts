@@ -51,13 +51,18 @@ import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
-import { emptyLayout as emptyPaneLayout, htmlPreviewLayout, keybindingsLayout, mdPreviewLayout, noteLayout, previewPaneOptions, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
+import { emptyLayout as emptyPaneLayout, extensionsLayout, htmlPreviewLayout, keybindingsLayout, mdPreviewLayout, noteLayout, previewPaneOptions, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
 import type { TetherUi } from './ext-api.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
 import { uiIpc } from '../shared/ext-ipc.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
+import { MenuId, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
+import { appMenuHtml, coreMenuRegistry } from './app-menu.ts'
+import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
+import { extensionRows } from './extensions-list.ts'
+import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, formatKeys, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
@@ -84,6 +89,7 @@ const previews = new Map<string, PreviewPane>()
 const empties = new Map<string, EmptyPanel>()
 /** The "Atalhos de teclado" screens (F5, delivery 5; one is the rule, the map keeps the layout honest). */
 const keybindingsPanels = new Map<string, KeybindingsPanel>()
+const extensionsPanels = new Map<string, ExtensionsPanel>()
 /** Every kind of pane (F9): the registry main.ts and the extensions register into (see "pane types" below). */
 const paneTypes = new PaneRegistry<PaneType>()
 /** Removes the editor actions registered as commands by the last note that got the focus. */
@@ -537,7 +543,7 @@ function markSeenIfWatched(): void {
 
 /** The keyboard to a pane, whatever it is: a terminal or a note. */
 function focusPane(id: string): void {
-  (panels.get(id) ?? notes.get(id) ?? previews.get(id) ?? empties.get(id) ?? keybindingsPanels.get(id))?.focus()
+  (panels.get(id) ?? notes.get(id) ?? previews.get(id) ?? empties.get(id) ?? keybindingsPanels.get(id) ?? extensionsPanels.get(id))?.focus()
 }
 
 /** After a desk switch: the keyboard goes to the desk's active pane (and its badge, if any, is seen). */
@@ -2104,7 +2110,7 @@ const commandHost: CommandHost = {
   duplicateActive: target => { void duplicateActive(target) },
   splitEmpty: (target, origin) => splitEmpty(target, origin),
   newEmptyDesk: () => newEmptyDesk(),
-  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id) || previews.has(a.id) || empties.has(a.id) || keybindingsPanels.has(a.id)) ? a.id : undefined },
+  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id) || previews.has(a.id) || empties.has(a.id) || keybindingsPanels.has(a.id) || extensionsPanels.has(a.id)) ? a.id : undefined },
   renamePane: id => (notes.has(id) ? noteTabs.get(id)?.startRename() : tabs.get(id)?.startRename()),
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
@@ -2162,6 +2168,7 @@ const commandHost: CommandHost = {
     void (async () => { for (const p of [...active.group.panels]) await closePanel(p.id) })()
   },
   showKeybindings: () => openKeybindings(),
+  showExtensions: () => openExtensions(),
   recordKeybinding: () => { const a = currentDesk().activePanel?.id; if (a) keybindingsPanels.get(a)?.recordSelected() },
   markdownPreview: side => openPreview({ side }),
   markdownSource: () => { const a = currentDesk().activePanel?.id; if (a && previews.has(a)) openPreviewSource(a) },
@@ -2310,6 +2317,31 @@ function openKeybindings(): void {
   requestAnimationFrame(() => focusPane(panel.id))
 }
 
+/** The "Extensões" screen as a tab of the active group (one screen: a second call brings it forward and refreshes it). */
+function openExtensions(): void {
+  const existing = extensionsPanels.keys().next().value as string | undefined
+  if (existing && findPanel(existing)) {
+    findPanel(existing)!.api.setActive()
+    void extensionsPanels.get(existing)?.refresh()
+    requestAnimationFrame(() => focusPane(existing))
+    return
+  }
+  const reference = currentDesk().activePanel?.id
+  const options: AddPanelOptions = { id: newExtensionsPanelId(), component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, title: EXTENSIONS_TITLE, params: {} }
+  const panel = addPaneOptions(options, reference && findPanel(reference) ? { level: 'pane', placement: 'within' } : undefined, reference && findPanel(reference) ? reference : undefined)
+  scheduleSave()
+  requestAnimationFrame(() => focusPane(panel.id))
+}
+
+const extensionsHost: ExtensionsHost = {
+  rows: async () => {
+    const main = await window.tether.listMainExtensions()
+    return extensionRows([{ manifests: extensions.map(e => e.manifest), failed: rendererActivation.failed }, main], main.disabled)
+  },
+  onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
+  onClose: id => { void closePanel(id) },
+}
+
 /** "Abrir keybindings.json": the file as a note tab beside the screen (an empty file is created first so the tab has something to show). */
 function openKeybindingsFile(): void {
   void (async () => {
@@ -2331,7 +2363,12 @@ let letThrough: KeyboardEvent | undefined
 function setupMenu(): void {
   const btn = $('btn-menu')
   const menu = $('app-menu')
+  const entries = menuRegistry.build(MenuId.App)
+  menu.innerHTML = appMenuHtml(entries, id => commands.get(id)?.title)
+  for (const el of menu.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
   const items = [...menu.querySelectorAll<HTMLElement>('li[data-command]')]
+  // The registry's items in the rendered order: an item with `when` is hidden while it does not hold.
+  const conditional = entries.flatMap(e => e.type === 'item' ? [e.item] : []).map((item, i) => ({ item, li: items[i]! })).filter(x => x.item.when)
   for (const li of items) {
     const id = li.dataset.command!
     if (!commands.get(id)) throw new Error(`menu item without a command: ${id}`)
@@ -2347,6 +2384,7 @@ function setupMenu(): void {
     // Items whose command is unavailable now (no active pane, a single desk…) are greyed out, not hidden.
     const ctx = commandContext()
     for (const li of items) li.setAttribute('aria-disabled', String(!commands.isAvailable(commands.get(li.dataset.command!)!, ctx)))
+    for (const { item, li } of conditional) li.hidden = !(item.when as (c: CommandContext) => boolean)(ctx)
     toggle(menu.hidden)
   })
   document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
@@ -2921,6 +2959,12 @@ function registerCorePaneTypes(): void {
     has: id => keybindingsPanels.has(id),
     contextFlags: () => ['keybindings.screen'],
   }))
+  paneTypes.register(live(extensionsLayout, {
+    icon: 'puzzle-piece',
+    create: () => { const p: ExtensionsPanel = tracked(new ExtensionsPanel(extensionsHost), extensionsPanels, () => p.id); return p },
+    createTab: () => new ExtensionsTab(extensionsHost),
+    has: id => extensionsPanels.has(id),
+  }))
   const previewCwd = (id: string): string | undefined => { const p = previews.get(id); return p ? noteByPath(p.path)?.cwd ?? paneCwdOfNote(p.path) : undefined }
   paneTypes.register(live(htmlPreviewLayout, {
     icon: 'eye',
@@ -2969,6 +3013,8 @@ const extensionStore = new DisposableStore()
 const configuration = new ConfigurationRegistry()
 let extSettings: ExtensionsSettings = { disabled: [], values: {} }
 const extSettingListeners = new Map<string, Set<(value: SettingValue) => void>>()
+/** The ≡ menu: the core's items and groups, plus what extensions contribute (built once by setupMenu). */
+const menuRegistry = coreMenuRegistry()
 let rendererActivation: { active: string[]; disabled: string[]; failed: { id: string; error: string }[] } = { active: [], disabled: [], failed: [] }
 
 function onExtSetting(change: { id: string; key: string; value: SettingValue }): void {
@@ -3002,6 +3048,7 @@ function activateRendererExtensions(): void {
         return extensionStore.add(toDisposable(() => { set.delete(listener) }))
       },
     },
+    menus: { app: (item: RegistryMenuItem<CommandContext>) => extensionStore.add(menuRegistry.appendMenuItem(MenuId.App, item as RegistryMenuItem)) },
   })
   rendererActivation = activateExtensions(extensions, apiFor, extensionStore, extSettings.disabled)
 }
