@@ -6,6 +6,7 @@ import type { FontSizeCommand } from './font.ts'
 import type { TerminalAppearance } from './terminal-theme.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 import type { UiSettings } from './ui-settings.ts'
+import type { QuickOpenResult, QuickOpenTarget } from './quick-open.ts'
 
 export type { Profile, ProfileInput }
 
@@ -117,6 +118,18 @@ export interface TetherApi {
   notePickSaveAs(currentPath: string): Promise<string | null>
   /** The answer to "add .tether/ to .gitignore?" for a repository: add it, or remember the refusal for that repository. */
   noteGitignore(repoRoot: string, add: boolean): Promise<void>
+  /**
+   * Quick Open (app/main/quick-open-main.ts): the files under the pane's opening folder (the notes folder without
+   * one) ranked for the query, with the recently opened ones (`recent`, absolute paths, newest first) on top.
+   * Null when a newer search replaced this one before it ran.
+   */
+  quickOpenSearch(paneCwd: string | undefined, query: string, recent: string[]): Promise<QuickOpenResult | null>
+  /** The box opened: refresh the root's list in the background when nothing watches it. */
+  quickOpenRefresh(paneCwd: string | undefined): void
+  /** What opening a path means: editor (text), system program (binary, too large), or nothing (missing, folder). */
+  quickOpenInspect(path: string): Promise<QuickOpenTarget>
+  /** Opens a binary or too large file with the system's program (never one that would run). */
+  quickOpenExternal(path: string): Promise<{ ok: true } | { ok: false; message: string }>
 }
 
 declare global {

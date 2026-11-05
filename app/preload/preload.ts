@@ -69,6 +69,10 @@ const api: TetherApi = {
   notePickOpen: initialDir => ipcRenderer.invoke('note:pick-open', initialDir),
   notePickSaveAs: currentPath => ipcRenderer.invoke('note:pick-save-as', currentPath),
   noteGitignore: (repoRoot, add) => ipcRenderer.invoke('note:gitignore', repoRoot, add),
+  quickOpenSearch: (paneCwd, query, recent) => ipcRenderer.invoke('quickopen:search', paneCwd, query, recent),
+  quickOpenRefresh: paneCwd => ipcRenderer.send('quickopen:refresh', paneCwd),
+  quickOpenInspect: path => ipcRenderer.invoke('quickopen:inspect', path),
+  quickOpenExternal: path => ipcRenderer.invoke('quickopen:open-external', path),
 }
 
 contextBridge.exposeInMainWorld('tether', api)

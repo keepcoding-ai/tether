@@ -17,6 +17,7 @@ import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, NotePrepared, NoteRead, NoteRenamed, NoteWritten, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import { addTetherToGitignore, NoteWatchers, notesDirFor, prepareNote, readNote, renameNote, writeNote } from './note-files.ts'
+import { registerQuickOpen } from './quick-open-main.ts'
 import { NOTE_EXTENSION } from '../shared/notes.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
@@ -766,6 +767,11 @@ ipcMain.handle('note:gitignore', (_e, repoRoot: unknown, add: unknown) => {
   const declined = gitignoreDeclined()
   if (!declined.includes(repoRoot)) writeJson(settingsPath, { ...settings, notes: { gitignoreDeclined: [...declined, repoRoot] } })
 })
+
+// ---------- quick open ----------
+// Ctrl+P's file list and search (app/main/quick-open-main.ts), in a worker thread next to main.cjs.
+const quickOpen = registerQuickOpen(ipcMain, shell, __dirname)
+app.on('will-quit', () => quickOpen.dispose())
 
 // ---------- single instance ----------
 

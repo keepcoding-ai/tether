@@ -1,6 +1,8 @@
 // One-shot esbuild build of the Electron app into app/dist (no watch mode):
 //   main.cjs      Electron main process (CommonJS, node platform, electron external)
 //   preload.cjs   sandboxed preload (CommonJS)
+//   file-index-worker.cjs  Quick Open's file index (worker thread of main). It runs rg from node_modules/@vscode/ripgrep-<platform>-<arch>
+//                 (resolved from the repo root at run time, never bundled: the app runs from this repo, no asar)
 //   renderer.js   browser bundle (ESM) with xterm + dockview-core
 //   dockview.css  dockview-core's stylesheet. The ESM build of dockview-core 8 ships no CSS file: the
 //                 styles exist only as a string injected by its UMD bundle, so they are extracted from it.
@@ -42,6 +44,7 @@ writeTrayIcons(out)
 await Promise.all([
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),
+  build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-worker.ts')], outfile: join(out, 'file-index-worker.cjs') }),
   build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'main.ts')], outfile: join(out, 'renderer.js') }),
   build({ ...common, platform: 'browser', format: 'iife', entryPoints: [join(here, '..', 'node_modules', 'monaco-editor', 'esm', 'vs', 'editor', 'editor.worker.js')], outfile: join(out, 'editor.worker.js') }),
   build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'dialog-window.ts')], outfile: join(out, 'dialog.js') }),
