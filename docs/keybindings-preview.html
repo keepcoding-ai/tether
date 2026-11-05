@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>tether · Atalhos de teclado</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@350;700&display=swap" rel="stylesheet">
+<style>
+/* tokens: same as app/renderer/styles.css / docs/chooser-preview.html */
+:root[data-theme="dark"]{--bg:#1b1b1f;--bg-2:#232329;--bg-3:#2c2c34;--bg-hover:#363640;--bg-hover-2:#3f3f4a;--fg:#d8d8dc;--fg-dim:#9a9aa3;--accent:#6aa6ff;--accent-hover:#86b7ff;--on-accent:#0d1320;--border:#35353d;--ok:#5fcf80;--warn:#e6b450;--err:#ef6a6a;--shadow:0 6px 20px rgba(0,0,0,.5);--backdrop:rgba(0,0,0,.6);color-scheme:dark;
+ --t-fg:#e6edf3;--t-dim:#6e7681;--t-green:#3fb950;--t-blue:#58a6ff;--t-mag:#bc8cff;--frame-border:rgba(255,255,255,.08);--desk-bg:#141418;--frame-bg:#1e1e23;--on-warn:#1a1408;
+ --dlg-shadow:0 2px 4px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.45),0 32px 72px rgba(0,0,0,.55)}
+:root[data-theme="light"]{--bg:#fbfbfd;--bg-2:#f1f2f5;--bg-3:#e6e7ec;--bg-hover:#dcdde3;--bg-hover-2:#d2d3da;--fg:#24292f;--fg-dim:#5f6368;--accent:#1f6fe0;--accent-hover:#3b84ea;--on-accent:#ffffff;--border:#cfd1d8;--ok:#1a8a3c;--warn:#9a6b00;--err:#c62828;--shadow:0 6px 20px rgba(0,0,0,.18);--backdrop:rgba(0,0,0,.35);color-scheme:light;
+ --t-fg:#1f2328;--t-dim:#6e7781;--t-green:#116329;--t-blue:#0969da;--t-mag:#8250df;--frame-border:rgba(0,0,0,.09);--desk-bg:#e7e9ed;--frame-bg:#fbfbfd;--on-warn:#ffffff;
+ --dlg-shadow:0 2px 4px rgba(0,0,0,.08),0 10px 24px rgba(0,0,0,.14),0 28px 64px rgba(0,0,0,.22)}
+:root{--gap:8px;--frame-radius:10px;--x-alert:oklch(0.70 0.19 50);--claude:#d97757;
+ --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;--ui:"Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box}html{height:100%}body{margin:0;min-height:100%;font:13px var(--ui);background:var(--desk-bg);color:var(--fg)}
+button{font:inherit;color:inherit;cursor:pointer}
+svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+kbd{font:11px var(--ui);color:var(--fg);background:var(--bg);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:1px 6px;flex:none;line-height:1.3;white-space:nowrap}
+kbd.dim{color:var(--fg-dim)}
+.chord{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.chord .then{color:var(--fg-dim);font-size:10px;padding:0 1px}
+.ib{position:relative;width:28px;height:28px;display:grid;place-items:center;border-radius:6px;cursor:pointer;border:0;background:none;color:var(--fg-dim);padding:0}
+.ib:hover{background:var(--bg-hover);color:var(--fg)}
+.ib:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+mark{background:none;color:var(--accent);font-weight:700}
+
+/* ---------- page ---------- */
+.page{max-width:1320px;margin:0 auto;padding:28px 24px 80px}
+.top h1{margin:0;font-size:20px;font-weight:650}
+.top p{margin:4px 0 0;color:var(--fg-dim);max-width:900px;line-height:1.5}
+#theme{position:fixed;top:12px;right:12px;z-index:90;background:var(--bg-2);border:1px solid var(--border);box-shadow:var(--shadow);color:var(--fg)}
+.toc{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 26px}
+.toc a{color:var(--fg-dim);text-decoration:none;border:1px solid var(--border);border-radius:999px;padding:3px 11px;font-size:12px;background:var(--bg-2)}
+.toc a:hover{color:var(--fg);background:var(--bg-hover)}
+section.s{margin:0 0 48px;scroll-margin-top:16px}
+section.s>h2{display:flex;align-items:center;gap:10px;margin:0 0 4px;font-size:16px;font-weight:650}
+section.s>h2 .n{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-size:12px;font-weight:700}
+section.s>.lead{margin:0 0 14px;color:var(--fg-dim);max-width:960px;line-height:1.5}
+.lead b,.notes b{color:var(--fg);font-weight:600}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px 22px;margin-top:18px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--bg-2)}
+.notes h4{margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.notes p,.notes li{margin:0;color:var(--fg);line-height:1.5;font-size:12.5px}
+.notes ul{margin:0;padding-left:16px}
+.notes code,.cmdid,code{font:11.5px var(--mono);color:var(--fg);background:var(--bg);padding:0 4px;border-radius:3px;border:1px solid var(--border)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(8px);z-index:95;padding:9px 14px;border-radius:8px;background:var(--bg-3);border:1px solid var(--border);box-shadow:var(--shadow);font-size:12.5px;opacity:0;transition:opacity .15s,transform .15s;pointer-events:none;display:flex;align-items:center;gap:8px;max-width:90vw}
+.toast.on{opacity:1;transform:translateX(-50%)}
+.toast svg.i{color:var(--ok)}
+.toast b{font-weight:600}
+.btn{background:var(--bg-3);color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;font:inherit;display:inline-flex;align-items:center;gap:7px;white-space:nowrap;min-height:30px}
+.btn:hover{background:var(--bg-hover)}
+.btn.cancel{background:none;border-color:transparent;color:var(--fg-dim);padding:5px 9px}.btn.cancel:hover{background:var(--bg-3);color:var(--fg);border-color:var(--border)}
+.btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600}.btn.primary:hover{background:var(--accent-hover)}
+.btn.primary.warnb{background:var(--warn);border-color:var(--warn);color:var(--on-warn)}
+.btn.sm{min-height:26px;padding:2px 9px;font-size:12px}
+.btn svg.i{width:15px;height:15px}
+.btn:disabled{opacity:.5;cursor:default}
+.selo{font-size:10px;font-weight:700;letter-spacing:.03em;padding:1px 7px;border-radius:999px;flex:none;white-space:nowrap}
+.selo.same{color:var(--fg-dim);background:var(--bg-3)}
+.selo.change{color:var(--on-accent);background:var(--accent)}
+.selo.new{color:var(--ok);background:color-mix(in srgb,var(--ok) 16%,transparent)}
+.selo.out{color:var(--fg-dim);background:none;border:1px dashed var(--border)}
+.selo.conf{color:var(--on-warn);background:var(--warn)}
+.selo.user{color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.selo.editor{color:var(--t-mag);background:color-mix(in srgb,var(--t-mag) 14%,transparent)}
+.selo.info{color:var(--fg-dim);background:var(--bg-3);font-weight:600}
+
+/* ---------- A: scheme table ---------- */
+.filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.filters .sp{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--fg-dim);border-radius:999px;padding:3px 11px;font-size:12px;cursor:pointer;user-select:none}
+.chip:hover{background:var(--bg-hover);color:var(--fg)}
+.chip[aria-pressed=true]{background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:color-mix(in srgb,var(--accent) 50%,var(--border));color:var(--accent)}
+.chip .cnt{font-size:10.5px;background:var(--bg-3);border-radius:999px;padding:0 6px;color:var(--fg-dim)}
+.chip[aria-pressed=true] .cnt{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent)}
+.lgd{display:flex;flex-wrap:wrap;gap:12px;color:var(--fg-dim);font-size:12px;align-items:center;margin:0 0 10px}
+.lgd span{display:inline-flex;align-items:center;gap:5px}
+table.scheme{width:100%;border-collapse:separate;border-spacing:0;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;overflow:hidden;font-size:12.5px}
+table.scheme th{position:sticky;top:0;z-index:2;text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim);background:var(--bg-3);padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+table.scheme td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.45}
+table.scheme tr:last-child td{border-bottom:0}
+table.scheme tr.grp td{background:var(--bg);padding:9px 10px 5px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+table.scheme tr.grp td span{color:var(--fg);font-weight:400;text-transform:none;letter-spacing:0;font-size:12px;margin-left:8px}
+table.scheme td.k{white-space:nowrap}
+table.scheme td.vs{color:var(--fg-dim)}
+table.scheme td .t{font-weight:600;color:var(--fg)}
+table.scheme td .sub{color:var(--fg-dim);font-size:11.5px;display:block}
+table.scheme tr.conf>td{background:color-mix(in srgb,var(--warn) 6%,transparent)}
+table.scheme tr.conf>td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+tr.detail td{padding:0 10px 10px 10px;background:color-mix(in srgb,var(--warn) 6%,transparent)}
+tr.detail td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+.cbox{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.4fr);gap:10px 18px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--warn) 40%,var(--border));border-radius:8px;background:var(--bg-2)}
+@media (max-width:900px){.cbox{grid-template-columns:1fr}}
+.cbox h5{margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--warn);display:flex;align-items:center;gap:6px}
+.cbox h5 svg.i{width:14px;height:14px}
+.cbox p{margin:0;line-height:1.5;color:var(--fg)}
+.cbox .opts{display:flex;flex-direction:column;gap:5px}
+.opt{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-radius:6px;border:1px solid transparent;cursor:pointer;line-height:1.45}
+.opt:hover{background:var(--bg-hover)}
+.opt input{margin:3px 0 0;accent-color:var(--accent);flex:none}
+.opt.rec{border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.opt .rc{font-size:10px;font-weight:700;color:var(--ok);letter-spacing:.04em;margin-left:6px}
+.opt:has(input:checked){background:color-mix(in srgb,var(--accent) 12%,transparent);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.cbox .why{font-size:12px;color:var(--fg-dim);margin-top:4px}
+.decisions{display:flex;align-items:center;gap:10px;margin:12px 0 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-2);color:var(--fg-dim);font-size:12.5px;flex-wrap:wrap}
+.decisions b{color:var(--fg)}
+.decisions .sp{flex:1}
+.empty-row td{color:var(--fg-dim);text-align:center;padding:24px 10px!important;font-style:italic}
+
+/* ---------- B: the screen (a tab inside a pane) ---------- */
+.pane{position:relative;display:flex;flex-direction:column;min-width:0;background:var(--frame-bg);border:1px solid var(--frame-border);border-radius:var(--frame-radius);overflow:hidden;box-shadow:0 0 0 1px color-mix(in srgb,var(--fg) 4%,transparent);container-type:inline-size;container-name:pane;height:640px;width:100%;transition:max-width .2s}
+.pane.narrow{max-width:460px}
+.strip{flex:none;display:flex;align-items:stretch;height:32px;background:var(--bg-2);border-bottom:1px solid var(--border)}
+.tabs{display:flex;min-width:0;flex:0 1 auto;overflow:hidden}
+.tab{display:flex;align-items:center;gap:7px;padding:0 8px 0 11px;min-width:112px;max-width:220px;color:var(--fg-dim);border-right:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;flex:0 1 auto}
+.tab.on{background:var(--frame-bg);color:var(--fg);flex-shrink:0}
+.tab svg.i{width:14px;height:14px}
+.tab .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tab .x{display:inline-flex;margin-left:auto;padding:2px;border-radius:3px;color:var(--fg-dim);visibility:hidden;background:none;border:0}
+.tab.on .x,.tab:hover .x{visibility:visible}
+.tab .x svg.i{width:13px;height:13px}
+.tab.claude svg.i.k{color:var(--claude)}.tab.tab-kb svg.i.k{color:var(--accent)}
+.tab-actions{display:flex;align-items:center;gap:1px;height:100%;padding:0 4px;border-left:1px solid var(--border);margin-left:auto;flex:none}
+.tab-act{width:26px;height:24px;border-radius:5px;padding:0;border:0;background:none;color:var(--fg-dim);display:inline-flex;align-items:center;justify-content:center}
+.tab-act:hover{background:var(--bg-hover);color:var(--fg)}
+.tab-act svg.i{width:15px;height:15px}
+
+.kb{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;background:var(--frame-bg);position:relative;outline:none}
+.kb-head{flex:none;display:flex;flex-direction:column;gap:8px;padding:10px 12px 8px;border-bottom:1px solid var(--border);background:var(--bg-2)}
+.kb-row{display:flex;align-items:center;gap:8px;min-width:0}
+.kb-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:32px;padding:0 4px 0 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg-dim)}
+.kb-search:focus-within{border-color:var(--accent);outline:1px solid var(--accent)}
+.kb-search svg.i.mag{width:15px;height:15px}
+.kb-search input{flex:1;min-width:0;background:none;border:0;padding:0;color:var(--fg);font:13px var(--ui);outline:none}
+.kb-search input::placeholder{color:var(--fg-dim)}
+.kb-search.rec{border-color:var(--err)}
+.kb-search.rec .live{display:inline-flex;align-items:center;gap:4px;color:var(--fg);font-size:12px;min-width:0;flex:1}
+.kb-search .live .ph{color:var(--fg-dim);font-style:italic}
+.kb-search .ib{width:26px;height:26px}
+.kb-search .ib[aria-pressed=true]{background:color-mix(in srgb,var(--err) 16%,transparent);color:var(--err)}
+.kb-search .ib.clear[hidden]{display:none}
+.kb-sel{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 8px 0 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:12.5px;cursor:pointer;white-space:nowrap}
+.kb-sel select{appearance:none;background:none;border:0;color:var(--fg);font:inherit;outline:none;cursor:pointer;padding-right:14px}
+.kb-sel svg.i{width:13px;height:13px;color:var(--fg-dim);margin-left:-18px;pointer-events:none}
+.kb-links{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--fg-dim);min-width:0;flex-wrap:wrap}
+.kb-links .sp{flex:1}
+.kb-links button.lnk,.lnk{background:none;border:0;color:var(--accent);padding:0;display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer}
+.kb-links button.lnk:hover,.lnk:hover{text-decoration:underline}
+.kb-links button.lnk svg.i{width:13px;height:13px}
+.kb-links .cnt b{color:var(--fg)}
+.kb-banner{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:6px;font-size:12px;line-height:1.45}
+.kb-banner.err{color:var(--err);background:color-mix(in srgb,var(--err) 10%,transparent);border:1px solid color-mix(in srgb,var(--err) 35%,transparent)}
+.kb-banner.err svg.i{width:15px;height:15px;margin-top:1px;flex:none}
+.kb-banner[hidden]{display:none}
+.kb-banner .sp{flex:1}
+.kb-banner button.lnk{color:inherit;font-weight:600}
+.kb-list{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--bg-hover) transparent;outline:none;position:relative}
+table.kbt{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
+table.kbt th{position:sticky;top:0;z-index:2;text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim);background:var(--frame-bg);padding:7px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+table.kbt td{padding:5px 10px;border-bottom:1px solid color-mix(in srgb,var(--border) 60%,transparent);vertical-align:middle;height:38px}
+table.kbt tr.r{cursor:default}
+table.kbt tr.r:hover td{background:var(--bg-hover)}
+table.kbt tr.r.sel td{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+table.kbt tr.r.sel td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
+table.kbt tr.r.conflict td{background:color-mix(in srgb,var(--warn) 7%,transparent)}
+table.kbt tr.r.conflict.sel td{background:color-mix(in srgb,var(--warn) 16%,transparent)}
+table.kbt td.cmd{min-width:0}
+table.kbt td.cmd .t{display:flex;align-items:center;gap:7px;min-width:0}
+table.kbt td.cmd .t span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+table.kbt td.cmd .id{display:block;font:10.5px var(--mono);color:var(--fg-dim);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+table.kbt td.key{white-space:nowrap}
+table.kbt td.key .none{color:var(--fg-dim);font-style:italic}
+table.kbt td.key .alt{color:var(--fg-dim);font-size:11px;margin-left:6px}
+table.kbt td.key .warn{color:var(--warn);display:inline-flex;align-items:center;margin-left:4px;vertical-align:middle}
+table.kbt td.key .warn svg.i{width:14px;height:14px}
+table.kbt td.where{white-space:nowrap}
+.sc{display:inline-flex;gap:3px}
+.sc button{height:20px;padding:0 7px;border-radius:999px;border:1px solid var(--border);background:none;color:var(--fg-dim);font-size:10.5px;font-weight:600;letter-spacing:.02em;line-height:1}
+.sc button[aria-pressed=true]{background:color-mix(in srgb,var(--accent) 18%,transparent);border-color:color-mix(in srgb,var(--accent) 50%,var(--border));color:var(--accent)}
+.sc button:hover{border-color:var(--accent)}
+.sc button:disabled{opacity:.45;cursor:not-allowed}
+.sc button.pass[aria-pressed=false]{border-style:dashed}
+table.kbt td.src{white-space:nowrap;color:var(--fg-dim);font-size:11.5px}
+table.kbt td.act{white-space:nowrap;text-align:right;width:96px}
+table.kbt td.act .ib{width:24px;height:24px;visibility:hidden;display:inline-grid}
+table.kbt td.act .ib svg.i{width:14px;height:14px}
+table.kbt tr.r:hover td.act .ib,table.kbt tr.r.sel td.act .ib{visibility:visible}
+table.kbt td.act .ib.always{visibility:visible}
+table.kbt td.act .ib:disabled{opacity:.35;cursor:not-allowed;background:none}
+table.kbt tr.sec td{background:var(--bg);font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim);height:28px;padding:4px 10px}
+.kb-empty{padding:28px 20px;color:var(--fg-dim);font-size:12.5px;line-height:1.6;text-align:center}
+.kb-empty b{color:var(--fg)}
+.kb-foot{flex:none;display:flex;align-items:center;gap:10px;height:28px;padding:0 10px;font-size:11.5px;color:var(--fg-dim);background:var(--bg-2);border-top:1px solid var(--border);white-space:nowrap;overflow:hidden}
+.kb-foot .sp{flex:1}
+.kb-foot span{display:inline-flex;align-items:center;gap:4px}
+@container pane (max-width: 560px){
+ .kbt th.c-src,.kbt td.src,.kbt th.c-grp,.kbt td.grp{display:none}
+ table.kbt td.cmd .id{display:none}
+ .kb-links .hide-n{display:none}
+ .sc button{padding:0 5px}
+ .kb-foot .hide-n{display:none}
+}
+@container pane (max-width: 480px){
+ .kbt th.c-where,.kbt td.where{display:none}
+ table.kbt td.act{width:56px}
+}
+
+/* record dialog (inside the pane, a veil over the list) */
+.kb-veil{position:absolute;inset:0;background:var(--backdrop);z-index:20;display:grid;place-items:start center;padding-top:56px;animation:vIn .14s ease-out}
+.kb-veil[hidden]{display:none}
+@keyframes vIn{from{opacity:0}}@keyframes dIn{from{opacity:0;transform:translateY(-6px)}}
+.rec{width:min(520px,92%);display:flex;flex-direction:column;gap:10px;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;box-shadow:var(--dlg-shadow);padding:14px 16px 12px;animation:dIn .16s cubic-bezier(.2,.8,.2,1)}
+.rec h3{margin:0;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px;min-width:0}
+.rec h3 span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rec .sub{color:var(--fg-dim);font-size:12px;margin:-4px 0 0}
+.rec .cap{display:flex;align-items:center;justify-content:center;gap:8px;min-height:56px;border:1px dashed var(--border);border-radius:8px;background:var(--bg);font-size:13px;padding:8px 12px;text-align:center;flex-wrap:wrap}
+.rec .cap.live{border-color:var(--accent);border-style:solid}
+.rec .cap .ph{color:var(--fg-dim);font-style:italic}
+.rec .cap kbd{font-size:12px;padding:3px 8px}
+.rec .cap .then{color:var(--fg-dim);font-size:11px}
+.rec .cap .wait{width:100%;font-size:11px;color:var(--fg-dim)}
+.rec .msg{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:6px;font-size:12px;line-height:1.45}
+.rec .msg[hidden]{display:none}
+.rec .msg svg.i{width:15px;height:15px;margin-top:1px;flex:none}
+.rec .msg.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent)}
+.rec .msg.info{color:var(--fg);background:var(--bg-3);border:1px solid var(--border)}
+.rec .msg.info svg.i{color:var(--accent)}
+.rec .msg b{font-weight:600}
+.rec .msg .pre{display:block;margin-top:2px;color:var(--fg-dim)}
+.rec .where{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-dim);flex-wrap:wrap}
+.rec .acts{display:flex;align-items:center;gap:8px;margin-top:2px}
+.rec .acts .hint{font-size:11px;color:var(--fg-dim);display:inline-flex;gap:8px}
+.rec .acts .hint span{display:inline-flex;align-items:center;gap:4px}
+.rec .acts .sp{flex:1}
+.rec .acts kbd{font-size:10.5px}
+.btn.primary kbd{color:var(--on-accent);background:color-mix(in srgb,var(--on-accent) 15%,transparent);border-color:color-mix(in srgb,var(--on-accent) 35%,transparent)}
+.btn.primary.warnb kbd{color:var(--on-warn);background:color-mix(in srgb,var(--on-warn) 14%,transparent);border-color:color-mix(in srgb,var(--on-warn) 35%,transparent)}
+
+/* the json pane (section B.3) */
+.json{display:grid;grid-template-columns:34px 1fr;font:350 12.5px/1.55 var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:420px}
+.json .ln{padding:10px 0;color:var(--t-dim);text-align:right;padding-right:8px;border-right:1px solid var(--border);white-space:pre}
+.json .tx{padding:10px 12px;color:var(--t-fg);white-space:pre;min-width:0}
+.json .k{color:var(--t-blue)}.json .s{color:var(--t-green)}.json .c{color:var(--t-dim);font-style:italic}.json .m{color:var(--t-mag)}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:980px){.two{grid-template-columns:1fr}}
+.card{display:flex;flex-direction:column;gap:8px;min-width:0}
+.card .cap{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-dim);flex-wrap:wrap}
+.card .cap b{color:var(--fg);font-weight:600}
+.card .cap .sp{flex:1}
+.bar{display:flex;align-items:center;gap:8px;margin:0 0 10px;flex-wrap:wrap}
+.bar .sp{flex:1}
+.bar .lbl{font-size:12px;color:var(--fg-dim)}
+
+/* ---------- C: the chord indicator ---------- */
+.stage{position:relative;height:380px;border:1px solid var(--frame-border);border-radius:var(--frame-radius);background:var(--desk-bg);overflow:hidden;display:flex;flex-direction:column}
+.stage .fakebar{height:38px;flex:none;display:flex;align-items:center;justify-content:center;gap:4px;border-bottom:1px solid var(--border);background:var(--bg-2)}
+.stage .fakebar .desk{padding:3px 10px;border-radius:999px;border:1px solid var(--border);font-size:12px;color:var(--fg-dim)}
+.stage .fakebar .desk.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.stage .fakebar .drw{padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-size:12px;color:var(--fg-dim);margin-right:6px;display:inline-flex;align-items:center;gap:4px}
+.stage .fakebar .drw svg.i{width:12px;height:12px}
+.stage .fr{position:absolute;inset:46px 8px 8px 8px;background:var(--frame-bg);border:1px solid var(--frame-border);border-radius:var(--frame-radius);overflow:hidden}
+.stage pre.term{margin:0;padding:10px 12px;font:350 12.5px/1.3 var(--mono);color:var(--t-fg);white-space:pre;height:100%;background:var(--bg)}
+pre.term .d{color:var(--t-dim)}pre.term .g{color:var(--t-green)}pre.term .o{color:var(--claude)}
+pre.term .cur{display:inline-block;width:7px;height:13px;background:var(--t-fg);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.pill{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:5;display:flex;flex-direction:column;align-items:stretch;gap:0;min-width:300px;max-width:min(560px,92%);background:var(--bg-3);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);font-size:12.5px;overflow:hidden;animation:pIn .14s ease-out}
+@keyframes pIn{from{opacity:0;transform:translateX(-50%) translateY(6px)}}
+.pill .main{display:flex;align-items:center;gap:10px;padding:8px 12px}
+.pill .main kbd{font-size:12px;padding:2px 8px}
+.pill .main .txt{flex:1;min-width:0}
+.pill .main .txt b{font-weight:600}
+.pill .main .esc{color:var(--fg-dim);font-size:11px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.pill .main .esc kbd{font-size:10.5px;padding:0 5px}
+.pill .dots{display:inline-flex;gap:3px;margin-left:2px}
+.pill .dots i{width:4px;height:4px;border-radius:50%;background:var(--fg-dim);animation:dot 1.2s infinite}
+.pill .dots i:nth-child(2){animation-delay:.2s}.pill .dots i:nth-child(3){animation-delay:.4s}
+@keyframes dot{0%,80%,100%{opacity:.25}40%{opacity:1}}
+.pill.warn{border-color:color-mix(in srgb,var(--warn) 50%,var(--border))}
+.pill.warn .main svg.i{color:var(--warn)}
+.pill .term-hint{padding:6px 12px 8px;border-top:1px solid var(--border);color:var(--fg-dim);font-size:11.5px;display:flex;align-items:center;gap:6px}
+.pill .term-hint kbd{font-size:10.5px;padding:0 5px}
+.pill .cont{border-top:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:1px 14px;padding:8px 12px 10px;max-height:250px;overflow:auto}
+.pill .cont .c{display:flex;align-items:center;gap:8px;padding:3px 0;color:var(--fg);min-width:0}
+.pill .cont .c kbd{min-width:28px;text-align:center;font-size:11px}
+.pill .cont .c span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill .cont .c .g{color:var(--fg-dim);font-size:11px;margin-left:auto;padding-left:6px}
+.pill .cont h6{grid-column:1/-1;margin:2px 0 0;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.pill.done .main svg.i{color:var(--ok)}
+.pill.done{animation:pOut .5s 1.2s forwards}
+@keyframes pOut{to{opacity:0;transform:translateX(-50%) translateY(6px)}}
+.states{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.tiers .stage{height:220px}
+.tiers .cap{font-size:12px;color:var(--fg-dim);margin:6px 0 0}
+.tiers .cap b{color:var(--fg);font-weight:600}
+@media (prefers-reduced-motion:reduce){.pill,.rec,.kb-veil{animation:none}.pill .dots i{animation:none}}
+</style></head><body>
+<button class="ib" id="theme" title="Tema"><svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11a5.5 5.5 0 0 0 0-11z" fill="currentColor" stroke="none"/></svg></button>
+<div class="page">
+ <div class="top">
+  <h1>Atalhos de teclado — o esquema do VS Code no tether</h1>
+  <p>Prévia (só HTML; o app não mudou). Três partes: <b>A</b> a tradução do esquema do VS Code (Windows) para o tether, com cada conflito marcado e uma recomendação para você decidir um a um; <b>B</b> a tela "Atalhos de teclado" funcionando (busque, grave uma tecla, veja o conflito, troque onde vale, volte ao padrão); <b>C</b> como um atalho de duas teclas aparece enquanto espera a segunda. Tradução adotada: <b>editor (aba) = painel (aba)</b> · <b>grupo de editores = quadro</b> · <b>janela/workspace = mesa</b> · <b>painel do terminal = gaveta</b>.</p>
+ </div>
+ <nav class="toc"><a href="#sA">A · O esquema, tradução e conflitos</a><a href="#sB">B · A tela "Atalhos de teclado"</a><a href="#sB3">B.3 · keybindings.json</a><a href="#sC">C · Atalho de duas teclas</a><a href="#sN">Regras e perguntas</a></nav>
+
+ <!-- ========== A ========== -->
+ <section class="s" id="sA">
+  <h2><span class="n">A</span>O esquema: atalho do VS Code → o que faz no tether</h2>
+  <p class="lead">Cada linha é um atalho padrão do VS Code no Windows (ou um atalho do tether que o VS Code não tem). <b>Muda?</b> compara com o tether de hoje. Linha amarela = conflito: a caixa abaixo dela diz com quem e traz as opções; a recomendada vem marcada. Suas escolhas ficam neste navegador e saem pelo botão "Copiar decisões".</p>
+  <div class="filters" id="aFilters">
+   <button class="chip" data-f="all" aria-pressed="true">Tudo <span class="cnt" id="cAll"></span></button>
+   <button class="chip" data-f="change" aria-pressed="false">Só o que muda <span class="cnt" id="cChange"></span></button>
+   <button class="chip" data-f="conf" aria-pressed="false">Só conflitos <span class="cnt" id="cConf"></span></button>
+   <span class="sp"></span>
+   <span class="lgd"><span><span class="selo same">igual</span> já é assim</span><span><span class="selo change">muda</span> tecla ou ação diferente de hoje</span><span><span class="selo new">novo</span> comando ou tecla que não existe</span><span><span class="selo out">fora</span> VS Code tem, tether não terá</span></span>
+  </div>
+  <div class="filters" id="aGroups"></div>
+  <table class="scheme"><thead><tr><th>Atalho (VS Code)</th><th>Comando no VS Code</th><th>No tether</th><th>Hoje no tether</th><th>Muda?</th><th>Conflito</th></tr></thead><tbody id="aBody"></tbody></table>
+  <div class="decisions"><span>Decisões marcadas: <b id="decCount">0</b> de <b id="decTotal">0</b></span><span class="sp"></span><button class="btn sm" id="decReset">Voltar às recomendadas</button><button class="btn sm primary" id="decCopy">Copiar decisões</button></div>
+ </section>
+
+ <!-- ========== B ========== -->
+ <section class="s" id="sB">
+  <h2><span class="n">B</span>A tela "Atalhos de teclado" (<span class="chord"><kbd>Ctrl+K</kbd><span class="then">depois</span><kbd>Ctrl+S</kbd></span>)</h2>
+  <p class="lead">Abre como <b>uma aba do quadro ativo</b>, como no VS Code (também pela paleta e pelo menu ≡). Tudo funciona aqui: <b>busque</b> por nome, id ou tecla; ligue <b>Gravar teclas</b> e tecle um atalho para achar quem o usa; <b>duplo clique</b> (ou <kbd>Enter</kbd>, ou <kbd>Ctrl+K</kbd> <kbd>Ctrl+K</kbd>) numa linha grava um atalho novo — com chord de duas teclas, aviso de conflito e aviso do que o terminal perde; os chips <b>Janela · Terminal · Nota</b> dizem onde o atalho vale (Terminal desligado = a tecla passa ao programa); <b>↺</b> volta ao padrão. Dados reais do registro (<code>app-commands.ts</code>) mais os comandos novos da seção A.</p>
+  <div class="bar"><span class="lbl">Largura do painel:</span><button class="chip" id="wWide" aria-pressed="true">larga</button><button class="chip" id="wNarrow" aria-pressed="false">estreita (460px)</button><span class="sp"></span><button class="chip" id="bErr" aria-pressed="false">simular keybindings.json com erro</button><button class="btn sm" id="bReset">Zerar a prévia</button></div>
+  <div class="pane" id="kbPane">
+   <div class="strip"><div class="tabs">
+    <div class="tab claude"><svg class="i k" viewBox="0 0 16 16"><path d="M8 1.5l1.6 4.4 4.4 1.6-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z"/></svg><span class="t">tether · claude</span></div>
+    <div class="tab tab-kb on"><svg class="i k" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5"/><path d="M4 7h1M6.5 7h1M9 7h1M11.5 7h1M4 9.5h1M6.5 9.5h3M11.5 9.5h1"/></svg><span class="t">Atalhos de teclado</span><button class="x" title="Fechar"><svg class="i" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
+   </div><div class="tab-actions"><button class="tab-act" title="Nova aba vazia"><svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button><button class="tab-act" title="Mais"><svg class="i" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/></svg></button></div></div>
+   <div class="kb" id="kb" tabindex="-1">
+    <div class="kb-head">
+     <div class="kb-row">
+      <div class="kb-search" id="kbSearch"><svg class="i mag" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><input id="kbQ" placeholder="Buscar por nome, id ou tecla (ex.: mesa, ctrl+k, fechar)" autocomplete="off" spellcheck="false"><div class="live" id="kbLive" hidden></div><button class="ib clear" id="kbClear" title="Limpar (Esc)" hidden><svg class="i" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button><button class="ib" id="kbRec" aria-pressed="false" title="Gravar teclas: tecle o atalho para buscar por ele (Alt+K)"><svg class="i" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5"/><path d="M4 7h1M6.5 7h1M9 7h1M11.5 7h1M4 9.5h1M6.5 9.5h3M11.5 9.5h1"/></svg></button></div>
+      <label class="kb-sel"><select id="kbFilter"><option value="all">Todos</option><option value="bound">Com atalho</option><option value="unbound">Sem atalho</option><option value="user">Alterados por você</option><option value="conflict">Em conflito</option><option value="pass">Que passam ao terminal</option></select><svg class="i" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg></label>
+     </div>
+     <div class="kb-banner err" id="kbBanner" hidden><svg class="i" viewBox="0 0 16 16"><path d="M8 1.8L14.6 13.4H1.4z"/><path d="M8 6v3.6M8 11.6v.4"/></svg><span><b>~/.tether/keybindings.json</b> tem um erro na linha 7 (vírgula a mais depois do último item). Os padrões valem até você corrigir; o que estava no arquivo fica em espera.</span><span class="sp"></span><button class="lnk" data-act="open-json">Abrir o arquivo</button></div>
+     <div class="kb-links"><span class="cnt" id="kbCount"></span><span class="sp"></span><button class="lnk" data-act="open-json"><svg class="i" viewBox="0 0 16 16"><path d="M9.5 2H4.5A1 1 0 0 0 3.5 3v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5z"/><path d="M9.5 2v3h3"/></svg>Abrir keybindings.json</button><button class="lnk" data-act="reset-all"><svg class="i" viewBox="0 0 16 16"><path d="M3 8a5 5 0 1 0 1.5-3.6"/><path d="M3 2.5v3h3"/></svg><span class="hide-n">Restaurar todos os padrões…</span><span style="display:none">Padrões…</span></button></div>
+    </div>
+    <div class="kb-list" id="kbList" tabindex="0"></div>
+    <div class="kb-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navega</span><span><kbd>Enter</kbd> grava</span><span class="hide-n"><kbd>Delete</kbd> tira o atalho</span><span class="hide-n"><kbd>Ctrl+K</kbd><kbd>Ctrl+K</kbd> grava</span><span class="sp"></span><span id="kbFootSrc"></span></div>
+    <div class="kb-veil" id="kbVeil" hidden></div>
+   </div>
+  </div>
+
+  <div class="notes" style="margin-top:14px">
+   <div><h4>Estados da tela</h4><ul>
+    <li><b>Normal:</b> lista agrupada (Painel, Quadro, Mesa, Gaveta, Nota, Editor, Aparência, App), ordem do registro; a busca filtra e destaca.</li>
+    <li><b>Buscando sem resultado:</b> texto vazio com a dica de "Gravar teclas".</li>
+    <li><b>Gravar teclas ligado:</b> a caixa fica vermelha e mostra a tecla ao vivo; <kbd>Esc</kbd> desliga.</li>
+    <li><b>Gravando um atalho (diálogo):</b> aguardando 1ª tecla → 1ª tecla capturada, aguardando 2ª (opcional) → conflito (amarelo) → aviso do terminal (cinza) → confirmado (toast).</li>
+    <li><b>Arquivo com erro:</b> faixa vermelha no topo, padrões valem, link para abrir o arquivo.</li>
+    <li><b>Comando do editor (Monaco):</b> selo "editor", lápis desligado: a tecla é do Monaco por ora.</li>
+   </ul></div>
+   <div><h4>Decisões de estrutura</h4><ul>
+    <li><b>É uma aba</b>, não um diálogo: fica aberta enquanto você testa as teclas noutro painel, como no VS Code.</li>
+    <li><b>Conflito é resolvido no ato:</b> ao confirmar um atalho já usado, o outro comando perde a tecla (fica "sem atalho", com ↺). Dois comandos na mesma tecla é um bug à espera.</li>
+    <li><b>"Onde vale" é parte do atalho</b>, não uma tela à parte: três chips por linha. Terminal desligado é a lista "deixar passar", visível e editável.</li>
+    <li><b>Teclas do terminal são avisadas, não proibidas:</b> ao gravar Ctrl+W o diálogo diz que o bash e o Claude Code apagam a palavra com ela.</li>
+    <li><b>Comando sem tecla padrão</b> continua listado: é assim que se descobre o que dá para atalhar.</li>
+   </ul></div>
+  </div>
+
+  <h2 id="sB3" style="font-size:14.5px;margin:30px 0 4px">B.3 · <code>~/.tether/keybindings.json</code>: só o que você mudou</h2>
+  <p class="lead">O formato do VS Code, com três diferenças: <code>where</code> no lugar da expressão <code>when</code> (três valores: <code>window</code>, <code>terminal</code>, <code>note</code>); chords com espaço (<code>"ctrl+k ctrl+s"</code>); e <code>-comando</code> tira um padrão, como no VS Code. "Abrir keybindings.json" abre o arquivo numa aba de nota; salvar aplica na hora, e a tela de atalhos reflete. O painel abaixo acompanha o que você fizer na tela.</p>
+  <div class="two">
+   <div class="card"><div class="cap"><b>~/.tether/keybindings.json</b><span class="sp"></span><span id="jsonCount"></span></div><div class="json" id="jsonView"></div></div>
+   <div class="card"><div class="cap"><b>Como o app lê</b></div><div class="notes" style="margin:0">
+    <div><ul>
+     <li>Os padrões moram em <code>shortcuts.ts</code> (e nascem com o <code>where</code> padrão: Ctrl+letra pura = janela+nota; o resto = os três).</li>
+     <li>O arquivo é lido ao abrir o app e sempre que é salvo (watcher). Entrada por entrada: <code>key</code> em minúsculas com <code>+</code>, teclas físicas (<code>KeyboardEvent.code</code>): <code>ctrl+shift+t</code>, <code>alt+1</code>, <code>ctrl+k ctrl+s</code>, <code>ctrl+\</code>.</li>
+     <li><code>command</code> é o id do registro; <code>-id</code> remove a tecla padrão daquele comando. <code>where</code> opcional (sem ele, vale onde o padrão valia).</li>
+     <li>Erro de sintaxe: nada do arquivo se aplica, a faixa vermelha aparece na tela e na aba de nota (linha marcada pelo Monaco). Id desconhecido ou tecla ilegível: só aquela entrada é ignorada, com aviso na tela.</li>
+     <li>"Restaurar todos os padrões…" confirma e esvazia o arquivo (deixa <code>[]</code>).</li>
+    </ul></div>
+   </div></div>
+  </div>
+ </section>
+
+ <!-- ========== C ========== -->
+ <section class="s" id="sC">
+  <h2><span class="n">C</span>Atalho de duas teclas: <span class="chord"><kbd>Ctrl+K</kbd><span class="then">depois</span><kbd>X</kbd></span></h2>
+  <p class="lead">Quando a primeira tecla é um prefixo, o app entra em espera e mostra uma pílula no rodapé da janela (o lugar dos avisos do app). Não há tempo limite, como no VS Code; <kbd>Esc</kbd>, clicar em qualquer lugar ou perder o foco cancelam. Se a espera passa de ~800 ms, a pílula abre a lista do que pode vir depois — quem não decorou não precisa abrir a tela de atalhos. Dentro de um terminal, a pílula lembra que <kbd>Ctrl+K</kbd> de novo manda o <code>^K</code> ao programa. Clique nos estados:</p>
+  <div class="states" id="cStates">
+   <button class="chip" data-st="wait" aria-pressed="true">1 · aguardando a 2ª tecla</button>
+   <button class="chip" data-st="term" aria-pressed="false">2 · aguardando, foco num terminal</button>
+   <button class="chip" data-st="list" aria-pressed="false">3 · depois de ~800 ms: lista do que pode vir</button>
+   <button class="chip" data-st="done" aria-pressed="false">4 · completou (some sozinho)</button>
+   <button class="chip" data-st="unknown" aria-pressed="false">5 · segunda tecla sem atalho</button>
+   <button class="chip" data-st="try" aria-pressed="false">6 · experimente: tecle aqui</button>
+  </div>
+  <div class="stage" id="cStage" tabindex="0">
+   <div class="fakebar"><span class="drw"><svg class="i" viewBox="0 0 16 16"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></svg></span><span class="desk on">atrium</span><span class="desk">keep</span><span class="desk">soul</span></div>
+   <div class="fr"><pre class="term" id="cTerm"><span class="d">D:\atrium\workspace\tether</span> <span class="g">develop</span>
+<span class="o">●</span> Claude Code — sessão retomada
+<span class="d">›</span> <span class="cur"></span></pre></div>
+   <div id="cPill"></div>
+  </div>
+  <div class="notes" style="margin-top:14px">
+   <div><h4>Regras do prefixo</h4><ul>
+    <li>Um prefixo é qualquer primeira tecla de um atalho de duas (hoje só <kbd>Ctrl+K</kbd>). Uma tecla não pode ser prefixo e atalho simples ao mesmo tempo: a tela avisa ao gravar.</li>
+    <li>A segunda tecla é consumida mesmo sem atalho (estado 5): nada vaza ao terminal nem ao editor.</li>
+    <li>Na nota, o Monaco tem os próprios <kbd>Ctrl+K</kbd> (comentar, dobrar…): a segunda tecla vai primeiro ao editor; o que ele não usa, o app usa. A pílula aparece do mesmo jeito.</li>
+    <li>No terminal, <kbd>Ctrl+K</kbd> é do app por padrão (o VS Code faz igual: <code>terminal.integrated.allowChords</code>). Quem quiser o <code>^K</code> do bash de volta desliga o chip Terminal da linha "Ctrl+K (prefixo)" ou tecla <kbd>Ctrl+K</kbd> duas vezes.</li>
+   </ul></div>
+   <div><h4>Onde a pílula aparece</h4><ul>
+    <li>Centro inferior da janela, sobre tudo (mesa, gaveta, diálogos não-modais). Com um diálogo modal aberto o prefixo é ignorado.</li>
+    <li>Mesma pílula no diálogo "Gravar" da tela B: lá ela vive dentro da caixa de captura.</li>
+    <li>Largura mínima 300px; a lista do estado 3 quebra em colunas e rola a partir de 190px de altura.</li>
+   </ul></div>
+  </div>
+ </section>
+
+ <!-- ========== notes ========== -->
+ <section class="s" id="sN">
+  <h2><span class="n">+</span>Regras gerais e perguntas abertas</h2>
+  <div class="notes" style="margin-top:0">
+   <div><h4>Quem fica com a tecla (a regra de hoje, mantida)</h4><ul>
+    <li><b>Ctrl+letra pura</b> é do terminal (<code>^A…^Z</code>): no tether vale só na janela e na nota, salvo a lista de captura explícita, hoje <kbd>Ctrl+P</kbd>, proposta <kbd>Ctrl+P</kbd> <kbd>Ctrl+N</kbd> <kbd>Ctrl+K</kbd> <kbd>Ctrl+\</kbd> <kbd>Ctrl+=</kbd> <kbd>Ctrl+-</kbd> <kbd>Ctrl+0</kbd>.</li>
+    <li><b>Ctrl+Shift+…</b>, <b>Alt+…</b>, <b>F-teclas</b> e setas com modificador são do app (o xterm manda o mesmo byte ou nada).</li>
+    <li><b>Na nota</b> toda tecla com seta que o Monaco usa é dele (já é assim: <code>editorKeyOwner</code>); o resto é do app.</li>
+    <li><b>Ctrl+C</b> (com seleção), <b>Ctrl+Shift+C/V</b>, <b>Ctrl+V</b> e <b>Shift+Enter</b> continuam decididos no painel (área de transferência), antes de tudo.</li>
+   </ul></div>
+   <div><h4>Perguntas para o Guga (além das decisões da seção A)</h4><ul>
+    <li><b>Lista do estado 3 (que pode vir depois de Ctrl+K):</b> entra já, ou só a pílula simples?</li>
+    <li><b>Ctrl+K duas vezes = <code>^K</code> ao terminal:</b> vale a regra, ou só o chip Terminal?</li>
+    <li><b>Ctrl+1…9 nas mesas</b> continuam (recomendado) — confirma que a faixa de mesas é a "barra de abas" do app?</li>
+    <li><b>Comandos do editor (Monaco)</b> aparecem na tela com a tecla, sem edição por ora. Regravar teclas do Monaco fica para depois?</li>
+    <li><b>Ícone da aba</b>: teclado (como acima) serve?</li>
+   </ul></div>
+   <div><h4>Notas técnicas para quem implementar</h4><ul>
+    <li><code>chordFromLabel</code> recusa rótulos com espaço: os atalhos de duas teclas do Monaco (Ctrl+K Ctrl+C…) hoje aparecem sem dica na paleta; com o suporte a chords isso se resolve junto.</li>
+    <li><code>Ctrl+\</code>: no ABNT2 a tecla <code>\</code> é <code>IntlBackslash</code>, no US é <code>Backslash</code>: o padrão liga as duas.</li>
+    <li><code>Alt+1…9</code> casam <code>Digit1…9</code> (fileira de cima), nunca o teclado numérico (códigos Alt+numpad do Windows).</li>
+    <li>O prefixo é um estado no dispatch de <code>main.ts</code> (não em <code>shortcuts.ts</code>): a tabela passa a aceitar <code>chord: Chord[]</code>; <code>shortcutOf</code> devolve "prefixo" quando a tecla abre um chord.</li>
+   </ul></div>
+  </div>
+ </section>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ICO={
+ warn:'<svg class="i" viewBox="0 0 16 16"><path d="M8 1.8L14.6 13.4H1.4z"/><path d="M8 6v3.6M8 11.6v.4"/></svg>',
+ info:'<svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5v.4"/></svg>',
+ check:'<svg class="i" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7"/></svg>',
+ pencil:'<svg class="i" viewBox="0 0 16 16"><path d="M11.5 2.5l2 2L5 13H3v-2z"/></svg>',
+ reset:'<svg class="i" viewBox="0 0 16 16"><path d="M3 8a5 5 0 1 0 1.5-3.6"/><path d="M3 2.5v3h3"/></svg>',
+ plus:'<svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>',
+ minus:'<svg class="i" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M5 8h6"/></svg>',
+ key:'<svg class="i" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5"/><path d="M4 7h1M6.5 7h1M9 7h1M11.5 7h1M4 9.5h1M6.5 9.5h3M11.5 9.5h1"/></svg>',
+};
+let tt;function toast(html){const t=$('toast');t.innerHTML=ICO.check+'<span>'+html+'</span>';t.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('on'),3400)}
+
+/* ---------- chords: "ctrl+k ctrl+s" ---------- */
+const KEYLBL={left:'←',right:'→',up:'↑',down:'↓',pgup:'PgUp',pgdn:'PgDn',tab:'Tab',enter:'Enter',space:'Espaço',numpad0:'Num0','`':'`','\\':'\\','=':'=','-':'-',',':',','/':'/',f1:'F1',f2:'F2',f4:'F4',f11:'F11',f12:'F12'};
+function keyLabel(k){const p=k.split('+');const key=p.pop();const out=[];if(p.includes('ctrl'))out.push('Ctrl');if(p.includes('alt'))out.push('Alt');if(p.includes('shift'))out.push('Shift');out.push(KEYLBL[key]??key.toUpperCase());return out.join('+')}
+function chordHTML(k,dim){if(!k)return '';return '<span class="chord">'+k.split(' ').map(keyLabel).map(l=>`<kbd${dim?' class="dim"':''}>${esc(l)}</kbd>`).join('<span class="then">depois</span>')+'</span>'}
+const CODE2KEY={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',PageUp:'pgup',PageDown:'pgdn',Tab:'tab',Enter:'enter',Space:'space',Backquote:'`',Backslash:'\\',IntlBackslash:'\\',Equal:'=',Minus:'-',Comma:',',Slash:'/',Numpad0:'numpad0',NumpadAdd:'=',NumpadSubtract:'-'};
+function keyFromEvent(ev){
+ if(['Control','Shift','Alt','Meta'].includes(ev.key))return null;
+ let key;const c=ev.code;
+ if(/^Key[A-Z]$/.test(c))key=c.slice(3).toLowerCase();else if(/^Digit[0-9]$/.test(c))key=c.slice(5);else if(/^F([1-9]|1[0-2])$/.test(c))key=c.toLowerCase();else key=CODE2KEY[c];
+ if(!key)return null;
+ const m=[];if(ev.ctrlKey)m.push('ctrl');if(ev.altKey)m.push('alt');if(ev.shiftKey)m.push('shift');
+ return [...m,key].join('+');
+}
+const isPlainCtrlLetter=k=>/^ctrl\+[a-z]$/.test(k);
+const CAPTURE=new Set(['p','n','k']);
+const WHERE_ALL=['window','terminal','note'];
+const WHERE_LBL={window:'Janela',terminal:'Terminal',note:'Nota'};
+function defaultWhere(k){const first=k.split(' ')[0];return isPlainCtrlLetter(first)&&!CAPTURE.has(first.slice(5))?['window','note']:WHERE_ALL.slice()}
+/* what the terminal does with a key (bash / PSReadLine / Claude Code) */
+const TERM={'ctrl+a':'início da linha (bash, Claude Code)','ctrl+b':'volta um caractere (bash); tarefa de fundo (Claude Code)','ctrl+c':'interrompe (^C)','ctrl+d':'fim de entrada / sai do shell','ctrl+e':'fim da linha','ctrl+f':'avança um caractere','ctrl+g':'abre o prompt no editor externo (Claude Code)','ctrl+h':'apaga um caractere','ctrl+i':'Tab','ctrl+j':'nova linha (Claude Code) / Enter','ctrl+k':'apaga até o fim da linha (bash, Claude Code)','ctrl+l':'limpa a tela','ctrl+m':'Enter','ctrl+n':'próximo comando do histórico (bash; a seta ↓ faz o mesmo)','ctrl+o':'modo detalhado do Claude Code','ctrl+p':'comando anterior do histórico (bash; a seta ↑ faz o mesmo)','ctrl+q':'retoma a saída (XON)','ctrl+r':'busca no histórico (bash, PowerShell, Claude Code)','ctrl+s':'congela a saída (XOFF)','ctrl+t':'lista de tarefas (Claude Code); troca caracteres (bash)','ctrl+u':'apaga até o início da linha','ctrl+v':'colar / imagem da área de transferência (Claude Code)','ctrl+w':'apaga a palavra anterior (bash, PowerShell, Claude Code)','ctrl+x':'prefixo do bash','ctrl+y':'cola o último trecho apagado','ctrl+z':'suspende o processo','ctrl+-':'desfazer (bash)','ctrl+\\':'SIGQUIT: mata o programa em primeiro plano (capturar protege)','f2':'alterna a visão de previsão do PSReadLine','f1':'ajuda do comando no PSReadLine','ctrl+shift+left':'seleciona a palavra anterior (PSReadLine)','ctrl+shift+right':'seleciona a palavra seguinte (PSReadLine)','alt+left':'palavra anterior (bash)','alt+right':'palavra seguinte (bash)'};
+function termNote(k){const first=k.split(' ')[0];return TERM[first]}
+
+/* =====================================================================
+   A · THE SCHEME
+   ===================================================================== */
+const GROUPS=[['abas','Abas e painéis','editor (aba) = painel (aba)'],['quadros','Quadros','grupo de editores = quadro'],['mesas','Mesas','janela / workspace = mesa'],['gaveta','Gaveta','painel do terminal = gaveta'],['nota','Nota e editor','o Monaco é o editor do VS Code'],['nav','Navegação e busca',''],['app','App e aparência',''],['term','Dentro do terminal','decididas no painel, antes de tudo']];
+const CONF={
+ c1:{t:'Ctrl+W: fechar a aba × apagar a palavra no terminal',with:'terminal',text:'No VS Code, Ctrl+W fecha o editor. Dentro de um terminal, Ctrl+W apaga a palavra anterior no bash, no PowerShell (PSReadLine) e na caixa de texto do Claude Code: é uma das teclas de edição mais usadas. O próprio terminal do VS Code deixa Ctrl+W passar ao shell.',opts:[
+  {id:'a',rec:true,text:'Ctrl+W fecha o painel quando o foco está numa nota, num vazio ou na janela; dentro de um terminal passa ao programa. Ctrl+F4 (também padrão do VS Code) fecha em qualquer lugar.'},
+  {id:'b',text:'Ctrl+W fecha sempre, inclusive dentro do terminal (o bash e o Claude perdem "apagar palavra"). Fechar painel com agente continua pedindo confirmação.'},
+  {id:'c',text:'Sem Ctrl+W; só Ctrl+F4 fecha.'}]},
+ c2:{t:'Ctrl+Tab e Ctrl+1…9: mesas (hoje) × abas e grupos (VS Code)',with:'tether',text:'No VS Code, Ctrl+Tab alterna entre editores recentes do grupo e Ctrl+1…8 focam o grupo N. No tether, desde a fase C, as duas trocam de mesa. A faixa de mesas é a barra de abas de primeiro nível do app (como as abas do navegador e do Windows Terminal, que usam exatamente Ctrl+Tab e Ctrl+N), e trocar de mesa é o gesto mais frequente.',opts:[
+  {id:'a',rec:true,text:'Mesas continuam em Ctrl+Tab / Ctrl+Shift+Tab e Ctrl+1…9. Abas do quadro ganham Ctrl+PgDn / Ctrl+PgUp e Alt+1…9 (os mesmos do VS Code para "próximo editor" e "editor N"). Painel vizinho: Ctrl+K Ctrl+setas (o mesmo do VS Code para focar grupo).'},
+  {id:'b',text:'VS Code puro: Ctrl+Tab alterna abas recentes do quadro, Ctrl+1…8 focam o quadro N. Mesas vão para Ctrl+K 1…9 e Ctrl+K Ctrl+PgUp / PgDn.'}]},
+ c3:{t:'Ctrl+Shift+T: nova aba vazia (hoje) × reabrir aba fechada (VS Code)',with:'tether',text:'Ctrl+Shift+T acabou de virar "nova aba vazia" (seletor aprovado em 04/11). No VS Code e em todo navegador, Ctrl+Shift+T reabre a última aba fechada, e no tether isso tem sentido forte: reabrir o último painel fechado retoma o slot (os "Rodando sem painel" e "Encerrados"). A nova aba vazia é o Ctrl+N do VS Code (novo arquivo sem título: aqui o seletor, que tem a Nota dentro). Ctrl+N é Ctrl+letra pura: precisa entrar na lista de captura do terminal, como o Ctrl+P. O custo é o ^N do bash (= seta ↓).',opts:[
+  {id:'a',rec:true,text:'Ctrl+Shift+T = reabrir o último painel fechado. Ctrl+N = nova aba vazia, capturado também no terminal.'},
+  {id:'b',text:'Ctrl+Shift+T continua "nova aba vazia"; reabrir fica sem tecla (menu "Slots fechados").'},
+  {id:'c',text:'Ctrl+Shift+T reabre; nova aba vazia só pelo "+" da faixa e pela paleta (Ctrl+N fica com o terminal).'}]},
+ c4:{t:'Gaveta: Ctrl+` igual; Ctrl+Shift+` novo; Ctrl+Shift+G é Source Control no VS Code',with:'vscode',text:'Ctrl+` já é o mesmo do VS Code. Ctrl+Shift+` (novo terminal) cai bem no "Terminal rápido na gaveta". O apelido Ctrl+Shift+G existe por causa do ABNT2 e, no VS Code, abre o Source Control, que o tether não tem. Ctrl+J (painel inferior) fica com o terminal: é "nova linha" no Claude Code.',opts:[
+  {id:'a',rec:true,text:'Adotar Ctrl+Shift+` para o terminal rápido; manter Ctrl+Shift+G como apelido da gaveta.'},
+  {id:'b',text:'Só Ctrl+` e Ctrl+Shift+G; terminal rápido continua pela paleta.'}]},
+ c5:{t:'Ctrl+Shift+setas: dividir vazio × seleção por palavra',with:'editor',text:'O VS Code não usa Ctrl+Shift+setas no workbench; no editor é seleção por palavra. Na nota o Monaco já vence (editorKeyOwner), fora dela a tecla é do app. Resolvido por escopo: nada muda.',opts:null},
+ c6:{t:'Ctrl+Alt+setas: duplicar (hoje) × mover a aba de grupo (VS Code); Ctrl+\\ dividir',with:'vscode',text:'No VS Code, Ctrl+Alt+→/← move o editor para o grupo vizinho e Ctrl+\\ divide (o mesmo arquivo num grupo novo à direita; Ctrl+K Ctrl+\\ para baixo). No tether, Ctrl+Alt+setas é a família de duplicar em três níveis (painel, +Shift quadro, Alt+Shift mesa), aprovada na fase B e já na mão. Dividir do VS Code equivale a duplicar; Ctrl+\\ no terminal é SIGQUIT, que ninguém tecla de propósito: capturar protege. No ABNT2 a tecla é outra (IntlBackslash): o padrão liga as duas.',opts:[
+  {id:'a',rec:true,text:'Mantém duplicar nos quatro sentidos e nos três níveis. Ctrl+\\ e Ctrl+K Ctrl+\\ viram apelidos de duplicar à direita / abaixo, no lugar de Ctrl+Shift+D / E (que no VS Code são Run e Explorer). Mover painel segue pelo "Mover…" e pelo arrastar.'},
+  {id:'b',text:'VS Code puro: Ctrl+Alt+←/→ = mover a aba para o quadro vizinho; duplicar só em Ctrl+\\ e Ctrl+K Ctrl+\\; os níveis quadro e mesa perdem a tecla.'}]},
+ c7:{t:'Alt+setas e Shift+Alt+setas na nota',with:'editor',text:'Alt+↑/↓ move a linha e Shift+Alt+↑/↓ copia a linha (Monaco); Alt+←/→ é voltar/avançar no VS Code, sem equivalente no tether (no terminal é palavra anterior/seguinte). O app usa Alt+Shift+setas para "quadro novo na borda da mesa": na nota o editor vence, como hoje. Resolvido por escopo: nada muda.',opts:null},
+ c8:{t:'Ctrl+P e Ctrl+Shift+P: já alinhados',with:'vscode',text:'Os dois são do app, inclusive no terminal (lista de captura). F1, o outro atalho da paleta no VS Code, não entra: no PSReadLine F1 é ajuda.',opts:null},
+ c9:{t:'Ctrl+K como prefixo dentro do terminal',with:'terminal',text:'Todo atalho de duas teclas começa com Ctrl+K, que no bash e no Claude Code apaga até o fim da linha. O VS Code resolve capturando Ctrl+K no terminal por padrão (terminal.integrated.allowChords) e deixando desligar. A regra "Ctrl+letra pura é do terminal" ganha Ctrl+K na lista de captura.',opts:[
+  {id:'a',rec:true,text:'Como o VS Code: Ctrl+K é prefixo também no terminal; a pílula aparece; Ctrl+K de novo manda o ^K ao programa. O chip Terminal da linha "Ctrl+K (prefixo)" desliga isso.'},
+  {id:'b',text:'No terminal Ctrl+K passa; os atalhos de duas teclas valem só com o foco fora do terminal.'}]},
+ c11:{t:'Zoom: Ctrl+= / Ctrl+- / Ctrl+0 (VS Code) × Ctrl+Shift+… (hoje)',with:'terminal',text:'O VS Code e o Windows Terminal capturam Ctrl+= e Ctrl+- do shell (e Ctrl+Shift+= também, por ser o "+"). Hoje o tether usa só Ctrl+Shift+=/-/0 para não tirar nada do terminal. O único custo real é Ctrl+- no bash (desfazer, raro).',opts:[
+  {id:'a',rec:true,text:'Adotar Ctrl+=, Ctrl+-, Ctrl+0 e Ctrl+Numpad0 como padrão, mantendo os Ctrl+Shift+… como apelidos.'},
+  {id:'b',text:'Manter só Ctrl+Shift+=/-/0.'}]},
+ c12:{t:'Ctrl+Shift+V: prévia do markdown × colar no terminal',with:'terminal',text:'No VS Code, Ctrl+Shift+V abre a prévia quando o editor é markdown e cola no terminal. Mesma coisa aqui: com a nota em foco é prévia; no terminal continua colando (decidido no painel). Ctrl+K V abre a prévia ao lado, como no VS Code. Resolvido por escopo: nada a decidir.',opts:null},
+ c13:{t:'Nova mesa: Ctrl+Shift+N (VS Code: nova janela) × Ctrl+Alt+N (hoje)',with:'tether',text:'Pela tradução janela = mesa, Ctrl+Shift+N cria a mesa. Ctrl+Alt+N e Ctrl+Alt+Shift+N (antes desta) saem; "antes desta" fica na paleta e no menu da mesa.',opts:[
+  {id:'a',rec:true,text:'Ctrl+Shift+N = nova mesa; Ctrl+Alt+N sai; "antes desta" sem tecla.'},
+  {id:'b',text:'Os dois valem: Ctrl+Shift+N e Ctrl+Alt+N (apelido), Ctrl+Alt+Shift+N continua para "antes desta".'}]},
+ c14:{t:'Fechar: Ctrl+Shift+W (janela) e Ctrl+K F (mesa)',with:'vscode',text:'Ctrl+Shift+W é "fechar janela" no VS Code e no tether: coincidem. Pela tradução literal seria "fechar mesa", mas fechar a janela do tether é inofensivo (os terminais continuam no tetherd) e fechar a mesa encerra agentes. Ctrl+K F (fechar pasta/workspace) é o lugar natural de "Fechar mesa…", com confirmação.',opts:[
+  {id:'a',rec:true,text:'Ctrl+Shift+W continua fechando a janela; Ctrl+K F = Fechar mesa… (confirma).'},
+  {id:'b',text:'Tradução literal: Ctrl+Shift+W = Fechar mesa… (confirma); fechar a janela só por Alt+F4.'}]},
+ c15:{t:'F2: renomear × visão de previsão do PSReadLine',with:'terminal',text:'F2 é "renomear" no VS Code e cai bem em "Renomear painel…". No PowerShell, F2 alterna a visão de previsão do PSReadLine (lista / em linha), pouco usada.',opts:[
+  {id:'a',rec:true,text:'F2 renomeia em todo lugar, inclusive no terminal.'},
+  {id:'b',text:'F2 renomeia só fora do terminal; dentro passa ao PowerShell.'}]},
+ c16:{t:'Ctrl+O: abrir nota × modo detalhado do Claude Code',with:'terminal',text:'Ctrl+O (abrir arquivo) vira "Abrir nota…". No Claude Code, Ctrl+O alterna o modo detalhado da conversa. Segue a regra geral: Ctrl+letra pura vale na janela e na nota e passa no terminal.',opts:[
+  {id:'a',rec:true,text:'Ctrl+O = Abrir nota… na janela e na nota; passa no terminal.'},
+  {id:'b',text:'Capturar Ctrl+O também no terminal.'}]},
+};
+/* rows: g, vs (VS Code chord(s)), vc (VS Code command), te (tether), id, today, st (same|change|new|out), c (conflict id), note */
+const SCHEME=[
+ // abas
+ {g:'abas',vs:'ctrl+n',vc:'Novo arquivo sem título',te:'Nova aba vazia (o seletor dentro; a Nota é uma das opções)',id:'pane.new-tab',today:'Ctrl+Shift+T',st:'change',c:'c3',note:'Ctrl+N entra na lista de captura do terminal'},
+ {g:'abas',vs:'ctrl+w|ctrl+f4',vc:'Fechar editor',te:'Fechar painel…',id:'pane.close',today:'— (× da aba, menu)',st:'new',c:'c1'},
+ {g:'abas',vs:'ctrl+shift+t',vc:'Reabrir editor fechado',te:'Reabrir o último painel fechado (retoma o slot)',id:'pane.reopen-closed',today:'Ctrl+Shift+T = nova aba vazia',st:'change',c:'c3',isNew:true},
+ {g:'abas',vs:'ctrl+k w',vc:'Fechar todos os editores do grupo',te:'Fechar todas as abas do quadro… (confirma; lista os agentes)',id:'frame.close-tabs',today:'—',st:'new',isNew:true},
+ {g:'abas',vs:'ctrl+k ctrl+w',vc:'Fechar todos os editores',te:'Fechar todos os painéis da mesa: fica de fora por ora (a mesa fecha por Ctrl+K F)',id:'',today:'—',st:'out'},
+ {g:'abas',vs:'ctrl+pgdn|ctrl+pgup',vc:'Próximo / anterior editor do grupo',te:'Próxima / anterior aba do quadro',id:'pane.next-tab · pane.previous-tab',today:'—',st:'new',isNew:true},
+ {g:'abas',vs:'alt+1|alt+9|alt+0',vc:'Abrir o editor N do grupo · o último',te:'Aba N do quadro · última aba',id:'pane.go.1…9 · pane.last',today:'—',st:'new',isNew:true,note:'Alt+1…9 na fileira de cima; o numérico fica com o Windows (Alt+código)'},
+ {g:'abas',vs:'ctrl+tab|ctrl+shift+tab',vc:'Alternar entre editores (recentes)',te:'Fica nas mesas (ver Mesas)',id:'desk.next · desk.previous',today:'próxima / anterior mesa',st:'same',c:'c2'},
+ {g:'abas',vs:'f2',vc:'Renomear (explorador)',te:'Renomear painel…',id:'pane.rename',today:'— (duplo clique na aba)',st:'new',c:'c15'},
+ {g:'abas',vs:'ctrl+k p',vc:'Copiar caminho do arquivo ativo',te:'Copiar pasta do painel',id:'pane.copy-folder',today:'—',st:'new'},
+ {g:'abas',vs:'ctrl+k r',vc:'Revelar no Explorador',te:'Abrir pasta do painel no Explorer',id:'pane.open-folder',today:'—',st:'new'},
+ {g:'abas',vs:'ctrl+\\',vc:'Dividir editor',te:'Duplicar painel à direita (apelido)',id:'pane.duplicate.pane.right',today:'Ctrl+Alt+→ (fica) · Ctrl+Shift+D (sai)',st:'change',c:'c6'},
+ {g:'abas',vs:'ctrl+k ctrl+\\',vc:'Dividir editor para baixo',te:'Duplicar painel abaixo (apelido)',id:'pane.duplicate.pane.below',today:'Ctrl+Alt+↓ (fica) · Ctrl+Shift+E (sai)',st:'change',c:'c6'},
+ {g:'abas',vs:'ctrl+alt+right|ctrl+alt+left',vc:'Mover editor para o grupo seguinte / anterior',te:'Duplicar painel à direita / à esquerda (mantém; mover fica no "Mover…")',id:'pane.duplicate.pane.*',today:'igual',st:'same',c:'c6'},
+ {g:'abas',vs:'',tvs:'ctrl+alt+up|ctrl+alt+down',vc:'— (no editor: cursor acima / abaixo)',te:'Duplicar painel acima / abaixo',id:'pane.duplicate.pane.*',today:'igual',st:'same'},
+ {g:'abas',vs:'',tvs:'ctrl+shift+right',vc:'— (no editor: seleção por palavra)',te:'Dividir ao lado (vazio), nos quatro sentidos',id:'pane.split-empty.pane.*',today:'igual',st:'same',c:'c5'},
+ {g:'abas',vs:'',tvs:'ctrl+shift+h',vc:'Substituir nos arquivos (sem equivalente)',te:'Mostrar ou ocultar a barra de status do painel',id:'pane.details',today:'igual',st:'same'},
+ // quadros
+ {g:'quadros',vs:'ctrl+k ctrl+right|ctrl+k ctrl+left|ctrl+k ctrl+up|ctrl+k ctrl+down',vc:'Focar o grupo à direita / esquerda / acima / abaixo',te:'Focar o painel vizinho na direção (dentro do quadro e, na borda, no quadro ao lado)',id:'frame.focus.*',today:'— (só mouse)',st:'new',isNew:true},
+ {g:'quadros',vs:'ctrl+1|ctrl+8',vc:'Focar o grupo N',te:'Fica nas mesas (ver Mesas)',id:'desk.go.N',today:'Ctrl+1…9 = mesa N',st:'same',c:'c2'},
+ {g:'quadros',vs:'',tvs:'ctrl+alt+shift+right',vc:'— (no editor: seleção em coluna)',te:'Duplicar painel na borda do quadro (quatro sentidos)',id:'pane.duplicate.frame.*',today:'igual',st:'same'},
+ {g:'quadros',vs:'',tvs:'alt+shift+right',vc:'— (no editor: copiar linha / expandir seleção)',te:'Duplicar num quadro novo na borda da mesa',id:'pane.duplicate.desk.*',today:'igual',st:'same',c:'c7'},
+ {g:'quadros',vs:'ctrl+k left|ctrl+k right',vc:'Mover grupo para a esquerda / direita',te:'Sem equivalente (mover quadro: arrastar)',id:'',today:'—',st:'out'},
+ // mesas
+ {g:'mesas',vs:'ctrl+shift+n',vc:'Nova janela',te:'Nova mesa',id:'desk.new',today:'Ctrl+Alt+N',st:'change',c:'c13'},
+ {g:'mesas',vs:'',tvs:'ctrl+alt+shift+n',vc:'—',te:'Nova mesa antes desta: sai da tecla (paleta, menu da mesa)',id:'desk.new-before',today:'Ctrl+Alt+Shift+N',st:'change',c:'c13'},
+ {g:'mesas',vs:'ctrl+k f',vc:'Fechar pasta / workspace',te:'Fechar mesa… (confirma)',id:'desk.close',today:'— (menu da mesa)',st:'new',c:'c14'},
+ {g:'mesas',vs:'ctrl+shift+w',vc:'Fechar janela',te:'Fechar a janela (os terminais continuam no tetherd)',id:'window.close',today:'Ctrl+Shift+W',st:'same',c:'c14'},
+ {g:'mesas',vs:'',tvs:'ctrl+tab|ctrl+shift+tab',vc:'Alternar editores recentes',te:'Próxima / anterior mesa',id:'desk.next · desk.previous',today:'igual',st:'same',c:'c2'},
+ {g:'mesas',vs:'',tvs:'ctrl+1|ctrl+9',vc:'Focar o grupo N',te:'Ir para a mesa N',id:'desk.go.N',today:'igual',st:'same',c:'c2'},
+ {g:'mesas',vs:'ctrl+k ctrl+o',vc:'Abrir pasta',te:'Novo painel… (o seletor com a pasta)',id:'pane.new',today:'—',st:'new'},
+ {g:'mesas',vs:'ctrl+r',vc:'Abrir recente',te:'Sem equivalente; fica com o terminal (busca no histórico)',id:'',today:'—',st:'out'},
+ // gaveta
+ {g:'gaveta',vs:'ctrl+`',vc:'Alternar terminal',te:'Abrir ou fechar a gaveta',id:'drawer.toggle',today:'Ctrl+`',st:'same',c:'c4'},
+ {g:'gaveta',vs:'ctrl+shift+`',vc:'Novo terminal',te:'Terminal rápido na gaveta',id:'drawer.quick-terminal',today:'—',st:'new',c:'c4'},
+ {g:'gaveta',vs:'',tvs:'ctrl+shift+g',vc:'Source Control (sem equivalente)',te:'Abrir ou fechar a gaveta (apelido ABNT2)',id:'drawer.toggle',today:'igual',st:'same',c:'c4'},
+ {g:'gaveta',vs:'ctrl+j',vc:'Alternar painel inferior',te:'Fica com o terminal (nova linha no Claude Code)',id:'',today:'—',st:'out'},
+ // nota
+ {g:'nota',vs:'ctrl+o',vc:'Abrir arquivo',te:'Abrir nota… (janela e nota; passa no terminal)',id:'note.open',today:'—',st:'new',c:'c16'},
+ {g:'nota',vs:'ctrl+s',vc:'Salvar',te:'Salvar a nota agora (ela já salva sozinha; só na nota)',id:'note.save',today:'— (Monaco)',st:'new',isNew:true},
+ {g:'nota',vs:'ctrl+shift+s',vc:'Salvar como',te:'Salvar nota como… (só na nota)',id:'note.save-as',today:'—',st:'new'},
+ {g:'nota',vs:'ctrl+shift+v',vc:'Prévia do markdown',te:'Prévia do markdown (só na nota; no terminal segue colando)',id:'note.preview',today:'—',st:'new',c:'c12',isNew:true},
+ {g:'nota',vs:'ctrl+k v',vc:'Prévia do markdown ao lado',te:'Prévia do markdown ao lado (só na nota)',id:'note.preview-side',today:'—',st:'new',isNew:true},
+ {g:'nota',vs:'ctrl+w',vc:'Fechar editor',te:'Fechar a nota (vale na nota: aqui não há terminal para brigar)',id:'pane.close',today:'—',st:'new',c:'c1'},
+ {g:'nota',vs:'ctrl+d|ctrl+shift+l|alt+down|ctrl+alt+down|ctrl+f|ctrl+h|ctrl+g',vc:'Edição: multi-cursor, linhas, localizar…',te:'Do Monaco; o editor vence na nota (já é assim)',id:'editor.*',today:'igual',st:'same',c:'c7'},
+ {g:'nota',vs:'ctrl+k ctrl+c|ctrl+k ctrl+u',vc:'Comentar / descomentar',te:'Do Monaco; com os chords, a dica passa a aparecer na paleta',id:'editor.action.add-comment-line',today:'igual (sem dica)',st:'same'},
+ {g:'nota',vs:'alt+left|alt+right',vc:'Voltar / avançar',te:'Sem equivalente (no terminal: palavra anterior / seguinte)',id:'',today:'—',st:'out'},
+ // nav
+ {g:'nav',vs:'ctrl+shift+p',vc:'Paleta de comandos',te:'Paleta de comandos',id:'palette.show',today:'Ctrl+Shift+P',st:'same',c:'c8'},
+ {g:'nav',vs:'ctrl+p',vc:'Ir rápido ao arquivo',te:'Ir para… (capturado também no terminal)',id:'palette.quick-open',today:'Ctrl+P',st:'same',c:'c8'},
+ {g:'nav',vs:'f1',vc:'Paleta de comandos',te:'Não entra (F1 é ajuda no PSReadLine)',id:'',today:'—',st:'out',c:'c8'},
+ {g:'nav',vs:'ctrl+e',vc:'Ir rápido (igual Ctrl+P)',te:'Fica com o terminal (fim da linha)',id:'',today:'—',st:'out'},
+ {g:'nav',vs:'ctrl+shift+o|ctrl+t|ctrl+g',vc:'Símbolo / ir à linha',te:'Monaco na nota; fora dela sem equivalente (Ctrl+T é a lista de tarefas do Claude Code)',id:'',today:'—',st:'out'},
+ {g:'nav',vs:'ctrl+k ctrl+p',vc:'Mostrar todos os editores',te:'Sem equivalente (Ctrl+P já lista os painéis)',id:'',today:'—',st:'out'},
+ // app
+ {g:'app',vs:'ctrl+k ctrl+s',vc:'Atalhos de teclado',te:'Atalhos de teclado (a tela da seção B)',id:'keybindings.show',today:'—',st:'new',c:'c9',isNew:true},
+ {g:'app',vs:'ctrl+k',vc:'Prefixo dos atalhos de duas teclas',te:'Prefixo, também no terminal (como allowChords)',id:'chord.prefix',today:'Ctrl+K passa ao terminal',st:'change',c:'c9',isNew:true},
+ {g:'app',vs:'ctrl+,',vc:'Configurações',te:'Reservado (sem tela de configurações ainda)',id:'',today:'—',st:'out'},
+ {g:'app',vs:'ctrl+k ctrl+t',vc:'Tema de cores',te:'Paleta já filtrada em "Tema" (app e terminal)',id:'theme.pick',today:'—',st:'new',isNew:true},
+ {g:'app',vs:'ctrl+=|ctrl+shift+=',vc:'Aumentar zoom',te:'Aumentar a fonte do terminal',id:'font.increase',today:'Ctrl+Shift+=',st:'change',c:'c11'},
+ {g:'app',vs:'ctrl+-|ctrl+shift+-',vc:'Diminuir zoom',te:'Diminuir a fonte do terminal',id:'font.decrease',today:'Ctrl+Shift+-',st:'change',c:'c11'},
+ {g:'app',vs:'ctrl+numpad0|ctrl+0',vc:'Zoom padrão',te:'Fonte do terminal no tamanho padrão',id:'font.reset',today:'Ctrl+Shift+0',st:'change',c:'c11'},
+ {g:'app',vs:'f11',vc:'Tela cheia',te:'Tela cheia (já é F11, pelo menu nativo)',id:'window.fullscreen',today:'F11',st:'same'},
+ {g:'app',vs:'ctrl+shift+i|f12',vc:'Ferramentas de desenvolvedor',te:'Ferramentas de desenvolvedor',id:'app.devtools',today:'Ctrl+Shift+I (menu)',st:'same'},
+ {g:'app',vs:'',tvs:'ctrl+shift+q',vc:'— (Linux: Ctrl+Q sai)',te:'Sair e encerrar tudo…',id:'app.quit-all',today:'igual',st:'same'},
+ // terminal
+ {g:'term',vs:'ctrl+c',vc:'Copiar (com seleção) / ^C',te:'Igual: copia com seleção; sem seleção é o ^C do programa',id:'terminal.copy',today:'igual',st:'same'},
+ {g:'term',vs:'ctrl+shift+c',vc:'Copiar seleção do terminal',te:'Igual (no Windows o VS Code também abre um terminal externo com ela; não entra)',id:'terminal.copy-always',today:'igual',st:'same'},
+ {g:'term',vs:'ctrl+v|ctrl+shift+v',vc:'Colar',te:'Igual (Ctrl+V sem texto manda o ^V ao Claude Code: imagem)',id:'terminal.paste',today:'igual',st:'same',c:'c12'},
+ {g:'term',vs:'',tvs:'shift+enter',vc:'—',te:'Nova linha sem enviar (Claude Code)',id:'terminal.newline',today:'igual',st:'same'},
+];
+const ST_LBL={same:'igual',change:'muda',new:'novo',out:'fora'};
+const DEC_KEY='tether.kb.decisions';
+let decisions={};try{decisions=JSON.parse(localStorage.getItem(DEC_KEY)||'{}')||{}}catch(e){decisions={}}
+const decidable=Object.entries(CONF).filter(([,c])=>c.opts).map(([id])=>id);
+for(const id of decidable)if(!decisions[id])decisions[id]=CONF[id].opts.find(o=>o.rec).id;
+function saveDecisions(){try{localStorage.setItem(DEC_KEY,JSON.stringify(decisions))}catch(e){}$('decCount').textContent=decidable.filter(id=>decisions[id]).length;$('decTotal').textContent=decidable.length}
+let aFilter='all',aGroup='';
+const shownConf=new Set();
+function vsChords(s){return s?s.split('|'):[]}
+function renderA(){
+ const body=$('aBody');body.innerHTML='';shownConf.clear();
+ let shown=0;
+ for(const [g,name,tr] of GROUPS){
+  const rows=SCHEME.filter(r=>r.g===g&&(aFilter==='all'||(aFilter==='change'&&(r.st==='change'||r.st==='new'))||(aFilter==='conf'&&r.c&&CONF[r.c].opts))&&(!aGroup||aGroup===g));
+  if(!rows.length)continue;
+  const gh=document.createElement('tr');gh.className='grp';gh.innerHTML=`<td colspan="6">${esc(name)}${tr?`<span>${esc(tr)}</span>`:''}</td>`;body.append(gh);
+  for(const r of rows){
+   shown++;
+   const tr=document.createElement('tr');const hasConf=r.c&&CONF[r.c].opts;if(hasConf)tr.className='conf';
+   const chords=(r.vs?vsChords(r.vs):vsChords(r.tvs||'')).map(k=>chordHTML(k,!r.vs)).join(' <span style="color:var(--fg-dim)">·</span> ');
+   const vsCol=r.vs?chords:`<span style="color:var(--fg-dim);font-size:11px">só no tether</span><br>${chords}`;
+   const confCol=r.c?(hasConf?`<span class="selo conf">conflito</span> <span class="sub">${esc(CONF[r.c].t)}</span>`:`<span class="selo info">resolvido</span> <span class="sub">${esc(CONF[r.c].t)}</span>`):'<span style="color:var(--fg-dim)">—</span>';
+   tr.innerHTML=`<td class="k">${vsCol}</td><td class="vs">${esc(r.vc)}</td><td><span class="t">${esc(r.te)}</span>${r.id?`<span class="sub"><code class="cmdid">${esc(r.id)}</code>${r.isNew?' <span class="selo new">novo</span>':''}</span>`:''}${r.note?`<span class="sub">${esc(r.note)}</span>`:''}</td><td>${esc(r.today)}</td><td><span class="selo ${r.st}">${ST_LBL[r.st]}</span></td><td>${confCol}</td>`;
+   body.append(tr);
+   if(hasConf&&!shownConf.has(r.c)){shownConf.add(r.c);body.append(confRow(r.c))}
+  }
+ }
+ if(!shown){const e=document.createElement('tr');e.className='empty-row';e.innerHTML='<td colspan="6">Nada neste filtro.</td>';body.append(e)}
+ $('cAll').textContent=SCHEME.length;$('cChange').textContent=SCHEME.filter(r=>r.st==='change'||r.st==='new').length;$('cConf').textContent=decidable.length;
+ saveDecisions();
+}
+function confRow(id){
+ const c=CONF[id];const tr=document.createElement('tr');tr.className='detail';
+ const opts=c.opts.map(o=>`<label class="opt${o.rec?' rec':''}"><input type="radio" name="dec-${id}" value="${o.id}"${decisions[id]===o.id?' checked':''}><span><b>${o.id.toUpperCase()}</b> · ${esc(o.text)}${o.rec?'<span class="rc">RECOMENDADA</span>':''}</span></label>`).join('');
+ tr.innerHTML=`<td colspan="6"><div class="cbox"><div><h5>${ICO.warn}${esc(c.t)}</h5><p>${esc(c.text)}</p></div><div><h5 style="color:var(--fg-dim)">Sua decisão</h5><div class="opts">${opts}</div></div></div></td>`;
+ tr.querySelectorAll('input').forEach(i=>i.onchange=()=>{decisions[id]=i.value;saveDecisions();toast(`Decisão <b>${esc(id.toUpperCase())}</b>: opção ${i.value.toUpperCase()}`)});
+ return tr;
+}
+$('aFilters').querySelectorAll('.chip[data-f]').forEach(b=>b.onclick=()=>{aFilter=b.dataset.f;$('aFilters').querySelectorAll('.chip[data-f]').forEach(x=>x.setAttribute('aria-pressed',x===b));renderA()});
+(function(){const w=$('aGroups');w.innerHTML='<button class="chip" data-g="" aria-pressed="true">Todos os grupos</button>'+GROUPS.map(([g,n])=>`<button class="chip" data-g="${g}" aria-pressed="false">${esc(n)}</button>`).join('');w.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{aGroup=b.dataset.g;w.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed',x===b));renderA()})})();
+$('decReset').onclick=()=>{for(const id of decidable)decisions[id]=CONF[id].opts.find(o=>o.rec).id;renderA();toast('Decisões de volta às recomendadas')};
+$('decCopy').onclick=()=>{const lines=decidable.map(id=>{const c=CONF[id];const o=c.opts.find(x=>x.id===decisions[id]);return `${id.toUpperCase()} ${c.t}\n  → ${o.id.toUpperCase()}${o.rec?' (recomendada)':''}: ${o.text}`});const text='Decisões sobre os atalhos (tether, seção A)\n\n'+lines.join('\n\n');(navigator.clipboard?navigator.clipboard.writeText(text):Promise.reject()).then(()=>toast('Decisões copiadas: cole na conversa'),()=>{prompt('Copie:',text)})};
+renderA();
+
+/* =====================================================================
+   B · THE SCREEN
+   ===================================================================== */
+const DIRS=[['right','à direita'],['left','à esquerda'],['above','acima'],['below','abaixo']];
+const B=(id,title,group,keys,x)=>Object.assign({id,title,group,keys:(keys||[]).map(k=>typeof k==='string'?{k}:k)},x||{});
+const REG=[
+ B('pane.new-tab','Nova aba vazia','Painel',['ctrl+n'],{isNew:'tecla'}),
+ B('pane.new','Novo painel…','Painel',['ctrl+k ctrl+o'],{isNew:'tecla'}),
+ B('pane.reopen-closed','Reabrir o último painel fechado','Painel',['ctrl+shift+t'],{isNew:true}),
+ ...DIRS.map(([d,l])=>B(`pane.duplicate.pane.${d}`,`Duplicar painel ${l}`,'Painel',[`ctrl+alt+${{right:'right',left:'left',above:'up',below:'down'}[d]}`,...(d==='right'?['ctrl+\\']:d==='below'?['ctrl+k ctrl+\\']:[])])),
+ ...DIRS.map(([d,l])=>B(`pane.duplicate.frame.${d}`,`Duplicar painel na borda do quadro, ${l}`,'Painel',[`ctrl+alt+shift+${{right:'right',left:'left',above:'up',below:'down'}[d]}`])),
+ ...DIRS.map(([d,l])=>B(`pane.duplicate.desk.${d}`,`Duplicar painel num quadro novo, ${l}`,'Painel',[`alt+shift+${{right:'right',left:'left',above:'up',below:'down'}[d]}`])),
+ ...DIRS.map(([d,l])=>B(`pane.split-empty.pane.${d}`,`Dividir ${l} (vazio)`,'Painel',[`ctrl+shift+${{right:'right',left:'left',above:'up',below:'down'}[d]}`])),
+ ...DIRS.map(([d,l])=>B(`pane.split-empty.frame.${d}`,`Dividir na borda do quadro, ${l} (vazio)`,'Painel',[])),
+ B('pane.new-at-frame-edge','Novo painel na borda do quadro…','Painel',[]),
+ B('pane.next-tab','Próxima aba do quadro','Painel',['ctrl+pgdn'],{isNew:true}),
+ B('pane.previous-tab','Aba anterior do quadro','Painel',['ctrl+pgup'],{isNew:true}),
+ ...[1,2,3,4,5,6,7,8,9].map(n=>B(`pane.go.${n}`,`Aba ${n} do quadro`,'Painel',[`alt+${n}`],{isNew:true})),
+ B('pane.last','Última aba do quadro','Painel',['alt+0'],{isNew:true}),
+ B('pane.rename','Renomear painel…','Painel',['f2'],{isNew:'tecla'}),
+ B('pane.switch-profile','Trocar perfil do painel…','Painel',[]),
+ B('pane.details','Mostrar ou ocultar a barra de status do painel','Painel',['ctrl+shift+h']),
+ B('pane.copy-folder','Copiar pasta do painel','Painel',['ctrl+k p'],{isNew:'tecla'}),
+ B('pane.open-folder','Abrir pasta do painel no Explorer','Painel',['ctrl+k r'],{isNew:'tecla'}),
+ B('pane.move','Mover painel…','Painel',[]),
+ B('pane.close','Fechar painel…','Painel',['ctrl+f4',{k:'ctrl+w',where:['window','note']}],{isNew:'tecla'}),
+ B('frame.new','Novo quadro…','Quadro',[]),
+ ...DIRS.map(([d,l])=>B(`frame.new-empty.${d}`,`Novo quadro vazio ${l}`,'Quadro',[])),
+ ...[['right','à direita'],['left','à esquerda'],['up','acima'],['down','abaixo']].map(([d,l])=>B(`frame.focus.${d}`,`Focar o painel vizinho ${l}`,'Quadro',[`ctrl+k ctrl+${d}`],{isNew:true})),
+ B('frame.close-tabs','Fechar todas as abas do quadro…','Quadro',['ctrl+k w'],{isNew:true}),
+ B('desk.new','Nova mesa','Mesa',['ctrl+shift+n'],{isNew:'tecla'}),
+ B('desk.new-before','Nova mesa antes desta','Mesa',[]),
+ B('desk.new-empty','Nova mesa vazia','Mesa',[]),
+ B('desk.next','Próxima mesa','Mesa',['ctrl+tab']),
+ B('desk.previous','Mesa anterior','Mesa',['ctrl+shift+tab']),
+ ...[1,2,3,4,5,6,7,8,9].map(n=>B(`desk.go.${n}`,`Ir para a mesa ${n}`,'Mesa',[`ctrl+${n}`])),
+ B('desk.actions','Mesa atual: renomear, cor, mover…','Mesa',[]),
+ B('desk.close','Fechar mesa…','Mesa',['ctrl+k f'],{isNew:'tecla'}),
+ B('drawer.toggle','Abrir ou fechar a gaveta','Gaveta',['ctrl+`','ctrl+shift+g']),
+ B('drawer.quick-terminal','Terminal rápido na gaveta','Gaveta',['ctrl+shift+`'],{isNew:'tecla'}),
+ B('note.new','Nova nota','Nota',[]),
+ B('note.open','Abrir nota…','Nota',['ctrl+o'],{isNew:'tecla'}),
+ B('note.save','Salvar a nota agora','Nota',[{k:'ctrl+s',where:['note']}],{isNew:true}),
+ B('note.save-as','Salvar nota como…','Nota',[{k:'ctrl+shift+s',where:['note']}],{isNew:'tecla'}),
+ B('note.preview','Prévia do markdown','Nota',[{k:'ctrl+shift+v',where:['note']}],{isNew:true}),
+ B('note.preview-side','Prévia do markdown ao lado','Nota',[{k:'ctrl+k v',where:['note']}],{isNew:true}),
+ B('editor.action.add-selection-to-next-find-match','Add Selection To Next Find Match','Editor',[{k:'ctrl+d',where:['note']}],{fixed:'editor'}),
+ B('editor.action.select-highlights','Select All Occurrences of Find Match','Editor',[{k:'ctrl+shift+l',where:['note']}],{fixed:'editor'}),
+ B('editor.action.insert-cursor-below','Add Cursor Below','Editor',[{k:'ctrl+alt+down',where:['note']}],{fixed:'editor'}),
+ B('editor.action.move-lines-down-action','Move Line Down','Editor',[{k:'alt+down',where:['note']}],{fixed:'editor'}),
+ B('editor.action.copy-lines-down-action','Copy Line Down','Editor',[{k:'alt+shift+down',where:['note']}],{fixed:'editor'}),
+ B('editor.action.comment-line','Toggle Line Comment','Editor',[{k:'ctrl+/',where:['note']}],{fixed:'editor'}),
+ B('editor.action.add-comment-line','Add Line Comment','Editor',[{k:'ctrl+k ctrl+c',where:['note']}],{fixed:'editor'}),
+ B('editor.actions.find','Find','Editor',[{k:'ctrl+f',where:['note']}],{fixed:'editor'}),
+ B('editor.action.start-find-replace-action','Replace','Editor',[{k:'ctrl+h',where:['note']}],{fixed:'editor'}),
+ B('editor.action.goto-line','Go to Line/Column…','Editor',[{k:'ctrl+g',where:['note']}],{fixed:'editor'}),
+ B('editor.fold-all','Fold All','Editor',[{k:'ctrl+k ctrl+0',where:['note']}],{fixed:'editor'}),
+ B('theme.light','Tema: Claro','Aparência',[]),
+ B('theme.auto','Tema: Automático','Aparência',[]),
+ B('theme.dark','Tema: Escuro','Aparência',[]),
+ B('theme.pick','Tema… (paleta filtrada)','Aparência',['ctrl+k ctrl+t'],{isNew:true}),
+ B('ui.desk-line','Ligar ou desligar a linha da cor da mesa','Aparência',[]),
+ B('terminal.theme','Tema do terminal…','Aparência',[]),
+ B('font.increase','Aumentar a fonte do terminal','Aparência',['ctrl+=','ctrl+shift+='],{isNew:'tecla'}),
+ B('font.decrease','Diminuir a fonte do terminal','Aparência',['ctrl+-','ctrl+shift+-'],{isNew:'tecla'}),
+ B('font.reset','Fonte do terminal no tamanho padrão','Aparência',['ctrl+0','ctrl+numpad0','ctrl+shift+0'],{isNew:'tecla'}),
+ B('palette.show','Paleta de comandos','App',['ctrl+shift+p']),
+ B('palette.quick-open','Ir para…','App',['ctrl+p']),
+ B('keybindings.show','Atalhos de teclado','App',['ctrl+k ctrl+s'],{isNew:true}),
+ B('chord.prefix','Ctrl+K (prefixo dos atalhos de duas teclas)','App',['ctrl+k'],{isNew:true,prefix:true}),
+ B('profiles.manage','Perfis de lançamento…','App',[]),
+ B('confirmations.restore','Voltar a perguntar antes de fechar painéis','App',[]),
+ B('daemon.restart','Reiniciar o tetherd… (encerra os agentes e retoma as sessões)','App',[]),
+ B('app.reload-all','Reiniciar tudo… (app e tetherd)','App',[],{danger:true}),
+ B('app.relaunch','Reiniciar o app (os agentes continuam rodando)','App',[]),
+ B('app.devtools','Ferramentas de desenvolvedor','App',['ctrl+shift+i'],{fixed:'nativo'}),
+ B('window.fullscreen','Tela cheia','App',['f11'],{fixed:'nativo'}),
+ B('window.close','Fechar a janela (os terminais continuam no tetherd)','App',['ctrl+shift+w'],{fixed:'nativo'}),
+ B('app.quit-all','Sair e encerrar tudo…','App',['ctrl+shift+q'],{danger:true}),
+ B('terminal.copy','Copiar (com seleção; sem ela é o ^C do programa)','Terminal',[{k:'ctrl+c',where:['terminal']}],{fixed:'painel'}),
+ B('terminal.copy-always','Copiar a seleção','Terminal',[{k:'ctrl+shift+c',where:['terminal']}],{fixed:'painel'}),
+ B('terminal.paste','Colar','Terminal',[{k:'ctrl+v',where:['terminal']},{k:'ctrl+shift+v',where:['terminal']}],{fixed:'painel'}),
+ B('terminal.newline','Nova linha sem enviar (Claude Code)','Terminal',[{k:'shift+enter',where:['terminal']}],{fixed:'painel'}),
+];
+const GROUP_ORDER=['Painel','Quadro','Mesa','Gaveta','Nota','Editor','Aparência','App','Terminal'];
+for(const c of REG)for(const b of c.keys)if(!b.where)b.where=defaultWhere(b.k);
+const CMD=new Map(REG.map(c=>[c.id,c]));
+/* state: overrides per command → bindings array (replaces the defaults) */
+let OV={};
+const OV_KEY='tether.kb.preview.overrides';
+try{OV=JSON.parse(localStorage.getItem(OV_KEY)||'{}')||{}}catch(e){OV={}}
+function saveOV(){try{localStorage.setItem(OV_KEY,JSON.stringify(OV))}catch(e){}}
+const bindingsOf=c=>OV[c.id]?OV[c.id]:c.keys;
+const isUser=c=>!!OV[c.id];
+const sameBindings=(a,b)=>JSON.stringify(a.map(x=>[x.k,[...x.where].sort()]))===JSON.stringify(b.map(x=>[x.k,[...x.where].sort()]));
+function setBindings(c,list){if(sameBindings(list,c.keys))delete OV[c.id];else OV[c.id]=list.map(b=>({k:b.k,where:[...b.where]}));saveOV()}
+/* rows: one per binding, plus one for an unbound command */
+function rows(){const out=[];for(const c of REG){const bs=bindingsOf(c);if(!bs.length)out.push({c,b:null,i:-1});bs.forEach((b,i)=>out.push({c,b,i}))}return out}
+const overlap=(a,b)=>a.some(x=>b.includes(x));
+/* who else uses key k in scope `where` (excluding command id) */
+function usersOf(k,where,exceptId){const out=[];for(const c of REG){if(c.id===exceptId)continue;for(const b of bindingsOf(c))if(b.k===k&&overlap(b.where,where))out.push({c,b})}return out}
+/* prefix clash: single key that opens chords, or a chord whose first key is a single binding elsewhere */
+function prefixIssue(k,where,exceptId){
+ const parts=k.split(' ');
+ if(parts.length===1){const ch=[];for(const c of REG){if(c.id===exceptId||c.prefix)continue;for(const b of bindingsOf(c))if(b.k.split(' ').length===2&&b.k.split(' ')[0]===k&&overlap(b.where,where))ch.push(c)}if(ch.length)return {kind:'is-prefix',cmds:ch}}
+ else{const first=parts[0];for(const c of REG){if(c.id===exceptId||c.prefix)continue;for(const b of bindingsOf(c))if(b.k===first&&overlap(b.where,where))return {kind:'first-is-single',cmds:[c]}}}
+ return null;
+}
+function conflictOf(c,b){if(!b)return [];return usersOf(b.k,b.where,c.id)}
+/* ---- rendering ---- */
+let q='',filter='all',selIdx=0,recordSearch=false,bannerOn=false;
+const norm=s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function hl(text,words){if(!words.length)return esc(text);let out=esc(text);for(const w of words){if(!w)continue;const re=new RegExp('('+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');out=out.replace(re,'<mark>$1</mark>')}return out}
+function matches(r){
+ if(filter==='bound'&&!r.b)return false;if(filter==='unbound'&&r.b)return false;if(filter==='user'&&!isUser(r.c))return false;
+ if(filter==='conflict'&&!(r.b&&conflictOf(r.c,r.b).length))return false;
+ if(filter==='pass'&&!(r.b&&!r.b.where.includes('terminal')&&!r.c.fixed))return false;
+ if(!q)return true;
+ const nq=norm(q).trim();
+ if(recordSearch)return !!r.b&&(r.b.k===nq||r.b.k.startsWith(nq+' '));
+ const hay=norm(r.c.title+' '+r.c.id+' '+(r.b?r.b.k+' '+keyLabel(r.b.k.split(' ')[0]):''));
+ return nq.split(/\s+/).every(w=>hay.includes(w));
+}
+function render(){
+ const list=$('kbList');const all=rows();const vis=all.filter(matches);
+ const words=recordSearch?[]:norm(q).trim().split(/\s+/).filter(Boolean);
+ $('kbCount').innerHTML=`<b>${vis.length}</b> de ${all.length} atalhos · <b>${Object.keys(OV).length}</b> alterado${Object.keys(OV).length===1?'':'s'}`;
+ $('kbFootSrc').innerHTML=Object.keys(OV).length?`${ICO.key} <span class="hide-n">~/.tether/</span>keybindings.json · ${Object.keys(OV).length}`:'padrões';
+ if(!vis.length){list.innerHTML=`<div class="kb-empty">Nenhum atalho com <b>${esc(q||'esse filtro')}</b>.<br>${recordSearch?'Tecle outra combinação ou desligue "Gravar teclas".':'Para achar pela tecla, ligue <b>Gravar teclas</b> e tecle o atalho.'}</div>`;return}
+ selIdx=Math.min(selIdx,vis.length-1);
+ let html='<table class="kbt"><thead><tr><th>Comando</th><th>Atalho</th><th class="c-where">Onde vale</th><th class="c-src">Origem</th><th class="c-grp">Grupo</th><th></th></tr></thead><tbody>';
+ let lastG=null;
+ vis.forEach((r,i)=>{
+  const g=r.c.group;if(g!==lastG&&!q){html+=`<tr class="sec"><td colspan="6">${esc(g)}</td></tr>`;lastG=g}
+  const conf=conflictOf(r.c,r.b);const pre=r.b?prefixIssue(r.b.k,r.b.where,r.c.id):null;
+  const selos=(r.c.isNew===true?' <span class="selo new">novo</span>':'')+(r.c.fixed?` <span class="selo editor">${esc(r.c.fixed)}</span>`:'')+(isUser(r.c)?' <span class="selo user">você</span>':'');
+  const keyCell=r.b?chordHTML(r.b.k)+(conf.length?`<span class="warn" title="Também em: ${esc(conf.map(x=>x.c.title).join(', '))}">${ICO.warn}</span>`:'')+(pre?`<span class="warn" title="${pre.kind==='is-prefix'?'É prefixo de atalhos de duas teclas':'A primeira tecla já é um atalho simples'}">${ICO.warn}</span>`:''):'<span class="none">sem atalho</span>';
+  const where=r.b?`<span class="sc">${WHERE_ALL.map(w=>`<button data-w="${w}" aria-pressed="${r.b.where.includes(w)}" class="${w==='terminal'?'pass':''}" ${r.c.fixed?'disabled':''} title="${w==='terminal'&&!r.b.where.includes(w)?'Desligado: a tecla passa ao programa do terminal':WHERE_LBL[w]}">${WHERE_LBL[w]}</button>`).join('')}</span>`:'<span style="color:var(--fg-dim)">—</span>';
+  const src=r.c.fixed?(r.c.fixed==='editor'?'Monaco':r.c.fixed==='nativo'?'Menu nativo':'Painel'):isUser(r.c)?'Você':'Padrão';
+  const acts=r.c.fixed?`<button class="ib" disabled title="Tecla fixa por ora (${esc(src)})">${ICO.pencil}</button>`:`<button class="ib" data-a="edit" title="Gravar atalho (Enter)">${ICO.pencil}</button><button class="ib" data-a="add" title="Adicionar outro atalho">${ICO.plus}</button>${r.b?`<button class="ib" data-a="remove" title="Tirar este atalho (Delete)">${ICO.minus}</button>`:''}${isUser(r.c)?`<button class="ib always" data-a="reset" title="Voltar ao padrão">${ICO.reset}</button>`:''}`;
+  html+=`<tr class="r${i===selIdx?' sel':''}${conf.length?' conflict':''}" data-i="${i}"><td class="cmd"><div class="t"><span class="nm" style="${r.c.danger?'color:var(--err)':''}">${hl(r.c.title,words)}</span>${selos}</div><span class="id">${hl(r.c.id,words)}</span></td><td class="key">${keyCell}</td><td class="where">${where}</td><td class="src">${src}</td><td class="grp" style="color:var(--fg-dim)">${esc(g)}</td><td class="act">${acts}</td></tr>`;
+ });
+ html+='</tbody></table>';list.innerHTML=html;
+ list._vis=vis;
+ const selRow=list.querySelector('tr.sel');if(selRow&&document.activeElement===list)selRow.scrollIntoView({block:'nearest'});
+ renderJSON();
+}
+function visRow(i){return $('kbList')._vis?.[i]}
+function select(i){selIdx=i;const list=$('kbList');list.querySelectorAll('tr.r').forEach(tr=>tr.classList.toggle('sel',+tr.dataset.i===i));list.querySelector('tr.sel')?.scrollIntoView({block:'nearest'})}
+$('kbList').addEventListener('click',e=>{
+ const tr=e.target.closest('tr.r');if(!tr)return;selIdx=+tr.dataset.i;const r=visRow(selIdx);
+ const w=e.target.closest('button[data-w]');if(w){toggleWhere(r,w.dataset.w);return}
+ const a=e.target.closest('button[data-a]');if(a){act(a.dataset.a,r);return}
+ select(selIdx);
+});
+$('kbList').addEventListener('dblclick',e=>{const tr=e.target.closest('tr.r');if(!tr||e.target.closest('button'))return;const r=visRow(+tr.dataset.i);if(!r.c.fixed)openRecord(r,'edit')});
+let chordArm=false;
+$('kbList').addEventListener('keydown',e=>{
+ const vis=$('kbList')._vis||[];if(!vis.length)return;
+ if(e.key==='ArrowDown'){e.preventDefault();select(Math.min(vis.length-1,selIdx+1))}
+ else if(e.key==='ArrowUp'){e.preventDefault();select(Math.max(0,selIdx-1))}
+ else if(e.key==='Enter'){e.preventDefault();const r=vis[selIdx];if(!r.c.fixed)openRecord(r,'edit')}
+ else if(e.key==='Delete'){e.preventDefault();const r=vis[selIdx];if(r.b&&!r.c.fixed)act('remove',r)}
+ else if(e.ctrlKey&&e.code==='KeyK'){e.preventDefault();if(chordArm){chordArm=false;const r=vis[selIdx];if(!r.c.fixed)openRecord(r,'edit')}else{chordArm=true;toast('<kbd>Ctrl+K</kbd> aguardando a segunda tecla… (<kbd>Ctrl+K</kbd> grava a linha selecionada)');setTimeout(()=>chordArm=false,3000)}}
+ else chordArm=false;
+});
+function toggleWhere(r,w){
+ if(!r.b||r.c.fixed)return;const list=bindingsOf(r.c).map(b=>({k:b.k,where:[...b.where]}));const b=list[r.i];
+ if(b.where.includes(w)){if(b.where.length===1){toast('Um atalho vale em pelo menos um lugar: tire o atalho em vez disso');return}b.where=b.where.filter(x=>x!==w)}else b.where.push(w);
+ setBindings(r.c,list);render();
+ if(w==='terminal')toast(b.where.includes('terminal')?`<b>${esc(keyLabel(b.k.split(' ')[0]))}</b> agora é do app também no terminal`:`<b>${esc(keyLabel(b.k.split(' ')[0]))}</b> passa ao programa do terminal${termNote(b.k)?` (${esc(termNote(b.k))})`:''}`);
+}
+function act(a,r){
+ if(a==='edit')openRecord(r,'edit');
+ else if(a==='add')openRecord(r,'add');
+ else if(a==='remove'){const list=bindingsOf(r.c).filter((_,i)=>i!==r.i);setBindings(r.c,list);render();toast(`<b>${esc(r.c.title)}</b> ficou sem esse atalho (↺ volta ao padrão)`)}
+ else if(a==='reset'){delete OV[r.c.id];saveOV();render();toast(`<b>${esc(r.c.title)}</b> voltou ao padrão`)}
+}
+/* ---- search ---- */
+$('kbQ').addEventListener('input',e=>{q=e.target.value;selIdx=0;$('kbClear').hidden=!q;render()});
+$('kbClear').onclick=()=>{q='';$('kbQ').value='';$('kbClear').hidden=true;$('kbLive').innerHTML='';render();$('kbQ').focus()};
+$('kbFilter').onchange=e=>{filter=e.target.value;selIdx=0;render()};
+function setRecordSearch(on){recordSearch=on;$('kbRec').setAttribute('aria-pressed',on);$('kbSearch').classList.toggle('rec',on);$('kbQ').hidden=on;$('kbLive').hidden=!on;if(on){q='';$('kbQ').value='';$('kbLive').innerHTML='<span class="ph">tecle o atalho…</span>';$('kbLive').tabIndex=0;$('kbLive').focus()}else{q='';$('kbQ').value='';$('kbLive').innerHTML='';$('kbQ').focus()}render()}
+$('kbRec').onclick=()=>setRecordSearch(!recordSearch);
+$('kbLive').addEventListener('keydown',e=>{if(e.key==='Escape'){setRecordSearch(false);return}const k=keyFromEvent(e);if(!k)return;e.preventDefault();e.stopPropagation();
+ // chord: a second key within 1.5s after a prefix key extends the query
+ const prev=q.split(' ')[0];const now=Date.now();
+ q=(prev&&now-($('kbLive')._t||0)<1500&&prev!==k&&!q.includes(' '))?prev+' '+k:k;$('kbLive')._t=now;
+ $('kbLive').innerHTML=chordHTML(q)+' <span class="ph" style="font-size:11px;margin-left:6px">Esc desliga</span>';$('kbClear').hidden=false;selIdx=0;render()});
+$('kbQ').addEventListener('keydown',e=>{if(e.key==='Escape'&&q){$('kbClear').click();e.stopPropagation()}else if(e.key==='ArrowDown'){e.preventDefault();$('kbList').focus()}else if(e.altKey&&e.code==='KeyK'){e.preventDefault();setRecordSearch(true)}});
+document.querySelectorAll('[data-act="open-json"]').forEach(b=>b.onclick=()=>{toast('Abriria <b>~/.tether/keybindings.json</b> numa aba de nota ao lado (ver B.3)');document.getElementById('sB3').scrollIntoView({behavior:'smooth',block:'start'})});
+document.querySelector('[data-act="reset-all"]').onclick=()=>{if(!Object.keys(OV).length){toast('Nada alterado: tudo já está no padrão');return}openConfirmReset()};
+function openConfirmReset(){const v=$('kbVeil');v.hidden=false;v.innerHTML=`<div class="rec" role="dialog" aria-modal="true"><h3>${ICO.reset}<span class="nm">Restaurar todos os padrões?</span></h3><p class="sub">${Object.keys(OV).length} comando(s) voltam ao atalho padrão e <code>~/.tether/keybindings.json</code> fica vazio (<code>[]</code>). Não dá para desfazer pela tela.</p><div class="acts"><span class="sp"></span><button class="btn cancel" data-x="c">Cancelar <kbd>Esc</kbd></button><button class="btn primary warnb" data-x="ok">Restaurar <kbd>Enter</kbd></button></div></div>`;
+ const close=()=>{v.hidden=true;v.innerHTML='';$('kbList').focus()};v.querySelector('[data-x=c]').onclick=close;v.querySelector('[data-x=ok]').onclick=()=>{OV={};saveOV();close();render();toast('Todos os atalhos voltaram ao padrão')};
+ v.onkeydown=e=>{if(e.key==='Escape'){e.stopPropagation();close()}if(e.key==='Enter'){e.stopPropagation();v.querySelector('[data-x=ok]').click()}};v.querySelector('[data-x=ok]').focus()}
+/* ---- the record dialog ---- */
+function openRecord(r,mode){
+ const v=$('kbVeil');v.hidden=false;
+ const c=r.c;const cur=r.b;let chord=[];let where=cur?[...cur.where]:defaultWhere('x');let waitTimer;
+ v.innerHTML=`<div class="rec" role="dialog" aria-modal="true" aria-label="Gravar atalho">
+  <h3>${ICO.key}<span class="nm">${mode==='add'?'Outro atalho para':'Atalho para'} «${esc(c.title)}»</span></h3>
+  <p class="sub">${cur&&mode==='edit'?`Hoje: ${chordHTML(cur.k)} · a nova combinação substitui esta.`:'Este comando não tem atalho; tecle a combinação desejada.'}</p>
+  <div class="cap" id="recCap" tabindex="0"><span class="ph">Pressione a combinação desejada…</span></div>
+  <div class="msg warn" id="recConf" hidden></div>
+  <div class="msg info" id="recTerm" hidden></div>
+  <div class="where"><span>Onde vale:</span><span class="sc" id="recWhere">${WHERE_ALL.map(w=>`<button data-w="${w}" aria-pressed="${where.includes(w)}" class="${w==='terminal'?'pass':''}">${WHERE_LBL[w]}</button>`).join('')}</span><span id="recWhereNote" style="font-size:11px"></span></div>
+  <div class="acts"><span class="hint"><span><kbd>Enter</kbd> confirma</span><span><kbd>Esc</kbd> cancela</span><span><kbd>Backspace</kbd> apaga</span></span><span class="sp"></span><button class="btn cancel" data-x="c">Cancelar</button><button class="btn primary" data-x="ok" disabled>Atribuir</button></div>
+ </div>`;
+ const cap=v.querySelector('#recCap'),conf=v.querySelector('#recConf'),term=v.querySelector('#recTerm'),ok=v.querySelector('[data-x=ok]'),wn=v.querySelector('#recWhereNote');
+ const close=()=>{clearTimeout(waitTimer);v.hidden=true;v.innerHTML='';$('kbList').focus()};
+ function paint(){
+  clearTimeout(waitTimer);
+  const k=chord.join(' ');
+  if(!chord.length){cap.className='cap';cap.innerHTML='<span class="ph">Pressione a combinação desejada…</span>';conf.hidden=true;term.hidden=true;ok.disabled=true;ok.innerHTML='Atribuir';wn.textContent='';return}
+  cap.className='cap live';
+  cap.innerHTML=chordHTML(k)+(chord.length===1?'<span class="wait">aguardando a 2ª tecla (opcional)… <kbd>Enter</kbd> confirma só esta</span>':'');
+  const auto=defaultWhere(k);if(cur===null||mode==='add'){where=auto}
+  v.querySelectorAll('#recWhere button').forEach(b=>b.setAttribute('aria-pressed',where.includes(b.dataset.w)));
+  wn.textContent=isPlainCtrlLetter(chord[0])&&!where.includes('terminal')?'Ctrl+letra pura: por padrão passa ao terminal':'';
+  const users=usersOf(k,where,c.id);const pre=prefixIssue(k,where,c.id);
+  const parts=[];
+  if(users.length)parts.push(`<b>Já usado por «${esc(users[0].c.title)}»</b> (${users[0].b.where.map(w=>WHERE_LBL[w]).join(', ')})${users.length>1?` e mais ${users.length-1}`:''}. Ao atribuir, ${users.length>1?'eles ficam':'ele fica'} sem esse atalho (↺ devolve).`);
+  if(pre&&pre.kind==='is-prefix')parts.push(`<b>${esc(keyLabel(k))} é prefixo</b> de ${pre.cmds.length} atalho(s) de duas teclas (${esc(pre.cmds.slice(0,2).map(x=>x.title).join(', '))}${pre.cmds.length>2?'…':''}). Um atalho simples aqui desliga esses.`);
+  if(pre&&pre.kind==='first-is-single')parts.push(`<b>${esc(keyLabel(chord[0]))} já é um atalho simples</b> («${esc(pre.cmds[0].title)}»): ele deixaria de disparar sozinho para virar prefixo.`);
+  conf.hidden=!parts.length;conf.innerHTML=ICO.warn+'<span>'+parts.join('<span class="pre"></span>')+'</span>';
+  const tn=termNote(k);
+  term.hidden=!(tn&&where.includes('terminal'));if(tn)term.innerHTML=ICO.info+`<span>No terminal, <b>${esc(keyLabel(chord[0]))}</b> é: ${esc(tn)}. Com "Terminal" ligado, o programa deixa de receber essa tecla.<span class="pre">Desligue o chip Terminal para deixá-la passar.</span></span>`;
+  ok.disabled=false;ok.innerHTML=users.length?`Atribuir e tirar de «${esc(users[0].c.title.length>22?users[0].c.title.slice(0,22)+'…':users[0].c.title)}» <kbd>Enter</kbd>`:'Atribuir <kbd>Enter</kbd>';ok.className='btn primary'+(users.length?' warnb':'');
+ }
+ cap.addEventListener('keydown',e=>{
+  e.preventDefault();e.stopPropagation();
+  if(e.key==='Escape'){close();return}
+  if(e.key==='Enter'&&!e.ctrlKey&&!e.altKey&&!e.shiftKey){if(!ok.disabled)commit();return}
+  if(e.key==='Backspace'&&!e.ctrlKey&&!e.altKey&&!e.shiftKey){chord.pop();paint();return}
+  const k=keyFromEvent(e);if(!k)return;
+  if(chord.length>=2)chord=[];
+  chord.push(k);paint();
+ });
+ v.querySelectorAll('#recWhere button').forEach(b=>b.onclick=()=>{const w=b.dataset.w;if(where.includes(w)){if(where.length===1)return;where=where.filter(x=>x!==w)}else where.push(w);v.querySelectorAll('#recWhere button').forEach(x=>x.setAttribute('aria-pressed',where.includes(x.dataset.w)));if(chord.length){const k=chord.join(' ');const save=cur;cur=cur||{};paint();cur=save}cap.focus()});
+ v.querySelector('[data-x=c]').onclick=close;ok.onclick=commit;
+ function commit(){
+  const k=chord.join(' ');
+  // strip the key from whoever had it in an overlapping scope
+  for(const u of usersOf(k,where,c.id)){const list=bindingsOf(u.c).filter(b=>!(b.k===k&&overlap(b.where,where)));setBindings(u.c,list)}
+  const list=bindingsOf(c).map(b=>({k:b.k,where:[...b.where]}));
+  if(mode==='edit'&&cur)list[r.i]={k,where:[...where]};else list.push({k,where:[...where]});
+  setBindings(c,list);close();filter='all';$('kbFilter').value='all';render();
+  toast(`<b>${esc(c.title)}</b> agora é ${chordHTML(k)}`);
+ }
+ v.onkeydown=e=>{if(e.key==='Escape'&&e.target!==cap){e.stopPropagation();close()}};
+ setTimeout(()=>cap.focus(),0);
+}
+/* ---- json ---- */
+function renderJSON(){
+ const entries=[];
+ for(const c of REG){if(!OV[c.id])continue;const def=c.keys,now=OV[c.id];
+  for(const d of def)if(!now.some(b=>b.k===d.k&&JSON.stringify([...b.where].sort())===JSON.stringify([...d.where].sort())))entries.push({key:d.k,command:'-'+c.id});
+  for(const b of now)if(!def.some(d=>d.k===b.k&&JSON.stringify([...b.where].sort())===JSON.stringify([...d.where].sort()))){const e={key:b.k,command:c.id};if(JSON.stringify([...b.where].sort())!==JSON.stringify([...defaultWhere(b.k)].sort()))e.where=b.where;entries.push(e)}}
+ const lines=[];lines.push('<span class="c">// Só o que difere do padrão. Editável; salvar aplica na hora.</span>');
+ if(!entries.length){lines.push('[]')}else{lines.push('[');entries.forEach((e,i)=>{let s=`  { <span class="k">"key"</span>: <span class="s">"${esc(e.key)}"</span>, <span class="k">"command"</span>: <span class="s">"${esc(e.command)}"</span>`;if(e.where)s+=`, <span class="k">"where"</span>: [${e.where.map(w=>`<span class="s">"${w}"</span>`).join(', ')}]`;s+=' }'+(i<entries.length-1?',':'');lines.push(s)});lines.push(']')}
+ if(bannerOn){lines.length=0;lines.push('<span class="c">// o arquivo como está no disco: a vírgula da linha 7 quebra o JSON</span>','[',`  { <span class="k">"key"</span>: <span class="s">"ctrl+shift+t"</span>, <span class="k">"command"</span>: <span class="s">"-pane.reopen-closed"</span> },`,`  { <span class="k">"key"</span>: <span class="s">"ctrl+shift+t"</span>, <span class="k">"command"</span>: <span class="s">"pane.new-tab"</span> },`,`  { <span class="k">"key"</span>: <span class="s">"ctrl+w"</span>, <span class="k">"command"</span>: <span class="s">"pane.close"</span>, <span class="k">"where"</span>: [<span class="s">"window"</span>, <span class="s">"note"</span>, <span class="s">"terminal"</span>] },`,`  { <span class="k">"key"</span>: <span class="s">"ctrl+k"</span>, <span class="k">"command"</span>: <span class="s">"chord.prefix"</span>, <span class="k">"where"</span>: [<span class="s">"window"</span>, <span class="s">"note"</span>] },<span class="m">   ← linha 7: vírgula a mais</span>`,']')}
+ $('jsonView').innerHTML=`<div class="ln">${lines.map((_,i)=>i+1).join('\n')}</div><div class="tx">${lines.join('\n')}</div>`;
+ $('jsonCount').textContent=bannerOn?'inválido':entries.length?`${entries.length} entrada${entries.length===1?'':'s'}`:'vazio (tudo no padrão)';
+}
+/* ---- page controls ---- */
+$('wWide').onclick=()=>{$('kbPane').classList.remove('narrow');$('wWide').setAttribute('aria-pressed','true');$('wNarrow').setAttribute('aria-pressed','false')};
+$('wNarrow').onclick=()=>{$('kbPane').classList.add('narrow');$('wWide').setAttribute('aria-pressed','false');$('wNarrow').setAttribute('aria-pressed','true')};
+$('bErr').onclick=()=>{bannerOn=!bannerOn;$('bErr').setAttribute('aria-pressed',bannerOn);$('kbBanner').hidden=!bannerOn;renderJSON()};
+$('bReset').onclick=()=>{OV={};saveOV();q='';$('kbQ').value='';filter='all';$('kbFilter').value='all';setRecordSearch(false);bannerOn=false;$('bErr').setAttribute('aria-pressed','false');$('kbBanner').hidden=true;render();toast('Prévia zerada')};
+render();
+
+/* =====================================================================
+   C · THE CHORD PILL
+   ===================================================================== */
+const CONT=[['Abas e painéis',[['W','Fechar todas as abas do quadro…'],['P','Copiar pasta do painel'],['R','Abrir pasta no Explorer'],['Ctrl+O','Novo painel…'],['Ctrl+\\','Duplicar abaixo']]],['Quadros e mesa',[['Ctrl+→ ← ↑ ↓','Focar o painel vizinho'],['F','Fechar mesa…']]],['Nota',[['V','Prévia do markdown ao lado'],['Ctrl+C / Ctrl+U','Comentar / descomentar (editor)']]],['App',[['Ctrl+S','Atalhos de teclado'],['Ctrl+T','Tema…'],['Ctrl+K','Enviar ^K ao terminal']]]];
+function pill(state){
+ const esc_=`<span class="esc"><kbd>Esc</kbd> cancela</span>`;
+ const dots='<span class="dots"><i></i><i></i><i></i></span>';
+ if(state==='wait')return `<div class="pill"><div class="main"><kbd>Ctrl+K</kbd><span class="txt">pressionado · aguardando a segunda tecla${dots}</span>${esc_}</div></div>`;
+ if(state==='term')return `<div class="pill"><div class="main"><kbd>Ctrl+K</kbd><span class="txt">pressionado · aguardando a segunda tecla${dots}</span>${esc_}</div><div class="term-hint">${ICO.info}<span>Foco no terminal: <kbd>Ctrl+K</kbd> de novo envia <code>^K</code> ao programa (apagar até o fim da linha).</span></div></div>`;
+ if(state==='list')return `<div class="pill"><div class="main"><kbd>Ctrl+K</kbd><span class="txt">aguardando a segunda tecla · <b>o que pode vir:</b></span>${esc_}</div><div class="cont">${CONT.map(([g,items])=>`<h6>${g}</h6>`+items.map(([k,t])=>`<div class="c"><kbd>${esc(k)}</kbd><span>${esc(t)}</span></div>`).join('')).join('')}</div></div>`;
+ if(state==='done')return `<div class="pill done"><div class="main">${ICO.check}<span class="chord"><kbd>Ctrl+K</kbd><span class="then">depois</span><kbd>Ctrl+S</kbd></span><span class="txt"><b>Atalhos de teclado</b></span></div></div>`;
+ if(state==='unknown')return `<div class="pill warn"><div class="main">${ICO.warn}<span class="chord"><kbd>Ctrl+K</kbd><span class="then">depois</span><kbd>X</kbd></span><span class="txt">não é um atalho</span><span class="esc"><button class="lnk" data-go="sB">Ver atalhos de teclado</button></span></div></div>`;
+ return '';
+}
+let cState='wait',cTry=null;
+function renderC(){
+ const stage=$('cStage');$('cPill').innerHTML=cState==='try'?(cTry?pill(cTry):''):pill(cState);
+ $('cStates').querySelectorAll('.chip').forEach(b=>b.setAttribute('aria-pressed',b.dataset.st===cState));
+ const term=$('cTerm');
+ if(cState==='try'){term.innerHTML='<span class="d">D:\\atrium\\workspace\\tether</span> <span class="g">develop</span>\n<span class="o">●</span> Claude Code — sessão retomada\n<span class="d">›</span> <span class="d">clique aqui e tecle Ctrl+K, depois Ctrl+S (ou outra tecla; Esc cancela)</span> <span class="cur"></span>';stage.focus()}
+ else term.innerHTML='<span class="d">D:\\atrium\\workspace\\tether</span> <span class="g">develop</span>\n<span class="o">●</span> Claude Code — sessão retomada\n<span class="d">›</span> <span class="cur"></span>';
+ const go=$('cPill').querySelector('[data-go]');if(go)go.onclick=()=>$('sB').scrollIntoView({behavior:'smooth'});
+}
+$('cStates').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{cState=b.dataset.st;cTry=null;renderC()});
+let tryTimer;
+$('cStage').addEventListener('keydown',e=>{
+ if(cState!=='try')return;
+ if(e.key==='Escape'){e.preventDefault();cTry=null;clearTimeout(tryTimer);renderC();return}
+ const k=keyFromEvent(e);if(!k)return;
+ e.preventDefault();
+ if(!cTry||cTry==='done'||cTry==='unknown'){
+  if(k==='ctrl+k'){cTry='wait';renderC();clearTimeout(tryTimer);tryTimer=setTimeout(()=>{if(cTry==='wait'){cTry='list';renderC()}},800)}
+  else toast(`<b>${esc(keyLabel(k))}</b> não é prefixo: dispararia direto (ou iria ao terminal)`);
+  return;
+ }
+ clearTimeout(tryTimer);
+ if(k==='ctrl+s'){cTry='done';renderC();setTimeout(()=>{if(cTry==='done'){cTry=null;renderC()}},1800)}
+ else if(k==='ctrl+k'){cTry=null;renderC();toast('<code>^K</code> enviado ao terminal')}
+ else{cTry='unknown';renderC();setTimeout(()=>{if(cTry==='unknown'){cTry=null;renderC()}},2600)}
+});
+$('cStage').addEventListener('blur',()=>{if(cState==='try'&&cTry&&cTry!=='done'){cTry=null;clearTimeout(tryTimer);renderC()}});
+renderC();
+
+/* ---------- page chrome ---------- */
+$('theme').onclick=()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'};
+if(location.hash==='#light')document.documentElement.dataset.theme='light';
+</script></body></html>
