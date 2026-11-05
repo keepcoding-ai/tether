@@ -227,7 +227,11 @@ button.primary:hover { background: var(--accent-hover); }
 #closed-list .fb { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); font-size: 12px; }
 #closed-list .fb:hover { background: var(--bg-hover); color: var(--err); }
 
-#dock { flex: 1; min-height: 0; }
+/* Layering: everything a pane paints (Monaco's minimap and scrollbars, the frame veil, the "+" handles, dockview
+   overlays) lives inside #dock's own stacking context, so no z-index in there can outrank the toolbar menus (the
+   toolbar is its own context at z-index 3), the drawer, the palette or the dialogs. Monaco's overflow widgets are
+   mounted on <body> (fixedOverflowWidgets) and stay above the editor on their own. */
+#dock { flex: 1; min-height: 0; isolation: isolate; }
 
 /* --- desk: a gridview of frames, each frame a dockview; the "+" near the borders --- */
 /* Frames are cards floating on the desk: half the gap around the desk plus half around each card makes a full
