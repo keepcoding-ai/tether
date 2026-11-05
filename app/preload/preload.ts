@@ -71,6 +71,7 @@ const api: TetherApi = {
   noteGitignore: (repoRoot, add) => ipcRenderer.invoke('note:gitignore', repoRoot, add),
   quickOpenSearch: (paneCwd, query, recent) => ipcRenderer.invoke('quickopen:search', paneCwd, query, recent),
   quickOpenRefresh: paneCwd => ipcRenderer.send('quickopen:refresh', paneCwd),
+  quickOpenEnd: () => ipcRenderer.send('quickopen:end'),
   quickOpenInspect: path => ipcRenderer.invoke('quickopen:inspect', path),
   quickOpenExternal: path => ipcRenderer.invoke('quickopen:open-external', path),
 }

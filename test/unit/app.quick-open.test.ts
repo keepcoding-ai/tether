@@ -10,7 +10,8 @@ import { basename, dirname, join, sep } from 'node:path'
 import { compareItemsByFuzzyScore, type FuzzyScore, type IItemAccessor, prepareQuery, scoreFuzzy, scoreItemFuzzy } from '../../app/shared/vscode-fuzzy-scorer.ts'
 import { failedResult, fileIcon, listFailureText, parseLineSuffix, pushHistory, readHistory } from '../../app/shared/quick-open.ts'
 import { QuickOpenService } from '../../app/main/quick-open-main.ts'
-import { FileIndex, findRipgrep, inspectFile, listFiles, MAX_EDITOR_BYTES, rankFiles, fileEntry, walkFiles } from '../../app/main/file-index.ts'
+import { SearchCache, top } from '../../app/main/vscode-raw-search.ts'
+import { type FileEntry, FileIndex, findRipgrep, inspectFile, listFiles, MAX_EDITOR_BYTES, rankFiles, fileEntry, walkFiles } from '../../app/main/file-index.ts'
 
 // ---------- the scorer (VS Code's own cases) ----------
 
@@ -173,7 +174,7 @@ test('file listing: rg (hidden files in, .gitignore and node_modules out), git f
 
 test('file index: "apma" ranks appMain.ts first; recents on top and not repeated; prefix cache narrows; empty query shows recents', async () => {
   const dir = tempRepo()
-  const index = new FileIndex({ watch: false })
+  const index = new FileIndex()
   try {
     await index.list(dir)
     const r = index.search(dir, 'apma')
@@ -200,6 +201,68 @@ test('file index: the best-score band gives the same answer as sorting everythin
   const all = rankFiles(entries, 'fi1', entries.length).best.map(b => b.entry.rel)
   const top = rankFiles(entries, 'fi1', 50).best.map(b => b.entry.rel)
   assert.deepEqual(top, all.slice(0, 50))
+})
+
+test('search session: only the first listing is pending; the folder is not watched; the box opening again lists again', async () => {
+  const dir = tempRepo()
+  const index = new FileIndex()
+  try {
+    index.refresh(dir)
+    assert.equal(index.search(dir, 'apma').pending, true) // the session's first listing is still running
+    await index.list(dir)
+    const first = index.search(dir, 'apma')
+    assert.equal(first.pending, false)
+    assert.equal(first.files[0]?.label, 'appMain.ts')
+    // A file created while the box is open changes nothing: no watcher, no re-listing, no pending, no new question.
+    writeFileSync(join(dir, 'src', 'apmaNew.ts'), 'x')
+    await new Promise(r => setTimeout(r, 1500))
+    for (const q of ['a', 'ap', 'apm', 'apma', 'apmaN']) {
+      const r = index.search(dir, q)
+      assert.equal(r.pending, false, q)
+      assert.equal(r.listMs, first.listMs, q)
+    }
+    assert.ok(!index.search(dir, 'apmaNew').files.some(f => f.label === 'apmaNew.ts'))
+    // The box closes (list dropped) and opens again: a new session lists the folder, the new file is in.
+    index.close(dir)
+    index.refresh(dir)
+    assert.equal(index.search(dir, 'apmaNew').pending, true)
+    await index.list(dir)
+    const again = index.search(dir, 'apmaNew')
+    assert.equal(again.pending, false)
+    assert.equal(again.files[0]?.label, 'apmaNew.ts')
+    // A refresh while the first listing of the session runs is not a second listing.
+    index.close(dir)
+    index.refresh(dir)
+    index.refresh(dir)
+    await index.list(dir)
+    assert.equal(index.search(dir, 'apma').pending, false)
+  } finally { index.dispose(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('search session: a query that extends the previous one is filtered from its candidates, with the same answer as scoring everything', () => {
+  const entries = Array.from({ length: 4000 }, (_, i) => fileEntry(rel(`d${i % 37}/sub${i % 5}/file${i}.ts`)))
+  const cache = new SearchCache<FileEntry>()
+  let previous = entries.length
+  for (const q of ['f', 'fi', 'fi1', 'fi12', 'fi12 d3', 'sub2/fi1']) {
+    const candidates = cache.getResultsFromCache(q, entries)
+    const incremental = rankFiles(entries, q, 100, cache, candidates)
+    cache.put(q, incremental.matches)
+    const full = rankFiles(entries, q, 100)
+    assert.deepEqual(incremental.best.map(b => b.entry.rel), full.best.map(b => b.entry.rel), q)
+    assert.deepEqual(incremental.matches.map(m => m.rel), full.matches.map(m => m.rel), q)
+    if (q !== 'sub2/fi1') { assert.ok(candidates.length <= previous, q); previous = candidates.length }
+  }
+  assert.ok(previous < entries.length) // the chain narrowed the candidates
+  // A quoted query never reads a row.
+  assert.deepEqual(cache.getResultsFromCache('"fi1', entries).map(m => m.rel), rankFiles(entries, '"fi1', 100).matches.map(m => m.rel))
+})
+
+test('search session: top-N selection equals sorting everything with the scorer', () => {
+  const xs = Array.from({ length: 500 }, (_, i) => (i * 7919) % 503)
+  const cmp = (a: number, b: number): number => a - b
+  assert.deepEqual(top(xs, cmp, 20), [...xs].sort(cmp).slice(0, 20))
+  assert.deepEqual(top(xs, cmp, 0), [])
+  assert.deepEqual(top(xs, cmp, 900), [...xs].sort(cmp))
 })
 
 test('opening: text, binary (NUL or extension), too large, runnable, missing, folder', () => {

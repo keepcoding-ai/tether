@@ -124,8 +124,10 @@ export interface TetherApi {
    * Null when a newer search replaced this one before it ran.
    */
   quickOpenSearch(paneCwd: string | undefined, query: string, recent: string[]): Promise<QuickOpenResult | null>
-  /** The box opened: refresh the root's list in the background when nothing watches it. */
+  /** The box opened: a new search session, main lists the root now. */
   quickOpenRefresh(paneCwd: string | undefined): void
+  /** The box closed: main drops the session's list and cache. */
+  quickOpenEnd(): void
   /** What opening a path means: editor (text), system program (binary, too large), or nothing (missing, folder). */
   quickOpenInspect(path: string): Promise<QuickOpenTarget>
   /** Opens a binary or too large file with the system's program (never one that would run). */

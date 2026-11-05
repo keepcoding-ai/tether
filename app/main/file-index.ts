@@ -3,20 +3,24 @@
 // Listing, the way VS Code's file search does it: ripgrep (`@vscode/ripgrep`, the rg VS Code ships) with
 // `--files --hidden`, the ignore files respected (.gitignore, .ignore, .rgignore, also outside a git repository),
 // and VS Code's default `files.exclude` + `search.exclude` globs. Without rg: `git ls-files -co --exclude-standard`
-// inside a repository, else an own walk with the same excludes. One list per root, cached; a recursive
-// `fs.watch` on the root marks it stale (files created, deleted or renamed — content changes do not alter the
-// list) and the next search rebuilds it in the background while the old list keeps answering. The list is
-// capped (MAX_FILES): beyond it the search runs over what was read and says so.
+// inside a repository, else an own walk with the same excludes. The list is capped (MAX_FILES): beyond it the
+// search runs over what was read and says so.
+//
+// The model is VS Code's search session (app/main/vscode-raw-search.ts): the list is read when the box opens
+// (`refresh`), every keystroke is answered from it, and it is dropped when the box closes (`close`). Nothing
+// watches the folder and nothing re-lists while the box is open: a file created meanwhile shows up the next time
+// the box opens. `pending` is true only while the first listing of the session runs.
 //
 // Search: VS Code's scorer (app/shared/vscode-fuzzy-scorer.ts) over the relative paths, with VS Code's file
 // accessor (label = file name, description = folder relative to the root, path = relative path) and its
-// comparator; only the best MAX_RESULTS are sorted and returned (VS Code's partial sort). A query that extends
-// the previous one on the same list only scores the previous matches (the subsequence property of the scorer).
+// comparator; a query that extends an earlier one of the session is filtered from that one's candidates, and only
+// the best MAX_RESULTS are selected and sorted (rawSearchService's cache and top-N).
 import { type ChildProcess, spawn } from 'node:child_process'
-import { existsSync, type FSWatcher, readdirSync, statSync, watch } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
-import { compareItemsByFuzzyScore, fuzzyContains, type FuzzyScorerCache, type IItemAccessor, type IMatch, prepareQuery, scoreItemFuzzy } from '../shared/vscode-fuzzy-scorer.ts'
+import { type FuzzyScorerCache, type IItemAccessor, type IMatch, prepareQuery, scoreItemFuzzy } from '../shared/vscode-fuzzy-scorer.ts'
+import { SearchCache } from './vscode-raw-search.ts'
 import type { ListSource, QuickOpenItem, QuickOpenResult, QuickOpenTarget } from '../shared/quick-open.ts'
 
 export type { ListSource, QuickOpenItem, QuickOpenResult }
@@ -25,9 +29,7 @@ export type { ListSource, QuickOpenItem, QuickOpenResult }
 export const MAX_FILES = 200_000
 /** Results shown per search (VS Code's Quick Open asks its file search for 512). */
 export const MAX_RESULTS = 512
-/** A stale list (the watcher saw a file come or go) is rebuilt at most this often. */
-const STALE_DEBOUNCE_MS = 1000
-/** How many roots keep a list (and a watcher); the least recently searched goes first. */
+/** How many roots keep a list; the least recently searched goes first (a closed session already dropped its list). */
 const MAX_ROOTS = 6
 
 /** VS Code's defaults: `files.exclude` (version control folders, OS litter) plus `search.exclude`. */
@@ -74,13 +76,14 @@ function normalizeRel(p: string): string {
 }
 
 /** Runs a lister that prints NUL-separated paths; stops it at `max`. Rejects when it cannot start or fails with nothing listed. */
-function runLister(cmd: string, args: string[], cwd: string, max: number, onBatch?: (files: string[]) => void): Promise<{ files: string[]; truncated: boolean }> {
+function runLister(cmd: string, args: string[], cwd: string, max: number, onBatch?: (files: string[]) => void, signal?: AbortSignal): Promise<{ files: string[]; truncated: boolean }> {
   return new Promise((resolve, reject) => {
     let child: ChildProcess
     try { child = spawn(cmd, args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }) } catch (err) { reject(err); return }
     const files: string[] = []
     let rest = ''
     let truncated = false
+    if (signal) { if (signal.aborted) child.kill(); else signal.addEventListener('abort', () => child.kill(), { once: true }) }
     child.stdout!.setEncoding('utf8')
     child.stdout!.on('data', (chunk: string) => {
       if (truncated) return
@@ -144,6 +147,8 @@ export interface ListOptions {
   max?: number
   /** Called with each batch of paths while the lister runs (the search can answer before it ends). */
   onBatch?: (files: string[]) => void
+  /** Aborting kills the lister (the session ended); the promise still settles with what was read. */
+  signal?: AbortSignal
 }
 
 /** Lists the files under `root`: rg, else git inside a repository, else the own walk. */
@@ -153,13 +158,13 @@ export async function listFiles(root: string, opts: ListOptions = {}): Promise<F
   const rg = opts.rg === undefined ? findRipgrep() : opts.rg
   if (rg) {
     try {
-      const r = await runLister(rg, rgArgs(), root, max, opts.onBatch)
+      const r = await runLister(rg, rgArgs(), root, max, opts.onBatch, opts.signal)
       return { ...r, source: 'rg', ms: performance.now() - t0 }
     } catch { /* fall through */ }
   }
   if (opts.git !== false && insideGit(root)) {
     try {
-      const r = await runLister('git', ['ls-files', '-co', '--exclude-standard', '-z'], root, max, opts.onBatch)
+      const r = await runLister('git', ['ls-files', '-co', '--exclude-standard', '-z'], root, max, opts.onBatch, opts.signal)
       // git lists the files of the excluded folders when they are tracked (a committed node_modules): VS Code's excludes still apply.
       const files = r.files.filter(f => !f.split(sep).some(seg => EXCLUDED_NAMES.has(seg)))
       return { files, truncated: r.truncated, source: 'git', ms: performance.now() - t0 }
@@ -204,33 +209,22 @@ function toItem(root: string, f: FileEntry, score: { labelMatch?: IMatch[]; desc
   }
 }
 
-/** Ranks `rels` for the query (VS Code's scorer and comparator); returns every match and the best `max` sorted. */
-export function rankFiles(entries: readonly FileEntry[], query: string, max: number = MAX_RESULTS): { matches: FileEntry[]; best: { entry: FileEntry; labelMatch?: IMatch[]; descriptionMatch?: IMatch[] }[] } {
+/**
+ * Ranks `entries` for the query: the candidates (the path contains each word as a subsequence; `candidates` when the
+ * caller already filtered them from a cached row) and the best `max` of them in VS Code's order (top-N with the
+ * scorer's comparator), the ones that do not score dropped.
+ */
+export function rankFiles(entries: readonly FileEntry[], query: string, max: number = MAX_RESULTS, cache: SearchCache<FileEntry> = new SearchCache<FileEntry>(), candidates?: FileEntry[]): { matches: FileEntry[]; best: { entry: FileEntry; labelMatch?: IMatch[]; descriptionMatch?: IMatch[] }[] } {
   const prepared = prepareQuery(query)
-  const cache: FuzzyScorerCache = Object.create(null)
-  const matched: FileEntry[] = []
-  // VS Code's file search drops a candidate whose path does not contain the query as a subsequence before
-  // scoring; here per piece of a multi-word query (the scorer accepts the pieces in any order).
-  const pieces = (prepared.values ?? [prepared]).map(p => p.normalizedLowercase)
-  for (const item of entries) {
-    if (!pieces.every(p => fuzzyContains(item.rel, p))) continue
-    if (scoreItemFuzzy(item, prepared, true, relAccessor, cache).score > 0) matched.push(item)
+  const matched = candidates ?? cache.getResultsFromCache(query, entries)
+  const scorerCache: FuzzyScorerCache = cache.scorerCache
+  const best: { entry: FileEntry; labelMatch?: IMatch[]; descriptionMatch?: IMatch[] }[] = []
+  for (const m of cache.sortResults(matched, query, max, relAccessor)) {
+    const s = scoreItemFuzzy(m, prepared, true, relAccessor, scorerCache)
+    if (s.score <= 0) continue
+    best.push({ entry: m, ...(s.labelMatch ? { labelMatch: s.labelMatch } : {}), ...(s.descriptionMatch ? { descriptionMatch: s.descriptionMatch } : {}) })
   }
-  // The comparator orders by score whenever two scores differ (identity > label prefix > label > path), so
-  // only the items scoring at least the max-th best score can be in the answer: those are sorted with VS Code's
-  // full comparator (its tie-breaks included), the rest never is. Same result as sorting everything.
-  let band = matched
-  if (matched.length > max) {
-    const scores = new Float64Array(matched.length)
-    matched.forEach((m, i) => { scores[i] = scoreItemFuzzy(m, prepared, true, relAccessor, cache).score })
-    const threshold = Float64Array.from(scores).sort().reverse()[max - 1]!
-    band = matched.filter((_, i) => scores[i]! >= threshold)
-  }
-  const best = band.sort((a, b) => compareItemsByFuzzyScore(a, b, prepared, true, relAccessor, cache)).slice(0, max)
-  return {
-    matches: matched,
-    best: best.map(m => { const s = scoreItemFuzzy(m, prepared, true, relAccessor, cache); return { entry: m, ...(s.labelMatch ? { labelMatch: s.labelMatch } : {}), ...(s.descriptionMatch ? { descriptionMatch: s.descriptionMatch } : {}) } }),
-  }
+  return { matches: matched, best }
 }
 
 interface Entry {
@@ -239,24 +233,21 @@ interface Entry {
   source: ListSource | undefined
   truncated: boolean
   listMs: number | undefined
-  /** Bumped on every completed build: the prefix cache is valid only within one version. */
+  /** 0 until the session's listing completes (`files` may be partial before); the session cache is valid after. */
   version: number
   building: Promise<void> | undefined
-  stale: boolean
-  staleAt: number
-  watcher: FSWatcher | undefined
-  last: { query: string; version: number; matches: FileEntry[] } | undefined
+  /** Bumped when a session ends: the listing of an earlier session discards its result. */
+  generation: number
+  abort: AbortController | undefined
+  cache: SearchCache<FileEntry>
   usedAt: number
   /** Why the last listing failed (cleared by the next one that succeeds). */
   error: string | undefined
 }
 
-export interface FileIndexOptions extends Omit<ListOptions, 'onBatch'> {
-  /** Watch roots for created/deleted files (default true). */
-  watch?: boolean
-}
+export type FileIndexOptions = Omit<ListOptions, 'onBatch' | 'signal'>
 
-/** The per-root lists and their searches. */
+/** The per-root lists (one search session each) and their searches. */
 export class FileIndex {
   private readonly entries = new Map<string, Entry>()
   private readonly opts: FileIndexOptions
@@ -265,11 +256,15 @@ export class FileIndex {
     this.opts = opts
   }
 
+  private key(root: string): string {
+    return process.platform === 'linux' ? root : root.toLowerCase()
+  }
+
   private entry(root: string): Entry {
-    const key = process.platform === 'linux' ? root : root.toLowerCase()
+    const key = this.key(root)
     let e = this.entries.get(key)
     if (!e) {
-      e = { root, files: [], source: undefined, truncated: false, listMs: undefined, version: 0, building: undefined, stale: true, staleAt: 0, watcher: undefined, last: undefined, usedAt: 0, error: undefined }
+      e = { root, files: [], source: undefined, truncated: false, listMs: undefined, version: 0, building: undefined, generation: 0, abort: undefined, cache: new SearchCache<FileEntry>(), usedAt: 0, error: undefined }
       this.entries.set(key, e)
       this.evict()
     }
@@ -281,70 +276,80 @@ export class FileIndex {
     if (this.entries.size <= MAX_ROOTS) return
     const oldest = [...this.entries.entries()].sort((a, b) => a[1].usedAt - b[1].usedAt)[0]
     if (!oldest) return
-    oldest[1].watcher?.close()
+    this.reset(oldest[1])
     this.entries.delete(oldest[0])
   }
 
-  /** Starts a build unless one runs; the first build fills `files` as rg prints them. */
+  /** The session's list and cache are dropped (rawSearchService.clearCache); a listing still running is killed. */
+  private reset(e: Entry): void {
+    e.generation++
+    e.abort?.abort()
+    e.abort = undefined
+    e.building = undefined
+    e.files = []
+    e.source = undefined
+    e.truncated = false
+    e.listMs = undefined
+    e.version = 0
+    e.cache = new SearchCache<FileEntry>()
+    e.error = undefined
+  }
+
+  /** Reads the root's list; while it runs, `files` fills as rg prints (the search can answer from the part read). */
   private build(e: Entry): Promise<void> {
     if (e.building) return e.building
-    const first = e.version === 0
+    const generation = e.generation
     const partial: FileEntry[] = []
-    if (first) e.files = partial
-    e.stale = false
-    e.building = listFiles(e.root, { ...this.opts, ...(first ? { onBatch: (b: string[]) => { for (const f of b) partial.push(fileEntry(f)) } } : {}) }).then(list => {
+    e.files = partial
+    const ac = new AbortController()
+    e.abort = ac
+    e.building = listFiles(e.root, { ...this.opts, signal: ac.signal, onBatch: (b: string[]) => { if (e.generation === generation) for (const f of b) partial.push(fileEntry(f)) } }).then(list => {
+      if (e.generation !== generation) return
       e.files = list.files.map(fileEntry)
       e.source = list.source
       e.truncated = list.truncated
       e.listMs = list.ms
       e.version++
-      e.last = undefined
+      e.cache = new SearchCache<FileEntry>()
       e.error = undefined
     }, err => {
+      if (e.generation !== generation) return
       e.error = err instanceof Error ? err.message : String(err)
       console.error(`quick open: não foi possível listar ${e.root}:`, err)
-    }).finally(() => { e.building = undefined })
-    if (this.opts.watch !== false && !e.watcher) this.watch(e)
+    }).finally(() => { if (e.generation === generation) { e.building = undefined; e.abort = undefined } })
     return e.building
   }
 
-  private watch(e: Entry): void {
-    try {
-      e.watcher = watch(e.root, { recursive: true }, (type, name) => {
-        // A content change keeps the list as it is; only a name that came or went matters.
-        if (type !== 'rename') return
-        const n = typeof name === 'string' ? name : ''
-        if (n.split(/[\\/]/).some(seg => EXCLUDED_NAMES.has(seg))) return
-        if (!e.stale) { e.stale = true; e.staleAt = Date.now() }
-      })
-      e.watcher.on('error', () => { e.watcher?.close(); e.watcher = undefined; e.stale = true })
-    } catch { /* no recursive watch here: the list is rebuilt when the box opens again (refresh) */ }
-  }
-
-  /** The box opened: a root without a watcher is re-listed in the background (cheap re-scan on reopen). */
+  /** The box opened: a new search session. The root is read again, whatever a previous session left. */
   refresh(root: string): void {
     const e = this.entry(root)
-    if (e.version === 0 && !e.building) { void this.build(e); return }
-    if (!e.watcher) e.stale = true
+    if (e.building && e.version === 0) return // the listing of this session is already running
+    this.reset(e)
+    void this.build(e)
   }
 
-  /** The list for a root, building it when needed (tests and measurements). */
+  /** The box closed: the session's list and cache go (VS Code's clearCache). */
+  close(root: string): void {
+    const e = this.entries.get(this.key(root))
+    if (e) this.reset(e)
+  }
+
+  /** The list for a root, reading it when there is none (tests and measurements). */
   async list(root: string): Promise<FileList> {
     const e = this.entry(root)
-    if (e.version === 0 || e.stale) await this.build(e)
-    else if (e.building) await e.building
+    if (e.version === 0) await this.build(e)
     return { files: e.files.map(f => f.rel), source: e.source ?? 'walk', truncated: e.truncated, ms: e.listMs ?? 0 }
   }
 
   search(root: string, query: string, recentPaths: readonly string[] = [], max: number = MAX_RESULTS): QuickOpenResult {
     const t0 = performance.now()
     const e = this.entry(root)
-    if (e.version === 0) { if (!e.building) void this.build(e) }
-    else if (e.stale && !e.building && Date.now() - e.staleAt >= STALE_DEBOUNCE_MS) void this.build(e)
-    // No list because the listing failed: the box says why instead of waiting (the next keystroke retries).
-    // A failed rebuild keeps answering from the previous list.
+    // A search without a session (no refresh before it) reads the list itself; a failed listing is retried by the next keystroke.
+    if (e.version === 0 && !e.building) void this.build(e)
+    // No list because the listing failed: the box says why instead of waiting.
     const failed = e.version === 0 ? e.error : undefined
-    const pending = failed === undefined && (!!e.building || (e.stale && e.version > 0))
+    // Only the session's first listing is pending; the box asks again until it is done, never afterwards.
+    const pending = failed === undefined && e.version === 0
 
     // History: the files opened lately under this root, still there.
     const recentRels: string[] = []
@@ -359,14 +364,14 @@ export class FileIndex {
 
     const q = query.trim()
     let recent: QuickOpenItem[]
-    let files: QuickOpenItem[] = []
+    const files: QuickOpenItem[] = []
     if (q === '') {
       recent = recentRels.filter(rel => existsSync(join(root, rel))).map(rel => toItem(root, fileEntry(rel), undefined))
     } else {
       recent = rankFiles(recentRels.map(fileEntry), q, max).best.map(m => toItem(root, m.entry, m))
-      const fresh = e.last && e.last.version === e.version && !pending && q.startsWith(e.last.query) ? e.last.matches : e.files
-      const ranked = rankFiles(fresh, q, max + recent.length)
-      if (!pending) e.last = { query: q, version: e.version, matches: ranked.matches }
+      const ranked = rankFiles(e.files, q, max + recent.length, e.cache)
+      // The partial list of a listing still running is not cached: it grows between keystrokes.
+      if (!pending) e.cache.put(q, ranked.matches)
       const recentSet = new Set(recent.map(r => (process.platform === 'linux' ? r.path : r.path.toLowerCase())))
       for (const m of ranked.best) {
         if (files.length >= max) break
@@ -379,7 +384,7 @@ export class FileIndex {
   }
 
   dispose(): void {
-    for (const e of this.entries.values()) e.watcher?.close()
+    for (const e of this.entries.values()) this.reset(e)
     this.entries.clear()
   }
 }

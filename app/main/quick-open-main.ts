@@ -38,6 +38,8 @@ export class QuickOpenService {
   private nextId = 1
   private inFlight: { id: number; root: string; resolve: (r: QuickOpenResult | null) => void } | undefined
   private queued: Pending | undefined
+  /** The root the open box reads (its search session); null while the box is closed. */
+  private sessionRoot: string | undefined
 
   constructor(workerPath: string, repo: string) {
     this.workerPath = workerPath
@@ -103,10 +105,22 @@ export class QuickOpenService {
     })
   }
 
-  /** The box opened: re-list the root in the background when it has no watcher (or start its first listing). */
+  /** The box opened: a new search session, the root is listed now (VS Code lists when its Quick Open opens). */
   refresh(paneCwd: unknown): void {
+    const root = this.rootFor(paneCwd)
+    this.sessionRoot = root
     // A worker that cannot start is reported by the search that follows.
-    try { this.ensureWorker().postMessage({ op: 'refresh', root: this.rootFor(paneCwd) } satisfies WorkerRequest) } catch { /* see search */ }
+    try { this.ensureWorker().postMessage({ op: 'refresh', root } satisfies WorkerRequest) } catch { /* see search */ }
+  }
+
+  /** The box closed: the session's list and cache are dropped (VS Code's clearCache); a search still waiting is moot. */
+  end(): void {
+    const root = this.sessionRoot
+    this.sessionRoot = undefined
+    this.queued?.resolve(null)
+    this.queued = undefined
+    if (root === undefined || !this.worker) return
+    try { this.worker.postMessage({ op: 'close', root } satisfies WorkerRequest) } catch { /* the worker is gone: so is its list */ }
   }
 
   dispose(): void {
@@ -116,13 +130,14 @@ export class QuickOpenService {
   }
 }
 
-/** Wires the IPC: `quickopen:search`, `quickopen:refresh`, `quickopen:inspect`, `quickopen:open-external`. */
+/** Wires the IPC: `quickopen:search`, `quickopen:refresh`, `quickopen:end`, `quickopen:inspect`, `quickopen:open-external`. */
 export function registerQuickOpen(ipcMain: IpcMain, shell: Shell, distDir: string): QuickOpenService {
   const service = new QuickOpenService(join(distDir, 'file-index-worker.cjs'), join(distDir, '..', '..'))
   const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 200) : [])
   ipcMain.handle('quickopen:search', (_e, paneCwd: unknown, query: unknown, recent: unknown) =>
     service.search(paneCwd, typeof query === 'string' ? query : '', strings(recent)))
   ipcMain.on('quickopen:refresh', (_e, paneCwd: unknown) => service.refresh(paneCwd))
+  ipcMain.on('quickopen:end', () => service.end())
   ipcMain.handle('quickopen:inspect', (_e, path: unknown): QuickOpenTarget =>
     typeof path === 'string' && path.trim() !== '' ? inspectFile(path, readHead) : { kind: 'missing' })
   ipcMain.handle('quickopen:open-external', async (_e, path: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {

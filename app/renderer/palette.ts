@@ -47,6 +47,8 @@ export class CommandPalette {
     this.input.addEventListener('keydown', ev => this.onKey(ev))
     // Esc: the browser raises `cancel` on a modal dialog; it is ours (the field keeps its text until the next opening).
     dialog.addEventListener('cancel', ev => { ev.preventDefault(); this.hide() })
+    // The box closed (any way): Quick Open's search session ends, main drops its list and cache.
+    dialog.addEventListener('close', () => this.quickOpen?.end())
     // A click on the backdrop lands on the dialog element itself, never on a child.
     dialog.addEventListener('mousedown', ev => { if (ev.target === dialog) { ev.preventDefault(); this.hide() } })
     // Picking with the mouse must not move the focus out of the field.

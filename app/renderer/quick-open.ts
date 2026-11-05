@@ -13,7 +13,7 @@ import { failedResult, fileIcon, type LineColumn, listFailureText, parseLineSuff
 
 const HISTORY_KEY = 'tether.quickOpen.history'
 const ICON_SET = new Set<string>(ICON_NAMES)
-/** While main is still reading the list, the box asks again this often. */
+/** While main is still reading the session's first list, the box asks again this often. */
 export const PENDING_POLL_MS = 250
 
 export interface QuickOpenHost {
@@ -52,10 +52,15 @@ export class QuickOpen {
     try { localStorage.setItem(HISTORY_KEY, JSON.stringify(pushHistory(this.history(), path, caseSensitivePaths()))) } catch { /* storage unavailable: no history */ }
   }
 
-  /** The box opened in this mode: main refreshes the root's list in the background when nothing watches it. */
+  /** The box opened in this mode: main starts a search session (lists the root now). */
   begin(): void {
     // Best effort: whatever fails here fails the search too, which says why in the box.
     try { window.tether.quickOpenRefresh(this.host.paneCwd()) } catch (err) { console.error('quick open:', err) }
+  }
+
+  /** The box closed: main drops the session's list and cache. */
+  end(): void {
+    try { window.tether.quickOpenEnd() } catch (err) { console.error('quick open:', err) }
   }
 
   /** Searches; null when a newer search replaced this one (the box shows that one). A failure comes back as a result with `error`. */
