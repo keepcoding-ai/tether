@@ -11,6 +11,7 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import { icon, setIcon } from './icons.ts'
 import { colorizeCode, tokenColorsCss } from './monaco.ts'
 import type { NotePanel } from './note-panel.ts'
+import type { PreviewPane } from './preview-pane.ts'
 import { previewShell, readPreviewTokens, tokensCss } from './preview-style.ts'
 import { noteDirOf } from '../shared/notes.ts'
 import { classifyLink } from '../shared/markdown-links.ts'
@@ -66,7 +67,8 @@ export interface PreviewSnapshot {
   rendered: number
 }
 
-export class PreviewPanel implements IContentRenderer {
+export class PreviewPanel implements IContentRenderer, PreviewPane {
+  readonly kind = 'md' as const
   readonly element: HTMLElement
   id = ''
   path = ''
@@ -158,6 +160,8 @@ export class PreviewPanel implements IContentRenderer {
     this.host.onParamsChange(this)
     this.schedule(0)
   }
+
+  watches(path: string): boolean { return path.toLowerCase() === this.path.toLowerCase() }
 
   /** The text of the editor that holds the file changed, finished loading, or went away; or the file changed on disk. */
   sourceChanged(): void { this.schedule(PREVIEW_DEBOUNCE_MS) }
@@ -485,9 +489,10 @@ export class PreviewTab implements ITabRenderer {
 
   render(): void {
     if (!this.api) return
-    const path = previewParams(this.api.getParameters?.() ?? undefined)?.path
+    const preview = previewParams(this.api.getParameters?.() ?? undefined)
+    const path = preview?.path
     this.text.textContent = this.api.title ?? this.api.id
-    this.element.title = `${this.api.title ?? this.api.id}\nPrévia de markdown${path ? `\n${path}` : ''}`
+    this.element.title = `${this.api.title ?? this.api.id}\n${preview?.kind === 'html' ? 'Prévia de HTML' : 'Prévia de markdown'}${path ? `\n${path}` : ''}`
   }
 
   dispose(): void {

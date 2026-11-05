@@ -11,6 +11,11 @@ import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 
 export type { Profile, ProfileInput }
 
+/** What main learned of an HTML preview's page (app/main/html-preview-main.ts): the files of its folder it loaded and what the policy refused. */
+export interface PreviewReport { partition: string; files: string[]; blocked: Array<{ url: string; reason: string }> }
+/** A chord pressed inside the page (the guest cannot reach the app's key handling): the app replays it. */
+export interface PreviewKey { partition: string; key: string; code: string; control: boolean; shift: boolean; alt: boolean; meta: boolean }
+
 export type MainCommand = 'quit-all' | 'restore-confirmations' | 'restart-daemon' | 'reload-all' | 'relaunch-app' | 'toggle-devtools' | 'toggle-fullscreen'
 
 /** A request without the `id`: the main process numbers them. */
@@ -135,6 +140,12 @@ export interface TetherApi {
   quickOpenExternal(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   /** Ctrl+click on terminal paths (app/main/terminal-links-main.ts): the first candidate that exists, read against the pane's opening folder `cwd`; null when none does. */
   resolveTerminalLink(cwd: string | undefined, candidates: string[]): Promise<ResolvedPath | null>
+  /** HTML previews, "Abrir no navegador": the page file with the system's program (only an existing .html file). */
+  openHtmlInBrowser(path: string): Promise<{ ok: true } | { ok: false; message: string }>
+  /** HTML previews: the files the isolated page loaded from its folder, and what was refused. */
+  onHtmlPreviewReport(listener: (report: PreviewReport) => void): () => void
+  /** HTML previews: a chord pressed inside the page, to be replayed on the pane. */
+  onHtmlPreviewKey(listener: (key: PreviewKey) => void): () => void
 }
 
 declare global {

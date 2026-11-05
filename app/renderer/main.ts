@@ -16,7 +16,9 @@ import { defineTheme, monaco } from './monaco.ts'
 import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
 import { paneCwdOfNote } from './note-rules.ts'
 import { PreviewPanel, PreviewTab, type PreviewHost, type PreviewSnapshot } from './preview-panel.ts'
-import { isMarkdownPath, isPreviewPanelId, newPreviewPanelId, PREVIEW_COMPONENT, PREVIEW_TAB, previewParams, previewTitle, withPreview } from '../shared/preview.ts'
+import { HtmlPreviewPanel, type HtmlPreviewHost, type HtmlPreviewSnapshot } from './html-preview-panel.ts'
+import type { PreviewPane } from './preview-pane.ts'
+import { HTML_PREVIEW_COMPONENT, isHtmlPath, isMarkdownPath, isPreviewablePath, isPreviewPanelId, newPreviewPanelId, PREVIEW_COMPONENT, PREVIEW_TAB, previewKindOf, previewParams, previewTitle, withPreview } from '../shared/preview.ts'
 import { cleanNoteName, isNotePanelId, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../shared/notes.ts'
 import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, isEmptyPanelId, newEmptyPanelId, withEmpty, type EmptyOrigin } from '../shared/empty.ts'
 import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empty-panel.ts'
@@ -59,8 +61,11 @@ const tabs = new Map<string, SlotTab>()
 /** The note panes (F5): no slot behind them, a file each (app/renderer/note-panel.ts). */
 const notes = new Map<string, NotePanel>()
 const noteTabs = new Map<string, NoteTab>()
-/** The markdown previews (F5): a pane tied to a file, drawn beside or instead of its editor (app/renderer/preview-panel.ts). */
-const previews = new Map<string, PreviewPanel>()
+/**
+ * The previews (F5): a pane tied to a file, drawn beside or instead of its editor. Markdown (app/renderer/preview-panel.ts) is drawn by
+ * the app into a script-less frame; HTML (app/renderer/html-preview-panel.ts) runs the page in an isolated webview.
+ */
+const previews = new Map<string, PreviewPane>()
 /** The empty panes (F5): a reserved place with the chooser inside (app/renderer/empty-panel.ts). */
 const empties = new Map<string, EmptyPanel>()
 /** Removes the editor actions registered as commands by the last note that got the focus. */
@@ -154,7 +159,9 @@ function commandContext(): CommandContext {
   const transient = !active || active === document.body || active.closest(TRANSIENT_FOCUS)
   const focus = transient ? focusOwner : focusOwnerOf(active)
   const activeId = currentDesk().activePanel?.id
-  const markdown = activeId && notes.has(activeId) && isMarkdownPath(notes.get(activeId)!.path) ? 'note' : activeId && previews.has(activeId) ? 'preview' : undefined
+  // `markdown`: the commands of the preview family (Ctrl+Shift+V, "abrir prévia", "abrir o arquivo-fonte") act on a note with a previewable
+  // file (markdown or HTML) or on a preview of either kind; the host picks the kind from the file.
+  const markdown = activeId && notes.has(activeId) && isPreviewablePath(notes.get(activeId)!.path) ? 'note' : activeId && previews.has(activeId) ? 'preview' : undefined
   return { pane: !!activeId, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(markdown ? { markdown } : {}) }
 }
 
@@ -286,6 +293,14 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
           empty.dispose = () => { dispose(); if (empties.get(empty.id) === empty) empties.delete(empty.id) }
           return empty
         }
+        if (name === HTML_PREVIEW_COMPONENT) {
+          const preview = new HtmlPreviewPanel(htmlPreviewHost)
+          const init = preview.init.bind(preview)
+          preview.init = params => { init(params); previews.set(preview.id, preview) }
+          const dispose = preview.dispose.bind(preview)
+          preview.dispose = () => { dispose(); if (previews.get(preview.id) === preview) previews.delete(preview.id) }
+          return preview
+        }
         if (name === PREVIEW_COMPONENT) {
           const preview = new PreviewPanel(previewHost)
           const init = preview.init.bind(preview)
@@ -338,8 +353,8 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
         paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
         toggleDetails: id => togglePaneDetails(id),
         addTab: id => { newTabBeside(id) },
-        canPreview: id => { const n = notes.get(id); return !!n && isMarkdownPath(n.path) },
-        previewSide: id => { openMarkdownPreview({ side: true, reference: id }) },
+        canPreview: id => { const n = notes.get(id); return !!n && isPreviewablePath(n.path) },
+        previewSide: id => { openPreview({ side: true, reference: id }) },
       }),
       createWatermarkComponent: () => {
         const el = document.createElement('div')
@@ -374,7 +389,7 @@ function setupDock(): void {
     paneOptions: panel => isNotePanelId(panel.id)
       ? { id: panel.id, component: NOTE_COMPONENT, tabComponent: NOTE_TAB, title: panel.title ?? panel.id, params: panel.params ?? {} }
       : isPreviewPanelId(panel.id)
-        ? { id: panel.id, component: PREVIEW_COMPONENT, tabComponent: PREVIEW_TAB, title: panel.title ?? previewTitle(previewParams(panel.params)?.path ?? ''), params: panel.params ?? {} }
+        ? previewPaneOptions(panel.id, previewParams(panel.params)?.path ?? '', previewKindOf(panel.params), panel.params, panel.title ?? undefined)
       : isEmptyPanelId(panel.id)
         ? { id: panel.id, component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: panel.params ?? withEmpty(undefined) }
         : { id: panel.id, component: COMPONENT, tabComponent: TAB, title: panel.title ?? panel.id, params: panel.params ?? { slotId: panel.id } },
@@ -1486,7 +1501,7 @@ function showNoteMenu(id: string, x: number, y: number): void {
     SEP,
     { icon: 'pencil-simple', label: 'Renomear…', run: () => noteTabs.get(id)?.startRename() },
     { icon: 'floppy-disk', label: 'Salvar nota como…', run: () => { void saveNoteAs(id) } },
-    ...(isMarkdownPath(note.path) ? [{ icon: 'eye' as const, label: 'Abrir prévia', run: () => openMarkdownPreview({ side: false, reference: id }) }, { icon: 'square-split-horizontal' as const, label: 'Abrir prévia ao lado', run: () => openMarkdownPreview({ side: true, reference: id }) }] : []),
+    ...(isPreviewablePath(note.path) ? [{ icon: 'eye' as const, label: 'Abrir prévia', run: () => openPreview({ side: false, reference: id }) }, { icon: 'square-split-horizontal' as const, label: 'Abrir prévia ao lado', run: () => openPreview({ side: true, reference: id }) }] : []),
     { icon: 'copy', label: 'Copiar caminho da nota', run: () => window.tether.writeClipboard(note.path) },
     { icon: 'folder-open', label: 'Abrir pasta da nota no Explorer', run: () => { void window.tether.openPath(noteDirOf(note.path)).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) }) } },
     SEP,
@@ -1501,7 +1516,8 @@ function showPreviewMenu(id: string, x: number, y: number): void {
   const preview = previews.get(id)
   if (!preview) return
   showContextMenu(x, y, [
-    { icon: 'note-pencil', label: 'Abrir o arquivo-fonte', run: () => openMarkdownSource(id) },
+    { icon: 'note-pencil', label: preview.kind === 'html' ? 'Ver código' : 'Abrir o arquivo-fonte', run: () => openPreviewSource(id) },
+    ...(preview instanceof HtmlPreviewPanel ? [{ icon: 'arrow-square-out' as const, label: 'Abrir no navegador', run: () => openInBrowser(preview.path) }, { icon: 'arrow-clockwise' as const, label: 'Recarregar a página', run: () => preview.reload() }] : []),
     { icon: 'copy', label: 'Copiar caminho do arquivo', run: () => window.tether.writeClipboard(preview.path) },
     { icon: 'folder-open', label: 'Abrir pasta do arquivo no Explorer', run: () => { void window.tether.openPath(noteDirOf(preview.path)).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) }) } },
     SEP,
@@ -1760,6 +1776,7 @@ function openTerminalLink(slotId: string, target: { path: string; isDirectory: b
 const quickOpen = new QuickOpen({
   paneCwd: () => paneCwdOf(currentDesk().activePanel?.id),
   openText: openQuickOpenFile,
+  openHtml: openHtmlFile,
   notify: message => { void askDialog(quickOpenFailedSituation(message)) },
 })
 
@@ -1806,7 +1823,7 @@ function closeNote(id: string): void {
 function onNoteChanged(path: string): void {
   const note = noteByPath(path)
   if (note) void note.onExternalChange()
-  for (const p of previewsOf(path)) p.diskChanged()
+  for (const p of previews.values()) if (p.watches(path)) p.diskChanged()
 }
 
 // ---------- markdown previews (F5) ----------
@@ -1836,48 +1853,88 @@ const previewHost: PreviewHost = {
   onClose: id => closeNote(id),
 }
 
-/** The previews showing `path` (paths compared case-insensitively: Windows). */
-function previewsOf(path: string): PreviewPanel[] {
+/** The markdown previews showing `path` as their file (paths compared case-insensitively: Windows): they follow the editor of that file. */
+function previewsOf(path: string): PreviewPane[] {
   const key = path.toLowerCase()
   return [...previews.values()].filter(p => p.path.toLowerCase() === key)
+}
+
+/** A preview pane's options: the component by kind (an HTML page is kept mounted: a running page must not restart when its pane is activated or moved). */
+function previewPaneOptions(id: string, path: string, kind: 'md' | 'html', params: Record<string, unknown> | undefined, title?: string): AddPanelOptions {
+  const common = { id, tabComponent: PREVIEW_TAB, title: title ?? previewTitle(path), params: params ?? withPreview(undefined, { path, ...(kind === 'html' ? { kind: 'html' as const } : {}) }) }
+  return kind === 'html' ? { ...common, component: HTML_PREVIEW_COMPONENT, renderer: 'always' } : { ...common, component: PREVIEW_COMPONENT }
 }
 
 /**
  * VS Code's "Open Preview" (`side: false`: a tab in the note's group) and "Open Preview to the Side" (`side: true`:
  * a pane to its right, the keyboard staying in the editor). A file that already has a preview gets that one focused.
+ * Markdown is drawn by the app; an HTML file opens as a running page in an isolated webview.
  */
-function openMarkdownPreview(opts: { side: boolean; reference?: string }): IDockviewPanel | undefined {
+function openPreview(opts: { side: boolean; reference?: string }): IDockviewPanel | undefined {
   const reference = opts.reference ?? currentDesk().activePanel?.id
   const path = reference ? notes.get(reference)?.path ?? previews.get(reference)?.path : undefined
   if (!reference || !path) return undefined
-  const existing = previewsOf(path)[0]
+  return showPreview(path, { side: opts.side, reference })
+}
+
+/** The preview of `path`, in the group of `reference` or beside it; an existing one is brought forward instead. */
+function showPreview(path: string, opts: { side: boolean; reference: string }): IDockviewPanel | undefined {
+  const kind = isHtmlPath(path) ? 'html' : 'md'
+  const key = path.toLowerCase()
+  const existing = [...previews.values()].find(p => p.kind === kind && p.path.toLowerCase() === key)
   if (existing) {
     const panel = findPanel(existing.id)
     panel?.api.setActive()
     requestAnimationFrame(() => existing.focus())
     return panel
   }
-  const options: AddPanelOptions = { id: newPreviewPanelId(), component: PREVIEW_COMPONENT, tabComponent: PREVIEW_TAB, title: previewTitle(path), params: withPreview(undefined, { path }) }
-  const panel = addPaneOptions(options, opts.side ? { level: 'pane', placement: 'right' } : undefined, reference)
+  const options = previewPaneOptions(newPreviewPanelId(), path, kind, undefined)
+  const panel = addPaneOptions(options, opts.side ? { level: 'pane', placement: 'right' } : undefined, opts.reference)
   scheduleSave()
   // In its own group the preview takes the keyboard; beside the editor the person keeps typing.
-  if (opts.side) { findPanel(reference)?.api.setActive(); requestAnimationFrame(() => focusPane(reference)) }
+  if (opts.side) { findPanel(opts.reference)?.api.setActive(); requestAnimationFrame(() => focusPane(opts.reference)) }
   else requestAnimationFrame(() => focusPane(panel.id))
   return panel
 }
 
+/** Quick Open / Ctrl+click on an .html: its preview, in the group of the pane that asked (or beside it). */
+function openHtmlFile(path: string, opts: OpenFileOptions): void {
+  const reference = opts.reference ?? currentDesk().activePanel?.id
+  if (!reference) { addNotePanel(path); return } // no pane at all: nothing to put a tab next to
+  showPreview(path, { side: opts.side, reference })
+}
+
 /** From a preview back to its file: the open editor is brought forward (at the preview's line), else the file is opened in the preview's group. */
-function openMarkdownSource(id: string): void {
+function openPreviewSource(id: string, path?: string): void {
   const preview = previews.get(id)
   if (!preview) return
-  const note = noteByPath(preview.path)
+  const file = path ?? preview.path
+  const note = noteByPath(file)
   if (note) {
     findPanel(note.id)?.api.setActive()
-    note.scrollToLine(preview.topLine())
+    if (preview.kind === 'md') note.scrollToLine(preview.topLine())
     note.focus()
     return
   }
-  void quickOpen.openFile(preview.path, { side: false, root: noteDirOf(preview.path), reference: id })
+  void quickOpen.openFile(file, { side: false, root: noteDirOf(file), reference: id, source: true })
+}
+
+/** "Abrir no navegador": the file with the system's browser (the same refusals as any file opened with the system). */
+function openInBrowser(path: string): void {
+  void window.tether.openHtmlInBrowser(path).then(r => { if (!r.ok) void askDialog(quickOpenFailedSituation(r.message)) })
+}
+
+const htmlPreviewHost: HtmlPreviewHost = {
+  onParamsChange: panel => {
+    const p = findPanel(panel.id)
+    if (!p) return
+    p.api.updateParameters(withPreview(p.params, { path: panel.path, kind: 'html', scroll: panel.scrollPosition }))
+    scheduleSave()
+  },
+  viewSource: (panel, path) => openPreviewSource(panel.id, path),
+  openInBrowser: path => openInBrowser(path),
+  activate: panel => { const p = findPanel(panel.id); if (p && !p.api.isGroupActive) p.api.setActive() },
+  onTabMenu: (id, x, y) => showTabMenu(id, x, y),
 }
 
 // ---------- profiles ----------
@@ -2075,8 +2132,8 @@ const commandHost: CommandHost = {
   newNote: () => { void newNote() },
   openNote: () => { void openNote() },
   saveNoteAs: () => { void saveNoteAs() },
-  markdownPreview: side => openMarkdownPreview({ side }),
-  markdownSource: () => { const a = currentDesk().activePanel?.id; if (a && previews.has(a)) openMarkdownSource(a) },
+  markdownPreview: side => openPreview({ side }),
+  markdownSource: () => { const a = currentDesk().activePanel?.id; if (a && previews.has(a)) openPreviewSource(a) },
 }
 
 /** Something modal of ours is up: app chords stay quiet (the palette has its own keys). */
@@ -2280,6 +2337,9 @@ function setupUi(): void {
   // The page goes (window closed, reload): every note's pending text is written.
   window.addEventListener('beforeunload', () => { for (const n of notes.values()) n.flush() })
   window.tether.onNoteChanged(onNoteChanged)
+  // The isolated page of an HTML preview reports what it loaded, and forwards the chords pressed inside it.
+  window.tether.onHtmlPreviewReport(report => { for (const p of previews.values()) if (p instanceof HtmlPreviewPanel && p.hasPartition(report.partition)) p.onReport(report) })
+  window.tether.onHtmlPreviewKey(key => { for (const p of previews.values()) if (p instanceof HtmlPreviewPanel && p.hasPartition(key.partition)) p.replayKey(key) })
 }
 
 // Test hooks (Playwright reads these through page.evaluate).
@@ -2403,6 +2463,12 @@ declare global {
       previewRect(id: string, selector: string): { x: number; y: number; width: number; height: number } | undefined
       /** The preview of the active markdown note as the command opens it (in its group, or beside it); returns the new pane's id. */
       openPreview(side: boolean): string | undefined
+      /** The HTML previews (isolated webview): file, page showing, partition, guest id, files loaded, what the policy refused, loads, scroll. */
+      htmlPreviews(): HtmlPreviewSnapshot[]
+      htmlPreview(id: string): HtmlPreviewSnapshot | undefined
+      /** Where the page's webview is on the app page (to click inside it with a real mouse). */
+      htmlPreviewRect(id: string): { x: number; y: number; width: number; height: number } | undefined
+      htmlPreviewAction(id: string, action: 'reload'): void
       /** The note panes: file, text, what is on disk, cursor, selections, scroll, focus. */
       notes(): NoteSnapshot[]
       note(id: string): NoteSnapshot | undefined
@@ -2559,10 +2625,14 @@ function setupTestHooks(): void {
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
     scrollNote: (id, top) => { notes.get(id)?.editor?.setScrollTop(top, 1 /* ScrollType.Immediate */) },
-    previews: () => [...previews.values()].map(p => p.snapshot()),
-    preview: id => previews.get(id)?.snapshot(),
-    previewRect: (id, selector) => previews.get(id)?.rectOf(selector),
-    openPreview: side => openMarkdownPreview({ side })?.id,
+    previews: () => [...previews.values()].flatMap(p => (p instanceof PreviewPanel ? [p.snapshot()] : [])),
+    preview: id => { const p = previews.get(id); return p instanceof PreviewPanel ? p.snapshot() : undefined },
+    previewRect: (id, selector) => { const p = previews.get(id); return p instanceof PreviewPanel ? p.rectOf(selector) : undefined },
+    openPreview: side => openPreview({ side })?.id,
+    htmlPreviews: () => [...previews.values()].flatMap(p => (p instanceof HtmlPreviewPanel ? [p.snapshot()] : [])),
+    htmlPreview: id => { const p = previews.get(id); return p instanceof HtmlPreviewPanel ? p.snapshot() : undefined },
+    htmlPreviewRect: id => { const p = previews.get(id); return p instanceof HtmlPreviewPanel ? p.viewRect() : undefined },
+    htmlPreviewAction: (id, action) => { const p = previews.get(id); if (!(p instanceof HtmlPreviewPanel)) return; if (action === 'reload') p.reload() },
     notes: () => [...notes.values()].map(n => n.snapshot()),
     note: id => notes.get(id)?.snapshot(),
     newNote,

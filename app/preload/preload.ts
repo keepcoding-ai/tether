@@ -2,7 +2,7 @@
 // Built as CommonJS (app/dist/preload.cjs) because the renderer runs sandboxed.
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Event as DaemonEvent, Notice } from '../../src/daemon/protocol.ts'
-import type { ConnectionState, TetherApi } from '../shared/api.ts'
+import type { ConnectionState, PreviewKey, PreviewReport, TetherApi } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import type { FontSizeCommand } from '../shared/font.ts'
 import type { TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -75,6 +75,9 @@ const api: TetherApi = {
   quickOpenInspect: path => ipcRenderer.invoke('quickopen:inspect', path),
   quickOpenExternal: path => ipcRenderer.invoke('quickopen:open-external', path),
   resolveTerminalLink: (cwd, candidates) => ipcRenderer.invoke('terminallinks:resolve', cwd, candidates),
+  openHtmlInBrowser: path => ipcRenderer.invoke('htmlpreview:open-in-browser', path),
+  onHtmlPreviewReport: listener => on<PreviewReport>('tether:html-preview-report', listener),
+  onHtmlPreviewKey: listener => on<PreviewKey>('tether:html-preview-key', listener),
 }
 
 contextBridge.exposeInMainWorld('tether', api)

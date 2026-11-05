@@ -22,6 +22,7 @@ import type { ConnectionState, NotePrepared, NoteRead, NoteRenamed, NoteWritten,
 import { addTetherToGitignore, NoteWatchers, notesDirFor, prepareNote, readNote, renameNote, writeNote } from './note-files.ts'
 import { registerQuickOpen } from './quick-open-main.ts'
 import { registerTerminalLinks } from './terminal-links-main.ts'
+import { guardHtmlPreviews, registerHtmlPreviewOpen } from './html-preview-main.ts'
 import { NOTE_EXTENSION } from '../shared/notes.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
@@ -457,6 +458,8 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The HTML preview's page runs in a <webview> (an isolated guest: app/main/html-preview-main.ts locks it down).
+      webviewTag: true,
       // A window that is never shown does not paint, and Playwright's screenshot would wait forever;
       // offscreen rendering keeps producing frames without any window on the user's screen.
       ...(hidden ? { offscreen: true, backgroundThrottling: false } : {}),
@@ -464,6 +467,7 @@ function createWindow(): void {
   })
   if (hidden) win.webContents.setFrameRate(30)
   const created = win
+  guardHtmlPreviews(created.webContents)
   created.on('close', e => {
     if (quitting || !tray) return
     e.preventDefault()
@@ -812,6 +816,7 @@ ipcMain.handle('note:gitignore', (_e, repoRoot: unknown, add: unknown) => {
 const quickOpen = registerQuickOpen(ipcMain, shell, __dirname)
 app.on('will-quit', () => quickOpen.dispose())
 // Ctrl+click on a path in a terminal: is the candidate a file or folder? (app/main/terminal-links-main.ts)
+registerHtmlPreviewOpen(ipcMain)
 registerTerminalLinks(ipcMain)
 
 // ---------- single instance ----------

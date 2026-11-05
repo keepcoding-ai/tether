@@ -8,6 +8,7 @@
 // recents; under TETHER_HOME/electron), one list for every root: each root shows the entries under it.
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import type { DialogSpec } from '../shared/dialog.ts'
+import { isHtmlPath } from '../shared/preview.ts'
 import { rangeRuns } from './word-filter.ts'
 import { failedResult, fileIcon, type LineColumn, listFailureText, parseLineSuffix, pushHistory, type QuickOpenItem, type QuickOpenResult, readHistory } from '../shared/quick-open.ts'
 
@@ -21,6 +22,8 @@ export interface QuickOpenHost {
   paneCwd(): string | undefined
   /** Opens a text file in a note tab: in the focused pane's group, or beside it (`side`); an open tab of the file is focused instead. */
   openText(path: string, opts: OpenFileOptions): void
+  /** An .html file opens as its rendered preview (a running page), in the same places a text file would open. */
+  openHtml?(path: string, opts: OpenFileOptions): void
   /** Something to say to the person (a file that could not be opened). */
   notify(message: string): void
 }
@@ -33,6 +36,8 @@ export interface OpenFileOptions {
   root: string
   /** The pane whose tab group receives the tab (default: the focused pane). */
   reference?: string
+  /** A web page opens as its source in the editor instead of its preview ("Ver código"). */
+  source?: boolean
 }
 
 export interface QuickOpenSearch {
@@ -152,7 +157,9 @@ export class QuickOpen {
     const target = await window.tether.quickOpenInspect(path)
     if (target.kind === 'text') {
       this.remember(path)
-      this.host.openText(path, opts)
+      // A web page opens rendered, unless the source was asked for (or a line, which only the editor can show).
+      if (this.host.openHtml && isHtmlPath(path) && !opts.source && !opts.position) this.host.openHtml(path, opts)
+      else this.host.openText(path, opts)
       return
     }
     if (target.kind === 'missing') { this.host.notify(`O arquivo não existe mais: ${path}`); return }
