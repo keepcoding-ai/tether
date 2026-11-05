@@ -229,7 +229,7 @@ async function newPanelViaChooser(page: Page, profileId: string, cwd: string, pl
   await page.fill('#dlg-new .ch-path-input', cwd)
   if (placement) {
     // "Onde" is one line until opened; the chips are buttons. Pane level: the same direction also exists at the frame and desk levels (phase B).
-    await page.click('#dlg-new .where-sum')
+    if (await page.locator('#dlg-new .placements').isHidden()) await page.click('#dlg-new .where-sum') // the grid may already be open
     await page.click(`#dlg-new .placement[data-level="pane"][data-placement="${placement}"]`)
     assert.ok(await placementChecked(page, placement), `placement ${placement} chosen`)
   }
