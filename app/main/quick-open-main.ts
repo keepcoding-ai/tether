@@ -1,6 +1,6 @@
 // Quick Open (Ctrl+P), main-process side: the IPC the renderer calls, over the index worker
-// (app/main/file-index-worker.ts). Searches are coalesced: while one runs in the worker, only the newest request
-// waits; the ones it replaced resolve with null (the box already shows a newer query). A root without a pane is
+// (app/main/file-index-worker.ts). Searches are coalesced: a request replaces the one in flight, which resolves with
+// null at once (the box already shows a newer query); the worker drops the replaced work. A root without a pane is
 // the person's notes folder. Every failure (the worker that does not load or dies, an error in it) answers the
 // search with the reason, which the box shows: never a reply that silently stays away. Opening a binary or too large file hands it to the system's program, except what
 // would run (app/main/file-index.ts inspectFile).
@@ -37,7 +37,6 @@ export class QuickOpenService {
   private readonly repo: string
   private nextId = 1
   private inFlight: { id: number; root: string; resolve: (r: QuickOpenResult | null) => void } | undefined
-  private queued: Pending | undefined
   /** The root the open box reads (its search session); null while the box is closed. */
   private sessionRoot: string | undefined
 
@@ -49,13 +48,13 @@ export class QuickOpenService {
   private ensureWorker(): Worker {
     if (this.worker) return this.worker
     const w = new Worker(this.workerPath, { workerData: { repo: this.repo } })
-    w.on('message', (msg: { id: number; result?: QuickOpenResult; error?: string }) => {
+    w.on('message', (msg: { id: number; result?: QuickOpenResult; error?: string; stale?: true }) => {
       if (!this.inFlight || msg.id !== this.inFlight.id) return
       const done = this.inFlight
       this.inFlight = undefined
+      if (msg.stale) { done.resolve(null); return }
       if (msg.error) console.error(`quick open: ${msg.error}`)
       done.resolve(msg.result ?? failedResult(done.root, msg.error ?? 'o índice não respondeu'))
-      this.pump()
     })
     w.on('error', err => {
       console.error('quick open: o índice parou', err)
@@ -73,13 +72,11 @@ export class QuickOpenService {
     const done = this.inFlight
     this.inFlight = undefined
     done?.resolve(failedResult(done.root, why))
-    this.pump()
   }
 
-  private pump(): void {
-    if (this.inFlight || !this.queued) return
-    const next = this.queued
-    this.queued = undefined
+  /** Sends the request at once; the search it replaces (still in flight) resolves with null. */
+  private send(next: Pending): void {
+    this.inFlight?.resolve(null)
     const id = this.nextId++
     this.inFlight = { id, root: next.req.root, resolve: next.resolve }
     try {
@@ -99,9 +96,7 @@ export class QuickOpenService {
   search(paneCwd: unknown, query: string, recent: string[]): Promise<QuickOpenResult | null> {
     const root = this.rootFor(paneCwd)
     return new Promise(resolve => {
-      this.queued?.resolve(null)
-      this.queued = { req: { op: 'search', root, query, recent, max: MAX_RESULTS }, resolve }
-      this.pump()
+      this.send({ req: { op: 'search', root, query, recent, max: MAX_RESULTS }, resolve })
     })
   }
 
@@ -117,8 +112,8 @@ export class QuickOpenService {
   end(): void {
     const root = this.sessionRoot
     this.sessionRoot = undefined
-    this.queued?.resolve(null)
-    this.queued = undefined
+    this.inFlight?.resolve(null)
+    this.inFlight = undefined
     if (root === undefined || !this.worker) return
     try { this.worker.postMessage({ op: 'close', root } satisfies WorkerRequest) } catch { /* the worker is gone: so is its list */ }
   }

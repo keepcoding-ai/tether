@@ -21,6 +21,8 @@ import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { type FuzzyScorerCache, type IItemAccessor, type IMatch, prepareQuery, scoreItemFuzzy } from '../shared/vscode-fuzzy-scorer.ts'
 import { SearchCache } from './vscode-raw-search.ts'
+import { type FileEntry, fileEntry, relAccessor } from './file-entry.ts'
+import { ShardPool, STALE } from './file-index-shard.ts'
 import type { ListSource, QuickOpenItem, QuickOpenResult, QuickOpenTarget } from '../shared/quick-open.ts'
 
 export type { ListSource, QuickOpenItem, QuickOpenResult }
@@ -177,19 +179,7 @@ export async function listFiles(root: string, opts: ListOptions = {}): Promise<F
 
 // ---------- search ----------
 
-/** A file of the list, its label and description computed once (the scorer asks for them on every comparison). */
-export interface FileEntry { rel: string; label: string; description: string }
-
-export function fileEntry(rel: string): FileEntry {
-  return { rel, label: basename(rel), description: dirname(rel) }
-}
-
-/** VS Code's FileMatchItemAccessor (rawSearchService): scored on the path relative to the root. */
-const relAccessor: IItemAccessor<FileEntry> = {
-  getItemLabel: m => m.label,
-  getItemDescription: m => m.description,
-  getItemPath: m => m.rel,
-}
+export { type FileEntry, fileEntry }
 
 /** True when `abs` is `root` or under it (case-insensitive on Windows and macOS). */
 export function isInside(root: string, abs: string): boolean {
@@ -241,19 +231,37 @@ interface Entry {
   abort: AbortController | undefined
   cache: SearchCache<FileEntry>
   usedAt: number
+  /** The id the shard workers know this session's list by; 0 while they hold none. */
+  sid: number
   /** Why the last listing failed (cleared by the next one that succeeds). */
   error: string | undefined
 }
 
-export type FileIndexOptions = Omit<ListOptions, 'onBatch' | 'signal'>
+/** A list shorter than this is scored in the one worker: cutting it up would cost more than it saves. */
+export const PARALLEL_MIN_FILES = 5000
+
+export interface FileIndexOptions extends Omit<ListOptions, 'onBatch' | 'signal'> {
+  /** Scoring shards (app/main/file-index-shard.ts); without it every search is scored in this thread. */
+  shards?: { path: string; size: number }
+  /** Lists shorter than this are scored in this thread (default PARALLEL_MIN_FILES). */
+  parallelMin?: number
+}
 
 /** The per-root lists (one search session each) and their searches. */
 export class FileIndex {
   private readonly entries = new Map<string, Entry>()
   private readonly opts: FileIndexOptions
+  private readonly pool: ShardPool | undefined
+  private nextSid = 1
 
   constructor(opts: FileIndexOptions = {}) {
     this.opts = opts
+    this.pool = opts.shards && opts.shards.size >= 2 ? new ShardPool(opts.shards.path, opts.shards.size) : undefined
+  }
+
+  private dropShards(e: Entry): void {
+    if (e.sid) this.pool?.drop(e.sid)
+    e.sid = 0
   }
 
   private key(root: string): string {
@@ -264,7 +272,7 @@ export class FileIndex {
     const key = this.key(root)
     let e = this.entries.get(key)
     if (!e) {
-      e = { root, files: [], source: undefined, truncated: false, listMs: undefined, version: 0, building: undefined, generation: 0, abort: undefined, cache: new SearchCache<FileEntry>(), usedAt: 0, error: undefined }
+      e = { root, files: [], source: undefined, truncated: false, listMs: undefined, version: 0, building: undefined, generation: 0, abort: undefined, cache: new SearchCache<FileEntry>(), usedAt: 0, sid: 0, error: undefined }
       this.entries.set(key, e)
       this.evict()
     }
@@ -282,6 +290,7 @@ export class FileIndex {
 
   /** The session's list and cache are dropped (rawSearchService.clearCache); a listing still running is killed. */
   private reset(e: Entry): void {
+    this.dropShards(e)
     e.generation++
     e.abort?.abort()
     e.abort = undefined
@@ -309,6 +318,7 @@ export class FileIndex {
       e.source = list.source
       e.truncated = list.truncated
       e.listMs = list.ms
+      this.dropShards(e)
       e.version++
       e.cache = new SearchCache<FileEntry>()
       e.error = undefined
@@ -323,6 +333,7 @@ export class FileIndex {
   /** The box opened: a new search session. The root is read again, whatever a previous session left. */
   refresh(root: string): void {
     const e = this.entry(root)
+    this.pool?.warm()
     if (e.building && e.version === 0) return // the listing of this session is already running
     this.reset(e)
     void this.build(e)
@@ -341,7 +352,8 @@ export class FileIndex {
     return { files: e.files.map(f => f.rel), source: e.source ?? 'walk', truncated: e.truncated, ms: e.listMs ?? 0 }
   }
 
-  search(root: string, query: string, recentPaths: readonly string[] = [], max: number = MAX_RESULTS): QuickOpenResult {
+  /** Search state shared by the two paths: the session, the history and what the listing is doing. */
+  private begin(root: string, query: string, recentPaths: readonly string[]) {
     const t0 = performance.now()
     const e = this.entry(root)
     // A search without a session (no refresh before it) reads the list itself; a failed listing is retried by the next keystroke.
@@ -361,31 +373,67 @@ export class FileIndex {
       seen.add(key)
       recentRels.push(relative(root, p))
     }
+    return { t0, e, failed, pending, recentRels, q: query.trim() }
+  }
 
-    const q = query.trim()
-    let recent: QuickOpenItem[]
-    const files: QuickOpenItem[] = []
-    if (q === '') {
-      recent = recentRels.filter(rel => existsSync(join(root, rel))).map(rel => toItem(root, fileEntry(rel), undefined))
-    } else {
-      recent = rankFiles(recentRels.map(fileEntry), q, max).best.map(m => toItem(root, m.entry, m))
-      const ranked = rankFiles(e.files, q, max + recent.length, e.cache)
-      // The partial list of a listing still running is not cached: it grows between keystrokes.
-      if (!pending) e.cache.put(q, ranked.matches)
-      const recentSet = new Set(recent.map(r => (process.platform === 'linux' ? r.path : r.path.toLowerCase())))
-      for (const m of ranked.best) {
-        if (files.length >= max) break
-        const item = toItem(root, m.entry, m)
-        if (recentSet.has(process.platform === 'linux' ? item.path : item.path.toLowerCase())) continue
-        files.push(item)
-      }
-    }
+  private finish(root: string, b: ReturnType<FileIndex['begin']>, recent: QuickOpenItem[], files: QuickOpenItem[]): QuickOpenResult {
+    const { e, failed, pending, t0 } = b
     return { root, recent, files, total: e.files.length, source: e.source, truncated: e.truncated, pending, listMs: e.listMs, searchMs: performance.now() - t0, ...(failed !== undefined ? { error: failed } : {}) }
+  }
+
+  /** The files of the result: the ranked ones, the history's repeats dropped, at most `max`. */
+  private filesOf(root: string, max: number, recent: QuickOpenItem[], best: ReturnType<typeof rankFiles>['best']): QuickOpenItem[] {
+    const files: QuickOpenItem[] = []
+    const recentSet = new Set(recent.map(r => (process.platform === 'linux' ? r.path : r.path.toLowerCase())))
+    for (const m of best) {
+      if (files.length >= max) break
+      const item = toItem(root, m.entry, m)
+      if (recentSet.has(process.platform === 'linux' ? item.path : item.path.toLowerCase())) continue
+      files.push(item)
+    }
+    return files
+  }
+
+  search(root: string, query: string, recentPaths: readonly string[] = [], max: number = MAX_RESULTS): QuickOpenResult {
+    const b = this.begin(root, query, recentPaths)
+    const { e, pending, recentRels, q } = b
+    if (q === '') return this.finish(root, b, recentRels.filter(rel => existsSync(join(root, rel))).map(rel => toItem(root, fileEntry(rel), undefined)), [])
+    const recent = rankFiles(recentRels.map(fileEntry), q, max).best.map(m => toItem(root, m.entry, m))
+    const ranked = rankFiles(e.files, q, max + recent.length, e.cache)
+    // The partial list of a listing still running is not cached: it grows between keystrokes.
+    if (!pending) e.cache.put(q, ranked.matches)
+    return this.finish(root, b, recent, this.filesOf(root, max, recent, ranked.best))
+  }
+
+  /** Tells the shards which search is the newest, so they skip the ones it replaced. Call it as the request arrives. */
+  noteLatest(seq: number): void { this.pool?.setLatest(seq) }
+
+  /**
+   * search(), scoring on the shard workers when the list is complete and long enough. Resolves null when a newer
+   * search (`seq`) or the end of the session made this one moot. The answer is the same as search()'s.
+   */
+  async searchAsync(root: string, query: string, recentPaths: readonly string[], max: number, seq: number): Promise<QuickOpenResult | null> {
+    const b = this.begin(root, query, recentPaths)
+    const { e, pending, failed, recentRels, q } = b
+    const pool = this.pool
+    if (!pool || pool.broken || q === '' || pending || failed !== undefined || e.files.length < (this.opts.parallelMin ?? PARALLEL_MIN_FILES)) return this.search(root, query, recentPaths, max)
+    const generation = e.generation
+    const recent = rankFiles(recentRels.map(fileEntry), q, max).best.map(m => toItem(root, m.entry, m))
+    if (!e.sid) { e.sid = this.nextSid++; pool.load(e.sid, e.files.map(f => f.rel)) }
+    const n = max + recent.length
+    let rels: string[] | typeof STALE
+    try { rels = await pool.search(e.sid, q, n, seq) } catch { rels = STALE }
+    if (pool.broken) return this.search(root, query, recentPaths, max) // a shard died: the one thread answers
+    if (rels === STALE || e.generation !== generation) return null
+    // The merge: the same comparator and the same scoring as the serial path, over the shards' tops.
+    const ranked = rankFiles([], q, n, e.cache, rels.map(fileEntry))
+    return this.finish(root, b, recent, this.filesOf(root, max, recent, ranked.best))
   }
 
   dispose(): void {
     for (const e of this.entries.values()) this.reset(e)
     this.entries.clear()
+    this.pool?.dispose()
   }
 }
 

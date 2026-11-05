@@ -2,6 +2,7 @@
 // commit as the port), the `:line:col` suffix, the history, the file listing with its fallbacks (rg, git, own
 // walk), the index's search (recents on top, the prefix cache, the result cap) and what opening a file means.
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -11,6 +12,7 @@ import { compareItemsByFuzzyScore, type FuzzyScore, type IItemAccessor, prepareQ
 import { failedResult, fileIcon, listFailureText, parseLineSuffix, pushHistory, readHistory } from '../../app/shared/quick-open.ts'
 import { QuickOpenService } from '../../app/main/quick-open-main.ts'
 import { SearchCache, top } from '../../app/main/vscode-raw-search.ts'
+import { Shard, slices } from '../../app/main/file-index-shard.ts'
 import { type FileEntry, FileIndex, findRipgrep, inspectFile, listFiles, MAX_EDITOR_BYTES, rankFiles, fileEntry, walkFiles } from '../../app/main/file-index.ts'
 
 // ---------- the scorer (VS Code's own cases) ----------
@@ -324,4 +326,71 @@ test('quick open failures reach the box: a worker that does not load or dies ans
   assert.match(listFailureText("Error invoking remote method 'quickopen:search': Error: No handler registered for 'quickopen:search'"), /versão anterior.*Reiniciar o app/)
   assert.equal(listFailureText("Error invoking remote method 'quickopen:search': Error: disco cheio"), 'disco cheio')
   assert.deepEqual({ ...failedResult('C:\\r', 'x'), searchMs: 0 }, { root: 'C:\\r', recent: [], files: [], total: 0, source: undefined, truncated: false, pending: false, listMs: undefined, searchMs: 0, error: 'x' })
+})
+
+// ---------- parallel scoring ----------
+
+/** A big list with plenty of ties: same file names in many folders, same extensions, varied depth. */
+function bigList(n: number): FileEntry[] {
+  const names = ['index.ts', 'main.ts', 'README.md', 'package.json', 'claude.md', 'appMain.ts', 'Clause.tsx', 'util.test.ts']
+  return Array.from({ length: n }, (_, i) => fileEntry(rel(`pkg${i % 53}/${i % 7 === 0 ? 'src/' : ''}mod${i % 211}/${names[i % names.length]}${i % 13 === 0 ? `.${i}` : ''}`)))
+    .filter((e, i, a) => a.findIndex(o => o.rel === e.rel) === i)
+}
+
+const PARALLEL_QUERIES = ['C', 'CL', 'CLA', 'CLAU', 'apma', 'index', 'md', 'pkg1 main', 'mod2/index', '"main', 'claude.md', 'zzzz', 'src', 'u t']
+
+test('parallel scoring: the merge of the shards\' tops is the serial top-N, ties included', () => {
+  const entries = bigList(16000)
+  assert.ok(entries.length > 5000)
+  for (const shards of [2, 4]) {
+    const parts = slices(entries.map(e => e.rel), shards).map(r => new Shard(r))
+    const merge = new SearchCache<FileEntry>()
+    for (const max of [512, 50]) {
+      for (const q of PARALLEL_QUERIES) {
+        const union = parts.flatMap(p => p.top(q, max).rels).map(fileEntry)
+        const merged = rankFiles([], q, max, merge, union).best.map(b => b.entry.rel)
+        const serial = rankFiles(entries, q, max).best.map(b => b.entry.rel)
+        assert.deepEqual(merged, serial, `${shards} shards, max ${max}, "${q}"`)
+      }
+    }
+  }
+})
+
+test('parallel scoring: the shards\' session caches narrow a chain of keystrokes with the same answer', () => {
+  const entries = bigList(20000)
+  const parts = slices(entries.map(e => e.rel), 4).map(r => new Shard(r))
+  const merge = new SearchCache<FileEntry>()
+  for (const q of ['c', 'cl', 'cla', 'clau', 'claud', 'claude', 'claude m']) {
+    const union = parts.flatMap(p => p.top(q, 512).rels).map(fileEntry)
+    assert.deepEqual(rankFiles([], q, 512, merge, union).best.map(b => b.entry.rel), rankFiles(entries, q, 512).best.map(b => b.entry.rel), q)
+  }
+})
+
+test('parallel scoring: FileIndex with shard workers answers like the one-thread FileIndex; a newer search drops the older', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tether-qo-par-'))
+  try {
+    for (const e of bigList(1500)) { mkdirSync(join(dir, dirname(e.rel)), { recursive: true }); writeFileSync(join(dir, e.rel), '') }
+    const workerPath = fileURLToPath(new URL('../../app/main/file-index-shard-worker.ts', import.meta.url))
+    const serial = new FileIndex({ rg: null, git: false })
+    const par = new FileIndex({ rg: null, git: false, shards: { path: workerPath, size: 3 }, parallelMin: 100 })
+    try {
+      serial.refresh(dir); par.refresh(dir)
+      await serial.list(dir); await par.list(dir)
+      let seq = 0
+      for (const q of PARALLEL_QUERIES) {
+        const a = serial.search(dir, q, [])
+        par.noteLatest(++seq)
+        const b = await par.searchAsync(dir, q, [], 512, seq)
+        assert.ok(b, q)
+        assert.deepEqual(b.files, a.files, q)
+        assert.equal(b.total, a.total)
+      }
+      // The older search of two issued back to back is discarded.
+      const first = par.searchAsync(dir, 'main', [], 512, seq + 1)
+      par.noteLatest(seq + 2)
+      const second = par.searchAsync(dir, 'mai', [], 512, seq + 2)
+      assert.equal(await first, null)
+      assert.deepEqual((await second)?.files, serial.search(dir, 'mai', []).files)
+    } finally { serial.dispose(); par.dispose() }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })
