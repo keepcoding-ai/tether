@@ -176,6 +176,17 @@ export function defineTheme(scheme: ColorScheme, tokens: Record<string, string> 
       'editorSuggestWidget.background': widget,
       'editorHoverWidget.background': widget,
       'editorHoverWidget.border': border,
+      'menu.background': widget,
+      'menu.foreground': fg,
+      'menu.selectionBackground': alpha(accent, scheme === 'dark' ? 0.35 : 0.22),
+      'menu.selectionForeground': fg,
+      'menu.separatorBackground': border,
+      'menu.border': border,
+      'widget.shadow': alpha('#000000', scheme === 'dark' ? 0.5 : 0.18),
+      'editorSuggestWidget.border': border,
+      'editorSuggestWidget.foreground': fg,
+      'editorSuggestWidget.selectedBackground': alpha(accent, 0.3),
+      'editorHoverWidget.foreground': fg,
       'input.background': tokens['--bg'] ?? widget,
       'input.foreground': fg,
       'input.border': border,
@@ -203,6 +214,31 @@ export function defineTheme(scheme: ColorScheme, tokens: Record<string, string> 
     },
   })
   return name
+}
+
+let themeProbe: HTMLElement | undefined
+const STATIC_VSCODE_TOKEN = /^--vscode-(strokeThickness|cornerRadius|shadow|spacing)/
+
+/**
+ * Monaco scopes its theme variables (`--vscode-*`) to `.monaco-editor`, but with `fixedOverflowWidgets` its
+ * context menu lives in a shadow root hung from <body>, outside any editor: every variable is unset there and the
+ * menu paints transparent. This copies the current ones onto :root, from a hidden `.monaco-component` probe (which
+ * the same rule covers). Call it after every `monaco.editor.setTheme`.
+ */
+export function mirrorThemeVars(): void {
+  if (!themeProbe) {
+    themeProbe = document.createElement('div')
+    themeProbe.className = 'monaco-component'
+    themeProbe.hidden = true
+    document.body.appendChild(themeProbe)
+  }
+  const style = getComputedStyle(themeProbe)
+  const root = document.documentElement.style
+  for (let i = 0; i < style.length; i++) {
+    const name = style[i]!
+    // The probe inherits the design tokens styles.css declares on :root (resolved): copying them back would freeze them.
+    if (name.startsWith('--vscode-') && !STATIC_VSCODE_TOKEN.test(name)) root.setProperty(name, style.getPropertyValue(name))
+  }
 }
 
 // ---------- colouring code for the markdown preview ----------

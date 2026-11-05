@@ -18,7 +18,7 @@ import { editorChordCommand, editorKeybindings, runEditorChord } from './monaco-
 import { formatKeybindingsFile, mergeKeybindings, overridesFor, parseKeybindingsFile } from './keybindings-rules.ts'
 import { KeybindingsPanel, KeybindingsTab, type FixedBinding, type KeybindingsHost, type KeybindingsSnapshot } from './keybindings-panel.ts'
 import { isKeybindingsPanelId, KEYBINDINGS_COMPONENT, KEYBINDINGS_TAB, KEYBINDINGS_TITLE, newKeybindingsPanelId, type KeybindingsFileState } from '../shared/keybindings.ts'
-import { defineTheme, monaco, remeasureEditorFonts } from './monaco.ts'
+import { defineTheme, mirrorThemeVars, monaco, remeasureEditorFonts } from './monaco.ts'
 import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
 import { paneCwdOfNote } from './note-rules.ts'
 import { PreviewPanel, PreviewTab, type PreviewHost, type PreviewSnapshot } from './preview-panel.ts'
@@ -252,6 +252,7 @@ function applyTheme(state: ThemeState): void {
   for (const p of panels.values()) p.setAppearance(appearance, state.scheme)
   // The note editors: one theme for every Monaco editor, rebuilt from the tokens just painted.
   monaco.editor.setTheme(defineTheme(state.scheme))
+  mirrorThemeVars()
   for (const p of previews.values()) p.restyle()
   themeDialog?.refresh()
   for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme], #theme-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))

@@ -54,6 +54,18 @@
   color-scheme: light;
 }
 
+/* Monaco 0.57's menus, dropdowns and widgets read these design tokens, which only the VS Code workbench defines:
+   standalone Monaco leaves them unset (border width, radius and shadow of the context menu collapse to nothing).
+   Its colour variables (--vscode-menu-*) are mirrored onto :root by app/renderer/monaco.ts (mirrorThemeVars). */
+:root {
+  --vscode-strokeThickness: 1px;
+  --vscode-cornerRadius-small: 3px; --vscode-cornerRadius-medium: 4px; --vscode-cornerRadius-large: 6px; --vscode-cornerRadius-xLarge: 8px; --vscode-cornerRadius-circle: 999px;
+  --vscode-shadow-md: var(--shadow); --vscode-shadow-lg: var(--shadow); --vscode-shadow-xl: var(--drawer-shadow);
+  --vscode-spacing-sizeNone: 0; --vscode-spacing-size20: 2px; --vscode-spacing-size40: 4px; --vscode-spacing-size60: 6px; --vscode-spacing-size80: 8px;
+  --vscode-spacing-size100: 10px; --vscode-spacing-size120: 12px; --vscode-spacing-size160: 16px; --vscode-spacing-size200: 20px;
+  --vscode-spacing-size240: 24px; --vscode-spacing-size280: 28px; --vscode-spacing-size320: 32px; --vscode-spacing-size400: 40px;
+}
+
 /* Bundled terminal fonts (app/renderer/fonts, variable woff2 + licence text next to each; app/shared/terminal-theme.ts
    lists them). Loaded from the app itself (CSP font-src 'self'); the renderer awaits document.fonts.load before
    any xterm opens. Cascadia gets its own family name so the bundled file wins over the system copy of Cascadia. */
