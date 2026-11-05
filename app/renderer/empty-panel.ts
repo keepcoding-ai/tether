@@ -1,21 +1,22 @@
 // One dockview panel = one empty pane (app/shared/empty.ts): a place reserved in the layout, with the chooser
-// inside it instead of a black screen. The chooser is the "Novo painel…" dialog's own pieces (the grouped list of
-// profiles with the note choices on top, the folder with "Procurar…" and the recent folders, "Abrir" / Enter),
-// without the "Onde" row: the pane IS the place. When the person picks, the host replaces this pane, in the same
-// group and at the same index, by what they chose. Nothing here talks to tetherd.
+// (app/renderer/chooser.ts) inside it instead of a black screen. The pane IS the place, so the chooser has no
+// "Onde" row; its ⤢ opens the same chooser in focus mode with the same state. When the person picks, the host
+// replaces this pane, in the same group and at the same index, by what they chose. Cancelling depends on where
+// the pane came from (`origin`): a "+" pane closes, a laid-out pane only gives the keyboard back. Nothing here
+// talks to tetherd.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
-import type { Profile } from '../../src/daemon/protocol.ts'
-import { type Choice, choiceNeedsFolder, choiceOf, leadingChoices } from './chooser-rules.ts'
+import type { Choice } from './chooser-rules.ts'
+import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
 import { icon } from './icons.ts'
-import { defaultOf, renderProfileGroups } from './profiles.ts'
-import { EMPTY_TITLE, emptyParams } from '../shared/empty.ts'
+import { EMPTY_TITLE, emptyOrigin, emptyParams, type EmptyOrigin } from '../shared/empty.ts'
 
-export interface EmptyHost {
-  profiles(): Profile[]
-  recentFolders(): Promise<string[]>
-  pickFolder(initial?: string): Promise<string | null>
+export interface EmptyHost extends ChooserHost {
   /** The person picked: the host opens it in this pane's place. Resolves with an error message to show, or nothing. */
   fill(panel: EmptyPanel, choice: Choice, cwd: string): Promise<string | undefined>
+  /** Esc / Cancelar with nothing left to undo: close the pane (`add`) or give the keyboard back (`layout`). */
+  cancel(panel: EmptyPanel, origin: EmptyOrigin): void
+  /** The ⤢: the same chooser as a popup, with this state; the popup hands the pick (or the state) back to the pane. */
+  expand(panel: EmptyPanel, state: ChooserState): void
   /** The pane's suggested folder changed (the person typed one): persist it with the layout. */
   onCwdChange(panel: EmptyPanel): void
   /** Right-click on the tab / the strip's "⋯". */
@@ -25,20 +26,15 @@ export interface EmptyHost {
 }
 
 /** What a test reads of an empty pane. */
-export interface EmptySnapshot { id: string; cwd: string; selected: string | undefined; focused: boolean; error: string | undefined }
+export interface EmptySnapshot extends ChooserSnapshot { id: string; cwd: string; origin: EmptyOrigin }
 
 export class EmptyPanel implements IContentRenderer {
   readonly element: HTMLElement
   id = ''
+  origin: EmptyOrigin = 'layout'
   private api: DockviewPanelApi | undefined
   private readonly host: EmptyHost
-  private readonly form: HTMLFormElement
-  private readonly groups: HTMLElement
-  private readonly cwdInput: HTMLInputElement
-  private readonly recent: HTMLUListElement
-  private readonly error: HTMLElement
-  private readonly submit: HTMLButtonElement
-  private busy = false
+  private chooser: Chooser | undefined
   private disposed = false
   private readonly disposers: Array<{ dispose(): void }> = []
 
@@ -47,136 +43,61 @@ export class EmptyPanel implements IContentRenderer {
     this.element = document.createElement('div')
     this.element.className = 'empty-panel'
     this.element.dataset.empty = 'pane'
-    // A form of its own: the radios are named `profile` like the dialog's, and a radio group is scoped to its form.
-    this.form = document.createElement('form')
-    this.form.className = 'chooser'
-    this.form.setAttribute('aria-label', 'O que abrir neste painel')
-    const head = document.createElement('h3')
-    head.append(icon('plus'), document.createTextNode('O que abrir aqui?'))
-    this.groups = document.createElement('div')
-    this.groups.className = 'profile-groups'
-    const folder = document.createElement('label'); folder.className = 'field'
-    const folderLabel = document.createElement('span'); folderLabel.textContent = 'Pasta'
-    const row = document.createElement('span'); row.className = 'row'
-    this.cwdInput = document.createElement('input')
-    this.cwdInput.type = 'text'; this.cwdInput.name = 'cwd'; this.cwdInput.placeholder = 'D:\\projetos\\meu-app'; this.cwdInput.spellcheck = false
-    const browse = document.createElement('button'); browse.type = 'button'
-    browse.append(icon('folder-open'), document.createTextNode('Procurar…'))
-    browse.addEventListener('click', () => { void this.browse() })
-    row.append(this.cwdInput, browse)
-    folder.append(folderLabel, row)
-    const recentField = document.createElement('div'); recentField.className = 'field'
-    const recentLabel = document.createElement('span'); recentLabel.textContent = 'Pastas recentes'
-    this.recent = document.createElement('ul'); this.recent.className = 'recent'
-    recentField.append(recentLabel, this.recent)
-    this.error = document.createElement('p'); this.error.className = 'error'; this.error.hidden = true
-    const actions = document.createElement('footer'); actions.className = 'actions'
-    this.submit = document.createElement('button'); this.submit.type = 'submit'; this.submit.className = 'primary'
-    const kbd = document.createElement('kbd'); kbd.textContent = 'Enter'
-    this.submit.append(document.createTextNode('Abrir '), kbd)
-    actions.append(this.submit)
-    this.form.append(head, this.groups, folder, recentField, this.error, actions)
-    this.form.addEventListener('submit', ev => { ev.preventDefault(); void this.open() })
-    this.cwdInput.addEventListener('change', () => this.host.onCwdChange(this))
-    // Keys typed in the chooser are its own (the terminal's Esc handling, the app's chords on letters stay away);
-    // the app's chords (Ctrl+Shift+…) still bubble to the document.
-    this.element.append(this.form)
   }
 
   init(params: GroupPanelPartInitParameters): void {
     this.api = params.api
     this.id = params.api.id
     this.element.dataset.emptyId = this.id
-    const suggested = emptyParams(params.params)?.cwd ?? ''
-    this.cwdInput.value = suggested
-    this.cwdInput.dataset.suggested = suggested
-    this.renderProfiles()
-    void this.loadRecent()
+    this.origin = emptyOrigin(params.params)
+    this.element.dataset.origin = this.origin
+    this.mount({ folder: emptyParams(params.params)?.cwd ?? '' })
     this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
   }
 
-  /** The folder the chooser shows now (what the layout keeps). */
-  get cwd(): string { return this.cwdInput.value.trim() }
-
-  /** The grouped list: the note choices first, then the profiles (re-rendered when the profiles change). */
-  renderProfiles(): void {
-    const profiles = this.host.profiles()
-    const selected = this.selectedValue() ?? defaultOf(profiles, 'claude')?.id ?? profiles[0]?.id
-    renderProfileGroups(this.groups, profiles, {
-      mode: 'radio', selectedId: selected, leading: leadingChoices('empty'),
-      onPick: id => {
-        const p = profiles.find(x => x.id === id)
-        if (p?.cwd && this.cwdInput.value === this.cwdInput.dataset.suggested) { this.cwdInput.value = p.cwd; this.cwdInput.dataset.suggested = p.cwd }
-      },
+  private mount(state: Partial<ChooserState>): void {
+    this.chooser?.dispose()
+    this.chooser = new Chooser(this.host, {
+      mode: 'pane',
+      origin: this.origin,
+      state,
+      onOpen: (choice, cwd) => this.host.fill(this, choice, cwd),
+      onCancel: () => this.host.cancel(this, this.origin),
+      onExpand: s => this.host.expand(this, s),
     })
+    this.element.append(this.chooser.element)
+    // The folder typed here is the pane's state: it goes to the layout file.
+    this.chooser.element.querySelector<HTMLInputElement>('.ch-path-input')?.addEventListener('change', () => this.host.onCwdChange(this))
   }
 
-  private async loadRecent(): Promise<void> {
-    const recent = await this.host.recentFolders()
-    if (this.disposed) return
-    this.recent.replaceChildren()
-    if (recent.length === 0) {
-      const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'Nenhuma pasta recente'
-      this.recent.append(li)
-    }
-    for (const f of recent) {
-      const li = document.createElement('li'); li.textContent = f
-      li.addEventListener('click', () => { this.cwdInput.value = f; this.host.onCwdChange(this); this.cwdInput.focus() })
-      this.recent.append(li)
-    }
-    // No folder to suggest yet: the most recent one.
-    if (!this.cwdInput.value && recent[0]) { this.cwdInput.value = recent[0]; this.cwdInput.dataset.suggested = recent[0] }
-  }
+  /** The folder the chooser holds now (what the layout keeps). */
+  get cwd(): string { return this.chooser?.snapshot().folder.trim() ?? '' }
 
-  private selectedValue(): string | undefined {
-    return this.form.querySelector<HTMLInputElement>('input[name=profile]:checked')?.value
-  }
+  /** The profiles changed: the list is redrawn with the same state. */
+  renderProfiles(): void { this.chooser?.render() }
 
-  private async browse(): Promise<void> {
-    const picked = await this.host.pickFolder(this.cwd || undefined)
-    if (picked && !this.disposed) { this.cwdInput.value = picked; this.host.onCwdChange(this); this.cwdInput.focus() }
-  }
+  /** The popup gave its state back (cancelled): the pane's chooser continues from it. */
+  setState(state: Partial<ChooserState>): void { this.chooser?.setState(state) }
 
-  private showError(message: string | undefined): void {
-    this.error.textContent = message ?? ''
-    this.error.hidden = !message
-  }
+  setBusy(busy: boolean): void { this.chooser?.setBusy(busy) }
 
-  /** "Abrir" / Enter: the choice goes to the host, which replaces this pane. */
-  private async open(): Promise<void> {
-    if (this.busy || this.disposed) return
-    const choice = choiceOf(this.selectedValue(), this.host.profiles())
-    if (!choice) { this.showError('Escolha um perfil.'); return }
-    const cwd = this.cwd
-    if (choiceNeedsFolder(choice) && !cwd) { this.showError('Informe a pasta.'); this.cwdInput.focus(); return }
-    this.busy = true
-    this.submit.disabled = true
-    this.showError(undefined)
-    try {
-      const error = await this.host.fill(this, choice, cwd)
-      if (!this.disposed && error) this.showError(error)
-    } finally {
-      this.busy = false
-      if (!this.disposed) this.submit.disabled = false
-    }
-  }
-
-  /** The keyboard to the chooser: the folder field, selected (as the dialog does). */
+  /** The keyboard to the chooser's search field. */
   focus(): void {
     if (this.disposed) return
-    this.cwdInput.focus()
-    this.cwdInput.select()
+    this.chooser?.focus()
   }
 
   // ---------- tests ----------
 
   snapshot(): EmptySnapshot {
-    return { id: this.id, cwd: this.cwd, selected: this.selectedValue(), focused: this.element.contains(document.activeElement), error: this.error.hidden ? undefined : this.error.textContent ?? undefined }
+    const s = this.chooser?.snapshot()
+    return { ...(s ?? { query: '', highlight: undefined, folder: '', touched: false, where: { level: 'pane', placement: 'within' }, busy: false, error: undefined, recentsOpen: false, shown: [], effectiveFolder: '', fromProfile: false, focused: false }), id: this.id, cwd: this.cwd, origin: this.origin }
   }
 
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.chooser?.dispose()
     for (const d of this.disposers.splice(0)) d.dispose()
   }
 }

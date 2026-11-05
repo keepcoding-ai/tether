@@ -10,15 +10,16 @@ import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { appCommands, type CommandHost } from './app-commands.ts'
 import { CommandRegistry, type CommandContext } from './commands.ts'
-import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, LEVEL_HINT, LEVEL_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, SPLIT_EMPTY_LABEL, targetKey, targetOf, TARGETS, type Direction, type Placement, type Target } from './create.ts'
+import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, shortcutOf, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
 import { editorKeyOwner, terminalKeyOwner } from './key-capture.ts'
 import { defineTheme, monaco } from './monaco.ts'
 import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
 import { paneCwdOfNote } from './note-rules.ts'
 import { cleanNoteName, isNotePanelId, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../shared/notes.ts'
-import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, isEmptyPanelId, newEmptyPanelId, withEmpty } from '../shared/empty.ts'
+import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, isEmptyPanelId, newEmptyPanelId, withEmpty, type EmptyOrigin } from '../shared/empty.ts'
 import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empty-panel.ts'
-import { type Choice, choiceNeedsFolder, choiceOf, leadingChoices } from './chooser-rules.ts'
+import { type Choice, rememberProfile } from './chooser-rules.ts'
+import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
 import { CommandPalette } from './palette.ts'
 import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
@@ -39,8 +40,8 @@ import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
-import { defaultOf, ProfileManager, renderProfileGroups } from './profiles.ts'
-import { LEVELS, shortcutHint, terminalInputOf } from './shortcuts.ts'
+import { defaultOf, ProfileManager } from './profiles.ts'
+import { shortcutHint, terminalInputOf } from './shortcuts.ts'
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, noteConflictSituation, noteGitignoreSituation, quitAllSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -107,6 +108,23 @@ let manager: ProfileManager
 // Every action is a command (app/renderer/app-commands.ts); the ≡ menu, the chords and the palette read the registry.
 
 const RECENT_COMMANDS_KEY = 'tether.commands.recent'
+/** The last profiles opened through a chooser (ids, most recent first): the Recentes group and the initial highlight. */
+const RECENT_PROFILES_KEY = 'tether.chooser.recent'
+function loadRecentProfiles(): string[] {
+  try { const v = JSON.parse(localStorage.getItem(RECENT_PROFILES_KEY) ?? '[]'); return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [] } catch { return [] }
+}
+let recentProfiles: string[] = loadRecentProfiles()
+function noteRecentProfile(id: string): void {
+  recentProfiles = rememberProfile(recentProfiles, id)
+  try { localStorage.setItem(RECENT_PROFILES_KEY, JSON.stringify(recentProfiles)) } catch { /* storage unavailable: recents live for the session */ }
+}
+/** The panes activated last (most recent first, a few): where the keyboard goes back to when a laid-out empty pane is left with Esc. */
+const activeHistory: string[] = []
+function noteActive(id: string | undefined): void {
+  if (!id || activeHistory[0] === id) return
+  activeHistory.unshift(id)
+  if (activeHistory.length > 8) activeHistory.length = 8
+}
 
 /** Where the keyboard goes back to once a transient surface (the palette, a menu, a dialog, the toolbar) is left. */
 const TRANSIENT_FOCUS = '#palette, .menu, #ctx-menu, dialog, #toolbar'
@@ -300,19 +318,20 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
         toggleDetails: id => togglePaneDetails(id),
+        addTab: id => { newTabBeside(id) },
       }),
       createWatermarkComponent: () => {
         const el = document.createElement('div')
         el.className = 'watermark'
-        el.innerHTML = `<p>Nenhum painel aberto.</p><p>${kbdHtml(shortcutHint({ op: 'choose' }))} ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
+        el.innerHTML = `<p>Nenhum painel aberto.</p><p>${kbdHtml(shortcutHint({ op: 'new-tab' }))} ou "+ ${NEW_PANEL_LABEL}" para abrir um terminal.</p>`
         return { element: el, init: () => {} }
       },
     }),
     // Only changes the person can make are saved: a hint or title the app updates is not one (isPersonChange).
     onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
     onPanelsChange: () => { refreshClosedMenu(); renderStrip() },
-    onEdge: (target, op, frameId) => { void onEdge(target, op, frameId, scope === 'drawer' ? drawer.desk : undefined) },
-    onActivePanelChange: () => markSeenIfWatched(),
+    onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : undefined),
+    onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched() },
   }
 }
 
@@ -377,9 +396,9 @@ function notePanelOptions(path: string): AddPanelOptions {
   return { id: newNotePanelId(), component: NOTE_COMPONENT, tabComponent: NOTE_TAB, title: noteTitle(path), params: withNote(undefined, { path }) }
 }
 
-/** The dockview options of an empty pane (a fresh id), suggesting `cwd` in its chooser. */
-function emptyPanelOptions(cwd: string | undefined): AddPanelOptions {
-  return { id: newEmptyPanelId(), component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: withEmpty(cwd) }
+/** The dockview options of an empty pane (a fresh id), suggesting `cwd` in its chooser; `origin` says what Esc does in it. */
+function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layout'): AddPanelOptions {
+  return { id: newEmptyPanelId(), component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: withEmpty(cwd, origin) }
 }
 
 /** Adds any pane (slot, note, empty) relative to `reference` at `target`'s level, in its desk or the drawer; `into` forces the drawer. */
@@ -1464,12 +1483,24 @@ function showEmptyMenu(id: string, x: number, y: number): void {
 // desk; it lives in layout.json like any pane and comes back after a restart. Picking something in it replaces it
 // in the same group and at the same index.
 
-/** An empty pane relative to `reference` (the active pane when absent), suggesting that pane's folder. */
-function addEmptyPanel(target?: Target, reference?: string, cwd = paneCwdOf(reference)): IDockviewPanel {
-  const panel = addPaneOptions(emptyPanelOptions(cwd), target, reference)
+/** An empty pane relative to `reference` (the active pane when absent), suggesting that pane's folder. `add`: born from a "+" (Esc closes it). */
+function addEmptyPanel(target?: Target, reference?: string, cwd = paneCwdOf(reference), origin: EmptyOrigin = 'layout'): IDockviewPanel {
+  const panel = addPaneOptions(emptyPanelOptions(cwd, origin), target, reference)
   scheduleSave()
   requestAnimationFrame(() => focusPane(panel.id))
   return panel
+}
+
+/** The "+" of a group's tab strip: an empty pane as a new tab beside `reference`, a request in progress (origin `add`). */
+function newTabBeside(reference: string): IDockviewPanel {
+  return addEmptyPanel({ level: 'pane', placement: 'within' }, reference, paneCwdOf(reference), 'add')
+}
+
+/** Ctrl+Shift+T: a new empty tab in the active group; with no pane at all, simply the first pane (still a request: Esc closes it). */
+function newTab(): void {
+  const reference = currentDesk().activePanel?.id
+  if (reference && findPanel(reference)) newTabBeside(reference)
+  else addEmptyPanel(undefined, undefined, undefined, 'add')
 }
 
 /** The keyboard/palette form: an empty pane relative to the active pane (with none, simply the first). */
@@ -1496,6 +1527,7 @@ async function resolveChoice(choice: Choice, cwd: string): Promise<{ options: Ad
     const reply = await window.tether.request({ t: 'create', kind: choice.profile.agent, cwd, start: true, profileId: choice.profile.id })
     if (reply.t === 'error' || !reply.slot) return { error: reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot' }
     await window.tether.rememberFolder(cwd)
+    noteRecentProfile(choice.profile.id)
     slots.set(reply.slot.slotId, reply.slot)
     return { options: slotPanelOptions(reply.slot) }
   }
@@ -1519,11 +1551,18 @@ async function resolveChoice(choice: Choice, cwd: string): Promise<{ options: Ad
   return { options: notePanelOptions(picked) }
 }
 
-/** What the empty panes need from the renderer. */
-const emptyHost: EmptyHost = {
+/** What every chooser (inside a pane, in the popup) needs from the renderer. */
+const chooserHost: ChooserHost = {
   profiles: () => profiles,
+  recentProfiles: () => recentProfiles,
   recentFolders: () => window.tether.recentFolders(),
   pickFolder: initial => window.tether.pickFolder(initial),
+  openProfiles: id => openProfiles(id),
+}
+
+/** What the empty panes need from the renderer. */
+const emptyHost: EmptyHost = {
+  ...chooserHost,
   fill: async (panel, choice, cwd) => {
     const r = await resolveChoice(choice, cwd)
     if (!r) return undefined
@@ -1538,10 +1577,25 @@ const emptyHost: EmptyHost = {
     if (r.after) { await r.after(); focusPane(added.id) }
     return undefined
   },
+  cancel: (panel, origin) => {
+    const p = findPanel(panel.id)
+    if (!p) return
+    if (origin === 'add') {
+      // A request in progress is withdrawn: the pane goes, the keyboard lands on what the group shows next.
+      removeAnyPanel(p)
+      requestAnimationFrame(() => { const a = currentDesk().activePanel; if (a) focusPane(a.id) })
+      return
+    }
+    // Laid out on purpose: the pane stays; the keyboard goes back to the pane that had it before.
+    const back = activeHistory.find(id => id !== panel.id && findPanel(id))
+    if (back) { findPanel(back)?.api.setActive(); focusPane(back) }
+    else (document.activeElement as HTMLElement | null)?.blur()
+  },
+  expand: (panel, state) => { void openNewDialog({ context: { panel, state } }) },
   onCwdChange: panel => {
     const p = findPanel(panel.id)
     if (!p) return
-    p.api.updateParameters(withEmpty(panel.cwd || undefined))
+    p.api.updateParameters(withEmpty(panel.cwd || undefined, panel.origin))
     scheduleSave()
   },
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
@@ -1677,8 +1731,7 @@ function setProfiles(list: Profile[], problem: string | undefined): void {
   profiles = list
   profilesProblem = problem
   if (manager.open) manager.refresh()
-  const dlg = $<HTMLDialogElement>('dlg-new')
-  if (dlg.open) renderNewProfiles(selectedProfileId())
+  popupChooser?.render()
   for (const e of empties.values()) e.renderProfiles()
 }
 
@@ -1693,130 +1746,87 @@ function openProfiles(id?: string): void {
   manager.show(id)
 }
 
-// ---------- new panel dialog ("Novo painel…": the chooser) ----------
+// ---------- "Novo painel…" in focus mode: the chooser in a popup ----------
 
 /**
- * `reference`: the panel the placement is relative to (the active one when absent); `placement`: what the
- * "Onde" row starts on (a tab in the reference's group by default). Without any panel there is nothing to
- * be relative to: the row is hidden and the new panel is simply the first.
+ * `reference`: the pane the "Onde" row is relative to (the active one when absent); `target`: what the row starts
+ * on (a tab in the reference's group by default). Without any pane there is nothing to be relative to: no row, and
+ * the new pane is simply the first. `context`: opened from an empty pane's ⤢; the popup shows the pane as a chip,
+ * has no "Onde" (the pane IS the place), and hands the pick, or the state on cancel, back to that pane.
  */
-interface NewPanelOptions { kind?: SlotKind; profileId?: string; cwd?: string; reference?: string; target?: Target }
+interface NewPanelOptions { kind?: SlotKind; profileId?: string; cwd?: string; reference?: string; target?: Target; context?: { panel: EmptyPanel; state: ChooserState } }
 
-function selectedProfileId(): string | undefined {
-  return $<HTMLFormElement>('form-new').querySelector<HTMLInputElement>('input[name=profile]:checked')?.value
+let popupChooser: Chooser | undefined
+let popupCancel: (() => void) | undefined
+
+/** The reference as its tab reads: the slot's title, a note's file name, "Vazio"; never an internal id. */
+function paneDisplayName(id: string): string {
+  const slot = slots.get(id)
+  return slot ? panelTitle(slot) : findPanel(id)?.api.title ?? id
 }
 
-function selectedTarget(): Target {
-  return targetOf($<HTMLFormElement>('form-new').querySelector<HTMLInputElement>('input[name=placement]:checked')?.value) ?? { level: 'pane', placement: 'within' }
-}
-
-/** The "Onde" rows of the chooser: one group per level (pane / frame / desk), relative to `reference`; hidden when there is none. */
-function renderPlacements(reference: string | undefined, selected: Target): void {
-  const field = $('new-placement')
-  const row = $('new-placements')
-  field.hidden = !reference
-  row.replaceChildren()
-  if (!reference) return
-  // The reference as its tab reads: the slot's title, a note's file name, "Vazio"; never an internal id.
-  const ref = slots.get(reference)
-  $('new-placement-ref').textContent = ref ? panelTitle(ref) : findPanel(reference)?.api.title ?? reference
-  for (const level of LEVELS) {
-    const group = document.createElement('div')
-    group.className = 'placement-group'
-    group.dataset.level = level
-    const head = document.createElement('span')
-    head.className = 'placement-level'
-    head.textContent = LEVEL_LABEL[level]
-    head.title = LEVEL_HINT[level]
-    group.append(head)
-    // What the level means, visible (the "Mesa" row puts a frame at the desk's edge, above/below included: not a desk among desks).
-    const hint = document.createElement('span')
-    hint.className = 'placement-hint'
-    hint.textContent = LEVEL_HINT[level]
-    group.append(hint)
-    for (const t of TARGETS.filter(t => t.level === level)) {
-      const label = document.createElement('label')
-      label.className = 'placement'
-      label.dataset.placement = t.placement
-      label.dataset.level = level
-      const input = document.createElement('input')
-      input.type = 'radio'; input.name = 'placement'; input.value = targetKey(t); input.checked = targetKey(t) === targetKey(selected)
-      label.append(input, icon(PLACEMENT_ICON[t.placement]), document.createTextNode(PLACEMENT_LABEL[t.placement]))
-      group.append(label)
-    }
-    row.append(group)
-  }
-}
-
-const PLACEMENT_ICON: Record<Placement, IconName> = {
-  within: 'tabs', left: 'arrow-line-left', right: 'arrow-line-right', above: 'arrow-line-up', below: 'arrow-line-down',
-}
-
-/** The profile list of "Novo painel"; a profile's folder is suggested while the folder field still holds the suggestion. */
-function renderNewProfiles(selectedId: string | undefined): void {
-  const cwdInput = $<HTMLInputElement>('new-cwd')
-  renderProfileGroups($('new-profiles'), profiles, {
-    mode: 'radio', selectedId, leading: leadingChoices('dialog'),
-    onPick: id => {
-      const p = profiles.find(x => x.id === id)
-      if (p?.cwd && cwdInput.value === cwdInput.dataset.suggested) { cwdInput.value = p.cwd; cwdInput.dataset.suggested = p.cwd }
-    },
-  })
+function closeNewDialog(): void {
+  const dlg = $<HTMLDialogElement>('dlg-new')
+  if (dlg.open) dlg.close()
+  popupChooser?.dispose()
+  popupChooser = undefined
+  popupCancel = undefined
 }
 
 async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   const dlg = $<HTMLDialogElement>('dlg-new')
-  const form = $<HTMLFormElement>('form-new')
-  const cwdInput = $<HTMLInputElement>('new-cwd')
-  const error = $('new-error')
-  error.hidden = true
   if (profiles.length === 0) await loadProfiles()
-  const wanted = (opts.profileId && profiles.find(p => p.id === opts.profileId)) || defaultOf(profiles, opts.kind ?? 'claude') || profiles[0]
+  popupChooser?.dispose()
+  const ctx = opts.context
+  const chip = $('new-context')
+  chip.hidden = !ctx
+  if (ctx) {
+    const where = inDrawer(ctx.panel.id) ? 'Gaveta' : deskName(desks.deskOf(ctx.panel.id) ?? desks.activeDeskId)
+    $('new-context-name').textContent = ctx.state.folder ? `${where} · ${folderName(ctx.state.folder)}` : where
+  }
+  // The reference is fixed when the popup opens: the active pane may change underneath (a slot exits) but the
+  // person chose "where" looking at this one.
+  const reference = ctx ? undefined : opts.reference && findPanel(opts.reference) ? opts.reference : currentDesk().activePanel?.id
+  const wanted = opts.profileId ? profiles.find(p => p.id === opts.profileId) : undefined
   const recent = await window.tether.recentFolders()
-  const suggested = opts.cwd ?? wanted?.cwd ?? recent[0] ?? ''
-  cwdInput.value = suggested
-  cwdInput.dataset.suggested = suggested
-  renderNewProfiles(wanted?.id)
-  // The reference is fixed when the dialog opens: the active panel may change underneath (a slot exits) but the
-  // user chose "where" looking at this one.
-  const reference = opts.reference && findPanel(opts.reference) ? opts.reference : currentDesk().activePanel?.id
-  renderPlacements(reference, opts.target ?? { level: 'pane', placement: 'within' })
-  const list = $('recent-list')
-  list.replaceChildren()
-  if (recent.length === 0) {
-    const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'Nenhuma pasta recente'
-    list.append(li)
-  }
-  for (const f of recent) {
-    const li = document.createElement('li'); li.textContent = f
-    li.addEventListener('click', () => { cwdInput.value = f; cwdInput.focus() })
-    list.append(li)
-  }
-  let submitting = false
-  const onSubmit = async (ev: SubmitEvent): Promise<void> => {
-    ev.preventDefault()
-    if (submitting) return
-    const choice = choiceOf(selectedProfileId(), profiles)
-    if (!choice) { error.textContent = 'Escolha um perfil.'; error.hidden = false; return }
-    const cwd = cwdInput.value.trim()
-    if (choiceNeedsFolder(choice) && !cwd) { error.textContent = 'Informe a pasta.'; error.hidden = false; return }
-    submitting = true
-    const r = await resolveChoice(choice, cwd).finally(() => { submitting = false })
-    if (!r) return // a file dialog cancelled (the chooser stays), or a note already open (now focused)
-    if ('error' in r) { error.textContent = r.error; error.hidden = false; return }
-    form.removeEventListener('submit', onSubmit)
-    const target = selectedTarget()
-    dlg.close()
-    const stillThere = reference && findPanel(reference) ? reference : undefined
-    const added = addPaneOptions(r.options, stillThere ? target : undefined, stillThere)
-    requestAnimationFrame(() => focusPane(added.id))
-    if (r.after) { await r.after(); focusPane(added.id) }
-  }
-  form.addEventListener('submit', onSubmit)
-  dlg.addEventListener('close', () => form.removeEventListener('submit', onSubmit), { once: true })
-  dlg.showModal()
-  cwdInput.focus()
-  cwdInput.select()
+  const folder = ctx ? ctx.state.folder : opts.cwd ?? paneCwdOf(reference) ?? recent[0] ?? ''
+  const chooser = new Chooser(chooserHost, {
+    mode: 'popup',
+    origin: 'add',
+    folder,
+    ...(!ctx && reference ? { where: { refName: paneDisplayName(reference), initial: opts.target ?? { level: 'pane', placement: 'within' } } } : {}),
+    offerEmpty: !ctx,
+    state: ctx ? ctx.state : { ...(wanted ? { highlight: wanted.id } : {}), touched: !!opts.cwd },
+    onOpen: async (choice, cwd, where) => {
+      if (ctx) {
+        const error = await emptyHost.fill(ctx.panel, choice, cwd)
+        if (error) return error
+        closeNewDialog()
+        return undefined
+      }
+      const r = await resolveChoice(choice, cwd)
+      if (!r) return undefined // a file dialog cancelled (the chooser stays), or a note already open (now focused)
+      if ('error' in r) return r.error
+      closeNewDialog()
+      const stillThere = reference && findPanel(reference) ? reference : undefined
+      const added = addPaneOptions(r.options, stillThere ? where : undefined, stillThere)
+      scheduleSave()
+      requestAnimationFrame(() => focusPane(added.id))
+      if (r.after) { await r.after(); focusPane(added.id) }
+      return undefined
+    },
+    onCancel: () => {
+      const state = popupChooser?.snapshot()
+      closeNewDialog()
+      // Back to the pane's own chooser, where it was.
+      if (ctx && state && findPanel(ctx.panel.id)) { ctx.panel.setState({ query: state.query, highlight: state.highlight, folder: state.folder, touched: state.touched }); findPanel(ctx.panel.id)?.api.setActive(); ctx.panel.focus() }
+    },
+  })
+  popupChooser = chooser
+  popupCancel = () => chooser.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  $('new-chooser').replaceChildren(chooser.element)
+  if (!dlg.open) dlg.showModal()
+  chooser.focus()
 }
 
 // ---------- "Duplicar painel" ----------
@@ -1846,11 +1856,20 @@ async function duplicateActive(target: Target): Promise<void> {
   await duplicatePanel(active.id, target)
 }
 
-/** A "+" near a border: the frame's active pane (or the desk's) is the reference; click duplicates, right-click chooses. */
-async function onEdge(target: Target, op: 'duplicate' | 'choose', frameId: string | undefined, scope: Desk = currentDesk()): Promise<void> {
+/**
+ * A "+" near a border: the frame's active pane (or the desk's) is the reference. A click ADDS an empty pane there
+ * (the chooser inside it, the reference's folder suggested; Esc closes it). The right-click menu: the same, duplicate
+ * the reference there (the one place that still clones without asking, and the name says so), the chooser in focus mode.
+ */
+function onEdge(target: Target, op: 'add' | 'menu', frameId: string | undefined, at: { x: number; y: number }, scope: Desk = currentDesk()): void {
   const reference = (frameId ? scope.frames.get(frameId)?.dock.activePanel?.id : undefined) ?? scope.activePanel?.id
-  if (op === 'choose' || !reference || !slots.has(reference)) { void openNewDialog({ reference, target }); return }
-  await duplicatePanel(reference, target)
+  const add = (): void => { addEmptyPanel(target, reference, paneCwdOf(reference), 'add') }
+  if (op === 'add') { add(); return }
+  const slot = reference ? slots.get(reference) : undefined
+  const items: MenuEntry[] = [{ icon: 'plus', label: target.level === 'desk' ? 'Novo quadro aqui' : 'Novo painel aqui', run: add }]
+  if (slot && reference) items.push({ icon: 'copy', label: `Duplicar ${panelTitle(slot)} aqui`, run: () => { void duplicatePanel(reference, target) } })
+  items.push(SEP, { icon: 'arrows-out-simple', label: `${NEW_PANEL_LABEL} (modo foco)`, run: () => { void openNewDialog({ reference, target }) } })
+  showContextMenu(at.x, at.y, items)
 }
 
 // ---------- in-app menu ----------
@@ -1860,6 +1879,7 @@ async function onEdge(target: Target, op: 'duplicate' | 'choose', frameId: strin
 /** What the app's commands do (app/renderer/app-commands.ts declares them over this host). */
 const commandHost: CommandHost = {
   newPanel: opts => { void openNewDialog(opts) },
+  newTab: () => newTab(),
   duplicateActive: target => { void duplicateActive(target) },
   splitEmpty: target => splitEmpty(target),
   newEmptyDesk: () => newEmptyDesk(),
@@ -2036,12 +2056,11 @@ function setupUi(): void {
   $('drawer-empty-new').addEventListener('click', () => { void openNewDialog() })
   $('drawer-empty-quick').addEventListener('click', () => { void quickShell() })
   $('drawer-pill').addEventListener('click', () => setDrawerOpen(false))
-  $('drawer-empty-new').querySelector('.de-kbd')!.innerHTML = kbdHtml(shortcutHint({ op: 'choose' }))
+  $('drawer-empty-new').querySelector('.de-kbd')!.remove() // "Novo painel…" has no chord now (Ctrl+Shift+T is the new empty tab)
   $('drawer-empty-quick').querySelector('.de-kbd')!.innerHTML = kbdHtml(shortcutHint({ op: 'drawer-toggle' }))
   $('drawer-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
   $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
-  $('btn-manage-profiles').addEventListener('click', () => openProfiles(selectedProfileId()))
   commands.register(...appCommands(commandHost))
   palette = new CommandPalette($<HTMLDialogElement>('palette'), commands)
   setupMenu()
@@ -2049,16 +2068,15 @@ function setupUi(): void {
   const hint = (level: Target['level'], direction: Direction): string => shortcutHint({ op: 'duplicate', level, direction })
   dup.title = `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right} (${hint('pane', 'right')}): outro painel com o mesmo perfil e a mesma pasta, numa sessão nova. Setas com os mesmos modificadores duplicam para os outros lados; ${hint('frame', 'right')} na borda do quadro; ${hint('desk', 'right')} num quadro novo.`
   dup.addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
-  $('btn-new').title = `${NEW_PANEL_LABEL} (${shortcutHint({ op: 'choose' })}): escolha o perfil, a pasta e onde abrir`
+  $('btn-new').title = `${NEW_PANEL_LABEL}: escolha o perfil, a pasta e onde abrir. ${shortcutHint({ op: 'new-tab' })} abre uma aba vazia no grupo ativo, com o seletor dentro.`
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
   setupThemeMenu()
   setupConnectionPopover()
-  $('btn-cancel').addEventListener('click', () => $<HTMLDialogElement>('dlg-new').close())
-  $('btn-browse').addEventListener('click', async () => {
-    const input = $<HTMLInputElement>('new-cwd')
-    const picked = await window.tether.pickFolder(input.value.trim() || undefined)
-    if (picked) input.value = picked
-  })
+  // The popup's Esc (the dialog's own `cancel`, when the focus is outside the chooser), its × and a click on the backdrop all cancel the way the chooser does.
+  const dlgNew = $<HTMLDialogElement>('dlg-new')
+  dlgNew.addEventListener('cancel', ev => { ev.preventDefault(); popupCancel?.() })
+  dlgNew.addEventListener('mousedown', ev => { if (ev.target === dlgNew) { ev.preventDefault(); popupCancel?.() } })
+  $('btn-new-close').addEventListener('click', () => popupCancel?.())
   const closedBtn = $('btn-closed')
   const closedList = $('closed-list')
   closedBtn.addEventListener('click', ev => {
@@ -2222,6 +2240,10 @@ declare global {
       /** The empty panes: id, the folder the chooser shows, the radio selected, focus, error. */
       empties(): EmptySnapshot[]
       empty(id: string): EmptySnapshot | undefined
+      /** The popup's chooser ("Novo painel…" / focus mode), while open. */
+      chooser(): ChooserSnapshot | undefined
+      /** Ctrl+Shift+T: an empty tab (origin add) in the active group. */
+      newTab(): void
       /** The tab index of a pane inside its group and the group's id (where a replacement must land). */
       tabIndex(id: string): number | undefined
       groupOf(id: string): string | undefined
@@ -2358,6 +2380,8 @@ function setupTestHooks(): void {
     editorCommandIds: () => commands.all().filter(c => c.id.startsWith('editor.')).map(c => c.id),
     empties: () => [...empties.values()].map(e => e.snapshot()),
     empty: id => empties.get(id)?.snapshot(),
+    chooser: () => popupChooser?.snapshot(),
+    newTab,
     tabIndex: id => { const p = findPanel(id); const i = p ? p.group.panels.indexOf(p) : -1; return i >= 0 ? i : undefined },
     groupOf: id => findPanel(id)?.group.id,
     cellSize: slotId => {

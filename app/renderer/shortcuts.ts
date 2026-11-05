@@ -17,13 +17,13 @@
 //                have no chord: the palette, the chooser's "Vazio" and the "+" at the edges reach them.
 //   desks        Ctrl+Tab / Ctrl+Shift+Tab next / previous desk (sequential, wraps) · Ctrl+1…9 desk by position
 //                Ctrl+Alt+N new desk after the current one · Ctrl+Alt+Shift+N before it
-//   Ctrl+Shift+T chooser · Ctrl+Shift+Q quit all · Ctrl+Shift+H show/hide the active pane's header details
+//   Ctrl+Shift+T new empty tab in the active group (the chooser inside it) · Ctrl+Shift+Q quit all · Ctrl+Shift+H show/hide the active pane's header details
 //   Ctrl+Shift+P command palette · Ctrl+P quick open (commands.ts / palette.ts; key-capture.ts says why the
 //                terminal does not get Ctrl+P)
 //   drawer       Ctrl+` toggles it (VS Code's terminal chord); Ctrl+Shift+G is the alias for keyboards where `
 //                is a dead key (ABNT2 sends the grave accent from another key; its physical Backquote key is ')
 //   font size    Ctrl+Shift+= / - / 0 (numpad too)
-// Mac differences: Cmd+T chooser, Cmd+D / Cmd+E duplicate right / below, Cmd+= / - / 0 font size, Cmd+C / Cmd+V
+// Mac differences: Cmd+T new tab, Cmd+D / Cmd+E duplicate right / below, Cmd+= / - / 0 font size, Cmd+C / Cmd+V
 // copy / paste, Ctrl+Tab and Ctrl+` kept literal; the other mod chords are Cmd ones (Cmd+Alt+Arrow, Cmd+1…9…).
 //
 // Ctrl+` vs the terminal: xterm maps it to NUL (the same byte as Ctrl+Space / Ctrl+2), which nobody types on purpose.
@@ -52,7 +52,7 @@ export type Level = 'pane' | 'frame' | 'desk'
 export const LEVELS: readonly Level[] = ['pane', 'frame', 'desk']
 
 export type AppShortcut =
-  | { op: 'choose' }
+  | { op: 'new-tab' }
   | { op: 'duplicate'; level: Level; direction: Direction }
   | { op: 'split-empty'; direction: Direction }
   | { op: 'quit-all' }
@@ -105,7 +105,7 @@ function fontSize(codes: string[], command: FontSizeCommand): ShortcutEntry[] {
 
 /** The registry. Order matters only for `shortcutHint`: the first entry of a command on the platform is the one shown. */
 export const SHORTCUTS: readonly ShortcutEntry[] = [
-  { chord: { mod: true, shift: true, code: 'KeyT' }, mac: { meta: true, code: 'KeyT' }, command: { op: 'choose' } },
+  { chord: { mod: true, shift: true, code: 'KeyT' }, mac: { meta: true, code: 'KeyT' }, command: { op: 'new-tab' } },
   ...arrows({ mod: true, alt: true }, 'pane'),
   { chord: { mod: true, shift: true, code: 'KeyD' }, mac: { meta: true, code: 'KeyD' }, command: { op: 'duplicate', level: 'pane', direction: 'right' } },
   { chord: { mod: true, shift: true, code: 'KeyE' }, mac: { meta: true, code: 'KeyE' }, command: { op: 'duplicate', level: 'pane', direction: 'below' } },

@@ -1057,17 +1057,154 @@ dialog.ask.move .primary:disabled { opacity: .45; cursor: not-allowed; backgroun
 .placement-group { position: relative; padding-bottom: 14px; }
 .placement-hint { position: absolute; left: 0; bottom: 0; font-size: 10.5px; color: var(--fg-dim); white-space: nowrap; }
 
-/* --- empty pane (app/renderer/empty-panel.ts): the chooser inside the pane, the dialog's pieces without the "Onde" row --- */
-.empty-panel { height: 100%; min-height: 0; overflow: auto; background: var(--frame-bg); color: var(--fg); display: flex; justify-content: center; }
-.empty-panel .chooser { width: 100%; max-width: 520px; margin: 0 auto; padding: 18px 22px 22px; display: flex; flex-direction: column; align-self: flex-start; }
-.empty-panel .chooser h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; font-weight: 600; }
-.empty-panel .chooser h3 .ph { width: 16px; height: 16px; color: var(--accent); }
-.empty-panel .chooser .profile-groups { margin-bottom: 14px; }
-.empty-panel .chooser .error { margin: 0 0 8px; color: var(--err); font-size: 12px; }
-.empty-panel .chooser .error[hidden] { display: none; }
-.empty-panel .chooser footer.actions { margin-top: 4px; }
+/* --- the chooser (app/renderer/chooser.ts; docs/chooser-preview.html): three fixed bands — search, list (scrolls), folder + actions.
+   One component: inside an empty pane (.empty-panel) and in the "Novo painel…" popup (dialog.chooser-dlg). Container queries
+   on the host (container-name: pane) fold it for narrow and low panes. --- */
+.empty-panel { height: 100%; min-height: 0; overflow: hidden; background: var(--frame-bg); color: var(--fg); display: flex; flex-direction: column; container-type: size; container-name: pane; }
+.ch { --pad: 12px; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--frame-bg); color: var(--fg); outline: none; }
+.ch .ph { flex: none; }
+.ch-top { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px var(--pad); border-bottom: 1px solid var(--border); color: var(--fg-dim); min-height: 40px; }
+.ch-top > .ph { width: 16px; height: 16px; }
+.ch input.ch-q[type="text"] { flex: 1; min-width: 0; background: none; border: 0; border-radius: 0; padding: 4px 0; color: var(--fg); font: 13.5px var(--ui); outline: none; }
+.ch input.ch-q[type="text"]:focus { outline: none; }
+.ch-q::placeholder { color: var(--fg-dim); }
+.ch .ib { position: relative; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; cursor: pointer; border: 0; background: none; color: var(--fg-dim); padding: 0; }
+.ch .ib:hover { background: var(--bg-hover); color: var(--fg); }
+.ch .ib .ph { width: 16px; height: 16px; }
+.ch-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 6px; scrollbar-width: thin; scrollbar-color: var(--bg-hover) transparent; outline: none; }
+.ch-list[inert] { opacity: .7; }
+.ch-sep { display: flex; align-items: center; gap: 6px; padding: 8px 6px 3px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); cursor: default; user-select: none; }
+.ch-sep .ph { width: 12px; height: 12px; }
+.ch-sep.rec .ph { color: var(--accent); }
+.ch-item { position: relative; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 4px 8px 4px 10px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; user-select: none; }
+.ch-item:hover { background: var(--bg-hover); }
+.ch-item.hl { background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.ch-item.unsafe { border-left: 3px solid color-mix(in srgb, var(--warn) 70%, transparent); padding-left: 8px; }
+.ch-item.unsafe.hl { border-left-color: var(--warn); }
+.ch-i { display: inline-flex; flex: none; color: var(--fg); }
+.ch-i .ph { width: 18px; height: 18px; }
+.ch-item[data-group="claude"] .ch-i { color: #d97757; }
+.ch-item[data-group="soul"] .ch-i { color: var(--x-purple, #bc8cff); }
+.ch-item[data-group="note"] .ch-i, .ch-item[data-group="empty"] .ch-i { color: var(--accent); }
+.ch-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ch-name { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; min-width: 0; }
+.ch-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-name b { color: var(--accent); font-weight: 700; }
+.selo { font-size: 10px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 1px 7px; border-radius: 999px; letter-spacing: .03em; flex: none; }
+.selo.rec { color: var(--fg-dim); background: var(--bg-3); }
+.ch-hint { font: 11px var(--mono); color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-hint.none { font-family: var(--ui); font-style: italic; opacity: .8; }
+.ch-unsafe { display: inline-flex; align-items: center; gap: 4px; color: var(--warn); font-size: 11px; font-weight: 600; flex: none; padding: 1px 7px 1px 5px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.ch-unsafe .ph { width: 13px; height: 13px; }
+.ch kbd { font: 11px var(--ui); color: var(--fg-dim); background: var(--bg); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; flex: none; line-height: 1.3; }
+.ch-item kbd.num { min-width: 22px; text-align: center; padding: 1px 0; color: var(--fg-dim); }
+.ch-item.hl kbd.num { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.ch-empty { padding: 18px 14px; color: var(--fg-dim); font-size: 12.5px; line-height: 1.5; }
+.ch-empty b { color: var(--fg); }
+.ch button.lnk, .ch button.ch-manage { background: none; border: 0; color: var(--accent); padding: 0; display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; cursor: pointer; }
+.ch button.lnk:hover, .ch button.ch-manage:hover { text-decoration: underline; }
+.ch button.lnk .ph, .ch button.ch-manage .ph { width: 14px; height: 14px; }
+.ch-bottom { flex: none; border-top: 1px solid var(--border); padding: 8px var(--pad) 10px; display: flex; flex-direction: column; gap: 8px; background: var(--frame-bg); position: relative; }
+.ch-err { display: flex; align-items: flex-start; gap: 8px; color: var(--err); font-size: 12px; line-height: 1.4; padding: 6px 10px; border-radius: 6px; background: color-mix(in srgb, var(--err) 10%, transparent); border: 1px solid color-mix(in srgb, var(--err) 35%, transparent); }
+.ch-err[hidden] { display: none; }
+.ch-err .ph { width: 15px; height: 15px; margin-top: 1px; }
+.ch-row { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ch-folder { position: relative; display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 2px 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg-dim); }
+.ch-folder:focus-within { outline: 1px solid var(--accent); border-color: var(--accent); }
+.ch-folder > .ph.fo { width: 15px; height: 15px; }
+.ch-path { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 100%; }
+/* Always an input. Unfocused it shows the END of a long path (what distinguishes it); focused it is a normal field. */
+.ch input.ch-path-input[type="text"] { flex: 1; min-width: 0; width: 0; background: none; border: 0; border-radius: 0; padding: 0; color: var(--fg); font: 12px var(--mono); outline: none; text-overflow: ellipsis; }
+.ch input.ch-path-input[type="text"]:not(:focus) { direction: rtl; text-align: left; }
+.ch input.ch-path-input[type="text"]:focus { outline: none; }
+.ch-path .tag { flex: none; font: 10.5px var(--ui); color: var(--fg-dim); background: var(--bg-3); padding: 0 6px; border-radius: 999px; }
+.ch-path .tag[hidden] { display: none; }
+.ch-folder .ib { width: 26px; height: 24px; border-radius: 5px; }
+.ch-folder .ib .ph { width: 14px; height: 14px; }
+.ch-folder .ib[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
+.ch-recents { position: absolute; left: 0; right: 0; bottom: calc(100% + 4px); z-index: 5; margin: 0; padding: 4px; list-style: none; background: var(--bg-3); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); max-height: 170px; overflow: auto; }
+.ch-recents[hidden] { display: none; }
+.ch-recents li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px; font: 12px var(--mono); cursor: pointer; color: var(--fg); white-space: nowrap; overflow: hidden; }
+.ch-recents li > span:not(.pick) { overflow: hidden; text-overflow: ellipsis; }
+.ch-recents li .ph { width: 13px; height: 13px; color: var(--fg-dim); }
+.ch-recents li:hover, .ch-recents li.hl { background: var(--bg-hover-2); }
+.ch-recents li.hd { font: 10.5px var(--ui); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); cursor: default; padding-bottom: 2px; }
+.ch-recents li.hd.none { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.ch-recents li.hd:hover { background: none; }
+.ch-recents li .pick { margin-left: auto; font: 10.5px var(--ui); color: var(--accent); flex: none; }
+.ch-actions { display: flex; align-items: center; gap: 8px; }
+.ch-hints { display: flex; align-items: center; gap: 10px; color: var(--fg-dim); font-size: 11px; opacity: .9; min-width: 0; overflow: hidden; white-space: nowrap; }
+.ch-hints span { display: inline-flex; align-items: center; gap: 4px; }
+.ch-actions .sp { flex: 1; }
+.ch .btn { background: var(--bg-3); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 5px 12px; font: inherit; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; min-height: 30px; cursor: pointer; }
+.ch .btn:hover { background: var(--bg-hover); }
+.ch .btn.cancel { background: none; border-color: transparent; color: var(--fg-dim); padding: 5px 9px; }
+.ch .btn.cancel:hover { background: var(--bg-3); color: var(--fg); border-color: var(--border); }
+.ch .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+.ch .btn.primary:hover { background: var(--accent-hover); }
+.ch .btn.primary kbd { color: var(--on-accent); background: color-mix(in srgb, var(--on-accent) 15%, transparent); border-color: color-mix(in srgb, var(--on-accent) 35%, transparent); }
+.ch .btn.primary.warnb { background: var(--warn); border-color: var(--warn); color: var(--x-alert-foreground); }
+.ch .btn.primary.warnb:hover { filter: brightness(1.08); }
+.ch .btn.primary.warnb kbd { color: var(--x-alert-foreground); background: color-mix(in srgb, var(--x-alert-foreground) 14%, transparent); border-color: color-mix(in srgb, var(--x-alert-foreground) 35%, transparent); }
+.ch .btn.primary:disabled { opacity: .6; cursor: progress; }
+.ch .btn .nm { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.ch .btn .ph { width: 15px; height: 15px; }
+.ch .btn kbd[hidden] { display: none; }
+.ch .spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--on-accent) 35%, transparent); border-top-color: var(--on-accent); animation: ch-spin .7s linear infinite; flex: none; }
+@keyframes ch-spin { to { transform: rotate(360deg); } }
+/* "Onde" — only in the contextless popup: one line until opened. */
+.ch .where { display: flex; flex-direction: column; gap: 6px; }
+.ch .where-line { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.ch .where-line .lbl { color: var(--fg-dim); font-size: 12px; flex: none; }
+.ch .where-sum { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px 4px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--fg); font: inherit; font-size: 12.5px; min-width: 0; max-width: 100%; cursor: pointer; }
+.ch .where-sum .ph { width: 14px; height: 14px; color: var(--accent); }
+.ch .where-sum .w { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch .where-sum .ph.car { margin-left: 2px; color: var(--fg-dim); transition: transform .12s; }
+.ch .where-sum[aria-expanded="true"] .ph.car { transform: rotate(180deg); }
+.ch .where-sum:hover { background: var(--bg-hover); }
+.ch .placements { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.ch .placements[hidden] { display: none; }
+.ch .placement { font: inherit; font-size: 12px; padding: 3px 10px 3px 6px; }
+.ch .placement.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--bg-3)); color: var(--fg); }
+.ch .placement .ph { width: 14px; height: 14px; color: var(--accent); }
+/* narrow pane: one line per item, the pill and the key stay, the folder shows its tail */
+@container pane (max-width: 420px) {
+  .ch { --pad: 10px; }
+  .ch-hint { display: none; }
+  .ch-item { min-height: 32px; gap: 8px; }
+  .ch-unsafe { padding: 1px 6px 1px 4px; font-size: 10.5px; }
+  .ch-hints { display: none; }
+  .ch .btn .nm { display: none; }
+  .ch input.ch-q[type="text"] { font-size: 13px; }
+}
+@container pane (max-width: 300px) {
+  .ch .btn.cancel .lbl { display: none; }
+  .ch-item kbd.num { display: none; }
+}
+/* low pane: the bottom band folds into one line (folder · Cancelar · Abrir) and gives the list ~40px back */
+@container pane (max-height: 300px) and (min-width: 421px) {
+  .ch-top { min-height: 34px; padding-top: 3px; padding-bottom: 3px; }
+  .ch-bottom { padding-top: 6px; padding-bottom: 6px; }
+  .ch-row { flex-direction: row; align-items: center; }
+  .ch-folder { flex: 1; min-width: 0; }
+  .ch-hints, .ch-actions .sp { display: none; }
+  .ch-sep { padding-top: 5px; }
+}
+@container pane (max-height: 300px) { .ch-item { min-height: 30px; } }
+/* the popup (focus mode / "Novo painel…"): the same chooser in a window; the header carries the context chip */
+dialog.chooser-dlg { width: min(600px, 94vw); height: min(600px, 86vh); padding: 0; flex-direction: column; overflow: hidden; }
+dialog.chooser-dlg[open] { display: flex; }
+dialog.chooser-dlg > header { margin: 0; padding: 14px 16px 10px; flex: none; }
+dialog.chooser-dlg > header .sp { flex: 1; }
+dialog.chooser-dlg > header .ib { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; border: 0; background: none; color: var(--fg-dim); padding: 0; cursor: pointer; }
+dialog.chooser-dlg > header .ib:hover { background: var(--bg-hover); color: var(--fg); }
+dialog.chooser-dlg > header .ib .ph { width: 16px; height: 16px; }
+.ctxchip { display: flex; align-items: center; gap: 7px; margin-left: 4px; padding: 3px 10px 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--fg-dim); font-size: 12px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.ctxchip[hidden] { display: none; }
+.ctxchip .ph { width: 13px; height: 13px; color: var(--accent); flex: none; }
+.ctxchip b { color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.ch-host { flex: 1; min-height: 0; display: flex; flex-direction: column; container-type: size; container-name: pane; }
+dialog.chooser-dlg .ch, dialog.chooser-dlg .ch-bottom { background: var(--bg-2); }
+dialog.chooser-dlg .ch-top { border-top: 1px solid var(--border); }
 .tether-tab.empty .kind .ph { color: var(--fg-dim); }
 .tether-tab.empty .text { color: var(--fg-dim); font-style: italic; }
-.empty-panel .chooser .row { min-width: 0; }
-.empty-panel .chooser input[type="text"] { min-width: 0; width: 0; }
-.empty-panel .chooser .recent li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

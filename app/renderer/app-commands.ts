@@ -3,14 +3,17 @@
 // the tests name them); titles are what the palette and the menu show. Add an action here first: the palette,
 // the menu and the chord follow.
 import type { Command } from './commands.ts'
-import { DIRECTIONS, DUPLICATE_LABEL, EMPTY_SUFFIX, NEW_EMPTY_DESK_LABEL, NEW_EMPTY_FRAME_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
+import { DIRECTIONS, DUPLICATE_LABEL, EMPTY_SUFFIX, NEW_EMPTY_DESK_LABEL, NEW_EMPTY_FRAME_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, NEW_TAB_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
 import type { FontSizeCommand } from '../shared/font.ts'
 import type { ThemeSetting } from '../shared/theme.ts'
 import type { Level } from './shortcuts.ts'
 import type { PaletteMode } from './palette-rules.ts'
 
 export interface CommandHost {
+  /** The contextless popup ("Novo painel…"): the chooser with the "Onde" row. */
   newPanel(opts?: { target?: Target }): void
+  /** Ctrl+Shift+T: an empty pane as a new tab of the active group (origin `add`: Esc closes it), the chooser inside. */
+  newTab(): void
   duplicateActive(target: Target): void
   /** An empty pane (app/shared/empty.ts) relative to the active pane: beside it, at its frame's edge, or in a new frame at the desk's edge. */
   splitEmpty(target: Target): void
@@ -90,7 +93,8 @@ export function appCommands(host: CommandHost): Command[] {
   }))
   return [
     // ----- pane -----
-    { id: 'pane.new', title: NEW_PANEL_LABEL, group: GROUP.pane, icon: 'plus', shortcut: { op: 'choose' }, run: () => host.newPanel() },
+    { id: 'pane.new-tab', title: NEW_TAB_LABEL, group: GROUP.pane, icon: 'plus', shortcut: { op: 'new-tab' }, run: () => host.newTab() },
+    { id: 'pane.new', title: NEW_PANEL_LABEL, group: GROUP.pane, icon: 'plus', run: () => host.newPanel() },
     ...duplicates,
     ...splits,
     { id: 'pane.new-at-frame-edge', title: 'Novo painel na borda do quadro…', group: GROUP.pane, icon: 'square-half', run: () => host.newPanel({ target: { level: 'frame', placement: 'right' } }) },

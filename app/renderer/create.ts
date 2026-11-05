@@ -45,6 +45,8 @@ export const LEVEL_HINT: Record<Level, string> = {
 
 /** The two operations as the user reads them (toolbar, menus, tooltips). */
 export const NEW_PANEL_LABEL = 'Novo painel…'
+/** Ctrl+Shift+T and the "+" of a group's tab strip: an empty pane as a new tab, the chooser inside it. */
+export const NEW_TAB_LABEL = 'Nova aba neste grupo'
 export const DUPLICATE_LABEL = 'Duplicar painel'
 export const NEW_FRAME_LABEL = 'Novo quadro'
 /** The empty pane (app/shared/empty.ts): "Dividir à direita (vazio)", "Novo quadro vazio à direita", "Nova mesa vazia". */

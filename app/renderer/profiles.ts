@@ -1,15 +1,14 @@
-// Launch profiles in the UI: the grouped list (shared by "Novo painel", where it is a radio group, and the
-// manager, where it selects the profile being edited) and the manager itself (app/renderer/index.html
-// #dlg-profiles): list on the left, one form on the right (name, agent, shell executable, args with a
-// chips preview, env rows, default folder, default flag). Validation is the daemon's (src/core/profile.ts):
-// every error it returns in Portuguese lands next to the field it is about; warnings do not block a save.
+// Launch profiles in the UI: the grouped list of the manager (selects the profile being edited; the chooser of
+// "Novo painel" / the empty pane has its own list, app/renderer/chooser.ts) and the manager itself
+// (app/renderer/index.html #dlg-profiles): list on the left, one form on the right (name, agent, shell executable,
+// args with a chips preview, env rows, default folder, default flag). Validation is the daemon's
+// (src/core/profile.ts): every error it returns in Portuguese lands next to the field it is about; warnings do not block a save.
 import type { Profile, ProfileInput, SlotState } from '../../src/daemon/protocol.ts'
 import type { ProfileAgent } from '../../src/core/profile.ts'
 import type { ProfileDeleted, ProfileSaved } from '../shared/api.ts'
 import { formatArgs, parseArgs } from './args.ts'
-import type { ChoiceGroup } from './chooser-rules.ts'
 import { askDialog } from './dialog.ts'
-import { icon, type IconName, KIND_ICON } from './icons.ts'
+import { icon, KIND_ICON } from './icons.ts'
 import { UNSAFE_LABEL, UNSAFE_TOOLTIP } from './panel.ts'
 import { deleteProfileSituation } from './situations.ts'
 
@@ -31,46 +30,15 @@ export function defaultOf(profiles: Profile[], agent: ProfileAgent): Profile | u
 }
 
 interface GroupOptions {
-  /** `radio`: a form group named `profile` (Novo painel); `select`: buttons, the selected one pressed (manager). */
+  /** `radio`: a form group named `profile`; `select`: buttons, the selected one pressed (manager). */
   mode: 'radio' | 'select'
   selectedId?: string
   onPick(id: string): void
-  /** Groups before the profiles (the empty pane, the notes: app/renderer/chooser-rules.ts), radios in the same group. */
-  leading?: readonly ChoiceGroup[]
 }
 
-/** A leading group (not a profile): the same row shape, the hint where the profiles show their args. */
-function renderChoiceGroup(group: ChoiceGroup, opts: GroupOptions): HTMLElement {
-  const el = document.createElement('div')
-  el.className = 'profile-group'
-  el.dataset.choice = group.label
-  const h = document.createElement('h4')
-  h.append(icon(group.icon as IconName), document.createTextNode(group.label))
-  el.append(h)
-  for (const item of group.items) {
-    const row = document.createElement('label')
-    row.className = 'profile-option'
-    row.dataset.id = item.value
-    row.dataset.kind = item.kind
-    const input = document.createElement('input')
-    input.type = 'radio'; input.name = 'profile'; input.value = item.value
-    input.checked = item.value === opts.selectedId
-    input.addEventListener('change', () => { if (input.checked) opts.onPick(item.value) })
-    const ic = document.createElement('span'); ic.className = 'p-icon'; ic.append(icon(item.icon as IconName))
-    const text = document.createElement('span'); text.className = 'p-text'
-    const name = document.createElement('span'); name.className = 'p-name'; name.textContent = item.name
-    const hint = document.createElement('span'); hint.className = 'p-args none'; hint.textContent = item.hint
-    text.append(name, hint)
-    row.append(input, ic, text)
-    el.append(row)
-  }
-  return el
-}
-
-/** The profiles grouped by agent, each with its name, args (small, muted), default and unsafe marks; `leading` groups first. */
+/** The profiles grouped by agent, each with its name, args (small, muted), default and unsafe marks. */
 export function renderProfileGroups(host: HTMLElement, profiles: Profile[], opts: GroupOptions): void {
   host.replaceChildren()
-  if (opts.mode === 'radio') for (const g of opts.leading ?? []) host.append(renderChoiceGroup(g, opts))
   for (const agent of AGENTS) {
     const items = profiles.filter(p => p.agent === agent)
     if (items.length === 0) continue

@@ -14,7 +14,7 @@
 <body>
   <header id="toolbar">
     <div class="tb-left">
-      <button id="btn-new" class="ib" title="Novo painel… (Ctrl+Shift+T)" aria-label="Novo painel…"><span class="i" data-icon="plus"></span></button>
+      <button id="btn-new" class="ib" title="Novo painel…" aria-label="Novo painel…"><span class="i" data-icon="plus"></span></button>
       <button id="btn-duplicate" class="ib" title="Duplicar painel (Ctrl+Alt+→)" aria-label="Duplicar painel"><span class="i" data-icon="copy"></span></button>
       <button id="btn-profiles" class="ib" title="Perfis de lançamento" aria-label="Perfis de lançamento"><span class="i" data-icon="sliders-horizontal"></span></button>
       <div class="dropdown">
@@ -96,7 +96,7 @@
     <section class="drawer-card" role="dialog" aria-label="Gaveta">
       <header class="drawer-bar">
         <div class="db-left">
-          <button id="drawer-new" class="ib" title="Novo painel na gaveta (Ctrl+Shift+T)" aria-label="Novo painel na gaveta"><span class="i" data-icon="plus"></span></button>
+          <button id="drawer-new" class="ib" title="Novo painel na gaveta" aria-label="Novo painel na gaveta"><span class="i" data-icon="plus"></span></button>
           <button id="drawer-duplicate" class="ib" title="Duplicar painel (Ctrl+Alt+→)" aria-label="Duplicar painel"><span class="i" data-icon="copy"></span></button>
         </div>
         <div class="db-mid">
@@ -138,35 +138,17 @@
     <p class="pal-empty" hidden></p>
   </dialog>
 
-  <dialog id="dlg-new" class="form" aria-labelledby="dlg-title">
-    <form id="form-new" method="dialog">
-      <header><span class="badge"><span class="i" data-icon="plus"></span></span><h2 id="dlg-title">Novo painel</h2></header>
-      <fieldset class="profiles">
-        <legend>Perfil</legend>
-        <div id="new-profiles" class="profile-groups"></div>
-        <button type="button" id="btn-manage-profiles" class="link"><span class="i" data-icon="sliders-horizontal"></span>Gerenciar perfis…</button>
-      </fieldset>
-      <label class="field">
-        <span>Pasta</span>
-        <span class="row">
-          <input type="text" id="new-cwd" name="cwd" placeholder="D:\projetos\meu-app" spellcheck="false">
-          <button type="button" id="btn-browse"><span class="i" data-icon="folder-open"></span>Procurar…</button>
-        </span>
-      </label>
-      <div class="field">
-        <span>Pastas recentes</span>
-        <ul id="recent-list" class="recent"></ul>
-      </div>
-      <div class="field" id="new-placement" hidden>
-        <span>Onde, em relação a <strong id="new-placement-ref"></strong></span>
-        <div id="new-placements" class="placements"></div>
-      </div>
-      <p id="new-error" class="error" hidden></p>
-      <footer class="actions">
-        <button type="button" id="btn-cancel">Cancelar <kbd>Esc</kbd></button>
-        <button type="submit" id="btn-create" class="primary">Abrir <kbd>Enter</kbd></button>
-      </footer>
-    </form>
+  <!-- "Novo painel…" in focus mode: the chooser (app/renderer/chooser.ts) in a window. Contextless (≡, toolbar, palette) it
+       carries the "Onde" row; opened from a pane's ⤢ it shows the pane as a chip and hands the pick back to the pane. -->
+  <dialog id="dlg-new" class="form chooser-dlg" aria-labelledby="dlg-title">
+    <header>
+      <span class="badge"><span class="i" data-icon="plus"></span></span>
+      <h2 id="dlg-title">Novo painel</h2>
+      <span id="new-context" class="ctxchip" hidden><span class="i" data-icon="tabs"></span><span>neste painel ·</span><b id="new-context-name"></b></span>
+      <span class="sp"></span>
+      <button type="button" id="btn-new-close" class="ib" title="Fechar (Esc)" aria-label="Fechar"><span class="i" data-icon="x"></span></button>
+    </header>
+    <div id="new-chooser" class="ch-host"></div>
   </dialog>
 
   <dialog id="dlg-profiles" class="form manager" aria-labelledby="profiles-title">

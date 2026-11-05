@@ -1,6 +1,6 @@
 // The fixed right end of a pane's tab strip (dockview `createRightHeaderActionComponent`, one per group):
-// "+N" (the tabs that do not fit), the status-bar toggle and "⋯" (the pane menu). They act on the group's
-// active panel and never move: the tab list shrinks to its left.
+// "+" (a new empty tab in this group, the chooser inside it), "+N" (the tabs that do not fit), the status-bar
+// toggle and "⋯" (the pane menu). They act on the group's active panel and never move: the tab list shrinks to its left.
 //
 // Overflow is measured here, not by dockview's own list (`disableTabsOverflowList`): the native one counts the
 // tabs scrolled out of a scrolling strip, so which tabs hide follows the scroll position, not use. Here the
@@ -24,13 +24,19 @@ export interface TabStripHost {
   /** "⋯": the pane menu (the same one as a right-click on the tab). `opener` is the "⋯" button. */
   paneMenu(id: string, x: number, y: number, opener: HTMLElement): void
   toggleDetails(id: string): void
+  /** The "+": an empty pane as a new tab beside `activeId` (the group's active pane), origin `add`. */
+  addTab(activeId: string): void
 }
+
+/** The title of the "+" button (the chord follows). */
+export const ADD_TAB_LABEL = 'Nova aba neste grupo'
 
 /** The title of the "⋯" button. */
 export const PANE_MENU_LABEL = 'Menu do painel'
 
 export class TabStripActions implements IHeaderActionsRenderer {
   readonly element: HTMLElement
+  private readonly add: HTMLButtonElement
   private readonly more: HTMLButtonElement
   private readonly toggle: HTMLButtonElement
   private readonly dots: HTMLButtonElement
@@ -48,6 +54,11 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.host = host
     this.element = document.createElement('div')
     this.element.className = 'tab-actions'
+    this.add = document.createElement('button')
+    this.add.className = 'tab-act add'; this.add.dataset.action = 'add-tab'; this.add.type = 'button'
+    const addTitle = `${ADD_TAB_LABEL} (${shortcutHint({ op: 'new-tab' })})`
+    this.add.title = addTitle; this.add.setAttribute('aria-label', ADD_TAB_LABEL)
+    this.add.append(icon('plus'))
     this.more = document.createElement('button')
     this.more.className = 'tab-more'; this.more.dataset.action = 'more'; this.more.hidden = true
     this.more.type = 'button'; this.more.setAttribute('aria-haspopup', 'menu'); this.more.setAttribute('aria-expanded', 'false')
@@ -58,9 +69,10 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.dots.className = 'tab-act'; this.dots.dataset.action = 'pane-menu'
     this.dots.title = PANE_MENU_LABEL; this.dots.setAttribute('aria-label', PANE_MENU_LABEL); this.dots.setAttribute('aria-haspopup', 'menu'); this.dots.setAttribute('aria-expanded', 'false'); this.dots.type = 'button'
     this.dots.append(icon('dots-three'))
-    this.element.append(this.more, this.toggle, this.dots)
+    this.element.append(this.add, this.more, this.toggle, this.dots)
     // Buttons, not drag handles: dockview must not start a group drag from here.
     this.element.addEventListener('pointerdown', ev => ev.stopPropagation())
+    this.add.addEventListener('click', ev => { ev.stopPropagation(); const id = this.activeId(); if (id) this.host.addTab(id) })
     this.more.addEventListener('click', ev => { ev.stopPropagation(); this.openHidden() })
     this.more.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.openHidden() } })
     this.dots.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.dots.click() } })

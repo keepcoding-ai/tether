@@ -2,7 +2,8 @@
 // one place that knows which frame a pane lives in and which frame has the focus, so the renderer keeps
 // talking about panes (`getPanel`, `addPanel`, `activePanel`…) and the desk routes to the right dockview.
 // Also the "+" that appears near the borders: at a frame's edge (a pane spanning that edge) and at the
-// desk's edge (a new frame there); click duplicates, right-click or Shift+click opens the chooser.
+// desk's edge (a new frame there); click ADDS an empty pane there (the chooser inside it), right-click opens the
+// menu (add, duplicate the focused pane there, the chooser in focus mode).
 import { createDockview, createGridview, GridviewPanel, type AddPanelOptions, type DockviewApi, type DockviewComponentOptions, type DockviewTheme, type GridviewApi, type IDockviewPanel, type IFrameworkPart, type SerializedDockview } from 'dockview-core'
 import type { Direction, Target } from './create.ts'
 import { DEFAULT_DESK_HUE } from './desks.ts'
@@ -29,8 +30,8 @@ export interface DeskHost {
   onLayoutChange(reasons?: ReadonlySet<string>): void
   /** A pane was added to or removed from some frame. */
   onPanelsChange(): void
-  /** A "+" was used: `frameId` is the frame whose edge it was (undefined at the desk level). */
-  onEdge(target: Target, op: 'duplicate' | 'choose', frameId: string | undefined): void
+  /** A "+" was used: `frameId` is the frame whose edge it was (undefined at the desk level). `add` is the click; `menu` the right-click, at `at`. */
+  onEdge(target: Target, op: 'add' | 'menu', frameId: string | undefined, at: { x: number; y: number }): void
   /** The focused pane of this desk may have changed (a pane or a frame got activated). */
   onActivePanelChange?(): void
 }
@@ -313,11 +314,11 @@ export class Desk {
     btn.append(icon('plus'))
     const direction = SIDE_DIRECTION[side]
     const what = level === 'desk' ? 'Novo quadro' : 'Novo painel na borda do quadro'
-    btn.title = `${what}: clique duplica o painel em foco; clique direito (ou Shift+clique) escolhe.`
+    btn.title = `${what}: escolha dentro dele o que abrir · clique direito: duplicar`
     btn.setAttribute('aria-label', what)
-    btn.addEventListener('mousedown', ev => ev.preventDefault()) // the terminal keeps the keyboard focus
-    btn.addEventListener('click', ev => { ev.stopPropagation(); this.hidePlus(); this.host.onEdge({ level, placement: direction }, ev.shiftKey ? 'choose' : 'duplicate', frameId) })
-    btn.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.hidePlus(); this.host.onEdge({ level, placement: direction }, 'choose', frameId) })
+    btn.addEventListener('mousedown', ev => ev.preventDefault()) // the keyboard moves only when the new pane's chooser takes it
+    btn.addEventListener('click', ev => { ev.stopPropagation(); this.hidePlus(); this.host.onEdge({ level, placement: direction }, 'add', frameId, { x: ev.clientX, y: ev.clientY }) })
+    btn.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.hidePlus(); this.host.onEdge({ level, placement: direction }, 'menu', frameId, { x: ev.clientX, y: ev.clientY }) })
     if (level === 'desk') this.deskPlus.set(side, btn)
     else if (frameId) {
       if (!this.framePlus.has(frameId)) this.framePlus.set(frameId, new Map())
