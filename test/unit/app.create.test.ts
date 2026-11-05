@@ -13,24 +13,24 @@ const altShift = (code: string): KeyLike => key(code, { altKey: true, shiftKey: 
 
 describe('shortcutOf', () => {
   test('Ctrl+Alt+Arrow duplicates beside the focused pane, in the arrow\'s direction', () => {
-    assert.deepEqual(shortcutOf(ctrlAlt('ArrowLeft')), { op: 'duplicate', level: 'pane', direction: 'left' })
-    assert.deepEqual(shortcutOf(ctrlAlt('ArrowRight')), { op: 'duplicate', level: 'pane', direction: 'right' })
-    assert.deepEqual(shortcutOf(ctrlAlt('ArrowUp')), { op: 'duplicate', level: 'pane', direction: 'above' })
-    assert.deepEqual(shortcutOf(ctrlAlt('ArrowDown')), { op: 'duplicate', level: 'pane', direction: 'below' })
+    assert.equal(shortcutOf(ctrlAlt('ArrowLeft')), 'pane.duplicate.pane.left')
+    assert.equal(shortcutOf(ctrlAlt('ArrowRight')), 'pane.duplicate.pane.right')
+    assert.equal(shortcutOf(ctrlAlt('ArrowUp')), 'pane.duplicate.pane.above')
+    assert.equal(shortcutOf(ctrlAlt('ArrowDown')), 'pane.duplicate.pane.below')
   })
 
   test('Ctrl+Alt+Shift+Arrow duplicates at the frame\'s edge; Alt+Shift+Arrow into a new frame at the desk\'s edge', () => {
-    assert.deepEqual(shortcutOf(ctrlAltShift('ArrowRight')), { op: 'duplicate', level: 'frame', direction: 'right' })
-    assert.deepEqual(shortcutOf(ctrlAltShift('ArrowDown')), { op: 'duplicate', level: 'frame', direction: 'below' })
-    assert.deepEqual(shortcutOf(altShift('ArrowLeft')), { op: 'duplicate', level: 'desk', direction: 'left' })
-    assert.deepEqual(shortcutOf(altShift('ArrowUp')), { op: 'duplicate', level: 'desk', direction: 'above' })
+    assert.equal(shortcutOf(ctrlAltShift('ArrowRight')), 'pane.duplicate.frame.right')
+    assert.equal(shortcutOf(ctrlAltShift('ArrowDown')), 'pane.duplicate.frame.below')
+    assert.equal(shortcutOf(altShift('ArrowLeft')), 'pane.duplicate.desk.left')
+    assert.equal(shortcutOf(altShift('ArrowUp')), 'pane.duplicate.desk.above')
   })
 
-  test('Ctrl+Shift+T adds an empty tab (the chooser inside it); D / E stay as the right / below duplicate aliases; Q quits all', () => {
-    assert.deepEqual(shortcutOf(ctrlShift('KeyT')), { op: 'new-tab' })
-    assert.deepEqual(shortcutOf(ctrlShift('KeyD')), { op: 'duplicate', level: 'pane', direction: 'right' })
-    assert.deepEqual(shortcutOf(ctrlShift('KeyE')), { op: 'duplicate', level: 'pane', direction: 'below' })
-    assert.deepEqual(shortcutOf(ctrlShift('KeyQ')), { op: 'quit-all' })
+  test('Ctrl+Shift+T reopens the last closed pane; Ctrl+\ is the duplicate alias (Ctrl+Shift+D / E are gone); Q quits all', () => {
+    assert.equal(shortcutOf(ctrlShift('KeyT')), 'pane.reopen-closed', 'Ctrl+Shift+T reopens the last closed pane (delivery 5); Ctrl+N is the new tab')
+    assert.equal(shortcutOf(ctrlShift('KeyD')), undefined, 'Ctrl+Shift+D is gone (VS Code: Run); Ctrl+\ is the alias now')
+    assert.equal(shortcutOf(key('Backslash', { ctrlKey: true })), 'pane.duplicate.pane.right')
+    assert.equal(shortcutOf(ctrlShift('KeyQ')), 'app.quit-all')
   })
 
   test('anything else stays with the terminal: plain keys, Ctrl alone, Alt alone, Win chords, Ctrl+Alt letters', () => {

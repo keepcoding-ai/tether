@@ -130,7 +130,7 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
       await page.keyboard.type(prompt, { delay: 10 })
       try { await waitPanel(page, id, t => inputText(t).includes(prompt), { timeout: 5_000, what: 'echo' }); break } catch (e) { if (i === 3) throw e }
     }
-    await page.keyboard.press('Control+Alt+N')
+    await page.keyboard.press('Control+Shift+N')
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
     for (let i = 1; ; i++) {
       await page.evaluate(id => window.tether.notice({ t: 'input', slotId: id, data: '\r' }), id)

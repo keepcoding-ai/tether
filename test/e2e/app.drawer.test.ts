@@ -241,7 +241,7 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     console.log('step 4')
     await openDrawer(page)
     const desk1 = await page.evaluate(() => window.__tether.activeDesk())
-    await page.keyboard.press('Control+Alt+N')
+    await page.keyboard.press('Control+Shift+N')
     await page.keyboard.press('Control+Tab')
     await sleep(200)
     assert.deepEqual([await page.evaluate(() => window.__tether.activeDesk()), await page.evaluate(() => document.querySelectorAll('.desk-layer').length)], [desk1, 1], 'no desk was created or switched behind the drawer')
@@ -270,7 +270,7 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     await page.waitForFunction(id => window.__tether.text(id).includes('marca-b'), b) // the new terminal got the scrollback
     assert.equal((await pidsOf(page, [b]))[b], bPid, 'moving never touches the process')
     // the drawer is the same from every desk
-    await page.keyboard.press('Control+Alt+N')
+    await page.keyboard.press('Control+Shift+N')
     await page.waitForFunction(() => window.__tether.activeDesk() !== 'desk-1')
     await openDrawer(page)
     assert.deepEqual([...(await h.drawer(page)).panes].sort(), [d, b].sort(), 'the same drawer from desk 2')
@@ -365,7 +365,7 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     await page.waitForSelector('.drawer[data-empty="true"] .drawer-empty .de-btn')
     assert.equal((await h.drawer(page)).open, true, 'closing the last pane does not close the drawer')
     assert.match((await page.locator('.drawer-empty').textContent())!, /A gaveta está vazia/)
-    assert.deepEqual(await page.locator('.drawer-empty .de-btn').allTextContents(), ['Novo painel…Ctrl+Shift+T', 'Terminal rápidoCtrl+`'])
+    assert.deepEqual(await page.locator('.drawer-empty .de-btn').allTextContents(), ['Novo painel…', 'Terminal rápidoCtrl+`'])
     await page.screenshot({ path: join(artifacts, 'drawer-empty.png') })
     await page.click('#drawer-empty-quick')
     await page.waitForFunction(() => window.__tether.drawer().panes.length === 1)

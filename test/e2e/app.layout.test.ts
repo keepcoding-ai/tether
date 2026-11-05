@@ -147,9 +147,9 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     assert.equal((await hooks.ids(page)).length, 2)
 
     // Split by shortcut: right, then below (from the active panel, same kind/folder).
-    await page.keyboard.press('Control+Shift+D')
+    await page.keyboard.press('Control+Backslash')
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 3)
-    await page.keyboard.press('Control+Shift+E')
+    await page.keyboard.press('Control+Alt+ArrowDown')
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 4)
     const ids = await hooks.ids(page)
     assert.equal(ids.length, 4)

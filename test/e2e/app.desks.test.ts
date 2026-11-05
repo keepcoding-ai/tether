@@ -1,5 +1,5 @@
 // E2E of phase C (desks), with shells only (hidden window, private home/pipe, real tetherd, CLAUDE* stripped):
-//   1. three desks with one PowerShell each: Ctrl+Alt+N creates a desk after the current one;
+//   1. three desks with one PowerShell each: Ctrl+Shift+N creates a desk after the current one;
 //   2. switching by Ctrl+1…3 and Ctrl+Tab / Ctrl+Shift+Tab; only the active layer is visible;
 //   3. a shell on a hidden desk keeps printing into its terminal (same PID, same size: nothing resized);
 //   4. "Mover…" from the tab's menu moves a pane (as a tab of desk 1) (same PID, its screen still there);
@@ -24,6 +24,7 @@ type DeskRow = { id: string; name: string; color: string; panes: string[]; atten
 type Hooks = {
   panelIds(): string[]
   activeId(): string | undefined
+  runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
   slots(): SlotState[]
   text(id: string): string
   connection(): { connected: boolean; pid?: number } | undefined
@@ -131,10 +132,10 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     assert.deepEqual((await h.desks(page)).map(d => [d.id, d.name]), [['desk-1', 'Mesa 1']])
     await page.waitForSelector('#desk-switch .seg.on[data-desk="desk-1"]')
     const a = await createShell(page, root)
-    await page.keyboard.press('Control+Alt+N')
+    await page.keyboard.press('Control+Shift+N')
     await expectActive(page, 'desk-2')
     const b = await createShell(page, root)
-    await page.keyboard.press('Control+Alt+N')
+    await page.keyboard.press('Control+Shift+N')
     await expectActive(page, 'desk-3')
     const c = await createShell(page, root)
     const desks3 = await h.desks(page)
@@ -205,7 +206,7 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     await page.click('#ctx-menu li:has-text("Mover para a esquerda")')
     assert.deepEqual((await h.desks(page)).map(d => d.id), ['desk-1', 'desk-2', 'desk-3'])
     await page.keyboard.press('Control+2'); await expectActive(page, 'desk-2')
-    await page.keyboard.press('Control+Alt+Shift+N')
+    await page.evaluate(() => window.__tether.runCommand('desk.new-before'))
     await expectActive(page, 'desk-4')
     assert.deepEqual((await h.desks(page)).map(d => d.id), ['desk-1', 'desk-4', 'desk-2', 'desk-3'], 'the new desk sits before the current one')
     await page.screenshot({ path: join(artifacts, 'desks-strip.png') })
@@ -230,7 +231,7 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     assert.equal(await h.deskOf(page, b), 'desk-3')
     assert.equal((await pidsOf(page, [b]))[b], pids[b], 'the moved shell still runs')
     // A new desk with a shell, closed with "stop": the shell ends, its slot stays (Slots fechados).
-    await page.keyboard.press('Control+Alt+N')
+    await page.keyboard.press('Control+Shift+N')
     const d = await createShell(page, root)
     const deskD = (await h.deskOf(page, d))!
     const pidD = (await pidsOf(page, [d]))[d]!

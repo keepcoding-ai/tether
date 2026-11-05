@@ -261,7 +261,7 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     await createShell(page, root)
     const [a] = await page.evaluate(() => window.__tether.panelIds())
     await focusPane(page, a!)
-    await page.keyboard.press('Control+Shift+D')
+    await page.keyboard.press('Control+Backslash')
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 2)
     await focusPane(page, a!)
     await page.keyboard.press('Alt+Shift+ArrowRight')

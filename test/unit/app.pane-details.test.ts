@@ -38,9 +38,9 @@ describe('pane details params', () => {
   })
 
   test('the shortcut is Ctrl+Shift+H and leaves DevTools (Ctrl+Shift+I) alone', () => {
-    assert.equal(shortcutHint({ op: 'pane-details' }), 'Ctrl+Shift+H')
+    assert.equal(shortcutHint('pane.details', false), 'Ctrl+Shift+H')
     const ev = { ctrlKey: true, shiftKey: true, altKey: false, metaKey: false }
-    assert.deepEqual(shortcutOf({ ...ev, code: 'KeyH' }), { op: 'pane-details' })
+    assert.equal(shortcutOf({ ...ev, code: 'KeyH' }, false), 'pane.details')
     assert.equal(shortcutOf({ ...ev, code: 'KeyI' }), undefined)
   })
 })

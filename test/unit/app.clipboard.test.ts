@@ -4,7 +4,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { decodeOsc52 } from '../../app/renderer/clipboard.ts'
-import { PANE_SHORTCUTS, paneShortcutHint, paneShortcutOf, SHORTCUTS, chordLabel, chordOn, type Chord } from '../../app/renderer/shortcuts.ts'
+import { PANE_SHORTCUTS, paneShortcutHint, paneShortcutOf, resolvedDefaults, chordLabel, chordOn, type Chord } from '../../app/renderer/shortcuts.ts'
 
 type Mods = { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }
 const key = (code: string, m: Mods = {}, type = 'keydown') =>
@@ -47,12 +47,9 @@ describe('pane clipboard keys', () => {
     assert.equal(paneShortcutHint('paste'), 'Ctrl+Shift+V')
     const keyOf = (c: Chord): string => `${c.ctrl ? 'C' : ''}${c.alt ? 'A' : ''}${c.shift ? 'S' : ''}${c.meta ? 'M' : ''}+${c.code}`
     for (const mac of [false, true]) {
-      // The one deliberate overlap: the markdown preview takes VS Code's Ctrl+Shift+V (Cmd+Shift+V) where there is a markdown note
-      // and leaves the key alone elsewhere (Command.keepKeyWhenUnavailable); a terminal decides its own paste before the app is asked.
-      const app = new Set(SHORTCUTS.filter(s => s.command.op !== 'md-preview').map(s => chordOn(s, mac)).filter((c): c is Chord => c !== null).map(keyOf))
-      const preview = SHORTCUTS.filter(s => s.command.op === 'md-preview').map(s => chordOn(s, mac)).filter((c): c is Chord => c !== null).map(keyOf)
-      const paste = PANE_SHORTCUTS.filter(e => e.command === 'paste').map(e => chordOn(e, mac)).filter((c): c is Chord => c !== null).map(keyOf)
-      assert.deepEqual(preview.filter(k => !paste.includes(k)), [], 'the preview chord is exactly a paste chord')
+      // The app's keys that are the app's INSIDE A TERMINAL (the markdown preview takes Ctrl+Shift+V in a note only; in a
+      // terminal the key stays the pane's paste): none of them may be a pane chord.
+      const app = new Set(resolvedDefaults(mac).filter(b => b.where.includes('terminal')).map(b => keyOf(b.keys[0]!)))
       const seen = new Set<string>()
       for (const entry of PANE_SHORTCUTS) {
         const chord = chordOn(entry, mac)

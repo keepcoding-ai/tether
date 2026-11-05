@@ -2,7 +2,7 @@
 // the renderer; the daemon is never asked anything by the test):
 //   1. fresh home → "+ Novo painel" → Claude in a temp folder → trust dialog accepted with the keyboard →
 //      "responda apenas: tamarindo" → the answer shows up in the panel's xterm;
-//   2. Ctrl+Shift+D → a second Claude panel in the same folder → "responda apenas: carambola";
+//   2. Ctrl+\ → a second Claude panel in the same folder → "responda apenas: carambola";
 //   3. kill the Electron main by PID (window crash) → relaunch → both panels back, same slot ids, same claude
 //      PIDs (the agents never died), scrollback shows the answers, panel 1 recalls tamarindo;
 //   4. kill the daemon by PID (reboot) → relaunch → both panels resume (running) on their previous session ids
@@ -230,9 +230,9 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     const a1 = await ask(page, id1, 'responda apenas: tamarindo')
     assert.match(a1, /tamarindo/i, `panel 1 answered: ${JSON.stringify(a1)}`)
 
-    // ---- 2. Ctrl+Shift+D → second Claude panel, same folder ----
+    // ---- 2. Ctrl+\ → second Claude panel, same folder ----
     await focusPanel(page, id1)
-    await page.keyboard.press('Control+Shift+D')
+    await page.keyboard.press('Control+Backslash')
     await tabCount(page, 2)
     const id2 = (await hooks.ids(page)).find(id => id !== id1)!
     assert.ok(id2, 'panel 2 exists')

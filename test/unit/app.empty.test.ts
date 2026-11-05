@@ -132,18 +132,18 @@ describe('the commands and the chord of the empty pane', () => {
   test('Ctrl+Shift+Arrow splits empty beside the pane (the frame and desk levels have no chord; Ctrl+Alt+N stays the desk\'s)', () => {
     const r = new CommandRegistry(() => CTX)
     r.register(...list)
-    assert.deepEqual(shortcutOf(key('ArrowRight', { ctrl: true, shift: true }), false), { op: 'split-empty', direction: 'right' })
-    assert.deepEqual(shortcutOf(key('ArrowUp', { ctrl: true, shift: true }), false), { op: 'split-empty', direction: 'above' })
-    assert.equal(r.byShortcut({ op: 'split-empty', direction: 'below' })?.id, 'pane.split-empty.pane.below')
-    assert.equal(r.hint(byId.get('pane.split-empty.pane.right')!), 'Ctrl+Shift+→')
-    assert.equal(r.hint(byId.get('pane.split-empty.frame.right')!), '')
-    assert.equal(r.hint(byId.get('frame.new-empty.right')!), '')
-    assert.equal(r.hint(byId.get('desk.new-empty')!), '')
-    // The existing chords are untouched.
-    assert.equal(shortcutHint({ op: 'duplicate', level: 'pane', direction: 'right' }, false), 'Ctrl+Alt+→')
-    assert.equal(shortcutHint({ op: 'duplicate', level: 'frame', direction: 'right' }, false), 'Ctrl+Alt+Shift+→')
-    assert.equal(shortcutHint({ op: 'duplicate', level: 'desk', direction: 'right' }, false), 'Alt+Shift+→')
-    assert.equal(shortcutHint({ op: 'desk-new', side: 'after' }, false), 'Ctrl+Alt+N')
+    assert.equal(shortcutOf(key('ArrowRight', { ctrl: true, shift: true }), false), 'pane.split-empty.pane.right')
+    assert.equal(shortcutOf(key('ArrowUp', { ctrl: true, shift: true }), false), 'pane.split-empty.pane.above')
+    assert.equal(shortcutOf(key('ArrowDown', { ctrl: true, shift: true }), false), 'pane.split-empty.pane.below')
+    assert.equal(r.hint(byId.get('pane.split-empty.pane.right')!, false), 'Ctrl+Shift+→')
+    assert.equal(r.hint(byId.get('pane.split-empty.frame.right')!, false), '')
+    assert.equal(r.hint(byId.get('frame.new-empty.right')!, false), '')
+    assert.equal(r.hint(byId.get('desk.new-empty')!, false), '')
+    // The existing chords are untouched (the desk's key is Ctrl+Shift+N since delivery 5).
+    assert.equal(shortcutHint('pane.duplicate.pane.right', false), 'Ctrl+Alt+→')
+    assert.equal(shortcutHint('pane.duplicate.frame.right', false), 'Ctrl+Alt+Shift+→')
+    assert.equal(shortcutHint('pane.duplicate.desk.right', false), 'Alt+Shift+→')
+    assert.equal(shortcutHint('desk.new', false), 'Ctrl+Shift+N')
   })
 
   test('running goes to the host with the target', async () => {

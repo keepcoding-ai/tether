@@ -176,10 +176,10 @@ test('app md-preview: Ctrl+Shift+V, GFM, nothing hostile runs, live, scroll sync
     await page.waitForFunction(id => window.__tether.note(id)?.focused === true, note.id)
     cmds = await page.evaluate(() => window.__tether.commands())
     const open = cmds.find(c => c.id === 'markdown.preview')!
-    assert.equal(open.title, 'Markdown: abrir prévia')
+    assert.equal(open.title, 'Prévia: abrir')
     assert.equal(open.hint, 'Ctrl+Shift+V')
     assert.equal(open.available, true)
-    assert.equal(cmds.find(c => c.id === 'markdown.preview.side')?.title, 'Markdown: abrir prévia ao lado')
+    assert.equal(cmds.find(c => c.id === 'markdown.preview.side')?.title, 'Prévia: abrir ao lado')
     assert.equal(cmds.find(c => c.id === 'markdown.preview.side')?.hint, '', 'Ctrl+K V comes with delivery 5')
     assert.ok(await page.locator('.tab-act[data-action="md-preview-side"]:visible').count() >= 1, 'the strip has the preview button for a markdown note')
     await page.keyboard.press('Control+Shift+V')

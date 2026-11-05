@@ -165,11 +165,10 @@ describe('the empty pane\'s origin and the new-tab command', () => {
     const list = appCommands(host)
     const r = new CommandRegistry(() => ({ pane: false, desks: 1, drawerOpen: false, focus: 'none' } satisfies CommandContext))
     r.register(...list)
-    const key: KeyLike = { code: 'KeyT', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false }
-    assert.deepEqual(shortcutOf(key, false), { op: 'new-tab' })
-    assert.equal(r.byShortcut({ op: 'new-tab' })?.id, 'pane.new-tab')
-    assert.equal(r.hint(list.find(c => c.id === 'pane.new-tab')!), 'Ctrl+Shift+T')
-    assert.equal(r.hint(list.find(c => c.id === 'pane.new')!), '')
+    const key: KeyLike = { code: 'KeyN', ctrlKey: true, shiftKey: false, altKey: false, metaKey: false }
+    assert.equal(shortcutOf(key, false), 'pane.new-tab', 'Ctrl+N since delivery 5 (Ctrl+Shift+T reopens the last closed pane)')
+    assert.equal(r.hint(list.find(c => c.id === 'pane.new-tab')!, false), 'Ctrl+N')
+    assert.equal(r.hint(list.find(c => c.id === 'pane.new')!, false), 'Ctrl+K Ctrl+O')
     assert.equal(list.find(c => c.id === 'pane.new-tab')!.title, 'Nova aba neste grupo')
     await r.run('pane.new-tab')
     await r.run('pane.new')

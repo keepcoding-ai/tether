@@ -163,7 +163,7 @@ test('in-app dialogs: close panel, remember, quit all, still closing (no native 
 
     const a = await createShellPanel(page, root)
     const b = await createShellPanel(page, root)
-    await page.keyboard.press('Control+Shift+D') // a third panel, side by side: the screenshots show toolbar + tabs + split
+    await page.keyboard.press('Control+Backslash') // a third panel, side by side: the screenshots show toolbar + tabs + split
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 3)
     const c = (await hooks.ids(page)).find(i => i !== a && i !== b)!
     await page.waitForFunction(id => /PS.*>/.test(window.__tether.text(id).replace(/\s+/g, '')), c, { timeout: 20_000 })

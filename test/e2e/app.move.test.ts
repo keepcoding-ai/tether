@@ -129,7 +129,7 @@ test('move dialog: pane beside / as a tab / drawer in and out / whole frame, sam
     // ---- 1. desk 1: a, b (one group); desk 2: c ----
     console.log('step 1')
     const a = await createShell(page, root)
-    await page.keyboard.press('Control+Alt+N')
+    await page.keyboard.press('Control+Shift+N')
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
     const c = await createShell(page, root)
     await page.keyboard.press('Control+1')

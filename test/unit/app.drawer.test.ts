@@ -93,9 +93,9 @@ describe('the drawer chords', () => {
   const ev = (code: string, mods: { ctrl?: boolean; shift?: boolean; alt?: boolean } = {}) => ({ code, ctrlKey: !!mods.ctrl, shiftKey: !!mods.shift, altKey: !!mods.alt, metaKey: false })
 
   test('Ctrl+` toggles, and Ctrl+Shift+G is the alias; the hint shows the backquote', () => {
-    assert.deepEqual(shortcutOf(ev('Backquote', { ctrl: true })), { op: 'drawer-toggle' })
-    assert.deepEqual(shortcutOf(ev('KeyG', { ctrl: true, shift: true })), { op: 'drawer-toggle' })
-    assert.equal(shortcutHint({ op: 'drawer-toggle' }), 'Ctrl+`')
+    assert.equal(shortcutOf(ev('Backquote', { ctrl: true })), 'drawer.toggle')
+    assert.equal(shortcutOf(ev('KeyG', { ctrl: true, shift: true })), 'drawer.toggle')
+    assert.equal(shortcutHint('drawer.toggle'), 'Ctrl+`')
   })
 
   test('a bare backquote, Alt or Win variants are the terminal\'s', () => {

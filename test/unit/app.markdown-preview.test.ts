@@ -270,13 +270,14 @@ describe('preview pane identity, params and place in the layout', () => {
 describe('Ctrl+Shift+V and the commands', () => {
   const ctrlShiftV = { ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, code: 'KeyV' }
 
-  test('the chord is the app\'s "md-preview"; the editor leaves it to the app; a terminal still pastes first', () => {
-    assert.deepEqual(shortcutOf(ctrlShiftV, false), { op: 'md-preview' })
-    assert.deepEqual(editorKeyOwner(ctrlShiftV, false), { owner: 'app', shortcut: { op: 'md-preview' } })
+  test('the key is "markdown.preview" in a note only; the editor leaves it to the app; a terminal pastes', () => {
+    assert.equal(shortcutOf(ctrlShiftV, false, 'note'), 'markdown.preview')
+    assert.deepEqual(editorKeyOwner(ctrlShiftV, false), { owner: 'app', command: 'markdown.preview' })
     assert.equal(paneShortcutOf({ ...ctrlShiftV, type: 'keydown' }, false, false), 'paste', 'the terminal\'s own pane shortcut is decided before the app\'s')
-    assert.equal(shortcutHint({ op: 'md-preview' }, false), 'Ctrl+Shift+V')
-    assert.deepEqual(shortcutOf({ ...ctrlShiftV, ctrlKey: false, metaKey: true }, true), { op: 'md-preview' })
-    assert.equal(terminalKeyOwner(ctrlShiftV, false).owner, 'app')
+    assert.equal(shortcutHint('markdown.preview', false), 'Ctrl+Shift+V')
+    assert.equal(shortcutHint('markdown.preview.side', false), 'Ctrl+K V')
+    assert.equal(shortcutOf({ ...ctrlShiftV, ctrlKey: false, metaKey: true }, true, 'note'), 'markdown.preview')
+    assert.equal(terminalKeyOwner(ctrlShiftV, false).owner, 'terminal', 'in a terminal the key is the pane\'s paste (the binding is note-only)')
   })
 
   const calls: string[] = []
@@ -289,9 +290,9 @@ describe('Ctrl+Shift+V and the commands', () => {
     const open = registry.get('markdown.preview')!
     const side = registry.get('markdown.preview.side')!
     const source = registry.get('markdown.source')!
-    assert.equal(open.title, 'Markdown: abrir prévia')
-    assert.equal(side.title, 'Markdown: abrir prévia ao lado')
-    assert.equal(side.shortcut, undefined, 'Ctrl+K V comes with the two-key chords')
+    assert.equal(open.title, 'Prévia: abrir')
+    assert.equal(side.title, 'Prévia: abrir ao lado')
+    assert.equal(registry.hint(side, false), 'Ctrl+K V', 'the two-key chord of VS Code')
     assert.equal(registry.hint(open, false), 'Ctrl+Shift+V')
     assert.ok(open.keepKeyWhenUnavailable, 'Ctrl+Shift+V keeps pasting where there is nothing to preview')
     assert.ok(registry.isAvailable(open, ctx('note')) && registry.isAvailable(side, ctx('note')))

@@ -128,9 +128,9 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter 
     const titles = all.filter(c => st.shown.includes(c.id)).sort((a, b) => st.shown.indexOf(a.id) - st.shown.indexOf(b.id)).map(c => c.title)
     assert.deepEqual(titles, [...titles].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })), 'by title')
     assert.ok(available.includes('pane.close') && available.includes('desk.new') && !available.includes('desk.close'), `availability with one pane and one desk: ${available.join(' ')}`)
-    assert.equal(await page.locator('#palette-list .pal-item[data-command="pane.new-tab"] kbd').innerText(), 'Ctrl+Shift+T')
+    assert.equal(await page.locator('#palette-list .pal-item[data-command="pane.new-tab"] kbd').innerText(), 'Ctrl+N')
     assert.equal(await page.locator('#palette-list .pal-item[data-command="drawer.toggle"] kbd').innerText(), 'Ctrl+`')
-    assert.equal(await page.locator('#palette-list .pal-item[data-command="pane.rename"] kbd').count(), 0, 'no hint without a chord')
+    assert.equal(await page.locator('#palette-list .pal-item[data-command="pane.move"] kbd').count(), 0, 'no hint without a chord')
     assert.equal(await page.locator('#palette-list .pal-item.selected').getAttribute('data-command'), st.shown[0], 'the first row is selected')
 
     // 2. Letters apart: "nvmesa" → "Nova mesa" first, highlighted; Enter runs it and closes the box.
@@ -199,7 +199,7 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter 
     // 5. The ≡ menu: hints from the registry; pane items greyed without a pane.
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"] kbd').innerText(), 'Ctrl+Shift+T')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"] kbd').innerText(), 'Ctrl+N')
     assert.equal(await page.locator('#app-menu li[data-command="palette.show"] kbd').innerText(), 'Ctrl+Shift+P')
     assert.equal(await page.locator('#app-menu li[data-command="pane.move"]').getAttribute('aria-disabled'), 'false')
     assert.equal(await page.locator('#app-menu li[data-command="desk.close"]').getAttribute('aria-disabled'), 'false', 'two desks now')

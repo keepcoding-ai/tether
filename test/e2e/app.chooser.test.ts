@@ -2,7 +2,7 @@
 //   1. "Novo painel…" (toolbar) with no pane: the popup has no "Onde"; a PowerShell opens from it by a click;
 //   2. the "+" of the group's tab strip: an empty tab (origin add) in the group, the pane's folder suggested, the
 //      keyboard in the search; Recentes shows the shell just opened and is the highlight; Enter opens it in place;
-//   3. Ctrl+Shift+T from inside the terminal: an empty tab (origin add) in the same group; Esc closes it;
+//   3. Ctrl+N from inside the terminal: an empty tab (origin add) in the same group; Esc closes it;
 //   4. "Dividir à direita (vazio)" (palette): origin layout, no Cancelar; Esc leaves it there;
 //   5. the digits open the item with that number as shown (renumbered under a filter);
 //   6. ⤢: the same chooser as a popup with the typed text, a context chip, no "Onde"; Esc hands the text back;
@@ -98,7 +98,7 @@ const place = (page: Page, id: string) => page.evaluate(id => ({ frame: window._
 const newOf = (before: string[], after: string[]): string => { const fresh = after.filter(id => !before.includes(id)); assert.equal(fresh.length, 1, `one new pane: ${after.join(', ')}`); return fresh[0]! }
 const noDialog = (page: Page) => page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
 
-test('app chooser: popup, strip "+", Ctrl+Shift+T, origins, digits, focus mode, edge "+", Onde', async () => {
+test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "+", Onde', async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
@@ -115,7 +115,7 @@ test('app chooser: popup, strip "+", Ctrl+Shift+T, origins, digits, focus mode, 
     await page.waitForFunction(() => window.__tether.profiles().length >= 3)
 
     // 1. The popup with no pane: three bands, no "Onde", Claude highlighted (no history), a click opens.
-    assert.equal(await page.locator('#btn-new').getAttribute('title').then(t => t?.includes('Ctrl+Shift+T')), true, 'the toolbar title explains the chord')
+    assert.equal(await page.locator('#btn-new').getAttribute('title').then(t => t?.includes('Ctrl+N')), true, 'the toolbar title explains the chord')
     await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
     assert.equal(await page.locator('#dlg-new .where').count(), 0, 'nothing to be relative to: no "Onde"')
@@ -157,9 +157,9 @@ test('app chooser: popup, strip "+", Ctrl+Shift+T, origins, digits, focus mode, 
     assert.deepEqual(await place(page, shell2), { ...shellPlace, index: 1 }, 'the shell took the empty tab\'s place')
     assert.equal((await page.evaluate(() => window.__tether.slots())).find(s => s.slotId === shell2)?.cwd, work)
 
-    // 3. Ctrl+Shift+T inside the terminal: an empty tab (add) in the group; Esc closes it.
+    // 3. Ctrl+N inside the terminal: an empty tab (add) in the group; Esc closes it.
     await focusShell(page, shell2)
-    await page.keyboard.press('Control+Shift+T')
+    await page.keyboard.press('Control+N')
     await page.waitForFunction(() => window.__tether.empties().length === 1)
     const e2 = (await empties(page))[0]!
     assert.equal(e2.origin, 'add')
@@ -208,7 +208,7 @@ test('app chooser: popup, strip "+", Ctrl+Shift+T, origins, digits, focus mode, 
 
     // 6. ⤢: the same chooser in focus mode with the typed text; Esc hands it back.
     await focusShell(page, shell!)
-    await page.keyboard.press('Control+Shift+T')
+    await page.keyboard.press('Control+N')
     await page.waitForFunction(() => window.__tether.empties().length === 1)
     const e4 = (await empties(page))[0]!
     await page.waitForFunction(id => window.__tether.empty(id)?.focused === true, e4.id)
@@ -297,7 +297,7 @@ test('app chooser: popup, strip "+", Ctrl+Shift+T, origins, digits, focus mode, 
 
     // 9. The origin travels in layout.json; screenshots on an empty pane, light and dark.
     await focusShell(page, shell!)
-    await page.keyboard.press('Control+Shift+T')
+    await page.keyboard.press('Control+N')
     await page.waitForFunction(() => window.__tether.empties().length === 1)
     const e6 = (await empties(page))[0]!
     await sleep(700) // the layout debounce

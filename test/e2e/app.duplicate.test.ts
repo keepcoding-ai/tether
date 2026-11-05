@@ -1,6 +1,6 @@
 // E2E of the two new-panel operations (hidden windows, private home/pipe, real tetherd, real Claude on haiku,
 // CLAUDE* stripped from the environment):
-//   1. "Novo painel…" (Ctrl+Shift+T, toolbar, ≡ menu, tab menu) opens the chooser; with no panel there is no
+//   1. "Novo painel…" (Ctrl+N, toolbar, ≡ menu, tab menu) opens the chooser; with no panel there is no
 //      "Onde" row; a Claude panel is opened from it and answers a seed word;
 //   2. "Duplicar painel" (Ctrl+Alt+→ from inside the terminal): a second Claude panel appears to the RIGHT of
 //      the first with the same folder and profile, as a NEW session (different session id, `--session-id` and no
@@ -259,7 +259,7 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     await setTheme(page, 'dark')
     await page.waitForFunction(() => window.__tether.profiles().length >= 3)
 
-    // ---- 1. the toolbar names the two operations; Ctrl+Shift+T opens the chooser; no "Onde" row without a panel ----
+    // ---- 1. the toolbar names the two operations; Ctrl+N opens the chooser; no "Onde" row without a panel ----
     assert.equal(await page.locator('#btn-new').getAttribute('aria-label'), 'Novo painel…')
     assert.equal(await page.locator('#btn-duplicate').getAttribute('aria-label'), 'Duplicar painel')
     assert.equal(await page.locator('#btn-split-right, #btn-split-down').count(), 0, 'the old "Direita"/"Abaixo" clone buttons are gone')
@@ -346,8 +346,8 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     // ---- 5. both operations in the ≡ menu and in the tab menu; the tab's "Novo painel…" is relative to that tab ----
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    assert.equal(await page.locator('#app-menu li[data-command="pane.new"]').textContent(), 'Novo painel…')
-    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"]').textContent(), 'Nova aba neste grupoCtrl+Shift+T')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new"]').textContent(), 'Novo painel…Ctrl+K Ctrl+O')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"]').textContent(), 'Nova aba neste grupoCtrl+N')
     assert.equal(await page.locator('#app-menu li[data-command="pane.duplicate.pane.right"]').getAttribute('aria-disabled'), 'false')
     assert.equal(await page.locator('#app-menu li[data-command="pane.duplicate.pane.below"]').count(), 1)
     await page.keyboard.press('Escape')

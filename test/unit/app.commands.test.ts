@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appCommands, type CommandHost } from '../../app/renderer/app-commands.ts'
 import { CommandRegistry, isCommandId, RECENT_LIMIT, type Command, type CommandContext } from '../../app/renderer/commands.ts'
-import { chordLabel, chordOn, SHORTCUTS } from '../../app/renderer/shortcuts.ts'
+import { keysLabel, PREFIX_COMMAND, resolvedDefaults, shortcutHint } from '../../app/renderer/shortcuts.ts'
 
 const CTX: CommandContext = { pane: true, desks: 3, drawerOpen: false, focus: 'terminal' }
 
@@ -23,6 +23,8 @@ function stubHost(calls: string[]): CommandHost {
     restartDaemon: log('restartDaemon'), reloadAll: log('reloadAll'), relaunchApp: log('relaunchApp'), toggleDevTools: log('toggleDevTools'), toggleFullscreen: log('toggleFullscreen'), showPalette: log('showPalette'),
     newNote: log('newNote'), openNote: log('openNote'), saveNoteAs: log('saveNoteAs'), markdownPreview: log('markdownPreview'), markdownSource: log('markdownSource'),
     splitEmpty: log('splitEmpty'), newEmptyDesk: log('newEmptyDesk'),
+    saveNote: log('saveNote'), reopenClosed: log('reopenClosed'), cycleTab: log('cycleTab'), goToTab: log('goToTab'), focusNeighbour: log('focusNeighbour'),
+    closeFrameTabs: log('closeFrameTabs'), showKeybindings: log('showKeybindings'), recordKeybinding: log('recordKeybinding'),
   }
 }
 
@@ -66,16 +68,15 @@ describe('command registry', () => {
     assert.deepEqual(ran, ['new', 'close'])
   })
 
-  test('byShortcut finds the command of a shortcut op, payload included; hint reads the chord table', () => {
+  test('hint reads the key table by command id; a display-only chord is the fallback', () => {
     const r = new CommandRegistry(() => CTX)
     r.register(
-      cmd('pane.duplicate.pane.right', { shortcut: { op: 'duplicate', level: 'pane', direction: 'right' } }),
-      cmd('pane.duplicate.pane.below', { shortcut: { op: 'duplicate', level: 'pane', direction: 'below' } }),
+      cmd('pane.duplicate.pane.right'),
+      cmd('pane.duplicate.pane.below'),
       cmd('window.close', { displayChord: { mod: true, shift: true, code: 'KeyW' } }),
       cmd('plain.one'),
     )
-    assert.equal(r.byShortcut({ op: 'duplicate', level: 'pane', direction: 'below' })?.id, 'pane.duplicate.pane.below')
-    assert.equal(r.byShortcut({ op: 'duplicate', level: 'frame', direction: 'below' }), undefined)
+    assert.equal(r.hint('pane.duplicate.pane.below', false), 'Ctrl+Alt+↓')
     assert.equal(r.hint('pane.duplicate.pane.right', false), 'Ctrl+Alt+→')
     assert.equal(r.hint('pane.duplicate.pane.right', true), '⌥⌘→')
     assert.equal(r.hint('window.close', false), 'Ctrl+Shift+W', 'display-only chord')
@@ -114,15 +115,13 @@ describe('the app commands', () => {
     }
   })
 
-  test('every chord of the shortcut table reaches exactly one command (no orphan key, no two commands on one op)', () => {
+  test('every default binding of the key table names a command that exists (no orphan key)', () => {
     const r = new CommandRegistry(() => CTX)
     r.register(...list)
     for (const mac of [false, true]) {
-      for (const e of SHORTCUTS) {
-        const chord = chordOn(e, mac)
-        if (!chord) continue
-        const owners = list.filter(c => c.shortcut && r.byShortcut(e.command) === c)
-        assert.equal(owners.length, 1, `${chordLabel(chord, mac)} → ${owners.map(c => c.id).join(', ') || 'nobody'}`)
+      for (const b of resolvedDefaults(mac)) {
+        if (b.command === PREFIX_COMMAND) continue
+        assert.ok(r.get(b.command), `${keysLabel(b.keys, mac)} → ${b.command} (nobody)`)
       }
     }
   })
@@ -131,8 +130,8 @@ describe('the app commands', () => {
     for (const id of ['pane.new', 'pane.duplicate.pane.right', 'pane.close', 'desk.new', 'desk.next', 'desk.previous', 'desk.go.1', 'desk.go.9', 'drawer.toggle', 'theme.dark', 'theme.light', 'theme.auto', 'font.increase', 'palette.show', 'palette.quick-open', 'app.quit-all', 'window.close']) {
       assert.ok(byId.has(id), id)
     }
-    assert.equal(byId.get('palette.show')!.shortcut?.op, 'palette')
-    assert.equal(byId.get('palette.quick-open')!.shortcut?.op, 'quick-open')
+    assert.equal(shortcutHint('palette.show', false), 'Ctrl+Shift+P')
+    assert.equal(shortcutHint('palette.quick-open', false), 'Ctrl+P')
     assert.equal(byId.get('drawer.toggle')!.ignoreRepeat, true, 'a held Ctrl+` is one toggle')
     assert.equal(byId.get('app.quit-all')!.danger, true)
   })

@@ -225,15 +225,15 @@ describe('chords inside the editor', () => {
   })
 
   test('the workbench chords stay the app\'s: palette, quick open, chooser, desks, drawer, font size, status bar', () => {
-    assert.deepEqual(editorKeyOwner(key('KeyP', { ctrl: true, shift: true }), false), { owner: 'app', shortcut: { op: 'palette' } })
-    assert.deepEqual(editorKeyOwner(key('KeyP', { ctrl: true }), false), { owner: 'app', shortcut: { op: 'quick-open' } })
+    assert.deepEqual(editorKeyOwner(key('KeyP', { ctrl: true, shift: true }), false), { owner: 'app', command: 'palette.show' })
+    assert.deepEqual(editorKeyOwner(key('KeyP', { ctrl: true }), false), { owner: 'app', command: 'palette.quick-open' })
     assert.equal(editorKeyOwner(key('KeyT', { ctrl: true, shift: true }), false).owner, 'app')
     assert.equal(editorKeyOwner(key('Tab', { ctrl: true }), false).owner, 'app')
     assert.equal(editorKeyOwner(key('Digit2', { ctrl: true }), false).owner, 'app')
     assert.equal(editorKeyOwner(key('Backquote', { ctrl: true }), false).owner, 'app')
     assert.equal(editorKeyOwner(key('Equal', { ctrl: true, shift: true }), false).owner, 'app')
     assert.equal(editorKeyOwner(key('KeyH', { ctrl: true, shift: true }), false).owner, 'app')
-    assert.equal(editorKeyOwner(key('KeyD', { ctrl: true, shift: true }), false).owner, 'app', 'Ctrl+Shift+D duplicates (VS Code: the Run view, a workbench chord)')
+    assert.equal(editorKeyOwner(key('Backslash', { ctrl: true }), false).owner, 'app', 'Ctrl+\ duplicates (VS Code: split editor, a workbench chord)')
     assert.deepEqual(editorKeyOwner(key('KeyD', { ctrl: true }), false), { owner: 'editor' }, 'Ctrl+D is not an app chord: the editor adds the next match')
     assert.deepEqual(editorKeyOwner(key('KeyL', { ctrl: true, shift: true }), false), { owner: 'editor' }, 'Ctrl+Shift+L is not an app chord: select all occurrences')
   })

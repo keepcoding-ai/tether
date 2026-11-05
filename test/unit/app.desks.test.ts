@@ -100,26 +100,27 @@ describe('desk model', () => {
 describe('desk chords', () => {
   const key = (code: string, mods: { ctrl?: boolean; alt?: boolean; shift?: boolean } = {}) =>
     shortcutOf({ ctrlKey: !!mods.ctrl, altKey: !!mods.alt, shiftKey: !!mods.shift, metaKey: false, code })
-  test('Ctrl+Tab / Ctrl+Shift+Tab cycle, Ctrl+1…9 go, Ctrl+Alt+(Shift+)N create', () => {
-    assert.deepEqual(key('Tab', { ctrl: true }), { op: 'desk-cycle', step: 1 })
-    assert.deepEqual(key('Tab', { ctrl: true, shift: true }), { op: 'desk-cycle', step: -1 })
-    for (let n = 1; n <= 9; n++) assert.deepEqual(key(`Digit${n}`, { ctrl: true }), { op: 'desk-go', position: n })
-    assert.equal(key('Digit0', { ctrl: true }), undefined)
-    assert.deepEqual(key('KeyN', { ctrl: true, alt: true }), { op: 'desk-new', side: 'after' })
-    assert.deepEqual(key('KeyN', { ctrl: true, alt: true, shift: true }), { op: 'desk-new', side: 'before' })
+  test('Ctrl+Tab / Ctrl+Shift+Tab cycle, Ctrl+1…9 go, Ctrl+Shift+N creates (delivery 5: Ctrl+Alt+N is gone)', () => {
+    assert.equal(key('Tab', { ctrl: true }), 'desk.next')
+    assert.equal(key('Tab', { ctrl: true, shift: true }), 'desk.previous')
+    for (let n = 1; n <= 9; n++) assert.equal(key(`Digit${n}`, { ctrl: true }), `desk.go.${n}`)
+    assert.equal(key('Digit0', { ctrl: true }), 'font.reset')
+    assert.equal(key('KeyN', { ctrl: true, shift: true }), 'desk.new')
+    assert.equal(key('KeyN', { ctrl: true, alt: true }), undefined)
+    assert.equal(key('KeyN', { ctrl: true, alt: true, shift: true }), undefined)
   })
-  test('the terminal keeps what it needs: Tab, Shift+Tab, Ctrl+N, Alt+digits, plain digits', () => {
+  test('the terminal keeps what it needs: Tab, Shift+Tab, plain digits; Alt+digits are the group\'s tabs now', () => {
     assert.equal(key('Tab'), undefined)
     assert.equal(key('Tab', { shift: true }), undefined)
-    assert.equal(key('KeyN', { ctrl: true }), undefined)
-    assert.equal(key('Digit1', { alt: true }), undefined)
+    assert.equal(key('KeyN', { ctrl: true }), 'pane.new-tab')
+    assert.equal(key('Digit1', { alt: true }), 'pane.go.1')
     assert.equal(key('Digit1'), undefined)
   })
   test('hints', () => {
-    assert.equal(shortcutHint({ op: 'desk-new', side: 'after' }), 'Ctrl+Alt+N')
-    assert.equal(shortcutHint({ op: 'desk-new', side: 'before' }), 'Ctrl+Alt+Shift+N')
-    assert.equal(shortcutHint({ op: 'desk-go', position: 3 }), 'Ctrl+3')
-    assert.equal(shortcutHint({ op: 'desk-cycle', step: -1 }), 'Ctrl+Shift+Tab')
+    assert.equal(shortcutHint('desk.new', false), 'Ctrl+Shift+N', 'VS Code\'s "new window" (delivery 5)')
+    assert.equal(shortcutHint('desk.new-before', false), '', 'no key since delivery 5: the palette and the desk menu')
+    assert.equal(shortcutHint('desk.go.3', false), 'Ctrl+3')
+    assert.equal(shortcutHint('desk.previous', false), 'Ctrl+Shift+Tab')
   })
 })
 

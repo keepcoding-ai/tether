@@ -170,7 +170,7 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await createShell(page, root)
     const [a] = await hooks.ids(page)
     await focusPane(page, a!)
-    await page.keyboard.press('Control+Shift+D')
+    await page.keyboard.press('Control+Backslash')
     await waitTabs(page, 2)
     const ids2 = await hooks.ids(page)
     const b = newId([a!], ids2)
