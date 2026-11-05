@@ -43,8 +43,15 @@ export interface FileList {
   ms: number
 }
 
+/**
+ * This module's folder: app/dist in the bundled worker (CommonJS `__dirname`), app/main under plain Node (tests).
+ * The rg package resolves from here, up to the repo's node_modules: never from the process's working directory,
+ * which is C:\Windows\System32 (or anything else) when the app is started by a shortcut or the shell.
+ */
+const moduleDir: string = typeof __dirname === 'string' ? __dirname : import.meta.dirname
+
 /** The rg binary of `@vscode/ripgrep` for this platform, or undefined when the package is not installed. */
-export function findRipgrep(from: string = process.cwd()): string | undefined {
+export function findRipgrep(from: string = moduleDir): string | undefined {
   const req = createRequire(join(from, 'noop.js'))
   const name = process.platform === 'win32' ? 'rg.exe' : 'rg'
   try {
@@ -240,6 +247,8 @@ interface Entry {
   watcher: FSWatcher | undefined
   last: { query: string; version: number; matches: FileEntry[] } | undefined
   usedAt: number
+  /** Why the last listing failed (cleared by the next one that succeeds). */
+  error: string | undefined
 }
 
 export interface FileIndexOptions extends Omit<ListOptions, 'onBatch'> {
@@ -260,7 +269,7 @@ export class FileIndex {
     const key = process.platform === 'linux' ? root : root.toLowerCase()
     let e = this.entries.get(key)
     if (!e) {
-      e = { root, files: [], source: undefined, truncated: false, listMs: undefined, version: 0, building: undefined, stale: true, staleAt: 0, watcher: undefined, last: undefined, usedAt: 0 }
+      e = { root, files: [], source: undefined, truncated: false, listMs: undefined, version: 0, building: undefined, stale: true, staleAt: 0, watcher: undefined, last: undefined, usedAt: 0, error: undefined }
       this.entries.set(key, e)
       this.evict()
     }
@@ -290,7 +299,9 @@ export class FileIndex {
       e.listMs = list.ms
       e.version++
       e.last = undefined
+      e.error = undefined
     }, err => {
+      e.error = err instanceof Error ? err.message : String(err)
       console.error(`quick open: não foi possível listar ${e.root}:`, err)
     }).finally(() => { e.building = undefined })
     if (this.opts.watch !== false && !e.watcher) this.watch(e)
@@ -330,7 +341,10 @@ export class FileIndex {
     const e = this.entry(root)
     if (e.version === 0) { if (!e.building) void this.build(e) }
     else if (e.stale && !e.building && Date.now() - e.staleAt >= STALE_DEBOUNCE_MS) void this.build(e)
-    const pending = !!e.building || (e.stale && e.version > 0)
+    // No list because the listing failed: the box says why instead of waiting (the next keystroke retries).
+    // A failed rebuild keeps answering from the previous list.
+    const failed = e.version === 0 ? e.error : undefined
+    const pending = failed === undefined && (!!e.building || (e.stale && e.version > 0))
 
     // History: the files opened lately under this root, still there.
     const recentRels: string[] = []
@@ -361,7 +375,7 @@ export class FileIndex {
         files.push(item)
       }
     }
-    return { root, recent, files, total: e.files.length, source: e.source, truncated: e.truncated, pending, listMs: e.listMs, searchMs: performance.now() - t0 }
+    return { root, recent, files, total: e.files.length, source: e.source, truncated: e.truncated, pending, listMs: e.listMs, searchMs: performance.now() - t0, ...(failed !== undefined ? { error: failed } : {}) }
   }
 
   dispose(): void {

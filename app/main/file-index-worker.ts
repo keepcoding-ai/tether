@@ -10,7 +10,8 @@ export type WorkerRequest =
   | { op: 'refresh'; root: string }
 
 const repo = (workerData as { repo?: string } | undefined)?.repo
-const index = new FileIndex({ rg: findRipgrep(repo) ?? null })
+// The repo main passes first; else the worker's own folder (app/dist, up to the repo's node_modules), never the cwd.
+const index = new FileIndex({ rg: findRipgrep(repo) ?? findRipgrep() ?? null })
 
 parentPort?.on('message', (msg: WorkerRequest) => {
   if (msg.op === 'refresh') { index.refresh(msg.root); return }

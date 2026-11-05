@@ -33,6 +33,20 @@ export interface QuickOpenResult {
   /** Milliseconds the last complete listing took, and this search. */
   listMs: number | undefined
   searchMs: number
+  /** Why there is no list (the listing, the index worker or the IPC failed): the box shows it instead of results. */
+  error?: string
+}
+
+/** An answer that carries only a failure (no list for `root`). */
+export function failedResult(root: string, error: string): QuickOpenResult {
+  return { root, recent: [], files: [], total: 0, source: undefined, truncated: false, pending: false, listMs: undefined, searchMs: 0, error }
+}
+
+/** The person's words for a failure to list: the main process older than this window is named, with the way out. */
+export function listFailureText(error: string): string {
+  // An IPC channel without a handler: the window was reloaded with a newer build than the running main process.
+  if (/No handler registered for 'quickopen:/.test(error)) return 'o processo principal do app é de uma versão anterior a esta janela. Use “Reiniciar o app” (os agentes continuam rodando).'
+  return error.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
 }
 
 /** What opening a path means (main inspects the file): the editor, the system's program, or a clear refusal. */

@@ -9,7 +9,7 @@
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import type { DialogSpec } from '../shared/dialog.ts'
 import { rangeRuns } from './word-filter.ts'
-import { fileIcon, type LineColumn, parseLineSuffix, pushHistory, type QuickOpenItem, type QuickOpenResult, readHistory } from '../shared/quick-open.ts'
+import { failedResult, fileIcon, type LineColumn, listFailureText, parseLineSuffix, pushHistory, type QuickOpenItem, type QuickOpenResult, readHistory } from '../shared/quick-open.ts'
 
 const HISTORY_KEY = 'tether.quickOpen.history'
 const ICON_SET = new Set<string>(ICON_NAMES)
@@ -54,13 +54,21 @@ export class QuickOpen {
 
   /** The box opened in this mode: main refreshes the root's list in the background when nothing watches it. */
   begin(): void {
-    window.tether.quickOpenRefresh(this.host.paneCwd())
+    // Best effort: whatever fails here fails the search too, which says why in the box.
+    try { window.tether.quickOpenRefresh(this.host.paneCwd()) } catch (err) { console.error('quick open:', err) }
   }
 
-  /** Searches; null when a newer search replaced this one (the box shows that one). */
+  /** Searches; null when a newer search replaced this one (the box shows that one). A failure comes back as a result with `error`. */
   async search(text: string): Promise<QuickOpenSearch | null> {
     const { query, position } = parseLineSuffix(text)
-    const result = await window.tether.quickOpenSearch(this.host.paneCwd(), query, this.history())
+    const cwd = this.host.paneCwd()
+    let result: QuickOpenResult | null
+    try {
+      result = await window.tether.quickOpenSearch(cwd, query, this.history())
+    } catch (err) {
+      console.error('quick open:', err)
+      result = failedResult(cwd ?? '', err instanceof Error ? err.message : String(err))
+    }
     if (!result) return null
     this.last = { result, position, query }
     return this.last
@@ -109,6 +117,7 @@ export class QuickOpen {
   emptyText(s: QuickOpenSearch | undefined): string {
     if (!s) return 'Procurando arquivos…'
     const where = s.result.root
+    if (s.result.error !== undefined) return `Não consegui listar os arquivos${where ? ` de ${where}` : ''}: ${listFailureText(s.result.error)}`
     if (s.query.trim() === '') return `Digite para procurar arquivos em ${where}. Digite > para procurar um comando.`
     if (s.result.pending && s.result.total === 0) return `Listando os arquivos de ${where}…`
     return `Nenhum arquivo para “${s.query.trim()}” em ${where}.`

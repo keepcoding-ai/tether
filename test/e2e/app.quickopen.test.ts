@@ -6,13 +6,17 @@
 //   recentemente" above "resultados de arquivo"); 5. "x.ts:3" → cursor on line 3; 6. reopening a file focuses
 //   its tab (no duplicate), "x.ts:2:4" moves the cursor of the open tab; 7. Ctrl+Enter opens beside;
 //   screenshots quickopen-{dark,light}.png. Every kill goes through test/kill.ts (pid + creation time).
+// Second test, launched the way the Start Menu shortcut can leave it: working directory outside the repo
+// (System32), no rg on PATH, the pane in a folder that is not a git repository: Ctrl+P still lists with the
+// app's rg (.gitignore honoured outside git: only rg does that); then a main process without the search handler
+// (a window reloaded over an older main) makes the box say why instead of keeping the hint.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
@@ -31,7 +35,7 @@ type Hooks = {
   note(id: string): Snap | undefined
   groupOf(id: string): string | undefined
 }
-declare const window: { __tether: Hooks }
+declare const window: { __tether: Hooks; tether: { quickOpenSearch(cwd: string, query: string, recent: string[]): Promise<{ source?: string; pending: boolean; error?: string; files: { label: string }[] } | null> } }
 type El = { textContent: string | null; dataset: Record<string, string>; getAttribute(n: string): string | null; querySelector(s: string): El | null }
 declare const document: { activeElement: { closest(sel: string): unknown } | null; documentElement: { dataset: Record<string, string> }; querySelectorAll(sel: string): { length: number }; querySelector(sel: string): El | null }
 
@@ -48,13 +52,14 @@ function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
 }
 
-async function launch(home: string): Promise<{ app: ElectronApplication; page: Page }> {
+async function launch(home: string, opts: { cwd?: string; path?: string } = {}): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
+  if (opts.path !== undefined) { for (const k of Object.keys(env)) if (k.toUpperCase() === 'PATH') delete env[k]; env.PATH = opts.path }
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
-  const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
+  const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env, ...(opts.cwd ? { cwd: opts.cwd } : {}) })
   const page = await app.firstWindow()
   page.setDefaultTimeout(10_000)
   page.on('pageerror', e => console.error(`renderer error: ${e.message}`))
@@ -226,6 +231,69 @@ test('app quick open: Ctrl+P lists the pane folder\'s files (VS Code scorer), re
     while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
     for (const dir of [home, repo]) for (let i = 0; i < 5; i++) {
       try { rmSync(dir, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})
+
+/** PATH without any folder that holds an rg binary: the app must find its own. */
+function pathWithoutRg(): string {
+  const raw = Object.entries(process.env).find(([k]) => k.toUpperCase() === 'PATH')?.[1] ?? ''
+  const name = process.platform === 'win32' ? 'rg.exe' : 'rg'
+  return raw.split(delimiter).filter(d => d !== '' && !existsSync(join(d, name))).join(delimiter)
+}
+
+test('app quick open: launched outside the repo (cwd System32, no rg on PATH) it still lists with the app\'s rg; a failure is said in the box', async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  mkdirSync(artifacts, { recursive: true })
+  const home = mkdtempSync(join(tmpdir(), 'tether-quickopen-cwd-'))
+  const dir = mkdtempSync(join(tmpdir(), 'tether-qo-plain-')) // no git: git ls-files cannot be the one listing
+  for (const [p, text] of Object.entries({ 'CLAUDE.md': '# instruções\n', 'docs/clara.md': 'x\n', 'build.log': 'fora\n', '.gitignore': '*.log\n' })) {
+    mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), text)
+  }
+  const cwd = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32') : '/'
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home, { cwd, path: pathWithoutRg() }))
+    assert.equal((await app.evaluate(() => process.cwd())).toLowerCase(), cwd.toLowerCase(), 'main runs outside the repo')
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+
+    await createShell(page, dir)
+    const [shell] = await page.evaluate(() => window.__tether.panelIds())
+    await focusPane(page, shell!)
+
+    // "CLAUD" → CLAUDE.md first; build.log stays out (.gitignore outside git: rg's --no-require-git, not the own walk).
+    await quickOpen(page, 'CLAUD')
+    const first = await firstFile(page, 'CLAUDE.md')
+    assert.equal(first.toLowerCase(), join(dir, 'CLAUDE.md').toLowerCase())
+    await quickOpen(page, 'build')
+    await sleep(500)
+    assert.ok(!(await paletteState(page)).shown.some(p => /build\.log$/.test(p)), '.gitignore respected outside git')
+    const direct = await page.evaluate(d => window.tether.quickOpenSearch(d, 'CLA', []), dir)
+    assert.equal(direct?.source, 'rg', 'the app\'s rg, resolved from the app folder and not from the cwd')
+    assert.equal(direct?.error, undefined)
+
+    // A main process without the search handler (a window reloaded over an older main): the box says why.
+    await app.evaluate(({ ipcMain }) => ipcMain.removeHandler('quickopen:search'))
+    await quickOpen(page, 'CLAU')
+    await page.waitForFunction(() => /Não consegui listar os arquivos de .*versão anterior.*Reiniciar o app/.test(document.querySelector('#palette .pal-empty')?.textContent ?? ''))
+    assert.deepEqual((await paletteState(page)).shown, [])
+    await shot(app, 'quickopen-error')
+    await page.keyboard.press('Escape')
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (const d of [home, dir]) for (let i = 0; i < 5; i++) {
+      try { rmSync(d, { recursive: true, force: true }); break } catch { await sleep(300) }
     }
   }
 })

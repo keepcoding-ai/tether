@@ -1,13 +1,14 @@
 // Quick Open (Ctrl+P), main-process side: the IPC the renderer calls, over the index worker
 // (app/main/file-index-worker.ts). Searches are coalesced: while one runs in the worker, only the newest request
 // waits; the ones it replaced resolve with null (the box already shows a newer query). A root without a pane is
-// the person's notes folder. Opening a binary or too large file hands it to the system's program, except what
+// the person's notes folder. Every failure (the worker that does not load or dies, an error in it) answers the
+// search with the reason, which the box shows: never a reply that silently stays away. Opening a binary or too large file hands it to the system's program, except what
 // would run (app/main/file-index.ts inspectFile).
 import type { IpcMain, Shell } from 'electron'
 import { openSync, readSync, closeSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
-import type { QuickOpenResult, QuickOpenTarget } from '../shared/quick-open.ts'
+import { failedResult, type QuickOpenResult, type QuickOpenTarget } from '../shared/quick-open.ts'
 import { inspectFile, MAX_RESULTS } from './file-index.ts'
 import type { WorkerRequest } from './file-index-worker.ts'
 import { userNotesDir } from './note-files.ts'
@@ -35,7 +36,7 @@ export class QuickOpenService {
   private readonly workerPath: string
   private readonly repo: string
   private nextId = 1
-  private inFlight: { id: number; resolve: (r: QuickOpenResult | null) => void } | undefined
+  private inFlight: { id: number; root: string; resolve: (r: QuickOpenResult | null) => void } | undefined
   private queued: Pending | undefined
 
   constructor(workerPath: string, repo: string) {
@@ -51,20 +52,25 @@ export class QuickOpenService {
       const done = this.inFlight
       this.inFlight = undefined
       if (msg.error) console.error(`quick open: ${msg.error}`)
-      done.resolve(msg.result ?? null)
+      done.resolve(msg.result ?? failedResult(done.root, msg.error ?? 'o índice não respondeu'))
       this.pump()
     })
-    w.on('error', err => { console.error('quick open: o índice parou', err); this.reset() })
-    w.on('exit', () => this.reset())
+    w.on('error', err => {
+      console.error('quick open: o índice parou', err)
+      if (this.worker === w) this.reset(`o índice de arquivos parou: ${err.message}`)
+    })
+    w.on('exit', code => { if (this.worker === w) this.reset(`o índice de arquivos saiu (código ${code})`) })
     w.unref()
     this.worker = w
     return w
   }
 
-  private reset(): void {
+  /** The worker is gone: the search it was running answers with why; the next one starts a new worker. */
+  private reset(why: string): void {
     this.worker = undefined
-    this.inFlight?.resolve(null)
+    const done = this.inFlight
     this.inFlight = undefined
+    done?.resolve(failedResult(done.root, why))
     this.pump()
   }
 
@@ -73,8 +79,14 @@ export class QuickOpenService {
     const next = this.queued
     this.queued = undefined
     const id = this.nextId++
-    this.inFlight = { id, resolve: next.resolve }
-    this.ensureWorker().postMessage({ id, ...next.req } satisfies WorkerRequest)
+    this.inFlight = { id, root: next.req.root, resolve: next.resolve }
+    try {
+      this.ensureWorker().postMessage({ id, ...next.req } satisfies WorkerRequest)
+    } catch (err) {
+      console.error('quick open: o índice não abriu', err)
+      this.inFlight = undefined
+      next.resolve(failedResult(next.req.root, `o índice de arquivos não abriu: ${(err as Error).message}`))
+    }
   }
 
   /** The root a search runs in: the pane's opening folder when it is a folder, else the person's notes folder. */
@@ -93,12 +105,14 @@ export class QuickOpenService {
 
   /** The box opened: re-list the root in the background when it has no watcher (or start its first listing). */
   refresh(paneCwd: unknown): void {
-    this.ensureWorker().postMessage({ op: 'refresh', root: this.rootFor(paneCwd) } satisfies WorkerRequest)
+    // A worker that cannot start is reported by the search that follows.
+    try { this.ensureWorker().postMessage({ op: 'refresh', root: this.rootFor(paneCwd) } satisfies WorkerRequest) } catch { /* see search */ }
   }
 
   dispose(): void {
-    void this.worker?.terminate()
+    const w = this.worker
     this.worker = undefined
+    void w?.terminate()
   }
 }
 

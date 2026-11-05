@@ -8,7 +8,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, sep } from 'node:path'
 import { compareItemsByFuzzyScore, type FuzzyScore, type IItemAccessor, prepareQuery, scoreFuzzy, scoreItemFuzzy } from '../../app/shared/vscode-fuzzy-scorer.ts'
-import { fileIcon, parseLineSuffix, pushHistory, readHistory } from '../../app/shared/quick-open.ts'
+import { failedResult, fileIcon, listFailureText, parseLineSuffix, pushHistory, readHistory } from '../../app/shared/quick-open.ts'
+import { QuickOpenService } from '../../app/main/quick-open-main.ts'
 import { FileIndex, findRipgrep, inspectFile, listFiles, MAX_EDITOR_BYTES, rankFiles, fileEntry, walkFiles } from '../../app/main/file-index.ts'
 
 // ---------- the scorer (VS Code's own cases) ----------
@@ -220,4 +221,44 @@ test('opening: text, binary (NUL or extension), too large, runnable, missing, fo
     writeFileSync(join(dir, 'big.txt'), Buffer.alloc(MAX_EDITOR_BYTES + 1, 0x61))
     assert.equal(inspectFile(join(dir, 'big.txt'), read).kind, 'large')
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('rg resolves from the app folder, not from the working directory (a Start Menu launch runs in System32)', () => {
+  const fromRepo = findRipgrep()
+  if (!fromRepo) return // @vscode/ripgrep not installed for this platform
+  const cwd = process.cwd()
+  try {
+    process.chdir(tmpdir())
+    assert.equal(findRipgrep(), fromRepo)
+  } finally { process.chdir(cwd) }
+})
+
+test('quick open failures reach the box: a worker that does not load or dies answers with the reason; old main named', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tether-qo-worker-'))
+  try {
+    const missing = new QuickOpenService(join(dir, 'missing-worker.cjs'), dir)
+    const r1 = await missing.search(dir, 'x', [])
+    assert.ok(r1 && r1.error, 'a worker that cannot load answers with an error')
+    assert.equal(r1.pending, false)
+    assert.equal(r1.root, dir)
+    missing.dispose()
+
+    writeFileSync(join(dir, 'throws.cjs'), "throw new Error('quebrou ao carregar')\n")
+    const throws = new QuickOpenService(join(dir, 'throws.cjs'), dir)
+    const r2 = await throws.search(dir, 'x', [])
+    assert.match(r2?.error ?? '', /quebrou ao carregar/)
+    // The next search starts a fresh worker and fails the same way (no request stuck in flight).
+    const r3 = await throws.search(dir, 'y', [])
+    assert.match(r3?.error ?? '', /quebrou ao carregar/)
+    throws.dispose()
+
+    writeFileSync(join(dir, 'exits.cjs'), "require('node:worker_threads').parentPort.on('message', () => process.exit(3))\n")
+    const exits = new QuickOpenService(join(dir, 'exits.cjs'), dir)
+    assert.match((await exits.search(dir, 'x', []))?.error ?? '', /código 3/)
+    exits.dispose()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+
+  assert.match(listFailureText("Error invoking remote method 'quickopen:search': Error: No handler registered for 'quickopen:search'"), /versão anterior.*Reiniciar o app/)
+  assert.equal(listFailureText("Error invoking remote method 'quickopen:search': Error: disco cheio"), 'disco cheio')
+  assert.deepEqual({ ...failedResult('C:\\r', 'x'), searchMs: 0 }, { root: 'C:\\r', recent: [], files: [], total: 0, source: undefined, truncated: false, pending: false, listMs: undefined, searchMs: 0, error: 'x' })
 })
