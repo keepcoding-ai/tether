@@ -85,11 +85,11 @@ async function createPanel(page: Page, kind: 'claude' | 'soul' | 'shell', cwd: s
   const before = await page.locator('.tether-tab').count()
   await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  // The dialog picks a profile, not a type: each kind's default profile on this machine (src/core/profile.ts defaults).
-  await page.check(`input[name=profile][value=${{ claude: 'claude', soul: 'soul', shell: 'powershell' }[kind]}]`)
-  await page.fill('#new-cwd', cwd)
+  // The chooser picks a profile, not a type: each kind's default profile on this machine (src/core/profile.ts defaults).
+  await page.fill('#dlg-new .ch-path-input', cwd)
   if (shot) await page.screenshot({ path: join(artifacts, shot) })
-  await page.click('#btn-create')
+  await page.click(`#dlg-new .ch-item[data-id="${{ claude: 'claude', soul: 'soul', shell: 'powershell' }[kind]}"]`)
+  await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
   await page.waitForFunction(n => document.querySelectorAll('.tether-tab').length === n, before + 1)
 }
 

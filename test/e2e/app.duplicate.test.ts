@@ -219,22 +219,22 @@ async function cmdOf(pid: number, trees: Proc[][]): Promise<string> {
 }
 
 const placementChecked = (page: Page, placement: string): Promise<boolean> =>
-  page.locator(`label.placement[data-level="pane"][data-placement="${placement}"] input`).evaluate(el => (el as unknown as { checked: boolean }).checked)
+  page.locator(`#dlg-new .placement[data-level="pane"][data-placement="${placement}"]`).getAttribute('aria-pressed').then(v => v === 'true')
 
-/** Opens the chooser, picks a profile, a folder and (when offered) a placement, submits; returns the new panel's id. */
+/** In the open chooser popup: a folder and (when offered) a placement, then a click on the profile opens it; returns the new panel's id. */
 async function newPanelViaChooser(page: Page, profileId: string, cwd: string, placement?: string): Promise<string> {
   const before = await hooks.ids(page)
   const dlg = page.locator('#dlg-new[open]')
   await dlg.waitFor()
-  await page.check(`input[name=profile][value=${profileId}]`)
-  await page.fill('#new-cwd', cwd)
+  await page.fill('#dlg-new .ch-path-input', cwd)
   if (placement) {
-    // The radio itself is visually hidden: the chip is the control. Pane level: the same direction also exists at the frame and desk levels (phase B).
-    await page.click(`label.placement[data-level="pane"][data-placement="${placement}"]`)
+    // "Onde" is one line until opened; the chips are buttons. Pane level: the same direction also exists at the frame and desk levels (phase B).
+    await page.click('#dlg-new .where-sum')
+    await page.click(`#dlg-new .placement[data-level="pane"][data-placement="${placement}"]`)
     assert.ok(await placementChecked(page, placement), `placement ${placement} chosen`)
   }
-  await page.click('#btn-create')
-  await dlg.waitFor({ state: 'detached' })
+  await page.click(`#dlg-new .ch-item[data-id="${profileId}"]`)
+  await dlg.waitFor({ state: 'hidden' })
   return waitNewPanel(page, before)
 }
 
@@ -263,9 +263,9 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     assert.equal(await page.locator('#btn-new').getAttribute('aria-label'), 'Novo painel…')
     assert.equal(await page.locator('#btn-duplicate').getAttribute('aria-label'), 'Duplicar painel')
     assert.equal(await page.locator('#btn-split-right, #btn-split-down').count(), 0, 'the old "Direita"/"Abaixo" clone buttons are gone')
-    await page.keyboard.press('Control+Shift+T')
+    await page.click('#btn-new')
     await page.locator('#dlg-new[open]').waitFor()
-    assert.equal(await page.locator('#new-placement').isVisible(), false, 'nothing to be relative to: no "Onde" row')
+    assert.equal(await page.locator('#dlg-new .where').count(), 0, 'nothing to be relative to: no "Onde" row')
     await shoot(page, 'new-panel-chooser-first-dark')
     const id1 = await newPanelViaChooser(page, 'claude', work)
     readyAt.set(id1, await awaitClaude(page, id1))
@@ -312,9 +312,11 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     await focusPanel(page, id1)
     await page.click('#btn-new')
     await page.locator('#dlg-new[open]').waitFor()
-    assert.ok(await page.locator('#new-placement').isVisible(), 'the "Onde" row is offered relative to the active panel')
-    assert.equal(await page.locator('label.placement[data-level="pane"]').count(), 5, 'pane level: nesta aba + four directions')
-    assert.equal(await page.locator('.placement-group').count(), 3, 'three levels (pane / frame / desk)')
+    assert.ok(await page.locator('#dlg-new .where').isVisible(), 'the "Onde" row is offered relative to the active panel')
+    assert.match(await page.locator('#dlg-new .where-sum .w').innerText(), /^como aba, ao lado de /, '"como aba" is the default, in one line')
+    await page.click('#dlg-new .where-sum')
+    assert.equal(await page.locator('#dlg-new .placement[data-level="pane"]').count(), 5, 'pane level: como aba + four directions')
+    assert.equal(await page.locator('#dlg-new .placement-group').count(), 3, 'three levels (pane / frame / desk)')
     assert.ok(await placementChecked(page, 'within'), '"nesta aba" is the default')
     await shoot(page, 'new-panel-chooser-placement-light')
     const id3 = await newPanelViaChooser(page, 'powershell', work, 'below')
@@ -344,7 +346,8 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     // ---- 5. both operations in the ≡ menu and in the tab menu; the tab's "Novo painel…" is relative to that tab ----
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    assert.equal(await page.locator('#app-menu li[data-command="pane.new"]').textContent(), 'Novo painel…Ctrl+Shift+T')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new"]').textContent(), 'Novo painel…')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"]').textContent(), 'Nova aba neste grupoCtrl+Shift+T')
     assert.equal(await page.locator('#app-menu li[data-command="pane.duplicate.pane.right"]').getAttribute('aria-disabled'), 'false')
     assert.equal(await page.locator('#app-menu li[data-command="pane.duplicate.pane.below"]').count(), 1)
     await page.keyboard.press('Escape')
@@ -371,11 +374,11 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     assert.deepEqual(await page.locator('#ctx-menu li[role=menuitem]').allTextContents(), want)
     await page.click('#ctx-menu li:has-text("Novo painel…")')
     await page.locator('#dlg-new[open]').waitFor()
-    assert.ok(await page.locator('#new-placement').isVisible())
+    assert.ok(await page.locator('#dlg-new .where').isVisible())
     const s1 = (await hooks.slot(page, id1))!
-    assert.equal(await page.locator('#new-placement-ref').textContent(), s1.title ?? s1.name ?? basename(work), 'relative to the right-clicked panel')
+    assert.equal(await page.locator('#dlg-new .where-sum .w').innerText(), `como aba, ao lado de ${s1.title ?? s1.name ?? basename(work)}`, 'relative to the right-clicked panel')
     await page.keyboard.press('Escape')
-    await page.locator('#dlg-new[open]').waitFor({ state: 'detached' })
+    await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
     assert.equal((await hooks.ids(page)).length, 5, 'Esc opened nothing')
     t.diagnostic(`evidence: ${JSON.stringify(evidence)}`)
     failed = false

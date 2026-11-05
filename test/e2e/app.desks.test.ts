@@ -91,11 +91,11 @@ async function pidsOf(page: Page, ids: string[]): Promise<Record<string, number>
 /** A PowerShell in the active desk through the chooser; returns its pane id. */
 async function createShell(page: Page, cwd: string): Promise<string> {
   const before = await h.ids(page)
-  await page.keyboard.press('Control+Shift+T')
+  await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check('input[name=profile][value=powershell]')
-  await page.fill('#new-cwd', cwd)
-  await page.click('#btn-create')
+  await page.fill('#dlg-new .ch-path-input', cwd)
+  await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await waitTabs(page, before.length + 1)
   const added = (await h.ids(page)).filter(id => !before.includes(id))
   assert.equal(added.length, 1)

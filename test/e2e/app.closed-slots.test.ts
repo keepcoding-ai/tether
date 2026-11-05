@@ -54,11 +54,11 @@ const idsOf = (page: Page): Promise<string[]> => page.evaluate(() => window.__te
 /** A PowerShell in the visible desk through the chooser; returns its slot id once it runs. */
 async function createShell(page: Page, cwd: string): Promise<string> {
   const before = await idsOf(page)
-  await page.keyboard.press('Control+Shift+T')
+  await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check('input[name=profile][value=powershell]')
-  await page.fill('#new-cwd', cwd)
-  await page.click('#btn-create')
+  await page.fill('#dlg-new .ch-path-input', cwd)
+  await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await page.waitForFunction(n => window.__tether.panelIds().length === n, before.length + 1)
   const id = (await idsOf(page)).find(x => !before.includes(x))!
   await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.status === 'running', id, { timeout: 20_000 })

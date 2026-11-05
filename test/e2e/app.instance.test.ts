@@ -86,9 +86,9 @@ const hooks = {
 async function createShellPanel(page: Page, cwd: string): Promise<void> {
   await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check('input[name=profile][value=powershell]')
-  await page.fill('#new-cwd', cwd)
-  await page.click('#btn-create')
+  await page.fill('#dlg-new .ch-path-input', cwd)
+  await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 1)
   // The shell prompt must be up (PowerShell shows "PS <folder>>"): the slot is running and the layout has settled.
   await page.waitForFunction(() => /PS.*>/.test(window.__tether.text(window.__tether.panelIds()[0]!).replace(/\s+/g, '')), undefined, { timeout: 20_000 })

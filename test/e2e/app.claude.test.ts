@@ -219,9 +219,9 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     // ---- 1. "+ Novo painel" → Claude in the temp folder ----
     await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
-    await page.check('input[name=profile][value=claude]')
-    await page.fill('#new-cwd', work)
-    await page.click('#btn-create')
+    await page.fill('#dlg-new .ch-path-input', work)
+    await page.click('#dlg-new .ch-item[data-id=\"claude\"]')
+    await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
     await tabCount(page, 1)
     const [id1] = await hooks.ids(page)
     assert.ok(id1, 'panel 1 exists')

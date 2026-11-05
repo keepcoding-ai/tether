@@ -36,6 +36,7 @@ type Hooks = {
   connection(): { connected: boolean; pid?: number } | undefined
   activate(id: string): void
   profiles(): Profile[]
+  chooser(): { highlight: string | undefined } | undefined
   openProfiles(id?: string): void
 }
 declare const window: { __tether: Hooks; tether: { request(body: unknown): Promise<unknown> } }
@@ -122,9 +123,9 @@ async function createPanel(page: Page, profileId: string, cwd: string): Promise<
   const before = await hooks.ids(page)
   await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check(`input[name=profile][value=${profileId}]`)
-  await page.fill('#new-cwd', cwd)
-  await page.click('#btn-create')
+  await page.fill('#dlg-new .ch-path-input', cwd)
+  await page.click(`#dlg-new .ch-item[data-id="${profileId}"]`)
+  await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await tabCount(page, before.length + 1)
   const id = (await hooks.ids(page)).find(i => !before.includes(i))!
   assert.ok(id, 'new panel')
@@ -243,15 +244,15 @@ test('profiles in the app: Novo painel by profile, unsafe badge, Git Bash, manag
     await page.waitForFunction(() => window.__tether.profiles().length >= 5)
     await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
-    const groups = await page.locator('#new-profiles .profile-group').evaluateAll(els => els.map(e => (e as { dataset: { agent?: string } }).dataset.agent))
-    assert.deepEqual(groups, ['claude', 'soul', 'shell'], 'one group per agent, in that order')
-    assert.ok(await page.isChecked('input[name=profile][value=claude]'), 'the Claude default profile is preselected')
-    const dev = page.locator('.profile-option[data-id="claude-dev"]')
-    assert.equal(await dev.locator('.p-args').textContent(), UNSAFE, 'the args are shown on the option')
-    assert.ok(await dev.locator('.p-unsafe').isVisible(), '"sem restrições" on the dev profile')
-    assert.equal(await page.locator('.profile-option[data-id="claude"] .p-unsafe').count(), 0, 'no mark on the plain profile')
-    assert.ok(await page.locator('.profile-option[data-id="git-bash"]').isVisible(), 'Git Bash is offered')
-    assert.equal(await page.locator('.profile-option[data-id="powershell"] .p-default').count(), 1, 'the shell default is marked')
+    const groups = await page.locator('#dlg-new .ch-sep').allInnerTexts().then(l => l.map(s => s.trim().toLowerCase()))
+    assert.deepEqual(groups, ['claude', 'soul', 'shell', 'nota', 'vazio'], 'one group per agent, in that order, then the notes and the empty pane')
+    assert.equal((await page.evaluate(() => window.__tether.chooser()))?.highlight, 'claude', 'the Claude default profile is highlighted')
+    const dev = page.locator('#dlg-new .ch-item[data-id="claude-dev"]')
+    assert.equal(await dev.locator('.ch-hint').textContent(), UNSAFE, 'the args are shown on the item')
+    assert.ok(await dev.locator('.ch-unsafe').isVisible(), '"sem restrições" on the dev profile')
+    assert.equal(await page.locator('#dlg-new .ch-item[data-id="claude"] .ch-unsafe').count(), 0, 'no mark on the plain profile')
+    assert.ok(await page.locator('#dlg-new .ch-item[data-id="git-bash"]').isVisible(), 'Git Bash is offered')
+    assert.equal(await page.locator('#dlg-new .ch-item[data-id="powershell"] .selo').count(), 1, 'the shell default is marked')
     await shoot(page, 'profiles-new-panel-dark')
     await page.keyboard.press('Escape')
     await page.waitForSelector('#dlg-new', { state: 'hidden' })

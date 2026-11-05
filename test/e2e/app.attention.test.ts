@@ -99,11 +99,11 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
     daemons.push(await claim((await page.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
 
     // ---- Claude on desk 1 ----
-    await page.keyboard.press('Control+Shift+T')
+    await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
-    await page.check('input[name=profile][value=claude]')
-    await page.fill('#new-cwd', work)
-    await page.click('#btn-create')
+    await page.fill('#dlg-new .ch-path-input', work)
+    await page.click('#dlg-new .ch-item[data-id=\"claude\"]')
+    await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 1)
     const id = (await page.evaluate(() => window.__tether.panelIds()))[0]!
     await waitPanel(page, id, t => TRUST.test(t) || hasPrompt(t), { timeout: 90_000, what: 'trust dialog or prompt' })

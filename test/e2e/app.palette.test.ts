@@ -71,11 +71,11 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 
 async function createShell(page: Page, cwd: string): Promise<void> {
   const before = await page.locator('.tether-tab').count()
-  await page.keyboard.press('Control+Shift+T')
+  await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check('input[name=profile][value=powershell]')
-  await page.fill('#new-cwd', cwd)
-  await page.click('#btn-create')
+  await page.fill('#dlg-new .ch-path-input', cwd)
+  await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await page.waitForFunction(n => document.querySelectorAll('.tether-tab').length === n, before + 1)
 }
 
@@ -128,7 +128,7 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter 
     const titles = all.filter(c => st.shown.includes(c.id)).sort((a, b) => st.shown.indexOf(a.id) - st.shown.indexOf(b.id)).map(c => c.title)
     assert.deepEqual(titles, [...titles].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })), 'by title')
     assert.ok(available.includes('pane.close') && available.includes('desk.new') && !available.includes('desk.close'), `availability with one pane and one desk: ${available.join(' ')}`)
-    assert.equal(await page.locator('#palette-list .pal-item[data-command="pane.new"] kbd').innerText(), 'Ctrl+Shift+T')
+    assert.equal(await page.locator('#palette-list .pal-item[data-command="pane.new-tab"] kbd').innerText(), 'Ctrl+Shift+T')
     assert.equal(await page.locator('#palette-list .pal-item[data-command="drawer.toggle"] kbd').innerText(), 'Ctrl+`')
     assert.equal(await page.locator('#palette-list .pal-item[data-command="pane.rename"] kbd').count(), 0, 'no hint without a chord')
     assert.equal(await page.locator('#palette-list .pal-item.selected').getAttribute('data-command'), st.shown[0], 'the first row is selected')
@@ -199,7 +199,7 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter 
     // 5. The ≡ menu: hints from the registry; pane items greyed without a pane.
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    assert.equal(await page.locator('#app-menu li[data-command="pane.new"] kbd').innerText(), 'Ctrl+Shift+T')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"] kbd').innerText(), 'Ctrl+Shift+T')
     assert.equal(await page.locator('#app-menu li[data-command="palette.show"] kbd').innerText(), 'Ctrl+Shift+P')
     assert.equal(await page.locator('#app-menu li[data-command="pane.move"]').getAttribute('aria-disabled'), 'false')
     assert.equal(await page.locator('#app-menu li[data-command="desk.close"]').getAttribute('aria-disabled'), 'false', 'two desks now')

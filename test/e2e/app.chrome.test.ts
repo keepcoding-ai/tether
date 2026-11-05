@@ -88,11 +88,11 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 
 async function createShell(page: Page, cwd: string): Promise<void> {
   const before = await page.locator('.tether-tab').count()
-  await page.keyboard.press('Control+Shift+T')
+  await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check('input[name=profile][value=powershell]')
-  await page.fill('#new-cwd', cwd)
-  await page.click('#btn-create')
+  await page.fill('#dlg-new .ch-path-input', cwd)
+  await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await page.waitForFunction(n => document.querySelectorAll('.tether-tab').length === n, before + 1)
 }
 
@@ -799,7 +799,7 @@ test('app chrome: the drawer is a full-window card with its own bar and an empty
     await page.locator('dialog[open] button.choice[data-choice="detach"]').click()
     await page.waitForSelector('.drawer[data-empty="true"] .drawer-empty .de-btn')
     assert.equal(await drawerIsOpen(), true)
-    assert.deepEqual(await page.locator('.drawer-empty .de-btn').allTextContents(), ['Novo painel…Ctrl+Shift+T', 'Terminal rápidoCtrl+`'])
+    assert.deepEqual(await page.locator('.drawer-empty .de-btn').allTextContents(), ['Novo painel…', 'Terminal rápidoCtrl+`'])
     await sleep(400) // the theme is still dark from the shots above
     await shot(app, 'chrome-drawer-empty-dark')
     await page.click('#drawer-empty-new')

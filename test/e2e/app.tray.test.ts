@@ -94,9 +94,9 @@ const tray = {
 async function createShellPanel(page: Page, cwd: string, count: number): Promise<void> {
   await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check('input[name=profile][value=powershell]')
-  await page.fill('#new-cwd', cwd)
-  await page.click('#btn-create')
+  await page.fill('#dlg-new .ch-path-input', cwd)
+  await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await page.waitForFunction(n => document.querySelectorAll('.tether-tab').length === n, count)
   await page.waitForFunction(() => {
     const id = window.__tether.panelIds().at(-1)!

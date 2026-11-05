@@ -97,9 +97,9 @@ test('pane details: collapsed by default, three ways to toggle, refit, persisten
 
     await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
-    await page.check('input[name=profile][value=powershell]')
-    await page.fill('#new-cwd', root)
-    await page.click('#btn-create')
+    await page.fill('#dlg-new .ch-path-input', root)
+    await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+    await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
     await page.waitForFunction(() => window.__tether.panelIds().length === 1)
     const id = (await page.evaluate(() => window.__tether.panelIds()))[0]!
     await page.waitForFunction(id => /PS.*>/.test(window.__tether.text(id).replace(/\s+/g, '')), id, { timeout: 30_000 })

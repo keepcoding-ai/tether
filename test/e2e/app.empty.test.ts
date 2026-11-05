@@ -22,7 +22,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
-type Empty = { id: string; cwd: string; selected: string | undefined; focused: boolean; error: string | undefined }
+type Empty = { id: string; cwd: string; origin: 'add' | 'layout'; highlight: string | undefined; query: string; focused: boolean; error: string | undefined }
 type Note = { id: string; path: string; text: string }
 type Hooks = {
   panelIds(): string[]
@@ -94,7 +94,7 @@ async function shot(app: ElectronApplication, name: string): Promise<void> {
 
 const empties = (page: Page) => page.evaluate(() => window.__tether.empties())
 const place = (page: Page, id: string) => page.evaluate(id => ({ frame: window.__tether.frameOf(id), group: window.__tether.groupOf(id), index: window.__tether.tabIndex(id) }), id)
-const dialogRef = (page: Page) => page.locator('#new-placement-ref').innerText()
+const dialogRef = (page: Page) => page.locator('#dlg-new .where-sum .w').innerText().then(s => s.replace(/^como aba, ao lado de /, ''))
 
 test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog, kill and resume, filled in place with a shell and a note', async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
@@ -112,18 +112,18 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
     daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
 
-    // 1. The chooser: Vazio and Nota on top, then the profiles; a PowerShell is opened from it as always.
-    await page.keyboard.press('Control+Shift+T')
+    // 1. The popup: the profiles, then Nota and Vazio; a PowerShell is opened from it by a click.
+    await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
-    const groupLabels = await page.locator('#new-profiles .profile-group h4').allInnerTexts()
-    assert.deepEqual(groupLabels.slice(0, 2).map(s => s.toLowerCase()), ['vazio', 'nota'], groupLabels.join(' | ')) // innerText carries the CSS uppercase
-    assert.equal(await page.locator('#new-profiles .profile-option[data-kind="empty"] .p-name').innerText(), 'Vazio — escolher depois')
-    assert.equal(await page.locator('#new-profiles .profile-option[data-kind="note-new"]').count(), 1)
-    assert.equal(await page.locator('#new-profiles .profile-option[data-kind="note-open"]').count(), 1)
-    assert.ok(await page.locator('#new-placement').isHidden(), 'nothing to be relative to yet')
-    await page.check('#form-new input[name=profile][value=powershell]')
-    await page.fill('#new-cwd', work)
-    await page.click('#btn-create')
+    const groupLabels = await page.locator('#dlg-new .ch-sep').allInnerTexts()
+    assert.deepEqual(groupLabels.slice(-2).map(s => s.trim().toLowerCase()), ['nota', 'vazio'], groupLabels.join(' | ')) // innerText carries the CSS uppercase
+    assert.equal(await page.locator('#dlg-new .ch-item[data-kind="empty"] .ch-name').innerText(), 'Vazio — escolher depois')
+    assert.equal(await page.locator('#dlg-new .ch-item[data-kind="note-new"]').count(), 1)
+    assert.equal(await page.locator('#dlg-new .ch-item[data-kind="note-open"]').count(), 1)
+    assert.equal(await page.locator('#dlg-new .where').count(), 0, 'nothing to be relative to yet')
+    await page.fill('#dlg-new .ch-path-input', work)
+    await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
     await page.waitForFunction(() => window.__tether.panelIds().length === 1)
     const [shell] = await page.evaluate(() => window.__tether.panelIds())
     await focusShell(page, shell!)
@@ -139,8 +139,9 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     assert.notEqual(await page.evaluate(id => window.__tether.groupOf(id), e1!.id), shellPlace.group, 'a group of its own, to the right')
     await page.waitForFunction(id => window.__tether.empty(id)?.focused === true, e1!.id)
     assert.equal(await page.locator('.tether-tab.empty .text').first().innerText(), 'Vazio')
-    assert.equal((await page.locator(`.empty-panel[data-empty-id="${e1!.id}"] .profile-group h4`).first().innerText()).toLowerCase(), 'nota', 'inside an empty pane the notes come first; no "Vazio" inside a Vazio')
-    assert.equal(await page.locator(`.empty-panel[data-empty-id="${e1!.id}"] .profile-option[data-kind="empty"]`).count(), 0)
+    assert.equal(e1!.origin, 'add', 'Ctrl+Shift+Arrow is a request: Esc would close it')
+    assert.equal(await page.locator(`.empty-panel[data-empty-id="${e1!.id}"] .ch-item[data-kind="note-new"]`).count(), 1, 'the notes are offered inside the pane')
+    assert.equal(await page.locator(`.empty-panel[data-empty-id="${e1!.id}"] .ch-item[data-kind="empty"]`).count(), 0, 'no "Vazio" inside a Vazio')
 
     // 2b. The palette command, with the shell as reference: an empty pane below it.
     await focusShell(page, shell!)
@@ -153,21 +154,22 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     const e2 = (await empties(page)).find(e => e.id !== e1!.id)!
     assert.equal(await page.evaluate(id => window.__tether.frameOf(id), e2.id), shellPlace.frame)
 
-    // 2c. The dialog's "Vazio", "nesta aba" relative to the shell: the second tab of the shell's group.
+    // 2c. The popup's "Vazio", "como aba" relative to the shell: the second tab of the shell's group, origin layout.
     await focusShell(page, shell!)
-    await page.keyboard.press('Control+Shift+T')
+    await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
     assert.ok((await dialogRef(page)).length > 0 && !/^[0-9a-f]{6,}$/i.test(await dialogRef(page)), `the reference reads as a title: ${await dialogRef(page)}`)
-    await page.check('#form-new input[name=profile][value="kind:empty"]')
-    await page.fill('#new-cwd', other)
-    assert.ok(await page.locator('#form-new input[name=placement][value="pane:within"]').isChecked(), '"nesta aba" by default')
-    await page.click('#btn-create')
+    assert.match(await page.locator('#dlg-new .where-sum .w').innerText(), /^como aba, ao lado de /, '"como aba" by default')
+    await page.fill('#dlg-new .ch-path-input', other)
+    await page.click('#dlg-new .ch-item[data-id="kind:empty"]')
+    await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
     await page.waitForFunction(() => window.__tether.empties().length === 3)
     const e3 = (await empties(page)).find(e => e.id !== e1!.id && e.id !== e2.id)!
     const e3Place = await place(page, e3.id)
     assert.equal(e3Place.group, shellPlace.group, 'in the shell\'s group')
     assert.equal(e3Place.index, 1, 'the second tab')
-    assert.equal(e3.cwd, other, 'the folder typed in the dialog is what its chooser suggests')
+    assert.equal(e3.cwd, other, 'the folder typed in the popup is what its chooser suggests')
+    assert.equal(e3.origin, 'layout', 'a "Vazio" picked on purpose is layout: Esc will not close it')
 
     // 2d. "Novo quadro vazio à direita": a second frame with one empty pane.
     assert.equal(await page.evaluate(() => window.__tether.runCommand('frame.new-empty.right')), 'ran')
@@ -178,10 +180,10 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     // 3. "Onde, em relação a" with an empty pane as the reference: "Vazio".
     await page.evaluate(id => window.__tether.activate(id), e1!.id)
     await page.waitForFunction(id => window.__tether.activeId() === id, e1!.id)
-    await page.keyboard.press('Control+Shift+T')
+    await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
     assert.equal(await dialogRef(page), 'Vazio')
-    await page.click('#btn-cancel')
+    await page.click('#dlg-new .btn.cancel')
     await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
 
     // 4. Kill (main process, by pid) and relaunch: the four come back, same ids, same frames, same folders.
@@ -205,15 +207,19 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
       assert.equal(now.index, was.index, `${id}: same tab index`)
       assert.equal((await page.evaluate(id => window.__tether.empty(id), id))!.cwd, was.cwd, `${id}: same suggested folder`)
     }
+    assert.equal((await page.evaluate(id => window.__tether.empty(id), e1!.id))!.origin, 'add', 'the origin survived the restart')
+    assert.equal((await page.evaluate(id => window.__tether.empty(id), e3.id))!.origin, 'layout')
     assert.equal(await page.evaluate(id => window.__tether.groupOf(id), e3.id), await page.evaluate(id => window.__tether.groupOf(id), shell!), 'still the shell\'s group')
 
     // 5a. Fill e3 (second tab of the shell's group) with PowerShell from the chooser inside it: Enter opens; same group, same index.
     await page.evaluate(id => window.__tether.activate(id), e3.id)
     const pane3 = page.locator(`.empty-panel[data-empty-id="${e3.id}"]`)
-    await pane3.locator('input[name=profile][value=powershell]').check()
-    await pane3.locator('input[name=cwd]').fill(work)
+    await pane3.locator('.ch-path-input').fill(work)
+    await pane3.locator('.ch-q').focus()
+    await page.keyboard.type('power')
+    await page.waitForFunction(id => window.__tether.empty(id)?.highlight === 'powershell', e3.id)
     const idsBefore = await page.evaluate(() => window.__tether.panelIds())
-    await pane3.locator('input[name=cwd]').press('Enter')
+    await page.keyboard.press('Enter')
     await page.waitForFunction(n => window.__tether.empties().length === n, 3)
     const idsAfter = await page.evaluate(() => window.__tether.panelIds())
     const newShell = idsAfter.find(id => !idsBefore.includes(id))!
@@ -228,9 +234,11 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     // 5b. Fill e1 with "Nova nota" (folder = other, no git): a note in its place, file under other/.tether/notes.
     await page.evaluate(id => window.__tether.activate(id), e1!.id)
     const pane1 = page.locator(`.empty-panel[data-empty-id="${e1!.id}"]`)
-    await pane1.locator('input[name=profile][value="kind:note-new"]').check()
-    await pane1.locator('input[name=cwd]').fill(other)
-    await pane1.locator('button.primary').click()
+    await pane1.locator('.ch-path-input').fill(other)
+    await pane1.locator('.ch-item[data-id="kind:note-new"]').hover()
+    await page.waitForFunction(id => window.__tether.empty(id)?.highlight === 'kind:note-new', e1!.id)
+    assert.equal(await pane1.locator('.btn.primary .go-l').innerText(), 'Criar', 'the button says what it does')
+    await pane1.locator('.btn.primary').click()
     await page.waitForFunction(() => window.__tether.notes().length === 1)
     const [note] = await page.evaluate(() => window.__tether.notes())
     const notesDir = join(other, '.tether', 'notes')
@@ -244,11 +252,12 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
 
     // 3 (again). The reference of a note reads as its file name.
     await page.waitForFunction(id => window.__tether.activeId() === id, note!.id)
-    await page.keyboard.press('Control+Shift+T')
+    await page.click('#btn-new')
     await page.waitForSelector('#dlg-new[open]')
     assert.equal(await dialogRef(page), note!.path.split(/[\\/]/).pop())
-    assert.equal(await page.locator('#new-placements .placement-group[data-level="desk"] .placement-hint').innerText(), 'num quadro novo, na borda da mesa')
-    await page.click('#btn-cancel')
+    await page.click('#dlg-new .where-sum')
+    assert.equal(await page.locator('#dlg-new .placement-group[data-level="desk"] .placement-hint').innerText(), 'num quadro novo, na borda da mesa')
+    await page.click('#dlg-new .btn.cancel')
     await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
 
     // 6. Light screenshot on an empty pane.

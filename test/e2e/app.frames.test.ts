@@ -129,17 +129,18 @@ async function focusPane(page: Page, id: string): Promise<void> {
 
 async function createShell(page: Page, cwd: string, placement?: string): Promise<void> {
   const before = (await hooks.ids(page)).length
-  await page.keyboard.press('Control+Shift+T')
+  await page.click('#btn-new')
   await page.waitForSelector('#dlg-new[open]')
-  await page.check('input[name=profile][value=powershell]')
-  await page.fill('#new-cwd', cwd)
+  await page.fill('#dlg-new .ch-path-input', cwd)
   if (placement) {
-    // The radio is visually hidden: the chip (label) is the control. `placement` is a target key, "level:placement".
+    // "Onde" is one line until opened; the chips are buttons. `placement` is a target key, "level:placement".
     const [level, where] = placement.split(':')
-    await page.click(`label.placement[data-level="${level}"][data-placement="${where}"]`)
-    assert.ok(await page.isChecked(`input[name=placement][value="${placement}"]`), `${placement} chosen`)
+    await page.click('#dlg-new .where-sum')
+    await page.click(`#dlg-new .placement[data-level="${level}"][data-placement="${where}"]`)
+    assert.equal(await page.locator(`#dlg-new .placement[data-level="${level}"][data-placement="${where}"]`).getAttribute('aria-pressed'), 'true', `${placement} chosen`)
   }
-  await page.click('#btn-create')
+  await page.click('#dlg-new .ch-item[data-id="powershell"]')
+  await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
   await waitTabs(page, before + 1)
 }
 
@@ -242,7 +243,10 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await page.mouse.move(dock.x + dock.width - 3, dock.y + dock.height / 2)
     await page.waitForSelector('.edge-plus.desk[data-side="right"]:not([hidden])')
     await page.screenshot({ path: join(artifacts, 'frames-plus-desk.png') })
-    await page.click('.edge-plus.desk[data-side="right"]')
+    // A click ADDS an empty pane in a new frame (the chooser inside it); "Duplicar" lives in its right-click menu.
+    await page.click('.edge-plus.desk[data-side="right"]', { button: 'right' })
+    await page.waitForSelector('#ctx-menu')
+    await page.click('#ctx-menu li:has-text("Duplicar")')
     await waitTabs(page, 5)
     const e = newId([a!, b, c, d], await hooks.ids(page))
     await page.waitForFunction(() => window.__tether.frameIds().length === 3)
@@ -255,12 +259,15 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await page.waitForSelector('.edge-plus.frame[data-frame="frame-3"][data-side="top"]:not([hidden])')
     assert.equal(await page.locator('.edge-plus.desk:not([hidden])').count(), 0, 'only the frame "+" shows inside the frame')
     await page.screenshot({ path: join(artifacts, 'frames-plus-frame.png') })
-    await page.click('.edge-plus.frame[data-frame="frame-3"][data-side="top"]', { modifiers: ['Shift'] })
+    await page.click('.edge-plus.frame[data-frame="frame-3"][data-side="top"]', { button: 'right' })
+    await page.waitForSelector('#ctx-menu')
+    await page.click('#ctx-menu li:has-text("modo foco")')
     await page.waitForSelector('#dlg-new[open]')
-    assert.ok(await page.isChecked('input[name=placement][value="frame:above"]'), 'Shift+click opens the chooser preset to that edge')
+    assert.equal(await page.locator('#dlg-new .where-sum .w').innerText(), 'na borda do quadro, acima', 'the focus-mode popup opens preset to that edge')
+    await page.click('#dlg-new .where-sum')
     await page.screenshot({ path: join(artifacts, 'frames-chooser-levels.png') })
-    assert.equal(await page.locator('.placement-group').count(), 3, 'three levels in "Onde"')
-    await page.click('#btn-cancel')
+    assert.equal(await page.locator('#dlg-new .placement-group').count(), 3, 'three levels in "Onde"')
+    await page.click('#dlg-new .btn.cancel')
     await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' }) // a closed <dialog> is not visible: wait for it to go, not to show
 
     // ---- 5. chooser: "Mesa · abaixo" opens a PowerShell in a frame spanning the desk ----
