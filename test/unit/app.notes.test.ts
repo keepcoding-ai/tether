@@ -151,6 +151,19 @@ describe('an outside change of the file', () => {
     assert.equal(externalChangeAction({ diskText: 'y', editorText: 'x', savedText: 'x' }), 'reload')
     assert.equal(externalChangeAction({ diskText: 'y', editorText: 'x2', savedText: 'x' }), 'ask')
   })
+
+  test('our own save echoed while the person kept typing: never ask (disk = what we wrote, editor ahead of it)', () => {
+    assert.equal(externalChangeAction({ diskText: 'abc', editorText: 'abcd', savedText: 'abc' }), 'keep')
+  })
+
+  test('an older write of ours read back after a newer one landed: ours, not an outside change', () => {
+    assert.equal(externalChangeAction({ diskText: 'ab', editorText: 'abcd', savedText: 'abc', ownTexts: ['a', 'ab', 'abc'] }), 'keep')
+  })
+
+  test('a genuine outside change is still caught, with or without pending edits', () => {
+    assert.equal(externalChangeAction({ diskText: 'other', editorText: 'abcd', savedText: 'abc', ownTexts: ['ab', 'abc'] }), 'ask')
+    assert.equal(externalChangeAction({ diskText: 'other', editorText: 'abc', savedText: 'abc', ownTexts: ['ab', 'abc'] }), 'reload')
+  })
 })
 
 describe('the editor\'s actions as commands', () => {

@@ -114,13 +114,15 @@ export type ExternalChange = 'keep' | 'reload' | 'ask'
 
 /**
  * What a change of the file on disk means for the open note:
- *   keep    the disk holds what the editor already has (our own save echoed by the watcher, or the person saved
- *           the same text elsewhere): nothing to do, the text counts as saved;
+ *   keep    the disk holds what the editor already has, or a text we wrote ourselves (`savedText`, or one of
+ *           `ownTexts`, the recent writes): our own save echoed by the watcher, possibly late, while the person
+ *           kept typing; nothing came from outside, so nothing to ask;
  *   reload  the disk differs and the editor has no pending edit: take the disk's text, keeping the cursor;
  *   ask     the disk differs and the editor has edits not yet written: the person decides.
  */
-export function externalChangeAction(input: { diskText: string; editorText: string; savedText: string }): ExternalChange {
+export function externalChangeAction(input: { diskText: string; editorText: string; savedText: string; ownTexts?: readonly string[] }): ExternalChange {
   if (input.diskText === input.editorText) return 'keep'
+  if (input.diskText === input.savedText || (input.ownTexts ?? []).includes(input.diskText)) return 'keep'
   if (input.editorText === input.savedText) return 'reload'
   return 'ask'
 }

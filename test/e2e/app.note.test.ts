@@ -177,6 +177,21 @@ test('app note: Monaco tab, autosave, column selection and multi-cursor, palette
     await page.keyboard.type('gamma three')
     await waitSaved(page, noteId, 'alpha one\r\nbeta two\r\ngamma three')
     assert.equal(readFileSync(note!.path, 'utf8'), 'alpha one\r\nbeta two\r\ngamma three', 'on disk')
+    // Steady typing for seconds, pauses around the save debounce: our own saves echo through the watcher while
+    // more text is pending, and none of them may be taken for an outside change (no conflict dialog, ever).
+    const steady = ' the quick brown fox jumps over the lazy dog'
+    for (let i = 0; i < steady.length; i++) {
+      await page.keyboard.type(steady[i]!)
+      await sleep(i % 7 === 0 ? 450 : 60 + (i % 5) * 30)
+      assert.equal(await page.evaluate(() => document.querySelectorAll('dialog.ask[open]').length), 0, `no dialog while typing (char ${i})`)
+    }
+    for (let i = 0; i < steady.length; i++) {
+      await page.keyboard.press('Backspace')
+      await sleep(i % 9 === 0 ? 400 : 40)
+    }
+    await waitSaved(page, noteId, 'alpha one\r\nbeta two\r\ngamma three')
+    await sleep(800)
+    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog.ask[open]').length), 0, 'no dialog after the typing settled')
     const framesBefore = await page.evaluate(() => window.__tether.frameIds())
     const panesBefore = (await page.evaluate(() => window.__tether.panelIds())).length
     await page.keyboard.press('Control+Home')

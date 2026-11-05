@@ -27,6 +27,8 @@ const VIEW_SETTLE_MS = 3000
 const SYNC_ECHO_MS = 160
 /** A failed write is retried after this. */
 const SAVE_RETRY_MS = 2000
+/** How many of our own recent writes a watcher echo is matched against. */
+const OWN_TEXTS_KEPT = 8
 
 export interface NoteHost {
   getScheme(): ColorScheme
@@ -85,6 +87,8 @@ export class NotePanel implements IContentRenderer {
   private readonly state: { root: HTMLElement; icon: HTMLElement; title: HTMLElement; text: HTMLElement }
   /** The text as last known to be on disk (what we wrote, or what we read). */
   private savedText = ''
+  /** The last texts this tab wrote (newest last): a watcher event that reads one of them back is our own echo. */
+  private readonly ownTexts: string[] = []
   private wasDirty = false
   private saveTimer: ReturnType<typeof setTimeout> | undefined
   private viewTimer: ReturnType<typeof setTimeout> | undefined
@@ -341,6 +345,7 @@ export class NotePanel implements IContentRenderer {
       this.saving = undefined
       if (r.ok) {
         this.savedText = text
+        this.rememberOwn(text)
         if (this.lastError) { this.lastError = undefined; this.hideState() }
       } else {
         this.lastError = r.message
@@ -359,7 +364,14 @@ export class NotePanel implements IContentRenderer {
     if (!this.loaded || this.disposed) return
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined }
     const text = this.text
-    if (text !== this.savedText) { window.tether.noteFlush(this.path, text); this.savedText = text }
+    if (text !== this.savedText) { window.tether.noteFlush(this.path, text); this.savedText = text; this.rememberOwn(text) }
+  }
+
+  private rememberOwn(text: string): void {
+    const i = this.ownTexts.indexOf(text)
+    if (i >= 0) this.ownTexts.splice(i, 1)
+    this.ownTexts.push(text)
+    if (this.ownTexts.length > OWN_TEXTS_KEPT) this.ownTexts.shift()
   }
 
   /** The file changed on disk (main's watcher). */
@@ -368,8 +380,15 @@ export class NotePanel implements IContentRenderer {
     if (this.saving) await this.saving
     const r = await window.tether.noteRead(this.path)
     if (this.disposed || !r.ok) return // gone or unreadable: the next save recreates it
-    const action = externalChangeAction({ diskText: r.text, editorText: this.text, savedText: this.savedText })
-    if (action === 'keep') { this.savedText = r.text; this.syncDirty(); return }
+    // A write started during the read: its own event follows and is judged then.
+    if (this.saving) return
+    const action = externalChangeAction({ diskText: r.text, editorText: this.text, savedText: this.savedText, ownTexts: this.ownTexts })
+    if (action === 'keep') {
+      // Only the editor's own text counts as saved; an echo of an earlier write leaves the pending edits pending.
+      if (r.text === this.text) this.savedText = r.text
+      this.syncDirty()
+      return
+    }
     if (action === 'reload') { this.replaceText(r.text); return }
     this.conflictOpen = true
     try {
