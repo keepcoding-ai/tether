@@ -17,16 +17,16 @@ import { ChordPill } from './chord-pill.ts'
 import { editorChordCommand, editorKeybindings, runEditorChord } from './monaco-chords.ts'
 import { formatKeybindingsFile, mergeKeybindings, overridesFor, parseKeybindingsFile } from './keybindings-rules.ts'
 import { KeybindingsPanel, KeybindingsTab, type FixedBinding, type KeybindingsHost, type KeybindingsSnapshot } from './keybindings-panel.ts'
-import { isKeybindingsPanelId, KEYBINDINGS_COMPONENT, KEYBINDINGS_TAB, KEYBINDINGS_TITLE, newKeybindingsPanelId, type KeybindingsFileState } from '../shared/keybindings.ts'
+import { KEYBINDINGS_COMPONENT, KEYBINDINGS_TAB, KEYBINDINGS_TITLE, newKeybindingsPanelId, type KeybindingsFileState } from '../shared/keybindings.ts'
 import { defineTheme, mirrorThemeVars, monaco, remeasureEditorFonts } from './monaco.ts'
 import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
 import { paneCwdOfNote } from './note-rules.ts'
 import { PreviewPanel, PreviewTab, type PreviewHost, type PreviewSnapshot } from './preview-panel.ts'
 import { HtmlPreviewPanel, type HtmlPreviewHost, type HtmlPreviewSnapshot } from './html-preview-panel.ts'
 import type { PreviewPane } from './preview-pane.ts'
-import { HTML_PREVIEW_COMPONENT, isHtmlPath, isMarkdownPath, isPreviewablePath, isPreviewPanelId, newPreviewPanelId, PREVIEW_COMPONENT, PREVIEW_TAB, previewKindOf, previewParams, previewTitle, withPreview } from '../shared/preview.ts'
-import { cleanNoteName, isNotePanelId, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../shared/notes.ts'
-import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, isEmptyPanelId, newEmptyPanelId, withEmpty, type EmptyOrigin } from '../shared/empty.ts'
+import { isHtmlPath, isMarkdownPath, isPreviewablePath, newPreviewPanelId, withPreview } from '../shared/preview.ts'
+import { cleanNoteName, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../shared/notes.ts'
+import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, newEmptyPanelId, withEmpty, type EmptyOrigin } from '../shared/empty.ts'
 import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empty-panel.ts'
 import { type Choice, rememberProfile } from './chooser-rules.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
@@ -50,6 +50,12 @@ import { drawerOf, emptyLayout, isPersonChange, type LayoutV2, migrateLayout, or
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
+import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
+import { emptyLayout as emptyPaneLayout, htmlPreviewLayout, keybindingsLayout, mdPreviewLayout, noteLayout, previewPaneOptions, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
+import { activateExtensions } from './ext-host.ts'
+import type { TetherUi } from './ext-api.ts'
+import { extensions } from '../../extensions/index.renderer.ts'
+import { DisposableStore } from '../shared/vscode-lifecycle.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, formatKeys, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
@@ -57,8 +63,8 @@ import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituatio
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 
-const COMPONENT = 'terminal'
-const TAB = 'slot-tab'
+const COMPONENT = TERMINAL_COMPONENT
+const TAB = TERMINAL_TAB
 const SAVE_DEBOUNCE_MS = 300
 
 const slots = new Map<string, SlotState>()
@@ -76,6 +82,8 @@ const previews = new Map<string, PreviewPane>()
 const empties = new Map<string, EmptyPanel>()
 /** The "Atalhos de teclado" screens (F5, delivery 5; one is the rule, the map keeps the layout honest). */
 const keybindingsPanels = new Map<string, KeybindingsPanel>()
+/** Every kind of pane (F9): the registry main.ts and the extensions register into (see "pane types" below). */
+const paneTypes = new PaneRegistry<PaneType>()
 /** Removes the editor actions registered as commands by the last note that got the focus. */
 let editorCommandsOff: (() => void) | undefined
 /** Error of the last refused `start` per slot (the daemon does not store `already-open` / `unconfirmed`). */
@@ -172,9 +180,12 @@ function commandContext(): CommandContext {
   const activeId = currentDesk().activePanel?.id
   // `markdown`: the commands of the preview family (Ctrl+Shift+V, "abrir prévia", "abrir o arquivo-fonte") act on a note with a previewable
   // file (markdown or HTML) or on a preview of either kind; the host picks the kind from the file.
-  const markdown = activeId && notes.has(activeId) && isPreviewablePath(notes.get(activeId)!.path) ? 'note' : activeId && previews.has(activeId) ? 'preview' : undefined
-  const keybindings = !!activeId && keybindingsPanels.has(activeId)
-  return { pane: !!activeId, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(markdown ? { markdown } : {}), ...(keybindings ? { keybindings } : {}) }
+  // The active pane's type and its context flags (PaneType.contextFlags); `markdown`/`keybindings` are read from the flags.
+  const type = activeId ? liveTypeOf(paneTypes, activeId) : undefined
+  const flags: ReadonlySet<string> = new Set(activeId ? type?.contextFlags?.(activeId) ?? [] : [])
+  const markdown = flags.has('markdown.note') ? 'note' : flags.has('markdown.preview') ? 'preview' : undefined
+  const keybindings = flags.has('keybindings.screen')
+  return { pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(markdown ? { markdown } : {}), ...(keybindings ? { keybindings } : {}) }
 }
 
 const commands = new CommandRegistry(commandContext, {
@@ -307,78 +318,21 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
     dockviewOptions: () => ({
       defaultTabComponent: TAB,
       createComponent: ({ name }) => {
-        if (name === EMPTY_COMPONENT) {
-          const empty = new EmptyPanel(emptyHost)
-          const init = empty.init.bind(empty)
-          empty.init = params => { init(params); empties.set(empty.id, empty) }
-          const dispose = empty.dispose.bind(empty)
-          empty.dispose = () => { dispose(); if (empties.get(empty.id) === empty) empties.delete(empty.id) }
-          return empty
-        }
-        if (name === KEYBINDINGS_COMPONENT) {
-          const screen = new KeybindingsPanel(keybindingsHost)
-          const init = screen.init.bind(screen)
-          screen.init = params => { init(params); keybindingsPanels.set(screen.id, screen) }
-          const dispose = screen.dispose.bind(screen)
-          screen.dispose = () => { dispose(); if (keybindingsPanels.get(screen.id) === screen) keybindingsPanels.delete(screen.id) }
-          return screen
-        }
-        if (name === HTML_PREVIEW_COMPONENT) {
-          const preview = new HtmlPreviewPanel(htmlPreviewHost)
-          const init = preview.init.bind(preview)
-          preview.init = params => { init(params); previews.set(preview.id, preview) }
-          const dispose = preview.dispose.bind(preview)
-          preview.dispose = () => { dispose(); if (previews.get(preview.id) === preview) previews.delete(preview.id) }
-          return preview
-        }
-        if (name === PREVIEW_COMPONENT) {
-          const preview = new PreviewPanel(previewHost)
-          const init = preview.init.bind(preview)
-          preview.init = params => { init(params); previews.set(preview.id, preview) }
-          const dispose = preview.dispose.bind(preview)
-          preview.dispose = () => { dispose(); if (previews.get(preview.id) === preview) previews.delete(preview.id) }
-          return preview
-        }
-        if (name === NOTE_COMPONENT) {
-          const note = new NotePanel(noteHost)
-          const init = note.init.bind(note)
-          note.init = params => { init(params); notes.set(note.id, note) }
-          const dispose = note.dispose.bind(note)
-          note.dispose = () => { dispose(); if (notes.get(note.id) === note) notes.delete(note.id) }
-          return note
-        }
-        const panel = new TerminalPanel(host)
-        const init = panel.init.bind(panel)
-        panel.init = params => { init(params); panels.set(panel.slotId, panel) }
-        const dispose = panel.dispose.bind(panel)
-        panel.dispose = () => { dispose(); if (panels.get(panel.slotId) === panel) panels.delete(panel.slotId) }
-        return panel
+        const type = paneTypes.byComponent(name)
+        if (!type) throw new Error(`tipo de painel desconhecido: ${name}`)
+        return type.create()
       },
       createTabComponent: ({ name }) => {
-        if (name === EMPTY_TAB) return new EmptyTab(emptyHost)
-        if (name === PREVIEW_TAB) return new PreviewTab(previewHost)
-        if (name === KEYBINDINGS_TAB) return new KeybindingsTab(keybindingsHost)
-        if (name === NOTE_TAB) {
-          const tab = new NoteTab(noteHost, id => notes.get(id)?.dirty ?? false)
-          const init = tab.init.bind(tab)
-          tab.init = params => { init(params); noteTabs.set(params.api.id, tab) }
-          const dispose = tab.dispose.bind(tab)
-          tab.dispose = () => { dispose(); for (const [id, t] of noteTabs) if (t === tab) noteTabs.delete(id) }
-          return tab
-        }
-        const tab = new SlotTab(host, id => { void closePanel(id) })
-        const init = tab.init.bind(tab)
-        tab.init = params => { init(params); tabs.set(params.api.id, tab) }
-        const dispose = tab.dispose.bind(tab)
-        tab.dispose = () => { dispose(); for (const [id, t] of tabs) if (t === tab) tabs.delete(id) }
-        return tab
+        const type = paneTypes.byTab(name)
+        if (!type?.createTab) throw new Error(`aba de painel desconhecida: ${name}`)
+        return type.createTab()
       },
       // The tab strip measures its own overflow ("+N", tab-strip.ts): dockview's scroll-based list is off.
       disableTabsOverflowList: true,
       createRightHeaderActionComponent: () => new TabStripActions({
         describe: id => {
           const s = slots.get(id)
-          return { icon: s ? KIND_ICON[s.kind] : notes.has(id) ? 'note-pencil' : previews.has(id) ? 'eye' : empties.has(id) ? 'plus' : 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
+          return { icon: s ? KIND_ICON[s.kind] : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
@@ -417,15 +371,7 @@ function setupDock(): void {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); scheduleSave() },
     onSwitch: () => focusActivePane(),
-    paneOptions: panel => isNotePanelId(panel.id)
-      ? { id: panel.id, component: NOTE_COMPONENT, tabComponent: NOTE_TAB, title: panel.title ?? panel.id, params: panel.params ?? {} }
-      : isPreviewPanelId(panel.id)
-        ? previewPaneOptions(panel.id, previewParams(panel.params)?.path ?? '', previewKindOf(panel.params), panel.params, panel.title ?? undefined)
-      : isEmptyPanelId(panel.id)
-        ? { id: panel.id, component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: panel.params ?? withEmpty(undefined) }
-      : isKeybindingsPanelId(panel.id)
-        ? { id: panel.id, component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, title: KEYBINDINGS_TITLE, params: {} }
-        : { id: panel.id, component: COMPONENT, tabComponent: TAB, title: panel.title ?? panel.id, params: panel.params ?? { slotId: panel.id } },
+    paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
   drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onMargin: () => setDrawerOpen(false) }, DOCK_THEME)
@@ -483,13 +429,7 @@ function addPaneOptions(options: AddPanelOptions, target?: Target, reference?: s
 /** The pane's opening folder: a terminal's cwd, a note's repository, an empty pane's suggestion; undefined for none. */
 function paneCwdOf(id: string | undefined): string | undefined {
   if (!id) return undefined
-  const slot = slots.get(id)
-  if (slot) return slot.cwd
-  const note = notes.get(id)
-  if (note) return note.cwd ?? paneCwdOfNote(note.path)
-  const preview = previews.get(id)
-  if (preview) return noteByPath(preview.path)?.cwd ?? paneCwdOfNote(preview.path)
-  return empties.get(id)?.cwd || undefined
+  return liveTypeOf(paneTypes, id)?.cwdOf?.(id)
 }
 
 /**
@@ -1149,7 +1089,7 @@ async function restoreLayout(): Promise<void> {
   const result = await (geometry ?? paintGeometry())
   // Pruning is for display only (planRestore): a pane whose slot the daemon does not list right now is not a
   // change the person made, an empty list prunes nothing, and nothing here writes layout.json.
-  const { layout, orphaned } = planRestore(result?.layout ?? null, new Set(slots.keys()))
+  const { layout, orphaned } = planRestore(result?.layout ?? null, new Set(slots.keys()), id => paneTypes.isSlotless(id))
   if (layout) {
     layoutFile = layout
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
@@ -1220,7 +1160,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
   } else {
     // Reconnected (the daemon was restarted): hide panels it no longer knows, re-attach the rest. An empty
     // list is not trusted, and hiding is not a change the person made: the saved layout stays as it was.
-    for (const id of orphanedPanels(allPanels().map(p => p.id), new Set(slots.keys()))) {
+    for (const id of orphanedPanels(allPanels().map(p => p.id), new Set(slots.keys()), id => paneTypes.isSlotless(id))) {
       const panel = findPanel(id)
       if (panel) removeAnyPanel(panel)
     }
@@ -1871,31 +1811,20 @@ function closeNote(id: string): void {
 // What closing leaves behind, newest last: a slot (it stays in the tetherd, "Rodando sem painel" / "Encerrados", and
 // reopening RESUMES it, as the closed-slots menu does) or a note's file. Reopening takes the newest that still makes
 // sense (the slot still exists and has no pane; the note is not open).
-type ClosedPane = { kind: 'slot'; slotId: string } | { kind: 'note'; path: string }
-const closedPanes: ClosedPane[] = []
+// Each pane type says what it leaves (PaneType.closedEntry).
+const closedPanes: ClosedEntry[] = []
 
 function rememberClosed(id: string): void {
-  const entry: ClosedPane | undefined = slots.has(id) ? { kind: 'slot', slotId: id } : notes.has(id) ? { kind: 'note', path: notes.get(id)!.path } : undefined
+  const entry = liveTypeOf(paneTypes, id)?.closedEntry?.(id)
   if (!entry) return
-  const same = (a: ClosedPane, b: ClosedPane): boolean => a.kind === b.kind && (a.kind === 'slot' ? a.slotId === (b as { slotId: string }).slotId : a.path === (b as { path: string }).path)
-  const i = closedPanes.findIndex(c => same(c, entry))
+  const i = closedPanes.findIndex(c => c.key === entry.key)
   if (i !== -1) closedPanes.splice(i, 1)
   closedPanes.push(entry)
   if (closedPanes.length > 50) closedPanes.shift()
 }
 
 function reopenClosed(): void {
-  while (closedPanes.length) {
-    const c = closedPanes.pop()!
-    if (c.kind === 'slot') {
-      if (!slots.has(c.slotId) || findPanel(c.slotId)) continue
-      openSlot(c.slotId)
-      return
-    }
-    if (noteByPath(c.path)) continue
-    void openNote(c.path)
-    return
-  }
+  while (closedPanes.length) if (closedPanes.pop()!.reopen()) return
 }
 
 /** Main's watcher saw the file change: the note that shows it decides (reload, keep, or ask). */
@@ -1936,12 +1865,6 @@ const previewHost: PreviewHost = {
 function previewsOf(path: string): PreviewPane[] {
   const key = path.toLowerCase()
   return [...previews.values()].filter(p => p.path.toLowerCase() === key)
-}
-
-/** A preview pane's options: the component by kind (an HTML page is kept mounted: a running page must not restart when its pane is activated or moved). */
-function previewPaneOptions(id: string, path: string, kind: 'md' | 'html', params: Record<string, unknown> | undefined, title?: string): AddPanelOptions {
-  const common = { id, tabComponent: PREVIEW_TAB, title: title ?? previewTitle(path), params: params ?? withPreview(undefined, { path, ...(kind === 'html' ? { kind: 'html' as const } : {}) }) }
-  return kind === 'html' ? { ...common, component: HTML_PREVIEW_COMPONENT, renderer: 'always' } : { ...common, component: PREVIEW_COMPONENT }
 }
 
 /**
@@ -2957,6 +2880,95 @@ function setupTestHooks(): void {
   }
 }
 
+// ---------- pane types (F9) ----------
+// Every kind of pane registers here (app/renderer/pane-registry.ts): dockview's component factories, moving a pane,
+// the restore's slotless rule, the tab strip's icon, the opening folder, the context flags and "reopen the last closed
+// pane" all read the registry. Extensions register theirs through TetherUi.panes (app/renderer/ext-api.ts).
+
+/** Keeps `map` in step with a pane's life: set on init (dockview gives the id there), removed on dispose. */
+function tracked<T extends M & { init(params: never): void; dispose(): void }, M = T>(pane: T, map: Map<string, M>, key: () => string): T {
+  const init = pane.init.bind(pane) as (params: never) => void
+  pane.init = ((params: never) => { init(params); map.set(key(), pane) }) as T['init']
+  const dispose = pane.dispose.bind(pane)
+  pane.dispose = () => { dispose(); const k = key(); if (map.get(k) === pane) map.delete(k) }
+  return pane
+}
+
+/** Keeps `map` (pane id → tab) in step with a tab's life. */
+function trackedTab<T extends { init(params: never): void; dispose(): void }>(tab: T, map: Map<string, T>): T {
+  const init = tab.init.bind(tab) as (params: { api: { id: string } }) => void
+  tab.init = ((params: { api: { id: string } }) => { init(params); map.set(params.api.id, tab) }) as T['init']
+  const dispose = tab.dispose.bind(tab)
+  tab.dispose = () => { dispose(); for (const [id, t] of map) if (t === tab) map.delete(id) }
+  return tab
+}
+
+function registerCorePaneTypes(): void {
+  const live = (layout: PaneLayout, type: Omit<PaneType, keyof PaneLayout>): PaneType => ({ ...layout, ...type })
+  paneTypes.register(live(emptyPaneLayout, {
+    icon: 'plus',
+    create: () => { const p: EmptyPanel = tracked(new EmptyPanel(emptyHost), empties, () => p.id); return p },
+    createTab: () => new EmptyTab(emptyHost),
+    has: id => empties.has(id),
+    cwdOf: id => empties.get(id)?.cwd || undefined,
+  }))
+  paneTypes.register(live(keybindingsLayout, {
+    icon: 'question',
+    create: () => { const p: KeybindingsPanel = tracked(new KeybindingsPanel(keybindingsHost), keybindingsPanels, () => p.id); return p },
+    createTab: () => new KeybindingsTab(keybindingsHost),
+    has: id => keybindingsPanels.has(id),
+    contextFlags: () => ['keybindings.screen'],
+  }))
+  const previewCwd = (id: string): string | undefined => { const p = previews.get(id); return p ? noteByPath(p.path)?.cwd ?? paneCwdOfNote(p.path) : undefined }
+  paneTypes.register(live(htmlPreviewLayout, {
+    icon: 'eye',
+    create: () => { const p: HtmlPreviewPanel = tracked(new HtmlPreviewPanel(htmlPreviewHost), previews, () => p.id); return p },
+    has: id => previews.get(id) instanceof HtmlPreviewPanel,
+    cwdOf: previewCwd,
+    contextFlags: () => ['markdown.preview'],
+  }))
+  paneTypes.register(live(mdPreviewLayout, {
+    icon: 'eye',
+    create: () => { const p: PreviewPanel = tracked(new PreviewPanel(previewHost), previews, () => p.id); return p },
+    createTab: () => new PreviewTab(previewHost),
+    has: id => previews.has(id) && !(previews.get(id) instanceof HtmlPreviewPanel),
+    cwdOf: previewCwd,
+    contextFlags: () => ['markdown.preview'],
+  }))
+  paneTypes.register(live(noteLayout, {
+    icon: 'note-pencil',
+    create: () => { const p: NotePanel = tracked(new NotePanel(noteHost), notes, () => p.id); return p },
+    createTab: () => trackedTab(new NoteTab(noteHost, id => notes.get(id)?.dirty ?? false), noteTabs),
+    has: id => notes.has(id),
+    cwdOf: id => { const n = notes.get(id); return n ? n.cwd ?? paneCwdOfNote(n.path) : undefined },
+    // The preview family's commands act on a note whose file can be previewed (markdown or HTML).
+    contextFlags: id => isPreviewablePath(notes.get(id)?.path ?? '') ? ['markdown.note'] : [],
+    closedEntry: id => {
+      const path = notes.get(id)?.path
+      if (path === undefined) return undefined
+      return { key: `note:${path}`, reopen: () => { if (noteByPath(path)) return false; void openNote(path); return true } }
+    },
+  }))
+  paneTypes.register(live(terminalLayout, {
+    icon: 'terminal',
+    create: () => { const p: TerminalPanel = tracked(new TerminalPanel(host), panels, () => p.slotId); return p },
+    createTab: () => trackedTab(new SlotTab(host, id => { void closePanel(id) }), tabs),
+    has: id => slots.has(id),
+    cwdOf: id => slots.get(id)?.cwd,
+    // Reopening a slot resumes it, as the closed-slots menu does; it makes sense while the slot exists without a pane.
+    closedEntry: id => slots.has(id) ? { key: `slot:${id}`, reopen: () => { if (!slots.has(id) || findPanel(id)) return false; openSlot(id); return true } } : undefined,
+  }))
+}
+
+/** The extensions' renderer side (extensions/index.renderer.ts): activated once at startup, after the core types. */
+const extensionStore = new DisposableStore()
+function activateRendererExtensions(): void {
+  const apiFor = (id: string): TetherUi => ({ id, panes: { register: type => extensionStore.add(paneTypes.register(type)) } })
+  activateExtensions(extensions, apiFor, extensionStore)
+}
+
+registerCorePaneTypes()
+activateRendererExtensions()
 setupDock()
 void paintGeometry()
 manager = new ProfileManager({

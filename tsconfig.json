@@ -20,6 +20,9 @@
     "bin",
     "app/main",
     "app/preload",
-    "app/shared"
+    "app/shared",
+    "extensions/types.ts",
+    "extensions/index.main.ts",
+    "extensions/index.daemon.ts"
   ]
 }

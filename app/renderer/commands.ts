@@ -15,6 +15,10 @@ export type CommandIcon = string
 export interface CommandContext {
   /** The current desk has an active pane (the one toolbar and ≡ actions act on). */
   pane: boolean
+  /** The active pane's type id (app/renderer/pane-registry.ts): 'terminal', 'note', 'md-preview'… */
+  paneType?: string
+  /** Context keys the active pane's type sets ('markdown.note', 'markdown.preview', 'keybindings.screen'). `markdown` and `keybindings` below are derived from them and go once commands read the flags. */
+  flags?: ReadonlySet<string>
   /** How many desks exist. */
   desks: number
   drawerOpen: boolean
