@@ -4,9 +4,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { AttentionState, attentionOptions, parseAttentionReport } from './attention.ts'
-import { claudeAdapter } from '../agents/claude.ts'
+import '../agents/builtin.ts'
+import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import { shellAdapter } from '../agents/shell.ts'
-import { soulAdapter } from '../agents/soul.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
@@ -41,7 +41,8 @@ export const MAX_STARTING = 3
 /** Args appended to every launch of an agent by this daemon, from `TETHER_CLAUDE_ARGS` / `TETHER_SOUL_ARGS`
  *  (whitespace-separated). The app's dialog has no args field; this is how a dev/E2E run pins `--model haiku`. */
 export function defaultAgentArgs(agent: AgentName, env: NodeJS.ProcessEnv = process.env): string[] {
-  const raw = env[`TETHER_${agent.toUpperCase()}_ARGS`]?.trim()
+  const name = agentRegistry.get(agent)?.envArgsVar ?? `TETHER_${agent.toUpperCase().replace(/-/g, '_')}_ARGS`
+  const raw = env[name]?.trim()
   return raw ? raw.split(/\s+/) : []
 }
 const WATCH_DEBOUNCE_MS = 100
@@ -56,6 +57,10 @@ export interface DaemonOptions {
   onShutdown?: () => void
   /** Replaces an agent's adapter (tests: a fake that launches an inert process instead of the agent). */
   adapters?: Partial<Record<AgentName, AgentAdapter>>
+  /** Daemon extensions' launch middlewares (TetherDaemon.launch.use), applied in order to every agent/shell plan. */
+  transformPlan?: (plan: LaunchPlan, meta: SlotMeta) => LaunchPlan
+  /** Slot lifecycle for daemon extensions (TetherDaemon.onSlot). */
+  onSlot?: (kind: 'spawned' | 'exited' | 'bound', slot: SlotState) => void
   /** Overrides READY_FALLBACK_MS (tests). */
   readyFallbackMs?: number
   /** How often a running Claude slot's title is polled from its transcript (tests shorten it). */
@@ -139,7 +144,10 @@ class DaemonImpl implements Daemon {
   private readonly slotMap = new Map<string, Slot>()
   private watcher: FSWatcher | undefined
   private readonly pending = new Map<string, NodeJS.Timeout>()
-  private readonly adapters: Record<AgentName, AgentAdapter>
+  /** Test overrides; everything else comes from the agent registry at the time of use. */
+  private readonly adapterOverrides: Partial<Record<AgentName, AgentAdapter>>
+  private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta) => LaunchPlan) | undefined
+  private readonly onSlot: ((kind: 'spawned' | 'exited' | 'bound', slot: SlotState) => void) | undefined
   private readonly readyFallbackMs: number
   private readonly minAgentAgeMs: number
   private readonly killWaitCapMs: number
@@ -157,7 +165,9 @@ class DaemonImpl implements Daemon {
     this.pipe = opts.pipe
     this.log = opts.log ?? (() => {})
     this.onShutdown = opts.onShutdown
-    this.adapters = { claude: claudeAdapter, soul: soulAdapter, ...opts.adapters }
+    this.adapterOverrides = { ...opts.adapters }
+    this.transformPlan = opts.transformPlan
+    this.onSlot = opts.onSlot
     this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
     this.minAgentAgeMs = opts.minAgentAgeMs ?? MIN_AGENT_AGE_MS
     this.killWaitCapMs = opts.killWaitCapMs ?? KILL_WAIT_CAP_MS
@@ -361,10 +371,27 @@ class DaemonImpl implements Daemon {
 
   // ---- slots ---------------------------------------------------------------------------------
 
+  /** The agent's adapter, or undefined when the agent is not registered (its extension is off or gone). */
+  private adapterOf(agent: AgentName): AgentAdapter | undefined {
+    return this.adapterOverrides[agent] ?? agentRegistry.get(agent)?.adapter
+  }
+
+  private unavailableError(meta: SlotMeta): { code: ErrorCode; message: string } | undefined {
+    if (meta.agent === 'shell' || this.adapterOf(meta.agent)) return undefined
+    return { code: 'agent-unavailable', message: `o agente ${meta.agent} não está disponível (extensão desativada ou ausente); o slot continua guardado` }
+  }
+
+  private emitSlot(kind: 'spawned' | 'exited' | 'bound', slot: Slot): void {
+    if (!this.onSlot) return
+    try { this.onSlot(kind, this.stateOf(slot)) } catch (e) { this.log(`onSlot listener failed: ${(e as Error).message}`) }
+  }
+
   private load(meta: SlotMeta): Slot {
+    const unavailable = this.unavailableError(meta)
     const slot: Slot = {
       meta,
-      status: 'exited',
+      status: unavailable ? 'error' : 'exited',
+      ...(unavailable ? { error: unavailable } : {}),
       scrollback: new Scrollback(),
       attention: new AttentionState(attentionOptions(meta.agent)),
       attached: new Set(),
@@ -393,8 +420,10 @@ class DaemonImpl implements Daemon {
     else if (broadcast) this.broadcastState(slot)
     this.unwatchTitle(slot) // the watch follows one binding; this one changed
     if (isAlive(slot)) this.watchTitle(slot)
-    if (binding && !binding.title) {
-      void this.adapters[binding.agent].title(binding, this.lookupOf(slot)).then((title) => {
+    this.emitSlot('bound', slot)
+    const titleAdapter = binding && !binding.title ? this.adapterOf(binding.agent) : undefined
+    if (binding && titleAdapter) {
+      void titleAdapter.title(binding, this.lookupOf(slot)).then((title) => {
         if (!title || slot.binding !== binding || slot.title === title) return
         slot.title = title
         this.broadcastState(slot)
@@ -420,8 +449,8 @@ class DaemonImpl implements Daemon {
   private watchTitle(slot: Slot): void {
     const binding = slot.binding
     if (slot.stopTitleWatch || !binding || slot.meta.agent === 'shell') return
-    const adapter = this.adapters[slot.meta.agent]
-    if (!adapter.watchTitle) return
+    const adapter = this.adapterOf(slot.meta.agent)
+    if (!adapter?.watchTitle) return
     const stop = adapter.watchTitle(binding, (title) => {
       if (slot.binding !== binding || slot.title === title) return
       slot.title = title
@@ -471,10 +500,12 @@ class DaemonImpl implements Daemon {
   private async startSlot(slot: Slot, choice: 'resume' | 'new' | undefined): Promise<void> {
     if (slot.pty && !slot.pty.exit) return // idempotent: already up
     if (slot.status === 'queued') return // already waiting its turn
+    const unavailable = this.unavailableError(slot.meta)
+    if (unavailable) throw this.fail(slot, unavailable.code, unavailable.message)
     const resume = this.resumeFor(slot, choice)
     if (resume) {
       // PRD C15: a resume of a session the agent no longer has must fail here, not inside the agent's TUI.
-      const exists = await this.adapters[resume.agent].sessionExists(resume, this.lookupOf(slot))
+      const exists = await (this.adapterOf(resume.agent)?.sessionExists(resume, this.lookupOf(slot)) ?? 'unknown')
       if (exists === false) throw this.fail(slot, 'session-missing', `a sessão ${resume.sessionId} não existe mais no ${resume.agent}`)
       if (slot.pty && !slot.pty.exit) return // another request started it while we checked
     }
@@ -525,7 +556,7 @@ class DaemonImpl implements Daemon {
     try {
       plan = this.planFor(meta, resume)
     } catch (e) {
-      throw this.fail(slot, 'spawn-failed', (e as Error).message)
+      throw this.fail(slot, e instanceof RequestError ? e.code : 'spawn-failed', (e as Error).message)
     }
     slot.scrollback.clear()
     slot.attention.reset()
@@ -559,6 +590,7 @@ class DaemonImpl implements Daemon {
             this.log(`slot ${meta.slotId}: no start event for this run; binding unconfirmed`)
           }
           this.broadcastState(slot)
+          this.emitSlot('exited', slot)
           this.pump()
         },
       })
@@ -577,6 +609,7 @@ class DaemonImpl implements Daemon {
     }
     this.broadcastState(slot)
     this.watchTitle(slot)
+    this.emitSlot('spawned', slot)
   }
 
   /**
@@ -590,13 +623,14 @@ class DaemonImpl implements Daemon {
       try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot refresh the profile snapshot: ${(e as Error).message}`) }
     }
     const profile = this.profileOf(meta, profiles).launch
-    switch (meta.agent) {
-      case 'shell':
-        return shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile })
-      case 'claude':
-      case 'soul':
-        return this.adapters[meta.agent].plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
+    let plan: LaunchPlan
+    if (meta.agent === 'shell') plan = shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile })
+    else {
+      const adapter = this.adapterOf(meta.agent)
+      if (!adapter) throw new RequestError('agent-unavailable', `o agente ${meta.agent} não está disponível`)
+      plan = adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
     }
+    return this.transformPlan ? this.transformPlan(plan, meta) : plan
   }
 
   /** A start event of the agent arrived at/after the last spawn (the binding describes what this run opened). */
@@ -736,6 +770,7 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id, slots: this.slots() }
       case 'create': {
         if (!isKind(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${String(req.kind)}`)
+        if (req.kind !== 'shell' && !this.adapterOf(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${req.kind} (use ${agentChoices()})`)
         if (typeof req.cwd !== 'string' || !req.cwd) throw new RequestError('bad-request', 'cwd obrigatório')
         const meta: SlotMeta = {
           v: 1,
@@ -820,7 +855,7 @@ class DaemonImpl implements Daemon {
       case 'profile-save': {
         const input = req.profile as Partial<ProfileInput> | undefined
         if (!input || typeof input !== 'object') throw new RequestError('bad-request', 'perfil obrigatório')
-        if (!isProfileAgent(input.agent)) throw new RequestError('invalid-profile', `agente inválido: ${String(input.agent)} (use claude, soul ou shell)`)
+        if (!isProfileAgent(input.agent)) throw new RequestError('invalid-profile', `agente inválido: ${String(input.agent)} (use ${agentChoices()})`)
         let saved: { profile: Profile; warnings: string[] }
         try {
           saved = this.profileStore.save({ ...input, agent: input.agent, name: String(input.name ?? ''), args: Array.isArray(input.args) ? input.args : [] })
@@ -955,7 +990,7 @@ class DaemonImpl implements Daemon {
 }
 
 function isKind(x: unknown): x is SlotKind {
-  return x === 'claude' || x === 'soul' || x === 'shell'
+  return x === 'shell' || isAgentName(x)
 }
 
 /** The slot's process is up (spawned and not exited). */

@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "slotId": "a1b2c3d4",
+  "agent": "claude",
+  "cwd": "__CWD__",
+  "args": [],
+  "createdAt": "2026-10-01T12:00:00.000Z",
+  "name": "principal",
+  "profileId": "claude",
+  "profileArgs": []
+}

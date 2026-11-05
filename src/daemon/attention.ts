@@ -14,6 +14,9 @@
 // Cleared by: the user typing into the slot (input that is not a terminal reply), `seen` (the pane got the
 // focus), a new launch and the process exit.
 
+import '../agents/builtin.ts'
+import { agentRegistry } from '../agents/registry.ts'
+
 export type Attention = 'done' | 'waiting'
 
 export interface AttentionOptions {
@@ -126,10 +129,12 @@ export class AttentionState {
   }
 }
 
-/** The options for a slot kind (see the header). */
-export function attentionOptions(kind: 'claude' | 'soul' | 'shell'): AttentionOptions {
-  if (kind === 'claude') return { idle: false, bel: false }
-  if (kind === 'soul') return { idle: true, bel: true }
+/** The options for a slot kind (see the header): the agent's contribution; shells and unregistered agents ring on BEL only. */
+export function attentionOptions(kind: string): AttentionOptions {
+  if (kind !== 'shell') {
+    const agent = agentRegistry.get(kind)
+    if (agent) return agent.attention
+  }
   return { idle: false, bel: true }
 }
 

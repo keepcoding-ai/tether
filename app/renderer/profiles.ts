@@ -3,6 +3,7 @@
 // (app/renderer/index.html #dlg-profiles): list on the left, one form on the right (name, agent, shell executable,
 // args with a chips preview, env rows, default folder, default flag). Validation is the daemon's
 // (src/core/profile.ts): every error it returns in Portuguese lands next to the field it is about; warnings do not block a save.
+import { byAgent } from './agent-labels.ts'
 import type { Profile, ProfileInput, SlotState } from '../../src/daemon/protocol.ts'
 import type { ProfileAgent } from '../../src/core/profile.ts'
 import type { ProfileDeleted, ProfileSaved } from '../shared/api.ts'
@@ -13,7 +14,7 @@ import { UNSAFE_LABEL, UNSAFE_TOOLTIP } from './panel.ts'
 import { deleteProfileSituation } from './situations.ts'
 
 export const AGENTS: ProfileAgent[] = ['claude', 'soul', 'shell']
-export const AGENT_LABEL: Record<ProfileAgent, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
+export const AGENT_LABEL: Record<ProfileAgent, string> = byAgent({ claude: 'Claude', soul: 'soul', shell: 'Shell' }, (n) => n)
 const UNSAFE_ARG = '--dangerously-skip-permissions'
 
 /** What the list shows for a profile's command line: shell profiles show the executable's args too. */
@@ -46,7 +47,7 @@ export function renderProfileGroups(host: HTMLElement, profiles: Profile[], opts
     group.className = 'profile-group'
     group.dataset.agent = agent
     const h = document.createElement('h4')
-    h.append(icon(KIND_ICON[agent]), document.createTextNode(AGENT_LABEL[agent]))
+    h.append(icon(KIND_ICON[agent] ?? 'terminal-window'), document.createTextNode(AGENT_LABEL[agent]!))
     group.append(h)
     for (const p of items) {
       const row = opts.mode === 'radio' ? document.createElement('label') : document.createElement('button')
@@ -65,7 +66,7 @@ export function renderProfileGroups(host: HTMLElement, profiles: Profile[], opts
         input.addEventListener('change', () => { if (input.checked) opts.onPick(p.id) })
         row.append(input)
       }
-      const ic = document.createElement('span'); ic.className = 'p-icon'; ic.append(icon(KIND_ICON[agent]))
+      const ic = document.createElement('span'); ic.className = 'p-icon'; ic.append(icon(KIND_ICON[agent] ?? 'terminal-window'))
       const text = document.createElement('span'); text.className = 'p-text'
       const name = document.createElement('span'); name.className = 'p-name'; name.textContent = p.name
       if (p.default) { const d = document.createElement('span'); d.className = 'p-default'; d.textContent = 'padrão'; d.title = `Pré-selecionado para ${AGENT_LABEL[agent]} em Novo painel`; name.append(d) }

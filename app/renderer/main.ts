@@ -340,7 +340,7 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
       createRightHeaderActionComponent: () => new TabStripActions({
         describe: id => {
           const s = slots.get(id)
-          return { icon: s ? KIND_ICON[s.kind] : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
+          return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
@@ -848,7 +848,7 @@ async function openMove(slotId: string, mode?: MoveMode): Promise<void> {
   const op = await openMoveDialog({
     scopes: moveTree(),
     source: { slotId, title: findPanel(slotId)?.api.title ?? slotId, scope, frameId: frame.id },
-    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] : notes.has(id) ? 'note-pencil' : previews.has(id) ? 'eye' : empties.has(id) ? 'plus' : 'question' },
+    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] ?? 'terminal-window' : notes.has(id) ? 'note-pencil' : previews.has(id) ? 'eye' : empties.has(id) ? 'plus' : 'question' },
     ...(mode ? { mode } : {}),
   })
   if (op) await runMove(op, slotId)
@@ -1214,7 +1214,7 @@ function closedRow(s: SlotState, group: 'running' | 'ended'): HTMLElement {
   row.dataset.slot = s.slotId
   if (group === 'running' && askingForget === s.slotId) row.classList.add('asking')
   const led = document.createElement('span'); led.className = 'led'
-  const kind = document.createElement('span'); kind.className = `kind ${s.kind}`; kind.append(icon(KIND_ICON[s.kind]))
+  const kind = document.createElement('span'); kind.className = `kind ${s.kind}`; kind.append(icon(KIND_ICON[s.kind] ?? 'terminal-window'))
   const tx = document.createElement('div'); tx.className = 'tx'
   const title = document.createElement('span'); title.className = 'tt'; title.textContent = panelTitle(s)
   const cwd = document.createElement('span'); cwd.className = 'cw'; cwd.textContent = s.cwd; cwd.title = s.cwd

@@ -8,6 +8,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync
 import { join } from 'node:path'
 import { defaultShell } from '../agents/shell.ts'
 import type { AgentName, SlotMeta } from './event.ts'
+import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
+import '../agents/builtin.ts'
 
 export type ProfileAgent = AgentName | 'shell'
 
@@ -77,11 +79,8 @@ export function gitBashPath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export function defaultProfiles(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Profile[] {
-  const out: Profile[] = [
-    { id: 'claude', name: 'Claude', agent: 'claude', args: [], default: true },
-    { id: 'claude-dev', name: 'Claude modo dev', agent: 'claude', args: [UNSAFE_ARG] },
-    { id: 'soul', name: 'soul', agent: 'soul', args: ['-g'], default: true },
-  ]
+  // Each registered agent brings its own (claude, claude-dev and soul from the built-ins); the shells are the core's.
+  const out: Profile[] = agentRegistry.all().flatMap((a) => a.defaultProfiles(env, platform))
   const shell = defaultShell(env, platform)
   if (platform === 'win32') {
     out.push({ id: 'powershell', name: 'PowerShell', agent: 'shell', args: [], shell, default: true })
@@ -108,7 +107,7 @@ function isStringMap(x: unknown): x is Record<string, string> {
 }
 
 export function isProfileAgent(x: unknown): x is ProfileAgent {
-  return x === 'claude' || x === 'soul' || x === 'shell'
+  return x === 'shell' || isAgentName(x)
 }
 
 /** Shape check only (validateProfile judges the content). */
@@ -197,29 +196,9 @@ export interface Validation {
   warnings: string[]
 }
 
-/** Args tether decides per launch; a profile must not carry them. Matched as `--flag` and `--flag=value`. */
-const RESERVED_ARGS: Record<AgentName, Record<string, string>> = {
-  claude: {
-    '--resume': 'o tether escolhe a sessão que o slot retoma',
-    '-r': 'o tether escolhe a sessão que o slot retoma',
-    '--continue': 'o tether escolhe a sessão que o slot retoma',
-    '-c': 'o tether escolhe a sessão que o slot retoma',
-    '--session-id': 'o tether gera o id de cada sessão nova',
-    '--settings': 'o tether injeta as configurações com os hooks que registram a sessão',
-    '--fork-session': 'bifurcar é uma ação por retomada, não uma propriedade do perfil (o slot perderia a sessão a cada reinício)',
-  },
-  soul: {
-    '--resume': 'o tether escolhe a sessão que o slot retoma',
-    '-r': 'o tether escolhe a sessão que o slot retoma',
-    '--continue': 'o tether escolhe a sessão que o slot retoma',
-    '-c': 'o tether escolhe a sessão que o slot retoma',
-    '--session-id': 'o tether identifica a sessão pelo evento do soul',
-    '--fork-session': 'bifurcar é uma ação por retomada, não uma propriedade do perfil (o slot perderia a sessão a cada reinício)',
-  },
-}
-
 function reservedReason(agent: AgentName, arg: string): string | undefined {
-  const table = RESERVED_ARGS[agent]
+  // Args tether decides per launch (AgentContribution.reservedArgs); matched as `--flag` and `--flag=value`.
+  const table = agentRegistry.get(agent)?.reservedArgs ?? {}
   for (const [flag, reason] of Object.entries(table)) {
     if (arg === flag || arg.startsWith(`${flag}=`)) return reason
   }
@@ -237,10 +216,11 @@ export function validateProfile(p: ProfileInput): Validation {
   const errors: string[] = []
   const warnings: string[] = []
   if (typeof p.name !== 'string' || !p.name.trim()) errors.push('o perfil precisa de um nome')
-  if (!isProfileAgent(p.agent)) errors.push(`agente inválido: ${String(p.agent)} (use claude, soul ou shell)`)
+  // Saving consults the registry (reading profiles.json does not: a profile of an agent whose extension is off is kept).
+  if (!isProfileAgent(p.agent) || (p.agent !== 'shell' && !agentRegistry.has(p.agent))) errors.push(`agente inválido: ${String(p.agent)} (use ${agentChoices()})`)
   if (p.id !== undefined && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(p.id)) errors.push(`id inválido: ${JSON.stringify(p.id)}`)
   if (!isStringArray(p.args)) errors.push('args precisa ser uma lista de textos')
-  else if (p.agent === 'claude' || p.agent === 'soul') {
+  else if (p.agent !== 'shell' && isProfileAgent(p.agent)) {
     for (const arg of p.args) {
       const reason = reservedReason(p.agent, arg)
       if (reason) errors.push(`o argumento ${arg} não pode ficar no perfil: ${reason}`)

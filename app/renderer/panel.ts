@@ -1,6 +1,7 @@
 // One dockview panel = one slot: a header strip (agent, title, folder, status) over an xterm, plus an
 // overlay for the states that need the user (unconfirmed binding, error, exited, queued).
 // Attaches on first layout, streams `data`, sends `input`/`resize`, detaches on dispose.
+import { byAgent } from './agent-labels.ts'
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -27,7 +28,7 @@ import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './termi
 /** Which xterm renderer a panel ended up with: WebGL draws box/block glyphs itself (no gaps at line height 1.2); DOM is the fallback. */
 export type TerminalRenderer = 'webgl' | 'dom'
 
-export const KIND_LABEL: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
+export const KIND_LABEL: Record<SlotKind, string> = byAgent({ claude: 'Claude', soul: 'soul', shell: 'Shell' }, (n) => n)
 export const STATUS_LABEL: Record<SlotStatus, string> = {
   running: 'rodando',
   queued: 'na fila',
@@ -125,6 +126,12 @@ export function errorOverlay(s: SlotState, err: SlotError): OverlaySpec {
         icon: 'warning', title: 'Esta sessão já está aberta em outro painel', tone: 'warn',
         text: 'Duas cópias da mesma conversa não podem rodar ao mesmo tempo.',
         choices: [NEW_SESSION('Uma conversa nova nesta pasta; a outra continua no painel dela.'), CLOSE],
+      }
+    case 'agent-unavailable':
+      return {
+        icon: 'warning', title: 'Agente indisponível', tone: 'warn',
+        text: err.message,
+        choices: [{ id: 'start', icon: 'arrow-clockwise', label: 'Tentar de novo', consequence: 'Funciona quando o agente voltar a estar disponível.', tone: 'safe' }, CLOSE],
       }
     case 'spawn-failed':
       return {
@@ -731,14 +738,14 @@ export class SlotTab implements ITabRenderer {
     if (!s && !this.host.isDaemonReady()) {
       // Before the daemon answers: the layout's hint and a "starting" dot.
       const hint = this.hint
-      setIcon(this.kind, hint ? KIND_ICON[hint.kind] : 'question')
+      setIcon(this.kind, hint ? KIND_ICON[hint.kind] ?? 'terminal-window' : 'question')
       this.text.textContent = this.api.title ?? this.api.id
       this.dot.className = 'dot starting'
       this.unsafe.hidden = !hint?.unsafe
       this.element.title = `${this.api.title ?? this.api.id}\nConectando ao serviço…`
       return
     }
-    setIcon(this.kind, s ? KIND_ICON[s.kind] : 'question')
+    setIcon(this.kind, s ? KIND_ICON[s.kind] ?? 'terminal-window' : 'question')
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.unsafe.hidden = !s?.unsafe

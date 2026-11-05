@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { pidExists } from '../core/liveness.ts'
 import { tetherHome } from '../core/paths.ts'
 import { pingDaemon } from './client.ts'
+import { DaemonExtensionHost } from './ext-host.ts'
 import { createGuard } from './guard.ts'
 import { pipePath } from './protocol.ts'
 import { startDaemon, type Daemon } from './server.ts'
@@ -58,9 +59,13 @@ async function main(): Promise<void> {
     process.exit(code)
   }
 
+  // Extensions activate before the slots load: an agent they register must be known when slot metas are read.
+  const extHost = new DaemonExtensionHost({ home, log })
+  extHost.activate()
+
   let daemon: Daemon
   try {
-    daemon = await startDaemon({ home, pipe, log, onShutdown: () => exit('shutdown request') })
+    daemon = await startDaemon({ home, pipe, log, onShutdown: () => exit('shutdown request'), transformPlan: extHost.transformPlan, onSlot: extHost.emitSlot })
   } catch (e) {
     const err = e as NodeJS.ErrnoException
     if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
@@ -79,6 +84,7 @@ async function main(): Promise<void> {
   }
   writeFileSync(pidFilePath(home), `${process.pid}\n`)
   log(`started pid ${process.pid}, home ${home}`)
+  log(`extensions: ${extHost.activated.length} active${extHost.failed.length ? `, ${extHost.failed.length} failed` : ''}`)
 
   const shutdown = (reason: string, code = 0): void => {
     log(`shutting down: ${reason}`)

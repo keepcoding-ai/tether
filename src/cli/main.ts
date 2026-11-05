@@ -18,7 +18,8 @@ import { parseArgs, UsageError } from './args.ts'
 import { attach } from './attach.ts'
 import { localTime, relativeTime, shortId, statusLabel, table, truncate, truncateStart } from './format.ts'
 import { ownSlotOf, restartDaemon, selfShutdownMessage } from '../daemon/restart.ts'
-import { adapters, planFor, profileFor, runHere } from './here.ts'
+import { agentChoices, agentRegistry } from '../agents/registry.ts'
+import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
 export const USAGE = `uso: tether <comando> [opções]
@@ -297,8 +298,8 @@ async function cmdShow(args: string[]): Promise<number> {
 // ---- new / open --------------------------------------------------------------------------------
 
 function parseKind(x: string | undefined): SlotKind {
-  if (x === 'claude' || x === 'soul' || x === 'shell') return x
-  throw new UsageError(`agente inválido: ${x ?? '(vazio)'} (use claude, soul ou shell)`)
+  if (x !== undefined && (x === 'shell' || agentRegistry.has(x))) return x
+  throw new UsageError(`agente inválido: ${x ?? '(vazio)'} (use ${agentChoices()})`)
 }
 
 async function cmdNew(args: string[]): Promise<number> {
@@ -382,7 +383,7 @@ async function openHere(ctx: Context, slot: SlotState, slots: SlotState[], choic
     if (!binding.confirmed && !choice) throw fail('unconfirmed', '')
     if (!existsSync(binding.cwd)) throw fail('cwd-missing', `a pasta não existe: ${binding.cwd}`)
     const env = profileFor(ctx.home, meta).launch?.env
-    const exists = await adapters[binding.agent].sessionExists(binding, env ? { env } : {})
+    const exists = await adapterOf(binding.agent).sessionExists(binding, env ? { env } : {})
     if (exists === false) throw fail('session-missing', `a sessão ${binding.sessionId} não existe mais no ${binding.agent}`)
     const other = slots.find((s) => s.slotId !== slot.slotId && s.pid !== undefined && s.binding?.sessionId === binding.sessionId)
     if (other) throw fail('already-open', `a sessão já está aberta no slot ${other.slotId}`)
@@ -519,8 +520,8 @@ async function cmdProfiles(args: string[]): Promise<number> {
 }
 
 function parseAgent(x: string | undefined): ProfileAgent {
-  if (x === 'claude' || x === 'soul' || x === 'shell') return x
-  throw new UsageError(`agente inválido: ${x ?? '(vazio)'} (use claude, soul ou shell)`)
+  if (x !== undefined && (x === 'shell' || agentRegistry.has(x))) return x
+  throw new UsageError(`agente inválido: ${x ?? '(vazio)'} (use ${agentChoices()})`)
 }
 
 function parseEnv(pairs: string[]): Record<string, string> {

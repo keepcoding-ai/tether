@@ -42,6 +42,9 @@ export type ItemGroup = ProfileAgent | 'note' | 'empty'
 export const ITEM_GROUPS: readonly ItemGroup[] = ['claude', 'soul', 'shell', 'note', 'empty']
 export const GROUP_LABEL: Record<ItemGroup, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell', note: 'Nota', empty: 'Vazio' }
 export const GROUP_ICON: Record<ItemGroup, IconName> = { claude: 'sparkle', soul: 'ghost', shell: 'terminal-window', note: 'note-pencil', empty: 'plus' }
+/** An agent the renderer has no descriptor for yet (an extension's, F9 slice 4) shows under its own name. */
+const groupLabel = (g: ItemGroup): string => GROUP_LABEL[g] ?? g
+const groupIcon = (g: ItemGroup): IconName => GROUP_ICON[g] ?? 'terminal-window'
 
 const UNSAFE_ARG = '--dangerously-skip-permissions'
 
@@ -69,7 +72,7 @@ const words = (s: string): string[] => fold(s).split(/[^\p{L}\p{N}]+/u).filter(B
 
 /** Aliases by what the profile is: shell names people type, the unsafe flag's nicknames, the agent's. */
 function profileKeywords(p: Profile, unsafe: boolean): string[] {
-  const out = [...words(p.name), ...words(GROUP_LABEL[p.agent]), p.agent]
+  const out = [...words(p.name), ...words(groupLabel(p.agent)), p.agent]
   const name = fold(p.name)
   if (p.agent === 'claude') out.push('cc', 'agente', 'code')
   if (p.agent === 'soul') out.push('agente')
@@ -90,7 +93,7 @@ export function profileItem(p: Profile): ChooserItem {
   const args = p.agent === 'shell' && p.shell ? [...p.shell.args, ...p.args] : p.args
   const unsafe = p.args.includes(UNSAFE_ARG)
   const hint = args.length ? formatArgs(args) : p.agent === 'shell' && !p.shell ? 'shell padrão' : 'sem argumentos'
-  return { id: p.id, kind: 'profile', group: p.agent, name: p.name, hint, hintNone: args.length === 0, icon: GROUP_ICON[p.agent], keywords: profileKeywords(p, unsafe), unsafe, default: !!p.default, ...(p.cwd ? { cwd: p.cwd } : {}) }
+  return { id: p.id, kind: 'profile', group: p.agent, name: p.name, hint, hintNone: args.length === 0, icon: groupIcon(p.agent), keywords: profileKeywords(p, unsafe), unsafe, default: !!p.default, ...(p.cwd ? { cwd: p.cwd } : {}) }
 }
 
 export const NOTE_NEW_ITEM: ChooserItem = { id: `${CHOICE_PREFIX}note-new`, kind: 'note-new', group: 'note', name: 'Nova nota', hint: 'arquivo .md novo em <pasta>/.tether/notes', hintNone: false, icon: 'note-pencil', keywords: ['nota', 'note', 'nova', 'novo', 'md', 'markdown', 'arquivo', 'texto'], unsafe: false, default: false }
@@ -159,10 +162,10 @@ export function chooserRows(items: readonly ChooserItem[], query: string, recent
       rows.push({ kind: 'sep', label: 'Recentes', icon: 'clock-counter-clockwise', recent: true })
       for (const item of recent) rows.push({ kind: 'item', item, positions: [], recent: true, n: undefined })
     }
-    for (const group of ITEM_GROUPS) {
+    for (const group of [...ITEM_GROUPS, ...new Set(items.map(it => it.group).filter(g => !ITEM_GROUPS.includes(g)))]) {
       const list = items.filter(it => it.group === group && !recent.includes(it))
       if (list.length === 0) continue
-      rows.push({ kind: 'sep', label: GROUP_LABEL[group], icon: GROUP_ICON[group], recent: false })
+      rows.push({ kind: 'sep', label: groupLabel(group), icon: groupIcon(group), recent: false })
       for (const item of list) rows.push({ kind: 'item', item, positions: [], recent: false, n: undefined })
     }
   } else {

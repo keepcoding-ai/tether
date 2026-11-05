@@ -2,13 +2,14 @@
 // Each one is written from what it has to communicate: what is at stake, what each choice does to it.
 // The copy is consequence-first and differs by what is actually there (an agent running, nothing
 // running, a shell with no session to resume).
+import { byAgent } from './agent-labels.ts'
 import type { Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import { KIND_ICON } from './icons.ts'
 
 /** "o Claude", "o soul", "o shell": the subject of every sentence about the panel. */
-const SUBJECT: Record<SlotKind, string> = { claude: 'o Claude', soul: 'o soul', shell: 'o shell' }
-const SUBJECT_CAP: Record<SlotKind, string> = { claude: 'O Claude', soul: 'O soul', shell: 'O shell' }
+const SUBJECT: Record<SlotKind, string> = byAgent({ claude: 'o Claude', soul: 'o soul', shell: 'o shell' }, (n) => `o ${n}`)
+const SUBJECT_CAP: Record<SlotKind, string> = byAgent({ claude: 'O Claude', soul: 'O soul', shell: 'O shell' }, (n) => `O ${n}`)
 
 export function folderName(cwd: string): string {
   const parts = cwd.replace(/[\\/]+$/, '').split(/[\\/]/)
@@ -29,7 +30,7 @@ function panelContext(s: SlotState): DialogContext {
     : s.status === 'starting' ? { label: 'iniciando', tone: 'warn' as const }
     : s.status === 'queued' ? { label: 'na fila para iniciar', tone: 'warn' as const }
     : { label: 'nada rodando', tone: 'dim' as const }
-  return { icon: KIND_ICON[s.kind], name: s.title ?? s.name ?? folderName(s.cwd), lines, status }
+  return { icon: KIND_ICON[s.kind] ?? 'terminal-window', name: s.title ?? s.name ?? folderName(s.cwd), lines, status }
 }
 
 /**
@@ -161,7 +162,7 @@ export function stillClosingSituation(): DialogSpec {
  * snapshot of its args); what goes is the choice for new panels." `users` = slots that reference it now.
  */
 export function deleteProfileSituation(p: Profile, users: SlotState[]): DialogSpec {
-  const lines = [KIND_LABEL_OF[p.agent]]
+  const lines = [KIND_LABEL_OF[p.agent]!]
   const args = p.agent === 'shell' && p.shell ? [...p.shell.args, ...p.args] : p.args
   if (args.length) lines.push(args.join(' '))
   const status = users.length === 0
@@ -175,7 +176,7 @@ export function deleteProfileSituation(p: Profile, users: SlotState[]): DialogSp
     tone: 'danger',
     icon: 'trash',
     title: `Apagar o perfil "${p.name}"?`,
-    context: { icon: KIND_ICON[p.agent], name: p.name, lines, status },
+    context: { icon: KIND_ICON[p.agent] ?? 'terminal-window', name: p.name, lines, status },
     choices: [
       { id: 'keep', icon: 'arrow-square-out', label: 'Manter o perfil', consequence: 'Nada muda.', tone: 'neutral' },
       { id: 'delete', icon: 'trash', label: 'Apagar o perfil', consequence, tone: 'destructive' },
@@ -184,7 +185,7 @@ export function deleteProfileSituation(p: Profile, users: SlotState[]): DialogSp
   }
 }
 
-const KIND_LABEL_OF: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell' }
+const KIND_LABEL_OF: Record<SlotKind, string> = byAgent({ claude: 'Claude', soul: 'soul', shell: 'Shell' }, (n) => n)
 
 /** The option id that means "no profile" in the switch-profile dialog (daemon: `profileId: null`). */
 export const NO_PROFILE = '__none__'
@@ -207,7 +208,7 @@ export function switchProfileSituation(s: SlotState, profiles: Profile[]): Dialo
   const items = profiles.filter(p => p.agent === kind).map(p => {
     const args = profileArgsOf(p)
     return {
-      id: p.id, icon: KIND_ICON[kind], label: p.name,
+      id: p.id, icon: KIND_ICON[kind] ?? 'terminal-window', label: p.name,
       detail: args.length ? args.join(' ') : (shell && !p.shell ? 'shell padrão' : 'sem argumentos'),
       ...(p.args.includes('--dangerously-skip-permissions') ? { mark: 'sem restrições' } : {}),
       ...(p.id === currentId ? { current: true } : {}),

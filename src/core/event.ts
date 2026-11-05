@@ -1,7 +1,8 @@
 // Contracts shared by the core, the agent adapters and the CLI.
 // One event = one JSON line in <home>/slots/<slotId>.jsonl (append-only).
 
-export type AgentName = 'claude' | 'soul'
+/** An agent in the registry (src/agents/registry.ts): 'claude', 'soul' or an extension's. Never 'shell'. */
+export type AgentName = string
 
 /**
  * What happened to the slot's session:

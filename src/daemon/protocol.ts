@@ -21,7 +21,7 @@ export const MIN_AGENT_AGE_MS = 12_000
 /** Longest a kill waits for a young agent before killing it anyway, so a shutdown can never hang. */
 export const KILL_WAIT_CAP_MS = 30_000
 
-/** Slot kinds: the two tracked agents, plus a plain shell (no session; "resume" = new shell in the same folder). */
+/** Slot kinds: any registered agent (claude, soul, an extension's), plus a plain shell (no session; "resume" = new shell in the same folder). */
 export type SlotKind = AgentName | 'shell'
 
 /** `\\.\pipe\tether-<user>` on Windows, `<home>/tetherd.sock` elsewhere; TETHER_PIPE overrides. */
@@ -77,6 +77,7 @@ export type ErrorCode =
   | 'bad-request'
   | 'unknown-profile'   // create/profile-delete named a profile that does not exist
   | 'invalid-profile'   // profile-save refused: the message lists every problem (Portuguese)
+  | 'agent-unavailable' // the slot's agent is not registered (its extension is off or gone); the slot is kept
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).

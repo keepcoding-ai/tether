@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import type { Binding, RunInfo, SlotMeta, TetherEvent } from './event.ts'
+import { isAgentName } from '../agents/registry.ts'
 import { slotAttentionPath, slotEventsPath, slotMetaPath, slotRunPath, slotsDir } from './paths.ts'
 
 export const SLOT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
@@ -117,7 +118,8 @@ export function parseEventLine(line: string): TetherEvent | undefined {
 function isTetherEvent(x: unknown): x is TetherEvent {
   if (!isObject(x) || x.v !== 1) return false
   if (typeof x.ts !== 'string' || typeof x.slotId !== 'string' || typeof x.sessionId !== 'string') return false
-  if (x.agent !== 'claude' && x.agent !== 'soul') return false
+  // Any plausible agent name: an event of an agent whose extension is off must not make the slot forget its session.
+  if (!isAgentName(x.agent)) return false
   if (x.kind !== 'start' && x.kind !== 'rename' && x.kind !== 'end') return false
   if (typeof x.source !== 'string') return false
   if (x.title !== undefined && typeof x.title !== 'string') return false
@@ -135,7 +137,7 @@ function isSlotMeta(x: unknown): x is SlotMeta {
     !isObject(x) ||
     x.v !== 1 ||
     typeof x.slotId !== 'string' ||
-    (x.agent !== 'claude' && x.agent !== 'soul' && x.agent !== 'shell') ||
+    (x.agent !== 'shell' && !isAgentName(x.agent)) || // unregistered agents load too (agent-unavailable, never vanish)
     typeof x.cwd !== 'string' ||
     !Array.isArray(x.args) ||
     typeof x.createdAt !== 'string'

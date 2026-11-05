@@ -1,6 +1,7 @@
 // The loading stage a pane shows between "the layout painted it" and "its terminal is attached and has
 // output". Pure (unit-tested): the panel feeds what it knows, this says which stage — or none, when the pane
 // should show its terminal or one of its situation overlays (error, unconfirmed, exited).
+import { byAgent } from './agent-labels.ts'
 import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 /** Phosphor icons of the stages (a subset of icons.ts IconName; not imported: icons.ts pulls the SVG assets). */
 export type LoadingIcon = 'plugs' | 'hourglass' | 'terminal-window' | 'clock-counter-clockwise' | 'ghost' | 'sparkle'
@@ -37,7 +38,7 @@ export interface LoadingInput {
   ready: boolean
 }
 
-const AGENT_NAME: Record<SlotKind, string> = { claude: 'Claude', soul: 'soul', shell: 'shell' }
+const AGENT_NAME: Record<SlotKind, string> = byAgent({ claude: 'Claude', soul: 'soul', shell: 'shell' }, (n) => n)
 
 /** The pane's loading stage, or undefined when the terminal (or a situation overlay) should show. */
 export function loadingStage(i: LoadingInput): LoadingStage | undefined {

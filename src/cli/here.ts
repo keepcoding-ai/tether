@@ -3,16 +3,21 @@
 // says who holds the slot while it runs, and the agent's exit code becomes ours.
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { claudeAdapter } from '../agents/claude.ts'
+import '../agents/builtin.ts'
+import { agentRegistry } from '../agents/registry.ts'
 import { shellAdapter } from '../agents/shell.ts'
-import { soulAdapter } from '../agents/soul.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { Binding, SlotMeta } from '../core/event.ts'
 import { processStartTime } from '../core/liveness.ts'
 import { readProfiles, slotProfile, snapshotProfile, type SlotProfile } from '../core/profile.ts'
 import { clearRun, writeRun, writeSlotMeta } from '../core/store.ts'
 
-export const adapters: Record<'claude' | 'soul', AgentAdapter> = { claude: claudeAdapter, soul: soulAdapter }
+/** The agent's adapter from the registry; throws (Portuguese) when the agent is not registered. */
+export function adapterOf(agent: string): AgentAdapter {
+  const adapter = agentRegistry.get(agent)?.adapter
+  if (!adapter) throw new Error(`o agente ${agent} não está disponível (extensão desativada ou ausente)`)
+  return adapter
+}
 
 /** The slot's profile as the daemon would apply it now (current profile, else the snapshot); refreshes the snapshot. */
 export function profileFor(home: string, meta: SlotMeta): SlotProfile {
@@ -27,7 +32,7 @@ export function profileFor(home: string, meta: SlotMeta): SlotProfile {
 export function planFor(home: string, meta: SlotMeta, resume: Binding | undefined, extraArgs: string[]): LaunchPlan {
   const profile = profileFor(home, meta).launch
   if (meta.agent === 'shell') return shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile })
-  return adapters[meta.agent].plan({ slot: meta, home, resume, extraArgs, profile })
+  return adapterOf(meta.agent).plan({ slot: meta, home, resume, extraArgs, profile })
 }
 
 /** `.cmd`/`.bat` need a shell on Windows (Node refuses to spawn them directly); args are quoted for it. */
