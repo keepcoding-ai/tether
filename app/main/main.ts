@@ -4,7 +4,7 @@
 // renderer's memory is freed; the process stays, still connected to the daemon, to feed the tray). The daemon
 // keeps every slot running whatever the app does.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
@@ -26,6 +26,7 @@ import { guardHtmlPreviews, registerHtmlPreviewOpen } from './html-preview-main.
 import { NOTE_EXTENSION } from '../shared/notes.ts'
 import { KEYBINDINGS_FILE, type KeybindingsFileState } from '../shared/keybindings.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
+import { normalizeWindowState, resolveWindowState, type WindowState } from '../shared/window-state.ts'
 import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
@@ -264,6 +265,7 @@ let relaunching = false
 async function relaunchApp(): Promise<void> {
   if (relaunching) return
   relaunching = true
+  flushWindowState()
   const args = relaunchArgs(process.argv, process.pid)
   const cwd = process.cwd()
   appLog(`relaunch: starting ${process.execPath} ${args.map(a => JSON.stringify(a)).join(' ')} (cwd ${cwd})`)
@@ -328,7 +330,7 @@ async function quitAll(): Promise<void> {
 
 /** User settings (theme, terminal appearance, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
 const settingsPath = join(home, 'settings.json')
-type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown }
+type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown }
 
 // ---------- terminal appearance ----------
 // The renderer owns the dialog and applies the change to every xterm; main keeps the file and echoes the
@@ -445,14 +447,46 @@ function themeMenu(): Electron.MenuItemConstructorOptions {
 /** Resolves once the current window's page has loaded (its script has registered the IPC listeners). */
 let windowLoaded: Promise<void> = Promise.resolve()
 
+/** Writes the window's maximized / fullscreen flags and last normal bounds to settings.json. */
+function saveWindowState(w: BrowserWindow): void {
+  if (w.isDestroyed()) return
+  const state: WindowState = { ...w.getNormalBounds(), maximized: w.isMaximized(), fullscreen: w.isFullScreen() }
+  writeJson(settingsPath, { ...readJson<Settings>(settingsPath, {}), window: state })
+}
+
+/** Saves the current window now (the process may leave without a `close`: relaunch, quit). */
+function flushWindowState(): void {
+  if (win) saveWindowState(win)
+}
+
+/** Remembers the window across launches: debounced on move/resize/state changes, immediately on close. */
+function trackWindowState(w: BrowserWindow): void {
+  let timer: NodeJS.Timeout | undefined
+  const later = (): void => {
+    clearTimeout(timer)
+    timer = setTimeout(() => saveWindowState(w), 400)
+  }
+  w.on('move', later)
+  w.on('resize', later)
+  w.on('maximize', later)
+  w.on('unmaximize', later)
+  w.on('enter-full-screen', later)
+  w.on('leave-full-screen', later)
+  w.on('close', () => { clearTimeout(timer); saveWindowState(w) })
+  w.on('closed', () => clearTimeout(timer))
+}
+
 function createWindow(): void {
+  const saved = normalizeWindowState(readJson<Settings>(settingsPath, {}).window)
+  const displays = screen.getAllDisplays()
+  const start = resolveWindowState(saved, displays.map(d => d.workArea), screen.getPrimaryDisplay().workArea)
   win = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    ...start.bounds,
     title: 'tether',
     icon: join(__dirname, 'tether.ico'),
     backgroundColor: WINDOW_BACKGROUND[themeState().scheme],
-    show: !hidden,
+    // Shown on ready-to-show, after maximize(): no flash of the small window.
+    show: false,
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
@@ -468,6 +502,10 @@ function createWindow(): void {
   })
   if (hidden) win.webContents.setFrameRate(30)
   const created = win
+  if (start.maximized) created.maximize()
+  if (start.fullscreen) created.setFullScreen(true)
+  if (!hidden) created.once('ready-to-show', () => created.show())
+  trackWindowState(created)
   guardHtmlPreviews(created.webContents)
   created.on('close', e => {
     if (quitting || !tray) return
@@ -998,7 +1036,7 @@ async function start(): Promise<void> {
 
 void start()
 
-app.on('before-quit', () => { quitting = true; tray?.destroy(); tray = undefined })
+app.on('before-quit', () => { flushWindowState(); quitting = true; tray?.destroy(); tray = undefined })
 
 // With the tray the app outlives its window (the daemon keeps the PTYs either way); without one, closing the
 // window ends the app as it always did.
