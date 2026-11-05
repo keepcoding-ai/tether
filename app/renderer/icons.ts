@@ -71,6 +71,31 @@ import arrowDown from '@phosphor-icons/core/assets/regular/arrow-down.svg'
 import notePencil from '@phosphor-icons/core/assets/regular/note-pencil.svg'
 import floppyDisk from '@phosphor-icons/core/assets/regular/floppy-disk.svg'
 import fileText from '@phosphor-icons/core/assets/regular/file-text.svg'
+// Quick Open's file types (app/shared/quick-open.ts fileIcon).
+import fileIcon from '@phosphor-icons/core/assets/regular/file.svg'
+import fileTsIcon from '@phosphor-icons/core/assets/regular/file-ts.svg'
+import fileTsxIcon from '@phosphor-icons/core/assets/regular/file-tsx.svg'
+import fileJsIcon from '@phosphor-icons/core/assets/regular/file-js.svg'
+import fileJsxIcon from '@phosphor-icons/core/assets/regular/file-jsx.svg'
+import fileMdIcon from '@phosphor-icons/core/assets/regular/file-md.svg'
+import fileCssIcon from '@phosphor-icons/core/assets/regular/file-css.svg'
+import fileHtmlIcon from '@phosphor-icons/core/assets/regular/file-html.svg'
+import filePyIcon from '@phosphor-icons/core/assets/regular/file-py.svg'
+import fileRsIcon from '@phosphor-icons/core/assets/regular/file-rs.svg'
+import fileSqlIcon from '@phosphor-icons/core/assets/regular/file-sql.svg'
+import fileVueIcon from '@phosphor-icons/core/assets/regular/file-vue.svg'
+import fileSvgIcon from '@phosphor-icons/core/assets/regular/file-svg.svg'
+import fileCsvIcon from '@phosphor-icons/core/assets/regular/file-csv.svg'
+import fileCIcon from '@phosphor-icons/core/assets/regular/file-c.svg'
+import fileCppIcon from '@phosphor-icons/core/assets/regular/file-cpp.svg'
+import fileCSharpIcon from '@phosphor-icons/core/assets/regular/file-c-sharp.svg'
+import fileImageIcon from '@phosphor-icons/core/assets/regular/file-image.svg'
+import filePdfIcon from '@phosphor-icons/core/assets/regular/file-pdf.svg'
+import fileZipIcon from '@phosphor-icons/core/assets/regular/file-zip.svg'
+import fileLockIcon from '@phosphor-icons/core/assets/regular/file-lock.svg'
+import bracketsCurlyIcon from '@phosphor-icons/core/assets/regular/brackets-curly.svg'
+import gearSixIcon from '@phosphor-icons/core/assets/regular/gear-six.svg'
+import terminalIcon from '@phosphor-icons/core/assets/regular/terminal.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -144,6 +169,30 @@ const SVG = {
   'note-pencil': notePencil,
   'floppy-disk': floppyDisk,
   'file-text': fileText,
+  'file': fileIcon,
+  'file-ts': fileTsIcon,
+  'file-tsx': fileTsxIcon,
+  'file-js': fileJsIcon,
+  'file-jsx': fileJsxIcon,
+  'file-md': fileMdIcon,
+  'file-css': fileCssIcon,
+  'file-html': fileHtmlIcon,
+  'file-py': filePyIcon,
+  'file-rs': fileRsIcon,
+  'file-sql': fileSqlIcon,
+  'file-vue': fileVueIcon,
+  'file-svg': fileSvgIcon,
+  'file-csv': fileCsvIcon,
+  'file-c': fileCIcon,
+  'file-cpp': fileCppIcon,
+  'file-c-sharp': fileCSharpIcon,
+  'file-image': fileImageIcon,
+  'file-pdf': filePdfIcon,
+  'file-zip': fileZipIcon,
+  'file-lock': fileLockIcon,
+  'brackets-curly': bracketsCurlyIcon,
+  'gear-six': gearSixIcon,
+  'terminal': terminalIcon,
 } as const
 
 export type IconName = keyof typeof SVG

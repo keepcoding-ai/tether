@@ -65,6 +65,8 @@ export class NotePanel implements IContentRenderer {
   readonly element: HTMLElement
   id = ''
   path = ''
+  /** The folder the file was opened from (Quick Open's root), when it was. */
+  cwd: string | undefined
   editor: Editor | undefined
   private model: monaco.editor.ITextModel | undefined
   private api: DockviewPanelApi | undefined
@@ -116,6 +118,7 @@ export class NotePanel implements IContentRenderer {
       return
     }
     this.path = note.path
+    this.cwd = note.cwd
     this.initialView = note.view
     this.createEditor()
     this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
@@ -127,7 +130,8 @@ export class NotePanel implements IContentRenderer {
     const font = terminalFontOptions(appearance)
     const theme = defineTheme(this.host.getScheme())
     const uri = monaco.Uri.file(this.path)
-    this.model = monaco.editor.getModel(uri) ?? monaco.editor.createModel('', 'markdown', uri)
+    // No language named: Monaco takes it from the file's extension (markdown for notes, the type for files Quick Open opens).
+    this.model = monaco.editor.getModel(uri) ?? monaco.editor.createModel('', undefined, uri)
     this.editor = monaco.editor.create(this.editorHost, {
       model: this.model,
       theme,
@@ -227,7 +231,21 @@ export class NotePanel implements IContentRenderer {
     }
     this.syncDirty()
     this.watch()
+    if (this.pendingReveal) { const p = this.pendingReveal; this.pendingReveal = undefined; this.reveal(p) }
     if (this.api?.isActive) requestAnimationFrame(() => this.focus())
+  }
+
+  private pendingReveal: { line: number; column?: number } | undefined
+
+  /** Puts the cursor at a line (and column), centred, as Quick Open's `file:42:7` asks; waits for the text when it is still loading. */
+  reveal(pos: { line: number; column?: number }): void {
+    if (!this.loaded || !this.editor || !this.model) { this.pendingReveal = pos; return }
+    const lineNumber = Math.min(Math.max(1, pos.line), this.model.getLineCount())
+    const column = Math.min(Math.max(1, pos.column ?? 1), this.model.getLineMaxColumn(lineNumber))
+    this.pendingView = undefined
+    this.editor.setPosition({ lineNumber, column })
+    this.editor.revealPositionInCenter({ lineNumber, column })
+    this.scheduleView()
   }
 
   private watch(): void {

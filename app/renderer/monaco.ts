@@ -3,7 +3,8 @@
 //     operations, find/replace with regex, folding, minimap, smart select, cursor undo, links, sticky scroll…);
 //     the language-server features (suggest, rename, code lens, parameter hints…) stay out, as does Monaco's
 //     own F1 palette: the app's palette (Ctrl+Shift+P) lists the editor's actions when a note has the focus;
-//   - the markdown language definition (Monarch tokenizer: headings, emphasis, code, links);
+//   - the markdown language definition (Monarch tokenizer: headings, emphasis, code, links), plus the Monarch
+//     grammars of the common file types Quick Open opens (ts/js/json/css/html/yaml/ps1/sh/py/ini/xml/bat);
 //   - the editor web worker (word-based features, link detection, diff) as app/dist/editor.worker.js;
 //   - two themes built from the app's own tokens (styles.css), redefined on every scheme switch.
 // monaco-editor's package exports map `monaco-editor/<path>.js` to `esm/vs/<path>.js`.
@@ -44,6 +45,17 @@ import 'monaco-editor/features/wordHighlighter/register.js'
 import 'monaco-editor/features/wordOperations/register.js'
 import 'monaco-editor/features/wordPartOperations/register.js'
 import 'monaco-editor/languages/definitions/markdown/register.js'
+import 'monaco-editor/languages/definitions/typescript/register.js'
+import 'monaco-editor/languages/definitions/javascript/register.js'
+import 'monaco-editor/languages/definitions/css/register.js'
+import 'monaco-editor/languages/definitions/html/register.js'
+import 'monaco-editor/languages/definitions/yaml/register.js'
+import 'monaco-editor/languages/definitions/powershell/register.js'
+import 'monaco-editor/languages/definitions/shell/register.js'
+import 'monaco-editor/languages/definitions/python/register.js'
+import 'monaco-editor/languages/definitions/ini/register.js'
+import 'monaco-editor/languages/definitions/xml/register.js'
+import 'monaco-editor/languages/definitions/bat/register.js'
 import type { ColorScheme } from '../shared/theme.ts'
 
 export { monaco }
@@ -55,6 +67,31 @@ export type ViewState = monaco.editor.ICodeEditorViewState
 ;(globalThis as { MonacoEnvironment?: unknown }).MonacoEnvironment = {
   getWorker: () => new Worker(new URL('./editor.worker.js', import.meta.url)),
 }
+
+// Files opened by Quick Open get the language of their extension (Monaco picks it from the model's URI). Only
+// Monarch tokenizers (colouring, brackets, comments), no language services or workers. Monaco ships no Monarch
+// grammar for JSON (its JSON support is a language service), so a small one is declared here.
+monaco.languages.register({ id: 'json', extensions: ['.json', '.jsonc', '.json5', '.code-workspace', '.babelrc', '.eslintrc'], filenames: ['.prettierrc'], aliases: ['JSON', 'json'], mimetypes: ['application/json'] })
+monaco.languages.setLanguageConfiguration('json', {
+  comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+  brackets: [['{', '}'], ['[', ']']],
+  autoClosingPairs: [{ open: '{', close: '}' }, { open: '[', close: ']' }, { open: '"', close: '"', notIn: ['string'] }],
+})
+monaco.languages.setMonarchTokensProvider('json', {
+  tokenizer: {
+    root: [
+      [/"(?:[^"\\]|\\.)*"(?=\s*:)/, 'type'],
+      [/"(?:[^"\\]|\\.)*"/, 'string'],
+      [/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/, 'number'],
+      [/\b(?:true|false|null)\b/, 'keyword'],
+      [/\/\/.*$/, 'comment'],
+      [/\/\*/, 'comment', '@comment'],
+      [/[{}[\]]/, '@brackets'],
+      [/[,:]/, 'delimiter'],
+    ],
+    comment: [[/[^/*]+/, 'comment'], [/\*\//, 'comment', '@pop'], [/[/*]/, 'comment']],
+  },
+})
 
 export const THEME_NAME: Record<ColorScheme, string> = { light: 'tether-light', dark: 'tether-dark' }
 

@@ -35,6 +35,8 @@ export interface NoteParams {
     path: string
     /** Cursor, selections, scroll and folds, as last persisted. */
     view?: NoteView
+    /** The folder the file was opened from (Quick Open's root): the pane's opening folder for the next Quick Open or note. */
+    cwd?: string
   }
 }
 
@@ -43,13 +45,14 @@ export function noteParams(params: unknown): NoteParams['note'] | undefined {
   if (!params || typeof params !== 'object') return undefined
   const note = (params as { note?: unknown }).note
   if (!note || typeof note !== 'object' || typeof (note as { path?: unknown }).path !== 'string') return undefined
-  const { path, view } = note as { path: string; view?: unknown }
-  return { path, ...(view && typeof view === 'object' ? { view: view as NoteView } : {}) }
+  const { path, view, cwd } = note as { path: string; view?: unknown; cwd?: unknown }
+  return { path, ...(view && typeof view === 'object' ? { view: view as NoteView } : {}), ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}) }
 }
 
-/** The params with the note's view replaced (or the path changed); other params are kept. */
+/** The params with the note's view replaced (or the path changed); other params are kept, the opening folder too when `note` names none. */
 export function withNote(params: Record<string, unknown> | undefined, note: NoteParams['note']): Record<string, unknown> {
-  return { ...(params ?? {}), note: { path: note.path, ...(note.view ? { view: note.view } : {}) } }
+  const cwd = note.cwd ?? noteParams(params)?.cwd
+  return { ...(params ?? {}), note: { path: note.path, ...(note.view ? { view: note.view } : {}), ...(cwd ? { cwd } : {}) } }
 }
 
 /** What the tab shows: the file name. */

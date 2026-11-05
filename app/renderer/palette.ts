@@ -8,6 +8,7 @@
 import type { CommandRegistry } from './commands.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import { initialInput, parsePaletteInput, rankCommands, type PaletteMode, type RankedCommand } from './palette-rules.ts'
+import { PENDING_POLL_MS, type QuickOpen } from './quick-open.ts'
 import { shortcutOf } from './shortcuts.ts'
 import { rangeRuns } from './word-filter.ts'
 
@@ -19,7 +20,7 @@ function iconEl(name: string): SVGSVGElement {
   return icon((ICON_SET.has(name) ? name : 'question') as IconName)
 }
 
-export const QUICK_OPEN_HINT = 'Ir para arquivos chega na próxima entrega. Digite > para procurar um comando.'
+export const QUICK_OPEN_HINT = 'Digite para procurar arquivos na pasta do painel. Digite > para procurar um comando.'
 
 export class CommandPalette {
   private readonly input: HTMLInputElement
@@ -30,10 +31,15 @@ export class CommandPalette {
   private seq = 0
   readonly dialog: HTMLDialogElement
   private readonly registry: CommandRegistry
+  /** Quick Open (the mode without `>`): files of the focused pane's folder. */
+  private readonly quickOpen: QuickOpen | undefined
+  private fileSeq = 0
+  private pollTimer: ReturnType<typeof setTimeout> | undefined
 
-  constructor(dialog: HTMLDialogElement, registry: CommandRegistry) {
+  constructor(dialog: HTMLDialogElement, registry: CommandRegistry, quickOpen?: QuickOpen) {
     this.dialog = dialog
     this.registry = registry
+    this.quickOpen = quickOpen
     this.input = dialog.querySelector<HTMLInputElement>('input')!
     this.list = dialog.querySelector<HTMLUListElement>('ul')!
     this.empty = dialog.querySelector<HTMLElement>('.pal-empty')!
@@ -46,6 +52,8 @@ export class CommandPalette {
     // Picking with the mouse must not move the focus out of the field.
     this.list.addEventListener('mousedown', ev => ev.preventDefault())
     this.list.addEventListener('click', ev => {
+      const file = (ev.target as HTMLElement).closest<HTMLElement>('li[data-file]')
+      if (file) { void this.openFile(file.dataset.file!, ev.ctrlKey || ev.metaKey); return }
       const li = (ev.target as HTMLElement).closest<HTMLElement>('li[data-command]')
       if (li) void this.runId(li.dataset.command!)
     })
@@ -64,6 +72,7 @@ export class CommandPalette {
   show(mode: PaletteMode): void {
     this.input.value = initialInput(mode)
     if (!this.dialog.open) this.dialog.showModal()
+    if (mode === 'quick-open') { this.quickOpen?.begin(); delete this.dialog.dataset.mode } // a fresh list, not the last query's
     this.input.focus()
     this.input.setSelectionRange(this.input.value.length, this.input.value.length)
     this.render()
@@ -73,9 +82,9 @@ export class CommandPalette {
     if (this.dialog.open) this.dialog.close()
   }
 
-  /** The ids on screen, in order (tests). */
+  /** The ids on screen, in order (tests): command ids, or file paths in Quick Open. */
   shown(): string[] {
-    return this.ranked.map(r => r.command.id)
+    return [...this.list.querySelectorAll<HTMLElement>('li.pal-item')].map(li => li.dataset.command ?? li.dataset.file ?? '')
   }
 
   private onKey(ev: KeyboardEvent): void {
@@ -86,13 +95,17 @@ export class CommandPalette {
       if (this.mode !== mode) this.show(mode)
       return
     }
-    const n = this.ranked.length
+    const n = this.list.querySelectorAll('li.pal-item').length
     switch (ev.key) {
       case 'ArrowDown': ev.preventDefault(); if (n) this.select((this.selected + 1) % n); break
       case 'ArrowUp': ev.preventDefault(); if (n) this.select((this.selected - 1 + n) % n); break
       case 'PageDown': ev.preventDefault(); if (n) this.select(Math.min(n - 1, this.selected + PAGE)); break
       case 'PageUp': ev.preventDefault(); if (n) this.select(Math.max(0, this.selected - PAGE)); break
-      case 'Enter': ev.preventDefault(); { const r = this.ranked[this.selected]; if (r) void this.runId(r.command.id) } break
+      case 'Enter': ev.preventDefault(); {
+        const li = this.list.querySelectorAll<HTMLElement>('li.pal-item')[this.selected]
+        if (li?.dataset.file) void this.openFile(li.dataset.file, ev.ctrlKey || ev.metaKey) // Ctrl+Enter: beside
+        else if (li?.dataset.command) void this.runId(li.dataset.command)
+      } break
       case 'Escape': ev.preventDefault(); ev.stopPropagation(); this.hide(); break
       case 'Tab': ev.preventDefault(); break // the field is the only stop
       default: return
@@ -105,8 +118,50 @@ export class CommandPalette {
     await this.registry.run(id, 'palette')
   }
 
+  private async openFile(path: string, side: boolean): Promise<void> {
+    this.hide()
+    await this.quickOpen?.open(path, side)
+  }
+
+  /** Quick Open's rows: the search runs in main (a worker); an answer that arrives after a newer keystroke is dropped. */
+  private async renderFiles(text: string): Promise<void> {
+    const qo = this.quickOpen!
+    const seq = ++this.fileSeq
+    if (this.pollTimer) { clearTimeout(this.pollTimer); this.pollTimer = undefined }
+    const s = await qo.search(text)
+    if (!s || seq !== this.fileSeq || !this.dialog.open || this.mode !== 'quick-open') return
+    this.list.replaceChildren()
+    this.ranked = []
+    const n = qo.render(this.list, s, `pal-opt-${++this.seq}`)
+    this.dialog.dataset.pending = String(s.result.pending)
+    if (n === 0) {
+      this.empty.textContent = qo.emptyText(s)
+      this.empty.hidden = false
+      this.input.removeAttribute('aria-activedescendant')
+    } else {
+      this.empty.hidden = true
+      this.select(0, false)
+    }
+    // The list is still being read: ask again with the same text while the box shows it.
+    if (s.result.pending) this.pollTimer = setTimeout(() => { this.pollTimer = undefined; if (this.dialog.open && this.input.value === text) void this.renderFiles(text) }, PENDING_POLL_MS)
+  }
+
   private render(): void {
     const { mode, query } = parsePaletteInput(this.input.value)
+    if (mode === 'quick-open' && this.quickOpen) {
+      // Coming from the command list (or a closed box): its rows go now, not when main answers.
+      if (this.dialog.dataset.mode !== mode || this.ranked.length > 0) {
+        this.ranked = []
+        this.list.replaceChildren()
+        this.empty.textContent = this.input.value.trim() === '' ? QUICK_OPEN_HINT : 'Procurando arquivos…'
+        this.empty.hidden = false
+        this.input.removeAttribute('aria-activedescendant')
+      }
+      this.dialog.dataset.mode = mode
+      void this.renderFiles(this.input.value)
+      return
+    }
+    this.fileSeq++
     this.list.replaceChildren()
     this.ranked = mode === 'commands' ? rankCommands(this.registry.available(), query, this.registry.recents()) : []
     this.dialog.dataset.mode = mode

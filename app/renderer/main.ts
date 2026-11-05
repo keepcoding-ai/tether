@@ -21,6 +21,7 @@ import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empt
 import { type Choice, rememberProfile } from './chooser-rules.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
 import { CommandPalette } from './palette.ts'
+import { QuickOpen, quickOpenFailedSituation } from './quick-open.ts'
 import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
@@ -415,7 +416,7 @@ function paneCwdOf(id: string | undefined): string | undefined {
   const slot = slots.get(id)
   if (slot) return slot.cwd
   const note = notes.get(id)
-  if (note) return paneCwdOfNote(note.path)
+  if (note) return note.cwd ?? paneCwdOfNote(note.path)
   return empties.get(id)?.cwd || undefined
 }
 
@@ -1675,6 +1676,32 @@ async function openNote(path?: string): Promise<void> {
   requestAnimationFrame(() => focusPane(panel.id))
 }
 
+/**
+ * Quick Open's text file: in the focused pane's tab group (or beside it), as a note tab that remembers the root it
+ * was opened from (the next Ctrl+P from it searches the same folder); a tab already showing the file is focused.
+ */
+function openQuickOpenFile(path: string, opts: { side: boolean; position?: { line: number; column?: number }; root: string }): void {
+  const existing = noteByPath(path)
+  if (existing) {
+    findPanel(existing.id)?.api.setActive()
+    existing.focus()
+    if (opts.position) existing.reveal(opts.position)
+    return
+  }
+  const reference = currentDesk().activePanel?.id
+  const options = { ...notePanelOptions(path), params: withNote(undefined, { path, ...(opts.root ? { cwd: opts.root } : {}) }) }
+  const panel = addPaneOptions(options, opts.side ? { level: 'pane', placement: 'right' } : undefined, reference)
+  scheduleSave()
+  if (opts.position) notes.get(panel.id)?.reveal(opts.position)
+  requestAnimationFrame(() => focusPane(panel.id))
+}
+
+const quickOpen = new QuickOpen({
+  paneCwd: () => paneCwdOf(currentDesk().activePanel?.id),
+  openText: openQuickOpenFile,
+  notify: message => { void askDialog(quickOpenFailedSituation(message)) },
+})
+
 /** "Salvar nota como…": the OS save dialog; the note moves to the chosen file (the old one stays as it was). */
 async function saveNoteAs(id = activeNoteId()): Promise<void> {
   const note = id ? notes.get(id) : undefined
@@ -2062,7 +2089,7 @@ function setupUi(): void {
   $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
   commands.register(...appCommands(commandHost))
-  palette = new CommandPalette($<HTMLDialogElement>('palette'), commands)
+  palette = new CommandPalette($<HTMLDialogElement>('palette'), commands, quickOpen)
   setupMenu()
   const dup = $('btn-duplicate')
   const hint = (level: Target['level'], direction: Direction): string => shortcutHint({ op: 'duplicate', level, direction })
