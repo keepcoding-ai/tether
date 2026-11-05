@@ -1468,8 +1468,8 @@ function showNoteMenu(id: string, x: number, y: number): void {
 function showEmptyMenu(id: string, x: number, y: number): void {
   showContextMenu(x, y, [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: id }) } },
-    { icon: 'plus', label: `${SPLIT_EMPTY_LABEL} ${PLACEMENT_LABEL.right} ${EMPTY_SUFFIX}`, run: () => { void splitEmpty({ level: 'pane', placement: 'right' }, id) } },
-    { icon: 'plus', label: `${SPLIT_EMPTY_LABEL} ${PLACEMENT_LABEL.below} ${EMPTY_SUFFIX}`, run: () => { void splitEmpty({ level: 'pane', placement: 'below' }, id) } },
+    { icon: 'plus', label: `${SPLIT_EMPTY_LABEL} ${PLACEMENT_LABEL.right} ${EMPTY_SUFFIX}`, run: () => { void splitEmpty({ level: 'pane', placement: 'right' }, 'layout', id) } },
+    { icon: 'plus', label: `${SPLIT_EMPTY_LABEL} ${PLACEMENT_LABEL.below} ${EMPTY_SUFFIX}`, run: () => { void splitEmpty({ level: 'pane', placement: 'below' }, 'layout', id) } },
     SEP,
     { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
     SEP,
@@ -1503,10 +1503,10 @@ function newTab(): void {
   else addEmptyPanel(undefined, undefined, undefined, 'add')
 }
 
-/** The keyboard/palette form: an empty pane relative to the active pane (with none, simply the first). */
-function splitEmpty(target: Target, reference = currentDesk().activePanel?.id): void {
+/** The keyboard/palette/menu form: an empty pane relative to the active pane (with none, simply the first). `add` from the chord (a request), `layout` otherwise. */
+function splitEmpty(target: Target, origin: EmptyOrigin = 'layout', reference = currentDesk().activePanel?.id): void {
   const stillThere = reference && findPanel(reference) ? reference : undefined
-  addEmptyPanel(stillThere ? target : undefined, stillThere)
+  addEmptyPanel(stillThere ? target : undefined, stillThere, paneCwdOf(stillThere), origin)
 }
 
 /** "Nova mesa vazia": a desk after the current one with one empty pane (the active pane's folder suggested). */
@@ -1881,7 +1881,7 @@ const commandHost: CommandHost = {
   newPanel: opts => { void openNewDialog(opts) },
   newTab: () => newTab(),
   duplicateActive: target => { void duplicateActive(target) },
-  splitEmpty: target => splitEmpty(target),
+  splitEmpty: (target, origin) => splitEmpty(target, origin),
   newEmptyDesk: () => newEmptyDesk(),
   activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id) || empties.has(a.id)) ? a.id : undefined },
   renamePane: id => (notes.has(id) ? noteTabs.get(id)?.startRename() : tabs.get(id)?.startRename()),

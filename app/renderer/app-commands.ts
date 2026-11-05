@@ -3,6 +3,7 @@
 // the tests name them); titles are what the palette and the menu show. Add an action here first: the palette,
 // the menu and the chord follow.
 import type { Command } from './commands.ts'
+import type { EmptyOrigin } from '../shared/empty.ts'
 import { DIRECTIONS, DUPLICATE_LABEL, EMPTY_SUFFIX, NEW_EMPTY_DESK_LABEL, NEW_EMPTY_FRAME_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, NEW_TAB_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
 import type { FontSizeCommand } from '../shared/font.ts'
 import type { ThemeSetting } from '../shared/theme.ts'
@@ -15,8 +16,11 @@ export interface CommandHost {
   /** Ctrl+Shift+T: an empty pane as a new tab of the active group (origin `add`: Esc closes it), the chooser inside. */
   newTab(): void
   duplicateActive(target: Target): void
-  /** An empty pane (app/shared/empty.ts) relative to the active pane: beside it, at its frame's edge, or in a new frame at the desk's edge. */
-  splitEmpty(target: Target): void
+  /**
+   * An empty pane (app/shared/empty.ts) relative to the active pane: beside it, at its frame's edge, or in a new frame at the
+   * desk's edge. `origin`: from the chord it is a request (`add`: Esc closes it); from the palette it is layout (Esc only leaves).
+   */
+  splitEmpty(target: Target, origin: EmptyOrigin): void
   /** A new desk after the current one, holding one empty pane. */
   newEmptyDesk(): void
   /** The pane the pane-level commands act on (the current desk's active pane), or undefined. */
@@ -83,13 +87,13 @@ export function appCommands(host: CommandHost): Command[] {
     title: `${SPLIT_EMPTY_LABEL} ${LEVEL_WORDING[level]}${PLACEMENT_LABEL[direction]} ${EMPTY_SUFFIX}`,
     group: GROUP.pane, icon: 'plus',
     ...(level === 'pane' ? { shortcut: { op: 'split-empty', direction } as const } : {}),
-    run: () => host.splitEmpty({ level, placement: direction }),
+    run: source => host.splitEmpty({ level, placement: direction }, source === 'key' ? 'add' : 'layout'),
   })))
   const emptyFrames = DIRECTIONS.map((direction: Direction): Command => ({
     id: `frame.new-empty.${direction}`,
     title: `${NEW_EMPTY_FRAME_LABEL} ${PLACEMENT_LABEL[direction]}`,
     group: GROUP.frame, icon: 'columns',
-    run: () => host.splitEmpty({ level: 'desk', placement: direction }),
+    run: () => host.splitEmpty({ level: 'desk', placement: direction }, 'layout'),
   }))
   return [
     // ----- pane -----

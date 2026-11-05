@@ -150,11 +150,12 @@ describe('the commands and the chord of the empty pane', () => {
     calls.length = 0
     const r = new CommandRegistry(() => CTX)
     r.register(...list)
-    await r.run('pane.split-empty.pane.left')
-    await r.run('pane.split-empty.frame.below')
+    await r.run('pane.split-empty.pane.left', 'key')
+    await r.run('pane.split-empty.frame.below', 'palette')
     await r.run('frame.new-empty.above')
     await r.run('desk.new-empty')
-    assert.deepEqual(calls, ['splitEmpty {"level":"pane","placement":"left"}', 'splitEmpty {"level":"frame","placement":"below"}', 'splitEmpty {"level":"desk","placement":"above"}', 'newEmptyDesk'])
+    // From the chord the pane is a request (origin add); from the palette or anywhere else it is layout.
+    assert.deepEqual(calls, ['splitEmpty {"level":"pane","placement":"left"} "add"', 'splitEmpty {"level":"frame","placement":"below"} "layout"', 'splitEmpty {"level":"desk","placement":"above"} "layout"', 'newEmptyDesk'])
   })
 
   test('from a terminal the chord is the app\'s; inside a note every arrow chord is the editor\'s (Ctrl+Shift+→ selects by word)', () => {

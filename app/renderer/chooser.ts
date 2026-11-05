@@ -136,7 +136,11 @@ export class Chooser {
     // ---- middle: the list ----
     this.list = el('div', 'ch-list')
     this.list.setAttribute('role', 'listbox'); this.list.setAttribute('aria-label', 'O que abrir')
-    this.list.addEventListener('mousedown', ev => { if (!(ev.target as HTMLElement).closest('button')) ev.preventDefault() }) // the keyboard stays in the search
+    // The keyboard stays in the search; a folder list left open (the person was typing a folder) closes, it would cover the items.
+    this.list.addEventListener('mousedown', ev => {
+      if (!(ev.target as HTMLElement).closest('button')) ev.preventDefault()
+      if (this.recentsOpen || document.activeElement === this.folderInput) { this.closeRecents(); this.query.focus(); this.paintFolder() }
+    })
     this.list.addEventListener('click', ev => {
       const t = ev.target as HTMLElement
       if (t.closest('.ch-manage')) { this.host.openProfiles(this.host.profiles().length ? undefined : 'new'); return }
@@ -383,8 +387,10 @@ export class Chooser {
 
   private openRecents(filter: string): void {
     const folders = filterFolders(this.recentFolders, filter)
+    // Typing a folder nothing recent resembles: no list in the way (the ▾ still opens the full list, or says there is none).
+    if (folders.length === 0 && filter) { this.closeRecents(); return }
     this.recentsList.replaceChildren(el('li', 'hd', 'Pastas recentes'))
-    if (folders.length === 0) { const none = el('li', 'hd none', this.recentFolders.length ? 'nenhuma parecida' : 'nenhuma pasta recente'); this.recentsList.append(none) }
+    if (folders.length === 0) this.recentsList.append(el('li', 'hd none', 'nenhuma pasta recente'))
     folders.forEach((f, i) => {
       const li = el('li', i === 0 ? 'hl' : '', iconEl('clock-counter-clockwise'), el('span', undefined, f)); li.dataset.folder = f; li.setAttribute('role', 'option'); li.title = f
       if (i === 0) li.append(el('span', 'pick', 'Enter'))

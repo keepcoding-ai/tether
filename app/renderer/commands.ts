@@ -40,7 +40,8 @@ export interface Command {
   ignoreRepeat?: boolean
   /** Destructive: painted in the error colour, like the ≡ menu's "Sair e encerrar tudo…". */
   danger?: boolean
-  run(): void | Promise<void>
+  /** `source`: where the run came from (a chord, the palette, the menu, the CLI); most commands ignore it. */
+  run(source: RunSource): void | Promise<void>
 }
 
 /** Where the palette's "recently used" list is kept between sessions. */
@@ -119,7 +120,7 @@ export class CommandRegistry {
     if (!c) return 'unknown'
     if (!this.isAvailable(c)) return 'unavailable'
     if (source === 'palette') this.markUsed(id)
-    await c.run()
+    await c.run(source)
     return 'ran'
   }
 
