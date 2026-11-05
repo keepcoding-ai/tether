@@ -33,6 +33,10 @@ const OWN_TEXTS_KEPT = 8
 export interface NoteHost {
   getScheme(): ColorScheme
   getAppearance(): TerminalAppearance
+  /** The global word-wrap preference (settings `ui.wordWrap`). */
+  getWordWrap(): boolean
+  /** Flips the global word-wrap preference; every editor follows through setWordWrap. */
+  toggleWordWrap(): void
   /** The editor's widget got or lost the keyboard. */
   onFocus(panel: NotePanel, focused: boolean): void
   /** The view state (or the path) changed: persist the pane params with the layout. */
@@ -154,7 +158,7 @@ export class NotePanel implements IContentRenderer {
       fontSize: font.fontSize,
       fontWeight: String(font.fontWeight),
       lineHeight: Math.round(font.fontSize * font.lineHeight),
-      wordWrap: 'on',
+      wordWrap: this.host.getWordWrap() ? 'on' : 'off',
       wrappingIndent: 'same',
       minimap: { enabled: true, renderCharacters: false },
       folding: true,
@@ -193,7 +197,7 @@ export class NotePanel implements IContentRenderer {
     // VS Code's Alt+Z, which Monaco alone does not ship.
     editor.addAction({
       id: 'tether.toggleWordWrap', label: 'Alternar quebra de linha', keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyZ],
-      run: () => { const on = editor.getOption(monaco.editor.EditorOption.wordWrap) !== 'off'; editor.updateOptions({ wordWrap: on ? 'off' : 'on' }) },
+      run: () => this.host.toggleWordWrap(),
     })
     this.disposers.push(
       editor.onDidChangeModelContent(() => { this.pendingView = undefined; this.scheduleSave(); this.scheduleView(); this.syncDirty(); if (this.loaded) this.host.onSourceChange(this) }),
@@ -457,6 +461,11 @@ export class NotePanel implements IContentRenderer {
   // ---------- look ----------
 
   focus(): void { this.editor?.focus() }
+
+  /** The wordWrap option the editor runs with right now ("on" / "off"). */
+  wordWrapOption(): string { return this.editor ? String(this.editor.getOption(monaco.editor.EditorOption.wordWrap)) : '' }
+
+  setWordWrap(on: boolean): void { this.editor?.updateOptions({ wordWrap: on ? 'on' : 'off' }) }
 
   setAppearance(appearance: TerminalAppearance): void {
     const font = terminalFontOptions(appearance)

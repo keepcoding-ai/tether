@@ -18,7 +18,7 @@ function stubHost(calls: string[]): CommandHost {
     copyFolder: log('copyFolder'), openFolder: log('openFolder'), movePane: log('movePane'), closePane: log('closePane'),
     createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), deskActions: log('deskActions'), closeDesk: log('closeDesk'),
     toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'),
-    setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
+    setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), toggleWordWrap: log('toggleWordWrap'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
     openProfiles: log('openProfiles'), restoreConfirmations: log('restoreConfirmations'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
     restartDaemon: log('restartDaemon'), reloadAll: log('reloadAll'), relaunchApp: log('relaunchApp'), toggleDevTools: log('toggleDevTools'), toggleFullscreen: log('toggleFullscreen'), showPalette: log('showPalette'),
     newNote: log('newNote'), openNote: log('openNote'), saveNoteAs: log('saveNoteAs'), markdownPreview: log('markdownPreview'), markdownSource: log('markdownSource'),

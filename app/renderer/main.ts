@@ -268,6 +268,8 @@ function applyUi(next: UiSettings): void {
   ui = next
   document.body.classList.toggle('desk-line', ui.deskLine)
   document.querySelector('#app-menu li[data-command="ui.desk-line"]')?.setAttribute('aria-checked', String(ui.deskLine))
+  document.querySelector('#app-menu li[data-command="ui.word-wrap"]')?.setAttribute('aria-checked', String(ui.wordWrap))
+  for (const n of notes.values()) n.setWordWrap(ui.wordWrap)
 }
 
 // ---------- terminal appearance ----------
@@ -1713,6 +1715,8 @@ const emptyHost: EmptyHost = {
 const noteHost: NoteHost = {
   getScheme: () => theme.scheme,
   getAppearance: () => appearance,
+  getWordWrap: () => ui.wordWrap,
+  toggleWordWrap: () => window.tether.setUi({ ...ui, wordWrap: !ui.wordWrap }),
   onFocus: (panel, focused) => {
     // The actions stay registered while the focus is on a transient surface (the palette lists them); the next
     // focused note replaces them, and a disposed note removes its own.
@@ -2188,6 +2192,7 @@ const commandHost: CommandHost = {
   quickShell: () => { void quickShell() },
   setTheme: setting => window.tether.setTheme(normalizeTheme(setting)),
   toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
+  toggleWordWrap: () => noteHost.toggleWordWrap(),
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
@@ -2667,6 +2672,8 @@ declare global {
       switchState(): { visible: string[]; hidden: string[]; active: string }
       /** The desk colour line: on/off (settings `ui.deskLine`). */
       deskLine(): boolean
+      /** Word wrap of the note editors: the preference and what each open editor really uses. */
+      wordWrap(): { setting: boolean; editors: string[] }
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
       closePanel(slotId: string): void
       /** The terminal font size in use (appearance.fontSize). */
@@ -2846,6 +2853,7 @@ function setupTestHooks(): void {
     confirmations: () => confirmations,
     switchState: () => strip.state(),
     deskLine: () => ui.deskLine,
+    wordWrap: () => ({ setting: ui.wordWrap, editors: [...notes.values()].map(n => n.wordWrapOption()) }),
     closePanel: slotId => { void closePanel(slotId) },
     fontSize: () => appearance.fontSize,
     startRename: slotId => tabs.get(slotId)?.startRename(),

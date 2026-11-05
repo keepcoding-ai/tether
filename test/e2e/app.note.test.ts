@@ -46,6 +46,7 @@ type Hooks = {
   movePaneToDrawer(id: string): void
   movePaneFromDrawer(id: string): void
   layout(): unknown
+  wordWrap(): { setting: boolean; editors: string[] }
 }
 declare const window: { __tether: Hooks }
 declare const document: { activeElement: { closest(sel: string): unknown } | null; documentElement: { dataset: Record<string, string> }; querySelectorAll(sel: string): { length: number } }
@@ -237,6 +238,12 @@ test('app note: Monaco tab, autosave, column selection and multi-cursor, palette
     const cmds = await page.evaluate(() => window.__tether.commands())
     assert.ok(cmds.find(c => c.id === 'note.save-as')?.available, 'Salvar como… is available with the note focused')
     assert.equal(cmds.find(c => c.id === 'editor.tether.toggle-word-wrap')?.hint, 'Alt+Z', 'the Alt+Z toggle is registered with a stable id and its chord')
+    // The wrap is a global preference: Alt+Z flips it for every editor and settings.json keeps it (checked after the relaunch).
+    assert.deepEqual(await page.evaluate(() => window.__tether.wordWrap()), { setting: true, editors: ['on'] }, 'wrap defaults to on')
+    await page.keyboard.press('Alt+z')
+    await page.waitForFunction(() => { const w = window.__tether.wordWrap(); return !w.setting && w.editors.every(o => o === 'off') })
+    for (let i = 0; i < 50 && JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui?.wordWrap !== false; i++) await sleep(100)
+    assert.equal(JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui?.wordWrap, false, 'settings.json ui.wordWrap')
 
     // 5. Changed outside while clean: reloads, cursor kept.
     await page.keyboard.press('Control+Home')
@@ -258,6 +265,7 @@ test('app note: Monaco tab, autosave, column selection and multi-cursor, palette
     await page.waitForFunction(id => /ideias\.md$/.test(window.__tether.note(id)?.path ?? ''), noteId)
     assert.ok(existsSync(join(notesDir, 'ideias.md')) && readdirSync(notesDir).length === 1, 'the file was renamed')
     assert.equal(await page.locator('.tether-tab.note .text').innerText(), 'ideias.md')
+    assert.deepEqual(await page.evaluate(() => window.__tether.wordWrap()), { setting: false, editors: ['off'] }, 'wrap stays off after the relaunch')
     await page.evaluate(id => window.__tether.movePaneToDrawer(id), noteId)
     await page.waitForFunction(id => window.__tether.inDrawer(id), noteId)
     await page.waitForFunction(id => window.__tether.note(id)?.text === '> alpha one\r\n> beta two (fora)\r\n> gamma three', noteId)
