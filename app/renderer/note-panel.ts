@@ -23,6 +23,8 @@ export const NOTE_SAVE_DEBOUNCE_MS = 300
 const VIEW_THROTTLE_MS = 250
 /** For how long after loading the saved view is applied again on every layout (a viewport that was not final yet). */
 const VIEW_SETTLE_MS = 3000
+/** After a scroll that came from the preview, the editor's own scroll events count as its echo for this long. */
+const SYNC_ECHO_MS = 160
 /** A failed write is retried after this. */
 const SAVE_RETRY_MS = 2000
 
@@ -43,6 +45,12 @@ export interface NoteHost {
   onRename(id: string, name: string): void
   /** The tab's ×. */
   onClose(id: string): void
+  /** The text in the editor changed, finished loading, or the editor went away: a preview of the file follows. */
+  onSourceChange(panel: NotePanel): void
+  /** The editor scrolled by the person (not echoing a preview's scroll): a preview of the file follows. */
+  onScroll(panel: NotePanel): void
+  /** The note now lives at another path (renamed or saved as). */
+  onPathChange(panel: NotePanel, from: string): void
 }
 
 /** What a test reads of a note. */
@@ -55,6 +63,8 @@ export interface NoteSnapshot {
   cursor: { lineNumber: number; column: number } | undefined
   selections: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }[]
   scrollTop: number
+  /** The source line at the top (0-based, fractional): what the preview follows. */
+  topLine: number
   /** The editor's viewport and content heights (why a scroll was clamped). */
   viewport: { width: number; height: number; scrollHeight: number }
   focused: boolean
@@ -182,9 +192,9 @@ export class NotePanel implements IContentRenderer {
       run: () => { const on = editor.getOption(monaco.editor.EditorOption.wordWrap) !== 'off'; editor.updateOptions({ wordWrap: on ? 'off' : 'on' }) },
     })
     this.disposers.push(
-      editor.onDidChangeModelContent(() => { this.pendingView = undefined; this.scheduleSave(); this.scheduleView(); this.syncDirty() }),
+      editor.onDidChangeModelContent(() => { this.pendingView = undefined; this.scheduleSave(); this.scheduleView(); this.syncDirty(); if (this.loaded) this.host.onSourceChange(this) }),
       editor.onDidChangeCursorSelection(e => { if (e.reason === monaco.editor.CursorChangeReason.Explicit) this.pendingView = undefined; this.scheduleView() }),
-      editor.onDidScrollChange(() => this.scheduleView()),
+      editor.onDidScrollChange(() => { this.scheduleView(); this.scrolled() }),
       editor.onDidChangeHiddenAreas(() => this.scheduleView()),
       // The restored scroll is clamped to the viewport the editor had at the time (a tab still hidden, a window
       // the OS resizes right after): the saved view is applied again on the layouts that follow, for a moment.
@@ -231,6 +241,7 @@ export class NotePanel implements IContentRenderer {
     }
     this.syncDirty()
     this.watch()
+    this.host.onSourceChange(this)
     if (this.pendingReveal) { const p = this.pendingReveal; this.pendingReveal = undefined; this.reveal(p) }
     if (this.api?.isActive) requestAnimationFrame(() => this.focus())
   }
@@ -246,6 +257,51 @@ export class NotePanel implements IContentRenderer {
     this.editor.setPosition({ lineNumber, column })
     this.editor.revealPositionInCenter({ lineNumber, column })
     this.scheduleView()
+  }
+
+  // ---------- scroll sync with the preview ----------
+
+  /** Until when the editor's scroll events are the echo of a preview's (they are not told back to it). */
+  private syncSuppressUntil = 0
+
+  /** Where the editor stopped after a scroll the preview asked for: its scroll event, whenever it comes, is the echo. */
+  private expectedTop: number | undefined
+
+  private scrolled(): void {
+    const top = this.editor?.getScrollTop() ?? 0
+    if (this.expectedTop !== undefined && Math.abs(top - this.expectedTop) <= 1.5) return
+    this.expectedTop = undefined
+    if (performance.now() >= this.syncSuppressUntil) this.host.onScroll(this)
+  }
+
+  get isDisposed(): boolean { return this.disposed }
+  /** The editor is on screen (its tab is the visible one): a hidden editor has no viewport to scroll. */
+  get isShown(): boolean { return this.editorHost.clientHeight > 0 }
+  /** The text has been read from the file (the editor holds the file's content, not the empty start). */
+  get isReady(): boolean { return this.loaded && !this.disposed }
+
+  /** The source line at the top of the editor, 0-based and fractional (3.5: halfway down the fourth line), by what is drawn (wrapped and folded lines count as they look). */
+  topLine(): number {
+    const e = this.editor
+    if (!e) return 0
+    const first = e.getVisibleRanges()[0]?.startLineNumber ?? 1
+    const top = e.getTopForLineNumber(first)
+    const height = Math.max(1, e.getTopForLineNumber(first + 1) - top)
+    const fraction = Math.min(1, Math.max(0, (e.getScrollTop() - top) / height))
+    return first - 1 + fraction
+  }
+
+  /** Scrolls so that source line `line` (0-based, fractional) is at the top; the echo is not told back to the preview. */
+  scrollToLine(line: number): void {
+    const e = this.editor
+    if (!e || !this.model) return
+    const whole = Math.min(this.model.getLineCount() - 1, Math.max(0, Math.floor(line)))
+    const top = e.getTopForLineNumber(whole + 1)
+    const next = whole + 2 <= this.model.getLineCount() ? e.getTopForLineNumber(whole + 2) : top + e.getOption(monaco.editor.EditorOption.lineHeight)
+    this.syncSuppressUntil = performance.now() + SYNC_ECHO_MS
+    this.pendingView = undefined
+    e.setScrollTop(top + Math.min(1, Math.max(0, line - whole)) * (next - top), monaco.editor.ScrollType.Immediate)
+    this.expectedTop = e.getScrollTop()
   }
 
   private watch(): void {
@@ -342,10 +398,12 @@ export class NotePanel implements IContentRenderer {
   setPath(path: string): void {
     if (path === this.path) return
     this.unwatch()
+    const from = this.path
     this.path = path
     this.api?.setTitle(noteTitle(path))
     this.watch()
     this.flushView()
+    this.host.onPathChange(this, from)
   }
 
   /** "Salvar como…": the text goes to `path`, which becomes the note's file. */
@@ -430,6 +488,7 @@ export class NotePanel implements IContentRenderer {
       cursor: pos ? { lineNumber: pos.lineNumber, column: pos.column } : undefined,
       selections: (this.editor?.getSelections() ?? []).map(s => ({ startLineNumber: s.startLineNumber, startColumn: s.startColumn, endLineNumber: s.endLineNumber, endColumn: s.endColumn })),
       scrollTop: this.editor?.getScrollTop() ?? 0,
+      topLine: this.topLine(),
       viewport: { width: this.editor?.getLayoutInfo().width ?? 0, height: this.editor?.getLayoutInfo().height ?? 0, scrollHeight: this.editor?.getScrollHeight() ?? 0 },
       focused: this.focused,
       error: this.lastError,
@@ -452,6 +511,7 @@ export class NotePanel implements IContentRenderer {
     // Told after the editor is gone: the host drops the actions it had registered for this note.
     this.focused = false
     this.host.onFocus(this, false)
+    this.host.onSourceChange(this)
     // The model is shared by uri: it goes when no editor shows it any more.
     if (this.model && !monaco.editor.getEditors().some(e => e.getModel() === this.model)) this.model.dispose()
     this.model = undefined

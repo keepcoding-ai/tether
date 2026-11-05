@@ -64,6 +64,7 @@ export type AppShortcut =
   | { op: 'font-size'; command: FontSizeCommand }
   | { op: 'palette' }
   | { op: 'quick-open' }
+  | { op: 'md-preview' }
 
 /** The subset of KeyboardEvent the mapping needs (tests build it by hand). */
 export interface KeyLike { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; code: string }
@@ -128,6 +129,9 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   // app takes it anyway, by the explicit list in key-capture.ts (TERMINAL_CAPTURE).
   { chord: { mod: true, shift: true, code: 'KeyP' }, command: { op: 'palette' } },
   { chord: { mod: true, code: 'KeyP' }, command: { op: 'quick-open' } },
+  // VS Code's "Open Preview" (Ctrl+Shift+V) for the markdown note in focus. A terminal's own Ctrl+Shift+V (paste,
+  // PANE_SHORTCUTS) is decided before this one and a chord with nothing to preview is left alone (Command.keepKeyWhenUnavailable).
+  { chord: { mod: true, shift: true, code: 'KeyV' }, command: { op: 'md-preview' } },
   ...fontSize(['Equal', 'NumpadAdd'], 'increase'),
   ...fontSize(['Minus', 'NumpadSubtract'], 'decrease'),
   ...fontSize(['Digit0', 'Numpad0'], 'reset'),

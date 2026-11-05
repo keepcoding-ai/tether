@@ -136,7 +136,7 @@ export const WATCH_DEBOUNCE_MS = 150
  * does not learn about outside changes.
  */
 export class NoteWatchers {
-  private readonly dirs = new Map<string, { watcher: FSWatcher; names: Map<string, string>; timers: Map<string, ReturnType<typeof setTimeout>> }>()
+  private readonly dirs = new Map<string, { watcher: FSWatcher; names: Map<string, { path: string; refs: number }>; timers: Map<string, ReturnType<typeof setTimeout>> }>()
   private readonly onChange: (path: string) => void
 
   constructor(onChange: (path: string) => void) {
@@ -159,7 +159,11 @@ export class NoteWatchers {
       entry = { watcher, names: new Map(), timers: new Map() }
       this.dirs.set(dir, entry)
     }
-    entry.names.set(name.toLowerCase(), path)
+    // A note and its preview watch the same file: the watch ends when the last of them lets go.
+    const key = name.toLowerCase()
+    const known = entry.names.get(key)
+    if (known) known.refs++
+    else entry.names.set(key, { path, refs: 1 })
   }
 
   unwatch(path: string): void {
@@ -167,6 +171,8 @@ export class NoteWatchers {
     const entry = this.dirs.get(dir)
     if (!entry) return
     const key = basename(path).toLowerCase()
+    const known = entry.names.get(key)
+    if (known && --known.refs > 0) return
     entry.names.delete(key)
     const t = entry.timers.get(key)
     if (t) { clearTimeout(t); entry.timers.delete(key) }
@@ -179,7 +185,7 @@ export class NoteWatchers {
     // No name (some platforms): every open note of the folder may have changed.
     const keys = filename ? [filename.toLowerCase()] : [...entry.names.keys()]
     for (const key of keys) {
-      const path = entry.names.get(key)
+      const path = entry.names.get(key)?.path
       if (!path) continue
       const old = entry.timers.get(key)
       if (old) clearTimeout(old)

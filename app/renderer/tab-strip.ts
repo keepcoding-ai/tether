@@ -26,10 +26,17 @@ export interface TabStripHost {
   toggleDetails(id: string): void
   /** The "+": an empty pane as a new tab beside `activeId` (the group's active pane), origin `add`. */
   addTab(activeId: string): void
+  /** Whether the pane is a markdown note (the button that opens its preview beside it shows only then). */
+  canPreview(id: string): boolean
+  /** The button: the pane's markdown preview to its side (VS Code's editor-title button). */
+  previewSide(id: string): void
 }
 
 /** The title of the "+" button (the chord follows). */
 export const ADD_TAB_LABEL = 'Nova aba neste grupo'
+
+/** The title of the preview button. */
+export const PREVIEW_SIDE_LABEL = 'Abrir prévia ao lado'
 
 /** The title of the "⋯" button. */
 export const PANE_MENU_LABEL = 'Menu do painel'
@@ -39,6 +46,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
   private readonly add: HTMLButtonElement
   private readonly more: HTMLButtonElement
   private readonly toggle: HTMLButtonElement
+  private readonly preview: HTMLButtonElement
   private readonly dots: HTMLButtonElement
   private group: IDockviewGroupPanel | undefined
   /** Use stamps of this group's tabs (session only). */
@@ -62,6 +70,10 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.more = document.createElement('button')
     this.more.className = 'tab-more'; this.more.dataset.action = 'more'; this.more.hidden = true
     this.more.type = 'button'; this.more.setAttribute('aria-haspopup', 'menu'); this.more.setAttribute('aria-expanded', 'false')
+    this.preview = document.createElement('button')
+    this.preview.className = 'tab-act'; this.preview.dataset.action = 'md-preview-side'; this.preview.type = 'button'; this.preview.hidden = true
+    this.preview.title = PREVIEW_SIDE_LABEL; this.preview.setAttribute('aria-label', PREVIEW_SIDE_LABEL)
+    this.preview.append(icon('square-split-horizontal'))
     this.toggle = document.createElement('button')
     this.toggle.className = 'tab-act'; this.toggle.dataset.action = 'status-bar'; this.toggle.type = 'button'
     this.toggle.append(icon('rows'))
@@ -69,13 +81,14 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.dots.className = 'tab-act'; this.dots.dataset.action = 'pane-menu'
     this.dots.title = PANE_MENU_LABEL; this.dots.setAttribute('aria-label', PANE_MENU_LABEL); this.dots.setAttribute('aria-haspopup', 'menu'); this.dots.setAttribute('aria-expanded', 'false'); this.dots.type = 'button'
     this.dots.append(icon('dots-three'))
-    this.element.append(this.add, this.more, this.toggle, this.dots)
+    this.element.append(this.add, this.more, this.preview, this.toggle, this.dots)
     // Buttons, not drag handles: dockview must not start a group drag from here.
     this.element.addEventListener('pointerdown', ev => ev.stopPropagation())
     this.add.addEventListener('click', ev => { ev.stopPropagation(); const id = this.activeId(); if (id) this.host.addTab(id) })
     this.more.addEventListener('click', ev => { ev.stopPropagation(); this.openHidden() })
     this.more.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.openHidden() } })
     this.dots.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.dots.click() } })
+    this.preview.addEventListener('click', ev => { ev.stopPropagation(); const id = this.activeId(); if (id) this.host.previewSide(id) })
     this.toggle.addEventListener('click', ev => { ev.stopPropagation(); const id = this.activeId(); if (id) this.host.toggleDetails(id) })
     this.dots.addEventListener('click', ev => {
       ev.stopPropagation()
@@ -127,6 +140,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
   private paintToggle(): void {
     const p = this.group?.activePanel
     this.element.hidden = !p
+    this.preview.hidden = !p || !this.host.canPreview(p.id)
     const open = detailsOpen(p?.params)
     this.toggle.title = `${detailsLabel(open)} (${shortcutHint({ op: 'pane-details' })})`
     this.toggle.setAttribute('aria-label', detailsLabel(open))

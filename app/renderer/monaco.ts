@@ -195,3 +195,40 @@ export function defineTheme(scheme: ColorScheme, tokens: Record<string, string> 
   })
   return name
 }
+
+// ---------- colouring code for the markdown preview ----------
+
+/** Monaco's language id for the name a fenced block gives (`ts`, `typescript`, `sh`, `yml`, an extension…), or undefined for one Monaco has no grammar of. */
+export function languageIdFor(name: string): string | undefined {
+  const key = name.trim().toLowerCase().replace(/^\./, '')
+  if (key === '') return undefined
+  for (const l of monaco.languages.getLanguages()) {
+    if (l.id === key || l.aliases?.some(a => a.toLowerCase() === key) || l.extensions?.some(e => e.toLowerCase() === `.${key}`)) return l.id
+  }
+  return undefined
+}
+
+/**
+ * `code` coloured with the editor's own tokenizer and theme: the inner HTML of a `<code>` (spans with `mtkN` classes,
+ * newlines as newlines), or undefined when the language is unknown or plain. The classes need `tokenColorsCss()`.
+ */
+export async function colorizeCode(code: string, lang: string): Promise<string | undefined> {
+  const id = languageIdFor(lang)
+  if (!id || id === 'plaintext') return undefined
+  const html = await monaco.editor.colorize(code, id, { tabSize: 4 })
+  // Monaco writes spaces as &nbsp; (for its own line boxes); in a <pre> plain spaces keep the text copyable.
+  return html.replace(/<br\s*\/?>/g, '\n').replace(/&nbsp;/g, ' ')
+}
+
+/** The stylesheet rules that give the `mtkN` classes their colours in the theme in force (Monaco writes them into the page's styles). */
+export function tokenColorsCss(): string {
+  const out: string[] = []
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules: CSSRuleList
+    try { rules = sheet.cssRules } catch { continue }
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSStyleRule && /(^|\s)\.mtk[a-z0-9]*\s*$/i.test(rule.selectorText)) out.push(`${rule.selectorText.replace(/^.*\s(?=\.mtk)/, '')}{${rule.style.cssText}}`)
+    }
+  }
+  return out.join('\n')
+}

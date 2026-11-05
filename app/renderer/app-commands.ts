@@ -60,6 +60,9 @@ export interface CommandHost {
   newNote(): void
   openNote(): void
   saveNoteAs(): void
+  /** Markdown (F5): the preview of the active markdown note, in its group or beside it; `markdownSource` goes from a preview back to its file. */
+  markdownPreview(side: boolean): void
+  markdownSource(): void
 }
 
 export const GROUP = { pane: 'Painel', frame: 'Quadro', desk: 'Mesa', drawer: 'Gaveta', look: 'Aparência', app: 'App', note: 'Nota' } as const
@@ -114,6 +117,10 @@ export function appCommands(host: CommandHost): Command[] {
     // ----- note -----
     { id: 'note.new', title: 'Nova nota', group: GROUP.note, icon: 'note-pencil', run: () => host.newNote() },
     { id: 'note.open', title: 'Abrir nota…', group: GROUP.note, icon: 'folder-open', run: () => host.openNote() },
+    { id: 'markdown.preview', title: 'Markdown: abrir prévia', group: GROUP.note, icon: 'eye', shortcut: { op: 'md-preview' }, keepKeyWhenUnavailable: true, when: ctx => ctx.markdown === 'note', run: () => host.markdownPreview(false) },
+    // The two-key chord of VS Code (Ctrl+K V) arrives with the chord support of delivery 5; until then the palette and the tab strip's button reach it.
+    { id: 'markdown.preview.side', title: 'Markdown: abrir prévia ao lado', group: GROUP.note, icon: 'square-split-horizontal', when: ctx => ctx.markdown === 'note', run: () => host.markdownPreview(true) },
+    { id: 'markdown.source', title: 'Markdown: abrir o arquivo-fonte', group: GROUP.note, icon: 'note-pencil', when: ctx => ctx.markdown === 'preview', run: () => host.markdownSource() },
     { id: 'note.save-as', title: 'Salvar nota como…', group: GROUP.note, icon: 'floppy-disk', when: ctx => ctx.focus === 'editor', run: () => host.saveNoteAs() },
     // ----- desk -----
     { id: 'desk.new', title: 'Nova mesa', group: GROUP.desk, icon: 'cards', shortcut: { op: 'desk-new', side: 'after' }, when: ctx => !ctx.drawerOpen, run: () => host.createDesk('after') },

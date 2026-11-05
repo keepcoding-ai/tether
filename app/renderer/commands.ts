@@ -20,6 +20,8 @@ export interface CommandContext {
   drawerOpen: boolean
   /** What owns the keyboard right now. */
   focus: 'terminal' | 'editor' | 'none'
+  /** The active pane is a markdown note (`note`) or the preview of one (`preview`); absent for any other pane. */
+  markdown?: 'note' | 'preview'
 }
 
 export interface Command {
@@ -38,6 +40,8 @@ export interface Command {
   when?: (ctx: CommandContext) => boolean
   /** A held key repeats the keydown: toggles opt out (one press, one toggle). */
   ignoreRepeat?: boolean
+  /** The chord is a key another surface uses too (Ctrl+Shift+V pastes): while the command is unavailable the key is left alone, not swallowed. */
+  keepKeyWhenUnavailable?: boolean
   /** Destructive: painted in the error colour, like the ≡ menu's "Sair e encerrar tudo…". */
   danger?: boolean
   /** `source`: where the run came from (a chord, the palette, the menu, the CLI); most commands ignore it. */

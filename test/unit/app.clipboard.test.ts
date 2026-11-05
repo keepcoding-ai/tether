@@ -47,7 +47,12 @@ describe('pane clipboard keys', () => {
     assert.equal(paneShortcutHint('paste'), 'Ctrl+Shift+V')
     const keyOf = (c: Chord): string => `${c.ctrl ? 'C' : ''}${c.alt ? 'A' : ''}${c.shift ? 'S' : ''}${c.meta ? 'M' : ''}+${c.code}`
     for (const mac of [false, true]) {
-      const app = new Set(SHORTCUTS.map(s => chordOn(s, mac)).filter((c): c is Chord => c !== null).map(keyOf))
+      // The one deliberate overlap: the markdown preview takes VS Code's Ctrl+Shift+V (Cmd+Shift+V) where there is a markdown note
+      // and leaves the key alone elsewhere (Command.keepKeyWhenUnavailable); a terminal decides its own paste before the app is asked.
+      const app = new Set(SHORTCUTS.filter(s => s.command.op !== 'md-preview').map(s => chordOn(s, mac)).filter((c): c is Chord => c !== null).map(keyOf))
+      const preview = SHORTCUTS.filter(s => s.command.op === 'md-preview').map(s => chordOn(s, mac)).filter((c): c is Chord => c !== null).map(keyOf)
+      const paste = PANE_SHORTCUTS.filter(e => e.command === 'paste').map(e => chordOn(e, mac)).filter((c): c is Chord => c !== null).map(keyOf)
+      assert.deepEqual(preview.filter(k => !paste.includes(k)), [], 'the preview chord is exactly a paste chord')
       const seen = new Set<string>()
       for (const entry of PANE_SHORTCUTS) {
         const chord = chordOn(entry, mac)

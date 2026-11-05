@@ -5,6 +5,7 @@
 // cancels by closing the pane; a pane the person laid out on purpose stays, and Esc only gives the keyboard back).
 // When the person picks something, the pane is replaced in the same group, at the same index, by what they chose.
 import { isNotePanelId } from './notes.ts'
+import { isPreviewPanelId } from './preview.ts'
 
 export const EMPTY_COMPONENT = 'empty'
 export const EMPTY_TAB = 'empty-tab'
@@ -19,9 +20,9 @@ export function isEmptyPanelId(id: string): boolean {
   return id.startsWith(EMPTY_PANEL_PREFIX)
 }
 
-/** A pane that has no slot behind it (a note, an empty pane): never an orphan for the restore, never pruned. */
+/** A pane that has no slot behind it (a note, a markdown preview, an empty pane): never an orphan for the restore, never pruned. */
 export function isSlotlessPanelId(id: string): boolean {
-  return isNotePanelId(id) || isEmptyPanelId(id)
+  return isNotePanelId(id) || isEmptyPanelId(id) || isPreviewPanelId(id)
 }
 
 /** A fresh pane id: time-ordered plus a random tail (two panes in the same millisecond). */

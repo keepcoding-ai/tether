@@ -44,6 +44,24 @@
 .note-panel .note-state .card p { margin: 0; font-size: 12px; }
 .note-panel .note-state .card code { font-family: var(--mono); font-size: 11px; word-break: break-all; }
 
+/* The markdown preview (app/renderer/preview-panel.ts): a frame filling the pane, under the same frame card. */
+.preview-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--frame-bg);
+}
+.preview-panel .preview-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: var(--frame-bg);
+}
+.tether-tab.preview .dot { display: none; }
+
 /* The tab: the dirty dot (unsaved text still in the debounce) replaces the status dot's place. */
 .tether-tab.note .dot { display: none; }
 .tether-tab.note .dirty {

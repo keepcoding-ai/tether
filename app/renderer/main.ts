@@ -15,6 +15,8 @@ import { editorKeyOwner, terminalKeyOwner } from './key-capture.ts'
 import { defineTheme, monaco } from './monaco.ts'
 import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
 import { paneCwdOfNote } from './note-rules.ts'
+import { PreviewPanel, PreviewTab, type PreviewHost, type PreviewSnapshot } from './preview-panel.ts'
+import { isMarkdownPath, isPreviewPanelId, newPreviewPanelId, PREVIEW_COMPONENT, PREVIEW_TAB, previewParams, previewTitle, withPreview } from '../shared/preview.ts'
 import { cleanNoteName, isNotePanelId, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../shared/notes.ts'
 import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, isEmptyPanelId, newEmptyPanelId, withEmpty, type EmptyOrigin } from '../shared/empty.ts'
 import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empty-panel.ts'
@@ -57,6 +59,8 @@ const tabs = new Map<string, SlotTab>()
 /** The note panes (F5): no slot behind them, a file each (app/renderer/note-panel.ts). */
 const notes = new Map<string, NotePanel>()
 const noteTabs = new Map<string, NoteTab>()
+/** The markdown previews (F5): a pane tied to a file, drawn beside or instead of its editor (app/renderer/preview-panel.ts). */
+const previews = new Map<string, PreviewPanel>()
 /** The empty panes (F5): a reserved place with the chooser inside (app/renderer/empty-panel.ts). */
 const empties = new Map<string, EmptyPanel>()
 /** Removes the editor actions registered as commands by the last note that got the focus. */
@@ -149,7 +153,9 @@ function commandContext(): CommandContext {
   const active = document.activeElement
   const transient = !active || active === document.body || active.closest(TRANSIENT_FOCUS)
   const focus = transient ? focusOwner : focusOwnerOf(active)
-  return { pane: !!currentDesk().activePanel, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus }
+  const activeId = currentDesk().activePanel?.id
+  const markdown = activeId && notes.has(activeId) && isMarkdownPath(notes.get(activeId)!.path) ? 'note' : activeId && previews.has(activeId) ? 'preview' : undefined
+  return { pane: !!activeId, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(markdown ? { markdown } : {}) }
 }
 
 const commands = new CommandRegistry(commandContext, {
@@ -225,6 +231,7 @@ function applyTheme(state: ThemeState): void {
   for (const p of panels.values()) p.setAppearance(appearance, state.scheme)
   // The note editors: one theme for every Monaco editor, rebuilt from the tokens just painted.
   monaco.editor.setTheme(defineTheme(state.scheme))
+  for (const p of previews.values()) p.restyle()
   themeDialog?.refresh()
   for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme], #theme-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))
   const btn = $('btn-theme')
@@ -248,6 +255,7 @@ function applyAppearance(a: TerminalAppearance): void {
   appearance = a
   for (const p of panels.values()) p.setAppearance(a, theme.scheme)
   for (const n of notes.values()) n.setAppearance(a)
+  for (const p of previews.values()) p.restyle()
   themeDialog?.refresh()
 }
 
@@ -278,6 +286,14 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
           empty.dispose = () => { dispose(); if (empties.get(empty.id) === empty) empties.delete(empty.id) }
           return empty
         }
+        if (name === PREVIEW_COMPONENT) {
+          const preview = new PreviewPanel(previewHost)
+          const init = preview.init.bind(preview)
+          preview.init = params => { init(params); previews.set(preview.id, preview) }
+          const dispose = preview.dispose.bind(preview)
+          preview.dispose = () => { dispose(); if (previews.get(preview.id) === preview) previews.delete(preview.id) }
+          return preview
+        }
         if (name === NOTE_COMPONENT) {
           const note = new NotePanel(noteHost)
           const init = note.init.bind(note)
@@ -295,6 +311,7 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
       },
       createTabComponent: ({ name }) => {
         if (name === EMPTY_TAB) return new EmptyTab(emptyHost)
+        if (name === PREVIEW_TAB) return new PreviewTab(previewHost)
         if (name === NOTE_TAB) {
           const tab = new NoteTab(noteHost, id => notes.get(id)?.dirty ?? false)
           const init = tab.init.bind(tab)
@@ -315,12 +332,14 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
       createRightHeaderActionComponent: () => new TabStripActions({
         describe: id => {
           const s = slots.get(id)
-          return { icon: s ? KIND_ICON[s.kind] : notes.has(id) ? 'note-pencil' : empties.has(id) ? 'plus' : 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
+          return { icon: s ? KIND_ICON[s.kind] : notes.has(id) ? 'note-pencil' : previews.has(id) ? 'eye' : empties.has(id) ? 'plus' : 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
         toggleDetails: id => togglePaneDetails(id),
         addTab: id => { newTabBeside(id) },
+        canPreview: id => { const n = notes.get(id); return !!n && isMarkdownPath(n.path) },
+        previewSide: id => { openMarkdownPreview({ side: true, reference: id }) },
       }),
       createWatermarkComponent: () => {
         const el = document.createElement('div')
@@ -354,6 +373,8 @@ function setupDock(): void {
     onSwitch: () => focusActivePane(),
     paneOptions: panel => isNotePanelId(panel.id)
       ? { id: panel.id, component: NOTE_COMPONENT, tabComponent: NOTE_TAB, title: panel.title ?? panel.id, params: panel.params ?? {} }
+      : isPreviewPanelId(panel.id)
+        ? { id: panel.id, component: PREVIEW_COMPONENT, tabComponent: PREVIEW_TAB, title: panel.title ?? previewTitle(previewParams(panel.params)?.path ?? ''), params: panel.params ?? {} }
       : isEmptyPanelId(panel.id)
         ? { id: panel.id, component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: panel.params ?? withEmpty(undefined) }
         : { id: panel.id, component: COMPONENT, tabComponent: TAB, title: panel.title ?? panel.id, params: panel.params ?? { slotId: panel.id } },
@@ -418,6 +439,8 @@ function paneCwdOf(id: string | undefined): string | undefined {
   if (slot) return slot.cwd
   const note = notes.get(id)
   if (note) return note.cwd ?? paneCwdOfNote(note.path)
+  const preview = previews.get(id)
+  if (preview) return noteByPath(preview.path)?.cwd ?? paneCwdOfNote(preview.path)
   return empties.get(id)?.cwd || undefined
 }
 
@@ -523,7 +546,7 @@ function markSeenIfWatched(): void {
 
 /** The keyboard to a pane, whatever it is: a terminal or a note. */
 function focusPane(id: string): void {
-  (panels.get(id) ?? notes.get(id) ?? empties.get(id))?.focus()
+  (panels.get(id) ?? notes.get(id) ?? previews.get(id) ?? empties.get(id))?.focus()
 }
 
 /** After a desk switch: the keyboard goes to the desk's active pane (and its badge, if any, is seen). */
@@ -828,7 +851,7 @@ async function openMove(slotId: string, mode?: MoveMode): Promise<void> {
   const op = await openMoveDialog({
     scopes: moveTree(),
     source: { slotId, title: findPanel(slotId)?.api.title ?? slotId, scope, frameId: frame.id },
-    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] : notes.has(id) ? 'note-pencil' : empties.has(id) ? 'plus' : 'question' },
+    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] : notes.has(id) ? 'note-pencil' : previews.has(id) ? 'eye' : empties.has(id) ? 'plus' : 'question' },
     ...(mode ? { mode } : {}),
   })
   if (op) await runMove(op, slotId)
@@ -1426,6 +1449,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
   const panel = findPanel(slotId)
   if (!slot) {
     if (empties.has(slotId)) { panel?.api.setActive(); showEmptyMenu(slotId, x, y); return }
+    if (previews.has(slotId)) { panel?.api.setActive(); showPreviewMenu(slotId, x, y); return }
     if (!notes.has(slotId)) return
     panel?.api.setActive()
     showNoteMenu(slotId, x, y)
@@ -1462,12 +1486,28 @@ function showNoteMenu(id: string, x: number, y: number): void {
     SEP,
     { icon: 'pencil-simple', label: 'Renomear…', run: () => noteTabs.get(id)?.startRename() },
     { icon: 'floppy-disk', label: 'Salvar nota como…', run: () => { void saveNoteAs(id) } },
+    ...(isMarkdownPath(note.path) ? [{ icon: 'eye' as const, label: 'Abrir prévia', run: () => openMarkdownPreview({ side: false, reference: id }) }, { icon: 'square-split-horizontal' as const, label: 'Abrir prévia ao lado', run: () => openMarkdownPreview({ side: true, reference: id }) }] : []),
     { icon: 'copy', label: 'Copiar caminho da nota', run: () => window.tether.writeClipboard(note.path) },
     { icon: 'folder-open', label: 'Abrir pasta da nota no Explorer', run: () => { void window.tether.openPath(noteDirOf(note.path)).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) }) } },
     SEP,
     { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
     SEP,
     { icon: 'x', label: 'Fechar nota', run: () => closeNote(id) },
+  ])
+}
+
+/** The preview's tab menu: its source, where it lives, close. */
+function showPreviewMenu(id: string, x: number, y: number): void {
+  const preview = previews.get(id)
+  if (!preview) return
+  showContextMenu(x, y, [
+    { icon: 'note-pencil', label: 'Abrir o arquivo-fonte', run: () => openMarkdownSource(id) },
+    { icon: 'copy', label: 'Copiar caminho do arquivo', run: () => window.tether.writeClipboard(preview.path) },
+    { icon: 'folder-open', label: 'Abrir pasta do arquivo no Explorer', run: () => { void window.tether.openPath(noteDirOf(preview.path)).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) }) } },
+    SEP,
+    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
+    SEP,
+    { icon: 'x', label: 'Fechar prévia', run: () => closeNote(id) },
   ])
 }
 
@@ -1636,6 +1676,9 @@ const noteHost: NoteHost = {
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
   onRename: (id, name) => { void renameNote(id, name) },
   onClose: id => closeNote(id),
+  onSourceChange: panel => { for (const p of previewsOf(panel.path)) p.sourceChanged() },
+  onScroll: panel => { for (const p of previewsOf(panel.path)) p.editorScrolled(panel) },
+  onPathChange: (panel, from) => { for (const p of previewsOf(from)) p.setPath(panel.path) },
 }
 let editorCommandsOwner: NotePanel | undefined
 
@@ -1763,6 +1806,78 @@ function closeNote(id: string): void {
 function onNoteChanged(path: string): void {
   const note = noteByPath(path)
   if (note) void note.onExternalChange()
+  for (const p of previewsOf(path)) p.diskChanged()
+}
+
+// ---------- markdown previews (F5) ----------
+// A preview is a pane tied to a markdown file (app/renderer/preview-panel.ts). It reads the text of the editor that
+// has the file open (live), else the file; the editor and the preview scroll together. Its params (the file, where
+// it was scrolled) go to the layout like a note's, so a restart brings it back.
+
+const previewHost: PreviewHost = {
+  getScheme: () => theme.scheme,
+  getAppearance: () => appearance,
+  editorFor: path => { const n = noteByPath(path); return n && n.isReady ? n : undefined },
+  openFile: (path, noteDir, line) => { void quickOpen.openFile(path, { side: false, root: noteDir, ...(line ? { position: { line } } : {}) }) },
+  openExternal: url => window.tether.openExternal(url),
+  onParamsChange: panel => {
+    const p = findPanel(panel.id)
+    if (!p) return
+    p.api.updateParameters(withPreview(p.params, { path: panel.path, ...(panel.line !== undefined ? { line: panel.line } : {}) }))
+    scheduleSave()
+  },
+  activate: panel => { const p = findPanel(panel.id); if (p && !p.api.isGroupActive) p.api.setActive() },
+  revealSource: (panel, line) => {
+    const note = noteByPath(panel.path)
+    if (note) { findPanel(note.id)?.api.setActive(); note.reveal({ line }); note.focus(); return }
+    void quickOpen.openFile(panel.path, { side: false, root: noteDirOf(panel.path), reference: panel.id, position: { line } })
+  },
+  onTabMenu: (id, x, y) => showTabMenu(id, x, y),
+  onClose: id => closeNote(id),
+}
+
+/** The previews showing `path` (paths compared case-insensitively: Windows). */
+function previewsOf(path: string): PreviewPanel[] {
+  const key = path.toLowerCase()
+  return [...previews.values()].filter(p => p.path.toLowerCase() === key)
+}
+
+/**
+ * VS Code's "Open Preview" (`side: false`: a tab in the note's group) and "Open Preview to the Side" (`side: true`:
+ * a pane to its right, the keyboard staying in the editor). A file that already has a preview gets that one focused.
+ */
+function openMarkdownPreview(opts: { side: boolean; reference?: string }): IDockviewPanel | undefined {
+  const reference = opts.reference ?? currentDesk().activePanel?.id
+  const path = reference ? notes.get(reference)?.path ?? previews.get(reference)?.path : undefined
+  if (!reference || !path) return undefined
+  const existing = previewsOf(path)[0]
+  if (existing) {
+    const panel = findPanel(existing.id)
+    panel?.api.setActive()
+    requestAnimationFrame(() => existing.focus())
+    return panel
+  }
+  const options: AddPanelOptions = { id: newPreviewPanelId(), component: PREVIEW_COMPONENT, tabComponent: PREVIEW_TAB, title: previewTitle(path), params: withPreview(undefined, { path }) }
+  const panel = addPaneOptions(options, opts.side ? { level: 'pane', placement: 'right' } : undefined, reference)
+  scheduleSave()
+  // In its own group the preview takes the keyboard; beside the editor the person keeps typing.
+  if (opts.side) { findPanel(reference)?.api.setActive(); requestAnimationFrame(() => focusPane(reference)) }
+  else requestAnimationFrame(() => focusPane(panel.id))
+  return panel
+}
+
+/** From a preview back to its file: the open editor is brought forward (at the preview's line), else the file is opened in the preview's group. */
+function openMarkdownSource(id: string): void {
+  const preview = previews.get(id)
+  if (!preview) return
+  const note = noteByPath(preview.path)
+  if (note) {
+    findPanel(note.id)?.api.setActive()
+    note.scrollToLine(preview.topLine())
+    note.focus()
+    return
+  }
+  void quickOpen.openFile(preview.path, { side: false, root: noteDirOf(preview.path), reference: id })
 }
 
 // ---------- profiles ----------
@@ -1928,12 +2043,12 @@ const commandHost: CommandHost = {
   duplicateActive: target => { void duplicateActive(target) },
   splitEmpty: (target, origin) => splitEmpty(target, origin),
   newEmptyDesk: () => newEmptyDesk(),
-  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id) || empties.has(a.id)) ? a.id : undefined },
+  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id) || previews.has(a.id) || empties.has(a.id)) ? a.id : undefined },
   renamePane: id => (notes.has(id) ? noteTabs.get(id)?.startRename() : tabs.get(id)?.startRename()),
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
-  copyFolder: id => { const n = notes.get(id); if (n) window.tether.writeClipboard(noteDirOf(n.path)); else if (slots.has(id)) copyFolder(id) },
-  openFolder: id => { const n = notes.get(id); if (n) void window.tether.openPath(noteDirOf(n.path)); else if (slots.has(id)) openFolder(id) },
+  copyFolder: id => { const n = notes.get(id) ?? previews.get(id); if (n) window.tether.writeClipboard(noteDirOf(n.path)); else if (slots.has(id)) copyFolder(id) },
+  openFolder: id => { const n = notes.get(id) ?? previews.get(id); if (n) void window.tether.openPath(noteDirOf(n.path)); else if (slots.has(id)) openFolder(id) },
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
   createDesk: side => { desks.create(side) },
@@ -1960,6 +2075,8 @@ const commandHost: CommandHost = {
   newNote: () => { void newNote() },
   openNote: () => { void openNote() },
   saveNoteAs: () => { void saveNoteAs() },
+  markdownPreview: side => openMarkdownPreview({ side }),
+  markdownSource: () => { const a = currentDesk().activePanel?.id; if (a && previews.has(a)) openMarkdownSource(a) },
 }
 
 /** Something modal of ours is up: app chords stay quiet (the palette has its own keys). */
@@ -2151,6 +2268,8 @@ function setupUi(): void {
     if (modalOpen()) return
     const command = commands.byShortcut(shortcut)
     if (!command) return
+    // A chord another surface uses too (Ctrl+Shift+V pastes) is left to it while the command has nothing to do.
+    if (command.keepKeyWhenUnavailable && !commands.isAvailable(command)) return
     ev.preventDefault()
     if (command.ignoreRepeat && ev.repeat) return // a held chord is one toggle
     void commands.run(command.id, 'key')
@@ -2190,6 +2309,8 @@ declare global {
       termTheme(slotId: string): Record<string, string | undefined> | undefined
       /** The xterm font options a panel is using, and which renderer it got. */
       termOptions(slotId: string): { fontFamily: string; fontWeight: number | string; fontWeightBold: number | string; fontSize: number; lineHeight: number; letterSpacing: number; minimumContrastRatio: number; renderer: string } | undefined
+      /** The path link under the pointer in a terminal: underlined, hand pointer, and the pane's tooltip (empty without one). */
+      linkHover(slotId: string): { underline: boolean; hand: boolean; title: string } | undefined
       /** The terminal appearance in force. */
       terminalAppearance(): TerminalAppearance
       /** Opens "Tema do terminal…" as the menu does. */
@@ -2273,6 +2394,15 @@ declare global {
       palette(): { open: boolean; mode?: PaletteMode; shown: string[]; input: string }
       /** Opens the palette as the chord does. */
       showPalette(mode?: PaletteMode): void
+      /** Scrolls a note's editor as the person's wheel would (immediately: the smooth animation needs a visible window). */
+      scrollNote(id: string, top: number): void
+      /** The markdown previews: file, rendered text and HTML, scroll, the frame's sandbox. */
+      previews(): PreviewSnapshot[]
+      preview(id: string): PreviewSnapshot | undefined
+      /** Where an element of a preview's document is on the page (to click it with a real mouse). */
+      previewRect(id: string, selector: string): { x: number; y: number; width: number; height: number } | undefined
+      /** The preview of the active markdown note as the command opens it (in its group, or beside it); returns the new pane's id. */
+      openPreview(side: boolean): string | undefined
       /** The note panes: file, text, what is on disk, cursor, selections, scroll, focus. */
       notes(): NoteSnapshot[]
       note(id: string): NoteSnapshot | undefined
@@ -2325,6 +2455,16 @@ function setupTestHooks(): void {
       if (!p) return undefined
       const o = p.term.options
       return { fontFamily: o.fontFamily!, fontWeight: o.fontWeight!, fontWeightBold: o.fontWeightBold!, fontSize: o.fontSize!, lineHeight: o.lineHeight!, letterSpacing: o.letterSpacing!, minimumContrastRatio: o.minimumContrastRatio!, renderer: p.renderer }
+    },
+    linkHover: slotId => {
+      const p = panels.get(slotId)
+      if (!p) return undefined
+      // xterm keeps the hovered link's state in its (private) linkifier; a test is the only reader.
+      type Decorations = { underline: boolean; pointerCursor: boolean }
+      type Linkifier = { _currentLink?: { state?: { decorations?: Decorations } } }
+      const holder = (p.term as unknown as { _core?: { _linkifier?: Linkifier & { value?: Linkifier } } })._core?._linkifier
+      const d = (holder?.value ?? holder)?._currentLink?.state?.decorations
+      return { underline: !!d?.underline, hand: !!d?.pointerCursor, title: p.term.element?.getAttribute('title') ?? '' }
     },
     terminalAppearance: () => appearance,
     openTerminalTheme: () => themeDialog.show(),
@@ -2418,6 +2558,11 @@ function setupTestHooks(): void {
     runCommand: id => commands.run(id, 'cli'),
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
+    scrollNote: (id, top) => { notes.get(id)?.editor?.setScrollTop(top, 1 /* ScrollType.Immediate */) },
+    previews: () => [...previews.values()].map(p => p.snapshot()),
+    preview: id => previews.get(id)?.snapshot(),
+    previewRect: (id, selector) => previews.get(id)?.rectOf(selector),
+    openPreview: side => openMarkdownPreview({ side })?.id,
     notes: () => [...notes.values()].map(n => n.snapshot()),
     note: id => notes.get(id)?.snapshot(),
     newNote,

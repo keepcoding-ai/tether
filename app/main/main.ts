@@ -774,9 +774,8 @@ ipcMain.handle('note:write', (_e, path: unknown, text: unknown): NoteWritten => 
 ipcMain.on('note:flush', (_e, path: unknown, text: unknown) => { if (isPath(path) && typeof text === 'string') writeNote(path, text) })
 ipcMain.handle('note:rename', (_e, from: unknown, to: unknown): NoteRenamed => {
   if (!isPath(from) || !isPath(to)) return { ok: false, message: 'Caminho inválido.' }
-  const r = renameNote(from, to)
-  if (r.ok) { noteWatchers.unwatch(from); noteWatchers.watch(to) }
-  return r
+  // The watches follow in the renderer (the note's `setPath`, a preview's retarget): each holder moves its own.
+  return renameNote(from, to)
 })
 ipcMain.on('note:watch', (_e, path: unknown) => { if (isPath(path)) noteWatchers.watch(path) })
 ipcMain.on('note:unwatch', (_e, path: unknown) => { if (isPath(path)) noteWatchers.unwatch(path) })

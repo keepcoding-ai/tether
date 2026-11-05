@@ -12,6 +12,7 @@ import caretUp from '@phosphor-icons/core/assets/regular/caret-up.svg'
 import circleFill from '@phosphor-icons/core/assets/fill/circle-fill.svg'
 import circleHalf from '@phosphor-icons/core/assets/regular/circle-half.svg'
 import clockCounterClockwise from '@phosphor-icons/core/assets/regular/clock-counter-clockwise.svg'
+import eye from '@phosphor-icons/core/assets/regular/eye.svg'
 import folderOpen from '@phosphor-icons/core/assets/regular/folder-open.svg'
 import ghost from '@phosphor-icons/core/assets/regular/ghost.svg'
 import hourglass from '@phosphor-icons/core/assets/regular/hourglass.svg'
@@ -167,6 +168,7 @@ const SVG = {
   'arrow-up': arrowUp,
   'arrow-down': arrowDown,
   'note-pencil': notePencil,
+  eye,
   'floppy-disk': floppyDisk,
   'file-text': fileText,
   'file': fileIcon,

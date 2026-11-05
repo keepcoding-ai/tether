@@ -21,7 +21,7 @@ function stubHost(calls: string[]): CommandHost {
     setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
     openProfiles: log('openProfiles'), restoreConfirmations: log('restoreConfirmations'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
     restartDaemon: log('restartDaemon'), reloadAll: log('reloadAll'), relaunchApp: log('relaunchApp'), toggleDevTools: log('toggleDevTools'), toggleFullscreen: log('toggleFullscreen'), showPalette: log('showPalette'),
-    newNote: log('newNote'), openNote: log('openNote'), saveNoteAs: log('saveNoteAs'),
+    newNote: log('newNote'), openNote: log('openNote'), saveNoteAs: log('saveNoteAs'), markdownPreview: log('markdownPreview'), markdownSource: log('markdownSource'),
     splitEmpty: log('splitEmpty'), newEmptyDesk: log('newEmptyDesk'),
   }
 }
