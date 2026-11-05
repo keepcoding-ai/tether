@@ -656,7 +656,7 @@ dialog.ask .choices.inert .choice:disabled:hover { background: var(--bg-3); }
 #app-menu li.sep { height: 1px; padding: 0; margin: 4px 2px; background: var(--border); cursor: default; }
 #app-menu li.label { color: var(--fg-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; cursor: default; padding-bottom: 2px; }
 #app-menu li.label:hover { background: none; }
-#app-menu li[data-theme] .check, #app-menu li[data-command="ui.desk-line"] .check, #theme-menu li .check { visibility: hidden; }
+#app-menu li[data-theme] .check, #app-menu li[data-command^="ui."] .check, #theme-menu li .check { visibility: hidden; }
 #app-menu li[aria-checked="true"] .check, #theme-menu li[aria-checked="true"] .check { visibility: visible; }
 #app-menu li[aria-checked="true"] .check .ph, #theme-menu li[aria-checked="true"] .check .ph { color: var(--accent); }
 #theme-menu li .check { margin-left: auto; }
@@ -1223,3 +1223,34 @@ dialog.chooser-dlg .ch, dialog.chooser-dlg .ch-bottom { background: var(--bg-2);
 dialog.chooser-dlg .ch-top { border-top: 1px solid var(--border); }
 .tether-tab.empty .kind .ph { color: var(--fg-dim); }
 .tether-tab.empty .text { color: var(--fg-dim); font-style: italic; }
+
+/* --- F6: desk and focus signals (settings ui.deskLine / ui.tabBorder / ui.dimUnfocused; independent, combinable) ---
+   --desk-line-color is the active desk's colour (set on #dock); the drawer paints its own with the accent. */
+.drawer-card { --desk-line-color: var(--accent); }
+/* Borda na guia: ONE outline in the desk colour shaped like a folder, on the focused frame's active group only.
+   Tab: top, left and right edges (inset shadow, so it follows the rounded top corners). Tab strip: its bottom edge, which
+   the active tab hides with its own opaque background (that is the open side of the folder). Content: left, right and
+   bottom edges, a ::after above the terminal. The strip's action buttons and the other tabs stay outside. */
+body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-tabs-and-actions-container { box-shadow: inset 0 -2px 0 var(--desk-line-color, transparent); }
+body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
+  border-radius: 8px 8px 0 0;
+  box-shadow: inset 0 2px 0 var(--desk-line-color, transparent), inset 2px 0 0 var(--desk-line-color, transparent), inset -2px 0 0 var(--desk-line-color, transparent);
+}
+body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-content-container { position: relative; }
+body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-content-container::after {
+  content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 0 0 calc(var(--frame-radius) - 1px) calc(var(--frame-radius) - 1px);
+  box-shadow: inset 2px 0 0 var(--desk-line-color, transparent), inset -2px 0 0 var(--desk-line-color, transparent), inset 0 -2px 0 var(--desk-line-color, transparent);
+}
+/* The drawer in front owns the signal; the desk behind it already steps back. */
+body.drawer-open .desk-set .frame.focused .dv-groupview > .dv-tabs-and-actions-container,
+body.drawer-open .desk-set .frame.focused .dv-groupview .dv-tab.dv-active-tab { box-shadow: none; }
+body.drawer-open .desk-set .frame.focused .dv-groupview > .dv-content-container::after { display: none; }
+
+/* Dim: a veil of the desk background over frames without the focus (tabs included), so it dims toward the surface in
+   both themes. Above the frame card, below the edge "+" (40) and every overlay. */
+.frame::after {
+  content: ""; position: absolute; inset: calc(var(--gap) / 2); z-index: 30; pointer-events: none; border-radius: var(--frame-radius);
+  background: var(--desk-bg); opacity: 0; transition: opacity var(--motion-fast) ease-out;
+}
+body.dim-unfocused .frame:not(.focused)::after { opacity: var(--dim-veil, .3); }
+@media (prefers-reduced-motion: reduce) { .frame::after { transition: none; } }

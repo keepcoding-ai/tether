@@ -66,7 +66,10 @@ export class Desk {
   private readonly container: HTMLElement
   private readonly grid: GridviewApi
   readonly frames = new Map<string, Frame>()
-  private activeFrameId: string | undefined
+  private focusedFrameId: string | undefined
+  /** The frame with the focus; every assignment repaints the `focused` class the signal modes style (borda na guia, dim). */
+  private get activeFrameId(): string | undefined { return this.focusedFrameId }
+  private set activeFrameId(id: string | undefined) { this.focusedFrameId = id; this.paintFocus() }
   /** Views to load into frames created by `fromJSON` (looked up by frame id as each frame initializes). */
   private pendingViews: Record<string, SerializedDockview> = {}
   private readonly deskPlus = new Map<Side, HTMLElement>()
@@ -85,11 +88,19 @@ export class Desk {
       proportionalLayout: true,
       createComponent: ({ id }) => new Frame(id, this),
     })
-    this.grid.onDidAddPanel(p => { this.frames.set(p.id, p as Frame) })
+    this.grid.onDidAddPanel(p => { this.frames.set(p.id, p as Frame); this.paintFocus() })
     this.grid.onDidRemovePanel(p => { this.frames.delete(p.id); this.framePlus.delete(p.id); if (this.activeFrameId === p.id) this.activeFrameId = undefined })
     this.grid.onDidActivePanelChange(p => { if (p) this.activeFrameId = p.id; host.onActivePanelChange?.() })
     this.grid.onDidLayoutChange(e => host.onLayoutChange(e.reasons))
     for (const side of SIDES) container.append(this.plusButton('desk', side, undefined))
+    // Whatever takes the focus inside a frame makes it the focused frame (dockview only reports a change of the active
+    // group, so a click into the already-active group of another frame would leave the signals on the old one).
+    const follow = (ev: Event): void => {
+      const f = [...this.frames.values()].find(fr => fr.element.contains(ev.target as Node))
+      if (f && f.id !== this.activeFrameId) { this.activeFrameId = f.id; host.onActivePanelChange?.() }
+    }
+    container.addEventListener('focusin', follow)
+    container.addEventListener('pointerdown', follow, true)
     container.addEventListener('mousemove', ev => this.onMouseMove(ev))
     container.addEventListener('mouseleave', () => this.hidePlus())
   }
@@ -128,6 +139,12 @@ export class Desk {
   }
 
   get frameIds(): string[] { return this.grid.panels.map(p => p.id) }
+
+  /** Marks the focused frame's element (`.frame.focused`): the CSS signals hang on it. */
+  private paintFocus(): void {
+    const focused = this.activeFrame
+    for (const f of this.frames.values()) f.element.classList.toggle('focused', f === focused)
+  }
 
   get activeFrame(): Frame | undefined {
     return (this.activeFrameId && this.frames.get(this.activeFrameId)) || this.grid.panels.map(p => this.frames.get(p.id)).find(f => f !== undefined)

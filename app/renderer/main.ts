@@ -267,6 +267,10 @@ const THEME_LABEL: Record<ThemeState['setting'], string> = { light: 'Claro', aut
 function applyUi(next: UiSettings): void {
   ui = next
   document.body.classList.toggle('desk-line', ui.deskLine)
+  document.body.classList.toggle('tab-border', ui.tabBorder)
+  document.body.classList.toggle('dim-unfocused', ui.dimUnfocused)
+  document.querySelector('#app-menu li[data-command="ui.tab-border"]')?.setAttribute('aria-checked', String(ui.tabBorder))
+  document.querySelector('#app-menu li[data-command="ui.dim-unfocused"]')?.setAttribute('aria-checked', String(ui.dimUnfocused))
   document.querySelector('#app-menu li[data-command="ui.desk-line"]')?.setAttribute('aria-checked', String(ui.deskLine))
   document.querySelector('#app-menu li[data-command="ui.word-wrap"]')?.setAttribute('aria-checked', String(ui.wordWrap))
   for (const n of notes.values()) n.setWordWrap(ui.wordWrap)
@@ -2192,6 +2196,8 @@ const commandHost: CommandHost = {
   quickShell: () => { void quickShell() },
   setTheme: setting => window.tether.setTheme(normalizeTheme(setting)),
   toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
+  toggleTabBorder: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }),
+  toggleDimUnfocused: () => window.tether.setUi({ ...ui, dimUnfocused: !ui.dimUnfocused }),
   toggleWordWrap: () => noteHost.toggleWordWrap(),
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),
@@ -2672,6 +2678,8 @@ declare global {
       switchState(): { visible: string[]; hidden: string[]; active: string }
       /** The desk colour line: on/off (settings `ui.deskLine`). */
       deskLine(): boolean
+      /** The other two signal modes: the folder-shaped outline on the focused pane and the dim of unfocused frames. */
+      signals(): { tabBorder: boolean; dimUnfocused: boolean }
       /** Word wrap of the note editors: the preference and what each open editor really uses. */
       wordWrap(): { setting: boolean; editors: string[] }
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
@@ -2853,6 +2861,7 @@ function setupTestHooks(): void {
     confirmations: () => confirmations,
     switchState: () => strip.state(),
     deskLine: () => ui.deskLine,
+    signals: () => ({ tabBorder: ui.tabBorder, dimUnfocused: ui.dimUnfocused }),
     wordWrap: () => ({ setting: ui.wordWrap, editors: [...notes.values()].map(n => n.wordWrapOption()) }),
     closePanel: slotId => { void closePanel(slotId) },
     fontSize: () => appearance.fontSize,

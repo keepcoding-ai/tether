@@ -42,6 +42,8 @@ export interface CommandHost {
   quickShell(): void
   setTheme(setting: ThemeSetting): void
   toggleDeskLine(): void
+  toggleTabBorder(): void
+  toggleDimUnfocused(): void
   toggleWordWrap(): void
   openTerminalTheme(): void
   fontSize(command: FontSizeCommand): void
@@ -165,6 +167,8 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'theme.dark', title: 'Tema: Escuro', group: GROUP.look, icon: 'moon', run: () => host.setTheme('dark') },
     { id: 'theme.pick', title: 'Tema… (a paleta filtrada)', group: GROUP.look, icon: 'palette', run: () => host.showPalette('commands', 'Tema') },
     { id: 'ui.desk-line', title: 'Ligar ou desligar a linha da cor da mesa', group: GROUP.look, icon: 'minus', run: () => host.toggleDeskLine() },
+    { id: 'ui.tab-border', title: 'Ligar ou desligar a borda na guia do painel com foco', group: GROUP.look, icon: 'folder-open', run: () => host.toggleTabBorder() },
+    { id: 'ui.dim-unfocused', title: 'Ligar ou desligar o esmaecer dos quadros sem foco', group: GROUP.look, icon: 'square-half', run: () => host.toggleDimUnfocused() },
     { id: 'ui.word-wrap', title: 'Quebra de linha no editor', group: GROUP.look, icon: 'text-aa', run: () => host.toggleWordWrap() },
     { id: 'terminal.theme', title: 'Tema do terminal…', group: GROUP.look, icon: 'palette', run: () => host.openTerminalTheme() },
     { id: 'font.increase', title: 'Aumentar a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('increase') },
