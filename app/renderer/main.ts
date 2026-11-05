@@ -43,7 +43,7 @@ import { TabStripActions } from './tab-strip.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { shortcutHint, terminalInputOf } from './shortcuts.ts'
-import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, noteConflictSituation, noteGitignoreSituation, quitAllSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, noteConflictSituation, noteGitignoreSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 
@@ -471,6 +471,11 @@ async function onAsk(req: AskRequest): Promise<void> {
       // What the person sees is what is at stake: the slots behind open panels, not every slot on disk.
       const open = [...slots.values()].filter(s => findPanel(s.slotId))
       const answer = await askDialog(reloadAllSituation(open))
+      window.tether.answer(req.askId, answer)
+      return
+    }
+    case 'relaunch-failed': {
+      const answer = await askDialog(relaunchFailedSituation(req.message ?? 'O próximo processo do app não pôde ser iniciado.'))
       window.tether.answer(req.askId, answer)
       return
     }

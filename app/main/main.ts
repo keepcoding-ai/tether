@@ -5,8 +5,11 @@
 // keeps every slot running whatever the app does.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
+import { createAppLog } from './app-log.ts'
+import { ackFromLiveInstance, relaunchArgs, relaunchedFrom } from './relaunch.ts'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '../../src/daemon/client.ts'
@@ -49,6 +52,11 @@ const DAEMON_START_TIMEOUT_MS = 15_000
 const hidden = process.env.TETHER_E2E_HIDDEN === '1'
 /** The daemon's entry point, relative to app/dist (this bundle) → repo root. */
 const daemonMain = join(__dirname, '..', '..', 'src', 'daemon', 'main.ts')
+/** The pid this process replaces when "Reiniciar o app" started it (app/main/relaunch.ts). */
+const replacedPid = relaunchedFrom(process.argv)
+/** What this launch decides, on disk (<home>/tether-app.log) and on stderr: a Start Menu launch has no console. */
+const appLog = createAppLog(join(home, 'tether-app.log'))
+appLog(`start: ppid ${process.ppid}, exec ${process.execPath}, cwd ${process.cwd()}, args ${JSON.stringify(process.argv.slice(1))}${replacedPid ? `, replaces pid ${replacedPid} (Reiniciar o app)` : ''}`)
 
 let daemon: DaemonClient | undefined
 let connecting: Promise<void> | undefined
@@ -205,12 +213,12 @@ let askSeq = 0
 const pendingAsks = new Map<number, (answer: DialogAnswer) => void>()
 
 /** Puts a situation to the user through the window; 'cancel' when there is no window to ask in. */
-function ask(situation: MainSituation): Promise<DialogAnswer> {
+function ask(situation: MainSituation, message?: string): Promise<DialogAnswer> {
   if (!win || win.webContents.isDestroyed()) return Promise.resolve({ choice: 'cancel', remember: false })
   const askId = ++askSeq
   return new Promise(resolve => {
     pendingAsks.set(askId, resolve)
-    const req: AskRequest = { askId, situation, slots: [...slotStates.values()] }
+    const req: AskRequest = { askId, situation, slots: [...slotStates.values()], ...(message !== undefined ? { message } : {}) }
     win?.webContents.send('tether:ask', req)
   })
 }
@@ -225,7 +233,7 @@ ipcMain.on('tether:command', (_e, cmd: unknown) => {
   else if (cmd === 'restore-confirmations') restoreConfirmations()
   else if (cmd === 'restart-daemon') void restartDaemon()
   else if (cmd === 'reload-all') void reloadAll()
-  else if (cmd === 'relaunch-app') relaunchApp()
+  else if (cmd === 'relaunch-app') void relaunchApp()
   else if (cmd === 'toggle-devtools') win?.webContents.toggleDevTools()
   else if (cmd === 'toggle-fullscreen') win?.setFullScreen(!win.isFullScreen())
 })
@@ -242,14 +250,45 @@ async function reloadAll(): Promise<void> {
   await request({ t: 'shutdown' })
 }
 
-/** "Reiniciar o app": a fresh main process (new main.cjs); the daemon and its agents are left alone. */
-function relaunchApp(): void {
+let relaunching = false
+
+/**
+ * "Reiniciar o app": a fresh main process (new main.cjs) with the same executable, arguments and cwd; the daemon
+ * and its agents are left alone. The next process is started from here, detached, after the single-instance
+ * lock is released and before this one leaves, and it is told which pid it replaces (app/main/relaunch.ts says
+ * why app.relaunch() is not used). A spawn failure keeps this instance up and says so in the in-app dialog.
+ */
+async function relaunchApp(): Promise<void> {
+  if (relaunching) return
+  relaunching = true
+  const args = relaunchArgs(process.argv, process.pid)
+  const cwd = process.cwd()
+  appLog(`relaunch: starting ${process.execPath} ${args.map(a => JSON.stringify(a)).join(' ')} (cwd ${cwd})`)
+  // From here on this process answers no second launch: an ack written now would make the next instance leave.
+  app.removeListener('second-instance', bringToFront)
+  app.releaseSingleInstanceLock()
+  const failure = await new Promise<string | undefined>(resolve => {
+    try {
+      const child = spawn(process.execPath, args, { cwd, env: process.env, detached: true, stdio: 'ignore', windowsHide: true })
+      child.once('spawn', () => { appLog(`relaunch: next instance is pid ${child.pid}; leaving`); child.unref(); resolve(undefined) })
+      child.once('error', err => resolve(err.message))
+    } catch (err) {
+      resolve(err instanceof Error ? err.message : String(err))
+    }
+  })
+  if (failure !== undefined) {
+    appLog(`relaunch: failed to start the next instance: ${failure}`)
+    if (!app.requestSingleInstanceLock()) appLog('relaunch: could not take the single-instance lock back')
+    app.on('second-instance', bringToFront)
+    relaunching = false
+    void ask('relaunch-failed', `Não consegui iniciar o próximo processo do app (${failure}).`)
+    return
+  }
   // Going down for real: no reconnect attempt, and closing the window must not turn into "hide to the tray".
   quittingAll = true
   quitting = true
   tray?.destroy() // app.exit skips before-quit, where the tray is normally removed
   tray = undefined
-  app.relaunch()
   app.exit(0)
 }
 
@@ -791,10 +830,9 @@ Object.defineProperty(globalThis, '__tetherLockAttempts', { get: () => lockAttem
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
-/** True when a live instance answered our launch (its ack is newer than this process). */
+/** True when a live instance answered our launch: an ack newer than this process, not from the one it replaces. */
 function ackedByLiveInstance(): boolean {
-  const ack = readJson<{ at?: number }>(ackPath, {})
-  return typeof ack.at === 'number' && ack.at >= startedAt
+  return ackFromLiveInstance(readJson<{ at?: unknown; pid?: unknown }>(ackPath, {}), startedAt, replacedPid)
 }
 
 /**
@@ -808,17 +846,22 @@ async function acquireSingleInstance(): Promise<'acquired' | 'focused-other' | '
   for (let attempt = 1; ; attempt++) {
     if (app.requestSingleInstanceLock()) {
       lockAttempts = attempt
-      if (attempt > 1) console.error(`tether: lock de instância única obtido após ${attempt} tentativas (${Date.now() - startedAt} ms)`)
+      appLog(`lock: acquired at attempt ${attempt} (${Date.now() - startedAt} ms)`)
       return 'acquired'
     }
-    if (attempt === 1) console.error(`tether: lock de instância única ocupado (recusado após ${Date.now() - startedAt} ms); tentando de novo por alguns segundos`)
+    if (attempt === 1) appLog(`lock: busy (refused after ${Date.now() - startedAt} ms); retrying for ${LOCK_RETRY_MS / 1000} s`)
     await sleep(LOCK_RETRY_STEP_MS)
-    if (ackedByLiveInstance()) return 'focused-other'
-    if (Date.now() >= deadline) return 'stale'
+    if (ackedByLiveInstance()) {
+      const ack = readJson<{ pid?: unknown }>(ackPath, {})
+      appLog(`lock: a live instance (pid ${String(ack.pid)}) answered this launch; leaving it the window`)
+      return 'focused-other'
+    }
+    if (Date.now() >= deadline) { appLog(`lock: still busy after ${LOCK_RETRY_MS / 1000} s and nobody answered`); return 'stale' }
   }
 }
 
 function bringToFront(): void {
+  appLog('second launch poked this instance; bringing the window up')
   writeJson(ackPath, { at: Date.now(), pid: process.pid })
   if (!app.isReady()) return
   void openWindow() // creates the window when the app is hidden in the tray
@@ -894,7 +937,7 @@ async function start(): Promise<void> {
     // The previous instance is still releasing the lock and nobody is alive to focus: say so in the app's
     // own dialog (stderr too, for a launch from a terminal) and let the user retry or leave.
     const message = 'o tether ainda está fechando; tente de novo em alguns segundos'
-    console.error(`tether: ${message} (lock de instância única ocupado por ${LOCK_RETRY_MS / 1000} s em ${app.getPath('userData')})`)
+    appLog(`${message} (lock de instância única ocupado por ${LOCK_RETRY_MS / 1000} s em ${app.getPath('userData')})`)
     await app.whenReady()
     closeStandalone?.()
     const { answer, close } = await showStandaloneDialog('still-closing')
@@ -910,6 +953,14 @@ async function start(): Promise<void> {
   createWindow()
   setupTray()
   closeStandalone?.() // only now: with the main window up, closing it does not quit the app
+  // The window of a relaunch must be the one in front, as the one it replaces was: a process started by another
+  // process does not always get the foreground on Windows, so it is asked for explicitly once the page is up.
+  if (replacedPid !== undefined) {
+    await windowLoaded
+    showWindow()
+    const w = win
+    appLog(`window: ${w ? `visible=${w.isVisible()} focused=${w.isFocused()} minimized=${w.isMinimized()}` : 'none'}${hidden ? ' (hidden mode: never shown)' : ''}`)
+  }
 }
 
 void start()

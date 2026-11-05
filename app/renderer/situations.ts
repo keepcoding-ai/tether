@@ -292,6 +292,22 @@ export function moveFailedSituation(message: string): DialogSpec {
   }
 }
 
+/**
+ * "Reiniciar o app" could not start the next instance, so this one stays. What it communicates: "nothing
+ * closed, nothing was lost; here is why, and the app is still the one you were using."
+ */
+export function relaunchFailedSituation(message: string): DialogSpec {
+  return {
+    situation: 'relaunch-failed',
+    tone: 'danger',
+    icon: 'x-circle',
+    title: 'Não foi possível reiniciar o app',
+    message: `${message} O app continua aberto como estava; os agentes não foram afetados.`,
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Nada muda: esta janela e os painéis continuam como estão.', tone: 'neutral' }],
+    escChoice: 'ok',
+  }
+}
+
 export const STANDALONE_SITUATIONS: Record<string, () => DialogSpec> = { 'still-closing': stillClosingSituation }
 
 /**
