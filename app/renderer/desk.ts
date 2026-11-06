@@ -34,6 +34,8 @@ export interface DeskHost {
   onEdge(target: Target, op: 'add' | 'menu', frameId: string | undefined, at: { x: number; y: number }): void
   /** The focused pane of this desk may have changed (a pane or a frame got activated). */
   onActivePanelChange?(): void
+  /** False while the window's one focused frame is elsewhere (a pad's frames vs the desks): this desk then paints no `.focused` frame. */
+  ownsFocus?(): boolean
 }
 
 /** One frame: a gridview cell owning a dockview. */
@@ -140,9 +142,9 @@ export class Desk {
 
   get frameIds(): string[] { return this.grid.panels.map(p => p.id) }
 
-  /** Marks the focused frame's element (`.frame.focused`): the CSS signals hang on it. */
-  private paintFocus(): void {
-    const focused = this.activeFrame
+  /** Marks the focused frame's element (`.frame.focused`): the CSS signals hang on it. One per window: none while the host says the focus is elsewhere. */
+  paintFocus(): void {
+    const focused = this.host.ownsFocus?.() === false ? undefined : this.activeFrame
     for (const f of this.frames.values()) f.element.classList.toggle('focused', f === focused)
   }
 

@@ -19,7 +19,7 @@ export type MiniNode =
 
 export interface FrameModel { id: string; name: string; layout: MiniNode; panes: MiniPane[] }
 /** The drawer or a desk: where a frame lives. */
-export interface ScopeModel { id: string; kind: 'drawer' | 'desk'; name: string; color?: DeskHue; current: boolean; frames: FrameModel[] }
+export interface ScopeModel { id: string; kind: 'drawer' | 'pad' | 'desk'; name: string; color?: DeskHue; current: boolean; frames: FrameModel[]; /** A pad's icon (app/renderer/icons.ts). */ icon?: string }
 
 /** What is being moved: a pane, which lives in a frame of a scope. */
 export interface MoveSource { slotId: string; title: string; scope: string; frameId: string }
@@ -81,13 +81,15 @@ export function panesOfLayout(n: MiniNode): MiniPane[] {
 
 export interface TreeInput {
   drawer: { frames: { id: string; view: FrameViewJSON }[] }
+  /** The frames pads offered as destinations (the current desk's desk pad, the global pad). */
+  pads?: { id: string; name: string; icon: string; frames: { id: string; view: FrameViewJSON }[] }[]
   desks: { id: string; name: string; color: DeskHue; frames: { id: string; view: FrameViewJSON }[] }[]
   /** The desk the user is on (the drawer is never "atual"). */
   currentDesk: string
   titleOf?: (id: string) => string | undefined
 }
 
-/** The drawer first, then the desks in their order; frames named "Quadro N" by their place in the desk. */
+/** The drawer first, then the pads, then the desks in their order; frames named "Quadro N" by their place in the desk. */
 export function buildTree(input: TreeInput): ScopeModel[] {
   const frames = (list: TreeInput['drawer']['frames']): FrameModel[] => list.map((f, i) => {
     const layout = miniLayout(f.view, input.titleOf)
@@ -95,6 +97,7 @@ export function buildTree(input: TreeInput): ScopeModel[] {
   }).filter(f => f.panes.length > 0) // an empty desk's placeholder frame is no destination: the desk's edges are
   return [
     { id: DRAWER_SCOPE, kind: 'drawer', name: 'Gaveta', current: false, frames: frames(input.drawer.frames) },
+    ...(input.pads ?? []).map(p => ({ id: p.id, kind: 'pad' as const, name: p.name, icon: p.icon, current: false, frames: frames(p.frames) })),
     ...input.desks.map(d => ({ id: d.id, kind: 'desk' as const, name: d.name, color: d.color, current: d.id === input.currentDesk, frames: frames(d.frames) })),
   ]
 }
@@ -238,6 +241,6 @@ export function summaryOf(scopes: readonly ScopeModel[], mode: MoveMode, source:
   if (!p.zone) return { subject, scope: scope?.name ?? '', where, zone: undefined, tail: 'escolha uma zona' }
   const label = zoneLabel(mode, !!frame, p.zone)
   const zone = label.charAt(0).toLowerCase() + label.slice(1)
-  const tail = frame ? '' : scope?.kind === 'drawer' ? ' da gaveta' : ' da mesa'
+  const tail = frame ? '' : scope?.kind === 'drawer' ? ' da gaveta' : scope?.kind === 'pad' ? ' da prancheta' : ' da mesa'
   return { subject, scope: scope?.name ?? '', where, zone, tail }
 }

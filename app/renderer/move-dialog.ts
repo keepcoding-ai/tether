@@ -33,7 +33,12 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return e
 }
 
-/** The scope's colour: the desk's `-text` token, the accent for the drawer. */
+/** The scope's mark: the drawer's lightning, a pad's own icon, a desk's colour dot. */
+function scopeMark(s: ScopeModel): HTMLElement | SVGElement {
+  return s.kind === 'drawer' ? icon('lightning') : s.kind === 'pad' ? icon((s.icon ?? 'square') as IconName) : el('span', 'dot')
+}
+
+/** The scope's colour: the desk's `-text` token, the accent for the drawer and the pads. */
 function scopeColor(s: ScopeModel | undefined): string {
   return s?.kind === 'desk' && s.color ? deskTokens(s.color).text : 'var(--accent)'
 }
@@ -139,13 +144,13 @@ export function openMoveDialog(input: MoveDialogInput): Promise<MoveOp | undefin
         row.dataset.scope = r.scope.id
         if (r.kind === 'scope') {
           const selected = state.sel.scope === r.scope.id && !state.sel.frameId
-          row.classList.add(r.scope.kind === 'drawer' ? 'g' : 'd')
+          row.classList.add(r.scope.kind === 'desk' ? 'd' : 'g')
           row.classList.toggle('open', r.open)
           row.classList.toggle('sel', selected)
           row.setAttribute('aria-expanded', String(r.open))
           row.setAttribute('aria-selected', String(selected))
           const chev = el('span', 'chev'); chev.dataset.chev = ''; chev.append(icon('caret-right'))
-          row.append(chev, r.scope.kind === 'drawer' ? icon('lightning') : el('span', 'dot'), highlighted(r.scope.name, state.query))
+          row.append(chev, scopeMark(r.scope), highlighted(r.scope.name, state.query))
           if (r.scope.current) row.append(el('span', 'atual', 'atual'))
           row.append(el('span', 'n', plural(r.scope.frames.length, 'quadro', 'quadros')))
         } else {
@@ -163,9 +168,9 @@ export function openMoveDialog(input: MoveDialogInput): Promise<MoveOp | undefin
           row.append(miniMap(r.frame.layout), ft)
         }
         tree.append(row)
-        // A thin line closes the drawer's rows (its frames come right after it), before the desks.
+        // A thin line closes the drawer's and the pads' rows (their frames come right after them), before the desks.
         const next = rows[index + 1]
-        if (r.scope.kind === 'drawer' && next && next.scope.id !== r.scope.id) tree.append(el('div', 'mv-sep'))
+        if (r.scope.kind !== 'desk' && next && next.scope.kind === 'desk') tree.append(el('div', 'mv-sep'))
       })
       tree.querySelector('.mv-row.sel')?.scrollIntoView({ block: 'nearest' })
     }
@@ -258,7 +263,7 @@ export function openMoveDialog(input: MoveDialogInput): Promise<MoveOp | undefin
       right.style.setProperty('--c', scopeColor(scope))
       rhead.replaceChildren()
       const crumb = el('div', 'crumb')
-      crumb.append(scope?.kind === 'drawer' ? icon('lightning') : el('span', 'dot'), el('span', 'dn', scope?.name ?? ''))
+      crumb.append(scope ? scopeMark(scope) : el('span', 'dot'), el('span', 'dn', scope?.name ?? ''))
       if (frame) crumb.append(el('span', 'sep', '›'), el('span', undefined, frame.name))
       rhead.append(crumb, el('span', 'spacer'), el('span', 'pill', frame ? plural(frame.panes.length, 'painel', 'painéis') : plural(scope?.frames.length ?? 0, 'quadro', 'quadros')))
       dia.replaceChildren()
@@ -277,7 +282,7 @@ export function openMoveDialog(input: MoveDialogInput): Promise<MoveOp | undefin
         dia.className = 'mv-dia out'
         const mid = el('div', 'mid')
         const tiles = el('div', 'tiles')
-        if (scope && scope.frames.length === 0) tiles.append(el('div', 'mv-empty', scope.kind === 'drawer' ? 'Gaveta vazia' : 'Mesa vazia'))
+        if (scope && scope.frames.length === 0) tiles.append(el('div', 'mv-empty', scope.kind === 'drawer' ? 'Gaveta vazia' : scope.kind === 'pad' ? 'Prancheta vazia' : 'Mesa vazia'))
         for (const f of scope?.frames ?? []) {
           const tile = el('div', 'tile')
           const tl = el('div', 'tl'); tl.append(el('span', undefined, f.name), el('span', undefined, plural(f.panes.length, 'painel', 'painéis')))

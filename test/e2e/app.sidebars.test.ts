@@ -7,7 +7,12 @@
 //      (the frame pads extension is turned off for this one);
 //   3. the frame pads (F10b): each opens and closes by its icon and by its command, one open per side, Ctrl+Alt+B toggles
 //      the right bar; a pad moved to the left and restored; the desk pad's content swaps with the desk, the global pad is
-//      the same frame in every desk; a terminal in a pad survives a relaunch with the same PID; widths and open state too.
+//      the same frame in every desk; a terminal in a pad survives a relaunch with the same PID; widths and open state too;
+//   4. pads in the focus (F10b-2): one focused frame in the window (the F6 outline and the dim follow a pad frame and
+//      come back to the desk); "Nova nota" with a pad frame focused opens in that pad; Ctrl+K arrows (frame.focus.*)
+//      cross desk ↔ pad; "Mover…" offers the desk pad and the global pad and moves a pane in and out; a pad pane's
+//      attention counts on its desk's badge and locating it (openSlot) opens its pad; the desk line spans the window.
+//      Screenshots light+dark in <repo>/../../.tmp/f10.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -27,7 +32,7 @@ type Hooks = {
   slots(): SlotState[]
   connection(): { connected: boolean; pid?: number } | undefined
   layout(): LayoutJSON
-  desks(): { id: string; name: string; panes: string[] }[]
+  desks(): { id: string; name: string; panes: string[]; attention: { done: number; waiting: number } }[]
   createDesk(side: 'before' | 'after'): string
   switchDesk(id: string): void
   activeDesk(): string
@@ -40,13 +45,19 @@ type Hooks = {
   padFrames(): { pad: string; desk?: string; panes: string[]; shown: boolean }[]
   openSlotInPad(slotId: string, padId: string): void
   togglePad(id: string): void
+  currentPane(): string | undefined
+  openMove(slotId: string, mode?: 'pane' | 'frame'): void
+  moveTree(): { id: string; kind: string; name: string }[]
+  applyState(slot: SlotState): void
   movePad(id: string): void
   restorePad(id: string): void
   runCommand(id: string): Promise<string>
   renameDesk(id: string, name: string): void
 }
 declare const window: { __tether: Hooks; tether: { request(body: unknown): Promise<{ t: string; slot?: SlotState }> } }
-declare const document: { querySelector(s: string): { hidden: boolean; getBoundingClientRect(): { width: number } } | null }
+type El = { hidden: boolean; dataset: Record<string, string>; closest(s: string): El | null; getBoundingClientRect(): { width: number } }
+declare const document: { querySelector(s: string): El | null; querySelectorAll(s: string): ArrayLike<El> & Iterable<El>; documentElement: El }
+declare const getComputedStyle: (el: El, pseudo?: string) => { width: string; content: string; opacity: string }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -291,5 +302,160 @@ test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relau
     for (const p of daemons) await killOwned(p, { tree: true })
     for (let i = 0; i < 20 && daemons.some(p => pidAlive(p.pid)); i++) await sleep(500)
     for (let i = 0; i < 5; i++) { try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) } }
+  }
+})
+
+/** Where the window's focused frames are: one entry per `.frame.focused` ('pads' or 'desk'). */
+const focusedFrames = (page: Page) => page.evaluate(() => [...document.querySelectorAll('.frame.focused')].filter(f => !f.closest('.drawer')).map(f => f.closest('#pads') ? 'pads' : 'desk'))
+/** How many frames wear the dim veil (their ::after above 0), in the shown pads and on the visible desk. */
+const dimmed = (page: Page) => page.evaluate(() => {
+  const n = (sel: string) => [...document.querySelectorAll(sel)].filter(f => Number(getComputedStyle(f, '::after').opacity) > 0.05).length
+  return { pads: n('#pads .pad.shown .frame:has(> .frame-dock)'), desk: n('.desk-layer:not(.inactive) .frame:has(> .frame-dock)') }
+})
+
+async function setTheme(page: Page, scheme: 'light' | 'dark'): Promise<void> {
+  await page.click('#btn-theme')
+  await page.click(`#theme-menu li[data-theme="${scheme}"]`)
+  await page.waitForFunction(s => document.documentElement.dataset.theme === s, scheme)
+  await sleep(300)
+}
+
+test('frame pads in the focus (F10b-2): one focused frame, new panes, Ctrl+K, Mover, attention, full-width line', { timeout: 300_000 }, async () => {
+  mkdirSync(artifacts, { recursive: true })
+  const shots = join(atriumTmp, 'f10')
+  mkdirSync(shots, { recursive: true })
+  const home = mkdtempSync(join(tmpBase, 'tether-padfocus-'))
+  // A folder of its own: the note the test creates lands in <cwd>/.tether/notes, never in the repo.
+  const work = mkdtempSync(join(tmpBase, 'tether-padfocus-work-'))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ theme: 'light', ui: { deskLine: true, tabBorder: true, dimUnfocused: true, dimLevel: 'medium' } }))
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  const frames = (page: Page) => page.evaluate(() => window.__tether.padFrames())
+  const padPanes = async (page: Page, desk: string) => (await frames(page)).find(f => f.pad === DESK_PAD && f.desk === desk)?.panes ?? []
+  const workShell = async (page: Page, open: boolean): Promise<string> => {
+    const reply = await page.evaluate(cwd => window.tether.request({ t: 'create', kind: 'shell', cwd, start: true }), work)
+    assert.equal(reply.t, 'ok')
+    const id = reply.slot!.slotId
+    if (open) await page.evaluate(id => window.__tether.openSlot(id), id)
+    await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.status === 'running', id, { timeout: 20_000 })
+    return id
+  }
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home))
+    daemons.push(await claim((await page.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    const a = await workShell(page, true)
+    page.evaluate(id => window.__tether.duplicate(id, 'right', 'desk'), a).catch(() => {})
+    await page.waitForFunction(() => window.__tether.panelIds().length === 2, undefined, { timeout: 20_000 })
+    const b = (await page.evaluate(() => window.__tether.panelIds())).find(id => id !== a)!
+    await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.status === 'running', b, { timeout: 20_000 })
+    const desk1 = await page.evaluate(() => window.__tether.activeDesk())
+
+    // ---- the desk line spans the window, over the side bars ----
+    await page.evaluate(id => window.__tether.togglePad(id), DESK_PAD)
+    await page.waitForFunction(p => window.__tether.padFrames().some(f => f.pad === p && f.shown && f.panes.length === 1), DESK_PAD)
+    const line = await page.evaluate(() => {
+      const st = getComputedStyle(document.querySelector('#workbench')!, '::before')
+      return { content: st.content, width: parseFloat(st.width), window: document.documentElement.getBoundingClientRect().width, dockLine: getComputedStyle(document.querySelector('#dock')!, '::before').content }
+    })
+    assert.notEqual(line.content, 'none', 'the line is drawn on the workbench')
+    assert.ok(Math.abs(line.width - line.window) < 2, `the line spans the window (${line.width} of ${line.window})`)
+    assert.equal(line.dockLine, 'none', 'no second line on the desks alone')
+
+    // ---- one focused frame: the pad's (opened with the keyboard in it), then the desk's ----
+    const seeded = (await padPanes(page, desk1))[0]!
+    await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !!document.querySelector('#workbench .frame.focused')!.closest('#pads'))
+    assert.equal(await page.evaluate(() => window.__tether.currentPane()), seeded, 'the active pane is the pad\'s')
+    await sleep(300)
+    assert.deepEqual(await dimmed(page), { pads: 0, desk: 2 }, 'the desk frames dim while the pad frame has the focus')
+    for (const scheme of ['light', 'dark'] as const) {
+      await setTheme(page, scheme)
+      // The theme menu took the keyboard: give it back to the pad's pane (focusing it keeps the pad frame focused).
+      await page.locator('#pads .pad.shown .dv-tab').first().click()
+      await page.waitForFunction(() => !!document.querySelector('#workbench .frame.focused')?.closest('#pads'))
+      await sleep(300)
+      await page.screenshot({ path: join(shots, `pad-focused-${scheme}.png`) })
+    }
+    await page.locator('.desk-layer:not(.inactive) .frame .panel-term:visible').first().click()
+    await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !document.querySelector('#workbench .frame.focused')!.closest('#pads'))
+    await sleep(300)
+    assert.deepEqual(await dimmed(page), { pads: 1, desk: 1 }, 'back on the desk: the pad frame dims, one desk frame is focused')
+
+    // ---- Ctrl+K arrows: desk → pad → desk ----
+    await page.locator('.desk-layer:not(.inactive) .frame:has(> .frame-dock)').last().locator('.panel-term:visible').first().click() // b's frame: the rightmost
+    await page.waitForFunction(id => window.__tether.currentPane() === id, b)
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('frame.focus.right')), 'ran')
+    await page.waitForFunction(id => window.__tether.currentPane() === id, seeded)
+    assert.deepEqual(await focusedFrames(page), ['pads'], 'Ctrl+K → reaches the pad frame')
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('frame.focus.left')), 'ran')
+    await page.waitForFunction(id => window.__tether.currentPane() === id, b)
+    assert.deepEqual(await focusedFrames(page), ['desk'], 'Ctrl+K ← comes back to the desk')
+
+    // ---- "Nova nota" with the pad frame focused opens in the pad ----
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('frame.focus.right')), 'ran')
+    await page.waitForFunction(id => window.__tether.currentPane() === id, seeded)
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('note.new')), 'ran')
+    await page.waitForFunction(p => window.__tether.padFrames().some(f => f.pad === p && f.panes.length === 2), DESK_PAD)
+    const note = (await padPanes(page, desk1)).find(id => id !== seeded)!
+    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(note), 'the note is in the pad, not on the desk')
+    await page.waitForFunction(id => window.__tether.currentPane() === id, note)
+    await sleep(500)
+    for (const scheme of ['light', 'dark'] as const) {
+      await setTheme(page, scheme)
+      await page.locator('#pads .pad.shown .monaco-editor').first().click()
+      await page.waitForFunction(() => !!document.querySelector('#workbench .frame.focused')?.closest('#pads'))
+      await sleep(300)
+      await page.screenshot({ path: join(shots, `pad-note-${scheme}.png`) })
+    }
+
+    // ---- "Mover…": the pads are destinations; b goes into the desk pad and comes back ----
+    const tree = await page.evaluate(() => window.__tether.moveTree())
+    assert.deepEqual(tree.filter(s => s.kind === 'pad').map(s => [s.id, s.name]), [[`pad:${DESK_PAD}@${desk1}`, 'Prancheta da mesa'], [`pad:${GLOBAL_PAD}`, 'Prancheta global']])
+    const bPid = await pidOf(page, b)
+    await page.evaluate(id => window.__tether.openMove(id), b)
+    await page.waitForSelector('dialog.move[open]')
+    await page.click(`dialog.move .mv-row.g[data-scope="pad:${DESK_PAD}@${desk1}"]`)
+    await page.click('dialog.move .oz.bottom')
+    assert.match((await page.textContent('#mv-summary'))!, /da prancheta/)
+    await page.click('#mv-go')
+    await page.waitForFunction(([id, p]) => window.__tether.padFrames().some(f => f.pad === p && f.panes.includes(id!)), [b, DESK_PAD])
+    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(b))
+    assert.equal(await pidOf(page, b), bPid, 'same process after the move')
+    await page.evaluate(id => window.__tether.openMove(id), b)
+    await page.waitForSelector('dialog.move[open]')
+    await page.click(`dialog.move .mv-row.d[data-scope="${desk1}"]`)
+    await page.click('dialog.move .oz.right')
+    await page.click('#mv-go')
+    await page.waitForFunction(id => window.__tether.panelIds().includes(id), b)
+    assert.ok(!(await padPanes(page, desk1)).includes(b), 'out of the pad')
+    // Into the global pad, never opened before: it opens and takes the pane, with no seeded empty pane beside it.
+    await page.evaluate(id => window.__tether.openMove(id), b)
+    await page.waitForSelector('dialog.move[open]')
+    await page.click(`dialog.move .mv-row.g[data-scope="pad:${GLOBAL_PAD}"]`)
+    await page.click('dialog.move .oz.left')
+    await page.click('#mv-go')
+    await page.waitForFunction(([id, p]) => window.__tether.padFrames().some(f => f.pad === p && f.shown && f.panes.length === 1 && f.panes[0] === id), [b, GLOBAL_PAD])
+    assert.equal(await pidOf(page, b), bPid, 'same process in the global pad')
+
+    // ---- attention: a desk pad's pane counts on its desk's badge; locating it opens its pad ----
+    const c = await workShell(page, false)
+    await page.evaluate(id => window.__tether.togglePad(id), DESK_PAD)
+    await page.waitForFunction(p => window.__tether.sidebars()!.right.open === p, DESK_PAD)
+    await page.evaluate(([id, pad]) => window.__tether.openSlotInPad(id!, pad!), [c, DESK_PAD])
+    await page.waitForFunction(id => window.__tether.padFrames().some(f => f.panes.includes(id)), c)
+    const cState = (await page.evaluate(id => window.__tether.slots().find(s => s.slotId === id), c))!
+    const desk2 = await page.evaluate(() => window.__tether.createDesk('after'))
+    await page.evaluate(id => window.__tether.switchDesk(id), desk2)
+    await page.evaluate(s => window.__tether.applyState(s), { ...cState, attention: 'waiting' as const })
+    await page.waitForFunction(d => window.__tether.desks().find(x => x.id === d)?.attention.waiting === 1, desk1)
+    await page.evaluate(id => window.__tether.openSlot(id), c)
+    await page.waitForFunction(([d, p]) => window.__tether.activeDesk() === d && window.__tether.sidebars()!.right.open === p, [desk1, DESK_PAD])
+    await page.waitForFunction(id => window.__tether.currentPane() === id, c)
+    await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !!document.querySelector('#workbench .frame.focused')!.closest('#pads'))
+  } finally {
+    if (app) await killElectron(app, root).catch(() => {})
+    for (const p of daemons) await killOwned(p, { tree: true })
+    for (let i = 0; i < 20 && daemons.some(p => pidAlive(p.pid)); i++) await sleep(500)
+    for (const dir of [home, work]) for (let i = 0; i < 5; i++) { try { rmSync(dir, { recursive: true, force: true }); break } catch { await sleep(300) } }
   }
 })

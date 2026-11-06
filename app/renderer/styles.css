@@ -157,8 +157,8 @@ body { display: flex; flex-direction: column; }
 .popover button { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; }
 .popover button .ph { width: 14px; height: 14px; }
 
-/* The desk colour line: 2 px along the top of the desk, in the active desk's colour (settings ui.deskLine). */
-body.desk-line #dock::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 5; pointer-events: none; background: var(--desk-line-color, transparent); }
+/* The desk colour line: 2 px under the toolbar across the whole window (over the side bars), in the active desk's colour (settings ui.deskLine). */
+body.desk-line #workbench::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 5; pointer-events: none; background: var(--desk-line-color, transparent); }
 
 button {
   background: var(--bg-3);
@@ -1282,7 +1282,7 @@ dialog.chooser-dlg .ch-top { border-top: 1px solid var(--border); }
 .tether-tab.empty .text { color: var(--fg-dim); font-style: italic; }
 
 /* --- F6: desk and focus signals (settings ui.deskLine / ui.tabBorder / ui.dimUnfocused; independent, combinable) ---
-   --desk-line-color is the active desk's colour (set on #dock); the drawer paints its own with the accent. */
+   --desk-line-color is the active desk's colour (set on #workbench, so the pads' frames inherit it); the drawer paints its own with the accent. */
 .drawer-card { --desk-line-color: var(--accent); }
 /* Borda na guia: ONE outline in the desk colour shaped like a folder, on the focused frame's active group only.
    Tab: top, left and right edges (inset shadow, so it follows the rounded top corners). Tab strip: its bottom edge, which
@@ -1299,9 +1299,9 @@ body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-content-conta
   box-shadow: inset 2px 0 0 var(--desk-line-color, transparent), inset -2px 0 0 var(--desk-line-color, transparent), inset 0 -2px 0 var(--desk-line-color, transparent);
 }
 /* The drawer in front owns the signal; the desk behind it already steps back. */
-body.drawer-open .desk-set .frame.focused .dv-groupview > .dv-tabs-and-actions-container,
-body.drawer-open .desk-set .frame.focused .dv-groupview .dv-tab.dv-active-tab { box-shadow: none; }
-body.drawer-open .desk-set .frame.focused .dv-groupview > .dv-content-container::after { display: none; }
+body.drawer-open :is(.desk-set, #pads) .frame.focused .dv-groupview > .dv-tabs-and-actions-container,
+body.drawer-open :is(.desk-set, #pads) .frame.focused .dv-groupview .dv-tab.dv-active-tab { box-shadow: none; }
+body.drawer-open :is(.desk-set, #pads) .frame.focused .dv-groupview > .dv-content-container::after { display: none; }
 
 /* Dim: a veil of the desk background over frames without the focus (tabs included), so it dims toward the surface in
    both themes. Above the frame card, below the edge "+" (40) and every overlay. */

@@ -16,6 +16,8 @@ export interface FramesPadHost {
   /** The keyboard to a pane of the pad. */
   focusPane(id: string): void
   onCreate(pad: FramesPad): void
+  /** The pad left the screen (closed, or another desk's pad took its place). */
+  onHidden(pad: FramesPad): void
   onDispose(pad: FramesPad): void
 }
 
@@ -59,7 +61,7 @@ export class FramesPad implements PadView {
 
   setVisible(visible: boolean): void {
     this.visible = visible
-    if (!visible) this.desk.hidePlus()
+    if (!visible) { this.desk.hidePlus(); this.host.onHidden(this) }
   }
 
   dispose(): void {

@@ -102,6 +102,26 @@ const padTypes = new Map<string, PadType>()
 let sidebars: SideBars | undefined
 /** The live frames of the `frames: true` pads (one per global pad, one per desk for a desk pad): places panes live, like the desks and the drawer. */
 const framePads = new Set<FramesPad>()
+/**
+ * The pad whose frames hold the window's one focused frame; undefined while the desks (or the drawer) have it. Follows
+ * where the keyboard or the pointer goes (followFocus): new panes, the shortcuts, Ctrl+K arrows and the F6 signals use it.
+ */
+let focusedPad: FramesPad | undefined
+
+function setFocusedPad(pad: FramesPad | undefined): void {
+  if (pad === focusedPad) return
+  focusedPad = pad
+  for (const d of desks.desks) desks.desk(d.id)?.paintFocus()
+  for (const p of framePads) p.desk.paintFocus()
+}
+
+/** Focus or a press inside a pad's frames gives that pad the focused frame; inside the desks, the desks take it back. The drawer leaves it as it is. */
+function followFocus(ev: Event): void {
+  const t = ev.target as Element | null
+  const box = t?.closest?.('.pad-frames')
+  if (box) { const pad = [...framePads].find(p => p.element === box); if (pad?.isVisible) setFocusedPad(pad); return }
+  if (t?.closest?.('#dock')) setFocusedPad(undefined)
+}
 /** Open/closed and the pane that gets the keyboard back (app/renderer/drawer-rules.ts). Never persisted: the app starts with the drawer closed. */
 let drawerState: DrawerState = CLOSED
 /** The element that had the keyboard when the drawer opened, for when it was not a pane. */
@@ -354,10 +374,14 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     onPanelsChange: () => { refreshClosedMenu(); renderStrip() },
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
     onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched() },
+    // One focused frame in the window: a pad's frames have it while that pad is focused, the desks otherwise.
+    ownsFocus: () => scope === 'drawer' ? true : scope instanceof FramesPad ? focusedPad === scope : focusedPad === undefined,
   }
 }
 
 function setupDock(): void {
+  document.addEventListener('focusin', followFocus)
+  document.addEventListener('pointerdown', followFocus, true)
   const bar = $('toolbar')
   strip = new DeskSwitch($('desk-switch'), bar, [bar.querySelector<HTMLElement>('.tb-left')!, bar.querySelector<HTMLElement>('.tb-right')!], {
     switchTo: id => desks.switchTo(id),
@@ -446,7 +470,8 @@ function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layou
 
 /** Adds any pane (slot, note, empty) relative to `reference` at `target`'s level, in its desk or the drawer; `into` forces the drawer. */
 function addPaneOptions(options: AddPanelOptions, target?: Target, reference?: string, into?: 'drawer'): IDockviewPanel {
-  const pad = into === 'drawer' ? undefined : reference ? framePadOf(reference) : undefined
+  // No reference: the focused pad's frames, when a pad has the focus (and the drawer is closed).
+  const pad = into === 'drawer' ? undefined : reference ? framePadOf(reference) : !drawer.isOpen ? padInFocus() : undefined
   const useDrawer = into === 'drawer' || (reference ? inDrawer(reference) : drawer.isOpen)
   const panel = (pad ? pad.desk : useDrawer ? drawer.desk : desks).addPanel(options, target, reference)
   panel.api.setActive()
@@ -532,7 +557,8 @@ function renderSlot(slotId: string): void {
 /** How many panes of a desk finished their turn / wait for the user. */
 function deskAttention(deskId: string): DeskAttention {
   const out = { done: 0, waiting: 0 }
-  for (const p of desks.desk(deskId)?.panels ?? []) {
+  // A desk pad's panes are the desk's: its badge counts them too.
+  for (const p of [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId).flatMap(x => x.desk.panels)]) {
     const a = slots.get(p.id)?.attention
     if (a === 'done') out.done++
     else if (a === 'waiting') out.waiting++
@@ -544,7 +570,8 @@ function renderStrip(): void {
   if (!strip || !desks) return
   strip.render(desks.desks, desks.activeDeskId, deskAttention)
   const active = desks.desks.find(d => d.id === desks.activeDeskId)
-  if (active) $('dock').style.setProperty('--desk-line-color', deskTokens(active.color).fill)
+  // On the workbench: the line spans the window (over the side bars) and the pads' frames take the colour for the F6 outline.
+  if (active) $('workbench').style.setProperty('--desk-line-color', deskTokens(active.color).fill)
   renderDrawerButton()
 }
 
@@ -643,9 +670,14 @@ function moveFrameToDesk(slotId: string, to: string): void {
 
 // ---------- the drawer ----------
 
-/** The Desk new panes go to and the shortcuts act on: the drawer's while it is open, else the visible desk. */
+/** The Desk new panes go to and the shortcuts act on: the drawer's while it is open, else the focused pad's frames, else the visible desk. */
 function currentDesk(): Desk {
-  return drawer?.isOpen ? drawer.desk : desks.active
+  return drawer?.isOpen ? drawer.desk : padInFocus()?.desk ?? desks.active
+}
+
+/** The pad holding the focused frame, while it is on screen. */
+function padInFocus(): FramesPad | undefined {
+  return focusedPad?.isVisible ? focusedPad : undefined
 }
 
 /** A pane lives in one place: a desk, the drawer or a pad's frames. */
@@ -676,7 +708,8 @@ function newFramesPad(host: PadHost): FramesPad {
     seed: pad => { pad.desk.addPanel(emptyPanelOptions(paneCwdOf(currentDesk().activePanel?.id))) },
     focusPane: id => focusPane(id),
     onCreate: pad => { framePads.add(pad) },
-    onDispose: pad => { framePads.delete(pad); refreshClosedMenu() },
+    onHidden: pad => { if (focusedPad === pad) setFocusedPad(undefined) },
+    onDispose: pad => { if (focusedPad === pad) setFocusedPad(undefined); framePads.delete(pad); refreshClosedMenu() },
   }, DOCK_THEME)
 }
 
@@ -874,12 +907,39 @@ function moveFrameFromDrawer(slotId: string): void {
 // ---------- "Mover…" (app/renderer/move-dialog.ts draws it, move-rules.ts maps the placement to an op) ----------
 
 /** The Desk of a scope of the dialog: the drawer's, or a desk's. */
+/** A pad's scope in "Mover…": `pad:<pad id>` (global) or `pad:<pad id>@<desk id>`, the same as its Desk's meta id. */
+function padScope(padId: string, deskId: string | undefined): string {
+  return `pad:${padId}${deskId ? `@${deskId}` : ''}`
+}
+
+/** The frames pad a scope names, created if it never showed (a fresh pad's seeded empty pane is dropped: a pane is on its way). */
+function scopePad(scope: string): FramesPad | undefined {
+  if (!scope.startsWith('pad:')) return undefined
+  const [padId = '', deskId] = scope.slice(4).split('@')
+  const live = framePadFor(padId, deskId)
+  if (live) return live
+  const view = sidebars?.viewOf(padId, deskId)
+  if (!(view instanceof FramesPad)) return undefined
+  for (const p of [...view.desk.panels]) if (empties.has(p.id)) view.desk.removePanel(p)
+  return view
+}
+
 function scopeDesk(scope: string): Desk | undefined {
-  return scope === DRAWER_SCOPE ? drawer.desk : desks.desk(scope)
+  return scope === DRAWER_SCOPE ? drawer.desk : scope.startsWith('pad:') ? scopePad(scope)?.desk : desks.desk(scope)
 }
 
 function scopeOf(slotId: string): string | undefined {
-  return inDrawer(slotId) ? DRAWER_SCOPE : desks.deskOf(slotId)
+  if (inDrawer(slotId)) return DRAWER_SCOPE
+  const pad = framePadOf(slotId)
+  return pad ? padScope(pad.padId, pad.deskId) : desks.deskOf(slotId)
+}
+
+/** The frames pads "Mover…" offers: the current desk's desk pads and the global pads. */
+function movePads(): { id: string; padId: string; name: string; icon: string; desk: Desk | undefined }[] {
+  return padRegistry.all().filter(p => p.frames).map(p => {
+    const deskId = p.scope === 'desk' ? desks.activeDeskId : undefined
+    return { id: padScope(p.id, deskId), padId: p.id, name: p.title, icon: p.icon, desk: framePadFor(p.id, deskId)?.desk }
+  })
 }
 
 /** The destination tree from the live desks, frames and drawer. */
@@ -888,6 +948,7 @@ function moveTree(): ScopeModel[] {
     (d?.frameIds ?? []).flatMap(id => { const f = d!.frames.get(id); return f ? [{ id, view: f.dock.toJSON() as unknown as FrameViewJSON }] : [] })
   return buildTree({
     drawer: { frames: framesOf(drawer.desk) },
+    pads: movePads().map(p => ({ id: p.id, name: p.name, icon: p.icon, frames: framesOf(p.desk) })),
     desks: desks.desks.map(d => ({ id: d.id, name: d.name, color: d.color, frames: framesOf(desks.desk(d.id)) })),
     currentDesk: desks.activeDeskId,
     titleOf: id => findPanel(id)?.api.title,
@@ -941,7 +1002,10 @@ async function runMove(op: MoveOp, slotId: string): Promise<boolean> {
     setDrawerOpen(false)
     return true
   }
-  const visible = op.scope === (drawer.isOpen ? DRAWER_SCOPE : desks.activeDeskId)
+  // Into a pad: it opens on its side bar, so the pane is seen where it went.
+  const pad = scopePad(op.scope)
+  if (pad && !drawer.isOpen) sidebars?.open(pad.padId, false)
+  const visible = op.scope === (drawer.isOpen ? DRAWER_SCOPE : desks.activeDeskId) || (!!pad && !drawer.isOpen)
   if (visible && op.op.startsWith('pane')) { findPanel(slotId)?.api.setActive(); focusPane(slotId) }
   return true
 }
@@ -1389,9 +1453,11 @@ function openSlot(slotId: string): void {
     sidebars?.open(pad.padId, false)
     if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
     pad.desk.getPanel(slotId)?.api.setActive()
+    setFocusedPad(pad)
     requestAnimationFrame(() => focusPane(slotId))
     return
   }
+  setFocusedPad(undefined)
   const deskId = desks.deskOf(slotId)
   if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
   const panel = desks.getPanel(slotId) ?? addPanel(s)
@@ -1800,7 +1866,8 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
   const chip = $('new-context')
   chip.hidden = !ctx
   if (ctx) {
-    const where = inDrawer(ctx.panel.id) ? 'Gaveta' : deskName(desks.deskOf(ctx.panel.id) ?? desks.activeDeskId)
+    const ctxPad = framePadOf(ctx.panel.id)
+    const where = inDrawer(ctx.panel.id) ? 'Gaveta' : ctxPad ? padRegistry.get(ctxPad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(ctx.panel.id) ?? desks.activeDeskId)
     $('new-context-name').textContent = ctx.state.folder ? `${where} · ${folderName(ctx.state.folder)}` : where
   }
   // The reference is fixed when the popup opens: the active pane may change underneath (a slot exits) but the
@@ -1981,11 +2048,13 @@ function focusNeighbour(direction: Direction): void {
   const desk = currentDesk()
   const active = desk.activePanel
   if (!active) return
+  // Across the desk and the pads on screen (the drawer alone while it is open): the boxes decide who is next.
+  const pool = drawer.isOpen ? drawer.desk.panels : [...desks.active.panels, ...[...framePads].filter(p => p.isVisible).flatMap(p => p.desk.panels)]
   const rectOf = (p: IDockviewPanel): DOMRect => p.group.element.getBoundingClientRect()
   const a = rectOf(active)
   const ax = a.left + a.width / 2, ay = a.top + a.height / 2
   let best: { panel: IDockviewPanel; score: number } | undefined
-  for (const p of desk.panels) {
+  for (const p of pool) {
     if (p.group === active.group || p.group.activePanel !== p) continue
     const r = rectOf(p)
     if (r.width === 0 || r.height === 0) continue
@@ -2399,6 +2468,8 @@ declare global {
       frameOf(slotId: string): string | undefined
       panelIds(): string[]
       activeId(): string | undefined
+      /** The pane new panes and the shortcuts act on: the drawer's, the focused pad's or the visible desk's active pane. */
+      currentPane(): string | undefined
       slots(): SlotState[]
       text(slotId: string): string
       connection(): ConnectionState | undefined
@@ -2545,6 +2616,7 @@ function setupTestHooks(): void {
     frameOf: slotId => desks.frameOf(slotId)?.id,
     panelIds: () => desks.panels.map(p => p.id),
     activeId: () => desks.activePanel?.id,
+    currentPane: () => currentDesk().activePanel?.id,
     slots: () => [...slots.values()],
     text: slotId => {
       const p = panels.get(slotId)
