@@ -8,7 +8,7 @@ import { appCommands, type CommandHost } from '../../app/renderer/app-commands.t
 import { choiceNeedsFolder, choiceOf, chooserItems, EMPTY_ITEM, contributeChooser, chooserItemOf } from '../../app/renderer/chooser-rules.ts'
 import { CommandRegistry, type CommandContext } from '../../app/renderer/commands.ts'
 import { editorKeyOwner, terminalKeyOwner } from '../../app/renderer/key-capture.ts'
-import { emptyLayout, orphanedPanels, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
+import { emptyLayout, orphanedPanels, planRestore, type Layout } from '../../app/renderer/layout.ts'
 import { shortcutHint, shortcutOf, type KeyLike } from '../../app/renderer/shortcuts.ts'
 import { emptyParams, EMPTY_TITLE, isEmptyPanelId, isSlotlessPanelId, newEmptyPanelId, withEmpty } from '../../app/shared/empty.ts'
 import { newNotePanelId } from '../../app/shared/notes.ts'
@@ -51,7 +51,7 @@ describe('empty pane identity and params', () => {
 })
 
 /** A layout with one frame holding `ids` as tabs of one group. */
-function layoutWith(ids: string[]): LayoutV2 {
+function layoutWith(ids: string[]): Layout {
   const l = emptyLayout()
   const panels: Record<string, { id: string; contentComponent: string; title: string }> = {}
   for (const id of ids) panels[id] = { id, contentComponent: id.startsWith('empty:') ? 'empty' : 'terminal', title: id }
@@ -59,7 +59,7 @@ function layoutWith(ids: string[]): LayoutV2 {
     grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { views: ids, activeView: ids[0]!, id: 'g1' }, size: 800 }], size: 600 }, width: 800, height: 600, orientation: 'HORIZONTAL' },
     panels,
     activeGroup: 'g1',
-  } as unknown as LayoutV2['desks'][0]['frames']['views'][string]
+  } as unknown as Layout['desks'][0]['frames']['views'][string]
   return l
 }
 
@@ -78,7 +78,7 @@ describe('an empty pane survives the restore', () => {
     const views = Object.keys(plan.layout!.desks[0]!.frames.views['frame-1']!.panels)
     assert.deepEqual(views.sort(), ['a', empty].sort(), 'the empty pane is not pruned with the forgotten slot')
     const untouched = planRestore(saved, new Set())
-    assert.equal(untouched.layout, saved, 'an empty daemon list prunes nothing')
+    assert.equal(untouched.layout!.desks, saved.desks, 'an empty daemon list prunes nothing')
   })
 
   test('a layout of empty panes only (the person arranged the space first) comes back whole', () => {

@@ -33,6 +33,38 @@ export interface FileOpener {
   open(path: string, opts: OpenFileOptions): void
 }
 
+/**
+ * What a pad shows (F10): the manifest declares the pad (`contributes.pads`), `activate` registers its type. The core creates
+ * one view per window (scope 'global') or per desk (scope 'desk', created when that desk first shows it or has a saved
+ * state), keeps every view mounted at its side bar's width while hidden (a closed pad or another desk's: nothing it holds
+ * is resized or detached), and asks `serialize` when it saves layout.json.
+ */
+export interface PadType {
+  /** The id the manifest declares. */
+  id: string
+  create(host: PadHost): PadView
+}
+
+export interface PadHost {
+  readonly padId: string
+  /** The desk this view belongs to (scope 'desk'). */
+  readonly deskId?: string
+  /** What `serialize` returned when layout.json was last written (undefined the first time). */
+  readonly state: unknown
+  /** The view's state changed: layout.json is written soon (it calls `serialize`). */
+  persist(): void
+}
+
+export interface PadView {
+  readonly element: HTMLElement
+  /** The keyboard into the pad (it was opened from the keyboard, or its icon was clicked). */
+  focus(): void
+  serialize?(): unknown
+  /** Shown or hidden (its side bar opened or closed, its desk switched); it keeps its size either way. */
+  setVisible?(visible: boolean): void
+  dispose(): void
+}
+
 /** What a chooser item resolves into: the pane to add (and what runs once it is there), nothing (cancelled), or an error to show. */
 export type ChoiceResolution = { options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined
 
@@ -104,6 +136,13 @@ export interface TetherUi {
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */
     resolve(itemId: string, fn: (cwd: string) => Promise<ChoiceResolution>): IDisposable
+  }
+  /** The side bars' pads (F10). */
+  pads: {
+    /** What a pad of the manifest shows. */
+    register(type: PadType): IDisposable
+    /** Opens a pad on its side bar (a no-op when it is shown). */
+    open(id: string): void
   }
   /** Rows the shortcuts screen lists but cannot change (an editor's own keys). */
   keybindings: { fixedBindings(provider: () => FixedBinding[]): IDisposable }

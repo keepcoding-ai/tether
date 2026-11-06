@@ -25,6 +25,7 @@ function stubHost(calls: string[]): CommandHost {
     splitEmpty: log('splitEmpty'), newEmptyDesk: log('newEmptyDesk'),
     reopenClosed: log('reopenClosed'), cycleTab: log('cycleTab'), goToTab: log('goToTab'), focusNeighbour: log('focusNeighbour'),
     closeFrameTabs: log('closeFrameTabs'), showKeybindings: log('showKeybindings'), recordKeybinding: log('recordKeybinding'), showExtensions: log('showExtensions'),
+    toggleSideBar: log('toggleSideBar'), moveCurrentPad: log('moveCurrentPad'), restoreCurrentPad: log('restoreCurrentPad'),
   }
 }
 

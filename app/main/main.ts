@@ -727,9 +727,13 @@ ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 // layout.json keeps its previous content in layout.json.bak on every save and falls back to it (layout-file.ts).
 ipcMain.handle('layout:load', () => loadLayoutFile(layoutPath))
 ipcMain.handle('layout:save', (_e, layout: unknown) => { saveLayoutFile(layoutPath, layout) })
-// The renderer asks for this when it reads a v1 file: layout.json.bak rotates on every save, layout.v1.bak keeps the
-// last v1 content for good (a copy: layout.json itself is not touched until the person changes something).
-ipcMain.handle('layout:backup', () => { if (existsSync(layoutPath)) copyFileSync(layoutPath, join(home, 'layout.v1.bak')) })
+// The renderer asks for this when it reads an older file (v1, v2): layout.json.bak rotates on every save, layout.v<n>.bak
+// keeps the last content of that version for good (a copy: layout.json itself is not touched until the person changes
+// something), so an older build can be given its file back by hand.
+ipcMain.handle('layout:backup', (_e, version: unknown) => {
+  const n = version === 2 ? 2 : 1
+  if (existsSync(layoutPath)) copyFileSync(layoutPath, join(home, `layout.v${n}.bak`))
+})
 
 /** Recent folders in canonical form, deduped case-insensitively (entries saved before the fix may differ only in casing). */
 function recentFolders(): string[] {

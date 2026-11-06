@@ -28,6 +28,12 @@ export interface CommandContext {
   focus: 'terminal' | 'editor' | 'none'
   /** The active pane is the "Atalhos de teclado" screen (its own keys: record, delete). */
   keybindings?: boolean
+  /** How many pads the side bars have (F10). */
+  pads?: number
+  /** The current pad: the open one most recently opened or focused. */
+  pad?: string
+  /** The current pad lives away from its default side. */
+  padMoved?: boolean
 }
 
 export interface Command {
@@ -76,6 +82,9 @@ export function contextKey(ctx: CommandContext, key: string): ContextValue {
     case 'focus': return ctx.focus
     case 'desks': return ctx.desks
     case 'drawerOpen': return ctx.drawerOpen
+    case 'pads': return ctx.pads ?? 0
+    case 'pad': return ctx.pad
+    case 'padMoved': return ctx.padMoved ?? false
     default: return ctx.flags?.has(key) ?? false
   }
 }

@@ -13,6 +13,10 @@ import circleFill from '@phosphor-icons/core/assets/fill/circle-fill.svg'
 import circleHalf from '@phosphor-icons/core/assets/regular/circle-half.svg'
 import clockCounterClockwise from '@phosphor-icons/core/assets/regular/clock-counter-clockwise.svg'
 import eye from '@phosphor-icons/core/assets/regular/eye.svg'
+import sidebarSimple from '@phosphor-icons/core/assets/regular/sidebar-simple.svg'
+import arrowsLeftRight from '@phosphor-icons/core/assets/regular/arrows-left-right.svg'
+import clipboardText from '@phosphor-icons/core/assets/regular/clipboard-text.svg'
+import globeSimple from '@phosphor-icons/core/assets/regular/globe-simple.svg'
 import folderOpen from '@phosphor-icons/core/assets/regular/folder-open.svg'
 import ghost from '@phosphor-icons/core/assets/regular/ghost.svg'
 import hourglass from '@phosphor-icons/core/assets/regular/hourglass.svg'
@@ -173,6 +177,10 @@ const SVG = {
   'arrow-down': arrowDown,
   'note-pencil': notePencil,
   eye,
+  'sidebar-simple': sidebarSimple,
+  'arrows-left-right': arrowsLeftRight,
+  'clipboard-text': clipboardText,
+  'globe-simple': globeSimple,
   'floppy-disk': floppyDisk,
   'file-text': fileText,
   'file': fileIcon,

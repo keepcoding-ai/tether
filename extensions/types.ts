@@ -123,6 +123,27 @@ export interface MigrationContribution {
   to: { setting: string } | { state: string }
 }
 
+/**
+ * A pad ("prancheta") of a side bar (F10; VS Code's `contributes.viewsContainers` entry): the strip draws its icon before
+ * activation, so it is data; `activate` registers what it shows (TetherUi.pads.register). Its id names it in layout.json
+ * (which side it was moved to, whether it is open, its state) and is never renamed once released.
+ */
+export interface PadContribution {
+  /** Lowercase, dotted, prefixed by the extension id: 'frame-pads.desk'. */
+  id: string
+  title: string
+  /** An icon name of app/renderer/icons.ts. */
+  icon: string
+  /** The side bar it lives on until the person moves it. */
+  defaultSide: 'left' | 'right'
+  /** 'global': one view and one state for the window; 'desk': one per desk, swapped with the desk. */
+  scope: 'global' | 'desk'
+  /** Its state is a frames layout (frames → panes): the core prunes it and lists its panes. */
+  frames?: boolean
+  /** Order on its strip (lower first). */
+  order?: number
+}
+
 export interface ExtensionManifest {
   /** Stable, lowercase, no dot: `note`, `quick-open`, `claude`. Prefixes IPC channels, settings and test hooks. */
   id: string
@@ -147,6 +168,8 @@ export interface ExtensionManifest {
     menus?: { app?: readonly MenuItemContribution[] }
     chooser?: { groups: readonly ChooserGroupContribution[]; items: readonly ChooserItemContribution[] }
     migrations?: readonly MigrationContribution[]
+    /** Pads of the side bars (F10). */
+    pads?: readonly PadContribution[]
   }
 }
 

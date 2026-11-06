@@ -75,9 +75,14 @@ export interface CommandHost {
   recordKeybinding(): void
   /** The "Extensões" screen (a tab; one at a time). */
   showExtensions(): void
+  /** Ctrl+B / Ctrl+Alt+B: a side bar opens (with the pad it had last) or closes (F10). */
+  toggleSideBar(side: 'left' | 'right'): void
+  /** The current pad (the open one most recently opened or focused) to the other side bar / back to its default side. */
+  moveCurrentPad(): void
+  restoreCurrentPad(): void
 }
 
-export const GROUP = { pane: 'Painel', frame: 'Quadro', desk: 'Mesa', drawer: 'Gaveta', look: 'Aparência', app: 'App', note: 'Nota' } as const
+export const GROUP = { pane: 'Painel', frame: 'Quadro', desk: 'Mesa', drawer: 'Gaveta', sidebars: 'Barras laterais', look: 'Aparência', app: 'App', note: 'Nota' } as const
 
 /** The level's wording in a duplicate title: "à direita" (pane), "na borda do quadro, à direita", "num quadro novo, à direita". */
 const LEVEL_WORDING: Record<Level, string> = { pane: '', frame: 'na borda do quadro, ', desk: 'num quadro novo, ' }
@@ -149,6 +154,11 @@ export function appCommands(host: CommandHost): Command[] {
     // ----- drawer -----
     { id: 'drawer.toggle', title: 'Abrir ou fechar a gaveta', group: GROUP.drawer, icon: 'lightning', ignoreRepeat: true, run: () => host.toggleDrawer() },
     { id: 'drawer.quick-terminal', title: 'Terminal rápido na gaveta', group: GROUP.drawer, icon: 'terminal-window', run: () => host.quickShell() },
+    // ----- side bars (F10); each pad's own toggle is registered from its manifest (pad.toggle.<id>) -----
+    { id: 'sidebar.left.toggle', title: 'Alternar barra lateral esquerda', group: GROUP.sidebars, icon: 'sidebar-simple', ignoreRepeat: true, keepKeyWhenUnavailable: true, when: ctx => (ctx.pads ?? 0) > 0, run: () => host.toggleSideBar('left') },
+    { id: 'sidebar.right.toggle', title: 'Alternar barra lateral direita', group: GROUP.sidebars, icon: 'sidebar-simple', ignoreRepeat: true, keepKeyWhenUnavailable: true, when: ctx => (ctx.pads ?? 0) > 0, run: () => host.toggleSideBar('right') },
+    { id: 'pad.move-to-other-side', title: 'Mover prancheta para a outra barra', group: GROUP.sidebars, icon: 'arrows-left-right', when: ctx => !!ctx.pad, run: () => host.moveCurrentPad() },
+    { id: 'pad.reset-location', title: 'Restaurar posição padrão da prancheta', group: GROUP.sidebars, icon: 'arrow-counter-clockwise', when: ctx => !!ctx.pad && !!ctx.padMoved, run: () => host.restoreCurrentPad() },
     // ----- look -----
     { id: 'theme.light', title: 'Tema: Claro', group: GROUP.look, icon: 'sun', run: () => host.setTheme('light') },
     { id: 'theme.auto', title: 'Tema: Automático', group: GROUP.look, icon: 'circle-half', run: () => host.setTheme('auto') },

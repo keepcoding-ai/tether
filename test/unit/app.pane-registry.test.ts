@@ -90,7 +90,7 @@ describe('pane registry: layout.json compatibility', () => {
     assert.deepEqual(after.orphaned, ['e5f6a7b8'])
     assert.ok(allPanelIds(after.layout!).includes('keybindings:mh1k2g0'))
     const untouched = planRestore(fixture, new Set(['a1b2c3d4', 'e5f6a7b8']), id => registry.isSlotless(id))
-    assert.equal(untouched.layout, fixture, 'nothing to prune: the saved object itself')
+    assert.equal(untouched.layout!.desks, fixture.desks, 'nothing to prune: the saved desks themselves')
   })
 })
 

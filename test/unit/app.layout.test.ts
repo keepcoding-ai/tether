@@ -8,7 +8,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SerializedDockview } from 'dockview-core'
-import { allPanelIds, drawerOf, emptyDrawer, emptyLayout, frameIdsOf, frameInsertion, isLayoutV1, isDrawerLayout, isLayoutV2, isPersonChange, migrateLayout, nextFrameId, orphanedPanels, planRestore, pruneDesk, pruneDrawer, pruneLayout, pruneLayoutV2, readDeskColors, singleFrameGrid, type DeskLayout, type DrawerLayout, type FrameGrid, type LayoutV2 } from '../../app/renderer/layout.ts'
+import { emptySideBars } from '../../app/renderer/sidebar-rules.ts'
+import { allPanelIds, drawerOf, emptyDrawer, emptyLayout, frameIdsOf, frameInsertion, isLayoutV1, isDrawerLayout, isLayoutV2, isLayoutV3, isPersonChange, migrateLayout, nextFrameId, orphanedPanels, planRestore, pruneDesk, pruneDrawer, pruneLayout, pruneLayoutV2, readDeskColors, singleFrameGrid, type DeskLayout, type DrawerLayout, type FrameGrid, type LayoutV2 } from '../../app/renderer/layout.ts'
 
 type Node = SerializedDockview['grid']['root']
 const leaf = (id: string, views: string[], size = 100): Node => ({ type: 'leaf', data: { views, activeView: views[0]!, id }, size })
@@ -63,7 +64,9 @@ describe('migrateLayout', () => {
     const before = JSON.stringify(v1)
     const out = migrateLayout(JSON.parse(before))!
     assert.equal(out.migrated, true)
-    assert.equal(out.layout.v, 2)
+    assert.equal(out.from, 1)
+    assert.equal(out.layout.v, 3)
+    assert.deepEqual(out.layout.sidebars, emptySideBars(), 'a v1 file has closed side bars')
     assert.equal(out.layout.desks.length, 1)
     const desk = out.layout.desks[0]!
     assert.equal(desk.id, out.layout.activeDesk)
@@ -93,17 +96,33 @@ describe('migrateLayout', () => {
     assert.deepEqual(frameIdsOf(pruned.layout.desks[0]!.frames.grid), ['frame-1'])
   })
 
-  test('a v2 file is returned as is; nothing else is a layout', () => {
-    const v2 = emptyLayout()
-    assert.deepEqual(migrateLayout(v2), { layout: v2, migrated: false })
+  test('a v2 file reads as v3 with closed side bars, its desks and drawer untouched; a v3 file as is; nothing else is a layout', () => {
+    const desk = emptyLayout().desks[0]!
+    const drawer = emptyDrawer()
+    const v2: LayoutV2 = { v: 2, desks: [desk], activeDesk: desk.id, drawer }
+    const fromV2 = migrateLayout(v2)!
+    assert.equal(fromV2.from, 2)
+    assert.equal(fromV2.migrated, false)
+    assert.equal(fromV2.layout.v, 3)
+    assert.equal(fromV2.layout.desks, v2.desks, 'the very same desks')
+    assert.equal(fromV2.layout.drawer, drawer, 'the very same drawer')
+    assert.equal(fromV2.layout.activeDesk, desk.id)
+    assert.deepEqual(fromV2.layout.sidebars, emptySideBars())
+    const v3 = emptyLayout()
+    const fromV3 = migrateLayout(v3)!
+    assert.equal(fromV3.from, 3)
+    assert.deepEqual(fromV3.layout, v3)
+    assert.equal(fromV3.layout.desks, v3.desks)
     assert.equal(migrateLayout(null), null)
     assert.equal(migrateLayout({}), null)
     assert.equal(migrateLayout({ grid: {}, panels: {} }), null, 'a grid without a root is not v1')
-    assert.equal(migrateLayout({ v: 3, desks: [], activeDesk: 'x' }), null, 'a version from the future is not read')
+    assert.equal(migrateLayout({ v: 4, desks: [], activeDesk: 'x' }), null, 'a version from the future is not read')
     assert.equal(migrateLayout('{"grid":1}'), null)
     assert.ok(isLayoutV1(real))
     assert.ok(!isLayoutV2(real))
     assert.ok(isLayoutV2(v2))
+    assert.ok(!isLayoutV2(v3))
+    assert.ok(isLayoutV3(v3))
   })
 
   test('a v1 file without sizes still gets a usable grid', () => {
@@ -315,11 +334,12 @@ describe('planRestore', () => {
     assert.equal(JSON.stringify(saved), before)
   })
 
-  test('v2, empty slot list: the layout is the saved one (same object), every frame and pane kept', () => {
+  test('v2, empty slot list: the saved desks and drawer (same objects), every frame and pane kept', () => {
     const saved = twoFramesV2()
     const before = JSON.stringify(saved)
     const plan = planRestore(saved, new Set())
-    assert.equal(plan.layout, saved)
+    assert.equal(plan.layout!.desks, saved.desks)
+    assert.equal(plan.from, 2)
     assert.equal(plan.migrated, false)
     assert.deepEqual(plan.orphaned, [])
     assert.equal(JSON.stringify(saved), before)
@@ -327,7 +347,7 @@ describe('planRestore', () => {
 
   test('v2, every pane known: the saved object, no rewrite', () => {
     const saved = twoFramesV2()
-    assert.equal(planRestore(saved, new Set(['a', 'b', 'c'])).layout, saved)
+    assert.equal(planRestore(saved, new Set(['a', 'b', 'c'])).layout!.desks, saved.desks)
   })
 
   test('v2, a whole frame\'s slot missing: that frame leaves the display only; the saved v2 is untouched', () => {
@@ -428,7 +448,7 @@ describe('desk colour read/write', () => {
     const saved = oneDesk('lime') as LayoutV2
     assert.equal(migrateLayout(saved)!.layout.desks, saved.desks)
     assert.equal(readDeskColors(saved.desks), saved.desks)
-    assert.equal(planRestore(saved, new Set()).layout, saved)
+    assert.equal(planRestore(saved, new Set()).layout!.desks, saved.desks)
   })
 
   test('an old numeric file reads as names and the saved object is left untouched (the next save writes names)', () => {

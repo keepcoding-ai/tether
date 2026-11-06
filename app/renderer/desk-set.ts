@@ -10,7 +10,7 @@ import type { AddPanelOptions, DockviewTheme, IDockviewPanel } from 'dockview-co
 import type { Target } from './create.ts'
 import { Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { closeDesk, type DeskHue, type DeskInfo, insertDesk, moveDesk, readDeskColor, recolorDesk, renameDesk, touchMru } from './desks.ts'
-import { emptyDesk, type DeskLayout, type LayoutV2 } from './layout.ts'
+import { emptyDesk, type DeskLayout, type Layout } from './layout.ts'
 
 export interface DeskSetHost {
   /** The host of one desk's frames (each desk gets its own, so a "+" knows its desk). */
@@ -193,7 +193,7 @@ export class DeskSet {
 
   // ---------- persistence ----------
 
-  toJSON(): Pick<LayoutV2, 'desks' | 'activeDesk'> {
+  toJSON(): Pick<Layout, 'desks' | 'activeDesk'> {
     const desks: DeskLayout[] = []
     for (const info of this.row) { const m = this.mounted.get(info.id); if (m) desks.push({ ...m.desk.toJSON(), ...info }) }
     return { desks, activeDesk: this.activeId }
@@ -207,7 +207,7 @@ export class DeskSet {
   }
 
   /** Mounts every desk of the layout (already pruned); each desk restores loss-proof (Desk.fromJSON). */
-  load(layout: Pick<LayoutV2, 'desks' | 'activeDesk'>): void {
+  load(layout: Pick<Layout, 'desks' | 'activeDesk'>): void {
     this.disposeAll()
     const seen = new Set<string>()
     for (const d of layout.desks) {

@@ -59,7 +59,22 @@
     </div>
   </header>
 
-  <main id="dock"></main>
+  <!-- The desks between the two side bars (F10, app/renderer/sidebars.ts): each side bar is a strip of pad icons, the slot
+       the open pad covers and a sash; the pads' views live in #pads, over the workbench, positioned on their side. -->
+  <div id="workbench">
+    <aside id="sidebar-left" class="sidebar" data-side="left" hidden>
+      <nav class="sb-strip" aria-label="Barra lateral esquerda"></nav>
+      <div class="sb-slot"></div>
+      <div class="sb-sash" role="separator" aria-orientation="vertical" aria-label="Largura da barra lateral esquerda" title="Arraste para mudar a largura · duplo clique: largura padrão"></div>
+    </aside>
+    <main id="dock"></main>
+    <aside id="sidebar-right" class="sidebar" data-side="right" hidden>
+      <div class="sb-sash" role="separator" aria-orientation="vertical" aria-label="Largura da barra lateral direita" title="Arraste para mudar a largura · duplo clique: largura padrão"></div>
+      <div class="sb-slot"></div>
+      <nav class="sb-strip" aria-label="Barra lateral direita"></nav>
+    </aside>
+    <div id="pads"></div>
+  </div>
 
   <div id="drawer" class="drawer" data-open="false" data-empty="false" inert aria-hidden="true">
     <section class="drawer-card" role="dialog" aria-label="Gaveta">

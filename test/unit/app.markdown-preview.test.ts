@@ -5,7 +5,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { editorKeyOwner, terminalKeyOwner } from '../../app/renderer/key-capture.ts'
-import { emptyLayout, orphanedPanels, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
+import { emptyLayout, orphanedPanels, planRestore, type Layout } from '../../app/renderer/layout.ts'
 import { CommandRegistry, type CommandContext } from '../../app/renderer/commands.ts'
 import { appCommands, type CommandHost } from '../../app/renderer/app-commands.ts'
 import { paneShortcutOf, shortcutHint, shortcutOf } from '../../app/renderer/shortcuts.ts'
@@ -256,7 +256,7 @@ describe('preview pane identity, params and place in the layout', () => {
   test('a restore never prunes a preview: it has no slot, by design', () => {
     const id = newPreviewPanelId(5, 0.5)
     assert.deepEqual(orphanedPanels([id, 'gone-slot'], new Set(['slot-1'])), ['gone-slot'])
-    const layout: LayoutV2 = emptyLayout()
+    const layout: Layout = emptyLayout()
     const desk = layout.desks[0]!
     const frame = desk.activeFrame!
     desk.frames.views[frame] = {

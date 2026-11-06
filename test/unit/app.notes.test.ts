@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from 'node:path'
 import { addTetherToGitignore, findGitRoot, gitignoreStatus, notesDirFor, prepareNote, readNote, renameNote, userNotesDir, writeNote, writeTextAtomic } from '../../app/main/note-files.ts'
 import { editorKeyOwner } from '../../app/renderer/key-capture.ts'
-import { emptyLayout, orphanedPanels, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
+import { emptyLayout, orphanedPanels, planRestore, type Layout } from '../../app/renderer/layout.ts'
 import { chordFromLabel, editorCommandId, paneCwdOfNote } from '../../app/renderer/note-rules.ts'
 import { chordLabel, type KeyLike } from '../../app/renderer/shortcuts.ts'
 import { cleanNoteName, externalChangeAction, gitignoreCovers, gitignoreWithTether, isNotePanelId, newNotePanelId, noteDirOf, noteFileName, noteParams, noteTitle, uniqueFileName, withNote } from '../../app/shared/notes.ts'
@@ -198,7 +198,7 @@ describe('the editor\'s actions as commands', () => {
 })
 
 describe('the layout keeps notes', () => {
-  function layoutWith(ids: string[]): LayoutV2 {
+  function layoutWith(ids: string[]): Layout {
     const l = emptyLayout()
     const frame = l.desks[0]!.frames
     frame.views['frame-1'] = {
@@ -219,7 +219,7 @@ describe('the layout keeps notes', () => {
     assert.deepEqual(Object.keys(views.panels).sort(), ['note:1', 'slot-a'])
     const only = planRestore(layoutWith(['note:1']), new Set(['slot-z']))
     assert.deepEqual(only.orphaned, [])
-    assert.equal(only.layout, layoutWith(['note:1']).v === 2 ? only.layout : null, 'a layout of notes alone is shown as read')
+    assert.ok(only.layout, 'a layout of notes alone is shown as read')
     assert.deepEqual(Object.keys(only.layout!.desks[0]!.frames.views['frame-1']!.panels), ['note:1'])
   })
 })

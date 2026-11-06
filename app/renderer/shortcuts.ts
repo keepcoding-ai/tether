@@ -256,6 +256,13 @@ export const DEFAULT_KEYBINDINGS: readonly DefaultEntry[] = [
   { key: 'ctrl+`', command: 'drawer.toggle', literal: true },       // "toggle terminal"
   { key: 'ctrl+shift+g', command: 'drawer.toggle' },                // alias for keyboards where ` is a dead key (ABNT2)
   { key: 'ctrl+shift+`', command: 'drawer.quick-terminal' },        // "new terminal"
+  // side bars (F10): VS Code's "toggle primary / secondary side bar". Ctrl+B is a plain Ctrl+letter, so it spares the
+  // terminal (^B: Claude Code's "run in background", readline's back-char); Ctrl+K Ctrl+B is its terminal-safe twin.
+  // Ctrl+Alt+B goes against the "no Ctrl+Alt+letter" rule above on purpose: it is VS Code's key, and AltGr+B types
+  // nothing on ABNT2 or US-International.
+  { key: 'ctrl+b', command: 'sidebar.left.toggle' },
+  { key: 'ctrl+k ctrl+b', command: 'sidebar.left.toggle' },
+  { key: 'ctrl+alt+b', command: 'sidebar.right.toggle' },
   // (the notes' defaults come from the note extension's manifest: extensions/note/manifest.ts)
   // ----- look -----
   { key: 'ctrl+k ctrl+t', command: 'theme.pick' },                  // "color theme": the palette filtered on "Tema"

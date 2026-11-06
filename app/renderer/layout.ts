@@ -2,6 +2,10 @@
 //   v1  a single SerializedDockview (the whole app was one frame);
 //   v2  desks → frames (a gridview of frames, each frame its own dockview) → panes. `drawer` is the quick desk
 //        (same shape as a desk without name/colour; null in files written before it existed).
+//   v3  v2 plus the side bars (F10): which pad is open on each side, each side's width, the pads moved away from their
+//        default side, and the state of the global pads; each desk may carry the state of its per-desk pads (`pads`).
+//        Additive: a v2 file reads as v3 with closed side bars, everything else untouched (the caller keeps a
+//        layout.v2.bak before the first v3 write, so an older build can be given its file back by hand).
 // Reading migrates v1 → v2 without touching the frame's dockview JSON (byte for byte the old file: the user's
 // panes come back exactly). Pruning drops the panes the daemon no longer knows, frame by frame, and the frames
 // that end up empty; a frame's root must stay a branch (dockview refuses a leaf there).
@@ -9,8 +13,9 @@ import type { SerializedDockview, SerializedGridviewComponent } from 'dockview-c
 import type { Direction } from './create.ts'
 import { isSlotlessPanelId } from '../shared/empty.ts'
 import { type DeskHue, DEFAULT_DESK_HUE, readDeskColor } from './desks.ts'
+import { emptySideBars, readSideBars, type SideBarsLayout } from './sidebar-rules.ts'
 
-export const LAYOUT_VERSION = 2
+export const LAYOUT_VERSION = 3
 export const FRAME_COMPONENT = 'frame'
 
 /** The gridview JSON of a desk (frames as leaves), as dockview-core serializes it. */
@@ -26,6 +31,8 @@ export interface DeskLayout {
   color: DeskHue
   frames: { grid: FrameGrid; views: Record<string, SerializedDockview> }
   activeFrame?: string
+  /** v3: the saved state of this desk's per-desk pads (pad id → what its view serialized). */
+  pads?: Record<string, unknown>
 }
 
 /** The drawer's content: the frames of a desk, without the identity (the drawer is one, shared by all desks). */
@@ -42,6 +49,14 @@ export interface LayoutV2 {
   drawer: DrawerLayout | null
 }
 
+/** The current file (and what the app keeps in memory): v2 plus the side bars. */
+export interface LayoutV3 extends Omit<LayoutV2, 'v'> {
+  v: 3
+  sidebars: SideBarsLayout
+}
+
+export type Layout = LayoutV3
+
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
 
 /** A v1 file: dockview's own serialization (a grid with a root, and a panels map). */
@@ -50,6 +65,10 @@ export function isLayoutV1(raw: unknown): raw is SerializedDockview {
 }
 
 export function isLayoutV2(raw: unknown): raw is LayoutV2 {
+  return isObject(raw) && raw.v === 2 && Array.isArray(raw.desks) && typeof raw.activeDesk === 'string'
+}
+
+export function isLayoutV3(raw: unknown): raw is LayoutV3 {
   return isObject(raw) && raw.v === LAYOUT_VERSION && Array.isArray(raw.desks) && typeof raw.activeDesk === 'string'
 }
 
@@ -83,9 +102,9 @@ export function drawerOf(layout: Pick<LayoutV2, 'drawer'>): DrawerLayout {
   return isDrawerLayout(layout.drawer) ? layout.drawer : emptyDrawer()
 }
 
-export function emptyLayout(): LayoutV2 {
+export function emptyLayout(): Layout {
   const desk = emptyDesk()
-  return { v: 2, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer() }
+  return { v: 3, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer(), sidebars: emptySideBars() }
 }
 
 /**
@@ -98,17 +117,20 @@ export function readDeskColors(desks: readonly DeskLayout[]): DeskLayout[] {
 }
 
 /**
- * The layout in v2 form. A v1 file becomes "Mesa 1" with one frame whose view IS the old file; `migrated` says
- * the caller must keep a `layout.v1.bak` before the first v2 write. Anything else (empty, corrupt) is null.
+ * The layout in v3 form, and the version it was read from. A v1 file becomes "Mesa 1" with one frame whose view IS the
+ * old file; `migrated` says the caller must keep a `layout.v1.bak` before the first write. A v2 file gains closed side
+ * bars and nothing else changes (its desks and drawer are the very same objects); the caller keeps a `layout.v2.bak`.
+ * Anything else (empty, corrupt) is null.
  */
-export function migrateLayout(raw: unknown): { layout: LayoutV2; migrated: boolean } | null {
-  if (isLayoutV2(raw)) return { layout: { ...raw, desks: readDeskColors(raw.desks), drawer: drawerOf(raw) }, migrated: false }
+export function migrateLayout(raw: unknown): { layout: Layout; migrated: boolean; from: 1 | 2 | 3 } | null {
+  if (isLayoutV3(raw)) return { layout: { ...raw, desks: readDeskColors(raw.desks), drawer: drawerOf(raw), sidebars: readSideBars(raw.sidebars) }, migrated: false, from: 3 }
+  if (isLayoutV2(raw)) return { layout: { v: 3, desks: readDeskColors(raw.desks), activeDesk: raw.activeDesk, drawer: drawerOf(raw), sidebars: emptySideBars() }, migrated: false, from: 2 }
   if (isLayoutV1(raw)) {
     const frameId = 'frame-1'
     const width = typeof raw.grid.width === 'number' && raw.grid.width > 0 ? raw.grid.width : 1200
     const height = typeof raw.grid.height === 'number' && raw.grid.height > 0 ? raw.grid.height : 800
     const desk: DeskLayout = { id: 'desk-1', name: 'Mesa 1', color: DEFAULT_DESK_HUE, frames: { grid: singleFrameGrid(frameId, width, height), views: { [frameId]: raw } }, activeFrame: frameId }
-    return { layout: { v: 2, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer() }, migrated: true }
+    return { layout: { v: 3, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer(), sidebars: emptySideBars() }, migrated: true, from: 1 }
   }
   return null
 }
@@ -209,18 +231,18 @@ function viewIds(frames: DeskLayout['frames']): string[] {
  * in total. A pane lives in one place only: an id the desks hold is dropped from the drawer (a hand-edited or
  * half-written file must not mount one terminal twice).
  */
-export function pruneLayoutV2(layout: LayoutV2, known: Set<string>): { layout: LayoutV2; kept: number; total: number } {
+export function pruneLayoutV2<L extends LayoutV2 | LayoutV3>(layout: L, known: Set<string>): { layout: L; kept: number; total: number } {
   const total = allPanelIds(layout).length
   const desks = layout.desks.map(d => pruneDesk(d, known))
   const activeDesk = desks.some(d => d.id === layout.activeDesk) ? layout.activeDesk : desks[0]!.id
   const inDesks = new Set(desks.flatMap(d => viewIds(d.frames)))
   const drawer = pruneDrawer(drawerOf(layout), new Set([...known].filter(id => !inDesks.has(id))))
-  const pruned: LayoutV2 = { ...layout, desks, activeDesk, drawer }
+  const pruned: L = { ...layout, desks, activeDesk, drawer }
   return { layout: pruned, kept: allPanelIds(pruned).length, total }
 }
 
 /** Every panel id in the layout, across desks, frames and the drawer. */
-export function allPanelIds(layout: LayoutV2): string[] {
+export function allPanelIds(layout: Pick<LayoutV2, 'desks' | 'drawer'>): string[] {
   const out: string[] = []
   for (const d of layout.desks) out.push(...viewIds(d.frames))
   if (isDrawerLayout(layout.drawer)) out.push(...viewIds(layout.drawer.frames))
@@ -290,23 +312,25 @@ export function orphanedPanels(panelIds: Iterable<string>, known: Set<string>, s
 }
 
 /** `known` plus every slotless pane (notes, empty panes) of the layout: what pruning keeps. */
-function knownWithSlotless(layout: LayoutV2, known: Set<string>, slotless: (id: string) => boolean): Set<string> {
+function knownWithSlotless(layout: Layout, known: Set<string>, slotless: (id: string) => boolean): Set<string> {
   const out = new Set(known)
   for (const id of allPanelIds(layout)) if (slotless(id)) out.add(id)
   return out
 }
 
 export interface RestorePlan {
-  /** What to show (v2, a v1 file migrated); null when there is nothing restorable. */
-  layout: LayoutV2 | null
+  /** What to show (v3; a v1 or v2 file migrated); null when there is nothing restorable. */
+  layout: Layout | null
   /** The file was v1 (the caller keeps a layout.v1.bak copy; the file itself is not rewritten for it). */
   migrated: boolean
+  /** The version the file was read from (a v1 or v2 file gets its backup before the first write). */
+  from?: 1 | 2 | 3
   /** Panels left out of the display because the daemon does not know their slot. Never a reason to save. */
   orphaned: string[]
 }
 
 /**
- * Decides what the saved layout (v1 or v2) becomes on screen. Every pane known: the layout as read (the same
+ * Decides what the saved layout (v1, v2 or v3) becomes on screen. Every pane known: the layout as read (the same
  * object). Some unknown: pruned desk by desk and frame by frame (pruneLayoutV2) for display, the input left
  * untouched. No known slot at all: shown untouched (each pane says "slot desconhecido" until the daemon knows it).
  */
@@ -314,9 +338,9 @@ export function planRestore(saved: unknown, known: Set<string>, slotless: (id: s
   const read = migrateLayout(saved)
   if (!read) return { layout: null, migrated: false, orphaned: [] }
   const orphaned = orphanedPanels(allPanelIds(read.layout), known, slotless)
-  // Nothing to prune: the saved v2 object itself (its `drawer` may be null; drawerOf reads that as empty).
-  if (orphaned.length === 0) return { layout: isLayoutV2(saved) && read.layout.desks === saved.desks ? saved : read.layout, migrated: read.migrated, orphaned }
-  return { layout: pruneLayoutV2(read.layout, knownWithSlotless(read.layout, known, slotless)).layout, migrated: read.migrated, orphaned }
+  // Nothing to prune: the layout as read (a v3 file whose desks needed no reading keeps its desks and drawer objects).
+  if (orphaned.length === 0) return { layout: read.layout, migrated: read.migrated, from: read.from, orphaned }
+  return { layout: pruneLayoutV2(read.layout, knownWithSlotless(read.layout, known, slotless)).layout, migrated: read.migrated, from: read.from, orphaned }
 }
 
 /**

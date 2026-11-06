@@ -37,14 +37,16 @@ import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText,
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { openMoveDialog } from './move-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
-import { drawerOf, emptyLayout, isPersonChange, type LayoutV2, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
+import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
+import { SideBars } from './sidebars.ts'
+import { otherSide, PadRegistry, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
 import { emptyLayout as emptyPaneLayout, extensionsLayout, keybindingsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
-import type { ChoiceResolution, ContextMenuEntry, FileOpener, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ContextMenuEntry, FileOpener, PadType, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -93,6 +95,10 @@ let strip: DeskSwitch
 /** Chrome preferences (settings.json `ui`). */
 let ui: UiSettings = DEFAULT_UI
 let drawer: Drawer
+/** The side bars and their pads (F10): the pads the extensions declare, what each shows, and the two bars on screen. */
+const padRegistry = new PadRegistry()
+const padTypes = new Map<string, PadType>()
+let sidebars: SideBars | undefined
 /** Open/closed and the pane that gets the keyboard back (app/renderer/drawer-rules.ts). Never persisted: the app starts with the drawer closed. */
 let drawerState: DrawerState = CLOSED
 /** The element that had the keyboard when the drawer opened, for when it was not a pane. */
@@ -102,7 +108,7 @@ let lastEsc: number | undefined
 /** The drawer's default shell is being created. */
 let quickShellBusy = false
 /** The whole file as last loaded; what the app keeps in memory (desks, drawer) is rewritten from the live state. */
-let layoutFile: LayoutV2 = emptyLayout()
+let layoutFile: Layout = emptyLayout()
 let layoutRestored = false
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let connection: ConnectionState | undefined
@@ -177,7 +183,11 @@ function commandContext(): CommandContext {
   const type = activeId ? liveTypeOf(paneTypes, activeId) : undefined
   const flags: ReadonlySet<string> = new Set(activeId ? type?.contextFlags?.(activeId) ?? [] : [])
   const keybindings = flags.has('keybindings.screen')
-  return { pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(keybindings ? { keybindings } : {}) }
+  const pad = sidebars?.current()
+  return {
+    pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(keybindings ? { keybindings } : {}),
+    pads: padRegistry.all().length, ...(pad ? { pad, padMoved: sidebars!.isMoved(pad) } : {}),
+  }
 }
 
 const commands = new CommandRegistry(commandContext, {
@@ -357,12 +367,40 @@ function setupDock(): void {
   })
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
-    onDesksChange: () => { renderStrip(); scheduleSave() },
+    onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.desks.map(d => d.id)); scheduleSave() },
     onSwitch: () => focusActivePane(),
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
   drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onMargin: () => setDrawerOpen(false) }, DOCK_THEME)
+  sidebars = new SideBars($('workbench'), {
+    pads: () => padRegistry.all(),
+    padType: id => padTypes.get(id),
+    activeDeskId: () => desks.activeDeskId,
+    deskName: id => deskName(id),
+    hint: id => commands.hint(id),
+    onChange: () => scheduleSave(),
+    onPadMenu: (id, x, y, opener) => showPadMenu(id, x, y, opener),
+    onFocusLost: () => { const a = currentDesk().activePanel; if (a) focusPane(a.id) },
+  })
+  padRegistry.onDidChange(() => sidebars?.render())
+  sidebars.render()
+}
+
+/** A pad's menu (right-click on its icon, its header's "⋯"): open or close it, move it to the other side bar, back to its default side. */
+function showPadMenu(id: string, x: number, y: number, opener?: HTMLElement): void {
+  const bars = sidebars
+  const pad = padRegistry.get(id)
+  const side = bars?.sideOf(id)
+  if (!bars || !pad || !side) return
+  const open = bars.isOpen(id)
+  const items: MenuEntry[] = [
+    { icon: open ? 'x' : (pad.icon as IconName), label: open ? `Fechar ${pad.title}` : `Abrir ${pad.title}`, run: () => bars.toggle(id) },
+    SEP,
+    { icon: side === 'left' ? 'arrow-line-right' : 'arrow-line-left', label: `Mover para a barra ${SIDE_LABEL[otherSide(side)]}`, run: () => bars.move(id) },
+  ]
+  if (bars.isMoved(id)) items.push({ icon: 'arrow-counter-clockwise', label: `Restaurar posição padrão (barra ${SIDE_LABEL[pad.defaultSide]})`, run: () => bars.restore(id) })
+  showContextMenu(x, y, items, opener)
 }
 
 /** "Ctrl+Shift+T" as <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>. */
@@ -370,9 +408,11 @@ function kbdHtml(hint: string): string {
   return hint.split('+').map(k => `<kbd>${k}</kbd>`).join('+')
 }
 
-/** The file to write: every desk and the drawer as mounted now. */
-function layoutJSON(): LayoutV2 {
-  return { ...layoutFile, v: 2, ...desks.toJSON(), drawer: drawer.toJSON() }
+/** The file to write: every desk (with its per-desk pads), the drawer and the side bars as mounted now. */
+function layoutJSON(): Layout {
+  const live = desks.toJSON()
+  const deskList = live.desks.map(d => { const pads = sidebars?.deskPads(d.id); return pads ? { ...d, pads } : d })
+  return { ...layoutFile, v: 3, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars }
 }
 
 function scheduleSave(): void {
@@ -614,7 +654,7 @@ function removeAnyPanel(panel: IDockviewPanel): void {
 }
 
 /** The parts of the window behind the drawer: inert while it is open, so the keyboard cannot wander into them. */
-const BEHIND_DRAWER = ['toolbar', 'dock']
+const BEHIND_DRAWER = ['toolbar', 'dock', 'sidebar-left', 'sidebar-right', 'pads']
 
 function drawerAttention(): DeskAttention {
   return countAttention(drawer.desk.panels.map(p => slots.get(p.id)?.attention))
@@ -1082,7 +1122,9 @@ async function restoreLayout(): Promise<void> {
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
     if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)) }
     // A v1 file is copied to layout.v1.bak now; layout.json itself stays v1 until the person changes something.
+    // A v2 file is copied to layout.v2.bak the same way: an older build reads only v2.
     if (result?.migrated) await window.tether.backupLayout()
+    else if (result?.from === 2) await window.tether.backupLayout(2)
   } else {
     layoutFile = emptyLayout()
   }
@@ -1103,7 +1145,7 @@ async function restoreLayout(): Promise<void> {
 function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
   geometry ??= window.tether.loadLayout().then(raw => {
     const result = migrateLayout(raw)
-    if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)) }
+    if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, result.layout.desks) }
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
   return geometry!
@@ -1868,6 +1910,9 @@ const commandHost: CommandHost = {
   showKeybindings: () => openKeybindings(),
   showExtensions: () => openExtensions(),
   recordKeybinding: () => { const a = currentDesk().activePanel?.id; if (a) keybindingsPanels.get(a)?.recordSelected() },
+  toggleSideBar: side => sidebars?.toggleSide(side),
+  moveCurrentPad: () => { const id = sidebars?.current(); if (id) sidebars!.move(id) },
+  restoreCurrentPad: () => { const id = sidebars?.current(); if (id) sidebars!.restore(id) },
 }
 
 /** Something modal of ours is up: app chords stay quiet (the palette has its own keys). */
@@ -2279,8 +2324,14 @@ declare global {
     __tether: {
       /** What each extension exposes (TetherUi.test.expose); a name no core hook has is also set flat here. */
       ext: Record<string, Record<string, unknown>>
-      /** The layout as it would be saved (v2: desks → frames → panes). */
-      layout(): LayoutV2
+      /** The layout as it would be saved (v3: desks → frames → panes, the side bars). */
+      layout(): Layout
+      /** The side bars (F10): each side's strip, open pad and widths; the live pad views. */
+      sidebars(): ReturnType<SideBars['snapshot']> | undefined
+      toggleSideBar(side: 'left' | 'right'): void
+      togglePad(id: string): void
+      movePad(id: string): void
+      restorePad(id: string): void
       /** A frame's dockview JSON (the active frame when no id is given). */
       frameLayout(frameId?: string): SerializedDockview | undefined
       frameIds(): string[]
@@ -2414,6 +2465,11 @@ function setupTestHooks(): void {
   window.__tether = {
     ext: extTestHooks,
     layout: () => layoutJSON(),
+    sidebars: () => sidebars?.snapshot(),
+    toggleSideBar: side => sidebars?.toggleSide(side),
+    togglePad: id => sidebars?.toggle(id),
+    movePad: id => sidebars?.move(id),
+    restorePad: id => sidebars?.restore(id),
     frameLayout: frameId => (frameId ? desks.frames.get(frameId) : desks.activeFrame)?.dock.toJSON(),
     frameIds: () => desks.frameIds,
     activeFrameId: () => desks.activeFrame?.id,
@@ -2656,6 +2712,14 @@ function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore)
     store.add(menuRegistry.appendMenuItem(MenuId.App, menuItemOf(m, toggled ? () => configuration.read(extSettings, manifest.id, toggled) === true : undefined)))
   }
   if (c.chooser) store.add(toDisposable(contributeChooser(c.chooser)))
+  // Pads: the strip draws them from the manifest; each gets its own toggle command (VS Code registers an "open" command per view container).
+  for (const p of c.pads ?? []) {
+    store.add(padRegistry.register({ ...p, extension: manifest.id }))
+    store.add(toDisposable(commands.register({
+      id: padToggleCommand(p.id), title: `${p.title}: abrir ou fechar`, group: 'Barras laterais', icon: p.icon, ignoreRepeat: true,
+      run: () => sidebars?.toggle(p.id),
+    })))
+  }
 }
 
 /**
@@ -2763,6 +2827,15 @@ function activateRendererExtensions(): void {
           chooserResolvers.set(itemId, fn)
           return add(toDisposable(() => { if (chooserResolvers.get(itemId) === fn) chooserResolvers.delete(itemId) }))
         },
+      },
+      pads: {
+        register: type => {
+          if (!manifest.contributes?.pads?.some(p => p.id === type.id)) throw new Error(`prancheta não declarada no manifesto de ${id}: ${type.id}`)
+          padTypes.set(type.id, type)
+          sidebars?.render()
+          return add(toDisposable(() => { if (padTypes.get(type.id) === type) padTypes.delete(type.id) }))
+        },
+        open: padId => sidebars?.open(padId),
       },
       keybindings: {
         fixedBindings: provider => { fixedBindingProviders.push(provider); return add(toDisposable(() => { const i = fixedBindingProviders.indexOf(provider); if (i !== -1) fixedBindingProviders.splice(i, 1) })) },
