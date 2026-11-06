@@ -16,6 +16,7 @@ import { brandAndSeed, importBundleFromDisk, readBuildInfo, type BridgeBrand, ty
 import type { DetectedBrowser } from './browsers.ts'
 import type { ConnectedOutcome, InstallOutcome } from './ipc.ts'
 import { bridgeHomeOf, browsersUrl, extensionDirOf } from './paths.ts'
+import { clearUpdateMarker, extensionVersionOf, setExtensionVersion } from './update.ts'
 import { auditVendor, VENDOR_BUNDLE, VENDOR_EXTENSION_DIR, type BuildInfo } from './vendor-rules.ts'
 import { createWarmup, type WarmupDeps } from './warmup.ts'
 
@@ -105,6 +106,11 @@ export function createInstaller(deps: InstallerDeps): Installer {
       result = b.installExtension({ home: bridgeHome, dir: currentDir, source: join(deps.vendorDir, VENDOR_EXTENSION_DIR), pin: true, port: deps.port })
       // The brand, and the seed again with `host`: the extension names who it connects to before the daemon's welcome.
       brandAndSeed(b, bridgeHome, currentDir, result.port, deps.brand)
+      // C5: the folder is the vendored build now, and the daemon will say so in its welcome; a pending "reload" notice is
+      // over (the person is at the browser's extensions page with this folder).
+      const version = extensionVersionOf(currentDir)
+      if (version) setExtensionVersion(bridgeHome, version)
+      clearUpdateMarker(deps.home)
     } catch (e) {
       const code = (e as { code?: unknown } | undefined)?.code
       deps.log(`instalação da extensão falhou: ${typeof code === 'string' ? code : e instanceof Error ? e.message : String(e)}`)

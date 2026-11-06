@@ -16,7 +16,10 @@
 //      mcp` with ATRIUM_BRIDGE_HOME, ATRIUM_BRIDGE_PORT and ATRIUM_BRIDGE_SERVER_NAME (the package's `brand.mcp.serverName`
 //      when it has a valid one, else this extension's). Rewritten only when its content changed (the ensureSettingsFile
 //      pattern of src/agents/claude.ts). No secret: the shell reads api.key by the home;
-//   e. the daemon warmed up (warmup.ts), so the browser finds it before any agent does.
+//   e. the daemon warmed up (warmup.ts), so the browser finds it before any agent does;
+//   f. (C5, update.ts) the extension folder, when installed, brought to the vendored build file by file, with
+//      `extensionVersion` kept in config.json for the daemon's welcome; and the daemon restarted when the tether's record
+//      says it runs an older bundle, by its daemon.pid only after proving pid + command line + port owner.
 // Secrets (pairing token, api key) stay inside the bundle's functions and the files it owns: no log line, no error and
 // no file written here carries one.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -25,6 +28,7 @@ import { pathToFileURL } from 'node:url'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
 import { manifest } from './manifest.ts'
 import { bridgeHomeOf, extensionDirOf, MCP_SERVER_NAME, mcpConfigPathOf } from './paths.ts'
+import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutdated, setExtensionVersion, updateExtensionDir, writeUpdateMarker, type RestartDeps } from './update.ts'
 import { auditVendor, isBuildInfo, VENDOR_BUILD_INFO, VENDOR_BUNDLE, VENDOR_EXTENSION_DIR, type BuildInfo } from './vendor-rules.ts'
 import { createWarmup, type Warmup, type WarmupDeps } from './warmup.ts'
 
@@ -134,6 +138,8 @@ export interface BridgeHostDeps {
   fetch?: WarmupDeps['fetch']
   spawnDaemon?: WarmupDeps['spawnDaemon']
   sleep?: WarmupDeps['sleep']
+  /** The process questions of the daemon restart (C5), injected in the unit test. */
+  process?: Pick<RestartDeps, 'identify' | 'portOwner' | 'kill' | 'alive'>
 }
 
 export interface SetupReport {
@@ -143,8 +149,13 @@ export interface SetupReport {
   /** Capability keys seeded now ([] when the installation already had its own). */
   capabilities: string[]
   mcpWritten: boolean
-  /** `skipped`: this home may not start the daemon (deps.warm false), or the setup stopped before. */
-  daemon: 'running' | 'started' | 'failed' | 'skipped'
+  /** The extension folder: not installed on this machine, already the vendored build, or brought to it now (C5). */
+  extension: 'absent' | 'current' | 'updated'
+  /**
+   * `restarted`: it ran an older bundle and was replaced (C5); `skipped`: this home may not start the daemon (deps.warm
+   * false), or the setup stopped before.
+   */
+  daemon: 'running' | 'started' | 'restarted' | 'failed' | 'skipped'
   /** Why it stopped (already logged), when !ok. */
   problem?: string
 }
@@ -163,7 +174,7 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
   const importBundle = deps.importBundle ?? importBundleFromDisk
 
   const setup = async (): Promise<SetupReport> => {
-    const report: SetupReport = { ok: false, created: false, capabilities: [], mcpWritten: false, daemon: 'skipped' }
+    const report: SetupReport = { ok: false, created: false, capabilities: [], mcpWritten: false, extension: 'absent', daemon: 'skipped' }
     const fail = (problem: string): SetupReport => { deps.log(problem); return { ...report, problem } }
     const problems = auditVendor(deps.vendorDir)
     if (problems.length) return fail(`vendor do bridge inválido, instalação não tocada: ${problems.slice(0, 3).join('; ')}${problems.length > 3 ? '…' : ''}`)
@@ -181,6 +192,18 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
       if (report.created) deps.log(`instalação do bridge criada em ${bridgeHome} (porta ${config.port}, bridge ${info.version}; a pasta da extensão nasce em "Instalar ${deps.brand.name} Bridge…")`)
       else if (config.port !== deps.port) deps.log(`instalação do bridge em ${bridgeHome} usa a porta ${config.port} no config.json; o tetherd sobe o daemon e aponta os agentes para ${deps.port}`)
       b.pinExtensionId(bridgeHome, info.extensionId)
+      // C5: an installed folder is brought to the vendored build before its seed is rewritten below (same token).
+      if (existsSync(join(currentDir, 'manifest.json'))) {
+        const version = extensionVersionOf(join(deps.vendorDir, VENDOR_EXTENSION_DIR)) ?? info.version
+        if (extensionOutdated(currentDir, info)) {
+          const from = extensionVersionOf(currentDir) ?? '?'
+          const u = updateExtensionDir(join(deps.vendorDir, VENDOR_EXTENSION_DIR), currentDir)
+          writeUpdateMarker(deps.home, { version, at: new Date().toISOString() })
+          report.extension = 'updated'
+          deps.log(`extensão em ${currentDir} atualizada em lugar (${from} → ${version}: ${u.written.length} arquivo(s) gravado(s), ${u.removed.length} removido(s)); o navegador precisa recarregá-la`)
+        } else report.extension = 'current'
+        if (setExtensionVersion(bridgeHome, version)) deps.log(`extensionVersion ${version} gravada no config.json do bridge`)
+      }
       brandAndSeed(b, bridgeHome, currentDir, deps.port, deps.brand)
       report.capabilities = b.seedCapabilities(bridgeHome, defaultCapabilities(info))
       if (report.capabilities.length) deps.log(`capabilities semeadas do pacote: ${report.capabilities.join(', ')}`)
@@ -192,7 +215,11 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
     report.mcpWritten = writeMcpConfig(deps.home, mcpConfigOf(bridgeHome, bundlePath, deps.port, serverName))
     deps.log(`${mcpConfigPathOf(deps.home)} ${report.mcpWritten ? 'gravado' : 'inalterado'} (servidor ${serverName}, porta ${deps.port})`)
     if (deps.warm === false) deps.log(`aquecimento do daemon pulado: home fora do padrão sem TETHER_BRIDGE_PORT próprio (a porta ${deps.port} é da instalação padrão)`)
-    else report.daemon = await warmup.ensure()
+    else {
+      // C5: a daemon running an older bundle is replaced; otherwise the usual warm-up.
+      const restart = await restartIfOutdated({ port: deps.port, bundlePath, bridgeHome, warmup, log: deps.log, sleep: deps.sleep, ...deps.process })
+      report.daemon = restart === 'restarted' ? 'restarted' : restart === 'failed' ? 'failed' : await warmup.ensure()
+    }
     report.ok = true
     return report
   }
@@ -212,6 +239,16 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
       const name = 'daemon do bridge'
       if (await warmup.health()) return { level: 'OK', name, detail: `responde em 127.0.0.1:${deps.port}` }
       return { level: 'AVISO', name, detail: `não responde na porta ${deps.port}`, hint: `o tetherd o inicia ao subir; veja ${join(bridgeHome, 'daemon.log')}` }
+    },
+    async () => {
+      // C5: the folder under the browser's extension changed; until the extension reloads itself (the bridge's side of the
+      // contract), the person clicks "Recarregar" once.
+      const name = `extensão ${deps.brand.name} Bridge no navegador`
+      if (!existsSync(join(currentDir, 'manifest.json'))) return { level: 'OK', name, detail: 'não instalada neste computador', hint: `"Instalar ${deps.brand.name} Bridge…" no menu do tether` }
+      const version = extensionVersionOf(currentDir) ?? '?'
+      const pending = readUpdateMarker(deps.home)
+      if (pending) return { level: 'AVISO', name, detail: `a extensão foi atualizada para ${pending.version} em ${pending.at.slice(0, 16).replace('T', ' ')} e o navegador pode estar com a versão anterior carregada`, hint: 'clique em "Recarregar" no card da extensão em chrome://extensions (edge://extensions, brave://extensions) ou reinicie o navegador' }
+      return { level: 'OK', name, detail: `pasta ${currentDir} na versão ${version}` }
     },
   ]
 

@@ -55,12 +55,23 @@ export function walk(dir: string): string[] {
 
 const rel = (root: string, file: string): string => relative(root, file).split('\\').join('/')
 
-/** The bridge build's tree hash: one line per file, `relative path \0 sha256 \n`, hashed. */
-export function hashTree(dir: string): string {
+/**
+ * The bridge build's tree hash: one line per file, `relative path \0 sha256 \n`, hashed. `ignore` (relative paths,
+ * forward slashes) leaves files out: the installed folder carries files the build does not (its seed, bridge.json),
+ * and without them its hash is the build's again.
+ */
+export function hashTree(dir: string, ignore: ReadonlySet<string> = new Set()): string {
   const h = createHash('sha256')
-  for (const f of walk(dir)) h.update(`${rel(dir, f)}\0${sha256(readFileSync(f))}\n`)
+  for (const f of walk(dir)) {
+    const r = rel(dir, f)
+    if (ignore.has(r)) continue
+    h.update(`${r}\0${sha256(readFileSync(f))}\n`)
+  }
   return h.digest('hex')
 }
+
+/** `file` relative to `root`, with forward slashes (the manifest's and the tree hash's spelling). */
+export const relPath = rel
 
 export function isBuildInfo(v: unknown): v is BuildInfo {
   const b = v as Partial<BuildInfo> | null

@@ -7,9 +7,39 @@
 // exits with EADDRINUSE. Electron's own binary cannot run the bundle (a Node program), hence `findNode`.
 // Nothing here reads or logs a secret: /health is public and the spawn carries only the port and the home.
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
 import { healthUrl } from './paths.ts'
+import { sha256 } from './vendor-rules.ts'
+
+/**
+ * The tether's own record of which bundle it started the daemon from: <bridgeHome>/daemon.build.json, written at every
+ * spawn. The bridge's daemon.pid says WHO listens; this says WHAT it runs, which /health does not tell. At the next
+ * tetherd start, a record whose sha differs from the vendored bundle's means the daemon runs an older build (update.ts).
+ */
+export const DAEMON_RECORD = 'daemon.build.json'
+export interface DaemonRecord { pid: number; bundleSha256: string; startedAt: string }
+export const daemonRecordPath = (bridgeHome: string): string => join(bridgeHome, DAEMON_RECORD)
+
+export function readDaemonRecord(bridgeHome: string): DaemonRecord | undefined {
+  try {
+    const r = JSON.parse(readFileSync(daemonRecordPath(bridgeHome), 'utf8')) as Partial<DaemonRecord>
+    return typeof r.pid === 'number' && typeof r.bundleSha256 === 'string' ? { pid: r.pid, bundleSha256: r.bundleSha256, startedAt: typeof r.startedAt === 'string' ? r.startedAt : '' } : undefined
+  } catch { return undefined }
+}
+
+export function writeDaemonRecord(bridgeHome: string, record: DaemonRecord): void {
+  mkdirSync(bridgeHome, { recursive: true })
+  const path = daemonRecordPath(bridgeHome)
+  const tmp = `${path}.${process.pid}.tmp`
+  writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`)
+  try { renameSync(tmp, path) } finally { rmSync(tmp, { force: true }) }
+}
+
+/** The sha256 of the bundle file, or undefined when it cannot be read. */
+export function bundleSha256Of(bundlePath: string): string | undefined {
+  try { return sha256(readFileSync(bundlePath)) } catch { return undefined }
+}
 
 /** `TETHER_NODE`, then npm's node, then the first `node` on PATH: the same rule app/main/main.ts uses for tetherd. */
 export function findNode(env: NodeJS.ProcessEnv = process.env, exists: (p: string) => boolean = existsSync): string | undefined {
@@ -88,6 +118,11 @@ export function createWarmup(deps: WarmupDeps): Warmup {
     if (!node) { deps.log('daemon do bridge: node não encontrado (TETHER_NODE ou PATH); não iniciado'); return 'failed' }
     const pid = (deps.spawnDaemon ?? spawnBridgeDaemon)(node, deps.bundlePath, deps.port, deps.bridgeHome)
     deps.log(`daemon do bridge iniciado (pid ${pid ?? '?'}, porta ${deps.port}, home ${deps.bridgeHome})`)
+    // The record of what was started (C5 reads it at the next start); a failure to write it is not a failure to start.
+    const sha = pid !== undefined ? bundleSha256Of(deps.bundlePath) : undefined
+    if (pid !== undefined && sha) {
+      try { writeDaemonRecord(deps.bridgeHome, { pid, bundleSha256: sha, startedAt: new Date().toISOString() }) } catch (e) { deps.log(`registro ${DAEMON_RECORD} não gravado: ${e instanceof Error ? e.message : String(e)}`) }
+    }
     const deadline = Date.now() + HEALTH_WAIT_MS
     while (Date.now() < deadline) {
       await sleep(250)
