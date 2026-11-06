@@ -4,9 +4,10 @@
 // Also the "+" that appears near the borders: at a frame's edge (a pane spanning that edge) and at the
 // desk's edge (a new frame there); click ADDS an empty pane there (the chooser inside it), right-click opens the
 // menu (add, duplicate the focused pane there, the chooser in focus mode).
-import { createDockview, createGridview, GridviewPanel, type AddPanelOptions, type DockviewApi, type DockviewComponentOptions, type DockviewTheme, type GridviewApi, type IDockviewPanel, type IFrameworkPart, type SerializedDockview } from 'dockview-core'
+import { createDockview, createGridview, GridviewPanel, LocalSelectionTransfer, PanelTransfer, type AddPanelOptions, type DockviewApi, type DockviewComponentOptions, type DockviewDidDropEvent, type DockviewTheme, type GridviewApi, type IDockviewPanel, type IFrameworkPart, type SerializedDockview } from 'dockview-core'
 import type { Direction, Target } from './create.ts'
 import { DEFAULT_DESK_HUE } from './desks.ts'
+import { draggedPanes, dropPlacements } from './frame-drop-rules.ts'
 import { icon } from './icons.ts'
 import { type DeskLayout, emptyDesk, FRAME_COMPONENT, frameInsertion, isLayoutV1, nextFrameId, panelIdsOf } from './layout.ts'
 
@@ -36,6 +37,23 @@ export interface DeskHost {
   onActivePanelChange?(): void
   /** False while the window's one focused frame is elsewhere (a pad's frames vs the desks): this desk then paints no `.focused` frame. */
   ownsFocus?(): boolean
+  /** The options to re-create a pane in another frame (a tab dragged out of its frame is rebuilt from them). */
+  paneOptions?(panel: IDockviewPanel): AddPanelOptions
+  /** A tab dragged from another frame (of this or another Desk) landed in this Desk as `id`: it is the active pane of its frame now. */
+  onPaneDropped?(id: string): void
+}
+
+/**
+ * Every live Desk of the window (the desks, the drawer, the pads' frames). A tab dragged out of a frame carries only
+ * the id of its dockview; the frame that receives it finds the source frame here.
+ */
+const liveDesks = new Set<Desk>()
+
+function frameOfView(viewId: string): { desk: Desk; frame: Frame } | undefined {
+  for (const desk of liveDesks) {
+    for (const frame of desk.frames.values()) if ((frame.dock as DockviewApi | undefined)?.id === viewId) return { desk, frame }
+  }
+  return undefined
 }
 
 /** One frame: a gridview cell owning a dockview. */
@@ -94,6 +112,7 @@ export class Desk {
     this.grid.onDidRemovePanel(p => { this.frames.delete(p.id); this.framePlus.delete(p.id); if (this.activeFrameId === p.id) this.activeFrameId = undefined })
     this.grid.onDidActivePanelChange(p => { if (p) this.activeFrameId = p.id; host.onActivePanelChange?.() })
     this.grid.onDidLayoutChange(e => host.onLayoutChange(e.reasons))
+    liveDesks.add(this)
     for (const side of SIDES) container.append(this.plusButton('desk', side, undefined))
     // Whatever takes the focus inside a frame makes it the focused frame (dockview only reports a change of the active
     // group, so a click into the already-active group of another frame would leave the signals on the old one).
@@ -120,6 +139,14 @@ export class Desk {
       queueMicrotask(() => this.removeIfEmpty(frame))
     })
     frame.dock.onDidActivePanelChange(p => { if (p) this.activeFrameId = frame.id; this.host.onActivePanelChange?.() })
+    // A tab (or a whole group) dragged from another frame: dockview moves tabs natively only within one dockview, so a
+    // drag from another one is accepted here (its drop overlay shows) and moved by dropFromFrame.
+    frame.dock.onUnhandledDragOver(e => {
+      const data = e.getData()
+      const source = data ? frameOfView(data.viewId) : undefined
+      if (source && source.frame !== frame && this.host.paneOptions) e.accept()
+    })
+    frame.dock.onDidDrop(e => this.dropFromFrame(frame, e))
     const view = this.pendingViews[frame.id]
     if (view) { delete this.pendingViews[frame.id]; this.loadView(frame, view) }
   }
@@ -132,6 +159,52 @@ export class Desk {
       const p = view.panels[id]!
       frame.dock.addPanel({ id, component: p.contentComponent ?? 'terminal', tabComponent: p.tabComponent, title: p.title, params: p.params })
     }
+  }
+
+  /**
+   * Moves what was dragged from another frame into `frame`, where it was dropped. The move runs once the drag is over
+   * (its dragend reaches the source tab while it is still in the page, so dockview releases its drag state); each pane
+   * is removed from its frame and re-created here (a terminal detaches, then re-attaches with the daemon's scrollback;
+   * a note writes what it still holds first), the way "Mover…" moves panes. The slot's process is never touched.
+   */
+  private dropFromFrame(frame: Frame, e: DockviewDidDropEvent): void {
+    const data = e.getData()
+    const source = data ? frameOfView(data.viewId) : undefined
+    if (!data || !source || source.frame === frame || !this.host.paneOptions) return
+    const group = source.frame.dock.getGroup(data.groupId)
+    const ids = draggedPanes(data.panelId, group?.panels.map(p => p.id) ?? [])
+    const placements = dropPlacements(ids, e.position, e.group?.id, e.index)
+    if (!placements) return
+    let done = false
+    const run = (): void => {
+      if (done) return
+      done = true
+      document.removeEventListener('dragend', run, true)
+      LocalSelectionTransfer.getInstance<PanelTransfer>().clearData(PanelTransfer.prototype)
+      let last: IDockviewPanel | undefined
+      ids.forEach((id, i) => {
+        const panel = source.frame.dock.getPanel(id)
+        if (!panel) return
+        const options = this.host.paneOptions!(panel)
+        source.frame.dock.removePanel(panel)
+        const at = placements[i]!
+        // The reference group (or the first moved pane) may be gone by now (the frame emptied meanwhile): then a tab of the frame.
+        const valid = 'referenceGroup' in at ? !!frame.dock.getGroup(at.referenceGroup) : !!frame.dock.getPanel(at.referencePanel)
+        try {
+          last = frame.dock.addPanel({ ...options, ...(valid ? { position: at } : {}) } as AddPanelOptions)
+        } catch (err) {
+          console.error(`arrastar painel ${id}: falhou, voltando ao quadro de origem`, err)
+          source.frame.dock.addPanel(options)
+        }
+      })
+      if (!last) return
+      last.api.setActive()
+      this.activeFrameId = frame.id
+      this.host.onPaneDropped?.(last.id)
+      if (source.desk !== this) source.desk.paintFocus()
+    }
+    document.addEventListener('dragend', run, true)
+    setTimeout(run, 100) // no dragend (the source left the page): move anyway
   }
 
   private removeIfEmpty(frame: Frame): void {
@@ -280,6 +353,7 @@ export class Desk {
 
   /** Disposes every frame (and their panes: each terminal detaches) and removes the desk's element. */
   dispose(): void {
+    liveDesks.delete(this)
     this.grid.clear()
     this.grid.dispose()
     this.frames.clear()

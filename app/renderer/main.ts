@@ -377,6 +377,16 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane() },
     // One focused frame in the window: a pad's frames have it while that pad is focused, the desks otherwise.
     ownsFocus: () => scope === 'drawer' ? true : scope instanceof FramesPad ? focusedPad === scope : focusedPad === undefined,
+    paneOptions: panel => paneTypes.optionsOf(panel),
+    // A tab dragged here from another frame: the focused frame is where it landed (a pad's, or the desks'), and the keyboard follows it.
+    onPaneDropped: id => {
+      if (scope instanceof FramesPad) setFocusedPad(scope)
+      else if (scope === 'desk') setFocusedPad(undefined)
+      requestAnimationFrame(() => focusPane(id))
+      refreshClosedMenu()
+      renderStrip()
+      scheduleSave()
+    },
   }
 }
 
