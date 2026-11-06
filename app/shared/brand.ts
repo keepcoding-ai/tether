@@ -1,6 +1,6 @@
 // The product's identity, read by the three hosts (renderer, main, daemon) and handed to extensions as `api.brand`.
 // One source: brand/brand.json (the host's brand file of the Atrium Bridge, validated by brand/brand.schema.json) and
-// brand/assets/app/mask.json (the 24x24 `currentColor` monogram app/brand-mask.mjs derives from brand/src/light/mask.svg).
+// brand/assets/app/mask.json (the 24x24 `currentColor` monogram app/brand-mask.ts derives from brand/src/light/mask.svg).
 // Both are JSON so the same import works in Node 24 (`with { type: 'json' }`), in tsc and in the esbuild bundles.
 //
 // brand.json names the Bridge product ("Tether Bridge"); the app's own name is its `shortName` ("Tether"), and it

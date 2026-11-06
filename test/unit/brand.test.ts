@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { BRAND } from '../../app/shared/brand.ts'
-import { maskAsset, maskIcon, MASK_ASSET, MASK_SOURCE } from '../../app/brand-mask.mjs'
+import { maskAsset, maskIcon, MASK_ASSET, MASK_SOURCE } from '../../app/brand-mask.ts'
 import { VENDOR_BUILD_INFO } from '../../extensions/web-bridge/vendor-rules.ts'
 
 const root = resolve(import.meta.dirname, '..', '..')

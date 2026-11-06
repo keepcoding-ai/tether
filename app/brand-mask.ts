@@ -15,14 +15,17 @@ export const MASK_SOURCE = 'brand/src/light/mask.svg'
 export const MASK_ASSET = 'brand/assets/app/mask.json'
 const SIZE = 24
 
+export interface MaskAsset { source: string; sha256: string; icon: string }
+interface Box { x: number; y: number; w: number; h: number }
+
 // Line endings are normalised before hashing: the SVG is checked out as CRLF on Windows and LF elsewhere (autocrlf).
-const sha256 = (s) => createHash('sha256').update(s.replace(/\r\n/g, '\n')).digest('hex')
-const round = (n) => String(Math.round(n * 10000) / 10000)
+const sha256 = (s: string): string => createHash('sha256').update(s.replace(/\r\n/g, '\n')).digest('hex')
+const round = (n: number): string => String(Math.round(n * 10000) / 10000)
 
 /** The 24x24 `currentColor` monogram derived from a mask SVG's text. */
-export function maskIcon(svg) {
+export function maskIcon(svg: string): string {
   const root = /<svg\b([^>]*)>([\s\S]*)<\/svg>/.exec(svg)
-  if (!root) throw new Error(`${MASK_SOURCE}: no <svg> element`)
+  if (!root || root[1] === undefined || root[2] === undefined) throw new Error(`${MASK_SOURCE}: no <svg> element`)
   const viewBox = /\bviewBox="([^"]+)"/.exec(root[1])?.[1]?.trim().split(/[\s,]+/).map(Number)
   if (!viewBox || viewBox.length !== 4 || viewBox.some(n => !Number.isFinite(n))) throw new Error(`${MASK_SOURCE}: viewBox missing or malformed`)
   let body = root[2]
@@ -40,7 +43,7 @@ export function maskIcon(svg) {
     .replace(/\s+xmlns:(inkscape|sodipodi)="[^"]*"/g, '')
     .replace(/>\s+</g, '><')
     .trim()
-  const box = tightBox(body) ?? { x: viewBox[0], y: viewBox[1], w: viewBox[2], h: viewBox[3] }
+  const box = tightBox(body) ?? { x: viewBox[0]!, y: viewBox[1]!, w: viewBox[2]!, h: viewBox[3]! }
   if (!(box.w > 0 && box.h > 0)) throw new Error(`${MASK_SOURCE}: empty drawing`)
   const s = SIZE / Math.max(box.w, box.h)
   const tx = (SIZE - box.w * s) / 2 - box.x * s
@@ -49,13 +52,13 @@ export function maskIcon(svg) {
 }
 
 /** Bounding box of the drawing when it is made only of untransformed <rect>s; undefined otherwise (use the viewBox). */
-function tightBox(body) {
+function tightBox(body: string): Box | undefined {
   if (/<(path|circle|ellipse|polygon|polyline|line|use|image|text)\b/.test(body) || /\btransform=/.test(body)) return undefined
   const rects = [...body.matchAll(/<rect\b([^>]*)>/g)]
   if (rects.length === 0) return undefined
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
   for (const [, attrs] of rects) {
-    const n = (name) => Number(new RegExp(`\\b${name}="([^"]+)"`).exec(attrs)?.[1] ?? NaN)
+    const n = (name: string): number => Number(new RegExp(`\\b${name}="([^"]+)"`).exec(attrs ?? '')?.[1] ?? NaN)
     const x = n('x') || 0, y = n('y') || 0, w = n('width'), h = n('height')
     if (!Number.isFinite(w) || !Number.isFinite(h)) return undefined
     x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h)
@@ -64,12 +67,12 @@ function tightBox(body) {
 }
 
 /** The committed asset's content for a mask SVG's text. */
-export function maskAsset(svg) {
+export function maskAsset(svg: string): MaskAsset {
   return { source: MASK_SOURCE, sha256: sha256(svg), icon: maskIcon(svg) }
 }
 
 /** Reads the mask and (re)writes brand/assets/app/mask.json under `root` (the repository). Returns the asset. */
-export function writeMaskAsset(root) {
+export function writeMaskAsset(root: string): MaskAsset {
   const asset = maskAsset(readFileSync(join(root, MASK_SOURCE), 'utf8'))
   mkdirSync(join(root, 'brand', 'assets', 'app'), { recursive: true })
   writeFileSync(join(root, MASK_ASSET), JSON.stringify(asset, null, 2) + '\n')
