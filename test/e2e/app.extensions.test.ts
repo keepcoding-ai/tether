@@ -81,6 +81,7 @@ const EXPECTED: Array<[string, string, string | null, string | null, string | nu
   ['pane.duplicate.pane.below', 'Duplicar painel abaixo', 'Ctrl+Alt+↓', null, 'true'],
   ['pane.new-at-frame-edge', 'Novo painel na borda do quadro…', null, null, 'false'],
   ['frame.new', 'Novo quadro…', null, null, 'false'],
+  ['explorer.open-folder', 'Abrir pasta…', null, null, 'false'],
   ['sep', '', null, null, null],
   ['note.new', 'Nova nota', null, null, 'false'],
   ['note.open', 'Abrir nota…', 'Ctrl+O', null, 'false'],

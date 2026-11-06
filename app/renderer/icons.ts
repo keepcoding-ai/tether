@@ -19,6 +19,8 @@ import clipboardText from '@phosphor-icons/core/assets/regular/clipboard-text.sv
 import globeSimple from '@phosphor-icons/core/assets/regular/globe-simple.svg'
 import folderOpen from '@phosphor-icons/core/assets/regular/folder-open.svg'
 import pushPin from '@phosphor-icons/core/assets/regular/push-pin.svg'
+import pushPinFill from '@phosphor-icons/core/assets/fill/push-pin-fill.svg'
+import filesIcon from '@phosphor-icons/core/assets/regular/files.svg'
 import ghost from '@phosphor-icons/core/assets/regular/ghost.svg'
 import hourglass from '@phosphor-icons/core/assets/regular/hourglass.svg'
 import info from '@phosphor-icons/core/assets/regular/info.svg'
@@ -120,6 +122,8 @@ const SVG = {
   'clock-counter-clockwise': clockCounterClockwise,
   'folder-open': folderOpen,
   'push-pin': pushPin,
+  'push-pin-fill': pushPinFill,
+  files: filesIcon,
   ghost,
   hourglass,
   info,

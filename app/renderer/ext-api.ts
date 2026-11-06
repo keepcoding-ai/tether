@@ -32,10 +32,12 @@ export interface PaneInfo {
   cwd?: string
   /** The slot's kind when it is an AI agent (a plain terminal has none). */
   agent?: string
+  /** Where it lives: the desk's name, 'Gaveta', or the pad's title. */
+  place?: string
 }
 
 /** A row of a context menu (the tab menu): an item, or 'sep' for a thin line between groups. */
-export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean } | 'sep'
+export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean; disabled?: boolean } | 'sep'
 
 /**
  * Who opens a file (VS Code's EditorResolverService: editors register for the resources they take). Ctrl+P, a
@@ -135,6 +137,8 @@ export interface TetherUi {
   folders: {
     recent(): Promise<string[]>
     pickFolder(initial?: string): Promise<string | null>
+    /** Puts a folder at the top of the recent ones. */
+    remember(path: string): void
   }
   commands: {
     /** Commands with everything in code (an editor's own actions, registered while it has the focus). */

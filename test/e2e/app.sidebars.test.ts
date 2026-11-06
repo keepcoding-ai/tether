@@ -4,7 +4,7 @@
 //      change the person makes writes v3 with the side bars and the desks untouched;
 //   2. with no extension declaring a pad, neither side bar shows (no strip), the desks take the whole width, and the
 //      side bar commands are unavailable (their keys pass: Ctrl+B in the window does nothing).
-//      (the frame pads extension is turned off for this one);
+//      (the frame pads and the explorer are turned off for this one);
 //   3. the frame pads (F10b): each opens and closes by its icon and by its command, one open per side, Ctrl+Alt+B toggles
 //      the right bar; a pad moved to the left and restored; the desk pad's content swaps with the desk, the global pad is
 //      the same frame in every desk; a terminal in a pad survives a relaunch with the same PID; widths and open state too;
@@ -115,7 +115,7 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-sidebars-'))
   // Part 2 is the window with no pad at all: the frame pads extension is off.
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads'] } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads', 'explorer'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -206,6 +206,8 @@ const GLOBAL_PAD = 'frame-pads.global'
 test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relaunch', { timeout: 300_000 }, async () => {
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-pads-'))
+  // The explorer (left strip) has its own e2e; this one is about the frame pads' sides.
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   const bars = (page: Page) => page.evaluate(() => window.__tether.sidebars()!)

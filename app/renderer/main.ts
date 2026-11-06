@@ -487,7 +487,9 @@ function describePane(id: string | undefined): PaneInfo | undefined {
   if (!id || !findPanel(id)) return undefined
   const slot = slots.get(id)
   const cwd = paneCwdOf(id)
-  return { id, type: liveTypeOf(paneTypes, id)?.id ?? 'unknown', ...(cwd ? { cwd } : {}), ...(slot && slot.kind !== 'shell' ? { agent: slot.kind } : {}) }
+  const pad = framePadOf(id)
+  const place = inDrawer(id) ? 'Gaveta' : pad ? padRegistry.get(pad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(id) ?? desks.activeDeskId)
+  return { id, type: liveTypeOf(paneTypes, id)?.id ?? 'unknown', ...(cwd ? { cwd } : {}), ...(slot && slot.kind !== 'shell' ? { agent: slot.kind } : {}), place }
 }
 
 function notifyActivePane(): void {
@@ -1575,7 +1577,7 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 
 // ---------- tab context menu ----------
 
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean }
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
 type MenuEntry = MenuItem | typeof SEP
@@ -1618,10 +1620,13 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
     const li = document.createElement('li'); li.setAttribute('role', 'menuitem'); li.tabIndex = -1
     if (item.danger) li.classList.add('danger')
+    if (item.disabled) li.setAttribute('aria-disabled', 'true')
     li.append(icon(item.icon), document.createTextNode(item.label))
     if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
     li.addEventListener('click', ev => {
-      ev.stopPropagation(); close(false); item.run()
+      ev.stopPropagation()
+      if (item.disabled) return
+      close(false); item.run()
       // The item left nothing focused (it did not open a dialog or move to a pane): back to the opener.
       if (document.activeElement === document.body && owner?.isConnected) owner.focus()
     })
@@ -3031,6 +3036,7 @@ function activateRendererExtensions(): void {
       folders: {
         recent: () => window.tether.recentFolders(),
         pickFolder: initial => window.tether.pickFolder(initial),
+        remember: path => { void window.tether.rememberFolder(path) },
       },
       commands: {
         register: (...list) => add(toDisposable(commands.register(...list))),
