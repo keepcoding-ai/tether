@@ -28,7 +28,7 @@ import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.t
 import { DeskSet } from './desk-set.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
 import { deskTokens, readDeskColor } from './desks.ts'
-import { DEFAULT_UI, type UiSettings } from '../shared/ui-settings.ts'
+import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
@@ -269,6 +269,9 @@ function applyUi(next: UiSettings): void {
   document.body.classList.toggle('desk-line', ui.deskLine)
   document.body.classList.toggle('tab-border', ui.tabBorder)
   document.body.classList.toggle('dim-unfocused', ui.dimUnfocused)
+  for (const level of DIM_LEVELS) document.body.classList.toggle(`dim-${level}`, ui.dimLevel === level)
+  // The radios show the level only while the dim is on.
+  for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-dim]')) li.setAttribute('aria-checked', String(ui.dimUnfocused && li.dataset.dim === ui.dimLevel))
   document.querySelector('#app-menu li[data-command="ui.tab-border"]')?.setAttribute('aria-checked', String(ui.tabBorder))
   document.querySelector('#app-menu li[data-command="ui.dim-unfocused"]')?.setAttribute('aria-checked', String(ui.dimUnfocused))
   document.querySelector('#app-menu li[data-command="ui.desk-line"]')?.setAttribute('aria-checked', String(ui.deskLine))
@@ -1828,6 +1831,7 @@ const commandHost: CommandHost = {
   toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
   toggleTabBorder: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }),
   toggleDimUnfocused: () => window.tether.setUi({ ...ui, dimUnfocused: !ui.dimUnfocused }),
+  setDimLevel: level => window.tether.setUi({ ...ui, dimUnfocused: true, dimLevel: level }),
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
@@ -2321,7 +2325,7 @@ declare global {
       /** The desk colour line: on/off (settings `ui.deskLine`). */
       deskLine(): boolean
       /** The other two signal modes: the folder-shaped outline on the focused pane and the dim of unfocused frames. */
-      signals(): { tabBorder: boolean; dimUnfocused: boolean }
+      signals(): { tabBorder: boolean; dimUnfocused: boolean; dimLevel: string }
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
       closePanel(slotId: string): void
       /** The terminal font size in use (appearance.fontSize). */
@@ -2478,7 +2482,7 @@ function setupTestHooks(): void {
     confirmations: () => confirmations,
     switchState: () => strip.state(),
     deskLine: () => ui.deskLine,
-    signals: () => ({ tabBorder: ui.tabBorder, dimUnfocused: ui.dimUnfocused }),
+    signals: () => ({ tabBorder: ui.tabBorder, dimUnfocused: ui.dimUnfocused, dimLevel: ui.dimLevel }),
     closePanel: slotId => { void closePanel(slotId) },
     fontSize: () => appearance.fontSize,
     startRename: slotId => tabs.get(slotId)?.startRename(),

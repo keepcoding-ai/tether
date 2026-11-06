@@ -7,6 +7,7 @@ import type { EmptyOrigin } from '../shared/empty.ts'
 import { DIRECTIONS, DUPLICATE_LABEL, EMPTY_SUFFIX, NEW_EMPTY_DESK_LABEL, NEW_EMPTY_FRAME_LABEL, NEW_FRAME_LABEL, NEW_PANEL_LABEL, NEW_TAB_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
 import type { FontSizeCommand } from '../shared/font.ts'
 import type { ThemeSetting } from '../shared/theme.ts'
+import type { DimLevel } from '../shared/ui-settings.ts'
 import type { Level } from './shortcuts.ts'
 import type { PaletteMode } from './palette-rules.ts'
 
@@ -44,6 +45,8 @@ export interface CommandHost {
   toggleDeskLine(): void
   toggleTabBorder(): void
   toggleDimUnfocused(): void
+  /** Picks the strength of the dim and turns the dim on. */
+  setDimLevel(level: DimLevel): void
   openTerminalTheme(): void
   fontSize(command: FontSizeCommand): void
   openProfiles(): void
@@ -154,6 +157,9 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'ui.desk-line', title: 'Ligar ou desligar a linha da cor da mesa', group: GROUP.look, icon: 'minus', run: () => host.toggleDeskLine() },
     { id: 'ui.tab-border', title: 'Ligar ou desligar a borda na guia do painel com foco', group: GROUP.look, icon: 'folder-open', run: () => host.toggleTabBorder() },
     { id: 'ui.dim-unfocused', title: 'Ligar ou desligar o esmaecer dos quadros sem foco', group: GROUP.look, icon: 'square-half', run: () => host.toggleDimUnfocused() },
+    { id: 'ui.dim-weak', title: 'Esmaecer: fraco', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('weak') },
+    { id: 'ui.dim-medium', title: 'Esmaecer: médio', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('medium') },
+    { id: 'ui.dim-strong', title: 'Esmaecer: forte', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('strong') },
     { id: 'terminal.theme', title: 'Tema do terminal…', group: GROUP.look, icon: 'palette', run: () => host.openTerminalTheme() },
     { id: 'font.increase', title: 'Aumentar a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('increase') },
     { id: 'font.decrease', title: 'Diminuir a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('decrease') },

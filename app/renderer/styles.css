@@ -1256,5 +1256,10 @@ body.drawer-open .desk-set .frame.focused .dv-groupview > .dv-content-container:
   content: ""; position: absolute; inset: calc(var(--gap) / 2); z-index: 30; pointer-events: none; border-radius: var(--frame-radius);
   background: var(--desk-bg); opacity: 0; transition: opacity var(--motion-fast) ease-out;
 }
-body.dim-unfocused .frame:not(.focused)::after { opacity: var(--dim-veil, .3); }
+/* Three strengths (settings ui.dimLevel); the veil colour stays --desk-bg whatever the level, never toward black. */
+body { --dim-veil: .32; }
+body.dim-weak { --dim-veil: .2; }
+body.dim-medium { --dim-veil: .32; }
+body.dim-strong { --dim-veil: .45; }
+body.dim-unfocused .frame:not(.focused)::after { opacity: var(--dim-veil); }
 @media (prefers-reduced-motion: reduce) { .frame::after { transition: none; } }

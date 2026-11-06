@@ -42,6 +42,9 @@ export const CORE_APP_MENU: readonly Item[] = [
     { command: 'ui.desk-line', kind: 'checkbox', checked: true, label: 'Linha da cor da mesa' },
     { command: 'ui.tab-border', kind: 'checkbox', checked: false, label: 'Borda na guia do painel com foco' },
     { command: 'ui.dim-unfocused', kind: 'checkbox', checked: false, label: 'Esmaecer quadros sem foco' },
+    { command: 'ui.dim-weak', kind: 'radio', data: { dim: 'weak' }, order: 61, label: 'Esmaecer: fraco' },
+    { command: 'ui.dim-medium', kind: 'radio', data: { dim: 'medium' }, order: 62, label: 'Esmaecer: médio' },
+    { command: 'ui.dim-strong', kind: 'radio', data: { dim: 'strong' }, order: 63, label: 'Esmaecer: forte' },
     // order 70: the note extension's "Quebra de linha no editor".
     { command: 'terminal.theme', icon: 'palette', label: 'Tema do terminal…', order: 80 },
   ]),

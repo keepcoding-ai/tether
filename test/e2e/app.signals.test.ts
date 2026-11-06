@@ -6,6 +6,8 @@
 //      action buttons have none; it follows the focus and a desk recolour; in the drawer it is not the desk colour;
 //   3. the dim: an unfocused frame gets the veil, the focused one does not, the toolbar is untouched;
 //   4. each toggle through the ≡ menu and the palette command, saved in settings.json;
+//   4b. the dim has three levels (fraco .20, médio .32 default, forte .45) picked from the ≡ menu and the palette, the veil
+//      colour stays the desk background, the level is saved in settings.json; screenshots in <repo>/../../.tmp/dim3 (6 files);
 //   5. screenshots (<repo>/../../.tmp/f6): each mode alone and the three together, light and dark (8 files).
 // Every kill goes through test/kill.ts (pid + creation time).
 import { test } from 'node:test'
@@ -28,7 +30,7 @@ type Hooks = {
   recolorDesk(id: string, color: string): void
   renameDesk(id: string, name: string): void
   deskLine(): boolean
-  signals(): { tabBorder: boolean; dimUnfocused: boolean }
+  signals(): { tabBorder: boolean; dimUnfocused: boolean; dimLevel: string }
   connection(): { connected: boolean; pid?: number } | undefined
   drawer(): { open: boolean; panes: string[] }
 }
@@ -39,6 +41,7 @@ type Q = { querySelector(s: string): unknown }
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
 const shots = resolve(root, '..', '..', '.tmp', 'f6')
+const shots3 = resolve(root, '..', '..', '.tmp', 'dim3')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const pipe = `\\\\.\\pipe\\tether-signals-${process.pid}`
@@ -168,7 +171,7 @@ test('app signals: line, folder border and dim are independent and combinable (F
 
     // 1. Defaults.
     assert.equal(await page.evaluate(() => window.__tether.deskLine()), true, 'the line is on by default')
-    assert.deepEqual(await page.evaluate(() => window.__tether.signals()), { tabBorder: false, dimUnfocused: false })
+    assert.deepEqual(await page.evaluate(() => window.__tether.signals()), { tabBorder: false, dimUnfocused: false, dimLevel: 'medium' })
     const fill = await page.locator('#desk-switch .seg.on').evaluate(el => window.getComputedStyle(el).backgroundColor)
     const plain = await frameBorder(page, fCrowd)
     for (const k of ['strip', 'tab', 'content'] as const) assert.equal(plain[k], 'none', `no folder border by default (${k})`)
@@ -232,6 +235,66 @@ test('app signals: line, folder border and dim are independent and combinable (F
     const ui = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui
     assert.equal(ui.tabBorder, true, 'settings.json ui.tabBorder')
     assert.equal(ui.dimUnfocused, true, 'settings.json ui.dimUnfocused')
+    await setModes(page, { line: true, border: false, dim: false })
+
+    // 4b. Three dim levels.
+    const level = async (cmd: 'ui.dim-weak' | 'ui.dim-medium' | 'ui.dim-strong', want: string): Promise<void> => {
+      await page.click('#btn-menu')
+      await page.waitForSelector('#app-menu:not([hidden])')
+      await page.click(`#app-menu li[data-command="${cmd}"]`)
+      await page.waitForFunction(w => window.__tether.signals().dimLevel === w, want)
+      await page.mouse.move(640, 400)
+      await sleep(350)
+    }
+    const veilOf = async (): Promise<{ opacity: number; color: string }> => page.evaluate(i => {
+      const frame = document.querySelectorAll('.desk-layer:not(.inactive) .frame:has(> .frame-dock)')[i]
+      const st = window.getComputedStyle(frame, '::after')
+      return { opacity: Number(st.opacity), color: st.backgroundColor }
+    }, fLone)
+    await focusFrame(page, fCrowd)
+    assert.equal((await page.evaluate(() => window.__tether.signals())).dimUnfocused, false, 'dim is off before the levels')
+    await level('ui.dim-weak', 'weak') // picking a level also turns the dim on
+    assert.equal((await page.evaluate(() => window.__tether.signals())).dimUnfocused, true, 'picking a level turns the dim on')
+    const weak = await veilOf()
+    assert.ok(Math.abs(weak.opacity - 0.2) < 0.01, `fraco is .20: ${weak.opacity}`)
+    assert.equal(await page.locator('#app-menu li[data-command="ui.dim-weak"]').getAttribute('aria-checked'), 'true')
+    await level('ui.dim-medium', 'medium')
+    const medium = await veilOf()
+    assert.ok(Math.abs(medium.opacity - 0.32) < 0.01, `médio is .32: ${medium.opacity}`)
+    await level('ui.dim-strong', 'strong')
+    const strong = await veilOf()
+    assert.ok(Math.abs(strong.opacity - 0.45) < 0.01, `forte is .45: ${strong.opacity}`)
+    assert.equal(weak.color, strong.color, 'the veil colour does not change with the level')
+    assert.notEqual(strong.color, 'rgb(0, 0, 0)', 'the veil is the desk background, not black')
+    assert.equal(JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui.dimLevel, 'strong', 'settings.json ui.dimLevel')
+    // Palette: "Esmaecer: fraco" picks the level too.
+    await page.keyboard.press('Control+Shift+P')
+    await page.waitForFunction(() => (window.__tether as unknown as { palette(): { open: boolean } }).palette().open)
+    await page.keyboard.type('Esmaecer: fraco')
+    await sleep(300)
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(() => window.__tether.signals().dimLevel === 'weak')
+    // Turning the dim off keeps the level; turning it on again brings it back.
+    await setModes(page, { line: true, border: false, dim: false })
+    assert.equal((await page.evaluate(() => window.__tether.signals())).dimLevel, 'weak', 'the level survives the toggle')
+    assert.equal(await page.locator('#app-menu li[data-command="ui.dim-weak"]').getAttribute('aria-checked'), 'false', 'no radio is checked while the dim is off')
+    // Screenshots: light and dark x three levels.
+    mkdirSync(shots3, { recursive: true })
+    const dim3: string[] = []
+    for (const scheme of ['light', 'dark'] as const) {
+      await setTheme(page, scheme)
+      for (const [cmd, name] of [['ui.dim-weak', 'weak'], ['ui.dim-medium', 'medium'], ['ui.dim-strong', 'strong']] as const) {
+        await level(cmd, name)
+        await page.mouse.move(900, 20)
+        await sleep(300)
+        const b64 = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()).toPNG().toString('base64'))
+        const file = join(shots3, `dim-${name}-${scheme}.png`)
+        writeFileSync(file, Buffer.from(b64, 'base64'))
+        dim3.push(file)
+      }
+    }
+    console.log(dim3.join(String.fromCharCode(10)))
+    await setTheme(page, 'light')
     await setModes(page, { line: true, border: false, dim: false })
 
     // 5. The drawer paints its own colour, not the desk's.
