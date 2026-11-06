@@ -12,7 +12,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   let view: ExplorerView | undefined
   ui.test.expose('explorer', () => view?.snapshot())
   return [
-    ui.pads.register({ id: PAD, create: () => (view = new ExplorerView(ui)) }),
+    ui.pads.register({ id: PAD, create: host => (view = new ExplorerView(ui, host)) }),
     // Opens the pad (focusing it when it was closed) and puts the keyboard in it when it already was open.
     ui.commands.registerCommand('explorer.focus', () => { ui.pads.open(PAD); view?.focus() }),
     ui.commands.registerCommand('explorer.open-folder', () => { ui.pads.open(PAD); void view?.pickFolder() }),

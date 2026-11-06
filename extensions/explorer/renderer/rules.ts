@@ -79,3 +79,21 @@ export function recentToOffer(recent: readonly string[], open: readonly string[]
   const taken = new Set(open.map(key))
   return recent.filter(p => !taken.has(key(p))).slice(0, RECENT_LIMIT)
 }
+
+/** The warning on a project root whose folder is gone. */
+export const MISSING_TEXT = 'pasta não encontrada'
+export const MISSING_TITLE = 'A pasta deste projeto não existe mais (ou o disco não está disponível). Feche o projeto ou restaure a pasta.'
+
+export type ItemAction = 'open' | 'open-side' | 'copy-path' | 'reveal'
+export interface ItemMenuItem { action: ItemAction; label: string; icon: string }
+
+/** A tree row's context menu by kind (the file operations are slice 5): a file opens here or beside; both can copy the path and reveal. */
+export function itemMenu(kind: 'file' | 'dir'): (ItemMenuItem | 'sep')[] {
+  const common: ItemMenuItem[] = [
+    { action: 'copy-path', label: 'Copiar caminho', icon: 'copy' },
+    { action: 'reveal', label: kind === 'file' ? 'Mostrar no explorador de arquivos' : 'Abrir no explorador de arquivos', icon: 'arrow-square-out' },
+  ]
+  return kind === 'file'
+    ? [{ action: 'open', label: 'Abrir', icon: 'file-text' }, { action: 'open-side', label: 'Abrir ao lado', icon: 'square-split-horizontal' }, 'sep', ...common]
+    : common
+}

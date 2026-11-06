@@ -71,7 +71,7 @@ describe('explorer manifest', () => {
 
   test('one global pad on the left, the id the layout will keep', () => {
     assert.deepEqual(c.pads, [{ id: 'explorer.files', title: 'Explorador', icon: 'files', defaultSide: 'left', scope: 'global', order: 10 }])
-    assert.deepEqual([...manifest.hosts], ['renderer'])
+    assert.deepEqual([...manifest.hosts], ['renderer', 'main'])
     assert.equal(manifest.optional, true)
   })
 

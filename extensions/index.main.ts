@@ -4,8 +4,10 @@ import type { TetherMain } from '../app/main/ext-api.ts'
 import type { ExtensionEntry } from './types.ts'
 import * as note from './note/main.ts'
 import * as quickOpen from './quick-open/main.ts'
+import * as explorer from './explorer/main.ts'
 
 export const extensions: readonly ExtensionEntry<TetherMain>[] = [
   { manifest: note.manifest, activate: note.activate },
   { manifest: quickOpen.manifest, activate: quickOpen.activate },
+  { manifest: explorer.manifest, activate: explorer.activate },
 ]

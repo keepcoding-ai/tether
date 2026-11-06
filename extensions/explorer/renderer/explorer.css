@@ -8,14 +8,29 @@
 /* ---- the roots ---- */
 .xp-roots-wrap { display: flex; flex-direction: column; min-height: 100%; }
 .xp-roots { padding: 6px 0; }
-.xp-root {
-  position: relative; display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 6px 0 14px; cursor: pointer; outline: none; user-select: none;
+/* Every row (a project root or a file/folder): indent by level, twistie, icon, name. */
+.xp-row {
+  position: relative; display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px 0 calc(6px + (var(--lvl, 1) - 1) * 14px);
+  cursor: pointer; outline: none; user-select: none; white-space: nowrap;
 }
-.xp-root:hover { background: var(--bg-hover); }
+.xp-root { height: 28px; gap: 4px; }
+.xp-row:hover { background: var(--bg-hover); }
+.xp-row.selected { background: var(--bg-3); }
 .xp-root.current { background: var(--bg-3); }
 .xp-root.current::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; border-radius: 2px; background: var(--accent); }
-.xp-root:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.xp-root .xp-folder { flex: none; width: 16px; height: 16px; color: var(--fg-dim); }
+.xp-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.xp-twist { flex: none; display: grid; place-items: center; width: 16px; height: 16px; color: var(--fg-dim); }
+.xp-twist .ph { width: 12px; height: 12px; transition: transform .12s ease; }
+.xp-row[aria-expanded="true"] > .xp-twist .ph { transform: rotate(90deg); }
+.xp-ico { flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin-right: 3px; color: var(--fg-dim); }
+.xp-ico .ph { width: 16px; height: 16px; }
+.xp-item[data-kind="dir"] > .xp-ico { color: var(--accent); }
+.xp-item .xp-name { font-weight: 400; }
+.xp-msg { padding: 3px 8px 3px calc(6px + (var(--lvl, 1) - 1) * 14px + 20px); font-size: 12px; color: var(--fg-dim); white-space: normal; }
+.xp-root.missing .xp-name { color: var(--fg-dim); }
+.xp-root.missing .xp-ico { opacity: .6; }
+.xp-warn { flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; color: var(--warn, var(--fg)); background: var(--bg-2); border: 1px solid var(--border); white-space: nowrap; }
+.xp-warn[hidden] { display: none; }
 .xp-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .xp-hint { flex: none; font-size: 11.5px; color: var(--fg-dim); white-space: nowrap; }
 .xp-sp { flex: 1; }

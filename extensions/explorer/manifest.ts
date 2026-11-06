@@ -1,6 +1,7 @@
 // The explorer extension (F8): the file explorer of the left side bar, over the window's projects (the core's workspace
 // service, app/renderer/workspace.ts: folders inferred from the AI agents' panes plus the pinned ones). Slice 1a: the pad
-// and the list of project roots (pin, close, move, copy path) with the empty state; the tree is slice 1b. The pad id and
+// and the list of project roots (pin, close, move, copy path) with the empty state; slice 1b: the file tree under each root
+// (the main side reads one folder at a time on the bus `ext:explorer:*`) and opening a file in the editor. The pad id and
 // the command ids are in people's layout.json and keybindings.json and never change. Its shape mirrors VS Code's
 // files.contribution (@7faf984): a view container on the left, "Open Folder" on the empty view, `explorer.focus`.
 import type { ExtensionManifest } from '../types.ts'
@@ -11,8 +12,8 @@ export const manifest: ExtensionManifest = {
   id: 'explorer',
   version: '1.0.0',
   displayName: 'Explorador',
-  description: 'Os projetos da janela (pastas dos agentes e pastas fixadas) na barra lateral esquerda.',
-  hosts: ['renderer'],
+  description: 'Os projetos da janela (pastas dos agentes e pastas fixadas) e seus arquivos na barra lateral esquerda.',
+  hosts: ['renderer', 'main'],
   optional: true,
   contributes: {
     pads: [
