@@ -53,14 +53,14 @@ describe('palette rules', () => {
   const cmd = (id: string, title: string): Command => ({ id, title, run: () => {} })
   const list = [cmd('pane.new', 'Novo painel…'), cmd('desk.new', 'Nova mesa'), cmd('desk.next', 'Próxima mesa'), cmd('pane.close', 'Fechar painel…'), cmd('theme.dark', 'Tema: Escuro')]
 
-  test('">" is the command mode; anything else is quick open; the prefix and the space after it are not part of the query', () => {
+  test('">" is the command mode; anything else is the default mode (quick open); the prefix and the space after it are not part of the query', () => {
     assert.deepEqual(parsePaletteInput('>'), { mode: 'commands', query: '' })
     assert.deepEqual(parsePaletteInput('> nova'), { mode: 'commands', query: 'nova' })
     assert.deepEqual(parsePaletteInput('>nova'), { mode: 'commands', query: 'nova' })
-    assert.deepEqual(parsePaletteInput('main.ts'), { mode: 'quick-open', query: 'main.ts' })
-    assert.deepEqual(parsePaletteInput(''), { mode: 'quick-open', query: '' })
+    assert.deepEqual(parsePaletteInput('main.ts'), { mode: 'default', query: 'main.ts' })
+    assert.deepEqual(parsePaletteInput(''), { mode: 'default', query: '' })
     assert.equal(initialInput('commands'), '>')
-    assert.equal(initialInput('quick-open'), '')
+    assert.equal(initialInput('default'), '')
   })
 
   const ids = (r: ReturnType<typeof rankCommands>): string[] => r.map(x => x.command.id)

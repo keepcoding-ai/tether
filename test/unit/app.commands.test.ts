@@ -128,11 +128,10 @@ describe('the app commands', () => {
   })
 
   test('the key commands exist with the ids the CLI and the palette will use', () => {
-    for (const id of ['pane.new', 'pane.duplicate.pane.right', 'pane.close', 'desk.new', 'desk.next', 'desk.previous', 'desk.go.1', 'desk.go.9', 'drawer.toggle', 'theme.dark', 'theme.light', 'theme.auto', 'font.increase', 'palette.show', 'palette.quick-open', 'app.quit-all', 'window.close']) {
+    for (const id of ['pane.new', 'pane.duplicate.pane.right', 'pane.close', 'desk.new', 'desk.next', 'desk.previous', 'desk.go.1', 'desk.go.9', 'drawer.toggle', 'theme.dark', 'theme.light', 'theme.auto', 'font.increase', 'palette.show', 'app.quit-all', 'window.close']) {
       assert.ok(byId.has(id), id)
     }
     assert.equal(shortcutHint('palette.show', false), 'Ctrl+Shift+P')
-    assert.equal(shortcutHint('palette.quick-open', false), 'Ctrl+P')
     assert.equal(byId.get('drawer.toggle')!.ignoreRepeat, true, 'a held Ctrl+` is one toggle')
     assert.equal(byId.get('app.quit-all')!.danger, true)
   })
@@ -163,8 +162,7 @@ describe('the app commands', () => {
     await r.run('desk.go.3')
     await r.run('theme.dark')
     await r.run('pane.close')
-    await r.run('palette.quick-open')
-    assert.deepEqual(calls, ['duplicateActive {"level":"frame","placement":"below"}', 'goToDesk 3', 'setTheme "dark"', 'closePane "slot-1"', 'showPalette "quick-open"'])
+    assert.deepEqual(calls, ['duplicateActive {"level":"frame","placement":"below"}', 'goToDesk 3', 'setTheme "dark"', 'closePane "slot-1"'])
   })
 
   test('the ≡ menu (app/renderer/app-menu.ts) names only commands that exist', () => {

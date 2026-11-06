@@ -1,20 +1,21 @@
 // The command palette's rules, pure (app/renderer/palette.ts puts them on screen): what the text in the box
 // means, and how the commands are ordered and filtered for it.
 //
-// One box, two modes, as in VS Code: text starting with `>` is a command search; anything else is quick open
-// (files in the focused pane's folder), which arrives in a later delivery. Ctrl+Shift+P opens the box with `>`
-// already typed; Ctrl+P opens it empty. Deleting the `>` turns one into the other.
+// One box, two modes, as in VS Code: text starting with `>` is a command search; anything else goes to the default
+// mode an extension registers (the quick-open extension: files in the focused pane's folder; with none, the box only
+// hints at `>`). Ctrl+Shift+P opens the box with `>` already typed; the default mode's chord opens it empty.
+// Deleting the `>` turns one into the other.
 import type { Command } from './commands.ts'
 import { clipRanges, wordFilter, type Range } from './word-filter.ts'
 
-export type PaletteMode = 'commands' | 'quick-open'
+export type PaletteMode = 'commands' | 'default'
 
 export const COMMAND_PREFIX = '>'
 
 /** What the user wrote means: the mode and the query without the prefix (trimmed at the start). */
 export function parsePaletteInput(text: string): { mode: PaletteMode; query: string } {
   if (text.startsWith(COMMAND_PREFIX)) return { mode: 'commands', query: text.slice(COMMAND_PREFIX.length).trimStart() }
-  return { mode: 'quick-open', query: text }
+  return { mode: 'default', query: text }
 }
 
 /** The text the box opens with for a mode. */

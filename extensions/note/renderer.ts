@@ -15,7 +15,7 @@ import type { PreviewPane } from '../../app/renderer/preview-pane.ts'
 import { defineTheme, mirrorThemeVars, monaco, remeasureEditorFonts } from '../../app/renderer/monaco.ts'
 import { editorChordCommand, editorKeybindings, runEditorChord } from '../../app/renderer/monaco-chords.ts'
 import type { FixedBinding } from '../../app/renderer/keybindings-panel.ts'
-import { quickOpenFailedSituation, type OpenFileOptions } from '../../app/renderer/quick-open.ts'
+import { fileOpenFailedSituation, type OpenFileOptions } from '../../app/renderer/file-open.ts'
 import { isHtmlPath, isPreviewablePath, newPreviewPanelId, withPreview } from '../../app/shared/preview.ts'
 import { cleanNoteName, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../../app/shared/notes.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
@@ -273,7 +273,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   /** "Abrir no navegador": the file with the system's browser (the same refusals as any file opened with the system). */
   function openInBrowser(path: string): void {
-    void ipc.invoke('openInBrowser', path).then(r => { if (!r.ok) void ui.dialogs.ask(quickOpenFailedSituation(r.message)) })
+    void ipc.invoke('openInBrowser', path).then(r => { if (!r.ok) void ui.dialogs.ask(fileOpenFailedSituation(r.message)) })
   }
 
   const htmlPreviewHost: HtmlPreviewHost = {

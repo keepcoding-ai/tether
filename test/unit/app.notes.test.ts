@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from 'node:path'
 import { addTetherToGitignore, findGitRoot, gitignoreStatus, notesDirFor, prepareNote, readNote, renameNote, userNotesDir, writeNote, writeTextAtomic } from '../../app/main/note-files.ts'
 import { editorKeyOwner } from '../../app/renderer/key-capture.ts'
+import { withQuickOpenKeybindings } from './quick-open-extension.ts'
 import { emptyLayout, orphanedPanels, planRestore, type Layout } from '../../app/renderer/layout.ts'
 import { chordFromLabel, editorCommandId, paneCwdOfNote } from '../../app/renderer/note-rules.ts'
 import { chordLabel, type KeyLike } from '../../app/renderer/shortcuts.ts'
@@ -239,6 +240,7 @@ describe('chords inside the editor', () => {
 
   test('the workbench chords stay the app\'s: palette, quick open, chooser, desks, drawer, font size, status bar', () => {
     assert.deepEqual(editorKeyOwner(key('KeyP', { ctrl: true, shift: true }), false), { owner: 'app', command: 'palette.show' })
+    withQuickOpenKeybindings() // Ctrl+P comes from the quick-open extension
     assert.deepEqual(editorKeyOwner(key('KeyP', { ctrl: true }), false), { owner: 'app', command: 'palette.quick-open' })
     assert.equal(editorKeyOwner(key('KeyT', { ctrl: true, shift: true }), false).owner, 'app')
     assert.equal(editorKeyOwner(key('Tab', { ctrl: true }), false).owner, 'app')

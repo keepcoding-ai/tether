@@ -14,11 +14,13 @@ import type { ColorScheme } from '../shared/theme.ts'
 import type { Command, CommandContext, RunSource } from './commands.ts'
 import type { Target } from './create.ts'
 import type { FixedBinding } from './keybindings-panel.ts'
+import type { PaletteModeProvider } from './palette.ts'
 import type { PaneType } from './pane-registry.ts'
-import type { OpenFileOptions } from './quick-open.ts'
+import type { OpenFileOptions } from './file-open.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
+export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
 
 /** A row of a context menu (the tab menu): an item, or 'sep' for a thin line between groups. */
 export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean } | 'sep'
@@ -132,6 +134,15 @@ export interface TetherUi {
     register(opener: FileOpener): IDisposable
     /** Opens a file as Ctrl+P does (checks it exists and is text; a binary goes to the system's program). */
     open(path: string, opts: OpenFileOptions): Promise<void>
+    /** A file was opened, whoever asked (text in an opener, or by the system's program): for a history of opened files. */
+    onOpened(listener: (path: string) => void): IDisposable
+  }
+  /** The command palette (Ctrl+Shift+P): extensions add the mode of text without `>`. */
+  palette: {
+    /** What the box shows for text without `>` (one extension at a time; the last registered wins). */
+    registerMode(provider: PaletteModeProvider): IDisposable
+    /** Opens the box in that mode (empty field), as the mode's chord does. */
+    showMode(): void
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */

@@ -1,4 +1,4 @@
-// The command palette (Ctrl+Shift+P; Ctrl+P opens the same box in quick-open mode): a box at the top of the
+// The command palette (Ctrl+Shift+P; the default mode an extension registers, Ctrl+P's quick open, uses the same box): a box at the top of the
 // window with a search field and the commands the registry offers right now, ranked by palette-rules.ts.
 // Keys: type to filter, ↑/↓ (wrapping) and PageUp/PageDown move, Enter runs, Esc closes, a click on an item
 // runs it, a click outside closes. The chords of the two modes switch the mode while the box is open. The
@@ -8,7 +8,6 @@
 import type { CommandRegistry } from './commands.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import { initialInput, parsePaletteInput, rankCommands, type PaletteMode, type RankedCommand } from './palette-rules.ts'
-import { PENDING_POLL_MS, type QuickOpen } from './quick-open.ts'
 import { shortcutOf } from './shortcuts.ts'
 import { rangeRuns } from './word-filter.ts'
 
@@ -20,7 +19,43 @@ function iconEl(name: string): SVGSVGElement {
   return icon((ICON_SET.has(name) ? name : 'question') as IconName)
 }
 
-export const QUICK_OPEN_HINT = 'Digite para procurar arquivos na pasta do painel. Digite > para procurar um comando.'
+/** While a mode's list is still being read, the box asks again this often. */
+export const PENDING_POLL_MS = 250
+
+/** The empty box when no extension registered a default mode. */
+export const COMMANDS_HINT = 'Digite > para procurar um comando.'
+
+/** One answer of a mode's search, ready to be shown (the mode keeps what it needs to draw it). */
+export interface PaletteSearch {
+  /** The list is still being read: the box asks again shortly with the same text. */
+  pending: boolean
+  /** Appends the rows (`li.pal-item[data-file]`, the path to open) under their separators; returns how many items there are. */
+  render(list: HTMLUListElement, idBase: string): number
+  /** The text under the list when it came back with no rows. */
+  emptyText(): string
+}
+
+/**
+ * What the box shows for text without `>` (VS Code's default quick access provider): the quick-open extension registers
+ * one (TetherUi.palette.registerMode). Rows are files; a click or Enter opens one, Ctrl+Enter beside the focused pane.
+ */
+export interface PaletteModeProvider {
+  id: string
+  /** The command that opens the box in this mode: pressing its chord in the open box switches to the mode. */
+  command: string
+  /** The empty box, before anything is typed. */
+  hint: string
+  /** While the first answer is on its way. */
+  searchingText: string
+  /** The box opened in this mode: a fresh session. */
+  begin(): void
+  /** The box closed (any way): the session ends. */
+  end(): void
+  /** Searches; null when a newer search replaced this one. Never throws: a failure comes back as a search that says why. */
+  search(text: string): Promise<PaletteSearch | null>
+  /** Opens the file of a row. */
+  open(path: string, side: boolean): Promise<void>
+}
 
 export class CommandPalette {
   private readonly input: HTMLInputElement
@@ -31,15 +66,15 @@ export class CommandPalette {
   private seq = 0
   readonly dialog: HTMLDialogElement
   private readonly registry: CommandRegistry
-  /** Quick Open (the mode without `>`): files of the focused pane's folder. */
-  private readonly quickOpen: QuickOpen | undefined
+  /** The mode without `>`, when an extension registered one (quick open: files of the focused pane's folder). */
+  private readonly provider: () => PaletteModeProvider | undefined
   private fileSeq = 0
   private pollTimer: ReturnType<typeof setTimeout> | undefined
 
-  constructor(dialog: HTMLDialogElement, registry: CommandRegistry, quickOpen?: QuickOpen) {
+  constructor(dialog: HTMLDialogElement, registry: CommandRegistry, provider: () => PaletteModeProvider | undefined = () => undefined) {
     this.dialog = dialog
     this.registry = registry
-    this.quickOpen = quickOpen
+    this.provider = provider
     this.input = dialog.querySelector<HTMLInputElement>('input')!
     this.list = dialog.querySelector<HTMLUListElement>('ul')!
     this.empty = dialog.querySelector<HTMLElement>('.pal-empty')!
@@ -47,8 +82,8 @@ export class CommandPalette {
     this.input.addEventListener('keydown', ev => this.onKey(ev))
     // Esc: the browser raises `cancel` on a modal dialog; it is ours (the field keeps its text until the next opening).
     dialog.addEventListener('cancel', ev => { ev.preventDefault(); this.hide() })
-    // The box closed (any way): Quick Open's search session ends, main drops its list and cache.
-    dialog.addEventListener('close', () => this.quickOpen?.end())
+    // The box closed (any way): the default mode's search session ends (quick open: main drops its list and cache).
+    dialog.addEventListener('close', () => this.provider()?.end())
     // A click on the backdrop lands on the dialog element itself, never on a child.
     dialog.addEventListener('mousedown', ev => { if (ev.target === dialog) { ev.preventDefault(); this.hide() } })
     // Picking with the mouse must not move the focus out of the field.
@@ -74,7 +109,7 @@ export class CommandPalette {
   show(mode: PaletteMode, query = ''): void {
     this.input.value = initialInput(mode) + query
     if (!this.dialog.open) this.dialog.showModal()
-    if (mode === 'quick-open') { this.quickOpen?.begin(); delete this.dialog.dataset.mode } // a fresh list, not the last query's
+    if (mode === 'default') { this.provider()?.begin(); delete this.dialog.dataset.mode } // a fresh list, not the last query's
     this.input.focus()
     this.input.setSelectionRange(this.input.value.length, this.input.value.length)
     this.render()
@@ -91,9 +126,10 @@ export class CommandPalette {
 
   private onKey(ev: KeyboardEvent): void {
     const id = shortcutOf(ev)
-    if (id === 'palette.show' || id === 'palette.quick-open') {
+    const provider = this.provider()
+    if (id === 'palette.show' || (provider && id === provider.command)) {
       ev.preventDefault(); ev.stopPropagation()
-      const mode: PaletteMode = id === 'palette.show' ? 'commands' : 'quick-open'
+      const mode: PaletteMode = id === 'palette.show' ? 'commands' : 'default'
       if (this.mode !== mode) this.show(mode)
       return
     }
@@ -122,22 +158,22 @@ export class CommandPalette {
 
   private async openFile(path: string, side: boolean): Promise<void> {
     this.hide()
-    await this.quickOpen?.open(path, side)
+    await this.provider()?.open(path, side)
   }
 
   /** Quick Open's rows: the search runs in main (a worker); an answer that arrives after a newer keystroke is dropped. */
   private async renderFiles(text: string): Promise<void> {
-    const qo = this.quickOpen!
+    const qo = this.provider()!
     const seq = ++this.fileSeq
     if (this.pollTimer) { clearTimeout(this.pollTimer); this.pollTimer = undefined }
     const s = await qo.search(text)
-    if (!s || seq !== this.fileSeq || !this.dialog.open || this.mode !== 'quick-open') return
+    if (!s || seq !== this.fileSeq || !this.dialog.open || this.mode !== 'default') return
     this.list.replaceChildren()
     this.ranked = []
-    const n = qo.render(this.list, s, `pal-opt-${++this.seq}`)
-    this.dialog.dataset.pending = String(s.result.pending)
+    const n = s.render(this.list, `pal-opt-${++this.seq}`)
+    this.dialog.dataset.pending = String(s.pending)
     if (n === 0) {
-      this.empty.textContent = qo.emptyText(s)
+      this.empty.textContent = s.emptyText()
       this.empty.hidden = false
       this.input.removeAttribute('aria-activedescendant')
     } else {
@@ -145,17 +181,18 @@ export class CommandPalette {
       this.select(0, false)
     }
     // The list is still being read: ask again with the same text while the box shows it.
-    if (s.result.pending) this.pollTimer = setTimeout(() => { this.pollTimer = undefined; if (this.dialog.open && this.input.value === text) void this.renderFiles(text) }, PENDING_POLL_MS)
+    if (s.pending) this.pollTimer = setTimeout(() => { this.pollTimer = undefined; if (this.dialog.open && this.input.value === text) void this.renderFiles(text) }, PENDING_POLL_MS)
   }
 
   private render(): void {
     const { mode, query } = parsePaletteInput(this.input.value)
-    if (mode === 'quick-open' && this.quickOpen) {
+    const provider = this.provider()
+    if (mode === 'default' && provider) {
       // Coming from the command list (or a closed box): its rows go now, not when main answers.
       if (this.dialog.dataset.mode !== mode || this.ranked.length > 0) {
         this.ranked = []
         this.list.replaceChildren()
-        this.empty.textContent = this.input.value.trim() === '' ? QUICK_OPEN_HINT : 'Procurando arquivos…'
+        this.empty.textContent = this.input.value.trim() === '' ? provider.hint : provider.searchingText
         this.empty.hidden = false
         this.input.removeAttribute('aria-activedescendant')
       }
@@ -168,7 +205,7 @@ export class CommandPalette {
     this.ranked = mode === 'commands' ? rankCommands(this.registry.available(), query, this.registry.recents()) : []
     this.dialog.dataset.mode = mode
     if (this.ranked.length === 0) {
-      this.empty.textContent = mode === 'commands' ? `Nenhum comando para “${query}”.` : QUICK_OPEN_HINT
+      this.empty.textContent = mode === 'commands' ? `Nenhum comando para “${query}”.` : COMMANDS_HINT
       this.empty.hidden = false
       this.input.removeAttribute('aria-activedescendant')
       return

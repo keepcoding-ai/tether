@@ -30,12 +30,12 @@ type Hooks = {
   deskOf(slotId: string): string | undefined
   switchDesk(id: string): void
   runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
-  palette(): { open: boolean; mode?: 'commands' | 'quick-open'; shown: string[]; input: string }
+  palette(): { open: boolean; mode?: 'commands' | 'default'; shown: string[]; input: string }
   notes(): Snap[]
   note(id: string): Snap | undefined
   groupOf(id: string): string | undefined
 }
-declare const window: { __tether: Hooks; tether: { quickOpenSearch(cwd: string, query: string, recent: string[]): Promise<{ source?: string; pending: boolean; error?: string; files: { label: string }[] } | null> } }
+declare const window: { __tether: Hooks; tether: { ext: { invoke(id: string, channel: string, ...args: unknown[]): Promise<unknown> } } }
 type El = { textContent: string | null; dataset: Record<string, string>; getAttribute(n: string): string | null; querySelector(s: string): El | null }
 declare const document: { activeElement: { closest(sel: string): unknown } | null; documentElement: { dataset: Record<string, string> }; querySelectorAll(sel: string): { length: number }; querySelector(sel: string): El | null }
 
@@ -144,7 +144,7 @@ test('app quick open: Ctrl+P lists the pane folder\'s files (VS Code scorer), re
     // 1. Ctrl+P with no history: no rows, the hint names the pane's folder.
     await page.keyboard.press('Control+P')
     await paletteOpen(page, true)
-    assert.equal((await paletteState(page)).mode, 'quick-open')
+    assert.equal((await paletteState(page)).mode, 'default')
     await page.waitForFunction(() => /Digite para procurar arquivos em/.test(document.querySelector('#palette .pal-empty')?.textContent ?? ''))
     assert.match(await page.locator('#palette .pal-empty').innerText(), /Digite > para procurar um comando/)
 
@@ -273,12 +273,12 @@ test('app quick open: launched outside the repo (cwd System32, no rg on PATH) it
     await quickOpen(page, 'build')
     await sleep(500)
     assert.ok(!(await paletteState(page)).shown.some(p => /build\.log$/.test(p)), '.gitignore respected outside git')
-    const direct = await page.evaluate(d => window.tether.quickOpenSearch(d, 'CLA', []), dir)
+    const direct = await page.evaluate(d => window.tether.ext.invoke('quick-open', 'search', d, 'CLA', []), dir) as { source?: string; error?: string } | null
     assert.equal(direct?.source, 'rg', 'the app\'s rg, resolved from the app folder and not from the cwd')
     assert.equal(direct?.error, undefined)
 
     // A main process without the search handler (a window reloaded over an older main): the box says why.
-    await app.evaluate(({ ipcMain }) => ipcMain.removeHandler('quickopen:search'))
+    await app.evaluate(({ ipcMain }) => ipcMain.removeHandler('ext:quick-open:search'))
     await quickOpen(page, 'CLAU')
     await page.waitForFunction(() => /Não consegui listar os arquivos de .*versão anterior.*Reiniciar o app/.test(document.querySelector('#palette .pal-empty')?.textContent ?? ''))
     assert.deepEqual((await paletteState(page)).shown, [])

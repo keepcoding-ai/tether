@@ -162,3 +162,56 @@ test('app note extension (F9 slice 1): off → restart → placeholder keeps the
     }
   }
 })
+
+test('app quick-open extension (F9 slice 2): off → the app opens, Ctrl+P does nothing, the box keeps the commands', async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  const home = mkdtempSync(join(tmpdir(), 'tether-ext-toggle-qo-'))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['quick-open'] } }))
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home))
+    const errors: string[] = []
+    page.on('pageerror', e => errors.push(String(e)))
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+
+    const ids = await page.evaluate(() => window.__tether.commands().map(c => c.id))
+    assert.ok(!ids.includes('palette.quick-open'), 'the Ir para… command is gone')
+    assert.ok(ids.includes('palette.show') && ids.includes('pane.new'), 'the core commands are there')
+
+    // Ctrl+P is nobody's: the box stays closed (a terminal would get the key).
+    await page.keyboard.press('Control+P')
+    await sleep(500)
+    assert.equal(await page.evaluate(() => (window.__tether as unknown as { palette(): { open: boolean } }).palette().open), false, 'Ctrl+P opened nothing')
+
+    // The command box works, and without ">" it only hints at the commands.
+    await page.keyboard.press('Control+Shift+P')
+    await page.waitForFunction(() => (window.__tether as unknown as { palette(): { open: boolean } }).palette().open)
+    await page.locator('#palette-input').fill('')
+    assert.match(await page.locator('#palette .pal-empty').innerText(), /Digite > para procurar um comando/)
+    assert.doesNotMatch(await page.locator('#palette .pal-empty').innerText(), /arquivos/)
+    await page.keyboard.press('Escape')
+
+    // The note still opens a file by path (the core's opening does not depend on the extension).
+    const notePath = join(home, 'a.md')
+    writeFileSync(notePath, '# a\r\n\r\nlinha')
+    await page.evaluate(p => window.__tether.openNote!(p), notePath)
+    await page.waitForFunction(() => (window.__tether.notes?.() ?? []).some(n => n.text.includes('linha')))
+    assert.deepEqual(errors, [], 'no page errors')
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})

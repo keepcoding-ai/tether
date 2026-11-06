@@ -22,7 +22,7 @@
 // types are the structural subset used here; indexed reads carry `!`; the resolution of the candidates of one line
 // runs side by side instead of one after the other (same order, same cap of 10).
 
-import type { LineColumn } from './quick-open.ts'
+import type { LineColumn } from './file-open.ts'
 import { detectLinks, getLinkSuffix, type ILinkSuffix, type IParsedLink, type LinkOs } from './vscode-terminal-link-parsing.ts'
 
 const Constants = {

@@ -1,9 +1,10 @@
-// Quick Open (Ctrl+P), the part both sides know: what a search returns (app/main/file-index.ts builds it, the
-// palette shows it), what opening a file means, and the rules that need no DOM (unit-tested): the `:line:col`
+// Quick Open (Ctrl+P, the quick-open extension), the part both sides know: what a search returns (app/main/file-index.ts
+// builds it, the palette shows it) and the rules that need no DOM (unit-tested): the `:line:col`
 // suffix, the history of opened files, the icon of a file type.
 import type { IMatch } from './vscode-fuzzy-scorer.ts'
+import type { LineColumn } from './file-open.ts'
 
-export type { IMatch }
+export type { IMatch, LineColumn }
 
 export type ListSource = 'rg' | 'git' | 'walk'
 
@@ -45,21 +46,11 @@ export function failedResult(root: string, error: string): QuickOpenResult {
 /** The person's words for a failure to list: the main process older than this window is named, with the way out. */
 export function listFailureText(error: string): string {
   // An IPC channel without a handler: the window was reloaded with a newer build than the running main process.
-  if (/No handler registered for 'quickopen:/.test(error)) return 'o processo principal do app é de uma versão anterior a esta janela. Use “Reiniciar o app” (os agentes continuam rodando).'
+  if (/No handler registered for 'ext:quick-open:/.test(error)) return 'o processo principal do app é de uma versão anterior a esta janela. Use “Reiniciar o app” (os agentes continuam rodando).'
   return error.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
 }
 
-/** What opening a path means (main inspects the file): the editor, the system's program, or a clear refusal. */
-export type QuickOpenTarget =
-  | { kind: 'text'; size: number }
-  | { kind: 'binary'; size: number; runnable: boolean }
-  | { kind: 'large'; size: number; runnable: boolean }
-  | { kind: 'missing' }
-  | { kind: 'folder' }
-
 // ---------- `file:42` / `file:42:7` ----------
-
-export interface LineColumn { line: number; column?: number }
 
 /**
  * The query without a trailing `:line` / `:line:col` (also `#line`, VS Code's other spelling), and the position.

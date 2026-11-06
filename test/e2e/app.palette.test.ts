@@ -34,7 +34,7 @@ type Hooks = {
   switchDesk(id: string): void
   commands(): { id: string; title: string; hint: string; available: boolean }[]
   runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
-  palette(): { open: boolean; mode?: 'commands' | 'quick-open'; shown: string[]; input: string }
+  palette(): { open: boolean; mode?: 'commands' | 'default'; shown: string[]; input: string }
   theme(): { setting: string; scheme: string }
   closePanel(id: string): void
 }
@@ -163,7 +163,7 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter 
     await page.keyboard.press('Control+P')
     await paletteOpen(page, true)
     st = await paletteState(page)
-    assert.equal(st.mode, 'quick-open')
+    assert.equal(st.mode, 'default')
     assert.equal(st.input, '')
     assert.deepEqual(st.shown, [])
     assert.match(await page.locator('#palette .pal-empty').innerText(), /Digite > para procurar um comando/)

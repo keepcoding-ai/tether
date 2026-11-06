@@ -6,7 +6,7 @@ import type { FontSizeCommand } from './font.ts'
 import type { TerminalAppearance } from './terminal-theme.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 import type { UiSettings } from './ui-settings.ts'
-import type { QuickOpenResult, QuickOpenTarget } from './quick-open.ts'
+import type { FileTarget } from './file-open.ts'
 import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 import type { ExtTransport } from './ext-ipc.ts'
@@ -114,20 +114,10 @@ export interface TetherApi {
   onOpenDrawer(listener: () => void): () => void
   /** Closes the window (keeps every slot running in the daemon). */
   closeWindow(): void
-  /**
-   * Quick Open (app/main/quick-open-main.ts): the files under the pane's opening folder (the notes folder without
-   * one) ranked for the query, with the recently opened ones (`recent`, absolute paths, newest first) on top.
-   * Null when a newer search replaced this one before it ran.
-   */
-  quickOpenSearch(paneCwd: string | undefined, query: string, recent: string[]): Promise<QuickOpenResult | null>
-  /** The box opened: a new search session, main lists the root now. */
-  quickOpenRefresh(paneCwd: string | undefined): void
-  /** The box closed: main drops the session's list and cache. */
-  quickOpenEnd(): void
-  /** What opening a path means: editor (text), system program (binary, too large), or nothing (missing, folder). */
-  quickOpenInspect(path: string): Promise<QuickOpenTarget>
+  /** What opening a path means (app/main/file-open-main.ts): editor (text), system program (binary, too large), or nothing (missing, folder). */
+  inspectFile(path: string): Promise<FileTarget>
   /** Opens a binary or too large file with the system's program (never one that would run). */
-  quickOpenExternal(path: string): Promise<{ ok: true } | { ok: false; message: string }>
+  openFileExternal(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   /** Ctrl+click on terminal paths (app/main/terminal-links-main.ts): the first candidate that exists, read against the pane's opening folder `cwd`; null when none does. */
   resolveTerminalLink(cwd: string | undefined, candidates: string[]): Promise<ResolvedPath | null>
   /**

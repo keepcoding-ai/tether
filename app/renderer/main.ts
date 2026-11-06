@@ -21,8 +21,8 @@ import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, newEmptyPanelId, withEmpty, ty
 import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empty-panel.ts'
 import { type Choice, contributeChooser, rememberProfile } from './chooser-rules.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
-import { CommandPalette } from './palette.ts'
-import { type OpenFileOptions, QuickOpen, quickOpenFailedSituation } from './quick-open.ts'
+import { CommandPalette, type PaletteModeProvider } from './palette.ts'
+import { fileOpenFailedSituation, openFile, type OpenFileOptions } from './file-open.ts'
 import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
@@ -1750,32 +1750,36 @@ const emptyHost: EmptyHost = {
 
 /**
  * A path printed in a terminal was Ctrl+clicked (app/renderer/terminal-links.ts): a folder opens in the Explorer; a file
- * opens the way Quick Open opens it, in the clicked pane's tab group, at the line and column the text names.
+ * opens the way Ctrl+P opens it, in the clicked pane's tab group, at the line and column the text names.
  */
 function openTerminalLink(slotId: string, target: { path: string; isDirectory: boolean; position?: { line: number; column?: number } }): void {
   if (target.isDirectory) {
-    void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(quickOpenFailedSituation(r.message)) })
+    void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
     return
   }
-  void quickOpen.openFile(target.path, { side: false, root: paneCwdOf(slotId) ?? '', reference: slotId, ...(target.position ? { position: target.position } : {}) })
+  void openFile(fileOpenHost, target.path, { side: false, root: paneCwdOf(slotId) ?? '', reference: slotId, ...(target.position ? { position: target.position } : {}) })
 }
 
 // ---------- opening a file ----------
-// Ctrl+P, a terminal link and the extensions' "abrir o arquivo-fonte" open a file through the openers extensions
-// register (TetherUi.openers; the note's: an .html as its preview, any other text file as a note).
+// Ctrl+P (the quick-open extension), a terminal link and the extensions' "abrir o arquivo-fonte" open a file through the
+// openers extensions register (TetherUi.openers; the note's: an .html as its preview, any other text file as a note).
 const fileOpeners: FileOpener[] = []
+const openedListeners = new Set<(path: string) => void>()
 
 function openWithOpeners(path: string, opts: OpenFileOptions): void {
   const opener = fileOpeners.find(o => o.canOpen(path, opts))
   if (opener) { opener.open(path, opts); return }
-  void askDialog(quickOpenFailedSituation(`Nenhuma extensão ligada abre este arquivo: ${path}. A extensão Nota abre arquivos de texto; veja em Extensões.`))
+  void askDialog(fileOpenFailedSituation(`Nenhuma extensão ligada abre este arquivo: ${path}. A extensão Nota abre arquivos de texto; veja em Extensões.`))
 }
 
-const quickOpen = new QuickOpen({
-  paneCwd: () => paneCwdOf(currentDesk().activePanel?.id),
+const fileOpenHost = {
   openText: openWithOpeners,
-  notify: message => { void askDialog(quickOpenFailedSituation(message)) },
-})
+  notify: (message: string) => { void askDialog(fileOpenFailedSituation(message)) },
+  opened: (path: string) => { for (const l of openedListeners) l(path) },
+}
+
+/** What the box shows for text without `>`: the quick-open extension's mode, when it is on. */
+let paletteMode: PaletteModeProvider | undefined
 
 /** Closes a pane with no slot behind it (a note, a preview, a screen): remembered for "reabrir", then removed. */
 function closeSlotless(id: string): void {
@@ -2361,7 +2365,7 @@ function setupUi(): void {
   $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
   commands.register(...appCommands(commandHost))
-  palette = new CommandPalette($<HTMLDialogElement>('palette'), commands, quickOpen)
+  palette = new CommandPalette($<HTMLDialogElement>('palette'), commands, () => paletteMode)
   setupMenu()
   $('btn-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
   paintKeyHints() // the tooltips and the menu hints that read the key table (painted again when the table changes)
@@ -2960,7 +2964,12 @@ function activateRendererExtensions(): void {
       },
       openers: {
         register: opener => { fileOpeners.push(opener); return add(toDisposable(() => { const i = fileOpeners.indexOf(opener); if (i !== -1) fileOpeners.splice(i, 1) })) },
-        open: (path, opts) => quickOpen.openFile(path, opts),
+        open: (path, opts) => openFile(fileOpenHost, path, opts),
+        onOpened: listener => { openedListeners.add(listener); return add(toDisposable(() => { openedListeners.delete(listener) })) },
+      },
+      palette: {
+        registerMode: provider => { paletteMode = provider; return add(toDisposable(() => { if (paletteMode === provider) paletteMode = undefined })) },
+        showMode: () => palette.show('default'),
       },
       chooser: {
         resolve: (itemId, fn) => {

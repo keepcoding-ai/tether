@@ -280,7 +280,6 @@ export const DEFAULT_KEYBINDINGS: readonly DefaultEntry[] = [
   { key: 'ctrl+shift+numpad0', command: 'font.reset' },
   // ----- app -----
   { key: 'ctrl+shift+p', command: 'palette.show' },
-  { key: 'ctrl+p', command: 'palette.quick-open' },
   { key: 'ctrl+k ctrl+s', command: 'keybindings.show' },            // "keyboard shortcuts"
   { key: 'ctrl+k ctrl+k', command: 'keybindings.record', where: ['window'] }, // in the shortcuts screen: record the selected row (in a terminal Ctrl+K twice sends ^K)
   { key: 'ctrl+k', command: PREFIX_COMMAND },                       // the prefix itself: its `where` says where two-key chords open (Terminal off = ^K passes)

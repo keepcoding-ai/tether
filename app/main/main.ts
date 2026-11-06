@@ -20,7 +20,7 @@ import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import { NoteWatchers } from './note-files.ts'
-import { registerQuickOpen } from './quick-open-main.ts'
+import { registerFileOpen } from './file-open-main.ts'
 import { registerTerminalLinks } from './terminal-links-main.ts'
 import { KEYBINDINGS_FILE, type KeybindingsFileState } from '../shared/keybindings.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
@@ -843,10 +843,10 @@ ipcMain.handle('keybindings:write', (_e, text: unknown): { ok: true } | { ok: fa
 const keybindingsWatchers = new NoteWatchers(() => win?.webContents.send('tether:keybindings-changed', keybindingsState()))
 try { mkdirSync(home, { recursive: true }); keybindingsWatchers.watch(keybindingsPath) } catch { /* no watcher: the screen still reads on open */ }
 
-// ---------- quick open ----------
-// Ctrl+P's file list and search (app/main/quick-open-main.ts), in a worker thread next to main.cjs.
-const quickOpen = registerQuickOpen(ipcMain, shell, __dirname)
-app.on('will-quit', () => quickOpen.dispose())
+// ---------- opening files ----------
+// What a path is and the system's program for a binary (app/main/file-open-main.ts); Ctrl+P's index is an extension.
+registerFileOpen(ipcMain, shell)
+app.on('will-quit', () => extensionHost.store.dispose())
 // Ctrl+click on a path in a terminal: is the candidate a file or folder? (app/main/terminal-links-main.ts)
 registerTerminalLinks(ipcMain)
 

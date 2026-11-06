@@ -78,7 +78,7 @@ import arrowDown from '@phosphor-icons/core/assets/regular/arrow-down.svg'
 import notePencil from '@phosphor-icons/core/assets/regular/note-pencil.svg'
 import floppyDisk from '@phosphor-icons/core/assets/regular/floppy-disk.svg'
 import fileText from '@phosphor-icons/core/assets/regular/file-text.svg'
-// Quick Open's file types (app/shared/quick-open.ts fileIcon).
+// The file types of the file lists (app/shared/quick-open.ts fileIcon).
 import fileIcon from '@phosphor-icons/core/assets/regular/file.svg'
 import fileTsIcon from '@phosphor-icons/core/assets/regular/file-ts.svg'
 import fileTsxIcon from '@phosphor-icons/core/assets/regular/file-tsx.svg'

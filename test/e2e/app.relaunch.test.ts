@@ -25,7 +25,7 @@ type Hooks = {
   panelIds(): string[]
   text(id: string): string
   connection(): { connected: boolean; pid?: number } | undefined
-  palette(): { open: boolean; mode?: 'commands' | 'quick-open'; shown: string[]; input: string }
+  palette(): { open: boolean; mode?: 'commands' | 'default'; shown: string[]; input: string }
 }
 declare const window: { __tether: Hooks }
 declare const document: { querySelectorAll(selector: string): { length: number }; visibilityState: string; hasFocus(): boolean }

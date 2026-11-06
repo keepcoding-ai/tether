@@ -5,7 +5,7 @@
 // tooltip); the hand pointer shows only while Ctrl (Cmd on macOS) is down, and only a click with it follows the link. A
 // click without it does nothing here (the web links of @xterm/addon-web-links are another provider and are untouched).
 import type { IBufferRange, ILink, ILinkDecorations, ILinkProvider, Terminal } from '@xterm/xterm'
-import type { LineColumn } from '../shared/quick-open.ts'
+import type { LineColumn } from '../shared/file-open.ts'
 import { type DetectedLink, provideLocalLinks } from '../shared/vscode-terminal-link-detector.ts'
 
 export interface TerminalLinkTarget {

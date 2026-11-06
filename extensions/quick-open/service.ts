@@ -1,29 +1,15 @@
-// Quick Open (Ctrl+P), main-process side: the IPC the renderer calls, over the index worker
-// (app/main/file-index-worker.ts). Searches are coalesced: a request replaces the one in flight, which resolves with
-// null at once (the box already shows a newer query); the worker drops the replaced work. A root without a pane is
-// the person's notes folder. Every failure (the worker that does not load or dies, an error in it) answers the
-// search with the reason, which the box shows: never a reply that silently stays away. Opening a binary or too large file hands it to the system's program, except what
-// would run (app/main/file-index.ts inspectFile).
-import type { IpcMain, Shell } from 'electron'
-import { openSync, readSync, closeSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+// Quick Open (Ctrl+P), main-process side: the search over the index worker (app/main/file-index-worker.ts), served on the
+// bus `ext:quick-open:*` (extensions/quick-open/main.ts). Searches are coalesced: a request replaces the one in flight,
+// which resolves with null at once (the box already shows a newer query); the worker drops the replaced work. A root
+// without a pane is the person's notes folder. Every failure (the worker that does not load or dies, an error in it)
+// answers the search with the reason, which the box shows: never a reply that silently stays away. Opening files is the
+// core's (app/main/file-open-main.ts).
+import { statSync } from 'node:fs'
 import { Worker } from 'node:worker_threads'
-import { failedResult, type QuickOpenResult, type QuickOpenTarget } from '../shared/quick-open.ts'
-import { inspectFile, MAX_RESULTS } from './file-index.ts'
-import type { WorkerRequest } from './file-index-worker.ts'
-import { userNotesDir } from './note-files.ts'
-
-/** How many bytes decide text vs binary (VS Code reads 512 for its NUL check; a little more costs nothing). */
-const HEAD_BYTES = 4096
-
-function readHead(path: string): Buffer {
-  const fd = openSync(path, 'r')
-  try {
-    const buf = Buffer.alloc(HEAD_BYTES)
-    const n = readSync(fd, buf, 0, HEAD_BYTES, 0)
-    return buf.subarray(0, n)
-  } finally { closeSync(fd) }
-}
+import { failedResult, type QuickOpenResult } from '../../app/shared/quick-open.ts'
+import { MAX_RESULTS } from '../../app/main/file-index.ts'
+import type { WorkerRequest } from '../../app/main/file-index-worker.ts'
+import { userNotesDir } from '../../app/main/note-files.ts'
 
 function isDir(p: string): boolean {
   try { return statSync(p).isDirectory() } catch { return false }
@@ -123,27 +109,4 @@ export class QuickOpenService {
     this.worker = undefined
     void w?.terminate()
   }
-}
-
-/** Wires the IPC: `quickopen:search`, `quickopen:refresh`, `quickopen:end`, `quickopen:inspect`, `quickopen:open-external`. */
-export function registerQuickOpen(ipcMain: IpcMain, shell: Shell, distDir: string): QuickOpenService {
-  const service = new QuickOpenService(join(distDir, 'file-index-worker.cjs'), join(distDir, '..', '..'))
-  const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 200) : [])
-  ipcMain.handle('quickopen:search', (_e, paneCwd: unknown, query: unknown, recent: unknown) =>
-    service.search(paneCwd, typeof query === 'string' ? query : '', strings(recent)))
-  ipcMain.on('quickopen:refresh', (_e, paneCwd: unknown) => service.refresh(paneCwd))
-  ipcMain.on('quickopen:end', () => service.end())
-  ipcMain.handle('quickopen:inspect', (_e, path: unknown): QuickOpenTarget =>
-    typeof path === 'string' && path.trim() !== '' ? inspectFile(path, readHead) : { kind: 'missing' })
-  ipcMain.handle('quickopen:open-external', async (_e, path: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
-    if (typeof path !== 'string' || path.trim() === '') return { ok: false, message: 'Caminho inválido.' }
-    const target = inspectFile(path, readHead)
-    if (target.kind === 'missing') return { ok: false, message: 'O arquivo não existe mais.' }
-    if (target.kind === 'folder') return { ok: false, message: 'O caminho é uma pasta.' }
-    if (target.kind === 'text') return { ok: false, message: 'Arquivo de texto: abre no editor do tether.' }
-    if (target.runnable) return { ok: false, message: 'Este tipo de arquivo é executável: o tether não o abre.' }
-    const err = await shell.openPath(path)
-    return err ? { ok: false, message: err } : { ok: true }
-  })
-  return service
 }

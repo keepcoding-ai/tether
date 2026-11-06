@@ -1,43 +1,27 @@
-// Quick Open (Ctrl+P): the palette's box without `>`. The files under the focused pane's opening folder (main
-// lists and ranks them with VS Code's scorer: app/main/file-index.ts), the recently opened ones on top, as VS
-// Code shows "recently opened" above "file results". `file:42` / `file:42:7` opens at the line and column.
-// Enter opens in the focused pane's tab group (a tab already showing the file is focused, not duplicated),
-// Ctrl+Enter beside it. A text file opens in a note tab (Monaco, language by extension); a binary or a file
-// above 5 MB goes to the system's program (main refuses anything that would run).
-// The history of opened files lives in the renderer's localStorage (a UI convenience, like the palette's
-// recents; under TETHER_HOME/electron), one list for every root: each root shows the entries under it.
-import { icon, ICON_NAMES, type IconName } from './icons.ts'
-import type { DialogSpec } from '../shared/dialog.ts'
-import { isHtmlPath } from '../shared/preview.ts'
-import { rangeRuns } from './word-filter.ts'
-import { failedResult, fileIcon, type LineColumn, listFailureText, parseLineSuffix, pushHistory, type QuickOpenItem, type QuickOpenResult, readHistory } from '../shared/quick-open.ts'
+// Quick Open (Ctrl+P), the renderer side: the palette's box without `>`. The files under the focused pane's opening
+// folder (main lists and ranks them with VS Code's scorer: app/main/file-index.ts), the recently opened ones on top, as
+// VS Code shows "recently opened" above "file results". `file:42` / `file:42:7` opens at the line and column.
+// Enter opens in the focused pane's tab group (a tab already showing the file is focused, not duplicated), Ctrl+Enter
+// beside it; what a file opens as is the core's (app/renderer/file-open.ts) and the openers' (the note's).
+// The history of opened files lives in the renderer's localStorage (a UI convenience, like the palette's recents; under
+// TETHER_HOME/electron), one list for every root: each root shows the entries under it.
+import { icon, ICON_NAMES, type IconName } from '../../app/renderer/icons.ts'
+import type { OpenFileOptions } from '../../app/renderer/file-open.ts'
+import { rangeRuns } from '../../app/renderer/word-filter.ts'
+import { failedResult, fileIcon, type LineColumn, listFailureText, parseLineSuffix, pushHistory, type QuickOpenItem, type QuickOpenResult, readHistory } from '../../app/shared/quick-open.ts'
 
 const HISTORY_KEY = 'tether.quickOpen.history'
 const ICON_SET = new Set<string>(ICON_NAMES)
-/** While main is still reading the session's first list, the box asks again this often. */
-export const PENDING_POLL_MS = 250
 
 export interface QuickOpenHost {
   /** The focused pane's opening folder (a terminal's cwd, a note's folder, an empty pane's suggestion); undefined without a pane. */
   paneCwd(): string | undefined
-  /** Opens a text file in a note tab: in the focused pane's group, or beside it (`side`); an open tab of the file is focused instead. */
-  openText(path: string, opts: OpenFileOptions): void
-  /** An .html file opens as its rendered preview (a running page), in the same places a text file would open. */
-  openHtml?(path: string, opts: OpenFileOptions): void
-  /** Something to say to the person (a file that could not be opened). */
-  notify(message: string): void
-}
-
-/** Where and how a file opens (shared by Quick Open and a Ctrl+click on a path in a terminal). */
-export interface OpenFileOptions {
-  side: boolean
-  position?: LineColumn
-  /** The folder the file was reached from: the note remembers it as the root of its next Ctrl+P. */
-  root: string
-  /** The pane whose tab group receives the tab (default: the focused pane). */
-  reference?: string
-  /** A web page opens as its source in the editor instead of its preview ("Ver código"). */
-  source?: boolean
+  /** The main side of the extension (extensions/quick-open/ipc.ts). */
+  search(paneCwd: string | undefined, query: string, recent: string[]): Promise<QuickOpenResult | null>
+  refresh(paneCwd: string | undefined): void
+  end(): void
+  /** Opens a file the way the core does (inspect, an opener, the system's program). */
+  openFile(path: string, opts: OpenFileOptions): Promise<void>
 }
 
 export interface QuickOpenSearch {
@@ -70,12 +54,12 @@ export class QuickOpen {
   /** The box opened in this mode: main starts a search session (lists the root now). */
   begin(): void {
     // Best effort: whatever fails here fails the search too, which says why in the box.
-    try { window.tether.quickOpenRefresh(this.host.paneCwd()) } catch (err) { console.error('quick open:', err) }
+    try { this.host.refresh(this.host.paneCwd()) } catch (err) { console.error('quick open:', err) }
   }
 
   /** The box closed: main drops the session's list and cache. */
   end(): void {
-    try { window.tether.quickOpenEnd() } catch (err) { console.error('quick open:', err) }
+    try { this.host.end() } catch (err) { console.error('quick open:', err) }
   }
 
   /** Searches; null when a newer search replaced this one (the box shows that one). A failure comes back as a result with `error`. */
@@ -84,7 +68,7 @@ export class QuickOpen {
     const cwd = this.host.paneCwd()
     let result: QuickOpenResult | null
     try {
-      result = await window.tether.quickOpenSearch(cwd, query, this.history())
+      result = await this.host.search(cwd, query, this.history())
     } catch (err) {
       console.error('quick open:', err)
       result = failedResult(cwd ?? '', err instanceof Error ? err.message : String(err))
@@ -146,28 +130,7 @@ export class QuickOpen {
   /** Opens the file of a row. */
   async open(path: string, side: boolean): Promise<void> {
     const position = this.last?.position
-    await this.openFile(path, { side, root: this.last?.result.root ?? '', ...(position ? { position } : {}) })
-  }
-
-  /**
-   * Opens a file: text in a note tab (Monaco; a tab already showing it is focused and positioned), binary or above
-   * 5 MB with the system's program, never one that would run (main refuses it); what cannot be opened is said.
-   */
-  async openFile(path: string, opts: OpenFileOptions): Promise<void> {
-    const target = await window.tether.quickOpenInspect(path)
-    if (target.kind === 'text') {
-      this.remember(path)
-      // A web page opens rendered, unless the source was asked for (or a line, which only the editor can show).
-      if (this.host.openHtml && isHtmlPath(path) && !opts.source && !opts.position) this.host.openHtml(path, opts)
-      else this.host.openText(path, opts)
-      return
-    }
-    if (target.kind === 'missing') { this.host.notify(`O arquivo não existe mais: ${path}`); return }
-    if (target.kind === 'folder') { this.host.notify(`É uma pasta: ${path}`); return }
-    const r = await window.tether.quickOpenExternal(path)
-    if (r.ok) { this.remember(path); return }
-    const why = target.kind === 'large' ? `Arquivo grande demais para o editor (${(target.size / 1024 / 1024).toFixed(1)} MB). ` : ''
-    this.host.notify(`${why}${r.message}`)
+    await this.host.openFile(path, { side, root: this.last?.result.root ?? '', ...(position ? { position } : {}) })
   }
 }
 
@@ -175,18 +138,5 @@ function appendRuns(host: HTMLElement, text: string, ranges: readonly { start: n
   for (const run of rangeRuns(text, ranges)) {
     if (run.hit) { const b = document.createElement('b'); b.textContent = run.text; host.append(b) }
     else host.append(document.createTextNode(run.text))
-  }
-}
-
-/** A file Quick Open could not open (gone, a folder, too large or binary and refused by the system). */
-export function quickOpenFailedSituation(message: string): DialogSpec {
-  return {
-    situation: 'quick-open-failed',
-    tone: 'danger',
-    icon: 'x-circle',
-    title: 'Não foi possível abrir o arquivo',
-    message,
-    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Nada foi aberto.', tone: 'neutral' }],
-    escChoice: 'ok',
   }
 }

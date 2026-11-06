@@ -176,7 +176,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'font.reset', title: 'Fonte do terminal no tamanho padrão', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('reset') },
     // ----- app -----
     { id: 'palette.show', title: 'Paleta de comandos', group: GROUP.app, icon: 'magnifying-glass', run: () => host.showPalette('commands') },
-    { id: 'palette.quick-open', title: 'Ir para…', group: GROUP.app, icon: 'magnifying-glass', run: () => host.showPalette('quick-open') },
+    // (Ctrl+P, 'palette.quick-open', comes from the quick-open extension: extensions/quick-open/manifest.ts)
     { id: 'keybindings.show', title: 'Atalhos de teclado', group: GROUP.app, icon: 'keyboard', run: () => host.showKeybindings() },
     { id: 'keybindings.record', title: 'Atalhos de teclado: gravar o atalho da linha selecionada', group: GROUP.app, icon: 'keyboard', when: ctx => !!ctx.keybindings, run: () => host.recordKeybinding() },
     { id: 'extensions.show', title: 'Extensões', group: GROUP.app, icon: 'puzzle-piece', run: () => host.showExtensions() },

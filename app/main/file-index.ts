@@ -16,14 +16,14 @@
 // comparator; a query that extends an earlier one of the session is filtered from that one's candidates, and only
 // the best MAX_RESULTS are selected and sorted (rawSearchService's cache and top-N).
 import { type ChildProcess, spawn } from 'node:child_process'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { type FuzzyScorerCache, type IItemAccessor, type IMatch, prepareQuery, scoreItemFuzzy } from '../shared/vscode-fuzzy-scorer.ts'
 import { SearchCache } from './vscode-raw-search.ts'
 import { type FileEntry, fileEntry, relAccessor } from './file-entry.ts'
 import { ShardPool, STALE } from './file-index-shard.ts'
-import type { ListSource, QuickOpenItem, QuickOpenResult, QuickOpenTarget } from '../shared/quick-open.ts'
+import type { ListSource, QuickOpenItem, QuickOpenResult } from '../shared/quick-open.ts'
 
 export type { ListSource, QuickOpenItem, QuickOpenResult }
 
@@ -437,36 +437,5 @@ export class FileIndex {
   }
 }
 
-// ---------- opening ----------
-
-/** Above this a file is not opened in the editor (the person is offered the system's program). */
-export const MAX_EDITOR_BYTES = 5 * 1024 * 1024
-
-/** Extensions never handed to the system's program from here: opening them would run them. */
-const EXECUTABLE = new Set(['.exe', '.com', '.bat', '.cmd', '.msi', '.msix', '.scr', '.pif', '.lnk', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh', '.ps1', '.psm1', '.reg', '.cpl', '.hta', '.jar', '.app', '.command', '.sh'])
-
-/** Binary by extension, before reading anything (images, archives, documents, media, compiled code). */
-const BINARY_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.icns', '.webp', '.tif', '.tiff', '.psd', '.pdf', '.zip', '.7z', '.rar', '.gz', '.tgz', '.bz2', '.xz', '.tar', '.exe', '.dll', '.so', '.dylib', '.node', '.bin', '.dat', '.class', '.jar', '.pyc', '.wasm', '.mp3', '.mp4', '.wav', '.ogg', '.flac', '.mov', '.avi', '.mkv', '.webm', '.ttf', '.otf', '.woff', '.woff2', '.eot', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.msi', '.sqlite', '.db'])
-
-function extOf(path: string): string {
-  const name = basename(path).toLowerCase()
-  const i = name.lastIndexOf('.')
-  return i <= 0 ? '' : name.slice(i)
-}
-
-/** What opening `path` means: the editor for text, the system's program for binary or too large (never for what would run). */
-export function inspectFile(path: string, readHead: (path: string) => Buffer): QuickOpenTarget {
-  let st
-  try { st = statSync(path) } catch { return { kind: 'missing' } }
-  if (st.isDirectory()) return { kind: 'folder' }
-  const ext = extOf(path)
-  const runnable = EXECUTABLE.has(ext)
-  if (BINARY_EXT.has(ext)) return { kind: 'binary', size: st.size, runnable }
-  if (st.size > MAX_EDITOR_BYTES) return { kind: 'large', size: st.size, runnable }
-  // VS Code's buffer check: a NUL in the first bytes means binary (UTF-16 files start with a BOM and are let through).
-  let head: Buffer
-  try { head = readHead(path) } catch { return { kind: 'missing' } }
-  const utf16 = head.length >= 2 && ((head[0] === 0xff && head[1] === 0xfe) || (head[0] === 0xfe && head[1] === 0xff))
-  if (!utf16 && head.includes(0)) return { kind: 'binary', size: st.size, runnable }
-  return { kind: 'text', size: st.size }
-}
+// What opening a path means lives in the core (app/main/file-inspect.ts); re-exported for the index's tests.
+export { inspectFile, MAX_EDITOR_BYTES } from './file-inspect.ts'

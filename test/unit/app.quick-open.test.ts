@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, sep } from 'node:path'
 import { compareItemsByFuzzyScore, type FuzzyScore, type IItemAccessor, prepareQuery, scoreFuzzy, scoreItemFuzzy } from '../../app/shared/vscode-fuzzy-scorer.ts'
 import { failedResult, fileIcon, listFailureText, parseLineSuffix, pushHistory, readHistory } from '../../app/shared/quick-open.ts'
-import { QuickOpenService } from '../../app/main/quick-open-main.ts'
+import { QuickOpenService } from '../../extensions/quick-open/service.ts'
 import { SearchCache, top } from '../../app/main/vscode-raw-search.ts'
 import { Shard, slices } from '../../app/main/file-index-shard.ts'
 import { type FileEntry, FileIndex, findRipgrep, inspectFile, listFiles, MAX_EDITOR_BYTES, rankFiles, fileEntry, walkFiles } from '../../app/main/file-index.ts'
@@ -323,8 +323,8 @@ test('quick open failures reach the box: a worker that does not load or dies ans
     exits.dispose()
   } finally { rmSync(dir, { recursive: true, force: true }) }
 
-  assert.match(listFailureText("Error invoking remote method 'quickopen:search': Error: No handler registered for 'quickopen:search'"), /versão anterior.*Reiniciar o app/)
-  assert.equal(listFailureText("Error invoking remote method 'quickopen:search': Error: disco cheio"), 'disco cheio')
+  assert.match(listFailureText("Error invoking remote method 'ext:quick-open:search': Error: No handler registered for 'ext:quick-open:search'"), /versão anterior.*Reiniciar o app/)
+  assert.equal(listFailureText("Error invoking remote method 'ext:quick-open:search': Error: disco cheio"), 'disco cheio')
   assert.deepEqual({ ...failedResult('C:\\r', 'x'), searchMs: 0 }, { root: 'C:\\r', recent: [], files: [], total: 0, source: undefined, truncated: false, pending: false, listMs: undefined, searchMs: 0, error: 'x' })
 })
 
