@@ -2,7 +2,7 @@
 // CLAUDE* stripped and --model haiku set in case a Claude is ever launched):
 //   1. two shell panes side by side; the window is killed and layout.json is rewritten as a v1 file (the
 //      frame's dockview JSON alone, as the app wrote it before phase B): the relaunch migrates it (same panes,
-//      same arrangement, same shell PIDs), keeps layout.v1.bak byte for byte, and writes v2 back;
+//      same arrangement, same shell PIDs), keeps layout.v1.bak byte for byte, and writes the current version (v3) back;
 //   2. Ctrl+Alt+Shift+↓ duplicates the focused pane at the frame's bottom edge, spanning the frame's width;
 //   3. Alt+Shift+→ duplicates into a new frame at the desk's right edge;
 //   4. the "+" near the desk's edge (click = duplicate into a new frame) and near a frame's edge (Shift+click =
@@ -177,7 +177,7 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     const pids = await waitRunning(page, ids2)
     await sleep(800) // debounced save
     const saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutV2
-    assert.equal(saved.v, 2, 'the app writes v2')
+    assert.equal(saved.v, 3, 'the app writes the current version (v3 since F10a)')
     assert.deepEqual(await hooks.frameIds(page), ['frame-1'])
     const frameView = saved.desks[0]!.frames.views['frame-1']!
     assert.deepEqual(Object.keys(frameView.panels).sort(), [a, b].sort())
@@ -210,7 +210,7 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     assert.equal(await hooks.frameOf(page, c), 'frame-1', 'same frame')
     await sleep(800) // debounced save of the person's first change
     const rewritten = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutV2
-    assert.equal(rewritten.v, 2, 'the first change rewrites layout.json as v2')
+    assert.equal(rewritten.v, 3, 'the first change rewrites layout.json in the current version')
     assert.deepEqual(Object.keys(rewritten.desks[0]!.frames.views['frame-1']!.panels).sort(), [a, b, c].sort())
     const layoutC = await hooks.frameLayout(page, 'frame-1')
     const topLevel = (layoutC.grid.root.data as Node[])
