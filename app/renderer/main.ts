@@ -32,6 +32,7 @@ import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.t
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
+import { FramesPad } from './frames-pad.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText, type ClosedGroups } from './closed-slots.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
@@ -46,7 +47,7 @@ import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
 import { emptyLayout as emptyPaneLayout, extensionsLayout, keybindingsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
-import type { ChoiceResolution, ContextMenuEntry, FileOpener, PadType, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -99,6 +100,8 @@ let drawer: Drawer
 const padRegistry = new PadRegistry()
 const padTypes = new Map<string, PadType>()
 let sidebars: SideBars | undefined
+/** The live frames of the `frames: true` pads (one per global pad, one per desk for a desk pad): places panes live, like the desks and the drawer. */
+const framePads = new Set<FramesPad>()
 /** Open/closed and the pane that gets the keyboard back (app/renderer/drawer-rules.ts). Never persisted: the app starts with the drawer closed. */
 let drawerState: DrawerState = CLOSED
 /** The element that had the keyboard when the drawer opened, for when it was not a pane. */
@@ -311,7 +314,7 @@ async function onAppearance(a: TerminalAppearance): Promise<void> {
 }
 
 /** The host of one desk's frames (or the drawer's): the same dockview options everywhere; a "+" acts in its own desk. */
-function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
+function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
   return {
     dockviewOptions: () => ({
       defaultTabComponent: TAB,
@@ -349,7 +352,7 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
     // Only changes the person can make are saved: a hint or title the app updates is not one (isPersonChange).
     onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
     onPanelsChange: () => { refreshClosedMenu(); renderStrip() },
-    onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : undefined),
+    onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
     onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched() },
   }
 }
@@ -443,8 +446,9 @@ function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layou
 
 /** Adds any pane (slot, note, empty) relative to `reference` at `target`'s level, in its desk or the drawer; `into` forces the drawer. */
 function addPaneOptions(options: AddPanelOptions, target?: Target, reference?: string, into?: 'drawer'): IDockviewPanel {
+  const pad = into === 'drawer' ? undefined : reference ? framePadOf(reference) : undefined
   const useDrawer = into === 'drawer' || (reference ? inDrawer(reference) : drawer.isOpen)
-  const panel = (useDrawer ? drawer.desk : desks).addPanel(options, target, reference)
+  const panel = (pad ? pad.desk : useDrawer ? drawer.desk : desks).addPanel(options, target, reference)
   panel.api.setActive()
   return panel
 }
@@ -586,7 +590,9 @@ function isLiveSlot(s: SlotState): boolean {
  */
 async function closeDesk(id: string): Promise<void> {
   if (desks.desks.length <= 1) return
-  const panes = desks.desk(id)?.panels ?? []
+  // The desk's pads go with it: their panes are the desk's panes for this question (same dialog, same answers).
+  const deskPads = [...framePads].filter(p => p.deskId === id)
+  const panes = [...(desks.desk(id)?.panels ?? []), ...deskPads.flatMap(p => p.desk.panels)]
   if (panes.length > 0) {
     const neighbour = neighbourDesk(desks.desks, id)!
     const states = panes.map(p => slots.get(p.id)).filter((s): s is SlotState => s !== undefined)
@@ -595,6 +601,13 @@ async function closeDesk(id: string): Promise<void> {
       // Frame by frame, so the split layouts travel along; whatever is left goes pane by pane.
       for (const frameId of [...(desks.desk(id)?.frameIds ?? [])]) desks.moveFrame(id, frameId, neighbour)
       for (const p of [...(desks.desk(id)?.panels ?? [])]) desks.movePanel(p.id, neighbour)
+      // A desk pad's frames go into the neighbour's same pad (created for it if it never showed).
+      for (const pad of deskPads) {
+        const target = sidebars?.viewOf(pad.padId, neighbour)
+        if (!(target instanceof FramesPad)) continue
+        for (const frameId of [...pad.desk.frameIds]) if (pad.desk.frames.get(frameId)?.dock.panels.length) transferFrame(pad.desk, target.desk, frameId)
+        for (const p of [...pad.desk.panels]) transferPanel(pad.desk, target.desk, p.id, paneTypes.optionsOf(p))
+      }
     } else if (answer.choice === 'stop') {
       await Promise.all(states.filter(isLiveSlot).map(s => window.tether.request({ t: 'stop', slotId: s.slotId })))
     } else return
@@ -635,13 +648,36 @@ function currentDesk(): Desk {
   return drawer?.isOpen ? drawer.desk : desks.active
 }
 
-/** A pane lives in one place: a desk or the drawer. */
+/** A pane lives in one place: a desk, the drawer or a pad's frames. */
 function findPanel(slotId: string): IDockviewPanel | undefined {
-  return desks.getPanel(slotId) ?? drawer?.desk.getPanel(slotId) // the drawer does not exist yet while the first desk is built
+  return desks.getPanel(slotId) ?? drawer?.desk.getPanel(slotId) ?? framePadOf(slotId)?.desk.getPanel(slotId) // the drawer does not exist yet while the first desk is built
 }
 
 function allPanels(): IDockviewPanel[] {
-  return [...desks.panels, ...(drawer?.desk.panels ?? [])]
+  return [...desks.panels, ...(drawer?.desk.panels ?? []), ...[...framePads].flatMap(p => p.desk.panels)]
+}
+
+/** The pad whose frames hold a pane. */
+function framePadOf(slotId: string): FramesPad | undefined {
+  for (const p of framePads) if (p.desk.getPanel(slotId)) return p
+  return undefined
+}
+
+/** The live frames of a pad (of a desk, for a desk pad). */
+function framePadFor(padId: string, deskId: string | undefined): FramesPad | undefined {
+  for (const p of framePads) if (p.padId === padId && p.deskId === deskId) return p
+  return undefined
+}
+
+/** The view of a `frames: true` pad: a Desk hosted like the drawer's, seeded with an empty pane when it has no state. */
+function newFramesPad(host: PadHost): FramesPad {
+  return new FramesPad(host, {
+    deskHost: pad => deskHost(pad),
+    seed: pad => { pad.desk.addPanel(emptyPanelOptions(paneCwdOf(currentDesk().activePanel?.id))) },
+    focusPane: id => focusPane(id),
+    onCreate: pad => { framePads.add(pad) },
+    onDispose: pad => { framePads.delete(pad); refreshClosedMenu() },
+  }, DOCK_THEME)
 }
 
 function inDrawer(slotId: string): boolean {
@@ -649,7 +685,9 @@ function inDrawer(slotId: string): boolean {
 }
 
 function removeAnyPanel(panel: IDockviewPanel): void {
-  if (drawer?.desk.getPanel(panel.id)) drawer.desk.removePanel(panel)
+  const pad = framePadOf(panel.id)
+  if (pad) pad.desk.removePanel(panel)
+  else if (drawer?.desk.getPanel(panel.id)) drawer.desk.removePanel(panel)
   else desks.removePanel(panel)
 }
 
@@ -1120,7 +1158,7 @@ async function restoreLayout(): Promise<void> {
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
-    if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)) }
+    if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)); sidebars?.load(layout.sidebars, layout.desks) }
     // A v1 file is copied to layout.v1.bak now; layout.json itself stays v1 until the person changes something.
     // A v2 file is copied to layout.v2.bak the same way: an older build reads only v2.
     if (result?.migrated) await window.tether.backupLayout()
@@ -1344,6 +1382,16 @@ function openSlot(slotId: string): void {
     return
   }
   if (drawer.isOpen) setDrawerOpen(false)
+  // A pane of a pad: its desk (for a desk pad) comes forward and the pad opens on its side bar.
+  const pad = framePadOf(slotId)
+  if (pad) {
+    if (pad.deskId && pad.deskId !== desks.activeDeskId) desks.switchTo(pad.deskId)
+    sidebars?.open(pad.padId, false)
+    if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+    pad.desk.getPanel(slotId)?.api.setActive()
+    requestAnimationFrame(() => focusPane(slotId))
+    return
+  }
   const deskId = desks.deskOf(slotId)
   if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
   const panel = desks.getPanel(slotId) ?? addPanel(s)
@@ -1834,7 +1882,15 @@ async function duplicateActive(target: Target): Promise<void> {
  */
 function onEdge(target: Target, op: 'add' | 'menu', frameId: string | undefined, at: { x: number; y: number }, scope: Desk = currentDesk()): void {
   const reference = (frameId ? scope.frames.get(frameId)?.dock.activePanel?.id : undefined) ?? scope.activePanel?.id
-  const add = (): void => { addEmptyPanel(target, reference, paneCwdOf(reference), 'add') }
+  const add = (): void => {
+    // A pad's frames with no pane left: the new pane goes into them, not where the user was.
+    if (!reference && scope !== currentDesk() && [...framePads].some(p => p.desk === scope)) {
+      const panel = scope.addPanel(emptyPanelOptions(paneCwdOf(currentDesk().activePanel?.id), 'add'), target)
+      panel.api.setActive(); scheduleSave(); requestAnimationFrame(() => focusPane(panel.id))
+      return
+    }
+    addEmptyPanel(target, reference, paneCwdOf(reference), 'add')
+  }
   if (op === 'add') { add(); return }
   const slot = reference ? slots.get(reference) : undefined
   const items: MenuEntry[] = [{ icon: 'plus', label: target.level === 'desk' ? 'Novo quadro aqui' : 'Novo painel aqui', run: add }]
@@ -2330,6 +2386,10 @@ declare global {
       sidebars(): ReturnType<SideBars['snapshot']> | undefined
       toggleSideBar(side: 'left' | 'right'): void
       togglePad(id: string): void
+      /** The live frames of the pads (F10b): which pad, which desk, its panes, shown or not. */
+      padFrames(): { pad: string; desk?: string; panes: string[]; shown: boolean }[]
+      /** Opens a slot as a pane in the shown frames of a pad (the active desk's, for a desk pad). */
+      openSlotInPad(slotId: string, padId: string): void
       movePad(id: string): void
       restorePad(id: string): void
       /** A frame's dockview JSON (the active frame when no id is given). */
@@ -2468,6 +2528,15 @@ function setupTestHooks(): void {
     sidebars: () => sidebars?.snapshot(),
     toggleSideBar: side => sidebars?.toggleSide(side),
     togglePad: id => sidebars?.toggle(id),
+    padFrames: () => [...framePads].map(p => ({ pad: p.padId, ...(p.deskId ? { desk: p.deskId } : {}), panes: p.desk.panels.map(x => x.id), shown: p.isVisible })),
+    openSlotInPad: (slotId, padId) => {
+      const s = slots.get(slotId)
+      const pad = sidebars?.viewOf(padId, desks.activeDeskId)
+      if (!s || !(pad instanceof FramesPad) || findPanel(slotId)) return
+      const ref = pad.desk.activePanel?.id
+      const panel = addPanel(s, undefined, ref)
+      panel.api.setActive()
+    },
     movePad: id => sidebars?.move(id),
     restorePad: id => sidebars?.restore(id),
     frameLayout: frameId => (frameId ? desks.frames.get(frameId) : desks.activeFrame)?.dock.toJSON(),
@@ -2836,6 +2905,10 @@ function activateRendererExtensions(): void {
           return add(toDisposable(() => { if (padTypes.get(type.id) === type) padTypes.delete(type.id) }))
         },
         open: padId => sidebars?.open(padId),
+        frames: host => {
+          if (!manifest.contributes?.pads?.some(p => p.id === host.padId && p.frames)) throw new Error(`prancheta sem quadros no manifesto de ${id}: ${host.padId}`)
+          return newFramesPad(host)
+        },
       },
       keybindings: {
         fixedBindings: provider => { fixedBindingProviders.push(provider); return add(toDisposable(() => { const i = fixedBindingProviders.indexOf(provider); if (i !== -1) fixedBindingProviders.splice(i, 1) })) },

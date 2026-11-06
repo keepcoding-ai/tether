@@ -143,6 +143,11 @@ export interface TetherUi {
     register(type: PadType): IDisposable
     /** Opens a pad on its side bar (a no-op when it is shown). */
     open(id: string): void
+    /**
+     * The view of a pad declared `frames: true`: a full Desk of frames (tabs, empty panes, "+", splits, any pane type)
+     * that the core knows as a place panes live (found, moved, pruned, listed, focused like a desk's).
+     */
+    frames(host: PadHost): PadView
   }
   /** Rows the shortcuts screen lists but cannot change (an editor's own keys). */
   keybindings: { fixedBindings(provider: () => FixedBinding[]): IDisposable }

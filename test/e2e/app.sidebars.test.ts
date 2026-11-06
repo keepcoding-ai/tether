@@ -4,7 +4,10 @@
 //      change the person makes writes v3 with the side bars and the desks untouched;
 //   2. with no extension declaring a pad, neither side bar shows (no strip), the desks take the whole width, and the
 //      side bar commands are unavailable (their keys pass: Ctrl+B in the window does nothing).
-// The pads themselves (icons, toggles, moving, widths) are proven with the frame pads (F10b).
+//      (the frame pads extension is turned off for this one);
+//   3. the frame pads (F10b): each opens and closes by its icon and by its command, one open per side, Ctrl+Alt+B toggles
+//      the right bar; a pad moved to the left and restored; the desk pad's content swaps with the desk, the global pad is
+//      the same frame in every desk; a terminal in a pad survives a relaunch with the same PID; widths and open state too.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -33,7 +36,12 @@ type Hooks = {
   movePaneToDrawer(slotId: string): void
   duplicate(slotId: string, direction: string, level?: string): void
   frameIds(): string[]
-  sidebars(): { left: { strip: string[]; open?: string }; right: { strip: string[]; open?: string } } | undefined
+  sidebars(): { left: { strip: string[]; open?: string; width: number }; right: { strip: string[]; open?: string; width: number } } | undefined
+  padFrames(): { pad: string; desk?: string; panes: string[]; shown: boolean }[]
+  openSlotInPad(slotId: string, padId: string): void
+  togglePad(id: string): void
+  movePad(id: string): void
+  restorePad(id: string): void
   runCommand(id: string): Promise<string>
   renameDesk(id: string, name: string): void
 }
@@ -95,6 +103,8 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-sidebars-'))
+  // Part 2 is the window with no pad at all: the frame pads extension is off.
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -164,6 +174,118 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
     await sleep(200)
     assert.deepEqual(await page.evaluate(() => [document.querySelector('#sidebar-left')!.hidden, document.querySelector('#sidebar-right')!.hidden]), [true, true])
     await page.screenshot({ path: join(artifacts, 'sidebars-none.png') })
+  } finally {
+    if (app) await killElectron(app, root).catch(() => {})
+    for (const p of daemons) await killOwned(p, { tree: true })
+    for (let i = 0; i < 20 && daemons.some(p => pidAlive(p.pid)); i++) await sleep(500)
+    for (let i = 0; i < 5; i++) { try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) } }
+  }
+})
+
+/** A running shell slot, not opened anywhere yet. */
+async function bareShell(page: Page): Promise<string> {
+  const reply = await page.evaluate(cwd => window.tether.request({ t: 'create', kind: 'shell', cwd, start: true }), root)
+  assert.equal(reply.t, 'ok')
+  return reply.slot!.slotId
+}
+
+const DESK_PAD = 'frame-pads.desk'
+const GLOBAL_PAD = 'frame-pads.global'
+
+test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relaunch', { timeout: 300_000 }, async () => {
+  mkdirSync(artifacts, { recursive: true })
+  const home = mkdtempSync(join(tmpBase, 'tether-pads-'))
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  const bars = (page: Page) => page.evaluate(() => window.__tether.sidebars()!)
+  const frames = (page: Page) => page.evaluate(() => window.__tether.padFrames())
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home))
+    daemons.push(await claim((await page.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    const deskTerm = await shell(page)
+    const desk1 = await page.evaluate(() => window.__tether.activeDesk())
+    assert.deepEqual((await bars(page)).right.strip, [DESK_PAD, GLOBAL_PAD], 'both pads on the right strip')
+    assert.deepEqual((await bars(page)).left.strip, [])
+
+    // ---- by icon ----
+    await page.click(`#sidebar-right .sb-icon[data-pad="${DESK_PAD}"]`)
+    assert.equal((await bars(page)).right.open, DESK_PAD)
+    await page.waitForFunction(p => window.__tether.padFrames().some(f => f.pad === p && f.shown && f.panes.length === 1), DESK_PAD)
+    const padTerm = await bareShell(page)
+    await page.evaluate(([id, pad]) => window.__tether.openSlotInPad(id!, pad!), [padTerm, DESK_PAD])
+    await page.waitForFunction(id => window.__tether.padFrames().some(f => f.panes.includes(id)), padTerm)
+    await page.waitForFunction(id => typeof window.__tether.slots().find(s => s.slotId === id)?.pid === 'number', padTerm, { timeout: 20_000 })
+    const padPid = await pidOf(page, padTerm)
+    assert.ok((await frames(page)).find(f => f.pad === DESK_PAD && f.desk === desk1)!.panes.includes(padTerm))
+    await page.click(`#sidebar-right .sb-icon[data-pad="${GLOBAL_PAD}"]`)
+    assert.equal((await bars(page)).right.open, GLOBAL_PAD, 'one pad open per side: the global replaced the desk pad')
+    assert.equal((await frames(page)).find(f => f.pad === DESK_PAD)!.shown, false)
+    await page.click(`#sidebar-right .sb-icon[data-pad="${GLOBAL_PAD}"]`)
+    assert.equal((await bars(page)).right.open, undefined, 'the icon toggles')
+
+    // ---- by command and by Ctrl+Alt+B ----
+    assert.equal(await page.evaluate(id => window.__tether.runCommand(`pad.toggle.${id}`), DESK_PAD), 'ran')
+    assert.equal((await bars(page)).right.open, DESK_PAD)
+    assert.equal(await page.evaluate(id => window.__tether.runCommand(`pad.toggle.${id}`), GLOBAL_PAD), 'ran')
+    assert.equal((await bars(page)).right.open, GLOBAL_PAD)
+    assert.equal(await page.evaluate(id => window.__tether.runCommand(`pad.toggle.${id}`), GLOBAL_PAD), 'ran')
+    assert.equal((await bars(page)).right.open, undefined)
+    await page.locator('#btn-menu').focus()
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Control+Alt+b')
+    await page.waitForFunction(() => window.__tether.sidebars()!.right.open !== undefined)
+    await page.keyboard.press('Control+Alt+b')
+    await page.waitForFunction(() => window.__tether.sidebars()!.right.open === undefined)
+
+    // ---- move to the left and back ----
+    await page.evaluate(id => window.__tether.togglePad(id), GLOBAL_PAD)
+    await page.evaluate(id => window.__tether.movePad(id), GLOBAL_PAD)
+    let b = await bars(page)
+    assert.deepEqual([b.left.strip, b.right.strip, b.left.open], [[GLOBAL_PAD], [DESK_PAD], GLOBAL_PAD])
+    await page.evaluate(id => window.__tether.togglePad(id), DESK_PAD)
+    b = await bars(page)
+    assert.deepEqual([b.left.open, b.right.open], [GLOBAL_PAD, DESK_PAD], 'one open on each side')
+    await page.screenshot({ path: join(artifacts, 'pads-moved-left.png') })
+    await page.evaluate(id => window.__tether.restorePad(id), GLOBAL_PAD)
+    b = await bars(page)
+    assert.deepEqual([b.left.strip, b.right.strip], [[], [DESK_PAD, GLOBAL_PAD]], 'restored to the right')
+
+    // ---- desk swap and global identity ----
+    await page.evaluate(id => { if (window.__tether.sidebars()!.right.open !== id) window.__tether.togglePad(id) }, GLOBAL_PAD)
+    const globalFrames = (await frames(page)).filter(f => f.pad === GLOBAL_PAD)
+    assert.equal(globalFrames.length, 1, 'one global frame')
+    const desk2 = await page.evaluate(() => window.__tether.createDesk('after'))
+    await page.evaluate(id => window.__tether.switchDesk(id), desk2)
+    assert.deepEqual((await frames(page)).filter(f => f.pad === GLOBAL_PAD), globalFrames, 'the same global frame in desk 2, shown')
+    await page.evaluate(id => window.__tether.togglePad(id), DESK_PAD)
+    await page.waitForFunction(([p, d]) => window.__tether.padFrames().some(f => f.pad === p && f.desk === d && f.shown), [DESK_PAD, desk2])
+    const f2 = await frames(page)
+    assert.ok(!f2.find(f => f.pad === DESK_PAD && f.desk === desk2)!.panes.includes(padTerm), 'desk 2 has its own desk pad')
+    assert.equal(f2.find(f => f.pad === DESK_PAD && f.desk === desk1)!.shown, false, 'the desk pad of desk 1 is hidden')
+    await page.evaluate(id => window.__tether.switchDesk(id), desk1)
+    await page.waitForFunction(([p, d]) => window.__tether.padFrames().some(f => f.pad === p && f.desk === d && f.shown), [DESK_PAD, desk1])
+
+    // ---- relaunch: the pad terminal keeps its PID; widths and open state survive ----
+    const before = await bars(page)
+    for (let i = 0; i < 40; i++) {
+      const raw = existsSync(join(home, 'layout.json')) ? readFileSync(join(home, 'layout.json'), 'utf8') : '{}'
+      const saved = JSON.parse(raw) as { sidebars?: { right?: { open?: string } } }
+      if (saved.sidebars?.right?.open === DESK_PAD && raw.includes(padTerm)) break
+      await sleep(100)
+      assert.ok(i < 39, 'layout.json has the open desk pad and its terminal')
+    }
+    await killElectron(app, root)
+    ;({ app, page } = await launch(home))
+    await page.waitForFunction(id => window.__tether.padFrames().some(f => f.panes.includes(id)), padTerm, { timeout: 20_000 })
+    const after = await bars(page)
+    assert.deepEqual([after.right.open, after.right.width, after.left.width], [before.right.open, before.right.width, before.left.width])
+    await page.waitForFunction(id => typeof window.__tether.slots().find(s => s.slotId === id)?.pid === 'number', padTerm, { timeout: 20_000 })
+    assert.equal(await pidOf(page, padTerm), padPid, 'same PID after relaunch')
+    assert.ok(pidAlive(padPid))
+    assert.ok((await page.evaluate(() => window.__tether.panelIds())).includes(deskTerm))
+    assert.equal((await frames(page)).find(f => f.pad === DESK_PAD && f.desk === desk1)!.shown, true)
+    await page.screenshot({ path: join(artifacts, 'pads-desk-open.png') })
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const p of daemons) await killOwned(p, { tree: true })

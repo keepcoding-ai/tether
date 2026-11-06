@@ -137,6 +137,15 @@ export class SideBars {
 
   focus(padId: string): void { this.shownView(padId)?.focus() }
 
+  /** A pad's view (of a desk, for a desk pad), created if it never showed: where a closing desk's pad content goes. */
+  viewOf(padId: string, deskId: string | undefined): PadView | undefined {
+    const pad = this.pad(padId)
+    if (!pad) return undefined
+    const m = this.ensureView(pad, pad.scope === 'desk' ? deskId : undefined)
+    if (m) this.render()
+    return m?.view
+  }
+
   private pad(id: string): PadDescriptor | undefined { return this.host.pads().find(p => p.id === id) }
 
   private touch(id: string): void { this.mru = [id, ...this.mru.filter(x => x !== id)].slice(0, 16) }

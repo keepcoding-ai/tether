@@ -257,6 +257,17 @@ describe('the drawer field', () => {
     assert.equal(out.total, 4, 'the duplicate counts as lost: the caller rebuilds from the pruned layout')
   })
 
+  test('pad frames (F10b): their panes are listed and pruned; a pane lives in one place', () => {
+    const v3 = { ...file([{ ...deskWith(['a']), pads: { 'frame-pads.desk': drawerWith(['p', 'gone']), other: { any: 1 } } }], drawerWith(['x'])), v: 3 as const, sidebars: { ...emptyLayout().sidebars, pads: { 'frame-pads.global': drawerWith(['g', 'a']) } } }
+    assert.deepEqual(allPanelIds(v3).sort(), ['a', 'a', 'g', 'gone', 'p', 'x'])
+    const out = pruneLayoutV2(v3, new Set(['a', 'p', 'g', 'x']))
+    const desk = out.layout.desks[0]!.pads!
+    assert.deepEqual(Object.keys((desk['frame-pads.desk'] as DrawerLayout).frames.views['frame-1']!.panels), ['p'])
+    assert.deepEqual(desk.other, { any: 1 }, 'a pad state that is not frames is kept as is')
+    assert.deepEqual(Object.keys((out.layout.sidebars.pads['frame-pads.global'] as DrawerLayout).frames.views['frame-1']!.panels), ['g'], 'the desks keep a; the global pad drops its copy')
+    assert.deepEqual(allPanelIds(out.layout).sort(), ['a', 'g', 'p', 'x'])
+  })
+
   test('an untouched drawer survives pruning byte for byte', () => {
     const drawer = drawerWith(['x', 'y'])
     assert.deepEqual(pruneDrawer(drawer, new Set(['x', 'y'])), drawer)

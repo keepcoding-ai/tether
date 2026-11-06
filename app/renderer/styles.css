@@ -279,6 +279,8 @@ body.sb-resizing #pads, body.sb-resizing #dock { pointer-events: none; }
 .pad-head .sp { flex: 1; }
 .pad-head .ib { width: 24px; height: 24px; }
 .pad-body { position: relative; flex: 1; min-height: 0; }
+/* A frames pad (F10b): a Desk filling the pad's body, like the drawer's (.drawer-desk); two classes so it beats `.desk`'s position. */
+.pad-frames, .pad-frames > .pad-desk-box { position: absolute; inset: 0; }
 /* The drawer in front: the pads step back with the desks. */
 body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
 #pads .frame-dock { transition: opacity var(--motion-fast) ease-out, filter var(--motion-fast) ease-out; }

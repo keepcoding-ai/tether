@@ -227,25 +227,55 @@ function viewIds(frames: DeskLayout['frames']): string[] {
 }
 
 /**
- * The layout restricted to `known` panel ids, desk by desk and then the drawer; `kept` = how many panels survived
- * in total. A pane lives in one place only: an id the desks hold is dropped from the drawer (a hand-edited or
- * half-written file must not mount one terminal twice).
+ * The layout restricted to `known` panel ids, desk by desk, then the drawer, then the pads' frames; `kept` = how many
+ * panels survived in total. A pane lives in one place only: an id the desks hold is dropped from the drawer and the
+ * pads (a hand-edited or half-written file must not mount one terminal twice).
  */
 export function pruneLayoutV2<L extends LayoutV2 | LayoutV3>(layout: L, known: Set<string>): { layout: L; kept: number; total: number } {
   const total = allPanelIds(layout).length
+  // A pane lives in one place: desks first, then the drawer, then the pads (desk pads in desk order, then the global ones).
+  const taken = new Set<string>()
+  const claim = (ids: string[]): void => { for (const id of ids) taken.add(id) }
+  const free = (): Set<string> => new Set([...known].filter(id => !taken.has(id)))
   const desks = layout.desks.map(d => pruneDesk(d, known))
+  claim(desks.flatMap(d => viewIds(d.frames)))
   const activeDesk = desks.some(d => d.id === layout.activeDesk) ? layout.activeDesk : desks[0]!.id
-  const inDesks = new Set(desks.flatMap(d => viewIds(d.frames)))
-  const drawer = pruneDrawer(drawerOf(layout), new Set([...known].filter(id => !inDesks.has(id))))
-  const pruned: L = { ...layout, desks, activeDesk, drawer }
+  const drawer = pruneDrawer(drawerOf(layout), free())
+  claim(viewIds(drawer.frames))
+  const withPads = desks.map(d => {
+    if (!d.pads) return d
+    const pads = prunePadStates(d.pads, free())
+    claim(Object.values(pads).flatMap(s => isDrawerLayout(s) ? viewIds(s.frames) : []))
+    return { ...d, pads }
+  })
+  const sidebars = 'sidebars' in layout && layout.sidebars ? { ...layout.sidebars, pads: prunePadStates(layout.sidebars.pads, free()) } : undefined
+  const pruned: L = { ...layout, desks: withPads, activeDesk, drawer, ...(sidebars ? { sidebars } : {}) }
   return { layout: pruned, kept: allPanelIds(pruned).length, total }
 }
 
-/** Every panel id in the layout, across desks, frames and the drawer. */
-export function allPanelIds(layout: Pick<LayoutV2, 'desks' | 'drawer'>): string[] {
+/**
+ * The pads' states with every frames state (a pad declared `frames: true` saves the drawer's shape: frames → panes)
+ * restricted to `known`. Recognized by shape, not by the manifest: a pad whose extension is off keeps its panes listed
+ * (their slots are not taken for orphans) and pruned like any frame.
+ */
+export function prunePadStates(pads: Record<string, unknown>, known: Set<string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [id, state] of Object.entries(pads)) out[id] = isDrawerLayout(state) ? pruneDrawer(state, known) : state
+  return out
+}
+
+/** The panel ids of the frames states among a set of pad states. */
+export function padPanelIds(pads: Record<string, unknown> | undefined): string[] {
+  return pads ? Object.values(pads).flatMap(s => (isDrawerLayout(s) ? viewIds(s.frames) : [])) : []
+}
+
+/** Every panel id in the layout, across desks, frames, the drawer and the pads' frames. */
+export function allPanelIds(layout: Pick<LayoutV2, 'desks' | 'drawer'> & { sidebars?: Pick<SideBarsLayout, 'pads'> }): string[] {
   const out: string[] = []
   for (const d of layout.desks) out.push(...viewIds(d.frames))
   if (isDrawerLayout(layout.drawer)) out.push(...viewIds(layout.drawer.frames))
+  for (const d of layout.desks) out.push(...padPanelIds(d.pads))
+  out.push(...padPanelIds(layout.sidebars?.pads))
   return out
 }
 
