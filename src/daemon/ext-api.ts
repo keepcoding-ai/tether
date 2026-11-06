@@ -2,12 +2,12 @@
 // app/renderer/ext-api.ts (TetherUi). Lives with the daemon because it speaks the daemon's own types.
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { Brand } from '../../app/shared/brand.ts'
-import type { AgentContribution } from '../agents/registry.ts'
+import type { AgentContribution, AgentMcp } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
 import type { SlotState } from './protocol.ts'
 
-export type { AgentContribution }
+export type { AgentContribution, AgentMcp }
 
 /** A doctor check an extension contributes (same shape `tether doctor` prints). */
 export interface DaemonCheck {
@@ -26,7 +26,11 @@ export interface TetherDaemon {
   readonly brand: Brand
   /** TETHER_HOME. */
   readonly home: string
-  agents: { register(agent: AgentContribution): IDisposable }
+  agents: {
+    register(agent: AgentContribution): IDisposable
+    /** The contribution registered under `name` (any extension's), undefined for 'shell' or an unknown agent. */
+    get(name: string): AgentContribution | undefined
+  }
   /**
    * Runs `listener` once tetherd owns its pipe and pid file (after every extension activated): the place for side effects
    * such as files written at startup or a helper process warmed up. The loser of a pipe race never gets here, and the
@@ -34,7 +38,7 @@ export interface TetherDaemon {
    * A listener registered after the start runs at once.
    */
   onStarted(listener: () => void): IDisposable
-  /** Rewrites every launch plan (agents and shells), in registration order. F7: inject --mcp-config in every agent. */
+  /** Rewrites every launch plan (agents and shells), in registration order. F7 C3: web-bridge adds its --mcp-config to every agent. */
   launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan): IDisposable }
   /** Checks `tether doctor` runs after the core's (src/doctor.ts, through src/agents/load.ts). */
   doctor: { register(check: () => Promise<DaemonCheck>): IDisposable }

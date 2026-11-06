@@ -125,7 +125,7 @@ export class DaemonExtensionHost implements IDisposable {
       id,
       brand: BRAND,
       home,
-      agents: { register: (agent) => own.add(agents.register(agent)) },
+      agents: { register: (agent) => own.add(agents.register(agent)), get: (name) => agents.get(name) },
       onStarted: (l) => {
         if (this.started) { l(); return toDisposable(() => {}) }
         this.startListeners.add(l)

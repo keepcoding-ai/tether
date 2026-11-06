@@ -9,7 +9,13 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { AgentName } from '../core/event.ts'
 import type { Profile } from '../core/profile.ts'
 import type { AttentionOptions } from '../daemon/attention.ts'
-import type { AgentAdapter } from './types.ts'
+import type { AgentAdapter, LaunchPlan } from './types.ts'
+
+/** How this agent's CLI loads an MCP config file (`{ "mcpServers": {...} }`); absent = the agent takes no MCP servers. */
+export interface AgentMcp {
+  /** `plan` with the servers of `configFile` added (a copy). The env those servers read is set by the caller on the plan. */
+  inject(plan: LaunchPlan, configFile: string): LaunchPlan
+}
 
 export interface AgentContribution {
   /** What goes in SlotMeta.agent / TetherEvent.agent: lowercase, never 'shell'. */
@@ -23,6 +29,8 @@ export interface AgentContribution {
   reservedArgs: Record<string, string>
   /** Env var with args appended to every launch by the daemon (dev/E2E: `--model haiku`). */
   envArgsVar?: string
+  /** MCP servers a daemon extension offers to every AI agent (F7 C3: the Tether Bridge) reach this agent through here. */
+  mcp?: AgentMcp
 }
 
 export const AGENT_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/

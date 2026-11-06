@@ -1,6 +1,7 @@
 // The soul extension in tetherd (and in the CLI/main through src/agents/load.ts): registers the agent and its check.
 // The adapter's code stays in src/agents/soul.ts (the CLI and tests use its command resolution from there).
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { withMcpConfigFlag } from '../../src/agents/mcp.ts'
 import { soulAdapter } from '../../src/agents/soul.ts'
 import type { AgentContribution, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { probeSoul } from '../../src/doctor.ts'
@@ -22,6 +23,8 @@ export const soulAgent: AgentContribution = {
     '--fork-session': 'bifurcar é uma ação por retomada, não uma propriedade do perfil (o slot perderia a sessão a cada reinício)',
   },
   envArgsVar: 'TETHER_SOUL_ARGS',
+  // `soul --mcp-config <file|json>` (repeatable; the servers run in-process, so a remote session over -H has none).
+  mcp: { inject: withMcpConfigFlag },
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {
