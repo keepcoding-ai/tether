@@ -7,7 +7,7 @@
 import { createDockview, createGridview, GridviewPanel, LocalSelectionTransfer, PanelTransfer, type AddPanelOptions, type DockviewApi, type DockviewComponentOptions, type DockviewDidDropEvent, type DockviewTheme, type GridviewApi, type IDockviewPanel, type IFrameworkPart, type SerializedDockview } from 'dockview-core'
 import type { Direction, Target } from './create.ts'
 import { DEFAULT_DESK_HUE } from './desks.ts'
-import { draggedPanes, dropPlacements } from './frame-drop-rules.ts'
+import { deskDropZone, DOCKVIEW_USED_EVENT, draggedPanes, dropPlacements, type DeskDropZone, type PanePlacement } from './frame-drop-rules.ts'
 import { icon } from './icons.ts'
 import { type DeskLayout, emptyDesk, FRAME_COMPONENT, frameInsertion, isLayoutV1, nextFrameId, panelIdsOf } from './layout.ts'
 
@@ -31,12 +31,22 @@ export interface DeskHost {
   onLayoutChange(reasons?: ReadonlySet<string>): void
   /** A pane was added to or removed from some frame. */
   onPanelsChange(): void
+  /**
+   * The place is exactly one frame (a pad): tabs and internal splits (groups) inside it, never a second frame. Every
+   * path that would add a frame (the desk-level "+", "quadro na borda", Mover, a drop on the outer edge, a saved
+   * layout with several frames) lands in that one frame instead.
+   */
+  singleFrame?: boolean
   /** A "+" was used: `frameId` is the frame whose edge it was (undefined at the desk level). `add` is the click; `menu` the right-click, at `at`. */
   onEdge(target: Target, op: 'add' | 'menu', frameId: string | undefined, at: { x: number; y: number }): void
   /** The focused pane of this desk may have changed (a pane or a frame got activated). */
   onActivePanelChange?(): void
-  /** False while the window's one focused frame is elsewhere (a pad's frames vs the desks): this desk then paints no `.focused` frame. */
-  ownsFocus?(): boolean
+  /**
+   * How this desk marks its focused frame. `foco`: it is the Foco de Mesa (`.frame.focused`, the F6 signals in the desk
+   * colour) — the desks. `keyboard`: the keyboard is in this desk now, but it never takes the Foco de Mesa (pads, the
+   * drawer): a neutral outline (`.frame.kbd-focused`). `none`: nothing is marked. Default `foco`.
+   */
+  focusKind?(): 'foco' | 'keyboard' | 'none'
   /** The options to re-create a pane in another frame (a tab dragged out of its frame is rebuilt from them). */
   paneOptions?(panel: IDockviewPanel): AddPanelOptions
   /** A tab dragged from another frame (of this or another Desk) landed in this Desk as `id`: it is the active pane of its frame now. */
@@ -109,11 +119,16 @@ export class Desk {
       createComponent: ({ id }) => new Frame(id, this),
     })
     this.grid.onDidAddPanel(p => { this.frames.set(p.id, p as Frame); this.paintFocus() })
-    this.grid.onDidRemovePanel(p => { this.frames.delete(p.id); this.framePlus.delete(p.id); if (this.activeFrameId === p.id) this.activeFrameId = undefined })
+    this.grid.onDidRemovePanel(p => {
+      this.frames.delete(p.id)
+      this.framePlus.delete(p.id)
+      // The focused frame left: the mark goes to the frame that takes over (activeFrame's fallback) once the grid settles.
+      if (this.activeFrameId === p.id) { this.activeFrameId = undefined; queueMicrotask(() => this.paintFocus()) }
+    })
     this.grid.onDidActivePanelChange(p => { if (p) this.activeFrameId = p.id; host.onActivePanelChange?.() })
     this.grid.onDidLayoutChange(e => host.onLayoutChange(e.reasons))
     liveDesks.add(this)
-    for (const side of SIDES) container.append(this.plusButton('desk', side, undefined))
+    if (!host.singleFrame) for (const side of SIDES) container.append(this.plusButton('desk', side, undefined))
     // Whatever takes the focus inside a frame makes it the focused frame (dockview only reports a change of the active
     // group, so a click into the already-active group of another frame would leave the signals on the old one).
     const follow = (ev: Event): void => {
@@ -123,6 +138,12 @@ export class Desk {
     container.addEventListener('focusin', follow)
     container.addEventListener('pointerdown', follow, true)
     container.addEventListener('mousemove', ev => this.onMouseMove(ev))
+    // Drop anywhere: a tab dragged over the outer edge of this place (a new frame there) or over an empty frame (its
+    // first pane) is claimed here, in the capture phase, before any dockview drop target sees the event.
+    container.addEventListener('dragover', ev => this.onPlaceDragOver(ev), true)
+    container.addEventListener('drop', ev => this.onPlaceDrop(ev), true)
+    container.addEventListener('dragleave', ev => { if (!container.contains(ev.relatedTarget as Node | null)) this.hideDropHint() })
+    document.addEventListener('dragend', () => this.hideDropHint(), true)
     container.addEventListener('mouseleave', () => this.hidePlus())
   }
 
@@ -175,23 +196,35 @@ export class Desk {
     const ids = draggedPanes(data.panelId, group?.panels.map(p => p.id) ?? [])
     const placements = dropPlacements(ids, e.position, e.group?.id, e.index)
     if (!placements) return
+    this.movePanes(source, ids, () => frame, placements)
+  }
+
+  /**
+   * Moves `ids` (panes of `source.frame`) into the frame `target()` gives, once the drag is over. `placements` says where
+   * each lands (undefined: tabs of the frame's active group, or its first group when the frame is empty). `target` runs
+   * when the move does, so a frame created for the drop (a desk edge) only exists if the move happens.
+   */
+  private movePanes(source: { desk: Desk; frame: Frame }, ids: readonly string[], target: () => Frame, placements?: readonly PanePlacement[], edge?: Direction): void {
     let done = false
     const run = (): void => {
       if (done) return
       done = true
       document.removeEventListener('dragend', run, true)
       LocalSelectionTransfer.getInstance<PanelTransfer>().clearData(PanelTransfer.prototype)
+      const frame = target()
       let last: IDockviewPanel | undefined
       ids.forEach((id, i) => {
         const panel = source.frame.dock.getPanel(id)
         if (!panel) return
         const options = this.host.paneOptions!(panel)
         source.frame.dock.removePanel(panel)
-        const at = placements[i]!
+        const at = placements?.[i]
         // The reference group (or the first moved pane) may be gone by now (the frame emptied meanwhile): then a tab of the frame.
-        const valid = 'referenceGroup' in at ? !!frame.dock.getGroup(at.referenceGroup) : !!frame.dock.getPanel(at.referencePanel)
+        const valid = !at ? false : 'referenceGroup' in at ? !!frame.dock.getGroup(at.referenceGroup) : !!frame.dock.getPanel(at.referencePanel)
         try {
-          last = frame.dock.addPanel({ ...options, ...(valid ? { position: at } : {}) } as AddPanelOptions)
+          // `edge`: the first pane opens a new group on that edge of the frame (its root), the others join it as tabs.
+          const position = valid ? at : edge && frame.dock.panels.length > 0 ? (last ? { referencePanel: last.id, direction: 'within' } : { direction: edge }) : undefined
+          last = frame.dock.addPanel({ ...options, ...(position ? { position } : {}) } as AddPanelOptions)
         } catch (err) {
           console.error(`arrastar painel ${id}: falhou, voltando ao quadro de origem`, err)
           source.frame.dock.addPanel(options)
@@ -207,6 +240,134 @@ export class Desk {
     setTimeout(run, 100) // no dragend (the source left the page): move anyway
   }
 
+  // ---------- drop anywhere (the outer edge of this place, an empty frame) ----------
+
+  private dropHint: HTMLElement | undefined
+  private dropZone: DeskDropZone | undefined
+
+  /** The pane drag in progress, when it comes from a frame of some live Desk (dockview's own transfer data). */
+  private draggedFromFrame(): { source: { desk: Desk; frame: Frame }; ids: string[] } | undefined {
+    const transfer = LocalSelectionTransfer.getInstance<PanelTransfer>()
+    if (!transfer.hasData(PanelTransfer.prototype)) return undefined
+    const data = transfer.getData(PanelTransfer.prototype)?.[0]
+    const source = data ? frameOfView(data.viewId) : undefined
+    if (!data || !source || !this.host.paneOptions) return undefined
+    const ids = draggedPanes(data.panelId, source.frame.dock.getGroup(data.groupId)?.panels.map(p => p.id) ?? [])
+    return ids.length > 0 ? { source, ids } : undefined
+  }
+
+  /** The zone under the pointer: this place's outer edge, an empty frame, or none (dockview's own targets handle it). */
+  private zoneAt(ev: DragEvent): DeskDropZone | undefined {
+    const r = this.container.getBoundingClientRect()
+    const emptyFrame = [...this.frames.values()].find(f => {
+      if ((f.dock as DockviewApi | undefined)?.panels.length !== 0) return false
+      const fr = f.element.getBoundingClientRect()
+      return ev.clientX >= fr.left && ev.clientX <= fr.right && ev.clientY >= fr.top && ev.clientY <= fr.bottom
+    })
+    const zone = deskDropZone({ left: r.left, top: r.top, width: r.width, height: r.height }, ev.clientX, ev.clientY, emptyFrame?.id)
+    // One frame only: its outer edge is the frame's own (dockview splits inside it), never a new frame.
+    return zone
+  }
+
+  private onPlaceDragOver(ev: DragEvent): void {
+    const zone = this.draggedFromFrame() ? this.zoneAt(ev) : undefined
+    if (!zone) { this.hideDropHint(); return }
+    // Claimed: every dockview drop target under the pointer sees the event as used and takes its overlay away.
+    const marked = ev as unknown as Record<string, boolean>
+    marked[DOCKVIEW_USED_EVENT] = true
+    ev.preventDefault()
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
+    this.showDropHint(zone)
+  }
+
+  private onPlaceDrop(ev: DragEvent): void {
+    const drag = this.draggedFromFrame()
+    const zone = drag ? this.zoneAt(ev) : undefined
+    this.hideDropHint()
+    if (!drag || !zone) return
+    ev.preventDefault()
+    ev.stopPropagation()
+    if (zone.kind === 'empty') {
+      const id = zone.frameId
+      this.movePanes(drag.source, drag.ids, () => this.frames.get(id) ?? this.frameForNew('right'))
+      return
+    }
+    const direction = SIDE_DIRECTION[zone.side]
+    // One frame only: its outer edge splits inside it (a new group on that side), never a new frame.
+    const single = this.singleFrameOrUndefined()
+    if (single) { this.movePanes(drag.source, drag.ids, () => this.singleFrameOrUndefined() ?? single, undefined, direction); return }
+    this.movePanes(drag.source, drag.ids, () => this.frameForNew(direction))
+  }
+
+  private showDropHint(zone: DeskDropZone): void {
+    if (this.dropZone && JSON.stringify(this.dropZone) === JSON.stringify(zone) && this.dropHint?.isConnected) return
+    this.dropZone = zone
+    const hint = this.dropHint ?? document.createElement('div')
+    hint.className = 'desk-drop-hint'
+    this.dropHint = hint
+    const box = this.container.getBoundingClientRect()
+    const area = zone.kind === 'empty' ? this.frames.get(zone.frameId)?.element.getBoundingClientRect() : undefined
+    const r = area ?? box
+    let left = r.left - box.left
+    let top = r.top - box.top
+    let width = r.width
+    let height = r.height
+    if (zone.kind === 'edge') {
+      // The new frame's side of the place, a quarter of it (the share the new frame gets is the grid's, not this hint's).
+      if (zone.side === 'left' || zone.side === 'right') { const w = width / 4; if (zone.side === 'right') left += width - w; width = w }
+      else { const h = height / 4; if (zone.side === 'bottom') top += height - h; height = h }
+    }
+    hint.dataset.zone = zone.kind === 'edge' ? zone.side : 'empty'
+    Object.assign(hint.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` })
+    if (!hint.isConnected) this.container.append(hint)
+  }
+
+  private hideDropHint(): void {
+    this.dropZone = undefined
+    this.dropHint?.remove()
+  }
+
+  /** The one frame of a single-frame place (undefined for a desk, or before the frame exists). */
+  private singleFrameOrUndefined(): Frame | undefined {
+    if (!this.host.singleFrame) return undefined
+    const id = this.frameIds[0]
+    return id ? this.frames.get(id) : undefined
+  }
+
+  /** The panes a serialized frame names, added to `frame`: the first as a new group on its right edge, the rest as its tabs. */
+  private addViewPanes(frame: Frame, view: SerializedDockview): void {
+    let first: string | undefined
+    for (const id of panelIdsOf(view)) {
+      const p = view.panels[id]!
+      const position = first ? { referencePanel: first, direction: 'within' } : frame.dock.panels.length > 0 ? { direction: 'right' } : undefined
+      frame.dock.addPanel({ id, component: p.contentComponent ?? 'terminal', tabComponent: p.tabComponent, title: p.title, params: p.params, ...(position ? { position } : {}) } as AddPanelOptions)
+      first ??= id
+    }
+  }
+
+  /**
+   * A single-frame place restored with several frames (saved before the rule): the panes of every other frame move into
+   * the first, each frame's panes as a new group on its right; the emptied frames go. Panes are re-created from their
+   * options (terminals re-attach with the daemon's scrollback; the processes are never touched).
+   */
+  private mergeFrames(): void {
+    const [keep, ...rest] = this.frameIds.map(id => this.frames.get(id)).filter((f): f is Frame => !!f)
+    if (!keep || rest.length === 0 || !this.host.paneOptions) return
+    for (const frame of rest) {
+      let first: string | undefined
+      for (const panel of [...frame.dock.panels]) {
+        const options = this.host.paneOptions(panel)
+        frame.dock.removePanel(panel)
+        const position = first ? { referencePanel: first, direction: 'within' } : keep.dock.panels.length > 0 ? { direction: 'right' } : undefined
+        keep.dock.addPanel({ ...options, ...(position ? { position } : {}) } as AddPanelOptions)
+        first ??= options.id
+      }
+      if (this.frames.has(frame.id)) this.grid.removePanel(frame)
+    }
+    this.activeFrameId = keep.id
+    this.host.onLayoutChange()
+  }
+
   private removeIfEmpty(frame: Frame): void {
     if (!this.frames.has(frame.id) || frame.dock.panels.length > 0 || this.frames.size <= 1) return
     this.grid.removePanel(frame)
@@ -215,10 +376,14 @@ export class Desk {
 
   get frameIds(): string[] { return this.grid.panels.map(p => p.id) }
 
-  /** Marks the focused frame's element (`.frame.focused`): the CSS signals hang on it. One per window: none while the host says the focus is elsewhere. */
+  /** Marks the focused frame's element: `.focused` (the Foco de Mesa, the F6 signals hang on it) or `.kbd-focused` (a pad's or the drawer's, neutral), per the host's focusKind. */
   paintFocus(): void {
-    const focused = this.host.ownsFocus?.() === false ? undefined : this.activeFrame
-    for (const f of this.frames.values()) f.element.classList.toggle('focused', f === focused)
+    const kind = this.host.focusKind?.() ?? 'foco'
+    const active = kind === 'none' ? undefined : this.activeFrame
+    for (const f of this.frames.values()) {
+      f.element.classList.toggle('focused', kind === 'foco' && f === active)
+      f.element.classList.toggle('kbd-focused', kind === 'keyboard' && f === active)
+    }
   }
 
   get activeFrame(): Frame | undefined {
@@ -232,6 +397,8 @@ export class Desk {
 
   /** A new frame at a desk edge, spanning the whole desk on that side. */
   addFrame(direction: Direction): Frame {
+    const single = this.singleFrameOrUndefined()
+    if (single) return single
     const json = this.grid.toJSON().grid
     const id = nextFrameId(json)
     const ins = frameInsertion(json, direction)
@@ -257,6 +424,13 @@ export class Desk {
 
   /** Puts a frame taken from another desk here: into the only frame when it is empty, else a new frame at the right edge. */
   putFrame(view: SerializedDockview): void {
+    const single = this.singleFrameOrUndefined()
+    if (single && single.dock.panels.length > 0) {
+      // One frame that already has panes: the frame's panes join it as a new group on its right (its own split is not kept).
+      this.addViewPanes(single, view)
+      this.activeFrameId = single.id
+      return
+    }
     const only = this.frames.size === 1 ? [...this.frames.values()][0] : undefined
     const frame = only && only.dock.panels.length === 0 ? only : this.addFrame('right')
     this.loadView(frame, view)
@@ -265,6 +439,8 @@ export class Desk {
 
   /** A new frame beside `referenceFrame` (the "Mover…" dialog's "ao lado do quadro"). */
   addFrameBeside(referenceFrame: string, direction: Direction): Frame {
+    const single = this.singleFrameOrUndefined()
+    if (single) return single
     const id = nextFrameId(this.grid.toJSON().grid)
     return this.grid.addPanel({ id, component: FRAME_COMPONENT, position: { referencePanel: referenceFrame, direction } }) as Frame
   }
@@ -310,6 +486,7 @@ export class Desk {
     const refFrame = reference ? this.frameOf(reference) : undefined
     const frame = refFrame ?? this.ensureFrame()
     const direction = target && target.placement !== 'within' ? target.placement : undefined
+    if (target?.level === 'desk' && direction && this.host.singleFrame) return this.addPanel(options, { level: 'frame', placement: direction }, reference)
     if (target?.level === 'desk' && direction) {
       const panel = this.addFrame(direction).dock.addPanel(options)
       this.activeFrameId = this.frameOf(panel.id)?.id
@@ -384,6 +561,7 @@ export class Desk {
     }
     this.pendingViews = {}
     if (this.frames.size === 0) this.fromEmpty()
+    if (this.host.singleFrame) this.mergeFrames()
     this.activeFrameId = desk.activeFrame && this.frames.has(desk.activeFrame) ? desk.activeFrame : this.frameIds[0]
   }
 

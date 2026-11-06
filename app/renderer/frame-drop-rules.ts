@@ -40,3 +40,32 @@ export function dropPlacements(panes: readonly string[], position: DropPosition,
   })
   return [first, ...rest]
 }
+
+/** The mark dockview leaves on a drag event its drop target used (`Droptarget.USED_EVENT_ID`): any other target then hides its overlay. */
+export const DOCKVIEW_USED_EVENT = '__dockview_droptarget_event_is_used__'
+
+/**
+ * How close (px) to the outer edge of a place that holds frames (a desk, a pad, the drawer) a dragged tab must be to
+ * make a new frame on that side, spanning the whole height or width (VS Code's editor area edge drop). The top band is
+ * only the outer gutter: wider, it would take the tab bars of the frames on top (reordering and joining by tab).
+ */
+export const PLACE_EDGE_PX = { left: 22, right: 22, bottom: 22, top: 8 } as const
+
+export type PlaceSide = 'left' | 'right' | 'top' | 'bottom'
+
+/** Where a tab dropped on a place lands when the place itself (not a frame's dockview) takes it. */
+export type DeskDropZone = { kind: 'edge'; side: PlaceSide } | { kind: 'empty'; frameId: string }
+
+/**
+ * The zone of a place under the pointer: its outer edge (a new frame there) first, then the empty frame under the
+ * pointer (its first pane: an empty pad shows "Nenhum painel aberto"). Undefined elsewhere: over a frame with panes the
+ * frame's own dockview takes the drop (join a group, split it, a tab at an index).
+ */
+export function deskDropZone(place: { left: number; top: number; width: number; height: number }, x: number, y: number, emptyFrameUnder: string | undefined): DeskDropZone | undefined {
+  if (place.width <= 0 || place.height <= 0) return undefined
+  const dist: Record<PlaceSide, number> = { left: x - place.left, right: place.left + place.width - x, top: y - place.top, bottom: place.top + place.height - y }
+  if (Object.values(dist).some(d => d < 0)) return undefined
+  const near = (Object.keys(dist) as PlaceSide[]).filter(s => dist[s] <= PLACE_EDGE_PX[s]).sort((a, b) => dist[a] - dist[b])[0]
+  if (near) return { kind: 'edge', side: near }
+  return emptyFrameUnder !== undefined ? { kind: 'empty', frameId: emptyFrameUnder } : undefined
+}

@@ -81,7 +81,9 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.dots.className = 'tab-act'; this.dots.dataset.action = 'pane-menu'
     this.dots.title = PANE_MENU_LABEL; this.dots.setAttribute('aria-label', PANE_MENU_LABEL); this.dots.setAttribute('aria-haspopup', 'menu'); this.dots.setAttribute('aria-expanded', 'false'); this.dots.type = 'button'
     this.dots.append(icon('dots-three'))
-    this.element.append(this.add, this.more, this.preview, this.toggle, this.dots)
+    this.element.append(this.add, this.preview, this.toggle, this.dots)
+    // The "+N" is not one of the actions: it lives in the tab row right after the last visible tab (placed by measure).
+    this.more.addEventListener('pointerdown', ev => ev.stopPropagation())
     // Buttons, not drag handles: dockview must not start a group drag from here.
     this.element.addEventListener('pointerdown', ev => ev.stopPropagation())
     this.add.addEventListener('click', ev => { ev.stopPropagation(); const id = this.activeId(); if (id) this.host.addTab(id) })
@@ -166,6 +168,10 @@ export class TabStripActions implements IHeaderActionsRenderer {
     const head = this.header()
     const list = head?.querySelector<HTMLElement>('.dv-tabs-container')
     if (!head || !list) return
+    // Right after the tabs, before dockview's void and the actions: the "+N" reads as the end of the tab row.
+    // dockview may wrap the tab list in a scroller (.dv-scrollable): the "+N" goes after the wrapper, never inside it.
+    const row = list.parentElement?.classList.contains('dv-scrollable') ? list.parentElement : list
+    if (this.more.previousElementSibling !== row) row.after(this.more)
     const els = this.tabs(head)
     const order = [...els.keys()]
     const apply = (vis: readonly string[]): void => {

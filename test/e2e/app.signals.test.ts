@@ -297,18 +297,18 @@ test('app signals: line, folder border and dim are independent and combinable (F
     await setTheme(page, 'light')
     await setModes(page, { line: true, border: false, dim: false })
 
-    // 5. The drawer paints its own colour, not the desk's.
+    // 5. The drawer never takes the Foco de Mesa: its frame with the keyboard gets the neutral outline, no desk colour.
     await setModes(page, { line: true, border: true, dim: false })
     await page.click('#btn-drawer')
     await page.waitForFunction(() => window.__tether.drawer().open && window.__tether.drawer().panes.length === 1, undefined, { timeout: 20_000 })
     await sleep(800)
-    const drawerTab = await page.evaluate(() => {
-      const group = (document.querySelector('.drawer-card .frame.focused') as Q | null)?.querySelector('.dv-groupview.dv-active-group') as Q | undefined
-      const tab = group?.querySelector('.dv-tab.dv-active-tab')
-      return tab ? window.getComputedStyle(tab).boxShadow : ''
+    const drawerFrame = await page.evaluate(() => {
+      const kbd = document.querySelector('.drawer-card .frame.kbd-focused > .frame-dock') as Q | null
+      return { kbd: kbd ? (window.getComputedStyle(kbd) as unknown as { borderTopColor: string }).borderTopColor : '', foco: document.querySelectorAll('.drawer-card .frame.focused').length }
     })
-    assert.equal(drawerTab.split('inset').length - 1, 3, `the drawer's focused tab is outlined: ${drawerTab}`)
-    assert.ok(!drawerTab.includes(fill), 'the drawer does not use the desk colour')
+    assert.equal(drawerFrame.foco, 0, 'no Foco de Mesa in the drawer')
+    assert.ok(drawerFrame.kbd !== '', 'the drawer frame with the keyboard has the neutral outline')
+    assert.ok(!drawerFrame.kbd.includes(fill), 'the drawer does not use the desk colour')
     await shot(app, 'drawer-border')
     await page.click('#drawer-pill')
     await page.waitForFunction(() => !window.__tether.drawer().open)

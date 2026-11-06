@@ -21,7 +21,7 @@
   /* Surfaces (phase 4, docs/tether-preview.html): the desk is the ground (also the toolbar), frames are cards on it. */
   --desk-bg: #141418;
   --frame-bg: #1e1e23;
-  --frame-border: rgba(255, 255, 255, .08);
+  --frame-border: rgba(255, 255, 255, .08); --kbd-ring: rgba(255, 255, 255, .34);
   --pane-divider: var(--border);
   --gap: 8px;
   --frame-radius: 10px;
@@ -41,7 +41,7 @@
     --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
     --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
     --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
-    --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
+    --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --kbd-ring: rgba(0, 0, 0, .3); --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
     color-scheme: light;
   }
 }
@@ -50,7 +50,7 @@
   --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
   --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
   --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
-  --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
+  --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --kbd-ring: rgba(0, 0, 0, .3); --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
   color-scheme: light;
 }
 
@@ -465,19 +465,19 @@ body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
 .dv-theme-tether .dv-right-actions-container { flex: none; height: 100%; }
 .tab-actions { display: flex; align-items: center; gap: 1px; height: 100%; padding: 0 4px; border-left: 1px solid var(--border); }
 .tab-actions[hidden] { display: none; }
-.tab-actions button { font: inherit; border: 0; background: none; color: var(--fg-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.tab-actions button, .tab-more { font: inherit; border: 0; background: none; color: var(--fg-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .tab-act { width: 26px; height: 24px; border-radius: 5px; padding: 0; }
 .tab-act .ph { width: 15px; height: 15px; }
 .tab-act:hover, .tab-act[aria-pressed="true"] { background: var(--bg-hover); color: var(--fg); }
-.tab-more { gap: 5px; height: 22px; padding: 0 8px; border-radius: 5px; }
+.tab-more { flex: none; align-self: center; margin: 0 2px; gap: 5px; height: 22px; padding: 0 8px; border-radius: 5px; }
 /* `.tab-actions button` above resets the font with higher specificity than a lone `.tab-more`, which left the "+N" at
    13px/400 instead of the intended 12px/600; this one wins. */
-.tab-actions .tab-more { font-size: 12px; font-weight: 600; }
+.dv-tabs-and-actions-container .tab-more { font-size: 12px; font-weight: 600; }
 /* The colour of both "+N" is the neutral --fg-dim (computed, and the glyph cores paint exactly that). What read as a
    purple (dark) or green (light) tint is LCD sub-pixel anti-aliasing: on a few thin, short glyphs the coloured
    fringes outweigh the core. Their own compositing layer has no opaque background, so Chromium paints grey
    anti-aliasing there. */
-.tab-actions .tab-more, .seg.desk-more { will-change: transform; }
+.dv-tabs-and-actions-container .tab-more, .seg.desk-more { will-change: transform; }
 .tab-more[hidden] { display: none; }
 .tab-more:hover { background: var(--bg-hover); color: var(--fg); }
 .tab-more .more-dot, .menu .attn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--x-alert); flex: none; }
@@ -1316,10 +1316,9 @@ body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-content-conta
   content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 0 0 calc(var(--frame-radius) - 1px) calc(var(--frame-radius) - 1px);
   box-shadow: inset 2px 0 0 var(--desk-line-color, transparent), inset -2px 0 0 var(--desk-line-color, transparent), inset 0 -2px 0 var(--desk-line-color, transparent);
 }
-/* The drawer in front owns the signal; the desk behind it already steps back. */
-body.drawer-open :is(.desk-set, #pads) .frame.focused .dv-groupview > .dv-tabs-and-actions-container,
-body.drawer-open :is(.desk-set, #pads) .frame.focused .dv-groupview .dv-tab.dv-active-tab { box-shadow: none; }
-body.drawer-open :is(.desk-set, #pads) .frame.focused .dv-groupview > .dv-content-container::after { display: none; }
+/* Foco de Mesa: `.focused` is only ever a desk's frame (the open drawer and a pad with the keyboard never take it). The
+   frame of a pad or of the drawer that has the keyboard gets a discreet neutral outline (--kbd-ring), never the desk colour. */
+.frame.kbd-focused > .frame-dock { border-color: var(--kbd-ring); }
 
 /* Dim: a veil of the desk background over frames without the focus (tabs included), so it dims toward the surface in
    both themes. Above the frame card, below the edge "+" (40) and every overlay. */
@@ -1332,5 +1331,14 @@ body { --dim-veil: .32; }
 body.dim-weak { --dim-veil: .2; }
 body.dim-medium { --dim-veil: .32; }
 body.dim-strong { --dim-veil: .45; }
-body.dim-unfocused .frame:not(.focused)::after { opacity: var(--dim-veil); }
+/* Only the desk's frames dim (around the Foco de Mesa): a pad or the drawer is never "the other frames". */
+body.dim-unfocused .desk-set .frame:not(.focused)::after { opacity: var(--dim-veil); }
 @media (prefers-reduced-motion: reduce) { .frame::after { transition: none; } }
+
+/* Drop anywhere (desk.ts): a tab over the outer edge of a desk, a pad or the drawer (a new frame on that side, full
+   height or width) or over an empty frame (its first pane). The same tint as dockview's own drop overlay. */
+.desk-drop-hint {
+  position: absolute; z-index: 45; pointer-events: none; box-sizing: border-box;
+  background: var(--dv-drag-over-background-color, color-mix(in srgb, var(--accent) 22%, transparent));
+  border: 1px solid var(--accent); border-radius: var(--frame-radius);
+}

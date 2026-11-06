@@ -7,7 +7,7 @@
 //      the keyboard is in a's terminal; screenshot of the drop indicator while hovering;
 //   4. b's tab dropped on the left edge of frame-1 → a new group to the left of c's, inside frame-1;
 //   5. a note with fresh text dragged from frame-2 into frame-1 → the same text, on disk too;
-//   6. a's tab dragged into the desk pad's frame (a side bar) and back: the pad's frame gets the F6 focus, then the desk;
+//   6. a's tab dragged into the desk pad's frame (a side bar) and back: the pad's frame gets the keyboard (neutral outline) while the Foco de Mesa stays on the desk;
 //   7. the PIDs never changed and every terminal kept its scrollback;
 //   8. window kill + relaunch: the same arrangement, the same PIDs.
 import { test } from 'node:test'
@@ -252,13 +252,13 @@ test('drag tabs between frames: reorder, into a frame, its edge, a note, a pad a
     await drag(page, await point(page, tab(a)), await point(page, groupContent(seed, '.pad-frames')), join(artifacts, 'frame-drag-pad.png'))
     await page.waitForFunction(a => window.__tether.padFrames().some(p => p.panes.includes(a)), a)
     assert.equal(await h.frameOf(page, a), undefined, 'a left the desk')
-    await page.waitForFunction(() => document.querySelectorAll('.pad-frames .frame.focused').length === 1 && document.querySelectorAll('#dock .frame.focused').length === 0)
+    await page.waitForFunction(() => document.querySelectorAll('.pad-frames .frame.kbd-focused').length === 1 && document.querySelectorAll('.pad-frames .frame.focused').length === 0 && document.querySelectorAll('#dock .frame.focused').length === 1)
     await page.waitForFunction(a => document.activeElement?.closest('.panel')?.getAttribute('data-slot-id') === a, a)
     await mark(page, a, 'na-prancheta')
     await page.screenshot({ path: join(artifacts, 'frame-drag-pad-done.png') })
     await drag(page, await point(page, tab(a), 0.5, 0.5), await point(page, groupContent(c), 0.94, 0.5))
     await page.waitForFunction(a => window.__tether.frameOf(a) === 'frame-1', a)
-    await page.waitForFunction(() => document.querySelectorAll('.pad-frames .frame.focused').length === 0 && document.querySelectorAll('#dock .frame.focused').length === 1)
+    await page.waitForFunction(() => document.querySelectorAll('.pad-frames .frame.kbd-focused').length === 0 && document.querySelectorAll('#dock .frame.focused').length === 1)
     await page.waitForFunction(a => document.activeElement?.closest('.panel')?.getAttribute('data-slot-id') === a, a)
     assert.deepEqual((await deskShape(page))['frame-1'], [[b], [c, note.id], [a]])
 

@@ -378,11 +378,17 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     }),
     // Only changes the person can make are saved: a hint or title the app updates is not one (isPersonChange).
     onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
-    onPanelsChange: () => { refreshClosedMenu(); renderStrip(); recomputeProjects() },
+    onPanelsChange: () => {
+      refreshClosedMenu(); renderStrip(); recomputeProjects()
+      // A pad is never empty: its one frame shows the chooser ("O que abrir aqui?") when its last tab leaves.
+      if (scope instanceof FramesPad) queueMicrotask(() => { if (scope.reseedIfEmpty()) scheduleSave() })
+    },
+    singleFrame: scope instanceof FramesPad,
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
     onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane() },
-    // One focused frame in the window: a pad's frames have it while that pad is focused, the desks otherwise.
-    ownsFocus: () => scope === 'drawer' ? true : scope instanceof FramesPad ? focusedPad === scope : focusedPad === undefined,
+    // The desks always paint the Foco de Mesa (it changes only by a click/focus in a desk); a pad with the keyboard and
+    // the open drawer paint a neutral outline on their frame instead, never the desk colour.
+    focusKind: () => scope === 'drawer' ? 'keyboard' : scope instanceof FramesPad ? (focusedPad === scope ? 'keyboard' : 'none') : 'foco',
     paneOptions: panel => paneTypes.optionsOf(panel),
     // A tab dragged here from another frame: the focused frame is where it landed (a pad's, or the desks'), and the keyboard follows it.
     onPaneDropped: id => {
@@ -512,7 +518,8 @@ function describePane(id: string | undefined): PaneInfo | undefined {
 }
 
 function notifyActivePane(): void {
-  const id = currentDesk().activePanel?.id
+  // The Foco de Mesa's pane: a pad or the drawer taking the keyboard does not change what the explorer's "Seguir" follows.
+  const id = desks.active.activePanel?.id
   if (id === lastActivePane) return
   lastActivePane = id
   const info = describePane(id)
@@ -554,8 +561,9 @@ function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layou
 
 /** Adds any pane (slot, note, empty) relative to `reference` at `target`'s level, in its desk or the drawer; `into` forces the drawer. */
 function addPaneOptions(options: AddPanelOptions, target?: Target, reference?: string, into?: 'drawer'): IDockviewPanel {
-  // No reference: the focused pad's frames, when a pad has the focus (and the drawer is closed).
-  const pad = into === 'drawer' ? undefined : reference ? framePadOf(reference) : !drawer.isOpen ? padInFocus() : undefined
+  // No reference: the focused pad's frames, when a pad has the focus (and the drawer is closed) — except for a file being
+  // opened, which goes to the Foco de Mesa (fileTargetDesk).
+  const pad = into === 'drawer' ? undefined : reference ? framePadOf(reference) : !drawer.isOpen && !openingFile ? padInFocus() : undefined
   const useDrawer = into === 'drawer' || (reference ? inDrawer(reference) : drawer.isOpen)
   const panel = (pad ? pad.desk : useDrawer ? drawer.desk : desks).addPanel(options, target, reference)
   panel.api.setActive()
@@ -758,6 +766,18 @@ function moveFrameToDesk(slotId: string, to: string): void {
 function currentDesk(): Desk {
   return drawer?.isOpen ? drawer.desk : padInFocus()?.desk ?? desks.active
 }
+
+/**
+ * Where a file opens (the explorer, Ctrl+P, a terminal link, the extensions' openers): the Foco de Mesa — the visible
+ * desk's focused frame — never a pad, even while a pad has the keyboard. The open drawer is the exception: the desks
+ * are inert behind it, so a file opened from inside it lands in the drawer's focused frame.
+ */
+function fileTargetDesk(): Desk {
+  return drawer?.isOpen ? drawer.desk : desks.active
+}
+
+/** True while an opener runs for a file (openWithOpeners): `ui.panes.activeId` and a pane opened with no reference then mean the Foco de Mesa. */
+let openingFile = false
 
 /** The pad holding the focused frame, while it is on screen. */
 function padInFocus(): FramesPad | undefined {
@@ -1850,7 +1870,9 @@ function openTerminalLink(slotId: string, target: { path: string; isDirectory: b
     void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
     return
   }
-  void openFile(fileOpenHost, target.path, { side: false, root: paneCwdOf(slotId) ?? '', reference: slotId, ...(target.position ? { position: target.position } : {}) })
+  // From a pad's terminal the file goes to the Foco de Mesa (no reference); from a desk's or the drawer's, into the clicked pane's group.
+  const reference = framePadOf(slotId) ? undefined : slotId
+  void openFile(fileOpenHost, target.path, { side: false, root: paneCwdOf(slotId) ?? '', ...(reference ? { reference } : {}), ...(target.position ? { position: target.position } : {}) })
 }
 
 // ---------- opening a file ----------
@@ -1863,7 +1885,12 @@ const renameListeners = new Set<(e: { from: string; to: string }) => void>()
 
 function openWithOpeners(path: string, opts: OpenFileOptions): void {
   const opener = fileOpeners.find(o => o.canOpen(path, opts))
-  if (opener) { opener.open(path, opts); return }
+  if (opener) {
+    const reference = opts.reference ?? fileTargetDesk().activePanel?.id
+    openingFile = true
+    try { opener.open(path, { ...opts, ...(reference ? { reference } : {}) }) } finally { openingFile = false }
+    return
+  }
   void askDialog(fileOpenFailedSituation(`Nenhuma extensão ligada abre este arquivo: ${path}. A extensão Nota abre arquivos de texto; veja em Extensões.`))
 }
 
@@ -2536,6 +2563,8 @@ declare global {
       sidebars(): ReturnType<SideBars['snapshot']> | undefined
       toggleSideBar(side: 'left' | 'right'): void
       togglePad(id: string): void
+      /** Opens a file the way the explorer and the extensions do (TetherUi.openers.open): the core's file opening. */
+      openFile(path: string): Promise<void>
       /** The live frames of the pads (F10b): which pad, which desk, its panes, shown or not. */
       padFrames(): { pad: string; desk?: string; panes: string[]; shown: boolean }[]
       /** Opens a slot as a pane in the shown frames of a pad (the active desk's, for a desk pad). */
@@ -2688,6 +2717,7 @@ function setupTestHooks(): void {
     sidebars: () => sidebars?.snapshot(),
     toggleSideBar: side => sidebars?.toggleSide(side),
     togglePad: id => sidebars?.toggle(id),
+    openFile: path => openFile(fileOpenHost, path, { side: false, root: '' }),
     padFrames: () => [...framePads].map(p => ({ pad: p.padId, ...(p.deskId ? { desk: p.deskId } : {}), panes: p.desk.panels.map(x => x.id), shown: p.isVisible })),
     openSlotInPad: (slotId, padId) => {
       const s = slots.get(slotId)
@@ -3001,7 +3031,7 @@ function activateRendererExtensions(): void {
         register: type => add(paneTypes.register(type)),
         open: (options, where) => addPaneOptions(options, where?.target, where?.reference),
         find: paneId => findPanel(paneId),
-        activeId: () => currentDesk().activePanel?.id,
+        activeId: () => (openingFile ? fileTargetDesk() : currentDesk()).activePanel?.id,
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),

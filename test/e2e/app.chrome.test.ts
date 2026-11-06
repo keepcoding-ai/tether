@@ -461,7 +461,7 @@ test('app chrome: pane tab strip, "+N" by recent use, status-bar toggle, "⋯" (
       type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number }
       const r = (e: HTMLLike | null): Rect => { const b = e!.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, width: b.width, height: b.height } }
       const tabs = Array.from(d.querySelectorAll('.dv-tabs-container > .dv-tab'))
-      const more = d.querySelector('.tab-actions .tab-more')!
+      const more = d.querySelector('.dv-tabs-and-actions-container .tab-more')!
       return {
         order: tabs.map(t => t.querySelector('[data-slot]')!.dataset.slot!),
         hidden: tabs.filter(t => t.classList.contains('tab-hidden')).map(t => t.querySelector('[data-slot]')!.dataset.slot!),
@@ -500,7 +500,7 @@ test('app chrome: pane tab strip, "+N" by recent use, status-bar toggle, "⋯" (
     const lruIndex = s.order.indexOf(lru)
     const picked = s.hidden[0]!
     const dotsBefore = s.dots
-    await page.click('.tab-actions .tab-more')
+    await page.click('.dv-tabs-and-actions-container .tab-more')
     await page.waitForSelector('#ctx-menu')
     assert.equal(await page.locator('#ctx-menu li[role=menuitem]').count(), s.hidden.length, 'the "+N" lists the hidden tabs')
     await page.locator('#ctx-menu li[role=menuitem]').first().click()
@@ -997,9 +997,9 @@ test('app chrome: aria, keyboard in the new menus, focus return, FLIP, drawer fr
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(600, 700))
     await page.waitForFunction(() => Math.abs(window.innerWidth - 600) <= 2)
     for (let i = 0; i < 10; i++) await createShell(page, root)
-    await page.waitForFunction(() => { const m = document.querySelector('.desk-layer:not(.inactive) .tab-actions .tab-more') as unknown as { hidden: boolean } | null; return !!m && !m.hidden })
+    await page.waitForFunction(() => { const m = document.querySelector('.desk-layer:not(.inactive) .dv-tabs-and-actions-container .tab-more') as unknown as { hidden: boolean } | null; return !!m && !m.hidden })
     await sleep(400)
-    const tmore = '.desk-layer:not(.inactive) .tab-actions .tab-more'
+    const tmore = '.desk-layer:not(.inactive) .dv-tabs-and-actions-container .tab-more'
     assert.equal(await attr(page, tmore, 'aria-haspopup'), 'menu')
     assert.equal(await attr(page, tmore, 'aria-expanded'), 'false')
     assert.match((await attr(page, tmore, 'aria-label')) ?? '', /abas? escondidas?/)
@@ -1028,7 +1028,7 @@ test('app chrome: aria, keyboard in the new menus, focus return, FLIP, drawer fr
     assert.notEqual(await probe(page, `return getComputedStyle(document.activeElement).outlineStyle`), 'none', 'a focus ring on the strip button')
     // The "+N" text is the neutral dim token (not a tint): its computed colour is --fg-dim, and it is 12px/600.
     const dim = await token(page, '--fg-dim')
-    const tc = await probe<{ color: string; size: string; weight: string; will: string }>(page, `const s = getComputedStyle(document.querySelector('.desk-layer:not(.inactive) .tab-actions .tab-more')); return { color: s.color, size: s.fontSize, weight: s.fontWeight, will: s.willChange }`)
+    const tc = await probe<{ color: string; size: string; weight: string; will: string }>(page, `const s = getComputedStyle(document.querySelector('.desk-layer:not(.inactive) .dv-tabs-and-actions-container .tab-more')); return { color: s.color, size: s.fontSize, weight: s.fontWeight, will: s.willChange }`)
     const rgb = await probe<string>(page, `const d = document.createElement('i'); d.style.color = ${JSON.stringify(dim)}; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c`)
     assert.equal(tc.color, rgb, '"+N" colour is --fg-dim')
     assert.equal(tc.size, '12px'); assert.equal(tc.weight, '600'); assert.equal(tc.will, 'transform')
