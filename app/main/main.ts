@@ -504,7 +504,9 @@ function createWindow(): void {
     backgroundColor: WINDOW_BACKGROUND[themeState().scheme],
     // Shown on ready-to-show, after maximize(): no flash of the small window.
     show: false,
-    autoHideMenuBar: true,
+    // Never auto-hide: auto-hide reveals the bar on Alt, which clashes with Monaco's Alt+click multi-cursor.
+    // The bar stays hidden (setMenuBarVisibility below) while the application menu keeps its accelerators.
+    autoHideMenuBar: false,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -517,6 +519,7 @@ function createWindow(): void {
       ...(hidden ? { offscreen: true, backgroundThrottling: false } : {}),
     },
   })
+  win.setMenuBarVisibility(false)
   if (hidden) win.webContents.setFrameRate(30)
   const created = win
   if (start.maximized) created.maximize()
