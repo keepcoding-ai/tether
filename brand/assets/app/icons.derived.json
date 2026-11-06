@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "sources": {
+    "brand/src/light/icon.svg": "2c7a2a59fda5ba0aec81bb3cf8270313ecc974ac814ef1948d87a7a8b66428b6"
+  },
+  "targets": {
+    "tether.ico": {
+      "source": "brand/src/light/icon.svg",
+      "sizes": [
+        16,
+        24,
+        32,
+        48,
+        64,
+        128,
+        256
+      ]
+    },
+    "tether.icns": {
+      "source": "brand/src/light/icon.svg",
+      "sizes": [
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1024
+      ]
+    },
+    "tether.png": {
+      "source": "brand/src/light/icon.svg",
+      "sizes": [
+        256
+      ]
+    },
+    "tray.png": {
+      "source": "brand/src/light/icon.svg",
+      "sizes": [
+        32
+      ]
+    },
+    "tray-active.png": {
+      "source": "brand/src/light/icon.svg",
+      "sizes": [
+        32
+      ]
+    },
+    "tray-attention.png": {
+      "source": "brand/src/light/icon.svg",
+      "sizes": [
+        32
+      ]
+    }
+  },
+  "renderer": "electron 45.1.0 (chromium 156.0.8078.49)"
+}
