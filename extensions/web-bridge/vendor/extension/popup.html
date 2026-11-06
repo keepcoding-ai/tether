@@ -6,19 +6,66 @@
   <title>Atrium Bridge</title>
   <link rel="stylesheet" href="ui.css">
   <style>
-    body { width: 320px; padding: 14px; }
+    body { width: 340px; padding: 14px; }
     #status { margin-bottom: 10px; }
-    #note { margin-bottom: 12px; }
-    #options { margin-top: 12px; }
+    #note { margin-bottom: 10px; }
+    #options { margin-top: 14px; }
   </style>
 </head>
 <body>
   <div id="alert" class="alert-banner tape" role="alert" hidden><span id="alert-text"></span><button id="alert-off" type="button"></button></div>
+  <div id="paused" class="alert-banner paused-banner" role="alert" hidden><span id="paused-text"></span><button id="paused-resume" type="button"></button></div>
   <h1 id="title">Atrium Bridge</h1>
   <div id="status" class="status" role="status"></div>
-  <p id="note"></p>
-  <button id="toggle" type="button" disabled>…</button>
-  <div id="error" class="error" role="alert"></div>
+  <p id="reload-hint" class="hint" role="status" hidden></p>
+
+  <section id="this-tab" aria-labelledby="note">
+    <p id="note"></p>
+    <div id="agent-pick" class="pick" hidden>
+      <p id="agent-pick-title"></p>
+      <div id="agent-pick-list"></div>
+    </div>
+    <button id="toggle" type="button" disabled>…</button>
+    <div id="error" class="error" role="alert"></div>
+  </section>
+
+  <section id="controlled" aria-labelledby="controlled-title">
+    <h2 id="controlled-title"><span id="controlled-label"></span> <span id="controlled-count" class="count"></span></h2>
+    <p id="controlled-empty" hidden></p>
+    <div id="groups"></div>
+    <button id="release-all" type="button" data-scoped="true" hidden></button>
+  </section>
+
+  <section id="pause-section">
+    <button id="pause-toggle" type="button" data-scoped="true"></button>
+    <small id="pause-hint"></small>
+  </section>
+
+  <section id="evaluate-section" aria-labelledby="evaluate-label">
+    <div class="row">
+      <div>
+        <strong id="evaluate-label"></strong>
+        <small id="evaluate-help"></small>
+      </div>
+      <button id="evaluate-switch" type="button" role="switch" aria-checked="false" aria-labelledby="evaluate-label"><span class="knob"></span></button>
+    </div>
+  </section>
+
+  <div id="confirm" class="overlay" hidden>
+    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+      <h2 id="confirm-title" class="tape"></h2>
+      <div class="body"><p id="confirm-body"></p></div>
+      <div class="actions">
+        <button id="confirm-no" class="cancel" type="button"></button>
+        <button id="confirm-yes" class="confirm" type="button"></button>
+      </div>
+    </div>
+  </div>
+
+  <label for="name" id="label-name"></label>
+  <input id="name" autocomplete="off" maxlength="80">
+  <small id="help-name"></small>
+
   <button id="options" class="link" type="button">Opções e pareamento</button>
   <script type="module" src="dist/popup.js"></script>
 </body>

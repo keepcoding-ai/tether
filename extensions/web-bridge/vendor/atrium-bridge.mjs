@@ -157,7 +157,7 @@ function isStored(v) {
   if (!c || typeof c !== "object") return false;
   const keysOk = c.apiKeys === void 0 || Array.isArray(c.apiKeys) && c.apiKeys.every(isKey);
   const names = (c.apiKeys ?? []).map((k) => k.name);
-  return typeof c.port === "number" && typeof c.pairingToken === "string" && c.pairingToken.length >= 16 && keysOk && new Set(names).size === names.length && (c.apiToken === void 0 || typeof c.apiToken === "string" && c.apiToken.length >= 16) && (c.apiKeys !== void 0 || c.apiToken !== void 0) && (c.brand === void 0 || isBrand(c.brand)) && (c.capabilities === void 0 || isCapabilities(c.capabilities)) && (c.extensionIds === void 0 || isExtensionIdList(c.extensionIds)) && (c.embedded === void 0 || typeof c.embedded === "boolean") && (c.supervisorEnvFile === void 0 || typeof c.supervisorEnvFile === "string" && c.supervisorEnvFile.length > 0);
+  return typeof c.port === "number" && typeof c.pairingToken === "string" && c.pairingToken.length >= 16 && keysOk && new Set(names).size === names.length && (c.apiToken === void 0 || typeof c.apiToken === "string" && c.apiToken.length >= 16) && (c.apiKeys !== void 0 || c.apiToken !== void 0) && (c.brand === void 0 || isBrand(c.brand)) && (c.capabilities === void 0 || isCapabilities(c.capabilities)) && (c.extensionIds === void 0 || isExtensionIdList(c.extensionIds)) && (c.embedded === void 0 || typeof c.embedded === "boolean") && (c.supervisorEnvFile === void 0 || typeof c.supervisorEnvFile === "string" && c.supervisorEnvFile.length > 0) && (c.downloadsDir === void 0 || typeof c.downloadsDir === "string" && c.downloadsDir.length > 0) && (c.extensionVersion === void 0 || isExtensionVersion(c.extensionVersion));
 }
 function readStored(home3) {
   const p = configPath(home3);
@@ -178,7 +178,7 @@ function legacyName(keys) {
   return name;
 }
 function normalize(stored, legacyCreatedAt) {
-  const { apiToken, apiKeys = [], port, pairingToken, brand, capabilities, extensionIds, embedded, supervisorEnvFile } = stored;
+  const { apiToken, apiKeys = [], port, pairingToken, brand, capabilities, extensionIds, embedded, supervisorEnvFile, downloadsDir, extensionVersion } = stored;
   const keys = apiKeys.map((k) => ({ ...k }));
   if (apiToken !== void 0) {
     const hash = hashSecret(apiToken);
@@ -192,7 +192,9 @@ function normalize(stored, legacyCreatedAt) {
     ...capabilities !== void 0 ? { capabilities: { ...capabilities } } : {},
     ...extensionIds !== void 0 ? { extensionIds: [...extensionIds] } : {},
     ...embedded !== void 0 ? { embedded } : {},
-    ...supervisorEnvFile !== void 0 ? { supervisorEnvFile } : {}
+    ...supervisorEnvFile !== void 0 ? { supervisorEnvFile } : {},
+    ...downloadsDir !== void 0 ? { downloadsDir } : {},
+    ...extensionVersion !== void 0 ? { extensionVersion } : {}
   };
 }
 function readConfig(home3) {
@@ -265,6 +267,7 @@ function writeStored(home3, config2, extra = {}) {
   if (config2.brand === void 0) delete out.brand;
   if (config2.capabilities === void 0) delete out.capabilities;
   if (config2.extensionIds === void 0) delete out.extensionIds;
+  if (config2.extensionVersion === void 0) delete out.extensionVersion;
   writeFileAtomic(configPath(home3), JSON.stringify(out, null, 2));
 }
 function ensureLocked(home3, port) {
@@ -328,7 +331,7 @@ function removeDaemonPid(home3, pid) {
   } catch {
   }
 }
-var KEY_SCOPES, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, localKeyPath, configPath, lockPath, isKey, isBrand, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
+var KEY_SCOPES, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, localKeyPath, configPath, lockPath, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
 var init_config = __esm({
   "daemon/src/config.ts"() {
     "use strict";
@@ -354,6 +357,7 @@ var init_config = __esm({
       const b = v;
       return !!b && typeof b.name === "string" && b.name.trim().length > 0 && b.name.length <= 64 && (b.color === void 0 || typeof b.color === "string" && /^#[0-9a-fA-F]{6}$/.test(b.color)) && (b.hostId === void 0 || typeof b.hostId === "string" && b.hostId.length > 0 && b.hostId.length <= 100);
     };
+    isExtensionVersion = (v) => typeof v === "string" && /^\d{1,9}(\.\d{1,9}){0,3}$/.test(v);
     isExtensionIdList = (v) => Array.isArray(v) && v.every((id) => typeof id === "string" && EXTENSION_ID_PATTERN.test(id));
     mtimeIso = (p) => {
       try {
@@ -425,6 +429,15 @@ function setCapabilities(home3, capabilities) {
   updateConfig(home3, (config2) => {
     if (capabilities === null) delete config2.capabilities;
     else config2.capabilities = { ...capabilities };
+  });
+}
+function setExtensionVersion(home3, version3) {
+  if (version3 !== null && !isExtensionVersion(version3)) {
+    throw Object.assign(new Error("extensionVersion must be 1 to 4 integers separated by dots (a Chrome manifest version)"), { code: "INVALID_ARGUMENT" });
+  }
+  updateConfig(home3, (config2) => {
+    if (version3 === null) delete config2.extensionVersion;
+    else config2.extensionVersion = version3;
   });
 }
 function seedCapabilities(home3, defaults) {
@@ -3972,7 +3985,7 @@ function isRef(value) {
 function cloneIssues(issues) {
   return issues.map((iss) => iss.path ? { ...iss, path: iss.path.slice() } : { ...iss });
 }
-function isRecursive(inst, stack, resolve7) {
+function isRecursive(inst, stack, resolve8) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -3982,7 +3995,7 @@ function isRecursive(inst, stack, resolve7) {
   let result = NONE;
   const check = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve7);
+      const answer = isRecursive(child, stack, resolve8);
       if (answer > result)
         result = answer;
     }
@@ -3993,7 +4006,7 @@ function isRecursive(inst, stack, resolve7) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve7) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve8) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -4057,7 +4070,7 @@ function isRecursive(inst, stack, resolve7) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def3._cachedInner ?? (resolve7 ? inst._zod.innerType : void 0);
+      const inner = def3._cachedInner ?? (resolve8 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -8829,12 +8842,12 @@ var init_stdio2 = __esm({
         this.onclose?.();
       }
       send(message) {
-        return new Promise((resolve7) => {
+        return new Promise((resolve8) => {
           const json = serializeMessage(message);
           if (this._stdout.write(json)) {
-            resolve7();
+            resolve8();
           } else {
-            this._stdout.once("drain", resolve7);
+            this._stdout.once("drain", resolve8);
           }
         });
       }
@@ -9041,6 +9054,16 @@ var init_client = __esm({
         const deadline = DAEMON_CALL_TIMEOUT_MS + this.callMarginMs;
         return (await this.request("POST", `/clients/${encodeURIComponent(clientId)}/release`, deadline)).browsers;
       }
+      /** POST /pause: nenhuma tool roda e toda extensão solta as abas sob controle, até `resume`. Devolve o que cada browser soltou. */
+      async pause() {
+        const r = await this.request("POST", "/pause", DAEMON_CALL_TIMEOUT_MS + this.callMarginMs);
+        return { paused: true, browsers: r.browsers };
+      }
+      /** POST /resume: as tools voltam a rodar (o escopo começa vazio: abas novas, ou a pessoa entrega de novo). */
+      async resume() {
+        await this.request("POST", "/resume", this.controlTimeoutMs);
+        return { paused: false };
+      }
       async call(browserId, tool, args, timeoutMs) {
         const body = { tool, args, ...timeoutMs ? { timeoutMs } : {} };
         const deadline = Math.min(timeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5) + this.callMarginMs;
@@ -9204,8 +9227,59 @@ var init_texts = __esm({
           clear: "Drop the buffer after reading."
         }
       },
+      upload: {
+        description: 'Attach files from the local disk to a file input (<input type="file">) of the page, like the user picking them in the file dialog: the input gets the files and fires input/change. Give the ref of the file input (find it with snapshot or find: role is usually button or textbox named like the field) and absolute paths of files on this machine. Fails with NOT_A_FILE_INPUT when the ref is not a file input and FILE_NOT_FOUND when a path does not exist. Returns { files: [{ name, size, type }] }.',
+        params: {
+          ref: `The file input. ${REF}`,
+          paths: "Absolute paths of the files to attach (several only if the input has the multiple attribute)."
+        }
+      },
+      download: {
+        description: "Download a file into the user's Downloads folder and wait for it to finish. Either click a ref (a link or button that starts a download, with a real click) or give a url to fetch directly (http(s), with the cookies of the browser). Returns { id, path, bytes, mime, url, state } once the file is complete; fails with DOWNLOAD_FAILED (reason from the browser) or DOWNLOAD_TIMEOUT (the id still works in downloads list). Use pdf to save the page itself.",
+        params: {
+          ref: "Element whose click starts the download (instead of url).",
+          url: "URL to download directly (instead of ref).",
+          timeoutMs: "How long to wait for the file to complete, in milliseconds, up to 600000. Default 60000."
+        }
+      },
+      downloads: {
+        description: "List the downloads this bridge started in the browser (through download or pdf), newest first: { downloads: [{ id, path, bytes, mime, url, state, startedAt }] }. Downloads the user made by themselves are not listed.",
+        params: {
+          action: '"list".',
+          limit: "Maximum entries (default 50, at most 200)."
+        }
+      },
+      pdf: {
+        description: "Save the page as a PDF file in the user's Downloads folder (like Print to PDF). Returns { path, bytes, title, url }. Optional landscape, scale, pageRanges and filename. Fails with PDF_FAILED when the page cannot be printed.",
+        params: {
+          filename: 'File name (without folder; ".pdf" is added if missing). Default: the page title. An existing name gets a numeric suffix.',
+          landscape: "Landscape orientation (default false).",
+          scale: "Zoom of the rendering, 0.1 to 2 (default 1).",
+          pageRanges: 'Pages to include, like "1-3, 5" (default all).',
+          printBackground: "Print background colors and images (default true)."
+        }
+      },
+      readNetwork: {
+        description: "Read the network requests of the tab seen since it came under control (page loads, fetch/XHR, scripts, images...), oldest first: { requests: [{ seq, id, url, method, type, status, mimeType, durationMs, bytes, error? }], lastSeq }. Pass afterSeq to read only what is new and urlContains to filter. To read one response, give its id (from the list) with body true: returns { request, body: { text, base64Encoded, truncated } }; BODY_UNAVAILABLE when the browser no longer has it (after a navigation, for example). WebSocket and EventSource traffic is not listed.",
+        params: {
+          afterSeq: "Only requests with seq greater than this.",
+          limit: "Maximum requests in the list (default 100, at most 500).",
+          urlContains: "Only requests whose URL contains this text.",
+          id: "Request id from the list, to read a single request (with body for its response body).",
+          body: "With id: also return the response body (text, or base64 for binary), cut at maxChars.",
+          maxChars: "Character limit of the body (default 100000, at most 1000000)."
+        }
+      },
+      resize: {
+        description: "Set the size of the viewport of the tab in CSS pixels (the page sees the new innerWidth/innerHeight, media queries react, screenshot captures that size). Emulated per tab, independent of the window; stays until the tab leaves the agent's control or reset is passed. Returns { width, height, innerWidth, innerHeight }.",
+        params: {
+          width: "Viewport width in CSS pixels (1 to 10000).",
+          height: "Viewport height in CSS pixels (1 to 10000).",
+          reset: "Remove the emulation and go back to the real window size (width and height are then ignored)."
+        }
+      },
       evaluate: {
-        description: "Run a JavaScript expression in the page and return its JSON-serializable value. Use it for reading page state that the snapshot does not show; use click/type for actions so the events are real. Promises are awaited.",
+        description: 'Run a JavaScript expression in the page and return its JSON-serializable value. Use it for reading page state that the snapshot does not show; use click/type for actions so the events are real. Promises are awaited. Allowed in the tabs the agent opened; in a tab the user handed over it fails with EVALUATE_DISABLED until the user enables "C\xF3digo na p\xE1gina" in the extension (the installation can also turn evaluate fully on or off).',
         params: {
           expression: 'JavaScript expression, for example "document.title".',
           awaitPromise: "Await the value when it is a promise (default true)."
@@ -9584,7 +9658,7 @@ function daemonEnv(home3) {
   return childEnv({ ATRIUM_BRIDGE_HOME: resolve4(home3) });
 }
 function probeHealth(port, timeoutMs) {
-  return new Promise((resolve7) => {
+  return new Promise((resolve8) => {
     let settled = false;
     let timer;
     const finish = (result, req2) => {
@@ -9592,7 +9666,7 @@ function probeHealth(port, timeoutMs) {
       settled = true;
       if (timer) clearTimeout(timer);
       req2?.destroy();
-      resolve7(result);
+      resolve8(result);
     };
     const req = request(
       { host: "127.0.0.1", port, path: "/health", method: "GET", agent: false, headers: { connection: "close" } },
@@ -9628,8 +9702,8 @@ function parseListenOwner(output, port) {
   return null;
 }
 function exec(cmd, args) {
-  return new Promise((resolve7) => {
-    execFile2(cmd, args, { windowsHide: true, timeout: 1e4, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve7(String(stdout ?? "")));
+  return new Promise((resolve8) => {
+    execFile2(cmd, args, { windowsHide: true, timeout: 1e4, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve8(String(stdout ?? "")));
   });
 }
 async function portOwner(port) {
@@ -9729,9 +9803,9 @@ function spawnDaemon(home3, launch2, port) {
       windowsHide: true,
       stdio: ["ignore", fd, fd]
     });
-    const exited = new Promise((resolve7) => {
-      child.once("error", (e) => resolve7({ code: null, error: e.message }));
-      child.once("exit", (code) => resolve7({ code }));
+    const exited = new Promise((resolve8) => {
+      child.once("error", (e) => resolve8({ code: null, error: e.message }));
+      child.once("exit", (code) => resolve8({ code }));
     });
     child.unref();
     return { pid: child.pid, exited };
@@ -9752,7 +9826,7 @@ function nodeEnsureOps(cfg) {
     portOwner,
     killTree,
     logTail: () => redactTokens(readTail(daemonLogPath(home3)), home3),
-    sleep: (ms) => new Promise((resolve7) => setTimeout(resolve7, ms)),
+    sleep: (ms) => new Promise((resolve8) => setTimeout(resolve8, ms)),
     now: () => Date.now(),
     log: log2
   };
@@ -10854,7 +10928,7 @@ var init_protocol2 = __esm({
               return;
             }
             const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-            await new Promise((resolve7) => setTimeout(resolve7, pollInterval));
+            await new Promise((resolve8) => setTimeout(resolve8, pollInterval));
             options?.signal?.throwIfAborted();
           }
         } catch (error2) {
@@ -10871,7 +10945,7 @@ var init_protocol2 = __esm({
        */
       request(request2, resultSchema, options) {
         const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-        return new Promise((resolve7, reject) => {
+        return new Promise((resolve8, reject) => {
           const earlyReject = (error2) => {
             reject(error2);
           };
@@ -10949,7 +11023,7 @@ var init_protocol2 = __esm({
               if (!parseResult.success) {
                 reject(parseResult.error);
               } else {
-                resolve7(parseResult.data);
+                resolve8(parseResult.data);
               }
             } catch (error2) {
               reject(error2);
@@ -11210,12 +11284,12 @@ var init_protocol2 = __esm({
           }
         } catch {
         }
-        return new Promise((resolve7, reject) => {
+        return new Promise((resolve8, reject) => {
           if (signal.aborted) {
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
             return;
           }
-          const timeoutId = setTimeout(resolve7, interval);
+          const timeoutId = setTimeout(resolve8, interval);
           signal.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -14242,7 +14316,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve7.call(this, root, ref);
+      let _sch = resolve8.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -14269,7 +14343,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve7(root, ref) {
+    function resolve8(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -15099,7 +15173,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve7(baseURI, relativeURI, options) {
+    function resolve8(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -15468,7 +15542,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize2,
-      resolve: resolve7,
+      resolve: resolve8,
       resolveComponent,
       equal,
       serialize,
@@ -19803,6 +19877,25 @@ var init_catalog2 = __esm({
         limit: { ...int3, minimum: 1, maximum: 500 },
         clear: bool2
       }),
+      def2("upload", { ref: str2, paths: { type: "string[]" } }, ["ref", "paths"]),
+      def2("download", { ref: str2, url: str2, timeoutMs: { ...int3, minimum: 1, maximum: 6e5 } }),
+      def2("downloads", { action: { ...str2, enum: ["list"] }, limit: { ...int3, minimum: 1, maximum: 200 } }, ["action"]),
+      def2("pdf", {
+        filename: str2,
+        landscape: bool2,
+        scale: { ...num2, minimum: 0.1, maximum: 2 },
+        pageRanges: str2,
+        printBackground: bool2
+      }),
+      def2("readNetwork", {
+        afterSeq: { ...int3, minimum: 0 },
+        limit: { ...int3, minimum: 1, maximum: 500 },
+        urlContains: str2,
+        id: str2,
+        body: bool2,
+        maxChars: { ...int3, minimum: 1, maximum: 1e6 }
+      }),
+      def2("resize", { width: { ...int3, minimum: 1, maximum: 1e4 }, height: { ...int3, minimum: 1, maximum: 1e4 }, reset: bool2 }),
       def2("evaluate", { expression: str2, awaitPromise: bool2 }, ["expression"])
     ]);
   }
@@ -19882,10 +19975,13 @@ function isPureRead(tool, args) {
     case "read":
     case "links":
     case "wait":
+    case "readNetwork":
       return true;
     case "readConsole":
       return args.clear !== true;
     case "tabs":
+      return args.action === "list";
+    case "downloads":
       return args.action === "list";
     default:
       return false;
@@ -19910,7 +20006,7 @@ function createResilientBridge(client, shell2) {
   const waitCallMs = shell2.waitCallMs ?? REAPPEAR_DEFAULTS.waitCallMs;
   const waitListMs = shell2.waitListMs ?? REAPPEAR_DEFAULTS.waitListMs;
   const pollMs = shell2.waitPollMs ?? REAPPEAR_DEFAULTS.waitPollMs;
-  const sleep = shell2.sleep ?? ((ms) => new Promise((resolve7) => setTimeout(resolve7, ms)));
+  const sleep = shell2.sleep ?? ((ms) => new Promise((resolve8) => setTimeout(resolve8, ms)));
   const now = shell2.now ?? (() => Date.now());
   async function alive(request2) {
     try {
@@ -23856,14 +23952,78 @@ var init_approval_page = __esm({
   }
 });
 
+// daemon/src/files.ts
+import { existsSync as existsSync6, mkdirSync as mkdirSync5, statSync as statSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { basename, isAbsolute, join as join5, resolve as resolve5 } from "node:path";
+function assertUploadPaths(paths) {
+  if (!Array.isArray(paths) || paths.length === 0) {
+    throw Object.assign(new Error('upload: "paths" must be a non-empty array of absolute file paths'), { code: "INVALID_ARGUMENT" });
+  }
+  return paths.map((p) => {
+    if (typeof p !== "string" || !isAbsolute(p)) {
+      throw Object.assign(new Error(`upload: "${String(p)}" is not an absolute path`), { code: "INVALID_ARGUMENT" });
+    }
+    let st;
+    try {
+      st = statSync4(p);
+    } catch {
+      throw new BridgeError("FILE_NOT_FOUND", `upload: file not found: ${p}`, { path: p });
+    }
+    if (!st.isFile()) throw new BridgeError("FILE_NOT_FOUND", `upload: not a file: ${p}`, { path: p });
+    return resolve5(p);
+  });
+}
+function pdfFilename(requested, title) {
+  let name = basename((requested ?? "").replace(/\\/g, "/")).trim();
+  if (!name) name = (title ?? "").replace(/\s+/g, " ").trim();
+  name = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/, "").slice(0, 150);
+  if (!name || /^\.+$/.test(name)) name = "page";
+  if (/^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i.test(name)) name = `_${name}`;
+  return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+}
+function uniquePath(dir, name) {
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  let candidate = join5(dir, name);
+  for (let n = 2; existsSync6(candidate); n++) candidate = join5(dir, `${stem} (${n})${ext}`);
+  return candidate;
+}
+function persistPdf(dir, result) {
+  const r = result;
+  if (!r || typeof r.data !== "string" || !r.data) throw new BridgeError("PDF_FAILED", "the extension returned no PDF data");
+  const title = typeof r.title === "string" ? r.title : "";
+  const url = typeof r.url === "string" ? r.url : "";
+  const bytes = Buffer.from(r.data, "base64");
+  if (bytes.length === 0) throw new BridgeError("PDF_FAILED", "the extension returned an empty PDF");
+  try {
+    mkdirSync5(dir, { recursive: true });
+    const path = uniquePath(dir, pdfFilename(typeof r.filename === "string" ? r.filename : void 0, title));
+    writeFileSync2(path, bytes, { flag: "wx" });
+    return { path, bytes: bytes.length, title, url };
+  } catch (e) {
+    throw new BridgeError("PDF_FAILED", `could not save the PDF in ${dir}: ${e.message}`);
+  }
+}
+var defaultDownloadsDir;
+var init_files = __esm({
+  "daemon/src/files.ts"() {
+    "use strict";
+    init_errors3();
+    defaultDownloadsDir = () => join5(homedir2(), "Downloads");
+  }
+});
+
 // daemon/src/registry.ts
 import { randomUUID } from "node:crypto";
-var CLIENTS_MAX, BrowserConnection, Registry;
+var CLIENTS_MAX, RELEASE_TOOL, BrowserConnection, Registry;
 var init_registry = __esm({
   "daemon/src/registry.ts"() {
     "use strict";
     init_errors3();
     CLIENTS_MAX = 200;
+    RELEASE_TOOL = "release";
     BrowserConnection = class {
       info;
       ws;
@@ -23906,6 +24066,11 @@ var init_registry = __esm({
       status() {
         return { browsers: [...this.browsers.values()].map((c) => c.status()), clients: [...this.clients.values()].reverse() };
       }
+      /**
+       * Chamado quando o conjunto de agentes ATIVOS muda (um novo, um nome novo, um que encerrou): o servidor repassa às
+       * extensões (`{t:'status'}`, A12). Só a mudança do conjunto, nunca cada chamada: N agentes agindo não geram tráfego.
+       */
+      onClientsChanged = null;
       /** Anota que `client` acabou de pedir `tool` (chamada ou consulta). O nome mais recente vence; sem nome, mantém o anterior. */
       noteClient(client, tool, now = /* @__PURE__ */ new Date()) {
         const previous = this.clients.get(client.id);
@@ -23913,6 +24078,16 @@ var init_registry = __esm({
         const name = client.name ?? previous?.name;
         this.clients.set(client.id, { id: client.id, ...name ? { name } : {}, lastTool: tool, lastSeenAt: now.toISOString(), calls: (previous?.calls ?? 0) + 1 });
         while (this.clients.size > CLIENTS_MAX) this.clients.delete(this.clients.keys().next().value);
+        const wasActive = previous !== void 0 && previous.lastTool !== RELEASE_TOOL;
+        const isActive = tool !== RELEASE_TOOL;
+        if (wasActive !== isActive || isActive && previous?.name !== name) this.onClientsChanged?.();
+      }
+      /**
+       * Os agentes ativos, para o popup escolher a quem entregar uma aba (A12): clientes vistos cuja última ação não foi o
+       * `release` (o agente que encerrou não recebe aba). Do mais recente para o mais antigo; só id e nome.
+       */
+      activeClients() {
+        return [...this.clients.values()].reverse().filter((c) => c.lastTool !== RELEASE_TOOL).map((c) => ({ id: c.id, ...c.name ? { name: c.name } : {} }));
       }
       get(id) {
         return this.browsers.get(id);
@@ -23955,15 +24130,42 @@ var init_registry = __esm({
           })
         );
       }
+      /**
+       * Pausa (`POST /pause`): toda extensão conectada solta TODAS as abas sob controle. Nunca rejeita: o resultado por
+       * browser diz o que cada um soltou (um browser mudo vem com `ok: false`). Sem browser conectado, lista vazia.
+       */
+      async releaseAll(timeoutMs) {
+        return Promise.all(
+          [...this.browsers.values()].map(async (conn) => {
+            const base = { id: conn.info.id, name: conn.info.name };
+            try {
+              const r = await this.request(conn, "release-all", (rid) => ({ t: "release-all", rid }), timeoutMs);
+              const released = Array.isArray(r?.released) ? r.released.filter((n) => Number.isInteger(n)) : [];
+              return { ...base, ok: true, released };
+            } catch (e) {
+              return { ...base, ok: false, error: toWireError(e) };
+            }
+          })
+        );
+      }
+      /** Uma mensagem sem resposta a todas as extensões conectadas (ex.: `{t:'config'}` quando o config.json muda). */
+      broadcast(message) {
+        for (const conn of this.browsers.values()) {
+          try {
+            conn.send(message);
+          } catch {
+          }
+        }
+      }
       /** Um pedido com resposta (`{t:'result'}` com o mesmo rid) a uma extensão: o que `call` e `releaseClient` têm em comum. */
       request(conn, what, build2, timeoutMs) {
         const rid = randomUUID();
-        return new Promise((resolve7, reject) => {
+        return new Promise((resolve8, reject) => {
           const timer = setTimeout(() => {
             conn.pending.delete(rid);
             reject(new BridgeError("CALL_TIMEOUT", `browser "${conn.info.name}" did not answer ${what} within ${timeoutMs} ms`));
           }, timeoutMs);
-          conn.pending.set(rid, { resolve: resolve7, reject, timer });
+          conn.pending.set(rid, { resolve: resolve8, reject, timer });
           try {
             conn.send(build2(rid));
           } catch (e) {
@@ -23988,9 +24190,9 @@ var init_registry = __esm({
 });
 
 // daemon/src/server.ts
-import { statSync as statSync4 } from "node:fs";
+import { statSync as statSync5 } from "node:fs";
 import { createServer as createServer2 } from "node:http";
-import { resolve as resolve5 } from "node:path";
+import { resolve as resolve6 } from "node:path";
 function statusFor(code) {
   switch (code) {
     case "BROWSER_NOT_FOUND":
@@ -24010,6 +24212,8 @@ function statusFor(code) {
       return 503;
     case "CALL_TIMEOUT":
       return 504;
+    case "BRIDGE_PAUSED":
+      return 423;
     case "BROWSER_DISCONNECTED":
       return 502;
     default:
@@ -24022,7 +24226,7 @@ async function startDaemon(opts) {
   let config2 = ensureConfig(opts.home, opts.port);
   const registry2 = new Registry();
   const stamp = () => {
-    const s = statSync4(configPath(opts.home), { bigint: true });
+    const s = statSync5(configPath(opts.home), { bigint: true });
     return `${s.ino}:${s.mtimeNs}:${s.size}`;
   };
   let seen = stamp();
@@ -24040,8 +24244,30 @@ async function startDaemon(opts) {
     }
     seen = now;
     log2("config_reloaded", { keys: config2.apiKeys.length });
+    registry2.broadcast({ t: "config", ...config2.brand ? { brand: config2.brand } : {}, ...config2.capabilities ? { capabilities: config2.capabilities } : {} });
     return config2;
   };
+  let paused = false;
+  const statusMessage = () => ({ t: "status", paused, clients: registry2.activeClients() });
+  const pushStatus = (to) => to ? to.send(statusMessage()) : registry2.broadcast(statusMessage());
+  registry2.onClientsChanged = () => pushStatus();
+  const pause = async (who) => {
+    paused = true;
+    pushStatus();
+    const started = Date.now();
+    const browsers = await registry2.releaseAll(callTimeoutMs);
+    log2("paused", { ...who, browsers: browsers.length, ok: browsers.every((b) => b.ok), ms: Date.now() - started });
+    return browsers;
+  };
+  const resume = (who) => {
+    const was = paused;
+    paused = false;
+    if (was) {
+      log2("resumed", who);
+      pushStatus();
+    }
+  };
+  const downloadsDir = () => opts.downloadsDir ?? current().downloadsDir ?? defaultDownloadsDir();
   const current = () => {
     try {
       return fresh();
@@ -24077,7 +24303,7 @@ async function startDaemon(opts) {
     const error2 = toWireError(e);
     json(res, statusFor(error2.code), { ok: false, error: error2 });
   };
-  const readBody = (req) => new Promise((resolve7, reject) => {
+  const readBody = (req) => new Promise((resolve8, reject) => {
     const chunks = [];
     let size = 0;
     req.on("data", (c) => {
@@ -24089,7 +24315,7 @@ async function startDaemon(opts) {
       }
       chunks.push(c);
     });
-    req.on("end", () => resolve7(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve8(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
   const page = (res, status, html) => {
@@ -24153,8 +24379,16 @@ async function startDaemon(opts) {
         return json(res, 200, { ok: true, browsers: registry2.list() });
       }
       if (req.method === "GET" && url.pathname === "/status") {
-        const body = { ok: true, paused: false, ...registry2.status() };
+        const body = { ok: true, paused, ...registry2.status() };
         return json(res, 200, body);
+      }
+      if (req.method === "POST" && url.pathname === "/pause") {
+        const browsers = await pause({ key: key.name });
+        return json(res, 200, { ok: true, paused: true, browsers });
+      }
+      if (req.method === "POST" && url.pathname === "/resume") {
+        resume({ key: key.name });
+        return json(res, 200, { ok: true, paused: false });
       }
       if (req.method === "POST" && url.pathname === "/embedded/approve") {
         if (key.scope === "use") throw new BridgeError("FORBIDDEN", `key "${key.name}" has scope "use"; approving a login needs a full or admin key`);
@@ -24205,7 +24439,10 @@ async function startDaemon(opts) {
         if (client) registry2.noteClient(client, body.tool);
         const who = { key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool };
         try {
-          const result = await registry2.call(id, body.tool, args, timeout, client);
+          if (paused) throw new BridgeError("BRIDGE_PAUSED", "the user paused the Bridge: no tool runs and no tab is under control until they resume it. Tell the user and wait.");
+          if (body.tool === "upload") args.paths = assertUploadPaths(args.paths);
+          let result = await registry2.call(id, body.tool, args, timeout, client);
+          if (body.tool === "pdf") result = persistPdf(downloadsDir(), result);
           log2("call", { ...who, ok: true, ms: Date.now() - started });
           return json(res, 200, { ok: true, result });
         } catch (e) {
@@ -24278,11 +24515,22 @@ async function startDaemon(opts) {
           previous.ws.close(CLOSE_REPLACED, "replaced by a new connection");
         }
         conn = mine;
-        const { brand, capabilities } = current();
-        mine.send({ t: "welcome", ...brand ? { brand } : {}, ...capabilities ? { capabilities } : {} });
+        const { brand, capabilities, extensionVersion } = current();
+        mine.send({
+          t: "welcome",
+          ...brand ? { brand } : {},
+          ...capabilities ? { capabilities } : {},
+          ...extensionVersion ? { extensionVersion } : {}
+        });
+        pushStatus(mine);
         log2("browser_connected", { browser: info2.id, name: info2.name });
         return;
       }
+      if (msg.t === "pause") {
+        void pause({ browser: conn.info.id });
+        return;
+      }
+      if (msg.t === "resume") return resume({ browser: conn.info.id });
       if (msg.t === "ping") return conn.send({ t: "pong" });
       if (msg.t === "result" && typeof msg.rid === "string") {
         registry2.settle(conn, msg.rid, msg.ok ? { ok: true, value: msg.value } : { ok: false, error: msg.error });
@@ -24305,13 +24553,13 @@ async function startDaemon(opts) {
     });
     ws.on("error", () => ws.terminate());
   };
-  await new Promise((resolve7, reject) => {
+  await new Promise((resolve8, reject) => {
     server.once("error", (e) => {
       reject(
         e.code === "EADDRINUSE" ? new Error(`port ${opts.port ?? config2.port} is already in use (is another Atrium Bridge daemon running?)`) : e
       );
     });
-    server.listen(opts.port ?? config2.port, "127.0.0.1", () => resolve7());
+    server.listen(opts.port ?? config2.port, "127.0.0.1", () => resolve8());
   });
   boundPort = server.address().port;
   if (boundPort !== config2.port) {
@@ -24322,7 +24570,7 @@ async function startDaemon(opts) {
   config2 = { ...config2, port: boundPort };
   log2("listening", { host: "127.0.0.1", port: boundPort });
   if (opts.embedded ?? config2.embedded === true) {
-    const envFile = opts.supervisorEnvFile !== void 0 ? resolve5(opts.supervisorEnvFile) : config2.supervisorEnvFile !== void 0 ? resolve5(opts.home, config2.supervisorEnvFile) : void 0;
+    const envFile = opts.supervisorEnvFile !== void 0 ? resolve6(opts.supervisorEnvFile) : config2.supervisorEnvFile !== void 0 ? resolve6(opts.home, config2.supervisorEnvFile) : void 0;
     embedded = startEmbeddedSupervisor({
       home: opts.home,
       port: opts.supervisorPort ?? boundPort + 1,
@@ -24358,6 +24606,7 @@ var init_server3 = __esm({
     init_approval_page();
     init_config();
     init_embedded();
+    init_files();
     init_registry();
     init_secrets();
     HELLO_TIMEOUT_MS = 5e3;
@@ -24551,7 +24800,7 @@ ${USAGE}
 
 // daemon/src/bundle.ts
 import { realpathSync } from "node:fs";
-import { resolve as resolve6 } from "node:path";
+import { resolve as resolve7 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // package.json
@@ -24611,7 +24860,7 @@ function isMain() {
   if (!entry) return false;
   try {
     const norm = (p) => process.platform === "win32" ? p.toLowerCase() : p;
-    return norm(realpathSync(resolve6(entry))) === norm(realpathSync(fileURLToPath2(import.meta.url)));
+    return norm(realpathSync(resolve7(entry))) === norm(realpathSync(fileURLToPath2(import.meta.url)));
   } catch {
     return false;
   }
@@ -24655,6 +24904,7 @@ export {
   setBrand,
   setCapabilities,
   setExtensionIds,
+  setExtensionVersion,
   version2 as version,
   writeSeed
 };

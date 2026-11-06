@@ -108,3 +108,52 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-bre
 .dialog .actions button { flex: 1; }
 .dialog .actions .confirm { background: var(--alert); color: var(--alert-fg); }
 .dialog .actions .cancel { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+
+/* ---- Popup (A12): a lista do que está sob controle, por agente ---- */
+h2 { font-size: 13px; margin: 16px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+h2 .count { font-weight: 400; text-transform: none; letter-spacing: 0; }
+section + section { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+#this-tab p { margin-bottom: 8px; }
+.hint { font-size: 12px; margin: -4px 0 10px; }
+.hint[hidden] { display: none; }
+.group { margin-bottom: 10px; }
+.group-head { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--muted); }
+.dot[data-color='blue'] { background: #1a73e8; }
+.dot[data-color='red'] { background: #d93025; }
+.dot[data-color='green'] { background: #188038; }
+.dot[data-color='pink'] { background: #d01884; }
+.dot[data-color='purple'] { background: #a142f4; }
+.dot[data-color='cyan'] { background: #007b83; }
+.dot[data-color='orange'] { background: #fa903e; }
+.dot[data-color='grey'] { background: #80868b; }
+.dot[data-color='yellow'] { background: #f9ab00; }
+.tab-row { display: flex; align-items: center; gap: 8px; padding: 5px 0 5px 18px; }
+.tab-row .text { flex: 1; min-width: 0; }
+.tab-row .tab-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.tab-row .tab-host { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
+.tab-row .tab-host .mark { color: var(--alert-stripe); font-weight: 600; }
+.tab-row button { width: auto; flex: none; padding: 5px 10px; font-size: 12px; background: transparent; color: var(--fg); border: 1px solid var(--line); }
+#release-all { margin-top: 4px; }
+#controlled-empty { margin: 0; }
+
+/* Entregar a qual agente: uma lista de botões, um por agente, mais "Qualquer agente". */
+.pick p { margin-bottom: 6px; font-weight: 600; color: var(--fg); }
+.pick button { display: flex; align-items: center; gap: 8px; text-align: left; margin-bottom: 6px; }
+.pick button .dot { background: var(--accent-fg); opacity: 0.85; }
+.pick button[data-owner=''] { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+.pick button[data-owner=''] .dot { background: var(--muted); }
+
+/* Pausa: faixa cinza-âmbar sem listras (é um estado, não um risco). */
+.paused-banner { background: color-mix(in srgb, var(--alert) 28%, var(--bg)); color: var(--fg); font-weight: 600; }
+.paused-banner button { background: var(--fg); color: var(--bg); }
+#pause-section small { margin-top: 6px; }
+
+/* Código na página em abas entregues: um interruptor. */
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.row strong { display: block; font-size: 13px; }
+.row small { margin-top: 2px; }
+[role='switch'] { width: 42px; height: 24px; flex: none; padding: 0; border-radius: 12px; position: relative; background: var(--line); }
+[role='switch'] .knob { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--bg); transition: left 120ms; }
+[role='switch'][aria-checked='true'] { background: repeating-linear-gradient(-45deg, var(--alert) 0 6px, var(--alert-stripe) 6px 12px); }
+[role='switch'][aria-checked='true'] .knob { left: 21px; }

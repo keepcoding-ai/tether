@@ -41,6 +41,41 @@ function toWireError(e) {
   return { code: "INTERNAL", message: e instanceof Error ? e.message : String(e) };
 }
 
+// extension/src/reload.ts
+function decideReload(running, expected, onDisk, attempted) {
+  if (expected === running) return { reload: false, reason: "same-version" };
+  if (attempted === expected) return { reload: false, reason: "already-attempted" };
+  if (onDisk !== null && onDisk === running) return { reload: false, reason: "disk-not-updated" };
+  return { reload: true, reason: "reload" };
+}
+var ATTEMPTED_KEY = "reloadAttemptedFor";
+var EXPECTED_KEY = "hostExtensionVersion";
+async function manifestVersionOnDisk() {
+  try {
+    const res = await fetch(chrome.runtime.getURL("manifest.json"), { cache: "no-store" });
+    if (!res.ok) return null;
+    const parsed = await res.json();
+    return typeof parsed.version === "string" ? parsed.version : null;
+  } catch {
+    return null;
+  }
+}
+async function maybeReloadForVersion(expected) {
+  if (!expected) {
+    await chrome.storage.session.remove(EXPECTED_KEY);
+    return null;
+  }
+  await chrome.storage.session.set({ [EXPECTED_KEY]: expected });
+  const running = chrome.runtime.getManifest().version;
+  const attempted = (await chrome.storage.local.get(ATTEMPTED_KEY))[ATTEMPTED_KEY] ?? null;
+  const decision = decideReload(running, expected, await manifestVersionOnDisk(), attempted);
+  if (decision.reload) {
+    await chrome.storage.local.set({ [ATTEMPTED_KEY]: expected });
+    chrome.runtime.reload();
+  }
+  return decision;
+}
+
 // extension/src/brand.ts
 var DEFAULT_BRAND = { name: "Atrium", product: "Atrium Bridge" };
 var BUILD_BRAND = typeof define_BRAND_default === "undefined" ? DEFAULT_BRAND : { ...DEFAULT_BRAND, ...define_BRAND_default };
@@ -55,6 +90,7 @@ function renderTemplate(template, vars) {
 var groupTitle = () => renderTemplate(BUILD_BRAND.tabs?.groupTitle ?? DEFAULT_GROUP_TITLE, { shortName: BUILD_BRAND.name });
 var agentGroupTitle = (agent) => renderTemplate(BUILD_BRAND.tabs?.agentTitle ?? DEFAULT_AGENT_TITLE, { shortName: BUILD_BRAND.name, agent });
 var brandGroupColor = () => BUILD_BRAND.tabs?.groupColor ?? DEFAULT_GROUP_COLOR;
+var brandAccent = () => BUILD_BRAND.colors?.accent ?? BUILD_BRAND.color;
 
 // extension/src/owner.ts
 var OWNER_GROUP_COLORS = ["blue", "red", "green", "pink", "purple", "cyan", "orange"];
@@ -134,6 +170,21 @@ async function capability(name, fallback) {
   return fallback;
 }
 var windowPerAgent = () => capability("windowPerAgent", true);
+var EVALUATE_MODES = ["off", "own-tabs", "all"];
+async function evaluateMode() {
+  const host = (await loadHostCapabilities())?.evaluate;
+  if (typeof host === "string" && EVALUATE_MODES.includes(host)) return host;
+  const packaged = BUILD_BRAND.capabilities?.evaluate;
+  if (packaged && EVALUATE_MODES.includes(packaged)) return packaged;
+  return "own-tabs";
+}
+var HOST_STATUS_KEY = "hostStatus";
+async function saveHostStatus(status) {
+  await chrome.storage.session.set({ [HOST_STATUS_KEY]: status });
+}
+async function loadHostStatus() {
+  return (await chrome.storage.session.get(HOST_STATUS_KEY))[HOST_STATUS_KEY] ?? { paused: false, clients: [] };
+}
 
 // extension/src/scope.ts
 var GROUP_TITLE = groupTitle();
@@ -159,6 +210,9 @@ async function isGrouped(tabId) {
 async function entryOf(tabId) {
   return (await load())[String(tabId)];
 }
+async function listScope() {
+  return Object.keys(await load()).map(Number);
+}
 async function listEntries() {
   return Object.entries(await load()).map(([id, e]) => [Number(id), e]);
 }
@@ -171,9 +225,14 @@ async function accessibleTabs(client) {
   const shared = entries.filter(([, e]) => e.owner === void 0).map(([id]) => id);
   return [...own, ...shared];
 }
-async function addScope(tabId, owner) {
+async function addScope(tabId, owner, handed = false) {
   const scope = await load();
-  scope[String(tabId)] ??= { grouped: false, ...owner ? { owner: owner.id } : {} };
+  const existing = scope[String(tabId)];
+  if (existing) {
+    if (handed && !existing.handed) existing.handed = true;
+  } else {
+    scope[String(tabId)] = { grouped: false, ...owner ? { owner: owner.id } : {}, ...handed ? { handed: true } : {} };
+  }
   await save();
   if (owner) await rememberClient(owner);
   scheduleTabs();
@@ -309,6 +368,28 @@ function groupTab(tabId) {
   return next;
 }
 
+// extension/src/alert.ts
+var ALERT_COLOR = "#f5a524";
+var ALERT_TEXT_COLOR = "#1a1a1a";
+var BADGE_COLOR = brandAccent() ?? "#d7813d";
+var BADGE_TEXT_COLOR = "#ffffff";
+function badgeText(controlled, allowEvaluate) {
+  if (controlled > 0) return controlled > 99 ? "99+" : String(controlled);
+  return allowEvaluate ? "JS" : "";
+}
+async function applyBadge() {
+  const allow = await getAllowEvaluate();
+  const controlled = (await listScope()).length;
+  await chrome.action.setBadgeText({ text: badgeText(controlled, allow) });
+  await chrome.action.setBadgeBackgroundColor({ color: allow ? ALERT_COLOR : BADGE_COLOR });
+  await chrome.action.setBadgeTextColor({ color: allow ? ALERT_TEXT_COLOR : BADGE_TEXT_COLOR });
+}
+async function applyAlertState() {
+  await applyBadge();
+  const color = await groupColor();
+  for (const g of await chrome.tabGroups.query({ title: GROUP_TITLE })) await chrome.tabGroups.update(g.id, { color });
+}
+
 // extension/src/report.ts
 var DEBOUNCE_MS = 250;
 var sender = null;
@@ -329,6 +410,7 @@ async function publishTabs() {
   if (timer) clearTimeout(timer);
   timer = null;
   sender?.({ t: "tabs", tabs: await scopedTabs() });
+  await applyBadge().catch(() => void 0);
 }
 function scheduleTabs() {
   if (timer) clearTimeout(timer);
@@ -966,6 +1048,7 @@ var COSMETICS_CSS = css(BRAND_GLOW, BRAND_RING);
 
 // extension/src/session.ts
 var CONSOLE_CAP = 1e3;
+var NETWORK_CAP = 500;
 var INFLIGHT_MAX_AGE_MS = 6e4;
 var STREAMING_TYPES = /* @__PURE__ */ new Set(["WebSocket", "EventSource"]);
 var formatArg = (a) => a.value !== void 0 ? typeof a.value === "string" ? a.value : JSON.stringify(a.value) : a.description ?? a.type ?? "";
@@ -1005,7 +1088,12 @@ var TabSession = class {
   dialog = null;
   /** O gesto que o diálogo deixou pendurado no browser (termina quando o diálogo é respondido). */
   pending = null;
+  /** Anel dos pedidos de rede vistos (A11, `readNetwork`), do mais antigo ao mais novo; os NETWORK_CAP últimos. */
+  requests = [];
+  /** Viewport emulada por `resize` (Emulation.setDeviceMetricsOverride), ou null com o tamanho real da janela. */
+  emulated = null;
   seq = 0;
+  netSeq = 0;
   waiters = [];
   constructor(tabId) {
     this.tabId = tabId;
@@ -1110,8 +1198,28 @@ var TabSession = class {
       this.loading = false;
     } else if (method === "Network.requestWillBeSent") {
       if (!STREAMING_TYPES.has(String(p.type))) this.inflight.set(String(p.requestId), Date.now());
+      this.onRequest(p);
+    } else if (method === "Network.responseReceived") {
+      const e = this.requestById(String(p.requestId));
+      const r = p.response;
+      if (e && r) {
+        e.status = r.status;
+        e.mimeType = r.mimeType;
+        if (typeof p.type === "string") e.type = p.type;
+        if (r.fromDiskCache || r.fromServiceWorker) e.fromCache = true;
+      }
     } else if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
       this.inflight.delete(String(p.requestId));
+      const e = this.requestById(String(p.requestId));
+      if (e) {
+        if (typeof p.timestamp === "number") e.durationMs = Math.max(0, Math.round((p.timestamp - e.ts) * 1e3));
+        if (method === "Network.loadingFinished") {
+          if (typeof p.encodedDataLength === "number") e.bytes = p.encodedDataLength;
+        } else {
+          e.error = typeof p.errorText === "string" && p.errorText ? p.errorText : "failed";
+          if (typeof p.type === "string" && !e.type) e.type = p.type;
+        }
+      }
     } else if (method === "Runtime.consoleAPICalled") {
       const args = p.args ?? [];
       this.pushConsole(consoleLevel(String(p.type)), args.map(formatArg).join(" "));
@@ -1127,6 +1235,39 @@ var TabSession = class {
   pushConsole(level, text) {
     this.console.push({ seq: ++this.seq, level, text, ts: Date.now() });
     if (this.console.length > CONSOLE_CAP) this.console.splice(0, this.console.length - CONSOLE_CAP);
+  }
+  /** A entrada do anel com este requestId (a mais recente, se o id se repetiu), ou undefined se já saiu do anel. */
+  requestById(id) {
+    for (let i = this.requests.length - 1; i >= 0; i--) if (this.requests[i].id === id) return this.requests[i];
+    return void 0;
+  }
+  /**
+   * Network.requestWillBeSent: um pedido novo entra no anel; um redirecionamento (mesmo requestId, com `redirectResponse`)
+   * atualiza a entrada existente (URL final, contagem de redirecionamentos) em vez de criar outra.
+   */
+  onRequest(p) {
+    const req = p.request;
+    const id = String(p.requestId);
+    const ts = typeof p.timestamp === "number" ? p.timestamp : 0;
+    if (p.redirectResponse) {
+      const existing = this.requestById(id);
+      if (existing) {
+        existing.redirects = (existing.redirects ?? 0) + 1;
+        existing.url = req?.url ?? existing.url;
+        return;
+      }
+    }
+    if (STREAMING_TYPES.has(String(p.type))) return;
+    this.requests.push({
+      seq: ++this.netSeq,
+      id,
+      url: req?.url ?? "",
+      method: req?.method ?? "GET",
+      ...typeof p.type === "string" ? { type: p.type } : {},
+      startedAt: Date.now(),
+      ts
+    });
+    if (this.requests.length > NETWORK_CAP) this.requests.splice(0, this.requests.length - NETWORK_CAP);
   }
 };
 
@@ -1146,8 +1287,8 @@ async function attachedSession(tabId, client) {
   await s.attach();
   return s;
 }
-async function takeControl(tabId, owner) {
-  await addScope(tabId, owner);
+async function takeControl(tabId, owner, opts = {}) {
+  await addScope(tabId, owner, opts.handed === true);
   const s = sessionFor(tabId);
   try {
     await s.attach();
@@ -1160,7 +1301,7 @@ async function takeControl(tabId, owner) {
 }
 async function adoptOpenedTab(tab) {
   const tabId = tab.id;
-  if (tabId === void 0 || tab.openerTabId === void 0) return false;
+  if (tabId === void 0 || tab.openerTabId === void 0 || isOwnPage(tab.pendingUrl ?? tab.url)) return false;
   const opener = await entryOf(tab.openerTabId);
   if (!opener || await isScoped(tabId)) return false;
   await addScope(tabId, opener.owner !== void 0 ? { id: opener.owner } : void 0);
@@ -1174,6 +1315,7 @@ async function adoptOpenedTab(tab) {
   await groupTab(tabId).catch(() => void 0);
   return true;
 }
+var isOwnPage = (url) => url !== void 0 && url.startsWith(chrome.runtime.getURL(""));
 async function releaseControl(tabId) {
   await removeScope(tabId);
   const s = sessions.get(tabId);
@@ -1198,6 +1340,15 @@ async function releaseClient(clientId) {
   await forgetClient(clientId);
   scheduleTabs();
   return { released, groups };
+}
+async function releaseAll() {
+  const released = [];
+  for (const [tabId] of await listEntries()) {
+    await releaseControl(tabId);
+    released.push(tabId);
+  }
+  scheduleTabs();
+  return { released };
 }
 async function resolveTabId(requested, client) {
   if (requested !== void 0 && requested !== null && requested !== "") {
@@ -1253,7 +1404,7 @@ function watchBrowserEvents() {
   });
   chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.url === void 0 && change.title === void 0) return;
-    void isScoped(tabId).then((scoped) => scoped ? scheduleTabs() : void 0);
+    void isScoped(tabId).then((scoped) => scoped ? isOwnPage(change.url) ? releaseControl(tabId) : scheduleTabs() : void 0);
   });
   chrome.windows.onFocusChanged.addListener((windowId) => {
     if (windowId !== chrome.windows.WINDOW_ID_NONE) publishFocus();
@@ -1593,15 +1744,15 @@ var rows = [];
 var byChar = /* @__PURE__ */ new Map();
 var byName = /* @__PURE__ */ new Map();
 function printable(code, keyCode, key, shiftKey) {
-  const row = { code, keyCode, key, shiftKey, text: key };
-  rows.push(row);
-  byChar.set(key, { row, shifted: false });
-  if (shiftKey !== key) byChar.set(shiftKey, { row, shifted: true });
+  const row2 = { code, keyCode, key, shiftKey, text: key };
+  rows.push(row2);
+  byChar.set(key, { row: row2, shifted: false });
+  if (shiftKey !== key) byChar.set(shiftKey, { row: row2, shifted: true });
 }
 function named(name, code, keyCode, extra = {}) {
-  const row = { code, keyCode, key: name, ...extra };
-  rows.push(row);
-  byName.set(name.toLowerCase(), row);
+  const row2 = { code, keyCode, key: name, ...extra };
+  rows.push(row2);
+  byName.set(name.toLowerCase(), row2);
 }
 for (let i = 0; i < 26; i++) {
   const lower = String.fromCharCode(97 + i);
@@ -1666,15 +1817,15 @@ var ALIASES = {
   plus: "+",
   spacebar: "space"
 };
-function fromRow(row, shift, impliedShift) {
-  const key = shift && row.shiftKey ? row.shiftKey : row.key;
-  const text = row.text === void 0 ? void 0 : shift && row.shiftKey ? row.shiftKey : row.text;
+function fromRow(row2, shift, impliedShift) {
+  const key = shift && row2.shiftKey ? row2.shiftKey : row2.key;
+  const text = row2.text === void 0 ? void 0 : shift && row2.shiftKey ? row2.shiftKey : row2.text;
   return {
     key,
-    code: row.code,
-    keyCode: row.keyCode,
+    code: row2.code,
+    keyCode: row2.keyCode,
     ...text !== void 0 ? { text } : {},
-    ...row.location ? { location: row.location } : {},
+    ...row2.location ? { location: row2.location } : {},
     impliedShift
   };
 }
@@ -1685,8 +1836,8 @@ function resolveKey(token, shiftHeld = false) {
   const alias = ALIASES[lower] ?? lower;
   const aliasChar = alias.length === 1 ? byChar.get(alias) : void 0;
   if (aliasChar) return fromRow(aliasChar.row, aliasChar.shifted || shiftHeld, aliasChar.shifted);
-  const row = byName.get(alias);
-  return row ? fromRow(row, shiftHeld, false) : null;
+  const row2 = byName.get(alias);
+  return row2 ? fromRow(row2, shiftHeld, false) : null;
 }
 var MODIFIER_NAMES = { alt: "Alt", control: "Control", meta: "Meta", shift: "Shift" };
 function toModifier(token) {
@@ -1871,14 +2022,15 @@ async function listTabs(client) {
     const t = await chrome.tabs.get(id).catch(() => null);
     if (!t) continue;
     const mine = canAct(entry, client);
-    const row = { tab: String(id), url: t.url ?? t.pendingUrl ?? "", title: t.title ?? "", active: t.active, current: mine && id === current };
+    const row2 = { tab: String(id), url: t.url ?? t.pendingUrl ?? "", title: t.title ?? "", active: t.active, current: mine && id === current };
+    if (entry.handed) row2.handed = true;
     if (entry.owner !== void 0) {
-      row.owner = entry.owner;
+      row2.owner = entry.owner;
       const name = await clientName(entry.owner);
-      if (name) row.ownerName = name;
-      if (!mine) row.ownedByOther = true;
+      if (name) row2.ownerName = name;
+      if (!mine) row2.ownedByOther = true;
     }
-    rows2.push(row);
+    rows2.push(row2);
   }
   return rows2;
 }
@@ -1936,20 +2088,6 @@ async function tabs(a, client) {
   }
 }
 
-// extension/src/alert.ts
-var ALERT_COLOR = "#f5a524";
-var ALERT_TEXT_COLOR = "#1a1a1a";
-async function applyAlertState() {
-  const allow = await getAllowEvaluate();
-  await chrome.action.setBadgeText({ text: allow ? "JS" : "" });
-  if (allow) {
-    await chrome.action.setBadgeBackgroundColor({ color: ALERT_COLOR });
-    await chrome.action.setBadgeTextColor({ color: ALERT_TEXT_COLOR });
-  }
-  const color = await groupColor();
-  for (const g of await chrome.tabGroups.query({ title: GROUP_TITLE })) await chrome.tabGroups.update(g.id, { color });
-}
-
 // extension/src/strings.ts
 var B = brandName();
 var P = productName();
@@ -1963,16 +2101,46 @@ var STATUS_LABEL = {
 var POPUP = {
   title: P,
   handover: `Entregar esta aba ao ${B}`,
+  /** Com um agente ativo: a aba vai direto para ele. */
+  handoverTo: (agent) => `Entregar esta aba a ${agent}`,
+  /** Com vários agentes: a pessoa escolhe. */
+  handoverPick: "Entregar esta aba a:",
+  anyAgent: "Qualquer agente",
   release: "Retomar esta aba",
   handedOver: `Esta aba est\xE1 com o ${B} (grupo "${B}").`,
+  handedOverTo: (agent) => `Esta aba est\xE1 com ${agent}.`,
   notHandedOver: `O ${B} s\xF3 controla as abas que ele abriu e as que voc\xEA entregar aqui.`,
   options: "Op\xE7\xF5es e pareamento",
   working: "Aguarde\u2026",
   failed: (reason) => `N\xE3o foi poss\xEDvel: ${reason}`,
-  noTab: "Nenhuma aba ativa."
+  noTab: "Nenhuma aba ativa.",
+  // A12: o que está sob controle, agrupado por agente.
+  controlledTitle: "Sob controle",
+  controlledCount: (n) => n === 1 ? "1 aba" : `${n} abas`,
+  controlledEmpty: `Nenhuma aba sob controle do ${B} agora.`,
+  sharedGroup: "Qualquer agente",
+  handedMark: "entregue por voc\xEA",
+  retake: "Retomar",
+  retakeAll: "Retomar tudo",
+  // Pausa (o kill switch, também daqui).
+  pausedBanner: `${B} PAUSADO \u2014 nenhum agente controla abas at\xE9 voc\xEA retomar`,
+  pause: "Pausar agentes",
+  resume: "Retomar agentes",
+  pauseHint: "Pausar solta todas as abas, em todos os navegadores; as tools dos agentes param at\xE9 voc\xEA retomar.",
+  noDaemon: `sem conex\xE3o com o ${B}; use "Retomar tudo" para soltar as abas deste navegador`,
+  // Nome do browser, inline (sem ir às opções).
+  browserName: "Nome deste navegador",
+  browserNameHelp: "Como os agentes veem este navegador. Enter ou sair do campo salva.",
+  // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
+  reloadHint: (expected, running) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running}): clique em Recarregar em chrome://extensions.`
 };
 var EVALUATE = {
-  disabledError: `evaluate is turned off in this browser: the user must enable "C\xF3digo na p\xE1gina" in the ${P} extension options (chrome://extensions > ${P} > Options).`,
+  /** Aba entregue pela pessoa, sem a liberação dela (modo `own-tabs`). */
+  disabledError: `evaluate is turned off in this tab: the user handed it over, so it is their session. It works in tabs you open yourself (tabs {action:"new"}); for this tab the user must enable "C\xF3digo na p\xE1gina" in the ${P} extension options (chrome://extensions > ${P} > Options).`,
+  /** A instalação desligou a evaluate em toda aba (`capabilities.evaluate = off`). */
+  disabledByInstallation: `evaluate is turned off by this ${P} installation (capabilities.evaluate = "off"): no script runs in any tab.`,
+  /** Uma capability booleana desligada pela instalação (download, upload, pdf, readNetwork). */
+  capabilityOff: (tool, capability2) => `${tool} is turned off by this ${P} installation (capabilities.${capability2} = false).`,
   /** Faixa no topo do popup enquanto a opção está ligada. */
   banner: `C\xF3digo na p\xE1gina LIBERADO \u2014 o agente pode executar scripts nas abas ${B}`,
   turnOff: "Desligar",
@@ -1980,6 +2148,8 @@ var EVALUATE = {
   pageNotice: `${B} executou c\xF3digo nesta p\xE1gina`,
   optionTitle: "C\xF3digo na p\xE1gina",
   optionHelp: `Permite que o agente execute scripts (JavaScript) nas abas do grupo ${B}. Desligado, a tool evaluate \xE9 recusada.`,
+  /** O interruptor no popup (A12): vale para as abas que a pessoa entregou; nas que o agente abriu já vale (Q1). */
+  popupHelp: "Nas abas que voc\xEA entregou. Nas que o agente abriu, j\xE1 vale.",
   off: "\u{1F512} Desligado",
   offHint: "O agente n\xE3o executa scripts nas p\xE1ginas.",
   on: "\u26A0\uFE0F Liberado",
@@ -2336,10 +2506,219 @@ async function evaluate(s, a) {
   return { value: value ?? null };
 }
 
+// extension/src/files.ts
+var PROBE_FILE_INPUT = `function () {
+  if (!(this instanceof HTMLInputElement) || this.type !== 'file') return null
+  return { multiple: this.multiple, files: Array.from(this.files || []).map((f) => ({ name: f.name, size: f.size, type: f.type })) }
+}`;
+async function withObject2(s, ref, fn) {
+  const backendNodeId = backendNodeOf(s, ref);
+  let objectId;
+  try {
+    objectId = (await s.transport.send("DOM.resolveNode", { backendNodeId })).object.objectId;
+  } catch (e) {
+    throw new BrowserError("STALE_REF", `ref "${ref}" no longer exists in the page; take a new snapshot`, { cause: e });
+  }
+  try {
+    return await fn(objectId, backendNodeId);
+  } finally {
+    await s.transport.send("Runtime.releaseObject", { objectId }).catch(() => void 0);
+  }
+}
+async function callOn2(s, objectId, functionDeclaration) {
+  const r = await s.transport.send("Runtime.callFunctionOn", { objectId, functionDeclaration, returnByValue: true });
+  if (r.exceptionDetails) {
+    throw new BrowserError("EVALUATE_FAILED", `page script failed: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+  }
+  return r.result?.value;
+}
+async function upload(s, a) {
+  if (!Array.isArray(a.paths) || a.paths.length === 0) throw new BrowserError("INVALID_ARGUMENT", "upload: give at least one path");
+  return withObject2(s, a.ref, async (objectId, backendNodeId) => {
+    const probe = await callOn2(s, objectId, PROBE_FILE_INPUT);
+    if (!probe) throw new BridgeError("NOT_A_FILE_INPUT", `ref "${a.ref}" is not an <input type="file">; find the file field of the form and pass its ref`);
+    if (a.paths.length > 1 && !probe.multiple) {
+      throw new BrowserError("INVALID_ARGUMENT", `upload: this file input accepts a single file (no multiple attribute); ${a.paths.length} paths were given`);
+    }
+    try {
+      await s.transport.send("DOM.setFileInputFiles", { files: a.paths, backendNodeId });
+    } catch (e) {
+      throw new BridgeError("UPLOAD_FAILED", `the browser refused to attach the files: ${e.message}`);
+    }
+    const after = await callOn2(s, objectId, PROBE_FILE_INPUT);
+    const files = after?.files ?? [];
+    if (files.length !== a.paths.length) {
+      throw new BridgeError("UPLOAD_FAILED", `${a.paths.length} file(s) were given but the input ended up with ${files.length}`);
+    }
+    return { files };
+  });
+}
+var DOWNLOAD_TIMEOUT_MS = 6e4;
+var POLL_MS = 150;
+var TRACKED_KEY = "bridgeDownloads";
+var TRACKED_MAX = 200;
+async function trackedIds() {
+  return (await chrome.storage.session.get(TRACKED_KEY))[TRACKED_KEY] ?? [];
+}
+async function remember(id) {
+  const ids = (await trackedIds()).filter((x) => x !== id);
+  ids.push(id);
+  await chrome.storage.session.set({ [TRACKED_KEY]: ids.slice(-TRACKED_MAX) });
+}
+var describe = (d) => ({
+  id: d.id,
+  path: d.filename,
+  bytes: d.fileSize > 0 ? d.fileSize : d.bytesReceived,
+  mime: d.mime,
+  url: d.finalUrl || d.url,
+  state: d.state,
+  startedAt: d.startTime,
+  ...d.error ? { error: d.error } : {}
+});
+async function item(id) {
+  return (await chrome.downloads.search({ id }))[0];
+}
+function assertDownloadUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new BrowserError("INVALID_ARGUMENT", `"${url}" is not an absolute URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new BridgeError("URL_NOT_ALLOWED", `only http(s) URLs can be downloaded, got "${parsed.protocol}"`);
+  }
+}
+function nextCreated(timeoutMs) {
+  let listener;
+  let timer2;
+  const promise = new Promise((resolve, reject) => {
+    listener = (d) => resolve(d);
+    chrome.downloads.onCreated.addListener(listener);
+    timer2 = setTimeout(() => reject(new BridgeError("DOWNLOAD_TIMEOUT", `the click did not start a download within ${timeoutMs} ms`)), timeoutMs);
+  });
+  const cancel = () => {
+    clearTimeout(timer2);
+    chrome.downloads.onCreated.removeListener(listener);
+  };
+  return { promise: promise.finally(cancel), cancel };
+}
+async function awaitDone(id, timeoutMs) {
+  const end = Date.now() + timeoutMs;
+  for (; ; ) {
+    const d = await item(id);
+    if (!d) throw new BridgeError("DOWNLOAD_FAILED", `download ${id} disappeared from the browser`);
+    if (d.state === "complete") return describe(d);
+    if (d.state === "interrupted") throw new BridgeError("DOWNLOAD_FAILED", `download of ${d.finalUrl || d.url} failed: ${d.error ?? "interrupted"}`, { download: describe(d) });
+    if (Date.now() >= end) {
+      throw new BridgeError("DOWNLOAD_TIMEOUT", `download ${id} (${d.finalUrl || d.url}) did not finish within ${timeoutMs} ms; it continues in the browser: check it with downloads {action:"list"}`, {
+        download: describe(d)
+      });
+    }
+    await sleep(POLL_MS);
+  }
+}
+async function download(s, a) {
+  if (a.ref === void 0 === (a.url === void 0)) throw new BrowserError("INVALID_ARGUMENT", "download: give exactly one of ref or url");
+  const timeoutMs = a.timeoutMs ?? DOWNLOAD_TIMEOUT_MS;
+  let id;
+  if (a.url !== void 0) {
+    assertDownloadUrl(a.url);
+    try {
+      id = await chrome.downloads.download({ url: a.url, conflictAction: "uniquify", saveAs: false });
+    } catch (e) {
+      throw new BridgeError("DOWNLOAD_FAILED", `the browser refused to download ${a.url}: ${e.message}`);
+    }
+  } else {
+    const created = nextCreated(timeoutMs);
+    try {
+      await click(s, { ref: a.ref });
+    } catch (e) {
+      created.cancel();
+      throw e;
+    }
+    id = (await created.promise).id;
+  }
+  await remember(id);
+  return awaitDone(id, timeoutMs);
+}
+async function downloads(a) {
+  if (a.action !== "list") throw new BrowserError("INVALID_ARGUMENT", 'downloads: action must be "list"');
+  const tracked = new Set(await trackedIds());
+  if (tracked.size === 0) return { downloads: [] };
+  const all = await chrome.downloads.search({ orderBy: ["-startTime"], limit: 0 });
+  return { downloads: all.filter((d) => tracked.has(d.id)).slice(0, a.limit ?? 50).map(describe) };
+}
+var PDF_TIMEOUT_MS = 6e4;
+async function pdf(s, a) {
+  const where2 = await pageEval(s.transport, "({url:location.href,title:document.title})");
+  const params = {
+    printBackground: a.printBackground ?? true,
+    landscape: a.landscape ?? false,
+    preferCSSPageSize: true
+  };
+  if (a.scale !== void 0) params.scale = a.scale;
+  if (a.pageRanges !== void 0) params.pageRanges = a.pageRanges;
+  let data;
+  try {
+    const r = await withTimeout(s.transport.send("Page.printToPDF", params), PDF_TIMEOUT_MS, () => new BridgeError("PDF_FAILED", `printing did not finish within ${PDF_TIMEOUT_MS / 1e3} s`));
+    data = r.data;
+  } catch (e) {
+    if (e instanceof BridgeError) throw e;
+    throw new BridgeError("PDF_FAILED", `the browser could not print this page: ${e.message}`);
+  }
+  if (typeof data !== "string" || !data) throw new BridgeError("PDF_FAILED", "the browser returned an empty PDF");
+  return { data, ...where2, ...a.filename !== void 0 ? { filename: a.filename } : {} };
+}
+
+// extension/src/network.ts
+var BODY_MAX_CHARS = 1e5;
+var row = (e) => {
+  const { ts: _ts, ...rest } = e;
+  void _ts;
+  return rest;
+};
+async function readNetwork(s, a) {
+  if (a.id !== void 0) {
+    const entry = s.requestById(a.id);
+    if (!entry) throw new BridgeError("REQUEST_NOT_FOUND", `no request with id "${a.id}" in this tab's recent network activity; list them with readNetwork first`);
+    if (!a.body) return { request: row(entry) };
+    const max = a.maxChars ?? BODY_MAX_CHARS;
+    let r;
+    try {
+      r = await s.transport.send("Network.getResponseBody", { requestId: a.id });
+    } catch (e) {
+      throw new BridgeError(
+        "BODY_UNAVAILABLE",
+        `the browser no longer has the response body of ${entry.url} (${e.message}); bodies are kept only while the page that loaded them is open`
+      );
+    }
+    const truncated = r.body.length > max;
+    return { request: row(entry), body: { text: truncated ? r.body.slice(0, max) : r.body, base64Encoded: r.base64Encoded, truncated } };
+  }
+  if (a.body) throw new BrowserError("INVALID_ARGUMENT", "readNetwork: body needs the id of one request");
+  const after = a.afterSeq ?? 0;
+  const needle = a.urlContains?.toLowerCase();
+  const requests = s.requests.filter((e) => e.seq > after && (!needle || e.url.toLowerCase().includes(needle))).slice(0, a.limit ?? 100).map(row);
+  return { requests, lastSeq: s.requests.at(-1)?.seq ?? 0 };
+}
+async function resize(s, a) {
+  if (a.reset) {
+    await s.transport.send("Emulation.clearDeviceMetricsOverride");
+    s.emulated = null;
+  } else {
+    if (a.width === void 0 || a.height === void 0) throw new BrowserError("INVALID_ARGUMENT", "resize: give width and height (or reset: true)");
+    await s.transport.send("Emulation.setDeviceMetricsOverride", { width: a.width, height: a.height, deviceScaleFactor: 0, mobile: false });
+    s.emulated = { width: a.width, height: a.height };
+  }
+  const inner = await pageEval(s.transport, "({innerWidth, innerHeight})");
+  return { width: s.emulated?.width ?? inner.innerWidth, height: s.emulated?.height ?? inner.innerHeight, ...inner, emulated: s.emulated !== null };
+}
+
 // extension/src/wait.ts
 var DEFAULT_TIMEOUT_MS = 15e3;
 var MAX_WAIT_MS = 12e4;
-var POLL_MS = 100;
+var POLL_MS2 = 100;
 var IDLE_MS = 500;
 var WITH_VALUE = /* @__PURE__ */ new Set(["text", "selector", "url", "time"]);
 async function wait(s, a) {
@@ -2366,14 +2745,14 @@ async function wait(s, a) {
   }
   let idleSince = null;
   let check;
-  let describe;
+  let describe2;
   switch (a.for) {
     case "load":
-      describe = "the page to finish loading";
+      describe2 = "the page to finish loading";
       check = async () => !s.loading && await pageEval(s.transport, "document.readyState") === "complete";
       break;
     case "networkidle":
-      describe = `the network to be idle for ${IDLE_MS} ms`;
+      describe2 = `the network to be idle for ${IDLE_MS} ms`;
       check = async () => {
         if (s.loading || s.inflightCount() > 0) {
           idleSince = null;
@@ -2384,11 +2763,11 @@ async function wait(s, a) {
       };
       break;
     case "text":
-      describe = `text ${JSON.stringify(value)}`;
+      describe2 = `text ${JSON.stringify(value)}`;
       check = () => pageEval(s.transport, `((document.body && document.body.innerText) || '').includes(${JSON.stringify(value)})`);
       break;
     case "selector":
-      describe = `an element matching ${JSON.stringify(value)} to be visible`;
+      describe2 = `an element matching ${JSON.stringify(value)} to be visible`;
       check = async () => {
         const r = await pageEval(
           s.transport,
@@ -2399,7 +2778,7 @@ async function wait(s, a) {
       };
       break;
     case "url":
-      describe = `the URL to contain ${JSON.stringify(value)}`;
+      describe2 = `the URL to contain ${JSON.stringify(value)}`;
       check = () => pageEval(s.transport, `location.href.includes(${JSON.stringify(value)})`);
       break;
     default:
@@ -2413,8 +2792,8 @@ async function wait(s, a) {
       if (e instanceof BrowserError && e.code === "INVALID_ARGUMENT") throw e;
     }
     const left = end - Date.now();
-    if (left <= 0) throw new BrowserError("WAIT_TIMEOUT", `timed out after ${timeoutMs} ms waiting for ${describe}`);
-    await sleep(Math.min(POLL_MS, left));
+    if (left <= 0) throw new BrowserError("WAIT_TIMEOUT", `timed out after ${timeoutMs} ms waiting for ${describe2}`);
+    await sleep(Math.min(POLL_MS2, left));
   }
 }
 
@@ -2446,8 +2825,20 @@ async function onTabFor(tool, a, client, fn) {
   const tabId = await resolveTabId(a.tab, client);
   return inTabQueue(tabId, async () => guardedByDialog(await attachedSession(tabId, client), tool, fn));
 }
+var GATED = { upload: "upload", download: "download", downloads: "download", pdf: "pdf", readNetwork: "readNetwork" };
+async function assertCapability(tool) {
+  const name = GATED[tool];
+  if (name && !await capability(name, true)) throw new BridgeError("CAPABILITY_DISABLED", EVALUATE.capabilityOff(tool, name), { capability: name });
+}
+async function assertEvaluateAllowed(entry) {
+  const mode = await evaluateMode();
+  if (mode === "off") throw new BridgeError("EVALUATE_DISABLED", EVALUATE.disabledByInstallation, { mode });
+  if (mode === "all" || !entry?.handed) return;
+  if (!await getAllowEvaluate()) throw new BridgeError("EVALUATE_DISABLED", EVALUATE.disabledError, { mode, handed: true });
+}
 async function runTool(tool, a, client) {
   const onTab = (args, fn) => onTabFor(tool, args, client, fn);
+  await assertCapability(tool);
   switch (tool) {
     case "tabs":
       return tabs({ action: a.action, url: a.url, tab: a.tab, where: a.where }, client);
@@ -2485,9 +2876,21 @@ async function runTool(tool, a, client) {
       return onTab(a, (s) => setChecked(s, { ref: a.ref, checked: a.checked }));
     case "readConsole":
       return onTab(a, async (s) => readConsole(s, { level: a.level, afterSeq: a.afterSeq, limit: a.limit, clear: a.clear }));
+    case "upload":
+      return onTab(a, (s) => upload(s, { ref: a.ref, paths: a.paths }));
+    case "download":
+      return onTab(a, (s) => download(s, { ref: a.ref, url: a.url, timeoutMs: a.timeoutMs }));
+    case "downloads":
+      return downloads({ action: a.action, limit: a.limit });
+    case "pdf":
+      return onTab(a, (s) => pdf(s, { filename: a.filename, landscape: a.landscape, scale: a.scale, pageRanges: a.pageRanges, printBackground: a.printBackground }));
+    case "readNetwork":
+      return onTab(a, async (s) => readNetwork(s, { afterSeq: a.afterSeq, limit: a.limit, urlContains: a.urlContains, id: a.id, body: a.body, maxChars: a.maxChars }));
+    case "resize":
+      return onTab(a, (s) => resize(s, { width: a.width, height: a.height, reset: a.reset }));
     case "evaluate":
       return onTab(a, async (s) => {
-        if (!await getAllowEvaluate()) throw new BridgeError("EVALUATE_DISABLED", EVALUATE.disabledError);
+        await assertEvaluateAllowed(await entryOf(s.tabId));
         await showEvaluateNotice(s.transport);
         return evaluate(s, { expression: a.expression, awaitPromise: a.awaitPromise });
       });
@@ -2577,6 +2980,9 @@ var DaemonConnection = class {
         this.pingTimer = setInterval(() => this.send({ t: "ping" }), PING_MS);
         void publishTabs();
         void publishFocusIfFocused();
+        void maybeReloadForVersion(msg.extensionVersion);
+      } else if (msg.t === "status") {
+        void saveHostStatus({ paused: msg.paused === true, clients: Array.isArray(msg.clients) ? msg.clients : [] });
       } else if (msg.t === "denied") {
         this.denied = true;
         void setStatus({ state: "denied", detail: msg.reason });
@@ -2585,6 +2991,11 @@ var DaemonConnection = class {
         void this.handleCall(msg.rid, () => runTool(msg.tool, msg.args, msg.client));
       } else if (msg.t === "release") {
         void this.handleCall(msg.rid, () => releaseClient(msg.client));
+      } else if (msg.t === "release-all") {
+        void this.handleCall(msg.rid, () => releaseAll());
+      } else if (msg.t === "config") {
+        void saveHostBrand(msg.brand);
+        void saveHostCapabilities(msg.capabilities);
       }
     };
     ws.onclose = () => {
@@ -2600,6 +3011,16 @@ var DaemonConnection = class {
     };
     ws.onerror = () => {
     };
+  }
+  /** Conectado ao daemon agora? (O popup só pausa/retoma pelo daemon; sem ele, só solta as abas localmente.) */
+  isOpen() {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+  /** A pessoa pausou ou retomou pelo popup (A12): o daemon faz o mesmo que em POST /pause e /resume. Devolve false sem conexão. */
+  setPaused(paused) {
+    if (!this.isOpen()) return false;
+    this.send({ t: paused ? "pause" : "resume" });
+    return true;
   }
   send(msg) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
@@ -2629,14 +3050,53 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && ALLOW_EVALUATE_STORAGE_KEY in changes) void applyAlertState();
 });
 void applyAlertState();
+async function overview() {
+  const [host, settings, entries] = await Promise.all([loadHostStatus(), loadSettings(), listEntries()]);
+  const tabs2 = [];
+  const agents = new Map(host.clients.map((c) => [c.id, c]));
+  for (const [id, entry] of entries) {
+    const tab = await chrome.tabs.get(id).catch(() => null);
+    if (!tab) continue;
+    const ownerName = entry.owner !== void 0 ? await clientName(entry.owner) : void 0;
+    if (entry.owner !== void 0 && !agents.has(entry.owner)) agents.set(entry.owner, { id: entry.owner, ...ownerName ? { name: ownerName } : {} });
+    tabs2.push({
+      id,
+      title: tab.title ?? "",
+      url: tab.url ?? "",
+      ...entry.owner !== void 0 ? { owner: entry.owner } : {},
+      ...ownerName ? { ownerName } : {},
+      ...entry.handed ? { handed: true } : {}
+    });
+  }
+  return { connected: connection.isOpen(), paused: host.paused, name: settings.name, tabs: tabs2, agents: [...agents.values()] };
+}
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-  const tabId = msg.tabId;
-  if (tabId === void 0) return false;
   const run = async () => {
-    if (msg.t === "handover") await takeControl(tabId, ownerOf(msg.owner));
-    else if (msg.t === "release") await releaseControl(tabId);
-    else if (msg.t === "is-scoped") return { scoped: await isScoped(tabId) };
-    return { ok: true };
+    switch (msg.t) {
+      case "is-scoped":
+        return { scoped: await isScoped(msg.tabId) };
+      case "handover":
+        await takeControl(msg.tabId, ownerOf(msg.owner), { handed: true });
+        return { ok: true };
+      case "release":
+        await releaseControl(msg.tabId);
+        return { ok: true };
+      case "overview":
+        return overview();
+      case "release-all":
+        return { ok: true, ...await releaseAll() };
+      case "set-paused":
+        if (!connection.setPaused(msg.paused === true)) return { error: POPUP.noDaemon };
+        return { ok: true };
+      case "set-name": {
+        const name = cleanClientName(msg.name) ?? "";
+        const settings = await loadSettings();
+        if (name && name !== settings.name) await saveSettings({ ...settings, name });
+        return { ok: true, name: name || settings.name };
+      }
+      default:
+        return { error: `unknown message ${String(msg.t)}` };
+    }
   };
   run().then(reply, (e) => reply({ error: e.message }));
   return true;
