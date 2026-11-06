@@ -1,0 +1,46 @@
+{
+  "$schema": "./brand.schema.json",
+  "slug": "tether",
+  "name": "Tether Bridge",
+  "shortName": "Tether",
+  "description": "Deixa os agentes do Tether (Claude, soul) usarem este navegador, só nas abas que eles abriram ou que você entregou.",
+  "host": {
+    "name": "tether",
+    "id": "studio.codr.tether"
+  },
+  "colors": {
+    "accent": "#6aa6ff",
+    "light": {
+      "ink": "#1b1b1f",
+      "paper": "#f4f4f7"
+    },
+    "dark": {
+      "ink": "#e8e8ee",
+      "paper": "#141418"
+    }
+  },
+  "assets": {
+    "src": "./src",
+    "out": "./assets/bridge"
+  },
+  "extension": {
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0nO41gGGG97Mi1W8c56yT+A/HT6vkcV8kEkk4e65dpotN964rHVWJu7qBizpZXpIzB7Ei8ONhO1SeK19okyIu5n/vcJM4mJhBfMfDWUYVfAGWYxCugXJiysEe4keVYZllH70IjaYdPI7M5vGk4pmYd8m1E+moUY7usAN81oL/lgzUfJDGI0oJkQP9T5e1vWLyzyyqLB1tKmx4L2a/v8cxTh2sWOl+koxVQbYWYf99mm3uROQFOCRpNJw4GE5iflNbH9tjcNl/zkOL2TFcUsOGMT8iyZzzM1YInP4ID7im4oNH+2ZTMjCW26nHkUw5WZOY8yfGamqDKRBz3CnQx505QIDAQAB",
+    "locale": "pt-BR"
+  },
+  "mcp": {
+    "serverName": "tether-bridge"
+  },
+  "tabs": {
+    "groupTitle": "{shortName}",
+    "agentTitle": "{shortName} · {agent}",
+    "groupColor": "blue"
+  },
+  "capabilities": {
+    "evaluate": "own-tabs",
+    "download": true,
+    "upload": true,
+    "pdf": true,
+    "readNetwork": true,
+    "windowPerAgent": true
+  }
+}

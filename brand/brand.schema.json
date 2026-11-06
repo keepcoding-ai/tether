@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Atrium Bridge brand",
+  "description": "A marca de um hospedeiro do Atrium Bridge (brand.json): nome, chave pública, cores, abas, servidor MCP e defaults de capabilities. Gerado por scripts/brand-schema.ts a partir de scripts/brand.ts.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 45
+    },
+    "shortName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 132
+    },
+    "host": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "colors": {
+      "type": "object",
+      "properties": {
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "light": {
+          "type": "object",
+          "properties": {
+            "ink": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "paper": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            }
+          },
+          "required": [
+            "ink",
+            "paper"
+          ],
+          "additionalProperties": false
+        },
+        "dark": {
+          "type": "object",
+          "properties": {
+            "ink": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "paper": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            }
+          },
+          "required": [
+            "ink",
+            "paper"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "accent"
+      ],
+      "additionalProperties": false
+    },
+    "assets": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "src": {
+          "default": "./src",
+          "type": "string",
+          "minLength": 1
+        },
+        "out": {
+          "default": "./assets/bridge",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "extension": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 200,
+          "pattern": "^[A-Za-z0-9+/]+=*$"
+        },
+        "updateUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "locale": {
+          "default": "pt-BR",
+          "type": "string",
+          "enum": [
+            "pt-BR",
+            "en"
+          ]
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "additionalProperties": false
+    },
+    "mcp": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "serverName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tabs": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "groupTitle": {
+          "default": "{shortName}",
+          "type": "string",
+          "minLength": 1
+        },
+        "agentTitle": {
+          "default": "{shortName} · {agent}",
+          "type": "string",
+          "minLength": 1
+        },
+        "groupColor": {
+          "default": "blue",
+          "type": "string",
+          "enum": [
+            "grey",
+            "blue",
+            "red",
+            "yellow",
+            "green",
+            "pink",
+            "purple",
+            "cyan",
+            "orange"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "evaluate": {
+          "default": "own-tabs",
+          "type": "string",
+          "enum": [
+            "off",
+            "own-tabs",
+            "all"
+          ]
+        },
+        "download": {
+          "default": true,
+          "type": "boolean"
+        },
+        "upload": {
+          "default": true,
+          "type": "boolean"
+        },
+        "pdf": {
+          "default": true,
+          "type": "boolean"
+        },
+        "readNetwork": {
+          "default": true,
+          "type": "boolean"
+        },
+        "windowPerAgent": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "slug",
+    "name",
+    "host",
+    "colors",
+    "extension"
+  ],
+  "additionalProperties": false
+}
