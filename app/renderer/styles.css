@@ -26,6 +26,8 @@
   --gap: 8px;
   --frame-radius: 10px;
   --drawer-inset: 16px;
+  /* The drawer's colour: neutral, no hue, inverted between themes (#d0d0d0 on dark: 10.8:1 on the frame, 11.9:1 on the desk; #3d3d3d on light: 10.5:1 and 8.9:1). */
+  --drawer-line: #d0d0d0;
   --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .3), 0 12px 28px rgba(0, 0, 0, .45), 0 32px 72px rgba(0, 0, 0, .55);
   --x-alert: oklch(0.70 0.19 50);
   --x-alert-foreground: #10131a;
@@ -41,7 +43,7 @@
     --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
     --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
     --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
-    --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --kbd-ring: rgba(0, 0, 0, .3); --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
+    --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --kbd-ring: rgba(0, 0, 0, .3); --drawer-line: #3d3d3d; --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
     color-scheme: light;
   }
 }
@@ -50,7 +52,7 @@
   --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
   --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
   --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
-  --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --kbd-ring: rgba(0, 0, 0, .3); --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
+  --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --kbd-ring: rgba(0, 0, 0, .3); --drawer-line: #3d3d3d; --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
   color-scheme: light;
 }
 
@@ -1300,8 +1302,10 @@ dialog.chooser-dlg .ch-top { border-top: 1px solid var(--border); }
 .tether-tab.empty .text { color: var(--fg-dim); font-style: italic; }
 
 /* --- F6: desk and focus signals (settings ui.deskLine / ui.tabBorder / ui.dimUnfocused; independent, combinable) ---
-   --desk-line-color is the active desk's colour (set on #workbench, so the pads' frames inherit it); the drawer paints its own with the accent. */
-.drawer-card { --desk-line-color: var(--accent); }
+   --desk-line-color is the active desk's colour (set on #workbench, so the pads' frames inherit it); the drawer paints its own, the neutral --drawer-line. */
+.drawer-card { --desk-line-color: var(--drawer-line); }
+/* With the drawer up the line under the toolbar is the drawer's too. Only the line is overridden (not --desk-line-color on #workbench), so the desk's focused frame keeps painting its own aura behind the drawer (Foco de Mesa). */
+body.drawer-open.desk-line #workbench::before { background: var(--drawer-line); }
 /* Borda na guia: ONE outline in the desk colour shaped like a folder, on the focused frame's active group only.
    Tab: top, left and right edges (inset shadow, so it follows the rounded top corners). Tab strip: its bottom edge, which
    the active tab hides with its own opaque background (that is the open side of the folder). Content: left, right and

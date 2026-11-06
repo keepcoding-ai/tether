@@ -38,9 +38,9 @@ function scopeMark(s: ScopeModel): HTMLElement | SVGElement {
   return s.kind === 'drawer' ? icon('lightning') : s.kind === 'pad' ? icon((s.icon ?? 'square') as IconName) : el('span', 'dot')
 }
 
-/** The scope's colour: the desk's `-text` token, the accent for the drawer and the pads. */
+/** The scope's colour: the desk's `-text` token, the neutral drawer line for the drawer, the accent for the pads. */
 function scopeColor(s: ScopeModel | undefined): string {
-  return s?.kind === 'desk' && s.color ? deskTokens(s.color).text : 'var(--accent)'
+  return s?.kind === 'desk' && s.color ? deskTokens(s.color).text : s?.kind === 'drawer' ? 'var(--drawer-line)' : 'var(--accent)'
 }
 
 /** Text with the query's hit wrapped in <mark>. */
