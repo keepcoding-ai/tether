@@ -13,7 +13,8 @@ import type { TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ColorScheme } from '../shared/theme.ts'
 import type { Command, CommandContext, RunSource } from './commands.ts'
 import type { Target } from './create.ts'
-import type { FixedBinding } from './keybindings-panel.ts'
+import type { FixedBinding, KbCommandInfo, KeybindingsFileInfo } from './keybindings-rules.ts'
+import type { Keybinding, KeyTable } from './shortcuts.ts'
 import type { PaletteModeProvider } from './palette.ts'
 import type { PaneType } from './pane-registry.ts'
 import type { OpenFileOptions } from './file-open.ts'
@@ -212,8 +213,28 @@ export interface TetherUi {
      */
     frames(host: PadHost): PadView
   }
-  /** Rows the shortcuts screen lists but cannot change (an editor's own keys). */
-  keybindings: { fixedBindings(provider: () => FixedBinding[]): IDisposable }
+  /**
+   * The key table and the person's keybindings.json, which stay the core's (the dispatcher honours the file with the
+   * shortcuts screen off). `fixedBindings` registers rows the screen lists but cannot change (an editor's own keys); the
+   * rest is what the screen reads and edits.
+   */
+  keybindings: {
+    fixedBindings(provider: () => FixedBinding[]): IDisposable
+    /** Every fixed row: the native menu's, the pane's clipboard keys, and the extensions'. */
+    fixed(): FixedBinding[]
+    /** Every command (the editor's own actions left out) as the screen lists it. */
+    commands(): KbCommandInfo[]
+    /** The key table in force. */
+    table(): KeyTable
+    /** The screen changed the table: in force at once (the extension writes the file). */
+    apply(bindings: Keybinding[]): void
+    /** Back to the defaults: in force at once; returns the bindings to write. */
+    defaults(): Keybinding[]
+    /** The file as the core last read it. */
+    file(): KeybindingsFileInfo
+    /** The file was read again (at start, after every change on disk, our own write included). */
+    onDidChangeFile(listener: () => void): IDisposable
+  }
   /**
    * File operations other extensions must follow (VS Code's IWorkingCopyFileService.onDidRunWorkingCopyFileOperation): the
    * explorer announces a rename it made on disk, the editors whose file was at (or under) `from` move to the new path.

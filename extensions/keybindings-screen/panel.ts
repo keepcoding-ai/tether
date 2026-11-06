@@ -7,15 +7,12 @@
 // Fixed rows are shown, not edited: the editor's (Monaco), the native menu's, the pane's own clipboard keys.
 // Everything the person changes becomes the smallest keybindings.json (keybindings-rules.ts) through the host.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
-import { chordHtml, escapeHtml } from './chord-pill.ts'
-import { prefixIssue } from './keybindings-rules.ts'
-import { icon } from './icons.ts'
-import { chordLabel, chordOfEvent, defaultWhere, isModifierOnly, keysLabel, PREFIX_COMMAND, resolvedDefaults, sameKeys, WHERE_ALL, WHERE_LABEL, type Chord, type Keybinding, type KeyTable, type Where } from './shortcuts.ts'
-import { KEYBINDINGS_TITLE } from '../shared/keybindings.ts'
+import { chordHtml, escapeHtml } from '../../app/renderer/chord-pill.ts'
+import { prefixIssue, type FixedBinding, type KbCommandInfo, type KeybindingsFileInfo } from '../../app/renderer/keybindings-rules.ts'
+import { icon } from '../../app/renderer/icons.ts'
+import { chordLabel, chordOfEvent, defaultWhere, isModifierOnly, keysLabel, PREFIX_COMMAND, resolvedDefaults, sameKeys, WHERE_ALL, WHERE_LABEL, type Chord, type Keybinding, type KeyTable, type Where } from '../../app/renderer/shortcuts.ts'
+import { KEYBINDINGS_TITLE } from '../../app/shared/keybindings.ts'
 
-export interface KbCommandInfo { id: string; title: string; group?: string; danger?: boolean; displayChord?: Chord }
-/** A row the screen shows but never edits: the editor's keys (Monaco), the native menu's, the pane's own. */
-export interface FixedBinding { command: string; title: string; group: string; keys: Chord[] | null; label?: string; where: Where[]; source: 'editor' | 'nativo' | 'painel' }
 
 export interface KeybindingsHost {
   commands(): KbCommandInfo[]
@@ -24,7 +21,7 @@ export interface KeybindingsHost {
   apply(bindings: Keybinding[]): void
   resetAll(): void
   /** The file as main last read it: where it is, whether it failed to parse, the entries skipped. */
-  fileState(): { path: string; error?: { message: string; line?: number }; warnings: string[] }
+  fileState(): KeybindingsFileInfo
   /** "Abrir keybindings.json": in a note tab beside this one. */
   openFile(): void
   fixedBindings(): FixedBinding[]

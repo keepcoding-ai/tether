@@ -7,10 +7,12 @@ import { editorKeyOwner, isPlainCtrlLetter, TERMINAL_CAPTURE, terminalKeyOwner }
 import { chordLabel, keysLabel, paneShortcutOf, resolvedDefaults, shortcutOf, type KeyLike } from '../../app/renderer/shortcuts.ts'
 import { withNoteKeybindings } from './note-extension.ts'
 import { withQuickOpenKeybindings } from './quick-open-extension.ts'
+import { withKeybindingsScreenKeybindings } from './keybindings-screen-extension.ts'
 
 // The note's keys come from its extension (extensions/note/manifest.ts), contributed as at the app's startup.
 withNoteKeybindings()
 withQuickOpenKeybindings()
+withKeybindingsScreenKeybindings()
 
 const key = (code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {}): KeyLike =>
   ({ code, ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta })

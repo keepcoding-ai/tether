@@ -24,7 +24,7 @@ function stubHost(calls: string[]): CommandHost {
     restartDaemon: log('restartDaemon'), reloadAll: log('reloadAll'), relaunchApp: log('relaunchApp'), toggleDevTools: log('toggleDevTools'), toggleFullscreen: log('toggleFullscreen'), showPalette: log('showPalette'),
     splitEmpty: log('splitEmpty'), newEmptyDesk: log('newEmptyDesk'),
     reopenClosed: log('reopenClosed'), cycleTab: log('cycleTab'), goToTab: log('goToTab'), focusNeighbour: log('focusNeighbour'),
-    closeFrameTabs: log('closeFrameTabs'), showKeybindings: log('showKeybindings'), recordKeybinding: log('recordKeybinding'), showExtensions: log('showExtensions'),
+    closeFrameTabs: log('closeFrameTabs'), showExtensions: log('showExtensions'),
     toggleSideBar: log('toggleSideBar'), moveCurrentPad: log('moveCurrentPad'), restoreCurrentPad: log('restoreCurrentPad'),
   }
 }

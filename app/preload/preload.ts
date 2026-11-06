@@ -65,7 +65,6 @@ const api: TetherApi = {
   openFileExternal: path => ipcRenderer.invoke('file:open-external', path),
   resolveTerminalLink: (cwd, candidates) => ipcRenderer.invoke('terminallinks:resolve', cwd, candidates),
   keybindingsRead: () => ipcRenderer.invoke('keybindings:read'),
-  keybindingsWrite: text => ipcRenderer.invoke('keybindings:write', text),
   onKeybindingsChanged: listener => on<KeybindingsFileState>('tether:keybindings-changed', listener),
   // The bus names every channel through extChannel: an extension reaches only `ext:<its id>:…`, never a core channel.
   ext: {

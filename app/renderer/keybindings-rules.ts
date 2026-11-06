@@ -8,6 +8,13 @@
 // entry with an unknown command or an unreadable key is skipped alone, with a warning.
 import { defaultWhere, formatKeys, parseKeys, resolvedDefaults, sameKeys, WHERE_ALL, type Chord, type Keybinding, type Where } from './shortcuts.ts'
 
+/** A command as the shortcuts screen lists it. */
+export interface KbCommandInfo { id: string; title: string; group?: string; danger?: boolean; displayChord?: Chord }
+/** A row the screen shows but never edits: the editor's keys (Monaco), the native menu's, the pane's own. */
+export interface FixedBinding { command: string; title: string; group: string; keys: Chord[] | null; label?: string; where: Where[]; source: 'editor' | 'nativo' | 'painel' }
+/** The file as the core last read it: where it is, whether it failed to parse, the entries skipped. */
+export interface KeybindingsFileInfo { path: string; error?: { message: string; line?: number }; warnings: string[] }
+
 /** One entry of the file. `-id` as the command removes the default binding(s) of `id` on `key` (any `key` when absent). */
 export interface KeybindingEntry { key?: string; command: string; where?: Where[] }
 

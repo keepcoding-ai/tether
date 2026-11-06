@@ -215,3 +215,70 @@ test('app quick-open extension (F9 slice 2): off → the app opens, Ctrl+P does 
     }
   }
 })
+
+test('app keybindings-screen extension (F9 slice 3): on → the screen lists every extension\'s keys; off → Ctrl+K Ctrl+S does nothing, the overrides file still applies, a saved screen is a placeholder', async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  const home = mkdtempSync(join(tmpdir(), 'tether-ext-toggle-kb-'))
+  // An override of the person's: Ctrl+Alt+J makes a new desk (core command), honoured with or without the screen.
+  writeFileSync(join(home, 'keybindings.json'), JSON.stringify([{ key: 'ctrl+alt+j', command: 'desk.new' }]))
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    // ---------- 1. on: Ctrl+K Ctrl+S opens the screen, which lists the commands of every extension ----------
+    let page: Page
+    ;({ app, page } = await launch(home))
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    await page.locator('body').click()
+    await page.keyboard.press('Control+K')
+    await page.keyboard.press('Control+S')
+    await page.waitForSelector('.kb-pane')
+    const commands = await page.evaluate(() => (window.__tether as unknown as { keybindings(): { rows: { command: string }[] }[] }).keybindings()[0]!.rows.map(r => r.command))
+    for (const id of ['pane.new', 'note.open', 'palette.quick-open', 'explorer.open-folder', 'keybindings.show']) assert.ok(commands.includes(id), `the screen lists ${id}`)
+    await waitFor('the screen saved in layout.json', () => savedPanes(home).some(p => p.contentComponent === 'keybindings'))
+    const saved = savedPanes(home).find(p => p.contentComponent === 'keybindings')!
+    assert.match(saved.id, /^keybindings:/)
+    await killElectron(app, root)
+    app = undefined
+
+    // ---------- 2. off ----------
+    writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['keybindings-screen'] } }))
+    ;({ app, page } = await launch(home))
+    const errors: string[] = []
+    page.on('pageerror', e => errors.push(String(e)))
+    const offTab = page.locator(`.tether-tab.ext-off[data-slot="${saved.id}"]`)
+    await offTab.waitFor()
+    await offTab.click()
+    await page.locator(`.ext-off-pane[data-extension-off-id="${saved.id}"]`).waitFor()
+    const ids = await page.evaluate(() => window.__tether.commands().map(c => c.id))
+    assert.ok(!ids.includes('keybindings.show') && !ids.includes('keybindings.record'), 'the screen commands are gone')
+    assert.ok(ids.includes('pane.new') && ids.includes('desk.new'), 'the core commands are there')
+    assert.equal(await page.locator('#app-menu li[data-command="keybindings.show"]').count(), 0, 'no item in ≡')
+    const panesBefore = savedPanes(home).length
+    await page.keyboard.press('Control+K')
+    await page.keyboard.press('Control+S')
+    await sleep(500)
+    assert.equal(await page.locator('.kb-pane').count(), 0, 'Ctrl+K Ctrl+S opened nothing')
+    assert.equal(await page.evaluate(() => (window.__tether as unknown as { openKeybindings?: unknown }).openKeybindings), undefined, 'no screen hooks')
+    // The person's file is the core's: the override still works.
+    const desks = (): Promise<number> => page.evaluate(() => window.__tether.layout().desks.length)
+    const before = await desks()
+    await page.keyboard.press('Control+Alt+J')
+    await page.waitForFunction(n => window.__tether.layout().desks.length === n + 1, before)
+    assert.ok(savedPanes(home).length >= panesBefore)
+    assert.deepEqual(errors, [], 'no page errors')
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})

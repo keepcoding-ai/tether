@@ -70,9 +70,6 @@ export interface CommandHost {
   focusNeighbour(direction: Direction): void
   /** Ctrl+K W: every tab of the active group closes (each agent pane confirms as a single close does). */
   closeFrameTabs(): void
-  /** The "Atalhos de teclado" screen (a tab); `recordKeybinding` records the row selected in it. */
-  showKeybindings(): void
-  recordKeybinding(): void
   /** The "Extensões" screen (a tab; one at a time). */
   showExtensions(): void
   /** Ctrl+B / Ctrl+Alt+B: a side bar opens (with the pad it had last) or closes (F10). */
@@ -177,8 +174,7 @@ export function appCommands(host: CommandHost): Command[] {
     // ----- app -----
     { id: 'palette.show', title: 'Paleta de comandos', group: GROUP.app, icon: 'magnifying-glass', run: () => host.showPalette('commands') },
     // (Ctrl+P, 'palette.quick-open', comes from the quick-open extension: extensions/quick-open/manifest.ts)
-    { id: 'keybindings.show', title: 'Atalhos de teclado', group: GROUP.app, icon: 'keyboard', run: () => host.showKeybindings() },
-    { id: 'keybindings.record', title: 'Atalhos de teclado: gravar o atalho da linha selecionada', group: GROUP.app, icon: 'keyboard', when: ctx => !!ctx.keybindings, run: () => host.recordKeybinding() },
+    // (keybindings.show / keybindings.record, Ctrl+K Ctrl+S, come from the keybindings-screen extension)
     { id: 'extensions.show', title: 'Extensões', group: GROUP.app, icon: 'puzzle-piece', run: () => host.showExtensions() },
     { id: 'profiles.manage', title: 'Perfis de lançamento…', group: GROUP.app, icon: 'sliders-horizontal', run: () => host.openProfiles() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },

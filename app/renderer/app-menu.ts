@@ -49,7 +49,7 @@ export const CORE_APP_MENU: readonly Item[] = [
     { command: 'terminal.theme', icon: 'palette', label: 'Tema do terminal…', order: 80 },
   ]),
   ...items('app', [
-    { command: 'keybindings.show', icon: 'keyboard', label: 'Atalhos de teclado' },
+    // order 5: the keybindings-screen extension's "Atalhos de teclado".
     { command: 'extensions.show', icon: 'puzzle-piece', label: 'Extensões' },
     { command: 'confirmations.restore', icon: 'arrow-clockwise', label: 'Voltar a perguntar antes de fechar painéis' },
   ]),

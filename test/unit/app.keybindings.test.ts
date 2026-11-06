@@ -6,11 +6,15 @@ import assert from 'node:assert/strict'
 import { ChordDispatcher, scopeOf, type DispatchEvent } from '../../app/renderer/chord-dispatch.ts'
 import { formatKeybindingsFile, mergeKeybindings, overridesFor, parseKeybindingsFile, prefixIssue, stripJsonComments } from '../../app/renderer/keybindings-rules.ts'
 import { appCommands, type CommandHost } from '../../app/renderer/app-commands.ts'
+import { withKeybindingsScreenKeybindings } from './keybindings-screen-extension.ts'
 import { formatKeys, KeyTable, PREFIX_COMMAND, resolvedDefaults, type Keybinding, type Where } from '../../app/renderer/shortcuts.ts'
 
 const known = new Set(appCommands(new Proxy({}, { get: () => () => {} }) as CommandHost).map(c => c.id))
 const ev = (code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {}, key = ''): DispatchEvent =>
   ({ code, key: key || code.replace(/^Key/, ''), ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta })
+
+// Ctrl+K Ctrl+S comes from the keybindings-screen extension (extensions/keybindings-screen/manifest.ts), contributed as at the app's startup.
+withKeybindingsScreenKeybindings()
 
 describe('keybindings.json', () => {
   test('comments are stripped outside strings; the rest is strict JSON (a trailing comma is an error, with its line)', () => {

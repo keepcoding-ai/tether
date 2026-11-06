@@ -8,10 +8,11 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appMenuHtml, APP_MENU_GROUPS, CORE_APP_MENU, coreMenuRegistry as coreOnly, menuItemOf } from '../../app/renderer/app-menu.ts'
 import { manifest as noteManifest } from '../../extensions/note/manifest.ts'
+import { manifest as keybindingsManifest } from '../../extensions/keybindings-screen/manifest.ts'
 import { MenuId, MenuRegistryImpl, sortMenuItems } from '../../app/shared/vscode-menu-registry.ts'
 
-// The registry as the app builds it: the core's items plus the note extension's (its word wrap on, the default).
-const NOTE_MENU = (noteManifest.contributes?.menus?.app ?? []).map(m => menuItemOf(m, () => true))
+// The registry as the app builds it: the core's items plus the note extension's (its word wrap on, the default) and the shortcuts screen's.
+const NOTE_MENU = [noteManifest, keybindingsManifest].flatMap(m => m.contributes?.menus?.app ?? []).map(m => menuItemOf(m, () => true))
 function coreMenuRegistry(): ReturnType<typeof coreOnly> {
   const r = coreOnly()
   for (const item of NOTE_MENU) r.appendMenuItem(MenuId.App, item)

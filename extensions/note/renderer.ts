@@ -14,7 +14,7 @@ import { HtmlPreviewPanel, type HtmlPreviewHost } from '../../app/renderer/html-
 import type { PreviewPane } from '../../app/renderer/preview-pane.ts'
 import { defineTheme, mirrorThemeVars, monaco, remeasureEditorFonts } from '../../app/renderer/monaco.ts'
 import { editorChordCommand, editorKeybindings, runEditorChord } from '../../app/renderer/monaco-chords.ts'
-import type { FixedBinding } from '../../app/renderer/keybindings-panel.ts'
+import type { FixedBinding } from '../../app/renderer/keybindings-rules.ts'
 import { fileOpenFailedSituation, type OpenFileOptions } from '../../app/renderer/file-open.ts'
 import { isHtmlPath, isPreviewablePath, newPreviewPanelId, withPreview } from '../../app/shared/preview.ts'
 import { cleanNoteName, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, rebasePath, withNote } from '../../app/shared/notes.ts'

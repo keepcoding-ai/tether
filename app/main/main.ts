@@ -821,25 +821,13 @@ ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
 
 // ---------- keyboard shortcuts (F5, delivery 5) ----------
 // <TETHER_HOME>/keybindings.json is the renderer's (format, defaults, merge: app/renderer/keybindings-rules.ts); main
-// only hands the text over, writes it atomically, and reports every change on disk (a save from the screen, an edit by
-// hand in a note tab or outside) so the renderer re-reads.
+// only hands the text over and reports every change on disk (a save from the screen, an edit by hand in a note tab or
+// outside) so the renderer re-reads. Writing it is the keybindings-screen extension's (extensions/keybindings-screen/main.ts).
 const keybindingsPath = join(home, KEYBINDINGS_FILE)
 function keybindingsState(): KeybindingsFileState {
   try { return { path: keybindingsPath, text: readFileSync(keybindingsPath, 'utf8') } } catch { return { path: keybindingsPath, text: null } }
 }
 ipcMain.handle('keybindings:read', (): KeybindingsFileState => keybindingsState())
-ipcMain.handle('keybindings:write', (_e, text: unknown): { ok: true } | { ok: false; message: string } => {
-  if (typeof text !== 'string') return { ok: false, message: 'Texto inválido.' }
-  try {
-    mkdirSync(home, { recursive: true })
-    const tmp = `${keybindingsPath}.${process.pid}.tmp`
-    writeFileSync(tmp, text)
-    renameSync(tmp, keybindingsPath)
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) }
-  }
-})
 // The same watcher class the notes use (one per folder, debounced): the file's folder is the home itself.
 const keybindingsWatchers = new NoteWatchers(() => win?.webContents.send('tether:keybindings-changed', keybindingsState()))
 try { mkdirSync(home, { recursive: true }); keybindingsWatchers.watch(keybindingsPath) } catch { /* no watcher: the screen still reads on open */ }

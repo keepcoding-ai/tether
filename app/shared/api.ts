@@ -122,10 +122,9 @@ export interface TetherApi {
   resolveTerminalLink(cwd: string | undefined, candidates: string[]): Promise<ResolvedPath | null>
   /**
    * The user's keyboard shortcuts (<TETHER_HOME>/keybindings.json; the renderer owns the format, app/renderer/keybindings-rules.ts).
-   * Main reads and writes the text and reports every change on disk through `onKeybindingsChanged` (our own write included).
+   * Main reads the text and reports every change on disk through `onKeybindingsChanged` (the shortcuts screen's own write included; the keybindings-screen extension writes it on its bus).
    */
   keybindingsRead(): Promise<KeybindingsFileState>
-  keybindingsWrite(text: string): Promise<{ ok: true } | { ok: false; message: string }>
   onKeybindingsChanged(listener: (state: KeybindingsFileState) => void): () => void
   /** The extensions' IPC bus (app/shared/ext-ipc.ts): channels `ext:<id>:<channel>`; extensions use it through TetherUi.ipc. */
   ext: ExtTransport

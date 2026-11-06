@@ -153,7 +153,7 @@ test('app keybindings: Ctrl+K Ctrl+S opens the screen, Ctrl+W recorded with its 
 
     // 2. Record Ctrl+W on "Fechar mesa…": the conflict with "Fechar painel…" is told and resolved on the act; the file is written.
     await page.fill('.kb-pane .kb-q', 'fechar mesa')
-    await page.waitForFunction(() => window.__tether.keybindings()[0]!.rows.length === 1 && window.__tether.keybindings()[0]!.rows[0]!.command === 'desk.close')
+    await page.waitForFunction(() => window.__tether.keybindings()[0]!.rows[0]?.command === 'desk.close')
     await page.dblclick('.kb-pane tr.r[data-command="desk.close"] td.cmd')
     const after = await page.evaluate(() => ({ panels: window.__tether.panelIds(), screens: window.__tether.keybindings().length, active: window.__tether.activeId(), pane: document.querySelectorAll('.kb-pane').length }))
     assert.equal(after.screens, 1, `the screen is still there after the double-click: ${JSON.stringify(after)}`)

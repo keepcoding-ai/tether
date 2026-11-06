@@ -1,8 +1,7 @@
 // The layout side (PaneLayout, app/renderer/pane-registry.ts) of the core's pane kinds (the note's live in
-// extensions/note/layouts.ts). main.ts adds the
+// extensions/note/layouts.ts, the shortcuts screen's in extensions/keybindings-screen/layouts.ts). main.ts adds the
 // live side to each and registers them. Names, prefixes and params are the ones already in people's layout.json.
 import { EMPTY_COMPONENT, EMPTY_PANEL_PREFIX, EMPTY_TAB, EMPTY_TITLE, withEmpty } from '../shared/empty.ts'
-import { KEYBINDINGS_COMPONENT, KEYBINDINGS_PANEL_PREFIX, KEYBINDINGS_TAB, KEYBINDINGS_TITLE } from '../shared/keybindings.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_PANEL_PREFIX, EXTENSIONS_TAB, EXTENSIONS_TITLE } from '../shared/extensions-screen.ts'
 import type { PaneLayout } from './pane-registry.ts'
 
@@ -19,15 +18,10 @@ export const emptyLayout: PaneLayout = {
   optionsOf: p => ({ id: p.id, component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: p.params ?? withEmpty(undefined) }),
 }
 
-export const keybindingsLayout: PaneLayout = {
-  id: 'keybindings', idPrefix: KEYBINDINGS_PANEL_PREFIX, component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, hasSlot: false,
-  optionsOf: p => ({ id: p.id, component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, title: KEYBINDINGS_TITLE, params: {} }),
-}
-
 export const extensionsLayout: PaneLayout = {
   id: 'extensions', idPrefix: EXTENSIONS_PANEL_PREFIX, component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, hasSlot: false,
   optionsOf: p => ({ id: p.id, component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, title: EXTENSIONS_TITLE, params: {} }),
 }
 
 /** In registration order: the fallback (terminal) last only by convention; lookup does not depend on order. */
-export const CORE_PANE_LAYOUTS: readonly PaneLayout[] = [emptyLayout, keybindingsLayout, extensionsLayout, terminalLayout]
+export const CORE_PANE_LAYOUTS: readonly PaneLayout[] = [emptyLayout, extensionsLayout, terminalLayout]

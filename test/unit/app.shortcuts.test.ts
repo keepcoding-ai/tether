@@ -6,10 +6,12 @@ import assert from 'node:assert/strict'
 import { chordLabel, defaultWhere, formatKeys, keysLabel, KeyTable, parseKey, parseKeys, PREFIX_COMMAND, resolvedDefaults, sameKeys, shortcutHint, shortcutOf, WHERE_ALL, type Chord, type KeyLike, type Where } from '../../app/renderer/shortcuts.ts'
 import { withNoteKeybindings } from './note-extension.ts'
 import { withQuickOpenKeybindings } from './quick-open-extension.ts'
+import { withKeybindingsScreenKeybindings } from './keybindings-screen-extension.ts'
 
 // The note's keys come from its extension (extensions/note/manifest.ts), contributed as at the app's startup.
 withNoteKeybindings()
 withQuickOpenKeybindings()
+withKeybindingsScreenKeybindings()
 
 const ev = (code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {}): KeyLike =>
   ({ code, ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta })

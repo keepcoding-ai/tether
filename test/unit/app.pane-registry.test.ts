@@ -8,13 +8,14 @@ import { readFileSync } from 'node:fs'
 import { CORE_PANE_LAYOUTS as CORE_ONLY } from '../../app/renderer/core-pane-layouts.ts'
 import { previewPaneOptions } from '../../extensions/note/layouts.ts'
 import { manifest as noteManifest } from '../../extensions/note/manifest.ts'
+import { manifest as keybindingsManifest } from '../../extensions/keybindings-screen/manifest.ts'
 import { allPanelIds, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
 import { PaneRegistry, type PaneLayout } from '../../app/renderer/pane-registry.ts'
 import { isSlotlessPanelId } from '../../app/shared/empty.ts'
 import { DisposableStore, dispose, toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 
-// The core's kinds plus the note extension's (declared in its manifest, as the renderer registers them).
-const CORE_PANE_LAYOUTS: PaneLayout[] = [...CORE_ONLY, ...(noteManifest.contributes?.paneTypes ?? []).map(t => ({ ...t, hasSlot: false }))]
+// The core's kinds plus the note's and the shortcuts screen's extensions' (declared in their manifests, as the renderer registers them).
+const CORE_PANE_LAYOUTS: PaneLayout[] = [...CORE_ONLY, ...[noteManifest, keybindingsManifest].flatMap(m => m.contributes?.paneTypes ?? []).map(t => ({ ...t, hasSlot: false }))]
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/layout-v2-panes.json', import.meta.url), 'utf8')) as LayoutV2
 

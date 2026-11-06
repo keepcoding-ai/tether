@@ -14,9 +14,8 @@ import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_P
 import { terminalKeyOwner } from './key-capture.ts'
 import { ChordDispatcher, scopeOf as keyScopeOf } from './chord-dispatch.ts'
 import { ChordPill } from './chord-pill.ts'
-import { formatKeybindingsFile, mergeKeybindings, overridesFor, parseKeybindingsFile } from './keybindings-rules.ts'
-import { KeybindingsPanel, KeybindingsTab, type FixedBinding, type KeybindingsHost, type KeybindingsSnapshot } from './keybindings-panel.ts'
-import { KEYBINDINGS_COMPONENT, KEYBINDINGS_TAB, KEYBINDINGS_TITLE, newKeybindingsPanelId, type KeybindingsFileState } from '../shared/keybindings.ts'
+import { mergeKeybindings, parseKeybindingsFile, type FixedBinding, type KbCommandInfo, type KeybindingsFileInfo } from './keybindings-rules.ts'
+import type { KeybindingsFileState } from '../shared/keybindings.ts'
 import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, newEmptyPanelId, withEmpty, type EmptyOrigin } from '../shared/empty.ts'
 import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empty-panel.ts'
 import { type Choice, contributeChooser, rememberProfile } from './chooser-rules.ts'
@@ -45,7 +44,7 @@ import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
-import { emptyLayout as emptyPaneLayout, extensionsLayout, keybindingsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
+import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
 import type { ChoiceResolution, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
@@ -78,7 +77,6 @@ const tabs = new Map<string, SlotTab>()
 /** The empty panes (F5): a reserved place with the chooser inside (app/renderer/empty-panel.ts). */
 const empties = new Map<string, EmptyPanel>()
 /** The "Atalhos de teclado" screens (F5, delivery 5; one is the rule, the map keeps the layout honest). */
-const keybindingsPanels = new Map<string, KeybindingsPanel>()
 const extensionsPanels = new Map<string, ExtensionsPanel>()
 /** Every kind of pane (F9): the registry main.ts and the extensions register into (see "pane types" below). */
 const paneTypes = new PaneRegistry<PaneType>()
@@ -658,7 +656,7 @@ function markSeenIfWatched(): void {
 
 /** The keyboard to a pane, whatever it is: a terminal or a note. */
 function focusPane(id: string): void {
-  const own = panels.get(id) ?? empties.get(id) ?? keybindingsPanels.get(id) ?? extensionsPanels.get(id)
+  const own = panels.get(id) ?? empties.get(id) ?? extensionsPanels.get(id)
   if (own) { own.focus(); return }
   liveTypeOf(paneTypes, id)?.focus?.(id)
 }
@@ -1657,17 +1655,6 @@ function showTabMenu(slotId: string, x: number, y: number): void {
   const panel = findPanel(slotId)
   if (!slot) {
     if (empties.has(slotId)) { panel?.api.setActive(); showEmptyMenu(slotId, x, y); return }
-    if (keybindingsPanels.has(slotId)) {
-      panel?.api.setActive()
-      showContextMenu(x, y, [
-        { icon: 'note-pencil', label: 'Abrir keybindings.json', run: () => openKeybindingsFile() },
-        SEP,
-        { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
-        SEP,
-        { icon: 'x', label: 'Fechar', run: () => closeSlotless(slotId) },
-      ])
-      return
-    }
     // Any other kind of pane shows its type's own menu (an extension's: the note, the previews, a placeholder).
     const type = liveTypeOf(paneTypes, slotId)
     if (!type?.tabMenu) return
@@ -2114,9 +2101,7 @@ const commandHost: CommandHost = {
     if (!active) return
     void (async () => { for (const p of [...active.group.panels]) await closePanel(p.id) })()
   },
-  showKeybindings: () => openKeybindings(),
   showExtensions: () => openExtensions(),
-  recordKeybinding: () => { const a = currentDesk().activePanel?.id; if (a) keybindingsPanels.get(a)?.recordSelected() },
   toggleSideBar: side => sidebars?.toggleSide(side),
   moveCurrentPad: () => { const id = sidebars?.current(); if (id) sidebars!.move(id) },
   restoreCurrentPad: () => { const id = sidebars?.current(); if (id) sidebars!.restore(id) },
@@ -2159,7 +2144,8 @@ function focusNeighbour(direction: Direction): void {
 // hands the text over at start and on every change on disk; the screen writes the smallest file for what it changed
 // and applies the table at once (the watcher's echo re-reads the same thing).
 
-let keybindingsFile: { path: string; error?: { message: string; line?: number }; warnings: string[] } = { path: '', warnings: [] }
+let keybindingsFile: KeybindingsFileInfo = { path: '', warnings: [] }
+const keybindingsFileListeners = new Set<() => void>()
 
 function applyKeybindingsFile(state: KeybindingsFileState): void {
   const file: typeof keybindingsFile = { path: state.path, warnings: [] }
@@ -2175,14 +2161,13 @@ function applyKeybindingsFile(state: KeybindingsFileState): void {
   keybindingsFile = file
   setKeyTable(new KeyTable(merged.bindings))
   paintKeyHints()
-  for (const s of keybindingsPanels.values()) s.refresh()
+  for (const l of [...keybindingsFileListeners]) { try { l() } catch (err) { console.error('onDidChangeFile', err) } }
 }
 
-/** The screen changed the table: in force now, and written as the smallest file. */
+/** The shortcuts screen (an extension) changed the table: in force now; it writes the file, and the watcher's echo re-reads it. */
 function applyKeybindings(bindings: Keybinding[]): void {
   setKeyTable(new KeyTable(bindings))
   paintKeyHints()
-  void window.tether.keybindingsWrite(formatKeybindingsFile(overridesFor(bindings))).then(r => { if (!r.ok) console.error(`keybindings.json: ${r.message}`) })
 }
 
 /** The hints that read the table (menus, tooltips): painted at start and again when the table changes. */
@@ -2207,45 +2192,23 @@ function paintKeyHints(): void {
 /** Rows the screen lists but cannot change, from extensions (the note editor's own keys). */
 const fixedBindingProviders: (() => FixedBinding[])[] = []
 
-const keybindingsHost: KeybindingsHost = {
-  commands: () => commands.all().filter(c => !c.id.startsWith('editor.')).map(c => ({ id: c.id, title: c.title, ...(c.group ? { group: c.group } : {}), ...(c.danger ? { danger: true } : {}), ...(c.displayChord ? { displayChord: c.displayChord } : {}) })),
-  table: () => keyTable(),
-  apply: bindings => applyKeybindings(bindings),
-  resetAll: () => applyKeybindings(new KeyTable([]).bindings.length ? [] : mergeKeybindings([], new Set(commands.all().map(c => c.id))).bindings),
-  fileState: () => keybindingsFile,
-  openFile: () => openKeybindingsFile(),
-  fixedBindings: () => {
-    const native: FixedBinding[] = commands.all().filter(c => c.displayChord).map(c => ({ command: c.id, title: c.title, group: c.group ?? 'App', keys: [chordOn({ chord: c.displayChord! })!], where: ['window', 'terminal', 'note'], source: 'nativo' }))
-    const pane: FixedBinding[] = [
-      { command: 'terminal.copy', title: 'Copiar (com seleção; sem ela é o ^C do programa)', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[0]!) ?? chordOn(PANE_SHORTCUTS[1]!)!], where: ['terminal'], source: 'painel' },
-      { command: 'terminal.copy-always', title: 'Copiar a seleção', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[2]!)!], where: ['terminal'], source: 'painel' },
-      { command: 'terminal.paste', title: 'Colar (Ctrl+V sem texto manda o ^V ao Claude Code: imagem)', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[3]!) ?? chordOn(PANE_SHORTCUTS[4]!)!], where: ['terminal'], source: 'painel' },
-      { command: 'terminal.paste-always', title: 'Colar', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[5]!)!], where: ['terminal'], source: 'painel' },
-      { command: 'terminal.newline', title: 'Nova linha sem enviar (Claude Code)', group: 'Terminal', keys: [chordOn(TERMINAL_INPUTS[0]!) ?? chordOn(TERMINAL_INPUTS[1]!)!], where: ['terminal'], source: 'painel' },
-    ].filter(f => f.keys[0]) as FixedBinding[]
-    const contributed: FixedBinding[] = []
-    for (const provide of fixedBindingProviders) {
-      try { contributed.push(...provide()) } catch (err) { console.warn(`fixed keybindings: ${err instanceof Error ? err.message : String(err)}`) }
-    }
-    return [...native, ...pane, ...contributed]
-  },
-  onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
-  onClose: id => closeSlotless(id),
-}
+/** Every command of the registry (the editor's own actions left out) as the shortcuts screen lists it. */
+const keybindingCommands = (): KbCommandInfo[] => commands.all().filter(c => !c.id.startsWith('editor.')).map(c => ({ id: c.id, title: c.title, ...(c.group ? { group: c.group } : {}), ...(c.danger ? { danger: true } : {}), ...(c.displayChord ? { displayChord: c.displayChord } : {}) }))
 
-/** Ctrl+K Ctrl+S: the screen as a tab of the active group (one screen: a second call brings it forward). */
-function openKeybindings(): void {
-  const existing = keybindingsPanels.keys().next().value as string | undefined
-  if (existing && findPanel(existing)) {
-    findPanel(existing)!.api.setActive()
-    requestAnimationFrame(() => focusPane(existing))
-    return
+function allFixedBindings(): FixedBinding[] {
+  const native: FixedBinding[] = commands.all().filter(c => c.displayChord).map(c => ({ command: c.id, title: c.title, group: c.group ?? 'App', keys: [chordOn({ chord: c.displayChord! })!], where: ['window', 'terminal', 'note'], source: 'nativo' }))
+  const pane: FixedBinding[] = [
+    { command: 'terminal.copy', title: 'Copiar (com seleção; sem ela é o ^C do programa)', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[0]!) ?? chordOn(PANE_SHORTCUTS[1]!)!], where: ['terminal'], source: 'painel' },
+    { command: 'terminal.copy-always', title: 'Copiar a seleção', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[2]!)!], where: ['terminal'], source: 'painel' },
+    { command: 'terminal.paste', title: 'Colar (Ctrl+V sem texto manda o ^V ao Claude Code: imagem)', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[3]!) ?? chordOn(PANE_SHORTCUTS[4]!)!], where: ['terminal'], source: 'painel' },
+    { command: 'terminal.paste-always', title: 'Colar', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[5]!)!], where: ['terminal'], source: 'painel' },
+    { command: 'terminal.newline', title: 'Nova linha sem enviar (Claude Code)', group: 'Terminal', keys: [chordOn(TERMINAL_INPUTS[0]!) ?? chordOn(TERMINAL_INPUTS[1]!)!], where: ['terminal'], source: 'painel' },
+  ].filter(f => f.keys[0]) as FixedBinding[]
+  const contributed: FixedBinding[] = []
+  for (const provide of fixedBindingProviders) {
+    try { contributed.push(...provide()) } catch (err) { console.warn(`fixed keybindings: ${err instanceof Error ? err.message : String(err)}`) }
   }
-  const reference = currentDesk().activePanel?.id
-  const options: AddPanelOptions = { id: newKeybindingsPanelId(), component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, title: KEYBINDINGS_TITLE, params: {} }
-  const panel = addPaneOptions(options, reference && findPanel(reference) ? { level: 'pane', placement: 'within' } : undefined, reference && findPanel(reference) ? reference : undefined)
-  scheduleSave()
-  requestAnimationFrame(() => focusPane(panel.id))
+  return [...native, ...pane, ...contributed]
 }
 
 /** The "Extensões" screen as a tab of the active group (one screen: a second call brings it forward and refreshes it). */
@@ -2273,15 +2236,6 @@ const extensionsHost: ExtensionsHost = {
   relaunch: () => window.tether.command('relaunch-app'),
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
   onClose: id => { void closePanel(id) },
-}
-
-/** "Abrir keybindings.json": the file in an editor tab beside the screen (an empty file is created first so the tab has something to show). */
-function openKeybindingsFile(): void {
-  void (async () => {
-    const state = await window.tether.keybindingsRead()
-    if (state.text === null) await window.tether.keybindingsWrite(formatKeybindingsFile([]))
-    openWithOpeners(state.path, { side: false, root: '', source: true })
-  })()
 }
 
 const dispatcher = new ChordDispatcher({
@@ -2482,7 +2436,7 @@ function setupUi(): void {
   // is the app's never reaches xterm or Monaco; what is not the app's passes untouched. Inside a note, a chord on an
   // arrow key stays the editor's (key-capture.ts editorKeyOwner), and the second key of a chord goes to the editor
   // first (monaco-chords.ts). The screen's own capture boxes (recording a key, searching by key) take every key.
-  pill = new ChordPill({ titleOf: id => commands.get(id)?.title, groupOf: id => commands.get(id)?.group, showKeybindings: () => openKeybindings() })
+  pill = new ChordPill({ titleOf: id => commands.get(id)?.title, groupOf: id => commands.get(id)?.group, showKeybindings: () => { void commands.run('keybindings.show', 'cli') } })
   document.addEventListener('keydown', ev => {
     const target = ev.target instanceof Element ? ev.target : undefined
     if (target?.closest('.kb-veil, .kb-live')) { if (dispatcher.waiting) { dispatcher.cancel(); pill.hide() } return }
@@ -2675,11 +2629,8 @@ declare global {
       /** Opens the palette as the chord does. */
       showPalette(mode?: PaletteMode): void
       /** The "Atalhos de teclado" screens, the chord pill and the key table (keys as the file writes them). */
-      keybindings(): KeybindingsSnapshot[]
       pill(): { state: string; text: string; continuations: number }
       keyTable(): { keys: string; command: string; where: string[]; source: string }[]
-      keybindingsFile(): { path: string; error?: { message: string; line?: number }; warnings: string[] }
-      openKeybindings(): void
       closedPanes(): number
       /** The empty panes: id, the folder the chooser shows, the radio selected, focus, error. */
       empties(): EmptySnapshot[]
@@ -2851,11 +2802,8 @@ function setupTestHooks(): void {
     runCommand: id => commands.run(id, 'cli'),
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
-    keybindings: () => [...keybindingsPanels.values()].map(s => s.snapshot()),
     pill: () => pill.snapshot(),
     keyTable: () => keyTable().bindings.map(b => ({ keys: formatKeys(b.keys), command: b.command, where: [...b.where], source: b.source })),
-    keybindingsFile: () => keybindingsFile,
-    openKeybindings: () => openKeybindings(),
     closedPanes: () => closedPanes.length,
     empties: () => [...empties.values()].map(e => e.snapshot()),
     empty: id => empties.get(id)?.snapshot(),
@@ -2904,13 +2852,6 @@ function registerCorePaneTypes(): void {
     createTab: () => new EmptyTab(emptyHost),
     has: id => empties.has(id),
     cwdOf: id => empties.get(id)?.cwd || undefined,
-  }))
-  paneTypes.register(live(keybindingsLayout, {
-    icon: 'question',
-    create: () => { const p: KeybindingsPanel = tracked(new KeybindingsPanel(keybindingsHost), keybindingsPanels, () => p.id); return p },
-    createTab: () => new KeybindingsTab(keybindingsHost),
-    has: id => keybindingsPanels.has(id),
-    contextFlags: () => ['keybindings.screen'],
   }))
   paneTypes.register(live(extensionsLayout, {
     icon: 'puzzle-piece',
@@ -3119,6 +3060,13 @@ function activateRendererExtensions(): void {
         },
       },
       keybindings: {
+        fixed: () => allFixedBindings(),
+        commands: () => keybindingCommands(),
+        table: () => keyTable(),
+        apply: bindings => applyKeybindings(bindings),
+        defaults: () => mergeKeybindings([], new Set(commands.all().map(c => c.id))).bindings,
+        file: () => keybindingsFile,
+        onDidChangeFile: listener => { keybindingsFileListeners.add(listener); return add(toDisposable(() => { keybindingsFileListeners.delete(listener) })) },
         fixedBindings: provider => { fixedBindingProviders.push(provider); return add(toDisposable(() => { const i = fixedBindingProviders.indexOf(provider); if (i !== -1) fixedBindingProviders.splice(i, 1) })) },
       },
       files: {
