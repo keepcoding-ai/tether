@@ -14,12 +14,14 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { BRAND } from './shared/brand.ts'
+
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
 const require = createRequire(import.meta.url)
 /** Must match APP_USER_MODEL_ID in app/main/main.ts; on macOS it is the bundle's CFBundleIdentifier. */
-export const AUMID = 'studio.codr.tether'
-export const BUNDLE_NAME = 'Tether.app'
+export const AUMID = BRAND.appId
+export const BUNDLE_NAME = `${BRAND.name}.app`
 /** What the Finder and the menu bar show; the executable and icon file names stay lowercase. */
 const DISPLAY_NAME = BUNDLE_NAME.replace(/\.app$/, '')
 /** LaunchServices' registration tool: refreshes the Finder/Spotlight view of a bundle without a re-login. */

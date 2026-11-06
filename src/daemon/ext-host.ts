@@ -13,6 +13,7 @@ import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
 import type { SlotState } from './protocol.ts'
+import { BRAND } from '../../app/shared/brand.ts'
 
 type Middleware = (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan
 type SlotListener = (ev: { kind: SlotEventKind; slot: SlotState }) => void
@@ -111,6 +112,7 @@ export class DaemonExtensionHost implements IDisposable {
     })
     return {
       id,
+      brand: BRAND,
       home,
       agents: { register: (agent) => own.add(agents.register(agent)) },
       launch: { use: (mw) => { this.middlewares.push(mw); return own.add(removing(this.middlewares, mw)) } },

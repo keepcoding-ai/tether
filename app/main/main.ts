@@ -36,18 +36,19 @@ import { createTray, type TrayController } from './tray.ts'
 import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
+import { BRAND } from '../shared/brand.ts'
 
 const home = tetherHome()
 const pipe = pipePath(home, userInfo().username)
 /** Taskbar grouping / pinning: the same id goes on the Start Menu shortcut (app/shortcut.ps1) and, on macOS, is the CFBundleIdentifier of Tether.app (app/install.mjs). */
-const APP_USER_MODEL_ID = 'studio.codr.tether'
+const APP_USER_MODEL_ID = BRAND.appId
 // Electron's own state (cache, GPU, the single-instance lock) lives under TETHER_HOME too: E2E runs with a
 // private home never collide with the user's running app.
 app.setPath('userData', join(home, 'electron'))
 app.setAppUserModelId(APP_USER_MODEL_ID)
 // The process runs from node_modules' Electron.app (Tether.app only wraps it: a launcher cannot change what
 // the OS attributes the process to), so the name and the Dock icon are set here, not read from a bundle.
-app.setName('Tether')
+app.setName(BRAND.name)
 const layoutPath = join(home, 'layout.json')
 const recentPath = join(home, 'recent-folders.json')
 const RECENT_LIMIT = 12
@@ -500,7 +501,7 @@ function createWindow(): void {
   const start = resolveWindowState(saved, displays.map(d => d.workArea), screen.getPrimaryDisplay().workArea)
   win = new BrowserWindow({
     ...start.bounds,
-    title: 'tether',
+    title: BRAND.slug,
     icon: join(__dirname, 'tether.ico'),
     backgroundColor: WINDOW_BACKGROUND[themeState().scheme],
     // Shown on ready-to-show, after maximize(): no flash of the small window.
@@ -912,7 +913,7 @@ function showStandaloneDialog(situation: string): Promise<{ answer: DialogAnswer
     width: 520,
     height: 360,
     useContentSize: true,
-    title: 'tether',
+    title: BRAND.slug,
     icon: join(__dirname, 'tether.ico'),
     backgroundColor: WINDOW_BACKGROUND[themeState().scheme],
     show: false,

@@ -1,6 +1,7 @@
 // The API tetherd hands to each daemon extension's `activate` (F9 §3.4); the daemon's counterpart of
 // app/renderer/ext-api.ts (TetherUi). Lives with the daemon because it speaks the daemon's own types.
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import type { Brand } from '../../app/shared/brand.ts'
 import type { AgentContribution } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
@@ -21,6 +22,8 @@ export type SlotEventKind = 'spawned' | 'exited' | 'bound'
 export interface TetherDaemon {
   /** The extension's id (manifest.id). */
   readonly id: string
+  /** The product's identity (app/shared/brand.ts). */
+  readonly brand: Brand
   /** TETHER_HOME. */
   readonly home: string
   agents: { register(agent: AgentContribution): IDisposable }

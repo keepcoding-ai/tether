@@ -5,6 +5,9 @@ import type { BrowserWindow, WebContents } from 'electron'
 import type { ChannelMap, MainIpc } from '../shared/ext-ipc.ts'
 import type { SettingValue } from '../shared/vscode-configuration-registry.ts'
 import type { IDisposable } from '../shared/vscode-lifecycle.ts'
+import type { Brand } from '../shared/brand.ts'
+
+export type { Brand } from '../shared/brand.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 
@@ -26,6 +29,8 @@ export interface ExtState {
 
 export interface TetherMain {
   readonly id: string
+  /** The product's identity (app/shared/brand.ts). */
+  readonly brand: Brand
   /** TETHER_HOME. */
   readonly home: string
   /** app/dist (workers, assets). */

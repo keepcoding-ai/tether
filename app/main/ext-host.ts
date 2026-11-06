@@ -17,6 +17,7 @@ import { mainIpc, type MainIpcTransport } from '../shared/ext-ipc.ts'
 import { ConfigurationRegistry, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
 import type { TetherMain } from './ext-api.ts'
+import { BRAND } from '../shared/brand.ts'
 
 import type { ExtSettingChange, MainExtensionsList } from '../shared/api.ts'
 export type { ExtSettingChange, MainExtensionsList }
@@ -116,6 +117,7 @@ export class MainExtensionHost {
     const deps = this.deps
     return {
       id,
+      brand: BRAND,
       home: deps.home,
       dist: deps.dist,
       ipc: () => mainIpc(id, deps.ipc, deps.broadcast),
