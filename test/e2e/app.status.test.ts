@@ -109,7 +109,8 @@ test('status contribution point: icon, badge, state, popover (F7 B1)', async () 
     assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
     daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
 
-    assert.equal(await page.locator('.status-wrap').count(), 0, 'no status icon without a contribution')
+    // The web-bridge extension contributes its own icon (C4); the probes are the ones this test counts.
+    assert.equal(await page.locator('.status-wrap[data-status^="probe."]').count(), 0, 'no probe icon before the contribution')
 
     await addStatus(page, 'probe.second', 'globe-simple', 20)
     await addStatus(page, 'probe.first', 'plugs-connected', 10)
@@ -173,7 +174,7 @@ test('status contribution point: icon, badge, state, popover (F7 B1)', async () 
     // 4. Disposing the registration takes the icon away.
     await page.evaluate(() => window.probes['probe.second']!.dispose())
     await second.waitFor({ state: 'detached' })
-    assert.equal(await page.locator('.status-wrap').count(), 1)
+    assert.equal(await page.locator('.status-wrap[data-status^="probe."]').count(), 1)
 
     // 5. Screenshots: icon, badge, amber state and open popover, in both themes.
     await set(page, 'probe.first', { state: 'warn', badge: 3, text: 'Tether Bridge pausado' })

@@ -12,8 +12,9 @@ import { BRAND } from '../../app/shared/brand.ts'
 import { manifest as framePads } from '../../extensions/frame-pads/manifest.ts'
 import { manifest as explorer } from '../../extensions/explorer/manifest.ts'
 import { manifest as note } from '../../extensions/note/manifest.ts'
+import { manifest as webBridge } from '../../extensions/web-bridge/manifest.ts'
 
-const manifests = [framePads, explorer, note]
+const manifests = [framePads, explorer, note, webBridge]
 
 const item = (id: string): StatusItem => ({ id, title: () => id, render: () => {} })
 const desc = (id: string, order?: number) => ({ id, icon: 'plugs', ...(order === undefined ? {} : { order }), extension: id.split('.')[0]! })
