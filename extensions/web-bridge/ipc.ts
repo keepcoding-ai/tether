@@ -2,6 +2,11 @@
 // for who is connected. No secret ever crosses: the pairing token goes to bridge.json on disk, the api.key is read by
 // main only and never leaves it (the renderer gets counts and names).
 import type { DetectedBrowser } from './browsers.ts'
+import type { ActionOutcome } from './status-poll.ts'
+import type { StatusSnapshot } from './status.ts'
+
+export type { ActionOutcome } from './status-poll.ts'
+export type { StatusSnapshot } from './status.ts'
 
 export type InstallOutcome =
   | {
@@ -32,5 +37,21 @@ export interface WebBridgeChannels {
     install(browserId: string): Promise<InstallOutcome>
     /** Who is connected to the daemon now (polled by the guide, once a second). */
     connected(): Promise<ConnectedOutcome>
+    /** The status icon's last snapshot (C4); main polls /status by itself and pushes `status` events. */
+    status(): Promise<StatusSnapshot>
+    /** POST /pause or /resume on the daemon (a 404 is "indisponível nesta versão"). */
+    pause(on: boolean): Promise<ActionOutcome>
+    /** "Retomar todas as abas": POST /clients/<id>/release for every client the last snapshot listed. */
+    releaseAll(): Promise<ActionOutcome>
+    /** "Opções da extensão": opens chrome://extensions/?id=<id> in the snapshot's `options` browser. */
+    openOptions(): Promise<ActionOutcome>
+  }
+  send: {
+    /** The popover opened (poll every 2 s) or closed (every 15 s). */
+    watch(open: boolean): void
+  }
+  events: {
+    /** A snapshot that differs from the last one. */
+    status(snapshot: StatusSnapshot): void
   }
 }

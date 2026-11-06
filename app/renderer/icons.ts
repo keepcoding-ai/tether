@@ -2,6 +2,7 @@
 // the bundle (esbuild `text` loader, app/build.mjs). Every file carries fill="currentColor", so an icon
 // takes the colour of its text and follows the theme. One weight (regular); `fill` only for the status dot.
 import { agentTable } from './agent-ui.ts'
+import { BRAND } from '../shared/brand.ts'
 import arrowsClockwise from '@phosphor-icons/core/assets/regular/arrows-clockwise.svg'
 import arrowsInLineVertical from '@phosphor-icons/core/assets/regular/arrows-in-line-vertical.svg'
 import arrowsOutSimple from '@phosphor-icons/core/assets/regular/arrows-out-simple.svg'
@@ -222,6 +223,8 @@ const SVG = {
   'brackets-curly': bracketsCurlyIcon,
   'gear-six': gearSixIcon,
   'terminal': terminalIcon,
+  // The product's monogram (brand/assets/app/mask.json, 24x24 currentColor): the Bridge's status icon wears it.
+  'brand': BRAND.icon,
 } as const
 
 export type IconName = keyof typeof SVG

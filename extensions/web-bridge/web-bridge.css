@@ -24,3 +24,41 @@ dialog.web-bridge-guide[data-state="connected"] .wb-dot { background: var(--ok);
 @media (prefers-reduced-motion: reduce) { dialog.web-bridge-guide .wb-dot { animation: none; } }
 
 dialog.web-bridge-guide .wb-note { margin: 0 0 14px; color: var(--fg-dim); font-size: 11.5px; line-height: 1.45; }
+
+/* The status popover (extensions/web-bridge/renderer.ts, C4): the core's .popover frame (styles.css) with the Bridge's
+   sections inside. State colours are the theme's tokens; the row of an agent calling now pulses with the accent. */
+.status-pop.wb-pop { min-width: 320px; max-width: 400px; padding: 10px 12px 8px; line-height: 1.45; }
+.wb-pop .wb-pop-head { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.wb-pop .wb-pop-head .ph { width: 16px; height: 16px; flex: none; }
+.wb-pop .wb-pop-title { font-weight: 600; }
+.wb-pop .wb-pop-state { flex: 1; min-width: 0; color: var(--fg-dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.wb-pop[data-state="busy"] .wb-pop-state { color: var(--accent); }
+.wb-pop[data-state="warn"] .wb-pop-state { color: var(--warn); }
+.wb-pop[data-state="error"] .wb-pop-state { color: var(--err); }
+.wb-pop .wb-sec { margin-top: 8px; }
+.wb-pop .wb-sec h3 { margin: 0 0 2px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-dim); }
+.wb-pop .wb-list { list-style: none; margin: 0; padding: 0; }
+.wb-pop .wb-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; column-gap: 8px; padding: 3px 6px; margin: 0 -6px; border-radius: 6px; }
+.wb-pop .wb-row .ph { width: 14px; height: 14px; color: var(--fg-dim); }
+.wb-pop .wb-row .wb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-pop .wb-row .wb-meta { color: var(--fg-dim); font-size: 11px; white-space: nowrap; }
+.wb-pop .wb-agent.active .ph { color: var(--accent); animation: status-pulse 1.2s ease-in-out infinite; }
+.wb-pop .wb-agent.active .wb-meta { color: var(--accent); }
+.wb-pop .wb-agent.clickable { cursor: pointer; }
+.wb-pop .wb-agent.clickable:hover, .wb-pop .wb-agent.clickable:focus-visible { background: var(--bg-hover); outline: none; }
+.wb-pop .wb-agent.clickable:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.wb-pop .wb-empty { margin: 2px 0 0; color: var(--fg-dim); font-size: 11.5px; white-space: normal; }
+.wb-pop .wb-down { margin-top: 8px; }
+.wb-pop .wb-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.wb-pop .wb-action { display: inline-flex; align-items: center; gap: 6px; margin: 0; font: 12px var(--ui); color: var(--fg); background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+.wb-pop .wb-action .ph { width: 13px; height: 13px; }
+.wb-pop .wb-action:hover:not(:disabled) { background: var(--bg-hover); }
+.wb-pop .wb-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.wb-pop .wb-action:disabled { opacity: .5; cursor: default; }
+.wb-pop .wb-action.danger { color: var(--err); }
+.wb-pop .wb-hint { margin: 6px 0 0; color: var(--fg-dim); font-size: 11px; white-space: normal; }
+.wb-pop .wb-notice { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; font-size: 11.5px; white-space: normal; }
+.wb-pop .wb-notice.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.wb-pop .wb-notice.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.wb-pop .wb-foot { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--border); color: var(--fg-dim); font-size: 11px; white-space: normal; }
+.wb-pop .wb-reload { color: var(--warn); }

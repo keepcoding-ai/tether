@@ -111,6 +111,8 @@ export interface TetherUi {
     cwdOf(id: string | undefined): string | undefined
     /** The keyboard to a pane. */
     focus(id: string): void
+    /** Brings a pane to the front wherever it lives (its desk comes forward, the drawer or its pad opens, its tab is activated) and focuses it. */
+    reveal(id: string): void
     /** Closes a pane without a slot behind it (remembered for "reabrir o último painel fechado"). */
     close(id: string): void
     /** The pane's tab menu at page coordinates (the type's own `tabMenu`). */

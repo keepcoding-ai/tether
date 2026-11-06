@@ -1,15 +1,21 @@
-// The web-bridge extension's Electron-main side: the browsers on this machine, the install (installer.ts) and the
-// "who is connected" poll, on the bus `ext:web-bridge:*`. Main is the only side that touches the bridge home (config,
-// api.key) and the file system; the renderer gets paths, names and counts.
-import { execFileSync } from 'node:child_process'
+// The web-bridge extension's Electron-main side: the browsers on this machine, the install (installer.ts), the "who is
+// connected" poll of the guide and, for the status icon (C4, status-poll.ts), the /status poll with the popover's
+// actions. Main is the only side that touches the bridge home (config, api.key) and the file system; the renderer gets
+// paths, names, counts and the sanitized snapshot, on the bus `ext:web-bridge:*`.
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { readBuildInfo } from './bridge-home.ts'
 import { browsersFromOverride, detectBrowsers, type DetectedBrowser } from './browsers.ts'
 import { createInstaller } from './installer.ts'
 import type { WebBridgeChannels } from './ipc.ts'
-import { bridgePortOf } from './paths.ts'
+import { bridgeHomeOf, bridgePortOf, extensionDirOf } from './paths.ts'
+import { createStatusPoller } from './status-poll.ts'
+import type { StatusSnapshot } from './status.ts'
+import { extensionVersionOf, readUpdateMarker } from './update.ts'
 import { findNode } from './warmup.ts'
 
 export { manifest } from './manifest.ts'
@@ -35,26 +41,89 @@ export function listBrowsers(env: NodeJS.ProcessEnv = process.env): DetectedBrow
   return detectBrowsers({ platform: process.platform, env, exists: isFile, registryText: registryText() })
 }
 
+/** The browser "Opções da extensão" opens in: the one connected (by name), else the first detected. */
+export function optionsBrowser(detected: DetectedBrowser[], connected: StatusSnapshot['browsers']): DetectedBrowser | undefined {
+  if (!detected.length) return undefined
+  for (const c of connected) {
+    const hit = detected.find(d => d.name.toLowerCase().includes(c.name.toLowerCase()))
+    if (hit) return hit
+  }
+  return detected[0]
+}
+
+/** chrome://extensions/?id=<id> on the browser's own scheme (chrome://, edge://, brave://). */
+export function optionsUrl(browser: DetectedBrowser, extensionId: string): string {
+  return `${browser.extensionsUrl.replace(/\/?$/, '')}/?id=${extensionId}`
+}
+
 export function activate(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<WebBridgeChannels>()
   // The app runs from this repository (no asar): app/dist/../../extensions/web-bridge/vendor.
   const vendorDir = resolve(main.dist, '..', '..', 'extensions', 'web-bridge', 'vendor')
+  const port = bridgePortOf()
+  const currentDir = extensionDirOf(main.home)
   const installer = createInstaller({
     home: main.home,
     vendorDir,
-    port: bridgePortOf(),
+    port,
     brand: { name: main.brand.name, color: main.brand.accent, hostId: main.brand.appId },
     nodeExe: () => findNode(),
     log: msg => main.log(msg),
   })
   let browsers: DetectedBrowser[] | undefined
+  const detected = (): DetectedBrowser[] => browsers ?? (browsers = listBrowsers())
+
+  // C4: the poll. The versions come from the vendored build-info (what the tether carries), the installed folder's
+  // manifest and C5's marker (the files under a loaded extension changed).
+  const version = (): StatusSnapshot['version'] => {
+    const vendored = readBuildInfo(vendorDir)?.version
+    const installed = extensionVersionOf(currentDir)
+    return { ...(vendored ? { vendored } : {}), ...(installed ? { installed } : {}), pendingReload: !!readUpdateMarker(main.home) }
+  }
+  const poller = createStatusPoller({
+    port,
+    bridgeHome: bridgeHomeOf(main.home),
+    version,
+    options: () => {
+      // Detected once the daemon is up (reg query costs ~100 ms; the list is cached for the session).
+      if (!readBuildInfo(vendorDir)) return undefined
+      const b = optionsBrowser(detected(), poller.current().browsers)
+      return b ? { browserId: b.id, browserName: b.name } : undefined
+    },
+    onChange: snapshot => ipc.send('status', snapshot),
+    log: msg => main.log(`status: ${msg}`),
+  })
+  poller.start()
+
+  const openOptions = async (): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const info = readBuildInfo(vendorDir)
+    if (!info) return { ok: false, message: 'A cópia vendorizada do bridge está sem build-info.' }
+    const target = poller.current().options
+    const browser = target ? detected().find(b => b.id === target.browserId) : undefined
+    if (!browser) return { ok: false, message: 'Nenhum navegador compatível encontrado neste computador.' }
+    try {
+      const script = /\.(cmd|bat)$/i.test(browser.exe)
+      const child = spawn(browser.exe, [optionsUrl(browser, info.extensionId)], { detached: true, stdio: 'ignore', windowsHide: script, shell: script })
+      child.on('error', () => {})
+      child.unref()
+      main.log(`opções da extensão abertas no ${browser.name}`)
+      return { ok: true }
+    } catch (e) { return { ok: false, message: e instanceof Error ? e.message : String(e) } }
+  }
+
   return [
-    ipc.handle('browsers', () => Promise.resolve((browsers = listBrowsers()))),
+    ipc.handle('browsers', () => Promise.resolve(detected())),
     ipc.handle('install', browserId => {
-      const browser = (browsers ?? (browsers = listBrowsers())).find(b => b.id === browserId)
+      const browser = detected().find(b => b.id === browserId)
       if (!browser) return Promise.resolve({ ok: false as const, message: 'Esse navegador não está mais na lista.' })
-      return installer.install(browser)
+      return installer.install(browser).then(r => { void poller.refresh(); return r })
     }),
     ipc.handle('connected', () => installer.connected()),
+    ipc.handle('status', () => Promise.resolve(poller.current())),
+    ipc.handle('pause', on => poller.pause(on === true)),
+    ipc.handle('releaseAll', () => poller.releaseAll()),
+    ipc.handle('openOptions', () => openOptions()),
+    ipc.on('watch', open => poller.watch(open === true)),
+    toDisposable(() => poller.stop()),
   ]
 }

@@ -5,14 +5,19 @@
 // success message and closes the guide two seconds later. The guide is a <dialog class="ask"> like the core's, so the
 // app's shortcuts stay quiet while it is open (dialogOpen()) and it shares the dialog's styles; its own pieces live in
 // web-bridge.css.
+// C4: the status icon of the top bar (design §5). Main polls the daemon and pushes a sanitized snapshot (`status` event);
+// this side computes state/badge/tooltip from it (status.ts), and fills the popover: browsers (tabs under control, last
+// activity), agents per `tether:<slot>` (click brings the pane to the front), Pausar/Retomar, Retomar todas as abas,
+// Instalar em outro navegador…, Opções da extensão, and the version footer with the "recarregue" hint (C5 marker).
 import type { TetherUi } from '../../app/renderer/ext-api.ts'
 import type { DialogOption } from '../../app/shared/dialog.ts'
-import { icon } from '../../app/renderer/icons.ts'
+import { icon, type IconName } from '../../app/renderer/icons.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DetectedBrowser } from './browsers.ts'
-import type { InstallOutcome, WebBridgeChannels } from './ipc.ts'
-import { BRIDGE_NAME } from './manifest.ts'
+import type { ActionOutcome, InstallOutcome, StatusSnapshot, WebBridgeChannels } from './ipc.ts'
+import { BRIDGE_NAME, STATUS_ID } from './manifest.ts'
+import { activeAgents, ago, badgeOf, EMPTY_SNAPSHOT, stateOf, tabsLabel, titleOf, versionLine } from './status.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -186,12 +191,179 @@ export function activate(ui: TetherUi): IDisposable[] {
     showGuide(r)
   }
 
+  // ---- C4: the status icon -----------------------------------------------------------------------------------------
+  let snapshot: StatusSnapshot = EMPTY_SNAPSHOT
+  let popoverOpen = false
+  let notice: { text: string; tone: 'warn' | 'ok' } | undefined
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
+  let busyTimer: ReturnType<typeof setTimeout> | undefined
+  let acting = false
+
+  const el = (tag: string, className?: string, text?: string): HTMLElement => {
+    const e = document.createElement(tag)
+    if (className) e.className = className
+    if (text !== undefined) e.textContent = text
+    return e
+  }
+  const button = (action: string, iconName: IconName, label: string, run: () => void, opts: { danger?: boolean; disabled?: boolean } = {}): HTMLButtonElement => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = `wb-action${opts.danger ? ' danger' : ''}`
+    b.dataset.action = action
+    b.disabled = !!opts.disabled || acting
+    b.append(icon(iconName), document.createTextNode(label))
+    b.addEventListener('click', ev => { ev.stopPropagation(); run() })
+    return b
+  }
+
+  const say = (text: string, tone: 'warn' | 'ok'): void => {
+    notice = { text, tone }
+    if (noticeTimer) clearTimeout(noticeTimer)
+    noticeTimer = setTimeout(() => { notice = undefined; handle.update() }, 6000)
+    handle.update()
+  }
+
+  const act = async (what: () => Promise<ActionOutcome>, done: string): Promise<void> => {
+    if (acting) return
+    acting = true
+    handle.update()
+    try {
+      const r = await what()
+      if (r.ok) say(done, 'ok'); else say(r.message, 'warn')
+    } finally { acting = false; handle.update() }
+  }
+
+  /** The busy state ends 10 s after the last call even without a new snapshot: a redraw is scheduled for that moment. */
+  const scheduleBusyEnd = (): void => {
+    if (busyTimer) clearTimeout(busyTimer)
+    const active = activeAgents(snapshot, Date.now())
+    if (!active.length) return
+    const latest = Math.max(...active.map(a => a.lastSeenAt ?? 0))
+    busyTimer = setTimeout(() => { busyTimer = undefined; handle.update() }, Math.max(50, latest + 10_000 - Date.now() + 20))
+  }
+
+  const render = (pop: HTMLElement): void => {
+    const now = Date.now()
+    pop.classList.add('wb-pop')
+    const state = stateOf(snapshot, now)
+    pop.dataset.state = state
+
+    const head = el('div', 'wb-pop-head')
+    head.append(icon('brand'), el('span', 'wb-pop-title', BRIDGE_NAME), el('span', 'wb-pop-state', titleOf(snapshot, now, BRIDGE_NAME)))
+    pop.append(head)
+
+    if (snapshot.daemon === 'up') {
+      // Browsers.
+      const bSec = el('section', 'wb-sec'); bSec.dataset.section = 'browsers'
+      bSec.append(el('h3', undefined, 'Navegadores'))
+      if (!snapshot.browsers.length) bSec.append(el('p', 'wb-empty', 'Nenhum navegador conectado.'))
+      else {
+        const ul = el('ul', 'wb-list')
+        for (const b of snapshot.browsers) {
+          const li = el('li', 'wb-row'); li.dataset.browser = b.id
+          li.append(icon('globe-simple'), el('span', 'wb-name', b.name), el('span', 'wb-meta', `${tabsLabel(b.tabs)} sob controle${b.lastActivityAt ? ` · ${ago(b.lastActivityAt, now)}` : ''}`))
+          ul.append(li)
+        }
+        bSec.append(ul)
+      }
+      pop.append(bSec)
+
+      // Agents.
+      const aSec = el('section', 'wb-sec'); aSec.dataset.section = 'agents'
+      aSec.append(el('h3', undefined, 'Agentes'))
+      if (!snapshot.agents.length) aSec.append(el('p', 'wb-empty', 'Nenhum agente usou o navegador ainda.'))
+      else {
+        const ul = el('ul', 'wb-list')
+        const active = new Set(activeAgents(snapshot, now).map(a => a.clientId))
+        for (const a of snapshot.agents) {
+          const pane = a.slotId ? ui.panes.describe(a.slotId) : undefined
+          const li = el('li', `wb-row wb-agent${active.has(a.clientId) ? ' active' : ''}${pane ? ' clickable' : ''}`)
+          li.dataset.client = a.clientId
+          if (a.slotId) li.dataset.slot = a.slotId
+          const agentIcon: IconName = pane?.agent ? 'sparkle' : 'terminal-window'
+          li.append(icon(agentIcon), el('span', 'wb-name', a.name))
+          const bits = [tabsLabel(a.tabs), a.lastTool ? `${a.lastTool} ${ago(a.lastSeenAt, now)}`.trim() : ago(a.lastSeenAt, now)].filter(Boolean)
+          li.append(el('span', 'wb-meta', bits.join(' · ')))
+          if (pane) {
+            li.tabIndex = 0
+            li.setAttribute('role', 'button')
+            li.title = `Ir para o painel${pane.place ? ` (${pane.place})` : ''}`
+            const go = (): void => { ui.panes.reveal(a.slotId!) }
+            li.addEventListener('click', ev => { ev.stopPropagation(); go() })
+            li.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go() } })
+          }
+          ul.append(li)
+        }
+        aSec.append(ul)
+      }
+      pop.append(aSec)
+    } else {
+      pop.append(el('p', 'wb-empty wb-down', snapshot.daemon === 'no-key'
+        ? 'A instalação do bridge ainda não tem chave: o tetherd a cria ao subir.'
+        : snapshot.daemon === 'refused' ? 'O daemon recusou a chave do tether; veja tether doctor.'
+          : snapshot.everUp ? 'O daemon do bridge parou de responder. A próxima chamada de um agente o reinicia; "Instalar…" também.' : 'O serviço do bridge ainda não respondeu.'))
+    }
+
+    // Actions.
+    const actions = el('div', 'wb-actions')
+    const up = snapshot.daemon === 'up'
+    if (snapshot.paused) actions.append(button('resume', 'play', 'Retomar', () => { void act(() => ipc.invoke('pause', false), `${BRIDGE_NAME} retomado.`) }, { disabled: !up }))
+    else actions.append(button('pause', 'stop-circle', 'Pausar', () => { void act(() => ipc.invoke('pause', true), `${BRIDGE_NAME} pausado: os agentes esperam.`) }, { disabled: !up || !snapshot.pauseSupported }))
+    actions.append(button('release-all', 'arrow-counter-clockwise', 'Retomar todas as abas', () => { void act(() => ipc.invoke('releaseAll'), 'Abas soltas: os agentes abrem outras quando precisarem.') }, { disabled: !up || !snapshot.agents.length }))
+    actions.append(button('install', 'arrow-square-out', 'Instalar em outro navegador…', () => { void ui.commands.run('web-bridge.install') }))
+    if (snapshot.options) actions.append(button('options', 'puzzle-piece', `Opções da extensão (${snapshot.options.browserName})`, () => { void act(() => ipc.invoke('openOptions'), `Página da extensão aberta no ${snapshot.options?.browserName ?? 'navegador'}.`) }))
+    pop.append(actions)
+    if (!snapshot.pauseSupported && !snapshot.paused) pop.append(el('p', 'wb-hint', 'Pausar está indisponível nesta versão do bridge.'))
+
+    if (notice) { const n = el('p', `wb-notice ${notice.tone}`, notice.text); n.setAttribute('role', 'status'); pop.append(n) }
+
+    // Footer: versions.
+    const v = versionLine(snapshot.version)
+    const foot = el('footer', 'wb-foot')
+    foot.append(el('span', 'wb-version', v.text))
+    if (v.reload) foot.append(el('span', 'wb-reload', 'Recarregue a extensão no navegador (chrome://extensions) para usar a versão nova.'))
+    pop.append(foot)
+  }
+
+  const handle = ui.status.register({
+    id: STATUS_ID,
+    title: () => titleOf(snapshot, Date.now(), BRIDGE_NAME),
+    state: () => stateOf(snapshot, Date.now()),
+    badge: () => badgeOf(snapshot, Date.now()),
+    render: pop => {
+      render(pop)
+      // The core calls render on open and on every update while open: the first call after a close is the "opened" signal.
+      if (!popoverOpen) { popoverOpen = true; ipc.send('watch', true); watchClose(pop) }
+    },
+  })
+
+  /** The popover closes without a callback: when its wrap loses `pinned`, the fast poll stops. */
+  const watchClose = (pop: HTMLElement): void => {
+    const wrap = pop.parentElement
+    if (!wrap) { popoverOpen = false; ipc.send('watch', false); return }
+    const obs = new MutationObserver(() => {
+      if (wrap.classList.contains('pinned')) return
+      obs.disconnect()
+      popoverOpen = false
+      ipc.send('watch', false)
+    })
+    obs.observe(wrap, { attributes: true, attributeFilter: ['class'] })
+  }
+
+  const apply = (s: StatusSnapshot): void => { snapshot = s; handle.update(); scheduleBusyEnd() }
+  const onStatus = ipc.on('status', apply)
+  void ipc.invoke('status').then(apply).catch(() => undefined)
+
   ui.test.expose('webBridge', {
     guide: (): GuideSnapshot => guide?.snapshot ?? { open: false },
+    status: (): { snapshot: StatusSnapshot; state: string; badge: number | 'dot' | undefined; title: string; watching: boolean } => ({ snapshot, state: stateOf(snapshot, Date.now()), badge: badgeOf(snapshot, Date.now()), title: titleOf(snapshot, Date.now(), BRIDGE_NAME), watching: popoverOpen }),
   })
 
   return [
     ui.commands.registerCommand('web-bridge.install', () => { void run() }),
     toDisposable(() => guide?.close()),
+    handle,
+    onStatus,
+    toDisposable(() => { if (busyTimer) clearTimeout(busyTimer); if (noticeTimer) clearTimeout(noticeTimer) }),
   ]
 }

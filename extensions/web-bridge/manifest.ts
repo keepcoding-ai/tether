@@ -4,12 +4,17 @@
 // a fixed folder with its pairing seeded, the folder path lands in the clipboard, the browser opens at its extensions
 // page, and a three-step guide waits for the browser to connect and closes by itself. Slice C2: the daemon side
 // (daemon.ts) keeps the installation whole, writes the agents' --mcp-config and warms the daemon up at every tetherd
-// start. The MCP injection into the agents (C3) and the status icon (C4) come in their own slices. Ids never change.
+// start. C3 hands the MCP to the agents; C4 is the status icon on the top bar (`contributes.status`: the brand's
+// monogram, grey/normal/busy/amber/red per design §5, the popover with the browsers, the agents and the controls).
+// Ids never change.
 import type { ExtensionManifest } from '../types.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 
 /** The extension's name in the browser, as brand/brand.json states it ("Tether Bridge"). */
 export const BRIDGE_NAME = BRAND.product
+
+/** The status icon's id (`contributes.status`), never renamed. */
+export const STATUS_ID = 'web-bridge.status'
 
 export const manifest: ExtensionManifest = {
   id: 'web-bridge',
@@ -33,5 +38,9 @@ export const manifest: ExtensionManifest = {
         { command: 'web-bridge.install', group: 'app', order: 7, icon: 'globe-simple', label: `Instalar ${BRIDGE_NAME}…` },
       ],
     },
+    status: [
+      // The brand's monogram (app/renderer/icons.ts 'brand'); order 50 leaves room on both sides.
+      { id: STATUS_ID, icon: 'brand', order: 50 },
+    ],
   },
 }

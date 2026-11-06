@@ -1553,6 +1553,17 @@ function openSlot(slotId: string): void {
   panel.api.setActive()
 }
 
+/** A pane to the front and focused: a slot's pane through openSlot (desk, drawer, pad), any other by activating its tab. */
+function revealPane(id: string): void {
+  if (slots.has(id)) { openSlot(id); requestAnimationFrame(() => focusPane(id)); return }
+  const panel = findPanel(id)
+  if (!panel) return
+  const deskId = desks.deskOf(id)
+  if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
+  panel.api.setActive()
+  requestAnimationFrame(() => focusPane(id))
+}
+
 // ---------- switching a panel's profile ----------
 
 /** Slots with a `set-profile` request in flight (the dialog is not offered twice). */
@@ -2993,6 +3004,7 @@ function activateRendererExtensions(): void {
         activeId: () => currentDesk().activePanel?.id,
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),
+        reveal: paneId => revealPane(paneId),
         close: paneId => closeSlotless(paneId),
         showTabMenu: (paneId, x, y) => showTabMenu(paneId, x, y),
         newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
