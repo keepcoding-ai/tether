@@ -7,6 +7,7 @@
 //
 //   node extensions/web-bridge/vendor.mjs [--from <bridge dist dir>] [--brand tether]
 //
+// This is the COPY step only; `npm run bridge:build` (build.mjs) runs the whole chain (derive, build by brand, this).
 // `--from` defaults to ../../chrome-extensions/bridge/dist relative to this repository (the atrium monorepo layout);
 // build it first with `node scripts/build.ts --brand <this repo>/brand/brand.json` in chrome-extensions/bridge: the brand
 // file is this repository's brand/brand.json (the bridge keeps no brand of its own). The copy is refused when
@@ -28,7 +29,7 @@ const brandFile = resolve(here, '..', '..', 'brand', 'brand.json')
 const infoPath = join(from, brand, VENDOR_BUILD_INFO)
 const extensionDir = join(from, brand, 'extension')
 if (!existsSync(infoPath) || !existsSync(extensionDir)) {
-  console.error(`build por marca não encontrado em ${join(from, brand)}: rode "node scripts/build.ts --brand ${brandFile}" no chrome-extensions/bridge, ou passe --from <dist>`)
+  console.error(`build por marca não encontrado em ${join(from, brand)}: rode "npm run bridge:build" (ou "node scripts/build.ts --brand ${brandFile}" no bridge e passe --from <dist>)`)
   process.exit(2)
 }
 const info = JSON.parse(readFileSync(infoPath, 'utf8'))

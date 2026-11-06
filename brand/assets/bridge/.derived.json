@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "sources": {
+    "dark/logo-h.svg": "bbb7a43b552ac1791ad6590a36f96f9cc7aec54d100422d8a1e50acd3506dbfd",
+    "dark/logo.svg": "0d89f725158afdc818897fcba554fecaddf61abb07803021605f24370d2f98a3",
+    "light/favicon.svg": "2b12d74346f1ffb29770f584aaf3fe600add62a84001804058146c98f2e960ca",
+    "light/icon.svg": "2c7a2a59fda5ba0aec81bb3cf8270313ecc974ac814ef1948d87a7a8b66428b6",
+    "light/logo-h.svg": "2071b7db312a31d15e128c916db55a34408313991d570d12a8df6e7fc574a213",
+    "light/logo.svg": "6558c9f88445beba342d294c9417542105e50e49e6b7c7e547fbb6f0542efdbd"
+  },
+  "targets": {
+    "icon-128.png": {
+      "source": "light/icon.svg",
+      "size": 128,
+      "art": 96
+    },
+    "icon-16.png": {
+      "source": "light/favicon.svg",
+      "size": 16,
+      "art": 16
+    },
+    "icon-32.png": {
+      "source": "light/favicon.svg",
+      "size": 32,
+      "art": 32
+    },
+    "icon-48.png": {
+      "source": "light/icon.svg",
+      "size": 48,
+      "art": 48
+    },
+    "logo-dark.svg": {
+      "source": "dark/logo.svg"
+    },
+    "logo-h-dark.svg": {
+      "source": "dark/logo-h.svg"
+    },
+    "logo-h-light.svg": {
+      "source": "light/logo-h.svg"
+    },
+    "logo-light.svg": {
+      "source": "light/logo.svg"
+    }
+  }
+}

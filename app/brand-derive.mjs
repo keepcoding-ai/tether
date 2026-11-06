@@ -5,13 +5,17 @@
 //                       by Electron offscreen (app/brand-raster.electron.mjs) and encoded by app/icon.mjs
 //   icons.derived.json  the manifest `npm run app:build` checks (sha256 of the source SVG; stale → the build fails)
 // Also writes brand/assets/preview/app-icon.png, a contact sheet of the icon at every size and the tray states, for review.
-// The Tether Bridge's assets (brand/assets/bridge) are derived by the bridge build (slice T3).
+// Then the Tether Bridge's part (brand/assets/bridge/, the PNGs and logos the extension packs): the bridge's own
+// scripts/brand-derive.ts, when its source checkout is on the machine (extensions/web-bridge/bridge-source.ts:
+// --bridge <dir>, TETHER_BRIDGE_SRC, or ../../chrome-extensions/bridge). Without it this step is skipped with a notice:
+// `npm run bridge:build` derives again anyway before packing the extension.
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { bridgeSourceProblems, describeBridgeSource, resolveBridgeSource } from '../extensions/web-bridge/bridge-source.ts'
 import { ALL_SIZES, hexRgb, ICON_ASSET_DIR, resolveIconSource, TRAY_DOT_ACTIVE, TRAY_DOT_ATTENTION, TRAY_SIZE, writeIconAssets } from './brand-icons.ts'
 import { writeMaskAsset } from './brand-mask.ts'
 import { encodePng, overlayDot } from './icon.mjs'
@@ -89,3 +93,15 @@ const png = encodePng(width, sheet, height)
 writeFileSync(join(previewDir, 'app-icon.png'), png)
 console.log(`brand:derive  preview/app-icon.png (${width}×${height}: ${sheetSizes.join('/')} px + bandeja)`)
 console.log(`brand:derive ok → ${ICON_ASSET_DIR}`)
+
+// The bridge's assets, by the bridge's own derive (same SVGs, its chains and margins), when the source is around.
+const src = resolveBridgeSource(root, process.argv.slice(2))
+const problems = bridgeSourceProblems(src.dir)
+if (problems.length) {
+  console.log(`brand:derive  assets do bridge (brand/assets/bridge) não derivados: fonte do bridge inutilizável em ${describeBridgeSource(src)}; "npm run bridge:build" deriva ao empacotar`)
+} else {
+  const brandFile = join(root, 'brand', 'brand.json')
+  const r = spawnSync(process.execPath, [join(src.dir, 'scripts', 'brand-derive.ts'), brandFile, '--preview', ...(process.argv.includes('--force') ? ['--force'] : [])], { cwd: src.dir, stdio: 'inherit' })
+  if (r.status !== 0) { console.error(`brand:derive  o brand-derive do bridge saiu com ${r.status ?? r.signal}`); process.exit(r.status ?? 1) }
+  console.log(`brand:derive ok → ${relative(root, join(root, 'brand', 'assets', 'bridge'))} (bridge em ${src.dir}); "npm run bridge:build" empacota a extensão`)
+}

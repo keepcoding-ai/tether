@@ -17,6 +17,7 @@
     "check": "npm run typecheck && npm test",
     "daemon": "node src/daemon/main.ts",
     "brand:derive": "node app/brand-derive.mjs",
+    "bridge:build": "node extensions/web-bridge/build.mjs",
     "app:build": "node app/build.mjs",
     "app:install": "node app/install.mjs install",
     "app:uninstall": "node app/install.mjs uninstall",
