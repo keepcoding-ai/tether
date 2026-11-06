@@ -11,7 +11,14 @@ import type { Binding } from '../core/event.ts'
 import { canonicalDir } from '../core/paths.ts'
 import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
 
-const HOOK_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.mjs')
+/**
+ * The reporter script, next to this module. Read on use, never at load: Electron main bundles this module as CommonJS
+ * (through the agent registry that core/profile.ts imports), where `import.meta.url` is undefined and resolving it at
+ * load threw before the app could start. Only tetherd (plain ESM) ever writes the hook settings.
+ */
+function defaultHookPath(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.mjs')
+}
 
 /**
  * Settings injected with `--settings`: every hook runs the reporter. Forward slashes: the hook runs under Git Bash on Windows.
@@ -21,7 +28,7 @@ const HOOK_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report
  * copy being present and current, and on bash quoting of a Windows path, for a failure mode that is worse (every
  * event lost) than the one it avoids.
  */
-export function hookSettings(hookPath: string = HOOK_PATH): object {
+export function hookSettings(hookPath: string = defaultHookPath()): object {
   const script = hookPath.replace(/\\/g, '/')
   const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
