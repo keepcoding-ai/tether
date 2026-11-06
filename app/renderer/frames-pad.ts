@@ -27,6 +27,7 @@ export class FramesPad implements PadView {
   readonly deskId: string | undefined
   readonly desk: Desk
   private visible = false
+  private disposing = false
   private readonly host: FramesPadHost
 
   constructor(pad: PadHost, host: FramesPadHost, theme: DockviewTheme) {
@@ -64,7 +65,15 @@ export class FramesPad implements PadView {
     if (!visible) { this.desk.hidePlus(); this.host.onHidden(this) }
   }
 
+  /** Seeds the empty pane again when the pad's frame has no tab left (not while it is being disposed). True when it did. */
+  reseedIfEmpty(): boolean {
+    if (this.disposing || this.desk.panels.length > 0) return false
+    this.host.seed(this)
+    return true
+  }
+
   dispose(): void {
+    this.disposing = true
     this.host.onDispose(this)
     this.desk.dispose()
   }

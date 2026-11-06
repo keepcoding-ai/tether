@@ -378,11 +378,17 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     }),
     // Only changes the person can make are saved: a hint or title the app updates is not one (isPersonChange).
     onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
-    onPanelsChange: () => { refreshClosedMenu(); renderStrip(); recomputeProjects() },
+    onPanelsChange: () => {
+      refreshClosedMenu(); renderStrip(); recomputeProjects()
+      // A pad is never empty: its one frame shows the chooser ("O que abrir aqui?") when its last tab leaves.
+      if (scope instanceof FramesPad) queueMicrotask(() => { if (scope.reseedIfEmpty()) scheduleSave() })
+    },
+    singleFrame: scope instanceof FramesPad,
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
     onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane() },
-    // One focused frame in the window: a pad's frames have it while that pad is focused, the desks otherwise.
-    ownsFocus: () => scope === 'drawer' ? true : scope instanceof FramesPad ? focusedPad === scope : focusedPad === undefined,
+    // The desks always paint the Foco de Mesa (it changes only by a click/focus in a desk); a pad with the keyboard and
+    // the open drawer paint a neutral outline on their frame instead, never the desk colour.
+    focusKind: () => scope === 'drawer' ? 'keyboard' : scope instanceof FramesPad ? (focusedPad === scope ? 'keyboard' : 'none') : 'foco',
     paneOptions: panel => paneTypes.optionsOf(panel),
     // A tab dragged here from another frame: the focused frame is where it landed (a pad's, or the desks'), and the keyboard follows it.
     onPaneDropped: id => {
