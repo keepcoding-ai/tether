@@ -169,7 +169,10 @@ async function toolbarChecks(page: Page): Promise<void> {
     return { left: read('#toolbar .tb-left button.ib'), right: read('#toolbar .tb-right button.ib') }
   })
   assert.equal(sides.left.length, 4, 'four icons on the left')
-  assert.equal(sides.right.length, 3, 'three icons on the right')
+  // Three of the app's own, plus one per extension status icon (left of the connection icon; the web bridge brings one).
+  const statusIcons = await page.locator('#toolbar .tb-right #status-area button.ib.status-btn').count()
+  assert.ok(statusIcons >= 1, 'the web bridge status icon is on the right side')
+  assert.equal(sides.right.length, 3 + statusIcons, 'three icons on the right, plus the status icons')
   for (const b of [...sides.left, ...sides.right]) {
     assert.equal(b.text, '', `icon only: ${JSON.stringify(b)}`)
     assert.ok(b.label.length > 0, `aria-label: ${JSON.stringify(b)}`)
@@ -192,7 +195,8 @@ async function assertCentred(page: Page, width: number): Promise<void> {
 
 /** The desk line is on and painted in the active segment's fill. */
 async function assertDeskLine(page: Page): Promise<void> {
-  const line = await page.locator('#dock').evaluate(el => { const s = window.getComputedStyle(el, '::before'); return { bg: s.backgroundColor, h: s.height, content: s.content } })
+  // The line hangs on the workbench (desk and pads together) since the pads joined it.
+  const line = await page.locator('#workbench').evaluate(el => { const s = window.getComputedStyle(el, '::before'); return { bg: s.backgroundColor, h: s.height, content: s.content } })
   const fill = await page.locator('#desk-switch .seg.on').evaluate(el => window.getComputedStyle(el).backgroundColor)
   assert.equal(line.content, '""', 'the line is on')
   assert.equal(line.h, '2px')
@@ -880,11 +884,14 @@ test('app chrome: aria, keyboard in the new menus, focus return, FLIP, drawer fr
     // ---- Tab order: bar -> capsule (the pill, then the active tab) -> right side ----
     await page.locator('#btn-closed').focus()
     const stops: string[] = []
-    for (let i = 0; i < 4; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
+    // Then the extensions' status icons, left to right, then the connection icon.
+    const statusIcons = await page.locator('#status-area button.status-btn').count()
+    for (let i = 0; i < 4 + statusIcons; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
     assert.equal(stops[0], '#btn-drawer')
     assert.match(stops[1]!, /^div\.seg\.on$/, `the active capsule tab is a Tab stop: ${JSON.stringify(stops)}`)
     assert.equal(stops[2], 'button.seg.desk-add', 'the capsule plus button (new desk) is the next stop')
-    assert.equal(stops[3], '#conn')
+    for (let i = 0; i < statusIcons; i++) assert.equal(stops[3 + i], 'button.ib.status-btn', `status icon ${i + 1} is a Tab stop: ${JSON.stringify(stops)}`)
+    assert.equal(stops[3 + statusIcons], '#conn')
 
     // ---- Theme menu: keys and focus return ----
     await page.locator('#btn-theme').focus()
