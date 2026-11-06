@@ -144,6 +144,19 @@ export interface PadContribution {
   order?: number
 }
 
+/**
+ * An icon of the top bar's status area (left of the connection icon): the core draws it from the manifest, `activate`
+ * registers what it says and shows (TetherUi.status.register). Its id is never renamed once released.
+ */
+export interface StatusContribution {
+  /** Lowercase, dotted, prefixed by the extension id: 'web-bridge.status'. */
+  id: string
+  /** An icon name of app/renderer/icons.ts. */
+  icon: string
+  /** Order on the bar (lower first, further from the connection icon). */
+  order?: number
+}
+
 export interface ExtensionManifest {
   /** Stable, lowercase, no dot: `note`, `quick-open`, `claude`. Prefixes IPC channels, settings and test hooks. */
   id: string
@@ -170,6 +183,8 @@ export interface ExtensionManifest {
     migrations?: readonly MigrationContribution[]
     /** Pads of the side bars (F10). */
     pads?: readonly PadContribution[]
+    /** Icons of the top bar's status area. */
+    status?: readonly StatusContribution[]
   }
 }
 

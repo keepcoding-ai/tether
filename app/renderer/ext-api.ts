@@ -20,12 +20,16 @@ import type { PaneType } from './pane-registry.ts'
 import type { OpenFileOptions } from './file-open.ts'
 import type { ProjectFolder } from './workspace.ts'
 import type { AgentUi } from './agent-ui.ts'
+import type { Brand } from '../shared/brand.ts'
+import type { StatusHandle, StatusItem } from './status-rules.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
 export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
 export type { ProjectFolder } from './workspace.ts'
 export type { AgentUi } from './agent-ui.ts'
+export type { Brand } from '../shared/brand.ts'
+export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
 export interface PaneInfo {
@@ -94,6 +98,8 @@ export type ChoiceResolution = { options: AddPanelOptions; after?: () => Promise
 export interface TetherUi {
   /** The extension's id. */
   readonly id: string
+  /** The product's identity (app/shared/brand.ts): name, slug, appId, accent, icon. */
+  readonly brand: Brand
   panes: {
     register(type: PaneType): IDisposable
     /** Adds a pane relative to `reference` (the active pane by default) at `target`'s level; it becomes active. */
@@ -206,6 +212,14 @@ export interface TetherUi {
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */
     resolve(itemId: string, fn: (cwd: string) => Promise<ChoiceResolution>): IDisposable
+  }
+  /**
+   * The top bar's status icons (left of the connection icon). The manifest declares the icon (`contributes.status`); this
+   * registers what it says. `register` returns the disposable with `update()`: call it when the title, badge, state or
+   * popover content changed.
+   */
+  status: {
+    register(item: StatusItem): StatusHandle
   }
   /** The side bars' pads (F10). */
   pads: {

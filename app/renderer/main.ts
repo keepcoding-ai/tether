@@ -35,6 +35,9 @@ import { FramesPad } from './frames-pad.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText, type ClosedGroups } from './closed-slots.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
+import { BRAND } from '../shared/brand.ts'
+import { StatusRegistry } from './status-rules.ts'
+import { StatusBar } from './status-bar.ts'
 import { openMoveDialog } from './move-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
 import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
@@ -99,6 +102,9 @@ let ui: UiSettings = DEFAULT_UI
 let drawer: Drawer
 /** The side bars and their pads (F10): the pads the extensions declare, what each shows, and the two bars on screen. */
 const padRegistry = new PadRegistry()
+/** The top bar's status icons the extensions declare and register (TetherUi.status), and the bar that draws them. */
+const statusRegistry = new StatusRegistry()
+let statusBar: StatusBar | undefined
 const padTypes = new Map<string, PadType>()
 let sidebars: SideBars | undefined
 /** The live frames of the `frames: true` pads (one per global pad, one per desk for a desk pad): places panes live, like the desks and the drawer. */
@@ -2360,6 +2366,7 @@ function setupConnectionPopover(): void {
     renderConnection()
     wrap.classList.toggle('pinned', open)
     btn.setAttribute('aria-expanded', String(open))
+    if (open) statusBar?.close()
   })
   document.addEventListener('click', ev => { if (!wrap.contains(ev.target as Node)) { wrap.classList.remove('pinned'); btn.setAttribute('aria-expanded', 'false') } })
   btn.setAttribute('aria-controls', 'conn-pop')
@@ -2373,6 +2380,7 @@ function setupConnectionPopover(): void {
 }
 
 function closeToolbarPopups(): void {
+  statusBar?.close()
   $('conn-wrap').classList.remove('pinned')
   $('conn').setAttribute('aria-expanded', 'false')
   $('theme-menu').hidden = true
@@ -2422,6 +2430,8 @@ function setupUi(): void {
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
   setupThemeMenu()
   setupConnectionPopover()
+  statusBar = new StatusBar($('status-area'), statusRegistry, { contextMenu: (x, y, entries) => showContextMenu(x, y, entries.map(e => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName })) })
+  statusBar.render()
   // The popup's Esc (the dialog's own `cancel`, when the focus is outside the chooser), its × and a click on the backdrop all cancel the way the chooser does.
   const dlgNew = $<HTMLDialogElement>('dlg-new')
   dlgNew.addEventListener('cancel', ev => { ev.preventDefault(); popupCancel?.() })
@@ -2507,6 +2517,8 @@ declare global {
     __tether: {
       /** What each extension exposes (TetherUi.test.expose); a name no core hook has is also set flat here. */
       ext: Record<string, Record<string, unknown>>
+      /** The status registry (e2e declares and registers a test icon through it). */
+      status: StatusRegistry
       /** The layout as it would be saved (v3: desks → frames → panes, the side bars). */
       layout(): Layout
       /** The side bars (F10): each side's strip, open pad and widths; the live pad views. */
@@ -2660,6 +2672,7 @@ declare global {
 function setupTestHooks(): void {
   window.__tether = {
     ext: extTestHooks,
+    status: statusRegistry,
     layout: () => layoutJSON(),
     sidebars: () => sidebars?.snapshot(),
     toggleSideBar: side => sidebars?.toggleSide(side),
@@ -2916,6 +2929,7 @@ function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore)
   }
   if (c.chooser) store.add(toDisposable(contributeChooser(c.chooser)))
   // Pads: the strip draws them from the manifest; each gets its own toggle command (VS Code registers an "open" command per view container).
+  for (const s of c.status ?? []) store.add(statusRegistry.declare({ ...s, extension: manifest.id }))
   for (const p of c.pads ?? []) {
     store.add(padRegistry.register({ ...p, extension: manifest.id }))
     store.add(toDisposable(commands.register({
@@ -2971,6 +2985,7 @@ function activateRendererExtensions(): void {
     const add = <T extends IDisposable>(d: T): T => own.add(d)
     return {
       id,
+      brand: BRAND,
       panes: {
         register: type => add(paneTypes.register(type)),
         open: (options, where) => addPaneOptions(options, where?.target, where?.reference),
@@ -3058,6 +3073,14 @@ function activateRendererExtensions(): void {
           if (!manifest.contributes?.chooser?.items.some(i => i.id === itemId)) throw new Error(`item do seletor não declarado no manifesto de ${id}: ${itemId}`)
           chooserResolvers.set(itemId, fn)
           return add(toDisposable(() => { if (chooserResolvers.get(itemId) === fn) chooserResolvers.delete(itemId) }))
+        },
+      },
+      status: {
+        register: item => {
+          if (!manifest.contributes?.status?.some(s => s.id === item.id)) throw new Error(`status não declarado no manifesto de ${id}: ${item.id}`)
+          const handle = statusRegistry.register(item)
+          add(handle)
+          return handle
         },
       },
       pads: {

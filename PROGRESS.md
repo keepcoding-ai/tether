@@ -729,3 +729,18 @@ Decisões para validar (arrastar):
 - **Entre mesas** não há arraste (só uma mesa fica visível); vale o "Mover…". Mesa ↔ prancheta e dentro da gaveta funcionam.
 - O movimento roda depois do `dragend` (com 100 ms de reserva), para o dockview da origem soltar o estado do arraste enquanto a aba ainda está na página.
 
+
+## F7 B1 — `brand` e o ponto de contribuição `status` (2026-11-06)
+
+Só o app e as APIs de extensão; nada no protocolo do tetherd (o daemon só ganhou `api.brand`; não precisa reiniciar por isso).
+
+**O que entrou.**
+- `app/shared/brand.ts`: `BRAND = { name: 'Tether', slug: 'tether', appId: 'studio.codr.tether', accent: '#6aa6ff', icon: <svg> }`, constante, sem imports. `api.brand` nos três hospedeiros (`TetherUi`, `TetherMain`, `TetherDaemon`). Derivados dele: `app.setName`, `APP_USER_MODEL_ID` e o título das janelas (`main.ts`), `AUMID`/`BUNDLE_NAME` (`install.mjs`).
+- `status`: manifesto `contributes.status: [{ id, icon, order? }]` (id prefixado pelo id da extensão); renderer `ui.status.register({ id, title(), render(popover), badge?(), state?(), menu?() })` devolve `StatusHandle` (`dispose()` + `update()`). `update()` redesenha o ícone e, com o popover aberto, o conteúdo. `badge()`: número (99+), `'dot'` ou nada. `state()`: `idle` (cinza), `normal`, `busy` (accent), `warn` (âmbar), `error` (vermelho), todos tokens do tema. `menu()` abre no botão direito.
+- Regras puras em `app/renderer/status-rules.ts` (`StatusRegistry`: declara pelo manifesto, registra no `activate`; só desenha o que tem as duas metades), DOM em `status-bar.ts`, área `#status-area` à esquerda do ícone de conexão. Clique abre o popover (fixo até clique fora ou Esc, devolve o foco); um popover por vez; abrir a conexão ou o tema fecha o de status. Extensão desligada não declara nada: o ícone some após "Reiniciar o app", como as pranchetas.
+
+Provas: `npm run app:build` ok; `npm run check` 1303 testes, só as 2 toleradas (`daemon.profiles`/`set-profile`); unitário novo `app.status` (8); E2E novo **`app.status` 1/1** (ícone à esquerda da conexão e ordem, tooltip, badge número/ponto, cinco estados com cores distintas, popover abre/re-renderiza/fecha por clique fora, Esc e conexão, remoção). Prints `test/e2e/artifacts/status-{light,dark}.png`.
+
+Decisões para validar (B1):
+- `state()` é extra em relação ao rascunho do estudo (precisa para cinza/âmbar/vermelho do desenho §5); `menu` é função e abre com o botão direito.
+- O e2e usa `window.__tether.status` (o registro) para declarar um status de teste; nenhuma extensão real contribui ainda (C1 é a primeira).

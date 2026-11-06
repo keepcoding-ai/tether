@@ -157,6 +157,21 @@ body { display: flex; flex-direction: column; }
 .popover button { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; }
 .popover button .ph { width: 14px; height: 14px; }
 
+/* The status area (status-bar.ts): extension icons left of the connection icon; the state colours the icon, the popover pins open. */
+.status-area { display: flex; align-items: center; gap: 2px; }
+.status-btn[data-state="idle"] { color: var(--fg-dim); opacity: .55; }
+.status-btn[data-state="busy"] { color: var(--accent); }
+.status-btn[data-state="warn"] { color: var(--warn); }
+.status-btn[data-state="error"] { color: var(--err); }
+.status-badge { position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 4px; border-radius: 7px; box-sizing: border-box; font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 2px var(--bg-2); pointer-events: none; }
+.status-badge[hidden] { display: none; }
+.status-badge.dot { top: 3px; right: 3px; min-width: 0; width: 8px; height: 8px; padding: 0; }
+.status-btn[data-state="busy"] .status-badge.dot { animation: status-pulse 1.2s ease-in-out infinite; }
+@keyframes status-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .status-btn[data-state="busy"] .status-badge.dot { animation: none; } }
+.status-wrap.pinned > .status-pop { display: block; }
+.status-pop { white-space: normal; min-width: 240px; max-width: 360px; }
+
 /* The desk colour line: 2 px under the toolbar across the whole window (over the side bars), in the active desk's colour (settings ui.deskLine). */
 body.desk-line #workbench::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 5; pointer-events: none; background: var(--desk-line-color, transparent); }
 
