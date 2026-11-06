@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="100" height="100" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid">
+  <title>tether — logo</title>
+  <desc>Symbol only, no name. Brand system v2 (brand-derivation). Shapes only: no text, no fonts, no rasters. Edit in Inkscape; keep the whole drawing as one group.</desc>
+  <g id="brand">
+    <g id="symbol">
+      <rect id="pane-left" x="14" y="26" width="30" height="48" rx="6" ry="6" fill="#1b1b1f"/>
+      <rect id="pane-right" x="56" y="26" width="30" height="48" rx="6" ry="6" fill="none" stroke="#1b1b1f" stroke-width="6"/>
+      <rect id="tether" x="32" y="44" width="36" height="12" rx="6" ry="6" fill="#6aa6ff"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="100" height="100" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid">
+  <title>tether — favicon</title>
+  <desc>Browser tab and toolbar glyph: bold cut of the symbol on the dark tile, full-bleed, readable at 16 px on light and dark toolbars. Brand system v2 (brand-derivation). Shapes only: no text, no fonts, no rasters. Edit in Inkscape; keep the whole drawing as one group.</desc>
+  <g id="brand">
+    <rect id="tile-edge" x="0" y="0" width="100" height="100" rx="24" ry="24" fill="#3a3a44"/>
+    <rect id="tile" x="3" y="3" width="94" height="94" rx="22" ry="22" fill="#1b1b1f"/>
+    <g id="symbol" transform="translate(50,50) scale(0.84) translate(-50,-50)">
+    <g id="symbol-bold">
+      <rect id="pane-left" x="4" y="22" width="38" height="56" rx="8" ry="8" fill="#e8e8ee"/>
+      <rect id="pane-right" x="58" y="22" width="38" height="56" rx="8" ry="8" fill="#e8e8ee"/>
+      <rect id="tether" x="30" y="42" width="40" height="16" rx="8" ry="8" fill="#6aa6ff"/>
+    </g>
+    </g>
+  </g>
+</svg>
