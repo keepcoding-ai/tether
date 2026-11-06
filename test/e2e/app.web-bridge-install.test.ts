@@ -6,12 +6,15 @@
 //      back), the fake browser was launched with chrome://extensions, bridge.json/config.json/api.key/daemon.pid exist,
 //      /health answers on the test port, the pairing token and the api key appear nowhere in tether-app.log;
 //   3. screenshots web-bridge-guide-{light,dark}.png;
-//   4. Chromium loads the folder, the extension reads its seed and connects: the guide says "conectado" and closes by itself.
+//   4. Chromium loads the folder, the extension reads its seed and connects: the guide says "conectado" and closes by itself;
+//   5. the extension wears the tether's brand (F7 T3): the popup is titled "Tether Bridge" with the logo, the loaded manifest
+//      names it and carries the icons derived from brand/src (screenshot web-bridge-popup.png).
 // Every kill goes through test/kill.ts (pid + identity); the bridge daemon is killed by its daemon.pid only if its
 // command line names the vendored bundle. The person's bridge (~/.atrium-bridge, %LOCALAPPDATA%\tether) is never touched.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
@@ -174,6 +177,30 @@ test('web-bridge: Instalar Tether Bridge… prepares the folder, opens the brows
     assert.equal((await guide(page)).open, false)
     const browsers = await fetch(`http://127.0.0.1:${port}/browsers`, { headers: { authorization: `Bearer ${apiKey}` } }).then(r => r.json()) as { browsers: { name: string }[] }
     assert.equal(browsers.browsers.length, 1, 'the daemon lists the Chromium')
+
+    // 5. The brand as the browser shows it: the popup (title from the packed brand, the logo-h in place of the text) and
+    //    the manifest Chromium loaded (name, the four derived icons; the 128 is byte for byte brand/assets/bridge's).
+    const popup = await context.newPage()
+    await popup.setViewportSize({ width: 360, height: 420 })
+    await popup.goto(`chrome-extension://${expectedId}/popup.html`)
+    await popup.waitForFunction(() => document.title === 'Tether Bridge' && !!document.querySelector('#title img, #title svg'), undefined, { timeout: 15_000 })
+    await popup.screenshot({ path: join(artifacts, 'web-bridge-popup.png') })
+    assert.equal(await popup.title(), 'Tether Bridge')
+    await popup.close()
+    const loaded = JSON.parse(readFileSync(join(current, 'manifest.json'), 'utf8')) as { name: string; icons: Record<string, string> }
+    assert.equal(loaded.name, 'Tether Bridge')
+    assert.deepEqual(loaded.icons, { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' })
+    const sha256 = (p: string): string => createHash('sha256').update(readFileSync(p)).digest('hex')
+    assert.equal(sha256(join(current, 'icons', 'icon-128.png')), sha256(join(root, 'brand', 'assets', 'bridge', 'icon-128.png')), 'the icon in the browser is the derived one')
+    // chrome://extensions with the card, best effort: a headless build may refuse the page; the popup above is the proof.
+    try {
+      const ext = await context.newPage()
+      await ext.setViewportSize({ width: 1100, height: 700 })
+      await ext.goto('chrome://extensions', { timeout: 10_000 })
+      await ext.waitForTimeout(1500)
+      await ext.screenshot({ path: join(artifacts, 'web-bridge-chrome-extensions.png') })
+      await ext.close()
+    } catch (e) { console.error(`chrome://extensions screenshot skipped: ${e instanceof Error ? e.message : String(e)}`) }
     await context.close().catch(() => {})
     context = undefined
     rmSync(profile, { recursive: true, force: true })

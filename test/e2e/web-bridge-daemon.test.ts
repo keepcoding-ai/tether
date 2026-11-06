@@ -1,8 +1,8 @@
 // E2E of the web-bridge daemon host (F7 slice C2): a PRIVATE tetherd (temp home, unique pipe, TETHER_BRIDGE_PORT on a free
 // port) activates the web-bridge extension at startup and, with no action of anyone: the bridge home gets config.json
-// (at that port, brand, the vendored build's id pinned, capabilities seeded) and api.key, the extension folder is staged
-// with its seed, <home>/mcp/tether-bridge.json exists with paths and env only, the REAL vendored bridge daemon answers
-// /health on the port, and no secret (pairing token, api key) appears in tetherd.log or in the MCP file.
+// (at that port, brand, the vendored build's id pinned, the package's capabilities seeded) and api.key, NO extension
+// folder (that is the install flow's, C1), <home>/mcp/tether-bridge.json exists with paths and env only, the REAL vendored
+// bridge daemon answers /health on the port, and no secret (pairing token, api key) appears in tetherd.log or in the MCP file.
 // Every kill goes through test/kill.ts (pid + identity): the bridge daemon by its daemon.pid only if its command line names
 // the vendored bundle; the tetherd by `shutdown`. The person's tetherd, %LOCALAPPDATA%\tether and ~/.atrium-bridge are never touched.
 import { test } from 'node:test'
@@ -64,17 +64,17 @@ test('a private tetherd activates web-bridge: installation, MCP file and the bri
     assert.ok(bridgePid && pidAlive(bridgePid), 'daemon.pid names a live process')
     owned.push(await claim(bridgePid, { cmdIncludes: 'atrium-bridge.mjs', what: 'bridge daemon' }))
 
-    const buildId = (JSON.parse(readFileSync(join(vendorDir, 'build-info.json'), 'utf8')) as { extensionId: string }).extensionId
+    const info = JSON.parse(readFileSync(join(vendorDir, 'build-info.json'), 'utf8')) as { extensionId: string; brand: { capabilities: Record<string, unknown> } }
     const config = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { port: number; pairingToken: string; extensionIds: string[]; brand?: { name: string; hostId?: string }; capabilities?: Record<string, unknown> }
     assert.equal(config.port, port)
-    assert.deepEqual(config.extensionIds, [buildId])
+    assert.deepEqual(config.extensionIds, [info.extensionId])
     assert.equal(config.brand?.name, 'Tether')
     assert.equal(config.brand?.hostId, 'studio.codr.tether')
-    assert.deepEqual(config.capabilities, { agentWindows: true, evaluate: 'own-tabs' })
+    assert.deepEqual(config.capabilities, info.brand.capabilities, 'the package defaults (brand/brand.json) seeded')
+    assert.equal(config.capabilities?.evaluate, 'own-tabs')
     const apiKey = readFileSync(join(bridgeHome, 'api.key'), 'utf8').trim()
     assert.ok(apiKey.length >= 16, 'api.key present')
-    const seed = JSON.parse(readFileSync(join(extensionDirOf(home), 'bridge.json'), 'utf8')) as { port: number; token: string; host?: string }
-    assert.deepEqual(seed, { port, token: config.pairingToken, host: 'Tether' })
+    assert.ok(!existsSync(extensionDirOf(home)), 'the extension folder is born in the install flow, never at startup')
 
     // 2. The MCP file: command, bundle, env; nothing else.
     const mcpText = readFileSync(mcpPath, 'utf8')
@@ -89,7 +89,7 @@ test('a private tetherd activates web-bridge: installation, MCP file and the bri
     // 4. The log tells the story, without a secret in it.
     const log = readFileSync(join(home, 'tetherd.log'), 'utf8')
     assert.ok(log.includes('[web-bridge] instalação do bridge criada'), log)
-    assert.ok(log.includes('[web-bridge] capabilities semeadas: agentWindows, evaluate'), log)
+    assert.ok(log.includes(`[web-bridge] capabilities semeadas do pacote: ${Object.keys(info.brand.capabilities).join(', ')}`), log)
     assert.ok(log.includes('tether-bridge.json gravado'), log)
     assert.ok(log.includes('[web-bridge] daemon do bridge iniciado'), log)
     for (const text of [log, mcpText]) {

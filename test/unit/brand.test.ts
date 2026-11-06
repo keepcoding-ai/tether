@@ -119,6 +119,8 @@ describe('brand/brand.json', () => {
 describe('app/shared/brand.ts', () => {
   test('derives the app identity from brand.json: short name, host id, slug, accent', () => {
     assert.equal(BRAND.name, 'Tether')
+    assert.equal(BRAND.product, 'Tether Bridge')
+    assert.equal(BRAND.product, brand.name)
     assert.equal(BRAND.slug, brand.slug)
     assert.equal(BRAND.appId, (brand.host as { id: string }).id)
     assert.equal(BRAND.accent, (brand.colors as { accent: string }).accent)

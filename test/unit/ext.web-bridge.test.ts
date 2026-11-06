@@ -4,16 +4,17 @@
 // folder with bridge.json seeded (port, token, host), the id is pinned and the brand written in config.json, api.key
 // exists, the daemon is started only when /health is silent, the browser is opened at its extensions page, and no
 // secret (pairing token, api key) appears in any log line or in the IPC reply.
-// F7 C2, the daemon host (bridge-home.ts, daemon.ts): a fresh home gets the whole installation (config at the port, api.key,
-// brand, pinned build id, capabilities seeded, mcp/tether-bridge.json, daemon warmed up once); a second run changes nothing;
-// the installation's own choices (capabilities, an extra pinned id) are kept; a corrupted vendor writes nothing; a
-// satellite process only registers the doctor checks; no secret in tetherd.log lines or in the MCP JSON.
+// F7 C2, the daemon host (bridge-home.ts, daemon.ts): a fresh home gets the installation's files (config at the port via the
+// bundle's ensureConfig, api.key, brand, pinned build id, the package's capabilities seeded, mcp/tether-bridge.json with the
+// package's server name, daemon warmed up once) and NO extension folder (that is the install flow's); a second run changes
+// nothing; the installation's own choices (capabilities, port, an extra pinned id) are kept; a corrupted vendor writes
+// nothing; a satellite process only registers the doctor checks; no secret in tetherd.log lines or in the MCP JSON.
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createBridgeHost, defaultCapabilities, mcpConfigOf, seedCapabilities } from '../../extensions/web-bridge/bridge-home.ts'
+import { createBridgeHost, defaultCapabilities, mcpConfigOf, serverNameOf } from '../../extensions/web-bridge/bridge-home.ts'
 import { browsersFromOverride, classifyExe, detectBrowsers, extensionsUrlOf, parseStartMenuInternet } from '../../extensions/web-bridge/browsers.ts'
 import { activate as activateDaemon } from '../../extensions/web-bridge/daemon.ts'
 import { createInstaller } from '../../extensions/web-bridge/installer.ts'
@@ -238,7 +239,10 @@ describe('web-bridge: install engine (real vendored bundle, temp home)', () => {
 })
 
 describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
-  const buildId = (JSON.parse(readFileSync(join(vendorDir, 'build-info.json'), 'utf8')) as { extensionId: string }).extensionId
+  const buildInfo = JSON.parse(readFileSync(join(vendorDir, 'build-info.json'), 'utf8')) as { extensionId: string; brand: { slug: string; name: string; mcp: { serverName: string }; capabilities: Record<string, unknown> } }
+  const buildId = buildInfo.extensionId
+  /** The package's defaults (brand/brand.json → build-info.brand.capabilities): what a fresh installation starts with. */
+  const packageCaps = buildInfo.brand.capabilities
   const brand = { name: 'Tether', color: '#6aa6ff', hostId: 'studio.codr.tether' }
   type Config = { port: number; pairingToken: string; extensionIds: string[]; brand: { name: string; hostId?: string }; capabilities?: Record<string, unknown>; apiKeys: { name: string; hash: string }[] }
   const readConfig = (home: string): Config => JSON.parse(readFileSync(join(bridgeHomeOf(home), 'config.json'), 'utf8')) as Config
@@ -252,29 +256,29 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     })
   }
 
-  test('a fresh home: installation at the port, brand, build id pinned, capabilities seeded, MCP file, daemon started once; nothing leaks; a second start changes nothing', async () => {
+  test('a fresh home: config at the port, brand, build id pinned, the package capabilities seeded, MCP file, daemon started once; no extension folder; nothing leaks; a second start changes nothing', async () => {
     const home = tmp.make()
     const log: string[] = []
     const spawns: unknown[][] = []
     const host = hostFor(home, 48131, log, spawns)
     const r = await host.setup()
-    assert.deepEqual(r, { ok: true, installed: true, capabilities: ['agentWindows', 'evaluate'], mcpWritten: true, daemon: 'started' })
+    assert.deepEqual(r, { ok: true, created: true, capabilities: Object.keys(packageCaps), mcpWritten: true, daemon: 'started' })
+    assert.deepEqual(Object.keys(packageCaps).sort(), ['download', 'evaluate', 'pdf', 'readNetwork', 'upload', 'windowPerAgent'], 'the vendored build carries the brand defaults')
     const bridgeHome = bridgeHomeOf(home)
     const config = readConfig(home)
     assert.equal(config.port, 48131)
     assert.deepEqual(config.extensionIds, [buildId])
     assert.deepEqual(config.brand, brand)
-    assert.deepEqual(config.capabilities, { agentWindows: true, evaluate: 'own-tabs' })
+    assert.deepEqual(config.capabilities, packageCaps)
     assert.equal(config.apiKeys[0]!.name, 'default')
     const apiKey = readFileSync(join(bridgeHome, 'api.key'), 'utf8').trim()
     assert.ok(apiKey.length >= 16)
-    // The extension folder is staged with its seed (the folder §1.3 updates in place), host included.
-    const seed = JSON.parse(readFileSync(join(extensionDirOf(home), 'bridge.json'), 'utf8')) as { port: number; token: string; host?: string }
-    assert.deepEqual(seed, { port: 48131, token: config.pairingToken, host: 'Tether' })
-    assert.ok(existsSync(join(extensionDirOf(home), 'manifest.json')))
-    // The MCP file: paths and env only, exactly the design's shape.
+    // The extension folder is the install flow's (§1.2): the start creates none.
+    assert.ok(!existsSync(extensionDirOf(home)), 'no extension folder at startup')
+    // The MCP file: paths and env only, exactly the design's shape; the server name is the package's (= this extension's).
     const mcpText = readFileSync(mcpConfigPathOf(home), 'utf8')
     assert.equal(MCP_SERVER_NAME, 'tether-bridge')
+    assert.equal(buildInfo.brand.mcp.serverName, 'tether-bridge')
     assert.deepEqual(JSON.parse(mcpText), {
       mcpServers: { 'tether-bridge': { command: 'node', args: [join(vendorDir, 'atrium-bridge.mjs'), 'mcp'], env: { ATRIUM_BRIDGE_HOME: bridgeHome, ATRIUM_BRIDGE_PORT: '48131', ATRIUM_BRIDGE_SERVER_NAME: 'tether-bridge' } } },
     })
@@ -283,51 +287,61 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     assert.ok(!everything.includes(config.pairingToken), 'pairing token leaked')
     assert.ok(!everything.includes(apiKey), 'api key leaked')
     assert.ok(!everything.includes(config.apiKeys[0]!.hash.slice(7, 30)), 'key hash leaked')
-    assert.ok(log.some(l => l.includes('instalação do bridge criada')) && log.some(l => l.includes('capabilities semeadas')) && log.some(l => l.includes('gravado')) && log.some(l => l.includes('daemon do bridge iniciado')), log.join('\n'))
+    assert.ok(log.some(l => l.includes('instalação do bridge criada')) && log.some(l => l.includes('capabilities semeadas do pacote')) && log.some(l => l.includes('gravado')) && log.some(l => l.includes('daemon do bridge iniciado')), log.join('\n'))
 
     // The doctor checks after the setup: installation OK, daemon OK.
     const results = await Promise.all(host.checks().map(c => c()))
     assert.deepEqual(results.map(c => [c.level, c.name]), [['OK', 'Tether Bridge'], ['OK', 'daemon do bridge']])
 
-    // A second start: nothing installed, nothing seeded, the MCP file untouched, the daemon found running; the secrets stay.
+    // A second start: nothing created, nothing seeded, the MCP file untouched, the daemon found running; the secrets stay.
     const again = await host.setup()
-    assert.deepEqual(again, { ok: true, installed: false, capabilities: [], mcpWritten: false, daemon: 'running' })
+    assert.deepEqual(again, { ok: true, created: false, capabilities: [], mcpWritten: false, daemon: 'running' })
     assert.deepEqual(readConfig(home), config)
     assert.equal(readFileSync(join(bridgeHome, 'api.key'), 'utf8').trim(), apiKey)
     assert.equal(spawns.length, 1)
   })
 
-  test('the installation decides: capabilities and an extra pinned id already there are kept; a removed folder is staged again', async () => {
+  test('the installation decides: capabilities, port and an extra pinned id already there are kept; an installed folder gets its seed again', async () => {
     const home = tmp.make()
     assert.ok((await hostFor(home, 48132, [], []).setup()).ok)
     // The person's choices, written by hand (the bridge's own writer keeps unknown fields too).
     const path = join(bridgeHomeOf(home), 'config.json')
     const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
-    writeFileSync(path, JSON.stringify({ ...raw, capabilities: { evaluate: 'off' }, extensionIds: ['abcdefghijklmnopabcdefghijklmnop'] }, null, 2))
+    writeFileSync(path, JSON.stringify({ ...raw, port: 48999, capabilities: { evaluate: 'off' }, extensionIds: ['abcdefghijklmnopabcdefghijklmnop'] }, null, 2))
     const log: string[] = []
     const r = await hostFor(home, 48132, log, [], { healthy: true }).setup()
-    assert.deepEqual(r, { ok: true, installed: false, capabilities: [], mcpWritten: false, daemon: 'running' })
+    assert.deepEqual(r, { ok: true, created: false, capabilities: [], mcpWritten: false, daemon: 'running' })
     const config = readConfig(home)
+    assert.equal(config.port, 48999, 'the installation\'s port stays in config.json (ensureConfig only applies the port at creation)')
+    assert.ok(log.some(l => l.includes('usa a porta 48999 no config.json')), log.join('\n'))
     assert.deepEqual(config.capabilities, { evaluate: 'off' }, 'capabilities untouched')
     assert.deepEqual(config.extensionIds, ['abcdefghijklmnopabcdefghijklmnop', buildId], 'the build id is added, the other stays')
     assert.ok(!log.some(l => l.includes('capabilities')), 'nothing seeded')
-    assert.equal(seedCapabilities(bridgeHomeOf(home), { x: 1 }).length, 0)
-    assert.ok(!existsSync(join(bridgeHomeOf(home), 'config.lock')), 'the lock is released')
-    // The folder removed by the person: the next start stages it again, config kept (same pairing token).
-    const token = config.pairingToken
-    rmSync(extensionDirOf(home), { recursive: true, force: true })
+    assert.ok(!existsSync(join(bridgeHomeOf(home), 'config.lock')), 'the bridge\'s lock is released')
+    // The folder the install flow created (here: the vendored extension copied by hand): the next start rewrites only its
+    // seed, with host and the port the tetherd runs the daemon on (the seed is what the extension dials).
+    const current = extensionDirOf(home)
+    cpSync(join(vendorDir, 'extension'), current, { recursive: true })
+    assert.ok(!existsSync(join(current, 'bridge.json')))
     const r2 = await hostFor(home, 48132, [], [], { healthy: true }).setup()
-    assert.equal(r2.installed, true)
-    assert.equal(readConfig(home).pairingToken, token)
-    assert.equal((JSON.parse(readFileSync(join(extensionDirOf(home), 'bridge.json'), 'utf8')) as { token: string }).token, token)
+    assert.equal(r2.created, false)
+    assert.deepEqual(JSON.parse(readFileSync(join(current, 'bridge.json'), 'utf8')), { port: 48132, token: config.pairingToken, host: 'Tether' })
+    assert.equal(readConfig(home).pairingToken, config.pairingToken)
   })
 
-  test('defaultCapabilities: the package defaults when the build carries them, else the settings defaults', () => {
+  test('defaultCapabilities and serverNameOf: the package defaults when the build carries them, else this extension\'s', () => {
     const base = { name: 'tether-bridge', version: '0.1.0', extensionId: buildId, bundle: { file: 'a', sha256: 'b', bytes: 1 }, extension: { dir: 'extension', sha256: 'c', files: 1 } }
     assert.deepEqual(defaultCapabilities(base), { agentWindows: true, evaluate: 'own-tabs' })
     assert.deepEqual(defaultCapabilities({ ...base, brand: { slug: 't', name: 'T', capabilities: { evaluate: 'all', pdf: false } } }), { evaluate: 'all', pdf: false })
     assert.deepEqual(defaultCapabilities(undefined), { agentWindows: true, evaluate: 'own-tabs' })
+    assert.equal(serverNameOf(undefined), 'tether-bridge')
+    assert.equal(serverNameOf(base), 'tether-bridge')
+    assert.equal(serverNameOf({ ...base, brand: { slug: 't', name: 'T', mcp: { serverName: 'other-bridge' } } }), 'other-bridge')
+    assert.equal(serverNameOf({ ...base, brand: { slug: 't', name: 'T', mcp: { serverName: 'não vale' } } }), 'tether-bridge', 'an invalid name falls back')
     assert.equal(mcpConfigOf('H', 'B', 1).mcpServers['tether-bridge']!.env.ATRIUM_BRIDGE_PORT, '1')
+    const other = mcpConfigOf('H', 'B', 1, 'other-bridge')
+    assert.deepEqual(Object.keys(other.mcpServers), ['other-bridge'])
+    assert.equal(other.mcpServers['other-bridge']!.env.ATRIUM_BRIDGE_SERVER_NAME, 'other-bridge')
   })
 
   test('warm: false writes everything and starts nothing (a second home without its own port)', async () => {
@@ -336,7 +350,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     const spawns: unknown[][] = []
     const host = createBridgeHost({ home, vendorDir, port: 48134, brand, nodeExe: () => 'C:\\fake\\node.exe', log: m => log.push(m), warm: false, fetch: async () => new Response('', { status: 503 }), spawnDaemon: (...a) => { spawns.push(a); return 1 }, sleep: async () => {} })
     const r = await host.setup()
-    assert.deepEqual(r, { ok: true, installed: true, capabilities: ['agentWindows', 'evaluate'], mcpWritten: true, daemon: 'skipped' })
+    assert.deepEqual(r, { ok: true, created: true, capabilities: Object.keys(packageCaps), mcpWritten: true, daemon: 'skipped' })
     assert.deepEqual(spawns, [])
     assert.ok(existsSync(join(bridgeHomeOf(home), 'api.key')) && existsSync(mcpConfigPathOf(home)))
     assert.ok(log.some(l => l.includes('aquecimento do daemon pulado')), log.join('\n'))

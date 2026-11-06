@@ -3,7 +3,7 @@
 // slot is launched with `--mcp-config <home>/mcp/tether-bridge.json` and the identity env on its command line, the agent
 // calls `mcp__tether-bridge__list_browsers` and gets the daemon's answer (NO_BROWSER_CONNECTED: nothing is paired in this
 // home, which is exactly what proves the wiring daemon → MCP shell → bridge daemon), and on /exit the tetherd posts the
-// release of the slot's client to the bridge daemon (the vendored bundle predates the route: a 404 is tolerated and logged).
+// release of the slot's client to the bridge daemon (route /clients/:id/release of the vendored bundle: 200, "abas soltas").
 // Kills go through test/kill.ts (pid + identity). The person's tetherd, %LOCALAPPDATA%\tether, port 47831 and
 // ~/.atrium-bridge are never touched. Run: npm run test:e2e (or node --test test/e2e/web-bridge-agent.test.ts).
 import { test } from 'node:test'
@@ -82,20 +82,20 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
     assert.ok(self!.cmd!.includes(`--mcp-config ${mcpPath}`) || self!.cmd!.includes(`--mcp-config "${mcpPath}"`), `--mcp-config <mcp file> on the command line: ${self!.cmd}`)
     assert.ok(/--session-id [0-9a-f-]{36}/.test(self!.cmd!), 'the tether\'s own args are still there')
 
-    // 3. The agent calls the bridge tool. No browser is paired in this home: the daemon answers an empty list (the vendored
-    //    bundle's list_browsers lists; a newer one may say NO_BROWSER_CONNECTED), and that answer on screen, in the form
-    //    asked for, is the whole chain working (agent → MCP shell → bridge daemon of this home).
+    // 3. The agent calls the bridge tool. No browser is paired in this home: the daemon answers NO_BROWSER_CONNECTED (or an
+    //    empty list), and that answer on screen, in the form asked for, is the whole chain working (agent → MCP shell →
+    //    bridge daemon of this home).
     await term.type('Chame a ferramenta mcp__tether-bridge__list_browsers agora. Responda apenas uma linha, no formato navegadores=<quantidade devolvida>, ou erro=<código> se a ferramenta falhar.')
     await term.waitIdle({ timeout: 180_000 })
     const screen = term.screen()
     assert.match(screen, /navegadores\s*=\s*0|erro\s*=\s*NO_BROWSER_CONNECTED/i, `the bridge's answer reached the agent\n--- screen ---\n${screen}`)
 
-    // 4. /exit: the slot exits and the tetherd posts the release of tether:<slotId>. The vendored daemon predates the route
-    //    (404), which the tetherd tolerates and logs; a newer daemon answers 200 ("abas soltas").
+    // 4. /exit: the slot exits and the tetherd posts the release of tether:<slotId>; the vendored daemon (A6 and later) has
+    //    the route and answers 200, which the tetherd logs as "abas soltas no bridge".
     await term.exit()
     await waitUntil(() => /\[web-bridge\] release de tether:[0-9a-f]+: (abas soltas no bridge|o daemon do bridge respondeu \d+)/.test(tetherdLog()), 30_000, 'the release line in tetherd.log', tetherdLog)
     const log = tetherdLog()
-    assert.ok(log.includes(`release de tether:${slotId}`), log)
+    assert.ok(log.includes(`release de tether:${slotId}: abas soltas no bridge`), `the daemon answered the release with 200\n${log}`)
     assert.ok(!log.includes(apiKey), 'api key leaked into tetherd.log')
     assert.ok(!log.includes(ENV_CLIENT_ID) && !log.includes(ENV_CLIENT_NAME), 'the plan env is not dumped into the log')
   } finally {

@@ -11,6 +11,8 @@ import mask from '../../brand/assets/app/mask.json' with { type: 'json' }
 export interface Brand {
   /** The name people read ("Tether"). */
   readonly name: string
+  /** The Bridge product's name as the brand file states it ("Tether Bridge"): the extension's name in the browser. */
+  readonly product: string
   /** Lowercase, safe in file names, MCP server names and CLI commands. */
   readonly slug: string
   /** The OS application id (taskbar grouping on Windows, CFBundleIdentifier on macOS). */
@@ -26,6 +28,7 @@ const shortName = (b: { name: string; shortName?: string }): string => b.shortNa
 
 export const BRAND: Brand = Object.freeze({
   name: shortName(brand),
+  product: brand.name,
   slug: brand.slug,
   appId: brand.host.id,
   accent: brand.colors.accent,

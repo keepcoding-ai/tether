@@ -92,7 +92,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
     const problems = auditVendor(deps.vendorDir)
     if (problems.length) {
       deps.log(`vendor do bridge inválido: ${problems.slice(0, 3).join('; ')}${problems.length > 3 ? '…' : ''}`)
-      return { ok: false, message: `A cópia do ${deps.brand.name} Bridge dentro do tether está incompleta ou alterada (${problems[0]}). Rode "node extensions/web-bridge/vendor.mjs" e tente de novo.` }
+      return { ok: false, message: `A cópia do ${deps.brand.name} Bridge dentro do tether está incompleta ou alterada (${problems[0]}). Rode "npm run bridge:build" e tente de novo.` }
     }
     const before = await connected().then(c => (c.ok ? c.browsers.map(b => b.id) : []))
     let b: BridgeBundle

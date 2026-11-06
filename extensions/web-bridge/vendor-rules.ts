@@ -17,8 +17,21 @@ export interface BuildInfo {
   name: string
   version: string
   extensionId: string
-  /** `capabilities`: the package's defaults for config.capabilities (f7-bridge-marca §1.3); absent in builds before it. */
-  brand?: { slug: string; name: string; shortName?: string; color?: string; capabilities?: Record<string, unknown> }
+  /**
+   * The brand as the package carries it (f7-bridge-marca §1.3, "the package brings the default; the installation decides"):
+   * `host` (who installs), `mcp.serverName` (the MCP shell's default name) and `capabilities` (the defaults for
+   * config.capabilities). Absent in the plain Atrium build; the rest of the block (colors, tabs, icons, logos) is the extension's.
+   */
+  brand?: {
+    slug: string
+    name: string
+    shortName?: string
+    description?: string
+    color?: string
+    host?: { name: string; id?: string; url?: string }
+    mcp?: { serverName?: string }
+    capabilities?: Record<string, unknown>
+  }
   bundle: { file: string; sha256: string; bytes: number }
   extension: { dir: string; sha256: string; files: number }
 }

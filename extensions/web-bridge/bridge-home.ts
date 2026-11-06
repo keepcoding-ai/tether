@@ -2,23 +2,24 @@
 // no action of the person. Electron-free and injectable, so the unit test runs it against the REAL vendored bundle in a
 // temp home. What `setup()` guarantees, idempotently:
 //   a. the bridge home <TETHER_HOME>/bridge exists with config.json (port 47831, pairing token, the `default` key) and
-//      api.key. The bundle exports no `ensureConfig`; the one export that creates the config AT A GIVEN PORT is
-//      `installExtension`, which also stages the extension folder `current/` with its seed (the folder §1.3 updates in
-//      place). So a missing config or a missing folder means an install from the vendored copy; otherwise nothing is copied;
+//      api.key: the bundle's `ensureConfig(home, port)` creates them or returns the existing ones (the port only counts at
+//      creation: an installation that chose another port keeps it). No extension folder is touched here: `web-bridge/current`
+//      is born in the install flow (installer.ts, §1.2) and refreshed in place by C5 (§1.3);
 //   b. `brand` (the host's own: name, accent, appId) and the vendored build's extension id pinned in `extensionIds`
-//      (`pinExtensionId` adds, never removes: a second id the person pinned stays). The seed gets `host` so the extension
-//      can say who it connects to before the daemon's welcome;
+//      (`pinExtensionId` adds, never removes: a second id the person pinned stays). When the folder exists, its seed is
+//      rewritten with `host` so the extension can say who it connects to before the daemon's welcome;
 //   c. `capabilities` seeded ONCE, when the config has none: from build-info.json `brand.capabilities` (the package's
-//      defaults, f7-bridge-marca §1.3) or, while the vendored build has none, from this extension's settings defaults.
-//      Existing values are never touched: the package brings the default, the installation decides;
+//      defaults, f7-bridge-marca §1.3) or, for a build without a brand, from this extension's settings defaults. The
+//      bundle's `seedCapabilities` does it under the bridge's own config lock; existing values are never touched: the
+//      package brings the default, the installation decides;
 //   d. <TETHER_HOME>/mcp/tether-bridge.json, the --mcp-config the agents will receive (C3): `node <vendor>/atrium-bridge.mjs
-//      mcp` with ATRIUM_BRIDGE_HOME, ATRIUM_BRIDGE_PORT and ATRIUM_BRIDGE_SERVER_NAME. Rewritten only when its content
-//      changed (the ensureSettingsFile pattern of src/agents/claude.ts). No secret: the shell reads api.key by the home;
+//      mcp` with ATRIUM_BRIDGE_HOME, ATRIUM_BRIDGE_PORT and ATRIUM_BRIDGE_SERVER_NAME (the package's `brand.mcp.serverName`
+//      when it has a valid one, else this extension's). Rewritten only when its content changed (the ensureSettingsFile
+//      pattern of src/agents/claude.ts). No secret: the shell reads api.key by the home;
 //   e. the daemon warmed up (warmup.ts), so the browser finds it before any agent does.
 // Secrets (pairing token, api key) stay inside the bundle's functions and the files it owns: no log line, no error and
-// no file written here carries one. The `capabilities` merge preserves every other field byte for byte in meaning and
-// honours the bridge's folder lock (config.lock, created exclusively; a dead owner's lock expires in 10 s).
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+// no file written here carries one.
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
@@ -29,10 +30,14 @@ import { createWarmup, type Warmup, type WarmupDeps } from './warmup.ts'
 
 /** What the bridge bundle exports that this host uses (chrome-extensions/bridge/daemon/src/bundle.ts). */
 export interface BridgeBundle {
-  installExtension(opts: { home: string; dir: string; source?: string; pin?: boolean; port?: number }): { dir: string; extensionId: string; port: number; extensionIds: string[]; files: number }
+  /** config.json + api.key of `home`, created (at `port`) or the existing ones; installs no extension. */
+  ensureConfig(home: string, port?: number): { port: number; pairingToken: string; brand?: BridgeBrand; extensionIds?: string[]; capabilities?: Record<string, unknown> }
+  installExtension(opts: { home: string; dir: string; source?: string; pin?: boolean; port?: number; buildInfo?: string; seed?: boolean }): { dir: string; extensionId: string; port: number; extensionIds: string[]; files: number }
   writeSeed(dir: string, seed: { port: number; token: string; host?: string }): string
   setBrand(home: string, brand: BridgeBrand | null): void
   pinExtensionId(home: string, id: string): string[]
+  /** Writes `defaults` as config.capabilities only when the config has none; returns the keys written, else []. */
+  seedCapabilities(home: string, defaults: Record<string, unknown>): string[]
   localKeyPath(home: string): string
   version: string
 }
@@ -52,7 +57,7 @@ export function readBuildInfo(vendorDir: string): BuildInfo | undefined {
 
 // ---- the pieces ----------------------------------------------------------------------------------------------------
 
-/** The brand into the config and the seed rewritten with `host`, after an install (shared with the install flow, installer.ts). */
+/** The brand into the config and, when the extension folder exists, its seed rewritten with `host` (shared with installer.ts). */
 export function brandAndSeed(b: BridgeBundle, bridgeHome: string, currentDir: string, port: number, brand: BridgeBrand): void {
   b.setBrand(bridgeHome, brand)
   const config = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { pairingToken?: string }
@@ -67,23 +72,12 @@ export function defaultCapabilities(info: BuildInfo | undefined): Record<string,
   return { agentWindows: settings.agentWindows?.default, evaluate: settings.evaluate?.default }
 }
 
-const LOCK_STALE_MS = 10_000
-const LOCK_WAIT_MS = 10_000
-const sleepSync = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) }
+const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
 
-/** Runs `fn` holding the bridge's own config lock (<bridgeHome>/config.lock, the protocol of its config.ts). */
-function withBridgeConfigLock<T>(bridgeHome: string, fn: () => T): T {
-  const lock = join(bridgeHome, 'config.lock')
-  const deadline = Date.now() + LOCK_WAIT_MS
-  for (;;) {
-    try { writeFileSync(lock, `${process.pid}\n`, { flag: 'wx' }); break } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
-      try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { force: true }) } catch { /* the owner just released it */ }
-      if (Date.now() > deadline) throw new Error(`config lock ${lock} is held by another process`)
-      sleepSync(20)
-    }
-  }
-  try { return fn() } finally { rmSync(lock, { force: true }) }
+/** The MCP server's name: the package's `brand.mcp.serverName` when valid (the bridge's own rule), else this extension's. */
+export function serverNameOf(info: BuildInfo | undefined): string {
+  const name = info?.brand?.mcp?.serverName?.trim()
+  return name && SERVER_NAME_PATTERN.test(name) ? name : MCP_SERVER_NAME
 }
 
 /** Writes `text` to `path` in one move (temp + rename). */
@@ -94,29 +88,18 @@ export function writeFileAtomic(path: string, text: string): void {
   try { renameSync(tmp, path) } finally { rmSync(tmp, { force: true }) }
 }
 
-/** Adds `capabilities` to config.json when it has none. Returns the keys written, or [] when the installation already decided. */
-export function seedCapabilities(bridgeHome: string, caps: Record<string, unknown>): string[] {
-  const path = join(bridgeHome, 'config.json')
-  return withBridgeConfigLock(bridgeHome, () => {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
-    if ('capabilities' in raw) return []
-    writeFileAtomic(path, JSON.stringify({ ...raw, capabilities: caps }, null, 2))
-    return Object.keys(caps)
-  })
-}
-
 export interface McpConfig {
   mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
 }
 
 /** The --mcp-config the agents receive: `node <bundle> mcp`, pointed at the tether's bridge home and port. No secret: the shell reads api.key from the home. */
-export function mcpConfigOf(bridgeHome: string, bundlePath: string, port: number): McpConfig {
+export function mcpConfigOf(bridgeHome: string, bundlePath: string, port: number, serverName: string = MCP_SERVER_NAME): McpConfig {
   return {
     mcpServers: {
-      [MCP_SERVER_NAME]: {
+      [serverName]: {
         command: 'node',
         args: [bundlePath, 'mcp'],
-        env: { ATRIUM_BRIDGE_HOME: bridgeHome, ATRIUM_BRIDGE_PORT: String(port), ATRIUM_BRIDGE_SERVER_NAME: MCP_SERVER_NAME },
+        env: { ATRIUM_BRIDGE_HOME: bridgeHome, ATRIUM_BRIDGE_PORT: String(port), ATRIUM_BRIDGE_SERVER_NAME: serverName },
       },
     },
   }
@@ -155,8 +138,8 @@ export interface BridgeHostDeps {
 
 export interface SetupReport {
   ok: boolean
-  /** The config and/or the extension folder were missing and were installed from the vendored copy. */
-  installed: boolean
+  /** config.json and api.key were missing and were created now (a first start on this home). */
+  created: boolean
   /** Capability keys seeded now ([] when the installation already had its own). */
   capabilities: string[]
   mcpWritten: boolean
@@ -180,7 +163,7 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
   const importBundle = deps.importBundle ?? importBundleFromDisk
 
   const setup = async (): Promise<SetupReport> => {
-    const report: SetupReport = { ok: false, installed: false, capabilities: [], mcpWritten: false, daemon: 'skipped' }
+    const report: SetupReport = { ok: false, created: false, capabilities: [], mcpWritten: false, daemon: 'skipped' }
     const fail = (problem: string): SetupReport => { deps.log(problem); return { ...report, problem } }
     const problems = auditVendor(deps.vendorDir)
     if (problems.length) return fail(`vendor do bridge inválido, instalação não tocada: ${problems.slice(0, 3).join('; ')}${problems.length > 3 ? '…' : ''}`)
@@ -188,24 +171,26 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
     if (!info) return fail(`vendor do bridge sem ${VENDOR_BUILD_INFO} legível, instalação não tocada`)
     let b: BridgeBundle
     try { b = await importBundle(bundlePath) } catch (e) { return fail(`bundle do bridge não carregou: ${e instanceof Error ? e.message : String(e)}`) }
+    let serverName = MCP_SERVER_NAME
     try {
-      const hasConfig = existsSync(join(bridgeHome, 'config.json'))
-      const hasFolder = existsSync(join(currentDir, 'manifest.json'))
-      if (!hasConfig || !hasFolder) {
-        const r = b.installExtension({ home: bridgeHome, dir: currentDir, source: join(deps.vendorDir, VENDOR_EXTENSION_DIR), pin: true, port: deps.port })
-        report.installed = true
-        deps.log(`instalação do bridge ${hasConfig ? 'completada' : 'criada'} em ${bridgeHome} (porta ${r.port}, extensão em ${r.dir}, ${r.files} arquivos)`)
-      }
+      const hadConfig = existsSync(join(bridgeHome, 'config.json')) && existsSync(b.localKeyPath(bridgeHome))
+      // With a port, ensureConfig also overrides the STORED port in the returned copy; asked without one, an existing
+      // config comes back as the installation wrote it (the file is never changed either way after creation).
+      const config = hadConfig ? b.ensureConfig(bridgeHome) : b.ensureConfig(bridgeHome, deps.port)
+      report.created = !hadConfig
+      if (report.created) deps.log(`instalação do bridge criada em ${bridgeHome} (porta ${config.port}, bridge ${info.version}; a pasta da extensão nasce em "Instalar ${deps.brand.name} Bridge…")`)
+      else if (config.port !== deps.port) deps.log(`instalação do bridge em ${bridgeHome} usa a porta ${config.port} no config.json; o tetherd sobe o daemon e aponta os agentes para ${deps.port}`)
       b.pinExtensionId(bridgeHome, info.extensionId)
       brandAndSeed(b, bridgeHome, currentDir, deps.port, deps.brand)
-      report.capabilities = seedCapabilities(bridgeHome, defaultCapabilities(info))
-      if (report.capabilities.length) deps.log(`capabilities semeadas: ${report.capabilities.join(', ')}`)
+      report.capabilities = b.seedCapabilities(bridgeHome, defaultCapabilities(info))
+      if (report.capabilities.length) deps.log(`capabilities semeadas do pacote: ${report.capabilities.join(', ')}`)
+      serverName = serverNameOf(info)
     } catch (e) {
       const code = (e as { code?: unknown } | undefined)?.code
       return fail(`instalação do bridge falhou: ${typeof code === 'string' ? code : e instanceof Error ? e.message : String(e)}`)
     }
-    report.mcpWritten = writeMcpConfig(deps.home, mcpConfigOf(bridgeHome, bundlePath, deps.port))
-    deps.log(`${mcpConfigPathOf(deps.home)} ${report.mcpWritten ? 'gravado' : 'inalterado'} (servidor ${MCP_SERVER_NAME}, porta ${deps.port})`)
+    report.mcpWritten = writeMcpConfig(deps.home, mcpConfigOf(bridgeHome, bundlePath, deps.port, serverName))
+    deps.log(`${mcpConfigPathOf(deps.home)} ${report.mcpWritten ? 'gravado' : 'inalterado'} (servidor ${serverName}, porta ${deps.port})`)
     if (deps.warm === false) deps.log(`aquecimento do daemon pulado: home fora do padrão sem TETHER_BRIDGE_PORT próprio (a porta ${deps.port} é da instalação padrão)`)
     else report.daemon = await warmup.ensure()
     report.ok = true
@@ -216,7 +201,7 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
     async () => {
       const name = `${deps.brand.name} Bridge`
       const problems = auditVendor(deps.vendorDir)
-      if (problems.length) return { level: 'ERRO', name, detail: `cópia vendorizada incompleta ou alterada (${problems[0]})`, hint: 'rode "node extensions/web-bridge/vendor.mjs" e reinicie o tetherd' }
+      if (problems.length) return { level: 'ERRO', name, detail: `cópia vendorizada incompleta ou alterada (${problems[0]})`, hint: 'rode "npm run bridge:build" e reinicie o tetherd' }
       const missing = ['config.json', 'api.key'].filter(f => !existsSync(join(bridgeHome, f)))
       if (missing.length) return { level: 'AVISO', name, detail: `instalação em ${bridgeHome} sem ${missing.join(' e ')}`, hint: 'abra o tether: o tetherd cria a instalação ao subir' }
       if (!existsSync(mcpConfigPathOf(deps.home))) return { level: 'AVISO', name, detail: `${mcpConfigPathOf(deps.home)} ausente`, hint: 'abra o tether: o tetherd grava o arquivo ao subir' }

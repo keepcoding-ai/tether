@@ -8,7 +8,8 @@
 import type { ExtensionManifest } from '../types.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 
-export const BRIDGE_NAME = `${BRAND.name} Bridge`
+/** The extension's name in the browser, as brand/brand.json states it ("Tether Bridge"). */
+export const BRIDGE_NAME = BRAND.product
 
 export const manifest: ExtensionManifest = {
   id: 'web-bridge',
