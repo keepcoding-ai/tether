@@ -56,6 +56,8 @@ import { uiIpc } from '../shared/ext-ipc.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
+import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
+import type { PaneInfo } from './ext-api.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
@@ -371,9 +373,9 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     }),
     // Only changes the person can make are saved: a hint or title the app updates is not one (isPersonChange).
     onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
-    onPanelsChange: () => { refreshClosedMenu(); renderStrip() },
+    onPanelsChange: () => { refreshClosedMenu(); renderStrip(); recomputeProjects() },
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
-    onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched() },
+    onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane() },
     // One focused frame in the window: a pad's frames have it while that pad is focused, the desks otherwise.
     ownsFocus: () => scope === 'drawer' ? true : scope instanceof FramesPad ? focusedPad === scope : focusedPad === undefined,
   }
@@ -395,7 +397,7 @@ function setupDock(): void {
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.desks.map(d => d.id)); scheduleSave() },
-    onSwitch: () => focusActivePane(),
+    onSwitch: () => { focusActivePane(); notifyActivePane() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
@@ -435,11 +437,71 @@ function kbdHtml(hint: string): string {
   return hint.split('+').map(k => `<kbd>${k}</kbd>`).join('+')
 }
 
+// ---------- projects (F8): the window's workspace folders (app/renderer/workspace.ts holds the rules) ----------
+
+/** win32 and darwin compare paths without case (the daemon's canonicalDir keeps the disk's spelling). */
+const CASE_INSENSITIVE = /^(win|mac)/i.test(navigator.platform)
+/** What layout.json keeps: the pinned roots. */
+let workspaceState: WorkspaceState = EMPTY_WORKSPACE
+let projectFolders: ProjectFolder[] = []
+let currentProject: string | undefined
+const workspaceListeners = new Set<(folders: readonly ProjectFolder[]) => void>()
+const activePaneListeners = new Set<(info: PaneInfo | undefined) => void>()
+let lastActivePane: string | undefined
+
+function paneSources(): PaneSource[] {
+  return allPanels().map(p => { const s = slots.get(p.id); return s ? { id: p.id, kind: s.kind, cwd: s.cwd } : { id: p.id } })
+}
+
+/** Re-derives the folders from the panes, the slots and the pinned roots; listeners hear only a real change. */
+function recomputeProjects(): void {
+  if (!desks) return // the first desk is still being built
+  const next = deriveFolders(projectFolders, workspaceState, paneSources(), CASE_INSENSITIVE)
+  const change = compareFolders(projectFolders, next, CASE_INSENSITIVE)
+  projectFolders = next
+  if (currentProject && !next.some(f => pathKey(f.path, CASE_INSENSITIVE) === pathKey(currentProject!, CASE_INSENSITIVE))) currentProject = undefined
+  if (!isEmptyChange(change)) for (const l of workspaceListeners) l(projectFolders)
+}
+
+function setWorkspace(state: WorkspaceState): void {
+  if (state === workspaceState) return
+  workspaceState = state
+  recomputeProjects()
+  scheduleSave()
+}
+
+/** Open = open and pin; opening an open folder only makes sure it is pinned (no message). */
+function openProject(path: string): void {
+  setWorkspace(openWorkspaceFolder(workspaceState, path, CASE_INSENSITIVE))
+}
+
+function moveProject(path: string, dir: 'up' | 'down'): void {
+  projectFolders = moveFolder(projectFolders, path, dir, CASE_INSENSITIVE)
+  workspaceState = pinnedInOrder(projectFolders)
+  for (const l of workspaceListeners) l(projectFolders)
+  scheduleSave()
+}
+
+function describePane(id: string | undefined): PaneInfo | undefined {
+  if (!id || !findPanel(id)) return undefined
+  const slot = slots.get(id)
+  const cwd = paneCwdOf(id)
+  return { id, type: liveTypeOf(paneTypes, id)?.id ?? 'unknown', ...(cwd ? { cwd } : {}), ...(slot && slot.kind !== 'shell' ? { agent: slot.kind } : {}) }
+}
+
+function notifyActivePane(): void {
+  const id = currentDesk().activePanel?.id
+  if (id === lastActivePane) return
+  lastActivePane = id
+  const info = describePane(id)
+  for (const l of activePaneListeners) l(info)
+}
+
 /** The file to write: every desk (with its per-desk pads), the drawer and the side bars as mounted now. */
 function layoutJSON(): Layout {
   const live = desks.toJSON()
   const deskList = live.desks.map(d => { const pads = sidebars?.deskPads(d.id); return pads ? { ...d, pads } : d })
-  return { ...layoutFile, v: 3, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars }
+  return { ...layoutFile, v: 3, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
 }
 
 function scheduleSave(): void {
@@ -1149,6 +1211,7 @@ function applyState(slot: SlotState): void {
   refreshClosedMenu()
   renderStrip()
   if (slot.attention && slot.slotId === watchedPane()) void window.tether.request({ t: 'seen', slotId: slot.slotId })
+  recomputeProjects() // the slot's kind or folder may have changed
 }
 
 function onDaemonEvent(ev: DaemonEvent): void {
@@ -1233,7 +1296,9 @@ async function restoreLayout(): Promise<void> {
   // Only what the person does from here on is saved; a slot missing from the daemon's list is not a change of theirs.
   if (orphaned.length) console.warn('painéis sem slot no tetherd, fora da tela até a próxima ação:', orphaned)
   await discardPendingSave()
+  workspaceState = readWorkspace(layoutFile.workspace)
   layoutRestored = true
+  recomputeProjects()
   // Panes that predate the hint get it now (saved with the next change the person makes).
   for (const panel of allPanels()) { const s = slots.get(panel.id); if (s) updateHint(s) }
   refreshClosedMenu()
@@ -1295,6 +1360,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
     }
     await discardPendingSave()
     for (const p of panels.values()) { p.render(); void p.reattach() }
+    recomputeProjects()
     for (const t of tabs.values()) t.render()
     refreshClosedMenu()
   }
@@ -2365,6 +2431,11 @@ function setupUi(): void {
   $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
   commands.register(...appCommands(commandHost))
+  commands.register(...workspaceCommands({
+    pickAndOpen: () => { void window.tether.pickFolder(currentProject).then(f => { if (f) openProject(f) }) },
+    toggleTarget: () => folderOf(projectFolders, paneCwdOf(currentDesk().activePanel?.id), CASE_INSENSITIVE) ?? projectFolders.find(f => f.path === currentProject),
+    togglePin: path => setWorkspace(togglePin(workspaceState, path, CASE_INSENSITIVE)),
+  }))
   palette = new CommandPalette($<HTMLDialogElement>('palette'), commands, () => paletteMode)
   setupMenu()
   $('btn-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
@@ -2514,6 +2585,16 @@ declare global {
       signals(): { tabBorder: boolean; dimUnfocused: boolean; dimLevel: string }
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
       closePanel(slotId: string): void
+      /** The projects (F8): the folders, the pinned roots, the current one. */
+      workspace(): { folders: readonly ProjectFolder[]; pinned: { path: string }[]; current: string | undefined }
+      openFolder(path: string): void
+      unpinProject(path: string): void
+      toggleProjectPin(path: string): void
+      /** A known slot's pane on the visible desk, without starting it (an agent created with start:false stays still). */
+      addSlotPane(slotId: string): void
+      /** Closes a pane without asking (the slot stays, in "Slots fechados"). */
+      detachPane(slotId: string): void
+      describePane(id: string): PaneInfo | undefined
       /** The terminal font size in use (appearance.fontSize). */
       fontSize(): number
       /** Opens the tab's inline rename, as a double click does. */
@@ -2685,6 +2766,13 @@ function setupTestHooks(): void {
     deskLine: () => ui.deskLine,
     signals: () => ({ tabBorder: ui.tabBorder, dimUnfocused: ui.dimUnfocused, dimLevel: ui.dimLevel }),
     closePanel: slotId => { void closePanel(slotId) },
+    workspace: () => ({ folders: projectFolders, pinned: workspaceState.pinned, current: currentProject }),
+    openFolder: path => openProject(path),
+    unpinProject: path => setWorkspace(unpinFolder(workspaceState, path, CASE_INSENSITIVE)),
+    toggleProjectPin: path => setWorkspace(togglePin(workspaceState, path, CASE_INSENSITIVE)),
+    addSlotPane: slotId => { const s = slots.get(slotId); if (s && !findPanel(slotId)) addPanel(s).api.setActive() },
+    detachPane: slotId => { void closePanel(slotId, { ask: false }) },
+    describePane: id => describePane(id),
     fontSize: () => appearance.fontSize,
     startRename: slotId => tabs.get(slotId)?.startRename(),
     profiles: () => profiles,
@@ -2921,9 +3009,27 @@ function activateRendererExtensions(): void {
         focus: paneId => focusPane(paneId),
         close: paneId => closeSlotless(paneId),
         showTabMenu: (paneId, x, y) => showTabMenu(paneId, x, y),
-        newPanelDialog: reference => { void openNewDialog({ reference }) },
+        newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
         newPanelLabel: NEW_PANEL_LABEL,
         move: paneId => { void openMove(paneId) },
+        all: () => allPanels().map(p => describePane(p.id)).filter((x): x is PaneInfo => x !== undefined),
+        describe: paneId => describePane(paneId),
+        onDidChangeActive: listener => { activePaneListeners.add(listener); return add(toDisposable(() => { activePaneListeners.delete(listener) })) },
+      },
+      workspace: {
+        folders: () => projectFolders,
+        onDidChange: listener => { workspaceListeners.add(listener); return add(toDisposable(() => { workspaceListeners.delete(listener) })) },
+        open: path => openProject(path),
+        unpin: path => setWorkspace(unpinFolder(workspaceState, path, CASE_INSENSITIVE)),
+        togglePin: path => setWorkspace(togglePin(workspaceState, path, CASE_INSENSITIVE)),
+        move: (path, dir) => moveProject(path, dir),
+        current: () => currentProject,
+        setCurrent: path => { currentProject = path === undefined ? undefined : folderOf(projectFolders, path, CASE_INSENSITIVE)?.path },
+        folderOf: absPath => folderOf(projectFolders, absPath, CASE_INSENSITIVE),
+      },
+      folders: {
+        recent: () => window.tether.recentFolders(),
+        pickFolder: initial => window.tether.pickFolder(initial),
       },
       commands: {
         register: (...list) => add(toDisposable(commands.register(...list))),

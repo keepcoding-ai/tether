@@ -14,6 +14,7 @@ import type { Direction } from './create.ts'
 import { isSlotlessPanelId } from '../shared/empty.ts'
 import { type DeskHue, DEFAULT_DESK_HUE, readDeskColor } from './desks.ts'
 import { emptySideBars, readSideBars, type SideBarsLayout } from './sidebar-rules.ts'
+import type { WorkspaceState } from './workspace.ts'
 
 export const LAYOUT_VERSION = 3
 export const FRAME_COMPONENT = 'frame'
@@ -53,6 +54,8 @@ export interface LayoutV2 {
 export interface LayoutV3 extends Omit<LayoutV2, 'v'> {
   v: 3
   sidebars: SideBarsLayout
+  /** F8, additive (no version bump): the pinned projects. Absent = none; read with tolerance (workspace.ts readWorkspace). */
+  workspace?: WorkspaceState
 }
 
 export type Layout = LayoutV3

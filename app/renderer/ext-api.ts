@@ -17,10 +17,22 @@ import type { FixedBinding } from './keybindings-panel.ts'
 import type { PaletteModeProvider } from './palette.ts'
 import type { PaneType } from './pane-registry.ts'
 import type { OpenFileOptions } from './file-open.ts'
+import type { ProjectFolder } from './workspace.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
 export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
+export type { ProjectFolder } from './workspace.ts'
+
+/** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
+export interface PaneInfo {
+  id: string
+  /** The pane type's id ('terminal', 'note'…). */
+  type: string
+  cwd?: string
+  /** The slot's kind when it is an AI agent (a plain terminal has none). */
+  agent?: string
+}
 
 /** A row of a context menu (the tab menu): an item, or 'sep' for a thin line between groups. */
 export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean } | 'sep'
@@ -88,11 +100,41 @@ export interface TetherUi {
     close(id: string): void
     /** The pane's tab menu at page coordinates (the type's own `tabMenu`). */
     showTabMenu(id: string, x: number, y: number): void
-    /** "Novo painel…" next to a pane, and its label. */
-    newPanelDialog(reference: string): void
+    /** "Novo painel…" next to a pane (in `cwd` when given), and its label. */
+    newPanelDialog(reference: string, opts?: { cwd?: string }): void
     readonly newPanelLabel: string
     /** "Mover…" for a pane. */
     move(id: string): void
+    /** Every pane in the window (each desk, the drawer, the frames pads). */
+    all(): readonly PaneInfo[]
+    describe(id: string): PaneInfo | undefined
+    /** The active pane (of the visible desk, the open drawer or the focused pad) changed. */
+    onDidChangeActive(listener: (info: PaneInfo | undefined) => void): IDisposable
+  }
+  /**
+   * The window's projects (F8; VS Code's IWorkspaceContextService): folders inferred from the AI agents' panes plus the
+   * pinned ones, in order of arrival. The core owns them; an extension (the explorer) shows and edits them.
+   */
+  workspace: {
+    folders(): readonly ProjectFolder[]
+    onDidChange(listener: (folders: readonly ProjectFolder[]) => void): IDisposable
+    /** Opens a folder as a project and pins it; idempotent (an open one just ends up pinned). */
+    open(path: string): void
+    /** Unpinned: it stays as inferred while agents reference it, else it closes. */
+    unpin(path: string): void
+    /** Pinned ↔ unpinned (an inferred folder is promoted in place). */
+    togglePin(path: string): void
+    move(path: string, dir: 'up' | 'down'): void
+    /** The current project (set by "seguir" or a click), if it is still open. */
+    current(): string | undefined
+    setCurrent(path: string | undefined): void
+    /** The project containing a path (the innermost one). */
+    folderOf(absPath: string): ProjectFolder | undefined
+  }
+  /** The app's folders: the recent ones ("Novo painel" keeps them) and the native folder picker. */
+  folders: {
+    recent(): Promise<string[]>
+    pickFolder(initial?: string): Promise<string | null>
   }
   commands: {
     /** Commands with everything in code (an editor's own actions, registered while it has the focus). */
