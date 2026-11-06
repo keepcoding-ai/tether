@@ -13,6 +13,13 @@ import { shortcutHint, shortcutOf, type KeyLike } from '../../app/renderer/short
 import { emptyParams, EMPTY_TITLE, isEmptyPanelId, isSlotlessPanelId, newEmptyPanelId, withEmpty } from '../../app/shared/empty.ts'
 import { newNotePanelId } from '../../app/shared/notes.ts'
 import { manifest as noteManifest } from '../../extensions/note/manifest.ts'
+import { registerAgentUi } from '../../app/renderer/agent-ui.ts'
+import { claudeUi } from '../../extensions/claude/ui.ts'
+import { soulUi } from '../../extensions/soul/ui.ts'
+
+// The agent extensions' AgentUi, as the renderer host registers them at startup.
+registerAgentUi(claudeUi)
+registerAgentUi(soulUi)
 
 // The note extension's chooser items, as the renderer's extension host contributes them at startup.
 const noteChooser = noteManifest.contributes!.chooser!

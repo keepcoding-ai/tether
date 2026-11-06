@@ -41,9 +41,9 @@ function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
 }
 
-async function launch(home: string): Promise<{ app: ElectronApplication; page: Page }> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
+async function launch(home: string, extraEnv: Record<string, string> = {}): Promise<{ app: ElectronApplication; page: Page }> {
+  const env: Record<string, string> = { ...extraEnv }
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE') && !(k in extraEnv)) env[k] = v
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
@@ -269,6 +269,78 @@ test('app keybindings-screen extension (F9 slice 3): on → the screen lists eve
     await page.waitForFunction(n => window.__tether.layout().desks.length === n + 1, before)
     assert.ok(savedPanes(home).length >= panesBefore)
     assert.deepEqual(errors, [], 'no page errors')
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})
+
+test('app soul extension (F9 slice 4): off → restart → the soul pane says "Agente indisponível"; on → restart → it is a soul pane again', async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  const home = mkdtempSync(join(tmpdir(), 'tether-ext-toggle-soul-'))
+  // An inert stand-in for the soul: the slot may start on restore, and no real soul should run in a test.
+  const fakeSoul = { TETHER_SOUL_CMD: `"${process.execPath}" -e "setInterval(()=>{},1000)"` }
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  type T = Hooks & { slots(): { slotId: string; kind: string }[]; openSlot(id: string): Promise<void> }
+  const unavailable = (id: string): string => `.panel[data-slot-id="${id}"] .panel-overlay:not([hidden])`
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home, fakeSoul))
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    // A soul slot in a pane, and the profile form offers soul.
+    const id = await page.evaluate(async cwd => {
+      const w = window as unknown as { tether: { request(r: unknown): Promise<{ t: string; slot?: { slotId: string } }> }; __tether: T }
+      const r = await w.tether.request({ t: 'create', kind: 'soul', cwd, start: false })
+      const slotId = r.slot?.slotId ?? w.__tether.slots().find(s => s.kind === 'soul')!.slotId
+      await w.__tether.openSlot(slotId)
+      return slotId
+    }, home)
+    await page.waitForSelector(`.panel[data-slot-id="${id}"]`)
+    assert.equal(await page.locator(`${unavailable(id)}:has-text("Agente indisponível")`).count(), 0, 'soul is available')
+    await waitFor('the soul pane saved in layout.json', () => savedPanes(home).some(p => p.id === id))
+
+    await page.evaluate(() => window.__tether.runCommand('extensions.show'))
+    const row = page.locator('.ext-pane .ext-row[data-ext="soul"]')
+    await row.waitFor()
+    await row.locator('.ext-toggle').click()
+    await page.waitForSelector('.ext-pane .ext-row[data-ext="soul"] .ext-toggle[aria-checked="false"]')
+    assert.deepEqual(disabled(home), ['soul'])
+    await killElectron(app, root)
+    app = undefined
+
+    // ---------- restarted with soul off: the pane is there and says so ----------
+    ;({ app, page } = await launch(home, fakeSoul))
+    await page.evaluate(id => (window.__tether as unknown as T).openSlot(id), id)
+    await page.waitForSelector(`${unavailable(id)}:has-text("Agente indisponível")`)
+    assert.ok(savedPanes(home).some(p => p.id === id), 'the soul pane is still in layout.json')
+    assert.equal(await page.locator('#dlg-profiles input[name=agent][value="soul"]').count(), 0, 'no soul option in the profile form')
+    await page.evaluate(() => window.__tether.runCommand('extensions.show'))
+    const row2 = page.locator('.ext-pane .ext-row[data-ext="soul"]')
+    await row2.waitFor()
+    await row2.locator('.ext-toggle').click()
+    await page.waitForSelector('.ext-pane .ext-row[data-ext="soul"] .ext-toggle[aria-checked="true"]')
+    assert.deepEqual(disabled(home), [])
+    await killElectron(app, root)
+    app = undefined
+
+    // ---------- restarted with soul on: no "Agente indisponível" ----------
+    ;({ app, page } = await launch(home, fakeSoul))
+    await page.evaluate(id => (window.__tether as unknown as T).openSlot(id), id)
+    await page.waitForSelector(`.panel[data-slot-id="${id}"]`)
+    await sleep(1000)
+    assert.equal(await page.locator(`${unavailable(id)}:has-text("Agente indisponível")`).count(), 0, 'soul is back')
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))
     for (const d of daemons) {

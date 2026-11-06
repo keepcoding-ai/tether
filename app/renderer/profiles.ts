@@ -3,7 +3,7 @@
 // (app/renderer/index.html #dlg-profiles): list on the left, one form on the right (name, agent, shell executable,
 // args with a chips preview, env rows, default folder, default flag). Validation is the daemon's
 // (src/core/profile.ts): every error it returns in Portuguese lands next to the field it is about; warnings do not block a save.
-import { byAgent } from './agent-labels.ts'
+import { agentTable, agentUi, agentUiNames } from './agent-ui.ts'
 import type { Profile, ProfileInput, SlotState } from '../../src/daemon/protocol.ts'
 import type { ProfileAgent } from '../../src/core/profile.ts'
 import type { ProfileDeleted, ProfileSaved } from '../shared/api.ts'
@@ -13,8 +13,9 @@ import { icon, KIND_ICON } from './icons.ts'
 import { UNSAFE_LABEL, UNSAFE_TOOLTIP } from './panel.ts'
 import { deleteProfileSituation } from './situations.ts'
 
-export const AGENTS: ProfileAgent[] = ['claude', 'soul', 'shell']
-export const AGENT_LABEL: Record<ProfileAgent, string> = byAgent({ claude: 'Claude', soul: 'soul', shell: 'Shell' }, (n) => n)
+/** The agents in the profile manager's order: the extensions' (registration order), then the shell. */
+export const agentOrder = (): ProfileAgent[] => [...agentUiNames(), 'shell']
+export const AGENT_LABEL: Record<ProfileAgent, string> = agentTable('Shell', ui => ui.label, n => n)
 const UNSAFE_ARG = '--dangerously-skip-permissions'
 
 /** What the list shows for a profile's command line: shell profiles show the executable's args too. */
@@ -40,7 +41,10 @@ interface GroupOptions {
 /** The profiles grouped by agent, each with its name, args (small, muted), default and unsafe marks. */
 export function renderProfileGroups(host: HTMLElement, profiles: Profile[], opts: GroupOptions): void {
   host.replaceChildren()
-  for (const agent of AGENTS) {
+  // Profiles of an agent with no AgentUi (its extension is off) still show, after the known ones.
+  const order = agentOrder()
+  const agents = [...order, ...new Set(profiles.map(p => p.agent).filter(a => !order.includes(a)))]
+  for (const agent of agents) {
     const items = profiles.filter(p => p.agent === agent)
     if (items.length === 0) continue
     const group = document.createElement('div')
@@ -175,7 +179,7 @@ export class ProfileManager {
   }
 
   private agent(): ProfileAgent {
-    return ((new FormData(this.form).get('agent') as ProfileAgent | null) ?? 'claude')
+    return ((new FormData(this.form).get('agent') as ProfileAgent | null) ?? agentOrder()[0]!)
   }
 
   private edit(id: string | undefined): void {
@@ -189,7 +193,7 @@ export class ProfileManager {
     this.refresh()
   }
 
-  private startNew(agent: ProfileAgent = 'claude'): void {
+  private startNew(agent: ProfileAgent = agentOrder()[0]!): void {
     this.editing = undefined
     this.fill({ id: '', name: '', agent, args: [], env: {}, cwd: '', shell: '', default: false })
     this.refresh()
@@ -200,6 +204,7 @@ export class ProfileManager {
     this.clearErrors()
     this.field<HTMLInputElement>('id').value = v.id
     this.field<HTMLInputElement>('name').value = v.name
+    this.renderAgentRadios(v.agent)
     for (const r of this.form.querySelectorAll<HTMLInputElement>('input[name=agent]')) r.checked = r.value === v.agent
     this.field<HTMLInputElement>('shell').value = v.shell
     this.field<HTMLInputElement>('args').value = formatArgs(v.args)
@@ -217,11 +222,29 @@ export class ProfileManager {
     dup.hidden = !v.id
   }
 
+  /** The agent options, from the AgentUi registry (plus the edited profile's agent when its extension is off). */
+  private renderAgentRadios(current: ProfileAgent): void {
+    const row = this.form.querySelector<HTMLElement>('.row.agents')!
+    const names = agentOrder()
+    if (!names.includes(current)) names.splice(names.length - 1, 0, current)
+    if (row.dataset.agents === names.join(',')) return
+    row.dataset.agents = names.join(',')
+    row.replaceChildren(...names.map(name => {
+      const label = document.createElement('label')
+      const input = document.createElement('input')
+      input.type = 'radio'
+      input.name = 'agent'
+      input.value = name
+      label.append(input, ' ', icon(KIND_ICON[name] ?? 'terminal-window'), ` ${AGENT_LABEL[name]}`)
+      return label
+    }))
+  }
+
   private onAgentChange(): void {
     const agent = this.agent()
     for (const el of this.form.querySelectorAll<HTMLElement>('[data-only]')) el.hidden = el.dataset.only !== agent
     document.getElementById('profile-default-label')!.textContent = `Perfil padrão de ${AGENT_LABEL[agent]} (pré-selecionado em Novo painel)`
-    this.field<HTMLInputElement>('args').placeholder = agent === 'claude' ? UNSAFE_ARG : agent === 'soul' ? '-g' : '--login -i'
+    this.field<HTMLInputElement>('args').placeholder = agent === 'shell' ? '--login -i' : agentUi(agent)?.argsPlaceholder ?? ''
   }
 
   private previewArgs(): void {
@@ -368,7 +391,8 @@ export class ProfileManager {
       const picked = await this.host.pickFolder(input.value.trim() || undefined)
       if (picked) input.value = picked
     })
-    for (const r of this.form.querySelectorAll<HTMLInputElement>('input[name=agent]')) r.addEventListener('change', () => this.onAgentChange())
+    // The radios are rebuilt from the AgentUi registry (renderAgentRadios): listen on their row.
+    this.form.querySelector<HTMLElement>('.row.agents')!.addEventListener('change', ev => { if ((ev.target as HTMLInputElement).name === 'agent') this.onAgentChange() })
     this.field<HTMLInputElement>('args').addEventListener('input', () => this.previewArgs())
     this.form.addEventListener('submit', ev => { ev.preventDefault(); void this.save() })
     this.form.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.ctrlKey) { ev.preventDefault(); void this.save() } })

@@ -6,6 +6,7 @@
 import type { Profile } from '../../src/daemon/protocol.ts'
 import type { ProfileAgent } from '../../src/core/profile.ts'
 import { foldChars, foldQuery, fuzzyMatch } from './fuzzy.ts'
+import { agentUi, agentUiNames } from './agent-ui.ts'
 import type { ChooserGroupContribution, ChooserItemContribution } from '../../extensions/types.ts'
 
 /** A Phosphor icon name of icons.ts (IconName). Not imported: icons.ts pulls the SVG assets, and this module stays pure for the unit tests. */
@@ -65,16 +66,16 @@ export function choiceNeedsFolder(choice: Choice): boolean {
 /** An agent's name, an extension's group id ('note'), or 'empty'. */
 export type ItemGroup = ProfileAgent | string
 /** The agents' groups in the profile manager's order; contributed groups follow, then (popup only) the empty pane. */
-export const AGENT_GROUPS: readonly ItemGroup[] = ['claude', 'soul', 'shell']
-export const GROUP_LABEL: Record<string, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell', empty: 'Vazio' }
-export const GROUP_ICON: Record<string, IconName> = { claude: 'sparkle', soul: 'ghost', shell: 'terminal-window', empty: 'plus' }
-/** An agent the renderer has no descriptor for yet (an extension's, F9 slice 4) shows under its own name. */
-const groupLabel = (g: ItemGroup): string => GROUP_LABEL[g] ?? contributedGroups.find(c => c.id === g)?.label ?? g
-const groupIcon = (g: ItemGroup): IconName => GROUP_ICON[g] ?? contributedGroups.find(c => c.id === g)?.icon ?? 'terminal-window'
+/** The agents' groups (their extensions' AgentUi, registration order) and the shell's. */
+const agentGroups = (): ItemGroup[] => [...agentUiNames(), 'shell']
+/** An agent with no AgentUi (its extension is off) shows under its own name. */
+const groupLabel = (g: ItemGroup): string => (g === 'shell' ? 'Shell' : g === 'empty' ? 'Vazio' : agentUi(g)?.label ?? contributedGroups.find(c => c.id === g)?.label ?? g)
+const groupIcon = (g: ItemGroup): IconName => (g === 'shell' ? 'terminal-window' : g === 'empty' ? 'plus' : (agentUi(g)?.icon as IconName | undefined) ?? (contributedGroups.find(c => c.id === g)?.icon as IconName | undefined) ?? 'terminal-window')
 /** Every group in reading order: the agents, other agents, the contributed groups, anything else, the empty pane. */
 function groupOrder(items: readonly ChooserItem[]): ItemGroup[] {
   const contributed = contributedGroups.map(g => g.id)
-  const agents = [...AGENT_GROUPS, ...new Set(items.filter(i => i.kind === 'profile').map(i => i.group).filter(g => !AGENT_GROUPS.includes(g)))]
+  const known = agentGroups()
+  const agents = [...known, ...new Set(items.filter(i => i.kind === 'profile').map(i => i.group).filter(g => !known.includes(g)))]
   const rest = [...new Set(items.map(i => i.group).filter(g => !agents.includes(g) && !contributed.includes(g) && g !== 'empty'))]
   return [...agents, ...contributed, ...rest, 'empty']
 }
@@ -110,8 +111,7 @@ const words = (s: string): string[] => fold(s).split(/[^\p{L}\p{N}]+/u).filter(B
 function profileKeywords(p: Profile, unsafe: boolean): string[] {
   const out = [...words(p.name), ...words(groupLabel(p.agent)), p.agent]
   const name = fold(p.name)
-  if (p.agent === 'claude') out.push('cc', 'agente', 'code')
-  if (p.agent === 'soul') out.push('agente')
+  out.push(...(agentUi(p.agent)?.keywords ?? []))
   if (p.agent === 'shell') out.push('terminal', 'console', 'prompt')
   if (name.includes('powershell') || name.includes('pwsh')) out.push('pwsh', 'ps', 'powershell')
   if (name.includes('bash')) out.push('sh', 'git', 'bash')
@@ -137,7 +137,8 @@ export const EMPTY_ITEM: ChooserItem = { id: `${CHOICE_PREFIX}empty`, kind: 'emp
 /** Everything a chooser offers: the profiles, the extensions' items, and the empty pane where it makes sense (the contextless popup). */
 export function chooserItems(profiles: readonly Profile[], opts: { empty: boolean }): ChooserItem[] {
   const out: ChooserItem[] = []
-  for (const agent of ['claude', 'soul', 'shell'] as const) for (const p of profiles) if (p.agent === agent) out.push(profileItem(p))
+  const known = agentGroups()
+  for (const agent of known) for (const p of profiles) if (p.agent === agent) out.push(profileItem(p))
   out.push(...contributedItems)
   if (opts.empty) out.push(EMPTY_ITEM)
   return out

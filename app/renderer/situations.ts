@@ -2,14 +2,14 @@
 // Each one is written from what it has to communicate: what is at stake, what each choice does to it.
 // The copy is consequence-first and differs by what is actually there (an agent running, nothing
 // running, a shell with no session to resume).
-import { byAgent } from './agent-labels.ts'
+import { agentTable } from './agent-ui.ts'
 import type { Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import { KIND_ICON } from './icons.ts'
 
 /** "o Claude", "o soul", "o shell": the subject of every sentence about the panel. */
-const SUBJECT: Record<SlotKind, string> = byAgent({ claude: 'o Claude', soul: 'o soul', shell: 'o shell' }, (n) => `o ${n}`)
-const SUBJECT_CAP: Record<SlotKind, string> = byAgent({ claude: 'O Claude', soul: 'O soul', shell: 'O shell' }, (n) => `O ${n}`)
+const SUBJECT: Record<SlotKind, string> = agentTable('o shell', ui => `o ${ui.label}`, n => `o ${n}`)
+const SUBJECT_CAP: Record<SlotKind, string> = agentTable('O shell', ui => `O ${ui.label}`, n => `O ${n}`)
 
 export function folderName(cwd: string): string {
   const parts = cwd.replace(/[\\/]+$/, '').split(/[\\/]/)
@@ -185,7 +185,7 @@ export function deleteProfileSituation(p: Profile, users: SlotState[]): DialogSp
   }
 }
 
-const KIND_LABEL_OF: Record<SlotKind, string> = byAgent({ claude: 'Claude', soul: 'soul', shell: 'Shell' }, (n) => n)
+const KIND_LABEL_OF: Record<SlotKind, string> = agentTable('Shell', ui => ui.label, n => n)
 
 /** The option id that means "no profile" in the switch-profile dialog (daemon: `profileId: null`). */
 export const NO_PROFILE = '__none__'

@@ -19,11 +19,13 @@ import type { PaletteModeProvider } from './palette.ts'
 import type { PaneType } from './pane-registry.ts'
 import type { OpenFileOptions } from './file-open.ts'
 import type { ProjectFolder } from './workspace.ts'
+import type { AgentUi } from './agent-ui.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
 export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
 export type { ProjectFolder } from './workspace.ts'
+export type { AgentUi } from './agent-ui.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
 export interface PaneInfo {
@@ -196,6 +198,10 @@ export interface TetherUi {
     registerMode(provider: PaletteModeProvider): IDisposable
     /** Opens the box in that mode (empty field), as the mode's chord does. */
     showMode(): void
+  }
+  /** How the app names and draws an agent the daemon side of this extension registers (F9 §4.8). */
+  agents: {
+    register(ui: AgentUi): IDisposable
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */

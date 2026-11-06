@@ -8,6 +8,6 @@ export const manifest: ExtensionManifest = {
   version: '1.0.0',
   displayName: 'soul',
   description: 'Painéis do soul-cli que retomam a própria sessão.',
-  hosts: ['daemon'],
+  hosts: ['renderer', 'daemon'],
   optional: true,
 }

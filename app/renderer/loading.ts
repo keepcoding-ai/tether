@@ -1,7 +1,7 @@
 // The loading stage a pane shows between "the layout painted it" and "its terminal is attached and has
 // output". Pure (unit-tested): the panel feeds what it knows, this says which stage — or none, when the pane
 // should show its terminal or one of its situation overlays (error, unconfirmed, exited).
-import { byAgent } from './agent-labels.ts'
+import { agentTable, agentUi, isAgentUnavailable } from './agent-ui.ts'
 import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 /** Phosphor icons of the stages (a subset of icons.ts IconName; not imported: icons.ts pulls the SVG assets). */
 export type LoadingIcon = 'plugs' | 'hourglass' | 'terminal-window' | 'clock-counter-clockwise' | 'ghost' | 'sparkle'
@@ -38,7 +38,7 @@ export interface LoadingInput {
   ready: boolean
 }
 
-const AGENT_NAME: Record<SlotKind, string> = byAgent({ claude: 'Claude', soul: 'soul', shell: 'shell' }, (n) => n)
+const AGENT_NAME: Record<SlotKind, string> = agentTable('shell', ui => ui.label, n => n)
 
 /** The pane's loading stage, or undefined when the terminal (or a situation overlay) should show. */
 export function loadingStage(i: LoadingInput): LoadingStage | undefined {
@@ -47,6 +47,7 @@ export function loadingStage(i: LoadingInput): LoadingStage | undefined {
   if (!s) return undefined // the daemon does not know the pane: the "slot desconhecido" overlay
   if (i.startError) return undefined
   if (s.status === 'error' || s.restarting) return undefined
+  if (isAgentUnavailable(s.kind)) return undefined // the "Agente indisponível" overlay
   if (s.status === 'exited' && s.binding && !s.binding.confirmed) return undefined // unconfirmed: the user chooses
   if (s.status === 'queued') {
     return { id: 'queued', icon: 'hourglass', text: i.queuePosition ? `Na fila (Nº ${i.queuePosition})` : 'Na fila' }
@@ -57,7 +58,7 @@ export function loadingStage(i: LoadingInput): LoadingStage | undefined {
   if (s.kind === 'shell') return { id: 'opening', icon: 'terminal-window', text: 'Abrindo terminal…' }
   const name = AGENT_NAME[s.kind]
   if (s.binding?.sessionId) return { id: 'resuming', icon: 'clock-counter-clockwise', text: `Retomando sessão do ${name}…` }
-  return { id: 'starting-agent', icon: s.kind === 'soul' ? 'ghost' : 'sparkle', text: `Iniciando o ${name}…` }
+  return { id: 'starting-agent', icon: (agentUi(s.kind)?.icon as LoadingIcon | undefined) ?? 'sparkle', text: `Iniciando o ${name}…` }
 }
 
 /** The hint to keep in the layout for a slot (only what the chrome paints). */

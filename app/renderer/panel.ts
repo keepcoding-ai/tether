@@ -1,7 +1,7 @@
 // One dockview panel = one slot: a header strip (agent, title, folder, status) over an xterm, plus an
 // overlay for the states that need the user (unconfirmed binding, error, exited, queued).
 // Attaches on first layout, streams `data`, sends `input`/`resize`, detaches on dispose.
-import { byAgent } from './agent-labels.ts'
+import { agentTable, isAgentUnavailable } from './agent-ui.ts'
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -28,7 +28,7 @@ import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './termi
 /** Which xterm renderer a panel ended up with: WebGL draws box/block glyphs itself (no gaps at line height 1.2); DOM is the fallback. */
 export type TerminalRenderer = 'webgl' | 'dom'
 
-export const KIND_LABEL: Record<SlotKind, string> = byAgent({ claude: 'Claude', soul: 'soul', shell: 'Shell' }, (n) => n)
+export const KIND_LABEL: Record<SlotKind, string> = agentTable('Shell', ui => ui.label, n => n)
 export const STATUS_LABEL: Record<SlotStatus, string> = {
   running: 'rodando',
   queued: 'na fila',
@@ -452,7 +452,9 @@ export class TerminalPanel implements IContentRenderer {
     this.element.dataset.status = status
 
     const err = s.status === 'error' && s.error ? s.error : startError
-    if (status === 'unconfirmed') this.showOverlay(unconfirmedOverlay(s))
+    // An agent whose extension is off here: the pane keeps its place and says so (the daemon may still run it).
+    if (isAgentUnavailable(s.kind)) this.showOverlay(errorOverlay(s, { code: 'agent-unavailable', message: `O agente ${s.kind} não está disponível neste app (extensão desligada ou ausente); o painel continua guardado.` }))
+    else if (status === 'unconfirmed') this.showOverlay(unconfirmedOverlay(s))
     else if (status === 'error' && err) this.showOverlay(errorOverlay(s, err))
     else if (status === 'exited') this.showOverlay(exitedOverlay(s))
     else this.overlay.hidden = true

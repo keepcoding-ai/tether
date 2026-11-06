@@ -8,6 +8,6 @@ export const manifest: ExtensionManifest = {
   version: '1.0.0',
   displayName: 'Claude',
   description: 'Painéis de Claude Code que retomam a própria sessão.',
-  hosts: ['daemon'],
+  hosts: ['renderer', 'daemon'],
   optional: true,
 }

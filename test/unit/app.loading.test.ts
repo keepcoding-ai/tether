@@ -3,6 +3,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { hintOf, loadingStage, QueueOrder, sameHint, type LoadingInput } from '../../app/renderer/loading.ts'
+import { registerAgentUi } from '../../app/renderer/agent-ui.ts'
+import { claudeUi } from '../../extensions/claude/ui.ts'
+import { soulUi } from '../../extensions/soul/ui.ts'
+
+// The agent extensions' AgentUi, as the renderer host registers them at startup.
+registerAgentUi(claudeUi)
+registerAgentUi(soulUi)
 
 const slot = (over: Partial<SlotState> = {}): SlotState => ({ slotId: 's1', kind: 'claude', cwd: 'C:/w', status: 'starting', ...over })
 const input = (over: Partial<LoadingInput> = {}): LoadingInput => ({ daemonReady: true, slot: slot(), startPending: false, startError: false, ready: false, ...over })

@@ -10,6 +10,7 @@
 // ipcMain and the window in, so this is unit-tested with fakes.
 import type { BrowserWindow, WebContents } from 'electron'
 import { summaryOf, type ExtensionEntry } from '../../extensions/types.ts'
+import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts'
 import { activateExtensions, type ActivationResult } from '../shared/ext-activation.ts'
 import { applyMigrations, stateOf, withState } from '../shared/ext-migrations.ts'
 import { mainIpc, type MainIpcTransport } from '../shared/ext-ipc.ts'
@@ -86,10 +87,13 @@ export class MainExtensionHost {
     for (const install of this.webviewGuards) install(host)
   }
 
-  /** Turns an extension on or off for the next start (an id no index knows, or one that is not optional, is refused). */
+  /**
+   * Turns an extension on or off for the next start (an id no index knows, or one that is not optional, is refused). The
+   * daemon index counts too: an agent extension (claude, soul) has no main entry, and tetherd and the CLI read the same list.
+   */
   setEnabled(id: string, on: boolean): string[] {
     const s = this.deps.readSettings()
-    const optional = this.list.find(e => e.manifest.id === id)?.manifest.optional === true
+    const optional = [...this.list, ...daemonExtensions].find(e => e.manifest.id === id)?.manifest.optional === true
     if (!ID.test(id) || (!on && !optional)) return s.disabled
     const disabled = on ? s.disabled.filter(x => x !== id) : [...new Set([...s.disabled, id])]
     this.deps.writeSettings({ ...s, disabled })

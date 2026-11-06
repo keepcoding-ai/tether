@@ -46,6 +46,7 @@ import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
 import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
+import { registerAgentUi } from './agent-ui.ts'
 import type { ChoiceResolution, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
@@ -3038,6 +3039,9 @@ function activateRendererExtensions(): void {
       palette: {
         registerMode: provider => { paletteMode = provider; return add(toDisposable(() => { if (paletteMode === provider) paletteMode = undefined })) },
         showMode: () => palette.show('default'),
+      },
+      agents: {
+        register: ui => add(registerAgentUi(ui)),
       },
       chooser: {
         resolve: (itemId, fn) => {

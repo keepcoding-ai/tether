@@ -1,6 +1,7 @@
 // Phosphor icons (@phosphor-icons/core, MIT), inlined at build time: only the SVGs imported here end up in
 // the bundle (esbuild `text` loader, app/build.mjs). Every file carries fill="currentColor", so an icon
 // takes the colour of its text and follows the theme. One weight (regular); `fill` only for the status dot.
+import { agentTable } from './agent-ui.ts'
 import arrowsClockwise from '@phosphor-icons/core/assets/regular/arrows-clockwise.svg'
 import arrowsInLineVertical from '@phosphor-icons/core/assets/regular/arrows-in-line-vertical.svg'
 import arrowsOutSimple from '@phosphor-icons/core/assets/regular/arrows-out-simple.svg'
@@ -227,8 +228,8 @@ export type IconName = keyof typeof SVG
 
 export const ICON_NAMES = Object.keys(SVG) as IconName[]
 
-/** The agent's icon: Claude → sparkle, soul → ghost, shell → terminal window. */
-export const KIND_ICON: Record<SlotKind, IconName> = { claude: 'sparkle', soul: 'ghost', shell: 'terminal-window' }
+/** The agent's icon, from its extension's AgentUi (agent-ui.ts); shell and an agent with no AgentUi → terminal window. */
+export const KIND_ICON: Record<SlotKind, IconName> = agentTable<IconName>('terminal-window', ui => ui.icon as IconName, () => 'terminal-window')
 
 const templates = new Map<IconName, SVGSVGElement>()
 
