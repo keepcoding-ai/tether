@@ -37,6 +37,8 @@ const CASE_INSENSITIVE = /^(win|mac)/i.test(navigator.platform)
 const CHUNK = 400
 /** Project roots whose expanded folders are remembered (the oldest are forgotten). */
 const REMEMBERED_ROOTS = 50
+/** The longest a press holds the redraws back (a release the window never saw). */
+const PRESS_MAX_MS = 3000
 /** Joins a root and a path into a row key (a control character no path holds). */
 const KEY_SEP = '\u0001'
 
@@ -111,6 +113,15 @@ export class ExplorerView implements PadView {
   /** The name being edited in place; its folder's redraws wait until it ends (they would drop the input). */
   private editing: Editing | undefined
   private readonly deferred = new Set<string>()
+  /**
+   * A pointer press that started on the tree and has not ended yet. Rows replaced between the press and the release would
+   * make the browser drop the click (it is dispatched on the common ancestor of both targets), so the redraws wait for the
+   * release and run right after the click.
+   */
+  private pressed = false
+  private pressTimer: ReturnType<typeof setTimeout> | undefined
+  private renderWaits: { force: boolean } | undefined
+  private readonly onRelease = (ev: Event): void => { if (ev.type !== 'blur' || ev.target === window) this.release() }
 
   constructor(ui: TetherUi, host: PadHost, controls: ExplorerControls) {
     this.ui = ui
@@ -119,6 +130,8 @@ export class ExplorerView implements PadView {
     this.ipc = ui.ipc<ExplorerChannels>()
     for (const [root, dirs] of Object.entries(readState(host.state).expanded)) this.expanded.set(root, new Set(dirs))
     this.subs.push(ui.workspace.onDidChange(() => this.render()))
+    this.element.addEventListener('pointerdown', () => this.press(), true)
+    for (const type of ['pointerup', 'pointercancel', 'dragend', 'blur'] as const) window.addEventListener(type, this.onRelease, true)
     this.subs.push(this.ipc.on('changed', dirs => this.onDiskChanged(dirs)))
     this.subs.push(this.ipc.on('rootMissing', (root, missing) => this.onRootMissing(root, missing)))
     this.subs.push(this.ipc.on('watchFailed', (_root, message) => this.setNotice(message)))
@@ -211,9 +224,41 @@ export class ExplorerView implements PadView {
 
   dispose(): void {
     clearTimeout(this.typedTimer)
+    clearTimeout(this.pressTimer)
+    for (const type of ['pointerup', 'pointercancel', 'dragend', 'blur'] as const) window.removeEventListener(type, this.onRelease, true)
     this.disposed = true
     for (const s of this.subs) s.dispose()
     this.element.remove()
+  }
+
+  // ---------- a press in progress ----------
+
+  /** The pointer went down on the tree: its redraws wait (a release that never reaches the window ends the wait on its own). */
+  private press(): void {
+    this.pressed = true
+    clearTimeout(this.pressTimer)
+    this.pressTimer = setTimeout(() => this.release(), PRESS_MAX_MS)
+  }
+
+  /** The pointer is up: the click runs first, then the redraws that waited (a task later). */
+  private release(): void {
+    if (!this.pressed) return
+    this.pressed = false
+    clearTimeout(this.pressTimer)
+    setTimeout(() => this.flushWaiting(), 0)
+  }
+
+  private flushWaiting(): void {
+    if (this.disposed || this.pressed) return
+    const waits = this.renderWaits
+    this.renderWaits = undefined
+    for (const dir of [...this.deferred]) {
+      if (this.editing?.dir === dir) continue
+      this.deferred.delete(dir)
+      // A whole redraw draws every folder from the model, so it covers the waiting ones.
+      if (!waits) for (const row of this.expandedRowsOf(dir)) this.refill(row)
+    }
+    if (waits) this.render(waits.force)
   }
 
   // ---------- what the person does ----------
@@ -500,7 +545,7 @@ export class ExplorerView implements PadView {
       if (this.disposed) return
       if (next.error !== undefined && this.missing.has(path)) this.forget(path)
       if (JSON.stringify(prev) !== JSON.stringify(next)) {
-        if (this.editing?.dir === path) this.deferred.add(path)
+        if (this.editing?.dir === path || this.pressed) this.deferred.add(path)
         else for (const row of this.expandedRowsOf(path)) this.refill(row)
       }
       this.updateMissing()
@@ -832,6 +877,7 @@ export class ExplorerView implements PadView {
   // ---------- drawing ----------
 
   private render(force = false): void {
+    if (this.pressed) { this.renderWaits = { force: force || (this.renderWaits?.force ?? false) }; return }
     const folders = this.ui.workspace.folders()
     const sig = JSON.stringify(folders.map(f => [f.path, f.name, f.pinned, f.agents]))
     // Only the current project changed (a click, "seguir"): the rows stay as they are.
