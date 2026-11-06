@@ -1,12 +1,15 @@
 // `tether doctor`: checks the machine the way tether will use it and prints one line per check, in Portuguese:
 // OK / AVISO / ERRO plus a hint. The pure parts (`check*`, `formatReport`) take their facts as arguments so
-// the unit tests cover them without a real node/claude/soul; `runDoctor` gathers the facts.
+// the unit tests cover them without a real node/claude/soul; `runDoctor` gathers the core's facts and runs the checks
+// the daemon extensions contribute (TetherDaemon.doctor: claude's and soul's live in extensions/claude and
+// extensions/soul, which call the probes below).
 import { spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { cleanEnv, resolveClaudeCommand } from './agents/claude.ts'
 import { ENV_SOUL_REPORT, resolveSoulCommand } from './agents/soul.ts'
+import { contributedChecks } from './agents/load.ts'
 import { inspectRenamedNode, isNodeExecutable, type ExeStatus } from './core/exe.ts'
 import { processStartTime, startTimeMethod, type StartTimeMethod } from './core/liveness.ts'
 import { parseEventLine } from './core/store.ts'
@@ -26,7 +29,10 @@ export interface CheckResult {
   hint?: string
 }
 
-const HOOK_PATH = resolve(import.meta.dirname, 'report', 'claude-hook.mjs')
+/** The reporter script. Read on use: Electron main bundles this module as CommonJS (through the claude extension), where import.meta.dirname is undefined. */
+function hookPath(): string {
+  return resolve(import.meta.dirname, 'report', 'claude-hook.mjs')
+}
 export const MIN_NODE_MAJOR = 24
 
 // ---- pure checks ------------------------------------------------------------------------------
@@ -64,7 +70,7 @@ export interface HookProbe {
 
 export function checkHook(p: HookProbe): CheckResult {
   const name = 'hook do claude'
-  if (p.exitCode !== 0) return { level: 'ERRO', name, detail: `saiu com código ${p.exitCode}`, hint: `rode node "${HOOK_PATH}" SessionStart à mão com um JSON no stdin` }
+  if (p.exitCode !== 0) return { level: 'ERRO', name, detail: `saiu com código ${p.exitCode}`, hint: `rode node "${hookPath()}" SessionStart à mão com um JSON no stdin` }
   if (p.stdout !== '') return { level: 'ERRO', name, detail: 'escreveu no stdout (vai parar no contexto do Claude)', hint: 'o hook só pode escrever no jsonl do slot' }
   const ev = p.lines.map(parseEventLine).find((e) => e !== undefined)
   if (!ev) return { level: 'ERRO', name, detail: 'rodou mas não gravou o evento no jsonl do slot', hint: 'veja <TETHER_HOME>/tether.log; o hook grava em <TETHER_HOME>/slots/<slot>.jsonl' }
@@ -242,7 +248,7 @@ export function probeHook(): HookProbe {
   try {
     const payload = JSON.stringify({ session_id: sessionId, cwd: home, hook_event_name: 'SessionStart', source: 'startup' })
     const t0 = performance.now()
-    const r = spawnSync(process.execPath, [HOOK_PATH, 'SessionStart'], {
+    const r = spawnSync(process.execPath, [hookPath(), 'SessionStart'], {
       input: payload,
       encoding: 'utf8',
       env: { ...cleanEnv(), TETHER_HOME: home, TETHER_SLOT_ID: slotId },
@@ -284,7 +290,7 @@ function soulSourceText(command: string, args: string[]): string | undefined {
   return parts.join('\n')
 }
 
-function probeSoul(): CheckResult {
+export function probeSoul(): CheckResult {
   let command: string, args: string[]
   try { ({ command, args } = resolveSoulCommand()) } catch (e) { return { level: 'ERRO', name: 'soul', detail: (e as Error).message, hint: 'corrija TETHER_SOUL_CMD' } }
   const found = command !== 'soul' && (existsSync(command) || onPath(command) !== undefined)
@@ -295,15 +301,21 @@ function probeSoul(): CheckResult {
   return checkSoul({ command: args[0] ?? command, found: true, versionOutput: stdout, sourceText: soulSourceText(command, args) })
 }
 
+/** `claude --version` through the resolved command (the claude extension's check). */
+export function probeClaude(): CheckResult {
+  const claudeCmd = resolveClaudeCommand()
+  const claudeFound = existsSync(claudeCmd) || onPath('claude') !== undefined
+  return checkClaude(claudeCmd, claudeFound, claudeFound ? run(claudeCmd, ['--version'], cleanEnv()).stdout : undefined)
+}
+
+/** The real hook writing a sample event (the claude extension's check). */
+export function probeHookCheck(): CheckResult {
+  try { return checkHook(probeHook()) } catch (e) { return { level: 'ERRO', name: 'hook do claude', detail: (e as Error).message } }
+}
+
 export async function runDoctor(): Promise<CheckResult[]> {
   const results: CheckResult[] = []
   results.push(checkNode(process.version))
-
-  const claudeCmd = resolveClaudeCommand()
-  const claudeFound = existsSync(claudeCmd) || onPath('claude') !== undefined
-  results.push(checkClaude(claudeCmd, claudeFound, claudeFound ? run(claudeCmd, ['--version'], cleanEnv()).stdout : undefined))
-
-  try { results.push(checkHook(probeHook())) } catch (e) { results.push({ level: 'ERRO', name: 'hook do claude', detail: (e as Error).message }) }
 
   const home = tetherHome()
   results.push(probeHome(home))
@@ -321,8 +333,10 @@ export async function runDoctor(): Promise<CheckResult[]> {
   const answered = (await processStartTime(process.pid)) !== undefined
   results.push(checkStartTime({ method: startTimeMethod(), ms: Math.round(performance.now() - t0), answered }))
 
-  results.push(probeSoul())
-  results.push(checkClaudeEnv(process.env))
+  // The active agent extensions' checks (claude, its hook and CLAUDE* vars; soul), in activation order.
+  for (const check of contributedChecks()) {
+    try { results.push(await check()) } catch (e) { results.push({ level: 'ERRO', name: 'verificação de extensão', detail: (e as Error).message }) }
+  }
   results.push(checkTerminal({ env: process.env, stdoutIsTTY: process.stdout.isTTY === true, winptyOnPath: onPath('winpty') !== undefined }))
   return results
 }

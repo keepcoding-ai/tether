@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { defaultShell } from '../agents/shell.ts'
 import type { AgentName, SlotMeta } from './event.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
-import '../agents/builtin.ts'
+import '../agents/load.ts'
 
 export type ProfileAgent = AgentName | 'shell'
 

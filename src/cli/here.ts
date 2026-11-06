@@ -3,7 +3,7 @@
 // says who holds the slot while it runs, and the agent's exit code becomes ours.
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import '../agents/builtin.ts'
+import '../agents/load.ts'
 import { agentRegistry } from '../agents/registry.ts'
 import { shellAdapter } from '../agents/shell.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'

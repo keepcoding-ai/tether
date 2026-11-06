@@ -52,7 +52,7 @@ function installSlot(home: string, file: string, cwd: string): void {
 }
 
 describe('agent registry', () => {
-  test('claude and soul are registered by the core, with their adapters', () => {
+  test('claude and soul are registered by their extensions, with their adapters', () => {
     assert.deepEqual(agentRegistry.names().slice(0, 2), ['claude', 'soul'])
     assert.equal(agentRegistry.get('claude')!.adapter.name, 'claude')
     assert.equal(agentRegistry.get('soul')!.adapter.name, 'soul')
@@ -161,8 +161,8 @@ describe('tetherd with an unregistered agent', () => {
 })
 
 describe('daemon extension host', () => {
-  test('the committed index is empty in slice 0c', () => {
-    assert.equal(daemonIndex.length, 0)
+  test('the committed index holds the built-in agents, claude then soul (slice 4)', () => {
+    assert.deepEqual(daemonIndex.map((e) => e.manifest.id), ['claude', 'soul'])
   })
 
   test('an extension registers an agent, a launch middleware and a slot listener; dispose undoes them', async () => {

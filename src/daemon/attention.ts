@@ -14,7 +14,7 @@
 // Cleared by: the user typing into the slot (input that is not a terminal reply), `seen` (the pane got the
 // focus), a new launch and the process exit.
 
-import '../agents/builtin.ts'
+import '../agents/load.ts'
 import { agentRegistry } from '../agents/registry.ts'
 
 export type Attention = 'done' | 'waiting'

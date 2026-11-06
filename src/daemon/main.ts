@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { pidExists } from '../core/liveness.ts'
 import { tetherHome } from '../core/paths.ts'
 import { pingDaemon } from './client.ts'
+import { disabledExtensions } from '../agents/load.ts'
 import { DaemonExtensionHost } from './ext-host.ts'
 import { createGuard } from './guard.ts'
 import { pipePath } from './protocol.ts'
@@ -59,8 +60,10 @@ async function main(): Promise<void> {
     process.exit(code)
   }
 
-  // Extensions activate before the slots load: an agent they register must be known when slot metas are read.
-  const extHost = new DaemonExtensionHost({ home, log })
+  // Extensions activate before the slots load: an agent they register must be known when slot metas are read. One the
+  // person turned off (settings.json `extensions.disabled`) stays off until the next tetherd start: its slots are kept,
+  // listed as agent-unavailable.
+  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home) })
   extHost.activate()
 
   let daemon: Daemon

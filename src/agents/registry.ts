@@ -1,6 +1,7 @@
 // The agent registry (F9 §4.8): every agent tether can launch in a slot (except the built-in 'shell') is a
-// contribution registered here, by the core's built-ins (builtin.ts) or by a daemon extension through
-// TetherDaemon.agents. Same shape as the renderer's pane registry: register returns a disposable, a second
+// contribution a daemon extension registers through TetherDaemon.agents (claude and soul are the built-in extensions
+// extensions/claude and extensions/soul, F9 slice 4). tetherd activates its extensions at startup; any other process
+// (CLI, Electron main, doctor) gets them on its first read of the registry through the loader src/agents/load.ts sets. Same shape as the renderer's pane registry: register returns a disposable, a second
 // registration of the same name is refused. Readers never lose a slot over an unknown name: they accept any
 // non-empty string and ask the registry only when they need to launch (agent-unavailable otherwise).
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
@@ -28,6 +29,24 @@ export const AGENT_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/
 
 export class AgentRegistry {
   private readonly byName = new Map<string, AgentContribution>()
+  private loader: (() => void) | undefined
+  private loaded = false
+
+  /** Runs once, on the first read, unless someone already filled the registry (markLoaded). */
+  setLoader(loader: () => void): void {
+    this.loader = loader
+  }
+
+  /** The registry is being filled by a host of its own (tetherd's): the lazy loader never runs. */
+  markLoaded(): void {
+    this.loaded = true
+  }
+
+  private ensure(): void {
+    if (this.loaded || !this.loader) return
+    this.loaded = true
+    this.loader()
+  }
 
   register(agent: AgentContribution): IDisposable {
     if (!AGENT_NAME_RE.test(agent.name) || agent.name === 'shell') throw new Error(`nome de agente inválido: ${JSON.stringify(agent.name)}`)
@@ -40,19 +59,23 @@ export class AgentRegistry {
   }
 
   get(name: string): AgentContribution | undefined {
+    this.ensure()
     return this.byName.get(name)
   }
 
   has(name: string): boolean {
+    this.ensure()
     return this.byName.has(name)
   }
 
-  /** In registration order (the built-ins first): the order default profiles are listed in. */
+  /** In registration order (the daemon index's order: claude, soul, then the others): the order default profiles are listed in. */
   all(): AgentContribution[] {
+    this.ensure()
     return [...this.byName.values()]
   }
 
   names(): string[] {
+    this.ensure()
     return [...this.byName.keys()]
   }
 }

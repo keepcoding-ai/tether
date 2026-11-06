@@ -26,7 +26,7 @@ export interface TetherDaemon {
   agents: { register(agent: AgentContribution): IDisposable }
   /** Rewrites every launch plan (agents and shells), in registration order. F7: inject --mcp-config in every agent. */
   launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan): IDisposable }
-  /** Checks for `tether doctor` (collected here; the doctor reads them once it runs extensions, slice 4). */
+  /** Checks `tether doctor` runs after the core's (src/doctor.ts, through src/agents/load.ts). */
   doctor: { register(check: () => Promise<DaemonCheck>): IDisposable }
   /** Reads a key of <home>/settings.json (undefined when absent or unreadable). */
   settings: { get<T>(key: string): T | undefined }

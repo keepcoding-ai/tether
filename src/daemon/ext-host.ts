@@ -9,7 +9,6 @@ import { DisposableStore, toDisposable, type IDisposable } from '../../app/share
 import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts'
 import type { DaemonCheck, SlotEventKind, TetherDaemon } from './ext-api.ts'
 import type { ExtensionEntry } from '../../extensions/types.ts'
-import '../agents/builtin.ts'
 import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
@@ -43,6 +42,8 @@ export class DaemonExtensionHost implements IDisposable {
   }
 
   activate(): void {
+    // tetherd's own host fills the process registry: the lazy loader of the other processes (src/agents/load.ts) stays off.
+    if (!this.opts.extensions && !this.opts.agents) agentRegistry.markLoaded()
     const list = this.opts.extensions ?? daemonExtensions
     const disabled = new Set(this.opts.disabled ?? [])
     const byId = new Map(list.map((e) => [e.manifest.id, e]))

@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { AttentionState, attentionOptions, parseAttentionReport } from './attention.ts'
-import '../agents/builtin.ts'
+import '../agents/load.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import { shellAdapter } from '../agents/shell.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
