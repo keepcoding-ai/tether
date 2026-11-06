@@ -44,6 +44,12 @@ export interface SlotState {
   name?: string
   /** Folder of the current binding, else the slot's creation folder. */
   cwd: string
+  /**
+   * The folder the slot was created in (SlotMeta.cwd), fixed for the slot's life. `cwd` follows the binding, and Claude's
+   * SessionStart hook reports the agent's working directory at that moment (after a `cd` and a /clear or a compaction it
+   * is the subfolder), so the app's projects (F8) infer from this one. Absent on older daemons.
+   */
+  folder?: string
   status: SlotStatus
   pid?: number
   binding?: Binding

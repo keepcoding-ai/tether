@@ -6,6 +6,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { agentPanes, compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, followTarget, isEmptyChange, moveFolder, openFolder, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from '../../app/renderer/workspace.ts'
 
+import { currentBinding } from '../../src/core/store.ts'
+// @ts-expect-error -- plain .mjs (the hook runs without a build), no declaration file
+import { toEvent } from '../../src/report/claude-hook.mjs'
+
 const CI = true
 const A = 'C:\\work\\alpha'
 const B = 'C:\\work\\beta'
@@ -158,4 +162,13 @@ test('the palette commands: "Abrir pasta como projeto…" and the pin toggle (un
   assert.equal(pin.when?.(ctx), true)
   open.run('palette'); pin.run('palette')
   assert.deepEqual(calls, ['pick', `toggle ${A}`])
+})
+
+test('why the creation folder: a SessionStart after `cd` moves the binding cwd (SlotState.cwd), so inference must not use it', () => {
+  const meta = { v: 1, slotId: 'slot-1', agent: 'claude', cwd: A, createdAt: '2026-11-06T00:00:00Z' }
+  const ev = toEvent('SessionStart', { session_id: 's', cwd: `${A}\\sub`, source: 'compact' }, 'slot-1', '2026-11-06T00:01:00Z')
+  const binding = currentBinding([ev], meta as never)
+  assert.equal(binding?.cwd, `${A}\\sub`, 'the daemon state cwd follows the hook')
+  // main.ts feeds SlotState.folder (meta.cwd) as the pane folder: the project stays A.
+  assert.deepEqual(derive([claude('s1', meta.cwd)]).map(f => f.path), [A])
 })

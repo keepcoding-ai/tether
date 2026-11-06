@@ -450,7 +450,8 @@ const activePaneListeners = new Set<(info: PaneInfo | undefined) => void>()
 let lastActivePane: string | undefined
 
 function paneSources(): PaneSource[] {
-  return allPanels().map(p => { const s = slots.get(p.id); return s ? { id: p.id, kind: s.kind, cwd: s.cwd } : { id: p.id } })
+  // The creation folder (`folder`), not `cwd`: the binding's folder moves with a `cd` reported by a later SessionStart.
+  return allPanels().map(p => { const s = slots.get(p.id); return s ? { id: p.id, kind: s.kind, cwd: s.folder ?? s.cwd } : { id: p.id } })
 }
 
 /** Re-derives the folders from the panes, the slots and the pinned roots; listeners hear only a real change. */

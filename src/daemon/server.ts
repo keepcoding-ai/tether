@@ -219,6 +219,7 @@ class DaemonImpl implements Daemon {
       slotId: slot.meta.slotId,
       kind: slot.meta.agent,
       cwd: slot.binding?.cwd ?? slot.meta.cwd,
+      folder: slot.meta.cwd,
       status: slot.status,
     }
     if (slot.meta.name) s.name = slot.meta.name

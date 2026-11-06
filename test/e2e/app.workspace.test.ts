@@ -2,6 +2,7 @@
 // tetherd, no real agent: claude slots created with `start: false` give agent panes (kind 'claude', a folder) with no
 // process behind them.
 //   1. two agent panes in folder A → one project A, inferred, held by both; a plain terminal in folder C infers nothing;
+//      a SessionStart reporting A\sub (a `cd` then /clear) moves the slot's cwd but not the project;
 //   2. closing both agent panes → no project;
 //   3. "abrir pasta" B → pinned; opening B again → still one B, pinned, no dialog; an agent in B and unpinning makes B
 //      inferred, pinning again promotes it; the pinned root lands in layout.json (`workspace.pinned`);
@@ -9,7 +10,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -113,6 +114,16 @@ test('projects: inferred from agent panes only, gone with the last one, open = p
     // no agent process was started
     const states = await page.evaluate(() => window.__tether.slots().map(s => ({ id: s.slotId, status: s.status })))
     for (const id of [a1, a2]) assert.notEqual(states.find(s => s.id === id)?.status, 'running', 'the agent stays still')
+    // `cd` is not followed: Claude's SessionStart hook (after a `cd sub` and a /clear or a compaction) reports the subfolder,
+    // and the daemon moves the slot's cwd there; the project stays the folder the agent was opened in.
+    const sub = join(A, 'sub')
+    mkdirSync(sub)
+    const ev = { v: 1, ts: new Date().toISOString(), slotId: a1, agent: 'claude', kind: 'start', source: 'compact', sessionId: '00000000-0000-4000-8000-000000000001', cwd: sub, resume: { cwd: sub, args: ['--resume', '00000000-0000-4000-8000-000000000001'] } }
+    appendFileSync(join(home, 'slots', `${a1}.jsonl`), JSON.stringify(ev) + '\n')
+    await waitUntil(async () => (await page.evaluate(id => window.__tether.slots().find(s => s.slotId === id)?.cwd, a1))?.toLowerCase() === sub.toLowerCase(), 10_000, 'the slot cwd to follow the hook')
+    const moved = await page.evaluate(id => window.__tether.slots().find(s => s.slotId === id), a1)
+    assert.equal(moved!.folder?.toLowerCase(), A.toLowerCase(), 'folder stays the creation folder')
+    assert.deepEqual(await summary(page), ['alpha:inferred:2'], 'still one project A, held by both')
 
     // ---- 2. close both agent panes → gone ----
     await page.evaluate(id => window.__tether.detachPane(id), a1)

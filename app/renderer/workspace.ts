@@ -14,7 +14,9 @@ import type { Command } from './commands.ts'
 //
 // The rules (tether's, not VS Code's):
 //   - A project is INFERRED from an AI agent's pane only (slot kind !== 'shell'), from the folder the agent was opened in
-//     (SlotState.cwd). A `cd` inside the terminal is never followed (the slot's cwd does not change with it); a plain
+//     (SlotState.folder, the slot's creation folder; SlotState.cwd only on daemons without it). A `cd` is never followed:
+//     SlotState.cwd follows the binding, and Claude's SessionStart hook reports the folder the agent has `cd`'d into
+//     (on /clear, a compaction, a resume), so the caller passes the creation folder as `cwd` here; a plain
 //     terminal infers nothing. Only panes present in the window count (any desk, the drawer, a frames pad), running or not.
 //   - An inferred project goes away when no agent pane references it any more.
 //   - A PINNED project stays until it is closed (unpinned without agents). Opening a folder = open AND pin, idempotent.
