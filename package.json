@@ -12,7 +12,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "node --test \"test/unit/**/*.test.ts\"",
+    "test": "node --test --test-timeout=120000 \"test/unit/**/*.test.ts\"",
     "test:e2e": "node --test --test-concurrency=1 \"test/e2e/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
     "daemon": "node src/daemon/main.ts",
