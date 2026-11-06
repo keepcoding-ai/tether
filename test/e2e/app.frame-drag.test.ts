@@ -147,6 +147,18 @@ async function focusTerm(page: Page, id: string): Promise<void> {
   await page.waitForFunction(id => window.__tether.activeId() === id, id)
 }
 
+/** Waits until `selector`'s box is laid out (wider than a placeholder) and holds still across a few frames. */
+async function settled(page: Page, selector: string): Promise<void> {
+  await page.waitForFunction(sel => {
+    const w = window as unknown as { __settle?: { key: string; n: number } }
+    const r = document.querySelector(sel)?.getBoundingClientRect()
+    if (!r || r.width < 160 || r.height < 160) return false
+    const key = `${r.x},${r.y},${r.width},${r.height}`
+    w.__settle = w.__settle?.key === key ? { key, n: w.__settle.n + 1 } : { key, n: 0 }
+    return w.__settle.n >= 3
+  }, selector, { polling: 'raf', timeout: 5000 })
+}
+
 type Pt = { x: number; y: number }
 const tab = (id: string): string => `.tether-tab[data-slot="${id}"]`
 /** The content area of the group whose tab bar holds `id`'s tab. */
@@ -249,6 +261,9 @@ test('drag tabs between frames: reorder, into a frame, its edge, a note, a pad a
     await page.evaluate(id => window.__tether.togglePad(id), DESK_PAD)
     await page.waitForFunction(() => window.__tether.padFrames().some(p => p.shown && p.panes.length > 0))
     const seed = (await h.pads(page)).find(p => p.shown)!.panes[0]!
+    // The pad opens before its frame's dockview takes the pad's size (it starts at dockview's default box): aiming at
+    // that first box lands in the left edge band once the frame grows, a new group instead of a tab. Aim once it settled.
+    await settled(page, groupContent(seed, '.pad-frames'))
     await drag(page, await point(page, tab(a)), await point(page, groupContent(seed, '.pad-frames')), join(artifacts, 'frame-drag-pad.png'))
     await page.waitForFunction(a => window.__tether.padFrames().some(p => p.panes.includes(a)), a)
     assert.equal(await h.frameOf(page, a), undefined, 'a left the desk')
@@ -256,7 +271,8 @@ test('drag tabs between frames: reorder, into a frame, its edge, a note, a pad a
     await page.waitForFunction(a => document.activeElement?.closest('.panel')?.getAttribute('data-slot-id') === a, a)
     await mark(page, a, 'na-prancheta')
     await page.screenshot({ path: join(artifacts, 'frame-drag-pad-done.png') })
-    await drag(page, await point(page, tab(a), 0.5, 0.5), await point(page, groupContent(c), 0.94, 0.5))
+    // Grab the tab by its start: in a narrow group a long title is clipped and its middle sits under the group's actions.
+    await drag(page, await point(page, tab(a), 0.15, 0.5), await point(page, groupContent(c), 0.94, 0.5))
     await page.waitForFunction(a => window.__tether.frameOf(a) === 'frame-1', a)
     await page.waitForFunction(() => document.querySelectorAll('.pad-frames .frame.kbd-focused').length === 0 && document.querySelectorAll('#dock .frame.focused').length === 1)
     await page.waitForFunction(a => document.activeElement?.closest('.panel')?.getAttribute('data-slot-id') === a, a)
