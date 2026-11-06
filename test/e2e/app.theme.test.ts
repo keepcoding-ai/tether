@@ -164,7 +164,7 @@ test('app theme: claro / automático / escuro apply live to chrome, dockview and
 
     await createShellPanel(page, root)
     await createShellPanel(page, root)
-    await page.keyboard.press('Control+Shift+D') // side by side, so the screenshot shows both
+    await page.keyboard.press('Control+Alt+ArrowRight') // side by side, so the screenshot shows both
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 3)
     const ids = await hooks.ids(page)
     assert.equal(ids.length, 3)

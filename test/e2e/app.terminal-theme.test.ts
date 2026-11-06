@@ -162,7 +162,7 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     // 1. Defaults, with the bundled font loaded before the terminal opened.
     assert.deepEqual(await hooks.appearance(page), DEFAULT_APPEARANCE)
     const first = await createShellPanel(page, root)
-    await page.keyboard.press('Control+Shift+D')
+    await page.keyboard.press('Control+Alt+ArrowRight')
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 2)
     const ids = await page.evaluate(() => window.__tether.panelIds())
     assert.equal(ids.length, 2)

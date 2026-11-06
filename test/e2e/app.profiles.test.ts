@@ -4,7 +4,7 @@
 //   2. a panel opened with "Claude modo dev": the claude process' command line carries
 //      --dangerously-skip-permissions (+ --model haiku from TETHER_CLAUDE_ARGS), the tab and the header show
 //      the unsafe badge and the header names the profile;
-//   3. a Git Bash panel opens from the dialog and runs `echo $BASH_VERSION`; Ctrl+Shift+D splits it with the
+//   3. a Git Bash panel opens from the dialog and runs `echo $BASH_VERSION`; Ctrl+Alt+→ splits it with the
 //      SAME profile;
 //   4. the manager: a custom shell profile with an extra arg and an env var is saved; a panel opened with it
 //      has both (command line + `echo $VAR`); an invalid arg (--resume) shows the inline error and is not
@@ -266,7 +266,7 @@ test('profiles in the app: Novo painel by profile, unsafe badge, Git Bash, manag
     assert.equal(claudeSlot.profileName, 'Claude modo dev')
     assert.equal(claudeSlot.unsafe, true, 'the slot state flags the launch unsafe')
 
-    // ---- 3. Git Bash from the dialog; Ctrl+Shift+D keeps the profile ----
+    // ---- 3. Git Bash from the dialog; Ctrl+Alt+→ keeps the profile ----
     const idBash = await createPanel(page, 'git-bash', work)
     const bashSlot = (await hooks.slot(page, idBash))!
     assert.deepEqual([bashSlot.kind, bashSlot.profileId, bashSlot.profileName, bashSlot.unsafe ?? false], ['shell', 'git-bash', 'Git Bash', false])
@@ -274,7 +274,7 @@ test('profiles in the app: Novo painel by profile, unsafe badge, Git Bash, manag
     const ver = await bashEcho(page, idBash, '$BASH_VERSION', BASH_VERSION)
     t.diagnostic(`Git Bash: ${BASH_VERSION.exec(ver)![0]}`)
     await focusPanel(page, idBash)
-    await page.keyboard.press('Control+Shift+D')
+    await page.keyboard.press('Control+Alt+ArrowRight')
     await tabCount(page, 3)
     const idSplit = (await hooks.ids(page)).find(i => i !== idClaude && i !== idBash)!
     const split = (await hooks.slot(page, idSplit))!
