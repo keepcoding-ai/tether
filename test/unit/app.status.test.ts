@@ -89,7 +89,7 @@ describe('contracts', () => {
   })
 
   test('the brand is complete and the three host APIs expose it', () => {
-    assert.deepEqual(Object.keys(BRAND).sort(), ['accent', 'appId', 'icon', 'name', 'slug'])
+    assert.deepEqual(Object.keys(BRAND).sort(), ['accent', 'appId', 'icon', 'name', 'product', 'slug'])
     assert.match(BRAND.slug, /^[a-z][a-z0-9-]*$/)
     assert.match(BRAND.accent, /^#[0-9a-f]{6}$/i)
     assert.ok(BRAND.icon.startsWith('<svg') && BRAND.icon.includes('currentColor'))
