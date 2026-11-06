@@ -9,7 +9,8 @@ import { tempDirs } from './tmp.helpers.ts'
 // @ts-expect-error app/install.mjs is plain JavaScript (no declaration file)
 import { AUMID, BUNDLE_NAME, ForeignBundleError, defaultMacPrefix, installMacBundle, macPrefixes, readMacBundle, readMacBundles, registerMacBundle, uninstallMacBundle, uninstallMacBundles } from '../../app/install.mjs'
 // @ts-expect-error app/icon.mjs is plain JavaScript (no declaration file)
-import { encodeIcns, rasterize, readIcnsIndex } from '../../app/icon.mjs'
+import { encodeIcns, readIcnsIndex } from '../../app/icon.mjs'
+import { gradientRgba } from './icon.helpers.ts'
 
 const tmp = tempDirs('tether-install-')
 after(() => tmp.cleanup())
@@ -21,7 +22,7 @@ function fixture() {
   const dist = join(repo, 'app', 'dist')
   mkdirSync(dist, { recursive: true })
   writeFileSync(join(dist, 'main.cjs'), '// fake main\n')
-  writeFileSync(join(dist, 'tether.icns'), encodeIcns([16, 32].map((size) => ({ size, rgba: rasterize(size) }))))
+  writeFileSync(join(dist, 'tether.icns'), encodeIcns([16, 32].map((size) => ({ size, rgba: gradientRgba(size) }))))
   const electron = join(dir, "Electron's.app", 'Contents', 'MacOS', 'Electron')
   const prefix = join(dir, 'Applications')
   const args = { prefix, repo, dist, electron, version: '9.9.9', nodeDir: '/opt/node/bin' }

@@ -128,7 +128,7 @@ describe('app/shared/brand.ts', () => {
   test('the icon is the committed monogram, derived from brand/src/light/mask.svg and in step with it', () => {
     const svg = read(MASK_SOURCE)
     const committed = JSON.parse(read(MASK_ASSET)) as { source: string; sha256: string; icon: string }
-    assert.deepEqual(committed, maskAsset(svg), `${MASK_ASSET} is older than ${MASK_SOURCE}: run npm run app:build and commit it`)
+    assert.deepEqual(committed, maskAsset(svg), `${MASK_ASSET} is older than ${MASK_SOURCE}: run npm run brand:derive and commit it`)
     assert.equal(BRAND.icon, committed.icon)
     assert.ok(BRAND.icon.startsWith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">'))
     assert.doesNotMatch(BRAND.icon, /#[0-9a-fA-F]{3,8}\b/, 'no hard-coded colour')
