@@ -144,6 +144,8 @@ export interface BridgeHostDeps {
   brand: BridgeBrand
   nodeExe(): string | undefined
   log(msg: string): void
+  /** May this tetherd start the daemon (paths.ts warmupAllowed)? Default yes. The files are written either way. */
+  warm?: boolean
   /** Injected in the unit test. */
   importBundle?: ImportBundle
   fetch?: WarmupDeps['fetch']
@@ -158,6 +160,7 @@ export interface SetupReport {
   /** Capability keys seeded now ([] when the installation already had its own). */
   capabilities: string[]
   mcpWritten: boolean
+  /** `skipped`: this home may not start the daemon (deps.warm false), or the setup stopped before. */
   daemon: 'running' | 'started' | 'failed' | 'skipped'
   /** Why it stopped (already logged), when !ok. */
   problem?: string
@@ -203,7 +206,8 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
     }
     report.mcpWritten = writeMcpConfig(deps.home, mcpConfigOf(bridgeHome, bundlePath, deps.port))
     deps.log(`${mcpConfigPathOf(deps.home)} ${report.mcpWritten ? 'gravado' : 'inalterado'} (servidor ${MCP_SERVER_NAME}, porta ${deps.port})`)
-    report.daemon = await warmup.ensure()
+    if (deps.warm === false) deps.log(`aquecimento do daemon pulado: home fora do padrão sem TETHER_BRIDGE_PORT próprio (a porta ${deps.port} é da instalação padrão)`)
+    else report.daemon = await warmup.ensure()
     report.ok = true
     return report
   }

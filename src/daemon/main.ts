@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   // Extensions activate before the slots load: an agent they register must be known when slot metas are read. One the
   // person turned off (settings.json `extensions.disabled`) stays off until the next tetherd start: its slots are kept,
   // listed as agent-unavailable.
-  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home), process: 'tetherd' })
+  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home) })
   extHost.activate()
 
   let daemon: Daemon
@@ -88,6 +88,8 @@ async function main(): Promise<void> {
   writeFileSync(pidFilePath(home), `${process.pid}\n`)
   log(`started pid ${process.pid}, home ${home}`)
   log(`extensions: ${extHost.activated.length} active${extHost.failed.length ? `, ${extHost.failed.length} failed` : ''}`)
+  // Only the owner of the pipe gets here: the extensions' startup side effects (files, helper processes) run now.
+  extHost.emitStarted()
 
   const shutdown = (reason: string, code = 0): void => {
     log(`shutting down: ${reason}`)

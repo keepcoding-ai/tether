@@ -26,13 +26,14 @@ export interface TetherDaemon {
   readonly brand: Brand
   /** TETHER_HOME. */
   readonly home: string
-  /**
-   * Which process activated the extension: `tetherd` (the long-lived daemon that owns the slots; the place for
-   * side effects such as files written at startup or processes warmed up) or a `satellite` (the CLI, Electron main:
-   * they activate the daemon extensions only to read their agents and doctor checks, and run many times).
-   */
-  readonly process: 'tetherd' | 'satellite'
   agents: { register(agent: AgentContribution): IDisposable }
+  /**
+   * Runs `listener` once tetherd owns its pipe and pid file (after every extension activated): the place for side effects
+   * such as files written at startup or a helper process warmed up. The loser of a pipe race never gets here, and the
+   * CLI and Electron main (which activate the daemon extensions only to read their agents and checks) never fire it.
+   * A listener registered after the start runs at once.
+   */
+  onStarted(listener: () => void): IDisposable
   /** Rewrites every launch plan (agents and shells), in registration order. F7: inject --mcp-config in every agent. */
   launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan): IDisposable }
   /** Checks `tether doctor` runs after the core's (src/doctor.ts, through src/agents/load.ts). */

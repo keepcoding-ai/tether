@@ -27,14 +27,14 @@ export interface DaemonHostOptions {
   extensions?: readonly ExtensionEntry<TetherDaemon>[]
   /** Extension ids the person turned off. */
   disabled?: readonly string[]
-  /** `tetherd` in the daemon itself (src/daemon/main.ts); default `satellite` (CLI, Electron main through src/agents/load.ts). */
-  process?: 'tetherd' | 'satellite'
 }
 
 export class DaemonExtensionHost implements IDisposable {
   private readonly store = new DisposableStore()
   private readonly middlewares: Middleware[] = []
   private readonly slotListeners = new Set<SlotListener>()
+  private readonly startListeners = new Set<() => void>()
+  private started = false
   readonly checks: Array<() => Promise<DaemonCheck>> = []
   readonly activated: string[] = []
   readonly failed: { id: string; error: string }[] = []
@@ -94,6 +94,15 @@ export class DaemonExtensionHost implements IDisposable {
     return out
   }
 
+  /** tetherd owns its pipe and pid file (src/daemon/main.ts): the extensions' `onStarted` listeners run, once. Never called by the satellites. */
+  readonly emitStarted = (): void => {
+    if (this.started) return
+    this.started = true
+    for (const l of [...this.startListeners]) {
+      try { l() } catch (e) { this.opts.log(`onStarted listener failed: ${(e as Error).message}`) }
+    }
+  }
+
   /** Slot lifecycle fan-out (DaemonOptions.onSlot). */
   readonly emitSlot = (kind: SlotEventKind, slot: SlotState): void => {
     for (const l of [...this.slotListeners]) {
@@ -116,8 +125,12 @@ export class DaemonExtensionHost implements IDisposable {
       id,
       brand: BRAND,
       home,
-      process: this.opts.process ?? 'satellite',
       agents: { register: (agent) => own.add(agents.register(agent)) },
+      onStarted: (l) => {
+        if (this.started) { l(); return toDisposable(() => {}) }
+        this.startListeners.add(l)
+        return own.add(toDisposable(() => { this.startListeners.delete(l) }))
+      },
       launch: { use: (mw) => { this.middlewares.push(mw); return own.add(removing(this.middlewares, mw)) } },
       doctor: { register: (check) => { this.checks.push(check); return own.add(removing(this.checks, check)) } },
       settings: { get: <T>(key: string): T | undefined => readSetting<T>(home, key) },

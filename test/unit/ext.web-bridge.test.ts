@@ -17,7 +17,7 @@ import { createBridgeHost, defaultCapabilities, mcpConfigOf, seedCapabilities } 
 import { browsersFromOverride, classifyExe, detectBrowsers, extensionsUrlOf, parseStartMenuInternet } from '../../extensions/web-bridge/browsers.ts'
 import { activate as activateDaemon } from '../../extensions/web-bridge/daemon.ts'
 import { createInstaller } from '../../extensions/web-bridge/installer.ts'
-import { BRIDGE_PORT, bridgeHomeOf, bridgePortOf, extensionDirOf, MCP_SERVER_NAME, mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
+import { BRIDGE_PORT, bridgeHomeOf, bridgePortOf, extensionDirOf, MCP_SERVER_NAME, mcpConfigPathOf, warmupAllowed } from '../../extensions/web-bridge/paths.ts'
 import { daemonEnv, findNode } from '../../extensions/web-bridge/warmup.ts'
 import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
@@ -139,6 +139,16 @@ describe('web-bridge: browsers', () => {
     assert.equal(findNode({ TETHER_NODE: 'C:\\n\\node.exe' }, p => p === 'C:\\n\\node.exe'), 'C:\\n\\node.exe')
     const env = daemonEnv('C:\\h\\bridge', { PATH: 'x', SECRET_THING: 'y', ATRIUM_BRIDGE_KEY: 'z' })
     assert.deepEqual(env, { PATH: 'x', ATRIUM_BRIDGE_HOME: 'C:\\h\\bridge' })
+  })
+
+  test('warmupAllowed: the default home may start the daemon; another home only with an explicit test port', () => {
+    const local = 'C:\\Users\\x\\AppData\\Local'
+    assert.equal(warmupAllowed({ LOCALAPPDATA: local }), true, 'no TETHER_HOME')
+    assert.equal(warmupAllowed({ LOCALAPPDATA: local, TETHER_HOME: 'c:\\users\\x\\appdata\\local\\tether\\' }), process.platform === 'win32', 'the default path spelled differently')
+    assert.equal(warmupAllowed({ LOCALAPPDATA: local, TETHER_HOME: 'C:\\tmp\\tether-test' }), false, 'a temp home without a port')
+    assert.equal(warmupAllowed({ LOCALAPPDATA: local, TETHER_HOME: 'C:\\tmp\\tether-test', TETHER_BRIDGE_PORT: '50123' }), true, 'a temp home with its own port')
+    assert.equal(warmupAllowed({ LOCALAPPDATA: local, TETHER_HOME: 'C:\\tmp\\tether-test', TETHER_BRIDGE_PORT: String(BRIDGE_PORT) }), false, 'the default port is never a test port')
+    assert.equal(warmupAllowed({ LOCALAPPDATA: local, TETHER_HOME: 'C:\\tmp\\tether-test', TETHER_BRIDGE_PORT: 'abc' }), false, 'an invalid port is no port')
   })
 })
 
@@ -320,6 +330,18 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     assert.equal(mcpConfigOf('H', 'B', 1).mcpServers['tether-bridge']!.env.ATRIUM_BRIDGE_PORT, '1')
   })
 
+  test('warm: false writes everything and starts nothing (a second home without its own port)', async () => {
+    const home = tmp.make()
+    const log: string[] = []
+    const spawns: unknown[][] = []
+    const host = createBridgeHost({ home, vendorDir, port: 48134, brand, nodeExe: () => 'C:\\fake\\node.exe', log: m => log.push(m), warm: false, fetch: async () => new Response('', { status: 503 }), spawnDaemon: (...a) => { spawns.push(a); return 1 }, sleep: async () => {} })
+    const r = await host.setup()
+    assert.deepEqual(r, { ok: true, installed: true, capabilities: ['agentWindows', 'evaluate'], mcpWritten: true, daemon: 'skipped' })
+    assert.deepEqual(spawns, [])
+    assert.ok(existsSync(join(bridgeHomeOf(home), 'api.key')) && existsSync(mcpConfigPathOf(home)))
+    assert.ok(log.some(l => l.includes('aquecimento do daemon pulado')), log.join('\n'))
+  })
+
   test('a corrupted vendor copy writes nothing and says so', async () => {
     const home = tmp.make()
     const copy = join(tmp.make(), 'vendor')
@@ -336,24 +358,27 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     assert.equal(daemon!.level, 'AVISO')
   })
 
-  test('activate(): a satellite process only registers the two doctor checks; an empty home reads as AVISO', async () => {
+  test('activate(): registers the two doctor checks and waits for onStarted; nothing is written before (a satellite never starts); an empty home reads as AVISO', async () => {
     const home = tmp.make()
     const checks: Array<() => Promise<DaemonCheck>> = []
+    const started: Array<() => void> = []
     const log: string[] = []
     const api: TetherDaemon = {
-      id: 'web-bridge', brand: BRAND, home, process: 'satellite',
+      id: 'web-bridge', brand: BRAND, home,
       agents: { register: () => toDisposable(() => {}) },
       launch: { use: () => toDisposable(() => {}) },
       doctor: { register: c => { checks.push(c); return toDisposable(() => {}) } },
+      onStarted: l => { started.push(l); return toDisposable(() => {}) },
       settings: { get: () => undefined },
       log: m => log.push(m),
       onSlot: () => toDisposable(() => {}),
     }
     const disposables = activateDaemon(api)
-    assert.equal(disposables.length, 2)
+    assert.equal(disposables.length, 3)
     assert.equal(checks.length, 2)
+    assert.equal(started.length, 1, 'the setup waits for the start')
     await new Promise(r => setTimeout(r, 50))
-    assert.ok(!existsSync(bridgeHomeOf(home)) && !existsSync(mcpConfigPathOf(home)), 'a satellite writes nothing')
+    assert.ok(!existsSync(bridgeHomeOf(home)) && !existsSync(mcpConfigPathOf(home)), 'nothing written before the start')
     assert.deepEqual(log, [])
     const install = await checks[0]!()
     assert.equal(install.level, 'AVISO')

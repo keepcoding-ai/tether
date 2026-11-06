@@ -5,8 +5,9 @@
 //                               over it and never a second "Load unpacked" (design §1.3)
 //   <home>/mcp/tether-bridge.json  the --mcp-config file the agents receive (C3): paths and env only, never a secret
 // With the default home (%LOCALAPPDATA%\tether) these are %LOCALAPPDATA%\tether\bridge and %LOCALAPPDATA%\tether\web-bridge\current.
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { BRAND } from '../../app/shared/brand.ts'
+import { tetherHome } from '../../src/core/paths.ts'
 
 /** The daemon's port: the bridge's default is 47821 (the Atrium installation); tether's own installation sits ten above it (D9). */
 export const BRIDGE_PORT = 47831
@@ -22,6 +23,21 @@ export const mcpConfigPathOf = (home: string): string => join(home, 'mcp', `${MC
 export function bridgePortOf(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.TETHER_BRIDGE_PORT)
   return Number.isInteger(n) && n > 0 && n <= 65535 ? n : BRIDGE_PORT
+}
+
+/**
+ * Whether this tetherd may START the bridge daemon. On the default home (no TETHER_HOME, or the default path), yes: the
+ * installation is the person's. On another home, only with an explicit TETHER_BRIDGE_PORT other than the default port: a
+ * second home (a test's, a trial's) must never take the default port with its own keys while the person's daemon happens
+ * to be down. The files (config, api.key, the MCP file) are written either way; they stay inside the home.
+ */
+export function warmupAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  const port = bridgePortOf(env)
+  if (env.TETHER_BRIDGE_PORT !== undefined && Number(env.TETHER_BRIDGE_PORT) === port && port !== BRIDGE_PORT) return true
+  const home = env.TETHER_HOME?.trim()
+  if (!home) return true
+  const norm = (p: string): string => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p))
+  return norm(home) === norm(tetherHome({ ...env, TETHER_HOME: undefined }))
 }
 
 export const healthUrl = (port: number): string => `http://127.0.0.1:${port}/health`
