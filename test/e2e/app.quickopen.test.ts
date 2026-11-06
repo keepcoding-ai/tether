@@ -10,6 +10,9 @@
 // (System32), no rg on PATH, the pane in a folder that is not a git repository: Ctrl+P still lists with the
 // app's rg (.gitignore honoured outside git: only rg does that); then a main process without the search handler
 // (a window reloaded over an older main) makes the box say why instead of keeping the hint.
+// Third test (F8 slice 6): Ctrl+P is scoped to the current project: two pinned projects alpha and beta, a pane in alpha's
+// subfolder lists alpha's files only and the field's placeholder names "alpha"; a pane in beta lists beta's; a pane outside
+// every project lists its own folder.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -34,6 +37,7 @@ type Hooks = {
   notes(): Snap[]
   note(id: string): Snap | undefined
   groupOf(id: string): string | undefined
+  openFolder(path: string): void
 }
 declare const window: { __tether: Hooks; tether: { ext: { invoke(id: string, channel: string, ...args: unknown[]): Promise<unknown> } } }
 type El = { textContent: string | null; dataset: Record<string, string>; getAttribute(n: string): string | null; querySelector(s: string): El | null }
@@ -293,6 +297,70 @@ test('app quick open: launched outside the repo (cwd System32, no rg on PATH) it
     const deadline = Date.now() + 10_000
     while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
     for (const d of [home, dir]) for (let i = 0; i < 5; i++) {
+      try { rmSync(d, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})
+
+test('app quick open (F8 slice 6): Ctrl+P searches the project of the focused pane, names it in the field, and falls back to the pane folder', { timeout: 240_000 }, async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
+  assert.equal(build.status, 0, 'app build failed')
+  const home = mkdtempSync(join(tmpdir(), 'tether-quickopen-proj-'))
+  const base = mkdtempSync(join(tmpdir(), 'tether-qo-proj-'))
+  const A = join(base, 'alpha')
+  const B = join(base, 'beta')
+  const C = join(base, 'gamma')
+  const expected = { alpha: ['a-only.ts', 'a-deep.ts'], beta: ['b-only.ts'], gamma: ['c-only.ts'] }
+  for (const [p, text] of Object.entries({ 'alpha/a-only.ts': 'a', 'alpha/sub/a-deep.ts': 'a', 'beta/b-only.ts': 'b', 'gamma/c-only.ts': 'c' })) {
+    mkdirSync(dirname(join(base, p)), { recursive: true }); writeFileSync(join(base, p), text)
+  }
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home))
+    daemons.push(await claim((await page.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    await page.evaluate(([a, b]) => { window.__tether.openFolder(a!); window.__tether.openFolder(b!) }, [A, B])
+
+    const panes: Record<string, string> = {}
+    for (const [name, cwd] of [['alpha', join(A, 'sub')], ['beta', B], ['gamma', C]] as const) {
+      const before = await page.evaluate(() => window.__tether.panelIds())
+      await createShell(page, cwd)
+      panes[name] = (await page.evaluate(() => window.__tether.panelIds())).find(id => !before.includes(id))!
+    }
+    const listed = async (): Promise<string[]> => (await paletteState(page)).shown.map(p => p.split(/[\\/]/).at(-1)!).sort()
+
+    for (const [name, files, placeholder] of [
+      ['alpha', expected.alpha, /no projeto alpha/],
+      ['beta', expected.beta, /no projeto beta/],
+      ['gamma', expected.gamma, /em gamma/],
+    ] as const) {
+      await focusPane(page, panes[name]!)
+      await page.keyboard.press('Control+P')
+      await paletteOpen(page, true)
+      await page.locator('#palette-input').fill('')
+      await page.keyboard.type('.ts')
+      await page.waitForFunction(n => document.querySelectorAll('#palette-list li.pal-item[data-file]').length === n, files.length, { timeout: 15_000 })
+      await sleep(400)
+      assert.deepEqual(await listed(), [...files].sort(), `${name}: only its own files`)
+      assert.match((await page.locator('#palette-input').getAttribute('placeholder')) ?? '', placeholder, `${name}: the scope is named`)
+      await page.keyboard.press('Escape')
+      await paletteOpen(page, false)
+    }
+    // The commands mode puts the field's own placeholder back.
+    await page.keyboard.press('Control+Shift+P')
+    await paletteOpen(page, true)
+    assert.doesNotMatch((await page.locator('#palette-input').getAttribute('placeholder')) ?? '', /no projeto|em gamma/)
+    await page.keyboard.press('Escape')
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (const d of [home, base]) for (let i = 0; i < 5; i++) {
       try { rmSync(d, { recursive: true, force: true }); break } catch { await sleep(300) }
     }
   }

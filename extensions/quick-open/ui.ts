@@ -1,5 +1,6 @@
-// Quick Open (Ctrl+P), the renderer side: the palette's box without `>`. The files under the focused pane's opening
-// folder (main lists and ranks them with VS Code's scorer: app/main/file-index.ts), the recently opened ones on top, as
+// Quick Open (Ctrl+P), the renderer side: the palette's box without `>`. The files of the current project, that is the
+// project that contains the focused pane's folder, else that folder itself, else the explorer's current project (F8: the
+// scope is named in the field's placeholder). Main lists and ranks them with VS Code's scorer (app/main/file-index.ts), the recently opened ones on top, as
 // VS Code shows "recently opened" above "file results". `file:42` / `file:42:7` opens at the line and column.
 // Enter opens in the focused pane's tab group (a tab already showing the file is focused, not duplicated), Ctrl+Enter
 // beside it; what a file opens as is the core's (app/renderer/file-open.ts) and the openers' (the note's).
@@ -13,12 +14,20 @@ import { failedResult, fileIcon, type LineColumn, listFailureText, parseLineSuff
 const HISTORY_KEY = 'tether.quickOpen.history'
 const ICON_SET = new Set<string>(ICON_NAMES)
 
+/** Where the box searches: a project (its name is shown), a plain folder, or nothing (main falls back to the notes folder). */
+export interface QuickOpenScope {
+  root: string | undefined
+  kind: 'project' | 'folder' | 'none'
+  /** The project's or the folder's name; empty for 'none'. */
+  name: string
+}
+
 export interface QuickOpenHost {
-  /** The focused pane's opening folder (a terminal's cwd, a note's folder, an empty pane's suggestion); undefined without a pane. */
-  paneCwd(): string | undefined
-  /** The main side of the extension (extensions/quick-open/ipc.ts). */
-  search(paneCwd: string | undefined, query: string, recent: string[]): Promise<QuickOpenResult | null>
-  refresh(paneCwd: string | undefined): void
+  /** The scope now: the project holding the focused pane's folder, else that folder, else the explorer's current project. */
+  scope(): QuickOpenScope
+  /** The main side of the extension (extensions/quick-open/ipc.ts); `root` is the folder to list (undefined: the notes folder). */
+  search(root: string | undefined, query: string, recent: string[]): Promise<QuickOpenResult | null>
+  refresh(root: string | undefined): void
   end(): void
   /** Opens a file the way the core does (inspect, an opener, the system's program). */
   openFile(path: string, opts: OpenFileOptions): Promise<void>
@@ -28,6 +37,11 @@ export interface QuickOpenSearch {
   result: QuickOpenResult
   position: LineColumn | undefined
   query: string
+}
+
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string): string => p.replace(/[\\/]+$/, '').replace(/\\/g, '/')
+  return caseSensitivePaths() ? norm(a) === norm(b) : norm(a).toLowerCase() === norm(b).toLowerCase()
 }
 
 function caseSensitivePaths(): boolean {
@@ -54,7 +68,7 @@ export class QuickOpen {
   /** The box opened in this mode: main starts a search session (lists the root now). */
   begin(): void {
     // Best effort: whatever fails here fails the search too, which says why in the box.
-    try { this.host.refresh(this.host.paneCwd()) } catch (err) { console.error('quick open:', err) }
+    try { this.host.refresh(this.host.scope().root) } catch (err) { console.error('quick open:', err) }
   }
 
   /** The box closed: main drops the session's list and cache. */
@@ -65,7 +79,7 @@ export class QuickOpen {
   /** Searches; null when a newer search replaced this one (the box shows that one). A failure comes back as a result with `error`. */
   async search(text: string): Promise<QuickOpenSearch | null> {
     const { query, position } = parseLineSuffix(text)
-    const cwd = this.host.paneCwd()
+    const cwd = this.host.scope().root
     let result: QuickOpenResult | null
     try {
       result = await this.host.search(cwd, query, this.history())
@@ -76,6 +90,19 @@ export class QuickOpen {
     if (!result) return null
     this.last = { result, position, query }
     return this.last
+  }
+
+  /** The field's placeholder: it names the scope, so the person knows where the search looks. */
+  placeholder(): string {
+    const { kind, name } = this.host.scope()
+    const where = kind === 'project' ? ` no projeto ${name}` : kind === 'folder' ? ` em ${name}` : ''
+    return `Procurar arquivo${where} pelo nome (arquivo:linha vai à linha); > procura comandos`
+  }
+
+  /** "em <folder>", or "no projeto <name>" when the root searched is the current project's. */
+  private inWhere(root: string): string {
+    const scope = this.host.scope()
+    return scope.kind === 'project' && scope.root !== undefined && samePath(scope.root, root) ? `no projeto ${scope.name}` : `em ${root}`
   }
 
   /** The rows for a search, under the two separators; returns how many items there are. */
@@ -122,9 +149,9 @@ export class QuickOpen {
     if (!s) return 'Procurando arquivos…'
     const where = s.result.root
     if (s.result.error !== undefined) return `Não consegui listar os arquivos${where ? ` de ${where}` : ''}: ${listFailureText(s.result.error)}`
-    if (s.query.trim() === '') return `Digite para procurar arquivos em ${where}. Digite > para procurar um comando.`
+    if (s.query.trim() === '') return `Digite para procurar arquivos ${this.inWhere(where)}. Digite > para procurar um comando.`
     if (s.result.pending && s.result.total === 0) return `Listando os arquivos de ${where}…`
-    return `Nenhum arquivo para “${s.query.trim()}” em ${where}.`
+    return `Nenhum arquivo para “${s.query.trim()}” ${this.inWhere(where)}.`
   }
 
   /** Opens the file of a row. */

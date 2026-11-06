@@ -45,6 +45,8 @@ export interface PaletteModeProvider {
   command: string
   /** The empty box, before anything is typed. */
   hint: string
+  /** The field's placeholder while the box is in this mode (the scope of the search, e.g. the project); absent: the box's own. */
+  placeholder?(): string | undefined
   /** While the first answer is on its way. */
   searchingText: string
   /** The box opened in this mode: a fresh session. */
@@ -69,6 +71,8 @@ export class CommandPalette {
   /** The mode without `>`, when an extension registered one (quick open: files of the focused pane's folder). */
   private readonly provider: () => PaletteModeProvider | undefined
   private fileSeq = 0
+  /** The field's own placeholder (the markup's), put back whenever the mode shows none of its own. */
+  private readonly basePlaceholder: string
   private pollTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(dialog: HTMLDialogElement, registry: CommandRegistry, provider: () => PaletteModeProvider | undefined = () => undefined) {
@@ -76,6 +80,7 @@ export class CommandPalette {
     this.registry = registry
     this.provider = provider
     this.input = dialog.querySelector<HTMLInputElement>('input')!
+    this.basePlaceholder = this.input.placeholder
     this.list = dialog.querySelector<HTMLUListElement>('ul')!
     this.empty = dialog.querySelector<HTMLElement>('.pal-empty')!
     this.input.addEventListener('input', () => this.render())
@@ -187,6 +192,7 @@ export class CommandPalette {
   private render(): void {
     const { mode, query } = parsePaletteInput(this.input.value)
     const provider = this.provider()
+    this.input.placeholder = (mode === 'default' ? provider?.placeholder?.() : undefined) ?? this.basePlaceholder
     if (mode === 'default' && provider) {
       // Coming from the command list (or a closed box): its rows go now, not when main answers.
       if (this.dialog.dataset.mode !== mode || this.ranked.length > 0) {
