@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   // Extensions activate before the slots load: an agent they register must be known when slot metas are read. One the
   // person turned off (settings.json `extensions.disabled`) stays off until the next tetherd start: its slots are kept,
   // listed as agent-unavailable.
-  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home) })
+  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home), process: 'tetherd' })
   extHost.activate()
 
   let daemon: Daemon

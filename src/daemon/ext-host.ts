@@ -27,6 +27,8 @@ export interface DaemonHostOptions {
   extensions?: readonly ExtensionEntry<TetherDaemon>[]
   /** Extension ids the person turned off. */
   disabled?: readonly string[]
+  /** `tetherd` in the daemon itself (src/daemon/main.ts); default `satellite` (CLI, Electron main through src/agents/load.ts). */
+  process?: 'tetherd' | 'satellite'
 }
 
 export class DaemonExtensionHost implements IDisposable {
@@ -114,6 +116,7 @@ export class DaemonExtensionHost implements IDisposable {
       id,
       brand: BRAND,
       home,
+      process: this.opts.process ?? 'satellite',
       agents: { register: (agent) => own.add(agents.register(agent)) },
       launch: { use: (mw) => { this.middlewares.push(mw); return own.add(removing(this.middlewares, mw)) } },
       doctor: { register: (check) => { this.checks.push(check); return own.add(removing(this.checks, check)) } },

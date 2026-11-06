@@ -3,14 +3,20 @@
 //   <home>/bridge/              the bridge's home (ATRIUM_BRIDGE_HOME of everything tether launches): config.json, api.key, daemon.pid, daemon.log
 //   <home>/web-bridge/current/  the extension folder the person loads in the browser; a FIXED path, so an update is a copy
 //                               over it and never a second "Load unpacked" (design §1.3)
+//   <home>/mcp/tether-bridge.json  the --mcp-config file the agents receive (C3): paths and env only, never a secret
 // With the default home (%LOCALAPPDATA%\tether) these are %LOCALAPPDATA%\tether\bridge and %LOCALAPPDATA%\tether\web-bridge\current.
 import { join } from 'node:path'
+import { BRAND } from '../../app/shared/brand.ts'
 
 /** The daemon's port: the bridge's default is 47821 (the Atrium installation); tether's own installation sits ten above it (D9). */
 export const BRIDGE_PORT = 47831
 
 export const bridgeHomeOf = (home: string): string => join(home, 'bridge')
 export const extensionDirOf = (home: string): string => join(home, 'web-bridge', 'current')
+
+/** The MCP server's name, the prefix of the agents' tools (`mcp__tether-bridge__*`): ATRIUM_BRIDGE_SERVER_NAME of the shell. */
+export const MCP_SERVER_NAME = `${BRAND.slug}-bridge`
+export const mcpConfigPathOf = (home: string): string => join(home, 'mcp', `${MCP_SERVER_NAME}.json`)
 
 /** The port in force: `TETHER_BRIDGE_PORT` (a development or test knob, never a setting) or the fixed one. */
 export function bridgePortOf(env: NodeJS.ProcessEnv = process.env): number {

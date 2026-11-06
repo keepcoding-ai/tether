@@ -7,9 +7,10 @@ import { resolve } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { browsersFromOverride, detectBrowsers, type DetectedBrowser } from './browsers.ts'
-import { createInstaller, findNode } from './installer.ts'
+import { createInstaller } from './installer.ts'
 import type { WebBridgeChannels } from './ipc.ts'
 import { bridgePortOf } from './paths.ts'
+import { findNode } from './warmup.ts'
 
 export { manifest } from './manifest.ts'
 

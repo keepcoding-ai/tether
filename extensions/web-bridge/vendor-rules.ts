@@ -17,7 +17,8 @@ export interface BuildInfo {
   name: string
   version: string
   extensionId: string
-  brand?: { slug: string; name: string; shortName?: string; color?: string }
+  /** `capabilities`: the package's defaults for config.capabilities (f7-bridge-marca §1.3); absent in builds before it. */
+  brand?: { slug: string; name: string; shortName?: string; color?: string; capabilities?: Record<string, unknown> }
   bundle: { file: string; sha256: string; bytes: number }
   extension: { dir: string; sha256: string; files: number }
 }

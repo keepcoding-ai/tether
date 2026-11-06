@@ -26,6 +26,12 @@ export interface TetherDaemon {
   readonly brand: Brand
   /** TETHER_HOME. */
   readonly home: string
+  /**
+   * Which process activated the extension: `tetherd` (the long-lived daemon that owns the slots; the place for
+   * side effects such as files written at startup or processes warmed up) or a `satellite` (the CLI, Electron main:
+   * they activate the daemon extensions only to read their agents and doctor checks, and run many times).
+   */
+  readonly process: 'tetherd' | 'satellite'
   agents: { register(agent: AgentContribution): IDisposable }
   /** Rewrites every launch plan (agents and shells), in registration order. F7: inject --mcp-config in every agent. */
   launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan): IDisposable }
