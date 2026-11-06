@@ -4,6 +4,7 @@
 // (the main side reads one folder at a time on the bus `ext:explorer:*`) and opening a file in the editor. The pad id and
 // the command ids are in people's layout.json and keybindings.json and never change. Its shape mirrors VS Code's
 // files.contribution (@7faf984): a view container on the left, "Open Folder" on the empty view, `explorer.focus`.
+// Slice 5: the file operations (new file/folder, rename, trash, copy path, "Novo painel aqui"), on the selected row.
 import type { ExtensionManifest } from '../types.ts'
 
 const EXPLORER = 'Explorador'
@@ -22,6 +23,7 @@ export const manifest: ExtensionManifest = {
     settings: {
       follow: { type: 'boolean', default: true, title: 'Seguir o agente ativo no explorador' },
       autoReveal: { type: 'boolean', default: false, title: 'Revelar o arquivo ativo no explorador' },
+      confirmDelete: { type: 'boolean', default: true, title: 'Confirmar antes de mover para a lixeira' },
     },
     commands: [
       { command: 'explorer.focus', title: 'Explorador: focar', category: EXPLORER, icon: 'files' },
@@ -30,6 +32,13 @@ export const manifest: ExtensionManifest = {
       { command: 'explorer.refresh', title: 'Explorador: atualizar', category: EXPLORER, icon: 'arrows-clockwise' },
       { command: 'explorer.collapse-all', title: 'Explorador: recolher tudo', category: EXPLORER, icon: 'arrows-in-line-vertical' },
       { command: 'explorer.follow', title: 'Explorador: seguir o agente ativo (liga/desliga)', category: EXPLORER, icon: 'target' },
+      { command: 'explorer.new-file', title: 'Explorador: novo arquivo…', category: EXPLORER, icon: 'file-plus' },
+      { command: 'explorer.new-folder', title: 'Explorador: nova pasta…', category: EXPLORER, icon: 'folder-plus' },
+      { command: 'explorer.rename', title: 'Explorador: renomear…', category: EXPLORER, icon: 'pencil-simple' },
+      { command: 'explorer.delete', title: 'Explorador: mover para a lixeira', category: EXPLORER, icon: 'trash' },
+      { command: 'explorer.copy-path', title: 'Explorador: copiar caminho', category: EXPLORER, icon: 'copy' },
+      { command: 'explorer.copy-relative-path', title: 'Explorador: copiar caminho relativo', category: EXPLORER, icon: 'copy' },
+      { command: 'explorer.new-pane', title: 'Explorador: novo painel aqui…', category: EXPLORER, icon: 'terminal-window' },
       { command: 'explorer.auto-reveal', title: 'Explorador: revelar o arquivo ativo (liga/desliga)', category: EXPLORER, icon: 'target' },
     ],
     keybindings: [

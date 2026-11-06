@@ -94,3 +94,20 @@
 .xp-recent-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .xp-recent-name { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .xp-recent-dir { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--fg-dim); }
+
+/* ---- slice 5: a name edited in place (new file/folder, rename), VS Code's input box with its validation message ---- */
+.xp-row.xp-edit { cursor: default; height: auto; min-height: 26px; align-items: flex-start; padding-top: 2px; padding-bottom: 2px; }
+.xp-row.xp-edit > .xp-twist, .xp-row.xp-edit > .xp-ico { margin-top: 3px; }
+.xp-row:has(.xp-edit-box) { height: auto; min-height: 26px; }
+.xp-edit-box { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.xp-input {
+  width: 100%; min-width: 0; height: 22px; padding: 0 5px; box-sizing: border-box; font: inherit; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; outline: none; user-select: text;
+}
+.xp-input.invalid { border-color: var(--err); }
+.xp-validate {
+  margin-top: 2px; padding: 4px 6px; font-size: 12px; line-height: 1.35; white-space: normal; border-radius: 3px;
+  color: var(--fg); background: color-mix(in srgb, var(--err) 14%, var(--bg)); border: 1px solid var(--err);
+}
+.xp-validate.warning { background: color-mix(in srgb, var(--warn) 14%, var(--bg)); border-color: var(--warn); }
+.xp-validate[hidden] { display: none; }

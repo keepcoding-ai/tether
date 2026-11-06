@@ -9,8 +9,17 @@ export type { WatchStats } from './watchers.ts'
 /** A folder read: its entries (excluded names dropped, folders first), or why it could not be (`missing`: the folder is gone). */
 export type ReadDirResult = { ok: true; entries: Entry[] } | { ok: false; missing: boolean; message: string }
 
+/** A file operation's outcome: what went wrong, in the person's words. */
+export type OpResult = { ok: true } | { ok: false; message: string }
+
 export interface ExplorerChannels {
   invoke: {
+    /** A new empty file or folder (the folders on the way are made); never over an existing one. Only inside the roots. */
+    create: (path: string, kind: 'file' | 'dir') => OpResult
+    /** Renames within the same folder; never over an existing one. Source and destination inside the roots, never a root. */
+    rename: (from: string, to: string) => OpResult
+    /** Moves a file or folder to the system's trash (never a permanent delete); a failure changes nothing. */
+    trash: (path: string) => OpResult
     /** One folder's entries; never a recursive listing. Only inside the project roots announced by `setRoots`. */
     readDir: (dir: string) => ReadDirResult
     /** What a path is now; a project root that is gone is 'missing'. Only inside the announced roots. */

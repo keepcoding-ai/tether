@@ -179,7 +179,7 @@ test('explorer 1b: the file tree under a root; excludes; expand; open; keyboard;
     // "Abrir ao lado" from the row menu
     await page.click(rowSel('notes.md'), { button: 'right' })
     const labels = await page.evaluate(() => [...document.querySelectorAll('#ctx-menu li[role=menuitem]')].map(li => li.textContent ?? ''))
-    assert.deepEqual(labels, ['Abrir', 'Abrir ao lado', 'Copiar caminho', 'Mostrar no explorador de arquivos'])
+    assert.deepEqual(labels, ['Abrir', 'Abrir ao lado', 'Renomear…', 'Mover para a lixeira', 'Copiar caminho', 'Copiar caminho relativo', 'Mostrar no explorador de arquivos'])
     await page.click('#ctx-menu li:has-text("Abrir ao lado")')
     await page.waitForFunction(() => window.__tether.notes().length === 3)
     const ns = await noteOf()

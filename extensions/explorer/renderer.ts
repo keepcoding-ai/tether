@@ -4,8 +4,9 @@
 import type { TetherUi } from '../../app/renderer/ext-api.ts'
 import { followTarget } from '../../app/renderer/workspace.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import type { ExplorerChannels } from './ipc.ts'
 import { manifest } from './manifest.ts'
-import { ExplorerView } from './renderer/view.ts'
+import { ExplorerView, type FileOp } from './renderer/view.ts'
 
 export { manifest }
 
@@ -14,7 +15,7 @@ const CASE_INSENSITIVE = /^(win|mac)/i.test(navigator.platform)
 
 export function activate(ui: TetherUi): IDisposable[] {
   let view: ExplorerView | undefined
-  const on = (key: 'follow' | 'autoReveal'): boolean => ui.settings.get<boolean>(key) === true
+  const on = (key: 'follow' | 'autoReveal' | 'confirmDelete'): boolean => ui.settings.get<boolean>(key) === true
   const toggle = (key: 'follow' | 'autoReveal'): void => ui.settings.set(key, !on(key))
   /** The active pane's file, revealed in the tree: opens the pad (the keyboard stays where it is). */
   const reveal = async (): Promise<void> => {
@@ -27,12 +28,20 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   ui.test.expose('explorer', () => view?.snapshot())
   ui.test.expose('explorerWatch', () => view?.watchStats())
+  // The e2e calls the write channels directly to prove main's guard refuses what the view would never ask.
+  const ipc = ui.ipc<ExplorerChannels>()
+  ui.test.expose('explorerWrite', {
+    create: (path: string, kind: 'file' | 'dir') => ipc.invoke('create', path, kind),
+    rename: (from: string, to: string) => ipc.invoke('rename', from, to),
+    trash: (path: string) => ipc.invoke('trash', path),
+  })
   return [
     ui.pads.register({
       id: PAD,
       create: host => (view = new ExplorerView(ui, host, {
         isOn: on,
         toggle,
+        set: (key, value) => ui.settings.set(key, value),
         reveal: () => { void reveal() },
       })),
     }),
@@ -50,6 +59,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.commands.registerCommand('explorer.reveal', () => { void reveal() }),
     ui.commands.registerCommand('explorer.refresh', () => { ui.pads.open(PAD); view?.refresh() }),
     ui.commands.registerCommand('explorer.collapse-all', () => { ui.pads.open(PAD); view?.collapseAll() }),
+    ...(['new-file', 'new-folder', 'rename', 'delete', 'copy-path', 'copy-relative-path', 'new-pane'] as const).map((op: FileOp) =>
+      ui.commands.registerCommand(`explorer.${op}`, () => { ui.pads.open(PAD); view?.run(op) })),
     ui.commands.registerCommand('explorer.follow', () => toggle('follow')),
     ui.commands.registerCommand('explorer.auto-reveal', () => toggle('autoReveal')),
   ]

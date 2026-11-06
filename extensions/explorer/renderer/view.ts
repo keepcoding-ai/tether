@@ -4,6 +4,9 @@
 // `ext:explorer:*`), its rows are inserted after the folder's row, and the expanded folders are kept in the pad's state.
 // Slice 3: the pad follows the disk (the main side tells which expanded folders changed; only those are read again, and the
 // scroll, the selection and the keyboard stay where they were) and has "Atualizar" and "Recolher tudo" in its "⋯" menu.
+// Slice 5: the file operations. New file/folder and rename edit the name in place (an input row, VS Code's explorerViewer
+// edit mode, with fileActions' name validation), "Mover para a lixeira" asks first (setting confirmDelete), and the tree is
+// redrawn by the disk watcher (slice 3), never by the operation itself.
 // The model follows VS Code's explorer (explorerModel: children resolved lazily per expanded folder; explorerViewer: the
 // twistie, the indent, the multi-root folder rows; the list's keys). The empty state follows VS Code's empty view
 // ("You have not yet opened a folder" + "Open Folder"), made useful with the app's recent folders.
@@ -11,13 +14,23 @@ import type { ContextMenuEntry, PadHost, PadView, ProjectFolder, TetherUi } from
 import { icon, setIcon, type IconName } from '../../../app/renderer/icons.ts'
 import type { UiIpc } from '../../../app/shared/ext-ipc.ts'
 import { fileIcon } from '../../../app/shared/quick-open.ts'
+import { rebasePath } from '../../../app/shared/notes.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
+import { renameSelection, validateFileName, type NameProblem } from '../file-names.ts'
 import type { Entry, ExplorerChannels } from '../ipc.ts'
 import { emptyState, isTypeAheadKey, joinPath, navigate, pageTarget, parentPath, readState, revealChain, samePath, TYPE_AHEAD_RESET_MS, typeAheadMatch, type NavRow } from '../tree-rules.ts'
 import {
-  agentsHint, agentsTooltip, EMPTY_HELP, EMPTY_TITLE, itemMenu, type ItemAction, MISSING_TEXT, MISSING_TITLE, OPEN_FOLDER_LABEL, pinLabel,
-  recentRow, recentToOffer, RECENT_TITLE, rootMenu, rootTitle, type RootAction,
+  agentsHint, agentsTooltip, deleteSituation, EMPTY_HELP, EMPTY_TITLE, itemMenu, type ItemAction, MISSING_TEXT, MISSING_TITLE, OPEN_FOLDER_LABEL, pinLabel,
+  recentRow, recentToOffer, RECENT_TITLE, relativePath, rootMenu, rootTitle, type RootAction, failedSituation, trashFailedSituation,
 } from './rules.ts'
+
+const IS_WINDOWS = /^win/i.test(navigator.platform)
+
+/** A file operation the commands run on the selected row. */
+export type FileOp = 'new-file' | 'new-folder' | 'rename' | 'delete' | 'copy-path' | 'copy-relative-path' | 'new-pane'
+
+/** The name being edited in place (new file/folder or rename), for the e2e and for the redraws that wait for it. */
+interface Editing { dir: string; input: HTMLInputElement; message: HTMLElement; problem: NameProblem | null; end(): void }
 
 const CASE_INSENSITIVE = /^(win|mac)/i.test(navigator.platform)
 /** How many rows a big folder paints at once; the rest follow in later tasks so the window never freezes on a folder of thousands. */
@@ -39,8 +52,9 @@ interface DirState { entries?: Entry[]; error?: string }
 
 /** What the extension's entry gives the pad: the two toggles (settings) and the reveal command. */
 export interface ExplorerControls {
-  isOn(key: 'follow' | 'autoReveal'): boolean
+  isOn(key: 'follow' | 'autoReveal' | 'confirmDelete'): boolean
   toggle(key: 'follow' | 'autoReveal'): void
+  set(key: 'confirmDelete', value: boolean): void
   reveal(): void
 }
 
@@ -94,6 +108,9 @@ export class ExplorerView implements PadView {
   /** Type to navigate: the prefix typed so far and the timer that forgets it. */
   private typed = ''
   private typedTimer: ReturnType<typeof setTimeout> | undefined
+  /** The name being edited in place; its folder's redraws wait until it ends (they would drop the input). */
+  private editing: Editing | undefined
+  private readonly deferred = new Set<string>()
 
   constructor(ui: TetherUi, host: PadHost, controls: ExplorerControls) {
     this.ui = ui
@@ -225,6 +242,10 @@ export class ExplorerView implements PadView {
     else if (action === 'move-down') ws.move(f.path, 'down')
     else if (action === 'copy-path') this.ui.shell.writeClipboard(f.path)
     else if (action === 'reveal') void this.ui.shell.openPath(f.path)
+    else if (action === 'new-file' || action === 'new-folder' || action === 'new-pane') {
+      const row = this.rowByKey(rowKey(f.path, f.path))
+      if (row) this.runOn(row, action)
+    }
   }
 
   private showRootMenu(f: ProjectFolder, x: number, y: number): void {
@@ -243,14 +264,206 @@ export class ExplorerView implements PadView {
   private itemAction(action: ItemAction, info: RowInfo): void {
     if (action === 'open') this.openFile(info, false)
     else if (action === 'open-side') this.openFile(info, true)
-    else if (action === 'copy-path') this.ui.shell.writeClipboard(info.path)
-    else void this.ui.shell.openPath(info.dir ? info.path : parentPath(info.path))
+    else if (action === 'reveal') void this.ui.shell.openPath(info.dir ? info.path : parentPath(info.path))
+    else {
+      const row = this.rowByKey(info.key)
+      if (row) this.runOn(row, action)
+    }
   }
 
   private showItemMenu(info: RowInfo, x: number, y: number): void {
     this.ui.menus.context(x, y, itemMenu(info.dir ? 'dir' : 'file').map((e): ContextMenuEntry => e === 'sep' ? 'sep' : {
-      icon: e.icon, label: e.label, run: () => this.itemAction(e.action, info),
+      icon: e.icon, label: e.label, run: () => this.itemAction(e.action, info), ...(e.danger ? { danger: true } : {}),
     }))
+  }
+
+  // ---------- file operations (slice 5) ----------
+
+  /** A command on the selected row (else the one the keyboard is on, else the first project root). */
+  run(op: FileOp): void {
+    const row = this.rowByKey(this.selected) ?? this.rowByKey(this.focused) ?? this.tree?.querySelector<HTMLElement>('.xp-root') ?? null
+    if (row) this.runOn(row, op)
+  }
+
+  private runOn(row: HTMLElement, op: FileOp): void {
+    const info = infoOf(row)
+    if (op === 'copy-path') this.ui.shell.writeClipboard(info.path)
+    else if (op === 'copy-relative-path') this.ui.shell.writeClipboard(relativePath(info.root, info.path))
+    else if (op === 'new-pane') this.ui.panes.newPanelDialog(this.ui.panes.activeId() ?? '', { cwd: info.dir ? info.path : parentPath(info.path) })
+    else if (op === 'new-file' || op === 'new-folder') void this.newEntry(row, op === 'new-folder' ? 'dir' : 'file')
+    else if (op === 'rename') { if (!info.isRoot) this.startRename(row) }
+    else if (op === 'delete') { if (!info.isRoot) void this.trash(row) }
+  }
+
+  /** The keyboard fell to the page (an input row was removed under it): it goes back to the tree; a click elsewhere keeps its target. */
+  private keyboardLost(): boolean { return !document.activeElement || document.activeElement === document.body }
+
+  /** The names in a folder as last read (the validation's "already exists"). */
+  private siblingsOf(dir: string): string[] { return (this.dirs.get(dir)?.entries ?? []).map(e => e.name) }
+
+  /** The input of an in-place edit with its validation message under it (VS Code's InputBox with a message). */
+  private editor(dir: string, value: string, current: string | undefined, isDir: boolean, onCommit: (name: string) => Promise<string | undefined>, onEnd: () => void): Editing {
+    this.editing?.end()
+    const input = el('input', 'xp-input')
+    input.type = 'text'
+    input.value = value
+    input.spellcheck = false
+    input.setAttribute('aria-label', current === undefined ? (isDir ? 'Nome da nova pasta' : 'Nome do novo arquivo') : `Novo nome de ${current}`)
+    const message = el('div', 'xp-validate')
+    message.hidden = true
+    message.setAttribute('role', 'alert')
+    let done = false
+    let busy = false
+    const editing: Editing = {
+      dir, input, message, problem: null,
+      end: () => {
+        if (done) return
+        done = true
+        if (this.editing === editing) this.editing = undefined
+        onEnd()
+        // The redraws that waited for the edit (the disk changed meanwhile, this operation's own change among them).
+        if (this.deferred.delete(dir)) for (const row of this.expandedRowsOf(dir)) this.refill(row)
+      },
+    }
+    const show = (problem: NameProblem | null, text?: string): void => {
+      editing.problem = problem
+      const msg = text ?? problem?.message
+      message.hidden = !msg
+      message.textContent = msg ?? ''
+      message.classList.toggle('warning', !text && problem?.severity === 'warning')
+      input.classList.toggle('invalid', !!msg && (!!text || problem?.severity === 'error'))
+    }
+    const validate = (): NameProblem | null => validateFileName(input.value, { siblings: this.siblingsOf(dir), ...(current !== undefined ? { current } : {}), isWindows: IS_WINDOWS })
+    const commit = async (fromBlur: boolean): Promise<void> => {
+      if (done || busy) return
+      const name = input.value
+      // Leaving the field with nothing typed (or the same name) is a cancel; leaving it with an invalid name too (VS Code).
+      if (name.trim() === '' || name === current) { editing.end(); return }
+      const problem = validate()
+      if (problem?.severity === 'error') { if (fromBlur) editing.end(); else show(problem); return }
+      busy = true
+      const failure = await onCommit(name).catch((err: unknown) => (err as Error).message)
+      busy = false
+      if (failure === undefined) { editing.end(); return }
+      if (fromBlur || done) { editing.end(); void this.ui.dialogs.ask(failedSituation(current === undefined ? `Não foi possível criar "${name}"` : `Não foi possível renomear "${current}"`, failure)); return }
+      show(null, failure)
+      input.focus()
+    }
+    for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick', 'contextmenu'] as const) input.addEventListener(type, ev => ev.stopPropagation())
+    input.addEventListener('input', () => show(validate()))
+    input.addEventListener('keydown', ev => {
+      ev.stopPropagation()
+      if (ev.key === 'Enter') { ev.preventDefault(); void commit(false) }
+      else if (ev.key === 'Escape') { ev.preventDefault(); editing.end() }
+    })
+    input.addEventListener('blur', () => { void commit(true) })
+    this.editing = editing
+    return editing
+  }
+
+  /** "Novo arquivo…"/"Nova pasta…": an input row at the top of the folder (the folder of a file row); Enter creates, and a file opens. */
+  private async newEntry(row: HTMLElement, kind: 'file' | 'dir'): Promise<void> {
+    let target = row
+    if (!infoOf(row).dir) target = this.rowByKey(rowKey(infoOf(row).root, parentPath(infoOf(row).path))) ?? row
+    const folder = infoOf(target)
+    if (!folder.dir) return
+    if (target.getAttribute('aria-expanded') !== 'true') this.toggle(target)
+    await this.load(folder.path).catch(() => {})
+    if (this.disposed || !target.isConnected) return
+    const line = el('div', 'xp-row xp-edit')
+    line.dataset.level = String(folder.level + 1)
+    line.style.setProperty('--lvl', String(folder.level + 1))
+    line.setAttribute('role', 'none')
+    const ico = el('span', 'xp-ico')
+    setIcon(ico, kind === 'dir' ? 'folder' : 'file')
+    const editing = this.editor(folder.path, '', undefined, kind === 'dir', async name => {
+      const sep = folder.path.includes('\\') ? '\\' : '/'
+      const parts = name.trim().split(/[\\/]+/).filter(s => s !== '')
+      const path = joinPath(folder.path, parts.join(sep))
+      const res = await this.ipc.invoke('create', path, kind)
+      if (!res.ok) return res.message
+      void this.afterCreate(folder.root, path, kind, parts.length > 1)
+      return undefined
+    }, () => { line.remove(); if (this.keyboardLost()) target.focus() })
+    if (kind === 'file') editing.input.addEventListener('input', () => setIcon(ico, (fileIcon(editing.input.value) || 'file') as IconName))
+    const box = el('div', 'xp-edit-box')
+    box.append(editing.input, editing.message)
+    line.append(this.twistie(false), ico, box)
+    target.after(line)
+    line.scrollIntoView({ block: 'nearest' })
+    editing.input.focus()
+  }
+
+  /** The new entry shows up when the watcher redraws its folder: it is selected; a file opens in the editor (VS Code). */
+  private async afterCreate(root: string, path: string, kind: 'file' | 'dir', nested: boolean): Promise<void> {
+    if (kind === 'file') void this.ui.openers.open(path, { side: false, root })
+    const shown = nested ? await this.reveal(path) : !!(await this.waitRow(root, path))
+    const row = shown ? await this.waitRow(root, path) : undefined
+    if (!row || this.disposed) return
+    this.select(row)
+    row.scrollIntoView({ block: 'nearest' })
+    if (kind === 'dir') row.focus()
+  }
+
+  /** F2 / "Renomear…": the name becomes an input with the name without its extension selected (VS Code). */
+  private startRename(row: HTMLElement): void {
+    const info = infoOf(row)
+    const nameEl = row.querySelector<HTMLElement>('.xp-name')
+    if (!nameEl) return
+    const current = nameEl.textContent ?? ''
+    const dir = parentPath(info.path)
+    this.select(row)
+    const editing = this.editor(dir, current, current, info.dir, async name => {
+      const to = joinPath(dir, name)
+      const res = await this.ipc.invoke('rename', info.path, to)
+      if (!res.ok) return res.message
+      nameEl.textContent = name
+      this.afterRename(info, to)
+      return undefined
+    }, () => { box.replaceWith(nameEl); if (row.isConnected && this.keyboardLost()) row.focus() })
+    const box = el('div', 'xp-edit-box')
+    box.append(editing.input, editing.message)
+    nameEl.replaceWith(box)
+    editing.input.focus()
+    const sel = renameSelection(current, info.dir)
+    editing.input.setSelectionRange(sel.start, sel.end)
+  }
+
+  /** After a rename: the expanded folders and the selection move with it, the editors follow (TetherUi.files), the new row is selected. */
+  private afterRename(info: RowInfo, to: string): void {
+    for (const set of this.expanded.values()) {
+      for (const d of [...set]) { const next = rebasePath(d, info.path, to); if (next !== undefined) { set.delete(d); set.add(next) } }
+    }
+    for (const path of [...this.dirs.keys()]) if (rebasePath(path, info.path, to) !== undefined) this.dirs.delete(path)
+    this.persist()
+    this.selected = rowKey(info.root, to)
+    this.focused = this.selected
+    this.ui.files.didRename(info.path, to)
+    void this.waitRow(info.root, to).then(row => {
+      if (!row || this.disposed) return
+      this.select(row)
+      if (!this.editing) row.focus()
+    })
+  }
+
+  /** Delete / "Mover para a lixeira": asks first (unless confirmDelete is off), then the system's trash; a failure deletes nothing and says why. */
+  private async trash(row: HTMLElement): Promise<void> {
+    const info = infoOf(row)
+    const name = row.querySelector('.xp-name')?.textContent ?? info.path
+    if (this.controls.isOn('confirmDelete')) {
+      const answer = await this.ui.dialogs.ask(deleteSituation(name, info.path, info.dir))
+      if (answer.choice !== 'trash') { if (row.isConnected) row.focus(); return }
+      if (answer.remember) this.controls.set('confirmDelete', false)
+    }
+    // Where the keyboard goes once the row is gone: the next row out of its subtree, else the one above.
+    const after = this.subtreeEnd(row).nextElementSibling as HTMLElement | null
+    const next = after?.classList.contains('xp-row') && after.dataset.root === info.root ? after : row.previousElementSibling as HTMLElement | null
+    const res = await this.ipc.invoke('trash', info.path)
+    if (!res.ok) { await this.ui.dialogs.ask(trashFailedSituation(name, res.message)); if (row.isConnected) row.focus(); return }
+    let changed = false
+    for (const set of this.expanded.values()) for (const d of [...set]) if (rebasePath(d, info.path, info.path) !== undefined) { set.delete(d); changed = true }
+    if (changed) this.persist()
+    if (next?.isConnected && next.classList.contains('xp-row')) { this.select(next); next.focus() }
   }
 
   private async loadRecent(): Promise<void> {
@@ -286,7 +499,10 @@ export class ExplorerView implements PadView {
       this.dirs.set(path, next)
       if (this.disposed) return
       if (next.error !== undefined && this.missing.has(path)) this.forget(path)
-      if (JSON.stringify(prev) !== JSON.stringify(next)) for (const row of this.expandedRowsOf(path)) this.refill(row)
+      if (JSON.stringify(prev) !== JSON.stringify(next)) {
+        if (this.editing?.dir === path) this.deferred.add(path)
+        else for (const row of this.expandedRowsOf(path)) this.refill(row)
+      }
       this.updateMissing()
     })().finally(() => {
       this.inflight.delete(path)
@@ -557,6 +773,11 @@ export class ExplorerView implements PadView {
       this.menuFor(row, r.left + 24, r.bottom)
       return
     }
+    if (!ev.altKey && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey && (ev.key === 'F2' || ev.key === 'Delete')) {
+      ev.preventDefault()
+      this.runOn(row, ev.key === 'F2' ? 'rename' : 'delete')
+      return
+    }
     if (ev.altKey || ev.metaKey || (ev.ctrlKey && ev.key !== 'Enter')) return
     if (ev.key === 'PageDown' || ev.key === 'PageUp') { ev.preventDefault(); this.page(row, ev.key === 'PageDown'); return }
     if (!ev.ctrlKey && isTypeAheadKey(ev.key, this.typed)) { ev.preventDefault(); this.typeAhead(row, ev.key); return }
@@ -703,6 +924,8 @@ export class ExplorerView implements PadView {
     const tree = el('div', 'xp-roots')
     tree.setAttribute('role', 'tree')
     tree.setAttribute('aria-label', 'Projetos')
+    // F2 and Delete are the tree's (rename, trash), not the app's F2 "renomear painel".
+    tree.dataset.ownKeys = 'F2 Delete'
     tree.addEventListener('keydown', ev => this.onKey(ev))
     wrap.append(tree, this.button('xp-add', OPEN_FOLDER_LABEL, 'folder-open', () => { void this.pickFolder() }))
     this.tree = tree
@@ -812,6 +1035,7 @@ export class ExplorerView implements PadView {
     recent: string[]
     reads: number
     notice: string
+    edit: { value: string; message: string; severity: string; selection: [number, number] } | undefined
   } {
     return {
       mode: this.element.querySelector('.xp-empty') ? 'empty' : 'roots',
@@ -828,6 +1052,12 @@ export class ExplorerView implements PadView {
       recent: [...this.element.querySelectorAll<HTMLElement>('.xp-recent-item')].map(b => b.title),
       reads: this.reads,
       notice: this.notice === undefined ? '' : (this.noticeEl.textContent ?? ''),
+      edit: this.editing ? {
+        value: this.editing.input.value,
+        message: this.editing.message.hidden ? '' : (this.editing.message.textContent ?? ''),
+        severity: this.editing.message.hidden ? '' : this.editing.message.classList.contains('warning') ? 'warning' : 'error',
+        selection: [this.editing.input.selectionStart ?? 0, this.editing.input.selectionEnd ?? 0],
+      } : undefined,
     }
   }
 }

@@ -35,19 +35,19 @@ describe('explorer root row', () => {
 describe('explorer root menu', () => {
   test('an inferred root: pin, the disabled note, no close', () => {
     const m = rootMenu(root({ agents: ['a'] }), 0, 1)
-    assert.deepEqual(actions(m), ['pin', 'auto-close', '-', 'copy-path', 'reveal'])
+    assert.deepEqual(actions(m), ['pin', 'auto-close', '-', 'new-file', 'new-folder', 'new-pane', '-', 'copy-path', 'reveal'])
     assert.equal((m[1] as { disabled?: boolean }).disabled, true)
   })
 
   test('a pinned root with agents unpins but cannot be closed; without agents it closes', () => {
-    assert.deepEqual(actions(rootMenu(root({ pinned: true, agents: ['a'] }), 0, 1)), ['unpin', '-', 'copy-path', 'reveal'])
-    assert.deepEqual(actions(rootMenu(root({ pinned: true }), 0, 1)), ['unpin', 'close', '-', 'copy-path', 'reveal'])
+    assert.deepEqual(actions(rootMenu(root({ pinned: true, agents: ['a'] }), 0, 1)), ['unpin', '-', 'new-file', 'new-folder', 'new-pane', '-', 'copy-path', 'reveal'])
+    assert.deepEqual(actions(rootMenu(root({ pinned: true }), 0, 1)), ['unpin', 'close', '-', 'new-file', 'new-folder', 'new-pane', '-', 'copy-path', 'reveal'])
   })
 
   test('moving up needs a root above, moving down one below', () => {
-    assert.deepEqual(actions(rootMenu(root({ pinned: true }), 0, 3)), ['unpin', 'close', '-', 'move-down', '-', 'copy-path', 'reveal'])
-    assert.deepEqual(actions(rootMenu(root({ pinned: true }), 1, 3)), ['unpin', 'close', '-', 'move-up', 'move-down', '-', 'copy-path', 'reveal'])
-    assert.deepEqual(actions(rootMenu(root({ pinned: true }), 2, 3)), ['unpin', 'close', '-', 'move-up', '-', 'copy-path', 'reveal'])
+    assert.deepEqual(actions(rootMenu(root({ pinned: true }), 0, 3)), ['unpin', 'close', '-', 'new-file', 'new-folder', 'new-pane', '-', 'move-down', '-', 'copy-path', 'reveal'])
+    assert.deepEqual(actions(rootMenu(root({ pinned: true }), 1, 3)), ['unpin', 'close', '-', 'new-file', 'new-folder', 'new-pane', '-', 'move-up', 'move-down', '-', 'copy-path', 'reveal'])
+    assert.deepEqual(actions(rootMenu(root({ pinned: true }), 2, 3)), ['unpin', 'close', '-', 'new-file', 'new-folder', 'new-pane', '-', 'move-up', '-', 'copy-path', 'reveal'])
   })
 })
 
