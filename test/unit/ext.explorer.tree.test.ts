@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { guardPath, readDirectory } from '../../extensions/explorer/main.ts'
 import {
-  compareFileNamesDefault, flatten, isExcluded, isInsideAny, joinPath, listing, navigate, parentPath, readState, sortEntries, type Entry, type NavRow,
+  compareFileNamesDefault, flatten, isExcluded, isInsideAny, joinPath, listing, navigate, parentPath, readState, revealChain, samePath, sortEntries, type Entry, type NavRow,
 } from '../../extensions/explorer/tree-rules.ts'
 
 const atriumTmp = resolve(import.meta.dirname, '..', '..', '..', '..', '.tmp')
@@ -133,5 +133,24 @@ describe('explorer main side: only inside the project roots', () => {
       const file = await readDirectory(join(dir, 'a.md'))
       assert.equal(file.ok, false)
     } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+describe('explorer reveal', () => {
+  test('revealChain: the root, then each folder down to the file parent', () => {
+    assert.deepEqual(revealChain('C:\\p\\a', 'C:\\p\\a\\sub\\deep\\x.md', true), ['C:\\p\\a', 'C:\\p\\a\\sub', 'C:\\p\\a\\sub\\deep'])
+    assert.deepEqual(revealChain('C:\\p\\a', 'C:\\p\\a\\top.md', true), ['C:\\p\\a'])
+    assert.deepEqual(revealChain('/p/a', '/p/a/sub/x.md', false), ['/p/a', '/p/a/sub'])
+  })
+  test('revealChain: nothing for a file outside the root, the root itself, or a sibling with the same prefix', () => {
+    assert.deepEqual(revealChain('C:\\p\\a', 'C:\\p\\b\\x.md', true), [])
+    assert.deepEqual(revealChain('C:\\p\\a', 'C:\\p\\a', true), [])
+    assert.deepEqual(revealChain('C:\\p\\a', 'C:\\p\\ab\\x.md', true), [])
+  })
+  test('revealChain keeps the file spelling; case only matters where the system cares', () => {
+    assert.deepEqual(revealChain('C:\\P\\A', 'c:\\p\\a\\Sub\\x.md', true), ['C:\\P\\A', 'C:\\P\\A\\Sub'])
+    assert.deepEqual(revealChain('/p/A', '/p/a/x.md', false), [])
+    assert.equal(samePath('C:\\p\\a\\', 'c:/P/A', true), true)
+    assert.equal(samePath('/p/a', '/p/A', false), false)
   })
 })

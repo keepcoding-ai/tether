@@ -83,6 +83,24 @@ export function isInsideAny(roots: readonly string[], dir: string, caseInsensiti
   return roots.some(r => { const k = norm(r, caseInsensitive); return d === k || d.startsWith(k + '/') || (k === '' && d.startsWith('/')) })
 }
 
+/** Whether two paths are the same one (separators and, where the system ignores case, case do not matter). */
+export function samePath(a: string, b: string, caseInsensitive: boolean): boolean { return norm(a, caseInsensitive) === norm(b, caseInsensitive) }
+
+/**
+ * The folders to open so `file` shows in the tree under `root`: the root, then each folder down to the file's parent, in order.
+ * Empty when the file is not inside the root (or is the root itself).
+ */
+export function revealChain(root: string, file: string, caseInsensitive: boolean): string[] {
+  const r = norm(root, caseInsensitive)
+  const f = norm(file, caseInsensitive)
+  if (f === r || !f.startsWith(r + '/')) return []
+  const rest = norm(file, false).slice(r.length + 1).split('/')
+  const chain = [root]
+  let dir = root
+  for (const name of rest.slice(0, -1)) { dir = joinPath(dir, name); chain.push(dir) }
+  return chain
+}
+
 // ---------- expanded state ----------
 
 /** What the pad keeps in layout.json (`serialize`): per project root, the folders expanded under it (the root itself included). */

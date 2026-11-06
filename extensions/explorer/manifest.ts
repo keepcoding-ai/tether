@@ -19,9 +19,16 @@ export const manifest: ExtensionManifest = {
     pads: [
       { id: 'explorer.files', title: 'Explorador', icon: 'files', defaultSide: 'left', scope: 'global', order: 10 },
     ],
+    settings: {
+      follow: { type: 'boolean', default: true, title: 'Seguir o agente ativo no explorador' },
+      autoReveal: { type: 'boolean', default: false, title: 'Revelar o arquivo ativo no explorador' },
+    },
     commands: [
       { command: 'explorer.focus', title: 'Explorador: abrir', category: EXPLORER, icon: 'files' },
       { command: 'explorer.open-folder', title: 'Explorador: abrir pasta…', category: EXPLORER, icon: 'folder-open' },
+      { command: 'explorer.reveal', title: 'Revelar no explorador', category: EXPLORER, icon: 'target' },
+      { command: 'explorer.follow', title: 'Explorador: seguir o agente ativo (liga/desliga)', category: EXPLORER, icon: 'target' },
+      { command: 'explorer.auto-reveal', title: 'Explorador: revelar o arquivo ativo (liga/desliga)', category: EXPLORER, icon: 'target' },
     ],
     keybindings: [
       { key: 'ctrl+k e', command: 'explorer.focus' },                   // VS Code's "focus the explorer" is Ctrl+Shift+E (taken here: duplicate below)

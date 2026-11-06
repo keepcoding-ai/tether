@@ -5,7 +5,7 @@
 // implementations stay in app/renderer (note-panel.ts, preview-panel.ts, html-preview-panel.ts, monaco.ts); they get
 // their files through the bus `ext:note:*` (extensions/note/ipc.ts) injected in their hosts.
 import type { IDockviewPanel } from 'dockview-core'
-import type { TetherUi, PaneType } from '../../app/renderer/ext-api.ts'
+import type { ContextMenuEntry, TetherUi, PaneType } from '../../app/renderer/ext-api.ts'
 import type { Target } from '../../app/renderer/create.ts'
 import { NotePanel, NoteTab, type NoteHost, type NoteIo } from '../../app/renderer/note-panel.ts'
 import { paneCwdOfNote } from '../../app/renderer/note-rules.ts'
@@ -292,6 +292,11 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   const openFolder = (path: string): void => { void ui.shell.openPath(noteDirOf(path)).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) }) }
 
+  /** "Revelar no explorador" (the explorer extension's command, acting on the active pane's file); absent while that extension is off. */
+  const revealEntry = (): ContextMenuEntry[] => ui.commands.ids().includes('explorer.reveal')
+    ? [{ icon: 'target', label: 'Revelar no explorador', run: () => { void ui.commands.run('explorer.reveal') } }]
+    : []
+
   /** The note's tab menu: new things next to it, the file (rename, save as, its folder), where it lives, close. */
   function showNoteMenu(id: string, x: number, y: number): void {
     const note = notes.get(id)
@@ -305,6 +310,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       ...(isPreviewablePath(note.path) ? [{ icon: 'eye', label: 'Abrir prévia', run: () => { openPreview({ side: false, reference: id }) } }, { icon: 'square-split-horizontal', label: 'Abrir prévia ao lado', run: () => { openPreview({ side: true, reference: id }) } }] : []),
       { icon: 'copy', label: 'Copiar caminho da nota', run: () => ui.shell.writeClipboard(note.path) },
       { icon: 'folder-open', label: 'Abrir pasta da nota no Explorer', run: () => openFolder(note.path) },
+      ...revealEntry(),
       'sep',
       { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(id) },
       'sep',
@@ -321,6 +327,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       ...(preview instanceof HtmlPreviewPanel ? [{ icon: 'arrow-square-out', label: 'Abrir no navegador', run: () => openInBrowser(preview.path) }, { icon: 'arrow-clockwise', label: 'Recarregar a página', run: () => preview.reload() }] : []),
       { icon: 'copy', label: 'Copiar caminho do arquivo', run: () => ui.shell.writeClipboard(preview.path) },
       { icon: 'folder-open', label: 'Abrir pasta do arquivo no Explorer', run: () => openFolder(preview.path) },
+      ...revealEntry(),
       'sep',
       { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(id) },
       'sep',
@@ -340,6 +347,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   }
 
   const previewCwd = (id: string): string | undefined => { const p = previews.get(id); return p ? noteByPath(p.path)?.cwd ?? paneCwdOfNote(p.path) : undefined }
+  const previewFile = (id: string): string | undefined => previews.get(id)?.path
   const previewFolder = (id: string): string | undefined => { const p = previews.get(id); return p ? noteDirOf(p.path) : undefined }
   const focusPreview = (id: string): void => previews.get(id)?.focus()
 
@@ -348,6 +356,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     create: () => tracked(new HtmlPreviewPanel(htmlPreviewHost), previews),
     has: id => previews.get(id) instanceof HtmlPreviewPanel,
     cwdOf: previewCwd,
+    fileOf: previewFile,
     folderOf: previewFolder,
     focus: focusPreview,
     contextFlags: () => ['markdown.preview'],
@@ -359,6 +368,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     createTab: () => new PreviewTab(previewHost),
     has: id => previews.has(id) && !(previews.get(id) instanceof HtmlPreviewPanel),
     cwdOf: previewCwd,
+    fileOf: previewFile,
     folderOf: previewFolder,
     focus: focusPreview,
     contextFlags: () => ['markdown.preview'],
@@ -377,6 +387,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     },
     has: id => notes.has(id),
     cwdOf: id => { const n = notes.get(id); return n ? n.cwd ?? paneCwdOfNote(n.path) : undefined },
+    fileOf: id => notes.get(id)?.path,
     folderOf: id => { const n = notes.get(id); return n ? noteDirOf(n.path) : undefined },
     focus: id => notes.get(id)?.focus(),
     rename: id => noteTabs.get(id)?.startRename(),

@@ -675,6 +675,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 #ctx-menu li:hover, #ctx-menu li:focus { background: var(--bg-hover-2); }
 #ctx-menu li[aria-disabled="true"] { opacity: .5; cursor: default; }
 #ctx-menu li[aria-disabled="true"]:hover { background: none; }
+#ctx-menu li .ctx-check { margin-left: auto; color: var(--accent); }
 #ctx-menu li.danger { color: var(--err); }
 #ctx-menu li.danger .ph { color: var(--err); }
 #app-menu li[aria-disabled="true"] { opacity: .45; cursor: default; }

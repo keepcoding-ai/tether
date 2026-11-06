@@ -18,6 +18,7 @@ import arrowsLeftRight from '@phosphor-icons/core/assets/regular/arrows-left-rig
 import clipboardText from '@phosphor-icons/core/assets/regular/clipboard-text.svg'
 import globeSimple from '@phosphor-icons/core/assets/regular/globe-simple.svg'
 import folderOpen from '@phosphor-icons/core/assets/regular/folder-open.svg'
+import target from '@phosphor-icons/core/assets/regular/target.svg'
 import pushPin from '@phosphor-icons/core/assets/regular/push-pin.svg'
 import pushPinFill from '@phosphor-icons/core/assets/fill/push-pin-fill.svg'
 import filesIcon from '@phosphor-icons/core/assets/regular/files.svg'
@@ -121,6 +122,7 @@ const SVG = {
   'circle-half': circleHalf,
   'clock-counter-clockwise': clockCounterClockwise,
   'folder-open': folderOpen,
+  target,
   'push-pin': pushPin,
   'push-pin-fill': pushPinFill,
   files: filesIcon,

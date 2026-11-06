@@ -11,7 +11,7 @@ import type { UiIpc } from '../../../app/shared/ext-ipc.ts'
 import { fileIcon } from '../../../app/shared/quick-open.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { Entry, ExplorerChannels } from '../ipc.ts'
-import { emptyState, joinPath, navigate, parentPath, readState, type NavRow } from '../tree-rules.ts'
+import { emptyState, joinPath, navigate, parentPath, readState, revealChain, samePath, type NavRow } from '../tree-rules.ts'
 import {
   agentsHint, agentsTooltip, EMPTY_HELP, EMPTY_TITLE, itemMenu, type ItemAction, MISSING_TEXT, MISSING_TITLE, OPEN_FOLDER_LABEL, pinLabel,
   recentRow, recentToOffer, RECENT_TITLE, rootMenu, rootTitle, type RootAction,
@@ -35,6 +35,13 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 /** A folder as the model keeps it: its entries, or why it could not be read. */
 interface DirState { entries?: Entry[]; error?: string }
 
+/** What the extension's entry gives the pad: the two toggles (settings) and the reveal command. */
+export interface ExplorerControls {
+  isOn(key: 'follow' | 'autoReveal'): boolean
+  toggle(key: 'follow' | 'autoReveal'): void
+  reveal(): void
+}
+
 /** What a tree row stands for (kept on the row's dataset). */
 interface RowInfo { root: string; path: string; level: number; dir: boolean; isRoot: boolean; key: string }
 
@@ -49,6 +56,7 @@ export class ExplorerView implements PadView {
   readonly element = el('div', 'xp')
   private readonly ui: TetherUi
   private readonly host: PadHost
+  private readonly controls: ExplorerControls
   private readonly ipc: UiIpc<ExplorerChannels>
   private readonly subs: IDisposable[] = []
   private recent: string[] = []
@@ -70,9 +78,10 @@ export class ExplorerView implements PadView {
   private focused: string | undefined
   private selected: string | undefined
 
-  constructor(ui: TetherUi, host: PadHost) {
+  constructor(ui: TetherUi, host: PadHost, controls: ExplorerControls) {
     this.ui = ui
     this.host = host
+    this.controls = controls
     this.ipc = ui.ipc<ExplorerChannels>()
     for (const [root, dirs] of Object.entries(readState(host.state).expanded)) this.expanded.set(root, new Set(dirs))
     this.subs.push(ui.workspace.onDidChange(() => this.render()))
@@ -85,6 +94,61 @@ export class ExplorerView implements PadView {
   focus(): void {
     const target = this.rowByKey(this.focused) ?? this.tree?.querySelector<HTMLElement>('.xp-row[tabindex="0"]') ?? this.element.querySelector<HTMLElement>('.xp-row') ?? this.element.querySelector<HTMLElement>('.xp-primary')
     target?.focus()
+  }
+
+  /** The pad's "⋯" menu: the two toggles and the command. */
+  menu(): ContextMenuEntry[] {
+    return [
+      { icon: 'target', label: 'Seguir o agente ativo', checked: this.controls.isOn('follow'), run: () => this.controls.toggle('follow') },
+      { icon: 'eye', label: 'Revelar o arquivo ativo', checked: this.controls.isOn('autoReveal'), run: () => this.controls.toggle('autoReveal') },
+      { icon: 'target', label: 'Revelar no explorador', run: () => this.controls.reveal() },
+    ]
+  }
+
+  /** "Seguir": the project of the agent that took the focus becomes the current one, shown (expanded, in view). */
+  follow(root: string): void {
+    this.ui.workspace.setCurrent(root)
+    this.updateCurrent()
+    const row = this.rowByKey(rowKey(root, root))
+    if (!row) return
+    if (row.getAttribute('aria-expanded') !== 'true') { this.setOf(root).add(root); this.expandRow(row, false); this.host.persist() }
+    row.scrollIntoView({ block: 'nearest' })
+  }
+
+  /** "Revelar no explorador": opens the folders down to the file, selects its row and scrolls to it. False when no project holds it. */
+  async reveal(file: string): Promise<boolean> {
+    const folder = this.ui.workspace.folderOf(file)
+    if (!folder) return false
+    const chain = revealChain(folder.path, file, CASE_INSENSITIVE)
+    if (chain.length === 0) return false
+    const root = folder.path
+    this.ui.workspace.setCurrent(root)
+    for (const dir of chain) {
+      const row = await this.waitRow(root, dir)
+      if (!row) return false
+      // The row's own spelling is what the expanded set keeps (the disk's, not the note's).
+      this.setOf(root).add(row.dataset.path!)
+      if (row.getAttribute('aria-expanded') !== 'true') this.expandRow(row, false)
+      await this.load(row.dataset.path!).catch(() => {})
+    }
+    this.host.persist()
+    const target = await this.waitRow(root, file)
+    if (!target || this.disposed) return false
+    this.select(target)
+    this.updateCurrent()
+    target.scrollIntoView({ block: 'nearest' })
+    return true
+  }
+
+  /** A row that is drawn shortly (a folder just read paints its rows in tasks); undefined if it never shows. */
+  private async waitRow(root: string, path: string): Promise<HTMLElement | undefined> {
+    for (let i = 0; i < 100; i++) {
+      const row = this.rows().find(r => r.dataset.root === root && samePath(r.dataset.path ?? '', path, CASE_INSENSITIVE))
+      if (row) return row
+      if (this.disposed) return undefined
+      await new Promise(resolve => setTimeout(resolve, 30))
+    }
+    return undefined
   }
 
   setVisible(visible: boolean): void {
@@ -329,7 +393,7 @@ export class ExplorerView implements PadView {
     if (row.dataset.isRoot !== 'true') { row.classList.add('selected'); row.setAttribute('aria-selected', 'true') }
     this.setRoving(row, false)
     const root = row.dataset.root!
-    if (this.ui.workspace.current() !== root) this.ui.workspace.setCurrent(root)
+    if (this.ui.workspace.current() !== root) { this.ui.workspace.setCurrent(root); this.updateCurrent() }
   }
 
   private onClick(row: HTMLElement, ev: MouseEvent): void {

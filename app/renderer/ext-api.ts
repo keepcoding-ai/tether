@@ -30,6 +30,8 @@ export interface PaneInfo {
   /** The pane type's id ('terminal', 'note'…). */
   type: string
   cwd?: string
+  /** The file a note or a preview shows (its type's `fileOf`). */
+  file?: string
   /** The slot's kind when it is an AI agent (a plain terminal has none). */
   agent?: string
   /** Where it lives: the desk's name, 'Gaveta', or the pad's title. */
@@ -37,7 +39,7 @@ export interface PaneInfo {
 }
 
 /** A row of a context menu (the tab menu): an item, or 'sep' for a thin line between groups. */
-export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean; disabled?: boolean } | 'sep'
+export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean; disabled?: boolean; checked?: boolean } | 'sep'
 
 /**
  * Who opens a file (VS Code's EditorResolverService: editors register for the resources they take). Ctrl+P, a
@@ -76,6 +78,8 @@ export interface PadView {
   /** The keyboard into the pad (it was opened from the keyboard, or its icon was clicked). */
   focus(): void
   serialize?(): unknown
+  /** Items the pad's menu (its header's "⋯", right-click on its icon) shows after the core's. */
+  menu?(): ContextMenuEntry[]
   /** Shown or hidden (its side bar opened or closed, its desk switched); it keeps its size either way. */
   setVisible?(visible: boolean): void
   dispose(): void
@@ -147,6 +151,8 @@ export interface TetherUi {
     registerCommand(id: string, run: (source?: RunSource) => void): IDisposable
     /** Every registered command id. */
     ids(): string[]
+    /** Runs a command by id (a menu item calling another extension's command); 'unknown' when none is registered. */
+    run(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
   }
   /** The extension's channels to its main side (`ext:<id>:<channel>`), typed by its channel map. */
   ipc<C extends ChannelMap>(): UiIpc<C>

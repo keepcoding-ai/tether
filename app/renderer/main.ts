@@ -53,7 +53,7 @@ import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
 import { DisposableStore, toDisposable, type IDisposable } from '../shared/vscode-lifecycle.ts'
 import { uiIpc } from '../shared/ext-ipc.ts'
-import { ConfigurationRegistry, readExtensionsSettings, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
+import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
@@ -429,6 +429,9 @@ function showPadMenu(id: string, x: number, y: number, opener?: HTMLElement): vo
     { icon: side === 'left' ? 'arrow-line-right' : 'arrow-line-left', label: `Mover para a barra ${SIDE_LABEL[otherSide(side)]}`, run: () => bars.move(id) },
   ]
   if (bars.isMoved(id)) items.push({ icon: 'arrow-counter-clockwise', label: `Restaurar posição padrão (barra ${SIDE_LABEL[pad.defaultSide]})`, run: () => bars.restore(id) })
+  // The pad's own items (the explorer's "Seguir" and "Revelar" toggles) come after the core's.
+  const own = bars.shownView(id)?.menu?.() ?? []
+  if (own.length) items.push(SEP, ...own.map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName }))
   showContextMenu(x, y, items, opener)
 }
 
@@ -487,9 +490,10 @@ function describePane(id: string | undefined): PaneInfo | undefined {
   if (!id || !findPanel(id)) return undefined
   const slot = slots.get(id)
   const cwd = paneCwdOf(id)
+  const file = liveTypeOf(paneTypes, id)?.fileOf?.(id)
   const pad = framePadOf(id)
   const place = inDrawer(id) ? 'Gaveta' : pad ? padRegistry.get(pad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(id) ?? desks.activeDeskId)
-  return { id, type: liveTypeOf(paneTypes, id)?.id ?? 'unknown', ...(cwd ? { cwd } : {}), ...(slot && slot.kind !== 'shell' ? { agent: slot.kind } : {}), place }
+  return { id, type: liveTypeOf(paneTypes, id)?.id ?? 'unknown', ...(cwd ? { cwd } : {}), ...(file ? { file } : {}), ...(slot && slot.kind !== 'shell' ? { agent: slot.kind } : {}), place }
 }
 
 function notifyActivePane(): void {
@@ -1577,7 +1581,7 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 
 // ---------- tab context menu ----------
 
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean }
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
 type MenuEntry = MenuItem | typeof SEP
@@ -1606,7 +1610,7 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
   }
   const onDoc = (ev: Event): void => { if (!menu.contains(ev.target as Node)) close(false) }
   const onKey = (ev: KeyboardEvent): void => {
-    const lis = [...menu.querySelectorAll<HTMLElement>('li[role=menuitem]')]
+    const lis = [...menu.querySelectorAll<HTMLElement>('li[role^=menuitem]')]
     const i = lis.indexOf(document.activeElement as HTMLElement)
     if (ev.key === 'Escape') { ev.preventDefault(); close(true) }
     else if (ev.key === 'Tab') { ev.preventDefault(); close(true) }
@@ -1618,10 +1622,12 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
   }
   for (const item of items) {
     if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
-    const li = document.createElement('li'); li.setAttribute('role', 'menuitem'); li.tabIndex = -1
+    const li = document.createElement('li'); li.setAttribute('role', item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'); li.tabIndex = -1
+    if (item.checked !== undefined) li.setAttribute('aria-checked', String(item.checked))
     if (item.danger) li.classList.add('danger')
     if (item.disabled) li.setAttribute('aria-disabled', 'true')
     li.append(icon(item.icon), document.createTextNode(item.label))
+    if (item.checked) li.append(icon('check', 'ctx-check'))
     if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
     li.addEventListener('click', ev => {
       ev.stopPropagation()
@@ -1639,7 +1645,7 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - r.height - 4))}px`
   document.addEventListener('click', onDoc, true)
   document.addEventListener('keydown', onKey, true)
-  menu.querySelector<HTMLElement>('li[role=menuitem]')?.focus()
+  menu.querySelector<HTMLElement>('li[role^=menuitem]')?.focus()
 }
 
 /**
@@ -2992,7 +2998,8 @@ function registerPlaceholders(manifest: ExtensionManifest, failed: boolean): voi
 }
 
 function activateRendererExtensions(): void {
-  extSettings = readExtensionsSettings(window.tether.extSettingsSync())
+  // main hands over the parsed settings; reading them back through the file's own shape keeps the values (not just `disabled`).
+  extSettings = readExtensionsSettings(writeExtensionsSettings(window.tether.extSettingsSync()))
   window.tether.onExtSetting(onExtSetting)
   for (const e of extensions) {
     const settings = e.manifest.contributes?.settings
@@ -3046,6 +3053,7 @@ function activateRendererExtensions(): void {
           return add(toDisposable(commands.register(commandFromContribution(declared, run))))
         },
         ids: () => commands.all().map(c => c.id),
+        run: commandId => commands.run(commandId, 'menu'),
       },
       ipc: () => uiIpc(id, window.tether.ext),
       settings: {

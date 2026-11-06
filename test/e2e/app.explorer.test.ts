@@ -165,6 +165,8 @@ test('explorer 1a: the left pad lists the project roots; empty state; open folde
     const a2 = await create(page, 'claude', A)
     for (const id of [a1, a2]) await page.evaluate(id => window.__tether.addSlotPane(id), id)
     await waitRows(page, ['beta:pinned', 'alpha:inferred:2 agentes'], 'A inferred from the two agents')
+    // "seguir" (on by default) makes the new agents' project current; settle that before the click moves it to beta
+    await page.waitForFunction(() => window.__tether.explorer()?.roots.find(r => r.name === 'alpha')?.current === true)
     await page.hover(`.pad.shown ${rowSel('alpha')} .xp-hint`)
     const tip = await page.evaluate(() => document.querySelector('.xp-hint')?.title ?? '')
     assert.match(tip, /Claude · /, 'the tooltip names the agent panes')
@@ -176,6 +178,8 @@ test('explorer 1a: the left pad lists the project roots; empty state; open folde
       await sleep(250)
       await page.screenshot({ path: join(shots, `explorer-roots-${scheme}.png`) })
     }
+    // (the theme menu hands the keyboard back to alpha's agent, which "seguir" follows: click beta once more)
+    await page.click(`.pad.shown ${rowSel('beta')} .xp-name`)
     assert.equal((await snap(page)).roots.find(r => r.name === 'beta')!.current, true, 'a click makes the root current')
 
     // ---- 4. the pin toggle, the menus, move, close ----

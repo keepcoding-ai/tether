@@ -65,6 +65,8 @@ export interface PaneType extends PaneLayout {
   rename?(id: string): void
   /** The folder "Copiar pasta" / "Abrir pasta no Explorer" act on (a file's own folder). */
   folderOf?(id: string): string | undefined
+  /** The file a note or a preview shows ("Revelar no explorador"). */
+  fileOf?(id: string): string | undefined
   /** The tab's menu (right-click, the strip's "⋯"); the core activates the pane first. */
   tabMenu?(id: string, x: number, y: number): void
   /** The tab strip's "prévia ao lado" button: shown while `canPreviewSide` holds. */
