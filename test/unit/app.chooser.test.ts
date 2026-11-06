@@ -7,10 +7,17 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Profile } from '../../src/daemon/protocol.ts'
 import { appCommands, type CommandHost } from '../../app/renderer/app-commands.ts'
-import { chooserItems, chooserRows, effectiveFolder, EMPTY_ITEM, escLayer, filterFolders, itemForDigit, matchItem, NOTE_NEW_ITEM, NOTE_OPEN_ITEM, openLabel, profileItem, rememberProfile, rowItems } from '../../app/renderer/chooser-rules.ts'
+import { chooserItems, chooserRows, effectiveFolder, EMPTY_ITEM, escLayer, filterFolders, itemForDigit, matchItem, contributeChooser, chooserItemOf, openLabel, profileItem, rememberProfile, rowItems } from '../../app/renderer/chooser-rules.ts'
 import { CommandRegistry, type CommandContext } from '../../app/renderer/commands.ts'
 import { shortcutOf, type KeyLike } from '../../app/renderer/shortcuts.ts'
 import { emptyOrigin, emptyParams, withEmpty } from '../../app/shared/empty.ts'
+import { manifest as noteManifest } from '../../extensions/note/manifest.ts'
+
+// The note extension's chooser items, as the renderer's extension host contributes them at startup.
+const noteChooser = noteManifest.contributes!.chooser!
+contributeChooser(noteChooser)
+const NOTE_NEW_ITEM = chooserItemOf(noteChooser.items[0]!)
+const NOTE_OPEN_ITEM = chooserItemOf(noteChooser.items[1]!)
 
 const UNSAFE = '--dangerously-skip-permissions'
 const PROFILES: Profile[] = [

@@ -1,15 +1,20 @@
-// The pane-type registry (F9 slice 0a, app/renderer/pane-registry.ts): the core pane kinds' layout side
-// (app/renderer/core-pane-layouts.ts) must rebuild every pane of a layout.json exactly as it was saved (component,
+// The pane-type registry (F9 slice 0a, app/renderer/pane-registry.ts): the pane kinds' layout side (the core's,
+// app/renderer/core-pane-layouts.ts, and the note extension's, extensions/note/layouts.ts) must rebuild every pane of a layout.json exactly as it was saved (component,
 // tab, title, params), the slotless rule must match the one the restore always used, and registrations dispose.
 // The fixture (fixtures/layout-v2-panes.json) is synthesized in the shape the app writes: one pane of each kind.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { CORE_PANE_LAYOUTS, previewPaneOptions } from '../../app/renderer/core-pane-layouts.ts'
+import { CORE_PANE_LAYOUTS as CORE_ONLY } from '../../app/renderer/core-pane-layouts.ts'
+import { previewPaneOptions } from '../../extensions/note/layouts.ts'
+import { manifest as noteManifest } from '../../extensions/note/manifest.ts'
 import { allPanelIds, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
 import { PaneRegistry, type PaneLayout } from '../../app/renderer/pane-registry.ts'
 import { isSlotlessPanelId } from '../../app/shared/empty.ts'
 import { DisposableStore, dispose, toDisposable } from '../../app/shared/vscode-lifecycle.ts'
+
+// The core's kinds plus the note extension's (declared in its manifest, as the renderer registers them).
+const CORE_PANE_LAYOUTS: PaneLayout[] = [...CORE_ONLY, ...(noteManifest.contributes?.paneTypes ?? []).map(t => ({ ...t, hasSlot: false }))]
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/layout-v2-panes.json', import.meta.url), 'utf8')) as LayoutV2
 

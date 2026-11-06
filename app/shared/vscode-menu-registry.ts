@@ -38,6 +38,8 @@ export interface MenuItem<Ctx = unknown> {
   kind?: 'radio' | 'checkbox'
   /** The initial check of a radio/checkbox, before the renderer syncs it with the setting. */
   checked?: boolean
+  /** A checkbox's live check (VS Code's `toggled`): the renderer reads it whenever the menu opens or a setting changes. */
+  toggled?: () => boolean
   /** The radio's value attribute (the theme radios carry `data-theme`). */
   data?: Readonly<Record<string, string>>
   danger?: boolean

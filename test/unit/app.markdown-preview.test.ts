@@ -14,6 +14,10 @@ import { renderMarkdown, renderMarkdownSync, sanitizeHtml, slugify } from '../..
 import { lineAtOffset, offsetOfLine, type LineBlock } from '../../app/shared/markdown-scroll.ts'
 import { isMarkdownPath, isPreviewPanelId, newPreviewPanelId, previewParams, previewTitle, withPreview } from '../../app/shared/preview.ts'
 import { isSlotlessPanelId } from '../../app/shared/empty.ts'
+import { noteCommands, withNoteKeybindings } from './note-extension.ts'
+
+// The note's keys come from its extension (extensions/note/manifest.ts), contributed as at the app's startup.
+withNoteKeybindings()
 
 const WIN = 'C:\\notes\\proj'
 const POSIX = '/home/u/notes'
@@ -282,11 +286,11 @@ describe('Ctrl+Shift+V and the commands', () => {
 
   const calls: string[] = []
   const host = new Proxy({}, { get: (_t, name) => (...args: unknown[]) => { calls.push(`${String(name)}(${args.join(',')})`) } }) as CommandHost
-  const ctx = (markdown?: 'note' | 'preview'): CommandContext => ({ pane: true, desks: 1, drawerOpen: false, focus: 'editor', ...(markdown ? { markdown } : {}) })
+  const ctx = (markdown?: 'note' | 'preview'): CommandContext => ({ pane: true, desks: 1, drawerOpen: false, focus: 'editor', flags: new Set(markdown ? [`markdown.${markdown}`] : []) })
 
   test('the preview commands exist with the titles of the palette and appear only where they apply', async () => {
     const registry = new CommandRegistry(() => ctx('note'))
-    registry.register(...appCommands(host))
+    registry.register(...appCommands(host), ...noteCommands(id => calls.push(id)))
     const open = registry.get('markdown.preview')!
     const side = registry.get('markdown.preview.side')!
     const source = registry.get('markdown.source')!
@@ -302,6 +306,6 @@ describe('Ctrl+Shift+V and the commands', () => {
     calls.length = 0
     assert.equal(await registry.run('markdown.preview', 'key'), 'ran')
     assert.equal(await registry.run('markdown.preview.side', 'palette'), 'ran')
-    assert.deepEqual(calls, ['markdownPreview(false)', 'markdownPreview(true)'])
+    assert.deepEqual(calls, ['markdown.preview', 'markdown.preview.side'])
   })
 })

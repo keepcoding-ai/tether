@@ -9,26 +9,17 @@ import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { appCommands, type CommandHost } from './app-commands.ts'
-import { CommandRegistry, type CommandContext } from './commands.ts'
+import { commandFromContribution, CommandRegistry, type CommandContext } from './commands.ts'
 import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
 import { terminalKeyOwner } from './key-capture.ts'
 import { ChordDispatcher, scopeOf as keyScopeOf } from './chord-dispatch.ts'
 import { ChordPill } from './chord-pill.ts'
-import { editorChordCommand, editorKeybindings, runEditorChord } from './monaco-chords.ts'
 import { formatKeybindingsFile, mergeKeybindings, overridesFor, parseKeybindingsFile } from './keybindings-rules.ts'
 import { KeybindingsPanel, KeybindingsTab, type FixedBinding, type KeybindingsHost, type KeybindingsSnapshot } from './keybindings-panel.ts'
 import { KEYBINDINGS_COMPONENT, KEYBINDINGS_TAB, KEYBINDINGS_TITLE, newKeybindingsPanelId, type KeybindingsFileState } from '../shared/keybindings.ts'
-import { defineTheme, mirrorThemeVars, monaco, remeasureEditorFonts } from './monaco.ts'
-import { NotePanel, NoteTab, type NoteHost, type NoteSnapshot } from './note-panel.ts'
-import { paneCwdOfNote } from './note-rules.ts'
-import { PreviewPanel, PreviewTab, type PreviewHost, type PreviewSnapshot } from './preview-panel.ts'
-import { HtmlPreviewPanel, type HtmlPreviewHost, type HtmlPreviewSnapshot } from './html-preview-panel.ts'
-import type { PreviewPane } from './preview-pane.ts'
-import { isHtmlPath, isMarkdownPath, isPreviewablePath, newPreviewPanelId, withPreview } from '../shared/preview.ts'
-import { cleanNoteName, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../shared/notes.ts'
 import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, newEmptyPanelId, withEmpty, type EmptyOrigin } from '../shared/empty.ts'
 import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empty-panel.ts'
-import { type Choice, rememberProfile } from './chooser-rules.ts'
+import { type Choice, contributeChooser, rememberProfile } from './chooser-rules.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
 import { CommandPalette } from './palette.ts'
 import { type OpenFileOptions, QuickOpen, quickOpenFailedSituation } from './quick-open.ts'
@@ -51,22 +42,24 @@ import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
-import { emptyLayout as emptyPaneLayout, extensionsLayout, htmlPreviewLayout, keybindingsLayout, mdPreviewLayout, noteLayout, previewPaneOptions, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
+import { emptyLayout as emptyPaneLayout, extensionsLayout, keybindingsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
-import type { TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ContextMenuEntry, FileOpener, TetherUi } from './ext-api.ts'
+import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
-import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
+import type { ExtensionManifest } from '../../extensions/types.ts'
+import { DisposableStore, toDisposable, type IDisposable } from '../shared/vscode-lifecycle.ts'
 import { uiIpc } from '../shared/ext-ipc.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
-import { appMenuHtml, coreMenuRegistry } from './app-menu.ts'
+import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
-import { chordOn, formatKeys, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
-import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, noteConflictSituation, noteGitignoreSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
+import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 
@@ -77,14 +70,6 @@ const SAVE_DEBOUNCE_MS = 300
 const slots = new Map<string, SlotState>()
 const panels = new Map<string, TerminalPanel>()
 const tabs = new Map<string, SlotTab>()
-/** The note panes (F5): no slot behind them, a file each (app/renderer/note-panel.ts). */
-const notes = new Map<string, NotePanel>()
-const noteTabs = new Map<string, NoteTab>()
-/**
- * The previews (F5): a pane tied to a file, drawn beside or instead of its editor. Markdown (app/renderer/preview-panel.ts) is drawn by
- * the app into a script-less frame; HTML (app/renderer/html-preview-panel.ts) runs the page in an isolated webview.
- */
-const previews = new Map<string, PreviewPane>()
 /** The empty panes (F5): a reserved place with the chooser inside (app/renderer/empty-panel.ts). */
 const empties = new Map<string, EmptyPanel>()
 /** The "Atalhos de teclado" screens (F5, delivery 5; one is the rule, the map keeps the layout honest). */
@@ -92,8 +77,13 @@ const keybindingsPanels = new Map<string, KeybindingsPanel>()
 const extensionsPanels = new Map<string, ExtensionsPanel>()
 /** Every kind of pane (F9): the registry main.ts and the extensions register into (see "pane types" below). */
 const paneTypes = new PaneRegistry<PaneType>()
-/** Removes the editor actions registered as commands by the last note that got the focus. */
-let editorCommandsOff: (() => void) | undefined
+/** What extensions follow through TetherUi.theme: every theme applied, every terminal appearance painted. */
+const themeListeners = new Set<(scheme: ThemeState['scheme']) => void>()
+const appearanceListeners = new Set<(a: TerminalAppearance) => void>()
+/** The chooser items extensions contribute, by item id: what picking one opens (TetherUi.chooser). */
+const chooserResolvers = new Map<string, (cwd: string) => Promise<ChoiceResolution>>()
+/** The panes standing in for a disabled extension's saved panes (app/renderer/disabled-pane.ts). */
+const placeholders = new Map<string, DisabledPane>()
 /** Error of the last refused `start` per slot (the daemon does not store `already-open` / `unconfirmed`). */
 const startErrors = new Map<string, SlotError>()
 /** Slots with a `start` request in flight. */
@@ -130,10 +120,7 @@ let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-sc
 let appearance: TerminalAppearance = DEFAULT_APPEARANCE
 let themeDialog: TerminalThemeDialog
 /** The saved appearance read and its font loaded: no panel opens before this, so xterm measures the real glyphs. */
-const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; await loadTerminalFonts(a); remeasureEditorFonts() })
-// Note editors can be created (a restored layout) before the web font is in: Monaco then caches the fallback
-// font's character widths and draws the caret off the text. Whenever a face finishes loading, measure again.
-document.fonts.addEventListener('loadingdone', () => remeasureEditorFonts())
+const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; await loadTerminalFonts(a); for (const l of appearanceListeners) l(a) })
 /** Remembered dialog answers ("não perguntar de novo"); main owns the file and pushes every change. */
 let confirmations: Confirmations = {}
 /** The launch profiles (<home>/profiles.json), as last listed or pushed by the daemon's `profiles` event. */
@@ -186,14 +173,11 @@ function commandContext(): CommandContext {
   const transient = !active || active === document.body || active.closest(TRANSIENT_FOCUS)
   const focus = transient ? focusOwner : focusOwnerOf(active)
   const activeId = currentDesk().activePanel?.id
-  // `markdown`: the commands of the preview family (Ctrl+Shift+V, "abrir prévia", "abrir o arquivo-fonte") act on a note with a previewable
-  // file (markdown or HTML) or on a preview of either kind; the host picks the kind from the file.
-  // The active pane's type and its context flags (PaneType.contextFlags); `markdown`/`keybindings` are read from the flags.
+  // The active pane's type and its context flags (PaneType.contextFlags: 'markdown.note', 'keybindings.screen'…).
   const type = activeId ? liveTypeOf(paneTypes, activeId) : undefined
   const flags: ReadonlySet<string> = new Set(activeId ? type?.contextFlags?.(activeId) ?? [] : [])
-  const markdown = flags.has('markdown.note') ? 'note' : flags.has('markdown.preview') ? 'preview' : undefined
   const keybindings = flags.has('keybindings.screen')
-  return { pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(markdown ? { markdown } : {}), ...(keybindings ? { keybindings } : {}) }
+  return { pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(keybindings ? { keybindings } : {}) }
 }
 
 const commands = new CommandRegistry(commandContext, {
@@ -269,10 +253,7 @@ function applyTheme(state: ThemeState): void {
   theme = state
   document.documentElement.dataset.theme = state.scheme
   for (const p of panels.values()) p.setAppearance(appearance, state.scheme)
-  // The note editors: one theme for every Monaco editor, rebuilt from the tokens just painted.
-  monaco.editor.setTheme(defineTheme(state.scheme))
-  mirrorThemeVars()
-  for (const p of previews.values()) p.restyle()
+  for (const l of themeListeners) l(state.scheme)
   themeDialog?.refresh()
   for (const li of document.querySelectorAll<HTMLElement>('#app-menu li[data-theme], #theme-menu li[data-theme]')) li.setAttribute('aria-checked', String(li.dataset.theme === state.setting))
   const btn = $('btn-theme')
@@ -291,8 +272,6 @@ function applyUi(next: UiSettings): void {
   document.querySelector('#app-menu li[data-command="ui.tab-border"]')?.setAttribute('aria-checked', String(ui.tabBorder))
   document.querySelector('#app-menu li[data-command="ui.dim-unfocused"]')?.setAttribute('aria-checked', String(ui.dimUnfocused))
   document.querySelector('#app-menu li[data-command="ui.desk-line"]')?.setAttribute('aria-checked', String(ui.deskLine))
-  document.querySelector('#app-menu li[data-command="ui.word-wrap"]')?.setAttribute('aria-checked', String(ui.wordWrap))
-  for (const n of notes.values()) n.setWordWrap(ui.wordWrap)
 }
 
 // ---------- terminal appearance ----------
@@ -301,8 +280,7 @@ function applyUi(next: UiSettings): void {
 function applyAppearance(a: TerminalAppearance): void {
   appearance = a
   for (const p of panels.values()) p.setAppearance(a, theme.scheme)
-  for (const n of notes.values()) n.setAppearance(a)
-  for (const p of previews.values()) p.restyle()
+  for (const l of appearanceListeners) l(a)
   themeDialog?.refresh()
 }
 
@@ -310,14 +288,13 @@ function applyAppearance(a: TerminalAppearance): void {
 async function changeAppearance(a: TerminalAppearance): Promise<void> {
   await loadTerminalFonts(a)
   applyAppearance(a)
-  remeasureEditorFonts()
   window.tether.setTerminalAppearance(a)
 }
 
 /** Main pushed an appearance (the echo of ours, or another window's change): paint it once its font is loaded. */
 async function onAppearance(a: TerminalAppearance): Promise<void> {
   if (!terminalFontsLoaded(a)) await loadTerminalFonts(a)
-  if (JSON.stringify(a) !== JSON.stringify(appearance)) { applyAppearance(a); remeasureEditorFonts() }
+  if (JSON.stringify(a) !== JSON.stringify(appearance)) applyAppearance(a)
 }
 
 /** The host of one desk's frames (or the drawer's): the same dockview options everywhere; a "+" acts in its own desk. */
@@ -346,8 +323,8 @@ function deskHost(scope: 'desk' | 'drawer' = 'desk'): DeskHost {
         paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
         toggleDetails: id => togglePaneDetails(id),
         addTab: id => { newTabBeside(id) },
-        canPreview: id => { const n = notes.get(id); return !!n && isPreviewablePath(n.path) },
-        previewSide: id => { openPreview({ side: true, reference: id }) },
+        canPreview: id => liveTypeOf(paneTypes, id)?.canPreviewSide?.(id) ?? false,
+        previewSide: id => liveTypeOf(paneTypes, id)?.previewSide?.(id),
       }),
       createWatermarkComponent: () => {
         const el = document.createElement('div')
@@ -414,11 +391,6 @@ function addPanel(slot: SlotState, target?: Target, reference?: string, into?: '
 /** The dockview options of a slot's pane. */
 function slotPanelOptions(slot: SlotState): AddPanelOptions {
   return { id: slot.slotId, component: COMPONENT, tabComponent: TAB, title: panelTitle(slot), params: { slotId: slot.slotId, hint: hintOf(slot) } }
-}
-
-/** The dockview options of a note's pane (a fresh id). */
-function notePanelOptions(path: string): AddPanelOptions {
-  return { id: newNotePanelId(), component: NOTE_COMPONENT, tabComponent: NOTE_TAB, title: noteTitle(path), params: withNote(undefined, { path }) }
 }
 
 /** The dockview options of an empty pane (a fresh id), suggesting `cwd` in its chooser; `origin` says what Esc does in it. */
@@ -543,7 +515,9 @@ function markSeenIfWatched(): void {
 
 /** The keyboard to a pane, whatever it is: a terminal or a note. */
 function focusPane(id: string): void {
-  (panels.get(id) ?? notes.get(id) ?? previews.get(id) ?? empties.get(id) ?? keybindingsPanels.get(id) ?? extensionsPanels.get(id))?.focus()
+  const own = panels.get(id) ?? empties.get(id) ?? keybindingsPanels.get(id) ?? extensionsPanels.get(id)
+  if (own) { own.focus(); return }
+  liveTypeOf(paneTypes, id)?.focus?.(id)
 }
 
 /** After a desk switch: the keyboard goes to the desk's active pane (and its badge, if any, is seen). */
@@ -848,7 +822,7 @@ async function openMove(slotId: string, mode?: MoveMode): Promise<void> {
   const op = await openMoveDialog({
     scopes: moveTree(),
     source: { slotId, title: findPanel(slotId)?.api.title ?? slotId, scope, frameId: frame.id },
-    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] ?? 'terminal-window' : notes.has(id) ? 'note-pencil' : previews.has(id) ? 'eye' : empties.has(id) ? 'plus' : 'question' },
+    paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question' },
     ...(mode ? { mode } : {}),
   })
   if (op) await runMove(op, slotId)
@@ -1446,7 +1420,6 @@ function showTabMenu(slotId: string, x: number, y: number): void {
   const panel = findPanel(slotId)
   if (!slot) {
     if (empties.has(slotId)) { panel?.api.setActive(); showEmptyMenu(slotId, x, y); return }
-    if (previews.has(slotId)) { panel?.api.setActive(); showPreviewMenu(slotId, x, y); return }
     if (keybindingsPanels.has(slotId)) {
       panel?.api.setActive()
       showContextMenu(x, y, [
@@ -1454,13 +1427,15 @@ function showTabMenu(slotId: string, x: number, y: number): void {
         SEP,
         { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
         SEP,
-        { icon: 'x', label: 'Fechar', run: () => closeNote(slotId) },
+        { icon: 'x', label: 'Fechar', run: () => closeSlotless(slotId) },
       ])
       return
     }
-    if (!notes.has(slotId)) return
+    // Any other kind of pane shows its type's own menu (an extension's: the note, the previews, a placeholder).
+    const type = liveTypeOf(paneTypes, slotId)
+    if (!type?.tabMenu) return
     panel?.api.setActive()
-    showNoteMenu(slotId, x, y)
+    type.tabMenu(slotId, x, y)
     return
   }
   panel?.api.setActive()
@@ -1481,42 +1456,6 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
     SEP,
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
-  ])
-}
-
-/** The note's tab menu: new things next to it, the file (rename, save as, its folder), where it lives, close. */
-function showNoteMenu(id: string, x: number, y: number): void {
-  const note = notes.get(id)
-  if (!note) return
-  showContextMenu(x, y, [
-    { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: id }) } },
-    { icon: 'note-pencil', label: 'Nova nota', run: () => { void newNote() } },
-    SEP,
-    { icon: 'pencil-simple', label: 'Renomear…', run: () => noteTabs.get(id)?.startRename() },
-    { icon: 'floppy-disk', label: 'Salvar nota como…', run: () => { void saveNoteAs(id) } },
-    ...(isPreviewablePath(note.path) ? [{ icon: 'eye' as const, label: 'Abrir prévia', run: () => openPreview({ side: false, reference: id }) }, { icon: 'square-split-horizontal' as const, label: 'Abrir prévia ao lado', run: () => openPreview({ side: true, reference: id }) }] : []),
-    { icon: 'copy', label: 'Copiar caminho da nota', run: () => window.tether.writeClipboard(note.path) },
-    { icon: 'folder-open', label: 'Abrir pasta da nota no Explorer', run: () => { void window.tether.openPath(noteDirOf(note.path)).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) }) } },
-    SEP,
-    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
-    SEP,
-    { icon: 'x', label: 'Fechar nota', run: () => closeNote(id) },
-  ])
-}
-
-/** The preview's tab menu: its source, where it lives, close. */
-function showPreviewMenu(id: string, x: number, y: number): void {
-  const preview = previews.get(id)
-  if (!preview) return
-  showContextMenu(x, y, [
-    { icon: 'note-pencil', label: preview.kind === 'html' ? 'Ver código' : 'Abrir o arquivo-fonte', run: () => openPreviewSource(id) },
-    ...(preview instanceof HtmlPreviewPanel ? [{ icon: 'arrow-square-out' as const, label: 'Abrir no navegador', run: () => openInBrowser(preview.path) }, { icon: 'arrow-clockwise' as const, label: 'Recarregar a página', run: () => preview.reload() }] : []),
-    { icon: 'copy', label: 'Copiar caminho do arquivo', run: () => window.tether.writeClipboard(preview.path) },
-    { icon: 'folder-open', label: 'Abrir pasta do arquivo no Explorer', run: () => { void window.tether.openPath(noteDirOf(preview.path)).then(r => { if (!r.ok) console.warn(`open folder: ${r.message}`) }) } },
-    SEP,
-    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
-    SEP,
-    { icon: 'x', label: 'Fechar prévia', run: () => closeNote(id) },
   ])
 }
 
@@ -1574,12 +1513,12 @@ function newEmptyDesk(): void {
 }
 
 /**
- * Resolves what the person picked in a chooser into the pane to add: a slot created by the daemon, a note file
- * prepared or picked, or an empty pane. `undefined` when nothing is to be added (a file dialog cancelled, a note
+ * Resolves what the person picked in a chooser into the pane to add: a slot created by the daemon, an empty pane, or
+ * what an extension's item resolves into (a note file prepared or picked). `undefined` when nothing is to be added (a file dialog cancelled, a note
  * already open and now focused); `{ error }` with the message to show in the chooser.
  */
 async function resolveChoice(choice: Choice, cwd: string): Promise<{ options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined> {
-  if (choice.kind === 'profile') {
+  if (choice.profile) {
     const reply = await window.tether.request({ t: 'create', kind: choice.profile.agent, cwd, start: true, profileId: choice.profile.id })
     if (reply.t === 'error' || !reply.slot) return { error: reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot' }
     await window.tether.rememberFolder(cwd)
@@ -1591,20 +1530,12 @@ async function resolveChoice(choice: Choice, cwd: string): Promise<{ options: Ad
     if (cwd) await window.tether.rememberFolder(cwd)
     return { options: emptyPanelOptions(cwd || undefined) }
   }
-  if (choice.kind === 'note-new') {
-    const prepared = await window.tether.notePrepare(cwd || undefined)
-    if (cwd) await window.tether.rememberFolder(cwd)
-    const after = prepared.askGitignore ? async (): Promise<void> => {
-      const answer = await askDialog(noteGitignoreSituation(prepared.askGitignore!))
-      await window.tether.noteGitignore(prepared.askGitignore!, answer.choice === 'add')
-    } : undefined
-    return { options: notePanelOptions(prepared.path), ...(after ? { after } : {}) }
-  }
-  const picked = await window.tether.notePickOpen(cwd || undefined)
-  if (!picked) return undefined
-  const existing = noteByPath(picked)
-  if (existing) { findPanel(existing.id)?.api.setActive(); existing.focus(); return undefined }
-  return { options: notePanelOptions(picked) }
+  // An item an extension contributes (the note's "Nova nota", "Abrir nota…"): its own resolver.
+  const resolve = chooserResolvers.get(choice.kind)
+  if (!resolve) return { error: 'Este item vem de uma extensão que não está ligada.' }
+  const r = await resolve(cwd)
+  if (r && !('error' in r) && cwd) await window.tether.rememberFolder(cwd)
+  return r
 }
 
 /** What every chooser (inside a pane, in the popup) needs from the renderer. */
@@ -1658,104 +1589,6 @@ const emptyHost: EmptyHost = {
   onClose: id => { const p = findPanel(id); if (p) removeAnyPanel(p) },
 }
 
-// ---------- notes (F5) ----------
-// A note is a pane with a file instead of a slot (app/renderer/note-panel.ts). Its text is written by the panel
-// itself; here live the ways a note is born (new, opened from the disk), its file operations through the tab, and
-// what the layout keeps of it (the view state goes to the pane params and is saved with the layout).
-
-/** What the panels need from the renderer. */
-const noteHost: NoteHost = {
-  getScheme: () => theme.scheme,
-  getAppearance: () => appearance,
-  getWordWrap: () => ui.wordWrap,
-  toggleWordWrap: () => window.tether.setUi({ ...ui, wordWrap: !ui.wordWrap }),
-  onFocus: (panel, focused) => {
-    // The actions stay registered while the focus is on a transient surface (the palette lists them); the next
-    // focused note replaces them, and a disposed note removes its own.
-    if (focused) { editorCommandsOff?.(); editorCommandsOff = commands.register(...panel.commands()); editorCommandsOwner = panel }
-    else if (editorCommandsOwner === panel && !panel.editor) { editorCommandsOff?.(); editorCommandsOff = undefined; editorCommandsOwner = undefined }
-  },
-  onViewChange: panel => {
-    const p = findPanel(panel.id)
-    if (!p) return
-    const view = panel.viewState()
-    p.api.updateParameters(withNote(p.params, { path: panel.path, ...(view ? { view } : {}) }))
-    scheduleSave()
-  },
-  onDirtyChange: panel => noteTabs.get(panel.id)?.render(),
-  askConflict: panel => askDialog(noteConflictSituation(panel.path)).then(a => (a.choice === 'reload' ? 'reload' : 'keep')),
-  onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
-  onRename: (id, name) => { void renameNote(id, name) },
-  onClose: id => closeNote(id),
-  onSourceChange: panel => { for (const p of previewsOf(panel.path)) p.sourceChanged() },
-  onScroll: panel => { for (const p of previewsOf(panel.path)) p.editorScrolled(panel) },
-  onPathChange: (panel, from) => { for (const p of previewsOf(from)) p.setPath(panel.path) },
-}
-let editorCommandsOwner: NotePanel | undefined
-
-/** Adds the pane of a note (in the reference's group by default, or at `target` relative to it). */
-function addNotePanel(path: string, reference?: string, target?: Target): IDockviewPanel {
-  const panel = addPaneOptions(notePanelOptions(path), target, reference)
-  scheduleSave()
-  return panel
-}
-
-/** The folder a new note belongs to: the active pane's opening folder (a terminal's cwd; a note's own repository; an empty pane's suggestion), or none. */
-function paneCwdForNote(): string | undefined {
-  return paneCwdOf(currentDesk().activePanel?.id)
-}
-
-/** "Nova nota": a file under the active pane's folder (`.tether/notes/`), opened beside it; in a git repository, the `.gitignore` question once. */
-async function newNote(): Promise<void> {
-  const reference = currentDesk().activePanel?.id
-  const prepared = await window.tether.notePrepare(paneCwdForNote())
-  const panel = addNotePanel(prepared.path, reference)
-  requestAnimationFrame(() => focusPane(panel.id))
-  if (prepared.askGitignore) {
-    const answer = await askDialog(noteGitignoreSituation(prepared.askGitignore))
-    await window.tether.noteGitignore(prepared.askGitignore, answer.choice === 'add')
-    focusPane(panel.id)
-  }
-}
-
-/** The open note showing `path`, if any (paths compared case-insensitively: Windows). */
-function noteByPath(path: string): NotePanel | undefined {
-  const key = path.toLowerCase()
-  for (const n of notes.values()) if (n.path.toLowerCase() === key) return n
-  return undefined
-}
-
-/** "Abrir nota…": the OS file dialog; a file already open is focused instead of opened twice. */
-async function openNote(path?: string): Promise<void> {
-  const reference = currentDesk().activePanel?.id
-  const picked = path ?? await window.tether.notePickOpen(paneCwdForNote())
-  if (!picked) return
-  const existing = noteByPath(picked)
-  if (existing) { findPanel(existing.id)?.api.setActive(); existing.focus(); return }
-  const panel = addNotePanel(picked, reference)
-  requestAnimationFrame(() => focusPane(panel.id))
-}
-
-/**
- * Quick Open's text file: in the focused pane's tab group (or beside it), as a note tab that remembers the root it
- * was opened from (the next Ctrl+P from it searches the same folder); a tab already showing the file is focused.
- */
-function openQuickOpenFile(path: string, opts: OpenFileOptions): void {
-  const existing = noteByPath(path)
-  if (existing) {
-    findPanel(existing.id)?.api.setActive()
-    existing.focus()
-    if (opts.position) existing.reveal(opts.position)
-    return
-  }
-  const reference = opts.reference ?? currentDesk().activePanel?.id
-  const options = { ...notePanelOptions(path), params: withNote(undefined, { path, ...(opts.root ? { cwd: opts.root } : {}) }) }
-  const panel = addPaneOptions(options, opts.side ? { level: 'pane', placement: 'right' } : undefined, reference)
-  scheduleSave()
-  if (opts.position) notes.get(panel.id)?.reveal(opts.position)
-  requestAnimationFrame(() => focusPane(panel.id))
-}
-
 /**
  * A path printed in a terminal was Ctrl+clicked (app/renderer/terminal-links.ts): a folder opens in the Explorer; a file
  * opens the way Quick Open opens it, in the clicked pane's tab group, at the line and column the text names.
@@ -1768,57 +1601,35 @@ function openTerminalLink(slotId: string, target: { path: string; isDirectory: b
   void quickOpen.openFile(target.path, { side: false, root: paneCwdOf(slotId) ?? '', reference: slotId, ...(target.position ? { position: target.position } : {}) })
 }
 
+// ---------- opening a file ----------
+// Ctrl+P, a terminal link and the extensions' "abrir o arquivo-fonte" open a file through the openers extensions
+// register (TetherUi.openers; the note's: an .html as its preview, any other text file as a note).
+const fileOpeners: FileOpener[] = []
+
+function openWithOpeners(path: string, opts: OpenFileOptions): void {
+  const opener = fileOpeners.find(o => o.canOpen(path, opts))
+  if (opener) { opener.open(path, opts); return }
+  void askDialog(quickOpenFailedSituation(`Nenhuma extensão ligada abre este arquivo: ${path}. A extensão Nota abre arquivos de texto; veja em Extensões.`))
+}
+
 const quickOpen = new QuickOpen({
   paneCwd: () => paneCwdOf(currentDesk().activePanel?.id),
-  openText: openQuickOpenFile,
-  openHtml: openHtmlFile,
+  openText: openWithOpeners,
   notify: message => { void askDialog(quickOpenFailedSituation(message)) },
 })
 
-/** "Salvar nota como…": the OS save dialog; the note moves to the chosen file (the old one stays as it was). */
-async function saveNoteAs(id = activeNoteId()): Promise<void> {
-  const note = id ? notes.get(id) : undefined
-  if (!note) return
-  const picked = await window.tether.notePickSaveAs(note.path)
-  if (!picked || picked === note.path) { note.focus(); return }
-  await note.saveAs(picked)
-  noteTabs.get(note.id)?.render()
-  note.focus()
-}
-
-/** The active pane when it is a note (the keyboard's last owner when the active pane is not conclusive). */
-function activeNoteId(): string | undefined {
-  const active = currentDesk().activePanel
-  if (active && notes.has(active.id)) return active.id
-  if (editorCommandsOwner && notes.has(editorCommandsOwner.id)) return editorCommandsOwner.id
-  return undefined
-}
-
-/** The tab's rename: the file is renamed in its folder (`.md` added when missing); a refusal keeps the old name. */
-async function renameNote(id: string, typed: string): Promise<void> {
-  const note = notes.get(id)
-  const name = cleanNoteName(typed)
-  if (!note || !name || name === noteTitle(note.path)) return
-  const dir = noteDirOf(note.path)
-  const sep = note.path.includes('\\') ? '\\' : '/'
-  const to = dir ? `${dir}${sep}${name}` : name
-  const r = await window.tether.noteRename(note.path, to)
-  if (!r.ok) { console.warn(`renomear nota: ${r.message}`); return }
-  note.setPath(to)
-  noteTabs.get(id)?.render()
-}
-
-/** The tab's ×: the pane goes (its text is already on disk; the panel flushes what is pending). */
-function closeNote(id: string): void {
+/** Closes a pane with no slot behind it (a note, a preview, a screen): remembered for "reabrir", then removed. */
+function closeSlotless(id: string): void {
   const panel = findPanel(id)
   rememberClosed(id)
   if (panel) removeAnyPanel(panel)
 }
 
+
 // ---------- reopen the last closed pane (Ctrl+Shift+T) ----------
 // What closing leaves behind, newest last: a slot (it stays in the tetherd, "Rodando sem painel" / "Encerrados", and
-// reopening RESUMES it, as the closed-slots menu does) or a note's file. Reopening takes the newest that still makes
-// sense (the slot still exists and has no pane; the note is not open).
+// reopening RESUMES it, as the closed-slots menu does) or what another pane type keeps (a note's file). Reopening takes
+// the newest that still makes sense (the slot still exists and has no pane; the note is not open).
 // Each pane type says what it leaves (PaneType.closedEntry).
 const closedPanes: ClosedEntry[] = []
 
@@ -1833,118 +1644,6 @@ function rememberClosed(id: string): void {
 
 function reopenClosed(): void {
   while (closedPanes.length) if (closedPanes.pop()!.reopen()) return
-}
-
-/** Main's watcher saw the file change: the note that shows it decides (reload, keep, or ask). */
-function onNoteChanged(path: string): void {
-  const note = noteByPath(path)
-  if (note) void note.onExternalChange()
-  for (const p of previews.values()) if (p.watches(path)) p.diskChanged()
-}
-
-// ---------- markdown previews (F5) ----------
-// A preview is a pane tied to a markdown file (app/renderer/preview-panel.ts). It reads the text of the editor that
-// has the file open (live), else the file; the editor and the preview scroll together. Its params (the file, where
-// it was scrolled) go to the layout like a note's, so a restart brings it back.
-
-const previewHost: PreviewHost = {
-  getScheme: () => theme.scheme,
-  getAppearance: () => appearance,
-  editorFor: path => { const n = noteByPath(path); return n && n.isReady ? n : undefined },
-  openFile: (path, noteDir, line) => { void quickOpen.openFile(path, { side: false, root: noteDir, ...(line ? { position: { line } } : {}) }) },
-  openExternal: url => window.tether.openExternal(url),
-  onParamsChange: panel => {
-    const p = findPanel(panel.id)
-    if (!p) return
-    p.api.updateParameters(withPreview(p.params, { path: panel.path, ...(panel.line !== undefined ? { line: panel.line } : {}) }))
-    scheduleSave()
-  },
-  activate: panel => { const p = findPanel(panel.id); if (p && !p.api.isGroupActive) p.api.setActive() },
-  revealSource: (panel, line) => {
-    const note = noteByPath(panel.path)
-    if (note) { findPanel(note.id)?.api.setActive(); note.reveal({ line }); note.focus(); return }
-    void quickOpen.openFile(panel.path, { side: false, root: noteDirOf(panel.path), reference: panel.id, position: { line } })
-  },
-  onTabMenu: (id, x, y) => showTabMenu(id, x, y),
-  onClose: id => closeNote(id),
-}
-
-/** The markdown previews showing `path` as their file (paths compared case-insensitively: Windows): they follow the editor of that file. */
-function previewsOf(path: string): PreviewPane[] {
-  const key = path.toLowerCase()
-  return [...previews.values()].filter(p => p.path.toLowerCase() === key)
-}
-
-/**
- * VS Code's "Open Preview" (`side: false`: a tab in the note's group) and "Open Preview to the Side" (`side: true`:
- * a pane to its right, the keyboard staying in the editor). A file that already has a preview gets that one focused.
- * Markdown is drawn by the app; an HTML file opens as a running page in an isolated webview.
- */
-function openPreview(opts: { side: boolean; reference?: string }): IDockviewPanel | undefined {
-  const reference = opts.reference ?? currentDesk().activePanel?.id
-  const path = reference ? notes.get(reference)?.path ?? previews.get(reference)?.path : undefined
-  if (!reference || !path) return undefined
-  return showPreview(path, { side: opts.side, reference })
-}
-
-/** The preview of `path`, in the group of `reference` or beside it; an existing one is brought forward instead. */
-function showPreview(path: string, opts: { side: boolean; reference: string }): IDockviewPanel | undefined {
-  const kind = isHtmlPath(path) ? 'html' : 'md'
-  const key = path.toLowerCase()
-  const existing = [...previews.values()].find(p => p.kind === kind && p.path.toLowerCase() === key)
-  if (existing) {
-    const panel = findPanel(existing.id)
-    panel?.api.setActive()
-    requestAnimationFrame(() => existing.focus())
-    return panel
-  }
-  const options = previewPaneOptions(newPreviewPanelId(), path, kind, undefined)
-  const panel = addPaneOptions(options, opts.side ? { level: 'pane', placement: 'right' } : undefined, opts.reference)
-  scheduleSave()
-  // In its own group the preview takes the keyboard; beside the editor the person keeps typing.
-  if (opts.side) { findPanel(opts.reference)?.api.setActive(); requestAnimationFrame(() => focusPane(opts.reference)) }
-  else requestAnimationFrame(() => focusPane(panel.id))
-  return panel
-}
-
-/** Quick Open / Ctrl+click on an .html: its preview, in the group of the pane that asked (or beside it). */
-function openHtmlFile(path: string, opts: OpenFileOptions): void {
-  const reference = opts.reference ?? currentDesk().activePanel?.id
-  if (!reference) { addNotePanel(path); return } // no pane at all: nothing to put a tab next to
-  showPreview(path, { side: opts.side, reference })
-}
-
-/** From a preview back to its file: the open editor is brought forward (at the preview's line), else the file is opened in the preview's group. */
-function openPreviewSource(id: string, path?: string): void {
-  const preview = previews.get(id)
-  if (!preview) return
-  const file = path ?? preview.path
-  const note = noteByPath(file)
-  if (note) {
-    findPanel(note.id)?.api.setActive()
-    if (preview.kind === 'md') note.scrollToLine(preview.topLine())
-    note.focus()
-    return
-  }
-  void quickOpen.openFile(file, { side: false, root: noteDirOf(file), reference: id, source: true })
-}
-
-/** "Abrir no navegador": the file with the system's browser (the same refusals as any file opened with the system). */
-function openInBrowser(path: string): void {
-  void window.tether.openHtmlInBrowser(path).then(r => { if (!r.ok) void askDialog(quickOpenFailedSituation(r.message)) })
-}
-
-const htmlPreviewHost: HtmlPreviewHost = {
-  onParamsChange: panel => {
-    const p = findPanel(panel.id)
-    if (!p) return
-    p.api.updateParameters(withPreview(p.params, { path: panel.path, kind: 'html', scroll: panel.scrollPosition }))
-    scheduleSave()
-  },
-  viewSource: (panel, path) => openPreviewSource(panel.id, path),
-  openInBrowser: path => openInBrowser(path),
-  activate: panel => { const p = findPanel(panel.id); if (p && !p.api.isGroupActive) p.api.setActive() },
-  onTabMenu: (id, x, y) => showTabMenu(id, x, y),
 }
 
 // ---------- profiles ----------
@@ -2110,12 +1809,12 @@ const commandHost: CommandHost = {
   duplicateActive: target => { void duplicateActive(target) },
   splitEmpty: (target, origin) => splitEmpty(target, origin),
   newEmptyDesk: () => newEmptyDesk(),
-  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || notes.has(a.id) || previews.has(a.id) || empties.has(a.id) || keybindingsPanels.has(a.id) || extensionsPanels.has(a.id)) ? a.id : undefined },
-  renamePane: id => (notes.has(id) ? noteTabs.get(id)?.startRename() : tabs.get(id)?.startRename()),
+  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || liveTypeOf(paneTypes, a.id)) ? a.id : undefined },
+  renamePane: id => { const type = liveTypeOf(paneTypes, id); if (type?.rename) type.rename(id); else tabs.get(id)?.startRename() },
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
-  copyFolder: id => { const n = notes.get(id) ?? previews.get(id); if (n) window.tether.writeClipboard(noteDirOf(n.path)); else if (slots.has(id)) copyFolder(id) },
-  openFolder: id => { const n = notes.get(id) ?? previews.get(id); if (n) void window.tether.openPath(noteDirOf(n.path)); else if (slots.has(id)) openFolder(id) },
+  copyFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) window.tether.writeClipboard(f); else if (slots.has(id)) copyFolder(id) },
+  openFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) void window.tether.openPath(f); else if (slots.has(id)) openFolder(id) },
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
   createDesk: side => { desks.create(side) },
@@ -2129,7 +1828,6 @@ const commandHost: CommandHost = {
   toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
   toggleTabBorder: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }),
   toggleDimUnfocused: () => window.tether.setUi({ ...ui, dimUnfocused: !ui.dimUnfocused }),
-  toggleWordWrap: () => noteHost.toggleWordWrap(),
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
@@ -2142,10 +1840,6 @@ const commandHost: CommandHost = {
   toggleDevTools: () => window.tether.command('toggle-devtools'),
   toggleFullscreen: () => window.tether.command('toggle-fullscreen'),
   showPalette: (mode, query) => palette.show(mode, query),
-  newNote: () => { void newNote() },
-  openNote: () => { void openNote() },
-  saveNoteAs: () => { void saveNoteAs() },
-  saveNote: () => { const id = activeNoteId(); if (id) void notes.get(id)?.save() },
   reopenClosed: () => reopenClosed(),
   cycleTab: step => {
     const active = currentDesk().activePanel
@@ -2170,8 +1864,6 @@ const commandHost: CommandHost = {
   showKeybindings: () => openKeybindings(),
   showExtensions: () => openExtensions(),
   recordKeybinding: () => { const a = currentDesk().activePanel?.id; if (a) keybindingsPanels.get(a)?.recordSelected() },
-  markdownPreview: side => openPreview({ side }),
-  markdownSource: () => { const a = currentDesk().activePanel?.id; if (a && previews.has(a)) openPreviewSource(a) },
 }
 
 /** Something modal of ours is up: app chords stay quiet (the palette has its own keys). */
@@ -2254,29 +1946,8 @@ function paintKeyHints(): void {
   renderStrip()
 }
 
-/** Monaco's keybindings for the screen, read once from an editor (an open note's, or a throwaway one). */
-let editorBindingsCache: FixedBinding[] | undefined
-function editorFixedBindings(): FixedBinding[] {
-  if (editorBindingsCache) return editorBindingsCache
-  let editor = [...notes.values()].find(n => n.editor)?.editor
-  let throwaway: ReturnType<typeof monaco.editor.create> | undefined
-  if (!editor) {
-    const el = document.createElement('div')
-    el.style.cssText = 'position:absolute;left:-9999px;width:200px;height:100px'
-    document.body.append(el)
-    throwaway = monaco.editor.create(el, { value: '', language: 'markdown' })
-    editor = throwaway
-  }
-  try {
-    const seen = new Set<string>()
-    editorBindingsCache = editorKeybindings(editor).filter(k => !seen.has(`${k.command}|${k.keys}`) && seen.add(`${k.command}|${k.keys}`))
-      .map(k => ({ command: k.command, title: k.label, group: 'Editor', keys: null, label: k.keys, where: ['note'] as const, source: 'editor' as const }))
-      .map(f => ({ ...f, where: [...f.where] }))
-  } finally {
-    if (throwaway) { throwaway.dispose(); throwaway.getDomNode()?.parentElement?.remove() }
-  }
-  return editorBindingsCache
-}
+/** Rows the screen lists but cannot change, from extensions (the note editor's own keys). */
+const fixedBindingProviders: (() => FixedBinding[])[] = []
 
 const keybindingsHost: KeybindingsHost = {
   commands: () => commands.all().filter(c => !c.id.startsWith('editor.')).map(c => ({ id: c.id, title: c.title, ...(c.group ? { group: c.group } : {}), ...(c.danger ? { danger: true } : {}), ...(c.displayChord ? { displayChord: c.displayChord } : {}) })),
@@ -2294,12 +1965,14 @@ const keybindingsHost: KeybindingsHost = {
       { command: 'terminal.paste-always', title: 'Colar', group: 'Terminal', keys: [chordOn(PANE_SHORTCUTS[5]!)!], where: ['terminal'], source: 'painel' },
       { command: 'terminal.newline', title: 'Nova linha sem enviar (Claude Code)', group: 'Terminal', keys: [chordOn(TERMINAL_INPUTS[0]!) ?? chordOn(TERMINAL_INPUTS[1]!)!], where: ['terminal'], source: 'painel' },
     ].filter(f => f.keys[0]) as FixedBinding[]
-    let editor: FixedBinding[] = []
-    try { editor = editorFixedBindings() } catch (err) { console.warn(`editor keybindings: ${err instanceof Error ? err.message : String(err)}`) }
-    return [...native, ...pane, ...editor]
+    const contributed: FixedBinding[] = []
+    for (const provide of fixedBindingProviders) {
+      try { contributed.push(...provide()) } catch (err) { console.warn(`fixed keybindings: ${err instanceof Error ? err.message : String(err)}`) }
+    }
+    return [...native, ...pane, ...contributed]
   },
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
-  onClose: id => closeNote(id),
+  onClose: id => closeSlotless(id),
 }
 
 /** Ctrl+K Ctrl+S: the screen as a tab of the active group (one screen: a second call brings it forward). */
@@ -2336,30 +2009,40 @@ function openExtensions(): void {
 const extensionsHost: ExtensionsHost = {
   rows: async () => {
     const main = await window.tether.listMainExtensions()
-    return extensionRows([{ manifests: extensions.map(e => e.manifest), failed: rendererActivation.failed }, main], main.disabled)
+    return extensionRows([{ manifests: extensions.map(e => e.manifest), failed: rendererActivation.failed }, main], main.disabled, rendererActivation.disabled)
   },
+  setEnabled: async (id, on) => { await window.tether.setExtensionEnabled(id, on) },
+  relaunch: () => window.tether.command('relaunch-app'),
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
   onClose: id => { void closePanel(id) },
 }
 
-/** "Abrir keybindings.json": the file as a note tab beside the screen (an empty file is created first so the tab has something to show). */
+/** "Abrir keybindings.json": the file in an editor tab beside the screen (an empty file is created first so the tab has something to show). */
 function openKeybindingsFile(): void {
   void (async () => {
     const state = await window.tether.keybindingsRead()
     if (state.text === null) await window.tether.keybindingsWrite(formatKeybindingsFile([]))
-    await openNote(state.path)
+    openWithOpeners(state.path, { side: false, root: '', source: true })
   })()
 }
 
 const dispatcher = new ChordDispatcher({
   modalOpen,
-  editorChord: (first, second) => { const id = currentDesk().activePanel?.id; const ed = id ? notes.get(id)?.editor : undefined; return !!ed && !!editorChordCommand(ed, first, second) },
+  editorChord: (first, second) => { const id = currentDesk().activePanel?.id; return !!id && !!liveTypeOf(paneTypes, id)?.editorChord?.(id, first, second) },
 })
 let pill: ChordPill
 /** The keydown the dispatcher let through to the terminal (Ctrl+K twice = ^K): the panel's own policy must not take it back. */
 let letThrough: KeyboardEvent | undefined
 
 /** The ≡ menu: every item names a command; the hint, the greying and the run come from the registry. */
+/** The ≡ checkboxes an extension's setting drives (MenuItem.toggled): their check follows the setting. */
+function syncMenuChecks(): void {
+  for (const e of menuRegistry.build(MenuId.App)) {
+    if (e.type !== 'item' || !e.item.toggled) continue
+    document.querySelector(`#app-menu li[data-command="${e.item.command}"]`)?.setAttribute('aria-checked', String(e.item.toggled()))
+  }
+}
+
 function setupMenu(): void {
   const btn = $('btn-menu')
   const menu = $('app-menu')
@@ -2385,6 +2068,7 @@ function setupMenu(): void {
     const ctx = commandContext()
     for (const li of items) li.setAttribute('aria-disabled', String(!commands.isAvailable(commands.get(li.dataset.command!)!, ctx)))
     for (const { item, li } of conditional) li.hidden = !(item.when as (c: CommandContext) => boolean)(ctx)
+    syncMenuChecks()
     toggle(menu.hidden)
   })
   document.addEventListener('click', ev => { if (!menu.hidden && !menu.contains(ev.target as Node)) toggle(false) })
@@ -2552,8 +2236,7 @@ function setupUi(): void {
       case 'editor': {
         take(); pill.hide()
         const id = currentDesk().activePanel?.id
-        const ed = id ? notes.get(id)?.editor : undefined
-        if (ed) runEditorChord(ed, action.keys[0]!, ev)
+        if (id) liveTypeOf(paneTypes, id)?.runEditorChord?.(id, action.keys[0]!, ev)
         return
       }
       case 'unknown': take(); pill.unknown(action.keys); return
@@ -2584,18 +2267,14 @@ function setupUi(): void {
   // Back to the window: the pane in front of the user is seen.
   window.addEventListener('focus', () => markSeenIfWatched())
   document.addEventListener('visibilitychange', () => markSeenIfWatched())
-  // The page goes (window closed, reload): every note's pending text is written.
-  window.addEventListener('beforeunload', () => { for (const n of notes.values()) n.flush() })
-  window.tether.onNoteChanged(onNoteChanged)
-  // The isolated page of an HTML preview reports what it loaded, and forwards the chords pressed inside it.
-  window.tether.onHtmlPreviewReport(report => { for (const p of previews.values()) if (p instanceof HtmlPreviewPanel && p.hasPartition(report.partition)) p.onReport(report) })
-  window.tether.onHtmlPreviewKey(key => { for (const p of previews.values()) if (p instanceof HtmlPreviewPanel && p.hasPartition(key.partition)) p.replayKey(key) })
 }
 
 // Test hooks (Playwright reads these through page.evaluate).
 declare global {
   interface Window {
     __tether: {
+      /** What each extension exposes (TetherUi.test.expose); a name no core hook has is also set flat here. */
+      ext: Record<string, Record<string, unknown>>
       /** The layout as it would be saved (v2: desks → frames → panes). */
       layout(): LayoutV2
       /** A frame's dockview JSON (the active frame when no id is given). */
@@ -2643,8 +2322,6 @@ declare global {
       deskLine(): boolean
       /** The other two signal modes: the folder-shaped outline on the focused pane and the dim of unfocused frames. */
       signals(): { tabBorder: boolean; dimUnfocused: boolean }
-      /** Word wrap of the note editors: the preference and what each open editor really uses. */
-      wordWrap(): { setting: boolean; editors: string[] }
       /** Asks to close a panel exactly as the tab's × does (dialog included). */
       closePanel(slotId: string): void
       /** The terminal font size in use (appearance.fontSize). */
@@ -2708,22 +2385,6 @@ declare global {
       palette(): { open: boolean; mode?: PaletteMode; shown: string[]; input: string }
       /** Opens the palette as the chord does. */
       showPalette(mode?: PaletteMode): void
-      /** Scrolls a note's editor as the person's wheel would (immediately: the smooth animation needs a visible window). */
-      scrollNote(id: string, top: number): void
-      /** The markdown previews: file, rendered text and HTML, scroll, the frame's sandbox. */
-      previews(): PreviewSnapshot[]
-      preview(id: string): PreviewSnapshot | undefined
-      /** Where an element of a preview's document is on the page (to click it with a real mouse). */
-      previewRect(id: string, selector: string): { x: number; y: number; width: number; height: number } | undefined
-      /** The preview of the active markdown note as the command opens it (in its group, or beside it); returns the new pane's id. */
-      openPreview(side: boolean): string | undefined
-      /** The HTML previews (isolated webview): file, page showing, partition, guest id, files loaded, what the policy refused, loads, scroll. */
-      htmlPreviews(): HtmlPreviewSnapshot[]
-      htmlPreview(id: string): HtmlPreviewSnapshot | undefined
-      /** Where the page's webview is on the app page (to click inside it with a real mouse). */
-      htmlPreviewRect(id: string): { x: number; y: number; width: number; height: number } | undefined
-      htmlPreviewAction(id: string, action: 'reload'): void
-      /** The note panes: file, text, what is on disk, cursor, selections, scroll, focus. */
       /** The "Atalhos de teclado" screens, the chord pill and the key table (keys as the file writes them). */
       keybindings(): KeybindingsSnapshot[]
       pill(): { state: string; text: string; continuations: number }
@@ -2731,14 +2392,6 @@ declare global {
       keybindingsFile(): { path: string; error?: { message: string; line?: number }; warnings: string[] }
       openKeybindings(): void
       closedPanes(): number
-      notes(): NoteSnapshot[]
-      note(id: string): NoteSnapshot | undefined
-      /** "Nova nota" as the command does (beside the active pane, the folder rule applied). */
-      newNote(): Promise<void>
-      /** Opens a note by path, as "Abrir nota…" does after the file dialog. */
-      openNote(path: string): Promise<void>
-      /** The ids of the editor actions registered as commands right now. */
-      editorCommandIds(): string[]
       /** The empty panes: id, the folder the chooser shows, the radio selected, focus, error. */
       empties(): EmptySnapshot[]
       empty(id: string): EmptySnapshot | undefined
@@ -2755,6 +2408,7 @@ declare global {
 
 function setupTestHooks(): void {
   window.__tether = {
+    ext: extTestHooks,
     layout: () => layoutJSON(),
     frameLayout: frameId => (frameId ? desks.frames.get(frameId) : desks.activeFrame)?.dock.toJSON(),
     frameIds: () => desks.frameIds,
@@ -2825,7 +2479,6 @@ function setupTestHooks(): void {
     switchState: () => strip.state(),
     deskLine: () => ui.deskLine,
     signals: () => ({ tabBorder: ui.tabBorder, dimUnfocused: ui.dimUnfocused }),
-    wordWrap: () => ({ setting: ui.wordWrap, editors: [...notes.values()].map(n => n.wordWrapOption()) }),
     closePanel: slotId => { void closePanel(slotId) },
     fontSize: () => appearance.fontSize,
     startRename: slotId => tabs.get(slotId)?.startRename(),
@@ -2887,26 +2540,12 @@ function setupTestHooks(): void {
     runCommand: id => commands.run(id, 'cli'),
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
-    scrollNote: (id, top) => { notes.get(id)?.editor?.setScrollTop(top, 1 /* ScrollType.Immediate */) },
-    previews: () => [...previews.values()].flatMap(p => (p instanceof PreviewPanel ? [p.snapshot()] : [])),
-    preview: id => { const p = previews.get(id); return p instanceof PreviewPanel ? p.snapshot() : undefined },
-    previewRect: (id, selector) => { const p = previews.get(id); return p instanceof PreviewPanel ? p.rectOf(selector) : undefined },
-    openPreview: side => openPreview({ side })?.id,
-    htmlPreviews: () => [...previews.values()].flatMap(p => (p instanceof HtmlPreviewPanel ? [p.snapshot()] : [])),
-    htmlPreview: id => { const p = previews.get(id); return p instanceof HtmlPreviewPanel ? p.snapshot() : undefined },
-    htmlPreviewRect: id => { const p = previews.get(id); return p instanceof HtmlPreviewPanel ? p.viewRect() : undefined },
-    htmlPreviewAction: (id, action) => { const p = previews.get(id); if (!(p instanceof HtmlPreviewPanel)) return; if (action === 'reload') p.reload() },
     keybindings: () => [...keybindingsPanels.values()].map(s => s.snapshot()),
     pill: () => pill.snapshot(),
     keyTable: () => keyTable().bindings.map(b => ({ keys: formatKeys(b.keys), command: b.command, where: [...b.where], source: b.source })),
     keybindingsFile: () => keybindingsFile,
     openKeybindings: () => openKeybindings(),
     closedPanes: () => closedPanes.length,
-    notes: () => [...notes.values()].map(n => n.snapshot()),
-    note: id => notes.get(id)?.snapshot(),
-    newNote,
-    openNote: path => openNote(path),
-    editorCommandIds: () => commands.all().filter(c => c.id.startsWith('editor.')).map(c => c.id),
     empties: () => [...empties.values()].map(e => e.snapshot()),
     empty: id => empties.get(id)?.snapshot(),
     chooser: () => popupChooser?.snapshot(),
@@ -2918,6 +2557,9 @@ function setupTestHooks(): void {
       return term?._core?._renderService?.dimensions?.css?.cell
     },
   }
+  // The extensions' hooks also sit flat on window.__tether (the e2e called them there before they moved), unless the core has the name.
+  const flat = window.__tether as unknown as Record<string, unknown>
+  for (const hooks of Object.values(extTestHooks)) for (const [name, value] of Object.entries(hooks)) if (!(name in flat)) flat[name] = value
 }
 
 // ---------- pane types (F9) ----------
@@ -2965,36 +2607,6 @@ function registerCorePaneTypes(): void {
     createTab: () => new ExtensionsTab(extensionsHost),
     has: id => extensionsPanels.has(id),
   }))
-  const previewCwd = (id: string): string | undefined => { const p = previews.get(id); return p ? noteByPath(p.path)?.cwd ?? paneCwdOfNote(p.path) : undefined }
-  paneTypes.register(live(htmlPreviewLayout, {
-    icon: 'eye',
-    create: () => { const p: HtmlPreviewPanel = tracked(new HtmlPreviewPanel(htmlPreviewHost), previews, () => p.id); return p },
-    has: id => previews.get(id) instanceof HtmlPreviewPanel,
-    cwdOf: previewCwd,
-    contextFlags: () => ['markdown.preview'],
-  }))
-  paneTypes.register(live(mdPreviewLayout, {
-    icon: 'eye',
-    create: () => { const p: PreviewPanel = tracked(new PreviewPanel(previewHost), previews, () => p.id); return p },
-    createTab: () => new PreviewTab(previewHost),
-    has: id => previews.has(id) && !(previews.get(id) instanceof HtmlPreviewPanel),
-    cwdOf: previewCwd,
-    contextFlags: () => ['markdown.preview'],
-  }))
-  paneTypes.register(live(noteLayout, {
-    icon: 'note-pencil',
-    create: () => { const p: NotePanel = tracked(new NotePanel(noteHost), notes, () => p.id); return p },
-    createTab: () => trackedTab(new NoteTab(noteHost, id => notes.get(id)?.dirty ?? false), noteTabs),
-    has: id => notes.has(id),
-    cwdOf: id => { const n = notes.get(id); return n ? n.cwd ?? paneCwdOfNote(n.path) : undefined },
-    // The preview family's commands act on a note whose file can be previewed (markdown or HTML).
-    contextFlags: id => isPreviewablePath(notes.get(id)?.path ?? '') ? ['markdown.note'] : [],
-    closedEntry: id => {
-      const path = notes.get(id)?.path
-      if (path === undefined) return undefined
-      return { key: `note:${path}`, reopen: () => { if (noteByPath(path)) return false; void openNote(path); return true } }
-    },
-  }))
   paneTypes.register(live(terminalLayout, {
     icon: 'terminal',
     create: () => { const p: TerminalPanel = tracked(new TerminalPanel(host), panels, () => p.slotId); return p },
@@ -3020,6 +2632,56 @@ let rendererActivation: { active: string[]; disabled: string[]; failed: { id: st
 function onExtSetting(change: { id: string; key: string; value: SettingValue }): void {
   extSettings = withSetting(extSettings, change.id, change.key, change.value)
   for (const l of extSettingListeners.get(`${change.id}.${change.key}`) ?? []) l(configuration.read(extSettings, change.id, change.key) ?? change.value)
+  syncMenuChecks()
+}
+
+/** What each extension registered, so a failed activation takes its declarative contributions back too. */
+const contributionStores = new Map<string, DisposableStore>()
+/** What extensions expose for the e2e (TetherUi.test.expose), merged into window.__tether by setupTestHooks. */
+const extTestHooks: Record<string, Record<string, unknown>> = {}
+
+/** The manifest's data the core needs before `activate`: default keys, ≡ items, chooser items. */
+function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore): void {
+  const c = manifest.contributes
+  if (!c) return
+  if (c.keybindings?.length) {
+    store.add(toDisposable(contributeKeybindings(keybindingEntries(c.keybindings))))
+  }
+  for (const m of c.menus?.app ?? []) {
+    const toggled = m.toggled
+    store.add(menuRegistry.appendMenuItem(MenuId.App, menuItemOf(m, toggled ? () => configuration.read(extSettings, manifest.id, toggled) === true : undefined)))
+  }
+  if (c.chooser) store.add(toDisposable(contributeChooser(c.chooser)))
+}
+
+/**
+ * A disabled (or failed) extension's pane types: a placeholder keeps each saved pane of them in its place, with its id
+ * and params untouched, so the layout loses nothing and the pane comes back when the extension is on again.
+ */
+function registerPlaceholders(manifest: ExtensionManifest, failed: boolean): void {
+  const placeholderHost: DisabledPaneHost = {
+    extension: () => ({ name: manifest.displayName, failed }),
+    showExtensions: () => openExtensions(),
+    onTabMenu: (id, x, y) => showTabMenu(id, x, y),
+    onClose: id => closeSlotless(id),
+  }
+  for (const t of manifest.contributes?.paneTypes ?? []) {
+    if (paneTypes.get(t.id)) continue
+    paneTypes.register({
+      ...t, hasSlot: false, icon: 'puzzle-piece',
+      create: () => { const p: DisabledPane = tracked(new DisabledPane(placeholderHost), placeholders, () => p.id); return p },
+      createTab: () => new DisabledTab(placeholderHost),
+      has: id => placeholders.has(id) && (!t.owns || paneTypes.bySaved({ id, params: findPanel(id)?.params }) === paneTypes.get(t.id)),
+      focus: id => placeholders.get(id)?.focus(),
+      tabMenu: (id, x, y) => showContextMenu(x, y, [
+        { icon: 'puzzle-piece', label: 'Abrir Extensões', run: () => openExtensions() },
+        SEP,
+        { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
+        SEP,
+        { icon: 'x', label: 'Fechar', run: () => closeSlotless(id) },
+      ]),
+    })
+  }
 }
 
 function activateRendererExtensions(): void {
@@ -3029,28 +2691,100 @@ function activateRendererExtensions(): void {
     const settings = e.manifest.contributes?.settings
     if (settings && !extSettings.disabled.includes(e.manifest.id)) extensionStore.add(configuration.registerConfiguration({ id: e.manifest.id, properties: settings }))
   }
-  const apiFor = (id: string): TetherUi => ({
-    id,
-    panes: { register: type => extensionStore.add(paneTypes.register(type)) },
-    ipc: () => uiIpc(id, window.tether.ext),
-    settings: {
-      get: <T extends SettingValue>(key: string) => configuration.read(extSettings, id, key) as T | undefined,
-      set: (key, value) => {
-        const schema = configuration.schemaOf(id, key)
-        const v = schema ? configuration.read({ disabled: [], values: { [id]: { [key]: value } } }, id, key)! : value
-        window.tether.setExtSetting(id, key, v)
+  const apiFor = (id: string): TetherUi => {
+    const manifest = extensions.find(e => e.manifest.id === id)!.manifest
+    const own = extensionStore.add(new DisposableStore())
+    contributionStores.set(id, own)
+    contributeDeclared(manifest, own)
+    const add = <T extends IDisposable>(d: T): T => own.add(d)
+    return {
+      id,
+      panes: {
+        register: type => add(paneTypes.register(type)),
+        open: (options, where) => addPaneOptions(options, where?.target, where?.reference),
+        find: paneId => findPanel(paneId),
+        activeId: () => currentDesk().activePanel?.id,
+        cwdOf: paneId => paneCwdOf(paneId),
+        focus: paneId => focusPane(paneId),
+        close: paneId => closeSlotless(paneId),
+        showTabMenu: (paneId, x, y) => showTabMenu(paneId, x, y),
+        newPanelDialog: reference => { void openNewDialog({ reference }) },
+        newPanelLabel: NEW_PANEL_LABEL,
+        move: paneId => { void openMove(paneId) },
       },
-      onChange: (key, listener) => {
-        const full = `${id}.${key}`
-        let set = extSettingListeners.get(full)
-        if (!set) { set = new Set(); extSettingListeners.set(full, set) }
-        set.add(listener)
-        return extensionStore.add(toDisposable(() => { set.delete(listener) }))
+      commands: {
+        register: (...list) => add(toDisposable(commands.register(...list))),
+        registerCommand: (command, run) => {
+          const declared = manifest.contributes?.commands?.find(c => c.command === command)
+          if (!declared) throw new Error(`comando não declarado no manifesto de ${id}: ${command}`)
+          return add(toDisposable(commands.register(commandFromContribution(declared, run))))
+        },
+        ids: () => commands.all().map(c => c.id),
       },
-    },
-    menus: { app: (item: RegistryMenuItem<CommandContext>) => extensionStore.add(menuRegistry.appendMenuItem(MenuId.App, item as RegistryMenuItem)) },
-  })
+      ipc: () => uiIpc(id, window.tether.ext),
+      settings: {
+        get: <T extends SettingValue>(key: string) => configuration.read(extSettings, id, key) as T | undefined,
+        set: (key, value) => {
+          const schema = configuration.schemaOf(id, key)
+          const v = schema ? configuration.read({ disabled: [], values: { [id]: { [key]: value } } }, id, key)! : value
+          window.tether.setExtSetting(id, key, v)
+        },
+        onChange: (key, listener) => {
+          const full = `${id}.${key}`
+          let set = extSettingListeners.get(full)
+          if (!set) { set = new Set(); extSettingListeners.set(full, set) }
+          set.add(listener)
+          return add(toDisposable(() => { set.delete(listener) }))
+        },
+      },
+      menus: {
+        app: (item: RegistryMenuItem<CommandContext>) => add(menuRegistry.appendMenuItem(MenuId.App, item as RegistryMenuItem)),
+        context: (x, y, entries: ContextMenuEntry[]) => showContextMenu(x, y, entries.map(e => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName })),
+      },
+      layout: { scheduleSave: () => scheduleSave() },
+      dialogs: { ask: spec => askDialog(spec) },
+      theme: {
+        scheme: () => theme.scheme,
+        onChange: listener => { themeListeners.add(listener); return add(toDisposable(() => { themeListeners.delete(listener) })) },
+        appearance: () => appearance,
+        onAppearance: listener => { appearanceListeners.add(listener); return add(toDisposable(() => { appearanceListeners.delete(listener) })) },
+      },
+      openers: {
+        register: opener => { fileOpeners.push(opener); return add(toDisposable(() => { const i = fileOpeners.indexOf(opener); if (i !== -1) fileOpeners.splice(i, 1) })) },
+        open: (path, opts) => quickOpen.openFile(path, opts),
+      },
+      chooser: {
+        resolve: (itemId, fn) => {
+          if (!manifest.contributes?.chooser?.items.some(i => i.id === itemId)) throw new Error(`item do seletor não declarado no manifesto de ${id}: ${itemId}`)
+          chooserResolvers.set(itemId, fn)
+          return add(toDisposable(() => { if (chooserResolvers.get(itemId) === fn) chooserResolvers.delete(itemId) }))
+        },
+      },
+      keybindings: {
+        fixedBindings: provider => { fixedBindingProviders.push(provider); return add(toDisposable(() => { const i = fixedBindingProviders.indexOf(provider); if (i !== -1) fixedBindingProviders.splice(i, 1) })) },
+      },
+      shell: {
+        writeClipboard: text => window.tether.writeClipboard(text),
+        openPath: path => window.tether.openPath(path),
+        openExternal: url => window.tether.openExternal(url),
+      },
+      test: {
+        expose: (name, value) => {
+          (extTestHooks[id] ??= {})[name] = value
+          const hooks = window.__tether as unknown as Record<string, unknown> | undefined
+          if (hooks && !(name in hooks)) hooks[name] = value
+        },
+      },
+    }
+  }
   rendererActivation = activateExtensions(extensions, apiFor, extensionStore, extSettings.disabled)
+  // A failed extension takes back what it declared (its keys, ≡ items, chooser items); a disabled or failed one leaves
+  // placeholders for its saved panes.
+  for (const f of rendererActivation.failed) contributionStores.get(f.id)?.dispose()
+  for (const e of extensions) {
+    const failed = rendererActivation.failed.some(f => f.id === e.manifest.id)
+    if (failed || rendererActivation.disabled.includes(e.manifest.id)) registerPlaceholders(e.manifest, failed)
+  }
 }
 
 registerCorePaneTypes()

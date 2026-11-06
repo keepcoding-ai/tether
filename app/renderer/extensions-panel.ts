@@ -1,5 +1,7 @@
-// The "Extensões" screen (F9 decision 13): a tab listing the extensions (name, id, version, where they run, state).
-// Read-only in slice 0b. Registered through the pane registry like the shortcuts screen; one screen at a time.
+// The "Extensões" screen (F9 decision 13): a tab listing the extensions (name, id, version, where they run, state),
+// with a switch per optional extension. A change is written at once and takes effect at "Reiniciar o app" (decision 3):
+// the row says so and the screen offers the restart. Registered through the pane registry like the shortcuts screen;
+// one screen at a time.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { icon } from './icons.ts'
 import { STATE_LABEL, type ExtensionRow } from './extensions-list.ts'
@@ -8,6 +10,10 @@ import { EXTENSIONS_TITLE } from '../shared/extensions-screen.ts'
 export interface ExtensionsHost {
   /** The rows, gathered from every host (main answers over IPC). */
   rows(): Promise<ExtensionRow[]>
+  /** The switch: on or off at the next start. */
+  setEnabled(id: string, on: boolean): Promise<void>
+  /** "Reiniciar o app" (the agents keep running). */
+  relaunch(): void
   onTabMenu(id: string, ev: MouseEvent): void
   onClose(id: string): void
 }
@@ -20,6 +26,7 @@ export class ExtensionsPanel implements IContentRenderer {
   id = ''
   private readonly host: ExtensionsHost
   private readonly list: HTMLElement
+  private readonly restart: HTMLElement
   private last: ExtensionRow[] = []
 
   constructor(host: ExtensionsHost) {
@@ -27,8 +34,15 @@ export class ExtensionsPanel implements IContentRenderer {
     this.element = document.createElement('div')
     this.element.className = 'ext-pane'
     this.element.dataset.extensions = 'pane'
-    this.element.innerHTML = `<header><h2>${EXTENSIONS_TITLE}</h2><p class="dim">O que o tether carrega além do núcleo. Ligar e desligar vem em breve; uma mudança vale depois de "Reiniciar o app".</p></header><div class="ext-list" tabindex="0" role="list" aria-label="${EXTENSIONS_TITLE}"></div>`
+    this.element.innerHTML = `<header><h2>${EXTENSIONS_TITLE}</h2><p class="dim">O que o tether carrega além do núcleo. Ligar ou desligar uma extensão vale depois de "Reiniciar o app"; os agentes continuam rodando.</p></header><div class="ext-restart" role="status" hidden><span>Há mudanças que valem depois de reiniciar o app.</span><button type="button" class="ext-relaunch">Reiniciar o app</button></div><div class="ext-list" tabindex="0" role="list" aria-label="${EXTENSIONS_TITLE}"></div>`
     this.list = this.element.querySelector<HTMLElement>('.ext-list')!
+    this.restart = this.element.querySelector<HTMLElement>('.ext-restart')!
+    this.restart.querySelector('button')!.addEventListener('click', () => host.relaunch())
+    this.list.addEventListener('click', ev => {
+      const sw = (ev.target as HTMLElement).closest<HTMLButtonElement>('button.ext-toggle')
+      if (!sw?.dataset.ext) return
+      void host.setEnabled(sw.dataset.ext, sw.getAttribute('aria-checked') !== 'true').then(() => this.refresh())
+    })
   }
 
   init(params: GroupPanelPartInitParameters): void {
@@ -46,7 +60,10 @@ export class ExtensionsPanel implements IContentRenderer {
   ${r.description ? `<div class="ext-desc dim">${esc(r.description)}</div>` : ''}
   <div class="ext-meta dim">Roda em: ${r.hosts.map(h => HOST_LABEL[h] ?? h).join(', ')}</div>
   <span class="ext-state" title="${esc(r.error ?? '')}">${STATE_LABEL[r.state]}</span>
+  ${r.optional ? `<button type="button" class="ext-toggle" role="switch" data-ext="${esc(r.id)}" aria-checked="${r.wanted}" aria-label="${r.wanted ? 'Desligar' : 'Ligar'} ${esc(r.displayName)}">${r.wanted ? 'Ligada' : 'Desligada'}</button>` : ''}
+  ${r.pending ? `<div class="ext-pending">${r.wanted ? 'Liga' : 'Desliga'} depois de "Reiniciar o app".</div>` : ''}
 </div>`).join('')
+    this.restart.hidden = !this.last.some(r => r.pending)
   }
 
   /** What the e2e reads. */

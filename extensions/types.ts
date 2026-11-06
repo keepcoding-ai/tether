@@ -2,11 +2,126 @@
 // (renderer.ts, main.ts, daemon.ts), each exporting `activate(api)` that returns the disposables of what it registered.
 // Discovery is static: one committed index per host (index.renderer.ts, index.main.ts, index.daemon.ts); a unit test
 // fails when a folder's entry is missing from its index (test/unit/ext.index.test.ts). Pure: read by all three hosts.
+//
+// The manifest mirrors the `contributes` of a VS Code extension's package.json (e.g. extensions/markdown-language-features
+// @7faf984: commands, keybindings, menus, configuration, customEditors): what the core needs to know before (or without)
+// activating the extension is declared here as data; the behaviour (command handlers, pane factories, IPC handlers) is
+// registered by `activate`. Availability is a VS Code-style `when` string (app/shared/vscode-contextkey.ts), so the
+// manifest stays data; the only functions are a pane type's pure `owns`/`optionsOf` (its layout.json identity).
 import type { IDisposable } from '../app/shared/vscode-lifecycle.ts'
 import type { SettingSchema } from '../app/shared/vscode-configuration-registry.ts'
 
 export type Host = 'renderer' | 'main' | 'daemon'
 export const HOSTS: readonly Host[] = ['renderer', 'main', 'daemon']
+
+/** The keyboard scopes of the key table (app/renderer/shortcuts.ts `Where`); the person's keybindings.json names them. */
+export type KeyScope = 'window' | 'terminal' | 'note'
+
+/** A command the extension contributes (VS Code `contributes.commands`); `activate` gives it its handler. Ids never change: keybindings.json names them. */
+export interface CommandContribution {
+  command: string
+  title: string
+  /** The palette's group (VS Code `category`). */
+  category: string
+  /** An icon name of app/renderer/icons.ts. */
+  icon: string
+  /**
+   * When it can run (VS Code `enablement`/`when`): a context key expression over the core's keys — the active pane's
+   * flags ('markdown.note', 'markdown.preview', 'keybindings.screen'), `focus` (terminal | editor | none), `pane`,
+   * `paneType`, `desks`, `drawerOpen` — e.g. 'markdown.note', 'focus == editor', '!drawerOpen && pane'. Unavailable
+   * commands are greyed out in the ≡ menu, hidden from the palette, and skipped by their chords.
+   */
+  when?: string
+  /** An unavailable command's single key passes to the target instead of being swallowed. */
+  keepKeyWhenUnavailable?: boolean
+}
+
+/** A default keybinding (VS Code `contributes.keybindings`), in the key table's format: `ctrl` is the app modifier. */
+export interface KeybindingContribution {
+  key: string
+  command: string
+  where?: readonly KeyScope[]
+  /** A Ctrl that stays Ctrl on the Mac. */
+  literal?: boolean
+}
+
+/** An item of the ≡ menu (VS Code `contributes.menus`); the core fixes the order of the groups. */
+export interface MenuItemContribution {
+  command: string
+  group: string
+  order?: number
+  label?: string
+  icon?: string
+  kind?: 'radio' | 'checkbox'
+  /** A checkbox checked while this extension's boolean setting is on (VS Code's `toggled`). */
+  toggled?: string
+}
+
+/** What a pane is in layout.json, without dockview: its id, title and params. */
+export interface SavedPaneShape {
+  id: string
+  title?: string | undefined
+  params?: Record<string, unknown> | undefined
+}
+
+/** The dockview options a pane is (re)created with (a structural subset of dockview's AddPanelOptions). */
+export interface PaneOptionsShape {
+  id: string
+  component: string
+  tabComponent?: string
+  title?: string
+  params?: Record<string, unknown>
+  renderer?: 'always' | 'onlyWhenVisible'
+}
+
+/**
+ * A pane type's identity in layout.json (VS Code `contributes.customEditors`: the view type is declared, the provider is
+ * registered on activation). The core reads it even when the extension is off, so a saved pane of the type keeps its
+ * place, id and params (a placeholder stands in) instead of being taken for a slot. Never renamed once released.
+ */
+export interface PaneTypeContribution {
+  id: string
+  /** The prefix of its pane ids ('note:' ⇒ 'note:…'). */
+  idPrefix: string
+  /** The dockview content and tab component names saved in layout.json. */
+  component: string
+  tabComponent: string
+  /** Among types sharing a prefix, whether this one owns the saved pane. */
+  owns?(pane: SavedPaneShape): boolean
+  /** The dockview options of a pane from its saved state (moving a pane between desks rebuilds it from these). */
+  optionsOf(pane: SavedPaneShape): PaneOptionsShape
+}
+
+/** A group of the chooser (the "Novo painel" list and the empty pane): a heading with its items. */
+export interface ChooserGroupContribution {
+  id: string
+  label: string
+  icon: string
+}
+
+/** An item of the chooser; `activate` resolves it into the pane to add (TetherUi.chooser). */
+export interface ChooserItemContribution {
+  /** The item's kind; its list id is `kind:<id>`. Unique across extensions. */
+  id: string
+  group: string
+  name: string
+  hint: string
+  icon: string
+  /** Aliases the search matches (folded, never shown). */
+  keywords: readonly string[]
+  /** What the open button says: "Criar <name>" or "Abrir <name>". */
+  button: { verb: 'create' | 'open'; name: string }
+}
+
+/**
+ * A value moved once from where the core kept it into this extension (VS Code's ConfigurationMigrationRegistry): `from`
+ * is a dotted path in settings.json ('ui.wordWrap'); `to` is a setting of the extension or a key of its stored state.
+ * Main applies it at startup, also for a disabled extension, so the value is never lost.
+ */
+export interface MigrationContribution {
+  from: string
+  to: { setting: string } | { state: string }
+}
 
 export interface ExtensionManifest {
   /** Stable, lowercase, no dot: `note`, `quick-open`, `claude`. Prefixes IPC channels, settings and test hooks. */
@@ -21,13 +136,25 @@ export interface ExtensionManifest {
   optional?: boolean
   /** Extensions that must activate first. */
   requires?: readonly string[]
-  /** What the core needs before activation (grows per slice: keybindings, settings, pads, agents, menus). */
+  /** What the core needs before activation. */
   contributes?: {
-    /** Pane type ids this extension registers: the layout knows they exist. */
-    paneTypes?: readonly string[]
+    /** Pane types this extension registers: the layout knows they exist, even with the extension off. */
+    paneTypes?: readonly PaneTypeContribution[]
     /** Settings (schema + default), stored in settings.json under `extensions.<id>.<key>`; read by every host it runs in. */
     settings?: Readonly<Record<string, SettingSchema>>
+    commands?: readonly CommandContribution[]
+    keybindings?: readonly KeybindingContribution[]
+    menus?: { app?: readonly MenuItemContribution[] }
+    chooser?: { groups: readonly ChooserGroupContribution[]; items: readonly ChooserItemContribution[] }
+    migrations?: readonly MigrationContribution[]
   }
+}
+
+/** What another process needs to list an extension (plain data: it crosses IPC; a manifest may hold functions). */
+export type ExtensionSummary = Pick<ExtensionManifest, 'id' | 'version' | 'displayName' | 'description' | 'hosts' | 'optional'>
+
+export function summaryOf(m: ExtensionManifest): ExtensionSummary {
+  return { id: m.id, version: m.version, displayName: m.displayName, ...(m.description ? { description: m.description } : {}), hosts: [...m.hosts], ...(m.optional ? { optional: true } : {}) }
 }
 
 /** One entry of a host's index: the manifest and that host's `activate`. */

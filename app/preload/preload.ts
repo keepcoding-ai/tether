@@ -2,7 +2,7 @@
 // Built as CommonJS (app/dist/preload.cjs) because the renderer runs sandboxed.
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Event as DaemonEvent, Notice } from '../../src/daemon/protocol.ts'
-import type { ConnectionState, PreviewKey, PreviewReport, TetherApi } from '../shared/api.ts'
+import type { ConnectionState, TetherApi } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import type { FontSizeCommand } from '../shared/font.ts'
 import type { TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -61,17 +61,6 @@ const api: TetherApi = {
   onFocusSlot: listener => on<string>('tether:focus-slot', listener),
   onOpenDrawer: listener => on<void>('tether:open-drawer', () => listener()),
   closeWindow: () => ipcRenderer.send('window:close'),
-  notePrepare: paneCwd => ipcRenderer.invoke('note:prepare', paneCwd),
-  noteRead: path => ipcRenderer.invoke('note:read', path),
-  noteWrite: (path, text) => ipcRenderer.invoke('note:write', path, text),
-  noteFlush: (path, text) => ipcRenderer.send('note:flush', path, text),
-  noteRename: (from, to) => ipcRenderer.invoke('note:rename', from, to),
-  noteWatch: path => ipcRenderer.send('note:watch', path),
-  noteUnwatch: path => ipcRenderer.send('note:unwatch', path),
-  onNoteChanged: listener => on<string>('tether:note-changed', listener),
-  notePickOpen: initialDir => ipcRenderer.invoke('note:pick-open', initialDir),
-  notePickSaveAs: currentPath => ipcRenderer.invoke('note:pick-save-as', currentPath),
-  noteGitignore: (repoRoot, add) => ipcRenderer.invoke('note:gitignore', repoRoot, add),
   quickOpenSearch: (paneCwd, query, recent) => ipcRenderer.invoke('quickopen:search', paneCwd, query, recent),
   quickOpenRefresh: paneCwd => ipcRenderer.send('quickopen:refresh', paneCwd),
   quickOpenEnd: () => ipcRenderer.send('quickopen:end'),
@@ -81,9 +70,6 @@ const api: TetherApi = {
   keybindingsRead: () => ipcRenderer.invoke('keybindings:read'),
   keybindingsWrite: text => ipcRenderer.invoke('keybindings:write', text),
   onKeybindingsChanged: listener => on<KeybindingsFileState>('tether:keybindings-changed', listener),
-  openHtmlInBrowser: path => ipcRenderer.invoke('htmlpreview:open-in-browser', path),
-  onHtmlPreviewReport: listener => on<PreviewReport>('tether:html-preview-report', listener),
-  onHtmlPreviewKey: listener => on<PreviewKey>('tether:html-preview-key', listener),
   // The bus names every channel through extChannel: an extension reaches only `ext:<its id>:…`, never a core channel.
   ext: {
     invoke: (id, channel, ...args) => ipcRenderer.invoke(extChannel(id, channel), ...args),
@@ -99,6 +85,7 @@ const api: TetherApi = {
   setExtSetting: (id, key, value) => ipcRenderer.send('extsettings:set', id, key, value),
   onExtSetting: listener => on<ExtSettingChange>('tether:ext-setting', listener),
   listMainExtensions: () => ipcRenderer.invoke('extensions:list'),
+  setExtensionEnabled: (id, on) => ipcRenderer.invoke('extensions:set-enabled', id, on),
 }
 
 contextBridge.exposeInMainWorld('tether', api)

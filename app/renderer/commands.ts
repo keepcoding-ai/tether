@@ -7,6 +7,8 @@
 // purpose: a focused editor (the note tab) registers its own commands and removes them on blur with the
 // function `register` returns; the CLI will be able to `tether run <id>` through `run`.
 import { chordLabel, shortcutHint, type Chord } from './shortcuts.ts'
+import type { CommandContribution } from '../../extensions/types.ts'
+import { deserialize, evaluate, type ContextValue } from '../shared/vscode-contextkey.ts'
 
 /** A Phosphor icon name of icons.ts (IconName). Not imported: icons.ts pulls the SVG assets, and this module stays pure for the unit tests. */
 export type CommandIcon = string
@@ -17,15 +19,13 @@ export interface CommandContext {
   pane: boolean
   /** The active pane's type id (app/renderer/pane-registry.ts): 'terminal', 'note', 'md-preview'… */
   paneType?: string
-  /** Context keys the active pane's type sets ('markdown.note', 'markdown.preview', 'keybindings.screen'). `markdown` and `keybindings` below are derived from them and go once commands read the flags. */
+  /** Context keys the active pane's type sets ('markdown.note', 'markdown.preview', 'keybindings.screen'). `keybindings` below is derived from them. */
   flags?: ReadonlySet<string>
   /** How many desks exist. */
   desks: number
   drawerOpen: boolean
   /** What owns the keyboard right now. */
   focus: 'terminal' | 'editor' | 'none'
-  /** The active pane is a markdown note (`note`) or the preview of one (`preview`); absent for any other pane. */
-  markdown?: 'note' | 'preview'
   /** The active pane is the "Atalhos de teclado" screen (its own keys: record, delete). */
   keybindings?: boolean
 }
@@ -56,6 +56,29 @@ export interface Command {
 export interface RecentStore { load(): string[]; save(ids: string[]): void }
 
 export type RunSource = 'palette' | 'key' | 'menu' | 'cli' | 'test'
+
+/** A command an extension declares (manifest `contributes.commands`, VS Code's package.json shape) with the handler its `activate` gives. */
+export function commandFromContribution(c: CommandContribution, run: (source?: RunSource) => void): Command {
+  const expr = c.when ? deserialize(c.when) : undefined
+  return {
+    id: c.command, title: c.title, group: c.category, icon: c.icon,
+    ...(c.keepKeyWhenUnavailable ? { keepKeyWhenUnavailable: true } : {}),
+    ...(expr ? { when: (ctx: CommandContext) => evaluate(expr, key => contextKey(ctx, key)) } : {}),
+    run: source => run(source),
+  }
+}
+
+/** A context key's value in the command context: the named fields, else one of the active pane's flags. */
+export function contextKey(ctx: CommandContext, key: string): ContextValue {
+  switch (key) {
+    case 'pane': return ctx.pane
+    case 'paneType': return ctx.paneType
+    case 'focus': return ctx.focus
+    case 'desks': return ctx.desks
+    case 'drawerOpen': return ctx.drawerOpen
+    default: return ctx.flags?.has(key) ?? false
+  }
+}
 export type RunOutcome = 'ran' | 'unknown' | 'unavailable'
 
 /** How many recently used commands the palette remembers. */

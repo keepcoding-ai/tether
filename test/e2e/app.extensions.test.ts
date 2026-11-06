@@ -1,7 +1,7 @@
 // E2E of F9 slice 0b against the real tetherd on a private home/pipe, hidden window:
 //   1. the ≡ menu, now generated from the menu registry, shows the same rows the static list had (labels, order,
 //      separators, the "Tema" heading, radio/checkbox checks, shortcut hints, greyed items with no pane), plus "Extensões";
-//   2. "Extensões" from the menu opens the screen (a tab, empty list); from the palette it brings the same tab forward;
+//   2. "Extensões" from the menu opens the screen (a tab listing the note extension); from the palette it brings the same tab forward;
 //   3. the preload's extension bus and settings channels are live: `ext:<id>:<channel>` reaches main (no handler →
 //      rejected, a bad id refused), settings.json `extensions` is read at start and a set is persisted and echoed.
 // Every kill goes through test/kill.ts (pid + creation time).
@@ -139,12 +139,13 @@ test('app extensions (F9 0b): generated ≡ menu equals the old one + "Extensõe
     assert.ok(rows.filter(r => r.role?.startsWith('menuitem')).every(r => r.command), 'every item names a command')
     assert.equal(await page.locator('#app-menu li[data-command="theme.auto"] svg').count(), 1, 'icons are painted')
 
-    // 2. "Extensões" from the menu: the screen opens as a tab, with the empty list.
+    // 2. "Extensões" from the menu: the screen opens as a tab, listing the note (F9 slice 1), on, with its switch.
     await page.click('#app-menu li[data-command="extensions.show"]')
     await page.waitForSelector('#app-menu', { state: 'hidden' })
-    await page.waitForSelector('.ext-pane .ext-empty')
+    await page.waitForSelector('.ext-pane .ext-row[data-ext="note"]')
     assert.equal(await page.locator('.tether-tab.extensions .text').innerText(), 'Extensões')
-    assert.match(await page.locator('.ext-pane .ext-empty').innerText(), /Nenhuma extensão instalada/)
+    assert.equal(await page.locator('.ext-pane .ext-row[data-ext="note"]').getAttribute('data-state'), 'enabled')
+    assert.equal(await page.locator('.ext-pane .ext-row[data-ext="note"] .ext-toggle').getAttribute('aria-checked'), 'true')
     // From the palette: the same screen comes forward (one at a time).
     await page.keyboard.press('Control+Shift+P')
     await page.waitForFunction(() => window.__tether.palette().open)

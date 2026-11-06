@@ -15,4 +15,12 @@ describe('the "Extensões" screen rows', () => {
     assert.deepEqual(rows.map(r => [r.id, r.state, r.hosts.join('+'), r.optional]), [['zeta', 'failed', 'renderer', false], ['note', 'enabled', 'renderer+main', false], ['bridge', 'disabled', 'main', true]])
     assert.equal(rows[0]!.error, 'boom')
   })
+
+  test('the wanted state and what changes at the next start', () => {
+    const src = [{ manifests: [manifest('note', { displayName: 'Nota', optional: true }), manifest('x', { displayName: 'X', optional: true })], failed: [] }]
+    const now = extensionRows(src, ['x'], [])
+    assert.deepEqual(now.map(r => [r.id, r.state, r.wanted, r.pending]), [['note', 'enabled', true, false], ['x', 'enabled', false, true]])
+    const back = extensionRows(src, [], ['note'])
+    assert.deepEqual(back.map(r => [r.id, r.state, r.wanted, r.pending]), [['note', 'disabled', true, true], ['x', 'enabled', true, false]])
+  })
 })

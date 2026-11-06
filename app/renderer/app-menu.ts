@@ -3,14 +3,16 @@
 // rendering keeps the markup the static index.html list had (roles, data-command, data-theme, aria-checked, classes,
 // data-icon spans), so the hint painting, greying, keys and check syncing in main.ts work unchanged. Pure, no DOM.
 import { MenuId, MenuRegistryImpl, type MenuEntry, type MenuItem } from '../shared/vscode-menu-registry.ts'
+import type { MenuItemContribution } from '../../extensions/types.ts'
 
 /** The groups of the ≡ menu, in the order the core shows them; an extension's unknown group goes after, lexically. */
 export const APP_MENU_GROUPS = ['palette', 'pane', 'note', 'desk', 'drawer', 'profiles', 'look', 'app', 'exit'] as const
 
 type Item = MenuItem
-const items = (group: string, list: Omit<Item, 'group' | 'order'>[]): Item[] => list.map((item, i) => ({ ...item, group, order: (i + 1) * 10 }))
+/** Orders 10, 20, 30… in list order; an item with its own `order` keeps it (a gap left for an extension's item). */
+const items = (group: string, list: (Omit<Item, 'group' | 'order'> & { order?: number })[]): Item[] => list.map((item, i) => ({ ...item, group, order: item.order ?? (i + 1) * 10 }))
 
-/** The core's items: the same list, labels, icons and initial checks the static menu had. */
+/** The core's items: the same list, labels, icons and initial checks the static menu had, minus what extensions contribute. */
 export const CORE_APP_MENU: readonly Item[] = [
   ...items('palette', [{ command: 'palette.show', icon: 'magnifying-glass', label: 'Paleta de comandos…' }]),
   ...items('pane', [
@@ -21,11 +23,7 @@ export const CORE_APP_MENU: readonly Item[] = [
     { command: 'pane.new-at-frame-edge', icon: 'square-half', label: 'Novo painel na borda do quadro…' },
     { command: 'frame.new', icon: 'columns', label: 'Novo quadro…' },
   ]),
-  ...items('note', [
-    { command: 'note.new', icon: 'note-pencil', label: 'Nova nota' },
-    { command: 'note.open', icon: 'folder-open', label: 'Abrir nota…' },
-    { command: 'note.save-as', icon: 'floppy-disk', label: 'Salvar nota como…' },
-  ]),
+  // The 'note' group is the note extension's (extensions/note/manifest.ts: Nova nota, Abrir nota…, Salvar nota como…).
   ...items('desk', [
     { command: 'desk.new', icon: 'cards', label: 'Nova mesa' },
     { command: 'pane.move', icon: 'arrow-square-out', label: 'Mover…' },
@@ -44,8 +42,8 @@ export const CORE_APP_MENU: readonly Item[] = [
     { command: 'ui.desk-line', kind: 'checkbox', checked: true, label: 'Linha da cor da mesa' },
     { command: 'ui.tab-border', kind: 'checkbox', checked: false, label: 'Borda na guia do painel com foco' },
     { command: 'ui.dim-unfocused', kind: 'checkbox', checked: false, label: 'Esmaecer quadros sem foco' },
-    { command: 'ui.word-wrap', kind: 'checkbox', checked: true, label: 'Quebra de linha no editor' },
-    { command: 'terminal.theme', icon: 'palette', label: 'Tema do terminal…' },
+    // order 70: the note extension's "Quebra de linha no editor".
+    { command: 'terminal.theme', icon: 'palette', label: 'Tema do terminal…', order: 80 },
   ]),
   ...items('app', [
     { command: 'keybindings.show', icon: 'keyboard', label: 'Atalhos de teclado' },
@@ -67,6 +65,15 @@ export function coreMenuRegistry(): MenuRegistryImpl {
   return r
 }
 
+/** An extension's ≡ item (manifest `contributes.menus.app`); `toggled` reads the setting its `toggled` names. */
+export function menuItemOf(m: MenuItemContribution, toggled?: () => boolean): MenuItem {
+  return {
+    command: m.command, group: m.group,
+    ...(m.order !== undefined ? { order: m.order } : {}), ...(m.label ? { label: m.label } : {}), ...(m.icon ? { icon: m.icon } : {}), ...(m.kind ? { kind: m.kind } : {}),
+    ...(m.toggled && toggled ? { toggled } : {}),
+  }
+}
+
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /**
@@ -81,7 +88,7 @@ export function appMenuHtml(entries: readonly MenuEntry[], titleOf: (command: st
     const i = e.item
     const role = i.kind === 'radio' ? 'menuitemradio' : i.kind === 'checkbox' ? 'menuitemcheckbox' : 'menuitem'
     const data = Object.entries(i.data ?? {}).map(([k, v]) => ` data-${esc(k)}="${esc(v)}"`).join('')
-    const checked = i.kind === 'checkbox' ? ` aria-checked="${i.checked === true}"` : ''
+    const checked = i.kind === 'checkbox' ? ` aria-checked="${(i.toggled ? i.toggled() : i.checked) === true}"` : ''
     const cls = i.danger ? ' class="danger"' : ''
     const lead = i.kind ? iconSpan('check', ' check') : i.icon ? iconSpan(i.icon) : ''
     return `<li role="${role}"${data} data-command="${esc(i.command)}"${checked}${cls}>${lead}${esc(i.label ?? titleOf(i.command) ?? i.command)}</li>`

@@ -11,12 +11,12 @@ import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 import type { ExtTransport } from './ext-ipc.ts'
 import type { ExtensionsSettings, SettingValue } from './vscode-configuration-registry.ts'
-import type { ExtensionManifest } from '../../extensions/types.ts'
+import type { ExtensionSummary } from '../../extensions/types.ts'
 
 /** A change of one extension setting (`extensions.<id>.<key>` of settings.json). */
 export interface ExtSettingChange { id: string; key: string; value: SettingValue }
 /** Main's side of the "Extensões" screen: its manifests, the disabled list, and what failed to activate there. */
-export interface MainExtensionsList { manifests: ExtensionManifest[]; disabled: string[]; failed: { id: string; error: string }[] }
+export interface MainExtensionsList { manifests: ExtensionSummary[]; disabled: string[]; failed: { id: string; error: string }[] }
 
 export type { Profile, ProfileInput }
 
@@ -115,25 +115,6 @@ export interface TetherApi {
   /** Closes the window (keeps every slot running in the daemon). */
   closeWindow(): void
   /**
-   * Notes (app/main/note-files.ts). `notePrepare` creates the empty file for a new note under the pane's folder
-   * (`<cwd>/.tether/notes/`) or the person's (`~/.tether/notes/`). Reads and writes are by absolute path; a write is
-   * atomic. `noteFlush` is the fire-and-forget write of a page going away (beforeunload cannot await).
-   */
-  notePrepare(paneCwd?: string): Promise<NotePrepared>
-  noteRead(path: string): Promise<NoteRead>
-  noteWrite(path: string, text: string): Promise<NoteWritten>
-  noteFlush(path: string, text: string): void
-  noteRename(from: string, to: string): Promise<NoteRenamed>
-  /** Watches a note's file; `onNoteChanged` reports a change on disk (our own save included: the renderer compares). */
-  noteWatch(path: string): void
-  noteUnwatch(path: string): void
-  onNoteChanged(listener: (path: string) => void): () => void
-  /** The OS file dialogs (the agreed exception to the in-app dialogs for files): null when cancelled. */
-  notePickOpen(initialDir?: string): Promise<string | null>
-  notePickSaveAs(currentPath: string): Promise<string | null>
-  /** The answer to "add .tether/ to .gitignore?" for a repository: add it, or remember the refusal for that repository. */
-  noteGitignore(repoRoot: string, add: boolean): Promise<void>
-  /**
    * Quick Open (app/main/quick-open-main.ts): the files under the pane's opening folder (the notes folder without
    * one) ranked for the query, with the recently opened ones (`recent`, absolute paths, newest first) on top.
    * Null when a newer search replaced this one before it ran.
@@ -156,12 +137,6 @@ export interface TetherApi {
   keybindingsRead(): Promise<KeybindingsFileState>
   keybindingsWrite(text: string): Promise<{ ok: true } | { ok: false; message: string }>
   onKeybindingsChanged(listener: (state: KeybindingsFileState) => void): () => void
-  /** HTML previews, "Abrir no navegador": the page file with the system's program (only an existing .html file). */
-  openHtmlInBrowser(path: string): Promise<{ ok: true } | { ok: false; message: string }>
-  /** HTML previews: the files the isolated page loaded from its folder, and what was refused. */
-  onHtmlPreviewReport(listener: (report: PreviewReport) => void): () => void
-  /** HTML previews: a chord pressed inside the page, to be replayed on the pane. */
-  onHtmlPreviewKey(listener: (key: PreviewKey) => void): () => void
   /** The extensions' IPC bus (app/shared/ext-ipc.ts): channels `ext:<id>:<channel>`; extensions use it through TetherUi.ipc. */
   ext: ExtTransport
   /** settings.json's `extensions` object, read synchronously once before the renderer's extensions activate. */
@@ -169,6 +144,8 @@ export interface TetherApi {
   setExtSetting(id: string, key: string, value: SettingValue): void
   onExtSetting(listener: (change: ExtSettingChange) => void): () => void
   listMainExtensions(): Promise<MainExtensionsList>
+  /** The "Extensões" toggle: on or off at the next start ("Reiniciar o app"); answers settings.json `extensions.disabled`. */
+  setExtensionEnabled(id: string, on: boolean): Promise<string[]>
 }
 
 declare global {

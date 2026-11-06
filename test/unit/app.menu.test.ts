@@ -6,8 +6,17 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { appMenuHtml, APP_MENU_GROUPS, CORE_APP_MENU, coreMenuRegistry } from '../../app/renderer/app-menu.ts'
+import { appMenuHtml, APP_MENU_GROUPS, CORE_APP_MENU, coreMenuRegistry as coreOnly, menuItemOf } from '../../app/renderer/app-menu.ts'
+import { manifest as noteManifest } from '../../extensions/note/manifest.ts'
 import { MenuId, MenuRegistryImpl, sortMenuItems } from '../../app/shared/vscode-menu-registry.ts'
+
+// The registry as the app builds it: the core's items plus the note extension's (its word wrap on, the default).
+const NOTE_MENU = (noteManifest.contributes?.menus?.app ?? []).map(m => menuItemOf(m, () => true))
+function coreMenuRegistry(): ReturnType<typeof coreOnly> {
+  const r = coreOnly()
+  for (const item of NOTE_MENU) r.appendMenuItem(MenuId.App, item)
+  return r
+}
 
 const fixture = (): string[] => readFileSync(join(import.meta.dirname, 'fixtures', 'app-menu-static.html'), 'utf8').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
 const EXTENSIONS_ROW = '<li role="menuitem" data-command="extensions.show"><span class="i" data-icon="puzzle-piece"></span>Extensões</li>'
@@ -30,9 +39,9 @@ describe('the ≡ menu from the registry', () => {
   })
 
   test('every core item is in a core group, and the groups are the fixed order', () => {
-    for (const i of CORE_APP_MENU) assert.ok((APP_MENU_GROUPS as readonly string[]).includes(i.group), i.command)
-    const seen = [...new Set(CORE_APP_MENU.map(i => i.group))]
-    assert.deepEqual(seen, [...APP_MENU_GROUPS])
+    for (const i of [...CORE_APP_MENU, ...NOTE_MENU]) assert.ok((APP_MENU_GROUPS as readonly string[]).includes(i.group), i.command)
+    const seen = new Set([...CORE_APP_MENU, ...NOTE_MENU].map(i => i.group))
+    assert.deepEqual([...APP_MENU_GROUPS].filter(g => seen.has(g)), [...APP_MENU_GROUPS], 'every core group is filled (the note group by the note extension)')
   })
 
   test('an extension item lands in its group by order; an unknown group goes after the core groups', () => {

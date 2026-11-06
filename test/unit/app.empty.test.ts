@@ -5,13 +5,20 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Profile } from '../../src/daemon/protocol.ts'
 import { appCommands, type CommandHost } from '../../app/renderer/app-commands.ts'
-import { choiceNeedsFolder, choiceOf, chooserItems, EMPTY_ITEM, NOTE_NEW_ITEM, NOTE_OPEN_ITEM } from '../../app/renderer/chooser-rules.ts'
+import { choiceNeedsFolder, choiceOf, chooserItems, EMPTY_ITEM, contributeChooser, chooserItemOf } from '../../app/renderer/chooser-rules.ts'
 import { CommandRegistry, type CommandContext } from '../../app/renderer/commands.ts'
 import { editorKeyOwner, terminalKeyOwner } from '../../app/renderer/key-capture.ts'
 import { emptyLayout, orphanedPanels, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
 import { shortcutHint, shortcutOf, type KeyLike } from '../../app/renderer/shortcuts.ts'
 import { emptyParams, EMPTY_TITLE, isEmptyPanelId, isSlotlessPanelId, newEmptyPanelId, withEmpty } from '../../app/shared/empty.ts'
 import { newNotePanelId } from '../../app/shared/notes.ts'
+import { manifest as noteManifest } from '../../extensions/note/manifest.ts'
+
+// The note extension's chooser items, as the renderer's extension host contributes them at startup.
+const noteChooser = noteManifest.contributes!.chooser!
+contributeChooser(noteChooser)
+const NOTE_NEW_ITEM = chooserItemOf(noteChooser.items[0]!)
+const NOTE_OPEN_ITEM = chooserItemOf(noteChooser.items[1]!)
 
 const key = (code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {}): KeyLike =>
   ({ code, ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta })

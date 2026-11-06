@@ -44,7 +44,6 @@ export interface CommandHost {
   toggleDeskLine(): void
   toggleTabBorder(): void
   toggleDimUnfocused(): void
-  toggleWordWrap(): void
   openTerminalTheme(): void
   fontSize(command: FontSizeCommand): void
   openProfiles(): void
@@ -59,16 +58,7 @@ export interface CommandHost {
   toggleDevTools(): void
   toggleFullscreen(): void
   showPalette(mode: PaletteMode, query?: string): void
-  /** Notes (F5): a new note next to the active pane, a file picked from the disk, the focused note saved under another name. */
-  newNote(): void
-  openNote(): void
-  saveNoteAs(): void
-  /** Markdown (F5): the preview of the active markdown note, in its group or beside it; `markdownSource` goes from a preview back to its file. */
-  markdownPreview(side: boolean): void
-  markdownSource(): void
-  /** Ctrl+S in a note: written now (notes save by themselves; this is the reflex). */
-  saveNote(): void
-  /** Ctrl+Shift+T: the last pane closed comes back (a slot resumes; a note reopens). */
+  /** Ctrl+Shift+T: the last pane closed comes back (a slot resumes; a pane type says what else reopens). */
   reopenClosed(): void
   /** The tabs of the active group: next / previous (wrapping), the N-th, the last. */
   cycleTab(step: 1 | -1): void
@@ -140,14 +130,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.open-folder', title: 'Abrir pasta do painel no Explorer', group: GROUP.pane, icon: 'folder-open', ...pane, run: withPane(id => host.openFolder(id)) },
     { id: 'pane.move', title: 'Mover painel…', group: GROUP.pane, icon: 'arrow-square-out', ...pane, run: withPane(id => host.movePane(id)) },
     { id: 'pane.close', title: 'Fechar painel…', group: GROUP.pane, icon: 'x', ...pane, run: withPane(id => host.closePane(id)) },
-    // ----- note -----
-    { id: 'note.new', title: 'Nova nota', group: GROUP.note, icon: 'note-pencil', run: () => host.newNote() },
-    { id: 'note.open', title: 'Abrir nota…', group: GROUP.note, icon: 'folder-open', run: () => host.openNote() },
-    { id: 'markdown.preview', title: 'Prévia: abrir', group: GROUP.note, icon: 'eye', keepKeyWhenUnavailable: true, when: ctx => ctx.markdown === 'note', run: () => host.markdownPreview(false) },
-    { id: 'markdown.preview.side', title: 'Prévia: abrir ao lado', group: GROUP.note, icon: 'square-split-horizontal', when: ctx => ctx.markdown === 'note', run: () => host.markdownPreview(true) },
-    { id: 'markdown.source', title: 'Markdown: abrir o arquivo-fonte', group: GROUP.note, icon: 'note-pencil', when: ctx => ctx.markdown === 'preview', run: () => host.markdownSource() },
-    { id: 'note.save', title: 'Salvar a nota agora', group: GROUP.note, icon: 'floppy-disk', when: ctx => ctx.focus === 'editor', run: () => host.saveNote() },
-    { id: 'note.save-as', title: 'Salvar nota como…', group: GROUP.note, icon: 'floppy-disk', when: ctx => ctx.focus === 'editor', run: () => host.saveNoteAs() },
+    // (the note commands come from the note extension: extensions/note/manifest.ts)
     // ----- desk -----
     { id: 'desk.new', title: 'Nova mesa', group: GROUP.desk, icon: 'cards', when: ctx => !ctx.drawerOpen, run: () => host.createDesk('after') },
     { id: 'desk.new-before', title: 'Nova mesa antes desta', group: GROUP.desk, icon: 'arrow-line-left', when: ctx => !ctx.drawerOpen, run: () => host.createDesk('before') },
@@ -171,7 +154,6 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'ui.desk-line', title: 'Ligar ou desligar a linha da cor da mesa', group: GROUP.look, icon: 'minus', run: () => host.toggleDeskLine() },
     { id: 'ui.tab-border', title: 'Ligar ou desligar a borda na guia do painel com foco', group: GROUP.look, icon: 'folder-open', run: () => host.toggleTabBorder() },
     { id: 'ui.dim-unfocused', title: 'Ligar ou desligar o esmaecer dos quadros sem foco', group: GROUP.look, icon: 'square-half', run: () => host.toggleDimUnfocused() },
-    { id: 'ui.word-wrap', title: 'Quebra de linha no editor', group: GROUP.look, icon: 'text-aa', run: () => host.toggleWordWrap() },
     { id: 'terminal.theme', title: 'Tema do terminal…', group: GROUP.look, icon: 'palette', run: () => host.openTerminalTheme() },
     { id: 'font.increase', title: 'Aumentar a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('increase') },
     { id: 'font.decrease', title: 'Diminuir a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('decrease') },

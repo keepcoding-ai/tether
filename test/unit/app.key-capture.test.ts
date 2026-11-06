@@ -5,6 +5,10 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { editorKeyOwner, isPlainCtrlLetter, TERMINAL_CAPTURE, terminalKeyOwner } from '../../app/renderer/key-capture.ts'
 import { chordLabel, keysLabel, paneShortcutOf, resolvedDefaults, shortcutOf, type KeyLike } from '../../app/renderer/shortcuts.ts'
+import { withNoteKeybindings } from './note-extension.ts'
+
+// The note's keys come from its extension (extensions/note/manifest.ts), contributed as at the app's startup.
+withNoteKeybindings()
 
 const key = (code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {}): KeyLike =>
   ({ code, ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta })

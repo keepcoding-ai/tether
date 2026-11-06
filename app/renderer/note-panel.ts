@@ -15,6 +15,7 @@ import { defineTheme, type Editor, monaco, THEME_NAME, type ViewState } from './
 import { chordFromLabel, EDITOR_GROUP, editorCommandId } from './note-rules.ts'
 import { terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ColorScheme } from '../shared/theme.ts'
+import type { NoteRead, NoteWritten } from '../shared/api.ts'
 import { externalChangeAction, noteParams, noteTitle, type NoteView } from '../shared/notes.ts'
 
 /** How long after the last keystroke the text is written. */
@@ -30,10 +31,23 @@ const SAVE_RETRY_MS = 2000
 /** How many of our own recent writes a watcher echo is matched against. */
 const OWN_TEXTS_KEPT = 8
 
+/** The files of the note panes (the note extension's side of the bus `ext:note:*`, extensions/note/ipc.ts). */
+export interface NoteIo {
+  read(path: string): Promise<NoteRead>
+  /** Atomic write. */
+  write(path: string, text: string): Promise<NoteWritten>
+  /** The fire-and-forget write of a page going away (beforeunload cannot await). */
+  flush(path: string, text: string): void
+  /** Watches a file; a change on disk comes back as the extension's `changed` event. */
+  watch(path: string): void
+  unwatch(path: string): void
+}
+
 export interface NoteHost {
+  io: NoteIo
   getScheme(): ColorScheme
   getAppearance(): TerminalAppearance
-  /** The global word-wrap preference (settings `ui.wordWrap`). */
+  /** The global word-wrap preference (settings.json `extensions.note.wordWrap`). */
   getWordWrap(): boolean
   /** Flips the global word-wrap preference; every editor follows through setWordWrap. */
   toggleWordWrap(): void
@@ -225,7 +239,7 @@ export class NotePanel implements IContentRenderer {
   // ---------- the file ----------
 
   private async load(): Promise<void> {
-    const r = await window.tether.noteRead(this.path)
+    const r = await this.host.io.read(this.path)
     if (this.disposed || !this.model || !this.editor) return
     if (r.ok) {
       this.savedText = r.text
@@ -315,13 +329,13 @@ export class NotePanel implements IContentRenderer {
   private watch(): void {
     if (this.watching || this.disposed) return
     this.watching = true
-    window.tether.noteWatch(this.path)
+    this.host.io.watch(this.path)
   }
 
   private unwatch(): void {
     if (!this.watching) return
     this.watching = false
-    window.tether.noteUnwatch(this.path)
+    this.host.io.unwatch(this.path)
   }
 
   get text(): string { return this.model?.getValue() ?? '' }
@@ -345,7 +359,7 @@ export class NotePanel implements IContentRenderer {
     if (!this.loaded || this.disposed) return Promise.resolve()
     const text = this.text
     if (text === this.savedText) return Promise.resolve()
-    this.saving = window.tether.noteWrite(this.path, text).then(r => {
+    this.saving = this.host.io.write(this.path, text).then(r => {
       this.saving = undefined
       if (r.ok) {
         this.savedText = text
@@ -368,7 +382,7 @@ export class NotePanel implements IContentRenderer {
     if (!this.loaded || this.disposed) return
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined }
     const text = this.text
-    if (text !== this.savedText) { window.tether.noteFlush(this.path, text); this.savedText = text; this.rememberOwn(text) }
+    if (text !== this.savedText) { this.host.io.flush(this.path, text); this.savedText = text; this.rememberOwn(text) }
   }
 
   private rememberOwn(text: string): void {
@@ -382,7 +396,7 @@ export class NotePanel implements IContentRenderer {
   async onExternalChange(): Promise<void> {
     if (!this.loaded || this.disposed || !this.editor || !this.model || this.conflictOpen) return
     if (this.saving) await this.saving
-    const r = await window.tether.noteRead(this.path)
+    const r = await this.host.io.read(this.path)
     if (this.disposed || !r.ok) return // gone or unreadable: the next save recreates it
     // A write started during the read: its own event follows and is judged then.
     if (this.saving) return
@@ -433,7 +447,7 @@ export class NotePanel implements IContentRenderer {
   async saveAs(path: string): Promise<boolean> {
     if (this.saving) await this.saving
     const text = this.text
-    const r = await window.tether.noteWrite(path, text)
+    const r = await this.host.io.write(path, text)
     if (!r.ok) { console.error(`nota: salvar como ${path} falhou: ${r.message}`); return false }
     this.setPath(path)
     this.savedText = text
@@ -529,7 +543,7 @@ export class NotePanel implements IContentRenderer {
     if (this.viewTimer) { clearTimeout(this.viewTimer); this.viewTimer = undefined }
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = undefined }
     // What is still pending goes to disk; the params get the last view state before the pane is serialized elsewhere (a move).
-    if (this.loaded && this.text !== this.savedText) { window.tether.noteFlush(this.path, this.text); this.savedText = this.text }
+    if (this.loaded && this.text !== this.savedText) { this.host.io.flush(this.path, this.text); this.savedText = this.text }
     if (this.loaded) this.host.onViewChange(this)
     this.disposed = true
     this.unwatch()

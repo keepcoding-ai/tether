@@ -242,8 +242,9 @@ test('app note: Monaco tab, autosave, column selection and multi-cursor, palette
     assert.deepEqual(await page.evaluate(() => window.__tether.wordWrap()), { setting: true, editors: ['on'] }, 'wrap defaults to on')
     await page.keyboard.press('Alt+z')
     await page.waitForFunction(() => { const w = window.__tether.wordWrap(); return !w.setting && w.editors.every(o => o === 'off') })
-    for (let i = 0; i < 50 && JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui?.wordWrap !== false; i++) await sleep(100)
-    assert.equal(JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui?.wordWrap, false, 'settings.json ui.wordWrap')
+    // The preference is the note extension's (F9 slice 1): settings.json `extensions.note.wordWrap`.
+    for (let i = 0; i < 50 && JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).extensions?.note?.wordWrap !== false; i++) await sleep(100)
+    assert.equal(JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).extensions?.note?.wordWrap, false, 'settings.json extensions.note.wordWrap')
 
     // 5. Changed outside while clean: reloads, cursor kept.
     await page.keyboard.press('Control+Home')

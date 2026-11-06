@@ -23,6 +23,7 @@
 // when there is one (without one it stays the terminal's ^C), Ctrl+Shift+C always copies, Ctrl+V / Ctrl+Shift+V
 // paste. Terminal input chords (TERMINAL_INPUTS) turn a key into bytes for the prompt (Shift+Enter = ESC CR, Claude
 // Code's "new line without submitting"; on macOS the line-editing keys of a Mac text field).
+import type { KeybindingContribution } from '../../extensions/types.ts'
 export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(
   (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform,
 )
@@ -255,12 +256,7 @@ export const DEFAULT_KEYBINDINGS: readonly DefaultEntry[] = [
   { key: 'ctrl+`', command: 'drawer.toggle', literal: true },       // "toggle terminal"
   { key: 'ctrl+shift+g', command: 'drawer.toggle' },                // alias for keyboards where ` is a dead key (ABNT2)
   { key: 'ctrl+shift+`', command: 'drawer.quick-terminal' },        // "new terminal"
-  // ----- notes -----
-  { key: 'ctrl+o', command: 'note.open' },                          // "open file" (window and note; in a terminal Ctrl+O is Claude Code's verbose toggle)
-  { key: 'ctrl+s', command: 'note.save', where: ['note'] },
-  { key: 'ctrl+shift+s', command: 'note.save-as', where: ['note'] },
-  { key: 'ctrl+shift+v', command: 'markdown.preview', where: ['note'] }, // in a terminal Ctrl+Shift+V pastes (PANE_SHORTCUTS)
-  { key: 'ctrl+k v', command: 'markdown.preview.side', where: ['note'] },
+  // (the notes' defaults come from the note extension's manifest: extensions/note/manifest.ts)
   // ----- look -----
   { key: 'ctrl+k ctrl+t', command: 'theme.pick' },                  // "color theme": the palette filtered on "Tema"
   { key: 'ctrl+=', command: 'font.increase' },                      // "zoom in" (VS Code and Windows Terminal take Ctrl+= / Ctrl+- from the shell too)
@@ -284,9 +280,30 @@ export const DEFAULT_KEYBINDINGS: readonly DefaultEntry[] = [
   { key: 'ctrl+shift+q', command: 'app.quit-all' },
 ]
 
+/**
+ * The defaults extensions contribute (their manifest's `contributes.keybindings`, VS Code's KeybindingsRegistry fed by
+ * package.json): after the core's, in activation order. Contributing happens at startup, before the person's file is
+ * merged (mergeKeybindings reads resolvedDefaults), so the table in force is rebuilt from the defaults here.
+ */
+const contributedKeybindings: (readonly DefaultEntry[])[] = []
+
+/** A manifest's `contributes.keybindings` as entries of the table. */
+export function keybindingEntries(list: readonly KeybindingContribution[]): DefaultEntry[] {
+  return list.map(k => ({ key: k.key, command: k.command, ...(k.where ? { where: [...k.where] } : {}), ...(k.literal ? { literal: true } : {}) }))
+}
+export function contributeKeybindings(entries: readonly DefaultEntry[]): () => void {
+  contributedKeybindings.push(entries)
+  active = new KeyTable(resolvedDefaults())
+  return () => {
+    const i = contributedKeybindings.indexOf(entries)
+    if (i !== -1) contributedKeybindings.splice(i, 1)
+    active = new KeyTable(resolvedDefaults())
+  }
+}
+
 /** The defaults as concrete bindings of a platform. */
 export function resolvedDefaults(mac = IS_MAC): Keybinding[] {
-  return DEFAULT_KEYBINDINGS.map(e => {
+  return [...DEFAULT_KEYBINDINGS, ...contributedKeybindings.flat()].map(e => {
     const parsed = parseKeys(e.key)
     if (!parsed) throw new Error(`default keybinding unreadable: ${e.key}`)
     const keys = parsed.map(c => {

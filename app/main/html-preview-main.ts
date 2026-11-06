@@ -10,7 +10,7 @@
 // What the page loaded from its folder is reported to the renderer (it watches those files for the live reload), and so is what
 // the policy refused (the strip says how many). Chords pressed inside the page are forwarded as data (the guest cannot reach the
 // app's key handling on its own).
-import { type IpcMain, type Session, session, shell, type WebContents, type WebPreferences } from 'electron'
+import { type Session, session, shell, type WebContents, type WebPreferences } from 'electron'
 import { realpathSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { isHtmlPath } from '../shared/preview.ts'
@@ -36,18 +36,22 @@ function realpath(path: string): string {
   return realpathSync.native(path)
 }
 
+/** Where a window's previews report to (the note extension's bus events). */
+export interface PreviewReporter {
+  report(r: PreviewReport): void
+  key(k: PreviewKey): void
+}
+
 /** Hooks one app window: its webviews become isolated previews (and nothing else may be a webview). */
-export function guardHtmlPreviews(host: WebContents): void {
+export function guardHtmlPreviews(host: WebContents, reporter: PreviewReporter): void {
   const guards = new Map<string, Guard>()
   const installed = new WeakSet<Session>()
-
-  const send = (channel: string, payload: unknown): void => { if (!host.isDestroyed()) host.send(channel, payload) }
 
   const report = (g: Guard): void => {
     if (g.timer) return
     g.timer = setTimeout(() => {
       g.timer = undefined
-      send('tether:html-preview-report', { partition: g.partition, files: [...g.files], blocked: [...g.blocked].map(([url, reason]) => ({ url, reason })) } satisfies PreviewReport)
+      if (!host.isDestroyed()) reporter.report({ partition: g.partition, files: [...g.files], blocked: [...g.blocked].map(([url, reason]) => ({ url, reason })) })
     }, REPORT_DEBOUNCE_MS)
   }
 
@@ -139,7 +143,7 @@ export function guardHtmlPreviews(host: WebContents): void {
     guest.on('before-input-event', (_event, input) => {
       if (input.type !== 'keyDown') return
       if (!input.control && !input.meta && !input.alt && !/^F\d+$/.test(input.key)) return // typing stays in the page
-      send('tether:html-preview-key', { partition: g.partition, key: input.key, code: input.code, control: input.control, shift: input.shift, alt: input.alt, meta: input.meta } satisfies PreviewKey)
+      if (!host.isDestroyed()) reporter.key({ partition: g.partition, key: input.key, code: input.code, control: input.control, shift: input.shift, alt: input.alt, meta: input.meta })
     })
   })
 }
@@ -159,11 +163,9 @@ function openExternal(url: string): void {
  * "Abrir no navegador": the page's file with the system's program for it (the browser, normally). Only an existing web page
  * file: the path is never interpreted and nothing else is spawned.
  */
-export function registerHtmlPreviewOpen(ipcMain: IpcMain): void {
-  ipcMain.handle('htmlpreview:open-in-browser', async (_e, path: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
-    if (typeof path !== 'string' || !isAbsolute(path) || !isHtmlPath(path)) return { ok: false, message: 'Só abro páginas .html.' }
-    try { if (!statSync(path).isFile()) return { ok: false, message: 'Não é um arquivo.' } } catch { return { ok: false, message: 'O arquivo não existe mais.' } }
-    const err = await shell.openPath(path)
-    return err ? { ok: false, message: err } : { ok: true }
-  })
+export async function openHtmlInBrowser(path: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (typeof path !== 'string' || !isAbsolute(path) || !isHtmlPath(path)) return { ok: false, message: 'Só abro páginas .html.' }
+  try { if (!statSync(path).isFile()) return { ok: false, message: 'Não é um arquivo.' } } catch { return { ok: false, message: 'O arquivo não existe mais.' } }
+  const err = await shell.openPath(path)
+  return err ? { ok: false, message: err } : { ok: true }
 }

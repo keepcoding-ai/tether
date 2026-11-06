@@ -10,7 +10,7 @@
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { icon, setIcon } from './icons.ts'
 import { colorizeCode, tokenColorsCss } from './monaco.ts'
-import type { NotePanel } from './note-panel.ts'
+import type { NoteIo, NotePanel } from './note-panel.ts'
 import type { PreviewPane } from './preview-pane.ts'
 import { previewShell, readPreviewTokens, tokensCss } from './preview-style.ts'
 import { noteDirOf } from '../shared/notes.ts'
@@ -31,6 +31,7 @@ const SYNC_ECHO_MS = 160
 const ACTIVATE_DELAY_MS = 450
 
 export interface PreviewHost {
+  io: NoteIo
   getScheme(): ColorScheme
   getAppearance(): TerminalAppearance
   /** The open editor of the file, when there is one that has read it. */
@@ -141,13 +142,13 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
   private watch(): void {
     if (this.watching || this.disposed || !this.path) return
     this.watching = true
-    window.tether.noteWatch(this.path)
+    this.host.io.watch(this.path)
   }
 
   private unwatch(): void {
     if (!this.watching) return
     this.watching = false
-    window.tether.noteUnwatch(this.path)
+    this.host.io.unwatch(this.path)
   }
 
   /** The preview now shows another file (the note was renamed or saved as). */
@@ -178,7 +179,7 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
   private async currentText(): Promise<string | undefined> {
     const editor = this.host.editorFor(this.path)
     if (editor) return editor.text
-    const r = await window.tether.noteRead(this.path)
+    const r = await this.host.io.read(this.path)
     if (r.ok) return r.text
     if (r.missing) { this.showState('file-text', 'Arquivo não encontrado', this.path); return undefined }
     this.showState('x-circle', 'Não foi possível ler o arquivo', r.message)

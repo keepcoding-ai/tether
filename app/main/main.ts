@@ -18,12 +18,10 @@ import type { Notice, Reply, SlotState } from '../../src/daemon/protocol.ts'
 import { canonicalDir, tetherHome } from '../../src/core/paths.ts'
 import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles } from '../../src/core/profile.ts'
 import type { ProfileInput } from '../../src/core/profile.ts'
-import type { ConnectionState, NotePrepared, NoteRead, NoteRenamed, NoteWritten, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
-import { addTetherToGitignore, NoteWatchers, notesDirFor, prepareNote, readNote, renameNote, writeNote } from './note-files.ts'
+import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
+import { NoteWatchers } from './note-files.ts'
 import { registerQuickOpen } from './quick-open-main.ts'
 import { registerTerminalLinks } from './terminal-links-main.ts'
-import { guardHtmlPreviews, registerHtmlPreviewOpen } from './html-preview-main.ts'
-import { NOTE_EXTENSION } from '../shared/notes.ts'
 import { KEYBINDINGS_FILE, type KeybindingsFileState } from '../shared/keybindings.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeWindowState, resolveWindowState, type WindowState } from '../shared/window-state.ts'
@@ -346,6 +344,8 @@ const extensionHost = new MainExtensionHost(mainExtensions, {
   window: () => win,
   readSettings: () => readExtensionsSettings(readJson<Settings>(settingsPath, {}).extensions),
   writeSettings: s => writeJson(settingsPath, { ...readJson<Settings>(settingsPath, {}), extensions: writeExtensionsSettings(s) }),
+  readFile: () => readJson<Record<string, unknown>>(settingsPath, {}),
+  writeFile: file => writeJson(settingsPath, file),
   log: msg => appLog(msg),
 })
 
@@ -523,7 +523,8 @@ function createWindow(): void {
   if (start.fullscreen) created.setFullScreen(true)
   if (!hidden) created.once('ready-to-show', () => created.show())
   trackWindowState(created)
-  guardHtmlPreviews(created.webContents)
+  // A <webview> is only ever an extension's isolated page (the note's HTML preview): with no extension guarding, none attaches.
+  extensionHost.guardWebviews(created.webContents, () => created.webContents.on('will-attach-webview', event => event.preventDefault()))
   created.on('close', e => {
     if (quitting || !tray) return
     e.preventDefault()
@@ -810,36 +811,6 @@ ipcMain.handle('shell:open-path', async (_e, path: unknown): Promise<{ ok: true 
 ipcMain.handle('clipboard:read', () => clipboard.readText())
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
 
-// ---------- notes ----------
-// The files of the note tabs (app/main/note-files.ts). The renderer owns the editor and the debounce; main owns
-// the disk: atomic writes, the folder watcher, the two OS file dialogs, and the repositories whose
-// ".gitignore" question was declined (settings.json `notes.gitignoreDeclined`).
-
-const noteWatchers = new NoteWatchers(path => win?.webContents.send('tether:note-changed', path))
-
-function gitignoreDeclined(): string[] {
-  const raw = readJson<Settings>(settingsPath, {}).notes
-  const list = raw && typeof raw === 'object' ? (raw as { gitignoreDeclined?: unknown }).gitignoreDeclined : undefined
-  return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : []
-}
-
-const isPath = (p: unknown): p is string => typeof p === 'string' && p.trim() !== ''
-
-ipcMain.handle('note:prepare', (_e, paneCwd: unknown): NotePrepared => {
-  const cwd = isPath(paneCwd) ? canonicalDir(paneCwd) : undefined
-  return prepareNote(cwd, { declined: gitignoreDeclined() })
-})
-ipcMain.handle('note:read', (_e, path: unknown): NoteRead => isPath(path) ? readNote(path) : { ok: false, missing: false, message: 'Caminho inválido.' })
-ipcMain.handle('note:write', (_e, path: unknown, text: unknown): NoteWritten => isPath(path) && typeof text === 'string' ? writeNote(path, text) : { ok: false, message: 'Caminho inválido.' })
-ipcMain.on('note:flush', (_e, path: unknown, text: unknown) => { if (isPath(path) && typeof text === 'string') writeNote(path, text) })
-ipcMain.handle('note:rename', (_e, from: unknown, to: unknown): NoteRenamed => {
-  if (!isPath(from) || !isPath(to)) return { ok: false, message: 'Caminho inválido.' }
-  // The watches follow in the renderer (the note's `setPath`, a preview's retarget): each holder moves its own.
-  return renameNote(from, to)
-})
-ipcMain.on('note:watch', (_e, path: unknown) => { if (isPath(path)) noteWatchers.watch(path) })
-ipcMain.on('note:unwatch', (_e, path: unknown) => { if (isPath(path)) noteWatchers.unwatch(path) })
-
 // ---------- keyboard shortcuts (F5, delivery 5) ----------
 // <TETHER_HOME>/keybindings.json is the renderer's (format, defaults, merge: app/renderer/keybindings-rules.ts); main
 // only hands the text over, writes it atomically, and reports every change on disk (a save from the screen, an edit by
@@ -864,40 +835,12 @@ ipcMain.handle('keybindings:write', (_e, text: unknown): { ok: true } | { ok: fa
 // The same watcher class the notes use (one per folder, debounced): the file's folder is the home itself.
 const keybindingsWatchers = new NoteWatchers(() => win?.webContents.send('tether:keybindings-changed', keybindingsState()))
 try { mkdirSync(home, { recursive: true }); keybindingsWatchers.watch(keybindingsPath) } catch { /* no watcher: the screen still reads on open */ }
-ipcMain.handle('note:pick-open', async (_e, initialDir: unknown): Promise<string | null> => {
-  if (!win) return null
-  const r = await dialog.showOpenDialog(win, {
-    title: 'Abrir nota',
-    properties: ['openFile'],
-    filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }, { name: 'Todos os arquivos', extensions: ['*'] }],
-    ...(isPath(initialDir) ? { defaultPath: initialDir } : {}),
-  })
-  const picked = r.filePaths[0]
-  return r.canceled || !picked ? null : picked
-})
-ipcMain.handle('note:pick-save-as', async (_e, currentPath: unknown): Promise<string | null> => {
-  if (!win) return null
-  const r = await dialog.showSaveDialog(win, {
-    title: 'Salvar nota como',
-    filters: [{ name: 'Markdown', extensions: ['md'] }, { name: 'Todos os arquivos', extensions: ['*'] }],
-    ...(isPath(currentPath) ? { defaultPath: currentPath } : { defaultPath: join(notesDirFor(undefined), `nota${NOTE_EXTENSION}`) }),
-  })
-  return r.canceled || !r.filePath ? null : r.filePath
-})
-ipcMain.handle('note:gitignore', (_e, repoRoot: unknown, add: unknown) => {
-  if (!isPath(repoRoot)) return
-  if (add === true) { addTetherToGitignore(repoRoot); return }
-  const settings = readJson<Settings>(settingsPath, {})
-  const declined = gitignoreDeclined()
-  if (!declined.includes(repoRoot)) writeJson(settingsPath, { ...settings, notes: { gitignoreDeclined: [...declined, repoRoot] } })
-})
 
 // ---------- quick open ----------
 // Ctrl+P's file list and search (app/main/quick-open-main.ts), in a worker thread next to main.cjs.
 const quickOpen = registerQuickOpen(ipcMain, shell, __dirname)
 app.on('will-quit', () => quickOpen.dispose())
 // Ctrl+click on a path in a terminal: is the candidate a file or folder? (app/main/terminal-links-main.ts)
-registerHtmlPreviewOpen(ipcMain)
 registerTerminalLinks(ipcMain)
 
 // ---------- single instance ----------

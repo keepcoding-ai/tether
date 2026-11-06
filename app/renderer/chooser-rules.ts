@@ -1,30 +1,55 @@
-// The chooser's data, pure (unit-tested): what it offers (the launch profiles, the two ways a note is born, the
-// empty pane in the contextless popup), how a typed query ranks them (prefix → start of a word → subsequence →
+// The chooser's data, pure (unit-tested): what it offers (the launch profiles, the items extensions contribute —
+// the note's two ways a note is born —, the empty pane in the contextless popup), how a typed query ranks them (prefix → start of a word → subsequence →
 // alias: "bash", "pwsh", "nota", "dev"), how the list is laid out (Recentes first, then the groups in the profile
 // manager's order, numbered 1–9 as shown), which folder applies (the profile's own until the field is touched),
 // what the open button says, and the Esc ladder. app/renderer/chooser.ts renders it; main.ts resolves a Choice.
 import type { Profile } from '../../src/daemon/protocol.ts'
 import type { ProfileAgent } from '../../src/core/profile.ts'
 import { foldChars, foldQuery, fuzzyMatch } from './fuzzy.ts'
+import type { ChooserGroupContribution, ChooserItemContribution } from '../../extensions/types.ts'
 
 /** A Phosphor icon name of icons.ts (IconName). Not imported: icons.ts pulls the SVG assets, and this module stays pure for the unit tests. */
 type IconName = string
 
 export const CHOICE_PREFIX = 'kind:'
 
-export type ChoiceKind = 'empty' | 'note-new' | 'note-open'
+/** The core's own item kind ('empty'), or the id of an item an extension contributes ('note-new'). */
+export type ChoiceKind = string
 
 /** What the person picked in the chooser. */
 export type Choice =
   | { kind: 'profile'; profile: Profile }
-  | { kind: ChoiceKind }
+  | { kind: ChoiceKind; profile?: undefined }
 
-/** The choice an item id names, or undefined for nothing / an unknown profile. */
+// ---------- contributions ----------
+// The items extensions offer (their manifest's `contributes.chooser`), in activation order: a group each, after the
+// agents' groups and before the empty pane. Contributed at startup by the renderer's extension host.
+
+const contributedGroups: ChooserGroupContribution[] = []
+const contributedItems: ChooserItem[] = []
+
+/** A contributed item as the chooser lists it (id `kind:<id>`). */
+export function chooserItemOf(c: ChooserItemContribution): ChooserItem {
+  return { id: `${CHOICE_PREFIX}${c.id}`, kind: c.id, group: c.group, name: c.name, hint: c.hint, hintNone: false, icon: c.icon, keywords: [...c.keywords], unsafe: false, default: false, button: { ...c.button } }
+}
+
+export function contributeChooser(c: { groups: readonly ChooserGroupContribution[]; items: readonly ChooserItemContribution[] }): () => void {
+  const groups = c.groups.map(g => ({ ...g }))
+  const items = c.items.map(chooserItemOf)
+  contributedGroups.push(...groups)
+  contributedItems.push(...items)
+  return () => {
+    for (const g of groups) { const i = contributedGroups.indexOf(g); if (i !== -1) contributedGroups.splice(i, 1) }
+    for (const it of items) { const i = contributedItems.indexOf(it); if (i !== -1) contributedItems.splice(i, 1) }
+  }
+}
+
+/** The choice an item id names, or undefined for nothing / an unknown profile or kind. */
 export function choiceOf(value: string | undefined, profiles: readonly Profile[]): Choice | undefined {
   if (!value) return undefined
   if (value.startsWith(CHOICE_PREFIX)) {
     const kind = value.slice(CHOICE_PREFIX.length)
-    return kind === 'empty' || kind === 'note-new' || kind === 'note-open' ? { kind } : undefined
+    return kind === 'empty' || contributedItems.some(i => i.kind === kind) ? { kind } : undefined
   }
   const profile = profiles.find(p => p.id === value)
   return profile ? { kind: 'profile', profile } : undefined
@@ -37,21 +62,30 @@ export function choiceNeedsFolder(choice: Choice): boolean {
 
 // ---------- items ----------
 
-export type ItemGroup = ProfileAgent | 'note' | 'empty'
-/** The groups in reading order: the profile manager's order, then the notes, then (popup only) the empty pane. */
-export const ITEM_GROUPS: readonly ItemGroup[] = ['claude', 'soul', 'shell', 'note', 'empty']
-export const GROUP_LABEL: Record<ItemGroup, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell', note: 'Nota', empty: 'Vazio' }
-export const GROUP_ICON: Record<ItemGroup, IconName> = { claude: 'sparkle', soul: 'ghost', shell: 'terminal-window', note: 'note-pencil', empty: 'plus' }
+/** An agent's name, an extension's group id ('note'), or 'empty'. */
+export type ItemGroup = ProfileAgent | string
+/** The agents' groups in the profile manager's order; contributed groups follow, then (popup only) the empty pane. */
+export const AGENT_GROUPS: readonly ItemGroup[] = ['claude', 'soul', 'shell']
+export const GROUP_LABEL: Record<string, string> = { claude: 'Claude', soul: 'soul', shell: 'Shell', empty: 'Vazio' }
+export const GROUP_ICON: Record<string, IconName> = { claude: 'sparkle', soul: 'ghost', shell: 'terminal-window', empty: 'plus' }
 /** An agent the renderer has no descriptor for yet (an extension's, F9 slice 4) shows under its own name. */
-const groupLabel = (g: ItemGroup): string => GROUP_LABEL[g] ?? g
-const groupIcon = (g: ItemGroup): IconName => GROUP_ICON[g] ?? 'terminal-window'
+const groupLabel = (g: ItemGroup): string => GROUP_LABEL[g] ?? contributedGroups.find(c => c.id === g)?.label ?? g
+const groupIcon = (g: ItemGroup): IconName => GROUP_ICON[g] ?? contributedGroups.find(c => c.id === g)?.icon ?? 'terminal-window'
+/** Every group in reading order: the agents, other agents, the contributed groups, anything else, the empty pane. */
+function groupOrder(items: readonly ChooserItem[]): ItemGroup[] {
+  const contributed = contributedGroups.map(g => g.id)
+  const agents = [...AGENT_GROUPS, ...new Set(items.filter(i => i.kind === 'profile').map(i => i.group).filter(g => !AGENT_GROUPS.includes(g)))]
+  const rest = [...new Set(items.map(i => i.group).filter(g => !agents.includes(g) && !contributed.includes(g) && g !== 'empty'))]
+  return [...agents, ...contributed, ...rest, 'empty']
+}
 
 const UNSAFE_ARG = '--dangerously-skip-permissions'
 
 export interface ChooserItem {
   /** A profile id, or `kind:<kind>` (the value `choiceOf` reads). */
   id: string
-  kind: 'profile' | ChoiceKind
+  /** 'profile', 'empty', or a contributed item's id. */
+  kind: ChoiceKind
   group: ItemGroup
   name: string
   /** The small line under the name: the args of a profile, a description otherwise. */
@@ -65,6 +99,8 @@ export interface ChooserItem {
   default: boolean
   /** The profile's own folder, suggested while the folder field is untouched. */
   cwd?: string
+  /** What the open button says for a non-profile item ("Criar nota", "Abrir nota…"). */
+  button?: { verb: 'create' | 'open'; name: string }
 }
 
 const fold = (s: string): string => foldChars(s).join('')
@@ -96,15 +132,13 @@ export function profileItem(p: Profile): ChooserItem {
   return { id: p.id, kind: 'profile', group: p.agent, name: p.name, hint, hintNone: args.length === 0, icon: groupIcon(p.agent), keywords: profileKeywords(p, unsafe), unsafe, default: !!p.default, ...(p.cwd ? { cwd: p.cwd } : {}) }
 }
 
-export const NOTE_NEW_ITEM: ChooserItem = { id: `${CHOICE_PREFIX}note-new`, kind: 'note-new', group: 'note', name: 'Nova nota', hint: 'arquivo .md novo em <pasta>/.tether/notes', hintNone: false, icon: 'note-pencil', keywords: ['nota', 'note', 'nova', 'novo', 'md', 'markdown', 'arquivo', 'texto'], unsafe: false, default: false }
-export const NOTE_OPEN_ITEM: ChooserItem = { id: `${CHOICE_PREFIX}note-open`, kind: 'note-open', group: 'note', name: 'Abrir nota…', hint: 'um arquivo existente, pelo seletor de arquivos', hintNone: false, icon: 'folder-open', keywords: ['nota', 'note', 'abrir', 'md', 'markdown', 'arquivo', 'existente'], unsafe: false, default: false }
-export const EMPTY_ITEM: ChooserItem = { id: `${CHOICE_PREFIX}empty`, kind: 'empty', group: 'empty', name: 'Vazio — escolher depois', hint: 'só o espaço, na posição escolhida; o que abre nele se decide lá dentro', hintNone: false, icon: 'plus', keywords: ['vazio', 'espaco', 'depois', 'empty', 'lugar'], unsafe: false, default: false }
+export const EMPTY_ITEM: ChooserItem = { id: `${CHOICE_PREFIX}empty`, kind: 'empty', group: 'empty', name: 'Vazio — escolher depois', hint: 'só o espaço, na posição escolhida; o que abre nele se decide lá dentro', hintNone: false, icon: 'plus', keywords: ['vazio', 'espaco', 'depois', 'empty', 'lugar'], unsafe: false, default: false, button: { verb: 'create', name: 'vazio' } }
 
-/** Everything a chooser offers: the profiles, the notes, and the empty pane where it makes sense (the contextless popup). */
+/** Everything a chooser offers: the profiles, the extensions' items, and the empty pane where it makes sense (the contextless popup). */
 export function chooserItems(profiles: readonly Profile[], opts: { empty: boolean }): ChooserItem[] {
   const out: ChooserItem[] = []
   for (const agent of ['claude', 'soul', 'shell'] as const) for (const p of profiles) if (p.agent === agent) out.push(profileItem(p))
-  out.push(NOTE_NEW_ITEM, NOTE_OPEN_ITEM)
+  out.push(...contributedItems)
   if (opts.empty) out.push(EMPTY_ITEM)
   return out
 }
@@ -162,7 +196,7 @@ export function chooserRows(items: readonly ChooserItem[], query: string, recent
       rows.push({ kind: 'sep', label: 'Recentes', icon: 'clock-counter-clockwise', recent: true })
       for (const item of recent) rows.push({ kind: 'item', item, positions: [], recent: true, n: undefined })
     }
-    for (const group of [...ITEM_GROUPS, ...new Set(items.map(it => it.group).filter(g => !ITEM_GROUPS.includes(g)))]) {
+    for (const group of groupOrder(items)) {
       const list = items.filter(it => it.group === group && !recent.includes(it))
       if (list.length === 0) continue
       rows.push({ kind: 'sep', label: groupLabel(group), icon: groupIcon(group), recent: false })
@@ -207,9 +241,9 @@ export function effectiveFolder(item: ChooserItem | undefined, folder: string, t
 /** What the primary button says for the highlighted item ("Abrir Claude", "Criar nota", "Abrir nota…"; the busy form while opening). */
 export function openLabel(item: ChooserItem | undefined, busy = false): { verb: string; name: string } {
   if (!item) return { verb: busy ? 'Abrindo' : 'Abrir', name: '' }
-  const create = item.kind === 'note-new' || item.kind === 'empty'
+  const create = item.button?.verb === 'create'
   const verb = busy ? (create ? 'Criando' : 'Abrindo') : create ? 'Criar' : 'Abrir'
-  const name = item.kind === 'note-new' ? 'nota' : item.kind === 'note-open' ? 'nota…' : item.kind === 'empty' ? 'vazio' : item.name
+  const name = item.kind === 'profile' ? item.name : item.button?.name ?? item.name
   return { verb, name: busy ? `${name}…` : name }
 }
 

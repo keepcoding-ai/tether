@@ -9,7 +9,7 @@
 // and a running page must not restart when the pane is activated or dragged to another group.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer } from 'dockview-core'
 import { icon, setIcon } from './icons.ts'
-import type { NotePanel } from './note-panel.ts'
+import type { NoteIo, NotePanel } from './note-panel.ts'
 import type { PreviewPane } from './preview-pane.ts'
 import type { PreviewKey, PreviewReport } from '../shared/api.ts'
 import { blockedLabel, fromFileUrl, pathKey, previewPartition, toFileUrl } from '../shared/html-preview.ts'
@@ -35,6 +35,7 @@ interface WebviewElement extends HTMLElement {
 }
 
 export interface HtmlPreviewHost {
+  io: NoteIo
   /** The path or the scroll changed: persist the pane params with the layout. */
   onParamsChange(panel: HtmlPreviewPanel): void
   /** "Ver código": the file in a note tab (the editor, not the preview), in the pane's group. */
@@ -254,14 +255,14 @@ export class HtmlPreviewPanel implements IContentRenderer, PreviewPane {
     const key = pathKey(path)
     if (this.watched.has(key) || this.disposed) return
     this.watched.set(key, path)
-    window.tether.noteWatch(path)
+    this.host.io.watch(path)
   }
 
   private unwatch(key: string): void {
     const path = this.watched.get(key)
     if (path === undefined) return
     this.watched.delete(key)
-    window.tether.noteUnwatch(path)
+    this.host.io.unwatch(path)
   }
 
   /** Main's report of what the page loaded and what the policy refused: the files are watched for the live reload. */

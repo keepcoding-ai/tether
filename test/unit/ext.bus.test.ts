@@ -130,10 +130,13 @@ describe('Electron main extension host', () => {
   function setup(list: ExtensionEntry<TetherMain>[], initial: unknown = {}) {
     const ipc = fakeIpc()
     let stored = readExtensionsSettings(initial)
+    let file: Record<string, unknown> = {}
     const logs: string[] = []
     const host = new MainExtensionHost(list, {
       home: 'H', dist: 'D', ipc: ipc.main, broadcast: ipc.broadcast, window: () => undefined,
       readSettings: () => stored, writeSettings: s => { stored = s }, log: m => logs.push(m),
+      readFile: () => ({ ...file, extensions: writeExtensionsSettings(stored) }),
+      writeFile: f => { file = f; stored = readExtensionsSettings(f.extensions) },
     })
     return { ipc, host, logs, stored: () => stored }
   }

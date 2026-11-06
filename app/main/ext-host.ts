@@ -4,11 +4,14 @@
 //   extsettings:get-sync  (sendSync) the `extensions` object of settings.json, read before the renderer activates
 //   extsettings:set       one value `<id>.<key>`; normalized by the schema when main knows it; broadcast as tether:ext-setting
 //   extensions:list       the main-side manifests and the disabled list, for the "Extensões" screen
+//   extensions:set-enabled  the screen's toggle: `extensions.disabled` gains or loses an id (takes effect at the next
+//                           start, decision 3); answers the new list
 // The extensions' own traffic goes on the bus (app/shared/ext-ipc.ts). No Electron import at runtime: main.ts passes
 // ipcMain and the window in, so this is unit-tested with fakes.
-import type { BrowserWindow } from 'electron'
-import type { ExtensionEntry, ExtensionManifest } from '../../extensions/types.ts'
+import type { BrowserWindow, WebContents } from 'electron'
+import { summaryOf, type ExtensionEntry } from '../../extensions/types.ts'
 import { activateExtensions, type ActivationResult } from '../shared/ext-activation.ts'
+import { applyMigrations, stateOf, withState } from '../shared/ext-migrations.ts'
 import { mainIpc, type MainIpcTransport } from '../shared/ext-ipc.ts'
 import { ConfigurationRegistry, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
@@ -26,6 +29,9 @@ export interface MainHostDeps {
   window(): BrowserWindow | undefined
   readSettings(): ExtensionsSettings
   writeSettings(s: ExtensionsSettings): void
+  /** The whole settings.json object (migrations, remembered state). */
+  readFile(): Record<string, unknown>
+  writeFile(file: Record<string, unknown>): void
   log(msg: string): void
 }
 
@@ -38,6 +44,7 @@ export class MainExtensionHost {
   readonly configuration = new ConfigurationRegistry()
   private readonly listeners = new Map<string, Set<(value: SettingValue) => void>>()
   private result: ActivationResult = { active: [], disabled: [], failed: [] }
+  private readonly webviewGuards = new Set<(host: WebContents) => void>()
   private readonly deps: MainHostDeps
   private readonly list: readonly ExtensionEntry<TetherMain>[]
 
@@ -46,11 +53,13 @@ export class MainExtensionHost {
     this.deps = deps
     deps.ipc.on('extsettings:get-sync', (e: { returnValue?: unknown }) => { e.returnValue = deps.readSettings() })
     deps.ipc.on('extsettings:set', (_e, id: unknown, key: unknown, value: unknown) => { if (typeof id === 'string' && typeof key === 'string') this.setSetting(id, key, value) })
-    deps.ipc.handle('extensions:list', (): MainExtensionsList => ({ manifests: this.list.map(e => e.manifest), disabled: deps.readSettings().disabled, failed: this.result.failed }))
+    deps.ipc.handle('extensions:list', (): MainExtensionsList => ({ manifests: this.list.map(e => summaryOf(e.manifest)), disabled: deps.readSettings().disabled, failed: this.result.failed }))
+    deps.ipc.handle('extensions:set-enabled', (_e, id: unknown, on: unknown): string[] => (typeof id === 'string' && typeof on === 'boolean' ? this.setEnabled(id, on) : deps.readSettings().disabled))
   }
 
   /** Activates the index (called once, when the app is ready). */
   activate(): ActivationResult {
+    this.migrate()
     const disabled = this.deps.readSettings().disabled
     for (const e of this.list) {
       const settings = e.manifest.contributes?.settings
@@ -59,6 +68,31 @@ export class MainExtensionHost {
     this.result = activateExtensions(this.list, id => this.apiFor(id), this.store, disabled)
     if (this.result.active.length || this.result.failed.length) this.deps.log(`extensões (main): ativas ${this.result.active.join(', ') || '—'}; falharam ${this.result.failed.map(f => `${f.id} (${f.error})`).join(', ') || '—'}`)
     return this.result
+  }
+
+  /** The manifests' one-time moves of values the core kept (every extension of the index, enabled or not). */
+  private migrate(): void {
+    const { file, moved } = applyMigrations(this.deps.readFile(), this.list.map(e => e.manifest))
+    if (!moved.length) return
+    this.deps.writeFile(file)
+    this.deps.log(`extensões: configurações migradas: ${moved.join('; ')}`)
+  }
+
+  /** A new app window: the extensions' webview guards install on it; with none, every webview is refused. */
+  guardWebviews(host: WebContents, refuseAll: () => void): void {
+    if (this.webviewGuards.size === 0) { refuseAll(); return }
+    for (const install of this.webviewGuards) install(host)
+  }
+
+  /** Turns an extension on or off for the next start (an id no index knows, or one that is not optional, is refused). */
+  setEnabled(id: string, on: boolean): string[] {
+    const s = this.deps.readSettings()
+    const optional = this.list.find(e => e.manifest.id === id)?.manifest.optional === true
+    if (!ID.test(id) || (!on && !optional)) return s.disabled
+    const disabled = on ? s.disabled.filter(x => x !== id) : [...new Set([...s.disabled, id])]
+    this.deps.writeSettings({ ...s, disabled })
+    this.deps.log(`extensões: ${id} ${on ? 'ligada' : 'desligada'} (vale no próximo início)`)
+    return disabled
   }
 
   /** Writes one setting and tells both sides. A value main has a schema for is normalized; an unknown key is kept as given (the renderer normalized it). */
@@ -88,6 +122,16 @@ export class MainExtensionHost {
           if (!set) { set = new Set(); this.listeners.set(full, set) }
           set.add(listener)
           return toDisposable(() => { set.delete(listener) })
+        },
+      },
+      state: {
+        get: <T>(key: string) => stateOf(deps.readFile(), id)[key] as T | undefined,
+        update: (key, value) => deps.writeFile(withState(deps.readFile(), id, key, value)),
+      },
+      webviews: {
+        guard: install => {
+          this.webviewGuards.add(install)
+          return toDisposable(() => { this.webviewGuards.delete(install) })
         },
       },
       window: { current: () => deps.window() },

@@ -11,6 +11,7 @@
 // the input, `prefersEditorPane`; here the type's `owns`). This module stays pure (type-only dockview import) for the unit tests.
 import type { AddPanelOptions, IContentRenderer, ITabRenderer } from 'dockview-core'
 import { toDisposable, type IDisposable } from '../shared/vscode-lifecycle.ts'
+import type { Chord, KeyLike } from './shortcuts.ts'
 
 export type Disposable = IDisposable
 
@@ -58,6 +59,20 @@ export interface PaneType extends PaneLayout {
   contextFlags?(id: string): readonly string[]
   /** What closing it leaves for "reopen the last closed pane"; undefined = nothing to reopen. */
   closedEntry?(id: string): ClosedEntry | undefined
+  /** The keyboard to the pane. */
+  focus?(id: string): void
+  /** "Renomear painel" (F2). */
+  rename?(id: string): void
+  /** The folder "Copiar pasta" / "Abrir pasta no Explorer" act on (a file's own folder). */
+  folderOf?(id: string): string | undefined
+  /** The tab's menu (right-click, the strip's "⋯"); the core activates the pane first. */
+  tabMenu?(id: string, x: number, y: number): void
+  /** The tab strip's "prévia ao lado" button: shown while `canPreviewSide` holds. */
+  canPreviewSide?(id: string): boolean
+  previewSide?(id: string): void
+  /** Whether the pane's own editor takes the second key of a two-key chord, and runs it. */
+  editorChord?(id: string, first: Chord, second: KeyLike): boolean
+  runEditorChord?(id: string, first: Chord, second: KeyLike): void
 }
 
 export class PaneRegistry<T extends PaneLayout = PaneType> {
