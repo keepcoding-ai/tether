@@ -307,8 +307,12 @@ test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relau
   }
 })
 
-/** Where the window's focused frames are: one entry per `.frame.focused` ('pads' or 'desk'). */
-const focusedFrames = (page: Page) => page.evaluate(() => [...document.querySelectorAll('.frame.focused')].filter(f => !f.closest('.drawer')).map(f => f.closest('#pads') ? 'pads' : 'desk'))
+/** Where the keyboard's frame is: 'pads' while a pad's frame wears `.kbd-focused`, else 'desk'. The Foco de Mesa (`.frame.focused`) stays on the desk either way. */
+const focusedFrames = (page: Page) => page.evaluate(() => {
+  const foco = [...document.querySelectorAll('.frame.focused')].filter(f => !f.closest('.drawer'))
+  if (foco.length !== 1 || foco[0]!.closest('#pads')) return ['foco de mesa fora da mesa: ' + foco.length]
+  return [document.querySelector('#pads .frame.kbd-focused') ? 'pads' : 'desk']
+})
 /** How many frames wear the dim veil (their ::after above 0), in the shown pads and on the visible desk. */
 const dimmed = (page: Page) => page.evaluate(() => {
   const n = (sel: string) => [...document.querySelectorAll(sel)].filter(f => Number(getComputedStyle(f, '::after').opacity) > 0.05).length
@@ -364,24 +368,24 @@ test('frame pads in the focus (F10b-2): one focused frame, new panes, Ctrl+K, Mo
     assert.ok(Math.abs(line.width - line.window) < 2, `the line spans the window (${line.width} of ${line.window})`)
     assert.equal(line.dockLine, 'none', 'no second line on the desks alone')
 
-    // ---- one focused frame: the pad's (opened with the keyboard in it), then the desk's ----
+    // ---- the keyboard in the pad (neutral outline) while the Foco de Mesa stays on the desk, then back ----
     const seeded = (await padPanes(page, desk1))[0]!
-    await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !!document.querySelector('#workbench .frame.focused')!.closest('#pads'))
+    await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !document.querySelector('#workbench .frame.focused')!.closest('#pads') && !!document.querySelector('#pads .frame.kbd-focused'))
     assert.equal(await page.evaluate(() => window.__tether.currentPane()), seeded, 'the active pane is the pad\'s')
     await sleep(300)
-    assert.deepEqual(await dimmed(page), { pads: 0, desk: 2 }, 'the desk frames dim while the pad frame has the focus')
+    assert.deepEqual(await dimmed(page), { pads: 0, desk: 1 }, 'the pad frame has the keyboard: the Foco de Mesa stays, only the other desk frame dims, a pad never dims')
     for (const scheme of ['light', 'dark'] as const) {
       await setTheme(page, scheme)
       // The theme menu took the keyboard: give it back to the pad's pane (focusing it keeps the pad frame focused).
       await page.locator('#pads .pad.shown .dv-tab').first().click()
-      await page.waitForFunction(() => !!document.querySelector('#workbench .frame.focused')?.closest('#pads'))
+      await page.waitForFunction(() => !!document.querySelector('#pads .frame.kbd-focused'))
       await sleep(300)
       await page.screenshot({ path: join(shots, `pad-focused-${scheme}.png`) })
     }
     await page.locator('.desk-layer:not(.inactive) .frame .panel-term:visible').first().click()
-    await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !document.querySelector('#workbench .frame.focused')!.closest('#pads'))
+    await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !document.querySelector('#workbench .frame.focused')!.closest('#pads') && !document.querySelector('#pads .frame.kbd-focused'))
     await sleep(300)
-    assert.deepEqual(await dimmed(page), { pads: 1, desk: 1 }, 'back on the desk: the pad frame dims, one desk frame is focused')
+    assert.deepEqual(await dimmed(page), { pads: 0, desk: 1 }, 'back on the desk: one desk frame is the Foco, the other dims; the pad does not')
 
     // ---- Ctrl+K arrows: desk → pad → desk ----
     await page.locator('.desk-layer:not(.inactive) .frame:has(> .frame-dock)').last().locator('.panel-term:visible').first().click() // b's frame: the rightmost
@@ -405,7 +409,7 @@ test('frame pads in the focus (F10b-2): one focused frame, new panes, Ctrl+K, Mo
     for (const scheme of ['light', 'dark'] as const) {
       await setTheme(page, scheme)
       await page.locator('#pads .pad.shown .monaco-editor').first().click()
-      await page.waitForFunction(() => !!document.querySelector('#workbench .frame.focused')?.closest('#pads'))
+      await page.waitForFunction(() => !!document.querySelector('#pads .frame.kbd-focused'))
       await sleep(300)
       await page.screenshot({ path: join(shots, `pad-note-${scheme}.png`) })
     }
@@ -453,7 +457,8 @@ test('frame pads in the focus (F10b-2): one focused frame, new panes, Ctrl+K, Mo
     await page.evaluate(id => window.__tether.openSlot(id), c)
     await page.waitForFunction(([d, p]) => window.__tether.activeDesk() === d && window.__tether.sidebars()!.right.open === p, [desk1, DESK_PAD])
     await page.waitForFunction(id => window.__tether.currentPane() === id, c)
-    await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !!document.querySelector('#workbench .frame.focused')!.closest('#pads'))
+    // Every desk keeps its own Foco de Mesa (the hidden desk's too): count the visible one.
+    await page.waitForFunction(() => document.querySelectorAll('#workbench .desk-layer:not(.inactive) .frame.focused').length === 1 && !document.querySelector('#pads .frame.focused') && !!document.querySelector('#pads .frame.kbd-focused'))
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const p of daemons) await killOwned(p, { tree: true })
