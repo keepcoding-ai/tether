@@ -11,17 +11,18 @@
 //                 codicon.ttf (its icon font) is copied next to it
 //   editor.worker.js  Monaco's editor web worker (classic script; app/renderer/monaco.ts points MonacoEnvironment at it)
 //   dialog.js     browser bundle (ESM) of the standalone dialog window (shown before the main window exists)
-//   tether.ico/icns/png the app icon (window, taskbar, Start Menu shortcut, Tether.app bundle), drawn by app/icon.mjs
-// It also rewrites brand/assets/app/mask.json (the 24x24 currentColor monogram app/shared/brand.ts imports) from
-// brand/src/light/mask.svg (app/brand-mask.ts), so the committed asset follows the SVG.
+//   tether.ico/icns/png the app icon (window, taskbar, Start Menu shortcut, Tether.app bundle)
 //   tray.png, tray-active.png, tray-attention.png  the tray icon (32 px): plain, green dot while an agent runs, amber dot when one finished or waits for you
+// The icon files are COPIED from brand/assets/app/, where `npm run brand:derive` (app/brand-derive.mjs) commits them
+// derived from brand/src/light/icon.svg (rasterised by Electron offscreen) together with icons.derived.json and
+// mask.json (the 24x24 currentColor monogram app/shared/brand.ts imports, from mask.svg). The build never
+// rasterises: it checks those manifests against the SVGs and fails, naming the command, when they are stale.
 // The Phosphor icons (@phosphor-icons/core) are inlined as strings: only the ones app/renderer/icons.ts imports.
 import { build } from 'esbuild'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { writeMaskAsset } from './brand-mask.ts'
-import { writeIcons, writeTrayIcons } from './icon.mjs'
+import { assertBrandAssetsFresh, copyIconAssets } from './brand-icons.ts'
 import { paletteCss } from './shared/palette.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -41,11 +42,10 @@ function extractDockviewCss() {
   writeFileSync(join(out, 'dockview.css'), JSON.parse(m[1]))
 }
 
-writeMaskAsset(root)
+assertBrandAssetsFresh(root)
 extractDockviewCss()
 writeFileSync(join(out, 'palette.css'), paletteCss())
-writeIcons(out)
-writeTrayIcons(out)
+copyIconAssets(root, out)
 await Promise.all([
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),

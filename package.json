@@ -16,6 +16,7 @@
     "test:e2e": "node --test --test-concurrency=1 \"test/e2e/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
     "daemon": "node src/daemon/main.ts",
+    "brand:derive": "node app/brand-derive.mjs",
     "app:build": "node app/build.mjs",
     "app:install": "node app/install.mjs install",
     "app:uninstall": "node app/install.mjs uninstall",

@@ -2,8 +2,8 @@
 // v2: one monochrome silhouette, recolourable). Derived, never drawn by hand: the SVG is read, every colour becomes
 // `currentColor`, ids/title/desc go away, and the drawing is fitted tight (no margin) and centred in a 24x24 viewBox.
 // The result is committed as brand/assets/app/mask.json (with the sha256 of its source) because the three hosts import
-// brand.ts and plain Node cannot import an .svg: `npm run app:build` rewrites it, and test/unit/brand.test.ts fails when
-// the committed file is older than the SVG.
+// brand.ts and plain Node cannot import an .svg: `npm run brand:derive` rewrites it (app/brand-derive.mjs), and both
+// `npm run app:build` and test/unit/brand.test.ts fail when the committed file is older than the SVG.
 //
 // Tight fit needs the drawing's bounding box. Without a renderer it is computed only for untransformed <rect>s (the
 // mask today); any other shape (<path>, <circle>…, or a `transform`) falls back to the SVG's own viewBox (full-bleed).
