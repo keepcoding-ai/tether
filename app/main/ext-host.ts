@@ -33,6 +33,8 @@ export interface MainHostDeps {
   readFile(): Record<string, unknown>
   writeFile(file: Record<string, unknown>): void
   log(msg: string): void
+  /** Moves a path to the system's trash (shell.trashItem); absent in the unit tests. */
+  trash?(path: string): Promise<void>
 }
 
 const KEY = /^[a-zA-Z0-9][a-zA-Z0-9.-]*$/
@@ -135,6 +137,7 @@ export class MainExtensionHost {
         },
       },
       window: { current: () => deps.window() },
+      shell: { trash: path => (deps.trash ? deps.trash(path) : Promise.reject(new Error('lixeira indisponível'))) },
       log: msg => deps.log(`[${id}] ${msg}`),
     }
   }

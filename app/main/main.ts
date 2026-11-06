@@ -347,6 +347,7 @@ const extensionHost = new MainExtensionHost(mainExtensions, {
   readFile: () => readJson<Record<string, unknown>>(settingsPath, {}),
   writeFile: file => writeJson(settingsPath, file),
   log: msg => appLog(msg),
+  trash: path => shell.trashItem(path),
 })
 
 // ---------- terminal appearance ----------

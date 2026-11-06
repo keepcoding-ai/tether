@@ -1843,6 +1843,8 @@ function openTerminalLink(slotId: string, target: { path: string; isDirectory: b
 // openers extensions register (TetherUi.openers; the note's: an .html as its preview, any other text file as a note).
 const fileOpeners: FileOpener[] = []
 const openedListeners = new Set<(path: string) => void>()
+/** Who follows a rename made by an extension (a note whose file moved). */
+const renameListeners = new Set<(e: { from: string; to: string }) => void>()
 
 function openWithOpeners(path: string, opts: OpenFileOptions): void {
   const opener = fileOpeners.find(o => o.canOpen(path, opts))
@@ -2484,6 +2486,10 @@ function setupUi(): void {
   document.addEventListener('keydown', ev => {
     const target = ev.target instanceof Element ? ev.target : undefined
     if (target?.closest('.kb-veil, .kb-live')) { if (dispatcher.waiting) { dispatcher.cancel(); pill.hide() } return }
+    // A widget that handles a plain key itself says so (data-own-keys="F2 Delete": the explorer's tree renames and trashes
+    // its row): the key is the widget's, unless a chord is pending or a modifier is held.
+    const owner = target?.closest<HTMLElement>('[data-own-keys]')
+    if (owner && !dispatcher.waiting && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.shiftKey && (owner.dataset.ownKeys ?? '').split(' ').includes(ev.key)) return
     const where = keyScopeOf(target)
     if (where === 'note' && !dispatcher.waiting && /^Arrow(Up|Down|Left|Right)$/.test(ev.code)) return
     const action = dispatcher.press(ev, where)
@@ -3114,6 +3120,10 @@ function activateRendererExtensions(): void {
       },
       keybindings: {
         fixedBindings: provider => { fixedBindingProviders.push(provider); return add(toDisposable(() => { const i = fixedBindingProviders.indexOf(provider); if (i !== -1) fixedBindingProviders.splice(i, 1) })) },
+      },
+      files: {
+        didRename: (from, to) => { for (const l of [...renameListeners]) { try { l({ from, to }) } catch (err) { console.error('onDidRename', err) } } },
+        onDidRename: listener => { renameListeners.add(listener); return add(toDisposable(() => { renameListeners.delete(listener) })) },
       },
       shell: {
         writeClipboard: text => window.tether.writeClipboard(text),

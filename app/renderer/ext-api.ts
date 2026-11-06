@@ -214,6 +214,14 @@ export interface TetherUi {
   }
   /** Rows the shortcuts screen lists but cannot change (an editor's own keys). */
   keybindings: { fixedBindings(provider: () => FixedBinding[]): IDisposable }
+  /**
+   * File operations other extensions must follow (VS Code's IWorkingCopyFileService.onDidRunWorkingCopyFileOperation): the
+   * explorer announces a rename it made on disk, the editors whose file was at (or under) `from` move to the new path.
+   */
+  files: {
+    didRename(from: string, to: string): void
+    onDidRename(listener: (e: { from: string; to: string }) => void): IDisposable
+  }
   shell: {
     writeClipboard(text: string): void
     openPath(path: string): Promise<{ ok: true } | { ok: false; message: string }>

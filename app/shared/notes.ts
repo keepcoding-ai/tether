@@ -67,6 +67,17 @@ export function noteDirOf(path: string): string {
   return i < 0 ? '' : path.slice(0, i)
 }
 
+/**
+ * Where `path` is after `from` was renamed to `to`: `to` itself, the same place under a renamed folder, or undefined when
+ * the rename does not touch it. Case-insensitive, like the notes' own path matching (Windows).
+ */
+export function rebasePath(path: string, from: string, to: string): string | undefined {
+  const p = path.toLowerCase(), f = from.replace(/[\\/]+$/, '').toLowerCase()
+  if (p === f) return to
+  if (p.startsWith(f) && (p[f.length] === '\\' || p[f.length] === '/')) return to.replace(/[\\/]+$/, '') + path.slice(f.length)
+  return undefined
+}
+
 const two = (n: number): string => String(n).padStart(2, '0')
 
 /** `AAAA-MM-DD-HHmm.md`, local time. */

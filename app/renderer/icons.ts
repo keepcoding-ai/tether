@@ -108,6 +108,8 @@ import fileLockIcon from '@phosphor-icons/core/assets/regular/file-lock.svg'
 import bracketsCurlyIcon from '@phosphor-icons/core/assets/regular/brackets-curly.svg'
 import gearSixIcon from '@phosphor-icons/core/assets/regular/gear-six.svg'
 import terminalIcon from '@phosphor-icons/core/assets/regular/terminal.svg'
+import filePlusIcon from '@phosphor-icons/core/assets/regular/file-plus.svg'
+import folderPlusIcon from '@phosphor-icons/core/assets/regular/folder-plus.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -124,6 +126,8 @@ const SVG = {
   'circle-half': circleHalf,
   'clock-counter-clockwise': clockCounterClockwise,
   'folder-open': folderOpen,
+  'file-plus': filePlusIcon,
+  'folder-plus': folderPlusIcon,
   target,
   'push-pin': pushPin,
   'push-pin-fill': pushPinFill,

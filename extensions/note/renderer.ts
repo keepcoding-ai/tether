@@ -17,7 +17,7 @@ import { editorChordCommand, editorKeybindings, runEditorChord } from '../../app
 import type { FixedBinding } from '../../app/renderer/keybindings-panel.ts'
 import { fileOpenFailedSituation, type OpenFileOptions } from '../../app/renderer/file-open.ts'
 import { isHtmlPath, isPreviewablePath, newPreviewPanelId, withPreview } from '../../app/shared/preview.ts'
-import { cleanNoteName, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, withNote } from '../../app/shared/notes.ts'
+import { cleanNoteName, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, rebasePath, withNote } from '../../app/shared/notes.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { noteConflictSituation, noteGitignoreSituation } from './situations.ts'
 import { htmlPreviewLayout, mdPreviewLayout, noteLayout, previewPaneOptions } from './layouts.ts'
@@ -407,6 +407,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     runEditorChord: (id, first, ev) => { const ed = notes.get(id)?.editor; if (ed) runEditorChord(ed, first, ev) },
   }
   subs.push(ui.panes.register(htmlType), ui.panes.register(mdType), ui.panes.register(noteType))
+  // A file renamed by another extension (the explorer): the notes showing it, or a file under a renamed folder, follow it.
+  subs.push(ui.files.onDidRename(({ from, to }) => {
+    for (const n of notes.values()) {
+      const next = rebasePath(n.path, from, to)
+      if (next !== undefined && next !== n.path) n.setPath(next)
+    }
+  }))
 
   // ---------- commands ----------
 

@@ -40,6 +40,8 @@ export interface TetherMain {
    */
   webviews: { guard(install: (host: WebContents) => void): IDisposable }
   window: { current(): BrowserWindow | undefined }
+  /** The operating system's file shell. `trash` moves a file or folder to the system's trash (Electron's shell.trashItem); it rejects when it cannot. */
+  shell: { trash(path: string): Promise<void> }
   /** A line in tether-app.log, prefixed with the extension's id. */
   log(msg: string): void
 }
