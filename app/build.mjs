@@ -12,16 +12,20 @@
 //   editor.worker.js  Monaco's editor web worker (classic script; app/renderer/monaco.ts points MonacoEnvironment at it)
 //   dialog.js     browser bundle (ESM) of the standalone dialog window (shown before the main window exists)
 //   tether.ico/icns/png the app icon (window, taskbar, Start Menu shortcut, Tether.app bundle), drawn by app/icon.mjs
+// It also rewrites brand/assets/app/mask.json (the 24x24 currentColor monogram app/shared/brand.ts imports) from
+// brand/src/light/mask.svg (app/brand-mask.mjs), so the committed asset follows the SVG.
 //   tray.png, tray-active.png, tray-attention.png  the tray icon (32 px): plain, green dot while an agent runs, amber dot when one finished or waits for you
 // The Phosphor icons (@phosphor-icons/core) are inlined as strings: only the ones app/renderer/icons.ts imports.
 import { build } from 'esbuild'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { writeMaskAsset } from './brand-mask.mjs'
 import { writeIcons, writeTrayIcons } from './icon.mjs'
 import { paletteCss } from './shared/palette.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
+const root = join(here, '..')
 const out = join(here, 'dist')
 
 const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024' }
@@ -37,6 +41,7 @@ function extractDockviewCss() {
   writeFileSync(join(out, 'dockview.css'), JSON.parse(m[1]))
 }
 
+writeMaskAsset(root)
 extractDockviewCss()
 writeFileSync(join(out, 'palette.css'), paletteCss())
 writeIcons(out)

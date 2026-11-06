@@ -1,0 +1,5 @@
+{
+  "source": "brand/src/light/mask.svg",
+  "sha256": "4aef13557d4354ac09e678a296d060db7943f1a5a49fc06bf87af76e6fc56cb5",
+  "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"currentColor\"><g transform=\"translate(-1.0435 -1.0435) scale(0.2609)\"><g><g><rect x=\"4\" y=\"22\" width=\"38\" height=\"56\" rx=\"8\" ry=\"8\" fill=\"currentColor\"/><rect x=\"58\" y=\"22\" width=\"38\" height=\"56\" rx=\"8\" ry=\"8\" fill=\"currentColor\"/><rect x=\"30\" y=\"42\" width=\"40\" height=\"16\" rx=\"8\" ry=\"8\" fill=\"currentColor\"/></g></g></g></svg>"
+}

@@ -1,5 +1,12 @@
 // The product's identity, read by the three hosts (renderer, main, daemon) and handed to extensions as `api.brand`.
-// Today a constant; if tether ever ships per tenant, this is the one file a build would generate. Pure, no imports.
+// One source: brand/brand.json (the host's brand file of the Atrium Bridge, validated by brand/brand.schema.json) and
+// brand/assets/app/mask.json (the 24x24 `currentColor` monogram app/brand-mask.mjs derives from brand/src/light/mask.svg).
+// Both are JSON so the same import works in Node 24 (`with { type: 'json' }`), in tsc and in the esbuild bundles.
+//
+// brand.json names the Bridge product ("Tether Bridge"); the app's own name is its `shortName` ("Tether"), and it
+// keeps feeding app.setName, the window titles, the AUMID (`host.id`) and the install name. Pure, no other imports.
+import brand from '../../brand/brand.json' with { type: 'json' }
+import mask from '../../brand/assets/app/mask.json' with { type: 'json' }
 
 export interface Brand {
   /** The name people read ("Tether"). */
@@ -14,10 +21,13 @@ export interface Brand {
   readonly icon: string
 }
 
+/** `shortName` when the brand file has one, else the product name without its " Bridge" suffix (the bridge's own rule). */
+const shortName = (b: { name: string; shortName?: string }): string => b.shortName ?? b.name.replace(/\s+Bridge$/i, '')
+
 export const BRAND: Brand = Object.freeze({
-  name: 'Tether',
-  slug: 'tether',
-  appId: 'studio.codr.tether',
-  accent: '#6aa6ff',
-  icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14"/><path d="M12 6v13"/></svg>',
+  name: shortName(brand),
+  slug: brand.slug,
+  appId: brand.host.id,
+  accent: brand.colors.accent,
+  icon: mask.icon,
 })
