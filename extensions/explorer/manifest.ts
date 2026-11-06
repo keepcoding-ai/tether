@@ -27,6 +27,8 @@ export const manifest: ExtensionManifest = {
       { command: 'explorer.focus', title: 'Explorador: abrir', category: EXPLORER, icon: 'files' },
       { command: 'explorer.open-folder', title: 'Explorador: abrir pasta…', category: EXPLORER, icon: 'folder-open' },
       { command: 'explorer.reveal', title: 'Revelar no explorador', category: EXPLORER, icon: 'target' },
+      { command: 'explorer.refresh', title: 'Explorador: atualizar', category: EXPLORER, icon: 'arrows-clockwise' },
+      { command: 'explorer.collapse-all', title: 'Explorador: recolher tudo', category: EXPLORER, icon: 'arrows-in-line-vertical' },
       { command: 'explorer.follow', title: 'Explorador: seguir o agente ativo (liga/desliga)', category: EXPLORER, icon: 'target' },
       { command: 'explorer.auto-reveal', title: 'Explorador: revelar o arquivo ativo (liga/desliga)', category: EXPLORER, icon: 'target' },
     ],

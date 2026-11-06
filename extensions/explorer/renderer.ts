@@ -26,6 +26,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   }
 
   ui.test.expose('explorer', () => view?.snapshot())
+  ui.test.expose('explorerWatch', () => view?.watchStats())
   return [
     ui.pads.register({
       id: PAD,
@@ -47,6 +48,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.commands.registerCommand('explorer.focus', () => { ui.pads.open(PAD); view?.focus() }),
     ui.commands.registerCommand('explorer.open-folder', () => { ui.pads.open(PAD); void view?.pickFolder() }),
     ui.commands.registerCommand('explorer.reveal', () => { void reveal() }),
+    ui.commands.registerCommand('explorer.refresh', () => { ui.pads.open(PAD); view?.refresh() }),
+    ui.commands.registerCommand('explorer.collapse-all', () => { ui.pads.open(PAD); view?.collapseAll() }),
     ui.commands.registerCommand('explorer.follow', () => toggle('follow')),
     ui.commands.registerCommand('explorer.auto-reveal', () => toggle('autoReveal')),
   ]

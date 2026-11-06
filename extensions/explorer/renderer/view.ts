@@ -2,6 +2,8 @@
 // the core's workspace service (TetherUi.workspace); this view shows and edits them (pin, close, move) and draws their
 // folders. Slice 1b: a folder is read only when expanded (the main side lists one folder at a time on the bus
 // `ext:explorer:*`), its rows are inserted after the folder's row, and the expanded folders are kept in the pad's state.
+// Slice 3: the pad follows the disk (the main side tells which expanded folders changed; only those are read again, and the
+// scroll, the selection and the keyboard stay where they were) and has "Atualizar" and "Recolher tudo" in its "⋯" menu.
 // The model follows VS Code's explorer (explorerModel: children resolved lazily per expanded folder; explorerViewer: the
 // twistie, the indent, the multi-root folder rows; the list's keys). The empty state follows VS Code's empty view
 // ("You have not yet opened a folder" + "Open Folder"), made useful with the app's recent folders.
@@ -52,6 +54,9 @@ function infoOf(row: HTMLElement): RowInfo {
   return { root: d.root ?? '', path: d.path ?? '', level: Number(d.level ?? 1), dir: d.kind === 'dir', isRoot: d.isRoot === 'true', key: d.key ?? '' }
 }
 
+/** Where the person was in the tree when a folder is drawn again: the scroll and the row the keyboard was on. */
+interface Keep { scroll: number; focusKey: string | undefined }
+
 export class ExplorerView implements PadView {
   readonly element = el('div', 'xp')
   private readonly ui: TetherUi
@@ -65,6 +70,15 @@ export class ExplorerView implements PadView {
   /** The folders read so far, by path (a folder shared by two roots is read once). */
   private readonly dirs = new Map<string, DirState>()
   private readonly inflight = new Map<string, Promise<void>>()
+  /** Folders whose disk changed while a read of them was running: they are read once more when it ends. */
+  private readonly rerun = new Set<string>()
+  /** How many folder reads this pad asked main for (the e2e counts them). */
+  private reads = 0
+  /** The expanded folders last announced to main (a list that did not change is not sent again). */
+  private sentSig: string | undefined
+  /** Why the pad cannot follow the disk by itself (a watcher failed), shown with an "Atualizar" action. */
+  private notice: string | undefined
+  private readonly noticeEl = el('div', 'xp-notice')
   /** Project roots whose folder is gone. */
   private readonly missing = new Set<string>()
   private readonly probed = new Set<string>()
@@ -85,6 +99,10 @@ export class ExplorerView implements PadView {
     this.ipc = ui.ipc<ExplorerChannels>()
     for (const [root, dirs] of Object.entries(readState(host.state).expanded)) this.expanded.set(root, new Set(dirs))
     this.subs.push(ui.workspace.onDidChange(() => this.render()))
+    this.subs.push(this.ipc.on('changed', dirs => this.onDiskChanged(dirs)))
+    this.subs.push(this.ipc.on('rootMissing', (root, missing) => this.onRootMissing(root, missing)))
+    this.subs.push(this.ipc.on('watchFailed', (_root, message) => this.setNotice(message)))
+    this.paintNotice()
     this.render()
     void this.loadRecent()
   }
@@ -96,12 +114,15 @@ export class ExplorerView implements PadView {
     target?.focus()
   }
 
-  /** The pad's "⋯" menu: the two toggles and the command. */
+  /** The pad's "⋯" menu: the two toggles, the command, and the two actions on the tree. */
   menu(): ContextMenuEntry[] {
     return [
       { icon: 'target', label: 'Seguir o agente ativo', checked: this.controls.isOn('follow'), run: () => this.controls.toggle('follow') },
       { icon: 'eye', label: 'Revelar o arquivo ativo', checked: this.controls.isOn('autoReveal'), run: () => this.controls.toggle('autoReveal') },
       { icon: 'target', label: 'Revelar no explorador', run: () => this.controls.reveal() },
+      'sep',
+      { icon: 'arrows-clockwise', label: 'Atualizar', run: () => this.refresh() },
+      { icon: 'arrows-in-line-vertical', label: 'Recolher tudo', run: () => this.collapseAll() },
     ]
   }
 
@@ -111,7 +132,7 @@ export class ExplorerView implements PadView {
     this.updateCurrent()
     const row = this.rowByKey(rowKey(root, root))
     if (!row) return
-    if (row.getAttribute('aria-expanded') !== 'true') { this.setOf(root).add(root); this.expandRow(row, false); this.host.persist() }
+    if (row.getAttribute('aria-expanded') !== 'true') { this.setOf(root).add(root); this.persist(); this.expandRow(row, false) }
     row.scrollIntoView({ block: 'nearest' })
   }
 
@@ -128,10 +149,11 @@ export class ExplorerView implements PadView {
       if (!row) return false
       // The row's own spelling is what the expanded set keeps (the disk's, not the note's).
       this.setOf(root).add(row.dataset.path!)
+      this.syncExpanded()
       if (row.getAttribute('aria-expanded') !== 'true') this.expandRow(row, false)
       await this.load(row.dataset.path!).catch(() => {})
     }
-    this.host.persist()
+    this.persist()
     const target = await this.waitRow(root, file)
     if (!target || this.disposed) return false
     this.select(target)
@@ -157,6 +179,7 @@ export class ExplorerView implements PadView {
     // A project folder that came back (a drive plugged in again) or went away is noticed when the pad is shown.
     this.probed.clear()
     this.probeRoots(this.ui.workspace.folders())
+    this.ipc.send('rewatch')
   }
 
   serialize(): unknown {
@@ -248,6 +271,7 @@ export class ExplorerView implements PadView {
     if (running) return running
     const p = (async () => {
       let next: DirState
+      this.reads++
       try {
         const res = await this.ipc.invoke('readDir', path)
         if (res.ok) { next = { entries: res.entries }; this.missing.delete(path) }
@@ -257,9 +281,12 @@ export class ExplorerView implements PadView {
       this.dirs.set(path, next)
       if (this.disposed) return
       if (next.error !== undefined && this.missing.has(path)) this.forget(path)
-      if (JSON.stringify(prev) !== JSON.stringify(next)) for (const row of this.expandedRowsOf(path)) this.fill(row)
+      if (JSON.stringify(prev) !== JSON.stringify(next)) for (const row of this.expandedRowsOf(path)) this.refill(row)
       this.updateMissing()
-    })().finally(() => { this.inflight.delete(path) })
+    })().finally(() => {
+      this.inflight.delete(path)
+      if (this.rerun.delete(path) && !this.disposed) void this.load(path)
+    })
     this.inflight.set(path, p)
     return p
   }
@@ -268,7 +295,7 @@ export class ExplorerView implements PadView {
   private forget(path: string): void {
     let changed = false
     for (const [root, set] of this.expanded) if (root !== path && set.delete(path)) changed = true
-    if (changed) this.host.persist()
+    if (changed) this.persist()
   }
 
   private expandedRowsOf(path: string): HTMLElement[] {
@@ -281,8 +308,11 @@ export class ExplorerView implements PadView {
     const info = infoOf(row)
     if (!info.dir) return
     const set = this.setOf(info.root)
-    if (set.has(info.path)) { set.delete(info.path); this.collapseRow(row) } else { set.add(info.path); this.expandRow(row, true) }
-    this.host.persist()
+    const open = !set.has(info.path)
+    if (open) set.add(info.path); else set.delete(info.path)
+    // Main hears of the folder before the first read of it, so no change slips between the read and the watch.
+    this.persist()
+    if (open) this.expandRow(row, true); else this.collapseRow(row)
   }
 
   private paintTwistie(row: HTMLElement, open: boolean): void {
@@ -331,7 +361,7 @@ export class ExplorerView implements PadView {
    * Draws a folder's children after its row (what the model holds now): the first rows at once, a big folder's rest in later
    * tasks. A child folder that was left expanded is expanded in turn.
    */
-  private fill(row: HTMLElement): void {
+  private fill(row: HTMLElement, keep?: Keep): void {
     const info = infoOf(row)
     this.dropDescendants(row)
     const token = ++this.fillSeq
@@ -359,10 +389,113 @@ export class ExplorerView implements PadView {
       last = made[made.length - 1] ?? last
       for (const r of made) if (r.dataset.kind === 'dir' && this.setOf(info.root).has(r.dataset.path!)) this.expandRow(r, false)
       this.ensureTabbable()
+      if (keep) this.restore(keep)
       if (next < entries.length) setTimeout(step, 0)
     }
     step()
   }
+
+  // ---------- following the disk ----------
+
+  /** Draws a folder again (it changed on disk) without moving the person: same scroll, same selection, the keyboard on the same row. */
+  private refill(row: HTMLElement): void {
+    const active = document.activeElement
+    const focusKey = active && this.tree?.contains(active) ? (active as HTMLElement).closest<HTMLElement>('.xp-row')?.dataset.key : undefined
+    this.fill(row, { scroll: this.element.scrollTop, focusKey })
+  }
+
+  /** Puts the scroll and the keyboard back after a folder's rows were replaced (a big folder's rest comes in later tasks, each restores). */
+  private restore(keep: Keep): void {
+    if (this.element.scrollTop !== keep.scroll) this.element.scrollTop = keep.scroll
+    if (!keep.focusKey) return
+    const active = document.activeElement
+    if (active && active !== document.body && !this.tree?.contains(active)) return // the person went elsewhere meanwhile
+    const target = this.rowByKey(keep.focusKey)
+    if (target && target !== active) { this.setRoving(target, false); target.focus({ preventScroll: true }) }
+  }
+
+  /** The disk changed under these folders: the ones drawn open are read again; a listing that is not drawn is forgotten (read afresh when shown). */
+  private onDiskChanged(dirs: readonly string[]): void {
+    if (this.disposed || !Array.isArray(dirs)) return
+    for (const dir of dirs) {
+      if (typeof dir !== 'string') continue
+      if (this.expandedRowsOf(dir).length > 0) this.reload(dir)
+      else this.dirs.delete(dir)
+    }
+  }
+
+  /** A read that cannot overlap itself: a change that comes while the folder is being read makes one more read after it. */
+  private reload(path: string): void {
+    if (this.inflight.has(path)) { this.rerun.add(path); return }
+    void this.load(path)
+  }
+
+  private onRootMissing(root: string, missing: boolean): void {
+    if (this.disposed) return
+    if (missing) { this.missing.add(root); this.updateMissing() } else { this.probed.delete(root); this.probeRoots(this.ui.workspace.folders()) }
+  }
+
+  /** "Atualizar": every folder drawn open is read again (only a changed one is redrawn), failed watchers try again, vanished roots are looked for. */
+  refresh(): void {
+    this.setNotice(undefined)
+    this.ipc.send('rewatch')
+    this.probed.clear()
+    this.probeRoots(this.ui.workspace.folders())
+    const shown = new Set<string>()
+    for (const row of this.rows()) {
+      if (row.dataset.kind !== 'dir' || row.getAttribute('aria-expanded') !== 'true') continue
+      shown.add(row.dataset.path!)
+      this.reload(row.dataset.path!)
+    }
+    for (const path of [...this.dirs.keys()]) if (!shown.has(path)) this.dirs.delete(path)
+  }
+
+  /** "Recolher tudo": every folder under the project roots closes; the roots stay open (they are the headings of the pad). */
+  collapseAll(): void {
+    for (const [root, set] of this.expanded) { const open = set.has(root); set.clear(); if (open) set.add(root) }
+    this.persist()
+    for (const row of this.tree?.querySelectorAll<HTMLElement>('.xp-root[aria-expanded="true"]') ?? []) this.fill(row)
+    this.element.scrollTop = 0
+  }
+
+  private setNotice(message: string | undefined): void {
+    this.notice = message
+    this.paintNotice()
+  }
+
+  private paintNotice(): void {
+    const n = this.noticeEl
+    n.hidden = this.notice === undefined
+    n.replaceChildren()
+    if (this.notice === undefined) return
+    n.setAttribute('role', 'status')
+    const text = el('span', 'xp-notice-text', 'O explorador não está acompanhando o disco.')
+    text.title = this.notice
+    const button = el('button', 'xp-notice-btn', 'Atualizar')
+    button.type = 'button'
+    button.addEventListener('click', () => this.refresh())
+    n.append(icon('warning'), text, button)
+  }
+
+  /** Tells main which folders are open (the whole list; unchanged lists are not sent). */
+  private syncExpanded(): void {
+    const all = new Set<string>()
+    for (const set of this.expanded.values()) for (const d of set) all.add(d)
+    const list = [...all].sort()
+    const sig = list.join('\n')
+    if (sig === this.sentSig) return
+    this.sentSig = sig
+    this.ipc.send('setExpanded', list)
+  }
+
+  /** The expanded folders changed: the layout saves them and main learns of them. */
+  private persist(): void {
+    this.host.persist()
+    this.syncExpanded()
+  }
+
+  /** For the e2e: what the disk watchers of the main side hold. */
+  watchStats(): Promise<unknown> { return this.ipc.invoke('watchStats') }
 
   // ---------- selection and keyboard ----------
 
@@ -452,9 +585,9 @@ export class ExplorerView implements PadView {
     const hadFocus = this.element.contains(document.activeElement)
     const scroll = this.element.scrollTop
     this.ipc.send('setRoots', folders.map(f => f.path))
-    if (folders.length === 0) { this.tree = undefined; this.element.replaceChildren(this.emptyState()) }
+    if (folders.length === 0) { this.tree = undefined; this.element.replaceChildren(this.noticeEl, this.emptyState()) }
     else {
-      this.element.replaceChildren(this.roots(folders))
+      this.element.replaceChildren(this.noticeEl, this.roots(folders))
       this.probeRoots(folders)
     }
     this.element.scrollTop = scroll
@@ -544,6 +677,7 @@ export class ExplorerView implements PadView {
     let changed = false
     for (const f of folders) if (!this.expanded.has(f.path)) { this.setOf(f.path).add(f.path); changed = true }
     if (changed) this.host.persist()
+    this.syncExpanded()
     for (const f of folders) {
       const row = this.rootRow(f, f.path === current)
       tree.append(row)
@@ -641,6 +775,8 @@ export class ExplorerView implements PadView {
     rows: { root: string; path: string; name: string; level: number; kind: string; expanded: boolean; selected: boolean; focused: boolean; icon: string }[]
     messages: string[]
     recent: string[]
+    reads: number
+    notice: string
   } {
     return {
       mode: this.element.querySelector('.xp-empty') ? 'empty' : 'roots',
@@ -655,6 +791,8 @@ export class ExplorerView implements PadView {
       })),
       messages: [...this.element.querySelectorAll<HTMLElement>('.xp-msg')].map(m => m.textContent ?? ''),
       recent: [...this.element.querySelectorAll<HTMLElement>('.xp-recent-item')].map(b => b.title),
+      reads: this.reads,
+      notice: this.notice === undefined ? '' : (this.noticeEl.textContent ?? ''),
     }
   }
 }

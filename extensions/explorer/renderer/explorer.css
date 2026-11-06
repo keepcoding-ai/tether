@@ -5,8 +5,23 @@
   color: var(--fg); font: 13px var(--ui);
 }
 
+/* The watcher notice: the pad cannot follow the disk by itself; "Atualizar" reads again. */
+.xp-notice {
+  position: sticky; top: 0; z-index: 2; flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12px;
+  background: var(--bg-2); border-bottom: 1px solid var(--border); color: var(--fg);
+}
+.xp-notice[hidden] { display: none; }
+.xp-notice .ph { flex: none; width: 14px; height: 14px; color: var(--warn, var(--fg-dim)); }
+.xp-notice-text { flex: 1; min-width: 0; line-height: 1.35; }
+.xp-notice-btn {
+  flex: none; height: 24px; padding: 0 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-hover);
+  color: var(--fg); font: inherit; font-size: 12px; cursor: pointer;
+}
+.xp-notice-btn:hover { background: var(--bg-hover-2); }
+.xp-notice-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* ---- the roots ---- */
-.xp-roots-wrap { display: flex; flex-direction: column; min-height: 100%; }
+.xp-roots-wrap { display: flex; flex-direction: column; flex: 1 0 auto; }
 .xp-roots { padding: 6px 0; }
 /* Every row (a project root or a file/folder): indent by level, twistie, icon, name. */
 .xp-row {

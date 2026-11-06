@@ -1,14 +1,15 @@
 // The explorer extension's Electron-main side (F8 slice 1b): the file system for the tree, on the bus `ext:explorer:*`.
 // A folder is read on demand (`readdir` of the expanded folder only, never a recursive listing), filtered by VS Code's
-// default `files.exclude` and sorted folders first (tree-rules.ts). Nothing here watches the disk (slice 3). Every
-// argument comes from the renderer: paths are read only inside the project roots it announced.
+// default `files.exclude` and sorted folders first (tree-rules.ts). Slice 3: the disk watchers (watchers.ts) tell the window
+// which expanded folders changed. Every argument comes from the renderer: paths are read only inside the project roots it announced.
 import { readdir, realpath, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
-import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { ExplorerChannels, ReadDirResult } from './ipc.ts'
 import { type Entry, isExcluded, isInsideAny, listing } from './tree-rules.ts'
+import { ExplorerWatchers } from './watchers.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -62,8 +63,20 @@ export async function guardPath(
 export function activate(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<ExplorerChannels>()
   let roots: string[] = []
+  const watchers = new ExplorerWatchers({
+    changed: dirs => ipc.send('changed', dirs),
+    rootMissing: (root, missing) => ipc.send('rootMissing', root, missing),
+    failed: (root, message) => { main.log(`watcher failed for ${root}: ${message}`); ipc.send('watchFailed', root, message) },
+  })
   return [
-    ipc.on('setRoots', list => { roots = Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string' && x !== '').slice(0, 200) : [] }),
+    toDisposable(() => watchers.dispose()),
+    ipc.on('setRoots', list => {
+      roots = Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string' && x !== '').slice(0, 200) : []
+      watchers.setRoots(roots)
+    }),
+    ipc.on('setExpanded', dirs => { watchers.setExpanded(Array.isArray(dirs) ? dirs.filter((x): x is string => typeof x === 'string').slice(0, 20_000) : []) }),
+    ipc.on('rewatch', () => watchers.rewatch()),
+    ipc.handle('watchStats', () => watchers.stats()),
     ipc.handle('readDir', async dir => {
       const ok = await guardPath(roots, dir)
       return ok ? readDirectory(ok) : { ok: false, missing: false, message: 'Esta pasta não está em um projeto aberto.' }

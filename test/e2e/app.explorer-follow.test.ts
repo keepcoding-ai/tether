@@ -156,11 +156,13 @@ test('explorer 2: seguir o agente ativo; revelar no explorador; revelar automát
     await page.waitForFunction(() => window.__tether.explorer()?.roots.length === 2, undefined, { timeout: 10_000 })
 
     // ---- 1. follow (on by default): an agent moves the current project; a terminal and a note do not ----
-    assert.deepEqual((await padMenu(page)).slice(-3), [
+    assert.deepEqual((await padMenu(page)).slice(-5), [
       { label: 'Seguir o agente ativo', checked: 'true' },
       { label: 'Revelar o arquivo ativo', checked: 'false' },
       { label: 'Revelar no explorador', checked: null },
-    ], 'the pad menu: follow on, auto-reveal off by default')
+      { label: 'Atualizar', checked: null },
+      { label: 'Recolher tudo', checked: null },
+    ], 'the pad menu: follow on, auto-reveal off by default; then the two actions on the tree (slice 3)')
     await page.keyboard.press('Escape')
     await page.evaluate(id => window.__tether.activate(id), agentB)
     await waitCurrent(page, 'beta', 'focusing the agent of B makes B current')
@@ -229,7 +231,7 @@ test('explorer 2: seguir o agente ativo; revelar no explorador; revelar automát
     ;({ app, page } = await launch(home))
     await page.waitForFunction(() => window.__tether.sidebars()?.left.open === 'explorer.files', undefined, { timeout: 15_000 })
     await page.waitForSelector('.pad.shown .pad-more')
-    assert.deepEqual((await padMenu(page)).slice(-3, -1), [
+    assert.deepEqual((await padMenu(page)).slice(-5, -3), [
       { label: 'Seguir o agente ativo', checked: 'false' },
       { label: 'Revelar o arquivo ativo', checked: 'true' },
     ], 'the toggles come back as they were left')
