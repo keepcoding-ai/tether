@@ -7,17 +7,17 @@
 //      a marker (<TETHER_HOME>/web-bridge/update-pending.json) records that the files under a loaded extension changed,
 //      for the doctor (and C4's status) to say "clique em recarregar" until the extension can reload itself;
 //   2. `extensionVersion` (the manifest version of the folder's build) is written into the bridge home's config.json, the
-//      field the daemon will carry in its `welcome` so the extension can compare with chrome.runtime.getManifest().version
-//      and call chrome.runtime.reload() (the bridge's side of the contract; see PROGRESS). Written under the bridge's own
-//      config.lock protocol (config.lock created with wx, stale after 10 s, waited up to 10 s), the same the bundle uses,
-//      because two writers of config.json exist: the daemon (keys) and the host;
+//      field the daemon carries in its `welcome` so the extension can compare with chrome.runtime.getManifest().version
+//      and call chrome.runtime.reload() once per version (the bridge's side of the contract, since bridge 782d3ea55).
+//      Written through the bundle's own `setExtensionVersion` (under the bridge's config.lock): the host writes none of
+//      the bridge's files by hand;
 //   3. the daemon, when the tether's record says it runs a bundle other than the vendored one (warmup.ts daemon.build.json),
 //      is ended and started again. The kill follows the tests' safety rule (test/kill.ts): the pid of daemon.pid must be
 //      alive, its command line must name the bridge bundle and `start`, and it must be the process listening on the
 //      bridge's port; any doubt keeps the daemon running and logs why. No record (a daemon started before this code) counts
 //      as outdated: the person's daemon predates the vendored bundle by definition.
-// Nothing here reads a secret: the seed is left alone, config.json is read whole only to add one field and written back,
-// and no log line carries a token.
+// Nothing here reads a secret out: the seed is left alone, config.json is read only to compare one field, and no log
+// line carries a token.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { identifyProcess, killProcess, listeningOwner, pidAlive } from './process-info.ts'
@@ -117,43 +117,27 @@ export function clearUpdateMarker(home: string): void {
 
 // ---- 2. extensionVersion in config.json ------------------------------------------------------------------------------
 
-const LOCK_STALE_MS = 10_000
-const LOCK_WAIT_MS = 10_000
+/** The one bundle export this step needs (bridge-home.ts BridgeBundle): the bridge writes its own config, under its own lock. */
+export interface ExtensionVersionWriter { setExtensionVersion(home: string, version: string | null): void }
 
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
-}
-
-/** The bridge's config.lock protocol (daemon/src/config.ts withConfigLock), so this writer and the daemon never interleave. */
-function withBridgeConfigLock<T>(bridgeHome: string, fn: () => T): T {
-  mkdirSync(bridgeHome, { recursive: true })
-  const lock = join(bridgeHome, 'config.lock')
-  const deadline = Date.now() + LOCK_WAIT_MS
-  for (;;) {
-    try { writeFileSync(lock, `${process.pid}\n`, { flag: 'wx' }); break } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
-      try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { force: true }) } catch { /* taken meanwhile */ }
-      if (Date.now() > deadline) throw new Error(`config lock ${lock} is held by another process; try again`)
-      sleepSync(20)
-    }
-  }
-  try { return fn() } finally { rmSync(lock, { force: true }) }
+/** What config.json says the installed extension's version is (undefined when absent or unreadable). Reads no secret out. */
+export function storedExtensionVersion(bridgeHome: string): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { extensionVersion?: unknown }
+    return typeof raw.extensionVersion === 'string' ? raw.extensionVersion : undefined
+  } catch { return undefined }
 }
 
 /**
- * Writes `extensionVersion` into <bridgeHome>/config.json (one field added or replaced; everything else byte for byte as
- * JSON allows), only when it differs. Returns whether the file was written. The daemon rereads its config by mtime.
+ * Keeps `extensionVersion` in <bridgeHome>/config.json equal to `version` through the bundle's own `setExtensionVersion`
+ * (bridge 782d3ea55+: the field is part of its config, written under its config.lock, so the host and the daemon never
+ * interleave and the host writes none of the bridge's files by hand). Only when it differs; returns whether it was
+ * written. The daemon rereads its config by mtime and carries the field in its `welcome`.
  */
-export function setExtensionVersion(bridgeHome: string, version: string): boolean {
-  const path = join(bridgeHome, 'config.json')
-  return withBridgeConfigLock(bridgeHome, () => {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
-    if (raw.extensionVersion === version) return false
-    const tmp = `${path}.${process.pid}.tmp`
-    writeFileSync(tmp, JSON.stringify({ ...raw, extensionVersion: version }, null, 2), { mode: 0o600 })
-    try { renameSync(tmp, path) } finally { rmSync(tmp, { force: true }) }
-    return true
-  })
+export function syncExtensionVersion(b: ExtensionVersionWriter, bridgeHome: string, version: string): boolean {
+  if (storedExtensionVersion(bridgeHome) === version) return false
+  b.setExtensionVersion(bridgeHome, version)
+  return true
 }
 
 // ---- 3. the daemon ---------------------------------------------------------------------------------------------------

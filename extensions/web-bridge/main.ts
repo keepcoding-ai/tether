@@ -73,10 +73,12 @@ export function activate(main: TetherMain): IDisposable[] {
   let browsers: DetectedBrowser[] | undefined
   const detected = (): DetectedBrowser[] => browsers ?? (browsers = listBrowsers())
 
-  // C4: the poll. The versions come from the vendored build-info (what the tether carries), the installed folder's
-  // manifest and C5's marker (the files under a loaded extension changed).
+  // C4: the poll. The versions are the EXTENSION's (the manifest version, `<bridge>.<commits>` since bridge 782d3ea55, the
+  // one chrome.runtime.getManifest().version reports): the vendored folder's (what the tether carries; the bridge version
+  // of build-info as a fallback for a build without the stamp), the installed folder's, and C5's marker (the files under a
+  // loaded extension changed).
   const version = (): StatusSnapshot['version'] => {
-    const vendored = readBuildInfo(vendorDir)?.version
+    const vendored = extensionVersionOf(join(vendorDir, 'extension')) ?? readBuildInfo(vendorDir)?.version
     const installed = extensionVersionOf(currentDir)
     return { ...(vendored ? { vendored } : {}), ...(installed ? { installed } : {}), pendingReload: !!readUpdateMarker(main.home) }
   }

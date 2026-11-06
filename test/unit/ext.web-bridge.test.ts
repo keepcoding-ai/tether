@@ -17,13 +17,13 @@ import assert from 'node:assert/strict'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createBridgeHost, defaultCapabilities, mcpConfigOf, serverNameOf } from '../../extensions/web-bridge/bridge-home.ts'
+import { createBridgeHost, defaultCapabilities, importBundleFromDisk, mcpConfigOf, serverNameOf } from '../../extensions/web-bridge/bridge-home.ts'
 import { browsersFromOverride, classifyExe, detectBrowsers, extensionsUrlOf, parseStartMenuInternet } from '../../extensions/web-bridge/browsers.ts'
 import { activate as activateDaemon } from '../../extensions/web-bridge/daemon.ts'
 import { createInstaller } from '../../extensions/web-bridge/installer.ts'
 import { BRIDGE_PORT, bridgeHomeOf, bridgePortOf, extensionDirOf, MCP_SERVER_NAME, mcpConfigPathOf, warmupAllowed } from '../../extensions/web-bridge/paths.ts'
 import { daemonEnv, findNode, readDaemonRecord, writeDaemonRecord, type Warmup } from '../../extensions/web-bridge/warmup.ts'
-import { extensionOutdated, readUpdateMarker, restartIfOutdated, setExtensionVersion, updateExtensionDir, updateMarkerPath } from '../../extensions/web-bridge/update.ts'
+import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutdated, storedExtensionVersion, syncExtensionVersion, updateExtensionDir, updateMarkerPath } from '../../extensions/web-bridge/update.ts'
 import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { BRAND } from '../../app/shared/brand.ts'
@@ -33,6 +33,8 @@ import { tempDirs } from './tmp.helpers.ts'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const vendorDir = join(root, 'extensions', 'web-bridge', 'vendor')
+/** The vendored extension's manifest version (`<bridge>.<commits>`, stamped by the bridge's build): what the welcome carries. */
+const VENDORED_VERSION = extensionVersionOf(join(vendorDir, 'extension'))!
 const tmp = tempDirs('tether-web-bridge-')
 after(() => tmp.cleanup())
 
@@ -204,7 +206,7 @@ describe('web-bridge: install engine (real vendored bundle, temp home)', () => {
     assert.deepEqual(config.extensionIds, [r.extensionId])
     assert.equal(config.brand.name, 'Tether')
     assert.equal(config.brand.hostId, 'studio.codr.tether')
-    assert.equal((JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { extensionVersion?: string }).extensionVersion, '0.1.0', 'C5: the installed version for the welcome')
+    assert.equal((JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { extensionVersion?: string }).extensionVersion, VENDORED_VERSION, 'C5: the installed version for the welcome')
     assert.ok(!existsSync(updateMarkerPath(home)), 'no reload notice after an install')
     const apiKey = readFileSync(join(bridgeHome, 'api.key'), 'utf8').trim()
     assert.ok(apiKey.length >= 16)
@@ -333,7 +335,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     const r2 = await hostFor(home, 48132, [], [], { healthy: true }).setup()
     assert.equal(r2.created, false)
     assert.equal(r2.extension, 'current', 'the copy IS the vendored build: nothing to update')
-    assert.equal((JSON.parse(readFileSync(path, 'utf8')) as { extensionVersion?: string }).extensionVersion, '0.1.0', 'the manifest version of the folder goes to config.json for the welcome')
+    assert.equal((JSON.parse(readFileSync(path, 'utf8')) as { extensionVersion?: string }).extensionVersion, VENDORED_VERSION, 'the manifest version of the folder goes to config.json for the welcome')
     assert.deepEqual(JSON.parse(readFileSync(join(current, 'bridge.json'), 'utf8')), { port: 48132, token: config.pairingToken, host: 'Tether' })
     assert.equal(readConfig(home).pairingToken, config.pairingToken)
   })
@@ -449,20 +451,32 @@ describe('web-bridge: update in place (F7 C5, real vendored build, temp home)', 
     assert.deepEqual(updateExtensionDir(source, current), { written: [], removed: [] }, 'second run: nothing')
   })
 
-  test('setExtensionVersion: one field in config.json under the bridge\'s lock protocol; a stale lock is taken over; idempotent', () => {
+  test('syncExtensionVersion: the field goes through the REAL bundle\'s setExtensionVersion (its own lock, the rest of the config kept); only when it differs; a stale lock is taken over', async () => {
     const home = tmp.make()
     const bridgeHome = bridgeHomeOf(home)
-    mkdirSync(bridgeHome, { recursive: true })
-    writeFileSync(join(bridgeHome, 'config.json'), JSON.stringify({ port: 1, pairingToken: 'abcdefghijklmnopqrst', apiKeys: [], other: { kept: true } }))
+    const b = await importBundleFromDisk(join(vendorDir, 'atrium-bridge.mjs'))
+    assert.equal(typeof b.setExtensionVersion, 'function', 'the vendored bundle exports setExtensionVersion (bridge 782d3ea55+)')
+    const created = b.ensureConfig(bridgeHome, 48161)
+    b.setBrand(bridgeHome, { name: 'Tether', color: '#6aa6ff', hostId: 'studio.codr.tether' })
+    const before = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as Record<string, unknown>
+    assert.equal(before.extensionVersion, undefined)
+    assert.equal(storedExtensionVersion(bridgeHome), undefined)
     const stale = join(bridgeHome, 'config.lock')
     writeFileSync(stale, '999999\n')
     const old = (Date.now() - 60_000) / 1000
     utimesSync(stale, old, old)
-    assert.equal(setExtensionVersion(bridgeHome, '0.1.0'), true)
-    assert.ok(!existsSync(stale), 'the lock is released')
-    assert.deepEqual(JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')), { port: 1, pairingToken: 'abcdefghijklmnopqrst', apiKeys: [], other: { kept: true }, extensionVersion: '0.1.0' })
-    assert.equal(setExtensionVersion(bridgeHome, '0.1.0'), false, 'same version: not written')
-    assert.equal(setExtensionVersion(bridgeHome, '0.2.0'), true)
+    assert.equal(syncExtensionVersion(b, bridgeHome, '0.1.0.77'), true)
+    assert.ok(!existsSync(stale), 'the bridge took the stale lock over and released it')
+    const after = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as Record<string, unknown>
+    assert.deepEqual(after, { ...before, extensionVersion: '0.1.0.77' }, 'one field added; port, token, keys, brand and ids as they were')
+    assert.equal(before.pairingToken, created.pairingToken)
+    assert.equal(storedExtensionVersion(bridgeHome), '0.1.0.77')
+    const mtime = statSync(join(bridgeHome, 'config.json')).mtimeMs
+    assert.equal(syncExtensionVersion(b, bridgeHome, '0.1.0.77'), false, 'same version: not written')
+    assert.equal(statSync(join(bridgeHome, 'config.json')).mtimeMs, mtime, 'the file was not touched')
+    assert.equal(syncExtensionVersion(b, bridgeHome, '0.2.0'), true)
+    assert.equal(storedExtensionVersion(bridgeHome), '0.2.0')
+    assert.throws(() => syncExtensionVersion(b, bridgeHome, 'not-a-version'), /INVALID_ARGUMENT|manifest version/, 'the bundle validates the form')
   })
 
   test('the host updates an older installed folder in place: seed kept with the same token, extensionVersion in config, marker + doctor AVISO; a current folder is left alone', async () => {
@@ -479,13 +493,13 @@ describe('web-bridge: update in place (F7 C5, real vendored build, temp home)', 
     assert.deepEqual(JSON.parse(readFileSync(join(current, 'bridge.json'), 'utf8')), { port: 48141, token, host: 'Tether' }, 'the seed carries the installation\'s token and the tether\'s port')
     const config = JSON.parse(readFileSync(join(bridgeHomeOf(home), 'config.json'), 'utf8')) as { pairingToken: string; extensionVersion?: string }
     assert.equal(config.pairingToken, token, 'the token did not rotate')
-    assert.equal(config.extensionVersion, '0.1.0')
-    assert.deepEqual(readUpdateMarker(home)?.version, '0.1.0')
-    assert.ok(log.some(l => /atualizada em lugar \(0\.1\.0 → 0\.1\.0: 2 arquivo\(s\) gravado\(s\), 1 removido\(s\)\)/.test(l)), log.join('\n'))
+    assert.equal(config.extensionVersion, VENDORED_VERSION)
+    assert.deepEqual(readUpdateMarker(home)?.version, VENDORED_VERSION)
+    assert.ok(log.some(l => l.includes(`atualizada em lugar (${VENDORED_VERSION} → ${VENDORED_VERSION}: 2 arquivo(s) gravado(s), 1 removido(s))`)), log.join('\n'))
     assert.ok(!log.join('\n').includes(token), 'token leaked')
     const checks = await Promise.all(host().checks().map(c => c()))
     assert.equal(checks[2]!.level, 'AVISO')
-    assert.match(checks[2]!.detail, /atualizada para 0\.1\.0/)
+    assert.ok(checks[2]!.detail.includes(`atualizada para ${VENDORED_VERSION} `), checks[2]!.detail)
     assert.match(checks[2]!.hint ?? '', /Recarregar.*chrome:\/\/extensions/)
     // Current already: nothing written, the marker stays until the person reloads (or installs again).
     log.length = 0

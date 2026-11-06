@@ -12,7 +12,7 @@
 //      the new one (new pid); the log tells the story without a secret;
 //   4. the extension reconnects to the new daemon on its own; then the reload the extension will do by itself in the next
 //      bridge slice is simulated from the test (`chrome.runtime.reload()` in the service worker): the reloaded extension
-//      reports 0.1.0 and connects again.
+//      reports the vendored version and connects again.
 // Every kill goes through test/kill.ts (pid + identity). The person's tetherd, %LOCALAPPDATA%\tether, ~/.atrium-bridge,
 // port 47831 and Chrome are never touched.
 import { test } from 'node:test'
@@ -123,6 +123,9 @@ test('an installed older build is updated in place at tetherd start, the daemon 
   const bridgeHome = bridgeHomeOf(home)
   const current = extensionDirOf(home)
   const newInfo = JSON.parse(readFileSync(join(vendorDir, 'build-info.json'), 'utf8')) as BuildInfo
+  // The vendored extension's manifest version (`<bridge>.<commits>`, stamped by the bridge's build): what the folder, config.json and the browser must report after the update.
+  const newVersion = (JSON.parse(readFileSync(join(vendorDir, 'extension', 'manifest.json'), 'utf8')) as { version: string }).version
+  assert.notEqual(newVersion, '0.0.9')
   const owned: Owned[] = []
   let context: BrowserContext | undefined
   let client: DaemonClient | undefined
@@ -171,18 +174,18 @@ test('an installed older build is updated in place at tetherd start, the daemon 
     assert.equal(readDaemonRecord(bridgeHome)?.bundleSha256, newInfo.bundle.sha256, 'the record names the vendored bundle now')
     // The folder: the new build exactly (seed left out), the seed as it was.
     assert.equal(hashTree(current, new Set(['bridge.json'])), newInfo.extension.sha256, 'current/ is the vendored build')
-    assert.equal((JSON.parse(readFileSync(join(current, 'manifest.json'), 'utf8')) as { version: string }).version, '0.1.0')
+    assert.equal((JSON.parse(readFileSync(join(current, 'manifest.json'), 'utf8')) as { version: string }).version, newVersion)
     assert.ok(!existsSync(join(current, 'old')), 'the file the new build does not have is gone')
     assert.equal(readFileSync(join(current, 'popup.html'), 'utf8'), readFileSync(join(vendorDir, 'extension', 'popup.html'), 'utf8'))
     assert.deepEqual(JSON.parse(readFileSync(join(current, 'bridge.json'), 'utf8')), seedBefore, 'the seed keeps port, token and host')
     const configAfter = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { pairingToken: string; extensionVersion?: string }
     assert.equal(configAfter.pairingToken, configBefore.pairingToken, 'the token did not rotate')
-    assert.equal(configAfter.extensionVersion, '0.1.0', 'the welcome contract field')
-    assert.equal(readUpdateMarker(home)?.version, '0.1.0', 'the "reload" notice is pending')
+    assert.equal(configAfter.extensionVersion, newVersion, 'the welcome contract field')
+    assert.equal(readUpdateMarker(home)?.version, newVersion, 'the "reload" notice is pending')
     // The log tells the story, without a secret.
     const tlog = readFileSync(join(home, 'tetherd.log'), 'utf8')
-    assert.match(tlog, /\[web-bridge\] extensão em .* atualizada em lugar \(0\.0\.9 → 0\.1\.0: /, tlog)
-    assert.match(tlog, /\[web-bridge\] extensionVersion 0\.1\.0 gravada/, tlog)
+    assert.ok(tlog.includes(`atualizada em lugar (0.0.9 → ${newVersion}: `), tlog)
+    assert.ok(tlog.includes(`[web-bridge] extensionVersion ${newVersion} gravada`), tlog)
     assert.match(tlog, new RegExp(`\\[web-bridge\\] daemon do bridge \\(pid ${oldPid}\\) encerrado para atualizar: o bundle vendorizado mudou`), tlog)
     assert.match(tlog, /\[web-bridge\] daemon do bridge iniciado \(pid \d+/, tlog)
     for (const text of [tlog, log.join('\n')]) {
@@ -190,17 +193,15 @@ test('an installed older build is updated in place at tetherd start, the daemon 
       assert.ok(!text.includes(apiKey), 'api key leaked')
     }
 
-    // 4. The (still 0.0.9) extension reconnects to the new daemon by itself; then the reload the bridge will do on the
-    //    welcome's extensionVersion, simulated here: the reloaded extension is 0.1.0 and connects again.
+    // 4. The (still 0.0.9) extension reconnects to the new daemon by itself, gets `extensionVersion: <new>` in the welcome
+    //    and, as the bridge's side of the C5 contract (782d3ea55), calls chrome.runtime.reload() ONCE for that version: the
+    //    browser ends up running the vendored build, connected again, with nobody clicking anything.
     await waitUntil(async () => { const b = (await browsers(port, apiKey)).browsers; return b.length === 1 && b[0]!.connectedAt > firstConnection }, 60_000, 'the extension reconnected to the new daemon')
-    const reconnectedAt = (await browsers(port, apiKey)).browsers[0]!.connectedAt
-    assert.equal(await loadedVersion(context, newInfo.extensionId), '0.0.9', 'before the reload the browser still runs the older build, files updated under it')
-    const popup = await context.newPage()
-    await popup.goto(`chrome-extension://${newInfo.extensionId}/popup.html`)
-    await popup.evaluate(() => { chrome.runtime.reload() }).catch(() => { /* the page dies with the reload */ })
-    await popup.close().catch(() => {})
-    await waitUntil(async () => (await loadedVersion(context!, newInfo.extensionId).catch(() => '')) === '0.1.0', 30_000, 'the reloaded extension at 0.1.0')
-    await waitUntil(async () => { const b = (await browsers(port, apiKey)).browsers; return b.length === 1 && b[0]!.connectedAt > reconnectedAt }, 60_000, 'the reloaded extension connected')
+    await waitUntil(async () => (await loadedVersion(context!, newInfo.extensionId).catch(() => '')) === newVersion, 60_000, `the extension reloaded itself to ${newVersion}`)
+    await waitUntil(async () => { const b = (await browsers(port, apiKey)).browsers; return b.length === 1 && b[0]!.connectedAt > firstConnection }, 60_000, 'the reloaded extension connected')
+    await sleep(3000)
+    assert.equal(await loadedVersion(context, newInfo.extensionId), newVersion, 'and stays there: one reload per version, no loop')
+    assert.equal((await browsers(port, apiKey)).browsers.length, 1)
   } finally {
     if (context) await context.close().catch(() => {})
     for (const p of owned) await killOwned(p)

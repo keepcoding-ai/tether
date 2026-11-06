@@ -18,7 +18,8 @@
 //      pattern of src/agents/claude.ts). No secret: the shell reads api.key by the home;
 //   e. the daemon warmed up (warmup.ts), so the browser finds it before any agent does;
 //   f. (C5, update.ts) the extension folder, when installed, brought to the vendored build file by file, with
-//      `extensionVersion` kept in config.json for the daemon's welcome; and the daemon restarted when the tether's record
+//      `extensionVersion` kept in config.json through the bundle's `setExtensionVersion` (the daemon carries it in its
+//      welcome and the extension reloads itself once per version); and the daemon restarted when the tether's record
 //      says it runs an older bundle, by its daemon.pid only after proving pid + command line + port owner.
 // Secrets (pairing token, api key) stay inside the bundle's functions and the files it owns: no log line, no error and
 // no file written here carries one.
@@ -28,7 +29,7 @@ import { pathToFileURL } from 'node:url'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
 import { manifest } from './manifest.ts'
 import { bridgeHomeOf, extensionDirOf, MCP_SERVER_NAME, mcpConfigPathOf } from './paths.ts'
-import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutdated, setExtensionVersion, updateExtensionDir, writeUpdateMarker, type RestartDeps } from './update.ts'
+import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutdated, syncExtensionVersion, updateExtensionDir, writeUpdateMarker, type RestartDeps } from './update.ts'
 import { auditVendor, isBuildInfo, VENDOR_BUILD_INFO, VENDOR_BUNDLE, VENDOR_EXTENSION_DIR, type BuildInfo } from './vendor-rules.ts'
 import { createWarmup, type Warmup, type WarmupDeps } from './warmup.ts'
 
@@ -42,6 +43,8 @@ export interface BridgeBundle {
   pinExtensionId(home: string, id: string): string[]
   /** Writes `defaults` as config.capabilities only when the config has none; returns the keys written, else []. */
   seedCapabilities(home: string, defaults: Record<string, unknown>): string[]
+  /** config.extensionVersion (the installed folder's manifest version, carried in the daemon's welcome); null removes it. */
+  setExtensionVersion(home: string, version: string | null): void
   localKeyPath(home: string): string
   version: string
 }
@@ -202,7 +205,7 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
           report.extension = 'updated'
           deps.log(`extensão em ${currentDir} atualizada em lugar (${from} → ${version}: ${u.written.length} arquivo(s) gravado(s), ${u.removed.length} removido(s)); o navegador precisa recarregá-la`)
         } else report.extension = 'current'
-        if (setExtensionVersion(bridgeHome, version)) deps.log(`extensionVersion ${version} gravada no config.json do bridge`)
+        if (syncExtensionVersion(b, bridgeHome, version)) deps.log(`extensionVersion ${version} gravada no config.json do bridge`)
       }
       brandAndSeed(b, bridgeHome, currentDir, deps.port, deps.brand)
       report.capabilities = b.seedCapabilities(bridgeHome, defaultCapabilities(info))

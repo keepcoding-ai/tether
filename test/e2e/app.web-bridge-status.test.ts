@@ -165,6 +165,7 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
   const browsersJson = join(home, 'browsers.json')
   writeFileSync(browsersJson, JSON.stringify([{ id: 'chrome', name: 'Chrome de teste', exe: fakeExe }]))
   const expectedId = (JSON.parse(readFileSync(join(vendorDir, 'build-info.json'), 'utf8')) as { extensionId: string; version: string })
+  const vendoredVersion = (JSON.parse(readFileSync(join(vendorDir, 'extension', 'manifest.json'), 'utf8')) as { version: string }).version
   const fake = await fakeBridge(port, keyFile)
 
   const daemons: Owned[] = []
@@ -186,7 +187,7 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     assert.equal(await btn(page).getAttribute('title'), s.title)
     assert.equal(await page.locator(`${STATUS} .status-badge`).isHidden(), true)
     assert.equal(await pop(page).locator('[data-section="browsers"] .wb-empty').textContent(), 'Nenhum navegador conectado.')
-    assert.ok((await pop(page).locator('.wb-version').textContent())?.includes(expectedId.version), 'the footer names the vendored version')
+    assert.equal(await pop(page).locator('.wb-version').textContent(), `Extensão ${vendoredVersion} · não instalada neste computador`, 'the footer names the vendored EXTENSION version (the manifest version, not the bridge version)')
     assert.equal(await pop(page).locator('.wb-reload').count(), 0, 'nothing to reload')
     assert.ok(s.watching, 'the open popover is watched')
     const key = keyFile()
