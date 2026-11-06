@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atrium Bridge</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    body { width: 320px; padding: 14px; }
+    #status { margin-bottom: 10px; }
+    #note { margin-bottom: 12px; }
+    #options { margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div id="alert" class="alert-banner tape" role="alert" hidden><span id="alert-text"></span><button id="alert-off" type="button"></button></div>
+  <h1 id="title">Atrium Bridge</h1>
+  <div id="status" class="status" role="status"></div>
+  <p id="note"></p>
+  <button id="toggle" type="button" disabled>…</button>
+  <div id="error" class="error" role="alert"></div>
+  <button id="options" class="link" type="button">Opções e pareamento</button>
+  <script type="module" src="dist/popup.js"></script>
+</body>
+</html>

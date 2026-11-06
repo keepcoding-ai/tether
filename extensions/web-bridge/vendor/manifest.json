@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0",
+  "extensionId": "injmgjkjjfjeamlnnpacjcfnfkjgpmnk",
+  "files": {
+    "atrium-bridge.mjs": "24e8ae27d38c03d8add23bd9d03f1087f4a858df8b6d71d7d968e2b25c009e1a",
+    "build-info.json": "6b3af22a2be717c467d3f8ad36b5ae20ec8190a8933d0ce284fcdfab27fe4602",
+    "extension/dist/background.js": "59ed169f1ee0b7c8529da77ca32497868e6d2169a57e1775930103421a34041d",
+    "extension/dist/options.js": "17036ddfffbc2fe4ba1a9a7e7028d2a36ec95f687a30b707fa451c6263ef6992",
+    "extension/dist/popup.js": "e8d2f03e1edfc77891e8b1cd6e1f8685284f974253a24ff960c8c50e1947326c",
+    "extension/icons/icon-128.png": "dace6cd68312b7e9fb16e342d69692db309f4738460fff299b2738d24ccadd77",
+    "extension/icons/icon-16.png": "a2758bd99ceadc90d82ed223f23c5a4c6236934ce366522e720637d3d1ca21d1",
+    "extension/icons/icon-48.png": "c13082f7dcb1f5bcba0ed99aa84bbc7d1e282f2836670880cf30677d8e429962",
+    "extension/manifest.json": "3ad1e7992ac0170e166ca5aa97fdbff72eacd48785d9ed97324883e55456e4e3",
+    "extension/options.html": "c4f9482736492da42896a6e239854841d3efd8d81576cb309acd0aa41692478e",
+    "extension/popup.html": "9d42aabf07d4ff183e3b74cc0ac7bb764c676aed2792c07c945bab7bc070f513",
+    "extension/ui.css": "fe260072808e2b1bd8b99feefefbdd9107ae3808ef04a5961527e1383c8ab12e"
+  }
+}

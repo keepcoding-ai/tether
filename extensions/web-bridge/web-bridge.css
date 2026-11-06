@@ -1,0 +1,26 @@
+/* The web-bridge extension's guide (extensions/web-bridge/renderer.ts): a dialog.ask with three steps, the folder path
+   and the live "waiting" line. Everything else (frame, header, footer, kbd) is the core dialog's (styles.css). */
+dialog.web-bridge-guide { width: 600px; }
+dialog.web-bridge-guide .wb-steps { margin: 0 0 12px; padding: 0 0 0 24px; line-height: 1.5; color: var(--fg); }
+dialog.web-bridge-guide .wb-steps li { margin: 4px 0; }
+dialog.web-bridge-guide .wb-steps li::marker { color: var(--accent); font-weight: 600; }
+dialog.web-bridge-guide .wb-steps kbd { margin: 0 2px; }
+
+dialog.web-bridge-guide .wb-path { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+dialog.web-bridge-guide .wb-path-text { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+dialog.web-bridge-guide .wb-copy { display: inline-flex; align-items: center; gap: 6px; flex: none; font: 12px var(--ui); color: var(--fg); background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+dialog.web-bridge-guide .wb-copy .ph { width: 14px; height: 14px; }
+dialog.web-bridge-guide .wb-copy:hover { background: var(--bg-3); }
+dialog.web-bridge-guide .wb-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+dialog.web-bridge-guide .wb-copy.done { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, var(--border)); }
+
+dialog.web-bridge-guide .wb-wait { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--fg); font-size: 13px; }
+dialog.web-bridge-guide .wb-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--accent); animation: wb-pulse 1.2s ease-in-out infinite; }
+dialog.web-bridge-guide[data-state="daemon-down"] .wb-wait { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+dialog.web-bridge-guide[data-state="daemon-down"] .wb-dot { background: var(--warn); }
+dialog.web-bridge-guide[data-state="connected"] .wb-wait { background: color-mix(in srgb, var(--ok) 14%, transparent); font-weight: 600; }
+dialog.web-bridge-guide[data-state="connected"] .wb-dot { background: var(--ok); animation: none; }
+@keyframes wb-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+@media (prefers-reduced-motion: reduce) { dialog.web-bridge-guide .wb-dot { animation: none; } }
+
+dialog.web-bridge-guide .wb-note { margin: 0 0 14px; color: var(--fg-dim); font-size: 11.5px; line-height: 1.45; }
