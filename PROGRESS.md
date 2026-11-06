@@ -34,6 +34,12 @@ A semana de uso real (PRD §8) é do usuário.
 
 ## Decisões para validar
 
+- 05–06/11, F6–F10 (frente mind/effort/on/tether, seção "Objetivo em curso"):
+  - **F9:** as 13 decisões do estudo (`mind/effort/on/tether/f9-estudo.md` §7.2) foram aprovadas pela coordenação, porque são de engenharia. Pasta `extensions/`, ativação ao abrir, desligar só depois de "Reiniciar o app", nota e prévias numa extensão só, terminal no núcleo, configurações em `extensions.<id>`, barramento `ext:<id>:<canal>`, menu ≡ gerado pelo registro, layout v3 e versão semver no manifesto.
+  - **F6 → F11:** o esmaecer usa a cor do fundo (`--desk-bg`) e nunca escurece para o preto. Tem três níveis (0,20 / 0,32 / 0,45), com o médio como padrão, porque o contraste depende do monitor.
+  - **F10:** Ctrl+B abre a barra esquerda, mas não dentro do terminal, onde o ^B é do programa. Nele vale Ctrl+K Ctrl+B. A barra direita é Ctrl+Alt+B, apesar da regra "sem Ctrl+Alt+letra", porque o AltGr+B não digita nada no ABNT2. Antes de gravar o primeiro v3, o layout guarda `layout.v2.bak`. Mover uma prancheta já a abre na outra barra. Fechar uma mesa trata os painéis da prancheta dela como os da própria mesa.
+  - **F8:** o Ctrl+P busca no projeto atual, e buscar em todos os projetos fica para depois. "Revelar o arquivo ativo" começa desligado. Ver `mind/effort/on/tether/f8-plano.md`.
+  - **Núcleo:** um serviço "abrir arquivo" (`app/shared/file-open.ts`), em que as extensões se registram como abridoras. Ctrl+P, Ctrl+clique e "abrir o arquivo-fonte" passam por ele.
 - Autorizado pelo usuário a tocar o projeto sem parar: `git init` feito; soul-cli será alterado num branch próprio (`tether-session-report`), sem push.
 - T1: verificação de processo vivo via PowerShell (start time) leva 0,7–6 s e falha sob carga. Substituir por canal nomeado por slot (`\.\pipe\tether-slot-<id>`) mantido pelo processo dono do slot (launcher da CLI ou tetherd): conectar = vivo. Instantâneo e imune a PID reaproveitado. Entra na A2/T4.
 - soul-cli em worktree (`D:\atrium\workspace\soul-cli-tether`, branch `feat/session-report`) em vez de commitar direto no develop: o checkout principal está em uso. Merge no develop depois de provado.
