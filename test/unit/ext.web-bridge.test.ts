@@ -365,7 +365,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     const log: string[] = []
     const api: TetherDaemon = {
       id: 'web-bridge', brand: BRAND, home,
-      agents: { register: () => toDisposable(() => {}) },
+      agents: { register: () => toDisposable(() => {}), get: () => undefined },
       launch: { use: () => toDisposable(() => {}) },
       doctor: { register: c => { checks.push(c); return toDisposable(() => {}) } },
       onStarted: l => { started.push(l); return toDisposable(() => {}) },
@@ -374,7 +374,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
       onSlot: () => toDisposable(() => {}),
     }
     const disposables = activateDaemon(api)
-    assert.equal(disposables.length, 3)
+    assert.equal(disposables.length, 5, 'onStarted + launch middleware + slot listener (C3) + 2 checks')
     assert.equal(checks.length, 2)
     assert.equal(started.length, 1, 'the setup waits for the start')
     await new Promise(r => setTimeout(r, 50))
