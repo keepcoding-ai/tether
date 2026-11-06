@@ -111,6 +111,7 @@ const EXPECTED: Array<[string, string, string | null, string | null, string | nu
   ['terminal.theme', 'Tema do terminal…', null, null, 'false'],
   ['sep', '', null, null, null],
   ['keybindings.show', 'Atalhos de teclado', 'Ctrl+K Ctrl+S', null, 'false'],
+  ['web-bridge.install', 'Instalar Tether Bridge…', null, null, 'false'],   // F7 C1
   ['extensions.show', 'Extensões', null, null, 'false'],
   ['confirmations.restore', 'Voltar a perguntar antes de fechar painéis', null, null, 'false'],
   ['sep', '', null, null, null],
