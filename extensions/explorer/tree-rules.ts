@@ -186,3 +186,48 @@ export function flatten(
   walk(root.path, 2)
   return out
 }
+
+// ---------- type to navigate and paging ----------
+// Origin: https://github.com/microsoft/vscode, commit 7faf984945fefaceb533ca1d851697a2e72e4e68 (MIT)
+//   src/vs/base/browser/ui/list/listWidget.ts    TypeNavigationController (the 800 ms buffer, a repeated letter cycles, wraps),
+//                                                 DOMFocusController-style PageUp/PageDown (first go to the edge of the view, then a page)
+
+/** VS Code resets the typed prefix after this long without a key. */
+export const TYPE_AHEAD_RESET_MS = 800
+
+/** True for a key that feeds the prefix: one printable character (a space only joins a prefix already started). */
+export function isTypeAheadKey(key: string, buffer: string): boolean {
+  if (key.length !== 1) return false
+  return key !== ' ' || buffer.length > 0
+}
+
+/**
+ * The row to jump to when `buffer` was typed with the keyboard on row `from`: the first row (case-insensitive prefix of the name) at
+ * or after the current one, wrapping around. A single character (or one letter repeated) starts after the current row, so
+ * repeating a letter cycles through the names that start with it. -1 when nothing matches.
+ */
+export function typeAheadMatch(names: readonly string[], from: number, buffer: string): number {
+  const n = names.length
+  if (n === 0 || buffer === '') return -1
+  const q = buffer.toLowerCase()
+  const cycling = [...q].every(c => c === q[0])
+  const prefix = cycling ? q[0]! : q
+  const start = (cycling && q.length > 0 ? from + 1 : from) % n
+  for (let k = 0; k < n; k++) {
+    const i = (start + k) % n
+    if (names[i]!.toLowerCase().startsWith(prefix)) return i
+  }
+  // "aa" with no other name starting with "a": a name that really starts with "aa" still counts
+  return cycling && q.length > 1 ? names.findIndex(s => s.toLowerCase().startsWith(q)) : -1
+}
+
+/**
+ * PageUp/PageDown on row `i` with rows `first..last` in view and `page` rows per view: the first press goes to the edge of the
+ * view, the next one a page further (VS Code). Always clamped to the list.
+ */
+export function pageTarget(i: number, count: number, first: number, last: number, page: number, down: boolean): number {
+  if (count === 0) return -1
+  const step = Math.max(1, page - 1)
+  const t = down ? (i < last ? last : i + step) : (i > first ? first : i - step)
+  return Math.max(0, Math.min(count - 1, t))
+}

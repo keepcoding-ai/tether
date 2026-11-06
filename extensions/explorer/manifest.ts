@@ -24,7 +24,7 @@ export const manifest: ExtensionManifest = {
       autoReveal: { type: 'boolean', default: false, title: 'Revelar o arquivo ativo no explorador' },
     },
     commands: [
-      { command: 'explorer.focus', title: 'Explorador: abrir', category: EXPLORER, icon: 'files' },
+      { command: 'explorer.focus', title: 'Explorador: focar', category: EXPLORER, icon: 'files' },
       { command: 'explorer.open-folder', title: 'Explorador: abrir pasta…', category: EXPLORER, icon: 'folder-open' },
       { command: 'explorer.reveal', title: 'Revelar no explorador', category: EXPLORER, icon: 'target' },
       { command: 'explorer.refresh', title: 'Explorador: atualizar', category: EXPLORER, icon: 'arrows-clockwise' },

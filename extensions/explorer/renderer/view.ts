@@ -13,7 +13,7 @@ import type { UiIpc } from '../../../app/shared/ext-ipc.ts'
 import { fileIcon } from '../../../app/shared/quick-open.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { Entry, ExplorerChannels } from '../ipc.ts'
-import { emptyState, joinPath, navigate, parentPath, readState, revealChain, samePath, type NavRow } from '../tree-rules.ts'
+import { emptyState, isTypeAheadKey, joinPath, navigate, pageTarget, parentPath, readState, revealChain, samePath, TYPE_AHEAD_RESET_MS, typeAheadMatch, type NavRow } from '../tree-rules.ts'
 import {
   agentsHint, agentsTooltip, EMPTY_HELP, EMPTY_TITLE, itemMenu, type ItemAction, MISSING_TEXT, MISSING_TITLE, OPEN_FOLDER_LABEL, pinLabel,
   recentRow, recentToOffer, RECENT_TITLE, rootMenu, rootTitle, type RootAction,
@@ -91,6 +91,9 @@ export class ExplorerView implements PadView {
   /** The row the keyboard is on (roving focus) and the selected one, by row key. */
   private focused: string | undefined
   private selected: string | undefined
+  /** Type to navigate: the prefix typed so far and the timer that forgets it. */
+  private typed = ''
+  private typedTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(ui: TetherUi, host: PadHost, controls: ExplorerControls) {
     this.ui = ui
@@ -110,7 +113,8 @@ export class ExplorerView implements PadView {
   // ---------- PadView ----------
 
   focus(): void {
-    const target = this.rowByKey(this.focused) ?? this.tree?.querySelector<HTMLElement>('.xp-row[tabindex="0"]') ?? this.element.querySelector<HTMLElement>('.xp-row') ?? this.element.querySelector<HTMLElement>('.xp-primary')
+    // Lands on the selected row (the file being worked on), else where the keyboard last was.
+    const target = this.rowByKey(this.selected) ?? this.rowByKey(this.focused) ?? this.tree?.querySelector<HTMLElement>('.xp-row[tabindex="0"]') ?? this.element.querySelector<HTMLElement>('.xp-row') ?? this.element.querySelector<HTMLElement>('.xp-primary')
     target?.focus()
   }
 
@@ -189,6 +193,7 @@ export class ExplorerView implements PadView {
   }
 
   dispose(): void {
+    clearTimeout(this.typedTimer)
     this.disposed = true
     for (const s of this.subs) s.dispose()
     this.element.remove()
@@ -521,9 +526,10 @@ export class ExplorerView implements PadView {
   }
 
   private select(row: HTMLElement): void {
-    for (const r of this.tree?.querySelectorAll<HTMLElement>('.xp-row.selected') ?? []) { r.classList.remove('selected'); r.setAttribute('aria-selected', 'false') }
+    for (const r of this.tree?.querySelectorAll<HTMLElement>('.xp-row[aria-selected="true"]') ?? []) { r.classList.remove('selected'); r.setAttribute('aria-selected', 'false') }
     this.selected = row.dataset.key
-    if (row.dataset.isRoot !== 'true') { row.classList.add('selected'); row.setAttribute('aria-selected', 'true') }
+    row.setAttribute('aria-selected', 'true')
+    if (row.dataset.isRoot !== 'true') row.classList.add('selected')
     this.setRoving(row, false)
     const root = row.dataset.root!
     if (this.ui.workspace.current() !== root) { this.ui.workspace.setCurrent(root); this.updateCurrent() }
@@ -552,6 +558,8 @@ export class ExplorerView implements PadView {
       return
     }
     if (ev.altKey || ev.metaKey || (ev.ctrlKey && ev.key !== 'Enter')) return
+    if (ev.key === 'PageDown' || ev.key === 'PageUp') { ev.preventDefault(); this.page(row, ev.key === 'PageDown'); return }
+    if (!ev.ctrlKey && isTypeAheadKey(ev.key, this.typed)) { ev.preventDefault(); this.typeAhead(row, ev.key); return }
     const info = infoOf(row)
     if (ev.ctrlKey && !info.dir) { ev.preventDefault(); this.openFile(info, true); return }
     const rows = this.rows()
@@ -563,6 +571,32 @@ export class ExplorerView implements PadView {
     this.select(row)
     if (action.type === 'open') this.openFile(info, false)
     else this.toggle(row) // toggle, expand and collapse: the rule already checked the state
+  }
+
+  /** Type to navigate: the keyboard jumps to the next row whose name starts with what was typed (wrapping); 800 ms of silence starts over. */
+  private typeAhead(row: HTMLElement, key: string): void {
+    this.typed += key
+    clearTimeout(this.typedTimer)
+    this.typedTimer = setTimeout(() => { this.typed = '' }, TYPE_AHEAD_RESET_MS)
+    const rows = this.rows()
+    const at = typeAheadMatch(rows.map(r => r.querySelector('.xp-name')?.textContent ?? ''), rows.indexOf(row), this.typed)
+    if (at >= 0) this.setRoving(rows[at]!, true)
+  }
+
+  /** PageUp/PageDown: the first press goes to the edge of what is in view, the next one a page further. */
+  private page(row: HTMLElement, down: boolean): void {
+    const rows = this.rows()
+    if (rows.length === 0) return
+    const view = this.element.getBoundingClientRect()
+    let first = -1, last = -1
+    rows.forEach((r, i) => {
+      const b = r.getBoundingClientRect()
+      if (b.height > 0 && b.top >= view.top - 1 && b.bottom <= view.bottom + 1) { if (first < 0) first = i; last = i }
+    })
+    const h = rows[0]!.getBoundingClientRect().height || 24
+    const page = Math.max(1, Math.floor(view.height / h))
+    const at = pageTarget(rows.indexOf(row), rows.length, first < 0 ? 0 : first, last < 0 ? 0 : last, page, down)
+    if (at >= 0) this.setRoving(rows[at]!, true)
   }
 
   private menuFor(row: HTMLElement, x: number, y: number): void {
@@ -627,7 +661,7 @@ export class ExplorerView implements PadView {
     for (const r of this.tree?.querySelectorAll<HTMLElement>('.xp-root') ?? []) {
       const on = r.dataset.path === current
       r.classList.toggle('current', on)
-      r.setAttribute('aria-selected', String(on))
+      if (on) r.setAttribute('aria-current', 'true'); else r.removeAttribute('aria-current')
     }
   }
 
@@ -731,7 +765,8 @@ export class ExplorerView implements PadView {
     const row = this.rowBase('xp-root', f.path, f.path, 1, true)
     row.dataset.isRoot = 'true'
     row.dataset.pinned = String(f.pinned)
-    row.setAttribute('aria-selected', String(current))
+    row.setAttribute('aria-selected', String(row.dataset.key === this.selected))
+    if (current) row.setAttribute('aria-current', 'true')
     row.title = rootTitle(f)
     if (current) row.classList.add('current')
 

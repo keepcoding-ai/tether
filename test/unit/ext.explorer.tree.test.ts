@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { guardPath, readDirectory } from '../../extensions/explorer/main.ts'
 import {
-  compareFileNamesDefault, flatten, isExcluded, isInsideAny, joinPath, listing, navigate, parentPath, readState, revealChain, samePath, sortEntries, type Entry, type NavRow,
+  compareFileNamesDefault, flatten, isExcluded, isInsideAny, isTypeAheadKey, joinPath, listing, navigate, pageTarget, parentPath, typeAheadMatch, readState, revealChain, samePath, sortEntries, type Entry, type NavRow,
 } from '../../extensions/explorer/tree-rules.ts'
 
 const atriumTmp = resolve(import.meta.dirname, '..', '..', '..', '..', '.tmp')
@@ -152,5 +152,38 @@ describe('explorer reveal', () => {
     assert.deepEqual(revealChain('/p/A', '/p/a/x.md', false), [])
     assert.equal(samePath('C:\\p\\a\\', 'c:/P/A', true), true)
     assert.equal(samePath('/p/a', '/p/A', false), false)
+  })
+})
+
+describe('explorer type to navigate and paging', () => {
+  const names = ['src', 'docs', 'Apple.md', 'a.md', 'b.md', 'alpha.md']
+  test('a prefix jumps to the next match, case-insensitive, wrapping', () => {
+    assert.equal(typeAheadMatch(names, 0, 'd'), 1)
+    assert.equal(typeAheadMatch(names, 1, 'do'), 1, 'a longer prefix stays on a row that still matches')
+    assert.equal(typeAheadMatch(names, 4, 'a'), 5, 'a single letter starts after the current row')
+    assert.equal(typeAheadMatch(names, 5, 'a'), 2, 'and wraps around')
+    assert.equal(typeAheadMatch(names, 0, 'al'), 5)
+    assert.equal(typeAheadMatch(names, 0, 'zz'), -1)
+    assert.equal(typeAheadMatch(names, 0, ''), -1)
+    assert.equal(typeAheadMatch([], 0, 'a'), -1)
+  })
+  test('a repeated letter cycles through the names that start with it', () => {
+    assert.equal(typeAheadMatch(names, 2, 'aa'), 3)
+    assert.equal(typeAheadMatch(names, 3, 'aaa'), 5)
+  })
+  test('which keys feed the prefix', () => {
+    assert.equal(isTypeAheadKey('a', ''), true)
+    assert.equal(isTypeAheadKey(' ', ''), false, 'space alone toggles')
+    assert.equal(isTypeAheadKey(' ', 'my'), true)
+    assert.equal(isTypeAheadKey('ArrowDown', ''), false)
+  })
+  test('page keys go to the edge of the view first, then a page further, clamped', () => {
+    assert.equal(pageTarget(2, 100, 2, 11, 10, true), 11)
+    assert.equal(pageTarget(11, 100, 2, 11, 10, true), 20)
+    assert.equal(pageTarget(95, 100, 90, 99, 10, true), 99)
+    assert.equal(pageTarget(20, 100, 20, 29, 10, false), 11)
+    assert.equal(pageTarget(25, 100, 20, 29, 10, false), 20)
+    assert.equal(pageTarget(3, 100, 0, 9, 10, false), 0)
+    assert.equal(pageTarget(0, 0, 0, 0, 10, true), -1)
   })
 })
