@@ -253,3 +253,14 @@ describe('chords inside the editor', () => {
     assert.deepEqual(editorKeyOwner(key('KeyL', { ctrl: true, shift: true }), false), { owner: 'editor' }, 'Ctrl+Shift+L is not an app chord: select all occurrences')
   })
 })
+
+test('note params: the per-editor minimap choice is read, kept by withNote, set and cleared', () => {
+  assert.equal(noteParams({ note: { path: 'a.md' } })?.minimap, undefined)
+  assert.equal(noteParams({ note: { path: 'a.md', minimap: 'off' } })?.minimap, undefined, 'malformed reads as no choice')
+  assert.equal(noteParams({ note: { path: 'a.md', minimap: false } })?.minimap, false)
+  const own = withNote(undefined, { path: 'a.md', minimap: false })
+  assert.equal(noteParams(own)?.minimap, false)
+  assert.equal(noteParams(withNote(own, { path: 'a.md', view: { x: 1 } }))?.minimap, false, 'absent keeps the choice')
+  assert.equal(noteParams(withNote(own, { path: 'a.md', minimap: true }))?.minimap, true)
+  assert.equal(noteParams(withNote(own, { path: 'a.md', minimap: null }))?.minimap, undefined, 'null clears it')
+})

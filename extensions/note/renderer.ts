@@ -46,6 +46,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   let editorCommandsOwner: NotePanel | undefined
 
   const wordWrap = (): boolean => ui.settings.get<boolean>('wordWrap') ?? true
+  const minimap = (): boolean => ui.settings.get<boolean>('minimap') ?? true
   const activeId = (): string | undefined => ui.panes.activeId()
   const setActive = (id: string): void => ui.panes.find(id)?.api.setActive()
 
@@ -59,6 +60,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     getAppearance: () => ui.theme.appearance(),
     getWordWrap: wordWrap,
     toggleWordWrap: () => ui.settings.set('wordWrap', !wordWrap()),
+    getMinimap: minimap,
     onFocus: (panel, focused) => {
       // The actions stay registered while the focus is on a transient surface (the palette lists them); the next
       // focused note replaces them, and a disposed note removes its own.
@@ -69,7 +71,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const p = ui.panes.find(panel.id)
       if (!p) return
       const view = panel.viewState()
-      p.api.updateParameters(withNote(p.params, { path: panel.path, ...(view ? { view } : {}) }))
+      p.api.updateParameters(withNote(p.params, { path: panel.path, ...(view ? { view } : {}), minimap: panel.minimapOverride ?? null }))
       ui.layout.scheduleSave()
     },
     onDirtyChange: panel => noteTabs.get(panel.id)?.render(),
@@ -306,6 +308,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       { icon: 'note-pencil', label: 'Nova nota', run: () => { void newNote() } },
       'sep',
       { icon: 'pencil-simple', label: 'Renomear…', run: () => noteTabs.get(id)?.startRename() },
+      { icon: 'map-trifold', label: 'Minimapa neste editor', checked: note.minimapEnabled(), run: () => note.setMinimapOverride(!note.minimapEnabled()) },
+      ...(note.minimapOverride !== undefined ? [{ icon: 'arrow-counter-clockwise', label: 'Minimapa: usar o padrão', run: () => note.setMinimapOverride(undefined) }] : []),
       { icon: 'floppy-disk', label: 'Salvar nota como…', run: () => { void saveNoteAs(id) } },
       ...(isPreviewablePath(note.path) ? [{ icon: 'eye', label: 'Abrir prévia', run: () => { openPreview({ side: false, reference: id }) } }, { icon: 'square-split-horizontal', label: 'Abrir prévia ao lado', run: () => { openPreview({ side: true, reference: id }) } }] : []),
       { icon: 'copy', label: 'Copiar caminho da nota', run: () => ui.shell.writeClipboard(note.path) },
@@ -426,6 +430,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.commands.registerCommand('note.save', () => { const id = activeNoteId(); if (id) void notes.get(id)?.save() }),
     ui.commands.registerCommand('note.save-as', () => { void saveNoteAs() }),
     ui.commands.registerCommand('ui.word-wrap', () => noteHost.toggleWordWrap()),
+    ui.commands.registerCommand('ui.minimap', () => ui.settings.set('minimap', !minimap())),
+    ui.commands.registerCommand('note.minimap', () => { const n = notes.get(activeNoteId() ?? ''); n?.setMinimapOverride(!n.minimapEnabled()) }),
+    ui.commands.registerCommand('note.minimap.reset', () => notes.get(activeNoteId() ?? '')?.setMinimapOverride(undefined)),
   )
 
   // ---------- chooser items ----------
@@ -486,6 +493,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.theme.onChange(applyScheme),
     ui.theme.onAppearance(a => { for (const n of notes.values()) n.setAppearance(a); restyle(); remeasureEditorFonts() }),
     ui.settings.onChange('wordWrap', v => { for (const n of notes.values()) n.setWordWrap(v === true) }),
+    ui.settings.onChange('minimap', () => { for (const n of notes.values()) n.refreshMinimap() }),
   )
   // Editors can be created (a restored layout) before the web font is in: Monaco then caches the fallback font's
   // character widths and draws the caret off the text. Whenever a face finishes loading, measure again.
@@ -508,6 +516,10 @@ export function activate(ui: TetherUi): IDisposable[] {
   // ---------- test hooks (window.__tether.ext.note.*, also flat on window.__tether as before) ----------
 
   ui.test.expose('wordWrap', () => ({ setting: wordWrap(), editors: [...notes.values()].map(n => n.wordWrapOption()) }))
+  ui.test.expose('minimap', () => ({
+    setting: minimap(),
+    editors: [...notes.values()].map(n => ({ id: n.id, override: n.minimapOverride ?? null, enabled: n.minimapEnabled(), shown: n.minimapShown(), visible: n.element.offsetWidth > 0 })),
+  }))
   ui.test.expose('scrollNote', (id: string, top: number) => { notes.get(id)?.editor?.setScrollTop(top, 1 /* ScrollType.Immediate */) })
   ui.test.expose('previews', () => [...previews.values()].flatMap(p => (p instanceof PreviewPanel ? [p.snapshot()] : [])))
   ui.test.expose('preview', (id: string) => { const p = previews.get(id); return p instanceof PreviewPanel ? p.snapshot() : undefined })

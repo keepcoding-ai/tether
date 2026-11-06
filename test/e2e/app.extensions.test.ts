@@ -108,6 +108,7 @@ const EXPECTED: Array<[string, string, string | null, string | null, string | nu
   ['ui.dim-medium', 'Esmaecer: médio', null, 'false', 'false'],
   ['ui.dim-strong', 'Esmaecer: forte', null, 'false', 'false'],
   ['ui.word-wrap', 'Quebra de linha no editor', null, 'true', 'false'],
+  ['ui.minimap', 'Minimapa nos editores', null, 'true', 'false'],
   ['terminal.theme', 'Tema do terminal…', null, null, 'false'],
   ['sep', '', null, null, null],
   ['keybindings.show', 'Atalhos de teclado', 'Ctrl+K Ctrl+S', null, 'false'],

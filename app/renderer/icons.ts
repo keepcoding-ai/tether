@@ -8,6 +8,7 @@ import arrowsInLineVertical from '@phosphor-icons/core/assets/regular/arrows-in-
 import arrowsOutSimple from '@phosphor-icons/core/assets/regular/arrows-out-simple.svg'
 import bug from '@phosphor-icons/core/assets/regular/bug.svg'
 import appWindow from '@phosphor-icons/core/assets/regular/app-window.svg'
+import mapTrifold from '@phosphor-icons/core/assets/regular/map-trifold.svg'
 import arrowClockwise from '@phosphor-icons/core/assets/regular/arrow-clockwise.svg'
 import arrowSquareOut from '@phosphor-icons/core/assets/regular/arrow-square-out.svg'
 import caretDown from '@phosphor-icons/core/assets/regular/caret-down.svg'
@@ -121,6 +122,8 @@ const SVG = {
   'arrows-out-simple': arrowsOutSimple,
   bug,
   'arrow-clockwise': arrowClockwise,
+  'map-trifold': mapTrifold,
+  'arrow-counter-clockwise': arrowCounterClockwise,
   'arrow-square-out': arrowSquareOut,
   'caret-down': caretDown,
   'caret-up': caretUp,
@@ -174,7 +177,6 @@ const SVG = {
   'arrow-line-right': arrowLineRight,
   'arrow-line-up': arrowLineUp,
   'arrow-line-down': arrowLineDown,
-  'arrow-counter-clockwise': arrowCounterClockwise,
   palette,
   'text-aa': textAa,
   cards,

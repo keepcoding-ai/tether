@@ -20,6 +20,7 @@ export const manifest: ExtensionManifest = {
     paneTypes: NOTE_PANE_LAYOUTS,
     settings: {
       wordWrap: { type: 'boolean', default: true, title: 'Quebra de linha no editor' },
+      minimap: { type: 'boolean', default: true, title: 'Minimapa nos editores' },
     },
     commands: [
       { command: 'note.new', title: 'Nova nota', category: NOTE, icon: 'note-pencil' },
@@ -30,6 +31,9 @@ export const manifest: ExtensionManifest = {
       { command: 'note.save', title: 'Salvar a nota agora', category: NOTE, icon: 'floppy-disk', when: 'focus == editor' },
       { command: 'note.save-as', title: 'Salvar nota como…', category: NOTE, icon: 'floppy-disk', when: 'focus == editor' },
       { command: 'ui.word-wrap', title: 'Quebra de linha no editor', category: LOOK, icon: 'text-aa' },
+      { command: 'ui.minimap', title: 'Minimapa: ligar/desligar', category: LOOK, icon: 'map-trifold' },
+      { command: 'note.minimap', title: 'Minimapa deste editor: ligar/desligar', category: NOTE, icon: 'map-trifold', when: 'focus == editor' },
+      { command: 'note.minimap.reset', title: 'Minimapa deste editor: usar o padrão', category: NOTE, icon: 'arrow-counter-clockwise', when: 'focus == editor' },
     ],
     keybindings: [
       { key: 'ctrl+o', command: 'note.open' },                          // "open file" (window and note; in a terminal Ctrl+O is Claude Code's verbose toggle)
@@ -44,6 +48,7 @@ export const manifest: ExtensionManifest = {
         { command: 'note.open', group: 'note', order: 20, icon: 'folder-open', label: 'Abrir nota…' },
         { command: 'note.save-as', group: 'note', order: 30, icon: 'floppy-disk', label: 'Salvar nota como…' },
         { command: 'ui.word-wrap', group: 'look', order: 70, kind: 'checkbox', toggled: 'wordWrap', label: 'Quebra de linha no editor' },
+        { command: 'ui.minimap', group: 'look', order: 71, kind: 'checkbox', toggled: 'minimap', label: 'Minimapa nos editores' },
       ],
     },
     chooser: {

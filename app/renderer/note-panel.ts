@@ -51,6 +51,8 @@ export interface NoteHost {
   getWordWrap(): boolean
   /** Flips the global word-wrap preference; every editor follows through setWordWrap. */
   toggleWordWrap(): void
+  /** The general minimap preference (settings.json `extensions.note.minimap`). */
+  getMinimap(): boolean
   /** The editor's widget got or lost the keyboard. */
   onFocus(panel: NotePanel, focused: boolean): void
   /** The view state (or the path) changed: persist the pane params with the layout. */
@@ -151,6 +153,7 @@ export class NotePanel implements IContentRenderer {
     }
     this.path = note.path
     this.cwd = note.cwd
+    this.minimapOverride = note.minimap
     this.initialView = note.view
     this.createEditor()
     this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
@@ -174,7 +177,7 @@ export class NotePanel implements IContentRenderer {
       lineHeight: Math.round(font.fontSize * font.lineHeight),
       wordWrap: this.host.getWordWrap() ? 'on' : 'off',
       wrappingIndent: 'same',
-      minimap: { enabled: true, renderCharacters: false },
+      minimap: { enabled: this.minimapEnabled(), renderCharacters: false },
       folding: true,
       foldingHighlight: false,
       showFoldingControls: 'mouseover',
@@ -478,6 +481,28 @@ export class NotePanel implements IContentRenderer {
 
   /** The wordWrap option the editor runs with right now ("on" / "off"). */
   wordWrapOption(): string { return this.editor ? String(this.editor.getOption(monaco.editor.EditorOption.wordWrap)) : '' }
+
+  /** This editor's own minimap choice (undefined: follows the general setting). Persisted in the pane params. */
+  minimapOverride: boolean | undefined
+
+  /** Whether the minimap shows: the editor's own choice wins over the general setting. */
+  minimapEnabled(): boolean { return this.minimapOverride ?? this.host.getMinimap() }
+
+  /** What the editor really runs with: the minimap option and the width of Monaco's element (0 when hidden, or when the tab is not showing). */
+  minimapShown(): { option: boolean; width: number } {
+    const el = this.element.querySelector<HTMLElement>('.monaco-editor .minimap')
+    return { option: !!this.editor?.getOption(monaco.editor.EditorOption.minimap).enabled, width: el ? el.offsetWidth : 0 }
+  }
+
+  /** Applies the effective minimap to the editor (after the general setting or the override changed). */
+  refreshMinimap(): void { this.editor?.updateOptions({ minimap: { enabled: this.minimapEnabled(), renderCharacters: false } }) }
+
+  /** "Minimapa deste editor": flips what the editor shows now as its own choice; undefined resets it to the general setting. */
+  setMinimapOverride(value: boolean | undefined): void {
+    this.minimapOverride = value
+    this.refreshMinimap()
+    this.flushView()
+  }
 
   setWordWrap(on: boolean): void { this.editor?.updateOptions({ wordWrap: on ? 'on' : 'off' }) }
 

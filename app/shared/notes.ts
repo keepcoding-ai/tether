@@ -37,6 +37,8 @@ export interface NoteParams {
     view?: NoteView
     /** The folder the file was opened from (Quick Open's root): the pane's opening folder for the next Quick Open or note. */
     cwd?: string
+    /** This editor's own minimap choice; absent means it follows the general setting (`extensions.note.minimap`). */
+    minimap?: boolean
   }
 }
 
@@ -45,14 +47,19 @@ export function noteParams(params: unknown): NoteParams['note'] | undefined {
   if (!params || typeof params !== 'object') return undefined
   const note = (params as { note?: unknown }).note
   if (!note || typeof note !== 'object' || typeof (note as { path?: unknown }).path !== 'string') return undefined
-  const { path, view, cwd } = note as { path: string; view?: unknown; cwd?: unknown }
-  return { path, ...(view && typeof view === 'object' ? { view: view as NoteView } : {}), ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}) }
+  const { path, view, cwd, minimap } = note as { path: string; view?: unknown; cwd?: unknown; minimap?: unknown }
+  return { path, ...(view && typeof view === 'object' ? { view: view as NoteView } : {}), ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}), ...(typeof minimap === 'boolean' ? { minimap } : {}) }
 }
 
-/** The params with the note's view replaced (or the path changed); other params are kept, the opening folder too when `note` names none. */
-export function withNote(params: Record<string, unknown> | undefined, note: NoteParams['note']): Record<string, unknown> {
-  const cwd = note.cwd ?? noteParams(params)?.cwd
-  return { ...(params ?? {}), note: { path: note.path, ...(note.view ? { view: note.view } : {}), ...(cwd ? { cwd } : {}) } }
+/**
+ * The params with the note's view replaced (or the path changed); other params are kept, the opening folder too when `note` names none.
+ * `minimap`: absent keeps the stored choice, `null` clears it (back to the general setting), a boolean sets it.
+ */
+export function withNote(params: Record<string, unknown> | undefined, note: Omit<NoteParams['note'], 'minimap'> & { minimap?: boolean | null }): Record<string, unknown> {
+  const current = noteParams(params)
+  const cwd = note.cwd ?? current?.cwd
+  const minimap = note.minimap === undefined ? current?.minimap : note.minimap ?? undefined
+  return { ...(params ?? {}), note: { path: note.path, ...(note.view ? { view: note.view } : {}), ...(cwd ? { cwd } : {}), ...(minimap !== undefined ? { minimap } : {}) } }
 }
 
 /** What the tab shows: the file name. */
