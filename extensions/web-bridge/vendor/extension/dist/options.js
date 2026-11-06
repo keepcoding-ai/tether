@@ -1,5 +1,53 @@
 // <define:__BRAND__>
-var define_BRAND_default = { name: "Tether", product: "Tether Bridge", color: "#5b8def" };
+var define_BRAND_default = { slug: "tether", name: "Tether", shortName: "Tether", description: "Deixa os agentes do Tether (Claude, soul) usarem este navegador, s\xF3 nas abas que eles abriram ou que voc\xEA entregou.", color: "#6aa6ff", colors: { accent: "#6aa6ff", light: { ink: "#1b1b1f", paper: "#f4f4f7" }, dark: { ink: "#e8e8ee", paper: "#141418" } }, host: { name: "tether", id: "studio.codr.tether" }, locale: "pt-BR", mcp: { serverName: "tether-bridge" }, tabs: { groupTitle: "{shortName}", agentTitle: "{shortName} \xB7 {agent}", groupColor: "blue" }, capabilities: { evaluate: "own-tabs", download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: true }, icons: { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }, logos: { h: { light: "brand/logo-h-light.svg", dark: "brand/logo-h-dark.svg" }, symbol: { light: "brand/logo-light.svg", dark: "brand/logo-dark.svg" } }, product: "Tether Bridge" };
+
+// extension/src/brand.ts
+var DEFAULT_BRAND = { name: "Atrium", product: "Atrium Bridge" };
+var BUILD_BRAND = typeof define_BRAND_default === "undefined" ? DEFAULT_BRAND : { ...DEFAULT_BRAND, ...define_BRAND_default };
+var brandName = () => BUILD_BRAND.name;
+var productName = () => BUILD_BRAND.product;
+var brandAccent = () => BUILD_BRAND.colors?.accent ?? BUILD_BRAND.color;
+var brandTheme = (scheme) => BUILD_BRAND.colors?.[scheme];
+var brandLogos = () => BUILD_BRAND.logos?.h;
+
+// extension/src/brand-ui.ts
+function mountLogo(title, logos) {
+  const text = title.textContent ?? "";
+  title.replaceChildren();
+  const picture = document.createElement("picture");
+  picture.className = "brand-logo";
+  const dark = document.createElement("source");
+  dark.media = "(prefers-color-scheme: dark)";
+  dark.srcset = logos.dark;
+  const img = document.createElement("img");
+  img.src = logos.light;
+  img.alt = "";
+  img.decoding = "sync";
+  picture.append(dark, img);
+  const label = document.createElement("span");
+  label.className = "sr-only";
+  label.textContent = text;
+  title.append(picture, label);
+  title.classList.add("has-logo");
+}
+function mountColors() {
+  const accent = brandAccent();
+  const light = brandTheme("light");
+  const dark = brandTheme("dark");
+  if (!accent && !light && !dark) return;
+  const vars = (t) => t ? `--bg: ${t.paper}; --fg: ${t.ink};` : "";
+  const style = document.createElement("style");
+  style.id = "brand-colors";
+  style.textContent = `:root { ${accent ? `--brand-accent: ${accent};` : ""} ${vars(light)} }
+@media (prefers-color-scheme: dark) { :root { ${vars(dark)} } }
+`;
+  document.head.append(style);
+}
+function applyBrandUi(title) {
+  mountColors();
+  const logos = brandLogos();
+  if (logos) mountLogo(title, logos);
+}
 
 // src/protocol.ts
 var DEFAULT_PORT = 47821;
@@ -44,12 +92,6 @@ async function setAllowEvaluate(allow) {
 }
 var ALLOW_EVALUATE_STORAGE_KEY = ALLOW_EVALUATE_KEY;
 var STATUS_STORAGE_KEY = STATUS_KEY;
-
-// extension/src/brand.ts
-var DEFAULT_BRAND = { name: "Atrium", product: "Atrium Bridge" };
-var BUILD_BRAND = typeof define_BRAND_default === "undefined" ? DEFAULT_BRAND : { ...DEFAULT_BRAND, ...define_BRAND_default };
-var brandName = () => BUILD_BRAND.name;
-var productName = () => BUILD_BRAND.product;
 
 // extension/src/strings.ts
 var B = brandName();
@@ -187,6 +229,7 @@ async function init() {
   })) {
     $(id).textContent = text;
   }
+  applyBrandUi($("title"));
   $("save").textContent = OPTIONS.save;
   const s = await loadSettings();
   $("name").value = s.name;

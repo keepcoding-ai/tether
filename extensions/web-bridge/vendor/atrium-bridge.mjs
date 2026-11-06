@@ -47,7 +47,22 @@ function cleanClientName(raw) {
   const cleaned = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CLIENT_NAME_MAX).trim();
   return cleaned || void 0;
 }
-var PROTOCOL_VERSION, DEFAULT_PORT, WS_PATH, CLOSE_DENIED, CLOSE_REPLACED, CLOSE_PROTOCOL, CLIENT_ID_HEADER, CLIENT_NAME_HEADER, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, SEED_FILE, EXTENSION_ID_PATTERN;
+function sanitizeTabs(v) {
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  for (const raw of v.slice(0, STATUS_TABS_MAX)) {
+    const t = raw;
+    if (!t || typeof t !== "object" || typeof t.id !== "number" || !Number.isInteger(t.id)) continue;
+    out.push({
+      id: t.id,
+      url: typeof t.url === "string" ? t.url.slice(0, STATUS_URL_MAX) : "",
+      title: typeof t.title === "string" ? t.title.slice(0, STATUS_TITLE_MAX) : "",
+      ...isClientId(t.owner) ? { owner: t.owner } : {}
+    });
+  }
+  return out;
+}
+var PROTOCOL_VERSION, DEFAULT_PORT, WS_PATH, CLOSE_DENIED, CLOSE_REPLACED, CLOSE_PROTOCOL, CLIENT_ID_HEADER, CLIENT_NAME_HEADER, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, STATUS_TABS_MAX, STATUS_URL_MAX, STATUS_TITLE_MAX, SEED_FILE, EXTENSION_ID_PATTERN;
 var init_protocol = __esm({
   "src/protocol.ts"() {
     "use strict";
@@ -61,8 +76,47 @@ var init_protocol = __esm({
     CLIENT_NAME_HEADER = "x-bridge-client-name";
     CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$/;
     CLIENT_NAME_MAX = 80;
+    STATUS_TABS_MAX = 500;
+    STATUS_URL_MAX = 2048;
+    STATUS_TITLE_MAX = 300;
     SEED_FILE = "bridge.json";
     EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
+  }
+});
+
+// daemon/src/package-info.ts
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+function isPackagedBrand(v) {
+  if (!isRecord(v) || typeof v.slug !== "string" || typeof v.name !== "string") return false;
+  if (v.host !== void 0 && !(isRecord(v.host) && typeof v.host.name === "string")) return false;
+  if (v.mcp !== void 0 && !(isRecord(v.mcp) && (v.mcp.serverName === void 0 || typeof v.mcp.serverName === "string"))) return false;
+  if (v.capabilities !== void 0 && !isCapabilities(v.capabilities)) return false;
+  return true;
+}
+function readPackagedBrand(buildInfo) {
+  if (!buildInfo || !existsSync(buildInfo)) return void 0;
+  try {
+    const info2 = JSON.parse(readFileSync(buildInfo, "utf8"));
+    return isRecord(info2) && isPackagedBrand(info2.brand) ? info2.brand : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function packagedServerName(buildInfo) {
+  const name = readPackagedBrand(buildInfo)?.mcp?.serverName?.trim();
+  return name && SERVER_NAME_PATTERN.test(name) ? name : void 0;
+}
+var BUILD_INFO_FILE, isRecord, isCapabilities, buildInfoNextTo, buildInfoOfScript, SERVER_NAME_PATTERN;
+var init_package_info = __esm({
+  "daemon/src/package-info.ts"() {
+    "use strict";
+    BUILD_INFO_FILE = "build-info.json";
+    isRecord = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+    isCapabilities = (v) => isRecord(v) && Object.entries(v).every(([k, val]) => /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(k) && (typeof val === "boolean" || typeof val === "string" && val.length > 0 && val.length <= 32));
+    buildInfoNextTo = (extensionDir) => join(dirname(resolve(extensionDir)), BUILD_INFO_FILE);
+    buildInfoOfScript = (script = process.argv[1]) => script ? join(dirname(resolve(script)), BUILD_INFO_FILE) : null;
+    SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
   }
 });
 
@@ -92,25 +146,25 @@ var init_secrets = __esm({
 
 // daemon/src/config.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 function bridgeHome(env = process.env) {
-  return env.ATRIUM_BRIDGE_HOME || join(homedir(), ".atrium-bridge");
+  return env.ATRIUM_BRIDGE_HOME || join2(homedir(), ".atrium-bridge");
 }
 function isStored(v) {
   const c = v;
   if (!c || typeof c !== "object") return false;
   const keysOk = c.apiKeys === void 0 || Array.isArray(c.apiKeys) && c.apiKeys.every(isKey);
   const names = (c.apiKeys ?? []).map((k) => k.name);
-  return typeof c.port === "number" && typeof c.pairingToken === "string" && c.pairingToken.length >= 16 && keysOk && new Set(names).size === names.length && (c.apiToken === void 0 || typeof c.apiToken === "string" && c.apiToken.length >= 16) && (c.apiKeys !== void 0 || c.apiToken !== void 0) && (c.brand === void 0 || isBrand(c.brand)) && (c.extensionIds === void 0 || isExtensionIdList(c.extensionIds)) && (c.embedded === void 0 || typeof c.embedded === "boolean") && (c.supervisorEnvFile === void 0 || typeof c.supervisorEnvFile === "string" && c.supervisorEnvFile.length > 0);
+  return typeof c.port === "number" && typeof c.pairingToken === "string" && c.pairingToken.length >= 16 && keysOk && new Set(names).size === names.length && (c.apiToken === void 0 || typeof c.apiToken === "string" && c.apiToken.length >= 16) && (c.apiKeys !== void 0 || c.apiToken !== void 0) && (c.brand === void 0 || isBrand(c.brand)) && (c.capabilities === void 0 || isCapabilities(c.capabilities)) && (c.extensionIds === void 0 || isExtensionIdList(c.extensionIds)) && (c.embedded === void 0 || typeof c.embedded === "boolean") && (c.supervisorEnvFile === void 0 || typeof c.supervisorEnvFile === "string" && c.supervisorEnvFile.length > 0);
 }
 function readStored(home3) {
   const p = configPath(home3);
-  if (!existsSync(p)) return null;
+  if (!existsSync2(p)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(p, "utf8"));
+    parsed = JSON.parse(readFileSync2(p, "utf8"));
   } catch (e) {
     if (!(e instanceof SyntaxError)) throw e;
     throw new Error(`config file ${p} is not valid JSON; fix or delete it to generate new tokens`);
@@ -124,7 +178,7 @@ function legacyName(keys) {
   return name;
 }
 function normalize(stored, legacyCreatedAt) {
-  const { apiToken, apiKeys = [], port, pairingToken, brand, extensionIds, embedded, supervisorEnvFile } = stored;
+  const { apiToken, apiKeys = [], port, pairingToken, brand, capabilities, extensionIds, embedded, supervisorEnvFile } = stored;
   const keys = apiKeys.map((k) => ({ ...k }));
   if (apiToken !== void 0) {
     const hash = hashSecret(apiToken);
@@ -135,6 +189,7 @@ function normalize(stored, legacyCreatedAt) {
     pairingToken,
     apiKeys: keys,
     ...brand !== void 0 ? { brand: { ...brand } } : {},
+    ...capabilities !== void 0 ? { capabilities: { ...capabilities } } : {},
     ...extensionIds !== void 0 ? { extensionIds: [...extensionIds] } : {},
     ...embedded !== void 0 ? { embedded } : {},
     ...supervisorEnvFile !== void 0 ? { supervisorEnvFile } : {}
@@ -146,7 +201,7 @@ function readConfig(home3) {
 }
 function readLocalKey(home3) {
   try {
-    const value = readFileSync(localKeyPath(home3), "utf8").trim();
+    const value = readFileSync2(localKeyPath(home3), "utf8").trim();
     if (value) return value;
   } catch {
   }
@@ -208,6 +263,7 @@ function writeStored(home3, config2, extra = {}) {
   void _legacy;
   const out = { ...unknownFields, ...config2 };
   if (config2.brand === void 0) delete out.brand;
+  if (config2.capabilities === void 0) delete out.capabilities;
   if (config2.extensionIds === void 0) delete out.extensionIds;
   writeFileAtomic(configPath(home3), JSON.stringify(out, null, 2));
 }
@@ -253,7 +309,7 @@ function writeDaemonPid(home3, pid) {
 }
 function readDaemonPid(home3) {
   try {
-    const n = Number(readFileSync(daemonPidPath(home3), "utf8").trim());
+    const n = Number(readFileSync2(daemonPidPath(home3), "utf8").trim());
     return Number.isInteger(n) && n > 0 ? n : null;
   } catch {
     return null;
@@ -277,18 +333,19 @@ var init_config = __esm({
   "daemon/src/config.ts"() {
     "use strict";
     init_protocol();
+    init_package_info();
     init_secrets();
     KEY_SCOPES = ["use", "admin"];
     DEFAULT_KEY_NAME = "default";
     LEGACY_KEY_NAME = "legacy";
     KEY_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-    supervisorHome = (home3) => join(home3, "supervisor");
-    daemonPidPath = (home3) => join(home3, "daemon.pid");
-    daemonLogPath = (home3) => join(home3, "daemon.log");
-    mcpLogPath = (home3) => join(home3, "mcp.log");
-    localKeyPath = (home3) => join(home3, "api.key");
-    configPath = (home3) => join(home3, "config.json");
-    lockPath = (home3) => join(home3, "config.lock");
+    supervisorHome = (home3) => join2(home3, "supervisor");
+    daemonPidPath = (home3) => join2(home3, "daemon.pid");
+    daemonLogPath = (home3) => join2(home3, "daemon.log");
+    mcpLogPath = (home3) => join2(home3, "mcp.log");
+    localKeyPath = (home3) => join2(home3, "api.key");
+    configPath = (home3) => join2(home3, "config.json");
+    lockPath = (home3) => join2(home3, "config.lock");
     isKey = (v) => {
       const k = v;
       return !!k && typeof k.name === "string" && KEY_NAME_PATTERN.test(k.name) && isSecretHash(k.hash) && typeof k.createdAt === "string" && (k.scope === void 0 || KEY_SCOPES.includes(k.scope));
@@ -363,6 +420,21 @@ function setBrand(home3, brand) {
       };
   });
 }
+function setCapabilities(home3, capabilities) {
+  if (capabilities !== null && !isCapabilities(capabilities)) throw capabilitiesError();
+  updateConfig(home3, (config2) => {
+    if (capabilities === null) delete config2.capabilities;
+    else config2.capabilities = { ...capabilities };
+  });
+}
+function seedCapabilities(home3, defaults) {
+  if (!isCapabilities(defaults)) throw capabilitiesError();
+  return updateConfig(home3, (config2) => {
+    if (config2.capabilities !== void 0) return [];
+    config2.capabilities = { ...defaults };
+    return Object.keys(defaults);
+  });
+}
 function setExtensionIds(home3, ids) {
   if (!isExtensionIdList(ids)) throw keyError("EXTENSION_ID_INVALID", "invalid extension id: expected 32 letters a-p");
   updateConfig(home3, (config2) => {
@@ -386,7 +458,7 @@ function rotatePairingToken(home3) {
   });
   return value;
 }
-var keyError, info;
+var keyError, info, capabilitiesError;
 var init_keys = __esm({
   "daemon/src/keys.ts"() {
     "use strict";
@@ -395,6 +467,7 @@ var init_keys = __esm({
     init_protocol();
     keyError = (code, message) => Object.assign(new Error(message), { code });
     info = (k) => ({ name: k.name, createdAt: k.createdAt, ...k.scope ? { scope: k.scope } : {} });
+    capabilitiesError = () => keyError("CAPABILITIES_INVALID", 'invalid capabilities: an object of booleans or short modes, e.g. { evaluate: "own-tabs", download: true }');
   }
 });
 
@@ -416,13 +489,32 @@ var init_extension_id = __esm({
 });
 
 // daemon/src/install.ts
-import { cpSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, readdirSync, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
-import { dirname, join as join2, resolve } from "node:path";
+import { cpSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync3, readdirSync, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
+import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
+function brandFromPackage(packaged) {
+  if (!packaged.host?.name) return void 0;
+  return {
+    name: packaged.host.name,
+    ...packaged.color !== void 0 ? { color: packaged.color } : {},
+    ...packaged.host.id !== void 0 ? { hostId: packaged.host.id } : {}
+  };
+}
+function seedFromPackage(home3, packaged, hadBrand) {
+  const seeded = { capabilities: [], brand: false };
+  if (!packaged) return seeded;
+  if (packaged.capabilities) seeded.capabilities = seedCapabilities(home3, packaged.capabilities);
+  const brand = brandFromPackage(packaged);
+  if (brand && !hadBrand) {
+    setBrand(home3, brand);
+    seeded.brand = true;
+  }
+  return seeded;
+}
 function extensionIdOf(dir) {
-  const manifestPath = join2(dir, "manifest.json");
-  if (!existsSync2(manifestPath)) throw installError("EXTENSION_NOT_FOUND", `no manifest.json in ${dir}`);
-  const manifest = JSON.parse(readFileSync2(manifestPath, "utf8"));
+  const manifestPath = join3(dir, "manifest.json");
+  if (!existsSync3(manifestPath)) throw installError("EXTENSION_NOT_FOUND", `no manifest.json in ${dir}`);
+  const manifest = JSON.parse(readFileSync3(manifestPath, "utf8"));
   if (typeof manifest.key !== "string" || !manifest.key) {
     throw installError("EXTENSION_NO_KEY", `${manifestPath} has no "key": the extension id would change at every load`);
   }
@@ -431,40 +523,42 @@ function extensionIdOf(dir) {
   return id;
 }
 function writeSeed(dir, seed) {
-  const p = join2(dir, SEED_FILE);
+  const p = join3(dir, SEED_FILE);
   const out = { port: seed.port, token: seed.token, ...seed.host ? { host: seed.host } : {} };
   writeFileAtomic(p, `${JSON.stringify(out, null, 2)}
 `);
   return p;
 }
 function defaultExtensionSource() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const script = process.argv[1] ? dirname(resolve(process.argv[1])) : null;
+  const here = dirname2(fileURLToPath(import.meta.url));
+  const script = process.argv[1] ? dirname2(resolve2(process.argv[1])) : null;
   const candidates = [
-    ...script ? [join2(script, "extension")] : [],
-    join2(here, "extension"),
-    join2(here, "..", "..", "dist", "extension")
+    ...script ? [join3(script, "extension")] : [],
+    join3(here, "extension"),
+    join3(here, "..", "..", "dist", "extension")
   ];
-  return candidates.find((c) => existsSync2(join2(c, "manifest.json"))) ?? null;
+  return candidates.find((c) => existsSync3(join3(c, "manifest.json"))) ?? null;
 }
 function countFiles(dir) {
-  return readdirSync(dir, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? countFiles(join2(dir, e.name)) : 1), 0);
+  return readdirSync(dir, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? countFiles(join3(dir, e.name)) : 1), 0);
 }
 function installExtension(opts) {
   const source = opts.source ?? defaultExtensionSource();
   if (!source) throw installError("EXTENSION_NOT_FOUND", "no built extension found: run `npm run build` or pass --from <extension dir>");
-  if (!existsSync2(join2(source, "manifest.json"))) throw installError("EXTENSION_NOT_FOUND", `no manifest.json in ${source}`);
+  if (!existsSync3(join3(source, "manifest.json"))) throw installError("EXTENSION_NOT_FOUND", `no manifest.json in ${source}`);
   const extensionId = extensionIdOf(source);
-  const dir = resolve(opts.dir);
-  if (existsSync2(dir) && !statSync2(dir).isDirectory()) throw installError("INSTALL_DIR_INVALID", `${dir} is not a directory`);
-  if (resolve(source) === dir) throw installError("INSTALL_DIR_INVALID", "the destination is the source folder");
-  const config2 = ensureConfig(opts.home, opts.port);
+  const dir = resolve2(opts.dir);
+  if (existsSync3(dir) && !statSync2(dir).isDirectory()) throw installError("INSTALL_DIR_INVALID", `${dir} is not a directory`);
+  if (resolve2(source) === dir) throw installError("INSTALL_DIR_INVALID", "the destination is the source folder");
+  let config2 = ensureConfig(opts.home, opts.port);
+  const seeded = opts.seed === false ? { capabilities: [], brand: false } : seedFromPackage(opts.home, readPackagedBrand(opts.buildInfo ?? buildInfoNextTo(source)), config2.brand !== void 0);
+  if (seeded.brand || seeded.capabilities.length) config2 = ensureConfig(opts.home, opts.port);
   mkdirSync2(dir, { recursive: true });
-  rmSync3(join2(dir, SEED_FILE), { force: true });
+  rmSync3(join3(dir, SEED_FILE), { force: true });
   cpSync(source, dir, { recursive: true, force: true });
   writeSeed(dir, { port: config2.port, token: config2.pairingToken, ...config2.brand?.name ? { host: config2.brand.name } : {} });
   const extensionIds = opts.pin === false ? config2.extensionIds ?? [] : pinExtensionId(opts.home, extensionId);
-  return { dir, extensionId, port: config2.port, extensionIds, files: countFiles(dir) };
+  return { dir, extensionId, port: config2.port, extensionIds, files: countFiles(dir), seeded };
 }
 var installError;
 var init_install = __esm({
@@ -473,6 +567,7 @@ var init_install = __esm({
     init_protocol();
     init_config();
     init_keys();
+    init_package_info();
     init_extension_id();
     installError = (code, message) => Object.assign(new Error(message), { code });
   }
@@ -549,6 +644,7 @@ __export(util_exports, {
   required: () => required,
   safeExtend: () => safeExtend,
   shallowClone: () => shallowClone,
+  sizeCaps: () => sizeCaps,
   slugify: () => slugify,
   stringifyPrimitive: () => stringifyPrimitive,
   toZod: () => toZod,
@@ -971,6 +1067,18 @@ function prefixIssues(path, issues) {
 }
 function unwrapMessage(message) {
   return typeof message === "string" ? message : message?.message;
+}
+function sizeCaps(defChecks) {
+  const caps = [];
+  for (const ch of defChecks ?? []) {
+    const d = ch._zod.def;
+    if (!/_(length|size)$|_equals$/.test(d.check))
+      break;
+    const max = d.maximum ?? d.length ?? d.size;
+    if (max >= 0)
+      caps.push([max, ch]);
+  }
+  return caps;
 }
 function attachSchema(issues, start, inst) {
   var _a3;
@@ -2173,7 +2281,7 @@ var init_versions = __esm({
     version = {
       major: 4,
       minor: 6,
-      patch: 5
+      patch: 7
     };
   }
 });
@@ -2300,6 +2408,28 @@ function isValidJWT(token, algorithm = null) {
   } catch {
     return false;
   }
+}
+function capSize(inst, size) {
+  const caps = sizeCaps(inst._zod.def.checks);
+  if (!caps.length)
+    return;
+  const cap = Math.min(...caps.map((c) => c[0]));
+  const parse3 = inst._zod.parse;
+  inst._zod.parse = (payload, ctx) => {
+    const n = size(payload.value);
+    if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
+      for (const [max, ch] of sizeCaps(inst._zod.def.checks)) {
+        if (n > max && ch._zod.def.when(payload)) {
+          const start = payload.issues.length;
+          ch._zod.check(payload);
+          payload.issues[start].continue = false;
+          attachSchema(payload.issues, start, inst);
+          return payload;
+        }
+      }
+    }
+    return parse3(payload, ctx);
+  };
 }
 function handleArrayResult(result, final, index) {
   if (result.issues.length) {
@@ -2611,7 +2741,7 @@ function handleRefineResult(result, payload, input, inst) {
     payload.issues.push(issue(_iss));
   }
 }
-var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
+var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, arraySize, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
 var init_schemas = __esm({
   "node_modules/zod/v4/core/schemas.js"() {
     init_checks();
@@ -3069,6 +3199,7 @@ var init_schemas = __esm({
         return payload;
       };
     });
+    arraySize = (input) => Array.isArray(input) ? input.length : -1;
     $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def3) => {
       $ZodType.init(inst, def3);
       const memo2 = globalConfig.memoizer;
@@ -3106,6 +3237,7 @@ var init_schemas = __esm({
         }
         return payload;
       };
+      capSize(inst, arraySize);
     });
     NO_SYMBOL_KEYS = [];
     $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def3) => {
@@ -3840,7 +3972,7 @@ function isRef(value) {
 function cloneIssues(issues) {
   return issues.map((iss) => iss.path ? { ...iss, path: iss.path.slice() } : { ...iss });
 }
-function isRecursive(inst, stack, resolve6) {
+function isRecursive(inst, stack, resolve7) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -3850,7 +3982,7 @@ function isRecursive(inst, stack, resolve6) {
   let result = NONE;
   const check = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve6);
+      const answer = isRecursive(child, stack, resolve7);
       if (answer > result)
         result = answer;
     }
@@ -3861,7 +3993,7 @@ function isRecursive(inst, stack, resolve6) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve6) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve7) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -3925,7 +4057,7 @@ function isRecursive(inst, stack, resolve6) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def3._cachedInner ?? (resolve6 ? inst._zod.innerType : void 0);
+      const inner = def3._cachedInner ?? (resolve7 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -8697,12 +8829,12 @@ var init_stdio2 = __esm({
         this.onclose?.();
       }
       send(message) {
-        return new Promise((resolve6) => {
+        return new Promise((resolve7) => {
           const json = serializeMessage(message);
           if (this._stdout.write(json)) {
-            resolve6();
+            resolve7();
           } else {
-            this._stdout.once("drain", resolve6);
+            this._stdout.once("drain", resolve7);
           }
         });
       }
@@ -8747,7 +8879,16 @@ var init_errors3 = __esm({
 });
 
 // daemon/src/client.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
+function clientFromEnv(env = process.env) {
+  const id = env.ATRIUM_BRIDGE_CLIENT_ID?.trim();
+  if (!id) return void 0;
+  if (!isClientId(id)) {
+    throw new BridgeError("CLIENT_INVALID", `ATRIUM_BRIDGE_CLIENT_ID must match ${CLIENT_ID_PATTERN.source} (1 to 64 of letters, digits, . _ : @ -)`);
+  }
+  const name = cleanClientName(env.ATRIUM_BRIDGE_CLIENT_NAME);
+  return name ? { id, name } : { id };
+}
 function resolvePort(env = process.env) {
   const fromEnv = envPort(env);
   if (fromEnv !== void 0) return fromEnv;
@@ -8762,7 +8903,7 @@ function apiKeyFromEnv(env = process.env) {
   if (file) {
     let value = "";
     try {
-      value = readFileSync3(file, "utf8").trim();
+      value = readFileSync4(file, "utf8").trim();
     } catch (e) {
       throw new BridgeError("KEY_UNAVAILABLE", `cannot read the API key file ATRIUM_BRIDGE_KEY_FILE=${file} (${e.code ?? "error"})`);
     }
@@ -8790,7 +8931,8 @@ function targetFromEnv(env = process.env) {
       `no API key for the Atrium Bridge in ${home3}: create one with \`key create <name>\` and give it to this process by ATRIUM_BRIDGE_KEY_FILE`
     );
   }
-  return { port: envPort(env) ?? config2.port, apiKey };
+  const client = clientFromEnv(env);
+  return { port: envPort(env) ?? config2.port, apiKey, ...client ? { client } : {} };
 }
 function causeCodes(e) {
   const codes = [];
@@ -8865,6 +9007,9 @@ var init_client = __esm({
               // socket morto e falha como ECONNRESET ("em voo"), mesmo sem ter saído nada. Assim, ECONNREFUSED prova que o
               // pedido não saiu, e a classificação de classifyFetchFailure vale. Em loopback a conexão nova custa microssegundos.
               connection: "close",
+              // Quem chama, quando a casca se identificou: o daemon loga o id e o repassa à extensão em cada `call`.
+              ...target.client ? { [CLIENT_ID_HEADER]: target.client.id } : {},
+              ...target.client?.name ? { [CLIENT_NAME_HEADER]: target.client.name } : {},
               ...body !== void 0 ? { "content-type": "application/json" } : {}
             },
             ...body !== void 0 ? { body: JSON.stringify(body) } : {},
@@ -8887,6 +9032,15 @@ var init_client = __esm({
       async browsers() {
         return (await this.request("GET", "/browsers", this.controlTimeoutMs)).browsers;
       }
+      /** GET /status: browsers com abas sob controle e último foco, clientes vistos, pausa. O que um hospedeiro mostra. */
+      async status() {
+        return await this.request("GET", "/status", this.controlTimeoutMs);
+      }
+      /** POST /clients/:id/release: o agente `clientId` encerrou; cada browser solta as abas dele e recolhe o grupo dele. */
+      async releaseClient(clientId) {
+        const deadline = DAEMON_CALL_TIMEOUT_MS + this.callMarginMs;
+        return (await this.request("POST", `/clients/${encodeURIComponent(clientId)}/release`, deadline)).browsers;
+      }
       async call(browserId, tool, args, timeoutMs) {
         const body = { tool, args, ...timeoutMs ? { timeoutMs } : {} };
         const deadline = Math.min(timeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5) + this.callMarginMs;
@@ -8897,7 +9051,7 @@ var init_client = __esm({
 });
 
 // src/texts.ts
-var SERVER_NAME, REF, REF_OR_POINT, X, Y, COMMON_PARAMS, BRIDGE_TOOL_TEXTS, DAEMON_TEXTS;
+var SERVER_NAME, REF, REF_OR_POINT, X, Y, COMMON_PARAMS, BRIDGE_TOOL_TEXTS, BROWSER_TEXTS, DAEMON_TEXTS;
 var init_texts = __esm({
   "src/texts.ts"() {
     "use strict";
@@ -8907,17 +9061,48 @@ var init_texts = __esm({
     X = "Horizontal pixel coordinate in the viewport (use together with y, instead of ref).";
     Y = "Vertical pixel coordinate in the viewport (use together with x, instead of ref).";
     COMMON_PARAMS = {
-      browser: "Which connected browser to act in: its id or its name, as listed by list_browsers. Optional when exactly one browser is connected. With several connected and this omitted the call fails with BROWSER_AMBIGUOUS: ask the user which one, unless they already said.",
+      browser: "Which connected browser to act in: its id or its name, as listed by list_browsers. Optional when exactly one browser is connected. With several connected and this omitted, the call goes to the browser the user focused most recently and the result starts with a Notice saying which one; pass browser to choose. If no browser has reported focus yet the call fails with BROWSER_AMBIGUOUS: ask the user which one, unless they already said.",
       tab: "Tab id from the tabs tool. Optional: defaults to the current tab of that browser."
     };
     BRIDGE_TOOL_TEXTS = {
       list_browsers: {
-        description: 'List the user browsers connected to the Atrium Bridge: { id, name, userAgent, connectedAt }. Call it first when you do not know which browser to use. With one browser you can use it directly; with several, ask the user which one unless they already said ("in Brave").',
+        description: 'List the user browsers connected to the Atrium Bridge: { id, name, userAgent, connectedAt, lastFocusedAt? }. Call it first when you do not know which browser to use. With one browser you can use it directly; with several, the other tools default to the one the user focused most recently (lastFocusedAt) and say so in a Notice; pass browser when the user said which one ("in Brave").',
         params: {}
       },
       navigate: {
-        description: "Open a URL in a tab you control and wait for the page to load. Returns the final URL and the page title. Only http(s) and about:blank are accepted.",
-        params: { url: 'Absolute URL, for example "https://example.com/".' }
+        description: 'Open a URL in a tab you control and wait for the page to load, or move in the tab history with action "back", "forward" or "reload". Give url or action, not both. Returns the final URL and the page title. Only http(s) and about:blank are accepted. Refs from before the navigation go stale: take a new snapshot afterwards.',
+        params: {
+          url: 'Absolute URL, for example "https://example.com/".',
+          action: '"back", "forward" or "reload" (instead of url). back/forward fail with NAVIGATION_FAILED at the ends of the history.'
+        }
+      },
+      wait: {
+        description: 'Wait for something to happen in the tab: for "load" (the page finished loading), "networkidle" (no network requests for 500 ms), "text" (value appears in the visible text of the page, case sensitive), "selector" (an element matching the CSS selector in value is visible), "url" (the page URL contains value) or "time" (value milliseconds pass). The condition is checked right away: if it already holds the call returns at once. Fails with WAIT_TIMEOUT when it does not happen in time. Returns { matched, elapsedMs, url }.',
+        params: {
+          for: '"load", "networkidle", "text", "selector", "url" or "time".',
+          value: "The text, CSS selector, URL fragment or number of milliseconds, depending on for. Not used with load and networkidle.",
+          timeoutMs: "How long to wait, in milliseconds, up to 120000. Default 15000."
+        }
+      },
+      find: {
+        description: "Search the page for elements by role, accessible name or text, without reading the whole tree. Takes a fresh snapshot, so the returned refs work right away in click, type and the other tools (and older refs go stale). Give at least one of role, name or text; matches are case-insensitive. Returns { url, title, found: [{ ref, role, name, box }] }.",
+        params: {
+          role: "Exact ARIA role, for example button, link or textbox.",
+          name: "Part of the accessible name.",
+          text: "Part of the visible text of the element (its name or its own text).",
+          limit: "Maximum results. Default 20."
+        }
+      },
+      read: {
+        description: "Read the text of the page in reading order (the main content when the page has one), with the URL of each link after its text. Cheaper than snapshot when you only need to read. Returns { url, title, text, truncated, source } and says when the text was cut.",
+        params: { maxChars: "Character limit before the text is cut. Default 50000." }
+      },
+      links: {
+        description: "List the visible links of the page: { ref, text, href } with absolute URLs, without repeating the same href and text. Takes a fresh snapshot, so the refs work in click. Links with neither text nor accessible name are left out (pass includeUnnamed to see them).",
+        params: {
+          limit: "Maximum links. Default 100.",
+          includeUnnamed: "Also list links with no text and no accessible name (icons without a label, empty anchors). Default false."
+        }
       },
       snapshot: {
         description: "Read the page as an accessibility tree. Interactive elements carry a ref like [ref=e12] and a box [box=x,y,width,height]. Use it before acting: every ref you pass to the other tools must come from the latest snapshot of the same tab, and a navigation makes older refs stale.",
@@ -8984,11 +9169,31 @@ var init_texts = __esm({
         }
       },
       tabs: {
-        description: 'Manage the tabs the agent controls. The agent only sees and controls tabs it opened itself and tabs the user handed over with the "Hand this tab to Atrium" button; they live in a tab group named "Atrium". Actions: list, new (opens a tab and makes it current), close, activate.',
+        description: `Manage the tabs the agent controls. The agent only sees and controls tabs it opened itself and tabs the user handed over with the "Hand this tab to Atrium" button; they live in a tab group named "Atrium". Actions: list, new (opens a tab and makes it current), close, activate. When several agents share the browser, each one owns the tabs it opened (its own tab group and its own current tab); tabs the user handed over without choosing an agent are shared. "list" also shows other agents' tabs, marked ownedByOther: acting on one of those fails with TAB_OWNED_BY_OTHER. Open your own tab instead. An identified agent gets a browser window of its own: "new" opens there (created behind the user's window, never stealing focus, reused afterwards) unless where is "user-window". Tabs a page opens from one of your tabs (popups, target=_blank, OAuth) join your tabs automatically.`,
         params: {
           action: '"list", "new", "close" or "activate".',
-          url: 'URL for "new" (default about:blank).'
+          url: 'URL for "new" (default about:blank).',
+          where: 'For "new": "agent-window" (default: the window of this agent, created unfocused if needed) or "user-window" (the window the user is in, as a tab next to theirs).'
         }
+      },
+      dialog: {
+        description: 'Answer a native dialog (alert, confirm, prompt or beforeunload) that the page opened. While a dialog is open the page is blocked and every other tool on that tab fails with DIALOG_OPEN, telling you the dialog type and message; nothing is accepted or dismissed for you. "accept" presses OK (with text as the answer of a prompt; default: the prompt default), "dismiss" presses Cancel. Returns { type, message, action }.',
+        params: {
+          action: '"accept" (OK) or "dismiss" (Cancel).',
+          text: "The answer to type into a prompt (only with accept on a prompt)."
+        }
+      },
+      select: {
+        description: "Choose an option of a native <select> (dropdown) by its value or its visible label; give exactly one. Sets the selection and fires input and change, but these events are not isTrusted (no real click on the list). Reports the option that ended up selected and whether it changed; fails with OPTION_NOT_FOUND (listing the options), OPTION_AMBIGUOUS or OPTION_DISABLED. For a custom dropdown, click it and click its option instead.",
+        params: {
+          ref: `The select. ${REF}`,
+          value: "The option value attribute.",
+          label: "Visible text of the option."
+        }
+      },
+      setChecked: {
+        description: "Leave a checkbox, radio button or switch checked or unchecked. It clicks like a person (trusted click) only if the current state differs, then confirms the result. Fails with NOT_CHECKABLE when the element has no checked state and STATE_NOT_CHANGED when the click did not flip it (a radio cannot be unchecked).",
+        params: { ref: REF, checked: "The state you want." }
       },
       readConsole: {
         description: "Read the console of the tab (console.* calls, uncaught errors and browser log entries) collected since the tab came under control. Each entry has a seq number; pass the last one as afterSeq to read only what is new.",
@@ -9006,6 +9211,10 @@ var init_texts = __esm({
           awaitPromise: "Await the value when it is a promise (default true)."
         }
       }
+    };
+    BROWSER_TEXTS = {
+      /** Primeiro bloco de texto do resultado quando a casca escolheu o browser pelo foco. */
+      focusedNotice: (name) => `Notice: usei "${name}", o navegador em que voc\xEA mexeu por \xFAltimo; passe browser= para escolher.`
     };
     DAEMON_TEXTS = {
       /** Sucesso de uma chamada que precisou reiniciar o daemon. Vai como primeiro bloco de texto do resultado. */
@@ -9037,9 +9246,9 @@ ${o.tail}` : ""),
 
 // daemon/src/embedded.ts
 import { execFile, spawn } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync as mkdirSync3 } from "node:fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3 } from "node:fs";
 import { createServer } from "node:net";
-import { resolve as resolve2 } from "node:path";
+import { resolve as resolve3 } from "node:path";
 function childEnv(extra) {
   const env = {};
   for (const key of ENV_ALLOWLIST) if (process.env[key] !== void 0) env[key] = process.env[key];
@@ -9091,8 +9300,8 @@ function startEmbeddedSupervisor(opts) {
     );
   });
   const ready = (async () => {
-    if (!existsSync3(SUPERVISOR_SERVICE_DIR)) throw new Error(`supervisor service not found at ${SUPERVISOR_SERVICE_DIR}`);
-    if (opts.envFile !== void 0 && !existsSync3(opts.envFile)) throw new Error(`supervisor env file not found: ${opts.envFile}`);
+    if (!existsSync4(SUPERVISOR_SERVICE_DIR)) throw new Error(`supervisor service not found at ${SUPERVISOR_SERVICE_DIR}`);
+    if (opts.envFile !== void 0 && !existsSync4(opts.envFile)) throw new Error(`supervisor env file not found: ${opts.envFile}`);
     await assertPortFree(opts.port);
     mkdirSync3(dataDir, { recursive: true });
     const args = [
@@ -9188,7 +9397,7 @@ var init_embedded = __esm({
     init_errors3();
     init_config();
     EMBEDDED_OWNER = "owner@atrium-bridge.local";
-    SUPERVISOR_SERVICE_DIR = resolve2(import.meta.dirname, "../../../../services/supervisor");
+    SUPERVISOR_SERVICE_DIR = resolve3(import.meta.dirname, "../../../../services/supervisor");
     DEFAULT_START_TIMEOUT_MS = 24e4;
     APPROVE_TIMEOUT_MS = 12e4;
     USER_CODE = /^[A-Z0-9]{4,12}(?:-[A-Z0-9]{4,12})?$/;
@@ -9231,7 +9440,7 @@ var init_embedded = __esm({
 import { execFile as execFile2, spawn as spawn2 } from "node:child_process";
 import { appendFileSync, closeSync, fstatSync, mkdirSync as mkdirSync4, openSync, readSync, renameSync as renameSync2, statSync as statSync3 } from "node:fs";
 import { request } from "node:http";
-import { dirname as dirname2, resolve as resolve3 } from "node:path";
+import { dirname as dirname3, resolve as resolve4 } from "node:path";
 function createEnsure(ops, opts) {
   const breaker2 = new Breaker(opts.breaker, ops.now);
   const reasons = DAEMON_TEXTS.startReasons;
@@ -9372,10 +9581,10 @@ function createEnsure(ops, opts) {
   };
 }
 function daemonEnv(home3) {
-  return childEnv({ ATRIUM_BRIDGE_HOME: resolve3(home3) });
+  return childEnv({ ATRIUM_BRIDGE_HOME: resolve4(home3) });
 }
 function probeHealth(port, timeoutMs) {
-  return new Promise((resolve6) => {
+  return new Promise((resolve7) => {
     let settled = false;
     let timer;
     const finish = (result, req2) => {
@@ -9383,7 +9592,7 @@ function probeHealth(port, timeoutMs) {
       settled = true;
       if (timer) clearTimeout(timer);
       req2?.destroy();
-      resolve6(result);
+      resolve7(result);
     };
     const req = request(
       { host: "127.0.0.1", port, path: "/health", method: "GET", agent: false, headers: { connection: "close" } },
@@ -9419,8 +9628,8 @@ function parseListenOwner(output, port) {
   return null;
 }
 function exec(cmd, args) {
-  return new Promise((resolve6) => {
-    execFile2(cmd, args, { windowsHide: true, timeout: 1e4, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve6(String(stdout ?? "")));
+  return new Promise((resolve7) => {
+    execFile2(cmd, args, { windowsHide: true, timeout: 1e4, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve7(String(stdout ?? "")));
   });
 }
 async function portOwner(port) {
@@ -9491,7 +9700,7 @@ function createShellLog(file) {
 `;
     try {
       if (!prepared) {
-        mkdirSync4(dirname2(file), { recursive: true });
+        mkdirSync4(dirname3(file), { recursive: true });
         rotateLog(file);
         prepared = true;
       } else if (++writes % 200 === 0) {
@@ -9514,15 +9723,15 @@ function spawnDaemon(home3, launch2, port) {
     rotateLog(logFile);
     fd = openSync(logFile, "a");
     const child = spawn2(process.execPath, [...launch2.execArgv, launch2.entry, ...launch2.args, "--port", String(port)], {
-      cwd: resolve3(home3),
+      cwd: resolve4(home3),
       env: daemonEnv(home3),
       detached: true,
       windowsHide: true,
       stdio: ["ignore", fd, fd]
     });
-    const exited = new Promise((resolve6) => {
-      child.once("error", (e) => resolve6({ code: null, error: e.message }));
-      child.once("exit", (code) => resolve6({ code }));
+    const exited = new Promise((resolve7) => {
+      child.once("error", (e) => resolve7({ code: null, error: e.message }));
+      child.once("exit", (code) => resolve7({ code }));
     });
     child.unref();
     return { pid: child.pid, exited };
@@ -9543,7 +9752,7 @@ function nodeEnsureOps(cfg) {
     portOwner,
     killTree,
     logTail: () => redactTokens(readTail(daemonLogPath(home3)), home3),
-    sleep: (ms) => new Promise((resolve6) => setTimeout(resolve6, ms)),
+    sleep: (ms) => new Promise((resolve7) => setTimeout(resolve7, ms)),
     now: () => Date.now(),
     log: log2
   };
@@ -10645,7 +10854,7 @@ var init_protocol2 = __esm({
               return;
             }
             const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-            await new Promise((resolve6) => setTimeout(resolve6, pollInterval));
+            await new Promise((resolve7) => setTimeout(resolve7, pollInterval));
             options?.signal?.throwIfAborted();
           }
         } catch (error2) {
@@ -10662,7 +10871,7 @@ var init_protocol2 = __esm({
        */
       request(request2, resultSchema, options) {
         const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-        return new Promise((resolve6, reject) => {
+        return new Promise((resolve7, reject) => {
           const earlyReject = (error2) => {
             reject(error2);
           };
@@ -10740,7 +10949,7 @@ var init_protocol2 = __esm({
               if (!parseResult.success) {
                 reject(parseResult.error);
               } else {
-                resolve6(parseResult.data);
+                resolve7(parseResult.data);
               }
             } catch (error2) {
               reject(error2);
@@ -11001,12 +11210,12 @@ var init_protocol2 = __esm({
           }
         } catch {
         }
-        return new Promise((resolve6, reject) => {
+        return new Promise((resolve7, reject) => {
           if (signal.aborted) {
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
             return;
           }
-          const timeoutId = setTimeout(resolve6, interval);
+          const timeoutId = setTimeout(resolve7, interval);
           signal.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -14033,7 +14242,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve6.call(this, root, ref);
+      let _sch = resolve7.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -14060,7 +14269,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve6(root, ref) {
+    function resolve7(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -14890,7 +15099,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve6(baseURI, relativeURI, options) {
+    function resolve7(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -15259,7 +15468,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize2,
-      resolve: resolve6,
+      resolve: resolve7,
       resolveComponent,
       equal,
       serialize,
@@ -19560,7 +19769,11 @@ var init_catalog2 = __esm({
     bool2 = { type: "boolean" };
     BRIDGE_CATALOG = Object.freeze([
       def2("list_browsers", {}, [], { common: false }),
-      def2("navigate", { url: str2 }, ["url"]),
+      def2("navigate", { url: str2, action: { ...str2, enum: ["back", "forward", "reload"] } }),
+      def2("wait", { for: { ...str2, enum: ["load", "networkidle", "text", "selector", "url", "time"] }, value: str2, timeoutMs: { ...int3, minimum: 1, maximum: 12e4 } }, ["for"]),
+      def2("find", { role: str2, name: str2, text: str2, limit: { ...int3, minimum: 1, maximum: 500 } }),
+      def2("read", { maxChars: { ...int3, minimum: 1 } }),
+      def2("links", { limit: { ...int3, minimum: 1, maximum: 1e3 }, includeUnnamed: bool2 }),
       def2("snapshot", { depth: { ...int3, minimum: 1 } }),
       def2("screenshot", {
         fullPage: bool2,
@@ -19580,7 +19793,10 @@ var init_catalog2 = __esm({
       def2("scroll", { ref: str2, x: num2, y: num2, byX: num2, byY: num2, to: { ...str2, enum: ["top", "bottom"] } }),
       def2("type", { text: str2, ref: str2, mode: { ...str2, enum: ["keys", "paste"] } }, ["text"]),
       def2("pressKey", { key: str2, hold: { type: "string[]" } }, ["key"]),
-      def2("tabs", { action: { ...str2, enum: ["list", "new", "close", "activate"] }, url: str2 }, ["action"]),
+      def2("tabs", { action: { ...str2, enum: ["list", "new", "close", "activate"] }, url: str2, where: { ...str2, enum: ["agent-window", "user-window"] } }, ["action"]),
+      def2("dialog", { action: { ...str2, enum: ["accept", "dismiss"] }, text: str2 }, ["action"]),
+      def2("select", { ref: str2, value: str2, label: str2 }, ["ref"]),
+      def2("setChecked", { ref: str2, checked: bool2 }, ["ref", "checked"]),
       def2("readConsole", {
         level: { ...str2, enum: ["debug", "log", "info", "warning", "error"] },
         afterSeq: { ...int3, minimum: 0 },
@@ -19596,12 +19812,19 @@ var init_catalog2 = __esm({
 function describeBrowsers(list) {
   return list.map((b) => `"${b.name}" (id ${b.id})`).join(", ");
 }
-function resolveBrowser(list, requested) {
+function lastFocused(list) {
+  let best;
+  for (const b of list) {
+    if (b.lastFocusedAt && (!best || b.lastFocusedAt > best.lastFocusedAt)) best = b;
+  }
+  return best;
+}
+function chooseBrowser(list, requested) {
   if (requested) {
     const byId = list.find((b) => b.id === requested);
-    if (byId) return byId;
+    if (byId) return { browser: byId };
     const byName = list.filter((b) => b.name.toLowerCase() === requested.toLowerCase());
-    if (byName.length === 1) return byName[0];
+    if (byName.length === 1) return { browser: byName[0] };
     if (byName.length > 1) {
       throw new BridgeError("BROWSER_AMBIGUOUS", `several browsers are named "${requested}"; pass the id instead: ${describeBrowsers(byName)}`, {
         browsers: byName
@@ -19615,13 +19838,15 @@ function resolveBrowser(list, requested) {
     throw new BridgeError("NO_BROWSER_CONNECTED", "no browser is connected to the Atrium Bridge; ask the user to open one with the extension paired");
   }
   if (list.length > 1) {
+    const focused = lastFocused(list);
+    if (focused) return { browser: focused, notice: BROWSER_TEXTS.focusedNotice(focused.name) };
     throw new BridgeError(
       "BROWSER_AMBIGUOUS",
-      `${list.length} browsers are connected (${describeBrowsers(list)}); ask the user which one to use and pass it as "browser"`,
+      `${list.length} browsers are connected (${describeBrowsers(list)}) and none has reported focus yet; ask the user which one to use and pass it as "browser"`,
       { browsers: list }
     );
   }
-  return list[0];
+  return { browser: list[0] };
 }
 function render(tool, result) {
   const r = result;
@@ -19630,6 +19855,15 @@ function render(tool, result) {
 title: ${String(r.title)}
 
 ${r.snapshot}` }];
+  }
+  if (tool === "read" && r && typeof r.text === "string") {
+    const cut = r.truncated === true ? `
+
+[truncated: pass maxChars to read more]` : "";
+    return [{ type: "text", text: `url: ${String(r.url)}
+title: ${String(r.title)}
+
+${r.text}${cut}` }];
   }
   if (tool === "screenshot" && r && typeof r.data === "string") {
     const { data, mimeType, ...meta2 } = r;
@@ -19644,6 +19878,10 @@ function isPureRead(tool, args) {
   switch (tool) {
     case "snapshot":
     case "screenshot":
+    case "find":
+    case "read":
+    case "links":
+    case "wait":
       return true;
     case "readConsole":
       return args.clear !== true;
@@ -19662,8 +19900,8 @@ function createResilientBridge(client, shell2) {
     return {
       listBrowsers: async () => ({ value: await client.browsers(), restarted: false }),
       callTool: async (tool, args, requested) => {
-        const target = resolveBrowser(await client.browsers(), requested);
-        return { value: await client.call(target.id, tool, args), restarted: false };
+        const { browser, notice } = chooseBrowser(await client.browsers(), requested);
+        return { value: await client.call(browser.id, tool, args), restarted: false, ...notice ? { notice } : {} };
       }
     };
   }
@@ -19672,7 +19910,7 @@ function createResilientBridge(client, shell2) {
   const waitCallMs = shell2.waitCallMs ?? REAPPEAR_DEFAULTS.waitCallMs;
   const waitListMs = shell2.waitListMs ?? REAPPEAR_DEFAULTS.waitListMs;
   const pollMs = shell2.waitPollMs ?? REAPPEAR_DEFAULTS.waitPollMs;
-  const sleep = shell2.sleep ?? ((ms) => new Promise((resolve6) => setTimeout(resolve6, ms)));
+  const sleep = shell2.sleep ?? ((ms) => new Promise((resolve7) => setTimeout(resolve7, ms)));
   const now = shell2.now ?? (() => Date.now());
   async function alive(request2) {
     try {
@@ -19699,7 +19937,7 @@ function createResilientBridge(client, shell2) {
   }
   function resolveAfterWait(waited, requested) {
     try {
-      return resolveBrowser(waited.list, requested);
+      return chooseBrowser(waited.list, requested);
     } catch (e) {
       if (waited.waitedMs > 0 && e instanceof BridgeError && (e.code === "NO_BROWSER_CONNECTED" || e.code === "BROWSER_NOT_FOUND")) {
         const suffix = DAEMON_TEXTS.waitedSuffix({ ageSeconds: Math.round(waited.ageMs / 1e3), waitedSeconds: Math.round(waited.waitedMs / 1e3) });
@@ -19721,7 +19959,8 @@ function createResilientBridge(client, shell2) {
     for (let round = 1; ; round++) {
       const progress = { stage: "lookup" };
       try {
-        return { value: await run(progress), restarted };
+        const value = await run(progress);
+        return { value, restarted, ...progress.notice ? { notice: progress.notice } : {} };
       } catch (e) {
         const phase = downPhase(e);
         if (phase === void 0) {
@@ -19745,15 +19984,16 @@ function createResilientBridge(client, shell2) {
     listBrowsers: () => guarded("list_browsers", true, async () => (await browsersWhen((list) => list.length > 0, waitListMs)).list),
     callTool: (tool, args, requested) => guarded(tool, isPureRead(tool, args), async (progress) => {
       const waited = await browsersWhen((list) => present(list, requested), waitCallMs);
-      const target = resolveAfterWait(waited, requested);
+      const { browser, notice } = resolveAfterWait(waited, requested);
+      if (notice) progress.notice = notice;
       progress.stage = "call";
-      return alive(client.call(target.id, tool, args));
+      return alive(client.call(browser.id, tool, args));
     })
   };
 }
-function serverNameFromEnv(env = process.env) {
+function serverNameFromEnv(env = process.env, fallback = SERVER_NAME) {
   const name = env.ATRIUM_BRIDGE_SERVER_NAME?.trim();
-  return name && SERVER_NAME_PATTERN.test(name) ? name : SERVER_NAME;
+  return name && SERVER_NAME_PATTERN2.test(name) ? name : fallback;
 }
 function buildMcpServer(client, shell2, info2 = {}) {
   const server = new Server({ name: info2.name ?? SERVER_NAME, version: "0.1.0" }, { capabilities: { tools: {} } });
@@ -19771,8 +20011,8 @@ function buildMcpServer(client, shell2, info2 = {}) {
         return { content: withNotice([{ type: "text", text: JSON.stringify(value2, null, 2) }], restarted2) };
       }
       const { browser, ...rest2 } = args;
-      const { value, restarted } = await bridge.callTool(tool, rest2, browser);
-      return { content: withNotice(render(tool, value), restarted) };
+      const { value, restarted, notice } = await bridge.callTool(tool, rest2, browser);
+      return { content: withNotice(render(tool, value), restarted, notice) };
     } catch (e) {
       const w = toWireError(e);
       const detail = w.data !== void 0 ? `
@@ -19782,7 +20022,7 @@ ${JSON.stringify(w.data)}` : "";
   });
   return server;
 }
-var REAPPEAR_DEFAULTS, MAX_ROUNDS, isRemote, withNotice, SERVER_NAME_PATTERN;
+var REAPPEAR_DEFAULTS, MAX_ROUNDS, isRemote, withNotice, SERVER_NAME_PATTERN2;
 var init_mcp_server = __esm({
   "daemon/src/mcp-server.ts"() {
     "use strict";
@@ -19795,16 +20035,21 @@ var init_mcp_server = __esm({
     REAPPEAR_DEFAULTS = { waitCallMs: 4e4, waitListMs: 5e3, waitPollMs: 500 };
     MAX_ROUNDS = 3;
     isRemote = (e, code) => e instanceof RemoteError && e.code === code;
-    withNotice = (content, restarted) => restarted ? [{ type: "text", text: DAEMON_TEXTS.restartedNotice }, ...content] : content;
-    SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+    withNotice = (content, restarted, notice) => {
+      const notices = [];
+      if (restarted) notices.push({ type: "text", text: DAEMON_TEXTS.restartedNotice });
+      if (notice) notices.push({ type: "text", text: notice });
+      return [...notices, ...content];
+    };
+    SERVER_NAME_PATTERN2 = /^[A-Za-z0-9_-]{1,64}$/;
   }
 });
 
 // daemon/src/mcp.ts
 var mcp_exports = {};
-import { existsSync as existsSync4 } from "node:fs";
-import { join as join3 } from "node:path";
-var home, log, sourceCli, launch, ensure;
+import { existsSync as existsSync5 } from "node:fs";
+import { join as join4 } from "node:path";
+var home, log, sourceCli, launch, ensure, serverName;
 var init_mcp = __esm({
   async "daemon/src/mcp.ts"() {
     "use strict";
@@ -19813,11 +20058,13 @@ var init_mcp = __esm({
     init_config();
     init_ensure();
     init_mcp_server();
+    init_package_info();
+    init_texts();
     home = bridgeHome();
     log = createShellLog(mcpLogPath(home));
-    sourceCli = join3(import.meta.dirname, "cli.ts");
+    sourceCli = join4(import.meta.dirname, "cli.ts");
     launch = {
-      entry: existsSync4(sourceCli) ? sourceCli : process.argv[1],
+      entry: existsSync5(sourceCli) ? sourceCli : process.argv[1],
       args: ["start"],
       execArgv: process.execArgv.filter((arg) => !arg.startsWith("--inspect"))
     };
@@ -19826,7 +20073,8 @@ var init_mcp = __esm({
       port: () => resolvePort(),
       logFile: daemonLogPath(home)
     });
-    await buildMcpServer(new BridgeClient(() => targetFromEnv()), { ensure, log }, { name: serverNameFromEnv() }).connect(
+    serverName = serverNameFromEnv(process.env, packagedServerName(buildInfoOfScript()) ?? SERVER_NAME);
+    await buildMcpServer(new BridgeClient(() => targetFromEnv()), { ensure, log }, { name: serverName }).connect(
       new StdioServerTransport()
     );
     void ensure.warmup();
@@ -23628,8 +23876,12 @@ var init_registry = __esm({
         this.info = info2;
         this.ws = ws;
       }
+      /** O `BrowserInfo` com o último foco: o que `GET /browsers` devolve (e o que o MCP usa para escolher sem `browser`). */
+      described() {
+        return { ...this.info, ...this.lastFocusedAt ? { lastFocusedAt: this.lastFocusedAt } : {} };
+      }
       status() {
-        return { ...this.info, ...this.lastFocusedAt ? { lastFocusedAt: this.lastFocusedAt } : {}, tabs: this.tabs };
+        return { ...this.described(), tabs: this.tabs };
       }
       send(message) {
         this.ws.send(JSON.stringify(message));
@@ -23648,7 +23900,7 @@ var init_registry = __esm({
       /** Clientes vistos, na ordem de inserção; `noteClient` reinsere para que o mais recente fique no fim. */
       clients = /* @__PURE__ */ new Map();
       list() {
-        return [...this.browsers.values()].map((c) => c.info);
+        return [...this.browsers.values()].map((c) => c.described());
       }
       /** O que `GET /status` devolve: browsers com abas e foco, clientes do mais recente para o mais antigo. */
       status() {
@@ -23682,15 +23934,38 @@ var init_registry = __esm({
         if (!conn) {
           return Promise.reject(new BridgeError("BROWSER_NOT_FOUND", `no connected browser with id "${id}"`, { browsers: this.list() }));
         }
+        return this.request(conn, tool, (rid) => client ? { t: "call", rid, tool, args, client } : { t: "call", rid, tool, args }, timeoutMs);
+      }
+      /**
+       * `POST /clients/:id/release`: avisa TODOS os browsers conectados que o cliente encerrou; cada extensão solta as abas
+       * dele e recolhe o grupo dele. Nunca rejeita: o agente já se foi, e o hospedeiro quer saber o que cada browser fez.
+       * Sem browser conectado, lista vazia (nada a soltar).
+       */
+      async releaseClient(clientId, timeoutMs) {
+        return Promise.all(
+          [...this.browsers.values()].map(async (conn) => {
+            const base = { id: conn.info.id, name: conn.info.name };
+            try {
+              const r = await this.request(conn, "release", (rid) => ({ t: "release", rid, client: clientId }), timeoutMs);
+              const released = Array.isArray(r?.released) ? r.released.filter((n) => Number.isInteger(n)) : [];
+              return { ...base, ok: true, released, groups: typeof r?.groups === "number" ? r.groups : 0 };
+            } catch (e) {
+              return { ...base, ok: false, error: toWireError(e) };
+            }
+          })
+        );
+      }
+      /** Um pedido com resposta (`{t:'result'}` com o mesmo rid) a uma extensão: o que `call` e `releaseClient` têm em comum. */
+      request(conn, what, build2, timeoutMs) {
         const rid = randomUUID();
-        return new Promise((resolve6, reject) => {
+        return new Promise((resolve7, reject) => {
           const timer = setTimeout(() => {
             conn.pending.delete(rid);
-            reject(new BridgeError("CALL_TIMEOUT", `browser "${conn.info.name}" did not answer ${tool} within ${timeoutMs} ms`));
+            reject(new BridgeError("CALL_TIMEOUT", `browser "${conn.info.name}" did not answer ${what} within ${timeoutMs} ms`));
           }, timeoutMs);
-          conn.pending.set(rid, { resolve: resolve6, reject, timer });
+          conn.pending.set(rid, { resolve: resolve7, reject, timer });
           try {
-            conn.send(client ? { t: "call", rid, tool, args, client } : { t: "call", rid, tool, args });
+            conn.send(build2(rid));
           } catch (e) {
             clearTimeout(timer);
             conn.pending.delete(rid);
@@ -23715,7 +23990,7 @@ var init_registry = __esm({
 // daemon/src/server.ts
 import { statSync as statSync4 } from "node:fs";
 import { createServer as createServer2 } from "node:http";
-import { resolve as resolve4 } from "node:path";
+import { resolve as resolve5 } from "node:path";
 function statusFor(code) {
   switch (code) {
     case "BROWSER_NOT_FOUND":
@@ -23802,7 +24077,7 @@ async function startDaemon(opts) {
     const error2 = toWireError(e);
     json(res, statusFor(error2.code), { ok: false, error: error2 });
   };
-  const readBody = (req) => new Promise((resolve6, reject) => {
+  const readBody = (req) => new Promise((resolve7, reject) => {
     const chunks = [];
     let size = 0;
     req.on("data", (c) => {
@@ -23814,7 +24089,7 @@ async function startDaemon(opts) {
       }
       chunks.push(c);
     });
-    req.on("end", () => resolve6(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve7(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
   const page = (res, status, html) => {
@@ -23897,6 +24172,18 @@ async function startDaemon(opts) {
         log2("device_approved", { via: "api", key: key.name });
         return json(res, 200, { ok: true });
       }
+      const rel = /^\/clients\/([^/]+)\/release$/.exec(url.pathname);
+      if (req.method === "POST" && rel) {
+        const id = decodeURIComponent(rel[1]);
+        if (!isClientId(id)) {
+          throw Object.assign(new Error(`invalid client id: expected ${CLIENT_ID_PATTERN.source}`), { code: "INVALID_ARGUMENT" });
+        }
+        const started = Date.now();
+        const browsers = await registry2.releaseClient(id, callTimeoutMs);
+        registry2.noteClient({ id }, "release");
+        log2("release", { key: key.name, client: id, browsers: browsers.length, ok: browsers.every((b) => b.ok), ms: Date.now() - started });
+        return json(res, 200, { ok: true, client: id, browsers });
+      }
       const m = /^\/browsers\/([^/]+)\/call$/.exec(url.pathname);
       if (req.method === "POST" && m) {
         const id = decodeURIComponent(m[1]);
@@ -23915,12 +24202,14 @@ async function startDaemon(opts) {
         }
         const timeout = typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? Math.min(body.timeoutMs, 6e5) : callTimeoutMs;
         const started = Date.now();
+        if (client) registry2.noteClient(client, body.tool);
+        const who = { key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool };
         try {
-          const result = await registry2.call(id, body.tool, args, timeout);
-          log2("call", { key: key.name, browser: id, tool: body.tool, ok: true, ms: Date.now() - started });
+          const result = await registry2.call(id, body.tool, args, timeout, client);
+          log2("call", { ...who, ok: true, ms: Date.now() - started });
           return json(res, 200, { ok: true, result });
         } catch (e) {
-          log2("call", { key: key.name, browser: id, tool: body.tool, ok: false, code: toWireError(e).code, ms: Date.now() - started });
+          log2("call", { ...who, ok: false, code: toWireError(e).code, ms: Date.now() - started });
           throw e;
         }
       }
@@ -23989,14 +24278,23 @@ async function startDaemon(opts) {
           previous.ws.close(CLOSE_REPLACED, "replaced by a new connection");
         }
         conn = mine;
-        const brand = current().brand;
-        mine.send(brand ? { t: "welcome", brand } : { t: "welcome" });
+        const { brand, capabilities } = current();
+        mine.send({ t: "welcome", ...brand ? { brand } : {}, ...capabilities ? { capabilities } : {} });
         log2("browser_connected", { browser: info2.id, name: info2.name });
         return;
       }
       if (msg.t === "ping") return conn.send({ t: "pong" });
       if (msg.t === "result" && typeof msg.rid === "string") {
         registry2.settle(conn, msg.rid, msg.ok ? { ok: true, value: msg.value } : { ok: false, error: msg.error });
+        return;
+      }
+      if (msg.t === "tabs") {
+        conn.tabs = sanitizeTabs(msg.tabs);
+        return;
+      }
+      if (msg.t === "focus") {
+        conn.lastFocusedAt = (/* @__PURE__ */ new Date()).toISOString();
+        return;
       }
     });
     ws.on("close", () => {
@@ -24007,13 +24305,13 @@ async function startDaemon(opts) {
     });
     ws.on("error", () => ws.terminate());
   };
-  await new Promise((resolve6, reject) => {
+  await new Promise((resolve7, reject) => {
     server.once("error", (e) => {
       reject(
         e.code === "EADDRINUSE" ? new Error(`port ${opts.port ?? config2.port} is already in use (is another Atrium Bridge daemon running?)`) : e
       );
     });
-    server.listen(opts.port ?? config2.port, "127.0.0.1", () => resolve6());
+    server.listen(opts.port ?? config2.port, "127.0.0.1", () => resolve7());
   });
   boundPort = server.address().port;
   if (boundPort !== config2.port) {
@@ -24024,7 +24322,7 @@ async function startDaemon(opts) {
   config2 = { ...config2, port: boundPort };
   log2("listening", { host: "127.0.0.1", port: boundPort });
   if (opts.embedded ?? config2.embedded === true) {
-    const envFile = opts.supervisorEnvFile !== void 0 ? resolve4(opts.supervisorEnvFile) : config2.supervisorEnvFile !== void 0 ? resolve4(opts.home, config2.supervisorEnvFile) : void 0;
+    const envFile = opts.supervisorEnvFile !== void 0 ? resolve5(opts.supervisorEnvFile) : config2.supervisorEnvFile !== void 0 ? resolve5(opts.home, config2.supervisorEnvFile) : void 0;
     embedded = startEmbeddedSupervisor({
       home: opts.home,
       port: opts.supervisorPort ?? boundPort + 1,
@@ -24253,7 +24551,7 @@ ${USAGE}
 
 // daemon/src/bundle.ts
 import { realpathSync } from "node:fs";
-import { resolve as resolve5 } from "node:path";
+import { resolve as resolve6 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // package.json
@@ -24266,6 +24564,7 @@ var package_default = {
   scripts: {
     build: "node scripts/build.ts",
     icons: "node scripts/make-icons.ts",
+    "brand:derive": "node scripts/brand-derive.ts",
     daemon: "node daemon/src/cli.ts start",
     mcp: "node daemon/src/mcp.ts",
     typecheck: "tsc --noEmit",
@@ -24282,7 +24581,8 @@ var package_default = {
     esbuild: "^0.25.0",
     "playwright-core": "1.63.0",
     typescript: "^5.6.3",
-    vitest: "^3.0.0"
+    vitest: "^3.0.0",
+    zod: "^4.6.7"
   }
 };
 
@@ -24290,6 +24590,7 @@ var package_default = {
 init_keys();
 init_install();
 init_config();
+init_package_info();
 var version2 = package_default.version;
 var USAGE2 = `Atrium Bridge ${package_default.version}
   start [--port N]            start the daemon (WebSocket + HTTP on 127.0.0.1)
@@ -24310,7 +24611,7 @@ function isMain() {
   if (!entry) return false;
   try {
     const norm = (p) => process.platform === "win32" ? p.toLowerCase() : p;
-    return norm(realpathSync(resolve5(entry))) === norm(realpathSync(fileURLToPath2(import.meta.url)));
+    return norm(realpathSync(resolve6(entry))) === norm(realpathSync(fileURLToPath2(import.meta.url)));
   } catch {
     return false;
   }
@@ -24336,15 +24637,23 @@ if (isMain()) {
 }
 export {
   addKey,
+  brandFromPackage,
   bridgeHome,
+  buildInfoNextTo,
+  ensureConfig,
   extensionIdOf,
   installExtension,
   listKeys,
   localKeyPath,
+  packagedServerName,
   pinExtensionId,
+  readConfig,
+  readPackagedBrand,
   revokeKey,
   rotatePairingToken,
+  seedCapabilities,
   setBrand,
+  setCapabilities,
   setExtensionIds,
   version2 as version,
   writeSeed

@@ -3,7 +3,8 @@
   --fg: #1f2328;
   --muted: #5b6370;
   --line: #d8dce2;
-  --accent: #d7813d;
+  /* A cor de destaque: a da marca do build (`--brand-accent`, posta por brand-ui.ts num build por marca) ou o laranja do Atrium. */
+  --accent: var(--brand-accent, #d7813d);
   --accent-fg: #ffffff;
   --ok: #1a7f37;
   --bad: #c0392b;
@@ -31,6 +32,11 @@ body {
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 h1 { font-size: 16px; margin: 0 0 4px; }
+/* Logo da marca no título (brand-ui.ts): o SVG horizontal do pacote, claro ou escuro pelo tema; o texto fica só para leitores de tela. */
+h1.has-logo { margin-bottom: 10px; }
+.brand-logo { display: block; }
+.brand-logo img { display: block; height: 28px; max-width: 100%; width: auto; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 p { margin: 0 0 12px; color: var(--muted); }
 label { display: block; font-weight: 600; margin: 14px 0 4px; }
 small { display: block; color: var(--muted); margin-top: 4px; }

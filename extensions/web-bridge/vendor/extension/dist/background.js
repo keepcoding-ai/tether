@@ -1,5 +1,25 @@
 // <define:__BRAND__>
-var define_BRAND_default = { name: "Tether", product: "Tether Bridge", color: "#5b8def" };
+var define_BRAND_default = { slug: "tether", name: "Tether", shortName: "Tether", description: "Deixa os agentes do Tether (Claude, soul) usarem este navegador, s\xF3 nas abas que eles abriram ou que voc\xEA entregou.", color: "#6aa6ff", colors: { accent: "#6aa6ff", light: { ink: "#1b1b1f", paper: "#f4f4f7" }, dark: { ink: "#e8e8ee", paper: "#141418" } }, host: { name: "tether", id: "studio.codr.tether" }, locale: "pt-BR", mcp: { serverName: "tether-bridge" }, tabs: { groupTitle: "{shortName}", agentTitle: "{shortName} \xB7 {agent}", groupColor: "blue" }, capabilities: { evaluate: "own-tabs", download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: true }, icons: { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }, logos: { h: { light: "brand/logo-h-light.svg", dark: "brand/logo-h-dark.svg" }, symbol: { light: "brand/logo-light.svg", dark: "brand/logo-dark.svg" } }, product: "Tether Bridge" };
+
+// src/protocol.ts
+var PROTOCOL_VERSION = 1;
+var DEFAULT_PORT = 47821;
+var WS_PATH = "/ext";
+var CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$/;
+var CLIENT_NAME_MAX = 80;
+function isClientId(v) {
+  return typeof v === "string" && CLIENT_ID_PATTERN.test(v);
+}
+function cleanClientName(raw) {
+  if (typeof raw !== "string") return void 0;
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CLIENT_NAME_MAX).trim();
+  return cleaned || void 0;
+}
+var SEED_FILE = "bridge.json";
+function isSeed(v) {
+  const s = v;
+  return !!s && typeof s === "object" && typeof s.port === "number" && Number.isInteger(s.port) && s.port >= 1 && s.port <= 65535 && typeof s.token === "string" && s.token.length >= 16 && (s.host === void 0 || typeof s.host === "string" && s.host.length <= 64);
+}
 
 // src/errors.ts
 var BridgeError = class extends Error {
@@ -21,14 +41,37 @@ function toWireError(e) {
   return { code: "INTERNAL", message: e instanceof Error ? e.message : String(e) };
 }
 
-// src/protocol.ts
-var PROTOCOL_VERSION = 1;
-var DEFAULT_PORT = 47821;
-var WS_PATH = "/ext";
-var SEED_FILE = "bridge.json";
-function isSeed(v) {
-  const s = v;
-  return !!s && typeof s === "object" && typeof s.port === "number" && Number.isInteger(s.port) && s.port >= 1 && s.port <= 65535 && typeof s.token === "string" && s.token.length >= 16 && (s.host === void 0 || typeof s.host === "string" && s.host.length <= 64);
+// extension/src/brand.ts
+var DEFAULT_BRAND = { name: "Atrium", product: "Atrium Bridge" };
+var BUILD_BRAND = typeof define_BRAND_default === "undefined" ? DEFAULT_BRAND : { ...DEFAULT_BRAND, ...define_BRAND_default };
+var brandName = () => BUILD_BRAND.name;
+var productName = () => BUILD_BRAND.product;
+var DEFAULT_GROUP_TITLE = "{shortName}";
+var DEFAULT_AGENT_TITLE = "{shortName} \xB7 {agent}";
+var DEFAULT_GROUP_COLOR = "grey";
+function renderTemplate(template, vars) {
+  return template.replace(/\{([A-Za-z]+)\}/g, (m, key) => key in vars ? vars[key] : m).trim();
+}
+var groupTitle = () => renderTemplate(BUILD_BRAND.tabs?.groupTitle ?? DEFAULT_GROUP_TITLE, { shortName: BUILD_BRAND.name });
+var agentGroupTitle = (agent) => renderTemplate(BUILD_BRAND.tabs?.agentTitle ?? DEFAULT_AGENT_TITLE, { shortName: BUILD_BRAND.name, agent });
+var brandGroupColor = () => BUILD_BRAND.tabs?.groupColor ?? DEFAULT_GROUP_COLOR;
+
+// extension/src/owner.ts
+var OWNER_GROUP_COLORS = ["blue", "red", "green", "pink", "purple", "cyan", "orange"];
+function ownerGroupColor(clientId) {
+  let h = 2166136261;
+  for (let i = 0; i < clientId.length; i++) {
+    h ^= clientId.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return OWNER_GROUP_COLORS[h % OWNER_GROUP_COLORS.length];
+}
+function ownerGroupTitle(client) {
+  return agentGroupTitle(client.name ?? client.id);
+}
+var RELEASED_SUFFIX = " (encerrado)";
+function releasedGroupTitle(title) {
+  return title.endsWith(RELEASED_SUFFIX) ? title : `${title}${RELEASED_SUFFIX}`;
 }
 
 // extension/src/settings.ts
@@ -75,6 +118,228 @@ async function saveHostBrand(brand, opts = {}) {
 }
 async function loadHostBrand() {
   return (await chrome.storage.local.get("hostBrand")).hostBrand ?? null;
+}
+async function saveHostCapabilities(capabilities) {
+  if (capabilities) await chrome.storage.local.set({ hostCapabilities: capabilities });
+  else await chrome.storage.local.remove("hostCapabilities");
+}
+async function loadHostCapabilities() {
+  return (await chrome.storage.local.get("hostCapabilities")).hostCapabilities ?? null;
+}
+async function capability(name, fallback) {
+  const host = (await loadHostCapabilities())?.[name];
+  if (typeof host === "boolean") return host;
+  const packaged = BUILD_BRAND.capabilities?.[name];
+  if (typeof packaged === "boolean") return packaged;
+  return fallback;
+}
+var windowPerAgent = () => capability("windowPerAgent", true);
+
+// extension/src/scope.ts
+var GROUP_TITLE = groupTitle();
+var SCOPE_KEY = "scope";
+var CURRENT_KEY = "currentTab";
+var CURRENT_BY_OWNER_KEY = "currentByOwner";
+var CLIENT_NAMES_KEY = "clientNames";
+var WINDOW_BY_OWNER_KEY = "windowByOwner";
+var cache = null;
+async function load() {
+  if (!cache) cache = (await chrome.storage.session.get(SCOPE_KEY))[SCOPE_KEY] ?? {};
+  return cache;
+}
+async function save() {
+  await chrome.storage.session.set({ [SCOPE_KEY]: cache });
+}
+async function isScoped(tabId) {
+  return String(tabId) in await load();
+}
+async function isGrouped(tabId) {
+  return (await load())[String(tabId)]?.grouped === true;
+}
+async function entryOf(tabId) {
+  return (await load())[String(tabId)];
+}
+async function listEntries() {
+  return Object.entries(await load()).map(([id, e]) => [Number(id), e]);
+}
+function canAct(entry, client) {
+  return entry.owner === void 0 || entry.owner === client?.id;
+}
+async function accessibleTabs(client) {
+  const entries = await listEntries();
+  const own = entries.filter(([, e]) => e.owner !== void 0 && e.owner === client?.id).map(([id]) => id);
+  const shared = entries.filter(([, e]) => e.owner === void 0).map(([id]) => id);
+  return [...own, ...shared];
+}
+async function addScope(tabId, owner) {
+  const scope = await load();
+  scope[String(tabId)] ??= { grouped: false, ...owner ? { owner: owner.id } : {} };
+  await save();
+  if (owner) await rememberClient(owner);
+  scheduleTabs();
+}
+async function removeScope(tabId) {
+  const scope = await load();
+  const entry = scope[String(tabId)];
+  if (!entry) return;
+  delete scope[String(tabId)];
+  await save();
+  if (await getCurrent(entry.owner) === tabId) await clearCurrent(entry.owner);
+  scheduleTabs();
+}
+async function currentByOwner() {
+  return (await chrome.storage.session.get(CURRENT_BY_OWNER_KEY))[CURRENT_BY_OWNER_KEY] ?? {};
+}
+async function getCurrent(owner) {
+  if (owner === void 0) return (await chrome.storage.session.get(CURRENT_KEY))[CURRENT_KEY] ?? null;
+  return (await currentByOwner())[owner] ?? null;
+}
+async function setCurrent(tabId, owner) {
+  if (owner === void 0) return chrome.storage.session.set({ [CURRENT_KEY]: tabId });
+  const map = await currentByOwner();
+  map[owner] = tabId;
+  await chrome.storage.session.set({ [CURRENT_BY_OWNER_KEY]: map });
+}
+async function clearCurrent(owner) {
+  if (owner === void 0) return chrome.storage.session.remove(CURRENT_KEY);
+  const map = await currentByOwner();
+  delete map[owner];
+  await chrome.storage.session.set({ [CURRENT_BY_OWNER_KEY]: map });
+}
+async function windowByOwner() {
+  return (await chrome.storage.session.get(WINDOW_BY_OWNER_KEY))[WINDOW_BY_OWNER_KEY] ?? {};
+}
+async function getWindow(owner) {
+  const id = (await windowByOwner())[owner];
+  if (id === void 0) return null;
+  const win = await chrome.windows.get(id).catch(() => null);
+  if (win) return id;
+  await clearWindow(owner);
+  return null;
+}
+async function setWindow(owner, windowId) {
+  const map = await windowByOwner();
+  map[owner] = windowId;
+  await chrome.storage.session.set({ [WINDOW_BY_OWNER_KEY]: map });
+}
+async function clearWindow(owner) {
+  const map = await windowByOwner();
+  if (!(owner in map)) return;
+  delete map[owner];
+  await chrome.storage.session.set({ [WINDOW_BY_OWNER_KEY]: map });
+}
+async function forgetWindow(windowId) {
+  const map = await windowByOwner();
+  const owners = Object.keys(map).filter((o) => map[o] === windowId);
+  if (!owners.length) return;
+  for (const o of owners) delete map[o];
+  await chrome.storage.session.set({ [WINDOW_BY_OWNER_KEY]: map });
+}
+async function clientNames() {
+  return (await chrome.storage.session.get(CLIENT_NAMES_KEY))[CLIENT_NAMES_KEY] ?? {};
+}
+async function rememberClient(client) {
+  if (!client.name) return;
+  const names = await clientNames();
+  if (names[client.id] === client.name) return;
+  names[client.id] = client.name;
+  await chrome.storage.session.set({ [CLIENT_NAMES_KEY]: names });
+}
+async function clientName(id) {
+  return (await clientNames())[id];
+}
+async function forgetClient(id) {
+  const names = await clientNames();
+  if (!(id in names)) return;
+  delete names[id];
+  await chrome.storage.session.set({ [CLIENT_NAMES_KEY]: names });
+}
+async function assertScoped(tabId) {
+  const entry = await entryOf(tabId);
+  if (!entry) {
+    throw new BridgeError(
+      "TAB_OUT_OF_SCOPE",
+      `tab ${tabId} is not under ${brandName()} control: the agent only controls tabs it opened (tabs new) and tabs the user handed over with "Hand this tab to ${brandName()}"`
+    );
+  }
+  return entry;
+}
+async function assertAccessible(tabId, client) {
+  const entry = await assertScoped(tabId);
+  if (!canAct(entry, client)) {
+    const owner = entry.owner;
+    const name = await clientName(owner);
+    throw new BridgeError(
+      "TAB_OWNED_BY_OTHER",
+      `tab ${tabId} belongs to another agent (${name ? `${name}, ${owner}` : owner}): only that agent acts on it. Open your own tab with tabs {action:"new"} or ask the user to hand this one to you`,
+      { owner, ...name ? { ownerName: name } : {} }
+    );
+  }
+  return entry;
+}
+async function groupColor() {
+  return await getAllowEvaluate() ? "yellow" : brandGroupColor();
+}
+async function groupTitleFor(owner) {
+  if (owner === void 0) return GROUP_TITLE;
+  const name = await clientName(owner);
+  return ownerGroupTitle(name ? { id: owner, name } : { id: owner });
+}
+var grouping = Promise.resolve();
+function groupTab(tabId) {
+  const run = async () => {
+    const entry = await entryOf(tabId);
+    const owner = entry?.owner;
+    const title = await groupTitleFor(owner);
+    const color = owner === void 0 ? await groupColor() : ownerGroupColor(owner);
+    const tab = await chrome.tabs.get(tabId);
+    const existing = (await chrome.tabGroups.query({ title, windowId: tab.windowId }))[0];
+    const groupId = await chrome.tabs.group(
+      existing ? { tabIds: tabId, groupId: existing.id } : { tabIds: tabId, createProperties: { windowId: tab.windowId } }
+    );
+    if (!existing) await chrome.tabGroups.update(groupId, { title, color });
+    const scope = await load();
+    if (scope[String(tabId)]) {
+      scope[String(tabId)].grouped = true;
+      await save();
+    }
+  };
+  const next = grouping.then(run, run);
+  grouping = next.catch(() => void 0);
+  return next;
+}
+
+// extension/src/report.ts
+var DEBOUNCE_MS = 250;
+var sender = null;
+var timer = null;
+function setReporter(send2) {
+  sender = send2;
+}
+async function scopedTabs() {
+  const entries = await listEntries();
+  const tabs2 = await Promise.all(entries.map(([id]) => chrome.tabs.get(id).catch(() => null)));
+  return tabs2.flatMap((tab, i) => {
+    if (tab?.id === void 0) return [];
+    const owner = entries[i][1].owner;
+    return [{ id: tab.id, url: tab.url ?? "", title: tab.title ?? "", ...owner !== void 0 ? { owner } : {} }];
+  });
+}
+async function publishTabs() {
+  if (timer) clearTimeout(timer);
+  timer = null;
+  sender?.({ t: "tabs", tabs: await scopedTabs() });
+}
+function scheduleTabs() {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => void publishTabs(), DEBOUNCE_MS);
+}
+function publishFocus() {
+  sender?.({ t: "focus" });
+}
+async function publishFocusIfFocused() {
+  const win = await chrome.windows.getLastFocused().catch(() => null);
+  if (win?.focused) publishFocus();
 }
 
 // extension/src/seed.ts
@@ -699,178 +964,300 @@ var BRAND_GLOW = `${GLOW_GEOMETRY} rgba(215,129,61,.55)`;
 var BRAND_RING = { border: "rgba(215,129,61,.9)", fill: "rgba(215,129,61,.18)" };
 var COSMETICS_CSS = css(BRAND_GLOW, BRAND_RING);
 
-// extension/src/keys.ts
-var MODIFIER_BIT = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
-function modifierBits(mods) {
-  let bits = 0;
-  for (const m of mods) bits |= MODIFIER_BIT[m];
-  return bits;
+// extension/src/session.ts
+var CONSOLE_CAP = 1e3;
+var INFLIGHT_MAX_AGE_MS = 6e4;
+var STREAMING_TYPES = /* @__PURE__ */ new Set(["WebSocket", "EventSource"]);
+var formatArg = (a) => a.value !== void 0 ? typeof a.value === "string" ? a.value : JSON.stringify(a.value) : a.description ?? a.type ?? "";
+function consoleLevel(type2) {
+  switch (type2) {
+    case "debug":
+      return "debug";
+    case "info":
+      return "info";
+    case "warning":
+      return "warning";
+    case "error":
+    case "assert":
+      return "error";
+    default:
+      return "log";
+  }
 }
-var rows = [];
-var byChar = /* @__PURE__ */ new Map();
-var byName = /* @__PURE__ */ new Map();
-function printable(code, keyCode, key, shiftKey) {
-  const row = { code, keyCode, key, shiftKey, text: key };
-  rows.push(row);
-  byChar.set(key, { row, shifted: false });
-  if (shiftKey !== key) byChar.set(shiftKey, { row, shifted: true });
-}
-function named(name, code, keyCode, extra = {}) {
-  const row = { code, keyCode, key: name, ...extra };
-  rows.push(row);
-  byName.set(name.toLowerCase(), row);
-}
-for (let i = 0; i < 26; i++) {
-  const lower = String.fromCharCode(97 + i);
-  printable(`Key${lower.toUpperCase()}`, 65 + i, lower, lower.toUpperCase());
-}
-var DIGIT_SHIFT = ")!@#$%^&*(";
-for (let d = 0; d <= 9; d++) printable(`Digit${d}`, 48 + d, String(d), DIGIT_SHIFT[d]);
-for (const [code, keyCode, key, shift] of [
-  ["Semicolon", 186, ";", ":"],
-  ["Equal", 187, "=", "+"],
-  ["Comma", 188, ",", "<"],
-  ["Minus", 189, "-", "_"],
-  ["Period", 190, ".", ">"],
-  ["Slash", 191, "/", "?"],
-  ["Backquote", 192, "`", "~"],
-  ["BracketLeft", 219, "[", "{"],
-  ["Backslash", 220, "\\", "|"],
-  ["BracketRight", 221, "]", "}"],
-  ["Quote", 222, "'", '"']
-]) {
-  printable(code, keyCode, key, shift);
-}
-printable("Space", 32, " ", " ");
-named("Enter", "Enter", 13, { text: "\r" });
-named("Tab", "Tab", 9);
-named("Backspace", "Backspace", 8);
-named("Delete", "Delete", 46);
-named("Escape", "Escape", 27);
-named("Insert", "Insert", 45);
-named("Home", "Home", 36);
-named("End", "End", 35);
-named("PageUp", "PageUp", 33);
-named("PageDown", "PageDown", 34);
-named("ArrowLeft", "ArrowLeft", 37);
-named("ArrowUp", "ArrowUp", 38);
-named("ArrowRight", "ArrowRight", 39);
-named("ArrowDown", "ArrowDown", 40);
-named("CapsLock", "CapsLock", 20);
-for (let n = 1; n <= 12; n++) named(`F${n}`, `F${n}`, 111 + n);
-named("Shift", "ShiftLeft", 16, { location: 1 });
-named("Control", "ControlLeft", 17, { location: 1 });
-named("Alt", "AltLeft", 18, { location: 1 });
-named("Meta", "MetaLeft", 91, { location: 1 });
-named("Space", "Space", 32, { key: " ", text: " " });
-var ALIASES = {
-  esc: "escape",
-  return: "enter",
-  del: "delete",
-  ins: "insert",
-  ctrl: "control",
-  cmd: "meta",
-  command: "meta",
-  super: "meta",
-  win: "meta",
-  option: "alt",
-  up: "arrowup",
-  down: "arrowdown",
-  left: "arrowleft",
-  right: "arrowright",
-  pgup: "pageup",
-  pgdn: "pagedown",
-  plus: "+",
-  spacebar: "space"
+var TabSession = class {
+  tabId;
+  transport;
+  attached = false;
+  /** ref do último snapshot -> backendNodeId. Vazio depois de uma navegação. */
+  refs = /* @__PURE__ */ new Map();
+  pointer = null;
+  held = /* @__PURE__ */ new Set();
+  console = [];
+  /** Id do frame principal (Page.getFrameTree no attach, atualizado a cada frameNavigated do topo). */
+  mainFrameId = null;
+  /** O frame principal está carregando (Page.frameStartedLoading → loadEventFired/frameStoppedLoading). */
+  loading = false;
+  /** Quantas navegações do frame principal o debugger viu: back/forward/reload esperam a contagem subir. */
+  navigations = 0;
+  /** Pedidos de rede em voo (requestId → quando começou), para `wait networkidle`. */
+  inflight = /* @__PURE__ */ new Map();
+  /** Diálogo nativo aberto agora (A9): toda tool, menos `dialog`, erra com DIALOG_OPEN enquanto ele estiver aqui. */
+  dialog = null;
+  /** O gesto que o diálogo deixou pendurado no browser (termina quando o diálogo é respondido). */
+  pending = null;
+  seq = 0;
+  waiters = [];
+  constructor(tabId) {
+    this.tabId = tabId;
+    this.transport = {
+      send: async (method, params) => {
+        try {
+          return await chrome.debugger.sendCommand({ tabId }, method, params);
+        } catch (e) {
+          throw new BrowserError("CDP_FAILED", `${method} failed: ${e.message}`, { cause: e });
+        }
+      }
+    };
+  }
+  /** Anexa o debugger (ou reaproveita um anexo nosso de antes de o service worker reiniciar) e liga os domínios. */
+  async attach() {
+    if (this.attached) return;
+    try {
+      await chrome.debugger.attach({ tabId: this.tabId }, "1.3");
+    } catch (e) {
+      const msg = e.message;
+      if (!/already attached/i.test(msg)) {
+        throw new BridgeError("DEBUGGER_ATTACH_FAILED", `cannot attach the debugger to tab ${this.tabId}: ${msg}`);
+      }
+      try {
+        await chrome.debugger.sendCommand({ tabId: this.tabId }, "Runtime.evaluate", { expression: "0" });
+      } catch (e2) {
+        throw new BridgeError("DEBUGGER_ATTACH_FAILED", `tab ${this.tabId} is already being debugged by another client: ${e2.message}`);
+      }
+    }
+    this.attached = true;
+    await this.transport.send("Page.enable");
+    await this.transport.send("Runtime.enable");
+    await this.transport.send("Log.enable");
+    await this.transport.send("Network.enable");
+    try {
+      const tree = await this.transport.send("Page.getFrameTree");
+      this.mainFrameId = tree.frameTree.frame.id;
+    } catch {
+    }
+  }
+  /** Pedidos em voo de verdade: os que começaram há mais de INFLIGHT_MAX_AGE_MS são esquecidos (sem fim relatado). */
+  inflightCount() {
+    const cutoff = Date.now() - INFLIGHT_MAX_AGE_MS;
+    for (const [id, started] of this.inflight) if (started < cutoff) this.inflight.delete(id);
+    return this.inflight.size;
+  }
+  async detach() {
+    if (!this.attached) return;
+    this.attached = false;
+    try {
+      await chrome.debugger.detach({ tabId: this.tabId });
+    } catch {
+    }
+  }
+  /** Espera o próximo evento CDP `method`. Registre ANTES de enviar o comando que o provoca. */
+  waitFor(method, timeoutMs) {
+    let waiter;
+    let timer2;
+    const promise = new Promise((resolve) => {
+      waiter = { method, resolve: () => resolve(true) };
+      this.waiters.push(waiter);
+      timer2 = setTimeout(() => {
+        this.waiters = this.waiters.filter((w) => w !== waiter);
+        resolve(false);
+      }, timeoutMs);
+    });
+    const cancel = () => {
+      clearTimeout(timer2);
+      this.waiters = this.waiters.filter((w) => w !== waiter);
+    };
+    return { promise: promise.finally(() => clearTimeout(timer2)), cancel };
+  }
+  /** Despacho dos eventos do chrome.debugger para esta sessão. */
+  onEvent(method, params) {
+    for (const w of this.waiters.filter((x) => x.method === method)) {
+      this.waiters = this.waiters.filter((x) => x !== w);
+      w.resolve();
+    }
+    const p = params ?? {};
+    if (method === "Page.frameNavigated") {
+      const frame = p.frame;
+      if (frame && !frame.parentId) {
+        this.refs.clear();
+        this.mainFrameId = frame.id;
+        this.navigations++;
+      }
+    } else if (method === "Page.javascriptDialogOpening") {
+      this.dialog = {
+        type: p.type ?? "alert",
+        message: typeof p.message === "string" ? p.message : "",
+        defaultPrompt: typeof p.defaultPrompt === "string" ? p.defaultPrompt : ""
+      };
+    } else if (method === "Page.javascriptDialogClosed") {
+      this.dialog = null;
+    } else if (method === "Page.navigatedWithinDocument") {
+      this.navigations++;
+    } else if (method === "Page.frameStartedLoading") {
+      if (this.mainFrameId === null || p.frameId === this.mainFrameId) this.loading = true;
+    } else if (method === "Page.frameStoppedLoading") {
+      if (this.mainFrameId === null || p.frameId === this.mainFrameId) this.loading = false;
+    } else if (method === "Page.loadEventFired") {
+      this.loading = false;
+    } else if (method === "Network.requestWillBeSent") {
+      if (!STREAMING_TYPES.has(String(p.type))) this.inflight.set(String(p.requestId), Date.now());
+    } else if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
+      this.inflight.delete(String(p.requestId));
+    } else if (method === "Runtime.consoleAPICalled") {
+      const args = p.args ?? [];
+      this.pushConsole(consoleLevel(String(p.type)), args.map(formatArg).join(" "));
+    } else if (method === "Runtime.exceptionThrown") {
+      const d = p.exceptionDetails;
+      this.pushConsole("error", d?.exception?.description ?? d?.text ?? "uncaught exception");
+    } else if (method === "Log.entryAdded") {
+      const e = p.entry;
+      const level = e?.level === "verbose" ? "debug" : e?.level === "warning" || e?.level === "error" ? e.level : "info";
+      this.pushConsole(level, `${e?.text ?? ""}${e?.url ? ` (${e.url})` : ""}`);
+    }
+  }
+  pushConsole(level, text) {
+    this.console.push({ seq: ++this.seq, level, text, ts: Date.now() });
+    if (this.console.length > CONSOLE_CAP) this.console.splice(0, this.console.length - CONSOLE_CAP);
+  }
 };
-function fromRow(row, shift, impliedShift) {
-  const key = shift && row.shiftKey ? row.shiftKey : row.key;
-  const text = row.text === void 0 ? void 0 : shift && row.shiftKey ? row.shiftKey : row.text;
-  return {
-    key,
-    code: row.code,
-    keyCode: row.keyCode,
-    ...text !== void 0 ? { text } : {},
-    ...row.location ? { location: row.location } : {},
-    impliedShift
-  };
-}
-function resolveKey(token, shiftHeld = false) {
-  const hit = [...token].length === 1 ? byChar.get(token) : void 0;
-  if (hit) return fromRow(hit.row, hit.shifted || shiftHeld, hit.shifted);
-  const lower = token.toLowerCase();
-  const alias = ALIASES[lower] ?? lower;
-  const aliasChar = alias.length === 1 ? byChar.get(alias) : void 0;
-  if (aliasChar) return fromRow(aliasChar.row, aliasChar.shifted || shiftHeld, aliasChar.shifted);
-  const row = byName.get(alias);
-  return row ? fromRow(row, shiftHeld, false) : null;
-}
-var MODIFIER_NAMES = { alt: "Alt", control: "Control", meta: "Meta", shift: "Shift" };
-function toModifier(token) {
-  const lower = token.toLowerCase();
-  return MODIFIER_NAMES[ALIASES[lower] ?? lower] ?? null;
-}
-function parseCombo(combo, hold = []) {
-  if (!combo) throw new BrowserError("KEY_INVALID", "key is empty");
-  const parts = combo.split("+");
-  if (combo.endsWith("+")) {
-    parts.pop();
-    parts.pop();
-    parts.push("+");
+
+// extension/src/sessions.ts
+var sessions = /* @__PURE__ */ new Map();
+function sessionFor(tabId) {
+  let s = sessions.get(tabId);
+  if (!s) {
+    s = new TabSession(tabId);
+    sessions.set(tabId, s);
   }
-  const mainToken = parts.pop();
-  const modifiers = [];
-  const addMod = (token) => {
-    const m = toModifier(token);
-    if (!m) throw new BrowserError("KEY_INVALID", `"${token}" is not a modifier (Control, Shift, Alt, Meta) in key "${combo}"`);
-    if (!modifiers.includes(m)) modifiers.push(m);
-  };
-  for (const h of hold) addMod(h);
-  for (const p of parts) addMod(p);
-  const main = resolveKey(mainToken, modifiers.includes("Shift"));
-  if (!main) throw new BrowserError("KEY_INVALID", `unknown key "${mainToken}" in "${combo}"`);
-  if (main.impliedShift && !modifiers.includes("Shift")) modifiers.push("Shift");
-  const mainAsMod = toModifier(mainToken);
-  if (mainAsMod && !modifiers.includes(mainAsMod)) modifiers.push(mainAsMod);
-  return { modifiers, main };
+  return s;
 }
-function event(type2, k, modifiers, text) {
-  return {
-    type: type2,
-    modifiers,
-    windowsVirtualKeyCode: k.keyCode,
-    nativeVirtualKeyCode: k.keyCode,
-    key: k.key,
-    code: k.code,
-    ...text !== void 0 ? { text, unmodifiedText: text } : {},
-    ...k.location ? { location: k.location } : {}
-  };
+async function attachedSession(tabId, client) {
+  await assertAccessible(tabId, client);
+  const s = sessionFor(tabId);
+  await s.attach();
+  return s;
 }
-function comboEvents({ modifiers, main }) {
-  const events = [];
-  const held = [];
-  const mainIsModifier = toModifier(main.key) !== null;
-  const pre = mainIsModifier ? modifiers.filter((m) => m !== toModifier(main.key)) : modifiers;
-  for (const m of pre) {
-    held.push(m);
-    events.push(event("keyDown", resolveKey(m), modifierBits(held)));
+async function takeControl(tabId, owner) {
+  await addScope(tabId, owner);
+  const s = sessionFor(tabId);
+  try {
+    await s.attach();
+    await groupTab(tabId);
+  } catch (e) {
+    await releaseControl(tabId);
+    throw e;
   }
-  const bits = modifierBits(modifiers);
-  const shortcut = modifiers.some((m) => m !== "Shift");
-  const text = shortcut ? void 0 : main.text;
-  events.push(event(text !== void 0 ? "keyDown" : "rawKeyDown", main, bits, text));
-  events.push(event("keyUp", main, bits));
-  for (const m of [...pre].reverse()) {
-    held.pop();
-    events.push(event("keyUp", resolveKey(m), modifierBits(held)));
-  }
-  return events;
+  return s;
 }
-function charEvents(ch) {
-  const control = ch === "\n" || ch === "\r" ? "Enter" : ch === "	" ? "Tab" : null;
-  const k = control ? resolveKey(control) : resolveKey(ch);
-  if (!k || !control && k.key !== ch) return null;
-  return [event(k.text !== void 0 ? "keyDown" : "rawKeyDown", k, 0, k.text), event("keyUp", k, 0)];
+async function adoptOpenedTab(tab) {
+  const tabId = tab.id;
+  if (tabId === void 0 || tab.openerTabId === void 0) return false;
+  const opener = await entryOf(tab.openerTabId);
+  if (!opener || await isScoped(tabId)) return false;
+  await addScope(tabId, opener.owner !== void 0 ? { id: opener.owner } : void 0);
+  const s = sessionFor(tabId);
+  try {
+    await s.attach();
+  } catch {
+    await releaseControl(tabId);
+    return false;
+  }
+  await groupTab(tabId).catch(() => void 0);
+  return true;
+}
+async function releaseControl(tabId) {
+  await removeScope(tabId);
+  const s = sessions.get(tabId);
+  sessions.delete(tabId);
+  await s?.detach();
+}
+async function releaseClient(clientId) {
+  const title = await groupTitleFor(clientId);
+  const released = [];
+  for (const [tabId, entry] of await listEntries()) {
+    if (entry.owner !== clientId) continue;
+    await releaseControl(tabId);
+    released.push(tabId);
+  }
+  await clearCurrent(clientId);
+  await clearWindow(clientId);
+  let groups = 0;
+  for (const g of await chrome.tabGroups.query({ title })) {
+    await chrome.tabGroups.update(g.id, { title: releasedGroupTitle(title), collapsed: true }).catch(() => chrome.tabGroups.update(g.id, { title: releasedGroupTitle(title) }));
+    groups++;
+  }
+  await forgetClient(clientId);
+  scheduleTabs();
+  return { released, groups };
+}
+async function resolveTabId(requested, client) {
+  if (requested !== void 0 && requested !== null && requested !== "") {
+    const id = Number(requested);
+    if (!Number.isInteger(id)) throw new BrowserError("INVALID_ARGUMENT", `tab must be a tab id from the tabs tool, got "${String(requested)}"`);
+    await assertAccessible(id, client);
+    return id;
+  }
+  const owner = client?.id;
+  const reachable = await accessibleTabs(client);
+  const current = await getCurrent(owner);
+  if (current !== null && reachable.includes(current)) return current;
+  for (const id of reachable) {
+    const tab = await chrome.tabs.get(id).catch(() => null);
+    if (tab?.active) {
+      await setCurrent(id, owner);
+      return id;
+    }
+  }
+  if (reachable[0] !== void 0) {
+    await setCurrent(reachable[0], owner);
+    return reachable[0];
+  }
+  throw new BrowserError(
+    "NO_ACTIVE_TAB",
+    `no tab is under ${brandName()} control${client ? ` for ${client.name ?? client.id}` : ""}: open one with tabs {action:"new"} or ask the user to hand a tab over with "Hand this tab to ${brandName()}"`
+  );
+}
+function watchBrowserEvents() {
+  chrome.debugger.onEvent.addListener((source, method, params) => {
+    if (source.tabId !== void 0) sessions.get(source.tabId)?.onEvent(method, params);
+  });
+  chrome.debugger.onDetach.addListener((source, reason) => {
+    const tabId = source.tabId;
+    if (tabId === void 0) return;
+    const s = sessions.get(tabId);
+    if (s) s.attached = false;
+    if (reason === "canceled_by_user") void releaseControl(tabId);
+  });
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    sessions.delete(tabId);
+    void removeScope(tabId);
+  });
+  chrome.tabs.onCreated.addListener((tab) => {
+    void adoptOpenedTab(tab).catch(() => void 0);
+  });
+  chrome.windows.onRemoved.addListener((windowId) => {
+    void forgetWindow(windowId);
+  });
+  chrome.tabs.onUpdated.addListener((tabId, change) => {
+    if (change.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) return;
+    void isGrouped(tabId).then((grouped) => grouped ? releaseControl(tabId) : void 0);
+  });
+  chrome.tabs.onUpdated.addListener((tabId, change) => {
+    if (change.url === void 0 && change.title === void 0) return;
+    void isScoped(tabId).then((scoped) => scoped ? scheduleTabs() : void 0);
+  });
+  chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (windowId !== chrome.windows.WINDOW_ID_NONE) publishFocus();
+  });
 }
 
 // extension/src/page.ts
@@ -883,11 +1270,11 @@ async function pageEval(t, expression) {
   return r.result?.value;
 }
 function withTimeout(p, ms, onTimeout) {
-  let timer;
+  let timer2;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(onTimeout()), ms);
+    timer2 = setTimeout(() => reject(onTimeout()), ms);
   });
-  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer2));
 }
 
 // extension/src/pointer.ts
@@ -1066,6 +1453,309 @@ async function scroll(s, a) {
   return { scroll: await settledScroll(s) };
 }
 
+// extension/src/forms.ts
+function dialogOpenError(d) {
+  return new BridgeError(
+    "DIALOG_OPEN",
+    `${d.type === "alert" ? "an" : "a"} ${d.type} dialog is open (${JSON.stringify(d.message)}); the page is blocked until you answer it with dialog {action:"accept"} or {action:"dismiss"}`,
+    { dialog: d }
+  );
+}
+var PENDING_GESTURE_MS = 5e3;
+async function dialog(s, a) {
+  const d = s.dialog;
+  if (!d) throw new BrowserError("NO_DIALOG", "there is no open dialog in this tab");
+  if (a.text !== void 0 && d.type !== "prompt") {
+    throw new BrowserError("INVALID_ARGUMENT", `dialog: "text" is only for a prompt; this is a ${d.type}`);
+  }
+  const accept = a.action === "accept";
+  const answer = d.type === "prompt" && accept ? a.text ?? d.defaultPrompt : void 0;
+  await s.transport.send("Page.handleJavaScriptDialog", { accept, ...answer !== void 0 ? { promptText: answer } : {} });
+  s.dialog = null;
+  const pending = s.pending;
+  s.pending = null;
+  if (pending) await withTimeout(pending.catch(() => void 0), PENDING_GESTURE_MS, () => new Error("pending gesture")).catch(() => void 0);
+  return { type: d.type, message: d.message, action: a.action, ...answer !== void 0 ? { text: answer } : {} };
+}
+async function withObject(s, ref, fn) {
+  const backendNodeId = backendNodeOf(s, ref);
+  let objectId;
+  try {
+    objectId = (await s.transport.send("DOM.resolveNode", { backendNodeId })).object.objectId;
+  } catch (e) {
+    throw new BrowserError("STALE_REF", `ref "${ref}" no longer exists in the page; take a new snapshot`, { cause: e });
+  }
+  try {
+    return await fn(objectId);
+  } finally {
+    await s.transport.send("Runtime.releaseObject", { objectId }).catch(() => void 0);
+  }
+}
+async function callOn(s, objectId, functionDeclaration, args = []) {
+  const r = await s.transport.send("Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration,
+    arguments: args.map((value) => ({ value })),
+    returnByValue: true
+  });
+  if (r.exceptionDetails) {
+    throw new BrowserError("EVALUATE_FAILED", `page script failed: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+  }
+  return r.result?.value;
+}
+var PROBE_SELECT = `function () {
+  if (!(this instanceof HTMLSelectElement)) return null
+  return {
+    multiple: this.multiple,
+    selectedIndex: this.selectedIndex,
+    options: Array.from(this.options).map((o) => ({
+      value: o.value,
+      label: (o.label || o.text || '').replace(/\\s+/g, ' ').trim(),
+      disabled: o.disabled || !!(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled),
+    })),
+  }
+}`;
+var SET_SELECT = `function (i) {
+  this.selectedIndex = i
+  this.dispatchEvent(new Event('input', { bubbles: true }))
+  this.dispatchEvent(new Event('change', { bubbles: true }))
+  return this.selectedIndex
+}`;
+async function select(s, a) {
+  if (a.value === void 0 === (a.label === void 0)) {
+    throw new BrowserError("INVALID_ARGUMENT", "select: give exactly one of value or label");
+  }
+  return withObject(s, a.ref, async (objectId) => {
+    const probe = await callOn(s, objectId, PROBE_SELECT);
+    if (!probe) {
+      throw new BrowserError("NOT_A_SELECT", `ref "${a.ref}" is not a native <select>; for a custom dropdown, click it and click its option`);
+    }
+    const by = a.value !== void 0 ? "value" : "label";
+    const wanted = a.value !== void 0 ? a.value : a.label.replace(/\s+/g, " ").trim();
+    const hits = probe.options.flatMap((o, i) => o[by] === wanted ? [i] : []);
+    const list = probe.options.map((o) => `${JSON.stringify(o.label)} (value ${JSON.stringify(o.value)}${o.disabled ? ", disabled" : ""})`).join(", ");
+    if (hits.length === 0) throw new BrowserError("OPTION_NOT_FOUND", `no option with ${by} ${JSON.stringify(wanted)}; options: ${list || "none"}`);
+    if (hits.length > 1) {
+      throw new BrowserError("OPTION_AMBIGUOUS", `${hits.length} options have ${by} ${JSON.stringify(wanted)}; select by ${by === "label" ? "value" : "label"} instead: ${list}`);
+    }
+    const index = hits[0];
+    const opt = probe.options[index];
+    if (opt.disabled) throw new BrowserError("OPTION_DISABLED", `option ${JSON.stringify(opt.label)} is disabled`);
+    const selected = { index, value: opt.value, label: opt.label };
+    if (!probe.multiple && probe.selectedIndex === index) return { selected, changed: false, trusted: false };
+    await s.transport.send("DOM.scrollIntoViewIfNeeded", { objectId }).catch(() => void 0);
+    const now = await callOn(s, objectId, SET_SELECT, [index]);
+    if (now !== index) {
+      throw new BrowserError("SELECT_FAILED", `selecting ${JSON.stringify(opt.label)} left ${now >= 0 ? JSON.stringify(probe.options[now]?.label ?? "") : "nothing"} selected`);
+    }
+    return { selected, changed: true, trusted: false };
+  });
+}
+var PROBE_CHECKED = `function () {
+  const el = this
+  if (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio')) return { checked: el.checked, kind: el.type }
+  const role = el.getAttribute('role')
+  if (role === 'checkbox' || role === 'radio' || role === 'switch' || role === 'menuitemcheckbox' || role === 'menuitemradio') {
+    return { checked: el.getAttribute('aria-checked') === 'true', kind: role }
+  }
+  return null
+}`;
+var SETTLE_MS = 500;
+async function setChecked(s, a) {
+  const probe = () => withObject(s, a.ref, (objectId) => callOn(s, objectId, PROBE_CHECKED));
+  const state = await probe();
+  if (!state) throw new BrowserError("NOT_CHECKABLE", `ref "${a.ref}" is not a checkbox, radio or switch (it has no checked state)`);
+  if (state.checked === a.checked) return { checked: state.checked, kind: state.kind, changed: false };
+  await click(s, { ref: a.ref });
+  const deadline = Date.now() + SETTLE_MS;
+  let now = await probe();
+  while (now && now.checked !== a.checked && Date.now() < deadline) {
+    await sleep(50);
+    now = await probe();
+  }
+  if (!now || now.checked !== a.checked) {
+    throw new BrowserError(
+      "STATE_NOT_CHANGED",
+      `clicking "${a.ref}" left it ${now?.checked ? "checked" : "unchecked"}; wanted ${a.checked ? "checked" : "unchecked"}` + (!a.checked && state.kind === "radio" ? " (a radio button cannot be unchecked by clicking it: check another one of its group)" : "")
+    );
+  }
+  return { checked: now.checked, kind: now.kind, changed: true };
+}
+
+// extension/src/keys.ts
+var MODIFIER_BIT = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+function modifierBits(mods) {
+  let bits = 0;
+  for (const m of mods) bits |= MODIFIER_BIT[m];
+  return bits;
+}
+var rows = [];
+var byChar = /* @__PURE__ */ new Map();
+var byName = /* @__PURE__ */ new Map();
+function printable(code, keyCode, key, shiftKey) {
+  const row = { code, keyCode, key, shiftKey, text: key };
+  rows.push(row);
+  byChar.set(key, { row, shifted: false });
+  if (shiftKey !== key) byChar.set(shiftKey, { row, shifted: true });
+}
+function named(name, code, keyCode, extra = {}) {
+  const row = { code, keyCode, key: name, ...extra };
+  rows.push(row);
+  byName.set(name.toLowerCase(), row);
+}
+for (let i = 0; i < 26; i++) {
+  const lower = String.fromCharCode(97 + i);
+  printable(`Key${lower.toUpperCase()}`, 65 + i, lower, lower.toUpperCase());
+}
+var DIGIT_SHIFT = ")!@#$%^&*(";
+for (let d = 0; d <= 9; d++) printable(`Digit${d}`, 48 + d, String(d), DIGIT_SHIFT[d]);
+for (const [code, keyCode, key, shift] of [
+  ["Semicolon", 186, ";", ":"],
+  ["Equal", 187, "=", "+"],
+  ["Comma", 188, ",", "<"],
+  ["Minus", 189, "-", "_"],
+  ["Period", 190, ".", ">"],
+  ["Slash", 191, "/", "?"],
+  ["Backquote", 192, "`", "~"],
+  ["BracketLeft", 219, "[", "{"],
+  ["Backslash", 220, "\\", "|"],
+  ["BracketRight", 221, "]", "}"],
+  ["Quote", 222, "'", '"']
+]) {
+  printable(code, keyCode, key, shift);
+}
+printable("Space", 32, " ", " ");
+named("Enter", "Enter", 13, { text: "\r" });
+named("Tab", "Tab", 9);
+named("Backspace", "Backspace", 8);
+named("Delete", "Delete", 46);
+named("Escape", "Escape", 27);
+named("Insert", "Insert", 45);
+named("Home", "Home", 36);
+named("End", "End", 35);
+named("PageUp", "PageUp", 33);
+named("PageDown", "PageDown", 34);
+named("ArrowLeft", "ArrowLeft", 37);
+named("ArrowUp", "ArrowUp", 38);
+named("ArrowRight", "ArrowRight", 39);
+named("ArrowDown", "ArrowDown", 40);
+named("CapsLock", "CapsLock", 20);
+for (let n = 1; n <= 12; n++) named(`F${n}`, `F${n}`, 111 + n);
+named("Shift", "ShiftLeft", 16, { location: 1 });
+named("Control", "ControlLeft", 17, { location: 1 });
+named("Alt", "AltLeft", 18, { location: 1 });
+named("Meta", "MetaLeft", 91, { location: 1 });
+named("Space", "Space", 32, { key: " ", text: " " });
+var ALIASES = {
+  esc: "escape",
+  return: "enter",
+  del: "delete",
+  ins: "insert",
+  ctrl: "control",
+  cmd: "meta",
+  command: "meta",
+  super: "meta",
+  win: "meta",
+  option: "alt",
+  up: "arrowup",
+  down: "arrowdown",
+  left: "arrowleft",
+  right: "arrowright",
+  pgup: "pageup",
+  pgdn: "pagedown",
+  plus: "+",
+  spacebar: "space"
+};
+function fromRow(row, shift, impliedShift) {
+  const key = shift && row.shiftKey ? row.shiftKey : row.key;
+  const text = row.text === void 0 ? void 0 : shift && row.shiftKey ? row.shiftKey : row.text;
+  return {
+    key,
+    code: row.code,
+    keyCode: row.keyCode,
+    ...text !== void 0 ? { text } : {},
+    ...row.location ? { location: row.location } : {},
+    impliedShift
+  };
+}
+function resolveKey(token, shiftHeld = false) {
+  const hit = [...token].length === 1 ? byChar.get(token) : void 0;
+  if (hit) return fromRow(hit.row, hit.shifted || shiftHeld, hit.shifted);
+  const lower = token.toLowerCase();
+  const alias = ALIASES[lower] ?? lower;
+  const aliasChar = alias.length === 1 ? byChar.get(alias) : void 0;
+  if (aliasChar) return fromRow(aliasChar.row, aliasChar.shifted || shiftHeld, aliasChar.shifted);
+  const row = byName.get(alias);
+  return row ? fromRow(row, shiftHeld, false) : null;
+}
+var MODIFIER_NAMES = { alt: "Alt", control: "Control", meta: "Meta", shift: "Shift" };
+function toModifier(token) {
+  const lower = token.toLowerCase();
+  return MODIFIER_NAMES[ALIASES[lower] ?? lower] ?? null;
+}
+function parseCombo(combo, hold = []) {
+  if (!combo) throw new BrowserError("KEY_INVALID", "key is empty");
+  const parts = combo.split("+");
+  if (combo.endsWith("+")) {
+    parts.pop();
+    parts.pop();
+    parts.push("+");
+  }
+  const mainToken = parts.pop();
+  const modifiers = [];
+  const addMod = (token) => {
+    const m = toModifier(token);
+    if (!m) throw new BrowserError("KEY_INVALID", `"${token}" is not a modifier (Control, Shift, Alt, Meta) in key "${combo}"`);
+    if (!modifiers.includes(m)) modifiers.push(m);
+  };
+  for (const h of hold) addMod(h);
+  for (const p of parts) addMod(p);
+  const main = resolveKey(mainToken, modifiers.includes("Shift"));
+  if (!main) throw new BrowserError("KEY_INVALID", `unknown key "${mainToken}" in "${combo}"`);
+  if (main.impliedShift && !modifiers.includes("Shift")) modifiers.push("Shift");
+  const mainAsMod = toModifier(mainToken);
+  if (mainAsMod && !modifiers.includes(mainAsMod)) modifiers.push(mainAsMod);
+  return { modifiers, main };
+}
+function event(type2, k, modifiers, text) {
+  return {
+    type: type2,
+    modifiers,
+    windowsVirtualKeyCode: k.keyCode,
+    nativeVirtualKeyCode: k.keyCode,
+    key: k.key,
+    code: k.code,
+    ...text !== void 0 ? { text, unmodifiedText: text } : {},
+    ...k.location ? { location: k.location } : {}
+  };
+}
+function comboEvents({ modifiers, main }) {
+  const events = [];
+  const held = [];
+  const mainIsModifier = toModifier(main.key) !== null;
+  const pre = mainIsModifier ? modifiers.filter((m) => m !== toModifier(main.key)) : modifiers;
+  for (const m of pre) {
+    held.push(m);
+    events.push(event("keyDown", resolveKey(m), modifierBits(held)));
+  }
+  const bits = modifierBits(modifiers);
+  const shortcut = modifiers.some((m) => m !== "Shift");
+  const text = shortcut ? void 0 : main.text;
+  events.push(event(text !== void 0 ? "keyDown" : "rawKeyDown", main, bits, text));
+  events.push(event("keyUp", main, bits));
+  for (const m of [...pre].reverse()) {
+    held.pop();
+    events.push(event("keyUp", resolveKey(m), modifierBits(held)));
+  }
+  return events;
+}
+function charEvents(ch) {
+  const control = ch === "\n" || ch === "\r" ? "Enter" : ch === "	" ? "Tab" : null;
+  const k = control ? resolveKey(control) : resolveKey(ch);
+  if (!k || !control && k.key !== ch) return null;
+  return [event(k.text !== void 0 ? "keyDown" : "rawKeyDown", k, 0, k.text), event("keyUp", k, 0)];
+}
+
 // extension/src/keyboard.ts
 var rng2 = mulberry32(Math.random() * 2 ** 32 >>> 0);
 var FOCUS = `(()=>{let el=document.activeElement;while(el&&el.shadowRoot&&el.shadowRoot.activeElement)el=el.shadowRoot.activeElement;if(!el||el===document.body||el===document.documentElement)return null;const tag=el.tagName.toLowerCase();const noText=['button','submit','checkbox','radio','file','image','reset','range','color'];const editable=tag==='textarea'||(tag==='input'&&!noText.includes(el.type))||el.isContentEditable;return {tag,editable}})()`;
@@ -1099,279 +1789,6 @@ async function pressKey(s, a) {
   return { pressed: [...parsed.modifiers.filter((m) => m !== parsed.main.key), parsed.main.key].join("+") };
 }
 
-// extension/src/brand.ts
-var DEFAULT_BRAND = { name: "Atrium", product: "Atrium Bridge" };
-var BUILD_BRAND = typeof define_BRAND_default === "undefined" ? DEFAULT_BRAND : { ...DEFAULT_BRAND, ...define_BRAND_default };
-var brandName = () => BUILD_BRAND.name;
-var productName = () => BUILD_BRAND.product;
-var groupTitle = () => BUILD_BRAND.name;
-
-// extension/src/scope.ts
-var GROUP_TITLE = groupTitle();
-var SCOPE_KEY = "scope";
-var CURRENT_KEY = "currentTab";
-var cache = null;
-async function load() {
-  if (!cache) cache = (await chrome.storage.session.get(SCOPE_KEY))[SCOPE_KEY] ?? {};
-  return cache;
-}
-async function save() {
-  await chrome.storage.session.set({ [SCOPE_KEY]: cache });
-}
-async function isScoped(tabId) {
-  return String(tabId) in await load();
-}
-async function isGrouped(tabId) {
-  return (await load())[String(tabId)]?.grouped === true;
-}
-async function listScope() {
-  return Object.keys(await load()).map(Number);
-}
-async function addScope(tabId) {
-  const scope = await load();
-  scope[String(tabId)] ??= { grouped: false };
-  await save();
-}
-async function removeScope(tabId) {
-  const scope = await load();
-  if (!(String(tabId) in scope)) return;
-  delete scope[String(tabId)];
-  await save();
-  if (await getCurrent() === tabId) await chrome.storage.session.remove(CURRENT_KEY);
-}
-async function getCurrent() {
-  return (await chrome.storage.session.get(CURRENT_KEY))[CURRENT_KEY] ?? null;
-}
-async function setCurrent(tabId) {
-  await chrome.storage.session.set({ [CURRENT_KEY]: tabId });
-}
-async function assertScoped(tabId) {
-  if (!await isScoped(tabId)) {
-    throw new BridgeError(
-      "TAB_OUT_OF_SCOPE",
-      `tab ${tabId} is not under ${brandName()} control: the agent only controls tabs it opened (tabs new) and tabs the user handed over with "Hand this tab to ${brandName()}"`
-    );
-  }
-}
-async function groupColor() {
-  return await getAllowEvaluate() ? "yellow" : "grey";
-}
-var grouping = Promise.resolve();
-function groupTab(tabId) {
-  const run = async () => {
-    const tab = await chrome.tabs.get(tabId);
-    const existing = (await chrome.tabGroups.query({ title: GROUP_TITLE, windowId: tab.windowId }))[0];
-    const groupId = await chrome.tabs.group(
-      existing ? { tabIds: tabId, groupId: existing.id } : { tabIds: tabId, createProperties: { windowId: tab.windowId } }
-    );
-    if (!existing) await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: await groupColor() });
-    const scope = await load();
-    if (scope[String(tabId)]) {
-      scope[String(tabId)].grouped = true;
-      await save();
-    }
-  };
-  const next = grouping.then(run, run);
-  grouping = next.catch(() => void 0);
-  return next;
-}
-
-// extension/src/session.ts
-var CONSOLE_CAP = 1e3;
-var formatArg = (a) => a.value !== void 0 ? typeof a.value === "string" ? a.value : JSON.stringify(a.value) : a.description ?? a.type ?? "";
-function consoleLevel(type2) {
-  switch (type2) {
-    case "debug":
-      return "debug";
-    case "info":
-      return "info";
-    case "warning":
-      return "warning";
-    case "error":
-    case "assert":
-      return "error";
-    default:
-      return "log";
-  }
-}
-var TabSession = class {
-  tabId;
-  transport;
-  attached = false;
-  /** ref do último snapshot -> backendNodeId. Vazio depois de uma navegação. */
-  refs = /* @__PURE__ */ new Map();
-  pointer = null;
-  held = /* @__PURE__ */ new Set();
-  console = [];
-  seq = 0;
-  waiters = [];
-  constructor(tabId) {
-    this.tabId = tabId;
-    this.transport = {
-      send: async (method, params) => {
-        try {
-          return await chrome.debugger.sendCommand({ tabId }, method, params);
-        } catch (e) {
-          throw new BrowserError("CDP_FAILED", `${method} failed: ${e.message}`, { cause: e });
-        }
-      }
-    };
-  }
-  /** Anexa o debugger (ou reaproveita um anexo nosso de antes de o service worker reiniciar) e liga os domínios. */
-  async attach() {
-    if (this.attached) return;
-    try {
-      await chrome.debugger.attach({ tabId: this.tabId }, "1.3");
-    } catch (e) {
-      const msg = e.message;
-      if (!/already attached/i.test(msg)) {
-        throw new BridgeError("DEBUGGER_ATTACH_FAILED", `cannot attach the debugger to tab ${this.tabId}: ${msg}`);
-      }
-      try {
-        await chrome.debugger.sendCommand({ tabId: this.tabId }, "Runtime.evaluate", { expression: "0" });
-      } catch (e2) {
-        throw new BridgeError("DEBUGGER_ATTACH_FAILED", `tab ${this.tabId} is already being debugged by another client: ${e2.message}`);
-      }
-    }
-    this.attached = true;
-    await this.transport.send("Page.enable");
-    await this.transport.send("Runtime.enable");
-    await this.transport.send("Log.enable");
-  }
-  async detach() {
-    if (!this.attached) return;
-    this.attached = false;
-    try {
-      await chrome.debugger.detach({ tabId: this.tabId });
-    } catch {
-    }
-  }
-  /** Espera o próximo evento CDP `method`. Registre ANTES de enviar o comando que o provoca. */
-  waitFor(method, timeoutMs) {
-    let waiter;
-    let timer;
-    const promise = new Promise((resolve) => {
-      waiter = { method, resolve: () => resolve(true) };
-      this.waiters.push(waiter);
-      timer = setTimeout(() => {
-        this.waiters = this.waiters.filter((w) => w !== waiter);
-        resolve(false);
-      }, timeoutMs);
-    });
-    const cancel = () => {
-      clearTimeout(timer);
-      this.waiters = this.waiters.filter((w) => w !== waiter);
-    };
-    return { promise: promise.finally(() => clearTimeout(timer)), cancel };
-  }
-  /** Despacho dos eventos do chrome.debugger para esta sessão. */
-  onEvent(method, params) {
-    for (const w of this.waiters.filter((x) => x.method === method)) {
-      this.waiters = this.waiters.filter((x) => x !== w);
-      w.resolve();
-    }
-    const p = params ?? {};
-    if (method === "Page.frameNavigated" && !p.frame?.parentId) {
-      this.refs.clear();
-    } else if (method === "Runtime.consoleAPICalled") {
-      const args = p.args ?? [];
-      this.pushConsole(consoleLevel(String(p.type)), args.map(formatArg).join(" "));
-    } else if (method === "Runtime.exceptionThrown") {
-      const d = p.exceptionDetails;
-      this.pushConsole("error", d?.exception?.description ?? d?.text ?? "uncaught exception");
-    } else if (method === "Log.entryAdded") {
-      const e = p.entry;
-      const level = e?.level === "verbose" ? "debug" : e?.level === "warning" || e?.level === "error" ? e.level : "info";
-      this.pushConsole(level, `${e?.text ?? ""}${e?.url ? ` (${e.url})` : ""}`);
-    }
-  }
-  pushConsole(level, text) {
-    this.console.push({ seq: ++this.seq, level, text, ts: Date.now() });
-    if (this.console.length > CONSOLE_CAP) this.console.splice(0, this.console.length - CONSOLE_CAP);
-  }
-};
-
-// extension/src/sessions.ts
-var sessions = /* @__PURE__ */ new Map();
-function sessionFor(tabId) {
-  let s = sessions.get(tabId);
-  if (!s) {
-    s = new TabSession(tabId);
-    sessions.set(tabId, s);
-  }
-  return s;
-}
-async function attachedSession(tabId) {
-  await assertScoped(tabId);
-  const s = sessionFor(tabId);
-  await s.attach();
-  return s;
-}
-async function takeControl(tabId) {
-  await addScope(tabId);
-  const s = sessionFor(tabId);
-  try {
-    await s.attach();
-    await groupTab(tabId);
-  } catch (e) {
-    await releaseControl(tabId);
-    throw e;
-  }
-  return s;
-}
-async function releaseControl(tabId) {
-  await removeScope(tabId);
-  const s = sessions.get(tabId);
-  sessions.delete(tabId);
-  await s?.detach();
-}
-async function resolveTabId(requested) {
-  if (requested !== void 0 && requested !== null && requested !== "") {
-    const id = Number(requested);
-    if (!Number.isInteger(id)) throw new BrowserError("INVALID_ARGUMENT", `tab must be a tab id from the tabs tool, got "${String(requested)}"`);
-    await assertScoped(id);
-    return id;
-  }
-  const scoped = await listScope();
-  const current = await getCurrent();
-  if (current !== null && scoped.includes(current)) return current;
-  for (const id of scoped) {
-    const tab = await chrome.tabs.get(id).catch(() => null);
-    if (tab?.active) {
-      await setCurrent(id);
-      return id;
-    }
-  }
-  if (scoped[0] !== void 0) {
-    await setCurrent(scoped[0]);
-    return scoped[0];
-  }
-  throw new BrowserError(
-    "NO_ACTIVE_TAB",
-    `no tab is under ${brandName()} control: open one with tabs {action:"new"} or ask the user to hand a tab over with "Hand this tab to ${brandName()}"`
-  );
-}
-function watchBrowserEvents() {
-  chrome.debugger.onEvent.addListener((source, method, params) => {
-    if (source.tabId !== void 0) sessions.get(source.tabId)?.onEvent(method, params);
-  });
-  chrome.debugger.onDetach.addListener((source, reason) => {
-    const tabId = source.tabId;
-    if (tabId === void 0) return;
-    const s = sessions.get(tabId);
-    if (s) s.attached = false;
-    if (reason === "canceled_by_user") void releaseControl(tabId);
-  });
-  chrome.tabs.onRemoved.addListener((tabId) => {
-    sessions.delete(tabId);
-    void removeScope(tabId);
-  });
-  chrome.tabs.onUpdated.addListener((tabId, change) => {
-    if (change.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) return;
-    void isGrouped(tabId).then((grouped) => grouped ? releaseControl(tabId) : void 0);
-  });
-}
-
 // extension/src/navigation.ts
 var NAVIGATION_TIMEOUT_MS = 3e4;
 function assertNavigableUrl(url) {
@@ -1389,7 +1806,41 @@ function assertNavigableUrl(url) {
 async function where(s) {
   return pageEval(s.transport, "({url:location.href,title:document.title})");
 }
+async function awaitLoaded(s, since, what) {
+  const end = Date.now() + NAVIGATION_TIMEOUT_MS;
+  while (Date.now() < end) {
+    if (s.navigations > since && !s.loading) {
+      const ready = await pageEval(s.transport, "document.readyState").catch(() => null);
+      if (ready === "complete") return;
+    }
+    await sleep(50);
+  }
+  throw new BridgeError("NAVIGATION_TIMEOUT", `${what} did not finish loading within ${NAVIGATION_TIMEOUT_MS / 1e3} s`);
+}
+async function historyNavigate(s, action) {
+  const since = s.navigations;
+  if (action === "reload") {
+    s.refs.clear();
+    await s.transport.send("Page.reload");
+  } else {
+    const h = await s.transport.send("Page.getNavigationHistory");
+    const entry = h.entries[h.currentIndex + (action === "back" ? -1 : 1)];
+    if (!entry) {
+      throw new BridgeError(
+        "NAVIGATION_FAILED",
+        action === "back" ? "cannot go back: this is the first page in the history of this tab" : "cannot go forward: this is the last page in the history of this tab"
+      );
+    }
+    s.refs.clear();
+    await s.transport.send("Page.navigateToHistoryEntry", { entryId: entry.id });
+  }
+  await awaitLoaded(s, since, action);
+  return { action, ...await where(s) };
+}
 async function navigate(s, a) {
+  if (a.action !== void 0 && a.url !== void 0) throw new BrowserError("INVALID_ARGUMENT", "navigate: give url or action, not both");
+  if (a.action !== void 0) return historyNavigate(s, a.action);
+  if (a.url === void 0) throw new BrowserError("INVALID_ARGUMENT", 'navigate: give url (an absolute URL) or action ("back", "forward" or "reload")');
   assertNavigableUrl(a.url);
   const loaded = s.waitFor("Page.loadEventFired", NAVIGATION_TIMEOUT_MS);
   let nav;
@@ -1413,47 +1864,73 @@ async function navigate(s, a) {
   }
   return where(s);
 }
-async function listTabs() {
-  const current = await getCurrent();
+async function listTabs(client) {
+  const current = await getCurrent(client?.id);
   const rows2 = [];
-  for (const id of await listScope()) {
+  for (const [id, entry] of await listEntries()) {
     const t = await chrome.tabs.get(id).catch(() => null);
-    if (t) rows2.push({ tab: String(id), url: t.url ?? t.pendingUrl ?? "", title: t.title ?? "", active: t.active, current: id === current });
+    if (!t) continue;
+    const mine = canAct(entry, client);
+    const row = { tab: String(id), url: t.url ?? t.pendingUrl ?? "", title: t.title ?? "", active: t.active, current: mine && id === current };
+    if (entry.owner !== void 0) {
+      row.owner = entry.owner;
+      const name = await clientName(entry.owner);
+      if (name) row.ownerName = name;
+      if (!mine) row.ownedByOther = true;
+    }
+    rows2.push(row);
   }
   return rows2;
 }
-async function tabs(a) {
+async function createBlankTab(client, preference) {
+  const inAgentWindow = client !== void 0 && preference !== "user-window" && await windowPerAgent();
+  if (!inAgentWindow) {
+    const created = await chrome.tabs.create({ url: "about:blank", active: true });
+    return { id: created.id, windowId: created.windowId };
+  }
+  const existing = await getWindow(client.id);
+  if (existing !== null) {
+    const created = await chrome.tabs.create({ windowId: existing, url: "about:blank", active: true });
+    return { id: created.id, windowId: existing };
+  }
+  const win = await chrome.windows.create({ url: "about:blank", focused: false });
+  const windowId = win.id;
+  const first = win.tabs?.[0] ?? (await chrome.tabs.query({ windowId }))[0];
+  if (!first?.id) throw new BridgeError("INTERNAL", `the new window ${windowId} has no tab`);
+  await setWindow(client.id, windowId);
+  return { id: first.id, windowId };
+}
+async function tabs(a, client) {
   switch (a.action) {
     case "list":
-      return { tabs: await listTabs() };
+      return { tabs: await listTabs(client) };
     case "new": {
       if (a.url !== void 0) assertNavigableUrl(a.url);
-      const created = await chrome.tabs.create({ url: "about:blank", active: true });
-      const id = created.id;
+      const { id, windowId } = await createBlankTab(client, a.where);
       let s;
       try {
-        s = await takeControl(id);
+        s = await takeControl(id, client);
       } catch (e) {
         await chrome.tabs.remove(id).catch(() => void 0);
         throw e;
       }
-      await setCurrent(id);
+      await setCurrent(id, client?.id);
       if (a.url && a.url !== "about:blank") await navigate(s, { url: a.url });
-      return { tab: String(id), ...await where(s) };
+      return { tab: String(id), windowId, ...await where(s) };
     }
     case "close": {
       if (a.tab === void 0) throw new BrowserError("INVALID_ARGUMENT", 'tabs close: "tab" is required');
-      const id = await resolveTabId(a.tab);
+      const id = await resolveTabId(a.tab, client);
       await releaseControl(id);
       await chrome.tabs.remove(id);
       return { closed: String(id) };
     }
     case "activate": {
       if (a.tab === void 0) throw new BrowserError("INVALID_ARGUMENT", 'tabs activate: "tab" is required');
-      const id = await resolveTabId(a.tab);
+      const id = await resolveTabId(a.tab, client);
       await chrome.tabs.update(id, { active: true });
-      await setCurrent(id);
-      await attachedSession(id);
+      await setCurrent(id, client?.id);
+      await attachedSession(id, client);
       return { activated: String(id) };
     }
   }
@@ -1608,7 +2085,7 @@ function buildLines(nodes, maxDepth) {
     if (node.ignored || role === "InlineTextBox" || role === "LineBreak") return kids();
     if (NOISE.has(role) && !name) return kids();
     if (role === "StaticText") {
-      if (name && !parentName.includes(name)) lines.push({ depth, text: `text ${JSON.stringify(clip(name))}` });
+      if (name && !parentName.includes(name)) lines.push({ depth, text: `text ${JSON.stringify(clip(name))}`, role, name, own: name });
       return;
     }
     if (maxDepth !== void 0 && depth >= maxDepth) return;
@@ -1632,7 +2109,16 @@ function buildLines(nodes, maxDepth) {
     }
     const url = props.get("url");
     if (role === "link" && typeof url === "string") text += ` href=${JSON.stringify(clip(url))}`;
-    lines.push({ depth, text, ...ref ? { backendNodeId: node.backendDOMNodeId } : {} });
+    const own = (node.childIds ?? []).map((id) => byId.get(id)).filter((c) => !!c && str2(c.role) === "StaticText").map((c) => str2(c.name)).join(" ");
+    lines.push({
+      depth,
+      text,
+      role,
+      name,
+      own,
+      ...ref ? { ref, backendNodeId: node.backendDOMNodeId } : {},
+      ...role === "link" && typeof url === "string" ? { url } : {}
+    });
     for (const id of node.childIds ?? []) {
       const child = byId.get(id);
       if (child) walk(child, depth + 1, name || parentName);
@@ -1654,10 +2140,15 @@ async function boxOf(s, backendNodeId) {
     return " [no-box]";
   }
 }
-async function snapshot(s, a) {
+async function collect(s, depth) {
   const { nodes } = await s.transport.send("Accessibility.getFullAXTree");
-  const { lines, refs } = buildLines(nodes, a.depth);
+  const { lines, refs } = buildLines(nodes, depth);
   s.refs = refs;
+  const where2 = await pageEval(s.transport, "({url:location.href,title:document.title})");
+  return { lines, refs, ...where2 };
+}
+async function snapshot(s, a) {
+  const { lines, refs, url, title } = await collect(s, a.depth);
   for (let i = 0; i < lines.length; i += 32) {
     await Promise.all(
       lines.slice(i, i + 32).map(async (l) => {
@@ -1668,8 +2159,129 @@ async function snapshot(s, a) {
   let tree = lines.map((l) => `${"  ".repeat(l.depth)}- ${l.text}`).join("\n");
   if (tree.length > MAX_CHARS) tree = `${tree.slice(0, MAX_CHARS)}
 ... [snapshot truncated at ${MAX_CHARS} characters; pass depth to get less]`;
+  return { url, title, refs: refs.size, snapshot: tree };
+}
+async function boxJson(s, backendNodeId) {
+  const m = /\[box=(-?\d+),(-?\d+),(-?\d+),(-?\d+)\]/.exec(await boxOf(s, backendNodeId));
+  return m ? { x: +m[1], y: +m[2], width: +m[3], height: +m[4] } : null;
+}
+var norm = (v) => v.toLowerCase();
+async function find(s, a) {
+  const role = a.role?.trim();
+  const name = a.name?.trim();
+  const text = a.text?.trim();
+  if (!role && !name && !text) throw new BrowserError("INVALID_ARGUMENT", "find: give at least one of role, name or text");
+  const limit = a.limit ?? 20;
+  const { lines, url, title } = await collect(s);
+  const hits = [];
+  for (const l of lines) {
+    if (!l.ref) continue;
+    if (role && norm(l.role) !== norm(role)) continue;
+    if (name && !norm(l.name).includes(norm(name))) continue;
+    if (text && !norm(`${l.name}
+${l.own}`).includes(norm(text))) continue;
+    hits.push(l);
+    if (hits.length >= limit) break;
+  }
+  const found = await Promise.all(hits.map(async (l) => ({ ref: l.ref, role: l.role, name: l.name, box: await boxJson(s, l.backendNodeId) })));
+  return { url, title, found };
+}
+async function links(s, a) {
+  const limit = a.limit ?? 100;
+  const { lines, url, title } = await collect(s);
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (let i = 0; i < lines.length && out.length < limit; i++) {
+    const l = lines[i];
+    if (l.role !== "link" || !l.ref || l.url === void 0) continue;
+    let href;
+    try {
+      href = new URL(l.url, url).href;
+    } catch {
+      continue;
+    }
+    let text = l.name;
+    if (!text) {
+      const names = [];
+      for (let j = i + 1; j < lines.length && lines[j].depth > l.depth; j++) if (lines[j].name) names.push(lines[j].name);
+      text = names.join(" ").trim();
+    }
+    if (!text && !a.includeUnnamed) continue;
+    const key = `${href}\0${text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ref: l.ref, text, href });
+  }
+  return { url, title, links: out };
+}
+var READ_MAX_CHARS = 5e4;
+var READ_SCRIPT = (max) => `(() => {
+  const root = document.querySelector('main') || document.querySelector('article') || document.body
+  if (!root) return { text: '', truncated: false, source: 'body' }
+  const source = root === document.body ? 'body' : root.tagName.toLowerCase()
+  const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'IFRAME', 'SVG', 'CANVAS'])
+  const BLOCK = new Set(['block', 'flex', 'grid', 'list-item', 'table', 'table-row', 'table-cell', 'table-caption', 'flow-root'])
+  const PARAGRAPH = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'DL', 'TABLE', 'PRE', 'BLOCKQUOTE', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'FORM', 'FIGURE'])
+  const INLINE_BOX = new Set(['inline-block', 'inline-flex', 'inline-grid', 'inline-table'])
+  const CONTROL = new Set(['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'IMG'])
+  const max = ${max}
+  let out = ''
+  let over = false
+  // Separador pendente entre dois trechos de texto: o maior vence (dois blocos vizinhos d\xE3o UMA quebra, n\xE3o duas).
+  let pending = ''
+  const gapOf = (g) => { if (g.length > pending.length) pending = g }
+  const push = (t) => { out += pending + t; pending = ''; if (out.length > max) over = true }
+  const walk = (node) => {
+    if (over) return
+    if (node.nodeType === 3) { const t = node.data.replace(/\\s+/g, ' '); if (t.trim()) push(t); return }
+    if (node.nodeType !== 1) return
+    const el = node
+    const tag = el.tagName.toUpperCase()
+    if (SKIP.has(tag)) return
+    if (el.hidden) return
+    const cs = getComputedStyle(el)
+    if (cs.display === 'none' || cs.visibility === 'hidden') return
+    if (tag === 'BR') { out += '\\n'; pending = ''; return }
+    const block = BLOCK.has(cs.display)
+    const gap = PARAGRAPH.has(tag) ? '\\n\\n' : block ? '\\n' : INLINE_BOX.has(cs.display) || CONTROL.has(tag) ? ' ' : ''
+    gapOf(gap)
+    if (tag === 'LI') push('- ')
+    if (tag === 'SELECT') {
+      push('[' + (el.selectedOptions[0] ? el.selectedOptions[0].text : '') + ']')
+    } else if (tag === 'INPUT') {
+      const type = (el.type || 'text').toLowerCase()
+      if (type === 'checkbox' || type === 'radio') push(el.checked ? '[x]' : '[ ]')
+      else if (type === 'button' || type === 'submit' || type === 'reset') push(el.value)
+      else if (type !== 'password' && type !== 'hidden' && el.value) push('[' + el.value + ']')
+    } else if (tag === 'TEXTAREA') {
+      if (el.value) push('[' + el.value + ']')
+    } else if (tag === 'IMG') {
+      if (el.alt) push(el.alt)
+    } else {
+      const before = out.length
+      const kids = el.shadowRoot ? el.shadowRoot.childNodes : el.childNodes
+      for (const c of kids) walk(c)
+      if (tag === 'A' && typeof el.href === 'string' && /^https?:/.test(el.href)) {
+        const label = out.slice(before).trim()
+        if (label && label !== el.href) { out += ' (' + el.href + ')'; pending = '' }
+      }
+    }
+    gapOf(gap)
+  }
+  walk(root)
+  const text = out
+    .replace(/[ \\t]+\\n/g, '\\n')
+    .replace(/\\n[ \\t]+/g, '\\n')
+    .replace(/ {2,}/g, ' ')
+    .replace(/\\n{3,}/g, '\\n\\n')
+    .trim()
+  return { text: text.slice(0, max), truncated: over || text.length > max, source }
+})()`;
+async function read(s, a) {
+  const max = a.maxChars ?? READ_MAX_CHARS;
+  const r = await pageEval(s.transport, READ_SCRIPT(max));
   const where2 = await pageEval(s.transport, "({url:location.href,title:document.title})");
-  return { ...where2, refs: refs.size, snapshot: tree };
+  return { ...where2, ...r };
 }
 async function screenshot(s, a) {
   const format = a.format ?? "png";
@@ -1724,6 +2336,88 @@ async function evaluate(s, a) {
   return { value: value ?? null };
 }
 
+// extension/src/wait.ts
+var DEFAULT_TIMEOUT_MS = 15e3;
+var MAX_WAIT_MS = 12e4;
+var POLL_MS = 100;
+var IDLE_MS = 500;
+var WITH_VALUE = /* @__PURE__ */ new Set(["text", "selector", "url", "time"]);
+async function wait(s, a) {
+  const timeoutMs = a.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_MS) {
+    throw new BrowserError("INVALID_ARGUMENT", `wait: timeoutMs must be an integer from 1 to ${MAX_WAIT_MS}`);
+  }
+  const value = a.value;
+  if (WITH_VALUE.has(a.for)) {
+    if (typeof value !== "string" || value === "") throw new BrowserError("INVALID_ARGUMENT", `wait ${a.for}: "value" is required`);
+  } else if (value !== void 0) {
+    throw new BrowserError("INVALID_ARGUMENT", `wait ${a.for}: "value" is not used; drop it`);
+  }
+  const started = Date.now();
+  const currentUrl = () => pageEval(s.transport, "location.href").catch(() => "");
+  const done = async () => ({ matched: a.for, elapsedMs: Date.now() - started, url: await currentUrl() });
+  if (a.for === "time") {
+    const ms = Number(value);
+    if (!Number.isInteger(ms) || ms < 0 || ms > MAX_WAIT_MS) {
+      throw new BrowserError("INVALID_ARGUMENT", `wait time: value must be a number of milliseconds from 0 to ${MAX_WAIT_MS}, got "${value}"`);
+    }
+    await sleep(ms);
+    return done();
+  }
+  let idleSince = null;
+  let check;
+  let describe;
+  switch (a.for) {
+    case "load":
+      describe = "the page to finish loading";
+      check = async () => !s.loading && await pageEval(s.transport, "document.readyState") === "complete";
+      break;
+    case "networkidle":
+      describe = `the network to be idle for ${IDLE_MS} ms`;
+      check = async () => {
+        if (s.loading || s.inflightCount() > 0) {
+          idleSince = null;
+          return false;
+        }
+        idleSince ??= Date.now();
+        return Date.now() - idleSince >= IDLE_MS;
+      };
+      break;
+    case "text":
+      describe = `text ${JSON.stringify(value)}`;
+      check = () => pageEval(s.transport, `((document.body && document.body.innerText) || '').includes(${JSON.stringify(value)})`);
+      break;
+    case "selector":
+      describe = `an element matching ${JSON.stringify(value)} to be visible`;
+      check = async () => {
+        const r = await pageEval(
+          s.transport,
+          `(() => { try { const el = document.querySelector(${JSON.stringify(value)}); return !!el && el.getClientRects().length > 0 } catch (e) { return 'invalid' } })()`
+        );
+        if (r === "invalid") throw new BrowserError("INVALID_ARGUMENT", `wait selector: ${JSON.stringify(value)} is not a valid CSS selector`);
+        return r;
+      };
+      break;
+    case "url":
+      describe = `the URL to contain ${JSON.stringify(value)}`;
+      check = () => pageEval(s.transport, `location.href.includes(${JSON.stringify(value)})`);
+      break;
+    default:
+      throw new BrowserError("INVALID_ARGUMENT", `wait: unknown condition "${String(a.for)}"`);
+  }
+  const end = started + timeoutMs;
+  for (; ; ) {
+    try {
+      if (await check()) return done();
+    } catch (e) {
+      if (e instanceof BrowserError && e.code === "INVALID_ARGUMENT") throw e;
+    }
+    const left = end - Date.now();
+    if (left <= 0) throw new BrowserError("WAIT_TIMEOUT", `timed out after ${timeoutMs} ms waiting for ${describe}`);
+    await sleep(Math.min(POLL_MS, left));
+  }
+}
+
 // extension/src/tools.ts
 var locks = /* @__PURE__ */ new Map();
 function inTabQueue(tabId, fn) {
@@ -1731,18 +2425,44 @@ function inTabQueue(tabId, fn) {
   locks.set(tabId, run.catch(() => void 0));
   return run;
 }
-async function onTab(a, fn) {
-  const tabId = await resolveTabId(a.tab);
-  return inTabQueue(tabId, async () => fn(await attachedSession(tabId)));
+var DIALOG_RACE_MS = 6e5;
+async function guardedByDialog(s, tool, fn) {
+  if (tool === "dialog") return fn(s);
+  if (s.dialog) throw dialogOpenError(s.dialog);
+  const opened = s.waitFor("Page.javascriptDialogOpening", DIALOG_RACE_MS);
+  const run = fn(s);
+  try {
+    const dialogWon = opened.promise.then((fired) => fired ? "dialog" : new Promise(() => void 0));
+    const outcome = await Promise.race([run.then((value) => ({ value })), dialogWon]);
+    if (outcome !== "dialog") return outcome.value;
+  } finally {
+    opened.cancel();
+  }
+  run.catch(() => void 0);
+  s.pending = run;
+  throw dialogOpenError(s.dialog ?? { type: "alert", message: "", defaultPrompt: "" });
 }
-async function runTool(tool, a) {
+async function onTabFor(tool, a, client, fn) {
+  const tabId = await resolveTabId(a.tab, client);
+  return inTabQueue(tabId, async () => guardedByDialog(await attachedSession(tabId, client), tool, fn));
+}
+async function runTool(tool, a, client) {
+  const onTab = (args, fn) => onTabFor(tool, args, client, fn);
   switch (tool) {
     case "tabs":
-      return tabs({ action: a.action, url: a.url, tab: a.tab });
+      return tabs({ action: a.action, url: a.url, tab: a.tab, where: a.where }, client);
     case "navigate":
-      return onTab(a, (s) => navigate(s, { url: a.url }));
+      return onTab(a, (s) => navigate(s, { url: a.url, action: a.action }));
+    case "wait":
+      return onTab(a, (s) => wait(s, { for: a.for, value: a.value, timeoutMs: a.timeoutMs }));
     case "snapshot":
       return onTab(a, (s) => snapshot(s, { depth: a.depth }));
+    case "find":
+      return onTab(a, (s) => find(s, { role: a.role, name: a.name, text: a.text, limit: a.limit }));
+    case "read":
+      return onTab(a, (s) => read(s, { maxChars: a.maxChars }));
+    case "links":
+      return onTab(a, (s) => links(s, { limit: a.limit, includeUnnamed: a.includeUnnamed }));
     case "screenshot":
       return onTab(a, (s) => screenshot(s, { fullPage: a.fullPage, ref: a.ref, format: a.format, quality: a.quality }));
     case "click":
@@ -1757,6 +2477,12 @@ async function runTool(tool, a) {
       return onTab(a, (s) => type(s, { text: a.text, ref: a.ref, mode: a.mode }));
     case "pressKey":
       return onTab(a, (s) => pressKey(s, { key: a.key, hold: a.hold }));
+    case "dialog":
+      return onTab(a, (s) => dialog(s, { action: a.action, text: a.text }));
+    case "select":
+      return onTab(a, (s) => select(s, { ref: a.ref, value: a.value, label: a.label }));
+    case "setChecked":
+      return onTab(a, (s) => setChecked(s, { ref: a.ref, checked: a.checked }));
     case "readConsole":
       return onTab(a, async (s) => readConsole(s, { level: a.level, afterSeq: a.afterSeq, limit: a.limit, clear: a.clear }));
     case "evaluate":
@@ -1782,6 +2508,9 @@ var DaemonConnection = class {
   denied = false;
   generation = 0;
   opening = null;
+  constructor() {
+    setReporter((msg) => this.send(msg));
+  }
   /** Abre a conexão se não há uma viva. Chamada pelo startup, pelo alarme e pela troca de opções. */
   async ensure() {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
@@ -1844,13 +2573,18 @@ var DaemonConnection = class {
         this.backoff = BACKOFF_START_MS;
         void setStatus({ state: "connected" });
         void saveHostBrand(msg.brand);
+        void saveHostCapabilities(msg.capabilities);
         this.pingTimer = setInterval(() => this.send({ t: "ping" }), PING_MS);
+        void publishTabs();
+        void publishFocusIfFocused();
       } else if (msg.t === "denied") {
         this.denied = true;
         void setStatus({ state: "denied", detail: msg.reason });
         void applySeed();
       } else if (msg.t === "call") {
-        void this.handleCall(msg.rid, msg.tool, msg.args);
+        void this.handleCall(msg.rid, () => runTool(msg.tool, msg.args, msg.client));
+      } else if (msg.t === "release") {
+        void this.handleCall(msg.rid, () => releaseClient(msg.client));
       }
     };
     ws.onclose = () => {
@@ -1870,9 +2604,9 @@ var DaemonConnection = class {
   send(msg) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
-  async handleCall(rid, tool, args) {
+  async handleCall(rid, run) {
     try {
-      this.send({ t: "result", rid, ok: true, value: await runTool(tool, args) });
+      this.send({ t: "result", rid, ok: true, value: await run() });
     } catch (e) {
       this.send({ t: "result", rid, ok: false, error: toWireError(e) });
     }
@@ -1899,7 +2633,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   const tabId = msg.tabId;
   if (tabId === void 0) return false;
   const run = async () => {
-    if (msg.t === "handover") await takeControl(tabId);
+    if (msg.t === "handover") await takeControl(tabId, ownerOf(msg.owner));
     else if (msg.t === "release") await releaseControl(tabId);
     else if (msg.t === "is-scoped") return { scoped: await isScoped(tabId) };
     return { ok: true };
@@ -1907,4 +2641,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   run().then(reply, (e) => reply({ error: e.message }));
   return true;
 });
+function ownerOf(raw) {
+  if (!raw || !isClientId(raw.id)) return void 0;
+  const name = cleanClientName(raw.name);
+  return name ? { id: raw.id, name } : { id: raw.id };
+}
 void connection.ensure();

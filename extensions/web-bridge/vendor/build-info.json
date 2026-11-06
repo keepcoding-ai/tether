@@ -6,16 +6,65 @@
     "slug": "tether",
     "name": "Tether Bridge",
     "shortName": "Tether",
-    "color": "#5b8def"
+    "description": "Deixa os agentes do Tether (Claude, soul) usarem este navegador, só nas abas que eles abriram ou que você entregou.",
+    "color": "#6aa6ff",
+    "colors": {
+      "accent": "#6aa6ff",
+      "light": {
+        "ink": "#1b1b1f",
+        "paper": "#f4f4f7"
+      },
+      "dark": {
+        "ink": "#e8e8ee",
+        "paper": "#141418"
+      }
+    },
+    "host": {
+      "name": "tether",
+      "id": "studio.codr.tether"
+    },
+    "locale": "pt-BR",
+    "mcp": {
+      "serverName": "tether-bridge"
+    },
+    "tabs": {
+      "groupTitle": "{shortName}",
+      "agentTitle": "{shortName} · {agent}",
+      "groupColor": "blue"
+    },
+    "capabilities": {
+      "evaluate": "own-tabs",
+      "download": true,
+      "upload": true,
+      "pdf": true,
+      "readNetwork": true,
+      "windowPerAgent": true
+    },
+    "icons": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "logos": {
+      "h": {
+        "light": "brand/logo-h-light.svg",
+        "dark": "brand/logo-h-dark.svg"
+      },
+      "symbol": {
+        "light": "brand/logo-light.svg",
+        "dark": "brand/logo-dark.svg"
+      }
+    }
   },
   "bundle": {
     "file": "atrium-bridge.mjs",
-    "sha256": "24e8ae27d38c03d8add23bd9d03f1087f4a858df8b6d71d7d968e2b25c009e1a",
-    "bytes": 905845
+    "sha256": "6c52f0b325f098c935f9a8dcbad0abd0a4633f7dd6bb0a8d4aeb19828ddf4167",
+    "bytes": 923673
   },
   "extension": {
     "dir": "extension",
-    "sha256": "58e91e21d70f369aa9d3e3eeedbc38c55fc2eb6dc1bf7cd98495aecf3140b4bc",
-    "files": 10
+    "sha256": "edde7f71d1491237a3c8d1e3119b62e6c6200197313ad91f22ebee95ef07ad52",
+    "files": 15
   }
 }
