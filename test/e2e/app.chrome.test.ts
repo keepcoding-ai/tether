@@ -6,7 +6,7 @@
 //   4. the "+" still appears at a card's edge (frame) and in the outer gutter (desk), on the card's border;
 //   5. small screenshots chrome-cards-{light,dark}.png (compare with preview-{light,dark}.png, preview-shot.ts).
 // Slice 2 (toolbar and capsule):
-//   6. icon-only sides (4 left, 3 right) with aria-labels, no "tether" name, the drawer pill in the capsule;
+//   6. icon-only sides (5 left, 3 right) with aria-labels, no "tether" name, the drawer pill in the capsule;
 //   7. the capsule on the window's true centre (±2 px) at 1280 and 900 px, sides asymmetric;
 //   8. 10 desks at 900 px: "+N" shows, the active desk stays visible, a pick replaces the visible desk used longest ago;
 //   9. the theme icon menu, the connection popover (pipe, pid, version, agents, "Reiniciar o tetherd");
@@ -160,7 +160,7 @@ async function assertScheme(app: ElectronApplication, page: Page, scheme: 'light
   assert.equal(divider, want.border, `${scheme}: pane divider`)
 }
 
-/** Slice 2: icon-only toolbar sides (4 left, 3 right), no "tether" name, every icon button labelled. */
+/** Slice 2: icon-only toolbar sides (5 left, 3 right), no "tether" name, every icon button labelled. */
 async function toolbarChecks(page: Page): Promise<void> {
   const text = await page.locator('#toolbar').innerText()
   assert.ok(!/tether(?!d)/i.test(text.replace(/Mesa \d+/g, '')), `no "tether" in the toolbar: ${JSON.stringify(text)}`)
@@ -168,7 +168,8 @@ async function toolbarChecks(page: Page): Promise<void> {
     const read = (sel: string) => Array.from(document.querySelectorAll(sel) as unknown as ArrayLike<{ innerText: string; getAttribute(n: string): string | null }>).map(b => ({ text: b.innerText.trim(), label: b.getAttribute('aria-label') ?? '' }))
     return { left: read('#toolbar .tb-left button.ib'), right: read('#toolbar .tb-right button.ib') }
   })
-  assert.equal(sides.left.length, 4, 'four icons on the left')
+  assert.equal(sides.left.length, 5, 'five icons on the left')
+  assert.equal(sides.left.at(-1)!.label, 'Extensões', 'the extensions button ends the left side')
   // Three of the app's own, plus one per extension status icon (left of the connection icon; the web bridge brings one).
   const statusIcons = await page.locator('#toolbar .tb-right #status-area button.ib.status-btn').count()
   assert.ok(statusIcons >= 1, 'the web bridge status icon is on the right side')
@@ -886,12 +887,13 @@ test('app chrome: aria, keyboard in the new menus, focus return, FLIP, drawer fr
     const stops: string[] = []
     // Then the extensions' status icons, left to right, then the connection icon.
     const statusIcons = await page.locator('#status-area button.status-btn').count()
-    for (let i = 0; i < 4 + statusIcons; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
-    assert.equal(stops[0], '#btn-drawer')
-    assert.match(stops[1]!, /^div\.seg\.on$/, `the active capsule tab is a Tab stop: ${JSON.stringify(stops)}`)
-    assert.equal(stops[2], 'button.seg.desk-add', 'the capsule plus button (new desk) is the next stop')
-    for (let i = 0; i < statusIcons; i++) assert.equal(stops[3 + i], 'button.ib.status-btn', `status icon ${i + 1} is a Tab stop: ${JSON.stringify(stops)}`)
-    assert.equal(stops[3 + statusIcons], '#conn')
+    for (let i = 0; i < 5 + statusIcons; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
+    assert.equal(stops[0], '#btn-extensions')
+    assert.equal(stops[1], '#btn-drawer')
+    assert.match(stops[2]!, /^div\.seg\.on$/, `the active capsule tab is a Tab stop: ${JSON.stringify(stops)}`)
+    assert.equal(stops[3], 'button.seg.desk-add', 'the capsule plus button (new desk) is the next stop')
+    for (let i = 0; i < statusIcons; i++) assert.equal(stops[4 + i], 'button.ib.status-btn', `status icon ${i + 1} is a Tab stop: ${JSON.stringify(stops)}`)
+    assert.equal(stops[4 + statusIcons], '#conn')
 
     // ---- Theme menu: keys and focus return ----
     await page.locator('#btn-theme').focus()
