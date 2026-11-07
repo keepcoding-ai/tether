@@ -115,6 +115,7 @@ const EXPECTED: Array<[string, string, string | null, string | null, string | nu
   ['keybindings.show', 'Atalhos de teclado', 'Ctrl+K Ctrl+S', null, 'false'],
   ['web-bridge.install', 'Instalar Tether Bridge…', null, null, 'false'],   // F7 C1
   ['extensions.show', 'Extensões', null, null, 'false'],
+  ['settings.show', 'Configurações…', 'Ctrl+,', null, 'false'],                   // settings plan, slice 3
   ['confirmations.restore', 'Voltar a perguntar antes de fechar painéis', null, null, 'false'],
   ['sep', '', null, null, null],
   ['window.close', 'Fechar a janela', 'Ctrl+Shift+W', null, 'false'],

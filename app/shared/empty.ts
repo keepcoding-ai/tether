@@ -8,6 +8,7 @@ import { isNotePanelId } from './notes.ts'
 import { isPreviewPanelId } from './preview.ts'
 import { isKeybindingsPanelId } from './keybindings.ts'
 import { EXTENSIONS_PANEL_PREFIX } from './extensions-screen.ts'
+import { isSettingsPanelId } from './settings-screen.ts'
 
 export const EMPTY_COMPONENT = 'empty'
 export const EMPTY_TAB = 'empty-tab'
@@ -22,9 +23,9 @@ export function isEmptyPanelId(id: string): boolean {
   return id.startsWith(EMPTY_PANEL_PREFIX)
 }
 
-/** A pane that has no slot behind it (a note, a markdown preview, an empty pane, the shortcuts or extensions screen): never an orphan for the restore, never pruned. */
+/** A pane that has no slot behind it (a note, a markdown preview, an empty pane, the shortcuts, extensions or settings screen): never an orphan for the restore, never pruned. */
 export function isSlotlessPanelId(id: string): boolean {
-  return isNotePanelId(id) || isEmptyPanelId(id) || isPreviewPanelId(id) || isKeybindingsPanelId(id) || id.startsWith(EXTENSIONS_PANEL_PREFIX)
+  return isNotePanelId(id) || isEmptyPanelId(id) || isPreviewPanelId(id) || isKeybindingsPanelId(id) || id.startsWith(EXTENSIONS_PANEL_PREFIX) || isSettingsPanelId(id)
 }
 
 /** A fresh pane id: time-ordered plus a random tail (two panes in the same millisecond). */
