@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { extensions as daemonIndex } from '../../extensions/index.daemon.ts'
 import { CLIENT_ID_PATTERN, CLIENT_NAME_MAX, clientIdOf, clientNameOf, createLaunchMiddleware, ENV_CLIENT_ID, ENV_CLIENT_NAME, releaseClient } from '../../extensions/web-bridge/agents.ts'
@@ -67,7 +67,7 @@ describe('the bridge feature at launch', () => {
     assert.ok(!out.args.includes(PLUGIN_DIR_FLAG) && !existsSync(join(composed(), CLAUDE_PLUGIN_DIR)))
     assert.equal(out.env[ENV_CLIENT_ID], 'tether:a1b2c3d4')
     assert.equal(out.env[ENV_CLIENT_NAME], 'Claude · Pesquisa')
-    assert.equal(out.env.PATH, 'p'); assert.equal(out.command, input.command); assert.equal(out.cwd, input.cwd)
+    assert.equal(out.env.PATH, `${join(composed(), 'bin')}${delimiter}p`, 'the tether shim folder is at the front of the PATH'); assert.equal(out.command, input.command); assert.equal(out.cwd, input.cwd)
     assert.deepEqual(input, plan(), 'the plan given is never mutated')
     assert.ok(existsSync(join(composed(), 'mcps', 'tether-bridge', 'mcp.json')))
     const merged = JSON.parse(readFileSync(join(composed(), CLAUDE_MCP_FILE), 'utf8')) as { mcpServers: Record<string, unknown> }

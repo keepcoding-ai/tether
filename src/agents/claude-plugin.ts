@@ -17,6 +17,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { BRAND } from '../../app/shared/brand.ts'
 import { removeTree, shareMcpServers, shareSkills, SKILLS_DIR, syncLinks, writeIfChanged } from '../daemon/share.ts'
+import { withCliShim } from './cli-shim.ts'
 import { MCP_CONFIG_FLAG } from './mcp.ts'
 import type { LaunchPlan } from './types.ts'
 
@@ -52,12 +53,15 @@ export function ensureClaudeMcpConfig(shareDir: string): string | undefined {
   return file
 }
 
-/** `plan` with `--plugin-dir <share>/claude-plugin` and, last, `--mcp-config <share>/claude.mcp.json` (a copy). */
+/**
+ * `plan` with `--plugin-dir <share>/claude-plugin` and, last, `--mcp-config <share>/claude.mcp.json` (a copy), and
+ * <share>/bin (the `tether` shim the skills call, src/agents/cli-shim.ts) at the front of the PATH.
+ */
 export function withClaudePlugin(plan: LaunchPlan, shareDir: string): LaunchPlan {
   const pluginDir = ensureClaudePlugin(shareDir)
   const mcpFile = ensureClaudeMcpConfig(shareDir)
-  return {
+  return withCliShim({
     ...plan,
     args: [...plan.args, ...(pluginDir ? [PLUGIN_DIR_FLAG, pluginDir] : []), ...(mcpFile ? [MCP_CONFIG_FLAG, mcpFile] : [])],
-  }
+  }, shareDir)
 }

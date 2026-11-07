@@ -14,6 +14,7 @@
 import { mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { removeTree, shareMcpServers, shareSkills, SKILLS_DIR, syncCopy, writeIfChanged } from '../daemon/share.ts'
+import { withCliShim } from './cli-shim.ts'
 import { MCP_CONFIG_FLAG } from './mcp.ts'
 import { withSharedFolder } from './soul.ts'
 import type { LaunchPlan } from './types.ts'
@@ -36,10 +37,10 @@ export function ensureSoulView(shareDir: string): { viewDir: string; mcpFile: st
   return { viewDir, mcpFile }
 }
 
-/** `plan` with `-S <share>/soul` and `--mcp-config <share>/soul.mcp.json` (a copy), the view written first. */
+/** `plan` with `-S <share>/soul` and `--mcp-config <share>/soul.mcp.json` (a copy), the view written first, and <share>/bin (the `tether` shim) at the front of the PATH. */
 export function withSoulShare(plan: LaunchPlan, shareDir: string, platform: NodeJS.Platform = process.platform): LaunchPlan {
   const { viewDir, mcpFile } = ensureSoulView(shareDir)
-  const out = withSharedFolder(plan, viewDir, platform)
+  const out = withCliShim(withSharedFolder(plan, viewDir, platform), shareDir)
   if (!mcpFile) return out
   const end = out.args.indexOf('--')
   const head = end < 0 ? out.args : out.args.slice(0, end)
