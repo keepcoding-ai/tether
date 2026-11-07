@@ -71,6 +71,12 @@ export interface SlotState {
    * the slot or by `seen`. Absent on daemons older than 0.3.0.
    */
   attention?: 'done' | 'waiting'
+  /**
+   * Whether a running agent can be sent a command now, for the Faults screen's "Mandar para o agente": 'idle' (at an empty
+   * prompt, its last report was the end of a turn or its start), 'busy' (in a turn), 'blocked' (waiting for the person's
+   * answer). Absent = unknown: never "idle". Not set for shells. See src/daemon/attention.ts for what each agent reports.
+   */
+  turn?: 'idle' | 'busy' | 'blocked'
 }
 
 export type ErrorCode =

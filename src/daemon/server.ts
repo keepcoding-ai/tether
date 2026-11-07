@@ -239,6 +239,7 @@ class DaemonImpl implements Daemon {
     if (slot.restarting) s.restarting = true
     if (slot.stopping) s.stopping = true
     if (slot.attention.value) s.attention = slot.attention.value
+    if (slot.attention.turn && slot.meta.agent !== 'shell' && slot.status === 'running' && isAlive(slot)) s.turn = slot.attention.turn
     return s
   }
 
@@ -420,7 +421,7 @@ class DaemonImpl implements Daemon {
     if (!changed) return
     slot.binding = binding
     slot.title = binding?.title
-    if (slot.status === 'starting' && binding && slot.spawnedAt && binding.since >= slot.spawnedAt) this.setRunning(slot) // broadcasts
+    if (slot.status === 'starting' && binding && slot.spawnedAt && binding.since >= slot.spawnedAt) this.setRunning(slot, true) // broadcasts
     else if (broadcast) this.broadcastState(slot)
     this.unwatchTitle(slot) // the watch follows one binding; this one changed
     if (isAlive(slot)) this.watchTitle(slot)
@@ -440,10 +441,11 @@ class DaemonImpl implements Daemon {
    * The slot's `running` state goes out BEFORE the queue is pumped, or clients would see the next slot's
    * `starting` first and count MAX_STARTING + 1 in 'starting' for a moment.
    */
-  private setRunning(slot: Slot): void {
+  private setRunning(slot: Slot, reported = false): void {
     if (slot.readyTimer) clearTimeout(slot.readyTimer)
     slot.readyTimer = undefined
     slot.status = 'running'
+    if (reported) slot.attention.ready() // only the agent's own start event says it sits at a prompt; the fallback timer does not
     this.broadcastState(slot)
     this.pump()
   }
@@ -961,7 +963,7 @@ class DaemonImpl implements Daemon {
     if (!report || (slot.attentionReportTs && report.ts <= slot.attentionReportTs)) return
     slot.attentionReportTs = report.ts
     if (!isAlive(slot) || (slot.spawnedAt && report.ts < slot.spawnedAt)) return
-    if (slot.attention.hook(report.kind)) this.broadcastState(slot)
+    if (slot.attention.hook(report.kind, report.notification)) this.broadcastState(slot)
   }
 
   /** Arms the idle heuristic's timer (soul) for the slot's next due time. */

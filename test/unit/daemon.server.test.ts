@@ -208,3 +208,41 @@ describe('attention', () => {
     c.client.close()
   })
 })
+
+describe('turn (idle / busy)', () => {
+  const FAKE_SOUL = join(import.meta.dirname, '..', 'fixtures', 'fake-soul.mjs')
+  test('an agent is idle once its start event arrives, busy after a submitted line, idle when its output goes quiet; a typed-but-unsent prompt is unknown', async () => {
+    const previous = process.env.TETHER_SOUL_CMD
+    process.env.TETHER_SOUL_CMD = `"${process.execPath}" "${FAKE_SOUL}"`
+    const c = await Recorder.connect(daemon.pipe)
+    try {
+      const { slot } = await c.client.request({ t: 'create', kind: 'soul', cwd, start: true })
+      const id = slot!.slotId
+      await c.client.request({ t: 'attach', slotId: id, cols: 100, rows: 30 })
+      const up = await c.state(id, (s) => s.status === 'running' && s.turn === 'idle', 30_000, 'running and idle')
+      assert.equal(up.kind, 'soul')
+      c.client.input(id, 'abc')
+      await c.state(id, (s) => s.status === 'running' && s.turn === undefined && s.attention === undefined, 5_000, 'typed text: unknown')
+      c.client.input(id, '\b\b\b')
+      c.client.input(id, 'think\r')
+      await c.state(id, (s) => s.turn === 'busy', 5_000, 'busy after Enter')
+      await c.see(id, /got: think/)
+      assert.equal((await c.client.request({ t: 'list' })).slots!.find((s) => s.slotId === id)!.turn, 'busy', 'a short answer is not a turn the heuristic can end')
+      c.client.input(id, 'work\r')
+      await c.state(id, (s) => s.turn === 'idle' && s.attention === 'done', 20_000, 'idle after a burst and silence')
+      await c.client.request({ t: 'stop', slotId: id }).catch(() => undefined)
+    } finally {
+      if (previous === undefined) delete process.env.TETHER_SOUL_CMD
+      else process.env.TETHER_SOUL_CMD = previous
+      c.close()
+    }
+  })
+  test('a shell never has a turn', async () => {
+    const c = await Recorder.connect(daemon.pipe)
+    const { slot } = await c.client.request({ t: 'create', kind: 'shell', cwd, start: true })
+    await c.state(slot!.slotId, (s) => s.status === 'running')
+    assert.equal((await c.client.request({ t: 'list' })).slots!.find((s) => s.slotId === slot!.slotId)!.turn, undefined)
+    await c.client.request({ t: 'forget', slotId: slot!.slotId })
+    c.close()
+  })
+})

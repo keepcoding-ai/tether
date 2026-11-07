@@ -1,5 +1,5 @@
 // Claude Code hook entry point. Claude runs it (via Git Bash on Windows) as:
-//   node "<abs path>/src/report/claude-hook.mjs" SessionStart|SessionEnd|Stop|Notification
+//   node "<abs path>/src/report/claude-hook.mjs" SessionStart|SessionEnd|Stop|Notification|UserPromptSubmit
 // with the hook payload on stdin and the slot's env (TETHER_SLOT_ID, TETHER_HOME).
 //
 // Rules (PRD RNF3): never write to stdout (SessionStart stdout is injected into Claude's
@@ -86,19 +86,22 @@ export function toEvent(hookName, payload, slotId, ts) {
 }
 
 /**
- * Maps Stop / Notification to an attention report (<home>/slots/<slot>.attention, read by tetherd):
+ * Maps Stop / Notification / UserPromptSubmit to an attention report (<home>/slots/<slot>.attention, read by tetherd):
  * Stop = the turn is over ('done'); Notification = Claude waits for the user ('waiting': a permission prompt,
- * the idle prompt, a question). `auth_success` is only informative. Undefined for any other hook.
+ * the idle prompt, a question; `notification` carries its type); UserPromptSubmit = a turn began ('busy').
+ * `auth_success` is only informative. Undefined for any other hook.
  * @param {string} hookName @param {Payload} payload @param {string} ts
- * @returns {{ ts: string, kind: 'done' | 'waiting', sessionId?: string } | undefined} */
+ * @returns {{ ts: string, kind: 'done' | 'waiting' | 'busy', notification?: string, sessionId?: string } | undefined} */
 export function toAttention(hookName, payload, ts) {
-  /** @type {'done' | 'waiting' | undefined} */
+  /** @type {'done' | 'waiting' | 'busy' | undefined} */
   let kind
   if (hookName === 'Stop') kind = 'done'
+  else if (hookName === 'UserPromptSubmit') kind = 'busy'
   else if (hookName === 'Notification') kind = str(payload.notification_type) === 'auth_success' ? undefined : 'waiting'
   if (!kind) return undefined
   const sessionId = str(payload.session_id)
-  return sessionId ? { ts, kind, sessionId } : { ts, kind }
+  const notification = kind === 'waiting' ? str(payload.notification_type) : undefined
+  return { ts, kind, ...(notification ? { notification } : {}), ...(sessionId ? { sessionId } : {}) }
 }
 
 /** @param {string} stdin */

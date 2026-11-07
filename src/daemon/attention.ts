@@ -11,6 +11,13 @@
 // A BEL that terminates an OSC/DCS/APC/PM/SOS string (window titles, hyperlinks) is not a bell: the scanner
 // tracks those strings across chunks.
 //
+// Besides the badge there is the TURN: whether the agent is free to be sent a command (the Faults screen's "Mandar para o
+// agente" types into a pane only when it is known to be idle). idle | busy | blocked, or unknown (undefined). Claude's
+// hooks tell it exactly (UserPromptSubmit = busy, Stop = idle, Notification = blocked, or idle for the idle_prompt one);
+// the soul has the same heuristic as the badge (Enter = busy, quiet after a burst = idle); an agent is idle from the moment
+// its start event arrives. Whatever the hooks cannot confirm is unknown rather than guessed: text typed into the prompt,
+// or a line submitted to an agent whose hook has not answered yet, make an idle pane unknown until its next report.
+//
 // Cleared by: the user typing into the slot (input that is not a terminal reply), `seen` (the pane got the
 // focus), a new launch and the process exit.
 
@@ -18,6 +25,9 @@ import '../agents/load.ts'
 import { agentRegistry } from '../agents/registry.ts'
 
 export type Attention = 'done' | 'waiting'
+
+/** Whether the agent can be sent a command now; undefined (unknown) is not "idle". 'blocked' = waiting for an answer of the person. */
+export type Turn = 'idle' | 'busy' | 'blocked'
 
 export interface AttentionOptions {
   /** Detect "output went quiet after the user's turn" (soul). */
@@ -36,6 +46,7 @@ type Scan = 'text' | 'esc' | 'string' | 'string-esc'
 
 export class AttentionState {
   value: Attention | undefined
+  turn: Turn | undefined
   private readonly opts: Required<AttentionOptions>
   private scan: Scan = 'text'
   /** The user submitted a line; output that follows counts toward a turn. */
@@ -47,10 +58,20 @@ export class AttentionState {
     this.opts = { idleMs: IDLE_MS, burstBytes: BURST_BYTES, ...opts }
   }
 
-  /** A hook reported the turn's end or a wait. Returns true when the value changed. */
-  hook(kind: Attention): boolean {
+  /**
+   * A hook reported the turn's start ('busy': the prompt was submitted), end ('done') or a wait ('waiting'; `notification`
+   * is Claude's notification_type: its idle_prompt means "idle for a while", not a question). Returns true when the
+   * badge or the turn changed.
+   */
+  hook(kind: Attention | 'busy', notification?: string): boolean {
     this.disarm()
-    return this.set(kind)
+    if (kind === 'busy') return this.update(undefined, 'busy')
+    return this.update(kind, kind === 'done' || notification === 'idle_prompt' ? 'idle' : 'blocked')
+  }
+
+  /** The agent's start event for this run arrived: it sits at an empty prompt. Returns true when the turn changed. */
+  ready(): boolean {
+    return this.turn === undefined ? this.update(this.value, 'idle') : false
   }
 
   /**
@@ -60,8 +81,13 @@ export class AttentionState {
    */
   input(data: string): boolean {
     if (data.startsWith('\x1b')) return false
-    if (this.opts.idle && /[\r\n]/.test(data)) { this.armed = true; this.burst = 0 }
-    return this.set(undefined)
+    const submitted = /[\r\n]/.test(data)
+    if (this.opts.idle && submitted) { this.armed = true; this.burst = 0 }
+    let turn = this.turn
+    if (this.opts.idle && submitted) turn = 'busy' // the heuristic agent's turn starts at Enter
+    else if (turn === 'blocked' && submitted) turn = 'busy' // the person answered
+    else if (turn === 'idle') turn = undefined // text in the prompt / a line the agent's hook has not confirmed
+    return this.update(undefined, turn)
   }
 
   /** The user looked at the pane. */
@@ -93,7 +119,7 @@ export class AttentionState {
       }
     }
     if (this.armed) { this.burst += data.length; this.lastOutputAt = now }
-    if (bell && this.opts.bel) { this.disarm(); return this.set('waiting') }
+    if (bell && this.opts.bel) { this.disarm(); return this.update('waiting', 'blocked') }
     return false
   }
 
@@ -107,14 +133,14 @@ export class AttentionState {
     const due = this.dueAt()
     if (due === undefined || now < due) return false
     this.disarm()
-    return this.set('done')
+    return this.update('done', 'idle')
   }
 
   /** A new launch or the process exit: nothing is pending and nothing is shown. */
   reset(): boolean {
     this.disarm()
     this.scan = 'text'
-    return this.set(undefined)
+    return this.update(undefined, undefined)
   }
 
   private disarm(): void {
@@ -126,6 +152,13 @@ export class AttentionState {
     if (this.value === v) return false
     this.value = v
     return true
+  }
+
+  /** Sets the badge and the turn together; true when either changed (the daemon then broadcasts the slot). */
+  private update(value: Attention | undefined, turn: Turn | undefined): boolean {
+    const changed = this.turn !== turn
+    this.turn = turn
+    return this.set(value) || changed
   }
 }
 
@@ -139,13 +172,13 @@ export function attentionOptions(kind: string): AttentionOptions {
 }
 
 /** The hook's file (<home>/slots/<id>.attention): `{ ts, kind, sessionId? }`; undefined when unreadable. */
-export interface AttentionReport { ts: string; kind: Attention; sessionId?: string }
+export interface AttentionReport { ts: string; kind: Attention | 'busy'; /** Claude's notification_type, for a 'waiting'. */ notification?: string; sessionId?: string }
 
 export function parseAttentionReport(text: string): AttentionReport | undefined {
   let x: unknown
   try { x = JSON.parse(text) } catch { return undefined }
   if (!x || typeof x !== 'object' || Array.isArray(x)) return undefined
   const r = x as Record<string, unknown>
-  if (typeof r.ts !== 'string' || (r.kind !== 'done' && r.kind !== 'waiting')) return undefined
-  return { ts: r.ts, kind: r.kind, ...(typeof r.sessionId === 'string' ? { sessionId: r.sessionId } : {}) }
+  if (typeof r.ts !== 'string' || (r.kind !== 'done' && r.kind !== 'waiting' && r.kind !== 'busy')) return undefined
+  return { ts: r.ts, kind: r.kind, ...(typeof r.notification === 'string' ? { notification: r.notification } : {}), ...(typeof r.sessionId === 'string' ? { sessionId: r.sessionId } : {}) }
 }
