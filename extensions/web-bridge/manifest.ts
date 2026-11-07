@@ -34,8 +34,8 @@ export const manifest: ExtensionManifest = {
     ],
     menus: {
       app: [
-        // order 7: in the 'app' group after "Atalhos de teclado" (5) and before the core's "Extensões" (10).
-        { command: 'web-bridge.install', group: 'app', order: 7, icon: 'globe-simple', label: `Instalar ${BRIDGE_NAME}…` },
+        // Ferramentas submenu: last, after the core's "Extensões" (30).
+        { command: 'web-bridge.install', group: 'tools', order: 40, icon: 'globe-simple', label: `Instalar ${BRIDGE_NAME}…` },
       ],
     },
     status: [

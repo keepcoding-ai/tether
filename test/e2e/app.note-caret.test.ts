@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { clickMenuItem } from './menu-helpers.ts'
 
 type Hooks = { panelIds(): string[]; notes(): { id: string }[]; connection(): { connected: boolean; pid?: number } | undefined; activate(id: string): void }
 declare const window: { __tether: Hooks }
@@ -84,7 +85,7 @@ test('app note caret: sits at the end of the typed text (font measured after the
     await page.waitForFunction(n => document.querySelectorAll('.tether-tab').length === n, before + 1)
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    await page.click('#app-menu li[data-command="note.new"]')
+    await clickMenuItem(page, 'note.new')
     await page.waitForFunction(() => window.__tether.notes().length === 1)
     const dlg = page.locator('dialog.ask[data-dialog="note-gitignore"][open]')
     if (await dlg.count()) { await dlg.locator('button.choice').first().click() }

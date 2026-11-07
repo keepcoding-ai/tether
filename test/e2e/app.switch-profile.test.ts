@@ -24,6 +24,7 @@ import { DaemonClient } from '../../src/daemon/client.ts'
 import type { Profile, SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { clickMenuItem } from './menu-helpers.ts'
 import { aliveProcs, CLAUDE_DIALECT, processTree, type Proc } from './harness.ts'
 
 type Hooks = {
@@ -337,7 +338,7 @@ test('switch profile: a Claude panel without a profile gets "Claude modo dev" no
     await dlg.waitFor({ state: 'detached' })
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    await page.click('#app-menu li[data-command="pane.switch-profile"]')
+    await clickMenuItem(page, 'pane.switch-profile')
     dlg = hooks.dialog(page, 'switch-profile')
     await dlg.waitFor()
     await page.keyboard.press('Escape')

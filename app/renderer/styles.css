@@ -790,6 +790,15 @@ dialog.ask .choices.inert .choice:disabled:hover { background: var(--bg-3); }
 #theme-menu li .check { margin-left: auto; }
 #app-menu li.danger { color: var(--err); }
 #app-menu li.danger .ph { color: var(--err); }
+/* Submenus (menu-submenus.ts): a fixed <ul> nested in its row, placed by script beside the menu (right, or left near the edge). */
+#app-menu li.sub .sub-arrow { margin-left: auto; width: 13px; height: 13px; }
+#app-menu li.sub[data-side="left"] .sub-arrow { transform: scaleX(-1); }
+#app-menu li.sub[aria-expanded="true"] { background: var(--bg-hover-2); }
+#app-menu ul.submenu {
+  position: fixed; z-index: 61; min-width: 260px; margin: 0; padding: 4px; list-style: none; cursor: default; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow); color: var(--fg); font-weight: normal;
+}
+#app-menu ul.submenu[hidden] { display: none; }
 
 /* --- profile list (Novo painel: radios; manager: pressable rows), grouped by agent --- */
 fieldset.profiles { flex-direction: column; gap: 6px; padding: 8px 10px 10px; }

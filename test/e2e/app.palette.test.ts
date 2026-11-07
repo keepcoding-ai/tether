@@ -199,7 +199,7 @@ test('app palette: Ctrl+Shift+P / Ctrl+P, word filter (no letters apart), Enter 
     // 5. The ≡ menu: hints from the registry; pane items greyed without a pane.
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"] kbd').innerText(), 'Ctrl+N')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"] kbd').textContent(), 'Ctrl+N')
     assert.equal(await page.locator('#app-menu li[data-command="palette.show"] kbd').innerText(), 'Ctrl+Shift+P')
     assert.equal(await page.locator('#app-menu li[data-command="pane.move"]').getAttribute('aria-disabled'), 'false')
     assert.equal(await page.locator('#app-menu li[data-command="desk.close"]').getAttribute('aria-disabled'), 'false', 'two desks now')

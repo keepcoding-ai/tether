@@ -86,7 +86,7 @@ describe('web-bridge: vendored bridge', () => {
     assert.deepEqual(Object.keys(manifest.contributes!.settings!), ['serveToAgents', 'agentWindows', 'evaluate'])
     assert.equal(manifest.contributes!.settings!.evaluate!.default, 'own-tabs')
     assert.equal(manifest.contributes!.commands![0]!.command, 'web-bridge.install')
-    assert.equal(manifest.contributes!.menus!.app![0]!.group, 'app')
+    assert.equal(manifest.contributes!.menus!.app![0]!.group, 'tools')
   })
 })
 

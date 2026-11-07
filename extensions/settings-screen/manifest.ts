@@ -22,8 +22,8 @@ export const manifest: ExtensionManifest = {
     ],
     menus: {
       app: [
-        // order 15: in the 'app' group after the core's "Extensões" (10).
-        { command: 'settings.show', group: 'app', order: 15, icon: 'gear-six', label: 'Configurações…' },
+        // Its own root row (group 'settings'), between the submenus and the exit rows.
+        { command: 'settings.show', group: 'settings', order: 10, icon: 'gear-six', label: 'Configurações…' },
       ],
     },
   },

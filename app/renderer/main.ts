@@ -57,8 +57,9 @@ import type { ExtensionManifest } from '../../extensions/types.ts'
 import { DisposableStore, toDisposable, type IDisposable } from '../shared/vscode-lifecycle.ts'
 import { uiIpc } from '../shared/ext-ipc.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
-import { MenuId, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
+import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
+import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
 import type { PaneInfo } from './ext-api.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
@@ -2343,9 +2344,9 @@ let letThrough: KeyboardEvent | undefined
 /** The ≡ menu: every item names a command; the hint, the greying and the run come from the registry. */
 /** The ≡ checkboxes an extension's setting drives (MenuItem.toggled): their check follows the setting. */
 function syncMenuChecks(): void {
-  for (const e of menuRegistry.build(MenuId.App)) {
-    if (e.type !== 'item' || !e.item.toggled) continue
-    document.querySelector(`#app-menu li[data-command="${e.item.command}"]`)?.setAttribute('aria-checked', String(e.item.toggled()))
+  for (const item of flatItems(menuRegistry.build(MenuId.App))) {
+    if (!item.toggled) continue
+    document.querySelector(`#app-menu li[data-command="${item.command}"]`)?.setAttribute('aria-checked', String(item.toggled()))
   }
 }
 
@@ -2357,13 +2358,15 @@ function setupMenu(): void {
   for (const el of menu.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
   const items = [...menu.querySelectorAll<HTMLElement>('li[data-command]')]
   // The registry's items in the rendered order: an item with `when` is hidden while it does not hold.
-  const conditional = entries.flatMap(e => e.type === 'item' ? [e.item] : []).map((item, i) => ({ item, li: items[i]! })).filter(x => x.item.when)
+  const conditional = flatItems(entries).map((item, i) => ({ item, li: items[i]! })).filter(x => x.item.when)
   for (const li of items) {
     const id = li.dataset.command!
     if (!commands.get(id)) throw new Error(`menu item without a command: ${id}`)
   }
   // The key hints are painted by paintKeyHints (they follow the table).
+  const submenus = attachSubmenus(menu)
   const toggle = (open: boolean): void => {
+    submenus.closeAll()
     menu.hidden = !open
     btn.setAttribute('aria-expanded', String(open))
     if (open) {
@@ -2390,20 +2393,17 @@ function setupMenu(): void {
     if (li.dataset.command) void commands.run(li.dataset.command, 'menu')
   }
   menu.addEventListener('click', ev => {
+    if (submenus.handleClick(ev)) { ev.stopPropagation(); return }
     const li = (ev.target as HTMLElement).closest<HTMLElement>('li[role^=menuitem]')
     if (li) { ev.stopPropagation(); run(li) }
   })
   menu.addEventListener('keydown', ev => {
-    const items = [...menu.querySelectorAll<HTMLElement>('li[role^=menuitem]')]
-    const i = items.indexOf(document.activeElement as HTMLElement)
-    const go = (li: HTMLElement | undefined): void => { li?.focus(); li?.scrollIntoView({ block: 'nearest' }) }
+    // Arrows, Home/End and the submenus' open/close (ArrowRight/Enter, ArrowLeft/Escape) are the submenu controller's.
+    if (submenus.handleKey(ev)) return
+    const active = document.activeElement as HTMLElement
     if (ev.key === 'Escape') { ev.preventDefault(); toggle(false); btn.focus() }
-    else if (ev.key === 'ArrowDown') { ev.preventDefault(); go(items[(i + 1) % items.length]) }
-    else if (ev.key === 'ArrowUp') { ev.preventDefault(); go(items[(i - 1 + items.length) % items.length]) }
-    else if (ev.key === 'Home') { ev.preventDefault(); go(items[0]) }
-    else if (ev.key === 'End') { ev.preventDefault(); go(items[items.length - 1]) }
     else if (ev.key === 'Tab') toggle(false)
-    else if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (i >= 0) run(items[i]!) }
+    else if ((ev.key === 'Enter' || ev.key === ' ') && active.matches('li[role^=menuitem]')) { ev.preventDefault(); run(active) }
   })
 }
 

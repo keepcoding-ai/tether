@@ -21,6 +21,7 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { clickMenuItem } from './menu-helpers.ts'
 
 type Note = {
   id: string; path: string; text: string; savedText: string; dirty: boolean
@@ -147,7 +148,7 @@ test('app note: Monaco tab, autosave, column selection and multi-cursor, palette
     await page.waitForSelector('#app-menu:not([hidden])')
     assert.equal(await page.locator('#app-menu li[data-command="note.new"]').getAttribute('aria-disabled'), 'false')
     assert.equal(await page.locator('#app-menu li[data-command="note.save-as"]').getAttribute('aria-disabled'), 'true', 'no note focused yet')
-    await page.click('#app-menu li[data-command="note.new"]')
+    await clickMenuItem(page, 'note.new')
     await page.waitForFunction(() => window.__tether.notes().length === 1)
     // 4. The repository question comes with the first note: the app's own dialog; "add" writes the line.
     const dlg = page.locator('dialog.ask[data-dialog="note-gitignore"][open]')

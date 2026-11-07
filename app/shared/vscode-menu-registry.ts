@@ -13,7 +13,9 @@
 // does not list come after, lexically. Ties keep registration order (VS Code compares titles; titles live in the command
 // registry here, outside this pure module). `when` is a function of the caller's context (no context-key language).
 // An item can be a radio or a checkbox (VS Code's `toggled`), with a static initial check the renderer keeps in sync.
-// Left out: submenus, alt commands, hidden-by-default state, the change event (the ≡ menu is built once at startup,
+// Submenus: a group declared with `submenu` renders as ONE row that opens its items (VS Code's SubmenuItemAction, here fed
+// by the group instead of a separate submenu id); `section` lets several groups sit together between two separators.
+// Left out: alt commands, hidden-by-default state, the change event (the ≡ menu is built once at startup,
 // after the extensions activate). Pure, no DOM.
 import { toDisposable, DisposableStore, type IDisposable } from './vscode-lifecycle.ts'
 
@@ -51,12 +53,17 @@ export interface MenuItem<Ctx = unknown> {
 export interface MenuGroup {
   id: string
   heading?: { label: string; icon?: string }
+  /** The group's items open from one row with this label instead of sitting in the menu. */
+  submenu?: { label: string; icon?: string }
+  /** Groups sharing a section have no separator between them; default: the group's own id. */
+  section?: string
 }
 
 export type MenuEntry<Ctx = unknown> =
   | { type: 'item'; item: MenuItem<Ctx> }
   | { type: 'separator' }
   | { type: 'heading'; label: string; icon?: string }
+  | { type: 'submenu'; group: string; label: string; icon?: string; items: MenuItem<Ctx>[] }
 
 export class MenuRegistryImpl<Ctx = unknown> {
   private readonly items = new Map<string, MenuItem<Ctx>[]>()
@@ -104,14 +111,21 @@ export class MenuRegistryImpl<Ctx = unknown> {
     const sorted = sortMenuItems(visible, order)
     const out: MenuEntry<Ctx>[] = []
     let group: string | undefined
+    let section: string | undefined
+    let sub: Extract<MenuEntry<Ctx>, { type: 'submenu' }> | undefined
     for (const item of sorted) {
       if (item.group !== group) {
-        if (group !== undefined) out.push({ type: 'separator' })
         group = item.group
-        const heading = this.getMenuGroup(menu, group)?.heading
-        if (heading) out.push({ type: 'heading', ...heading })
+        const g = this.getMenuGroup(menu, group)
+        const next = g?.section ?? group
+        if (section !== undefined && next !== section) out.push({ type: 'separator' })
+        section = next
+        sub = undefined
+        if (g?.submenu) { sub = { type: 'submenu', group, label: g.submenu.label, ...(g.submenu.icon ? { icon: g.submenu.icon } : {}), items: [] }; out.push(sub) }
+        else if (g?.heading) out.push({ type: 'heading', ...g.heading })
       }
-      out.push({ type: 'item', item })
+      if (sub) sub.items.push(item)
+      else out.push({ type: 'item', item })
     }
     return out
   }
@@ -129,4 +143,9 @@ export function sortMenuItems<T extends { group: string; order?: number }>(items
     const p = (a.item.order ?? 0) - (b.item.order ?? 0)
     return p !== 0 ? p : a.index - b.index
   }).map(x => x.item)
+}
+
+/** The items of built entries in document order (a submenu's after its row's place): what the renderer lists as `li[data-command]`. */
+export function flatItems<Ctx>(entries: readonly MenuEntry<Ctx>[]): MenuItem<Ctx>[] {
+  return entries.flatMap(e => e.type === 'item' ? [e.item] : e.type === 'submenu' ? e.items : [])
 }

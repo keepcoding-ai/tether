@@ -15,12 +15,13 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { clickMenuItem } from './menu-helpers.ts'
 
 type Hooks = {
   connection(): { connected: boolean; pid?: number } | undefined
   palette(): { open: boolean; shown: string[] }
 }
-type Row = { role: string | null; command: string | null; text: string; kbd: string | null; checked: string | null; disabled: string | null; cls: string }
+type Row = { role: string | null; command: string | null; text: string; kbd: string | null; checked: string | null; disabled: string | null; cls: string; submenu: string | null }
 declare const window: {
   __tether: Hooks
   tether: {
@@ -60,15 +61,16 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   return { app, page }
 }
 
-/** The ≡ rows as the person sees them: role, command, own text (no hint), hint, check, greyed, class. */
-const menuRows = (page: Page): Promise<Row[]> => page.evaluate(() => Array.from(document.querySelectorAll('#app-menu > li')).map(li => ({
+/** The ≡ rows (root rows, each submenu's row followed by its items) as the person sees them: role, command, own text (no hint), hint, check, greyed, class. */
+const menuRows = (page: Page): Promise<Row[]> => page.evaluate(() => Array.from(document.querySelectorAll('#app-menu li')).map(li => ({
   role: li.getAttribute('role'),
   command: li.getAttribute('data-command'),
   text: Array.from(li.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim(),
-  kbd: li.querySelector('kbd')?.textContent ?? null,
+  kbd: li.querySelector(':scope > kbd')?.textContent ?? null,
   checked: li.getAttribute('aria-checked'),
   disabled: li.getAttribute('aria-disabled'),
   cls: li.className,
+  submenu: li.getAttribute('data-submenu'),
 })))
 
 // [command | 'sep' | 'label', text, hint, checked, disabled] with no pane open, default settings (theme auto).
@@ -76,31 +78,32 @@ const EXPECTED: Array<[string, string, string | null, string | null, string | nu
   ['palette.show', 'Paleta de comandos…', 'Ctrl+Shift+P', null, 'false'],
   ['sep', '', null, null, null],
   ['pane.new', 'Novo painel…', 'Ctrl+K Ctrl+O', null, 'false'],
+  ['explorer.open-folder', 'Abrir pasta…', null, null, 'false'],
+  ['drawer.toggle', 'Abrir gaveta', 'Ctrl+`', null, 'false'],
+  ['sep', '', null, null, null],
+  ['sub:pane', 'Painel', null, null, null],
   ['pane.new-tab', 'Nova aba neste grupo', 'Ctrl+N', null, 'false'],
   ['pane.duplicate.pane.right', 'Duplicar painel à direita', 'Ctrl+Alt+→', null, 'true'],
   ['pane.duplicate.pane.below', 'Duplicar painel abaixo', 'Ctrl+Alt+↓', null, 'true'],
   ['pane.new-at-frame-edge', 'Novo painel na borda do quadro…', null, null, 'false'],
   ['frame.new', 'Novo quadro…', null, null, 'false'],
-  ['explorer.open-folder', 'Abrir pasta…', null, null, 'false'],
-  ['sep', '', null, null, null],
+  ['pane.switch-profile', 'Trocar perfil do painel…', null, null, 'true'],
+  ['sub:note', 'Nota', null, null, null],
   ['note.new', 'Nova nota', null, null, 'false'],
   ['note.open', 'Abrir nota…', 'Ctrl+O', null, 'false'],
   ['note.save-as', 'Salvar nota como…', 'Ctrl+Shift+S', null, 'true'],
-  ['sep', '', null, null, null],
+  ['sub:desk', 'Mesa', null, null, null],
   ['desk.new', 'Nova mesa', 'Ctrl+Shift+N', null, 'false'],
   ['pane.move', 'Mover…', null, null, 'true'],
   ['desk.actions', 'Mesa atual: renomear, cor, mover…', null, null, 'false'],
   ['desk.close', 'Fechar mesa…', 'Ctrl+K F', null, 'true'],
-  ['sep', '', null, null, null],
-  ['drawer.toggle', 'Abrir gaveta', 'Ctrl+`', null, 'false'],
-  ['sep', '', null, null, null],
+  ['sub:tools', 'Ferramentas', null, null, null],
   ['profiles.manage', 'Perfis de lançamento…', null, null, 'false'],
-  ['pane.switch-profile', 'Trocar perfil do painel…', null, null, 'true'],
-  ['sep', '', null, null, null],
   ['keybindings.show', 'Atalhos de teclado', 'Ctrl+K Ctrl+S', null, 'false'],
-  ['web-bridge.install', 'Instalar Tether Bridge…', null, null, 'false'],   // F7 C1
   ['extensions.show', 'Extensões', null, null, 'false'],
-  ['settings.show', 'Configurações…', 'Ctrl+,', null, 'false'],                   // settings plan, slice 3
+  ['web-bridge.install', 'Instalar Tether Bridge…', null, null, 'false'],
+  ['sep', '', null, null, null],
+  ['settings.show', 'Configurações…', 'Ctrl+,', null, 'false'],
   ['sep', '', null, null, null],
   ['window.close', 'Fechar a janela', 'Ctrl+Shift+W', null, 'false'],
   ['app.quit-all', 'Sair e encerrar tudo…', 'Ctrl+Shift+Q', null, 'false'],
@@ -125,14 +128,14 @@ test('app extensions (F9 0b): generated ≡ menu equals the old one + "Extensõe
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
     const rows = await menuRows(page)
-    const got = rows.map(r => [r.role === 'separator' ? 'sep' : r.cls === 'label' ? 'label' : r.command, r.text, r.kbd, r.checked, r.disabled])
+    const got = rows.map(r => [r.role === 'separator' ? 'sep' : r.cls === 'label' ? 'label' : r.cls === 'sub' ? `sub:${r.submenu}` : r.command, r.text, r.kbd, r.checked, r.disabled])
     assert.deepEqual(got, EXPECTED)
     assert.equal(rows.find(r => r.command === 'app.quit-all')?.cls, 'danger')
-    assert.ok(rows.filter(r => r.role?.startsWith('menuitem')).every(r => r.command), 'every item names a command')
+    assert.ok(rows.filter(r => r.role?.startsWith('menuitem') && r.cls !== 'sub').every(r => r.command), 'every item names a command')
     assert.equal(await page.locator('#app-menu li[data-command="extensions.show"] svg').count(), 1, 'icons are painted')
 
     // 2. "Extensões" from the menu: the screen opens as a tab, listing the note (F9 slice 1), on, with its switch.
-    await page.click('#app-menu li[data-command="extensions.show"]')
+    await clickMenuItem(page, 'extensions.show')
     await page.waitForSelector('#app-menu', { state: 'hidden' })
     await page.waitForSelector('.ext-pane .ext-row[data-ext="note"]')
     assert.equal(await page.locator('.tether-tab.extensions .text').innerText(), 'Extensões')

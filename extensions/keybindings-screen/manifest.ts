@@ -25,8 +25,8 @@ export const manifest: ExtensionManifest = {
     ],
     menus: {
       app: [
-        // order 5: first of the 'app' group, ahead of the core's "Extensões" (10).
-        { command: 'keybindings.show', group: 'app', order: 5, icon: 'keyboard', label: 'Atalhos de teclado' },
+        // Ferramentas submenu: after "Perfis de lançamento…" (10), before the core's "Extensões" (30).
+        { command: 'keybindings.show', group: 'tools', order: 20, icon: 'keyboard', label: 'Atalhos de teclado' },
       ],
     },
   },

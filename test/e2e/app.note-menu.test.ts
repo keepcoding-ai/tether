@@ -13,6 +13,7 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { clickMenuItem } from './menu-helpers.ts'
 
 type Hooks = {
   panelIds(): string[]
@@ -118,7 +119,7 @@ test('app note menu: the editor context menu is opaque, bordered and shadowed in
 
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
-    await page.click('#app-menu li[data-command="note.new"]')
+    await clickMenuItem(page, 'note.new')
     await page.waitForFunction(() => window.__tether.notes().length === 1)
     const noteId = (await page.evaluate(() => window.__tether.notes()))[0]!.id
     await page.locator(`.note-panel[data-note-id="${noteId}"] .monaco-editor`).click()

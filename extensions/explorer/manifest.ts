@@ -46,7 +46,7 @@ export const manifest: ExtensionManifest = {
     ],
     menus: {
       app: [
-        { command: 'explorer.open-folder', group: 'pane', order: 90, icon: 'folder-open', label: 'Abrir pasta…' },
+        { command: 'explorer.open-folder', group: 'open', order: 20, icon: 'folder-open', label: 'Abrir pasta…' },
       ],
     },
   },
