@@ -185,9 +185,9 @@ async function shoot(page: Page, name: string): Promise<void> {
 }
 
 async function setTheme(page: Page, scheme: 'light' | 'dark'): Promise<void> {
-  await page.click('#btn-menu')
-  await page.waitForSelector('#app-menu:not([hidden])')
-  await page.click(`#app-menu li[data-theme="${scheme}"]`)
+  await page.click('#btn-theme')
+  await page.waitForSelector('#theme-menu:not([hidden])')
+  await page.click(`#theme-menu li[data-theme="${scheme}"]`)
   await page.waitForFunction(s => document.querySelector('html')?.dataset.theme === s, scheme)
 }
 

@@ -22,10 +22,12 @@ type Hooks = {
 declare const window: { innerWidth: number; innerHeight: number; __tether: Hooks; tether: { setTheme(s: string): Promise<unknown> } }
 declare const document: {
   documentElement: { dataset: Record<string, string | undefined> }
-  querySelectorAll(sel: string): { length: number }
+  querySelectorAll(sel: string): { length: number } & ArrayLike<Menu>
   elementFromPoint(x: number, y: number): { closest(s: string): unknown } | null
-  querySelector(s: string): { getBoundingClientRect(): { left: number; top: number; right: number; bottom: number } } | null
+  querySelector(s: string): Menu | null
+  activeElement: Menu | null
 }
+type Menu = { getBoundingClientRect(): { left: number; top: number; right: number; bottom: number }; getAttribute(n: string): string | null; scrollHeight: number; clientHeight: number }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -124,6 +126,45 @@ test('app menu layer: the app menu stays above the editor minimap and scrollbar'
       await page.keyboard.press('Escape')
       await page.waitForSelector('#app-menu', { state: 'hidden' })
     }
+
+    // The slim menu (settings plan 9): no look group; the app group is Atalhos, Instalar, Extensões, Configurações.
+    await page.click('#btn-menu')
+    await page.waitForSelector('#app-menu:not([hidden])')
+    const cmds = await page.evaluate(() => Array.from(document.querySelectorAll('#app-menu li[data-command]')).map(li => li.getAttribute('data-command')))
+    for (const gone of ['theme.light', 'ui.desk-line', 'ui.dim-weak', 'ui.word-wrap', 'terminal.theme', 'confirmations.restore']) assert.ok(!cmds.includes(gone), `${gone} left the menu`)
+    const at = cmds.indexOf('keybindings.show')
+    assert.deepEqual(cmds.slice(at, at + 4), ['keybindings.show', 'web-bridge.install', 'extensions.show', 'settings.show'])
+    await sleep(400)
+    await shot(app, join(outDir, 'tether-menu-slim.png'))
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#app-menu', { state: 'hidden' })
+
+    // A short window (480 px high): the menu fits the viewport, scrolls, and the End key reaches the last item (settings plan 10).
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1280, 480))
+    await page.waitForFunction(() => window.innerHeight <= 481)
+    await page.click('#btn-menu')
+    await page.waitForSelector('#app-menu:not([hidden])')
+    const fit = await page.evaluate(() => {
+      const el = document.querySelector('#app-menu')!
+      const r = el.getBoundingClientRect()
+      return { top: r.top, bottom: r.bottom, inner: window.innerHeight, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
+    })
+    assert.ok(fit.top >= 0 && fit.bottom <= fit.inner, `the menu is inside the viewport: ${JSON.stringify(fit)}`)
+    assert.ok(fit.scrollHeight > fit.clientHeight, `the menu scrolls: ${JSON.stringify(fit)}`)
+    await page.keyboard.press('End')
+    const last = await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll('#app-menu li[role^=menuitem]'))
+      const li = items[items.length - 1]!
+      const a = document.activeElement
+      const m = document.querySelector('#app-menu')!.getBoundingClientRect()
+      const r = li.getBoundingClientRect()
+      return { focused: a?.getAttribute('data-command'), last: li.getAttribute('data-command'), visible: r.top >= m.top - 1 && r.bottom <= m.bottom + 1 }
+    })
+    assert.equal(last.focused, last.last, 'End focuses the last item')
+    assert.ok(last.visible, 'the last item was scrolled into view')
+    await sleep(400)
+    await shot(app, join(outDir, 'tether-scrollbar.png'))
+    await page.keyboard.press('Escape')
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))
     for (const d of daemons) {

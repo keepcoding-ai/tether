@@ -9,6 +9,8 @@ import { join } from 'node:path'
 import { appMenuHtml, APP_MENU_GROUPS, CORE_APP_MENU, coreMenuRegistry as coreOnly, menuItemOf } from '../../app/renderer/app-menu.ts'
 import { manifest as noteManifest } from '../../extensions/note/manifest.ts'
 import { manifest as keybindingsManifest } from '../../extensions/keybindings-screen/manifest.ts'
+import { manifest as settingsManifest } from '../../extensions/settings-screen/manifest.ts'
+import { manifest as webBridgeManifest } from '../../extensions/web-bridge/manifest.ts'
 import { MenuId, MenuRegistryImpl, sortMenuItems } from '../../app/shared/vscode-menu-registry.ts'
 
 // The registry as the app builds it: the core's items plus the note extension's (its word wrap on, the default) and the shortcuts screen's.
@@ -23,6 +25,16 @@ const fixture = (): string[] => readFileSync(join(import.meta.dirname, 'fixtures
 const EXTENSIONS_ROW = '<li role="menuitem" data-command="extensions.show"><span class="i" data-icon="puzzle-piece"></span>Extensões</li>'
 
 describe('the ≡ menu from the registry', () => {
+  test('slim menu (settings plan 9): no look group; the app group is Atalhos, Instalar Bridge, Extensões, Configurações', () => {
+    const r = coreOnly()
+    for (const m of [noteManifest, keybindingsManifest, settingsManifest, webBridgeManifest].flatMap(x => x.contributes?.menus?.app ?? [])) r.appendMenuItem(MenuId.App, menuItemOf(m, () => true))
+    const cmds = r.build(MenuId.App).flatMap(e => e.type === 'item' ? [e.item.command] : [])
+    assert.deepEqual(cmds.slice(cmds.indexOf('keybindings.show'), cmds.indexOf('keybindings.show') + 4), ['keybindings.show', 'web-bridge.install', 'extensions.show', 'settings.show'])
+    assert.ok(!(APP_MENU_GROUPS as readonly string[]).includes('look'))
+    for (const gone of ['theme.light', 'theme.auto', 'theme.dark', 'ui.desk-line', 'ui.tab-border', 'ui.dim-unfocused', 'ui.dim-weak', 'ui.dim-medium', 'ui.dim-strong', 'ui.word-wrap', 'ui.minimap', 'ui.line-numbers', 'terminal.theme', 'confirmations.restore']) assert.ok(!cmds.includes(gone), gone)
+    assert.ok(!r.build(MenuId.App).some(e => e.type === 'heading'), 'no "Tema" heading')
+  })
+
   test('generates the static menu it replaced, row for row (labels, icons, order, radios, checks, danger, separators, heading)', () => {
     const generated = appMenuHtml(coreMenuRegistry().build(MenuId.App)).split('\n')
     const expected = fixture()

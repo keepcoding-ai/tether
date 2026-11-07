@@ -103,9 +103,9 @@ async function focusPane(page: Page, id: string): Promise<void> {
 }
 
 async function setTheme(page: Page, scheme: 'light' | 'dark'): Promise<void> {
-  await page.click('#btn-menu')
-  await page.waitForSelector('#app-menu:not([hidden])')
-  await page.click(`#app-menu li[data-theme="${scheme}"]`)
+  await page.click('#btn-theme')
+  await page.waitForSelector('#theme-menu:not([hidden])')
+  await page.click(`#theme-menu li[data-theme="${scheme}"]`)
   await page.waitForFunction(s => (document.documentElement as { dataset: Record<string, string> }).dataset.theme === s, scheme)
   await page.mouse.move(400, 300) // inside a card, away from its edges: no "+" in the screenshot
   await sleep(300)
@@ -333,7 +333,7 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     await page.click('#theme-menu li[data-theme="dark"]')
     await page.waitForFunction(() => (document.documentElement as { dataset: Record<string, string> }).dataset.theme === 'dark')
     assert.equal(await page.locator('#theme-menu li[data-theme="dark"]').getAttribute('aria-checked'), 'true')
-    assert.equal(await page.locator('#app-menu li[data-theme="dark"]').getAttribute('aria-checked'), 'true', 'the ≡ radios follow')
+    assert.equal(await page.locator('#theme-menu li[data-theme="dark"]').getAttribute('aria-checked'), 'true', 'the ≡ radios follow')
 
     // The connection popover: on hover, pinned by a click, closed by Esc; pipe, pid and version from hello.
     await page.hover('#conn')
@@ -408,10 +408,9 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     await page.keyboard.press('Escape')
     await page.waitForSelector('#desk-colors', { state: 'detached' })
 
-    // The desk line: off through ≡, saved in settings.json, still off after a relaunch.
+    // The desk line: off through its command, saved in settings.json, still off after a relaunch.
     await assertDeskLine(page)
-    await page.click('#btn-menu')
-    await page.click('#app-menu li[data-command="ui.desk-line"]')
+    await page.evaluate(() => (globalThis as unknown as { __tether: { runCommand(id: string): Promise<unknown> } }).__tether.runCommand('ui.desk-line'))
     await page.waitForFunction(() => !window.__tether.deskLine())
     assert.equal(await page.locator('#dock').evaluate(el => window.getComputedStyle(el, '::before').content), 'none', 'the line is gone')
     assert.equal(JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')).ui?.deskLine, false, 'settings.json ui.deskLine')
@@ -420,9 +419,7 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     ;({ app, page } = await launch(home))
     await page.waitForFunction(() => window.__tether.desks().length > 1)
     assert.equal(await page.evaluate(() => window.__tether.deskLine()), false, 'still off after relaunch')
-    assert.equal(await page.locator('#app-menu li[data-command="ui.desk-line"]').getAttribute('aria-checked'), 'false')
-    await page.click('#btn-menu')
-    await page.click('#app-menu li[data-command="ui.desk-line"]')
+    await page.evaluate(() => (globalThis as unknown as { __tether: { runCommand(id: string): Promise<unknown> } }).__tether.runCommand('ui.desk-line'))
     await page.waitForFunction(() => window.__tether.deskLine())
     await assertDeskLine(page)
   } finally {

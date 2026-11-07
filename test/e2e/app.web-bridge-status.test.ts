@@ -107,9 +107,9 @@ async function launch(home: string, extra: Record<string, string>): Promise<{ ap
 }
 
 async function setTheme(page: Page, scheme: 'light' | 'dark'): Promise<void> {
-  await page.click('#btn-menu')
-  await page.waitForSelector('#app-menu:not([hidden])')
-  await page.click(`#app-menu li[data-theme="${scheme}"]`)
+  await page.click('#btn-theme')
+  await page.waitForSelector('#theme-menu:not([hidden])')
+  await page.click(`#theme-menu li[data-theme="${scheme}"]`)
   await page.waitForFunction(s => (document as unknown as { documentElement: { dataset: Record<string, string> } }).documentElement.dataset.theme === s, scheme)
   await sleep(300)
 }

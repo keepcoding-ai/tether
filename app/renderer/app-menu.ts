@@ -6,7 +6,7 @@ import { MenuId, MenuRegistryImpl, type MenuEntry, type MenuItem } from '../shar
 import type { MenuItemContribution } from '../../extensions/types.ts'
 
 /** The groups of the ≡ menu, in the order the core shows them; an extension's unknown group goes after, lexically. */
-export const APP_MENU_GROUPS = ['palette', 'pane', 'note', 'desk', 'drawer', 'profiles', 'look', 'app', 'exit'] as const
+export const APP_MENU_GROUPS = ['palette', 'pane', 'note', 'desk', 'drawer', 'profiles', 'app', 'exit'] as const
 
 type Item = MenuItem
 /** Orders 10, 20, 30… in list order; an item with its own `order` keeps it (a gap left for an extension's item). */
@@ -35,23 +35,10 @@ export const CORE_APP_MENU: readonly Item[] = [
     { command: 'profiles.manage', icon: 'sliders-horizontal', label: 'Perfis de lançamento…' },
     { command: 'pane.switch-profile', icon: 'arrow-clockwise', label: 'Trocar perfil do painel…' },
   ]),
-  ...items('look', [
-    { command: 'theme.light', kind: 'radio', data: { theme: 'light' }, label: 'Claro' },
-    { command: 'theme.auto', kind: 'radio', data: { theme: 'auto' }, label: 'Automático' },
-    { command: 'theme.dark', kind: 'radio', data: { theme: 'dark' }, label: 'Escuro' },
-    { command: 'ui.desk-line', kind: 'checkbox', checked: true, label: 'Linha da cor da mesa' },
-    { command: 'ui.tab-border', kind: 'checkbox', checked: false, label: 'Borda na guia do painel com foco' },
-    { command: 'ui.dim-unfocused', kind: 'checkbox', checked: false, label: 'Esmaecer quadros sem foco' },
-    { command: 'ui.dim-weak', kind: 'radio', data: { dim: 'weak' }, order: 61, label: 'Esmaecer: fraco' },
-    { command: 'ui.dim-medium', kind: 'radio', data: { dim: 'medium' }, order: 62, label: 'Esmaecer: médio' },
-    { command: 'ui.dim-strong', kind: 'radio', data: { dim: 'strong' }, order: 63, label: 'Esmaecer: forte' },
-    // order 70: the note extension's "Quebra de linha no editor".
-    { command: 'terminal.theme', icon: 'palette', label: 'Tema do terminal…', order: 80 },
-  ]),
   ...items('app', [
-    // order 5: the keybindings-screen extension's "Atalhos de teclado".
+    // order 5: the keybindings-screen extension's "Atalhos de teclado"; 7: the web-bridge's install; 15: the settings screen's "Configurações…".
+    // Appearance toggles (theme, ui.*, dim, terminal theme, confirmations) live on the Settings page and in the palette, not here.
     { command: 'extensions.show', icon: 'puzzle-piece', label: 'Extensões' },
-    { command: 'confirmations.restore', icon: 'arrow-clockwise', label: 'Voltar a perguntar antes de fechar painéis' },
   ]),
   ...items('exit', [
     { command: 'window.close', icon: 'app-window', label: 'Fechar a janela' },
@@ -59,11 +46,10 @@ export const CORE_APP_MENU: readonly Item[] = [
   ]),
 ]
 
-/** A registry holding the core's ≡ menu (order, groups, the "Tema" heading); main.ts adds the extensions' items to it. */
+/** A registry holding the core's ≡ menu (order, groups); main.ts adds the extensions' items to it. */
 export function coreMenuRegistry(): MenuRegistryImpl {
   const r = new MenuRegistryImpl()
   r.setGroupOrder(MenuId.App, APP_MENU_GROUPS)
-  r.appendMenuGroup(MenuId.App, { id: 'look', heading: { label: 'Tema', icon: 'circle-half' } })
   for (const item of CORE_APP_MENU) r.appendMenuItem(MenuId.App, item)
   return r
 }

@@ -767,6 +767,8 @@ dialog.ask .choices.inert .choice:disabled:hover { background: var(--bg-3); }
   background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow);
 }
 #theme-menu { min-width: 180px; }
+/* The ≡ menu fits the viewport below its top (main.ts sets --menu-top on open) and scrolls when its items do not fit (settings plan 10). */
+#app-menu { max-height: calc(100vh - var(--menu-top, 40px) - 8px); overflow-y: auto; overscroll-behavior: contain; }
 #app-menu li, #theme-menu li { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 4px; cursor: pointer; outline: none; }
 #app-menu li .ph, #theme-menu li .ph { width: 15px; height: 15px; color: var(--fg-dim); }
 #app-menu li:hover, #app-menu li:focus, #theme-menu li:hover, #theme-menu li:focus { background: var(--bg-hover-2); }

@@ -260,8 +260,8 @@ test('move dialog: pane beside / as a tab / drawer in and out / whole frame, sam
     // ---- 9. screenshots (light, dark), then relaunch ----
     console.log('step 9')
     for (const scheme of ['light', 'dark'] as const) {
-      await page.click('#btn-menu')
-      await page.click(`#app-menu li[data-theme="${scheme}"]`)
+      await page.click('#btn-theme')
+      await page.click(`#theme-menu li[data-theme="${scheme}"]`)
       await page.waitForFunction(s => document.documentElement.dataset.theme === s, scheme)
       await page.evaluate(id => window.__tether.openMove(id), a)
       await dialogOpen(page)

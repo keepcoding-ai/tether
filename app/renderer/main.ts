@@ -2366,7 +2366,12 @@ function setupMenu(): void {
   const toggle = (open: boolean): void => {
     menu.hidden = !open
     btn.setAttribute('aria-expanded', String(open))
-    if (open) menu.querySelector<HTMLElement>('li[role^=menuitem]')?.focus()
+    if (open) {
+      // The menu's CSS max-height reads the room below its top, so a short window scrolls the menu instead of clipping it.
+      menu.style.setProperty('--menu-top', `${menu.getBoundingClientRect().top}px`)
+      menu.scrollTop = 0
+      menu.querySelector<HTMLElement>('li[role^=menuitem]')?.focus()
+    }
   }
   btn.addEventListener('click', ev => {
     ev.stopPropagation()
@@ -2391,11 +2396,12 @@ function setupMenu(): void {
   menu.addEventListener('keydown', ev => {
     const items = [...menu.querySelectorAll<HTMLElement>('li[role^=menuitem]')]
     const i = items.indexOf(document.activeElement as HTMLElement)
+    const go = (li: HTMLElement | undefined): void => { li?.focus(); li?.scrollIntoView({ block: 'nearest' }) }
     if (ev.key === 'Escape') { ev.preventDefault(); toggle(false); btn.focus() }
-    else if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(i + 1) % items.length]?.focus() }
-    else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus() }
-    else if (ev.key === 'Home') { ev.preventDefault(); items[0]?.focus() }
-    else if (ev.key === 'End') { ev.preventDefault(); items[items.length - 1]?.focus() }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); go(items[(i + 1) % items.length]) }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); go(items[(i - 1 + items.length) % items.length]) }
+    else if (ev.key === 'Home') { ev.preventDefault(); go(items[0]) }
+    else if (ev.key === 'End') { ev.preventDefault(); go(items[items.length - 1]) }
     else if (ev.key === 'Tab') toggle(false)
     else if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (i >= 0) run(items[i]!) }
   })

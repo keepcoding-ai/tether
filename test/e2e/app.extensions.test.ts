@@ -97,26 +97,10 @@ const EXPECTED: Array<[string, string, string | null, string | null, string | nu
   ['profiles.manage', 'Perfis de lançamento…', null, null, 'false'],
   ['pane.switch-profile', 'Trocar perfil do painel…', null, null, 'true'],
   ['sep', '', null, null, null],
-  ['label', 'Tema', null, null, null],
-  ['theme.light', 'Claro', null, 'false', 'false'],
-  ['theme.auto', 'Automático', null, 'true', 'false'],
-  ['theme.dark', 'Escuro', null, 'false', 'false'],
-  ['ui.desk-line', 'Linha da cor da mesa', null, 'true', 'false'],
-  ['ui.tab-border', 'Borda na guia do painel com foco', null, 'false', 'false'],
-  ['ui.dim-unfocused', 'Esmaecer quadros sem foco', null, 'false', 'false'],
-  ['ui.dim-weak', 'Esmaecer: fraco', null, 'false', 'false'],
-  ['ui.dim-medium', 'Esmaecer: médio', null, 'false', 'false'],
-  ['ui.dim-strong', 'Esmaecer: forte', null, 'false', 'false'],
-  ['ui.word-wrap', 'Quebra de linha no editor', null, 'true', 'false'],
-  ['ui.minimap', 'Minimapa nos editores', null, 'true', 'false'],
-  ['ui.line-numbers', 'Números de linha nos editores', null, 'true', 'false'],
-  ['terminal.theme', 'Tema do terminal…', null, null, 'false'],
-  ['sep', '', null, null, null],
   ['keybindings.show', 'Atalhos de teclado', 'Ctrl+K Ctrl+S', null, 'false'],
   ['web-bridge.install', 'Instalar Tether Bridge…', null, null, 'false'],   // F7 C1
   ['extensions.show', 'Extensões', null, null, 'false'],
   ['settings.show', 'Configurações…', 'Ctrl+,', null, 'false'],                   // settings plan, slice 3
-  ['confirmations.restore', 'Voltar a perguntar antes de fechar painéis', null, null, 'false'],
   ['sep', '', null, null, null],
   ['window.close', 'Fechar a janela', 'Ctrl+Shift+W', null, 'false'],
   ['app.quit-all', 'Sair e encerrar tudo…', 'Ctrl+Shift+Q', null, 'false'],
@@ -145,7 +129,7 @@ test('app extensions (F9 0b): generated ≡ menu equals the old one + "Extensõe
     assert.deepEqual(got, EXPECTED)
     assert.equal(rows.find(r => r.command === 'app.quit-all')?.cls, 'danger')
     assert.ok(rows.filter(r => r.role?.startsWith('menuitem')).every(r => r.command), 'every item names a command')
-    assert.equal(await page.locator('#app-menu li[data-command="theme.auto"] svg').count(), 1, 'icons are painted')
+    assert.equal(await page.locator('#app-menu li[data-command="extensions.show"] svg').count(), 1, 'icons are painted')
 
     // 2. "Extensões" from the menu: the screen opens as a tab, listing the note (F9 slice 1), on, with its switch.
     await page.click('#app-menu li[data-command="extensions.show"]')

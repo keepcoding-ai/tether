@@ -84,20 +84,18 @@ async function focusFrame(page: Page, index: number): Promise<void> {
 }
 
 async function setTheme(page: Page, scheme: 'light' | 'dark'): Promise<void> {
-  await page.click('#btn-menu')
-  await page.waitForSelector('#app-menu:not([hidden])')
-  await page.click(`#app-menu li[data-theme="${scheme}"]`)
+  await page.click('#btn-theme')
+  await page.waitForSelector('#theme-menu:not([hidden])')
+  await page.click(`#theme-menu li[data-theme="${scheme}"]`)
   await page.waitForFunction(s => (document.querySelector('html') as { dataset: Record<string, string> }).dataset.theme === s, scheme)
   await sleep(300)
 }
 
 type Command = 'ui.desk-line' | 'ui.tab-border' | 'ui.dim-unfocused'
 
-/** Toggles a setting through its ≡ menu item and waits for the renderer to apply it. */
+/** Toggles a setting through its command (the ≡ menu no longer carries them) and waits for the renderer to apply it. */
 async function toggle(page: Page, command: Command, want: boolean): Promise<void> {
-  await page.click('#btn-menu')
-  await page.waitForSelector('#app-menu:not([hidden])')
-  await page.click(`#app-menu li[data-command="${command}"]`)
+  await page.evaluate(c => (globalThis as unknown as { __tether: { runCommand(id: string): Promise<unknown> } }).__tether.runCommand(c), command)
   await page.waitForFunction(([c, w]) => {
     const s = window.__tether.signals()
     return (c === 'ui.desk-line' ? window.__tether.deskLine() : c === 'ui.tab-border' ? s.tabBorder : s.dimUnfocused) === w
@@ -248,9 +246,7 @@ test('app signals: line, folder border and dim are independent and combinable (F
 
     // 4b. Three dim levels.
     const level = async (cmd: 'ui.dim-weak' | 'ui.dim-medium' | 'ui.dim-strong', want: string): Promise<void> => {
-      await page.click('#btn-menu')
-      await page.waitForSelector('#app-menu:not([hidden])')
-      await page.click(`#app-menu li[data-command="${cmd}"]`)
+      await page.evaluate(c => (globalThis as unknown as { __tether: { runCommand(id: string): Promise<unknown> } }).__tether.runCommand(c), cmd)
       await page.waitForFunction(w => window.__tether.signals().dimLevel === w, want)
       await page.mouse.move(640, 400)
       await sleep(350)
@@ -266,7 +262,6 @@ test('app signals: line, folder border and dim are independent and combinable (F
     assert.equal((await page.evaluate(() => window.__tether.signals())).dimUnfocused, true, 'picking a level turns the dim on')
     const weak = await veilOf()
     assert.ok(Math.abs(weak.opacity - 0.2) < 0.01, `fraco is .20: ${weak.opacity}`)
-    assert.equal(await page.locator('#app-menu li[data-command="ui.dim-weak"]').getAttribute('aria-checked'), 'true')
     await level('ui.dim-medium', 'medium')
     const medium = await veilOf()
     assert.ok(Math.abs(medium.opacity - 0.32) < 0.01, `médio is .32: ${medium.opacity}`)
@@ -286,7 +281,6 @@ test('app signals: line, folder border and dim are independent and combinable (F
     // Turning the dim off keeps the level; turning it on again brings it back.
     await setModes(page, { line: true, border: false, dim: false })
     assert.equal((await page.evaluate(() => window.__tether.signals())).dimLevel, 'weak', 'the level survives the toggle')
-    assert.equal(await page.locator('#app-menu li[data-command="ui.dim-weak"]').getAttribute('aria-checked'), 'false', 'no radio is checked while the dim is off')
     // Screenshots: light and dark x three levels.
     mkdirSync(shots3, { recursive: true })
     const dim3: string[] = []

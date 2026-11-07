@@ -84,10 +84,7 @@ async function focusEditor(page: Page, id: string): Promise<void> {
   await page.waitForFunction(id => window.__tether.activeId() === id, id)
 }
 async function appMenuToggle(page: Page): Promise<void> {
-  await page.click('#btn-menu')
-  await page.waitForSelector('#app-menu:not([hidden])')
-  await page.click('#app-menu li[data-command="ui.line-numbers"]')
-  await page.waitForSelector('#app-menu', { state: 'hidden' })
+  await page.evaluate(() => (globalThis as unknown as { __tether: { runCommand(id: string): Promise<unknown> } }).__tether.runCommand('ui.line-numbers'))
 }
 async function tabMenu(page: Page, id: string, label: string): Promise<void> {
   await page.locator(`.tether-tab[data-slot="${id}"]`).click({ button: 'right' })

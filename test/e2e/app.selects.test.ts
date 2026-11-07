@@ -124,8 +124,7 @@ test('selects: base-select dialog trigger + menu-like picker, keyboard selection
     assert.ok(s.sc, '#term-font has a selectedcontent')
 
     // 2. Terminal font, in its dialog.
-    await page.click('#btn-menu')
-    await page.click('#app-menu li[data-command="terminal.theme"]')
+    await page.evaluate(() => (globalThis as unknown as { __tether: { runCommand(id: string): Promise<unknown> } }).__tether.runCommand('terminal.theme'))
     await page.waitForSelector('#dlg-term-theme[open]')
     const font = '#term-font'
     const before = (await page.evaluate(() => window.__tether.terminalAppearance())).font

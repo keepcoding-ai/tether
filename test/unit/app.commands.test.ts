@@ -167,7 +167,7 @@ describe('the app commands', () => {
 
   test('the ≡ menu (app/renderer/app-menu.ts) names only commands that exist', () => {
     const named = CORE_APP_MENU.map(i => i.command)
-    assert.ok(named.length >= 20, `menu items found: ${named.length}`)
+    assert.ok(named.length >= 15, `menu items found: ${named.length}`)
     for (const id of named) assert.ok(byId.has(id), `menu item without a command: ${id}`)
     assert.ok(named.includes('palette.show'), 'the palette is reachable from the menu')
   })

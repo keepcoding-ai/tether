@@ -51,9 +51,6 @@ export const manifest: ExtensionManifest = {
         { command: 'note.new', group: 'note', order: 10, icon: 'note-pencil', label: 'Nova nota' },
         { command: 'note.open', group: 'note', order: 20, icon: 'folder-open', label: 'Abrir nota…' },
         { command: 'note.save-as', group: 'note', order: 30, icon: 'floppy-disk', label: 'Salvar nota como…' },
-        { command: 'ui.word-wrap', group: 'look', order: 70, kind: 'checkbox', toggled: 'wordWrap', label: 'Quebra de linha no editor' },
-        { command: 'ui.minimap', group: 'look', order: 71, kind: 'checkbox', toggled: 'minimap', label: 'Minimapa nos editores' },
-        { command: 'ui.line-numbers', group: 'look', order: 72, kind: 'checkbox', toggled: 'lineNumbers', label: 'Números de linha nos editores' },
       ],
     },
     chooser: {
