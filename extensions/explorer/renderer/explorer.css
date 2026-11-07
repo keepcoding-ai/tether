@@ -1,6 +1,6 @@
 /* The explorer pad (F8 slice 1a). The pad is a card on the desk ground, like a frame; colours come from the theme tokens. */
 .xp {
-  position: absolute; inset: 0 var(--gap) var(--gap) var(--gap); display: flex; flex-direction: column; overflow: auto;
+  position: absolute; inset: var(--pad-inset, 0 var(--gap) var(--gap)); display: flex; flex-direction: column; overflow: auto;
   background: var(--frame-bg); border: 1px solid var(--frame-border); border-radius: var(--frame-radius);
   color: var(--fg); font: 13px var(--ui);
 }
