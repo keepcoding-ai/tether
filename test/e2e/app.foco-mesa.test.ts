@@ -1,6 +1,6 @@
 // E2E of the Foco de Mesa, drop anywhere and the "+N" (hidden window, private home/pipe, real tetherd, shells and notes):
-//   (a) the keyboard in a pad's note (typing): the desk's frame keeps the aura (`.frame.focused`), the pad's frame gets the
-//       neutral `.kbd-focused`; a file opened the way the explorer opens one lands in the Foco de Mesa frame, not the pad;
+//   (a) the keyboard in a pad's note (typing): the desk's frame keeps the aura (`.frame.focused`), the pad's frame only carries the
+//       behaviour marker `.kbd-focused` (no ring, aura or dim: it looks the same with or without the keyboard); a file opened the way the explorer opens one lands in the Foco de Mesa frame, not the pad;
 //   (b) the pad emptied by dragging its tabs out shows "Nenhum painel aberto"; a tab dropped there becomes its first frame;
 //   (c) a tab dropped on the desk's outer left, right and bottom edge makes a new frame spanning that side;
 //   (d) with many tabs, the "+N" sits right after the last visible tab, before the action icons.
@@ -211,7 +211,21 @@ test('Foco de Mesa: a pad with the keyboard keeps the aura on the desk, files op
     await page.waitForFunction(id => window.__tether.note(id)?.text === 'digitando na prancheta', padNote.id)
     await page.waitForFunction(() => document.querySelectorAll('#workbench .frame.focused').length === 1 && !!document.querySelector('#dock .frame.focused') && document.querySelectorAll('.pad-frames .frame.kbd-focused').length === 1)
     assert.ok(await h.rect(page, `#dock .frame.focused ${tab(a)}`), 'the Foco de Mesa is still a\'s frame')
-    await page.screenshot({ path: join(shots, 'a-pad-typing.png') })
+    const padLook = await page.evaluate(() => {
+      const f = document.querySelector('.pad-frames .frame.kbd-focused') as Element
+      const dock = f.querySelector(':scope > .frame-dock') as Element
+      const cs = (window as unknown as { getComputedStyle(e: unknown, p: string): { content: string; opacity: string } }).getComputedStyle
+      return { ring: cs(dock, '::after').content, veil: cs(f, '::after').opacity }
+    })
+    assert.ok(padLook.ring === 'none' || padLook.ring === 'normal', 'a pad with the keyboard has no ring')
+    assert.equal(padLook.veil, '0', 'a pad is never dimmed')
+    await page.screenshot({ path: join(shots, 'a-pad-typing-dark.png') })
+    await page.click('#btn-menu')
+    await page.waitForSelector('#app-menu:not([hidden])')
+    await page.click('#app-menu li[data-theme="light"]')
+    await page.waitForFunction(() => (document.querySelector('html') as unknown as { dataset: Record<string, string> }).dataset.theme === 'light')
+    await new Promise(r => setTimeout(r, 400))
+    await page.screenshot({ path: join(shots, 'a-pad-typing-light.png') })
     const file = join(work, 'leia-me.txt')
     writeFileSync(file, 'conteúdo do arquivo')
     await page.evaluate(p => window.__tether.openFile(p), file)

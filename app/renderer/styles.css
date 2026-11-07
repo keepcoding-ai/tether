@@ -21,7 +21,7 @@
   /* Surfaces (phase 4, docs/tether-preview.html): the desk is the ground (also the toolbar), frames are cards on it. */
   --desk-bg: #141418;
   --frame-bg: #1e1e23;
-  --frame-border: rgba(255, 255, 255, .08); --kbd-ring: rgba(255, 255, 255, .34);
+  --frame-border: rgba(255, 255, 255, .08);
   --pane-divider: var(--border);
   --gap: 8px;
   --frame-radius: 10px;
@@ -48,7 +48,7 @@
     --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
     --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
     --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
-    --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --kbd-ring: rgba(0, 0, 0, .3); --drawer-line: #3d3d3d; --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
+    --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --drawer-line: #3d3d3d; --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
     color-scheme: light;
   }
 }
@@ -57,7 +57,7 @@
   --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
   --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
   --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
-  --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --kbd-ring: rgba(0, 0, 0, .3); --drawer-line: #3d3d3d; --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
+  --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --drawer-line: #3d3d3d; --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
   color-scheme: light;
 }
 
@@ -1356,13 +1356,8 @@ body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-acti
   content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 0 0 calc(var(--frame-radius) - 1px) calc(var(--frame-radius) - 1px);
   border: var(--desk-line-width) solid var(--desk-line-color, transparent); border-top: 0;
 }
-/* Foco de Mesa: `.focused` is only ever a desk's frame (the open drawer and a pad with the keyboard never take it). The
-   frame of a pad or of the drawer that has the keyboard gets a discreet neutral ring (--kbd-ring), never the desk colour:
-   a border on a ::after above the panes (an outline was half hidden under them), inside the card's own 1 px edge. */
-.frame.kbd-focused > .frame-dock::after {
-  content: ""; position: absolute; inset: 0; z-index: 6; pointer-events: none; border-radius: calc(var(--frame-radius) - 1px);
-  border: var(--desk-line-width) solid var(--kbd-ring);
-}
+/* Foco de Mesa: `.focused` is only ever a desk's frame; the drawer has its own `.drawer-focused`. A pad (`.kbd-focused`, a
+   behaviour marker only) has no ring, aura or dim: it looks the same with or without the keyboard. */
 
 /* Dim: a veil of the desk background over frames without the focus (tabs included), so it dims toward the surface in
    both themes. Above the frame card, below the edge "+" (40) and every overlay. */

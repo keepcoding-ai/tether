@@ -318,7 +318,7 @@ test('app signals: line, folder border and dim are independent and combinable (F
       return { tab: b ? `${b.borderTopColor} ${b.borderTopWidth}` : '', foco: document.querySelectorAll('.drawer-card .frame.focused').length, kbd: document.querySelectorAll('.drawer-card .frame.kbd-focused').length, line }
     })
     assert.equal(drawerFrame.foco, 0, 'no Foco de Mesa in the drawer')
-    assert.equal(drawerFrame.kbd, 0, 'the faint pad ring is for pads only')
+    assert.equal(drawerFrame.kbd, 0, 'the drawer never wears the pad keyboard marker')
     assert.match(drawerFrame.tab, /^rgb\((61, 61, 61|208, 208, 208)\) 2px$/, 'the drawer active tab has the folder border in --drawer-line at 2px')
     assert.ok(!drawerFrame.tab.includes(fill), 'the drawer does not use the desk colour')
     assert.equal(drawerFrame.line, '2px', 'the top line is as thick as the border (--desk-line-width)')
