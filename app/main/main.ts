@@ -56,6 +56,8 @@ const RECENT_LIMIT = 12
 const DAEMON_START_TIMEOUT_MS = 15_000
 /** E2E runs set this so the test windows never show up on the user's screen. */
 const hidden = process.env.TETHER_E2E_HIDDEN === '1'
+/** E2E only: the device scale of the offscreen window (default 1), to render the app at a display's scale (e.g. 1.25 = 125 %). */
+const hiddenScale = Number(process.env.TETHER_E2E_SCALE) > 0 ? Number(process.env.TETHER_E2E_SCALE) : 1
 /** The daemon's entry point, relative to app/dist (this bundle) → repo root. */
 const daemonMain = join(__dirname, '..', '..', 'src', 'daemon', 'main.ts')
 /** The pid this process replaces when "Reiniciar o app" started it (app/main/relaunch.ts). */
@@ -518,7 +520,7 @@ function createWindow(): void {
       webviewTag: true,
       // A window that is never shown does not paint, and Playwright's screenshot would wait forever;
       // offscreen rendering keeps producing frames without any window on the user's screen.
-      ...(hidden ? { offscreen: true, backgroundThrottling: false } : {}),
+      ...(hidden ? { offscreen: { deviceScaleFactor: hiddenScale }, backgroundThrottling: false } : {}),
     },
   })
   win.setMenuBarVisibility(false)

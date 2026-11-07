@@ -34,7 +34,7 @@ type Hooks = {
   connection(): { connected: boolean; pid?: number } | undefined
   drawer(): { open: boolean; panes: string[] }
 }
-declare const window: { __tether: Hooks; getComputedStyle(el: unknown, pseudo?: string): { boxShadow: string; opacity: string; backgroundColor: string; content: string } }
+declare const window: { __tether: Hooks; getComputedStyle(el: unknown, pseudo?: string): { boxShadow: string; opacity: string; backgroundColor: string; backgroundImage: string; content: string; borderTopWidth: string; borderLeftWidth: string; borderRightWidth: string; borderBottomWidth: string; borderTopColor: string; borderLeftColor: string; borderBottomColor: string } }
 declare const document: { querySelector(s: string): unknown; querySelectorAll(s: string): ArrayLike<unknown> & { length: number } }
 type Q = { querySelector(s: string): unknown }
 
@@ -125,14 +125,23 @@ function frameBorder(page: Page, frameIndex: number) {
   return page.evaluate(i => {
     const frame = document.querySelectorAll('.desk-layer:not(.inactive) .frame:has(> .frame-dock)')[i] as Q & { classList: { contains(c: string): boolean } }
     const g = (el: unknown, pseudo?: string) => el ? window.getComputedStyle(el, pseudo) : undefined
+    // A solid border (the folder's pieces are borders, never shadows): its colour and which sides it has, or 'none'.
+    const border = (el: unknown, pseudo: string) => {
+      const s = g(el, pseudo)
+      if (!s) return 'none'
+      const sides = ([['t', s.borderTopWidth], ['l', s.borderLeftWidth], ['r', s.borderRightWidth], ['b', s.borderBottomWidth]] as const).filter(([, w]) => parseFloat(w) > 0)
+      if (!sides.length) return 'none'
+      const colour = parseFloat(s.borderLeftWidth) > 0 ? s.borderLeftColor : s.borderTopWidth !== '0px' ? s.borderTopColor : s.borderBottomColor
+      return `${colour} ${sides.map(([k, w]) => `${k}:${w}`).join(' ')}`
+    }
     const group = frame.querySelector('.dv-groupview.dv-active-group') as Q
     return {
       focused: frame.classList.contains('focused'),
-      strip: g(group.querySelector(':scope > .dv-tabs-and-actions-container'))?.boxShadow ?? '',
-      tab: g(group.querySelector('.dv-tab.dv-active-tab'))?.boxShadow ?? '',
-      otherTab: g(group.querySelector('.dv-tab.dv-inactive-tab'))?.boxShadow ?? 'none',
+      strip: g(group.querySelector(':scope > .dv-tabs-and-actions-container'))?.backgroundImage ?? '',
+      tab: border(group.querySelector('.dv-tab.dv-active-tab'), '::before'),
+      otherTab: border(group.querySelector('.dv-tab.dv-inactive-tab'), '::before'),
       actions: g(group.querySelector('.tab-actions'))?.boxShadow ?? 'none',
-      content: g(group.querySelector(':scope > .dv-content-container'), '::after')?.boxShadow ?? '',
+      content: border(group.querySelector(':scope > .dv-content-container'), '::after'),
       veil: g(frame, '::after')?.opacity ?? '',
     }
   }, frameIndex)
@@ -183,9 +192,9 @@ test('app signals: line, folder border and dim are independent and combinable (F
     const on = await frameBorder(page, fLone)
     assert.equal(on.focused, true, 'the focused frame is marked')
     assert.ok(on.tab.includes(fill), `active tab outlined in the desk colour: ${on.tab}`)
-    assert.equal(on.tab.split('inset').length - 1, 3, `tab: top, left and right only: ${on.tab}`)
+    assert.ok(/ t:\S+ l:\S+ r:\S+$/.test(on.tab), `tab: top, left and right only: ${on.tab}`)
     assert.ok(on.strip.includes(fill), `the strip draws the folder's bottom edge: ${on.strip}`)
-    assert.ok(on.content.includes(fill) && on.content.split('inset').length - 1 === 3, `content: left, right and bottom: ${on.content}`)
+    assert.ok(on.content.includes(fill) && / l:\S+ r:\S+ b:\S+$/.test(on.content), `content: left, right and bottom: ${on.content}`)
     assert.equal(on.actions, 'none', 'the action buttons stay outside the outline')
     assert.equal(on.otherTab, 'none', 'other tabs stay outside')
     const off = await frameBorder(page, fCrowd)
@@ -305,11 +314,12 @@ test('app signals: line, folder border and dim are independent and combinable (F
     const drawerFrame = await page.evaluate(() => {
       const tab = document.querySelector('.drawer-card .frame.drawer-focused .dv-groupview.dv-active-group .dv-tab.dv-active-tab') as Q | null
       const line = (window.getComputedStyle(document.querySelector('#workbench') as Q as never, '::before') as unknown as { height: string }).height
-      return { tab: tab ? (window.getComputedStyle(tab as never) as unknown as { boxShadow: string }).boxShadow : '', foco: document.querySelectorAll('.drawer-card .frame.focused').length, kbd: document.querySelectorAll('.drawer-card .frame.kbd-focused').length, line }
+      const b = tab ? window.getComputedStyle(tab as never, '::before') : undefined
+      return { tab: b ? `${b.borderTopColor} ${b.borderTopWidth}` : '', foco: document.querySelectorAll('.drawer-card .frame.focused').length, kbd: document.querySelectorAll('.drawer-card .frame.kbd-focused').length, line }
     })
     assert.equal(drawerFrame.foco, 0, 'no Foco de Mesa in the drawer')
     assert.equal(drawerFrame.kbd, 0, 'the faint pad ring is for pads only')
-    assert.match(drawerFrame.tab, /^rgb\((61, 61, 61|208, 208, 208)\) 0px 2px 0px 0px inset/, 'the drawer active tab has the folder border in --drawer-line at 2px')
+    assert.match(drawerFrame.tab, /^rgb\((61, 61, 61|208, 208, 208)\) 2px$/, 'the drawer active tab has the folder border in --drawer-line at 2px')
     assert.ok(!drawerFrame.tab.includes(fill), 'the drawer does not use the desk colour')
     assert.equal(drawerFrame.line, '2px', 'the top line is as thick as the border (--desk-line-width)')
     await shot(app, 'drawer-border')

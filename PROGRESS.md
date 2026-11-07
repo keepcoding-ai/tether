@@ -1022,3 +1022,13 @@ Decisões para validar:
 - **Prancheta de quadros vazia**: na prática ela não fica vazia, porque recebe de novo o seletor, que tem aba e "⋯". O "⋯" flutuante cobre o instante sem abas. No E2E, o "pad vazio com ⋯ flutuante" foi provado no explorador vazio.
 - O "⋯" do quadro carrega os itens da prancheta; o clique direito na aba não carrega.
 - Prancheta sem `absorbsHeader` continua com o cabeçalho antigo (título · mesa, ⋯, ×).
+
+## Espessura da borda na guia igual à linha da mesa (2026-11-06)
+
+Causa medida: a tela do Guga está em 125% (1920 px físicos / 1536 lógicos, AppliedDPI 120). Com 2 px CSS = 2,5 px de tela, a linha sob a barra (caixa sólida) sai com 2 px nítidos, mas a aura (sombras inset empilhadas) sai com 2 px + um 3º pixel a ~50%: parecia mais grossa e borrada. O anel de teclado (`outline`) ficava com metade coberta pelos painéis: só 1 px visível.
+
+Conserto: `--desk-line-width` arredondada para baixo em pixels inteiros de tela (`round(down, …)` com `--dpr` = devicePixelRatio, posto pelo renderer e atualizado ao trocar de tela). A aura virou bordas sólidas: faixa de fundo na base da faixa de abas, `::before` da aba ativa (topo/esquerda/direita, cantos redondos) e `::after` do conteúdo (esquerda/direita/base). O anel de teclado virou `::after` com borda acima dos painéis. Gancho de E2E `TETHER_E2E_SCALE` (escala da janela offscreen).
+
+Medida (px físicos, claro e escuro, mesa e gaveta): a 125%, antes linha 2 / aura 2 + ~0,5 / anel 1; depois tudo 2. A 100%, linha e aura 2, anel 1 → 2. Capturas e ampliações em `D:/atrium/.tmp/tether-espessura/`.
+
+Provas: `app:build` ok; `npm run check` só com as 2 falhas conhecidas de perfis; E2E `app.signals` (asserções trocadas de sombra para borda), `app.foco-mesa`, `app.chrome`, `app.drawer`, `app.pads-chrome` verdes.

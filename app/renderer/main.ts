@@ -303,6 +303,15 @@ function applyTheme(state: ThemeState): void {
 
 const THEME_LABEL: Record<ThemeState['setting'], string> = { light: 'Claro', auto: 'Automático', dark: 'Escuro' }
 
+/** --dpr = devicePixelRatio on the root, so styles.css can snap --desk-line-width to whole device pixels; kept current when
+ * the window moves to a display with another scale or the zoom changes. */
+function trackDpr(): void {
+  const dpr = window.devicePixelRatio || 1
+  document.documentElement.style.setProperty('--dpr', String(dpr))
+  window.matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', trackDpr, { once: true })
+}
+trackDpr()
+
 /** Applies the chrome preferences: the desk colour line and its check in the ≡ menu. */
 function applyUi(next: UiSettings): void {
   ui = next

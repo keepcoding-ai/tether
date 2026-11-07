@@ -27,7 +27,10 @@
   --frame-radius: 10px;
   --drawer-inset: 16px;
   /* One thickness for every focus signal: the colour line under the toolbar, the folder border of the focused frame and the neutral ring of a pad or the drawer. */
-  --desk-line-width: 2px;
+  /* Snapped to whole device pixels (rounded down, at least one) with --dpr = devicePixelRatio (renderer main.ts):
+     2 CSS px at 125 % would be 2.5 device px, which a solid box paints as 2 px and a shadow smears over 3. Every signal
+     below draws with this width and as a solid box or border, never a shadow or an outline, so all read the same. */
+  --desk-line-width: max(calc(1px / var(--dpr, 1)), calc(round(down, calc(2px * var(--dpr, 1)), 1px) / var(--dpr, 1)));
   /* The drawer's colour: neutral, no hue, inverted between themes (#d0d0d0 on dark: 10.8:1 on the frame, 11.9:1 on the desk; #3d3d3d on light: 10.5:1 and 8.9:1). */
   --drawer-line: #d0d0d0;
   --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .3), 0 12px 28px rgba(0, 0, 0, .45), 0 32px 72px rgba(0, 0, 0, .55);
@@ -1334,22 +1337,32 @@ dialog.chooser-dlg .ch-top { border-top: 1px solid var(--border); }
 /* With the drawer up the line under the toolbar is the drawer's too. Only the line is overridden (not --desk-line-color on #workbench), so the desk's focused frame keeps painting its own aura behind the drawer (Foco de Mesa). */
 body.drawer-open.desk-line #workbench::before { background: var(--drawer-line); }
 /* Borda na guia: ONE outline in the desk colour shaped like a folder, on the focused frame's active group only.
-   Tab: top, left and right edges (inset shadow, so it follows the rounded top corners). Tab strip: its bottom edge, which
-   the active tab hides with its own opaque background (that is the open side of the folder). Content: left, right and
-   bottom edges, a ::after above the terminal. The strip's action buttons and the other tabs stay outside. */
-body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-tabs-and-actions-container { box-shadow: inset 0 calc(-1 * var(--desk-line-width)) 0 var(--desk-line-color, transparent); }
-body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
-  border-radius: 8px 8px 0 0;
-  box-shadow: inset 0 var(--desk-line-width) 0 var(--desk-line-color, transparent), inset var(--desk-line-width) 0 0 var(--desk-line-color, transparent), inset calc(-1 * var(--desk-line-width)) 0 0 var(--desk-line-color, transparent);
+   Every piece is a solid fill or border of --desk-line-width (snapped to device pixels), so the outline is as thick as
+   the line under the toolbar and its pieces meet edge to edge. Tab strip: a band at its bottom (a background layer,
+   under the tabs), which the active tab hides with its own opaque background (the open side of the folder). Tab: top,
+   left and right borders on its ::before (rounded top corners). Content: left, right and bottom borders on a ::after
+   above the terminal. The strip's action buttons and the other tabs stay outside. */
+body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-tabs-and-actions-container {
+  background-image: linear-gradient(var(--desk-line-color, transparent), var(--desk-line-color, transparent));
+  background-repeat: no-repeat; background-position: left bottom; background-size: 100% var(--desk-line-width);
+}
+body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab { border-radius: 8px 8px 0 0; }
+body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab::before {
+  content: ""; position: absolute; inset: 0; width: auto; height: auto; z-index: 5; pointer-events: none; background: none;
+  border: var(--desk-line-width) solid var(--desk-line-color, transparent); border-bottom: 0; border-radius: inherit;
 }
 body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-content-container { position: relative; }
 body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-content-container::after {
   content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 0 0 calc(var(--frame-radius) - 1px) calc(var(--frame-radius) - 1px);
-  box-shadow: inset var(--desk-line-width) 0 0 var(--desk-line-color, transparent), inset calc(-1 * var(--desk-line-width)) 0 0 var(--desk-line-color, transparent), inset 0 calc(-1 * var(--desk-line-width)) 0 var(--desk-line-color, transparent);
+  border: var(--desk-line-width) solid var(--desk-line-color, transparent); border-top: 0;
 }
 /* Foco de Mesa: `.focused` is only ever a desk's frame (the open drawer and a pad with the keyboard never take it). The
-   frame of a pad or of the drawer that has the keyboard gets a discreet neutral outline (--kbd-ring), never the desk colour. */
-.frame.kbd-focused > .frame-dock { outline: var(--desk-line-width) solid var(--kbd-ring); outline-offset: calc(-1 * var(--desk-line-width)); }
+   frame of a pad or of the drawer that has the keyboard gets a discreet neutral ring (--kbd-ring), never the desk colour:
+   a border on a ::after above the panes (an outline was half hidden under them), inside the card's own 1 px edge. */
+.frame.kbd-focused > .frame-dock::after {
+  content: ""; position: absolute; inset: 0; z-index: 6; pointer-events: none; border-radius: calc(var(--frame-radius) - 1px);
+  border: var(--desk-line-width) solid var(--kbd-ring);
+}
 
 /* Dim: a veil of the desk background over frames without the focus (tabs included), so it dims toward the surface in
    both themes. Above the frame card, below the edge "+" (40) and every overlay. */
