@@ -49,7 +49,7 @@ import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
 import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
-import { registerAgentUi } from './agent-ui.ts'
+import { agentUi, registerAgentUi } from './agent-ui.ts'
 import type { ChoiceResolution, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
@@ -503,6 +503,11 @@ let projectFolders: ProjectFolder[] = []
 let currentProject: string | undefined
 const workspaceListeners = new Set<(folders: readonly ProjectFolder[]) => void>()
 const activePaneListeners = new Set<(info: PaneInfo | undefined) => void>()
+/** TetherUi.slots.onDidChange: told after every slot state or removal (the Faults screen's agent chooser). */
+const slotListeners = new Set<() => void>()
+function notifySlotListeners(): void {
+  for (const l of [...slotListeners]) { try { l() } catch (err) { console.error('slot listener', err) } }
+}
 let lastActivePane: string | undefined
 
 function paneSources(): PaneSource[] {
@@ -1286,6 +1291,7 @@ function applyState(slot: SlotState): void {
   renderStrip()
   if (slot.attention && slot.slotId === watchedPane()) void window.tether.request({ t: 'seen', slotId: slot.slotId })
   recomputeProjects() // the slot's kind or folder may have changed
+  notifySlotListeners()
 }
 
 function onDaemonEvent(ev: DaemonEvent): void {
@@ -1300,6 +1306,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
       if (panel) removeAnyPanel(panel)
       refreshClosedMenu()
       renderStrip()
+      notifySlotListeners()
       break
     }
   }
@@ -3201,6 +3208,26 @@ function activateRendererExtensions(): void {
         frames: host => {
           if (!manifest.contributes?.pads?.some(p => p.id === host.padId && p.frames)) throw new Error(`prancheta sem quadros no manifesto de ${id}: ${host.padId}`)
           return newFramesPad(host)
+        },
+      },
+      slots: {
+        list: () => [...slots.values()].filter(s => s.kind !== 'shell'),
+        onDidChange: listener => { slotListeners.add(listener); return add(toDisposable(() => { slotListeners.delete(listener) })) },
+        label: slotId => { const s = slots.get(slotId); return s ? `${agentUi(s.kind)?.label ?? s.kind} · ${panelTitle(s)}` : slotId },
+        input: (slotId, data) => { if (slots.has(slotId)) window.tether.notice({ t: 'input', slotId, data }) },
+        open: slotId => openSlot(slotId),
+        profiles: () => profiles,
+        openProfiles: profileId => openProfiles(profileId),
+        create: async ({ profileId, cwd }) => {
+          const profile = profiles.find(p => p.id === profileId)
+          if (!profile) return { ok: false, message: 'o perfil não existe mais' }
+          const reply = await window.tether.request({ t: 'create', kind: profile.agent, cwd, start: true, profileId: profile.id })
+          if (reply.t === 'error' || !reply.slot) return { ok: false, message: reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot' }
+          noteRecentProfile(profile.id)
+          slots.set(reply.slot.slotId, reply.slot)
+          addPaneOptions(slotPanelOptions(reply.slot))
+          scheduleSave()
+          return { ok: true, slotId: reply.slot.slotId }
         },
       },
       keybindings: {

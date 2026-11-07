@@ -23,6 +23,7 @@ import type { OpenFileOptions } from './file-open.ts'
 import type { ProjectFolder } from './workspace.ts'
 import type { AgentUi } from './agent-ui.ts'
 import type { Brand } from '../shared/brand.ts'
+import type { Profile, SlotState } from '../../src/daemon/protocol.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
@@ -261,6 +262,27 @@ export interface TetherUi {
      * that the core knows as a place panes live (found, moved, pruned, listed, focused like a desk's).
      */
     frames(host: PadHost): PadView
+  }
+  /**
+   * The agent slots the daemon runs (never shells), as the app sees them: for an extension that sends a command to an
+   * agent pane ("Mandar para o agente" of the Faults screen). `input` types into the slot's terminal as the keyboard does
+   * (nothing is sent to a slot that does not exist); `create` makes a slot of an agent's profile in a folder, with a pane.
+   */
+  slots: {
+    list(): readonly SlotState[]
+    /** Any slot's state changed, or one was removed. */
+    onDidChange(listener: () => void): IDisposable
+    /** What the pane's tab calls the slot, with its agent: "Claude · tether-faults". */
+    label(slotId: string): string
+    input(slotId: string, data: string): void
+    /** Brings the slot's pane forward (a closed pane is reopened). */
+    open(slotId: string): void
+    /** The launch profiles. */
+    profiles(): readonly Profile[]
+    /** The profile editor, at that profile when given. */
+    openProfiles(profileId?: string): void
+    /** A new slot (started) of the profile, in `cwd`, in a new pane beside the active one. */
+    create(opts: { profileId: string; cwd: string }): Promise<{ ok: true; slotId: string } | { ok: false; message: string }>
   }
   /**
    * The key table and the person's keybindings.json, which stay the core's (the dispatcher honours the file with the
