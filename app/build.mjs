@@ -1,5 +1,7 @@
 // One-shot esbuild build of the Electron app into app/dist (no watch mode):
-//   main.cjs      Electron main process (CommonJS, node platform, electron external)
+//   main.cjs      the launcher Electron starts: app/main/launcher.cjs with the version/commit stamped in. It requires
+//                 main-app.cjs in a try/catch and files a load failure (kind "load") in the fault registry before rethrowing
+//   main-app.cjs  Electron main process (CommonJS, node platform, electron external)
 //   preload.cjs   sandboxed preload (CommonJS)
 //   file-index-worker.cjs  Quick Open's file index (worker thread of main). It runs rg from node_modules/@vscode/ripgrep-<platform>-<arch>
 //                 (resolved from the repo root at run time, never bundled: the app runs from this repo, no asar)
@@ -19,7 +21,8 @@
 // rasterises: it checks those manifests against the SVGs and fails, naming the command, when they are stale.
 // The Phosphor icons (@phosphor-icons/core) are inlined as strings: only the ones app/renderer/icons.ts imports.
 import { build } from 'esbuild'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertBrandAssetsFresh, copyIconAssets } from './brand-icons.ts'
@@ -29,7 +32,14 @@ const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..')
 const out = join(here, 'dist')
 
-const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024' }
+/** HEAD of the repo this build comes from; '' when git is not there (the registry then records no commit). */
+function gitCommit() {
+  try { return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return '' }
+}
+const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+const commit = gitCommit()
+// __TETHER_VERSION__ / __TETHER_COMMIT__ are read by src/core/faults.ts buildInfo().
+const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024', define: { __TETHER_VERSION__: JSON.stringify(version), __TETHER_COMMIT__: JSON.stringify(commit) } }
 // src/daemon/client.ts reads import.meta.url only as spawnDaemon's default mainPath (the app always passes one); CJS has none.
 const browser = { platform: 'browser', format: 'esm', loader: { '.svg': 'text', '.ttf': 'file' }, assetNames: '[name]' }
 // jsonc-parser: its "main" is a UMD wrapper with dynamic require("./impl/*") that esbuild can't inline; use the ESM build.
@@ -48,7 +58,7 @@ extractDockviewCss()
 writeFileSync(join(out, 'palette.css'), paletteCss())
 copyIconAssets(root, out)
 await Promise.all([
-  build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
+  build({ ...common, ...node, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main-app.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-worker.ts')], outfile: join(out, 'file-index-worker.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-shard-worker.ts')], outfile: join(out, 'file-index-shard-worker.cjs') }),
@@ -56,4 +66,6 @@ await Promise.all([
   build({ ...common, platform: 'browser', format: 'iife', entryPoints: [join(here, '..', 'node_modules', 'monaco-editor', 'esm', 'vs', 'editor', 'editor.worker.js')], outfile: join(out, 'editor.worker.js') }),
   build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'dialog-window.ts')], outfile: join(out, 'dialog.js') }),
 ])
+rmSync(join(out, 'main.cjs.map'), { force: true }) // left by builds before the launcher
+writeFileSync(join(out, 'main.cjs'), readFileSync(join(here, 'main', 'launcher.cjs'), 'utf8').replace('@@VERSION@@', version).replace('@@COMMIT@@', commit || '@@none@@'))
 console.log('app build ok → app/dist')
