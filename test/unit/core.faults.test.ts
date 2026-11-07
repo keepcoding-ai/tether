@@ -6,9 +6,12 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { assignShortId, createBundleMapper, decodeMappings, faultSig, faultsDir, normalizeMessage, readOccurrences, readState, reconcileState, record, resolveId, STORM_LIMIT, STORM_WINDOW_MS, statePath, writeState, type FaultInput } from '../../src/core/faults.ts'
+import { assignShortId, flush, createBundleMapper, decodeMappings, faultSig, faultsDir, normalizeMessage, readOccurrences, readState, reconcileState, record, resolveId, STORM_LIMIT, STORM_WINDOW_MS, statePath, writeState, type FaultInput } from '../../src/core/faults.ts'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'tether-faults-'))
+/** Records are flushed to the state on a debounce: readers settle first. */
+const settled = (dir: string) => { flush(dir); return readState(dir) }
+const finish = (dir: string): void => { flush(dir); rmSync(dir, { recursive: true }) }
 const input = (over: Partial<FaultInput> = {}): FaultInput => ({ proc: 'main', kind: 'uncaught', message: 'boom', stack: 'Error: boom\n    at a (C:\\x\\dist\\m.cjs:1:2)', ...over })
 const opts = (dir: string, now = 1_700_000_000_000) => ({ dir, now: () => now, version: '1.0.0', mapper: null })
 
@@ -28,10 +31,10 @@ test('record appends a line and creates the state', () => {
   assert.equal(items[0]!.version, '1.0.0')
   assert.equal(items[0]!.sig, r.sig)
   assert.deepEqual(items[0]!.context, { slot: 's1' })
-  const st = readState(dir).state.faults[r.sig]!
+  const st = settled(dir).state.faults[r.sig]!
   assert.equal(st.status, 'open')
   assert.equal(st.count, 1)
-  rmSync(dir, { recursive: true })
+  finish(dir)
 })
 
 test('every occurrence is kept; the state counts them', () => {
@@ -41,14 +44,14 @@ test('every occurrence is kept; the state counts them', () => {
   assert.equal(readOccurrences(dir).items.length, 2)
   assert.equal(r.state.count, 2)
   assert.notEqual(r.state.first, r.state.last)
-  rmSync(dir, { recursive: true })
+  finish(dir)
 })
 
 test('a done sig that occurs again reopens with `returned`; ignored never reopens', () => {
   const dir = tmp()
   const a = record(input(), opts(dir))!
   const b = record(input({ message: 'other' }), opts(dir))!
-  const s = readState(dir).state
+  const s = settled(dir).state
   s.faults[a.sig]!.status = 'done'
   s.faults[b.sig]!.status = 'ignored'
   writeState(dir, s)
@@ -59,18 +62,18 @@ test('a done sig that occurs again reopens with `returned`; ignored never reopen
   assert.equal(b2.state.status, 'ignored')
   assert.equal(b2.state.count, 2)
   assert.equal(b2.state.returned, undefined)
-  rmSync(dir, { recursive: true })
+  finish(dir)
 })
 
 test('storm guard: past the limit inside the window only the count grows; a new window writes again', () => {
   const dir = tmp()
   for (let i = 0; i < STORM_LIMIT + 10; i++) record(input(), opts(dir, 1_000 + i))
   assert.equal(readOccurrences(dir).items.length, STORM_LIMIT)
-  const sig = Object.keys(readState(dir).state.faults)[0]!
-  assert.equal(readState(dir).state.faults[sig]!.count, STORM_LIMIT + 10)
+  const sig = Object.keys(settled(dir).state.faults)[0]!
+  assert.equal(settled(dir).state.faults[sig]!.count, STORM_LIMIT + 10)
   record(input(), opts(dir, 1_000 + STORM_WINDOW_MS + 5))
   assert.equal(readOccurrences(dir).items.length, STORM_LIMIT + 1)
-  rmSync(dir, { recursive: true })
+  finish(dir)
 })
 
 test('a corrupt jsonl line is skipped and counted', () => {
@@ -81,7 +84,7 @@ test('a corrupt jsonl line is skipped and counted', () => {
   const { items, skipped } = readOccurrences(dir)
   assert.equal(items.length, 2)
   assert.equal(skipped, 2)
-  rmSync(dir, { recursive: true })
+  finish(dir)
 })
 
 test('a corrupt state file is copied aside and reset; record keeps working', () => {
@@ -92,7 +95,7 @@ test('a corrupt state file is copied aside and reset; record keeps working', () 
   assert.equal(r.state.count, 1)
   assert.ok(readdirSync(dir).some(f => f.startsWith('faults-state.json.corrompido-')))
   assert.equal(readOccurrences(dir).items.length, 1)
-  rmSync(dir, { recursive: true })
+  finish(dir)
 })
 
 test('normalizeMessage strips numbers, absolute paths and ids but keeps relative module names', () => {
@@ -177,14 +180,14 @@ test('resolveId: stored short id first, then unique prefix of the sig, else cand
 test('record assigns the short id once and keeps it when a colliding sig arrives later', () => {
   const dir = tmp()
   const first = record(input(), opts(dir))!
-  const state = readState(dir).state
+  const state = settled(dir).state
   // forge a later sig that collides with the first one's 4-hex id
   const forged = first.sig.slice(0, 4) + 'f'.repeat(60)
   assert.equal(assignShortId(forged, Object.values(state.faults).map(f => f.shortId)), forged.slice(0, 6))
   record(input(), opts(dir))
-  assert.equal(readState(dir).state.faults[first.sig]!.shortId, first.sig.slice(0, 4))
+  assert.equal(settled(dir).state.faults[first.sig]!.shortId, first.sig.slice(0, 4))
   assert.ok(existsSync(statePath(dir)))
-  rmSync(dir, { recursive: true })
+  finish(dir)
 })
 
 test('reconcileState folds lines the launcher wrote (no state entry) into the state', () => {
@@ -194,9 +197,9 @@ test('reconcileState folds lines the launcher wrote (no state entry) into the st
   writeFileSync(join(dir, 'faults.jsonl'), JSON.stringify(line) + '\n' + JSON.stringify({ ...line, ts: '2026-11-07T11:00:00.000Z' }) + '\n')
   reconcileState(dir)
   reconcileState(dir) // idempotent
-  const f = readState(dir).state.faults[sig]!
+  const f = settled(dir).state.faults[sig]!
   assert.equal(f.count, 2)
   assert.equal(f.last, '2026-11-07T11:00:00.000Z')
   assert.equal(f.shortId, 'ab12')
-  rmSync(dir, { recursive: true })
+  finish(dir)
 })

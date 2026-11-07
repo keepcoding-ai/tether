@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, describe, test } from 'node:test'
-import { faultsDir, readState, record, statePath, writeState, type FaultInput } from '../../src/core/faults.ts'
+import { faultsDir, flush, readState, record, statePath, writeState, type FaultInput } from '../../src/core/faults.ts'
 import { createSlot } from '../../src/core/store.ts'
 import { authorOf, cmdFaults, SHOW_CAP } from '../../src/cli/faults.ts'
 import { UsageError } from '../../src/cli/args.ts'
@@ -20,7 +20,9 @@ after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }) 
 const input = (message: string, over: Partial<FaultInput> = {}): FaultInput => ({ proc: 'main', kind: 'uncaught', message, stack: `Error: ${message}\n    at fn (C:\\x\\dist\\m.cjs:1:2)`, ...over })
 const T0 = Date.parse('2026-11-07T12:00:00Z')
 function seed(dir: string, message: string, over: Partial<FaultInput> = {}, at = T0, version = '0.9.3') {
-  return record(input(message, over), { dir, now: () => at, version, commit: 'abc1234def', mapper: null })!
+  const r = record(input(message, over), { dir, now: () => at, version, commit: 'abc1234def', mapper: null })!
+  flush(dir) // the state write is debounced; the CLI and the assertions read it right away
+  return r
 }
 
 async function run(dir: string, ...argv: string[]): Promise<{ code: number; out: string; err: string }> {

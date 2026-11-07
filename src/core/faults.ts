@@ -4,7 +4,8 @@
 // external report: stacks carry paths and project names, so they are stored as they came and the folder stays local).
 //   faults.jsonl        one line per occurrence: { id, ts, proc, version, commit, kind, message, stack, sig, context }
 //   faults-state.json   per `sig`: status, tags, notes, fix, count, first/last, shortId, returned (what the agent/person edits)
-//   faults.lock         short-lived lock file: several processes (main, daemon, CLI) write here
+//   faults.lock         short-lived lock file holding its owner's pid: several processes (main, daemon, CLI) write here
+//   faults.1.jsonl      the previous generation of faults.jsonl (rotated at 5 MB)
 // A fault is a SIGNATURE, not an occurrence: `sig` is the hash of the normalized stack, so the same defect gives the
 // same sig in two builds (see `faultSig`). Dedup is by sig, never by dropping lines: every occurrence is kept and the
 // state carries the count; only a storm (the same sig more than STORM_LIMIT times inside STORM_WINDOW_MS) stops
@@ -12,10 +13,10 @@
 // skipped and counted, a corrupt state file is copied aside and reset. `record` never throws: a fault reporter that
 // can crash its host would be worse than the fault.
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, copyFileSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { userDir } from './paths.ts'
+import { tetherHome, userDir } from './paths.ts'
 
 export type FaultProc = 'main' | 'renderer' | 'daemon' | 'worker' | `ext:${string}`
 export type FaultKind = 'uncaught' | 'rejection' | 'gone' | 'load'
@@ -61,11 +62,16 @@ export interface FaultState {
   /** The id shown to people: assigned when the sig is first recorded and never recomputed (the first claimant of a 4-hex prefix keeps it). */
   shortId: string
   returned?: { ts: string; version: string }
-  /** Storm guard window (epoch ms of its start, occurrences seen in it). */
+  /** Storm guard window of older versions: the guard now lives in memory, per process. */
   storm?: { start: number; n: number }
 }
 
-export interface StateFile { v: 1; faults: Record<string, FaultState> }
+export interface StateFile {
+  v: 1
+  faults: Record<string, FaultState>
+  /** Reports refused before they were recorded (rate limit), per sender (`<proc>:<id>`). */
+  dropped?: Record<string, number>
+}
 
 /** The same sig more than this many times inside the window: further occurrences only bump the count (no jsonl line). */
 export const STORM_LIMIT = 20
@@ -282,11 +288,131 @@ export function resolveId(faults: Record<string, Pick<FaultState, 'shortId'>>, r
   return pref.length === 1 ? { sig: pref[0]! } : { candidates: pref }
 }
 
+// ---- redaction and caps -------------------------------------------------------------------------------------------
+// Everything that reaches the registry passes through `redact` and the caps below inside `record`, so the main process,
+// the daemon, the CLI and whatever a renderer reports are all covered by one point. The registry stays on the person's
+// disk, but an agent they bring in reads it, and messages/stacks/contexts routinely carry whatever the failing code held.
+
+export const REDACTED = '[redigido]'
+export const MAX_MESSAGE = 2_000
+export const MAX_STACK = 20_000
+export const MAX_CONTEXT_STRING = 1_000
+export const MAX_CONTEXT_KEYS = 32
+export const MAX_CONTEXT_KEY_LENGTH = 64
+/** Exact secret values shorter than this are not redacted (too many false hits). */
+export const MIN_SECRET_LENGTH = 8
+
+/**
+ * [source, flags, replacement] of every pattern. app/main/launcher.cjs carries a copy of this list (it may import
+ * nothing but node core); test/unit/core.faults-redact.test.ts fails when the two differ, so change both together.
+ */
+export const REDACTION_PATTERNS: ReadonlyArray<readonly [source: string, flags: string, replacement: string]> = [
+  ['sk-ant-[A-Za-z0-9_-]+', 'g', REDACTED],
+  ['sk-[A-Za-z0-9_-]{20,}', 'g', REDACTED],
+  ['gh[pousr]_[A-Za-z0-9]{20,}', 'g', REDACTED],
+  ['xox[abp]-[A-Za-z0-9-]+', 'g', REDACTED],
+  ['AKIA[A-Z0-9]{16}', 'g', REDACTED],
+  ['eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+', 'g', REDACTED],
+  ['Bearer \\S+', 'gi', REDACTED],
+  ['(token|key|secret|passw?o?r?d?)(["\']?\\s*[:=]\\s*)\\S+', 'gi', `$1$2${REDACTED}`],
+]
+const COMPILED = REDACTION_PATTERNS.map(([source, flags, replacement]) => [new RegExp(source, flags), replacement] as const)
+
+/** The text with the known secret shapes replaced by `[redigido]`, and every exact value of `secrets` (length >= 8, longest first). */
+export function redact(text: string, secrets: readonly string[] = []): string {
+  let out = text
+  for (const s of secrets) if (s.length >= MIN_SECRET_LENGTH && out.includes(s)) out = out.split(s).join(REDACTED)
+  for (const [re, replacement] of COMPILED) out = out.replace(re, replacement)
+  return out
+}
+
+const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASS/i
+const SECRETS_TTL_MS = 60_000
+const secretSources = new Set<() => readonly string[]>()
+let secretsCache: { at: number; home: string; values: string[] } | undefined
+
+/** Registers a producer of exact secret values (the daemon and main hand over the launch profiles' env values). Returns the unregister function. */
+export function addSecretSource(fn: () => readonly string[]): () => void {
+  secretSources.add(fn)
+  secretsCache = undefined
+  return () => { secretSources.delete(fn); secretsCache = undefined }
+}
+
+export function resetSecretsCache(): void { secretsCache = undefined }
+
+function readTrimmed(path: string): string | undefined {
+  try { return readFileSync(path, 'utf8').trim() } catch { return undefined }
+}
+
+/**
+ * The exact values to redact: the bridge's api.key and pairing token, the values of the env vars named like a secret and
+ * whatever the registered sources hand over. Built once and rebuilt at most once a minute (files are read then only).
+ */
+export function secretValues(env: NodeJS.ProcessEnv = process.env, extra: readonly string[] = []): string[] {
+  const home = tetherHome(env)
+  const t = Date.now()
+  if (!secretsCache || secretsCache.home !== home || t - secretsCache.at > SECRETS_TTL_MS) {
+    const found = new Set<string>()
+    const bridge = join(home, 'bridge')
+    const key = readTrimmed(join(bridge, 'api.key'))
+    if (key) found.add(key)
+    const cfg = readTrimmed(join(bridge, 'config.json'))
+    if (cfg) {
+      try {
+        const token = (JSON.parse(cfg) as { pairingToken?: unknown }).pairingToken
+        if (typeof token === 'string') found.add(token.trim())
+      } catch { /* an unreadable config has no token for us */ }
+    }
+    for (const [name, value] of Object.entries(env)) if (value && SECRET_ENV_NAME.test(name)) found.add(value.trim())
+    for (const fn of secretSources) { try { for (const v of fn()) if (typeof v === 'string') found.add(v.trim()) } catch { /* a source that fails adds nothing */ } }
+    secretsCache = { at: t, home, values: [...found].filter(v => v.length >= MIN_SECRET_LENGTH).sort((a, b) => b.length - a.length) }
+  }
+  if (!extra.length) return secretsCache.values
+  return [...new Set([...extra.map(v => v.trim()), ...secretsCache.values])].filter(v => v.length >= MIN_SECRET_LENGTH).sort((a, b) => b.length - a.length)
+}
+
+const capText = (s: string, max: number): string => (s.length > max ? s.slice(0, max) : s)
+/** Cuts before redacting (cheap on huge input) and again after (redaction may only shorten, so the cut loses nothing it should keep). */
+const clean = (s: unknown, max: number, secrets: readonly string[]): string => capText(redact(capText(typeof s === 'string' ? s : String(s ?? ''), max * 2), secrets), max)
+
+const CONTEXT_KEY = /^[\w.-]{1,64}$/
+
+function cleanValue(v: unknown, secrets: readonly string[], depth: number): unknown {
+  if (typeof v === 'string') return clean(v, MAX_CONTEXT_STRING, secrets)
+  if (typeof v === 'boolean' || v === null) return v
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  if (depth >= 3) return undefined
+  if (Array.isArray(v)) return v.slice(0, MAX_CONTEXT_KEYS).map(x => cleanValue(x, secrets, depth + 1) ?? null)
+  if (v && typeof v === 'object') return cleanContext(v as Record<string, unknown>, secrets, depth + 1)
+  return undefined
+}
+
+/** At most 32 keys of `[\w.-]{1,64}`; strings redacted and cut to 1000 chars; anything that is not JSON-plain is dropped. */
+export function cleanContext(ctx: Record<string, unknown> | undefined, secrets: readonly string[] = [], depth = 0): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (!ctx || typeof ctx !== 'object') return out
+  let n = 0
+  for (const k of Object.keys(ctx)) {
+    if (!CONTEXT_KEY.test(k)) continue
+    const v = cleanValue(ctx[k], secrets, depth)
+    if (v === undefined) continue
+    out[k] = v
+    if (++n >= MAX_CONTEXT_KEYS) break
+  }
+  return out
+}
+
 // ---- reading ------------------------------------------------------------------------------------------------------
 
+export const rotatedPath = (dir: string): string => join(dir, 'faults.1.jsonl')
+
+/** The occurrences, oldest first: the rotated generation (faults.1.jsonl) and then the current file. */
 export function readOccurrences(dir: string): { items: FaultOccurrence[]; skipped: number } {
-  let text: string
-  try { text = readFileSync(occurrencesPath(dir), 'utf8') } catch { return { items: [], skipped: 0 } }
+  let text = ''
+  for (const file of [rotatedPath(dir), occurrencesPath(dir)]) {
+    try { text += readFileSync(file, 'utf8') } catch { /* absent */ }
+    if (text && !text.endsWith('\n')) text += '\n'
+  }
   const items: FaultOccurrence[] = []
   let skipped = 0
   for (const line of text.split('\n')) {
@@ -304,6 +430,19 @@ export interface StateRead { state: StateFile; problem?: string; backup?: string
 
 function stamp(): string { return new Date().toISOString().replace(/[:.]/g, '-') }
 
+const FILE_MODE = 0o600
+const DIR_MODE = 0o700
+
+/** The faults folder, private to the user where the platform has modes. */
+export function ensureDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: DIR_MODE })
+}
+
+function stateOf(parsed: StateFile): StateFile {
+  const d = parsed.dropped
+  return { v: 1, faults: parsed.faults, ...(d && typeof d === 'object' && !Array.isArray(d) ? { dropped: d } : {}) }
+}
+
 /** The state; a corrupt file is copied to `faults-state.json.corrompido-<time>` and replaced by an empty one. */
 export function readState(dir: string): StateRead {
   const path = statePath(dir)
@@ -314,7 +453,7 @@ export function readState(dir: string): StateRead {
   }
   try {
     const parsed = JSON.parse(text) as StateFile
-    if (parsed && typeof parsed === 'object' && parsed.faults && typeof parsed.faults === 'object' && !Array.isArray(parsed.faults)) return { state: { v: 1, faults: parsed.faults } }
+    if (parsed && typeof parsed === 'object' && parsed.faults && typeof parsed.faults === 'object' && !Array.isArray(parsed.faults)) return { state: stateOf(parsed) }
     throw new Error('formato inesperado')
   } catch (e) {
     const backup = `${path}.corrompido-${stamp()}`
@@ -327,44 +466,111 @@ export function readState(dir: string): StateRead {
   }
 }
 
-/** Atomic: temp name first, then replace. */
+/** Atomic: temp name first, then replace. Drops this process's cached view of the state (it was just replaced). */
 export function writeState(dir: string, state: StateFile): void {
-  mkdirSync(dir, { recursive: true })
+  ensureDir(dir)
   const path = statePath(dir)
   const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n')
+  writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: FILE_MODE })
   renameSync(tmp, path)
+  const c = caches.get(dir)
+  if (c) c.snap = undefined
 }
 
 // ---- locking ------------------------------------------------------------------------------------------------------
+// The lock file holds the pid of its owner. It is created atomically WITH its content (written to a private name, then
+// hard-linked to `faults.lock`: link fails with EEXIST when the lock exists, and the content is never seen half-written).
+// A lock whose owner is dead is stale: breaking it is serialized by `faults.lock.breaking` (created exclusively), and the
+// breaker re-reads the lock under it, so a lock another writer has just taken over is never torn down. There is no
+// "old enough, delete it" rule: a live owner keeps the lock for as long as it works, and the others wait or give up.
 
-const LOCK_STALE_MS = 5_000
-const LOCK_WAIT_MS = 2_000
+const LOCK_WAIT_MS = 5_000
+const BREAKER_STALE_MS = 10_000
 
-/** Runs `fn` holding the registry lock. Never blocks for good: a lock older than LOCK_STALE_MS is broken, and after LOCK_WAIT_MS `fn` runs anyway (a late fault beats a lost one). */
-export function withLock<T>(dir: string, fn: () => T): T {
-  mkdirSync(dir, { recursive: true })
-  const lock = join(dir, 'faults.lock')
-  const deadline = Date.now() + LOCK_WAIT_MS
-  let held = false
-  for (;;) {
-    try { closeSync(openSync(lock, 'wx')); held = true; break } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') break
-      try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) { unlinkSync(lock); continue } } catch { continue }
-      if (Date.now() > deadline) break
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15)
+export class LockBusyError extends Error {
+  constructor(dir: string) { super(`o registro de falhas em ${dir} está ocupado por outro processo`); this.name = 'LockBusyError' }
+}
+
+export interface LockOptions {
+  /** How long to wait for a live owner (default 5 s); then `LockBusyError`. */
+  waitMs?: number
+  /** Test seams: the pid this writer claims and the liveness check. */
+  pid?: number
+  alive?: (pid: number) => boolean
+}
+
+export function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
+}
+
+function sleepMs(ms: number): void { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) }
+
+function claim(dir: string, lock: string, me: number): boolean {
+  const mine = join(dir, `faults.lock.${me}.${randomUUID().slice(0, 8)}.tmp`)
+  try {
+    writeFileSync(mine, String(me), { mode: FILE_MODE })
+    try { linkSync(mine, lock); return true } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false
+      // a file system without hard links: exclusive create, then the pid (a reader that sees it empty waits for it)
+      try { const fd = openSync(lock, 'wx', FILE_MODE); try { writeFileSync(fd, String(me)) } finally { closeSync(fd) } return true } catch (e2) {
+        if ((e2 as NodeJS.ErrnoException).code === 'EEXIST') return false
+        throw e2
+      }
     }
+  } finally { try { unlinkSync(mine) } catch { /* gone */ } }
+}
+
+function breakIfStale(dir: string, lock: string, alive: (pid: number) => boolean): void {
+  let seen: string
+  try { seen = readFileSync(lock, 'utf8').trim() } catch { return } // gone already: the next claim wins
+  const pid = Number(seen)
+  if (seen === '') { try { if (Date.now() - statSync(lock).mtimeMs < 2_000) return } catch { return } } // a claim still being written
+  else if (Number.isInteger(pid) && pid > 0 && alive(pid)) return
+  const breaking = join(dir, 'faults.lock.breaking')
+  let fd: number
+  try { fd = openSync(breaking, 'wx', FILE_MODE) } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') { try { if (Date.now() - statSync(breaking).mtimeMs > BREAKER_STALE_MS) unlinkSync(breaking) } catch { /* someone else did */ } }
+    return
   }
-  try { return fn() } finally { if (held) { try { unlinkSync(lock) } catch { /* already gone */ } } }
+  try {
+    closeSync(fd)
+    let again: string
+    try { again = readFileSync(lock, 'utf8').trim() } catch { return }
+    if (again !== seen) return // taken over meanwhile
+    const aside = join(dir, `faults.lock.stale.${randomUUID().slice(0, 8)}`)
+    renameSync(lock, aside)
+    try { unlinkSync(aside) } catch { /* leftovers are harmless */ }
+  } catch { /* the loop tries again */ } finally { try { unlinkSync(breaking) } catch { /* gone */ } }
+}
+
+/** Runs `fn` holding the registry lock; throws `LockBusyError` when a live owner does not let go within `waitMs`. */
+export function withLock<T>(dir: string, fn: () => T, o: LockOptions = {}): T {
+  ensureDir(dir)
+  const lock = join(dir, 'faults.lock')
+  const me = o.pid ?? process.pid
+  const alive = o.alive ?? pidAlive
+  const deadline = Date.now() + (o.waitMs ?? LOCK_WAIT_MS)
+  while (!claim(dir, lock, me)) {
+    breakIfStale(dir, lock, alive)
+    if (Date.now() > deadline) throw new LockBusyError(dir)
+    sleepMs(10)
+  }
+  try { return fn() } finally {
+    try { if (readFileSync(lock, 'utf8').trim() === String(me)) unlinkSync(lock) } catch { /* already gone */ }
+  }
 }
 
 /**
  * Folds into the state the sigs that have lines in the jsonl but no state entry (the launcher writes `load` lines without
  * touching the state: it has nothing but node core). Counts, first/last and a short id are rebuilt from the lines.
+ * Lines younger than RECENT_LINE_MS are left to the process that wrote them (its state write is still debounced).
  */
+const RECENT_LINE_MS = 2_000
 export function reconcileState(dir: string): void {
   try {
-    const { items } = readOccurrences(dir)
+    flush(dir)
+    const horizon = new Date(Date.now() - RECENT_LINE_MS).toISOString()
+    const items = readOccurrences(dir).items.filter(o => o.ts <= horizon && o.sig !== OVERFLOW_SIG)
     if (!items.length) return
     withLock(dir, () => {
       const { state } = readState(dir)
@@ -386,6 +592,141 @@ export function reconcileState(dir: string): void {
 }
 
 // ---- recording ----------------------------------------------------------------------------------------------------
+// `record` appends the occurrence's line to the jsonl at once (one cheap append) and only NOTES the change to the state:
+// the rewrite of faults-state.json is debounced (STATE_DEBOUNCE_MS), flushed at process exit and by every reader through
+// `flush`. The pending changes are deltas applied to a fresh read under the lock, so another process' edits are kept.
+
+export const STATE_DEBOUNCE_MS = 100
+/** New signatures accepted per hour; past it occurrences fold into the synthetic sig OVERFLOW_SIG. */
+export const NEW_SIG_LIMIT_PER_HOUR = 100
+export const OVERFLOW_SIG = 'overflow'
+/** faults.jsonl is rotated to faults.1.jsonl (one generation) when it reaches this size. */
+export const MAX_JSONL_BYTES = 5 * 1024 * 1024
+const HOUR_MS = 3_600_000
+const SNAPSHOT_TTL_MS = 250
+const MAX_DROPPED_SENDERS = 64
+
+interface Delta { n: number; first: string; last: string; version: string; shortId?: string }
+interface DirCache {
+  snap?: { at: number; mtimeMs: number; size: number; faults: Record<string, FaultState> }
+  pending: Map<string, Delta>
+  dropped: Record<string, number>
+  /** When (wall clock) this process accepted each new sig in the last hour; seeded once from the state, then only appended to. */
+  newSigTimes: number[]
+  seeded?: boolean
+  storm: Map<string, { start: number; n: number }>
+  bytes?: number
+  timer?: ReturnType<typeof setTimeout>
+}
+const caches = new Map<string, DirCache>()
+let exitHooked = false
+
+function cacheOf(dir: string): DirCache {
+  let c = caches.get(dir)
+  if (!c) { c = { pending: new Map(), dropped: {}, newSigTimes: [], storm: new Map() }; caches.set(dir, c) }
+  return c
+}
+
+function schedule(dir: string, c: DirCache): void {
+  if (!exitHooked) {
+    exitHooked = true
+    const hook = (): void => { try { flush() } catch { /* exiting */ } }
+    process.on('exit', hook)
+    process.on('beforeExit', hook)
+  }
+  if (c.timer) return
+  c.timer = setTimeout(() => { c.timer = undefined; try { flush(dir) } catch { /* retried by the next change */ } }, STATE_DEBOUNCE_MS)
+  c.timer.unref?.()
+}
+
+function statOf(path: string): { mtimeMs: number; size: number } | undefined {
+  try { const s = statSync(path); return { mtimeMs: s.mtimeMs, size: s.size } } catch { return undefined }
+}
+
+/** This process' view of the state file, re-read when the file changed (checked at most every SNAPSHOT_TTL_MS). */
+function snapshotOf(dir: string, c: DirCache, t: number): Record<string, FaultState> {
+  const s = c.snap
+  if (s && t - s.at < SNAPSHOT_TTL_MS) return s.faults
+  const st = statOf(statePath(dir))
+  if (s && st && st.mtimeMs === s.mtimeMs && st.size === s.size) { s.at = t; return s.faults }
+  const faults = st ? readState(dir).state.faults : {}
+  const after = statOf(statePath(dir))
+  c.snap = { at: t, mtimeMs: after?.mtimeMs ?? 0, size: after?.size ?? 0, faults }
+  if (!c.seeded) {
+    c.seeded = true
+    const since = Date.now() - HOUR_MS
+    c.newSigTimes = Object.values(faults).map(f => Date.parse(f.first)).filter(ms => ms > since).sort((a, b) => a - b)
+  }
+  return faults
+}
+
+/** Writes the debounced state changes now (of one folder, or of every folder this process wrote to). Never throws. */
+export function flush(dir?: string): void {
+  for (const [d, c] of dir ? [[dir, caches.get(dir)] as const] : [...caches]) {
+    if (!c || (!c.pending.size && !Object.keys(c.dropped).length)) continue
+    if (c.timer) { clearTimeout(c.timer); c.timer = undefined }
+    try {
+      withLock(d, () => {
+        const { state, problem, backup } = readState(d)
+        if (problem && !backup) throw new Error(problem) // unreadable and not copied aside: do not overwrite
+        for (const [sig, delta] of c.pending) {
+          let f = state.faults[sig]
+          if (!f) {
+            const taken = Object.values(state.faults).map(x => x.shortId)
+            const shortId = delta.shortId && !taken.includes(delta.shortId) ? delta.shortId : assignShortId(sig, taken)
+            f = { status: 'open', tags: [], notes: [], count: 0, first: delta.first, last: delta.first, shortId }
+            state.faults[sig] = f
+          }
+          f.count += delta.n
+          if (delta.last > f.last) f.last = delta.last
+          if (f.status === 'done') { f.status = 'open'; f.returned = { ts: delta.last, version: delta.version }; delete f.investigating }
+        }
+        if (Object.keys(c.dropped).length) {
+          const dropped = { ...(state.dropped ?? {}) }
+          for (const [k, n] of Object.entries(c.dropped)) {
+            if (!(k in dropped) && Object.keys(dropped).length >= MAX_DROPPED_SENDERS) { dropped.other = (dropped.other ?? 0) + n; continue }
+            dropped[k] = (dropped[k] ?? 0) + n
+          }
+          state.dropped = dropped
+        }
+        writeState(d, state)
+        c.pending.clear()
+        c.dropped = {}
+      }, { waitMs: 250 })
+    } catch {
+      if (c.pending.size || Object.keys(c.dropped).length) schedule(d, c) // lock busy or disk trouble: try again later
+    }
+  }
+}
+
+/** Counts a report refused before it reached `record` (rate limit, bad shape) against `sender`; shows as `dropped` in the state. */
+export function noteDropped(sender: string, dir: string = faultsDir()): void {
+  try {
+    const c = cacheOf(dir)
+    const key = sender.slice(0, 80)
+    if (!(key in c.dropped) && Object.keys(c.dropped).length >= MAX_DROPPED_SENDERS) c.dropped.other = (c.dropped.other ?? 0) + 1
+    else c.dropped[key] = (c.dropped[key] ?? 0) + 1
+    schedule(dir, c)
+  } catch { /* never throws */ }
+}
+
+/** Moves a full faults.jsonl aside (one generation kept), re-checking under the lock: several processes append here. */
+function rotateIfFull(dir: string, c: DirCache): void {
+  try {
+    withLock(dir, () => {
+      const size = statOf(occurrencesPath(dir))?.size ?? 0
+      if (size + 1 >= MAX_JSONL_BYTES) { renameSync(occurrencesPath(dir), rotatedPath(dir)); c.bytes = 0 } else c.bytes = size
+    }, { waitMs: 250 })
+  } catch { c.bytes = 0 }
+}
+
+const infoCache = new Map<string, { version: string; commit?: string }>()
+function infoOf(fromDir: string | undefined): { version: string; commit?: string } {
+  const k = fromDir ?? ''
+  let i = infoCache.get(k)
+  if (!i) { i = buildInfo(fromDir); infoCache.set(k, i) }
+  return i
+}
 
 export interface RecordOptions {
   /** The faults folder (default: faultsDir()). */
@@ -397,44 +738,70 @@ export interface RecordOptions {
   commit?: string
   /** Where to look for package.json when `version` is not given. */
   fromDir?: string
+  /** Exact values to redact besides the ones `secretValues` finds. */
+  secrets?: readonly string[]
+  /** The environment the secrets are read from (default process.env). */
+  env?: NodeJS.ProcessEnv
 }
 
 export interface RecordResult { sig: string; shortId: string; written: boolean; occurrence: FaultOccurrence; state: FaultState }
 
-/** Appends the occurrence (unless it is storm noise) and updates the state. Returns undefined when the registry itself could not be written. */
+/**
+ * Redacts and caps the input, appends the occurrence (unless it is storm noise) and notes the state change (written by
+ * `flush`, debounced). `state` in the result is the entry as it will be once flushed. Returns undefined when the registry
+ * itself could not be written.
+ */
 export function record(input: FaultInput, opts: RecordOptions = {}): RecordResult | undefined {
   try {
     const dir = opts.dir ?? faultsDir()
     const now = (opts.now ?? Date.now)()
     const ts = new Date(now).toISOString()
-    const info = opts.version ? { version: opts.version, commit: opts.commit } : buildInfo(opts.fromDir)
-    const stack = input.stack ?? ''
-    const sig = faultSig(input.message, stack, opts.mapper)
+    const info = opts.version ? { version: opts.version, commit: opts.commit } : infoOf(opts.fromDir)
+    const secrets = secretValues(opts.env ?? process.env, opts.secrets ?? [])
+    const message = clean(input.message, MAX_MESSAGE, secrets)
+    const stack = clean(input.stack ?? '', MAX_STACK, secrets)
+    const context = cleanContext(input.context, secrets)
+    const c = cacheOf(dir)
+    const faults = snapshotOf(dir, c, Date.now())
+    let sig = faultSig(message, stack, opts.mapper)
+    if (!faults[sig] && !c.pending.has(sig)) {
+      const since = Date.now() - HOUR_MS
+      while (c.newSigTimes.length && c.newSigTimes[0]! < since) c.newSigTimes.shift()
+      if (c.newSigTimes.length >= NEW_SIG_LIMIT_PER_HOUR) sig = OVERFLOW_SIG
+      else c.newSigTimes.push(Date.now())
+    }
     const occurrence: FaultOccurrence = {
       id: randomUUID(), ts, proc: input.proc, version: info.version, ...(info.commit ? { commit: info.commit } : {}),
-      kind: input.kind, message: input.message, stack, sig, context: input.context ?? {},
+      kind: input.kind, message, stack, sig, context,
     }
-    return withLock(dir, () => {
-      const { state } = readState(dir)
-      let entry = state.faults[sig]
-      if (!entry) {
-        entry = { status: 'open', tags: [], notes: [], count: 0, first: ts, last: ts, shortId: assignShortId(sig, Object.values(state.faults).map(f => f.shortId)) }
-        state.faults[sig] = entry
-      }
-      entry.count++
-      entry.last = ts
-      if (entry.status === 'done') { entry.status = 'open'; entry.returned = { ts, version: info.version } }
-      const storm = entry.storm
-      let written = true
-      if (!storm || now - storm.start >= STORM_WINDOW_MS) entry.storm = { start: now, n: 1 }
-      else { storm.n++; if (storm.n > STORM_LIMIT) written = false }
-      if (written) {
-        mkdirSync(dir, { recursive: true })
-        appendFileSync(occurrencesPath(dir), JSON.stringify(occurrence) + '\n')
-      }
-      writeState(dir, state)
-      return { sig, shortId: entry.shortId, written, occurrence, state: entry }
-    })
+    let storm = c.storm.get(sig)
+    let written = true
+    if (!storm || now - storm.start >= STORM_WINDOW_MS) c.storm.set(sig, storm = { start: now, n: 1 })
+    else { storm.n++; if (storm.n > STORM_LIMIT) written = false }
+    if (written) {
+      ensureDir(dir)
+      const line = JSON.stringify(occurrence) + '\n'
+      c.bytes ??= statOf(occurrencesPath(dir))?.size ?? 0
+      if (c.bytes + line.length >= MAX_JSONL_BYTES) rotateIfFull(dir, c) // before the append: the new line opens the new file
+      appendFileSync(occurrencesPath(dir), line, { mode: FILE_MODE })
+      c.bytes += Buffer.byteLength(line)
+    }
+    let delta = c.pending.get(sig)
+    if (!delta) {
+      delta = { n: 0, first: ts, last: ts, version: info.version }
+      if (!faults[sig]) delta.shortId = sig === OVERFLOW_SIG ? 'over' : assignShortId(sig, [...Object.values(faults).map(f => f.shortId), ...[...c.pending.values()].map(d => d.shortId ?? '')])
+      c.pending.set(sig, delta)
+    }
+    delta.n++
+    delta.last = ts
+    delta.version = info.version
+    schedule(dir, c)
+    const base = faults[sig]
+    const view: FaultState = base
+      ? { ...base, count: base.count + delta.n, last: ts }
+      : { status: 'open', tags: [], notes: [], count: delta.n, first: delta.first, last: ts, shortId: delta.shortId! }
+    if (view.status === 'done') { view.status = 'open'; view.returned = { ts, version: info.version } }
+    return { sig, shortId: view.shortId, written, occurrence, state: view }
   } catch {
     return undefined
   }

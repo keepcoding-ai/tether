@@ -3,7 +3,7 @@
 // Faults screen through Electron main, so both write through the same code under the registry's lock: the screen and an
 // agent running `tether faults note` never overwrite each other. Occurrences are only ever read here (src/core/faults.ts
 // is the one that appends them).
-import { readOccurrences, readState, reconcileState, resolveId, withLock, writeState, type FaultKind, type FaultNote, type FaultOccurrence, type FaultProc, type FaultState, type FaultStatus, type StateFile } from './faults.ts'
+import { flush, LockBusyError, readOccurrences, readState, reconcileState, resolveId, withLock, writeState, type FaultKind, type FaultNote, type FaultOccurrence, type FaultProc, type FaultState, type FaultStatus, type StateFile } from './faults.ts'
 import { normalizeTag } from './faults-labels.ts'
 
 /** The fields the JSON of `tether faults list` has, and the screen's rows; stable, the skills parse them. */
@@ -55,6 +55,7 @@ function rowOf(sig: string, f: FaultState, latest: FaultOccurrence | undefined):
 
 /** Every fault, the one that occurred last first. Lines the launcher wrote without a state entry are folded in first. */
 export function listFaults(dir: string): FaultsSnapshot {
+  flush(dir) // this process' debounced state changes first: the screen and the CLI never read behind a pending write
   const occ = readOccurrences(dir)
   let read = readState(dir)
   const latest = new Map<string, FaultOccurrence>()
@@ -117,6 +118,13 @@ export type ActionResult =
 
 /** Applies one verb under the registry lock. A verb that finds the fault already so is `changed: false` (nothing written). */
 export function applyAction(dir: string, ref: string, action: FaultAction, now: () => number = Date.now): ActionResult {
+  try { return applyLocked(dir, ref, action, now) } catch (e) {
+    if (e instanceof LockBusyError) return { ok: false, code: 'unreadable', message: e.message }
+    throw e
+  }
+}
+
+function applyLocked(dir: string, ref: string, action: FaultAction, now: () => number): ActionResult {
   listFaults(dir)
   return withLock(dir, (): ActionResult => {
     const read = readState(dir)
