@@ -10,10 +10,19 @@ import type { FileTarget } from './file-open.ts'
 import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 import type { ExtTransport } from './ext-ipc.ts'
-import type { ExtensionsSettings, SettingValue } from './vscode-configuration-registry.ts'
+import type { ExtensionsSettings, SettingSchema, SettingValue } from './vscode-configuration-registry.ts'
+import type { SettingsError } from './settings-file.ts'
 import type { ExtensionSummary } from '../../extensions/types.ts'
 
 /** A change of one extension setting (`extensions.<id>.<key>` of settings.json). */
+/** One setting as the settings page lists it: its full key (the storage path), schema, value in force, and whether the file sets it. */
+export interface SettingEntry { key: string; node: string; nodeTitle: string; schema: SettingSchema; value: SettingValue; configured: boolean }
+/** settings:list: every registered setting in page order, and the file's parse errors (none when it is valid or absent). */
+export interface SettingsList { entries: SettingEntry[]; errors: SettingsError[] }
+/** settings:set / settings:reset: refused for an unknown key, an invalid value, or a file that does not parse. */
+export type SettingWriteResult = { ok: true } | { ok: false; message: string }
+/** settings:file: the file as main knows it (text null when it does not exist). */
+export interface SettingsFileState { path: string; text: string | null; errors: SettingsError[] }
 export interface ExtSettingChange { id: string; key: string; value: SettingValue }
 /** Main's side of the "Extensões" screen: its manifests, the disabled list, and what failed to activate there. */
 export interface MainExtensionsList { manifests: ExtensionSummary[]; disabled: string[]; failed: { id: string; error: string }[] }
@@ -135,6 +144,16 @@ export interface TetherApi {
   listMainExtensions(): Promise<MainExtensionsList>
   /** The "Extensões" toggle: on or off at the next start ("Reiniciar o app"); answers settings.json `extensions.disabled`. */
   setExtensionEnabled(id: string, on: boolean): Promise<string[]>
+  /** The configuration registry's settings (app/main/main.ts settings:*): list, write one key, remove one key, the file, and its ensure-then-path for "Abrir settings.json". */
+  settingsList(): Promise<SettingsList>
+  settingsSet(key: string, value: SettingValue): Promise<SettingWriteResult>
+  settingsReset(key: string): Promise<SettingWriteResult>
+  settingsFile(): Promise<SettingsFileState>
+  settingsOpen(): Promise<{ ok: true; path: string } | { ok: false; message: string }>
+  /** The dotted keys that changed in settings.json (a write of ours or an edit on disk). */
+  onSettingsChanged(listener: (keys: string[]) => void): () => void
+  /** The file's parse errors changed (empty once it parses again). */
+  onSettingsErrors(listener: (errors: SettingsError[]) => void): () => void
 }
 
 declare global {

@@ -10,6 +10,7 @@ import type { ThemeState } from '../shared/theme.ts'
 import type { UiSettings } from '../shared/ui-settings.ts'
 import type { KeybindingsFileState } from '../shared/keybindings.ts'
 import type { ExtSettingChange } from '../shared/api.ts'
+import type { SettingsError } from '../shared/settings-file.ts'
 import { extChannel } from '../shared/ext-ipc.ts'
 
 function on<T>(channel: string, listener: (value: T) => void): () => void {
@@ -82,6 +83,13 @@ const api: TetherApi = {
   onExtSetting: listener => on<ExtSettingChange>('tether:ext-setting', listener),
   listMainExtensions: () => ipcRenderer.invoke('extensions:list'),
   setExtensionEnabled: (id, on) => ipcRenderer.invoke('extensions:set-enabled', id, on),
+  settingsList: () => ipcRenderer.invoke('settings:list'),
+  settingsSet: (key, value) => ipcRenderer.invoke('settings:set', key, value),
+  settingsReset: key => ipcRenderer.invoke('settings:reset', key),
+  settingsFile: () => ipcRenderer.invoke('settings:file'),
+  settingsOpen: () => ipcRenderer.invoke('settings:open'),
+  onSettingsChanged: listener => on<string[]>('tether:settings-changed', listener),
+  onSettingsErrors: listener => on<SettingsError[]>('tether:settings-errors', listener),
 }
 
 contextBridge.exposeInMainWorld('tether', api)

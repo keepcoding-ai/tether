@@ -21,9 +21,9 @@ export const manifest: ExtensionManifest = {
       { id: 'explorer.files', title: 'Explorador', icon: 'files', defaultSide: 'left', scope: 'global', absorbsHeader: true, order: 10 },
     ],
     settings: {
-      follow: { type: 'boolean', default: true, title: 'Seguir o agente ativo no explorador' },
-      autoReveal: { type: 'boolean', default: false, title: 'Revelar o arquivo ativo no explorador' },
-      confirmDelete: { type: 'boolean', default: true, title: 'Confirmar antes de mover para a lixeira' },
+      follow: { type: 'boolean', default: true, title: 'Seguir o agente ativo no explorador', description: 'O explorador mostra a pasta do painel em foco.' },
+      autoReveal: { type: 'boolean', default: false, title: 'Revelar o arquivo ativo no explorador', description: 'Ao trocar de aba, o explorador abre a árvore até o arquivo aberto.' },
+      confirmDelete: { type: 'boolean', default: true, title: 'Confirmar antes de mover para a lixeira', description: 'Pergunta antes de mandar um arquivo ou pasta para a lixeira.' },
     },
     commands: [
       { command: 'explorer.focus', title: 'Explorador: focar', category: EXPLORER, icon: 'files' },

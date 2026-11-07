@@ -25,9 +25,9 @@ export const manifest: ExtensionManifest = {
   optional: true,
   contributes: {
     settings: {
-      serveToAgents: { type: 'boolean', default: true, title: `Oferecer o ${BRIDGE_NAME} aos agentes dos painéis` },
-      agentWindows: { type: 'boolean', default: true, title: 'Abas dos agentes em uma janela própria por agente' },
-      evaluate: { type: 'string', default: 'own-tabs', enum: ['own-tabs', 'all', 'off'], title: 'Onde um agente pode rodar código na página (evaluate)' },
+      serveToAgents: { type: 'boolean', default: true, title: `Oferecer o ${BRIDGE_NAME} aos agentes dos painéis`, description: 'Os agentes dos painéis recebem as ferramentas do navegador.' },
+      agentWindows: { type: 'boolean', default: true, title: 'Abas dos agentes em uma janela própria por agente', description: 'Cada agente abre suas abas numa janela do navegador só dele.' },
+      evaluate: { type: 'string', default: 'own-tabs', enum: ['own-tabs', 'all', 'off'], enumLabels: ['Só nas abas do agente', 'Em qualquer aba', 'Em nenhuma'], title: 'Onde um agente pode rodar código na página (evaluate)', description: 'Só nas abas do próprio agente, em qualquer aba, ou em nenhuma.' },
     },
     commands: [
       { command: 'web-bridge.install', title: `Instalar ${BRIDGE_NAME}…`, category: BRIDGE_NAME, icon: 'globe-simple' },

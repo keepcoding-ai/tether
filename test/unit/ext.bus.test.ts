@@ -114,7 +114,7 @@ describe('the settings registry', () => {
   test('properties by full key; undeclared keys read undefined; duplicate registration throws', () => {
     const r = new ConfigurationRegistry()
     const d = r.registerConfiguration({ id: 'note', properties: { wordWrap: { type: 'boolean', default: true, title: 'Quebra de linha' } } })
-    assert.deepEqual(Object.keys(r.getConfigurationProperties()), ['note.wordWrap'])
+    assert.deepEqual(Object.keys(r.getConfigurationProperties()), ['extensions.note.wordWrap'])
     const settings: ExtensionsSettings = { disabled: [], values: { note: { wordWrap: 'x' } } }
     assert.equal(r.read(settings, 'note', 'wordWrap'), true)
     assert.equal(r.read(settings, 'note', 'other'), undefined)

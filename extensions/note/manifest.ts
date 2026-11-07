@@ -19,9 +19,9 @@ export const manifest: ExtensionManifest = {
   contributes: {
     paneTypes: NOTE_PANE_LAYOUTS,
     settings: {
-      wordWrap: { type: 'boolean', default: true, title: 'Quebra de linha no editor' },
-      minimap: { type: 'boolean', default: true, title: 'Minimapa nos editores' },
-      lineNumbers: { type: 'boolean', default: true, title: 'Números de linha nos editores' },
+      wordWrap: { type: 'boolean', default: true, title: 'Quebra de linha no editor', description: 'Linhas longas quebram na largura do editor em vez de rolar para o lado.' },
+      minimap: { type: 'boolean', default: true, title: 'Minimapa nos editores', description: 'Uma miniatura do arquivo à direita do editor, para ver e saltar pelo texto.' },
+      lineNumbers: { type: 'boolean', default: true, title: 'Números de linha nos editores', description: 'Os números das linhas à esquerda do texto.' },
     },
     commands: [
       { command: 'note.new', title: 'Nova nota', category: NOTE, icon: 'note-pencil' },

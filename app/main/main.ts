@@ -18,8 +18,8 @@ import type { Notice, Reply, SlotState } from '../../src/daemon/protocol.ts'
 import { canonicalDir, tetherHome, userDir } from '../../src/core/paths.ts'
 import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles } from '../../src/core/profile.ts'
 import type { ProfileInput } from '../../src/core/profile.ts'
-import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
-import { NoteWatchers } from './note-files.ts'
+import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody, SettingsFileState, SettingsList, SettingWriteResult } from '../shared/api.ts'
+import { NoteWatchers, writeTextAtomic } from './note-files.ts'
 import { migrateUserFiles, SettingsStore } from './settings-store.ts'
 import { registerFileOpen } from './file-open-main.ts'
 import { registerTerminalLinks } from './terminal-links-main.ts'
@@ -27,7 +27,8 @@ import { KEYBINDINGS_FILE, type KeybindingsFileState } from '../shared/keybindin
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeWindowState, resolveWindowState, type WindowState } from '../shared/window-state.ts'
 import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
-import { readExtensionsSettings, writeExtensionsSettings } from '../shared/vscode-configuration-registry.ts'
+import { isValidSetting, readExtensionsSettings, settingPath, valueAt, writeExtensionsSettings } from '../shared/vscode-configuration-registry.ts'
+import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { extensions as mainExtensions } from '../../extensions/index.main.ts'
 import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
@@ -358,7 +359,11 @@ function saveSetting(key: string, value: unknown): boolean {
 /** The settings file changed: tells the renderer which keys; an edit from outside also replays the specific broadcasts. */
 function onSettingsChanged(keys: string[], source: 'self' | 'disk'): void {
   win?.webContents.send('tether:settings-changed', keys)
-  if (source !== 'disk') return
+  if (source === 'disk') replaySettings(keys)
+}
+
+/** The specific broadcasts of changed keys (an edit on disk, or a write through settings:set / settings:reset): each part applies its own. */
+function replaySettings(keys: readonly string[]): void {
   const roots = new Set(keys.map(k => k.split('.')[0]))
   if (roots.has('theme')) { const t = readThemeSetting(); nativeTheme.themeSource = t === 'auto' ? 'system' : t; applyTheme() }
   if (roots.has('terminal')) win?.webContents.send('tether:terminal', readTerminalAppearance())
@@ -384,6 +389,46 @@ const extensionHost = new MainExtensionHost(mainExtensions, {
   writeFile: file => { const r = settingsStore.assign([], file); if (!r.ok) appLog('configurações: o settings.json tem erros, nada foi gravado') },
   log: msg => appLog(msg),
   trash: path => shell.trashItem(path),
+})
+
+// ---------- settings registry (the settings page's channels) ----------
+// Every editable setting is a property of the configuration registry, keyed by its storage path: the core's
+// (app/shared/core-settings.ts) next to the extensions' (registered at activation). The specific readers (normalizeUi,
+// normalizeTheme, the extensions' settings.get) stay as they are; these channels are the page's generic way in.
+//   settings:list    every property in page order, its value in force and whether the file sets it; the parse errors
+//   settings:set     one key to a value its schema allows (that key alone, as a text edit), then its specific broadcast
+//   settings:reset   removes one key (back to its default), then its specific broadcast
+//   settings:file    the file's path, text and errors
+//   settings:open    creates an empty file when absent and answers its path (the renderer opens it in a note tab)
+extensionHost.configuration.registerConfiguration(CORE_SETTINGS)
+const settingsPath = join(userHome, 'settings.json')
+ipcMain.handle('settings:list', (): SettingsList => {
+  const reg = extensionHost.configuration
+  const file = settingsStore.value
+  const titles = new Map(reg.getConfigurationNodes().map(n => [n.id, n.title ?? n.id]))
+  return {
+    entries: reg.properties().map(p => ({ key: p.key, node: p.node, nodeTitle: titles.get(p.node) ?? p.node, schema: p.schema, value: reg.readAt(file, p.key)!, configured: reg.isConfigured(file, p.key) })),
+    errors: [...settingsStore.errors],
+  }
+})
+function writeSettingKey(key: unknown, value: unknown, reset: boolean): SettingWriteResult {
+  const schema = typeof key === 'string' ? extensionHost.configuration.schemaAt(key) : undefined
+  if (typeof key !== 'string' || !schema) return { ok: false, message: 'Configuração desconhecida.' }
+  if (!reset && !isValidSetting(schema, value)) return { ok: false, message: 'Valor inválido para esta configuração.' }
+  const before = JSON.stringify(valueAt(settingsStore.value, key))
+  const r = settingsStore.set(settingPath(key), reset ? undefined : value)
+  if (!r.ok) return { ok: false, message: `O settings.json tem erros: ${r.errors[0]?.message ?? 'inválido'}` }
+  if (JSON.stringify(valueAt(settingsStore.value, key)) !== before) replaySettings([key])
+  return { ok: true }
+}
+ipcMain.handle('settings:set', (_e, key: unknown, value: unknown): SettingWriteResult => writeSettingKey(key, value, false))
+ipcMain.handle('settings:reset', (_e, key: unknown): SettingWriteResult => writeSettingKey(key, undefined, true))
+ipcMain.handle('settings:file', (): SettingsFileState => ({ path: settingsPath, text: existsSync(settingsPath) ? settingsStore.fileText : null, errors: [...settingsStore.errors] }))
+ipcMain.handle('settings:open', (): { ok: true; path: string } | { ok: false; message: string } => {
+  try {
+    if (!existsSync(settingsPath)) { mkdirSync(userHome, { recursive: true }); writeTextAtomic(settingsPath, '{\n}\n'); settingsStore.reload() }
+    return { ok: true, path: settingsPath }
+  } catch (err) { return { ok: false, message: err instanceof Error ? err.message : String(err) } }
 })
 
 // ---------- terminal appearance ----------

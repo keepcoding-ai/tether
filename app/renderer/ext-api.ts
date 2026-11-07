@@ -6,6 +6,8 @@
 import type { AddPanelOptions, IDockviewPanel } from 'dockview-core'
 import type { ChannelMap, UiIpc } from '../shared/ext-ipc.ts'
 import type { SettingValue } from '../shared/vscode-configuration-registry.ts'
+import type { SettingsError } from '../shared/settings-file.ts'
+import type { SettingsFileState, SettingsList, SettingWriteResult } from '../shared/api.ts'
 import type { MenuItem } from '../shared/vscode-menu-registry.ts'
 import type { IDisposable } from '../shared/vscode-lifecycle.ts'
 import type { DialogAnswer, DialogSpec } from '../shared/dialog.ts'
@@ -181,6 +183,22 @@ export interface TetherUi {
     get<T extends SettingValue>(key: string): T | undefined
     set(key: string, value: SettingValue): void
     onChange(key: string, listener: (value: SettingValue) => void): IDisposable
+  }
+  /**
+   * Every registered setting (core and extensions) by its full key, the storage path (`ui.deskLine`,
+   * `extensions.note.minimap`): what the settings page lists and edits. Main is the writer; a write is refused for an
+   * unknown key, an invalid value, or a settings.json that does not parse.
+   */
+  configuration: {
+    all(): Promise<SettingsList>
+    set(key: string, value: SettingValue): Promise<SettingWriteResult>
+    /** Removes the key from settings.json (back to its default). */
+    reset(key: string): Promise<SettingWriteResult>
+    /** Keys changed in the file (any writer), or its parse errors changed (`errors` then set; empty once valid). */
+    onDidChange(listener: (e: { keys: string[]; errors?: SettingsError[] }) => void): IDisposable
+    fileState(): Promise<SettingsFileState>
+    /** "Abrir settings.json": the file in an editor tab (an empty `{}` is created first when absent). */
+    openFile(): Promise<void>
   }
   menus: {
     /** An item of the ≡ menu; the core fixes the group order (app/renderer/app-menu.ts APP_MENU_GROUPS). */

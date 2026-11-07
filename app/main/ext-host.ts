@@ -68,7 +68,7 @@ export class MainExtensionHost {
     const disabled = this.deps.readSettings().disabled
     for (const e of this.list) {
       const settings = e.manifest.contributes?.settings
-      if (settings && !disabled.includes(e.manifest.id)) this.store.add(this.configuration.registerConfiguration({ id: e.manifest.id, properties: settings }))
+      if (settings && !disabled.includes(e.manifest.id)) this.store.add(this.configuration.registerConfiguration({ id: e.manifest.id, title: e.manifest.displayName, properties: settings }))
     }
     this.result = activateExtensions(this.list, id => this.apiFor(id), this.store, disabled)
     if (this.result.active.length || this.result.failed.length) this.deps.log(`extensões (main): ativas ${this.result.active.join(', ') || '—'}; falharam ${this.result.failed.map(f => `${f.id} (${f.error})`).join(', ') || '—'}`)

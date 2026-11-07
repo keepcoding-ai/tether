@@ -3056,7 +3056,7 @@ function activateRendererExtensions(): void {
   window.tether.onExtSetting(onExtSetting)
   for (const e of extensions) {
     const settings = e.manifest.contributes?.settings
-    if (settings && !extSettings.disabled.includes(e.manifest.id)) extensionStore.add(configuration.registerConfiguration({ id: e.manifest.id, properties: settings }))
+    if (settings && !extSettings.disabled.includes(e.manifest.id)) extensionStore.add(configuration.registerConfiguration({ id: e.manifest.id, title: e.manifest.displayName, properties: settings }))
   }
   const apiFor = (id: string): TetherUi => {
     const manifest = extensions.find(e => e.manifest.id === id)!.manifest
@@ -3124,6 +3124,22 @@ function activateRendererExtensions(): void {
           if (!set) { set = new Set(); extSettingListeners.set(full, set) }
           set.add(listener)
           return add(toDisposable(() => { set.delete(listener) }))
+        },
+      },
+      configuration: {
+        all: () => window.tether.settingsList(),
+        set: (key, value) => window.tether.settingsSet(key, value),
+        reset: key => window.tether.settingsReset(key),
+        onDidChange: listener => {
+          const offKeys = window.tether.onSettingsChanged(keys => listener({ keys }))
+          const offErrors = window.tether.onSettingsErrors(errors => listener({ keys: [], errors }))
+          return add(toDisposable(() => { offKeys(); offErrors() }))
+        },
+        fileState: () => window.tether.settingsFile(),
+        openFile: async () => {
+          const r = await window.tether.settingsOpen()
+          if (r.ok) await openFile(fileOpenHost, r.path, { side: false, root: '', source: true })
+          else console.error(`settings.json: ${r.message}`)
         },
       },
       menus: {
