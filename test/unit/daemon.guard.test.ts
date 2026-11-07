@@ -42,3 +42,19 @@ test(`more than ${UNCAUGHT_LIMIT} uncaught exceptions inside the window are fata
   for (let i = 0; i < UNCAUGHT_LIMIT; i++) { fresh.guard.uncaught(new Error('old')); fresh.tick(UNCAUGHT_WINDOW_MS / UNCAUGHT_LIMIT + 1) }
   assert.equal(fresh.guard.uncaught(new Error('after the window')), false, 'errors older than the window do not count')
 })
+
+test('the guard also files uncaught errors and rejections in the registry (record), keeping the log line', () => {
+  const lines: string[] = []
+  const filed: string[] = []
+  const guard = createGuard({ log: m => lines.push(m), healthy: () => true, record: (kind, e) => filed.push(`${kind}:${(e as Error).message}`) })
+  guard.uncaught(new Error('a'))
+  guard.unhandled(new Error('b'))
+  assert.deepEqual(filed, ['uncaught:a', 'rejection:b'])
+  assert.match(lines[0]!, /uncaught exception/)
+})
+
+test('a record that throws never reaches the daemon', () => {
+  const guard = createGuard({ log: () => {}, healthy: () => true, record: () => { throw new Error('disk full') } })
+  assert.equal(guard.uncaught(new Error('a')), false)
+  guard.unhandled('x')
+})

@@ -11,6 +11,7 @@ import { pingDaemon } from './client.ts'
 import { disabledExtensions } from '../agents/load.ts'
 import { DaemonExtensionHost } from './ext-host.ts'
 import { createGuard } from './guard.ts'
+import { record } from '../core/faults.ts'
 import { pipePath } from './protocol.ts'
 import { startDaemon, type Daemon } from './server.ts'
 
@@ -103,7 +104,11 @@ async function main(): Promise<void> {
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) {
     process.on(sig, () => shutdown(`signal ${sig}`))
   }
-  const guard = createGuard({ log, healthy: () => daemon.listening() })
+  const guard = createGuard({
+    log,
+    healthy: () => daemon.listening(),
+    record: (kind, e) => record({ proc: 'daemon', kind, message: e instanceof Error ? e.message : String(e), stack: e instanceof Error ? e.stack ?? '' : '' }, { fromDir: import.meta.dirname }),
+  })
   process.on('uncaughtException', (e) => { if (guard.uncaught(e)) shutdown('uncaught exception with inconsistent state', 1) })
   process.on('unhandledRejection', (r) => guard.unhandled(r))
   process.on('exit', (code) => log(`process exit ${code}`))

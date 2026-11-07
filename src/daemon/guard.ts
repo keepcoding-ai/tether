@@ -13,13 +13,15 @@ export interface Guard {
   unhandled(reason: unknown): void
 }
 
-export function createGuard(opts: { log: (msg: string) => void; healthy: () => boolean; now?: () => number }): Guard {
+/** `record` (optional) also files the error in the fault registry; the log line stays either way. */
+export function createGuard(opts: { log: (msg: string) => void; healthy: () => boolean; now?: () => number; record?: (kind: 'uncaught' | 'rejection', e: unknown) => void }): Guard {
   const now = opts.now ?? Date.now
   const recent: number[] = []
   const describe = (e: unknown): string => (e instanceof Error ? e.stack ?? e.message : String(e))
   return {
     uncaught(e) {
       opts.log(`uncaught exception: ${describe(e)}`)
+      try { opts.record?.('uncaught', e) } catch { /* the registry never takes the daemon down */ }
       const t = now()
       recent.push(t)
       while (recent.length && recent[0]! < t - UNCAUGHT_WINDOW_MS) recent.shift()
@@ -36,6 +38,7 @@ export function createGuard(opts: { log: (msg: string) => void; healthy: () => b
     },
     unhandled(reason) {
       opts.log(`unhandled rejection: ${describe(reason)}`)
+      try { opts.record?.('rejection', reason) } catch { /* see uncaught */ }
     },
   }
 }
