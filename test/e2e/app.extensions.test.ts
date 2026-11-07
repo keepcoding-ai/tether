@@ -163,6 +163,11 @@ test('app extensions (F9 0b): generated ≡ menu equals the old one + "Extensõe
     await sleep(300)
     assert.equal(await page.locator('.ext-pane').count(), 1, 'one screen')
     assert.equal(await page.locator('.tether-tab.extensions').count(), 1)
+    // From the toolbar button (after the inbox): the same screen again, still one.
+    assert.equal(await page.locator('#btn-extensions').getAttribute('aria-label'), 'Extensões')
+    await page.click('#btn-extensions')
+    await sleep(300)
+    assert.equal(await page.locator('.ext-pane').count(), 1, 'one screen after the toolbar button')
     // With a pane active, the pane items are no longer greyed.
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')

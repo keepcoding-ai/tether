@@ -2494,6 +2494,7 @@ function setupUi(): void {
   $('drawer-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
   $('drawer-close').addEventListener('click', () => setDrawerOpen(false))
   $('btn-profiles').addEventListener('click', () => openProfiles())
+  $('btn-extensions').addEventListener('click', () => openExtensions())
   commands.register(...appCommands(commandHost))
   commands.register(...workspaceCommands({
     pickAndOpen: () => { void window.tether.pickFolder(currentProject).then(f => { if (f) openProject(f) }) },
