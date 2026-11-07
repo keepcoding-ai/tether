@@ -505,6 +505,7 @@ const workspaceListeners = new Set<(folders: readonly ProjectFolder[]) => void>(
 const activePaneListeners = new Set<(info: PaneInfo | undefined) => void>()
 /** TetherUi.slots.onDidChange: told after every slot state or removal (the Faults screen's agent chooser). */
 const slotListeners = new Set<() => void>()
+const profileListeners = new Set<() => void>()
 function notifySlotListeners(): void {
   for (const l of [...slotListeners]) { try { l() } catch (err) { console.error('slot listener', err) } }
 }
@@ -1990,6 +1991,7 @@ function profileOf(slot: SlotState): { profileId?: string } {
 function setProfiles(list: Profile[], problem: string | undefined): void {
   profiles = list
   profilesProblem = problem
+  for (const l of [...profileListeners]) { try { l() } catch (err) { console.error('profile listener', err) } }
   if (manager.open) manager.refresh()
   popupChooser?.render()
   for (const e of empties.values()) e.renderProfiles()
@@ -3217,6 +3219,7 @@ function activateRendererExtensions(): void {
         input: (slotId, data) => { if (slots.has(slotId)) window.tether.notice({ t: 'input', slotId, data }) },
         open: slotId => openSlot(slotId),
         profiles: () => profiles,
+        onDidChangeProfiles: listener => { profileListeners.add(listener); return add(toDisposable(() => { profileListeners.delete(listener) })) },
         openProfiles: profileId => openProfiles(profileId),
         create: async ({ profileId, cwd }) => {
           const profile = profiles.find(p => p.id === profileId)

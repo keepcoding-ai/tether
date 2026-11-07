@@ -15,7 +15,7 @@ import { canonicalDir } from '../../src/core/paths.ts'
 import { composeShare } from '../../src/daemon/share.ts'
 import { actionOf, investigateCwd, sourceRootOf } from '../../extensions/faults/main.ts'
 import { manifest } from '../../extensions/faults/manifest.ts'
-import { allTags, buildChooser, counts, featureOn, investigateCommand, isNew, newCount, returnedOf, shortFolder, sortRows, stackNote, statusSentence, turnState, visibleRows } from '../../extensions/faults/rules.ts'
+import { allTags, buildChooser, canSend, counts, featureOn, investigateCommand, isNew, newCount, returnedOf, shortFolder, sortRows, stackNote, statusSentence, turnState, visibleRows } from '../../extensions/faults/rules.ts'
 import { FaultsStore } from '../../extensions/faults/store.ts'
 import type { FaultsList } from '../../extensions/faults/ipc.ts'
 
@@ -167,14 +167,34 @@ describe('the agent chooser', () => {
     assert.deepEqual(c.choices.filter(x => x.kind === 'pane').map(x => [x.slotId, x.state, x.enabled]), [['s2', 'parado', false], ['s3', 'iniciando', false]])
   })
 
-  test('"Novo painel" rows: one per agent default profile, preselected when no pane is idle, disabled when the default profile has the feature off', () => {
+  test('"Novo painel" rows: every profile of an AI agent, the defaults first; the feature is resolved per profile (profile > general); off is listed disabled with "Ligar"', () => {
     const none = buildChooser({ ...base, slots: [slot({ slotId: 's1', turn: 'busy', profileId: 'claude-dev' })] })
     const news = none.choices.filter(x => x.kind === 'new')
-    assert.deepEqual(news.map(x => [x.profileId, x.enabled, x.label]), [['claude', false, 'Novo painel Claude em workspace/tether'], ['soul', true, 'Novo painel soul em workspace/tether']])
+    assert.deepEqual(news.map(x => [x.profileId, x.enabled, x.label]), [
+      ['claude', false, 'Novo painel Claude em workspace/tether'],
+      ['soul', true, 'Novo painel soul em workspace/tether'],
+      ['claude-dev', true, 'Novo painel Claude · Claude modo dev em workspace/tether'],
+    ], 'defaults first (claude, soul), then the others; the profile is named when the agent has more than one and its name says more than the agent name')
+    assert.deepEqual(news[0]!.reason, 'feature faults desligada neste perfil')
     assert.deepEqual(news[0]!.link, { text: 'Ligar', profileId: 'claude' })
-    assert.equal(none.selected, 'new:soul')
+    assert.equal(none.selected, 'new:soul', 'the first one that can take it')
     const allOn = buildChooser({ ...base, general: true, slots: [] })
     assert.equal(allOn.selected, 'new:claude')
+    assert.ok(allOn.choices.filter(x => x.kind === 'new').every(x => x.enabled), 'the general switch turns on every profile that does not say otherwise')
+    const shellOnly = buildChooser({ ...base, profiles: [...profiles, { id: 'sh', name: 'pwsh', agent: 'shell', args: [], default: true }], slots: [] })
+    assert.ok(!shellOnly.choices.some(x => x.profileId === 'sh'), 'a shell is never offered')
+    const profileOff = buildChooser({ ...base, general: true, profiles: [{ id: 'c1', name: 'Claude', agent: 'claude', args: [], default: true, features: { faults: false } }, { id: 'c2', name: 'Outro', agent: 'claude', args: [] }], slots: [] })
+    assert.deepEqual(profileOff.choices.map(x => [x.profileId, x.enabled]), [['c1', false], ['c2', true]], "the profile's own switch wins over the general one")
+  })
+
+  test('only a Claude "Novo painel" row carries the trust hint', () => {
+    const c = buildChooser({ ...base, general: true, slots: [] })
+    assert.deepEqual(c.choices.map(x => [x.profileId, x.hint]), [['claude', 'a pasta precisa estar confiada no Claude'], ['soul', undefined], ['claude-dev', 'a pasta precisa estar confiada no Claude']])
+    assert.ok(buildChooser({ ...base, general: true, slots: [slot({ slotId: 's1', profileId: 'claude-dev' })] }).choices.find(x => x.kind === 'pane')!.hint === undefined, 'a pane that is already running has no hint')
+  })
+
+  test('"Mandar para o agente" is for open and investigating faults; a resolved or ignored one is only reopened', () => {
+    assert.deepEqual((['open', 'investigating', 'done', 'ignored'] as const).map(canSend), [true, true, false, false])
   })
 
   test('the feature comes from what the pane launched with (SlotState.features), not from the current switches', () => {

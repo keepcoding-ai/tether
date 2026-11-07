@@ -13,7 +13,7 @@ import { kindLabel, statusLabel } from '../../src/core/faults-labels.ts'
 import type { FaultDetail, FaultRow } from '../../src/core/faults-ops.ts'
 import { FAULTS_TITLE } from './layouts.ts'
 import type { FaultsList, ScreenAction, UpdateOutcome } from './ipc.ts'
-import { allTags, buildChooser, counts, isNew, returnedOf, sortRows, stackNote, STATUS_MARK, stillSent, TABS, visibleRows, type Chooser, type Choice, type Tab } from './rules.ts'
+import { allTags, canSend, counts, isNew, returnedOf, sortRows, stackNote, STATUS_MARK, stillSent, TABS, visibleRows, type Chooser, type Choice, type Tab } from './rules.ts'
 import type { FaultsStore } from './store.ts'
 
 export type ShowReply = { ok: true; fault: FaultDetail; skipped: number } | { ok: false; message: string }
@@ -28,10 +28,10 @@ export interface FaultsHost {
   openFolder(path: string): void
   /** The agent panes that can take the command, as they are now. */
   chooser(): Chooser
-  /** Any slot changed (the chooser is redrawn while it is open). */
+  /** Anything the chooser is built from changed: a slot, the profiles, the feature switches (the open chooser is redrawn). */
   onSlotsChange(listener: () => void): IDisposable
-  /** Types the investigate command into the choice's pane (or into a new one, once its agent is up). */
-  send(choice: Choice, fault: { id: string; sig: string }): Promise<SendOutcome>
+  /** Types the investigate command into the choice's pane (or into a new one, once its agent is up); `progress` says what it waits for. */
+  send(choice: Choice, fault: { id: string; sig: string }, progress?: (text: string) => void): Promise<SendOutcome>
   openProfile(profileId: string): void
   /** The pane label a fault was sent to, until the fault is no longer open. */
   sentTo(sig: string): string | undefined
@@ -51,7 +51,7 @@ export interface FaultsSnapshot {
   counts: Record<Tab, number>
   rows: { id: string; status: string; message: string; count: number; tags: string[]; isNew: boolean; returned?: string; sent?: string; selected: boolean }[]
   detail: { id: string; status: string; tags: string[]; notes: { author: string; text: string }[]; fix?: string; occurrences: number; stackNote?: string } | undefined
-  chooser: { choices: { key: string; label: string; state: string; enabled: boolean; reason?: string; checked: boolean }[]; selected: string | undefined; sending: boolean } | undefined
+  chooser: { choices: { key: string; label: string; state: string; enabled: boolean; reason?: string; hint?: string; checked: boolean }[]; selected: string | undefined; sending: boolean } | undefined
   toast: string | undefined
 }
 
@@ -81,7 +81,7 @@ export class FaultsPanel implements IContentRenderer {
   /** When the person last had the screen open, as it was when this one opened. */
   private seenAtOpen: string | null = null
   private resolving = false
-  private chooser: { data: Chooser; selected: string | undefined; sending: boolean; message?: string } | undefined
+  private chooser: { data: Chooser; selected: string | undefined; sending: boolean; message?: string; progress?: string } | undefined
   private toastTimer: ReturnType<typeof setTimeout> | undefined
   private toastText: string | undefined
   private detailKey = ''
@@ -163,7 +163,7 @@ export class FaultsPanel implements IContentRenderer {
         occurrences: d.occurrences.length, ...(stackNote(d.occurrences[0]?.stack ?? '', d.version) ? { stackNote: stackNote(d.occurrences[0]?.stack ?? '', d.version)! } : {}),
       } : undefined,
       chooser: this.chooser ? {
-        choices: this.chooser.data.choices.map(c => ({ key: c.key, label: c.label, state: c.state, enabled: c.enabled, ...(c.reason ? { reason: c.reason } : {}), checked: c.key === this.chooser!.selected })),
+        choices: this.chooser.data.choices.map(c => ({ key: c.key, label: c.label, state: c.state, enabled: c.enabled, ...(c.reason ? { reason: c.reason } : {}), ...(c.hint ? { hint: c.hint } : {}), checked: c.key === this.chooser!.selected })),
         selected: this.chooser.selected, sending: this.chooser.sending,
       } : undefined,
       toast: this.toastText,
@@ -317,7 +317,7 @@ export class FaultsPanel implements IContentRenderer {
         ${sent ? `<div class="fl-dmeta"><span class="fl-pill sent">enviada para ${escapeHtml(sent)}</span></div>` : ''}
         <div class="fl-tags">${d.tags.map(t => `<span class="fl-tag">#${escapeHtml(t)}<button type="button" class="fl-x" data-act="untag" data-tag="${escapeHtml(t)}" aria-label="Tirar a etiqueta ${escapeHtml(t)}">×</button></span>`).join('')}<input class="fl-tag-in" list="fl-taglist" placeholder="+ etiqueta" aria-label="Nova etiqueta" autocomplete="off" spellcheck="false"><datalist id="fl-taglist">${allTags(this.rows).map(t => `<option value="${escapeHtml(t)}"></option>`).join('')}</datalist></div>
         <div class="fl-actions">
-          <button type="button" class="fl-primary" data-act="send">Mandar para o agente</button>
+          ${canSend(d.status) ? '<button type="button" class="fl-primary" data-act="send">Mandar para o agente</button>' : ''}
           ${done ? '<button type="button" class="fl-btn" data-act="reopen">Reabrir</button>' : '<button type="button" class="fl-btn" data-act="resolve">Marcar como resolvida</button><button type="button" class="fl-btn" data-act="ignore">Ignorar</button>'}
           <button type="button" class="fl-btn" data-act="copy">Copiar stack</button>
         </div>
@@ -359,7 +359,7 @@ export class FaultsPanel implements IContentRenderer {
     const cwd = this.host.store.info?.cwd ?? ''
     slot.innerHTML = `<div class="fl-chooser" tabindex="-1" role="radiogroup" aria-label="Mandar para qual agente?">
       <div class="fl-ch-h">Mandar para qual agente?</div>
-      ${c.data.choices.length ? c.data.choices.map(ch => `<label class="fl-choice${ch.enabled ? '' : ' off'}" data-key="${escapeHtml(ch.key)}"><input type="radio" name="fl-agent" value="${escapeHtml(ch.key)}"${ch.key === c.selected ? ' checked' : ''}${ch.enabled && !c.sending ? '' : ' disabled'}><span class="fl-ch-l">${escapeHtml(ch.label)}</span><span class="fl-ch-s">${escapeHtml(ch.enabled ? ch.state : ch.reason ?? ch.state)}</span>${ch.link ? `<button type="button" class="lnk" data-act="link" data-profile="${escapeHtml(ch.link.profileId)}">${escapeHtml(ch.link.text)}</button>` : ''}</label>`).join('') : '<div class="dim">Nenhum agente disponível.</div>'}
+      ${c.data.choices.length ? c.data.choices.map(ch => `<label class="fl-choice${ch.enabled ? '' : ' off'}" data-key="${escapeHtml(ch.key)}"><input type="radio" name="fl-agent" value="${escapeHtml(ch.key)}"${ch.key === c.selected ? ' checked' : ''}${ch.enabled && !c.sending ? '' : ' disabled'}><span class="fl-ch-l">${escapeHtml(ch.label)}${ch.hint ? `<span class="fl-ch-hint">${escapeHtml(ch.hint)}</span>` : ''}</span><span class="fl-ch-s">${escapeHtml(c.sending && c.progress && ch.key === c.selected ? c.progress : ch.enabled ? ch.state : ch.reason ?? ch.state)}</span>${ch.link ? `<button type="button" class="lnk" data-act="link" data-profile="${escapeHtml(ch.link.profileId)}">${escapeHtml(ch.link.text)}</button>` : ''}</label>`).join('') : '<div class="dim">Nenhum agente disponível.</div>'}
       ${cwd ? `<div class="fl-ch-cwd dim">Um painel novo abre em ${escapeHtml(cwd)}</div>` : ''}
       ${c.message ? `<div class="fl-ch-msg">${escapeHtml(c.message)}</div>` : ''}
       <div class="fl-ch-act"><button type="button" class="fl-primary" data-act="confirm-send"${c.selected && !c.sending ? '' : ' disabled'}>${c.sending ? 'Enviando…' : 'Enviar'}</button><button type="button" class="fl-btn" data-act="cancel-send"${c.sending ? ' disabled' : ''}>Cancelar</button></div>
@@ -379,8 +379,9 @@ export class FaultsPanel implements IContentRenderer {
     if (!choice) return
     c.sending = true
     c.message = choice.kind === 'new' ? 'Abrindo o painel e esperando o agente ficar pronto…' : undefined
+    c.progress = undefined
     this.drawChooser()
-    const r = await this.host.send(choice, { id: d.id, sig: d.sig })
+    const r = await this.host.send(choice, { id: d.id, sig: d.sig }, text => { if (this.chooser === c && !this.disposed) { c.progress = text; this.drawChooser() } })
     if (this.disposed) return
     if (r.ok) {
       this.chooser = undefined
@@ -390,6 +391,7 @@ export class FaultsPanel implements IContentRenderer {
       this.render()
     } else if (this.chooser) {
       this.chooser.sending = false
+      this.chooser.progress = undefined
       this.chooser.message = r.message
       this.refreshChooser()
       this.drawChooser()

@@ -10,18 +10,12 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { FaultsChannels } from './ipc.ts'
 import { FAULTS_COMPONENT, FAULTS_SCREEN_LAYOUT, FAULTS_TAB, FAULTS_TITLE, newFaultsPanelId } from './layouts.ts'
 import { FAULTS_FEATURE, FAULTS_STATUS_ID, manifest } from './manifest.ts'
+import { deliver, NOT_ACCEPTED_TEXT, NOT_FREE_TEXT, NOT_READY_TEXT, untilReady, type DeliveryIo } from './delivery.ts'
 import { FaultsPanel, FaultsTab, type FaultsHost, type SendOutcome } from './panel.ts'
 import { buildChooser, investigateCommand, newCount, statusSentence, type Choice } from './rules.ts'
 import { FaultsStore } from './store.ts'
 
 export { manifest }
-
-/** How long a new pane gets to bring its agent up before the command is given up on. */
-export const READY_TIMEOUT_MS = 30_000
-/** The text first, the Enter after it: an agent TUI takes a burst ending in Enter for a paste, not for a submit. */
-export const SUBMIT_DELAY_MS = 250
-
-const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
 export function activate(ui: TetherUi): IDisposable[] {
   const ipc = ui.ipc<FaultsChannels>()
@@ -31,6 +25,9 @@ export function activate(ui: TetherUi): IDisposable[] {
   const sent = new Map<string, string>()
   let seenLocal: string | null = null
   let generalOn = false
+  /** Told when anything the agent chooser is built from changes (slots, profiles, the general switch). */
+  const chooserListeners = new Set<() => void>()
+  const chooserChanged = (): void => { for (const l of [...chooserListeners]) { try { l() } catch (e) { console.error('faults chooser listener', e) } } }
 
   const seenAt = (): string | null => seenLocal ?? store.info?.seenAt ?? null
 
@@ -39,6 +36,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     void ui.configuration.all().then(list => {
       const e = list.entries.find(x => x.key === `agents.features.${FAULTS_FEATURE}`)
       generalOn = e ? e.value === true : false
+      chooserChanged()
     }).catch(() => undefined)
   }
   loadGeneral()
@@ -54,28 +52,15 @@ export function activate(ui: TetherUi): IDisposable[] {
     agentLabel: kind => agentUi(kind)?.label ?? kind,
   })
 
-  /** Types the command and then Enter, once the slot is still idle. */
-  async function type(slotId: string, faultId: string): Promise<SendOutcome | undefined> {
-    const now = ui.slots.list().find(s => s.slotId === slotId)
-    if (!now || now.status !== 'running' || now.turn !== 'idle') return { ok: false, message: 'O painel não está mais livre; escolha outro.' }
-    ui.slots.input(slotId, investigateCommand(faultId))
-    await sleep(SUBMIT_DELAY_MS)
-    ui.slots.input(slotId, '\r')
-    return undefined
-  }
+  /** The slot of the chooser's choice as the state machine (extensions/faults/delivery.ts) sees the world. */
+  const ioOf = (slotId: string): DeliveryIo => ({
+    slot: () => ui.slots.list().find(x => x.slotId === slotId),
+    onChange: l => ui.slots.onDidChange(l),
+    input: data => ui.slots.input(slotId, data),
+    after: (ms, fn) => { const t = setTimeout(fn, ms); return () => clearTimeout(t) },
+  })
 
-  /** Resolves when the slot's agent is up and idle, or false after the timeout. */
-  function untilReady(slotId: string): Promise<boolean> {
-    const ready = (): boolean => { const s = ui.slots.list().find(x => x.slotId === slotId); return !!s && s.status === 'running' && s.turn === 'idle' }
-    if (ready()) return Promise.resolve(true)
-    return new Promise(resolve => {
-      const done = (ok: boolean): void => { sub.dispose(); clearTimeout(timer); resolve(ok) }
-      const sub = ui.slots.onDidChange(() => { if (ready()) done(true) })
-      const timer = setTimeout(() => done(false), READY_TIMEOUT_MS)
-    })
-  }
-
-  async function send(choice: Choice, fault: { id: string; sig: string }): Promise<SendOutcome> {
+  async function send(choice: Choice, fault: { id: string; sig: string }, progress?: (text: string) => void): Promise<SendOutcome> {
     let slotId = choice.slotId
     if (choice.kind === 'new') {
       const cwd = store.info?.cwd
@@ -83,11 +68,13 @@ export function activate(ui: TetherUi): IDisposable[] {
       const created = await ui.slots.create({ profileId: choice.profileId, cwd })
       if (!created.ok) return { ok: false, message: `Não abri o painel: ${created.message}` }
       slotId = created.slotId
-      if (!(await untilReady(slotId))) return { ok: false, message: 'O agente não ficou pronto; o comando não foi enviado. O painel ficou aberto · Tentar de novo.' }
     }
     if (!slotId) return { ok: false, message: 'Painel desconhecido.' }
-    const failed = await type(slotId, fault.id)
-    if (failed) return failed
+    // A pane that is not idle yet (a new one, maybe at a trust dialog) is waited for; an existing one is checked at once.
+    if (choice.kind === 'new' && !(await untilReady(ioOf(slotId), progress))) return { ok: false, message: NOT_READY_TEXT }
+    const outcome = await deliver(ioOf(slotId), investigateCommand(fault.id))
+    if (outcome === 'not-free') return { ok: false, message: NOT_FREE_TEXT }
+    if (outcome === 'not-accepted') return { ok: false, message: NOT_ACCEPTED_TEXT }
     const label = ui.slots.label(slotId)
     sent.set(fault.sig, label)
     ui.panes.reveal(slotId)
@@ -102,7 +89,12 @@ export function activate(ui: TetherUi): IDisposable[] {
     copy: text => ui.shell.writeClipboard(text),
     openFolder: path => { void ui.shell.openPath(path) },
     chooser,
-    onSlotsChange: listener => ui.slots.onDidChange(listener),
+    onSlotsChange: listener => {
+      chooserListeners.add(listener)
+      const slots = ui.slots.onDidChange(listener)
+      const profiles = ui.slots.onDidChangeProfiles(listener)
+      return toDisposable(() => { chooserListeners.delete(listener); slots.dispose(); profiles.dispose() })
+    },
     send,
     openProfile: id => ui.slots.openProfiles(id),
     sentTo: sig => sent.get(sig),

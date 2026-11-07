@@ -279,6 +279,8 @@ export interface TetherUi {
     open(slotId: string): void
     /** The launch profiles. */
     profiles(): readonly Profile[]
+    /** The profiles changed (saved in the editor, or changed on disk). */
+    onDidChangeProfiles(listener: () => void): IDisposable
     /** The profile editor, at that profile when given. */
     openProfiles(profileId?: string): void
     /** A new slot (started) of the profile, in `cwd`, in a new pane beside the active one. */

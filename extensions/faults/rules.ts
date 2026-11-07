@@ -100,6 +100,8 @@ export interface Choice {
   enabled: boolean
   /** Why it cannot be picked. */
   reason?: string
+  /** A line under the row that the person should know before choosing it. */
+  hint?: string
   /** A "Ligar" link, for the feature switched off: opens the profile editor at that profile. */
   link?: { text: string; profileId: string }
   slotId?: string
@@ -112,6 +114,8 @@ export interface Chooser { choices: Choice[]; selected: string | undefined }
 export const featureOn = (profile: Pick<Profile, 'features'> | undefined, general: boolean): boolean => profile?.features?.[FAULTS_FEATURE] ?? general
 
 export const FEATURE_OFF = 'feature faults desligada neste perfil'
+/** A new Claude pane in a folder Claude has not been trusted in yet stops at its trust dialog. */
+export const TRUST_HINT = 'a pasta precisa estar confiada no Claude'
 /** The profile has it on now, but this pane's agent started without it: only a new start gets the skills. */
 export const FEATURE_NOT_LAUNCHED = 'este painel abriu sem a feature faults; reinicie o agente'
 
@@ -154,12 +158,20 @@ export function buildChooser(input: ChoiceInput): Chooser {
   }
   // Selectable first, the others in the order the panes came.
   choices.sort((a, b) => Number(b.enabled) - Number(a.enabled))
-  for (const p of input.profiles) {
-    if (!p.default || p.agent === 'shell') continue
+  // "Novo painel": every profile of an AI agent, the defaults first. The feature is resolved per profile (its own switch,
+  // else the general one): a profile with it off is listed, disabled, with the link that turns it on. When an agent has
+  // more than one profile the row names the profile.
+  const agentProfiles = input.profiles.filter(p => p.agent !== 'shell')
+  const perAgent = new Map<string, number>()
+  for (const p of agentProfiles) perAgent.set(p.agent, (perAgent.get(p.agent) ?? 0) + 1)
+  for (const p of [...agentProfiles.filter(x => x.default), ...agentProfiles.filter(x => !x.default)]) {
     const on = featureOn(p, input.general)
+    const agentName = input.agentLabel(p.agent)
+    const who = agentName + ((perAgent.get(p.agent) ?? 0) > 1 && p.name.trim().toLowerCase() !== agentName.toLowerCase() ? ` · ${p.name}` : '')
     choices.push({
-      key: `new:${p.id}`, kind: 'new', label: `Novo painel ${input.agentLabel(p.agent)} em ${shortFolder(input.cwd)}`, state: 'novo', enabled: on,
-      ...(on ? {} : { reason: FEATURE_OFF, link: { text: 'Ligar', profileId: p.id } }), profileId: p.id,
+      key: `new:${p.id}`, kind: 'new', label: `Novo painel ${who} em ${shortFolder(input.cwd)}`, state: 'novo', enabled: on,
+      ...(on ? {} : { reason: FEATURE_OFF, link: { text: 'Ligar', profileId: p.id } }),
+      ...(p.agent === 'claude' ? { hint: TRUST_HINT } : {}), profileId: p.id,
     })
   }
   const first = choices.find(c => c.enabled)
@@ -171,3 +183,6 @@ export const investigateCommand = (id: string): string => `/tether:fault-investi
 
 /** Whether a row that was sent to a pane still shows "enviada para ...": until the fault is no longer open. */
 export const stillSent = (status: FaultStatus): boolean => status === 'open'
+
+/** "Mandar para o agente" is offered while the fault is still to be looked at; a resolved or ignored one is only reopened. */
+export const canSend = (status: FaultStatus): boolean => status === 'open' || status === 'investigating'

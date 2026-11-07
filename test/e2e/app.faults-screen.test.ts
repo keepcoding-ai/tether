@@ -28,7 +28,7 @@ type Snap = {
   counts: Record<string, number>
   rows: { id: string; status: string; message: string; count: number; tags: string[]; isNew: boolean; returned?: string; sent?: string; selected: boolean }[]
   detail?: { id: string; status: string; tags: string[]; notes: { author: string; text: string }[]; fix?: string; occurrences: number; stackNote?: string }
-  chooser?: { choices: { key: string; label: string; state: string; enabled: boolean; reason?: string; checked: boolean }[]; selected?: string; sending: boolean }
+  chooser?: { choices: { key: string; label: string; state: string; enabled: boolean; reason?: string; hint?: string; checked: boolean }[]; selected?: string; sending: boolean }
 }
 type Hooks = {
   connection(): { connected: boolean; pid?: number } | undefined
@@ -206,6 +206,7 @@ test('app faults screen: rows, detail, resolve/tag/note persist, live refresh, t
     await page.click('.fl-tab[data-tab="all"]')
     await page.click(`.fl-row[data-id="${a.shortId}"]`)
     await until('reopen offered', async () => (await page.locator('.fl-actions [data-act="reopen"]').count()) === 1)
+    assert.equal(await page.locator('.fl-actions [data-act="send"]').count(), 0, 'a resolved fault is not sent to an agent, only reopened')
     await page.click('.fl-actions [data-act="reopen"]')
     await until('reopened', async () => readState(dir).state.faults[a.sig]?.status === 'open')
     await page.click('.fl-tab[data-tab="open"]')
@@ -228,6 +229,19 @@ test('app faults screen: rows, detail, resolve/tag/note persist, live refresh, t
     assert.ok(await page.locator('.fl-choice[data-key="pane:' + nofeature + '"] [data-act="link"]').count(), 'a "Ligar" link on the feature-off pane')
     assert.ok(ch.choices.some(x => x.key.startsWith('new:') && x.label.startsWith('Novo painel')), 'a new-pane row')
     assert.equal(await page.locator('.fl-choice[data-key="pane:' + busy + '"] input').isDisabled(), true)
+    // "Novo painel": every profile of an AI agent is a row (the soul profile with the feature off too, disabled with its link);
+    // the Claude row warns about the trust dialog.
+    const offKey = `new:${off.profile!.id}`
+    assert.deepEqual([byKey(offKey).enabled, byKey(offKey).reason], [false, 'feature faults desligada neste perfil'], 'a non-default profile is listed too')
+    assert.ok(await page.locator('.fl-choice[data-key="' + offKey + '"] [data-act="link"]').count(), 'with its "Ligar" link')
+    assert.equal(byKey('new:claude').hint, 'a pasta precisa estar confiada no Claude')
+    assert.equal(byKey('new:soul').hint, undefined)
+    assert.match(await page.locator('.fl-choice[data-key="new:claude"] .fl-ch-hint').textContent() ?? '', /confiada no Claude/)
+    // The open chooser follows the profiles: turning the feature on in the profile (what "Ligar" then Salvar does) enables its row.
+    assert.ok((await page.evaluate(p => window.tether.saveProfile({ ...p, features: { faults: true } }), off.profile!)).ok)
+    await until('the open chooser refreshed after the profile was saved', async () => (await snap(page))!.chooser!.choices.find(x => x.key === offKey)?.enabled === true)
+    assert.ok((await page.evaluate(p => window.tether.saveProfile({ ...p, features: { faults: false } }), off.profile!)).ok)
+    await until('and again when it is turned off', async () => (await snap(page))!.chooser!.choices.find(x => x.key === offKey)?.enabled === false)
     await shot(app, 'faults-chooser-dark')
     await page.click('.fl-chooser [data-act="confirm-send"]')
     await until('typed into the free pane', async () => /got: \/tether:fault-investigate /.test(await page.evaluate(id => window.__tether.text(id), idle)), 20_000)
