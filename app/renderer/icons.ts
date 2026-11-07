@@ -1,6 +1,6 @@
 // Phosphor icons (@phosphor-icons/core, MIT), inlined at build time: only the SVGs imported here end up in
 // the bundle (esbuild `text` loader, app/build.mjs). Every file carries fill="currentColor", so an icon
-// takes the colour of its text and follows the theme. One weight (regular); `fill` only for the status dot.
+// takes the colour of its text and follows the theme. One weight (regular); `fill` for the status dot, the pin and the side bars' open pads.
 import { agentTable } from './agent-ui.ts'
 import { BRAND } from '../shared/brand.ts'
 import arrowsClockwise from '@phosphor-icons/core/assets/regular/arrows-clockwise.svg'
@@ -22,6 +22,10 @@ import sidebarSimple from '@phosphor-icons/core/assets/regular/sidebar-simple.sv
 import arrowsLeftRight from '@phosphor-icons/core/assets/regular/arrows-left-right.svg'
 import clipboardText from '@phosphor-icons/core/assets/regular/clipboard-text.svg'
 import globeSimple from '@phosphor-icons/core/assets/regular/globe-simple.svg'
+// The side bars' open pads wear the fill weight of their icon (sidebars.ts): `<name>-fill` next to each pad icon.
+import clipboardTextFill from '@phosphor-icons/core/assets/fill/clipboard-text-fill.svg'
+import globeSimpleFill from '@phosphor-icons/core/assets/fill/globe-simple-fill.svg'
+import filesFill from '@phosphor-icons/core/assets/fill/files-fill.svg'
 import folderOpen from '@phosphor-icons/core/assets/regular/folder-open.svg'
 import target from '@phosphor-icons/core/assets/regular/target.svg'
 import pushPin from '@phosphor-icons/core/assets/regular/push-pin.svg'
@@ -201,6 +205,9 @@ const SVG = {
   'arrows-left-right': arrowsLeftRight,
   'clipboard-text': clipboardText,
   'globe-simple': globeSimple,
+  'clipboard-text-fill': clipboardTextFill,
+  'globe-simple-fill': globeSimpleFill,
+  'files-fill': filesFill,
   'floppy-disk': floppyDisk,
   'file-text': fileText,
   'file': fileIcon,

@@ -10,7 +10,7 @@
 // side bar itself (strip, the slot the pad covers, the sash) is in the flex row beside #dock, so an open pad takes its
 // width from the desks and a closed one gives it back.
 import type { ContextMenuEntry, PadType, PadView } from './ext-api.ts'
-import { icon, type IconName } from './icons.ts'
+import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import {
   DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, openPadOn, padsOn, padToggleCommand, restorePad, setWidth, SIDES, sideOf,
   togglePad, toggleSideBar, type PadDescriptor, type Side, type SideBarsLayout,
@@ -232,7 +232,9 @@ export class SideBars {
     const hint = this.host.hint(padToggleCommand(pad.id))
     b.title = `${this.padTitle(pad.id)}${hint ? ` (${hint})` : ''}: ${open ? 'fechar' : 'abrir'} · clique direito: mover`
     b.setAttribute('aria-label', pad.title)
-    b.append(icon(pad.icon as IconName))
+    // Closed: the regular (outline) weight; open: the fill weight, when the icon has one (Phosphor's `<name>-fill`).
+    const fill = `${pad.icon}-fill` as IconName
+    b.append(icon(open && ICON_NAMES.includes(fill) ? fill : pad.icon as IconName))
     b.addEventListener('mousedown', ev => ev.preventDefault()) // the keyboard moves only into the pad that opens
     b.addEventListener('click', () => this.toggle(pad.id))
     b.addEventListener('contextmenu', ev => { ev.preventDefault(); this.host.onPadMenu(pad.id, ev.clientX, ev.clientY, b) })

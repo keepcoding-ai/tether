@@ -259,7 +259,7 @@ button.primary:hover { background: var(--accent-hover); }
 #workbench { position: relative; flex: 1; min-height: 0; display: flex; --sb-left-w: 380px; --sb-right-w: 380px; --sb-left-strip: 0px; --sb-right-strip: 0px; }
 .sidebar { position: relative; z-index: 2; display: flex; flex: none; pointer-events: none; }
 .sidebar[hidden] { display: none; }
-.sb-strip { pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 40px; padding: 6px 0; background: var(--desk-bg); }
+.sb-strip { pointer-events: auto; display: flex; flex-direction: column; align-items: stretch; width: 44px; padding: 4px 0; background: var(--desk-bg); }
 .sb-slot { width: 0; }
 .sidebar.open .sb-slot { width: var(--sb-left-w); }
 .sidebar[data-side="right"].open .sb-slot { width: var(--sb-right-w); }
@@ -271,18 +271,20 @@ button.primary:hover { background: var(--accent-hover); }
 .sb-sash:hover::after, body.sb-resizing .sb-sash::after { background: var(--accent); }
 body.sb-resizing, body.sb-resizing * { cursor: ew-resize !important; user-select: none; }
 body.sb-resizing #pads, body.sb-resizing #dock { pointer-events: none; }
+/* The activity bar's items, as VS Code's: no box, a 24px glyph in a 44px cell. Closed pad: the muted outline (regular);
+   hover: a subtle background on the whole cell; open: the fill weight in the foreground and a short bar on the strip's
+   outer edge in the accent (the desk colour stays the Foco de Mesa's). */
 .sb-icon {
-  position: relative; display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
-  border: 0; border-radius: 7px; background: none; color: var(--fg-dim); cursor: pointer;
+  position: relative; display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
+  border: 0; border-radius: 0; background: none; color: var(--fg-dim); cursor: pointer;
 }
-.sb-icon .ph { width: 18px; height: 18px; }
+.sb-icon .ph { width: 24px; height: 24px; }
 .sb-icon:hover { background: var(--bg-hover); color: var(--fg); }
 .sb-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.sb-icon[aria-pressed="true"] { color: var(--fg); background: var(--bg-hover); }
-/* The open pad's icon carries a bar on the window's edge, as VS Code's active activity-bar item. */
-.sb-icon[aria-pressed="true"]::before { content: ""; position: absolute; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--accent); }
-.sidebar[data-side="left"] .sb-icon[aria-pressed="true"]::before { left: -4px; }
-.sidebar[data-side="right"] .sb-icon[aria-pressed="true"]::before { right: -4px; }
+.sb-icon[aria-pressed="true"] { color: var(--fg); }
+.sb-icon[aria-pressed="true"]::before { content: ""; position: absolute; top: 10px; bottom: 10px; width: 2px; border-radius: 1px; background: var(--accent); }
+.sidebar[data-side="left"] .sb-icon[aria-pressed="true"]::before { left: 0; }
+.sidebar[data-side="right"] .sb-icon[aria-pressed="true"]::before { right: 0; }
 #pads { position: absolute; inset: 0; z-index: 1; pointer-events: none; isolation: isolate; }
 .pad {
   position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; min-width: 0;
