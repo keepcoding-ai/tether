@@ -993,3 +993,32 @@ Mesmo molde do minimapa (ec57670), para os números de linha do Monaco (`lineNum
 - **Código**: `withNote` aceita `lineNumbers` (ausente mantém, `null` apaga); `NotePanel.lineNumbersOverride/lineNumbersEnabled/setLineNumbersOverride/refreshLineNumbers`; `NoteHost.getLineNumbers`. O código do minimapa ficou como estava (sem generalização, para não mexer no que já foi provado).
 - **Provas**: `app:build` ok; `npm run check` só com as 2 falhas conhecidas de perfil; e2e novo `test/e2e/app.note-linenumbers.test.ts` (padrão ligado, geral desliga/liga com `settings.json`, o editor vence a geral, "usar o padrão", relançar mantém) e `app.extensions` com o item novo do menu. Capturas em `D:/atrium/.tmp/tether-linenumbers/`.
 - **Decisão para validar**: como no minimapa, o item do editor mostra o estado efetivo, não a escolha própria.
+
+## Pranchetas: um --gap até a mesa, conteúdo que absorve o cabeçalho, ícones de barra de atividades (2026-11-06)
+
+Opus, em `develop`. **Só o app** (`app/renderer`, `extensions/`): nada em `src/`; o tetherd não reinicia. Commits `03b285e` (gap), `58a26c5` (cabeçalho absorvido), `3f2ef9d` (ícones).
+
+- **Gap**: prancheta e mesa ficam a um `--gap`, o mesmo entre dois quadros. O lado da prancheta voltado para as mesas abre mão das meias-calhas (quadro da prancheta) e do `--gap` do cartão (explorador, via a variável `--pad-inset` que o núcleo define por lado). Os topos dos cartões ficam alinhados com os da mesa.
+- **Contrato "o conteúdo absorve o cabeçalho"** (como no VS Code, a vista contribui e o contêiner cede):
+  - Manifesto: `PadContribution.absorbsHeader?: boolean` (`extensions/types.ts`, copiado em `PadDescriptor`).
+  - `PadHost` (`ext-api.ts`): `title()` ("Prancheta da mesa · Mesa 1"), `menuItems()` (os itens do núcleo: fechar, mover para a outra barra, restaurar, para uma vista com menu próprio fundir) e `setMenuHosted(hosted)`.
+  - Núcleo (`sidebars.ts`): quem absorve não tem a linha `.pad-head`. O wrapper ganha `.absorbed`, e o "⋯" da prancheta (`.pad-float .pad-more`) **flutua no canto superior direito** até a vista chamar `setMenuHosted(true)` (`.menu-hosted`). Assim a prancheta nunca perde o menu. Enquanto flutua, `--pad-menu-room` (32px) é o espaço que a vista deixa na primeira linha. O título vai para a dica do ícone e para uma linha de cabeçalho no menu (`#ctx-menu li.hd`, entrada `{ heading }` no menu do núcleo).
+  - **Explorador**: absorve. O "⋯" flutuante abre o menu da prancheta com os itens do explorador (`view.menu()`); a primeira raiz e o aviso deixam `--pad-menu-room`.
+  - **Prancheta da mesa / global**: absorvem. A barra de abas do quadro é o cabeçalho. O "⋯" do quadro (qualquer tipo de painel) acrescenta, depois dos itens do painel, o título e os itens da prancheta (`padSection` em `main.ts`, ao redor do `showTabMenu`). `FramesPad.syncMenuHosted()` hospeda enquanto há abas; sem abas, o "⋯" flutua.
+- **Ícones das barras** (como a barra de atividades do VS Code): sem caixa (raio 0), glifo de 24px numa célula de 44px (faixa com 44px). Fechada: Phosphor regular em `--fg-dim`. Aberta: Phosphor fill (`<ícone>-fill`, quando existe) em `--fg`, com uma barrinha de 2px na borda externa (esquerda na barra esquerda, direita na direita) em `--accent`. Hover: fundo sutil na célula toda.
+
+Provas: `app:build` ok. `npm run check`: só as falhas conhecidas de perfis (unitário do manifesto do explorador atualizado para `absorbsHeader`). E2E novo **`app.pads-chrome` 1/1**, que verifica:
+- ícones fechados regular, abertos fill, a barrinha do lado certo (e mudando de lado ao mover a prancheta) e as células de 44/24px;
+- gap computado `--gap`=8: entre quadros 8, prancheta↔mesa 8, explorador↔mesa 8, prancheta movida para a esquerda 8;
+- nenhum `.pad-head`, e o "⋯" do quadro com o cabeçalho "Prancheta da mesa · …";
+- "Mover para a barra esquerda" e "Restaurar posição padrão" pelo "⋯" do quadro;
+- o "⋯" flutuante do explorador vazio com "Seguir…", e "Fechar Explorador" funcionando;
+- capturas claro/escuro em `D:/atrium/.tmp/tether-pads/`.
+
+Regressão, todos verdes depois das três entregas: `app.sidebars`, `app.foco-mesa`, `app.frame-drag`, `app.chrome`, `app.explorer`, `app.explorer-follow` e `app.explorer-watch`.
+
+Decisões para validar:
+- **Cor da barrinha**: usei `--accent` (o acento do produto, nunca a cor da mesa). Se "acento neutro" quer dizer cinza, a troca é para `--fg`: uma linha.
+- **Prancheta de quadros vazia**: na prática ela não fica vazia, porque recebe de novo o seletor, que tem aba e "⋯". O "⋯" flutuante cobre o instante sem abas. No E2E, o "pad vazio com ⋯ flutuante" foi provado no explorador vazio.
+- O "⋯" do quadro carrega os itens da prancheta; o clique direito na aba não carrega.
+- Prancheta sem `absorbsHeader` continua com o cabeçalho antigo (título · mesa, ⋯, ×).
