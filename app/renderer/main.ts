@@ -2626,6 +2626,8 @@ declare global {
       activeFrameId(): string | undefined
       frameOf(slotId: string): string | undefined
       panelIds(): string[]
+      /** The JSON language service's diagnostics of an open file (Monaco markers; severity 8 error, 4 warning). */
+      modelMarkers(path: string): { severity: number; message: string; line: number }[]
       activeId(): string | undefined
       /** The pane new panes and the shortcuts act on: the drawer's, the focused pad's or the visible desk's active pane. */
       currentPane(): string | undefined
