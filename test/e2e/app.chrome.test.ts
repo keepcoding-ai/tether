@@ -274,12 +274,13 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     await page.waitForFunction(() => window.__tether.frameIds().length === 2)
     await sleep(400)
 
-    // Geometry: the full --gap between the cards, and from the desk border to each card.
+    // Geometry: the full --gap between the cards, flush against the icon strip (pads closed), --gap at the bottom.
     const desk = (await rects(page, '.desk-layer.desk:not(.inactive), .desk-layer:not(.inactive) > .desk'))[0]!
     const cards = (await rects(page, '.desk-layer:not(.inactive) .frame-dock')).sort((x, y) => x.left - y.left)
     assert.equal(cards.length, 2, 'two cards')
     assert.ok(Math.abs(cards[1]!.left - cards[0]!.right - 8) <= 1, `gap between cards: ${cards[1]!.left - cards[0]!.right}`)
-    assert.ok(Math.abs(cards[0]!.left - desk.left - 8) <= 1, `gap desk→card: ${cards[0]!.left - desk.left}`)
+    // Pad closed (icon strip showing): the outermost frame is flush with the strip, so no gap on that side.
+    assert.ok(Math.abs(cards[0]!.left - desk.left) <= 1, `desk→card flush on the icon-strip side: ${cards[0]!.left - desk.left}`)
     assert.ok(Math.abs(desk.bottom - cards[0]!.bottom - 8) <= 1, `gap card→desk bottom: ${desk.bottom - cards[0]!.bottom}`)
     // The desk-level sash fills the gutter (still draggable there).
     const sash = (await rects(page, '.desk-layer:not(.inactive) .desk-grid .dv-sash:not(.frame-dock *)')).filter(r => r.left >= cards[0]!.right - 2 && r.right <= cards[1]!.left + 2 && r.height > 100)
