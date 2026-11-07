@@ -101,7 +101,7 @@ export class FaultsPanel implements IContentRenderer {
           <label class="fl-sel fl-tabsel"><select class="fl-tabselect" aria-label="Filtro"></select><span class="caret"></span></label>
           <div class="fl-search"><span class="mag"></span><input class="fl-q" placeholder="Buscar por id, mensagem, etiqueta ou processo" autocomplete="off" spellcheck="false" aria-label="Buscar falha"></div>
           <label class="fl-sel"><select class="fl-tagfilter" aria-label="Etiqueta"></select><span class="caret"></span></label>
-          <label class="fl-sel"><select class="fl-order" aria-label="Ordem"><option value="last">Mais recentes</option><option value="count">Mais frequentes</option></select><span class="caret"></span></label>
+          <label class="fl-sel fl-order-wrap"><select class="fl-order" aria-label="Ordem"><option value="last">Mais recentes</option><option value="count">Mais frequentes</option></select><span class="caret"></span></label>
         </div>
         <div class="fl-body">
           <div class="fl-list" tabindex="0" role="listbox" aria-label="Falhas"></div>

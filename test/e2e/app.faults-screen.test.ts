@@ -36,7 +36,7 @@ type Hooks = {
   faultsStatus(): { visible: boolean; badge: number; title: string }
   openFaults(): void
   panelIds(): string[]
-  slots(): { slotId: string; kind: string; status: string; turn?: string; profileId?: string }[]
+  slots(): { slotId: string; kind: string; status: string; turn?: string; profileId?: string; cwd: string }[]
   text(id: string): string
   runCommand(id: string): Promise<string>
 }
@@ -244,6 +244,27 @@ test('app faults screen: rows, detail, resolve/tag/note persist, live refresh, t
     assert.equal((await snap(page))!.rows.find(r => r.id === a.shortId)?.sent, undefined, 'the mark goes when the agent takes it')
     await page.click('.fl-tab[data-tab="investigating"]')
     await shot(app, 'faults-investigating-dark')
+
+    // 4b. "Novo painel": no pane is free any more for the fault D; the new-pane row opens a pane in the tether source folder,
+    // waits for its agent and types the command once it is up.
+    await page.evaluate(() => window.__tether.openFaults())
+    await page.click('.fl-tab[data-tab="all"]')
+    await page.click(`.fl-row[data-id="${d.shortId}"]`)
+    await page.click('.fl-actions [data-act="send"]')
+    await until('chooser again', async () => !!(await snap(page))?.chooser)
+    const again = (await snap(page))!.chooser!
+    assert.equal(again.choices.find(x => x.key === `pane:${idle}`)?.enabled, false, 'the pane that took the command is not free now')
+    assert.equal(again.selected, 'new:claude', 'no free pane: the first new-pane row is the one marked')
+    await page.check('.fl-choice[data-key="new:soul"] input') // the stand-in agent, never a real Claude
+    const panesBefore = await page.evaluate(() => window.__tether.panelIds())
+    await page.click('.fl-chooser [data-act="confirm-send"]')
+    let fresh = ''
+    await until('the new pane', async () => { fresh = (await page.evaluate(() => window.__tether.panelIds())).find(x => !panesBefore.includes(x) && !x.startsWith('faults:')) ?? ''; return !!fresh })
+    await until('typed into the new pane once its agent was up', async () => new RegExp(`got: /tether-fault-investigate ${d.shortId}`).test(await page.evaluate(id => window.__tether.text(id), fresh)), 40_000)
+    const created = (await page.evaluate(() => window.__tether.slots())).find(x => x.slotId === fresh)!
+    assert.equal(created.cwd.toLowerCase(), root.toLowerCase(), 'the new pane opens in the tether source folder')
+    await page.evaluate(() => window.__tether.openFaults())
+    await until('sent mark on the second fault', async () => !!(await snap(page))?.rows.find(r => r.id === d.shortId)?.sent)
 
     // 5. Narrow: list and detail take turns.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(480, 800))
