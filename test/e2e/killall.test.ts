@@ -62,15 +62,13 @@ before(async () => {
     "process.stdin.on('data', (d) => process.stdout.write('stub got ' + d))",
   ].join('\n'))
   writeFileSync(sentinelScript, 'setInterval(() => {}, 1000)\n')
-  process.env.TETHER_SOUL_CMD = `"${process.execPath}" "${stub}"`
-  await suite.connect()
+  await suite.connect({ TETHER_SOUL_CMD: `"${process.execPath}" "${stub}"` })
   daemonOwned = suite.owned
   suite.client.on('data', (id, d) => output.set(id, (output.get(id) ?? '') + d))
   suite.client.on('state', (s) => states.set(s.slotId, s))
 })
 
 after(async () => {
-  delete process.env.TETHER_SOUL_CMD
   if (sentinelOwned) await killOwned(sentinelOwned)
   try { await suite.shutdown() } catch (e) { console.error(String(e)) }
   if (daemonOwned && await stillOurs(daemonOwned)) await killOwned(daemonOwned, { tree: true })

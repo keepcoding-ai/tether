@@ -45,7 +45,7 @@ test('a claude slot with the faults feature gets the skills: /tether:fault-list 
   const pipe = `\\\\.\\pipe\\tether-faults-agent-${process.pid}`
   // Launched from inside a Claude session: every CLAUDE* variable goes (the child would skip its transcript otherwise).
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^CLAUDE/i.test(k)) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(CLAUDE|TETHER_|ATRIUM_)/i.test(k)) env[k] = v
   env.TETHER_USER_DIR = userDir
   // The seeded registry (the daemon, the slot and the CLI all read this TETHER_USER_DIR).
   const dir = join(userDir, 'faults')

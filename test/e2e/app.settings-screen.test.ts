@@ -54,7 +54,7 @@ const stripComments = (s: string): string => s.replace(/\/\/.*$/gm, '')
 
 async function launch(home: string, userDir: string): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !/^(CLAUDE|TETHER_|ATRIUM_)/i.test(k)) env[k] = v
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_USER_DIR = userDir

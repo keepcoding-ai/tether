@@ -46,7 +46,7 @@ async function waitLines(userDir: string, want: (l: Line[]) => boolean): Promise
 }
 const cleanEnv = (): Record<string, string> => {
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !/^(CLAUDE|TETHER_|ATRIUM_)/i.test(k)) env[k] = v
   return env
 }
 

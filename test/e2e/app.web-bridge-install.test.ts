@@ -50,7 +50,7 @@ function freePort(): Promise<number> {
 
 async function launch(home: string, extra: Record<string, string>): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !/^(CLAUDE|TETHER_|ATRIUM_)/i.test(k)) env[k] = v
   Object.assign(env, { TETHER_PIPE: pipe, TETHER_HOME: home, TETHER_E2E_HIDDEN: '1' }, extra)
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()

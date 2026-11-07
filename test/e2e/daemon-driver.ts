@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
-import { awaitReady, Terminal, type ExitInfo, type StartOptions, type Transport } from './harness.ts'
+import { awaitReady, cleanEnv, Terminal, type ExitInfo, type StartOptions, type Transport } from './harness.ts'
 
 const DAEMON_MAIN = resolve(import.meta.dirname, '../../src/daemon/main.ts')
 
@@ -89,9 +89,16 @@ export class SuiteDaemon {
 
   constructor(home: string, pipe: string) { this.home = home; this.pipe = pipe }
 
-  /** Connects, spawning the daemon when nothing answers on the pipe. */
-  async connect(): Promise<DaemonClient> {
-    this.client = await DaemonClient.connect({ home: this.home, pipe: this.pipe, client: 'test' })
+  /**
+   * Connects, spawning the daemon when nothing answers on the pipe. The daemon gets the environment WITHOUT any CLAUDE*,
+   * TETHER_* or ATRIUM_* of the process running the test (a test run inside a tether pane would leak the pane's
+   * TETHER_CLAUDE_ARGS, e.g. --dangerously-skip-permissions, into every claude it launches); `extra` is what the suite
+   * sets on purpose (TETHER_CLAUDE_ARGS, TETHER_SOUL_CMD), and TETHER_SOUL_CMD of the caller is kept (the soul
+   * scenarios are pointed at a soul build with it).
+   */
+  async connect(extra: Record<string, string> = {}): Promise<DaemonClient> {
+    const env = cleanEnv({ ...(process.env.TETHER_SOUL_CMD ? { TETHER_SOUL_CMD: process.env.TETHER_SOUL_CMD } : {}), ...extra })
+    this.client = await DaemonClient.connect({ home: this.home, pipe: this.pipe, client: 'test', env })
     this.pid = this.client.hello.pid
     this.owned = await claim(this.pid, { cmdIncludes: DAEMON_MAIN, what: 'tetherd' })
     return this.client

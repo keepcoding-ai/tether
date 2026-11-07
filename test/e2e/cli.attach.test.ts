@@ -68,7 +68,7 @@ test('tether attach: keys in, output out, resize survives, Ctrl+] detaches with 
     assert.ok(shellPid > 0)
 
     const env: Record<string, string> = {}
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(CLAUDE|TETHER_|ATRIUM_)/i.test(k)) env[k] = v
     env.TETHER_HOME = home
     env.TETHER_PIPE = pipe
     cli = new CliTerminal(['attach', slotId], env)

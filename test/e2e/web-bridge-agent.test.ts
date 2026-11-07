@@ -58,7 +58,7 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
   const port = await freePort()
   // Launched from inside a Claude session: every CLAUDE* variable goes (the child would skip its transcript otherwise).
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^CLAUDE/i.test(k)) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(CLAUDE|TETHER_|ATRIUM_)/i.test(k)) env[k] = v
   env.TETHER_BRIDGE_PORT = String(port)
   // The soul slot of step 6 runs a stub script (no model, no server; the args after the script are its own): only its
   // command line matters.

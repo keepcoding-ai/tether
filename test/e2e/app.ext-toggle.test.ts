@@ -43,7 +43,7 @@ function pidAlive(pid: number): boolean {
 
 async function launch(home: string, extraEnv: Record<string, string> = {}): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = { ...extraEnv }
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE') && !(k in extraEnv)) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !/^(CLAUDE|TETHER_|ATRIUM_)/i.test(k) && !(k in extraEnv)) env[k] = v
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'

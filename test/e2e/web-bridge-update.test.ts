@@ -118,7 +118,7 @@ test('an installed older build is updated in place at tetherd start, the daemon 
   const pipe = `\\\\.\\pipe\\tether-wb-update-${process.pid}`
   const port = await freePort()
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(CLAUDE|TETHER_|ATRIUM_)/i.test(k)) env[k] = v
   env.TETHER_BRIDGE_PORT = String(port)
   const bridgeHome = bridgeHomeOf(home)
   const current = extensionDirOf(home)

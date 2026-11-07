@@ -28,9 +28,8 @@ const terminals: Terminal[] = []
 const trees: Proc[][] = []
 
 before(async () => {
-  // The daemon inherits our env: this is how a dev/E2E run pins the model for every claude launch (server.ts).
-  process.env.TETHER_CLAUDE_ARGS = '--model haiku'
-  await suite.connect()
+  // The daemon gets TETHER_CLAUDE_ARGS from us: this is how a dev/E2E run pins the model for every claude launch (server.ts).
+  await suite.connect({ TETHER_CLAUDE_ARGS: '--model haiku' })
 })
 
 after(async () => {
