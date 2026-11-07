@@ -6,6 +6,9 @@
 //   extensions:list       the main-side manifests and the disabled list, for the "Extensões" screen
 //   extensions:set-enabled  the screen's toggle: `extensions.disabled` gains or loses an id (takes effect at the next
 //                           start, decision 3); answers the new list
+//   features:list         the features the enabled extensions offer the agents (src/core/features.ts) with the general
+//                         switch in force, for the profile editor; the switches themselves are registered as the
+//                         settings node `agents.features` (the settings page lists them like any setting)
 // The extensions' own traffic goes on the bus (app/shared/ext-ipc.ts). No Electron import at runtime: main.ts passes
 // ipcMain and the window in, so this is unit-tested with fakes.
 import type { BrowserWindow, WebContents } from 'electron'
@@ -18,6 +21,7 @@ import { ConfigurationRegistry, withSetting, type ExtensionsSettings, type Setti
 import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
 import type { TetherMain } from './ext-api.ts'
 import { BRAND } from '../shared/brand.ts'
+import { declaredFeatures, featureInfos, featuresConfigurationNode, type FeatureDecl, type FeatureInfo } from '../../src/core/features.ts'
 
 import type { ExtSettingChange, MainExtensionsList } from '../shared/api.ts'
 export type { ExtSettingChange, MainExtensionsList }
@@ -52,6 +56,8 @@ export class MainExtensionHost {
   private readonly webviewGuards = new Set<(host: WebContents) => void>()
   private readonly deps: MainHostDeps
   private readonly list: readonly ExtensionEntry<TetherMain>[]
+  /** The enabled extensions' features (main's and the daemon's indexes: an agent-only extension may declare one). */
+  features: FeatureDecl[] = []
 
   constructor(list: readonly ExtensionEntry<TetherMain>[], deps: MainHostDeps) {
     this.list = list
@@ -60,6 +66,7 @@ export class MainExtensionHost {
     deps.ipc.on('extsettings:set', (_e, id: unknown, key: unknown, value: unknown) => { if (typeof id === 'string' && typeof key === 'string') this.setSetting(id, key, value) })
     deps.ipc.handle('extensions:list', (): MainExtensionsList => ({ manifests: this.list.map(e => summaryOf(e.manifest)), disabled: deps.readSettings().disabled, failed: this.result.failed }))
     deps.ipc.handle('extensions:set-enabled', (_e, id: unknown, on: unknown): string[] => (typeof id === 'string' && typeof on === 'boolean' ? this.setEnabled(id, on) : deps.readSettings().disabled))
+    deps.ipc.handle('features:list', (): FeatureInfo[] => featureInfos(this.features, deps.readFile()))
   }
 
   /** Activates the index (called once, when the app is ready). */
@@ -70,6 +77,11 @@ export class MainExtensionHost {
       const settings = e.manifest.contributes?.settings
       if (settings && !disabled.includes(e.manifest.id)) this.store.add(this.configuration.registerConfiguration({ id: e.manifest.id, title: e.manifest.displayName, properties: settings }))
     }
+    const manifests = new Map([...this.list, ...daemonExtensions].map(e => [e.manifest.id, e.manifest] as const))
+    const declared = declaredFeatures([...manifests.values()].filter(m => !disabled.includes(m.id)))
+    for (const p of declared.problems) this.deps.log(`extensões: ${p}`)
+    this.features = declared.features
+    if (this.features.length) this.store.add(this.configuration.registerConfiguration(featuresConfigurationNode(this.features)))
     this.result = activateExtensions(this.list, id => this.apiFor(id), this.store, disabled)
     if (this.result.active.length || this.result.failed.length) this.deps.log(`extensões (main): ativas ${this.result.active.join(', ') || '—'}; falharam ${this.result.failed.map(f => `${f.id} (${f.error})`).join(', ') || '—'}`)
     return this.result

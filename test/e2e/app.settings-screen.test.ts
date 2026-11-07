@@ -7,7 +7,9 @@
 //      and nothing is written; a valid value is written;
 //   6. "Abrir settings.json" opens <userDir>/settings.json as a note;
 //   7. the file edited on disk (the editor's save lands the same way) repaints the page; a broken file shows the banner;
-//   8. screenshots light and dark.
+//   8. screenshots light and dark (the features' section too);
+//   9. the features' general switches (src/core/features.ts) are a node "Agentes": agents.features.bridge, on by default,
+//      switched off writes that key.
 // Kills go through test/kill.ts by identity only.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -193,6 +195,20 @@ test('app settings screen: Ctrl+, and ≡ open it; a switch writes one key with 
     await until('dark', async () => (await page.evaluate(() => document.documentElement.dataset.theme)) === 'dark')
     await sleep(300)
     await shot(app, 'settings-dark')
+
+    // 9. The features' general switches: a section of their own, the bridge on by default; off writes agents.features.bridge.
+    const withFeatures = (await snap(page))!
+    assert.ok(withFeatures.toc.includes('agent-features/O que os agentes recebem'), `the features section in the TOC: ${withFeatures.toc.join(', ')}`)
+    const bridge = await row(page, 'agents.features.bridge')
+    assert.equal(bridge?.value, true, 'the bridge feature is on by default')
+    assert.match((await page.locator('.st-item[data-key="agents.features.bridge"] .st-title').textContent()) ?? '', /Tether Bridge para os agentes/)
+    await page.locator('.st-item[data-key="agents.features.bridge"]').scrollIntoViewIfNeeded()
+    await page.click('.st-item[data-key="agents.features.bridge"] .st-switch')
+    type WithFeatures = { agents?: { features?: { bridge?: boolean } } }
+    await until('the file has agents.features.bridge false', async () => (JSON.parse(stripComments(readFileSync(settingsFile, 'utf8'))) as WithFeatures).agents?.features?.bridge === false)
+    await until('the modified bar on the feature', async () => (await row(page, 'agents.features.bridge'))?.modifiedBar === true)
+    await sleep(300)
+    await shot(app, 'settings-features-dark')
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))
     for (const d of daemons) {

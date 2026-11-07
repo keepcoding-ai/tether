@@ -1,12 +1,16 @@
 // Launch profiles in the UI: the grouped list of the manager (selects the profile being edited; the chooser of
 // "Novo painel" / the empty pane has its own list, app/renderer/chooser.ts) and the manager itself
 // (app/renderer/index.html #dlg-profiles): list on the left, one form on the right (name, agent, shell executable,
-// args with a chips preview, env rows, default folder, default flag). Validation is the daemon's
+// args with a chips preview, env rows, default folder, what the agent receives, default flag). Validation is the daemon's
 // (src/core/profile.ts): every error it returns in Portuguese lands next to the field it is about; warnings do not block a save.
+// "O que o agente recebe" lists the features the extensions offer (src/core/features.ts, from main's `features:list`), each
+// with three choices: inherit the general switch (its value shown), on, off. Only the explicit ones go in Profile.features;
+// a feature the list does not know (its extension is off) keeps the profile's value untouched.
 import { agentTable, agentUi, agentUiNames } from './agent-ui.ts'
 import type { Profile, ProfileInput, SlotState } from '../../src/daemon/protocol.ts'
 import type { ProfileAgent } from '../../src/core/profile.ts'
 import type { ProfileDeleted, ProfileSaved } from '../shared/api.ts'
+import type { FeatureInfo } from '../../src/core/features.ts'
 import { formatArgs, parseArgs } from './args.ts'
 import { askDialog } from './dialog.ts'
 import { icon, KIND_ICON } from './icons.ts'
@@ -105,12 +109,31 @@ export interface ManagerHost {
   delete(id: string): Promise<ProfileDeleted>
   /** After a save/delete without a daemon there is no `profiles` event: the host re-reads the list. */
   reload(): Promise<void>
+  /** The features the extensions offer the agents, with the general switch in force (asked each time the manager opens). */
+  features(): Promise<FeatureInfo[]>
 }
 
-type Field = 'name' | 'agent' | 'shell' | 'args' | 'env' | 'cwd' | 'general'
+type Field = 'name' | 'agent' | 'shell' | 'args' | 'env' | 'cwd' | 'features' | 'general'
+
+/** A feature's choice in the form: inherit the general switch, or explicitly on / off. */
+export type FeatureChoice = 'inherit' | 'on' | 'off'
+
+export function choiceOf(features: Readonly<Record<string, boolean>> | undefined, id: string): FeatureChoice {
+  const v = features?.[id]
+  return v === true ? 'on' : v === false ? 'off' : 'inherit'
+}
+
+/** The form's choices back into Profile.features: the explicit ones, plus the ids the form does not show (kept as they were). */
+export function featuresFromChoices(choices: ReadonlyMap<string, FeatureChoice>, kept: Readonly<Record<string, boolean>> = {}): Record<string, boolean> | undefined {
+  const out: Record<string, boolean> = {}
+  for (const [id, v] of Object.entries(kept)) if (!choices.has(id)) out[id] = v
+  for (const [id, c] of choices) if (c !== 'inherit') out[id] = c === 'on'
+  return Object.keys(out).length ? out : undefined
+}
 
 /** Which field a validator line (src/core/profile.ts, Portuguese) is about. */
 export function fieldOfError(line: string): Field {
+  if (/feature/i.test(line)) return 'features'
   if (/variável/i.test(line)) return 'env'
   if (/argumento|args /i.test(line)) return 'args'
   if (/precisa de um nome|já existe um perfil chamado/i.test(line)) return 'name'
@@ -134,6 +157,10 @@ export class ProfileManager {
   /** The profile being edited (id), or undefined for a new one. */
   private editing: string | undefined
   private savedTimer: ReturnType<typeof setTimeout> | undefined
+  /** The features offered now (refreshed when the manager opens). */
+  private featureList: FeatureInfo[] = []
+  /** The edited profile's switches the list does not show (an extension that is off): saved back untouched. */
+  private keptFeatures: Record<string, boolean> = {}
 
   constructor(host: ManagerHost) {
     this.host = host
@@ -152,6 +179,12 @@ export class ProfileManager {
     else this.edit(profiles.find(p => p.id === id)?.id ?? this.editing ?? profiles[0]?.id)
     if (!this.dlg.open) this.dlg.showModal()
     this.field<HTMLInputElement>('name').focus()
+    void this.host.features().then(list => {
+      // What the form says now (rows shown) over what it kept aside (ids the previous list did not show).
+      const now = featuresFromChoices(this.readChoices(), this.keptFeatures) ?? {}
+      this.featureList = list
+      this.renderFeatures(now)
+    }).catch(() => { /* no list: the field stays hidden */ })
   }
 
   close(): void { if (this.dlg.open) this.dlg.close() }
@@ -188,19 +221,19 @@ export class ProfileManager {
     this.editing = p.id
     this.fill({
       id: p.id, name: p.name, agent: p.agent, args: displayArgs(p), env: p.env ?? {}, cwd: p.cwd ?? '',
-      shell: p.agent === 'shell' && p.shell ? p.shell.command : '', default: !!p.default,
+      shell: p.agent === 'shell' && p.shell ? p.shell.command : '', default: !!p.default, features: p.features ?? {},
     })
     this.refresh()
   }
 
   private startNew(agent: ProfileAgent = agentOrder()[0]!): void {
     this.editing = undefined
-    this.fill({ id: '', name: '', agent, args: [], env: {}, cwd: '', shell: '', default: false })
+    this.fill({ id: '', name: '', agent, args: [], env: {}, cwd: '', shell: '', default: false, features: {} })
     this.refresh()
     this.field<HTMLInputElement>('name').focus()
   }
 
-  private fill(v: { id: string; name: string; agent: ProfileAgent; args: string[]; env: Record<string, string>; cwd: string; shell: string; default: boolean }): void {
+  private fill(v: { id: string; name: string; agent: ProfileAgent; args: string[]; env: Record<string, string>; cwd: string; shell: string; default: boolean; features: Record<string, boolean> }): void {
     this.clearErrors()
     this.field<HTMLInputElement>('id').value = v.id
     this.field<HTMLInputElement>('name').value = v.name
@@ -213,6 +246,7 @@ export class ProfileManager {
     const env = document.getElementById('profile-env')!
     env.replaceChildren()
     for (const [k, val] of Object.entries(v.env)) this.addEnvRow(k, val)
+    this.renderFeatures(v.features)
     this.onAgentChange()
     this.previewArgs()
     this.previewEnv()
@@ -240,9 +274,48 @@ export class ProfileManager {
     }))
   }
 
+  /** One row per offered feature, its three choices set from `features`; the ids no row shows are kept aside for the save. */
+  private renderFeatures(features: Readonly<Record<string, boolean>>): void {
+    const host = document.getElementById('profile-features')!
+    const shown = new Set(this.featureList.map(f => f.id))
+    this.keptFeatures = Object.fromEntries(Object.entries(features).filter(([id]) => !shown.has(id)))
+    host.replaceChildren(...this.featureList.map(f => {
+      const row = document.createElement('div'); row.className = 'feature-row'; row.dataset.feature = f.id
+      const name = document.createElement('span'); name.className = 'f-name'; name.textContent = f.title
+      if (f.description) name.title = f.description
+      const choice = document.createElement('span'); choice.className = 'f-choice'; choice.setAttribute('role', 'radiogroup'); choice.setAttribute('aria-label', f.title)
+      const current = choiceOf(features, f.id)
+      const labels: Record<FeatureChoice, string> = { inherit: `Herdar (${f.general ? 'ligada' : 'desligada'})`, on: 'Ligada', off: 'Desligada' }
+      for (const c of ['inherit', 'on', 'off'] as const) {
+        const label = document.createElement('label')
+        const input = document.createElement('input')
+        input.type = 'radio'; input.name = `feature:${f.id}`; input.value = c; input.checked = c === current
+        label.append(input, ` ${labels[c]}`)
+        if (c === 'inherit') label.title = 'Segue a configuração geral (Configurações › Agentes)'
+        choice.append(label)
+      }
+      row.append(name, choice)
+      return row
+    }))
+    this.onAgentChange()
+  }
+
+  /** The form's feature choices, by id. */
+  private readChoices(): Map<string, FeatureChoice> {
+    const out = new Map<string, FeatureChoice>()
+    for (const row of this.form.querySelectorAll<HTMLElement>('.feature-row')) {
+      const id = row.dataset.feature!
+      const checked = row.querySelector<HTMLInputElement>('input[type=radio]:checked')
+      out.set(id, (checked?.value as FeatureChoice | undefined) ?? 'inherit')
+    }
+    return out
+  }
+
   private onAgentChange(): void {
     const agent = this.agent()
     for (const el of this.form.querySelectorAll<HTMLElement>('[data-only]')) el.hidden = el.dataset.only !== agent
+    // A shell receives no features; with no feature offered there is nothing to choose.
+    document.getElementById('profile-features-field')!.hidden = agent === 'shell' || this.featureList.length === 0
     document.getElementById('profile-default-label')!.textContent = `Perfil padrão de ${AGENT_LABEL[agent]} (pré-selecionado em Novo painel)`
     this.field<HTMLInputElement>('args').placeholder = agent === 'shell' ? '--login -i' : agentUi(agent)?.argsPlaceholder ?? ''
   }
@@ -308,6 +381,10 @@ export class ProfileManager {
       if (command) { input.shell = { command, args }; input.args = [] }
     }
     if (this.field<HTMLInputElement>('default').checked) input.default = true
+    if (agent !== 'shell') {
+      const features = featuresFromChoices(this.readChoices(), this.keptFeatures)
+      if (features) input.features = features
+    }
     return input
   }
 
@@ -358,7 +435,7 @@ export class ProfileManager {
     this.editing = undefined
     this.fill({
       id: '', name: `${src.name.trim()} (cópia)`, agent: src.agent, args: src.shell ? src.shell.args : src.args, env: src.env ?? {},
-      cwd: src.cwd ?? '', shell: src.shell?.command ?? '', default: false,
+      cwd: src.cwd ?? '', shell: src.shell?.command ?? '', default: false, features: src.features ?? {},
     })
     this.refresh()
     this.field<HTMLInputElement>('name').focus()

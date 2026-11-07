@@ -179,6 +179,18 @@ describe('Electron main extension host', () => {
     assert.deepEqual(await ipc.renderer.invoke('extensions:list'), { manifests: [manifest('a'), manifest('b')], disabled: ['b'], failed: [{ id: 'a', error: 'x' }] })
   })
 
+  test('features: the enabled extensions\' (main and daemon indexes) are settings agents.features.<id> and features:list', async () => {
+    const own = { manifest: manifest('f', { contributes: { features: { faults: { title: 'Falhas', default: false } } } }), activate: () => {} }
+    const off = { manifest: manifest('g', { optional: true, contributes: { features: { other: { title: 'Outra', default: true } } } }), activate: () => {} }
+    const { ipc, host } = setup([own, off], { disabled: ['g'] })
+    host.activate()
+    assert.deepEqual(host.features.map(f => f.id), ['faults', 'bridge'], "main's own, then the daemon index's (web-bridge); a disabled extension's left out")
+    assert.equal(host.configuration.schemaAt('agents.features.bridge')?.type, 'boolean')
+    assert.equal(host.configuration.readAt({}, 'agents.features.faults'), false)
+    const list = await ipc.renderer.invoke('features:list') as Array<{ id: string; general: boolean }>
+    assert.deepEqual(list.map(f => [f.id, f.general]), [['faults', false], ['bridge', true]])
+  })
+
   test('the shared activation leaves disabled ones out without failing them', () => {
     const r = activateExtensions([{ manifest: manifest('a'), activate: () => { } }], () => ({}), new DisposableStore(), ['a'])
     assert.deepEqual(r, { active: [], disabled: ['a'], failed: [] })

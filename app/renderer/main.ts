@@ -3250,6 +3250,7 @@ manager = new ProfileManager({
   save: input => window.tether.saveProfile(input),
   delete: id => window.tether.deleteProfile(id),
   reload: loadProfiles,
+  features: () => window.tether.listFeatures(),
 })
 themeDialog = new TerminalThemeDialog({
   appearance: () => appearance,

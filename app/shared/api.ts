@@ -1,5 +1,6 @@
 // The narrow API the preload exposes to the renderer as `window.tether` (contextBridge).
 // Shared by the preload (implements it) and the renderer (consumes it).
+import type { FeatureInfo } from '../../src/core/features.ts'
 import type { Event as DaemonEvent, Notice, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
 import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
 import type { FontSizeCommand } from './font.ts'
@@ -142,6 +143,8 @@ export interface TetherApi {
   setExtSetting(id: string, key: string, value: SettingValue): void
   onExtSetting(listener: (change: ExtSettingChange) => void): () => void
   listMainExtensions(): Promise<MainExtensionsList>
+  /** What the enabled extensions offer the agents (src/core/features.ts), with the general switch in force (the profile editor). */
+  listFeatures(): Promise<FeatureInfo[]>
   /** The "Extensões" toggle: on or off at the next start ("Reiniciar o app"); answers settings.json `extensions.disabled`. */
   setExtensionEnabled(id: string, on: boolean): Promise<string[]>
   /** The configuration registry's settings (app/main/main.ts settings:*): list, write one key, remove one key, the file, and its ensure-then-path for "Abrir settings.json". */

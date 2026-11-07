@@ -82,6 +82,7 @@ const api: TetherApi = {
   setExtSetting: (id, key, value) => ipcRenderer.send('extsettings:set', id, key, value),
   onExtSetting: listener => on<ExtSettingChange>('tether:ext-setting', listener),
   listMainExtensions: () => ipcRenderer.invoke('extensions:list'),
+  listFeatures: () => ipcRenderer.invoke('features:list'),
   setExtensionEnabled: (id, on) => ipcRenderer.invoke('extensions:set-enabled', id, on),
   settingsList: () => ipcRenderer.invoke('settings:list'),
   settingsSet: (key, value) => ipcRenderer.invoke('settings:set', key, value),

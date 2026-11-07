@@ -200,6 +200,14 @@
           <span class="hint">Sugerida ao abrir um painel novo com este perfil.</span>
           <span class="field-error" data-for="cwd" hidden></span>
         </label>
+        <div class="field" id="profile-features-field" data-agent-only hidden>
+          <span>O que o agente recebe</span>
+          <div id="profile-features" class="feature-rows">
+            <!-- one row per feature, generated (profiles.ts renderFeatures) -->
+          </div>
+          <span class="hint">Uma mudança vale no próximo lançamento do painel.</span>
+          <span class="field-error" data-for="features" hidden></span>
+        </div>
         <label class="field check">
           <input type="checkbox" name="default"> <span class="i" data-icon="star"></span><span id="profile-default-label">Perfil padrão deste agente (pré-selecionado em Novo painel)</span>
         </label>

@@ -9,7 +9,8 @@
 //   4. the manager: a custom shell profile with an extra arg and an env var is saved; a panel opened with it
 //      has both (command line + `echo $VAR`); an invalid arg (--resume) shows the inline error and is not
 //      saved; a CLAUDE_* env var shows the validator's warning; deleting a profile asks through the in-app
-//      dialog and leaves the panel that used it running;
+//      dialog and leaves the panel that used it running; "O que o agente recebe" shows each feature with three choices
+//      (inherit, showing the general switch, on, off), saves the explicit one as Profile.features, and is hidden for a shell;
 //   5. the in-app menu (toolbar) opens, "Sair e encerrar tudo…" shows the quit-all dialog, Esc keeps everything;
 //      Ctrl+Shift+Q from inside a terminal does the same.
 // Screenshots (light and dark) of the dialog, the manager and a tab with the badge land in test/e2e/artifacts.
@@ -349,6 +350,23 @@ test('profiles in the app: Novo painel by profile, unsafe badge, Git Bash, manag
     await page.waitForFunction(() => (document.querySelector('html') as { dataset: { theme?: string } }).dataset.theme === 'dark')
     await shoot(page, 'profiles-manager-dark')
     t.diagnostic('invalid profile refused inline')
+
+    // ---- 6b. what the agent receives: the features, three choices each; the explicit one saved as Profile.features ----
+    await fillProfileForm(page, { name: 'Claude sem ponte', agent: 'claude', args: '' })
+    const bridgeRow = page.locator('#profile-features .feature-row[data-feature="bridge"]')
+    await bridgeRow.waitFor()
+    assert.match((await bridgeRow.textContent())!, /Tether Bridge para os agentes.*Herdar \(ligada\).*Ligada.*Desligada/, 'title and the three choices, inherit naming the general switch')
+    assert.ok(await bridgeRow.locator('input[value=inherit]').isChecked(), 'a new profile inherits')
+    assert.match((await page.locator('#profile-features-field .hint').textContent())!, /próximo lançamento do painel/)
+    await bridgeRow.locator('input[value=off]').check()
+    await shoot(page, 'profiles-features-dark')
+    await page.click('#btn-profile-save')
+    await page.waitForSelector('#profile-saved:not([hidden])')
+    await page.waitForFunction(() => window.__tether.profiles().some(p => p.name === 'Claude sem ponte'))
+    assert.deepEqual((await hooks.profiles(page)).find(p => p.name === 'Claude sem ponte')!.features, { bridge: false })
+    await page.check('#form-profile input[name=agent][value=shell]')
+    assert.ok(await page.locator('#profile-features-field').isHidden(), 'a shell receives no features')
+    t.diagnostic('features: tri-state saved as Profile.features')
 
     // ---- 7. delete the custom profile: in-app dialog, consequence names the panel; the panel keeps running ----
     await page.click('.manager-list .profile-option[data-id="bash-de-teste"]')
