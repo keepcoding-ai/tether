@@ -6,6 +6,7 @@ import { faultsDir, type FaultStatus } from '../core/faults.ts'
 import { applyAction, describeNotFound, listFaults, showFault, type FaultAction, type FaultDetail, type FaultRow } from '../core/faults-ops.ts'
 import { kindLabel, normalizeTag, parseStatus, returnedText, STATUSES, statusLabel, statusPlural } from '../core/faults-labels.ts'
 import { tetherHome } from '../core/paths.ts'
+import { paneAuthor, paneDisplayName } from '../core/pane-name.ts'
 import { readSlot } from '../core/store.ts'
 import { ENV_SLOT } from '../agents/types.ts'
 import { parseArgs, UsageError, type ParsedArgs } from './args.ts'
@@ -36,17 +37,21 @@ export interface FaultsIo {
 export const SHOW_CAP = 20
 const SHOW_HUMAN = 5
 
-/** Who a write is attributed to: --by, else the name of the slot the command runs in (TETHER_SLOT_ID), else "você". */
-export function authorOf(by: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
+/**
+ * Who a write is attributed to: --by, else the pane the command runs in (TETHER_SLOT_ID): its own name, else the display
+ * name the bridge uses for it ("Claude · tether-faults", src/core/pane-name.ts), else "você". The slot is read from the
+ * home's files, never over the pipe, so a daemon that is down changes nothing; a slot that cannot be read at all falls back
+ * to "Claude · <this folder>".
+ */
+export function authorOf(by: string | undefined, env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string {
   if (by?.trim()) return by.trim()
   const slotId = env[ENV_SLOT]?.trim()
-  if (slotId) {
-    try {
-      const meta = readSlot(tetherHome(env), slotId)
-      if (meta) return meta.name || meta.agent
-    } catch { /* an id that is not a slot id */ }
-  }
-  return 'você'
+  if (!slotId) return 'você'
+  try {
+    const meta = readSlot(tetherHome(env), slotId)
+    if (meta) return paneAuthor(meta)
+  } catch { /* an id that is not a slot id */ }
+  return paneDisplayName('claude', { cwd })
 }
 
 export async function cmdFaults(argv: string[], io: FaultsIo): Promise<number> {

@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path'
 import { after, describe, test } from 'node:test'
 import { faultsDir, flush, readState, record, statePath, writeState, type FaultInput } from '../../src/core/faults.ts'
 import { createSlot } from '../../src/core/store.ts'
+import { clientNameOf } from '../../extensions/web-bridge/agents.ts'
 import { authorOf, cmdFaults, SHOW_CAP } from '../../src/cli/faults.ts'
 import { UsageError } from '../../src/cli/args.ts'
 
@@ -285,14 +286,35 @@ describe('tether faults writes', () => {
 })
 
 describe('author', () => {
-  test('--by wins; a slot in TETHER_SLOT_ID gives its name; otherwise "você"', () => {
+  const slot = (home: string, id: string, over: Record<string, unknown> = {}): void =>
+    createSlot(home, { v: 1, slotId: id, agent: 'claude', cwd: join(home, 'projetos', 'tether-faults'), args: [], createdAt: new Date().toISOString(), ...over } as never)
+
+  test("--by wins; the pane's own name next; no pane at all is 'você'", () => {
     const home = tmp()
-    createSlot(home, { v: 1, slotId: 's-aaaa1111', name: 'tether-faults', agent: 'claude', cwd: home, args: [], createdAt: new Date().toISOString() })
+    slot(home, 's-aaaa1111', { name: 'tether-faults' })
     const env = { TETHER_HOME: home, TETHER_SLOT_ID: 's-aaaa1111' }
     assert.equal(authorOf('Outro', env), 'Outro')
     assert.equal(authorOf(undefined, env), 'tether-faults')
     assert.equal(authorOf(undefined, { TETHER_HOME: home }), 'você')
-    assert.equal(authorOf(undefined, { TETHER_HOME: home, TETHER_SLOT_ID: 'nao-existe' }), 'você')
+  })
+
+  test('a pane nobody named is "Claude · <folder>", the same name the bridge shows', () => {
+    const home = tmp()
+    slot(home, 's-bbbb2222')
+    slot(home, 's-cccc3333', { name: '   ' })
+    slot(home, 's-dddd4444', { agent: 'soul', cwd: 'D:\\work\\proj\\' })
+    assert.equal(authorOf(undefined, { TETHER_HOME: home, TETHER_SLOT_ID: 's-bbbb2222' }), 'Claude · tether-faults')
+    assert.equal(authorOf(undefined, { TETHER_HOME: home, TETHER_SLOT_ID: 's-cccc3333' }), 'Claude · tether-faults', 'blank is not a name')
+    assert.equal(authorOf(undefined, { TETHER_HOME: home, TETHER_SLOT_ID: 's-dddd4444' }), clientNameOf('soul', { cwd: 'D:\\work\\proj\\' }))
+    assert.equal(clientNameOf('claude', { cwd: join(home, 'projetos', 'tether-faults') }), 'Claude · tether-faults', 'one rule for both')
+  })
+
+  test('with no slot to read (daemon never made it, files gone) it falls back to "Claude · <this folder>"; the pipe is never needed', () => {
+    const home = tmp()
+    const env = { TETHER_HOME: home, TETHER_SLOT_ID: 'nao-existe', TETHER_PIPE: '\\.\pipe\tether-nao-existe-nunca' }
+    assert.equal(authorOf(undefined, env, join(home, 'trabalho')), 'Claude · trabalho')
+    slot(home, 's-eeee5555')
+    assert.equal(authorOf(undefined, { ...env, TETHER_SLOT_ID: 's-eeee5555' }, join(home, 'trabalho')), 'Claude · tether-faults', 'read from the home files with the pipe down')
   })
 })
 

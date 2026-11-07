@@ -12,10 +12,11 @@
 //     read at that moment and never logged), so the extension lets the agent's tabs go and folds its group (§1.4). Best
 //     effort: a daemon that is down, slow or older than A6 (404) is a log line, never an error and never a wait of the slot.
 import { readFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { join } from 'node:path'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import { paneDisplayName } from '../../src/core/pane-name.ts'
 import type { LaunchContext } from '../../src/daemon/ext-api.ts'
 import { BRIDGE_FEATURE } from './manifest.ts'
 
@@ -29,13 +30,8 @@ export const CLIENT_NAME_MAX = 80
 /** `tether:<slotId>`: the agent's identity at the bridge, one per slot, stable across the slot's restarts. */
 export const clientIdOf = (slotId: string): string => `tether:${slotId}`
 
-/** "Claude · <slot name>" or "Claude · <folder name>", within the bridge's limit. */
-export function clientNameOf(agent: string, slot: Pick<SlotMeta, 'name' | 'cwd'>): string {
-  const who = agent.charAt(0).toUpperCase() + agent.slice(1)
-  const where = slot.name?.trim() || basename(slot.cwd.replace(/[\\/]+$/, '')) || slot.cwd
-  const name = `${who} · ${where}`
-  return name.length > CLIENT_NAME_MAX ? `${name.slice(0, CLIENT_NAME_MAX - 1)}…` : name
-}
+/** "Claude · <slot name>" or "Claude · <folder name>", within the bridge's limit (the rule is shared: src/core/pane-name.ts). */
+export const clientNameOf = (agent: string, slot: Pick<SlotMeta, 'name' | 'cwd'>): string => paneDisplayName(agent, slot, CLIENT_NAME_MAX)
 
 export interface InjectDeps {
   /** The agent contribution of a launch (TetherDaemon.agents.get); undefined = unknown agent, plan untouched. */
