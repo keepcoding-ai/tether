@@ -11,6 +11,7 @@ import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
 import { readUserSettings } from '../core/user-settings.ts'
+import { treeValueAt } from '../../app/shared/settings-file.ts'
 import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 
@@ -143,5 +144,5 @@ export class DaemonExtensionHost implements IDisposable {
 }
 
 function readSetting<T>(home: string, key: string): T | undefined {
-  return readUserSettings(home)[key] as T | undefined
+  return treeValueAt(readUserSettings(home), key) as T | undefined
 }

@@ -80,3 +80,28 @@ describe('readUserSettings (daemon side)', () => {
     assert.deepEqual(readUserSettings(home, { TETHER_HOME: home, TETHER_USER_DIR: user }), { new: true })
   })
 })
+
+describe('SettingsStore: flat keys like VS Code', () => {
+  test('a write of a nested key converts it to a dotted one; keyOf keeps whole-object settings as one key', () => {
+    const dir = dirs.make()
+    const path = join(dir, 'settings.json')
+    writeFileSync(path, '{\n  // mine\n  "ui": { "deskLine": true, "tabBorder": true },\n  "terminal": { "fontSize": 12 }\n}\n')
+    const store = new SettingsStore({ path, keyOf: p => (p[0] === 'terminal' ? 1 : p.length) })
+    assert.ok(store.assign(['ui'], { deskLine: false, tabBorder: true }).ok)
+    assert.ok(store.assign(['terminal'], { fontSize: 14 }).ok)
+    assert.ok(store.set(['theme'], 'dark').ok)
+    const text = readFileSync(path, 'utf8')
+    assert.match(text, /\/\/ mine/)
+    assert.match(text, /"ui\.deskLine": false/)
+    assert.match(text, /"ui": \{\s*"tabBorder": true\s*\}/)
+    assert.match(text, /"terminal": \{\s*"fontSize": 14\s*\}/)
+    assert.deepEqual(store.value, { ui: { deskLine: false, tabBorder: true }, terminal: { fontSize: 14 }, theme: 'dark' })
+    assert.ok(store.set(['ui', 'tabBorder'], undefined).ok)
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /"ui":/)
+  })
+  test('the daemon reader honours both forms, dotted winning', () => {
+    const dir = dirs.make()
+    writeFileSync(join(dir, 'settings.json'), '{ "extensions.disabled": ["a"], "ui": { "deskLine": true }, "ui.deskLine": false }')
+    assert.deepEqual(readUserSettings(dir), { extensions: { disabled: ['a'] }, ui: { deskLine: false } })
+  })
+})

@@ -49,6 +49,13 @@ const theme = (page: Page): Promise<ThemeState> => page.evaluate(() => window.__
 const clickMenu = (app: ElectronApplication, id: string): Promise<void> =>
   app.evaluate(({ Menu }, id) => { Menu.getApplicationMenu()?.getMenuItemById(id)?.click() }, id)
 
+const deskLine = (page: Page): Promise<boolean> => page.evaluate(() => (globalThis as unknown as { document: { body: { classList: { contains(c: string): boolean } } } }).document.body.classList.contains('desk-line'))
+async function waitDeskLine(page: Page, on: boolean): Promise<void> {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) { if ((await deskLine(page)) === on) return; await sleep(100) }
+  assert.equal(await deskLine(page), on, `desk line never became ${on}`)
+}
+
 async function waitTheme(page: Page, setting: ThemeState['setting']): Promise<void> {
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
@@ -87,6 +94,13 @@ test('settings store: migration to the user folder, live edits on disk, comments
     // 2. An edit on disk is live; the comment is the person's and stays.
     writeFileSync(settingsFile, seeded.replace('"dark"', '"light"'))
     await waitTheme(page, 'light')
+    // Both forms read (VS Code's values tree): a nested object, then a dotted key that wins over it.
+    writeFileSync(settingsFile, '{\n  // my own note\n  "theme": "light",\n  "ui": { "deskLine": false }\n}\n')
+    await waitDeskLine(page, false)
+    writeFileSync(settingsFile, '{\n  // my own note\n  "theme": "light",\n  "ui.deskLine": true,\n  "ui": { "deskLine": false }\n}\n')
+    await waitDeskLine(page, true)
+    writeFileSync(settingsFile, seeded.replace('"dark"', '"light"'))
+    await sleep(500)
 
     // 3. A change through the app edits the text in place.
     await clickMenu(app, 'theme-dark')

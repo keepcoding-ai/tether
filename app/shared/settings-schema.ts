@@ -10,10 +10,9 @@
 //   src/vs/workbench/services/configuration/common/configurationEditing.ts + preferences contribution
 //     (registerJSONConfigurationSchema: the schema is registered under a URI and re-generated when the registry changes)
 // Adapted: tether's SettingSchema (boolean, string with enum and labels, number, integer) maps to the JSON Schema keywords
-// VS Code emits (type, default, description, enum, enumDescriptions, minimum, maximum). VS Code's file is flat (`"editor.fontSize"`);
-// tether stores the same keys as nested objects (`"ui": { "deskLine": true }`, app/shared/settings-file.ts), so the schema
-// describes both: the dotted keys as top-level properties (VS Code's shape, what completion offers) and the nested objects
-// (what the readers honour). `extensions.disabled` is the one property no node declares. Pure.
+// VS Code emits (type, default, description, enum, enumDescriptions, minimum, maximum). Like VS Code's, the file is flat
+// (`"ui.deskLine"`, what the app writes, app/shared/settings-file.ts): only the dotted keys are properties; a nested object
+// still reads (toValuesTree) but is not suggested. `extensions.disabled` is the one property no node declares. Pure.
 import type { ConfigurationNode, SettingSchema } from './vscode-configuration-registry.ts'
 
 export const SETTINGS_SCHEMA_URI = 'tether://schemas/settings'
@@ -42,27 +41,17 @@ const EXTENSIONS_DISABLED: Json = {
 /** The schema of settings.json for the nodes registered now (core first, then extensions, as the registry orders them). */
 export function generateSettingsSchema(nodes: readonly ConfigurationNode[]): Json {
   const flat: Record<string, Json> = { 'extensions.disabled': EXTENSIONS_DISABLED }
-  const tree: Json = { type: 'object', properties: { extensions: { type: 'object', properties: { disabled: EXTENSIONS_DISABLED } } } }
   for (const node of nodes) {
     const prefix = node.prefix ?? `extensions.${node.id}`
     for (const [key, s] of Object.entries(node.properties)) {
-      const full = prefix ? `${prefix}.${key}` : key
-      const leaf = propertySchema(s)
-      flat[full] = leaf
-      let at = tree
-      const path = full.split('.')
-      for (const seg of path.slice(0, -1)) {
-        const props = (at.properties ??= {}) as Record<string, Json>
-        at = props[seg] ??= { type: 'object', properties: {} }
-      }
-      ;((at.properties ??= {}) as Record<string, Json>)[path[path.length - 1]!] = leaf
+      flat[prefix ? `${prefix}.${key}` : key] = propertySchema(s)
     }
   }
   return {
     $schema: 'http://json-schema.org/draft-07/schema#',
     title: 'Configurações do Tether',
     type: 'object',
-    properties: { ...(tree.properties as Record<string, Json>), ...flat },
+    properties: flat,
     // Unknown keys are the person's (a note in the file, a setting of an extension that is off); only declared ones are checked.
     additionalProperties: true,
   }

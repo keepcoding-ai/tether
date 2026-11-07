@@ -3,7 +3,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { diffSettings, formattingOf, parseSettings, setValueText } from '../../app/shared/settings-file.ts'
+import { diffSettings, formattingOf, parseSettings, setSettingText, setValueText } from '../../app/shared/settings-file.ts'
 import { userDir } from '../../src/core/paths.ts'
 
 describe('parseSettings', () => {
@@ -13,8 +13,8 @@ describe('parseSettings', () => {
     assert.deepEqual(r.value, { theme: 'dark', ui: { a: 1 } })
   })
   test('empty or blank text is {}', () => {
-    assert.deepEqual(parseSettings(''), { value: {}, errors: [] })
-    assert.deepEqual(parseSettings('  \n'), { value: {}, errors: [] })
+    assert.deepEqual(parseSettings(''), { value: {}, raw: {}, errors: [] })
+    assert.deepEqual(parseSettings('  \n'), { value: {}, raw: {}, errors: [] })
   })
   test('invalid text and a non-object root are errors', () => {
     assert.ok(parseSettings('{ "a": ').errors.length > 0)
@@ -82,5 +82,39 @@ describe('userDir', () => {
   })
   test('~/.tether otherwise', () => {
     assert.equal(userDir({}), join(homedir(), '.tether'))
+  })
+})
+
+describe('settings.json: dotted and nested keys (VS Code toValuesTree / configurationEditing)', () => {
+  test('both forms read the same; nested objects merge; a dotted key wins whatever the order', () => {
+    assert.deepEqual(parseSettings('{ "ui.deskLine": false }').value, { ui: { deskLine: false } })
+    assert.deepEqual(parseSettings('{ "ui": { "deskLine": false } }').value, { ui: { deskLine: false } })
+    assert.deepEqual(parseSettings('{ "ui.deskLine": false, "ui": { "deskLine": true, "tabBorder": true } }').value, { ui: { deskLine: false, tabBorder: true } })
+    assert.deepEqual(parseSettings('{ "ui": { "deskLine": true }, "ui.deskLine": false }').value, { ui: { deskLine: false } })
+    assert.deepEqual(parseSettings('{ "extensions": { "note": { "minimap": false } }, "extensions.note.size": 2 }').value, { extensions: { note: { minimap: false, size: 2 } } })
+    assert.deepEqual(parseSettings('{ "theme": "dark", "theme.x": 1 }').value, { theme: 'dark' })
+  })
+  test('a write goes flat and removes the nested occurrence (empty parents too), keeping comments', () => {
+    const text = '{\n  // mine\n  "theme": "dark",\n  "ui": {\n    // line\n    "deskLine": true\n  },\n  "extensions": { "note": { "minimap": true }, "disabled": [] }\n}\n'
+    let r = setSettingText(text, ['ui', 'deskLine'], [], false)
+    assert.ok(r.ok)
+    assert.match(r.text, /\/\/ mine/)
+    assert.match(r.text, /"ui\.deskLine": false/)
+    assert.doesNotMatch(r.text, /"ui":/)
+    r = setSettingText(r.text, ['extensions', 'note', 'minimap'], [], false)
+    assert.ok(r.ok)
+    assert.deepEqual(parseSettings(r.text).raw, { theme: 'dark', 'ui.deskLine': false, extensions: { disabled: [] }, 'extensions.note.minimap': false })
+  })
+  test('a reset removes every form; a whole-object key edits inside its flat value', () => {
+    const r = setSettingText('{ "ui": { "deskLine": true }, "ui.deskLine": false, "theme": "dark" }', ['ui', 'deskLine'], [], undefined)
+    assert.ok(r.ok)
+    assert.deepEqual(parseSettings(r.text).raw, { theme: 'dark' })
+    const w = setSettingText('{ "terminal": { /* c */ "fontSize": 12 } }', ['terminal'], ['fontSize'], 14)
+    assert.ok(w.ok)
+    assert.match(w.text, /\/\* c \*\//)
+    assert.deepEqual(parseSettings(w.text).raw, { terminal: { fontSize: 14 } })
+    const m = setSettingText('{ "terminal.fontSize": 12, "terminal": { "theme": "x" } }', ['terminal'], ['fontSize'], 14)
+    assert.ok(m.ok)
+    assert.deepEqual(parseSettings(m.text).raw, { terminal: { theme: 'x', fontSize: 14 } })
   })
 })

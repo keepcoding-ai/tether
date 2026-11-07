@@ -126,17 +126,17 @@ test('app settings screen: Ctrl+, and ≡ open it; a switch writes one key with 
     assert.equal(await page.evaluate(() => document.body.classList.contains('desk-line')), true)
     await page.click('.st-item[data-key="ui.deskLine"] .st-switch')
     await until('desk line off', async () => !(await page.evaluate(() => document.body.classList.contains('desk-line'))))
-    await until('the file has ui.deskLine false', async () => (JSON.parse(stripComments(readFileSync(settingsFile, 'utf8'))) as { ui?: { deskLine?: boolean } }).ui?.deskLine === false)
+    await until('the file has ui.deskLine false', async () => (JSON.parse(stripComments(readFileSync(settingsFile, 'utf8'))) as Record<string, unknown>)['ui.deskLine'] === false)
     const written = JSON.parse(stripComments(readFileSync(settingsFile, 'utf8'))) as Record<string, unknown>
     delete written.window // the core's window state, written on its own
-    assert.deepEqual(written, { theme: 'dark', ui: { deskLine: false } })
+    assert.deepEqual(written, { theme: 'dark', 'ui.deskLine': false })
     assert.match(readFileSync(settingsFile, 'utf8'), /\/\/ mine/, 'the comment survives')
     await until('the modified bar', async () => (await row(page, 'ui.deskLine'))?.modifiedBar === true)
     assert.equal(await page.locator('.st-item[data-key="ui.deskLine"] .st-switch').getAttribute('aria-checked'), 'false')
 
     // 3. ↺ removes the key.
     await page.click('.st-item[data-key="ui.deskLine"] .st-reset')
-    await until('the key is gone', async () => { const f = JSON.parse(stripComments(readFileSync(settingsFile, 'utf8'))) as { ui?: Record<string, unknown> }; return !f.ui || !('deskLine' in f.ui) })
+    await until('the key is gone', async () => { const f = JSON.parse(stripComments(readFileSync(settingsFile, 'utf8'))) as { ui?: Record<string, unknown> } & Record<string, unknown>; return !('ui.deskLine' in f) && (!f.ui || !('deskLine' in f.ui)) })
     await until('the bar is gone', async () => (await row(page, 'ui.deskLine'))?.modifiedBar === false)
     await until('desk line on', () => page.evaluate(() => document.body.classList.contains('desk-line')))
     assert.equal(await page.locator('.st-item[data-key="ui.deskLine"] .st-switch').getAttribute('aria-checked'), 'true')

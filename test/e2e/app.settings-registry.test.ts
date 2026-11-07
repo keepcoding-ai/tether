@@ -101,7 +101,7 @@ test('settings registry: list, set writes only that key, reset removes it, tethe
     // 2. Set: that key alone, as a text edit; the renderer gets tether:ui.
     assert.deepEqual(await page.evaluate(() => window.tether.settingsSet('ui.deskLine', false)), { ok: true })
     const afterSet = JSON.parse(readFileSync(settingsFile, 'utf8').replace(/\/\/.*$/gm, '')) as Record<string, unknown>
-    assert.deepEqual(afterSet, { theme: 'dark', ui: { deskLine: false } }, 'only ui.deskLine was written')
+    assert.deepEqual(afterSet, { theme: 'dark', 'ui.deskLine': false }, 'only ui.deskLine was written, as a flat key (VS Code)')
     assert.match(readFileSync(settingsFile, 'utf8'), /\/\/ mine/)
     await until('tether:ui with deskLine false', () => page.evaluate(() => window.__uiSeen.some(u => u.deskLine === false)))
     await until('desk line off', async () => !(await page.evaluate(() => document.body.classList.contains('desk-line'))))
@@ -111,13 +111,13 @@ test('settings registry: list, set writes only that key, reset removes it, tethe
     assert.equal(listed?.configured, true)
     // An extension key goes under extensions.<id>.
     assert.deepEqual(await page.evaluate(() => window.tether.settingsSet('extensions.note.minimap', false)), { ok: true })
-    assert.equal((JSON.parse(readFileSync(settingsFile, 'utf8').replace(/\/\/.*$/gm, '')) as { extensions: { note: { minimap: boolean } } }).extensions.note.minimap, false)
+    assert.equal((JSON.parse(readFileSync(settingsFile, 'utf8').replace(/\/\/.*$/gm, '')) as Record<string, unknown>)['extensions.note.minimap'], false)
 
     // 3. Reset removes the key.
     const uiBefore = await page.evaluate(() => window.__uiSeen.length)
     assert.deepEqual(await page.evaluate(() => window.tether.settingsReset('ui.deskLine')), { ok: true })
-    const afterReset = JSON.parse(readFileSync(settingsFile, 'utf8').replace(/\/\/.*$/gm, '')) as { ui?: Record<string, unknown> }
-    assert.ok(!afterReset.ui || !('deskLine' in afterReset.ui), 'ui.deskLine is gone from the file')
+    const afterReset = JSON.parse(readFileSync(settingsFile, 'utf8').replace(/\/\/.*$/gm, '')) as { ui?: Record<string, unknown> } & Record<string, unknown>
+    assert.ok(!('ui.deskLine' in afterReset) && (!afterReset.ui || !('deskLine' in afterReset.ui)), 'ui.deskLine is gone from the file')
     await until('tether:ui with deskLine true', () => page.evaluate(n => window.__uiSeen.slice(n).some(u => u.deskLine === true), uiBefore))
     await until('desk line on', () => page.evaluate(() => document.body.classList.contains('desk-line')))
     const relisted = (await page.evaluate(() => window.tether.settingsList())).entries.find(e => e.key === 'ui.deskLine')

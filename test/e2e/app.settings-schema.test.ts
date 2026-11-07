@@ -1,7 +1,8 @@
 // E2E of the settings.json schema in the note editor (Monaco's JSON language service, schema from the configuration registry):
 //   1. the Settings page's "Abrir settings.json" opens the user's file; typing `"ui.deskLine": "x"` (a string for a boolean) raises an
-//      error marker; comments and trailing commas raise nothing; the nested form is checked too;
-//   2. Ctrl+Space inside the file suggests extensions.note.minimap (a key the note extension registered);
+//      error marker; comments and trailing commas raise nothing; a nested object still reads but is not described (the
+//      schema is flat, like VS Code's); a dotted `"ui.deskLine": false` written in the file turns the desk line off live;
+//   2. Ctrl+Space inside the file suggests extensions.note.minimap (a key the note extension registered), and only dotted keys;
 //   3. an ordinary .json file opened as a note is still tokenized and coloured (several token classes), and gets no schema markers.
 // Kills go through test/kill.ts by identity only.
 import { test } from 'node:test'
@@ -24,7 +25,7 @@ type Hooks = {
 }
 declare const window: { __tether: Hooks }
 type El = { offsetParent: unknown; textContent: string | null; querySelectorAll(s: string): ArrayLike<{ className: string }> }
-declare const document: { querySelectorAll(s: string): ArrayLike<El> }
+declare const document: { querySelectorAll(s: string): ArrayLike<El>; body: { classList: { contains(c: string): boolean } } }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -94,21 +95,29 @@ test('app settings schema: type errors become markers, Ctrl+Space suggests regis
     await until('an error marker for the string in a boolean', async () => (await markers()).some(m => m.severity === 8 && /boolean/i.test(m.message)))
     assert.equal((await markers()).filter(m => m.severity === 8).length, 1, `only the type error: ${JSON.stringify(await markers())}`)
     writeFileSync(settingsFile, '{\n  // a comment is fine\n  "ui.deskLine": true,\n  "ui": { "tabBorder": "no" },\n}\n')
-    await until('the nested key is checked too', async () => (await markers()).some(m => m.severity === 8 && m.line === 4))
-    assert.ok(!(await markers()).some(m => m.line === 3), 'the boolean is fine')
+    await until('the boolean is fine', async () => /tabBorder/.test((await editor.textContent()) ?? '') && !(await markers()).some(m => m.line === 3))
+    await sleep(1000)
+    assert.ok(!(await markers()).some(m => m.severity === 8), `the nested object is not described, so not flagged: ${JSON.stringify(await markers())}`)
     assert.ok(!(await markers()).some(m => /comment|trailing|comma/i.test(m.message)), `comments and trailing commas are allowed: ${JSON.stringify(await markers())}`)
 
-    // 2. Ctrl+Space suggests the registered key.
+    // A dotted key written in the file is honoured live (the values tree of settings-file.ts).
+    assert.equal(await page.evaluate(() => document.body.classList.contains('desk-line')), true)
+    writeFileSync(settingsFile, '{\n  "ui.deskLine": false\n}\n')
+    await until('desk line off from the dotted key', async () => !(await page.evaluate(() => document.body.classList.contains('desk-line'))))
+
+    // 2. Ctrl+Space suggests the registered key, and only flat dotted keys.
     writeFileSync(settingsFile, '{\n  \n}\n')
-    await until('the file reloaded', async () => !/comment/.test((await editor.textContent()) ?? ''))
+    await until('the file reloaded', async () => !/deskLine/.test((await editor.textContent()) ?? ''))
     await editor.locator('.view-lines').click()
     await page.keyboard.press('Control+Home')
     await page.keyboard.press('ArrowDown')
     await page.keyboard.press('End')
-    await page.keyboard.insertText('"extensions.note.mini')
+    await page.keyboard.insertText('"ext')
     await page.keyboard.press('Control+Space')
     await page.waitForSelector('.suggest-widget.visible')
     await until('the suggestion', async () => /extensions\.note\.minimap/.test((await page.locator('.suggest-widget').textContent()) ?? ''))
+    const labels = await page.locator('.suggest-widget .monaco-list-row .label-name').allTextContents()
+    assert.ok(labels.length > 0 && labels.every(l => /^"?extensions\.\w/.test(l.trim())), `only dotted keys are suggested: ${JSON.stringify(labels)}`)
     await page.keyboard.press('Escape')
 
     // 3. An ordinary .json is coloured and carries no schema.

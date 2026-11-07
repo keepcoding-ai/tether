@@ -13,7 +13,7 @@
 // reports the dotted keys that changed. While the file does not parse the last good values stay in force and writes are refused.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
-import { diffSettings, parseSettings, setValueText, type SettingsError } from '../shared/settings-file.ts'
+import { diffSettings, parseSettings, setSettingText, type SettingsError } from '../shared/settings-file.ts'
 import { NoteWatchers, writeTextAtomic } from './note-files.ts'
 
 export type SettingsPath = readonly (string | number)[]
@@ -26,6 +26,11 @@ export interface SettingsStoreOptions {
   /** The file's parse state changed: errors when it does not parse, an empty list once it does again. */
   onErrors?(errors: SettingsError[]): void
   log?(msg: string): void
+  /**
+   * How many leading segments of a path name the setting it belongs to (the key written flat, `"ui.deskLine"`); the rest is a
+   * path inside that setting's value (`terminal` holds an object). Default: the whole path, every leaf its own key.
+   */
+  keyOf?(path: readonly string[]): number
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -104,9 +109,19 @@ export class SettingsStore {
   /** Applies several edits to the text and writes once. */
   setMany(entries: ReadonlyArray<readonly [SettingsPath, unknown]>): SetResult {
     if (this.errs.length) return { ok: false, errors: [...this.errs] }
+    // A path shorter than its setting's key with an object value is spread into the keys under it.
+    const keyLen = (path: readonly string[]): number => this.opts.keyOf?.(path) ?? Infinity
+    const flat: Array<[string[], unknown]> = []
+    const expand = (path: string[], value: unknown): void => {
+      if (isObject(value) && Object.keys(value).length && keyLen(path) > path.length) {
+        for (const [k, v] of Object.entries(value)) expand([...path, k], v)
+      } else flat.push([path, value])
+    }
+    for (const [path, value] of entries) expand(path.map(String), value)
     let text = this.text
-    for (const [path, value] of entries) {
-      const r = setValueText(text, path, value)
+    for (const [path, value] of flat) {
+      const n = Math.max(1, Math.min(keyLen(path), path.length))
+      const r = setSettingText(text, path.slice(0, n), path.slice(n), value)
       if (!r.ok) return r
       text = r.text
     }

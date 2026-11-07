@@ -28,6 +28,7 @@ import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../
 import { normalizeWindowState, resolveWindowState, type WindowState } from '../shared/window-state.ts'
 import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
 import { isValidSetting, readExtensionsSettings, settingPath, valueAt, writeExtensionsSettings } from '../shared/vscode-configuration-registry.ts'
+import { EXTENSION_STATE_KEY } from '../shared/ext-migrations.ts'
 import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { extensions as mainExtensions } from '../../extensions/index.main.ts'
 import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
@@ -346,7 +347,22 @@ const settingsStore = new SettingsStore({
   log: msg => appLog(msg),
   onChange: (keys, source) => onSettingsChanged(keys, source),
   onErrors: errors => win?.webContents.send('tether:settings-errors', errors),
+  keyOf: settingKeyLength,
 })
+/**
+ * The settings written as one flat key whose value is an object or array (VS Code's `files.exclude`): the app's own state
+ * objects, not in the registry. `extensionState` holds one such key per extension (`extensionState.<id>`).
+ */
+const WHOLE_SETTINGS = ['terminal', 'confirmations', 'window', 'notes', 'extensions.disabled']
+/** How many segments of a settings path form its flat key: a registry key, a whole-object setting, else the whole path. */
+function settingKeyLength(path: readonly string[]): number {
+  if (path[0] === EXTENSION_STATE_KEY) return 2
+  for (const w of WHOLE_SETTINGS) { const segs = w.split('.'); if (segs.every((s, i) => path[i] === s)) return segs.length }
+  let props: Record<string, unknown> = {}
+  try { props = extensionHost.configuration.getConfigurationProperties() } catch { /* not built yet */ }
+  for (let n = path.length; n > 0; n--) if (path.slice(0, n).join('.') in props) return n
+  return path.length
+}
 settingsStore.watch()
 const settings = (): Settings => settingsStore.value as Settings
 /** Saves one top-level setting (objects are edited key by key, so the person's comments stay); a refused write is logged. */
