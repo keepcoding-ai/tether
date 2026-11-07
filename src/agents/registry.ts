@@ -17,6 +17,15 @@ export interface AgentMcp {
   inject(plan: LaunchPlan, configFile: string): LaunchPlan
 }
 
+/**
+ * How this agent's CLI takes the composed share folder of a launch (src/daemon/share.ts: `skills/`, `mcps/<slug>/`, the
+ * layout of a Soul shared folder); absent = the agent gets no features.
+ */
+export interface AgentShare {
+  /** `plan` with `shareDir` handed to the CLI (a copy). May write next to it (the Claude adapter builds a plugin there). */
+  inject(plan: LaunchPlan, shareDir: string): LaunchPlan
+}
+
 export interface AgentContribution {
   /** What goes in SlotMeta.agent / TetherEvent.agent: lowercase, never 'shell'. */
   name: AgentName
@@ -29,8 +38,10 @@ export interface AgentContribution {
   reservedArgs: Record<string, string>
   /** Env var with args appended to every launch by the daemon (dev/E2E: `--model haiku`). */
   envArgsVar?: string
-  /** MCP servers a daemon extension offers to every AI agent (F7 C3: the Tether Bridge) reach this agent through here. */
+  /** How the CLI loads a single MCP config file (kept for extensions that hand one over; the features go through `share`). */
   mcp?: AgentMcp
+  /** The features tether offers the agents (the Tether Bridge among them) reach this agent through here. */
+  share?: AgentShare
 }
 
 export const AGENT_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/

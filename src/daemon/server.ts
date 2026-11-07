@@ -58,7 +58,8 @@ export interface DaemonOptions {
   /** Replaces an agent's adapter (tests: a fake that launches an inert process instead of the agent). */
   adapters?: Partial<Record<AgentName, AgentAdapter>>
   /** Daemon extensions' launch middlewares (TetherDaemon.launch.use), applied in order to every agent/shell plan. */
-  transformPlan?: (plan: LaunchPlan, meta: SlotMeta) => LaunchPlan
+  /** `info.profileFeatures`: the slot's current profile's explicit feature switches (DaemonExtensionHost.transformPlan). */
+  transformPlan?: (plan: LaunchPlan, meta: SlotMeta, info?: { profileFeatures?: Readonly<Record<string, boolean>> }) => LaunchPlan
   /** Slot lifecycle for daemon extensions (TetherDaemon.onSlot). */
   onSlot?: (kind: 'spawned' | 'exited' | 'bound', slot: SlotState) => void
   /** Overrides READY_FALLBACK_MS (tests). */
@@ -146,7 +147,7 @@ class DaemonImpl implements Daemon {
   private readonly pending = new Map<string, NodeJS.Timeout>()
   /** Test overrides; everything else comes from the agent registry at the time of use. */
   private readonly adapterOverrides: Partial<Record<AgentName, AgentAdapter>>
-  private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta) => LaunchPlan) | undefined
+  private readonly transformPlan: DaemonOptions['transformPlan']
   private readonly onSlot: ((kind: 'spawned' | 'exited' | 'bound', slot: SlotState) => void) | undefined
   private readonly readyFallbackMs: number
   private readonly minAgentAgeMs: number
@@ -631,7 +632,8 @@ class DaemonImpl implements Daemon {
       if (!adapter) throw new RequestError('agent-unavailable', `o agente ${meta.agent} não está disponível`)
       plan = adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
     }
-    return this.transformPlan ? this.transformPlan(plan, meta) : plan
+    // A profile that is gone launches with the general switches (its snapshot keeps args and env, not features).
+    return this.transformPlan ? this.transformPlan(plan, meta, current?.features ? { profileFeatures: current.features } : {}) : plan
   }
 
   /** A start event of the agent arrived at/after the last spawn (the binding describes what this run opened). */

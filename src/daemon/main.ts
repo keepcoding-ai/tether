@@ -85,6 +85,8 @@ async function main(): Promise<void> {
     }
     throw e
   }
+  // Only the pipe's owner, right after listen and before any request is read (no slot of this run has launched yet).
+  extHost.cleanStaleShares()
   writeFileSync(pidFilePath(home), `${process.pid}\n`)
   log(`started pid ${process.pid}, home ${home}`)
   log(`extensions: ${extHost.activated.length} active${extHost.failed.length ? `, ${extHost.failed.length} failed` : ''}`)
