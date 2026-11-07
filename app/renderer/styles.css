@@ -336,6 +336,18 @@ body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
    dockview positions them 4 px wide on the boundary, so they are widened to the gutter and re-centred. */
 .desk { position: relative; padding: calc(var(--gap) / 2); background: var(--desk-bg); }
 .desk-grid { position: relative; height: 100%; width: 100%; }
+/* Flush to the icon strip: on a side whose strip is showing and whose pad is closed, the desk's outermost frame touches the
+   strip (zero margin there), so icon-to-frame equals icon-to-window-edge, as a pad's card does. --desk-ext-l/r is how far
+   the desk's half-gutter is given up on that side: the padding shrinks and the grid grows into it, so the outer cards sit
+   at the desk's border and the aura (drawn inside the card) stays whole. An open pad keeps the full --gap to the desk. */
+#dock .desk {
+  padding-left: calc(var(--gap) / 2 - var(--desk-ext-l, 0px)); padding-right: calc(var(--gap) / 2 - var(--desk-ext-r, 0px));
+}
+#dock .desk > .desk-grid {
+  margin-left: calc(var(--desk-ext-l, 0px) * -1); width: calc(100% + var(--desk-ext-l, 0px) + var(--desk-ext-r, 0px));
+}
+#workbench:has(> #sidebar-left:not([hidden]):not(.open)) #dock { --desk-ext-l: calc(var(--gap) / 2); }
+#workbench:has(> #sidebar-right:not([hidden]):not(.open)) #dock { --desk-ext-r: calc(var(--gap) / 2); }
 .frame { position: relative; }
 .frame-dock {
   position: absolute; inset: calc(var(--gap) / 2); overflow: hidden;
@@ -407,8 +419,8 @@ body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
 .edge-plus[data-side="right"] { right: calc(var(--gap) / 2 + 2px); top: 50%; transform: translateY(-50%); }
 .edge-plus[data-side="top"] { top: calc(var(--gap) / 2 + 2px); left: 50%; transform: translateX(-50%); }
 .edge-plus[data-side="bottom"] { bottom: calc(var(--gap) / 2 + 2px); left: 50%; transform: translateX(-50%); }
-.edge-plus.desk[data-side="left"] { left: calc(var(--gap) / 2 - 6px); }
-.edge-plus.desk[data-side="right"] { right: calc(var(--gap) / 2 - 6px); }
+.edge-plus.desk[data-side="left"] { left: calc(var(--gap) / 2 - 6px + var(--desk-ext-l, 0px)); }
+.edge-plus.desk[data-side="right"] { right: calc(var(--gap) / 2 - 6px + var(--desk-ext-r, 0px)); }
 .edge-plus.desk[data-side="top"] { top: calc(var(--gap) / 2 - 6px); }
 .edge-plus.desk[data-side="bottom"] { bottom: calc(var(--gap) / 2 - 6px); }
 

@@ -142,6 +142,22 @@ test('pads chrome: activity-bar icons, one --gap to the desks, content that abso
     }
     await page.screenshot({ path: join(shots, 'icons-closed-light.png') })
 
+    // Pads closed: the desk's outermost frame touches the icon strip on each side, so icon-to-frame = icon-to-window-edge.
+    const c = await page.evaluate(({ e, d }) => {
+      const gl = (sel: string): R => document.querySelector(sel)!.querySelector('svg')!.getBoundingClientRect()
+      const L = gl(e), Rr = gl(d)
+      const fr = Array.from(document.querySelectorAll('#dock .frame-dock')).map(f => f.getBoundingClientRect())
+      const win = (globalThis as unknown as { innerWidth: number }).innerWidth
+      return {
+        leftEdge: L.left, leftFrame: Math.min(...fr.map(r => r.left)) - L.right,
+        rightEdge: win - Rr.right, rightFrame: Rr.left - Math.max(...fr.map(r => r.right)),
+      }
+    }, { e: `#sidebar-left ${icon(EXPLORER)}`, d: `#sidebar-right ${icon(DESK_PAD)}` })
+    console.log(JSON.stringify({ deskIconMargins: c }))
+    assert.ok(Math.abs(c.leftFrame - c.leftEdge) <= 0.5, `pads closed, left: icon to desk frame = icon to window edge (${c.leftFrame} vs ${c.leftEdge})`)
+    assert.ok(Math.abs(c.rightFrame - c.rightEdge) <= 0.5, `pads closed, right: icon to desk frame = icon to window edge (${c.rightFrame} vs ${c.rightEdge})`)
+    await page.screenshot({ path: join(atriumTmp, 'tether-desk-edge.png') })
+
     // ---- open both (explorer left, desk pad right) ----
     await page.click(`#sidebar-left ${icon(EXPLORER)}`)
     await page.click(`#sidebar-right ${icon(DESK_PAD)}`)
