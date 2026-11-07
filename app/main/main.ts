@@ -15,11 +15,12 @@ import { delimiter, join } from 'node:path'
 import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '../../src/daemon/client.ts'
 import { pipePath, PROTOCOL_VERSION } from '../../src/daemon/protocol.ts'
 import type { Notice, Reply, SlotState } from '../../src/daemon/protocol.ts'
-import { canonicalDir, tetherHome } from '../../src/core/paths.ts'
+import { canonicalDir, tetherHome, userDir } from '../../src/core/paths.ts'
 import { ProfileError, readProfiles, removeProfile, upsertProfile, writeProfiles } from '../../src/core/profile.ts'
 import type { ProfileInput } from '../../src/core/profile.ts'
 import type { ConnectionState, ProfileDeleted, ProfileSaved, ProfilesList, RequestBody } from '../shared/api.ts'
 import { NoteWatchers } from './note-files.ts'
+import { migrateUserFiles, SettingsStore } from './settings-store.ts'
 import { registerFileOpen } from './file-open-main.ts'
 import { registerTerminalLinks } from './terminal-links-main.ts'
 import { KEYBINDINGS_FILE, type KeybindingsFileState } from '../shared/keybindings.ts'
@@ -332,8 +333,39 @@ async function quitAll(): Promise<void> {
 
 // ---------- theme ----------
 
-/** User settings (theme, terminal appearance, remembered dialog answers) in <TETHER_HOME>/settings.json; a missing or corrupt file means defaults. */
-const settingsPath = join(home, 'settings.json')
+/**
+ * User settings (theme, terminal appearance, remembered dialog answers) in <userDir>/settings.json (`~/.tether`; the test home
+ * when TETHER_HOME is set). SettingsStore is the only writer (app/main/settings-store.ts); a missing or corrupt file means defaults.
+ * The files that used to live in the home move over once, at start.
+ */
+const userHome = userDir()
+migrateUserFiles(home, userHome, ['settings.json', KEYBINDINGS_FILE], msg => appLog(msg))
+const settingsStore = new SettingsStore({
+  path: join(userHome, 'settings.json'),
+  log: msg => appLog(msg),
+  onChange: (keys, source) => onSettingsChanged(keys, source),
+  onErrors: errors => win?.webContents.send('tether:settings-errors', errors),
+})
+settingsStore.watch()
+const settings = (): Settings => settingsStore.value as Settings
+/** Saves one top-level setting (objects are edited key by key, so the person's comments stay); a refused write is logged. */
+function saveSetting(key: string, value: unknown): boolean {
+  const r = settingsStore.assign([key], value)
+  if (!r.ok) appLog(`configurações: ${key} não foi gravado, o settings.json tem erros (${r.errors[0]?.message ?? 'inválido'})`)
+  return r.ok
+}
+
+/** The settings file changed: tells the renderer which keys; an edit from outside also replays the specific broadcasts. */
+function onSettingsChanged(keys: string[], source: 'self' | 'disk'): void {
+  win?.webContents.send('tether:settings-changed', keys)
+  if (source !== 'disk') return
+  const roots = new Set(keys.map(k => k.split('.')[0]))
+  if (roots.has('theme')) { const t = readThemeSetting(); nativeTheme.themeSource = t === 'auto' ? 'system' : t; applyTheme() }
+  if (roots.has('terminal')) win?.webContents.send('tether:terminal', readTerminalAppearance())
+  if (roots.has('ui')) win?.webContents.send('tether:ui', normalizeUi(settings().ui))
+  if (roots.has('confirmations')) win?.webContents.send('tether:confirmations', readConfirmations())
+  if (roots.has('extensions')) extensionHost.settingsChangedOnDisk(keys)
+}
 type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown }
 
 // ---------- extensions (F9) ----------
@@ -341,14 +373,15 @@ type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; 
 // (app/main/ext-host.ts). The handlers exist from the start; activation runs when the app is ready, before the window.
 const extensionHost = new MainExtensionHost(mainExtensions, {
   home,
+  userDir: userHome,
   dist: __dirname,
   ipc: ipcMain as unknown as MainHostDeps['ipc'],
   broadcast: (channel, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(channel, ...args) },
   window: () => win,
-  readSettings: () => readExtensionsSettings(readJson<Settings>(settingsPath, {}).extensions),
-  writeSettings: s => writeJson(settingsPath, { ...readJson<Settings>(settingsPath, {}), extensions: writeExtensionsSettings(s) }),
-  readFile: () => readJson<Record<string, unknown>>(settingsPath, {}),
-  writeFile: file => writeJson(settingsPath, file),
+  readSettings: () => readExtensionsSettings(settings().extensions),
+  writeSettings: s => saveSetting('extensions', writeExtensionsSettings(s)),
+  readFile: () => settingsStore.value,
+  writeFile: file => { const r = settingsStore.assign([], file); if (!r.ok) appLog('configurações: o settings.json tem erros, nada foi gravado') },
   log: msg => appLog(msg),
   trash: path => shell.trashItem(path),
 })
@@ -358,13 +391,12 @@ const extensionHost = new MainExtensionHost(mainExtensions, {
 // normalized value so every window (and a relaunch) paints the same thing.
 
 function readTerminalAppearance(): TerminalAppearance {
-  return normalizeAppearance(readJson<Settings>(settingsPath, {}).terminal)
+  return normalizeAppearance(settings().terminal)
 }
 
 function setTerminalAppearance(value: unknown): void {
   const appearance = normalizeAppearance(value)
-  const settings = readJson<Settings>(settingsPath, {})
-  writeJson(settingsPath, { ...settings, terminal: appearance })
+  saveSetting('terminal', appearance)
   win?.webContents.send('tether:terminal', appearance)
 }
 
@@ -372,16 +404,16 @@ ipcMain.handle('terminal:get', (): TerminalAppearance => readTerminalAppearance(
 ipcMain.on('terminal:set', (_e, value: unknown) => setTerminalAppearance(value))
 
 /** Chrome preferences (`ui`): the renderer applies them, main keeps the file and echoes the normalized value. */
-ipcMain.handle('ui:get', (): UiSettings => normalizeUi(readJson<Settings>(settingsPath, {}).ui))
+ipcMain.handle('ui:get', (): UiSettings => normalizeUi(settings().ui))
 ipcMain.on('ui:set', (_e, value: unknown) => {
   const ui = normalizeUi(value)
-  writeJson(settingsPath, { ...readJson<Settings>(settingsPath, {}), ui })
+  saveSetting('ui', ui)
   win?.webContents.send('tether:ui', ui)
 })
 
 /** Remembered answers per situation ("não perguntar de novo"); anything malformed reads as none. */
 function readConfirmations(): Confirmations {
-  const raw = readJson<Settings>(settingsPath, {}).confirmations
+  const raw = settings().confirmations
   if (!raw || typeof raw !== 'object') return {}
   const out: Confirmations = {}
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'string') out[k] = v
@@ -389,8 +421,7 @@ function readConfirmations(): Confirmations {
 }
 
 function writeConfirmations(confirmations: Confirmations): void {
-  const settings = readJson<Settings>(settingsPath, {})
-  writeJson(settingsPath, { ...settings, confirmations })
+  saveSetting('confirmations', confirmations)
   win?.webContents.send('tether:confirmations', confirmations)
 }
 
@@ -403,7 +434,7 @@ ipcMain.on('confirmations:remember', (_e, situation: unknown, choice: unknown) =
 function restoreConfirmations(): void { writeConfirmations({}) }
 
 function readThemeSetting(): ThemeSetting {
-  return normalizeTheme(readJson<Settings>(settingsPath, {}).theme)
+  return normalizeTheme(settings().theme)
 }
 
 function themeState(): ThemeState {
@@ -422,9 +453,8 @@ function applyTheme(): void {
 
 /** Electron resolves `auto` against the OS (`system`) and raises `updated` on every OS switch: live, no restart. */
 function setTheme(setting: ThemeSetting): void {
+  if (!saveSetting('theme', setting)) return // a settings.json with errors keeps the values in force
   nativeTheme.themeSource = setting === 'auto' ? 'system' : setting
-  const settings = readJson<Settings>(settingsPath, {})
-  writeJson(settingsPath, { ...settings, theme: setting })
   applyTheme()
 }
 
@@ -472,7 +502,7 @@ let windowLoaded: Promise<void> = Promise.resolve()
 function saveWindowState(w: BrowserWindow): void {
   if (w.isDestroyed()) return
   const state: WindowState = { ...w.getNormalBounds(), maximized: w.isMaximized(), fullscreen: w.isFullScreen() }
-  writeJson(settingsPath, { ...readJson<Settings>(settingsPath, {}), window: state })
+  saveSetting('window', state)
 }
 
 /** Saves the current window now (the process may leave without a `close`: relaunch, quit). */
@@ -498,7 +528,7 @@ function trackWindowState(w: BrowserWindow): void {
 }
 
 function createWindow(): void {
-  const saved = normalizeWindowState(readJson<Settings>(settingsPath, {}).window)
+  const saved = normalizeWindowState(settings().window)
   const displays = screen.getAllDisplays()
   const start = resolveWindowState(saved, displays.map(d => d.workArea), screen.getPrimaryDisplay().workArea)
   win = new BrowserWindow({
@@ -572,9 +602,8 @@ async function hideToTray(): Promise<void> {
   if (hiding || !win) return
   hiding = true
   try {
-    const settings = readJson<Settings>(settingsPath, {})
-    if (settings.trayNoticeShown !== true) {
-      writeJson(settingsPath, { ...settings, trayNoticeShown: true })
+    if (settings().trayNoticeShown !== true) {
+      saveSetting('trayNoticeShown', true)
       await ask('tray-first-close')
     }
     const closing = win
@@ -823,17 +852,17 @@ ipcMain.handle('clipboard:read', () => clipboard.readText())
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
 
 // ---------- keyboard shortcuts (F5, delivery 5) ----------
-// <TETHER_HOME>/keybindings.json is the renderer's (format, defaults, merge: app/renderer/keybindings-rules.ts); main
+// <userDir>/keybindings.json is the renderer's (format, defaults, merge: app/renderer/keybindings-rules.ts); main
 // only hands the text over and reports every change on disk (a save from the screen, an edit by hand in a note tab or
 // outside) so the renderer re-reads. Writing it is the keybindings-screen extension's (extensions/keybindings-screen/main.ts).
-const keybindingsPath = join(home, KEYBINDINGS_FILE)
+const keybindingsPath = join(userHome, KEYBINDINGS_FILE)
 function keybindingsState(): KeybindingsFileState {
   try { return { path: keybindingsPath, text: readFileSync(keybindingsPath, 'utf8') } } catch { return { path: keybindingsPath, text: null } }
 }
 ipcMain.handle('keybindings:read', (): KeybindingsFileState => keybindingsState())
-// The same watcher class the notes use (one per folder, debounced): the file's folder is the home itself.
+// The same watcher class the notes use (one per folder, debounced): the file's folder is the user folder.
 const keybindingsWatchers = new NoteWatchers(() => win?.webContents.send('tether:keybindings-changed', keybindingsState()))
-try { mkdirSync(home, { recursive: true }); keybindingsWatchers.watch(keybindingsPath) } catch { /* no watcher: the screen still reads on open */ }
+try { mkdirSync(userHome, { recursive: true }); keybindingsWatchers.watch(keybindingsPath) } catch { /* no watcher: the screen still reads on open */ }
 
 // ---------- opening files ----------
 // What a path is and the system's program for a binary (app/main/file-open-main.ts); Ctrl+P's index is an extension.

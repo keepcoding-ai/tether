@@ -30,7 +30,7 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 
-export const DAEMON_VERSION = '0.3.0'
+export const DAEMON_VERSION = '0.3.1'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000

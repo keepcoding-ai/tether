@@ -24,6 +24,7 @@ export type { ExtSettingChange, MainExtensionsList }
 
 export interface MainHostDeps {
   home: string
+  userDir: string
   dist: string
   ipc: MainIpcTransport & { on(channel: string, fn: (event: { returnValue?: unknown }, ...args: never[]) => void): void }
   /** main → renderer (the window's webContents.send, when there is a window). */
@@ -108,9 +109,26 @@ export class MainExtensionHost {
     const schema = this.configuration.schemaOf(id, key)
     const v = schema ? this.configuration.read({ disabled: [], values: { [id]: { [key]: value } } }, id, key)! : value
     this.deps.writeSettings(withSetting(this.deps.readSettings(), id, key, v))
+    this.announce(id, key, v)
+  }
+
+  private announce(id: string, key: string, v: SettingValue): void {
     const change: ExtSettingChange = { id, key, value: v }
     this.deps.broadcast('tether:ext-setting', change)
     for (const l of this.listeners.get(`${id}.${key}`) ?? []) l(v)
+  }
+
+  /** settings.json was edited outside the app: tells both sides of each changed `extensions.<id>.<key>` (`disabled` waits for the next start). */
+  settingsChangedOnDisk(keys: readonly string[]): void {
+    for (const full of keys) {
+      const [root, id, ...rest] = full.split('.')
+      const key = rest.join('.')
+      if (root !== 'extensions' || !id || !key || !ID.test(id) || !KEY.test(key)) continue
+      const raw = this.deps.readSettings().values[id]?.[key]
+      const schema = this.configuration.schemaOf(id, key)
+      const v = schema ? this.configuration.read(this.deps.readSettings(), id, key)! : raw
+      if (isValue(v)) this.announce(id, key, v)
+    }
   }
 
   private apiFor(id: string): TetherMain {
@@ -119,6 +137,7 @@ export class MainExtensionHost {
       id,
       brand: BRAND,
       home: deps.home,
+      userDir: deps.userDir,
       dist: deps.dist,
       ipc: () => mainIpc(id, deps.ipc, deps.broadcast),
       settings: {

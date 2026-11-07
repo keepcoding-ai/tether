@@ -1,4 +1,4 @@
-// The keybindings screen's Electron-main side: writes <TETHER_HOME>/keybindings.json (atomically) for the screen, on the
+// The keybindings screen's Electron-main side: writes <userDir>/keybindings.json (atomically) for the screen, on the
 // bus `ext:keybindings-screen:*`. The core reads and watches the file itself (app/main/main.ts).
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -13,11 +13,11 @@ const MAX_TEXT = 4 * 1024 * 1024
 
 export function activate(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<KeybindingsScreenChannels>()
-  const path = join(main.home, KEYBINDINGS_FILE)
+  const path = join(main.userDir, KEYBINDINGS_FILE)
   const write = (text: unknown): { ok: true } | { ok: false; message: string } => {
     if (typeof text !== 'string' || text.length > MAX_TEXT) return { ok: false, message: 'Texto inválido.' }
     try {
-      mkdirSync(main.home, { recursive: true })
+      mkdirSync(main.userDir, { recursive: true })
       const tmp = `${path}.${process.pid}.tmp`
       writeFileSync(tmp, text)
       renameSync(tmp, path)

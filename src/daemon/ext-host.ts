@@ -3,8 +3,6 @@
 // registrations land in its own DisposableStore (the lifecycle the renderer and main hosts use, ported from VS Code).
 // tetherd runs .ts with Node directly, so the static index is just imported. Order follows `requires`; a failing or
 // unsatisfiable extension is logged and skipped, never taking tetherd down.
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { DisposableStore, toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts'
 import type { DaemonCheck, SlotEventKind, TetherDaemon } from './ext-api.ts'
@@ -12,6 +10,7 @@ import type { ExtensionEntry } from '../../extensions/types.ts'
 import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
+import { readUserSettings } from '../core/user-settings.ts'
 import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 
@@ -144,10 +143,5 @@ export class DaemonExtensionHost implements IDisposable {
 }
 
 function readSetting<T>(home: string, key: string): T | undefined {
-  try {
-    const all = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')) as unknown
-    return all && typeof all === 'object' ? ((all as Record<string, unknown>)[key] as T | undefined) : undefined
-  } catch {
-    return undefined
-  }
+  return readUserSettings(home)[key] as T | undefined
 }

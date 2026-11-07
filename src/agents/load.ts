@@ -3,22 +3,17 @@
 // profiles.json) and the doctor (it runs the extensions' checks). Lazy: the registry calls the loader on its first read,
 // so importing this module costs nothing until an agent is needed. tetherd activates its own host (src/daemon/main.ts),
 // which marks the registry loaded first. Extensions settings.json `extensions.disabled` lists stay off here too.
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { tetherHome } from '../core/paths.ts'
+import { readUserSettings } from '../core/user-settings.ts'
 import { DaemonExtensionHost } from '../daemon/ext-host.ts'
 import type { DaemonCheck } from '../daemon/ext-api.ts'
 import { agentRegistry } from './registry.ts'
 
 /** settings.json `extensions.disabled` of `home` (empty when absent or unreadable). */
 export function disabledExtensions(home: string): string[] {
-  try {
-    const all = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')) as { extensions?: { disabled?: unknown } }
-    const d = all?.extensions?.disabled
-    return Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : []
-  } catch {
-    return []
-  }
+  const ext = readUserSettings(home).extensions as { disabled?: unknown } | undefined
+  const d = ext && typeof ext === 'object' ? ext.disabled : undefined
+  return Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : []
 }
 
 let host: DaemonExtensionHost | undefined

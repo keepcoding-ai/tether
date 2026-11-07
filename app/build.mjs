@@ -32,7 +32,8 @@ const out = join(here, 'dist')
 const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024' }
 // src/daemon/client.ts reads import.meta.url only as spawnDaemon's default mainPath (the app always passes one); CJS has none.
 const browser = { platform: 'browser', format: 'esm', loader: { '.svg': 'text', '.ttf': 'file' }, assetNames: '[name]' }
-const node = { platform: 'node', format: 'cjs', external: ['electron'], logOverride: { 'empty-import-meta': 'silent' } }
+// jsonc-parser: its "main" is a UMD wrapper with dynamic require("./impl/*") that esbuild can't inline; use the ESM build.
+const node = { platform: 'node', format: 'cjs', external: ['electron'], alias: { 'jsonc-parser': 'jsonc-parser/lib/esm/main.js' }, logOverride: { 'empty-import-meta': 'silent' } }
 
 function extractDockviewCss() {
   const umd = readFileSync(join(here, '..', 'node_modules', 'dockview-core', 'dist', 'dockview-core.js'), 'utf8')

@@ -33,6 +33,8 @@ export interface TetherMain {
   readonly brand: Brand
   /** TETHER_HOME. */
   readonly home: string
+  /** The person's own configuration folder (settings.json, keybindings.json): TETHER_USER_DIR, else TETHER_HOME, else ~/.tether. */
+  readonly userDir: string
   /** app/dist (workers, assets). */
   readonly dist: string
   /** The extension's channels, typed by its channel map. */
