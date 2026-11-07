@@ -1312,13 +1312,13 @@ body.drawer-open.desk-line #workbench::before { background: var(--drawer-line); 
    Tab: top, left and right edges (inset shadow, so it follows the rounded top corners). Tab strip: its bottom edge, which
    the active tab hides with its own opaque background (that is the open side of the folder). Content: left, right and
    bottom edges, a ::after above the terminal. The strip's action buttons and the other tabs stay outside. */
-body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-tabs-and-actions-container { box-shadow: inset 0 calc(-1 * var(--desk-line-width)) 0 var(--desk-line-color, transparent); }
-body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
+body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-tabs-and-actions-container { box-shadow: inset 0 calc(-1 * var(--desk-line-width)) 0 var(--desk-line-color, transparent); }
+body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
   border-radius: 8px 8px 0 0;
   box-shadow: inset 0 var(--desk-line-width) 0 var(--desk-line-color, transparent), inset var(--desk-line-width) 0 0 var(--desk-line-color, transparent), inset calc(-1 * var(--desk-line-width)) 0 0 var(--desk-line-color, transparent);
 }
-body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-content-container { position: relative; }
-body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-content-container::after {
+body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-content-container { position: relative; }
+body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-active-group > .dv-content-container::after {
   content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 0 0 calc(var(--frame-radius) - 1px) calc(var(--frame-radius) - 1px);
   box-shadow: inset var(--desk-line-width) 0 0 var(--desk-line-color, transparent), inset calc(-1 * var(--desk-line-width)) 0 0 var(--desk-line-color, transparent), inset 0 calc(-1 * var(--desk-line-width)) 0 var(--desk-line-color, transparent);
 }

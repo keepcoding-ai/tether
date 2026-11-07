@@ -44,9 +44,9 @@ export interface DeskHost {
   /**
    * How this desk marks its focused frame. `foco`: it is the Foco de Mesa (`.frame.focused`, the F6 signals in the desk
    * colour) — the desks. `keyboard`: the keyboard is in this desk now, but it never takes the Foco de Mesa (pads, the
-   * drawer): a neutral outline (`.frame.kbd-focused`). `none`: nothing is marked. Default `foco`.
+   * pads): a neutral outline (`.frame.kbd-focused`). `drawer`: the drawer's own focus, desk-like (`.frame.drawer-focused`, the F6 folder border in the neutral --drawer-line), separate from the hidden desk's Foco de Mesa. `none`: nothing is marked. Default `foco`.
    */
-  focusKind?(): 'foco' | 'keyboard' | 'none'
+  focusKind?(): 'foco' | 'keyboard' | 'drawer' | 'none'
   /** The options to re-create a pane in another frame (a tab dragged out of its frame is rebuilt from them). */
   paneOptions?(panel: IDockviewPanel): AddPanelOptions
   /** A tab dragged from another frame (of this or another Desk) landed in this Desk as `id`: it is the active pane of its frame now. */
@@ -383,6 +383,7 @@ export class Desk {
     for (const f of this.frames.values()) {
       f.element.classList.toggle('focused', kind === 'foco' && f === active)
       f.element.classList.toggle('kbd-focused', kind === 'keyboard' && f === active)
+      f.element.classList.toggle('drawer-focused', kind === 'drawer' && f === active)
     }
   }
 

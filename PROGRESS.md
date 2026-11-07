@@ -982,3 +982,4 @@ Decisões para validar (Foco de Mesa):
 
 - A gaveta e um quadro de teclado no Foco de Mesa (nunca recebe `.focused`): seu quadro com foco mostra o anel neutro `--kbd-ring`; `--drawer-line` pinta a linha sob a barra superior com a gaveta aberta (so o `#workbench::before` e sobrescrito, entao a aura da mesa segue na cor da mesa atras da gaveta) e a cor do escopo Gaveta no dialogo de mover.
 - `--desk-line-width` (2px) e a espessura unica da linha de topo, da borda na guia (mesa) e do anel neutro (`.frame.kbd-focused`, agora `outline` de mesma largura, sem mexer no layout).
+- **Gaveta com Foco proprio** (corrige a regra acima): a gaveta e desk-like; seu quadro com foco usa `.frame.drawer-focused` (focusKind `drawer`), com a borda na guia F6 em `--drawer-line`, na espessura `--desk-line-width`, separado do Foco de Mesa da mesa escondida (`.focused`, intacto). O anel fraco `--kbd-ring` fica so para pads.

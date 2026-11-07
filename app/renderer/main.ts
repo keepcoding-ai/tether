@@ -388,7 +388,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane() },
     // The desks always paint the Foco de Mesa (it changes only by a click/focus in a desk); a pad with the keyboard and
     // the open drawer paint a neutral outline on their frame instead, never the desk colour.
-    focusKind: () => scope === 'drawer' ? 'keyboard' : scope instanceof FramesPad ? (focusedPad === scope ? 'keyboard' : 'none') : 'foco',
+    focusKind: () => scope === 'drawer' ? 'drawer' : scope instanceof FramesPad ? (focusedPad === scope ? 'keyboard' : 'none') : 'foco',
     paneOptions: panel => paneTypes.optionsOf(panel),
     // A tab dragged here from another frame: the focused frame is where it landed (a pad's, or the desks'), and the keyboard follows it.
     onPaneDropped: id => {

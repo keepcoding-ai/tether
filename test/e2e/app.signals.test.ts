@@ -297,18 +297,21 @@ test('app signals: line, folder border and dim are independent and combinable (F
     await setTheme(page, 'light')
     await setModes(page, { line: true, border: false, dim: false })
 
-    // 5. The drawer never takes the Foco de Mesa: its frame with the keyboard gets the neutral outline, no desk colour.
+    // 5. The drawer is desk-like with its own Foco (`.drawer-focused`, never the desk's `.focused`): the folder border in the neutral --drawer-line, 2px.
     await setModes(page, { line: true, border: true, dim: false })
     await page.click('#btn-drawer')
     await page.waitForFunction(() => window.__tether.drawer().open && window.__tether.drawer().panes.length === 1, undefined, { timeout: 20_000 })
     await sleep(800)
     const drawerFrame = await page.evaluate(() => {
-      const kbd = document.querySelector('.drawer-card .frame.kbd-focused > .frame-dock') as Q | null
-      return { kbd: kbd ? (window.getComputedStyle(kbd) as unknown as { borderTopColor: string }).borderTopColor : '', foco: document.querySelectorAll('.drawer-card .frame.focused').length }
+      const tab = document.querySelector('.drawer-card .frame.drawer-focused .dv-groupview.dv-active-group .dv-tab.dv-active-tab') as Q | null
+      const line = (window.getComputedStyle(document.querySelector('#workbench') as Q as never, '::before') as unknown as { height: string }).height
+      return { tab: tab ? (window.getComputedStyle(tab as never) as unknown as { boxShadow: string }).boxShadow : '', foco: document.querySelectorAll('.drawer-card .frame.focused').length, kbd: document.querySelectorAll('.drawer-card .frame.kbd-focused').length, line }
     })
     assert.equal(drawerFrame.foco, 0, 'no Foco de Mesa in the drawer')
-    assert.ok(drawerFrame.kbd !== '', 'the drawer frame with the keyboard has the neutral outline')
-    assert.ok(!drawerFrame.kbd.includes(fill), 'the drawer does not use the desk colour')
+    assert.equal(drawerFrame.kbd, 0, 'the faint pad ring is for pads only')
+    assert.match(drawerFrame.tab, /^rgb\((61, 61, 61|208, 208, 208)\) 0px 2px 0px 0px inset/, 'the drawer active tab has the folder border in --drawer-line at 2px')
+    assert.ok(!drawerFrame.tab.includes(fill), 'the drawer does not use the desk colour')
+    assert.equal(drawerFrame.line, '2px', 'the top line is as thick as the border (--desk-line-width)')
     await shot(app, 'drawer-border')
     await page.click('#drawer-pill')
     await page.waitForFunction(() => !window.__tether.drawer().open)
