@@ -20,6 +20,7 @@ import { localTime, relativeTime, shortId, statusLabel, table, truncate, truncat
 import { ownSlotOf, restartDaemon, selfShutdownMessage } from '../daemon/restart.ts'
 import { agentChoices, agentRegistry } from '../agents/registry.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
+import { cmdFaults, FAULTS_USAGE } from './faults.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
 export const USAGE = `uso: tether <comando> [opções]
@@ -50,6 +51,7 @@ export const USAGE = `uso: tether <comando> [opções]
   daemon <status|restart|stop> [--force]
                                       gerencia o tetherd (restart/stop encerram todos os agentes; os apps
                                       reconectam; recusado de dentro de um slot dele sem --force)
+${FAULTS_USAGE}
   doctor                              confere o ambiente
   help                                esta ajuda
 
@@ -88,6 +90,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'profiles': return await cmdProfiles(rest)
       case 'profile': return await cmdProfile(rest)
       case 'daemon': return await cmdDaemon(rest)
+      case 'faults': return await cmdFaults(rest, { out, err })
       default:
         throw new UsageError(`comando desconhecido: ${command}`, true)
     }

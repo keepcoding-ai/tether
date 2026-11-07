@@ -51,7 +51,10 @@ export interface FaultState {
   status: FaultStatus
   tags: string[]
   notes: FaultNote[]
-  fix?: { commit?: string; ts: string }
+  /** Set by `done`: the commit that fixed it (absent = resolved without one) and who said so. */
+  fix?: { commit?: string; ts: string; by?: string }
+  /** Set by `investigate`: who is on it (the agent's pane name, or the person). */
+  investigating?: { by: string; ts: string }
   count: number
   first: string
   last: string
