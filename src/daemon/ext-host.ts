@@ -158,13 +158,16 @@ export class DaemonExtensionHost implements IDisposable {
     for (const mw of this.middlewares) {
       try { out = mw(out, meta, ctx) } catch (e) { this.opts.log(`launch middleware failed for slot ${meta.slotId}: ${(e as Error).message}`) }
     }
-    if (!agent?.share || sources.length === 0) return out
+    if (!agent?.share || sources.length === 0) { out.features = []; return out }
     try {
       const composed = composeShare(this.opts.home, sources)
       for (const p of composed.problems) this.opts.log(`slot ${meta.slotId}: ${p}`)
-      return agent.share.inject(out, composed.dir)
+      const injected = agent.share.inject(out, composed.dir)
+      injected.features = sources.map(s => s.id)
+      return injected
     } catch (e) {
       this.opts.log(`slot ${meta.slotId}: pasta das features (${sources.map(s => s.id).join('+')}) não montada: ${(e as Error).message}; lançado sem elas`)
+      out.features = []
       return out
     }
   }

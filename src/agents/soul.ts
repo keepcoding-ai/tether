@@ -32,7 +32,7 @@ import type { Binding } from '../core/event.ts'
 import { ensureRenamedNode, exeLog, isNodeExecutable, isRenamedNode } from '../core/exe.ts'
 import { canonicalDir, slotEventsPath } from '../core/paths.ts'
 import { findOnPath } from './shell.ts'
-import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
+import { ENV_CLI, ENV_HOME, ENV_SLOT, TETHER_CLI_PATH, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
 
 export const ENV_SOUL_CMD = 'TETHER_SOUL_CMD'
 export const ENV_SOUL_REPORT = 'SOUL_SESSION_REPORT'
@@ -252,6 +252,7 @@ function plan(input: PlanInput): LaunchPlan {
     p.env[ENV_SOUL_REPORT] = slotEventsPath(home, slot.slotId)
     p.env[ENV_SLOT] = slot.slotId
     p.env[ENV_HOME] = home
+    p.env[ENV_CLI] = TETHER_CLI_PATH
     return p
   }
 }

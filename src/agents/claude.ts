@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
 import { canonicalDir } from '../core/paths.ts'
-import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
+import { ENV_CLI, ENV_HOME, ENV_SLOT, TETHER_CLI_PATH, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
 
 /**
  * The reporter script, next to this module. Read on use, never at load: Electron main bundles this module as CommonJS
@@ -95,6 +95,7 @@ function plan(input: PlanInput): LaunchPlan {
   Object.assign(env, profile?.env ?? {})
   env[ENV_SLOT] = slot.slotId
   env[ENV_HOME] = home
+  env[ENV_CLI] = TETHER_CLI_PATH
   return {
     command: resolveClaudeCommand(env),
     args,

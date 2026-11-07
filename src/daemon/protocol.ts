@@ -59,6 +59,8 @@ export interface SlotState {
   /** The slot's launch profile (SlotMeta.profileId); `profileName` is its current name, absent when the profile is gone. */
   profileId?: string
   profileName?: string
+  /** The ids of the features the RUNNING process was launched with (what its agent actually received), absent while nothing runs. */
+  features?: string[]
   /** The launch carries --dangerously-skip-permissions (profile, slot or TETHER_*_ARGS): the UI shows a badge. */
   unsafe?: boolean
   /** A `set-profile` restart is under way: waiting for the agent's minimum age, or relaunching with the new profile. */

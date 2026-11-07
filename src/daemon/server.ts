@@ -111,6 +111,8 @@ interface Slot {
   stopping?: true
   /** Whether the CURRENT process was launched with --dangerously-skip-permissions (set at spawn). */
   runUnsafe?: boolean
+  /** The features the CURRENT process was launched with (LaunchPlan.features, set at spawn). */
+  runFeatures?: string[]
   scrollback: Scrollback
   /** Finished / waiting for the user (see attention.ts); `attentionTimer` runs the idle heuristic. */
   attention: AttentionState
@@ -236,6 +238,7 @@ class DaemonImpl implements Daemon {
     // make a Claude that still skips permissions look safe); otherwise it describes what the next start gets.
     const unsafe = isAlive(slot) && slot.runUnsafe !== undefined ? slot.runUnsafe : isUnsafe([...(profile.launch?.args ?? []), ...slot.meta.args, ...extra])
     if (unsafe) s.unsafe = true
+    if (isAlive(slot) && slot.runFeatures) s.features = slot.runFeatures
     if (slot.restarting) s.restarting = true
     if (slot.stopping) s.stopping = true
     if (slot.attention.value) s.attention = slot.attention.value
@@ -569,6 +572,7 @@ class DaemonImpl implements Daemon {
     slot.error = undefined
     slot.spawnedAt = new Date().toISOString()
     slot.runUnsafe = isUnsafe(plan.args)
+    slot.runFeatures = plan.features
     try {
       slot.pty = spawnPty(plan, {
         cols: slot.cols,

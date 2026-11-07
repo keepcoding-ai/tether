@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import type { AgentName, Binding, SlotMeta } from '../core/event.ts'
 import type { ProfileLaunch } from '../core/profile.ts'
 
@@ -13,6 +14,8 @@ export interface LaunchPlan {
   cwd: string
   /** The COMPLETE environment for the child (the adapter starts from process.env and cleans what it must). */
   env: Record<string, string>
+  /** The ids of the features this launch really got (set by DaemonExtensionHost.transformPlan; absent before it). */
+  features?: string[]
 }
 
 export interface PlanInput {
@@ -44,3 +47,6 @@ export interface AgentAdapter {
 /** Env vars the launcher sets for every slot (adapters add their own). */
 export const ENV_SLOT = 'TETHER_SLOT_ID'
 export const ENV_HOME = 'TETHER_HOME'
+/** The `tether` CLI as a script path (bin/tether.mjs): the skills run `node "$TETHER_CLI" ...` from any folder, since nothing puts `tether` on the agent's PATH. */
+export const ENV_CLI = 'TETHER_CLI'
+export const TETHER_CLI_PATH = resolve(import.meta.dirname ?? '.', '..', '..', 'bin', 'tether.mjs')

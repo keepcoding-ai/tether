@@ -42,8 +42,8 @@ describe('the bridge feature at launch', () => {
     home = tempHome()
     host = new DaemonExtensionHost({ home, log: m => logs.push(m), agents: new AgentRegistry(), extensions: daemonIndex })
     host.activate()
-    assert.deepEqual(host.activated, ['claude', 'soul', 'web-bridge'])
-    assert.deepEqual(host.features.map(f => [f.id, f.ext]), [['bridge', 'web-bridge']])
+    assert.deepEqual(host.activated, ['claude', 'soul', 'faults', 'web-bridge'])
+    assert.deepEqual(host.features.map(f => [f.id, f.ext]), [['faults', 'faults'], ['bridge', 'web-bridge']])
     // What the setup writes at start (bridge-home.ts), plus a pre-feature file it must remove.
     mkdirSync(join(home, 'mcp'), { recursive: true })
     writeFileSync(legacyMcpConfigPathOf(home), '{}')
@@ -126,11 +126,7 @@ describe('a static feature and the rules of provide', () => {
     const extensionsDir = join(home, 'exts')
     mkdirSync(join(extensionsDir, 'faults', 'share', 'skills', 'tether-faults'), { recursive: true })
     writeFileSync(join(extensionsDir, 'faults', 'share', 'skills', 'tether-faults', 'SKILL.md'), '---\nname: tether-faults\n---\n')
-    const faults: ExtensionEntry<TetherDaemon> = {
-      manifest: { id: 'faults', version: '0.0.1', displayName: 'Faults', hosts: ['daemon'], contributes: { features: { faults: { title: 'Falhas', default: false, share: 'share' } } } },
-      activate: () => [],
-    }
-    const host = new DaemonExtensionHost({ home, log: () => {}, agents: new AgentRegistry(), extensions: [...daemonIndex, faults], extensionsDir })
+    const host = new DaemonExtensionHost({ home, log: () => {}, agents: new AgentRegistry(), extensions: daemonIndex, extensionsDir })
     host.activate()
     writeMcpConfig(home, mcpConfigOf(join(home, 'bridge'), 'C:\\v\\b.mjs', 1))
     try {
@@ -166,7 +162,7 @@ describe('a static feature and the rules of provide', () => {
 
   test('a disabled extension declares nothing', () => {
     const home = tempHome()
-    const host = new DaemonExtensionHost({ home, log: () => {}, agents: new AgentRegistry(), extensions: daemonIndex, disabled: ['web-bridge'] })
+    const host = new DaemonExtensionHost({ home, log: () => {}, agents: new AgentRegistry(), extensions: daemonIndex, disabled: ['web-bridge', 'faults'] })
     host.activate()
     assert.deepEqual(host.features, [])
     const input = plan()

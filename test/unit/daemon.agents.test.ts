@@ -162,7 +162,7 @@ describe('tetherd with an unregistered agent', () => {
 
 describe('daemon extension host', () => {
   test('the committed index holds the built-in agents, claude then soul (slice 4), then web-bridge (F7 C2)', () => {
-    assert.deepEqual(daemonIndex.map((e) => e.manifest.id), ['claude', 'soul', 'web-bridge'])
+    assert.deepEqual(daemonIndex.map((e) => e.manifest.id), ['claude', 'soul', 'faults', 'web-bridge'])
   })
 
   test('an extension registers an agent, a launch middleware and a slot listener; dispose undoes them', async () => {
