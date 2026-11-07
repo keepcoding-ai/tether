@@ -9,6 +9,7 @@ import * as quickOpen from './quick-open/renderer.ts'
 import * as explorer from './explorer/renderer.ts'
 import * as keybindingsScreen from './keybindings-screen/renderer.ts'
 import * as settingsScreen from './settings-screen/renderer.ts'
+import * as faults from './faults/renderer.ts'
 import * as webBridge from './web-bridge/renderer.ts'
 
 export const extensions: readonly ExtensionEntry<TetherUi>[] = [
@@ -20,5 +21,6 @@ export const extensions: readonly ExtensionEntry<TetherUi>[] = [
   { manifest: explorer.manifest, activate: explorer.activate },
   { manifest: keybindingsScreen.manifest, activate: keybindingsScreen.activate },
   { manifest: settingsScreen.manifest, activate: settingsScreen.activate },
+  { manifest: faults.manifest, activate: faults.activate },
   { manifest: webBridge.manifest, activate: webBridge.activate },
 ]
