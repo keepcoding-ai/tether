@@ -307,6 +307,10 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     await page.evaluate(s => window.__tether.applyState(s), { ...dState, attention: 'done' } as SlotState)
     await page.waitForFunction(() => { const b = document.querySelector('#drawer-badge'); return !!b && !b.hidden && b.textContent === '1' && b.getAttribute('class')!.includes('done') })
     assert.deepEqual((await h.drawer(page)).attention, { done: 1, waiting: 0 })
+    // The count is the desks' badge (same component), not text in the label.
+    assert.equal(await page.locator('#btn-drawer').evaluate(el => [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim()), 'Gaveta')
+    assert.equal(await page.locator('#drawer-badge').evaluate(el => el.classList.contains('cnt') && el.classList.contains('desk-badge')), true)
+    if (process.env.TETHER_SHOT_BADGE) await page.screenshot({ path: process.env.TETHER_SHOT_BADGE, clip: { x: 0, y: 0, width: 1200, height: 60 } })
     await page.evaluate(s => window.__tether.applyState(s), { ...dState, attention: 'waiting' } as SlotState)
     await page.waitForFunction(() => document.querySelector('#drawer-badge')!.getAttribute('class')!.includes('waiting'))
     await page.evaluate(s => window.__tether.applyState(s), { ...dState, attention: undefined } as SlotState)

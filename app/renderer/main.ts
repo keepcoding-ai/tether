@@ -872,7 +872,7 @@ function renderDrawerButton(): void {
   const att = drawerAttention()
   const total = att.done + att.waiting
   badge.hidden = total === 0
-  badge.className = `drawer-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
+  badge.className = `cnt desk-badge drawer-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
   badge.textContent = String(total)
   btn.setAttribute('aria-expanded', String(drawer.isOpen))
   const n = drawer.desk.panels.length
