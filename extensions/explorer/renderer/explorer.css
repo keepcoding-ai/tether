@@ -29,6 +29,9 @@
   cursor: pointer; outline: none; user-select: none; white-space: nowrap;
 }
 .xp-root { height: 28px; gap: 4px; }
+/* The pad's floating "⋯" sits over the top-right corner (core styles.css, --pad-menu-room): the top row leaves it room. */
+.xp-roots > .xp-row:first-child { padding-right: max(6px, var(--pad-menu-room, 0px)); }
+.xp-notice { padding-right: max(8px, var(--pad-menu-room, 0px)); }
 .xp-row:hover { background: var(--bg-hover); }
 .xp-row.selected { background: var(--bg-3); }
 .xp-root.current { background: var(--bg-3); }

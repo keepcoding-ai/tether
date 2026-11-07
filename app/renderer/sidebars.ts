@@ -9,7 +9,7 @@
 // desks (desk-set.ts) and the closed drawer (drawer.ts). Moving a pad to the other side only changes its position. The
 // side bar itself (strip, the slot the pad covers, the sash) is in the flex row beside #dock, so an open pad takes its
 // width from the desks and a closed one gives it back.
-import type { PadType, PadView } from './ext-api.ts'
+import type { ContextMenuEntry, PadType, PadView } from './ext-api.ts'
 import { icon, type IconName } from './icons.ts'
 import {
   DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, openPadOn, padsOn, padToggleCommand, restorePad, setWidth, SIDES, sideOf,
@@ -27,8 +27,10 @@ export interface SideBarsHost {
   hint(commandId: string): string
   /** The person changed something of the side bars (a pad opened or closed, a width, a side, a pad's state): save soon. */
   onChange(): void
-  /** Right-click on a pad's icon, or its header's "⋯". */
+  /** Right-click on a pad's icon, or its header's "⋯" (floating, for a pad that absorbs its header). */
   onPadMenu(padId: string, x: number, y: number, opener: HTMLElement): void
+  /** The core's items of a pad's menu (PadHost.menuItems). */
+  padMenuItems(padId: string): ContextMenuEntry[]
   /** A pad that held the keyboard was hidden: give it back to the desks. */
   onFocusLost(): void
 }
@@ -40,6 +42,12 @@ interface Mounted {
   view: PadView
   shown: boolean
 }
+
+/**
+ * Header absorption (PadContribution.absorbsHeader): the wrapper carries `.absorbed` (no header row; the content starts
+ * at the top) and `.menu-hosted` while the view shows the pad's menu itself; without it the pad's "⋯" (`.pad-float`)
+ * floats in the top-right corner, so the pad's menu is always reachable.
+ */
 
 const STRIP = '.sb-strip'
 
@@ -148,6 +156,14 @@ export class SideBars {
 
   private pad(id: string): PadDescriptor | undefined { return this.host.pads().find(p => p.id === id) }
 
+  /** A pad's title as its header shows it: a desk pad carries the active desk's name ('Prancheta da mesa · Soul'). */
+  padTitle(padId: string, deskId?: string): string {
+    const pad = this.pad(padId)
+    if (!pad) return padId
+    const desk = pad.scope === 'desk' ? (deskId ?? this.host.activeDeskId()) : undefined
+    return desk ? `${pad.title} · ${this.host.deskName(desk)}` : pad.title
+  }
+
   private touch(id: string): void { this.mru = [id, ...this.mru.filter(x => x !== id)].slice(0, 16) }
 
   private apply(next: SideBarsLayout, focus: string | undefined): void {
@@ -214,7 +230,7 @@ export class SideBars {
     b.dataset.pad = pad.id
     b.setAttribute('aria-pressed', String(open))
     const hint = this.host.hint(padToggleCommand(pad.id))
-    b.title = `${pad.title}${hint ? ` (${hint})` : ''}: ${open ? 'fechar' : 'abrir'} · clique direito: mover`
+    b.title = `${this.padTitle(pad.id)}${hint ? ` (${hint})` : ''}: ${open ? 'fechar' : 'abrir'} · clique direito: mover`
     b.setAttribute('aria-label', pad.title)
     b.append(icon(pad.icon as IconName))
     b.addEventListener('mousedown', ev => ev.preventDefault()) // the keyboard moves only into the pad that opens
@@ -233,7 +249,7 @@ export class SideBars {
     const type = this.host.padType(pad.id)
     if (!type) return undefined
     const wrapper = document.createElement('section')
-    wrapper.className = 'pad'
+    wrapper.className = pad.absorbsHeader ? 'pad absorbed' : 'pad'
     wrapper.dataset.pad = pad.id
     if (deskId) wrapper.dataset.desk = deskId
     wrapper.dataset.side = sideOf(this.state, pad)
@@ -252,19 +268,33 @@ export class SideBars {
     more.className = 'ib pad-more'; more.type = 'button'; more.title = 'Mais ações da prancheta'; more.setAttribute('aria-label', 'Mais ações da prancheta')
     more.append(icon('dots-three'))
     more.addEventListener('click', ev => { const r = more.getBoundingClientRect(); ev.stopPropagation(); this.host.onPadMenu(pad.id, r.left, r.bottom + 4, more) })
-    const close = document.createElement('button')
-    close.className = 'ib pad-close'; close.type = 'button'; close.title = 'Fechar a prancheta'; close.setAttribute('aria-label', 'Fechar a prancheta')
-    close.append(icon('x'))
-    close.addEventListener('click', () => this.toggle(pad.id, false))
-    head.append(sp, more, close)
     const body = document.createElement('div')
     body.className = 'pad-body'
-    wrapper.append(head, body)
+    if (pad.absorbsHeader) {
+      // No header row: the "⋯" floats over the content's top-right corner (hidden while the view hosts the menu).
+      const float = document.createElement('div')
+      float.className = 'pad-float'
+      float.append(more)
+      wrapper.append(body, float)
+    } else {
+      const close = document.createElement('button')
+      close.className = 'ib pad-close'; close.type = 'button'; close.title = 'Fechar a prancheta'; close.setAttribute('aria-label', 'Fechar a prancheta')
+      close.append(icon('x'))
+      close.addEventListener('click', () => this.toggle(pad.id, false))
+      head.append(sp, more, close)
+      wrapper.append(head, body)
+    }
     this.layer.append(wrapper)
     const state = deskId === undefined ? this.state.pads[pad.id] : this.deskStates.get(deskId)?.[pad.id]
     let view: PadView
     try {
-      view = type.create({ padId: pad.id, ...(deskId ? { deskId } : {}), state, persist: () => this.host.onChange() })
+      view = type.create({
+        padId: pad.id, ...(deskId ? { deskId } : {}), state,
+        persist: () => this.host.onChange(),
+        title: () => this.padTitle(pad.id, deskId),
+        menuItems: () => this.host.padMenuItems(pad.id),
+        setMenuHosted: hosted => { wrapper.classList.toggle('menu-hosted', !!pad.absorbsHeader && hosted) },
+      })
     } catch (err) {
       console.error(`prancheta ${pad.id}: a extensão falhou ao criar a vista`, err)
       wrapper.remove()

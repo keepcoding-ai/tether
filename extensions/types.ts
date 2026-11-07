@@ -140,6 +140,13 @@ export interface PadContribution {
   scope: 'global' | 'desk'
   /** Its state is a frames layout (frames → panes): the core prunes it and lists its panes. */
   frames?: boolean
+  /**
+   * The view draws the pad's header itself (VS Code's view that contributes its own title bar): the core hides its header
+   * row, so the content gains that row. The pad's title goes to its icon's tooltip and the head of its menu; the pad's
+   * "⋯" floats in the content's top-right corner until the view says it shows the pad's menu itself
+   * (PadHost.setMenuHosted), and comes back whenever it does not (an empty pad never loses its menu).
+   */
+  absorbsHeader?: boolean
   /** Order on its strip (lower first). */
   order?: number
 }

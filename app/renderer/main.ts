@@ -363,7 +363,12 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
           return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
-        paneMenu: (id, x, y, opener) => { menuOpener = opener; showTabMenu(id, x, y) },
+        paneMenu: (id, x, y, opener) => {
+          menuOpener = opener
+          // A pad that absorbs its header: its frame's "⋯" is the pad's menu too (the pad's items after the pane's).
+          padSection = scope instanceof FramesPad && padRegistry.get(scope.padId)?.absorbsHeader ? scope.padId : undefined
+          try { showTabMenu(id, x, y) } finally { padSection = undefined }
+        },
         toggleDetails: id => togglePaneDetails(id),
         addTab: id => { newTabBeside(id) },
         canPreview: id => liveTypeOf(paneTypes, id)?.canPreviewSide?.(id) ?? false,
@@ -381,7 +386,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     onPanelsChange: () => {
       refreshClosedMenu(); renderStrip(); recomputeProjects()
       // A pad is never empty: its one frame shows the chooser ("O que abrir aqui?") when its last tab leaves.
-      if (scope instanceof FramesPad) queueMicrotask(() => { if (scope.reseedIfEmpty()) scheduleSave() })
+      if (scope instanceof FramesPad) queueMicrotask(() => { if (scope.reseedIfEmpty()) scheduleSave(); scope.syncMenuHosted() })
     },
     singleFrame: scope instanceof FramesPad,
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
@@ -431,6 +436,7 @@ function setupDock(): void {
     hint: id => commands.hint(id),
     onChange: () => scheduleSave(),
     onPadMenu: (id, x, y, opener) => showPadMenu(id, x, y, opener),
+    padMenuItems: id => padCoreItems(id).map((e): ContextMenuEntry => e === SEP ? 'sep' : e),
     onFocusLost: () => { const a = currentDesk().activePanel; if (a) focusPane(a.id) },
   })
   padRegistry.onDidChange(() => sidebars?.render())
@@ -439,21 +445,35 @@ function setupDock(): void {
 
 /** A pad's menu (right-click on its icon, its header's "⋯"): open or close it, move it to the other side bar, back to its default side. */
 function showPadMenu(id: string, x: number, y: number, opener?: HTMLElement): void {
+  const items = padMenuEntries(id)
+  if (items.length) showContextMenu(x, y, items, opener)
+}
+
+/** A pad's whole menu: its title as the heading, the core's items, then the view's own. */
+function padMenuEntries(id: string): MenuEntry[] {
+  const core = padCoreItems(id)
+  if (!core.length) return []
+  const items: MenuEntry[] = [{ heading: sidebars?.padTitle(id) ?? id }, ...core]
+  // The pad's own items (the explorer's "Seguir" and "Revelar" toggles) come after the core's.
+  const own = sidebars?.shownView(id)?.menu?.() ?? []
+  if (own.length) items.push(SEP, ...own.map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName }))
+  return items
+}
+
+/** The core's items of a pad's menu: open or close it, move it to the other side bar, back to its default side. */
+function padCoreItems(id: string): (MenuItem | typeof SEP)[] {
   const bars = sidebars
   const pad = padRegistry.get(id)
   const side = bars?.sideOf(id)
-  if (!bars || !pad || !side) return
+  if (!bars || !pad || !side) return []
   const open = bars.isOpen(id)
-  const items: MenuEntry[] = [
+  const items: (MenuItem | typeof SEP)[] = [
     { icon: open ? 'x' : (pad.icon as IconName), label: open ? `Fechar ${pad.title}` : `Abrir ${pad.title}`, run: () => bars.toggle(id) },
     SEP,
     { icon: side === 'left' ? 'arrow-line-right' : 'arrow-line-left', label: `Mover para a barra ${SIDE_LABEL[otherSide(side)]}`, run: () => bars.move(id) },
   ]
   if (bars.isMoved(id)) items.push({ icon: 'arrow-counter-clockwise', label: `Restaurar posição padrão (barra ${SIDE_LABEL[pad.defaultSide]})`, run: () => bars.restore(id) })
-  // The pad's own items (the explorer's "Seguir" and "Revelar" toggles) come after the core's.
-  const own = bars.shownView(id)?.menu?.() ?? []
-  if (own.length) items.push(SEP, ...own.map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName }))
-  showContextMenu(x, y, items, opener)
+  return items
 }
 
 /** "Ctrl+Shift+T" as <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>. */
@@ -1630,7 +1650,15 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
-type MenuEntry = MenuItem | typeof SEP
+/** A line naming what the items under it act on (a pad's title over its items); not an item. */
+interface MenuHeading { heading: string }
+type MenuEntry = MenuItem | MenuHeading | typeof SEP
+
+/**
+ * The pad whose items the next context menu appends (its title, then close, move…): set by the "⋯" of a frame inside a
+ * pad that absorbs its header, around the pane menu it opens, whichever pane type draws that menu.
+ */
+let padSection: string | undefined
 
 /** The button that opens the next context menu when the opener cannot be passed (the "⋯" goes through showTabMenu). */
 let menuOpener: HTMLElement | undefined
@@ -1666,8 +1694,10 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     else if (ev.key === 'End') { ev.preventDefault(); lis[lis.length - 1]?.focus() }
     else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); lis[i]!.click() }
   }
+  if (padSection) { const id = padSection; padSection = undefined; items = [...items, SEP, ...padMenuEntries(id)] }
   for (const item of items) {
     if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
+    if ('heading' in item) { const hd = document.createElement('li'); hd.className = 'hd'; hd.setAttribute('role', 'presentation'); hd.textContent = item.heading; menu.append(hd); continue }
     const li = document.createElement('li'); li.setAttribute('role', item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'); li.tabIndex = -1
     if (item.checked !== undefined) li.setAttribute('aria-checked', String(item.checked))
     if (item.danger) li.classList.add('danger')

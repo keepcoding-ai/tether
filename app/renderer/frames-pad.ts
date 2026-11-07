@@ -29,11 +29,13 @@ export class FramesPad implements PadView {
   private visible = false
   private disposing = false
   private readonly host: FramesPadHost
+  private readonly pad: PadHost
 
   constructor(pad: PadHost, host: FramesPadHost, theme: DockviewTheme) {
     this.padId = pad.padId
     this.deskId = pad.deskId
     this.host = host
+    this.pad = pad
     this.element = document.createElement('div')
     this.element.className = 'pad-frames'
     const el = document.createElement('div')
@@ -46,6 +48,15 @@ export class FramesPad implements PadView {
     const state: DrawerLayout | undefined = isDrawerLayout(pad.state) ? pad.state : undefined
     this.desk.fromJSON({ ...this.desk.meta, frames: (state ?? emptyDrawer()).frames, ...(state?.activeFrame ? { activeFrame: state.activeFrame } : {}) })
     if (!state) host.seed(this)
+    this.syncMenuHosted()
+  }
+
+  /**
+   * With a header absorbed, the frame's tab bar is the pad's header: its "⋯" carries the pad's items while there is a
+   * tab; an empty frame (no tab bar) lets the core float the pad's "⋯".
+   */
+  syncMenuHosted(): void {
+    if (!this.disposing) this.pad.setMenuHosted(this.desk.panels.length > 0)
   }
 
   get isVisible(): boolean { return this.visible }

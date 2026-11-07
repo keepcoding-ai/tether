@@ -18,7 +18,7 @@ export const manifest: ExtensionManifest = {
   optional: true,
   contributes: {
     pads: [
-      { id: 'explorer.files', title: 'Explorador', icon: 'files', defaultSide: 'left', scope: 'global', order: 10 },
+      { id: 'explorer.files', title: 'Explorador', icon: 'files', defaultSide: 'left', scope: 'global', absorbsHeader: true, order: 10 },
     ],
     settings: {
       follow: { type: 'boolean', default: true, title: 'Seguir o agente ativo no explorador' },

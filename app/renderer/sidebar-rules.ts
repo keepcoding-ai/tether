@@ -45,6 +45,8 @@ export interface PadDescriptor {
   scope: 'global' | 'desk'
   /** Its state is a frames layout (frames → panes): the core prunes it and lists its panes. */
   frames?: boolean
+  /** The view draws the pad's header itself (extensions/types.ts PadContribution.absorbsHeader). */
+  absorbsHeader?: boolean
   /** Order on its strip (lower first); ties keep the registration order. */
   order?: number
   /** The extension that declared it. */

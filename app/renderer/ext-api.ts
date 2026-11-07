@@ -78,6 +78,15 @@ export interface PadHost {
   readonly state: unknown
   /** The view's state changed: layout.json is written soon (it calls `serialize`). */
   persist(): void
+  /** The pad's title as its header shows it ('Prancheta da mesa · Soul': a desk pad carries its desk's name). */
+  title(): string
+  /** The core's items of the pad's menu (close, move to the other side bar, restore): for a view that merges them into its own menu. */
+  menuItems(): ContextMenuEntry[]
+  /**
+   * A pad declared `absorbsHeader`: true while the view shows the pad's menu itself (in its own "⋯", with `menuItems`),
+   * false (the default) to have the core float the pad's "⋯" in the top-right corner.
+   */
+  setMenuHosted(hosted: boolean): void
 }
 
 export interface PadView {
