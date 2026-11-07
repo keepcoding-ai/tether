@@ -122,6 +122,8 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
     }
     await waitPanel(page, id, t => !TRUST.test(t) && hasPrompt(t) && !busy(t), { quietMs: 1_500, timeout: 90_000, what: 'idle prompt' })
     assert.equal((await slotOf(page, id))?.attention, undefined, 'no badge before any turn')
+    // The turn (the Faults screen's "is this agent free?"): Claude's start report puts it at an idle prompt.
+    await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.turn === 'idle', id, { timeout: 10_000 })
 
     // ---- type the prompt, then go to a new desk and send Enter from there ----
     const prompt = 'responda apenas: tamarindo'
@@ -130,6 +132,9 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
       await page.keyboard.type(prompt, { delay: 10 })
       try { await waitPanel(page, id, t => inputText(t).includes(prompt), { timeout: 5_000, what: 'echo' }); break } catch (e) { if (i === 3) throw e }
     }
+    // Text sitting in the prompt: not known to be free any more (never guessed idle).
+    await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.turn === undefined, id, { timeout: 5_000 })
+    const busySeen = page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.turn === 'busy', id, { timeout: 120_000, polling: 50 })
     await page.keyboard.press('Control+Shift+N')
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
     for (let i = 1; ; i++) {
@@ -139,6 +144,8 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
 
     // ---- the turn ends while desk 1 is hidden: badge on desk 1, dot on the tab, amber tray ----
     await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.attention === 'done', id, { timeout: 120_000 })
+    await busySeen // UserPromptSubmit said the turn began...
+    assert.equal((await slotOf(page, id))?.turn, 'idle', '...and Stop says it is free again')
     assert.match(await text(page, id), /tamarindo/i)
     await page.waitForSelector('#desk-switch .seg[data-desk="desk-1"] .desk-badge.done')
     assert.equal(await page.locator('#desk-switch .seg[data-desk="desk-1"] .desk-badge').textContent(), '1')
