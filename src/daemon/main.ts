@@ -11,7 +11,8 @@ import { pingDaemon } from './client.ts'
 import { disabledExtensions } from '../agents/load.ts'
 import { DaemonExtensionHost } from './ext-host.ts'
 import { createGuard } from './guard.ts'
-import { record } from '../core/faults.ts'
+import { addSecretSource, record } from '../core/faults.ts'
+import { profileEnvSecrets } from '../core/faults-secrets.ts'
 import { pipePath } from './protocol.ts'
 import { startDaemon, type Daemon } from './server.ts'
 
@@ -104,6 +105,7 @@ async function main(): Promise<void> {
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) {
     process.on(sig, () => shutdown(`signal ${sig}`))
   }
+  addSecretSource(() => profileEnvSecrets(home))
   const guard = createGuard({
     log,
     healthy: () => daemon.listening(),

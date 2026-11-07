@@ -30,6 +30,8 @@ import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
 import { isValidSetting, readExtensionsSettings, settingPath, valueAt, writeExtensionsSettings } from '../shared/vscode-configuration-registry.ts'
 import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { extensions as mainExtensions } from '../../extensions/index.main.ts'
+import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts'
+import { RENDERER_ONLY_EXTENSION_IDS } from '../shared/faults-ext.ts'
 import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
@@ -68,7 +70,7 @@ const replacedPid = relaunchedFrom(process.argv)
 /** What this launch decides, on disk (<home>/tether-app.log) and on stderr: a Start Menu launch has no console. */
 const appLog = createAppLog(join(home, 'tether-app.log'))
 installMainFaults({ log: appLog, hidden })
-registerFaultsIpc()
+registerFaultsIpc({ knownExtensions: () => new Set([...mainExtensions, ...daemonExtensions].map(e => e.manifest.id).concat(RENDERER_ONLY_EXTENSION_IDS)) })
 appLog(`start: ppid ${process.ppid}, exec ${process.execPath}, cwd ${process.cwd()}, args ${JSON.stringify(process.argv.slice(1))}${replacedPid ? `, replaces pid ${replacedPid} (Reiniciar o app)` : ''}`)
 
 let daemon: DaemonClient | undefined

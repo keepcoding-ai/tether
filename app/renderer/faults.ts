@@ -4,14 +4,28 @@
 // throw: a reporter that fails is silent.
 type Context = Record<string, string | number | boolean>
 
-function details(e: unknown): { message: string; stack: string } {
+/**
+ * What a thrown value is reported as. Never its content: a rejection reason can be any object (a response, a config, a
+ * credentials bag) and serializing it would copy whatever it holds into the registry. Errors and strings are the
+ * message itself; anything else is described by its type, and a plain object by its key names only.
+ */
+export function describeReason(e: unknown): { message: string; stack: string } {
   if (e instanceof Error) return { message: e.message, stack: e.stack ?? '' }
-  return { message: typeof e === 'string' ? e : (() => { try { return JSON.stringify(e) ?? String(e) } catch { return String(e) } })(), stack: '' }
+  if (typeof e === 'string') return { message: e, stack: '' }
+  if (e === null || e === undefined || typeof e === 'number' || typeof e === 'boolean') return { message: String(e), stack: '' }
+  if (typeof e !== 'object') return { message: `valor não-Error (${typeof e})`, stack: '' }
+  try {
+    if (Array.isArray(e)) return { message: `valor não-Error (Array de ${e.length})`, stack: '' }
+    const proto = Object.getPrototypeOf(e) as { constructor?: { name?: unknown } } | null
+    const name = proto === null ? 'Object' : typeof proto.constructor?.name === 'string' && proto.constructor.name ? proto.constructor.name.slice(0, 60) : 'Object'
+    const keys = Object.keys(e).slice(0, 20).map(k => k.slice(0, 40))
+    return { message: `valor não-Error (${name}${keys.length ? `, chaves: ${keys.join(', ')}` : ''})`, stack: '' }
+  } catch { return { message: 'valor não-Error (objeto ilegível)', stack: '' } }
 }
 
 export function reportFault(f: { kind: 'uncaught' | 'rejection'; error: unknown; ext?: string; context?: Context }): void {
   try {
-    const { message, stack } = details(f.error)
+    const { message, stack } = describeReason(f.error)
     window.tether.reportFault({ kind: f.kind, message, stack, ...(f.ext ? { ext: f.ext } : {}), ...(f.context ? { context: f.context } : {}) })
   } catch { /* see above */ }
 }
