@@ -302,7 +302,8 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     // Pad closed (icon strip showing): the card is flush with the strip, so the "+" sits inward of the border (intentional, 92bf90d):
     // fully inside the viewport, clear of the icon column, and near the card's outer border. With a pad open it stays centred on the border.
     const strip = await page.evaluate(() => {
-      const el = document.querySelector('#sidebar-right')
+      type El = { hasAttribute(n: string): boolean; classList: { contains(c: string): boolean }; getBoundingClientRect(): { left: number; width: number } }
+      const el = (globalThis as unknown as { document: { querySelector(s: string): El | null } }).document.querySelector('#sidebar-right')
       const r = el && !el.hasAttribute('hidden') ? el.getBoundingClientRect() : undefined
       return r && r.width > 0 ? { left: r.left, open: el!.classList.contains('open') } : undefined
     })
