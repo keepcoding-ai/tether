@@ -4,12 +4,16 @@
 // launch (new session or resume) applies the profile as it is NOW, so an edit takes effect on the next start.
 // Validation refuses whatever tether itself puts on the command line (session choice, settings, fork) and the
 // env vars that carry the slot's identity. Reads are tolerant: a corrupt file is copied aside, never lost.
+// A profile may switch features (src/core/features.ts) on or off for its launches (`features`, optional: the file stays
+// v:1 and an older reader ignores the field); an absent id inherits settings.json `agents.features.<id>`.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defaultShell } from '../agents/shell.ts'
 import type { AgentName, SlotMeta } from './event.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import '../agents/load.ts'
+import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts'
+import { declaredFeatures, FEATURE_ID_RE, isFeatureMap } from './features.ts'
 
 export type ProfileAgent = AgentName | 'shell'
 
@@ -34,6 +38,8 @@ export interface Profile {
   shell?: ShellCommand
   /** The profile new slots of this agent get when none is chosen (at most one per agent). */
   default?: boolean
+  /** Features switched on (true) or off (false) for this profile's launches; an id left out inherits the general switch. */
+  features?: Record<string, boolean>
 }
 
 /** What a client sends to create or edit a profile: the id is optional (absent = new profile, derived from the name). */
@@ -118,6 +124,7 @@ export function isProfile(x: unknown): x is Profile {
   if (x.cwd !== undefined && typeof x.cwd !== 'string') return false
   if (x.default !== undefined && typeof x.default !== 'boolean') return false
   if (x.shell !== undefined && !(isObject(x.shell) && typeof x.shell.command === 'string' && isStringArray(x.shell.args))) return false
+  if (x.features !== undefined && !isFeatureMap(x.features)) return false
   return true
 }
 
@@ -247,6 +254,18 @@ export function validateProfile(p: ProfileInput): Validation {
     }
   }
   if (p.default !== undefined && typeof p.default !== 'boolean') errors.push('default precisa ser true ou false')
+  if (p.features !== undefined) {
+    if (!isFeatureMap(p.features)) errors.push('features precisa ser um mapa de feature para true ou false')
+    else {
+      if (p.agent === 'shell' && Object.keys(p.features).length) errors.push('features só vale para perfis de agente (um shell não recebe features)')
+      // Declared by any daemon extension, on or off: a profile keeps the switch of a feature whose extension is off.
+      const known = new Set(declaredFeatures(daemonExtensions.map((e) => e.manifest)).features.map((f) => f.id))
+      for (const id of Object.keys(p.features)) {
+        if (!FEATURE_ID_RE.test(id)) errors.push(`feature inválida: ${JSON.stringify(id)}`)
+        else if (!known.has(id)) warnings.push(`a feature ${id} não é declarada por nenhuma extensão; o perfil a guarda, sem efeito`)
+      }
+    }
+  }
   return { errors, warnings }
 }
 
@@ -276,6 +295,7 @@ function normalize(p: ProfileInput, id: string): Profile {
   if (p.cwd?.trim()) out.cwd = p.cwd.trim()
   if (p.shell && p.agent === 'shell') out.shell = { command: p.shell.command.trim(), args: [...p.shell.args] }
   if (p.default) out.default = true
+  if (p.features && Object.keys(p.features).length) out.features = { ...p.features }
   return out
 }
 
