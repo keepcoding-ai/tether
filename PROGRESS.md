@@ -977,3 +977,8 @@ Decisões para validar (Foco de Mesa):
 - **Prancheta nunca vazia**: fechar o seletor vazio da prancheta faz nascer outro. Fundir quadros antigos perde a divisão interna de cada quadro extra (vira um grupo só, à direita).
 - **Risco**: `app.frame-drag` passo 6 intermitente (o soltar no centro do seletor da prancheta estreita às vezes vira grupo novo, e o arraste de volta à mesa não move). Não reproduzido no `app.foco-mesa`; investigar se persistir.
 - O commit `0444153` é o estado intermediário (antes da prancheta de um quadro); só o estado final foi provado.
+
+## Gaveta neutra + Foco de Mesa (merge) e espessura unica
+
+- A gaveta e um quadro de teclado no Foco de Mesa (nunca recebe `.focused`): seu quadro com foco mostra o anel neutro `--kbd-ring`; `--drawer-line` pinta a linha sob a barra superior com a gaveta aberta (so o `#workbench::before` e sobrescrito, entao a aura da mesa segue na cor da mesa atras da gaveta) e a cor do escopo Gaveta no dialogo de mover.
+- `--desk-line-width` (2px) e a espessura unica da linha de topo, da borda na guia (mesa) e do anel neutro (`.frame.kbd-focused`, agora `outline` de mesma largura, sem mexer no layout).

@@ -26,6 +26,8 @@
   --gap: 8px;
   --frame-radius: 10px;
   --drawer-inset: 16px;
+  /* One thickness for every focus signal: the colour line under the toolbar, the folder border of the focused frame and the neutral ring of a pad or the drawer. */
+  --desk-line-width: 2px;
   /* The drawer's colour: neutral, no hue, inverted between themes (#d0d0d0 on dark: 10.8:1 on the frame, 11.9:1 on the desk; #3d3d3d on light: 10.5:1 and 8.9:1). */
   --drawer-line: #d0d0d0;
   --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .3), 0 12px 28px rgba(0, 0, 0, .45), 0 32px 72px rgba(0, 0, 0, .55);
@@ -175,7 +177,7 @@ body { display: flex; flex-direction: column; }
 .status-pop { white-space: normal; min-width: 240px; max-width: 360px; }
 
 /* The desk colour line: 2 px under the toolbar across the whole window (over the side bars), in the active desk's colour (settings ui.deskLine). */
-body.desk-line #workbench::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 5; pointer-events: none; background: var(--desk-line-color, transparent); }
+body.desk-line #workbench::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: var(--desk-line-width); z-index: 5; pointer-events: none; background: var(--desk-line-color, transparent); }
 
 button {
   background: var(--bg-3);
@@ -1310,19 +1312,19 @@ body.drawer-open.desk-line #workbench::before { background: var(--drawer-line); 
    Tab: top, left and right edges (inset shadow, so it follows the rounded top corners). Tab strip: its bottom edge, which
    the active tab hides with its own opaque background (that is the open side of the folder). Content: left, right and
    bottom edges, a ::after above the terminal. The strip's action buttons and the other tabs stay outside. */
-body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-tabs-and-actions-container { box-shadow: inset 0 -2px 0 var(--desk-line-color, transparent); }
+body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-tabs-and-actions-container { box-shadow: inset 0 calc(-1 * var(--desk-line-width)) 0 var(--desk-line-color, transparent); }
 body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
   border-radius: 8px 8px 0 0;
-  box-shadow: inset 0 2px 0 var(--desk-line-color, transparent), inset 2px 0 0 var(--desk-line-color, transparent), inset -2px 0 0 var(--desk-line-color, transparent);
+  box-shadow: inset 0 var(--desk-line-width) 0 var(--desk-line-color, transparent), inset var(--desk-line-width) 0 0 var(--desk-line-color, transparent), inset calc(-1 * var(--desk-line-width)) 0 0 var(--desk-line-color, transparent);
 }
 body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-content-container { position: relative; }
 body.tab-border .frame.focused .dv-groupview.dv-active-group > .dv-content-container::after {
   content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 0 0 calc(var(--frame-radius) - 1px) calc(var(--frame-radius) - 1px);
-  box-shadow: inset 2px 0 0 var(--desk-line-color, transparent), inset -2px 0 0 var(--desk-line-color, transparent), inset 0 -2px 0 var(--desk-line-color, transparent);
+  box-shadow: inset var(--desk-line-width) 0 0 var(--desk-line-color, transparent), inset calc(-1 * var(--desk-line-width)) 0 0 var(--desk-line-color, transparent), inset 0 calc(-1 * var(--desk-line-width)) 0 var(--desk-line-color, transparent);
 }
 /* Foco de Mesa: `.focused` is only ever a desk's frame (the open drawer and a pad with the keyboard never take it). The
    frame of a pad or of the drawer that has the keyboard gets a discreet neutral outline (--kbd-ring), never the desk colour. */
-.frame.kbd-focused > .frame-dock { border-color: var(--kbd-ring); }
+.frame.kbd-focused > .frame-dock { outline: var(--desk-line-width) solid var(--kbd-ring); outline-offset: calc(-1 * var(--desk-line-width)); }
 
 /* Dim: a veil of the desk background over frames without the focus (tabs included), so it dims toward the surface in
    both themes. Above the frame card, below the edge "+" (40) and every overlay. */
