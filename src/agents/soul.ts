@@ -19,6 +19,11 @@
 //   5. Elsewhere, or when nothing is found: the bare `soul` (spawn resolves it).
 // Whichever node the command ends up with runs as <home>/bin/tether-soul.exe (core/exe.ts): a panel of the
 // soul survives a "kill every node.exe" and shows its own name in the Task Manager.
+//
+// The features of a launch (src/daemon/share.ts, through src/agents/soul-share.ts) reach the soul as one more shared
+// folder: `-S <folder>` (soul-cli's core option, repeatable). A typed -S makes the soul ignore SOUL_CLI_SHARED_FOLDERS,
+// so that list, when set and no -S was typed, is spelled out as -S first: it keeps its precedence, the composed folder
+// comes last (searched last). It goes before a `--`, after which every word is the prompt.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
@@ -31,6 +36,20 @@ import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput 
 
 export const ENV_SOUL_CMD = 'TETHER_SOUL_CMD'
 export const ENV_SOUL_REPORT = 'SOUL_SESSION_REPORT'
+export const ENV_SOUL_SHARED = 'SOUL_CLI_SHARED_FOLDERS'
+export const SHARED_FOLDER_FLAG = '-S'
+const SHARED_FLAGS = new Set(['-S', '--shared-folder'])
+
+/** `plan` with `-S <shareDir>` (a copy): before a `--`, after the shared folders the env listed when no -S was typed. */
+export function withSharedFolder(plan: LaunchPlan, shareDir: string, platform: NodeJS.Platform = process.platform): LaunchPlan {
+  const end = plan.args.indexOf('--')
+  const head = end < 0 ? plan.args : plan.args.slice(0, end)
+  const tail = end < 0 ? [] : plan.args.slice(end)
+  const typed = head.some(a => SHARED_FLAGS.has(a) || a.startsWith('--shared-folder='))
+  const fromEnv = typed ? [] : (plan.env[ENV_SOUL_SHARED] ?? '').split(platform === 'win32' ? ';' : ':').map(s => s.trim()).filter(Boolean)
+  const add = [...fromEnv, shareDir].flatMap(dir => [SHARED_FOLDER_FLAG, dir])
+  return { ...plan, args: [...head, ...add, ...tail] }
+}
 
 export interface Command {
   command: string

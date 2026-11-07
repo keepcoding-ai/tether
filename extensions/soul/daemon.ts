@@ -3,6 +3,7 @@
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { withMcpConfigFlag } from '../../src/agents/mcp.ts'
 import { soulAdapter } from '../../src/agents/soul.ts'
+import { withSoulShare } from '../../src/agents/soul-share.ts'
 import type { AgentContribution, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { probeSoul } from '../../src/doctor.ts'
 export { manifest } from './manifest.ts'
@@ -25,6 +26,9 @@ export const soulAgent: AgentContribution = {
   envArgsVar: 'TETHER_SOUL_ARGS',
   // `soul --mcp-config <file|json>` (repeatable; the servers run in-process, so a remote session over -H has none).
   mcp: { inject: withMcpConfigFlag },
+  // The composed features (src/agents/soul-share.ts): the skills as one more shared folder (`-S <share>/soul`), the MCP
+  // servers as `--mcp-config <share>/soul.mcp.json` (soul-cli gates stdio servers that come from an mcps/ folder).
+  share: { inject: (plan, dir) => withSoulShare(plan, dir) },
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {

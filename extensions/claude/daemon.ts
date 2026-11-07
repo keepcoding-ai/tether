@@ -2,6 +2,7 @@
 // The adapter's code stays in src/agents/claude.ts (tests and the e2e read its transcript helpers from there).
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { claudeAdapter } from '../../src/agents/claude.ts'
+import { withClaudePlugin } from '../../src/agents/claude-plugin.ts'
 import { withMcpConfigFlag } from '../../src/agents/mcp.ts'
 import { UNSAFE_ARG } from '../../src/core/profile.ts'
 import type { AgentContribution, TetherDaemon } from '../../src/daemon/ext-api.ts'
@@ -31,6 +32,8 @@ export const claudeAgent: AgentContribution = {
   envArgsVar: 'TETHER_CLAUDE_ARGS',
   // `claude --mcp-config <file>`: added to the project's own .mcp.json servers (the default; --strict-mcp-config would drop them).
   mcp: { inject: withMcpConfigFlag },
+  // The composed features become a session-only plugin (src/agents/claude-plugin.ts): `--plugin-dir <share>/claude-plugin`.
+  share: { inject: withClaudePlugin },
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {
