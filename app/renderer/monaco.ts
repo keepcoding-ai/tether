@@ -1,8 +1,10 @@
 // Monaco (the VS Code editor) for the note tab, bundled by esbuild and served offline (app/build.mjs):
 //   - the editor API plus the features a markdown note uses (multi-cursor and column selection, line
 //     operations, find/replace with regex, folding, minimap, smart select, cursor undo, links, sticky scroll…);
-//     the language-server features (suggest, rename, code lens, parameter hints…) stay out, as does Monaco's
+//     suggest is in for the JSON language service (settings.json completion; the note editor keeps it off for the other
+//     languages); the other language-server features (rename, code lens, parameter hints…) stay out, as does Monaco's
 //     own F1 palette: the app's palette (Ctrl+Shift+P) lists the editor's actions when a note has the focus;
+//   - the JSON language service (validation + completion against the settings.json schema), worker app/dist/json.worker.js;
 //   - the markdown language definition (Monarch tokenizer: headings, emphasis, code, links), plus the Monarch
 //     grammars of the common file types Quick Open opens (ts/js/json/css/html/yaml/ps1/sh/py/ini/xml/bat);
 //   - the editor web worker (word-based features, link detection, diff) as app/dist/editor.worker.js;
@@ -37,6 +39,10 @@ import 'monaco-editor/features/sectionHeaders/register.js'
 import 'monaco-editor/features/smartSelect/register.js'
 import 'monaco-editor/features/snippet/register.js'
 import 'monaco-editor/features/stickyScroll/register.js'
+import 'monaco-editor/editor/contrib/suggest/browser/suggestController.js'
+// vs/language/json pulls in Monaco's other editor contributions (codelens, drop/paste…); these register the services they ask for.
+import 'monaco-editor/editor/contrib/codelens/browser/codeLensCache.js'
+import 'monaco-editor/editor/common/services/treeViewsDndService.js'
 import 'monaco-editor/features/toggleTabFocusMode/register.js'
 import 'monaco-editor/features/tokenization/register.js'
 import 'monaco-editor/features/unicodeHighlighter/register.js'
@@ -56,6 +62,8 @@ import 'monaco-editor/languages/definitions/python/register.js'
 import 'monaco-editor/languages/definitions/ini/register.js'
 import 'monaco-editor/languages/definitions/xml/register.js'
 import 'monaco-editor/languages/definitions/bat/register.js'
+import { jsonDefaults } from 'monaco-editor/language/json/monaco.contribution.js'
+import { SETTINGS_SCHEMA_URI } from '../shared/settings-schema.ts'
 import type { ColorScheme } from '../shared/theme.ts'
 
 export { monaco }
@@ -65,33 +73,30 @@ export type ViewState = monaco.editor.ICodeEditorViewState
 // The worker is a sibling of the renderer bundle (app/dist/editor.worker.js, classic script). Same origin
 // (file:), so the page's CSP (default-src 'self') admits it; Monaco falls back to the main thread if it fails.
 ;(globalThis as { MonacoEnvironment?: unknown }).MonacoEnvironment = {
-  getWorker: () => new Worker(new URL('./editor.worker.js', import.meta.url)),
+  getWorker: (_id: string, label: string) => new Worker(new URL(label === 'json' ? './json.worker.js' : './editor.worker.js', import.meta.url)),
 }
 
-// Files opened by Quick Open get the language of their extension (Monaco picks it from the model's URI). Only
-// Monarch tokenizers (colouring, brackets, comments), no language services or workers. Monaco ships no Monarch
-// grammar for JSON (its JSON support is a language service), so a small one is declared here.
-monaco.languages.register({ id: 'json', extensions: ['.json', '.jsonc', '.json5', '.code-workspace', '.babelrc', '.eslintrc'], filenames: ['.prettierrc'], aliases: ['JSON', 'json'], mimetypes: ['application/json'] })
-monaco.languages.setLanguageConfiguration('json', {
-  comments: { lineComment: '//', blockComment: ['/*', '*/'] },
-  brackets: [['{', '}'], ['[', ']']],
-  autoClosingPairs: [{ open: '{', close: '}' }, { open: '[', close: ']' }, { open: '"', close: '"', notIn: ['string'] }],
-})
-monaco.languages.setMonarchTokensProvider('json', {
-  tokenizer: {
-    root: [
-      [/"(?:[^"\\]|\\.)*"(?=\s*:)/, 'type'],
-      [/"(?:[^"\\]|\\.)*"/, 'string'],
-      [/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/, 'number'],
-      [/\b(?:true|false|null)\b/, 'keyword'],
-      [/\/\/.*$/, 'comment'],
-      [/\/\*/, 'comment', '@comment'],
-      [/[{}[\]]/, '@brackets'],
-      [/[,:]/, 'delimiter'],
-    ],
-    comment: [[/[^/*]+/, 'comment'], [/\*\//, 'comment', '@pop'], [/[/*]/, 'comment']],
-  },
-})
+// Files opened by Quick Open get the language of their extension (Monaco picks it from the model's URI). The other
+// languages are Monarch tokenizers only (colouring, brackets, comments). JSON is Monaco's language service
+// (vs/language/json: tokens, comments/brackets configuration, validation, completion; its worker is
+// app/dist/json.worker.js), which registers the `json` id itself; the extra extensions below are additive.
+monaco.languages.register({ id: 'json', extensions: ['.jsonc', '.json5', '.code-workspace'], filenames: ['.prettierrc'] })
+
+/**
+ * Hands the JSON language service the schema of the user's settings.json (app/shared/settings-schema.ts): that file alone
+ * (fileMatch is its URI) gets validation, completion and hovers; other .json files stay plain. Comments are allowed and
+ * trailing commas ignored, the settings-file behaviour of VS Code (the readers parse with jsonc-parser). Called again
+ * whenever the registry changes.
+ */
+export function setSettingsSchema(filePath: string, schema: object): void {
+  jsonDefaults.setDiagnosticsOptions({
+    validate: true,
+    allowComments: true,
+    trailingCommas: 'ignore',
+    schemaValidation: 'error',
+    schemas: [{ uri: SETTINGS_SCHEMA_URI, fileMatch: [monaco.Uri.file(filePath).toString(true)], schema }],
+  })
+}
 
 /**
  * Monaco caches the width of a character per font key. An editor created before its web font loaded cached the

@@ -212,6 +212,10 @@ export class NotePanel implements IContentRenderer {
       insertSpaces: true,
     })
     const editor = this.editor
+    // Completion is on for JSON only (the language service completes settings.json from its schema); notes and other files keep it off.
+    if (this.model.getLanguageId() === 'json') {
+      editor.updateOptions({ quickSuggestions: { strings: true, other: true, comments: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on' })
+    }
     // A wheel turn is the person taking over the scroll: the saved view stops being re-applied.
     this.editorHost.addEventListener('wheel', () => { this.pendingView = undefined }, { passive: true })
     // VS Code's Alt+Z, which Monaco alone does not ship.

@@ -10,6 +10,7 @@
 //   renderer.css  the stylesheets Monaco's modules import (esbuild gathers CSS imported from JS into a sibling file);
 //                 codicon.ttf (its icon font) is copied next to it
 //   editor.worker.js  Monaco's editor web worker (classic script; app/renderer/monaco.ts points MonacoEnvironment at it)
+//   json.worker.js  Monaco's JSON language service worker (settings.json schema validation and completion; same pointing)
 //   dialog.js     browser bundle (ESM) of the standalone dialog window (shown before the main window exists)
 //   tether.ico/icns/png the app icon (window, taskbar, Start Menu shortcut, Tether.app bundle)
 //   tray.png, tray-active.png, tray-attention.png  the tray icon (32 px): plain, green dot while an agent runs, amber dot when one finished or waits for you
@@ -54,6 +55,7 @@ await Promise.all([
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-shard-worker.ts')], outfile: join(out, 'file-index-shard-worker.cjs') }),
   build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'main.ts')], outfile: join(out, 'renderer.js') }),
   build({ ...common, platform: 'browser', format: 'iife', entryPoints: [join(here, '..', 'node_modules', 'monaco-editor', 'esm', 'vs', 'editor', 'editor.worker.js')], outfile: join(out, 'editor.worker.js') }),
+  build({ ...common, platform: 'browser', format: 'iife', entryPoints: [join(here, '..', 'node_modules', 'monaco-editor', 'esm', 'vs', 'language', 'json', 'json.worker.js')], outfile: join(out, 'json.worker.js') }),
   build({ ...common, ...browser, entryPoints: [join(here, 'renderer', 'dialog-window.ts')], outfile: join(out, 'dialog.js') }),
 ])
 console.log('app build ok → app/dist')

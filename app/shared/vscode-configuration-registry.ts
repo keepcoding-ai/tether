@@ -99,13 +99,23 @@ const fullKey = (prefix: string, key: string): string => (prefix ? `${prefix}.${
 
 export class ConfigurationRegistry {
   private readonly nodes = new Map<string, ConfigurationNode>()
+  private readonly listeners = new Set<() => void>()
+
+  /** VS Code's onDidSchemaChange: fires after a node is registered or taken back (the JSON schema of settings.json follows it). */
+  onDidChange(listener: () => void): IDisposable {
+    this.listeners.add(listener)
+    return toDisposable(() => { this.listeners.delete(listener) })
+  }
+
+  private fire(): void { for (const l of [...this.listeners]) l() }
 
   registerConfiguration(node: ConfigurationNode): IDisposable {
     if (this.nodes.has(node.id)) throw new Error(`configurações duplicadas: ${node.id}`)
     const taken = this.getConfigurationProperties()
     for (const k of Object.keys(node.properties)) if (fullKey(prefixOf(node), k) in taken) throw new Error(`configuração duplicada: ${fullKey(prefixOf(node), k)}`)
     this.nodes.set(node.id, node)
-    return toDisposable(() => { if (this.nodes.get(node.id) === node) this.nodes.delete(node.id) })
+    this.fire()
+    return toDisposable(() => { if (this.nodes.get(node.id) === node) { this.nodes.delete(node.id); this.fire() } })
   }
 
   /** Every property by its full key (the storage path). */

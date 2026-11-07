@@ -56,6 +56,9 @@ import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
 import { DisposableStore, toDisposable, type IDisposable } from '../shared/vscode-lifecycle.ts'
 import { uiIpc } from '../shared/ext-ipc.ts'
+import { CORE_SETTINGS } from '../shared/core-settings.ts'
+import { generateSettingsSchema } from '../shared/settings-schema.ts'
+import { monaco, setSettingsSchema } from './monaco.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
@@ -2780,6 +2783,8 @@ function setupTestHooks(): void {
     activeFrameId: () => desks.activeFrame?.id,
     frameOf: slotId => desks.frameOf(slotId)?.id,
     panelIds: () => desks.panels.map(p => p.id),
+    /** The JSON language service's diagnostics of an open file (Monaco markers; severity 8 error, 4 warning). */
+    modelMarkers: (path: string) => monaco.editor.getModelMarkers({ resource: monaco.Uri.file(path) }).map(m => ({ severity: m.severity, message: m.message, line: m.startLineNumber })),
     activeId: () => desks.activePanel?.id,
     currentPane: () => currentDesk().activePanel?.id,
     slots: () => [...slots.values()],
@@ -2992,6 +2997,13 @@ const extSettingListeners = new Map<string, Set<(value: SettingValue) => void>>(
 const menuRegistry = coreMenuRegistry()
 let rendererActivation: { active: string[]; disabled: string[]; failed: { id: string; error: string }[] } = { active: [], disabled: [], failed: [] }
 
+/** The JSON schema of the user's settings.json for the Monaco editor (app/shared/settings-schema.ts): re-generated whenever the registry changes. */
+let settingsFilePath: string | undefined
+function syncSettingsSchema(): void {
+  const push = (path: string): void => setSettingsSchema(path, generateSettingsSchema([CORE_SETTINGS, ...configuration.getConfigurationNodes()]))
+  if (settingsFilePath) push(settingsFilePath)
+  else void window.tether.settingsFile().then(f => { settingsFilePath = f.path; push(f.path) }, () => {})
+}
 function onExtSetting(change: { id: string; key: string; value: SettingValue }): void {
   extSettings = withSetting(extSettings, change.id, change.key, change.value)
   for (const l of extSettingListeners.get(`${change.id}.${change.key}`) ?? []) l(configuration.read(extSettings, change.id, change.key) ?? change.value)
@@ -3064,6 +3076,8 @@ function activateRendererExtensions(): void {
     const settings = e.manifest.contributes?.settings
     if (settings && !extSettings.disabled.includes(e.manifest.id)) extensionStore.add(configuration.registerConfiguration({ id: e.manifest.id, title: e.manifest.displayName, properties: settings }))
   }
+  syncSettingsSchema()
+  extensionStore.add(configuration.onDidChange(syncSettingsSchema))
   const apiFor = (id: string): TetherUi => {
     const manifest = extensions.find(e => e.manifest.id === id)!.manifest
     const own = extensionStore.add(new DisposableStore())
