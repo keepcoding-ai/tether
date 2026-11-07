@@ -296,19 +296,18 @@ body.sb-resizing #pads, body.sb-resizing #dock { pointer-events: none; }
 .pad[data-side="left"] { left: var(--sb-left-strip); width: var(--sb-left-w); }
 .pad[data-side="right"] { right: var(--sb-right-strip); width: var(--sb-right-w); }
 .pad.shown { visibility: visible; pointer-events: auto; }
-/* Where a pad's card sits in its body (--pad-inset, top right bottom left): a full --gap on its outer sides and none on
-   the side facing the desks, whose own border already has one, so pad and desk are one --gap apart, as two frames are. */
-.pad { --pad-inset: 0 var(--gap) var(--gap); }
-.pad[data-side="left"] { --pad-inset: 0 0 var(--gap) var(--gap); }
-.pad[data-side="right"] { --pad-inset: 0 var(--gap) var(--gap) 0; }
+/* Where a pad's card sits in its body (--pad-inset, top right bottom left): none on the side facing the icon strip (the
+   card touches it, so icon-to-card equals icon-to-window-edge, the icon being centred in its cell) and none on the side
+   facing the desks, whose own border already has one --gap, so pad and desk are one --gap apart, as two frames are. */
+.pad { --pad-inset: 0 0 var(--gap); }
+.pad[data-side="left"] { --pad-inset: 0 0 var(--gap) 0; }
+.pad[data-side="right"] { --pad-inset: 0 0 var(--gap) 0; }
 /* A pad that absorbs its header (PadContribution.absorbsHeader) has no header row: its card starts one --gap from the
    top, level with the desks' cards. Its "⋯" floats over the card's top-right corner unless the view hosts the menu
    (.menu-hosted: a frame's tab bar); while it floats, --pad-menu-room is the room a view leaves for it on its top row. */
-.pad.absorbed[data-side="left"] { --pad-inset: var(--gap) 0 var(--gap) var(--gap); }
-.pad.absorbed[data-side="right"] { --pad-inset: var(--gap) var(--gap) var(--gap) 0; }
+.pad.absorbed[data-side="left"], .pad.absorbed[data-side="right"] { --pad-inset: var(--gap) 0 var(--gap) 0; }
 .pad.absorbed:not(.menu-hosted) { --pad-menu-room: 32px; }
 .pad-float { position: absolute; z-index: 2; top: calc(var(--gap) + 3px); right: 4px; }
-.pad[data-side="right"] > .pad-float { right: calc(var(--gap) + 4px); }
 .pad.menu-hosted > .pad-float { display: none; }
 .pad-float .ib { width: 24px; height: 24px; }
 .pad-head { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 4px 0 12px; flex: none; color: var(--fg-dim); user-select: none; }
@@ -322,10 +321,10 @@ body.sb-resizing #pads, body.sb-resizing #dock { pointer-events: none; }
 .pad-frames, .pad-frames > .pad-desk-box { position: absolute; inset: 0; }
 /* A pad's frame meets the desks at one --gap, the same as between two frames of a desk: the desk's own half-gutters already
    make a full --gap at its border, so the pad gives up both of its half-gutters on the side that faces the desks. */
-.pad[data-side="left"] .pad-frames .desk { padding-right: 0; }
-.pad[data-side="left"] .pad-frames .frame-dock { right: 0; }
-.pad[data-side="right"] .pad-frames .desk { padding-left: 0; }
-.pad[data-side="right"] .pad-frames .frame-dock { left: 0; }
+.pad[data-side="left"] .pad-frames .desk { padding-left: 0; padding-right: 0; }
+.pad[data-side="left"] .pad-frames .frame-dock { left: 0; right: 0; }
+.pad[data-side="right"] .pad-frames .desk { padding-left: 0; padding-right: 0; }
+.pad[data-side="right"] .pad-frames .frame-dock { left: 0; right: 0; }
 /* The drawer in front: the pads step back with the desks. */
 body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
 #pads .frame-dock { transition: opacity var(--motion-fast) ease-out, filter var(--motion-fast) ease-out; }

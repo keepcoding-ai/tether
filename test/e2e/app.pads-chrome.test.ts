@@ -175,6 +175,20 @@ test('pads chrome: activity-bar icons, one --gap to the desks, content that abso
     assert.ok(Math.abs(g.pad!.top - g.desk[0]!.top) <= 0.5, `pad card top level with the desk's (${g.pad!.top} vs ${g.desk[0]!.top})`)
     assert.ok(Math.abs(g.xp!.top - g.desk[0]!.top) <= 0.5, `explorer card top level with the desk's (${g.xp!.top} vs ${g.desk[0]!.top})`)
 
+    // The pad's card touches the icon strip: icon-to-card = icon-to-window-edge (the glyph is centred in its cell).
+    const m = await page.evaluate(({ e, d }) => {
+      const gl = (sel: string): R => document.querySelector(sel)!.querySelector('svg')!.getBoundingClientRect()
+      const L = gl(e), Rr = gl(d)
+      const xp = document.querySelector('#pads .pad.shown[data-pad="explorer.files"] .xp')!.getBoundingClientRect()
+      const pf = document.querySelector('#pads .pad.shown[data-pad="frame-pads.desk"] .frame-dock')!.getBoundingClientRect()
+      const win = (globalThis as unknown as { innerWidth: number }).innerWidth
+      return { leftEdge: L.left, leftFrame: xp.left - L.right, rightEdge: win - Rr.right, rightFrame: Rr.left - pf.right }
+    }, { e: `#sidebar-left ${icon(EXPLORER)}`, d: `#sidebar-right ${icon(DESK_PAD)}` })
+    console.log(JSON.stringify({ iconMargins: m }))
+    assert.ok(Math.abs(m.leftFrame - m.leftEdge) <= 0.5, `left: icon to frame = icon to window edge (${m.leftFrame} vs ${m.leftEdge})`)
+    assert.ok(Math.abs(m.rightFrame - m.rightEdge) <= 0.5, `right: icon to frame = icon to window edge (${m.rightFrame} vs ${m.rightEdge})`)
+    await page.screenshot({ path: join(atriumTmp, 'tether-pad-margin.png') })
+
     // ---- 3. header absorbed ----
     console.log('step 3')
     assert.equal(await page.evaluate(() => document.querySelectorAll('#pads .pad .pad-head').length), 0, 'no pad header row')
