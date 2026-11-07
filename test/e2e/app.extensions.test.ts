@@ -98,6 +98,7 @@ const EXPECTED: Array<[string, string, string | null, string | null, string | nu
   ['pane.switch-profile', 'Trocar perfil do painel…', null, null, 'true'],
   ['sep', '', null, null, null],
   ['keybindings.show', 'Atalhos de teclado', 'Ctrl+K Ctrl+S', null, 'false'],
+  ['faults.show', 'Falhas', null, null, 'false'],
   ['web-bridge.install', 'Instalar Tether Bridge…', null, null, 'false'],   // F7 C1
   ['extensions.show', 'Extensões', null, null, 'false'],
   ['settings.show', 'Configurações…', 'Ctrl+,', null, 'false'],                   // settings plan, slice 3
