@@ -3,6 +3,8 @@
 // writes the new one, and the old key goes). Each manifest declares its own (`contributes.migrations`); main applies
 // them at startup, before the extensions activate, to every extension in the index, enabled or not, so a value is
 // never lost while an extension is off. A value already at the destination wins; the old key is removed either way.
+// A destination may also be a full key outside the extension's own settings (`{ key }`): the general switch of one of its
+// features (`agents.features.<id>`, a boolean), where only a boolean moves (anything else read as the default before).
 // Pure: the settings.json object in, the new object out.
 import type { ExtensionManifest } from '../../extensions/types.ts'
 import { normalizeSetting, readExtensionsSettings, withSetting, writeExtensionsSettings } from './vscode-configuration-registry.ts'
@@ -18,6 +20,15 @@ function getPath(file: Json, path: string): unknown {
   let cur: unknown = file
   for (const part of path.split('.')) { if (!isObject(cur)) return undefined; cur = cur[part] }
   return cur
+}
+
+/** `file` with `value` at the dotted `path` (missing or non-object steps become objects). */
+function withPath(file: Json, path: string, value: unknown): Json {
+  const [head, ...rest] = path.split('.')
+  if (!head) return file
+  if (rest.length === 0) return { ...file, [head]: value }
+  const child = isObject(file[head]) ? file[head] as Json : {}
+  return { ...file, [head]: withPath(child, rest.join('.'), value) }
 }
 
 /** `file` without `path`; a parent object left empty goes too. */
@@ -62,6 +73,9 @@ export function applyMigrations(file: Json, manifests: readonly ExtensionManifes
           out = { ...out, extensions: writeExtensionsSettings(withSetting(ext, m.id, mig.to.setting, normalizeSetting(schema, old))) }
         }
         moved.push(`${mig.from} → extensions.${m.id}.${mig.to.setting}`)
+      } else if ('key' in mig.to) {
+        if (typeof old === 'boolean' && getPath(out, mig.to.key) === undefined) out = withPath(out, mig.to.key, old)
+        moved.push(`${mig.from} → ${mig.to.key}`)
       } else {
         if (stateOf(out, m.id)[mig.to.state] === undefined) out = withState(out, m.id, mig.to.state, old)
         moved.push(`${mig.from} → ${EXTENSION_STATE_KEY}.${m.id}.${mig.to.state}`)

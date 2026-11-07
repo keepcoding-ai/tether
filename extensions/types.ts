@@ -115,12 +115,14 @@ export interface ChooserItemContribution {
 
 /**
  * A value moved once from where the core kept it into this extension (VS Code's ConfigurationMigrationRegistry): `from`
- * is a dotted path in settings.json ('ui.wordWrap'); `to` is a setting of the extension or a key of its stored state.
+ * is a dotted path in settings.json ('ui.wordWrap'); `to` is a setting of the extension, a key of its stored state, or
+ * the general switch of one of its features.
  * Main applies it at startup, also for a disabled extension, so the value is never lost.
  */
 export interface MigrationContribution {
   from: string
-  to: { setting: string } | { state: string }
+  /** `key`: a full settings.json path outside the extension's own (`agents.features.bridge`, a feature's general switch). */
+  to: { setting: string } | { state: string } | { key: string }
 }
 
 /**
@@ -164,6 +166,25 @@ export interface StatusContribution {
   order?: number
 }
 
+/**
+ * Something tether offers the AI agents of its panes (a skill, an MCP server), switched on and off as a unit: in general
+ * (settings.json `agents.features.<id>`) and per launch profile (Profile.features), the profile winning. Its content is a
+ * folder in the layout of a Soul shared folder: `skills/<name>/SKILL.md` and `mcps/<slug>/mcp.json` (`{ "mcpServers":
+ * { "<slug>": {...} } }`, optional `mcp.meta.json` and `mcps/<slug>/skills/`). tetherd composes the enabled features of
+ * a launch into one folder and each agent's contribution hands it to its CLI (AgentContribution.share). The content is
+ * either static (`share`: a folder of the extension, read in place) or produced at run time by the daemon entry
+ * (TetherDaemon.features.provide, which wins over `share`). The id is global across extensions and never renamed.
+ */
+export interface FeatureContribution {
+  /** What the settings page and the profile editor call it. */
+  title: string
+  description?: string
+  /** On or off when neither the profile nor settings.json says. */
+  default: boolean
+  /** The content's folder, relative to extensions/<id>/ ('share'); absent = provided by the daemon entry. */
+  share?: string
+}
+
 export interface ExtensionManifest {
   /** Stable, lowercase, no dot: `note`, `quick-open`, `claude`. Prefixes IPC channels, settings and test hooks. */
   id: string
@@ -192,6 +213,8 @@ export interface ExtensionManifest {
     pads?: readonly PadContribution[]
     /** Icons of the top bar's status area. */
     status?: readonly StatusContribution[]
+    /** What this extension offers the AI agents of the panes, by feature id (lowercase, no dot: `bridge`). */
+    features?: Readonly<Record<string, FeatureContribution>>
   }
 }
 
