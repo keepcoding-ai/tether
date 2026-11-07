@@ -355,6 +355,33 @@ export function withLock<T>(dir: string, fn: () => T): T {
   try { return fn() } finally { if (held) { try { unlinkSync(lock) } catch { /* already gone */ } } }
 }
 
+/**
+ * Folds into the state the sigs that have lines in the jsonl but no state entry (the launcher writes `load` lines without
+ * touching the state: it has nothing but node core). Counts, first/last and a short id are rebuilt from the lines.
+ */
+export function reconcileState(dir: string): void {
+  try {
+    const { items } = readOccurrences(dir)
+    if (!items.length) return
+    withLock(dir, () => {
+      const { state } = readState(dir)
+      let changed = false
+      const fresh = new Set<string>()
+      for (const o of items) {
+        if (!state.faults[o.sig]) {
+          fresh.add(o.sig)
+          state.faults[o.sig] = { status: 'open', tags: [], notes: [], count: 0, first: o.ts, last: o.ts, shortId: assignShortId(o.sig, Object.values(state.faults).map(f => f.shortId)) }
+        } else if (!fresh.has(o.sig)) continue
+        const f = state.faults[o.sig]!
+        f.count++
+        if (o.ts > f.last) f.last = o.ts
+        changed = true
+      }
+      if (changed) writeState(dir, state)
+    })
+  } catch { /* best effort */ }
+}
+
 // ---- recording ----------------------------------------------------------------------------------------------------
 
 export interface RecordOptions {

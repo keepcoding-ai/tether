@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { assignShortId, createBundleMapper, decodeMappings, faultSig, faultsDir, normalizeMessage, readOccurrences, readState, record, resolveId, STORM_LIMIT, STORM_WINDOW_MS, statePath, writeState, type FaultInput } from '../../src/core/faults.ts'
+import { assignShortId, createBundleMapper, decodeMappings, faultSig, faultsDir, normalizeMessage, readOccurrences, readState, reconcileState, record, resolveId, STORM_LIMIT, STORM_WINDOW_MS, statePath, writeState, type FaultInput } from '../../src/core/faults.ts'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'tether-faults-'))
 const input = (over: Partial<FaultInput> = {}): FaultInput => ({ proc: 'main', kind: 'uncaught', message: 'boom', stack: 'Error: boom\n    at a (C:\\x\\dist\\m.cjs:1:2)', ...over })
@@ -184,5 +184,19 @@ test('record assigns the short id once and keeps it when a colliding sig arrives
   record(input(), opts(dir))
   assert.equal(readState(dir).state.faults[first.sig]!.shortId, first.sig.slice(0, 4))
   assert.ok(existsSync(statePath(dir)))
+  rmSync(dir, { recursive: true })
+})
+
+test('reconcileState folds lines the launcher wrote (no state entry) into the state', () => {
+  const dir = tmp()
+  const sig = 'ab12'.padEnd(64, '0')
+  const line = { id: 'x', ts: '2026-11-07T10:00:00.000Z', proc: 'main', version: '1', kind: 'load', message: 'm', stack: '', sig, context: {} }
+  writeFileSync(join(dir, 'faults.jsonl'), JSON.stringify(line) + '\n' + JSON.stringify({ ...line, ts: '2026-11-07T11:00:00.000Z' }) + '\n')
+  reconcileState(dir)
+  reconcileState(dir) // idempotent
+  const f = readState(dir).state.faults[sig]!
+  assert.equal(f.count, 2)
+  assert.equal(f.last, '2026-11-07T11:00:00.000Z')
+  assert.equal(f.shortId, 'ab12')
   rmSync(dir, { recursive: true })
 })
