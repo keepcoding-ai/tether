@@ -1,23 +1,29 @@
 // E2E of the Tether Bridge reaching an agent (F7 slice C3), with REAL Claude Code (haiku) in a PRIVATE tetherd (temp home,
-// unique pipe, TETHER_BRIDGE_PORT on a free port, so the tetherd warms a REAL vendored bridge daemon of its own): a claude
-// slot is launched with `--mcp-config <home>/mcp/tether-bridge.json` and the identity env on its command line, the agent
-// calls `mcp__tether-bridge__list_browsers` and gets the daemon's answer (NO_BROWSER_CONNECTED: nothing is paired in this
-// home, which is exactly what proves the wiring daemon → MCP shell → bridge daemon), and on /exit the tetherd posts the
-// release of the slot's client to the bridge daemon (route /clients/:id/release of the vendored bundle: 200, "abas soltas").
+// unique pipe, TETHER_BRIDGE_PORT on a free port, so the tetherd warms a REAL vendored bridge daemon of its own). The bridge
+// is the feature `bridge` (on by default): a claude slot is launched with `--plugin-dir <home>/share/bridge/claude-plugin`
+// (the composed share folder translated into a session-only plugin whose .mcp.json carries mcps/tether-bridge/mcp.json),
+// the agent calls `mcp__plugin_tether_tether-bridge__list_browsers` (a plugin's server is `plugin:tether:<slug>`) and gets
+// the daemon's answer (NO_BROWSER_CONNECTED: nothing is paired in this home, which is exactly what proves the wiring
+// daemon → MCP shell → bridge daemon), and on /exit the tetherd posts the release of the slot's client to the bridge daemon
+// (route /clients/:id/release of the vendored bundle: 200, "abas soltas"). A second slot, of a profile with
+// `features.bridge = false`, launches with neither --plugin-dir nor --mcp-config. A soul slot (a stub CLI, TETHER_SOUL_CMD:
+// only its command line counts) gets `-S <home>/share/bridge/soul` and `--mcp-config <home>/share/bridge/soul.mcp.json`.
 // Kills go through test/kill.ts (pid + identity). The person's tetherd, %LOCALAPPDATA%\tether, port 47831 and
 // ~/.atrium-bridge are never touched. Run: npm run test:e2e (or node --test test/e2e/web-bridge-agent.test.ts).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ENV_CLIENT_ID, ENV_CLIENT_NAME } from '../../extensions/web-bridge/agents.ts'
 import { bridgeHomeOf, mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
+import { CLAUDE_PLUGIN_DIR } from '../../src/agents/claude-plugin.ts'
+import { cleanShares, shareRootOf } from '../../src/daemon/share.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { openSlot, pidAlive } from './daemon-driver.ts'
-import { aliveProcs, type Proc, type Terminal } from './harness.ts'
+import { aliveProcs, processTree, type Proc, type Terminal } from './harness.ts'
 
 const root = resolve(import.meta.dirname, '..', '..')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')
@@ -41,6 +47,8 @@ async function waitUntil(cond: () => Promise<boolean> | boolean, timeoutMs: numb
 }
 const health = (port: number): Promise<boolean> => fetch(`http://127.0.0.1:${port}/health`).then(r => r.ok, () => false)
 
+const TOOL = 'mcp__plugin_tether_tether-bridge__list_browsers'
+
 test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_browsers, and its exit releases the client', { timeout: 300_000 }, async () => {
   const base = mkdtempSync(join(tmpdir(), 'tether-wb-agent-'))
   const home = join(base, 'home'); mkdirSync(home)
@@ -51,6 +59,11 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^CLAUDE/i.test(k)) env[k] = v
   env.TETHER_BRIDGE_PORT = String(port)
+  // The soul slot of step 6 runs a stub script (no model, no server; the args after the script are its own): only its
+  // command line matters.
+  const stub = join(base, 'soul-stub.mjs')
+  writeFileSync(stub, 'setInterval(() => {}, 1000)\n')
+  env.TETHER_SOUL_CMD = `"${process.execPath}" "${stub}"`
   const owned: Owned[] = []
   const trees: Proc[][] = []
   let client: DaemonClient | undefined
@@ -73,19 +86,25 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
 
     // 2. A real Claude (haiku) in a slot. The one tool it needs is pre-allowed, so no permission dialog stands between the
     //    prompt and the bridge's answer.
-    const { slot } = await client.request({ t: 'create', kind: 'claude', cwd: work, name: 'Ponte', args: ['--model', 'haiku', '--allowedTools', 'mcp__tether-bridge__list_browsers'] })
+    const { slot } = await client.request({ t: 'create', kind: 'claude', cwd: work, name: 'Ponte', args: ['--model', 'haiku', '--allowedTools', TOOL] })
     const slotId = slot!.slotId
     term = await openSlot(client, slotId, { log: logDir ? join(logDir, `web-bridge-agent-${Date.now()}.jsonl`) : undefined })
     trees.push(await term.tree())
     const self = (await term.tree()).find(p => p.pid === term!.pid)
     assert.ok(self?.cmd, `the claude process has a command line (tree: ${JSON.stringify(trees[0])})`)
-    assert.ok(self!.cmd!.includes(`--mcp-config ${mcpPath}`) || self!.cmd!.includes(`--mcp-config "${mcpPath}"`), `--mcp-config <mcp file> on the command line: ${self!.cmd}`)
+    const composed = join(shareRootOf(home), 'bridge')
+    const pluginDir = join(composed, CLAUDE_PLUGIN_DIR)
+    assert.ok(self!.cmd!.includes(`--plugin-dir ${pluginDir}`) || self!.cmd!.includes(`--plugin-dir "${pluginDir}"`), `--plugin-dir <composed plugin> on the command line: ${self!.cmd}`)
+    assert.ok(!self!.cmd!.includes('--mcp-config'), 'the MCP goes through the plugin, not --mcp-config')
     assert.ok(/--session-id [0-9a-f-]{36}/.test(self!.cmd!), 'the tether\'s own args are still there')
+    assert.equal(readFileSync(join(composed, 'mcps', 'tether-bridge', 'mcp.json'), 'utf8'), readFileSync(mcpPath, 'utf8'), 'the composed folder carries the feature\'s MCP')
+    const pluginMcp = JSON.parse(readFileSync(join(pluginDir, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> }
+    assert.deepEqual(Object.keys(pluginMcp.mcpServers), ['tether-bridge'])
 
     // 3. The agent calls the bridge tool. No browser is paired in this home: the daemon answers NO_BROWSER_CONNECTED (or an
     //    empty list), and that answer on screen, in the form asked for, is the whole chain working (agent → MCP shell →
     //    bridge daemon of this home).
-    await term.type('Chame a ferramenta mcp__tether-bridge__list_browsers agora. Responda apenas uma linha, no formato navegadores=<quantidade devolvida>, ou erro=<código> se a ferramenta falhar.')
+    await term.type(`Chame a ferramenta ${TOOL} agora. Responda apenas uma linha, no formato navegadores=<quantidade devolvida>, ou erro=<código> se a ferramenta falhar.`)
     await term.waitIdle({ timeout: 180_000 })
     const screen = term.screen()
     assert.match(screen, /navegadores\s*=\s*0|erro\s*=\s*NO_BROWSER_CONNECTED/i, `the bridge's answer reached the agent\n--- screen ---\n${screen}`)
@@ -98,6 +117,31 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
     assert.ok(log.includes(`release de tether:${slotId}: abas soltas no bridge`), `the daemon answered the release with 200\n${log}`)
     assert.ok(!log.includes(apiKey), 'api key leaked into tetherd.log')
     assert.ok(!log.includes(ENV_CLIENT_ID) && !log.includes(ENV_CLIENT_NAME), 'the plan env is not dumped into the log')
+    term.dispose(); term = undefined
+
+    // 5. A profile with the feature off: the same claude launches with no plugin and no MCP config.
+    const { profile } = await client.request({ t: 'profile-save', profile: { name: 'Claude sem ponte', agent: 'claude', args: [], features: { bridge: false } } })
+    const off = await client.request({ t: 'create', kind: 'claude', cwd: work, name: 'Sem ponte', profileId: profile!.id, args: ['--model', 'haiku'] })
+    term = await openSlot(client, off.slot!.slotId)
+    trees.push(await term.tree())
+    const offCmd = (await term.tree()).find(p => p.pid === term!.pid)?.cmd ?? ''
+    assert.ok(offCmd.includes('--session-id'), `the claude command line: ${offCmd}`)
+    assert.ok(!offCmd.includes('--plugin-dir') && !offCmd.includes('--mcp-config'), `features.bridge=false: no plugin, no MCP (${offCmd})`)
+    await term.kill(); term.dispose(); term = undefined
+
+    // 6. A soul slot (default profile, the feature inherited on): the soul's view of the same composed folder.
+    //    The stub draws no TUI: started straight, its command line read from the process tree.
+    const soul = await client.request({ t: 'create', kind: 'soul', cwd: work, name: 'Alma', start: true })
+    const soulPid = soul.slot!.pid!
+    assert.ok(soulPid, 'the stub soul has a pid')
+    const soulTree = await processTree(soulPid)
+    trees.push(soulTree)
+    const soulCmd = soulTree.find(p => p.pid === soulPid)?.cmd ?? ''
+    const has = (flag: string, value: string): boolean => soulCmd.includes(`${flag} ${value}`) || soulCmd.includes(`${flag} "${value}"`)
+    assert.ok(has('-S', join(composed, 'soul')), `-S <composed>/soul on the soul's command line: ${soulCmd}`)
+    assert.ok(has('--mcp-config', join(composed, 'soul.mcp.json')), `--mcp-config <composed>/soul.mcp.json: ${soulCmd}`)
+    assert.deepEqual(Object.keys((JSON.parse(readFileSync(join(composed, 'soul.mcp.json'), 'utf8')) as { mcpServers: object }).mcpServers), ['tether-bridge'])
+    await client.request({ t: 'stop', slotId: soul.slot!.slotId })
   } finally {
     if (term) { try { if (term.alive) await term.kill() } catch { /* already gone */ } term.dispose() }
     for (const p of owned) await killOwned(p)
@@ -109,6 +153,7 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
       client.close()
     }
     const left = await aliveProcs(trees.flat())
+    cleanShares(home) // the composed folders' links go first, one by one, never followed
     for (let i = 0; i < 10; i++) { try { rmSync(base, { recursive: true, force: true }); break } catch { await sleep(500) } }
     assert.deepEqual(left.map(p => `${p.pid} ${p.name}`), [], 'orphan processes after the test')
   }

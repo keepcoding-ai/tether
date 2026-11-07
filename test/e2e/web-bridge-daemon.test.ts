@@ -1,7 +1,8 @@
 // E2E of the web-bridge daemon host (F7 slice C2): a PRIVATE tetherd (temp home, unique pipe, TETHER_BRIDGE_PORT on a free
 // port) activates the web-bridge extension at startup and, with no action of anyone: the bridge home gets config.json
 // (at that port, brand, the vendored build's id pinned, the package's capabilities seeded) and api.key, NO extension
-// folder (that is the install flow's, C1), <home>/mcp/tether-bridge.json exists with paths and env only, the REAL vendored
+// folder (that is the install flow's, C1), the feature folder's <home>/web-bridge/share/mcps/tether-bridge/mcp.json exists
+// with paths and env only (stdio), the REAL vendored
 // bridge daemon answers /health on the port, and no secret (pairing token, api key) appears in tetherd.log or in the MCP file.
 // Every kill goes through test/kill.ts (pid + identity): the bridge daemon by its daemon.pid only if its command line names
 // the vendored bundle; the tetherd by `shutdown`. The person's tetherd, %LOCALAPPDATA%\tether and ~/.atrium-bridge are never touched.
@@ -79,7 +80,7 @@ test('a private tetherd activates web-bridge: installation, MCP file and the bri
     // 2. The MCP file: command, bundle, env; nothing else.
     const mcpText = readFileSync(mcpPath, 'utf8')
     assert.deepEqual(JSON.parse(mcpText), {
-      mcpServers: { 'tether-bridge': { command: 'node', args: [join(vendorDir, 'atrium-bridge.mjs'), 'mcp'], env: { ATRIUM_BRIDGE_HOME: bridgeHome, ATRIUM_BRIDGE_PORT: String(port), ATRIUM_BRIDGE_SERVER_NAME: 'tether-bridge' } } },
+      mcpServers: { 'tether-bridge': { type: 'stdio', command: 'node', args: [join(vendorDir, 'atrium-bridge.mjs'), 'mcp'], env: { ATRIUM_BRIDGE_HOME: bridgeHome, ATRIUM_BRIDGE_PORT: String(port), ATRIUM_BRIDGE_SERVER_NAME: 'tether-bridge' } } },
     })
 
     // 3. The real daemon, started by tetherd, is the one on the port: the api.key of this home opens it.
@@ -90,7 +91,7 @@ test('a private tetherd activates web-bridge: installation, MCP file and the bri
     const log = readFileSync(join(home, 'tetherd.log'), 'utf8')
     assert.ok(log.includes('[web-bridge] instalação do bridge criada'), log)
     assert.ok(log.includes(`[web-bridge] capabilities semeadas do pacote: ${Object.keys(info.brand.capabilities).join(', ')}`), log)
-    assert.ok(log.includes('tether-bridge.json gravado'), log)
+    assert.ok(log.includes(`${join('mcps', 'tether-bridge', 'mcp.json')} gravado`), log)
     assert.ok(log.includes('[web-bridge] daemon do bridge iniciado'), log)
     for (const text of [log, mcpText]) {
       assert.ok(!text.includes(config.pairingToken), 'pairing token leaked')

@@ -21,7 +21,10 @@ export type SlotEventKind = 'spawned' | 'exited' | 'bound'
 
 /** What a launch middleware knows besides the plan and the slot. */
 export interface LaunchContext {
-  /** The features enabled for this launch (src/core/features.ts: profile > settings.json > default); empty for a shell. */
+  /**
+   * The features this launch gets: enabled (src/core/features.ts: profile > settings.json > default) and with content now,
+   * for an agent that takes them (AgentContribution.share); empty for a shell.
+   */
   features: ReadonlySet<string>
 }
 

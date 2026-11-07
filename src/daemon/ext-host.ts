@@ -142,22 +142,23 @@ export class DaemonExtensionHost implements IDisposable {
 
   /** The middlewares, applied in order, then the composed share folder handed to the agent (DaemonOptions.transformPlan). */
   readonly transformPlan = (plan: LaunchPlan, meta: SlotMeta, info: LaunchInfo = {}): LaunchPlan => {
-    const enabled = this.enabledFor(meta, info)
-    const ctx: LaunchContext = { features: new Set(enabled) }
+    const enabled = new Set(this.enabledFor(meta, info))
+    // What this launch really gets: the enabled features that have content now, for an agent that takes them.
+    const agent = enabled.size ? (this.opts.agents ?? agentRegistry).get(meta.agent) : undefined
+    const sources: FeatureSource[] = []
+    if (agent?.share) {
+      for (const f of this.features) {
+        if (!enabled.has(f.id)) continue
+        const dir = this.sourceOf(f)
+        if (dir) sources.push({ id: f.id, dir })
+      }
+    }
+    const ctx: LaunchContext = { features: new Set(sources.map(s => s.id)) }
     let out = plan
     for (const mw of this.middlewares) {
       try { out = mw(out, meta, ctx) } catch (e) { this.opts.log(`launch middleware failed for slot ${meta.slotId}: ${(e as Error).message}`) }
     }
-    if (enabled.length === 0) return out
-    const agent = (this.opts.agents ?? agentRegistry).get(meta.agent)
-    if (!agent?.share) return out
-    const sources: FeatureSource[] = []
-    for (const f of this.features) {
-      if (!ctx.features.has(f.id)) continue
-      const dir = this.sourceOf(f)
-      if (dir) sources.push({ id: f.id, dir })
-    }
-    if (sources.length === 0) return out
+    if (!agent?.share || sources.length === 0) return out
     try {
       const composed = composeShare(this.opts.home, sources)
       for (const p of composed.problems) this.opts.log(`slot ${meta.slotId}: ${p}`)

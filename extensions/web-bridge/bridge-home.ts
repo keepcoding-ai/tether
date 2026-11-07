@@ -12,10 +12,12 @@
 //      defaults, f7-bridge-marca §1.3) or, for a build without a brand, from this extension's settings defaults. The
 //      bundle's `seedCapabilities` does it under the bridge's own config lock; existing values are never touched: the
 //      package brings the default, the installation decides;
-//   d. <TETHER_HOME>/mcp/tether-bridge.json, the --mcp-config the agents will receive (C3): `node <vendor>/atrium-bridge.mjs
-//      mcp` with ATRIUM_BRIDGE_HOME, ATRIUM_BRIDGE_PORT and ATRIUM_BRIDGE_SERVER_NAME (the package's `brand.mcp.serverName`
-//      when it has a valid one, else this extension's). Rewritten only when its content changed (the ensureSettingsFile
-//      pattern of src/agents/claude.ts). No secret: the shell reads api.key by the home;
+//   d. <TETHER_HOME>/web-bridge/share/mcps/<server>/mcp.json, the content of the feature `bridge` the agents will receive
+//      (composed into each launch's share folder): `node <vendor>/atrium-bridge.mjs mcp` (stdio) with ATRIUM_BRIDGE_HOME,
+//      ATRIUM_BRIDGE_PORT and ATRIUM_BRIDGE_SERVER_NAME, <server> being the package's `brand.mcp.serverName` when it has a
+//      valid one, else this extension's. Rewritten only when its content changed (the ensureSettingsFile pattern of
+//      src/agents/claude.ts); another server's folder and the older <TETHER_HOME>/mcp/tether-bridge.json are removed. No
+//      secret: the shell reads api.key by the home;
 //   e. the daemon warmed up (warmup.ts), so the browser finds it before any agent does;
 //   f. (C5, update.ts) the extension folder, when installed, brought to the vendored build file by file, with
 //      `extensionVersion` kept in config.json through the bundle's `setExtensionVersion` (the daemon carries it in its
@@ -23,12 +25,13 @@
 //      says it runs an older bundle, by its daemon.pid only after proving pid + command line + port owner.
 // Secrets (pairing token, api key) stay inside the bundle's functions and the files it owns: no log line, no error and
 // no file written here carries one.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
+import { removeTree } from '../../src/daemon/share.ts'
 import { manifest } from './manifest.ts'
-import { bridgeHomeOf, extensionDirOf, MCP_SERVER_NAME, mcpConfigPathOf } from './paths.ts'
+import { bridgeHomeOf, bridgeShareDirOf, extensionDirOf, legacyMcpConfigPathOf, MCP_SERVER_NAME, mcpConfigPathOf } from './paths.ts'
 import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutdated, syncExtensionVersion, updateExtensionDir, writeUpdateMarker, type RestartDeps } from './update.ts'
 import { auditVendor, isBuildInfo, VENDOR_BUILD_INFO, VENDOR_BUNDLE, VENDOR_EXTENSION_DIR, type BuildInfo } from './vendor-rules.ts'
 import { createWarmup, type Warmup, type WarmupDeps } from './warmup.ts'
@@ -75,7 +78,7 @@ export function brandAndSeed(b: BridgeBundle, bridgeHome: string, currentDir: st
 export function defaultCapabilities(info: BuildInfo | undefined): Record<string, unknown> {
   if (info?.brand?.capabilities) return { ...info.brand.capabilities }
   const settings = manifest.contributes?.settings ?? {}
-  // serveToAgents is the tether's own switch (whether the MCP is offered at all), not a capability of the bridge.
+  // Whether the MCP is offered at all is the tether's own switch (the feature `bridge`), not a capability of the bridge.
   return { agentWindows: settings.agentWindows?.default, evaluate: settings.evaluate?.default }
 }
 
@@ -96,14 +99,18 @@ export function writeFileAtomic(path: string, text: string): void {
 }
 
 export interface McpConfig {
-  mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
+  mcpServers: Record<string, { type: 'stdio'; command: string; args: string[]; env: Record<string, string> }>
 }
 
-/** The --mcp-config the agents receive: `node <bundle> mcp`, pointed at the tether's bridge home and port. No secret: the shell reads api.key from the home. */
+/**
+ * The MCP the agents receive: `node <bundle> mcp`, pointed at the tether's bridge home and port. `type` is spelled out:
+ * the Soul refuses a connection without it (Claude Code reads it too). No secret: the shell reads api.key from the home.
+ */
 export function mcpConfigOf(bridgeHome: string, bundlePath: string, port: number, serverName: string = MCP_SERVER_NAME): McpConfig {
   return {
     mcpServers: {
       [serverName]: {
+        type: 'stdio',
         command: 'node',
         args: [bundlePath, 'mcp'],
         env: { ATRIUM_BRIDGE_HOME: bridgeHome, ATRIUM_BRIDGE_PORT: String(port), ATRIUM_BRIDGE_SERVER_NAME: serverName },
@@ -112,15 +119,35 @@ export function mcpConfigOf(bridgeHome: string, bundlePath: string, port: number
   }
 }
 
-/** Writes <home>/mcp/tether-bridge.json only when its content changed. Returns whether it was written. */
+/**
+ * Writes the feature's mcps/<server>/mcp.json (the config's one server names the folder) only when its content changed,
+ * and removes what else is there (another server name of an older package) and the pre-feature file. Returns whether it wrote.
+ */
 export function writeMcpConfig(home: string, config: McpConfig): boolean {
-  const path = mcpConfigPathOf(home)
+  const [serverName] = Object.keys(config.mcpServers)
+  if (!serverName || Object.keys(config.mcpServers).length !== 1) throw new Error('o MCP do bridge precisa de exatamente um servidor')
+  const path = mcpConfigPathOf(home, serverName)
+  const mcps = join(bridgeShareDirOf(home), 'mcps')
+  let others: string[] = []
+  try { others = readdirSync(mcps).filter(n => n !== serverName) } catch { /* not there yet */ }
+  for (const name of others) removeTree(join(mcps, name))
+  const legacy = legacyMcpConfigPathOf(home)
+  if (existsSync(legacy)) {
+    rmSync(legacy, { force: true })
+    try { rmdirSync(dirname(legacy)) } catch { /* not empty: someone else's files stay */ }
+  }
   const content = JSON.stringify(config, null, 2) + '\n'
   let current: string | undefined
   try { current = readFileSync(path, 'utf8') } catch { /* missing */ }
   if (current === content) return false
   writeFileAtomic(path, content)
   return true
+}
+
+/** The feature's folder when it holds an MCP to offer now (the setup wrote it), else undefined. */
+export function bridgeShareDir(home: string): string | undefined {
+  const dir = bridgeShareDirOf(home)
+  try { return readdirSync(join(dir, 'mcps')).some(n => existsSync(join(dir, 'mcps', n, 'mcp.json'))) ? dir : undefined } catch { return undefined }
 }
 
 // ---- the host --------------------------------------------------------------------------------------------------------
@@ -216,7 +243,7 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
       return fail(`instalação do bridge falhou: ${typeof code === 'string' ? code : e instanceof Error ? e.message : String(e)}`)
     }
     report.mcpWritten = writeMcpConfig(deps.home, mcpConfigOf(bridgeHome, bundlePath, deps.port, serverName))
-    deps.log(`${mcpConfigPathOf(deps.home)} ${report.mcpWritten ? 'gravado' : 'inalterado'} (servidor ${serverName}, porta ${deps.port})`)
+    deps.log(`${mcpConfigPathOf(deps.home, serverName)} ${report.mcpWritten ? 'gravado' : 'inalterado'} (servidor ${serverName}, porta ${deps.port})`)
     if (deps.warm === false) deps.log(`aquecimento do daemon pulado: home fora do padrão sem TETHER_BRIDGE_PORT próprio (a porta ${deps.port} é da instalação padrão)`)
     else {
       // C5: a daemon running an older bundle is replaced; otherwise the usual warm-up.
@@ -234,8 +261,9 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
       if (problems.length) return { level: 'ERRO', name, detail: `cópia vendorizada incompleta ou alterada (${problems[0]})`, hint: 'rode "npm run bridge:build" e reinicie o tetherd' }
       const missing = ['config.json', 'api.key'].filter(f => !existsSync(join(bridgeHome, f)))
       if (missing.length) return { level: 'AVISO', name, detail: `instalação em ${bridgeHome} sem ${missing.join(' e ')}`, hint: 'abra o tether: o tetherd cria a instalação ao subir' }
-      if (!existsSync(mcpConfigPathOf(deps.home))) return { level: 'AVISO', name, detail: `${mcpConfigPathOf(deps.home)} ausente`, hint: 'abra o tether: o tetherd grava o arquivo ao subir' }
       const info = readBuildInfo(deps.vendorDir)
+      const mcp = mcpConfigPathOf(deps.home, serverNameOf(info))
+      if (!existsSync(mcp)) return { level: 'AVISO', name, detail: `${mcp} ausente`, hint: 'abra o tether: o tetherd grava o arquivo ao subir' }
       return { level: 'OK', name, detail: `instalação em ${bridgeHome} (porta ${deps.port}${info ? `, bridge ${info.version}` : ''})` }
     },
     async () => {
