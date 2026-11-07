@@ -216,7 +216,7 @@ test('explorer 1b: the file tree under a root; excludes; expand; open; keyboard;
     // ---- 5. relaunch keeps the expanded folders; a vanished project folder is flagged ----
     const expectedAfter = await names(page)
     await stubPicker(app, M)
-    await page.click('.xp-add')
+    await page.click('.xp-topbar .xp-open')
     await page.waitForFunction(() => window.__tether.explorer()!.roots.length === 2)
     rmSync(M, { recursive: true, force: true })
     await sleep(1_800) // layout.json is written soon after the last change

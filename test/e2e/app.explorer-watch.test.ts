@@ -240,7 +240,7 @@ test('explorer 3: the tree follows the disk; reads only what is open; one handle
     await until(page, 'Atualizar reads the open folders again', s => s.reads > r5 && s.notice === '')
 
     const menu = async (): Promise<string[]> => {
-      await page.click('.pad.shown .pad-more')
+      await page.click('.pad.shown .xp-topbar .xp-more')
       await page.waitForSelector('#ctx-menu')
       return page.evaluate(() => [...document.querySelectorAll('#ctx-menu li[role^=menuitem]')].map(li => li.textContent ?? ''))
     }
@@ -258,7 +258,7 @@ test('explorer 3: the tree follows the disk; reads only what is open; one handle
 
     // ---- 6. one handle per root; a root deleted, a root closed ----
     await stubPicker(app, M)
-    await page.click('.xp-add')
+    await page.click('.xp-topbar .xp-open')
     await page.waitForFunction(() => window.__tether.explorer()!.roots.length === 2)
     const two = await stats(page)
     assert.equal(two.roots, 2)

@@ -5,7 +5,7 @@
 //      as between two frames of the desk; their tops are level with the desks';
 //   3. header absorption: no pad header row; the desk pad's frame "⋯" carries the pad's title and items ("Mover para a
 //      barra esquerda" moves it, "Restaurar posição padrão" brings it back); its floating "⋯" is hidden while it has tabs;
-//      the explorer's floating "⋯" (its empty state) opens the pad's menu, with its own items, and "Fechar" closes it;
+//      the explorer's top bar "⋯" opens the pad's menu, with its own items, and "Fechar" closes it;
 //      the icon's tooltip carries the pad's title with the desk's name.
 // Screenshots light and dark in <atrium>/.tmp/tether-pads.
 import { test } from 'node:test'
@@ -193,7 +193,9 @@ test('pads chrome: activity-bar icons, one --gap to the desks, content that abso
     console.log('step 3')
     assert.equal(await page.evaluate(() => document.querySelectorAll('#pads .pad .pad-head').length), 0, 'no pad header row')
     assert.equal(await visible(page, `.pad.shown[data-pad="${DESK_PAD}"] .pad-float .pad-more`), false, 'desk pad with tabs: no floating ⋯')
-    assert.equal(await visible(page, `.pad.shown[data-pad="${EXPLORER}"] .pad-float .pad-more`), true, 'explorer: floating ⋯')
+    assert.equal(await visible(page, `.pad.shown[data-pad="${EXPLORER}"] .pad-float .pad-more`), false, 'explorer: no floating ⋯ (its own top bar hosts it)')
+    assert.equal(await page.locator(`.pad.shown[data-pad="${EXPLORER}"] .xp-topbar-title`).textContent(), 'Explorador de Projeto')
+    assert.equal(await page.locator(`.pad.shown[data-pad="${EXPLORER}"] .xp-topbar .xp-open`).getAttribute('title'), 'Abrir pasta…')
     await page.screenshot({ path: join(shots, 'pads-open-light.png') })
 
     // The desk pad's frame "⋯": the pane's items, then the pad's title and items.
@@ -214,11 +216,10 @@ test('pads chrome: activity-bar icons, one --gap to the desks, content that abso
     await page.locator('#ctx-menu li', { hasText: 'Restaurar posição padrão' }).click()
     await page.waitForFunction(() => window.__tether.sidebars()?.right.open === 'frame-pads.desk')
 
-    // The explorer's floating "⋯" (its empty state: no project yet, or its tree): the pad's menu with the explorer's items.
+    // The explorer's top bar "⋯" (its empty state: no project yet, or its tree): the pad's menu with the explorer's items.
     await page.click(`#sidebar-left ${icon(EXPLORER)}`)
     await page.waitForFunction(() => window.__tether.sidebars()?.left.open === 'explorer.files')
-    await page.click(`.pad.shown[data-pad="${EXPLORER}"] .pad-float .pad-more`)
-    assert.equal(await page.locator('#ctx-menu li.hd').textContent(), 'Explorador')
+    await page.click(`.pad.shown[data-pad="${EXPLORER}"] .xp-topbar .xp-more`)
     await menuHas(page, 'Seguir o agente ativo')
     await menuHas(page, 'Mover para a barra direita')
     await page.screenshot({ path: join(shots, 'explorer-menu-light.png') })

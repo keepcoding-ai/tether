@@ -95,6 +95,8 @@ export class ExplorerView implements PadView {
   /** Why the pad cannot follow the disk by itself (a watcher failed), shown with an "Atualizar" action. */
   private notice: string | undefined
   private readonly noticeEl = el('div', 'xp-notice')
+  /** The pad's own top bar (title, "Abrir pasta…", the pad's "⋯"): the first child of the card, always there. */
+  private readonly topbar = el('div', 'xp-topbar')
   /** Project roots whose folder is gone. */
   private readonly missing = new Set<string>()
   private readonly probed = new Set<string>()
@@ -135,6 +137,8 @@ export class ExplorerView implements PadView {
     this.subs.push(this.ipc.on('changed', dirs => this.onDiskChanged(dirs)))
     this.subs.push(this.ipc.on('rootMissing', (root, missing) => this.onRootMissing(root, missing)))
     this.subs.push(this.ipc.on('watchFailed', (_root, message) => this.setNotice(message)))
+    this.buildTopbar()
+    host.setMenuHosted(true)
     this.paintNotice()
     this.render()
     void this.loadRecent()
@@ -886,9 +890,9 @@ export class ExplorerView implements PadView {
     const hadFocus = this.element.contains(document.activeElement)
     const scroll = this.element.scrollTop
     this.ipc.send('setRoots', folders.map(f => f.path))
-    if (folders.length === 0) { this.tree = undefined; this.element.replaceChildren(this.noticeEl, this.emptyState()) }
+    if (folders.length === 0) { this.tree = undefined; this.element.replaceChildren(this.topbar, this.noticeEl, this.emptyState()) }
     else {
-      this.element.replaceChildren(this.noticeEl, this.roots(folders))
+      this.element.replaceChildren(this.topbar, this.noticeEl, this.roots(folders))
       this.probeRoots(folders)
     }
     this.element.scrollTop = scroll
@@ -932,6 +936,23 @@ export class ExplorerView implements PadView {
     }
   }
 
+  /** Title on the left; on the right "Abrir pasta…" and the pad's "⋯" (the core's items, then the explorer's own). */
+  private buildTopbar(): void {
+    const open = el('button', 'ib xp-open')
+    open.type = 'button'; open.title = OPEN_FOLDER_LABEL; open.setAttribute('aria-label', OPEN_FOLDER_LABEL)
+    open.append(icon('folder-open'))
+    open.addEventListener('click', () => { void this.pickFolder() })
+    const more = el('button', 'ib xp-more')
+    more.type = 'button'; more.title = 'Mais ações da prancheta'; more.setAttribute('aria-label', 'Mais ações da prancheta')
+    more.append(icon('dots-three'))
+    more.addEventListener('click', ev => {
+      ev.stopPropagation()
+      const r = more.getBoundingClientRect()
+      this.ui.menus.context(r.left, r.bottom + 4, [...this.host.menuItems(), 'sep', ...this.menu()])
+    })
+    this.topbar.append(el('span', 'xp-topbar-title', 'Explorador de Projeto'), el('span', 'xp-sp'), open, more)
+  }
+
   private button(className: string, label: string, ic: IconName, onClick: () => void): HTMLButtonElement {
     const b = el('button', className)
     b.type = 'button'
@@ -973,7 +994,7 @@ export class ExplorerView implements PadView {
     // F2 and Delete are the tree's (rename, trash), not the app's F2 "renomear painel".
     tree.dataset.ownKeys = 'F2 Delete'
     tree.addEventListener('keydown', ev => this.onKey(ev))
-    wrap.append(tree, this.button('xp-add', OPEN_FOLDER_LABEL, 'folder-open', () => { void this.pickFolder() }))
+    wrap.append(tree)
     this.tree = tree
     const current = this.ui.workspace.current()
     // A root met for the first time starts expanded (VS Code's roots are); a person's collapse is remembered.

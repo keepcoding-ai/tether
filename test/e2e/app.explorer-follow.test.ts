@@ -100,7 +100,7 @@ async function stays(page: Page, name: string, what: string): Promise<void> {
 }
 
 async function padMenu(page: Page): Promise<{ label: string; checked: string | null }[]> {
-  await page.click('.pad.shown .pad-more')
+  await page.click('.pad.shown .xp-topbar .xp-more')
   await page.waitForSelector('#ctx-menu')
   return page.evaluate(() => [...document.querySelectorAll('#ctx-menu li[role^=menuitem]')].map(li => ({ label: li.textContent ?? '', checked: li.getAttribute('aria-checked') })))
 }
@@ -230,7 +230,7 @@ test('explorer 2: seguir o agente ativo; revelar no explorador; revelar automát
     await sleep(2_000)
     ;({ app, page } = await launch(home))
     await page.waitForFunction(() => window.__tether.sidebars()?.left.open === 'explorer.files', undefined, { timeout: 15_000 })
-    await page.waitForSelector('.pad.shown .pad-more')
+    await page.waitForSelector('.pad.shown .xp-topbar .xp-more')
     assert.deepEqual((await padMenu(page)).slice(-5, -3), [
       { label: 'Seguir o agente ativo', checked: 'false' },
       { label: 'Revelar o arquivo ativo', checked: 'true' },

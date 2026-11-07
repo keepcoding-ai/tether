@@ -5,9 +5,17 @@
   color: var(--fg); font: 13px var(--ui);
 }
 
+/* The top bar inside the card: title left, actions right (same 24px icon buttons as the pad and frame headers). */
+.xp-topbar {
+  position: sticky; top: 0; z-index: 3; flex: none; display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 4px 0 12px;
+  background: var(--frame-bg); border-bottom: 1px solid var(--border); color: var(--fg-dim); user-select: none;
+}
+.xp-topbar-title { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.xp-topbar .ib { width: 24px; height: 24px; flex: none; }
+
 /* The watcher notice: the pad cannot follow the disk by itself; "Atualizar" reads again. */
 .xp-notice {
-  position: sticky; top: 0; z-index: 2; flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12px;
+  position: sticky; top: 30px; z-index: 2; flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12px;
   background: var(--bg-2); border-bottom: 1px solid var(--border); color: var(--fg);
 }
 .xp-notice[hidden] { display: none; }
@@ -29,9 +37,6 @@
   cursor: pointer; outline: none; user-select: none; white-space: nowrap;
 }
 .xp-root { height: 28px; gap: 4px; }
-/* The pad's floating "⋯" sits over the top-right corner (core styles.css, --pad-menu-room): the top row leaves it room. */
-.xp-roots > .xp-row:first-child { padding-right: max(6px, var(--pad-menu-room, 0px)); }
-.xp-notice { padding-right: max(8px, var(--pad-menu-room, 0px)); }
 .xp-row:hover { background: var(--bg-hover); }
 .xp-row.selected { background: var(--bg-3); }
 .xp-root.current { background: var(--bg-3); }
@@ -64,13 +69,6 @@
 .xp-root[data-pinned="false"] .xp-pin { opacity: 0; }
 .xp-root[data-pinned="false"]:hover .xp-pin, .xp-root[data-pinned="false"]:focus-within .xp-pin, .xp-root[data-pinned="false"] .xp-pin:focus-visible { opacity: 1; }
 
-.xp-add {
-  display: flex; align-items: center; gap: 7px; margin: auto 8px 8px; height: 28px; padding: 0 10px; border: 0; border-radius: 6px;
-  background: none; color: var(--fg-dim); font: inherit; font-size: 12.5px; cursor: pointer; align-self: flex-start;
-}
-.xp-add .ph { width: 15px; height: 15px; }
-.xp-add:hover { background: var(--bg-hover); color: var(--fg); }
-.xp-add:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---- the empty state ---- */
 .xp-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 36px 20px 20px; text-align: center; }
