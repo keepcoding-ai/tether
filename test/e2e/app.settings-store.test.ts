@@ -94,10 +94,10 @@ test('settings store: migration to the user folder, live edits on disk, comments
     // 2. An edit on disk is live; the comment is the person's and stays.
     writeFileSync(settingsFile, seeded.replace('"dark"', '"light"'))
     await waitTheme(page, 'light')
-    // Both forms read (VS Code's values tree): a nested object, then a dotted key that wins over it.
+    // Both forms read, applied in order and the last wins (VS Code's values tree): a nested object, then a dotted key after it.
     writeFileSync(settingsFile, '{\n  // my own note\n  "theme": "light",\n  "ui": { "deskLine": false }\n}\n')
     await waitDeskLine(page, false)
-    writeFileSync(settingsFile, '{\n  // my own note\n  "theme": "light",\n  "ui.deskLine": true,\n  "ui": { "deskLine": false }\n}\n')
+    writeFileSync(settingsFile, '{\n  // my own note\n  "theme": "light",\n  "ui": { "deskLine": false },\n  "ui.deskLine": true\n}\n')
     await waitDeskLine(page, true)
     writeFileSync(settingsFile, seeded.replace('"dark"', '"light"'))
     await sleep(500)

@@ -13,11 +13,10 @@
 //   src/vs/platform/configuration/common/configurationModels.ts (tolerant parse into a model, `compare` of two models
 //     → the keys that changed; ConfigurationModelParser.doParseRaw turns the raw object into the values tree)
 //   src/vs/platform/configuration/common/configuration.ts (toValuesTree / addToValueTree: a dotted top-level key is a
-//     path into the tree, so `"ui.deskLine": false` and `"ui": { "deskLine": false }` read the same)
-// Adapted: no scopes or language overrides; arrays count as leaf values. Precedence differs on purpose: VS Code applies the
-// file's keys in order (the last one wins, and a nested object placed after a dotted key replaces that subtree); here nested
-// objects are merged first and dotted keys after (shorter before longer), so a dotted key wins whatever the order. Writes
-// follow configurationEditing.ts: the key is written flat at the top level (`"ui.deskLine": false`), and any other occurrence
+//     path into the tree, so `"ui.deskLine": false` and `"ui": { "deskLine": false }` read the same; keys apply in order, last wins)
+// Adapted: no scopes or language overrides; arrays count as leaf values. Reading is VS Code's: the file's top-level keys are
+// applied in document order (toValuesTree), so the last one wins and a nested object placed after a dotted key replaces that
+// subtree (a dotted key after a nested object sets just its leaf). Writes follow configurationEditing.ts: the key is written flat at the top level (`"ui.deskLine": false`), and any other occurrence
 // of it (nested, or a dotted parent/child) is removed so the file keeps a single source. Pure.
 import { applyEdits, modify, parse, printParseErrorCode, type FormattingOptions, type ParseError } from 'jsonc-parser'
 
@@ -28,7 +27,7 @@ export interface SettingsError {
 }
 
 export interface ParsedSettings {
-  /** The values tree (dotted keys expanded, nested objects merged); `{}` for an empty file or when the text is invalid (use `errors` to tell). */
+  /** The values tree (dotted keys expanded, applied in document order); `{}` for an empty file or when the text is invalid (use `errors` to tell). */
   value: Record<string, unknown>
   /** The file's top-level object as written (keys not expanded). */
   raw: Record<string, unknown>
@@ -57,33 +56,32 @@ export function parseSettings(text: string): ParsedSettings {
 const clone = (v: unknown): unknown =>
   isObject(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clone(x)])) : Array.isArray(v) ? v.map(clone) : v
 
-/** `value` merged into `target[key]`: two objects merge key by key, anything else replaces. */
-function mergeInto(target: Record<string, unknown>, key: string, value: unknown): void {
-  const cur = target[key]
-  if (isObject(cur) && isObject(value)) { for (const [k, v] of Object.entries(value)) mergeInto(cur, k, v) }
-  else target[key] = clone(value)
-}
-
 /**
- * The values tree of the file's top-level object (VS Code's toValuesTree): each top-level key is split on dots and its value
- * placed at that path. Keys with fewer segments go first, so nested objects lay the base and dotted keys win; a dotted key
- * under a non-object value is ignored, as VS Code's addToValueTree reports and skips it.
+ * The values tree of the file's top-level object (VS Code's toValuesTree): the keys are applied in document order, each with
+ * addToValueTree, so the last one wins and a later object replaces what an earlier key put at that path (no merging).
  */
 export function toValuesTree(raw: Record<string, unknown>): Record<string, unknown> {
   const root: Record<string, unknown> = {}
-  const keys = Object.keys(raw).map((k, i) => ({ k, i, n: k.split('.').length })).sort((a, b) => a.n - b.n || a.i - b.i)
-  outer: for (const { k } of keys) {
-    const segs = k.split('.')
-    const last = segs.pop()!
-    let at = root
-    for (const s of segs) {
-      if (at[s] === undefined) at[s] = {}
-      if (!isObject(at[s])) continue outer
-      at = at[s] as Record<string, unknown>
-    }
-    mergeInto(at, last, raw[k])
-  }
+  for (const key of Object.keys(raw)) addToValueTree(root, key, raw[key])
   return root
+}
+
+/**
+ * VS Code's addToValueTree: `key` split on dots is a path into the tree; missing steps become objects. A step that is null or
+ * a scalar makes the key ignored (upstream reports a conflict and skips it). The value is assigned at the path, replacing
+ * whatever is there. Deviation: the value is cloned, so the tree never shares objects with `raw`.
+ */
+function addToValueTree(root: Record<string, unknown>, key: string, value: unknown): void {
+  const segments = key.split('.')
+  const last = segments.pop()!
+  let curr: Record<string, unknown> = root
+  for (const s of segments) {
+    let obj = curr[s]
+    if (obj === undefined) obj = curr[s] = {}
+    else if (typeof obj !== 'object' || obj === null) return
+    curr = obj as Record<string, unknown>
+  }
+  curr[last] = clone(value)
 }
 
 /** The value at a dotted key of a values tree; undefined when a step is missing. */

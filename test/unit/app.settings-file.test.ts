@@ -86,13 +86,26 @@ describe('userDir', () => {
 })
 
 describe('settings.json: dotted and nested keys (VS Code toValuesTree / configurationEditing)', () => {
-  test('both forms read the same; nested objects merge; a dotted key wins whatever the order', () => {
+  test('both forms read the same; keys apply in document order and the last one wins (VS Code)', () => {
     assert.deepEqual(parseSettings('{ "ui.deskLine": false }').value, { ui: { deskLine: false } })
     assert.deepEqual(parseSettings('{ "ui": { "deskLine": false } }').value, { ui: { deskLine: false } })
-    assert.deepEqual(parseSettings('{ "ui.deskLine": false, "ui": { "deskLine": true, "tabBorder": true } }').value, { ui: { deskLine: false, tabBorder: true } })
-    assert.deepEqual(parseSettings('{ "ui": { "deskLine": true }, "ui.deskLine": false }').value, { ui: { deskLine: false } })
+    // a nested object after a dotted key replaces the subtree
+    assert.deepEqual(parseSettings('{ "ui.deskLine": false, "ui": { "deskLine": true, "tabBorder": true } }').value, { ui: { deskLine: true, tabBorder: true } })
+    assert.deepEqual(parseSettings('{ "ui.tabBorder": true, "ui": { "deskLine": true } }').value, { ui: { deskLine: true } })
+    // a dotted key after a nested object sets just its leaf
+    assert.deepEqual(parseSettings('{ "ui": { "deskLine": true, "tabBorder": true }, "ui.deskLine": false }').value, { ui: { deskLine: false, tabBorder: true } })
     assert.deepEqual(parseSettings('{ "extensions": { "note": { "minimap": false } }, "extensions.note.size": 2 }').value, { extensions: { note: { minimap: false, size: 2 } } })
+    assert.deepEqual(parseSettings('{ "extensions.note.size": 2, "extensions": { "note": { "minimap": false } } }').value, { extensions: { note: { minimap: false } } })
+    // a dotted key under a scalar or null is ignored
     assert.deepEqual(parseSettings('{ "theme": "dark", "theme.x": 1 }').value, { theme: 'dark' })
+    assert.deepEqual(parseSettings('{ "a": null, "a.b": 1 }').value, { a: null })
+    // a later scalar replaces an earlier subtree
+    assert.deepEqual(parseSettings('{ "a.b": 1, "a": 2 }').value, { a: 2 })
+  })
+  test('the values tree does not share objects with raw', () => {
+    const r = parseSettings('{ "ui": { "a": 1 }, "ui.b": 2 }')
+    assert.deepEqual(r.raw, { ui: { a: 1 }, 'ui.b': 2 })
+    assert.deepEqual(r.value, { ui: { a: 1, b: 2 } })
   })
   test('a write goes flat and removes the nested occurrence (empty parents too), keeping comments', () => {
     const text = '{\n  // mine\n  "theme": "dark",\n  "ui": {\n    // line\n    "deskLine": true\n  },\n  "extensions": { "note": { "minimap": true }, "disabled": [] }\n}\n'
