@@ -299,7 +299,21 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     await dp.waitFor()
     const dr = (await dp.boundingBox())!
     const centre = dr.x + dr.width / 2
-    assert.ok(Math.abs(centre - c1.right) <= 4, `desk "+" centred on the card's right border: ${centre} vs ${c1.right}`)
+    // Pad closed (icon strip showing): the card is flush with the strip, so the "+" sits inward of the border (intentional, 92bf90d):
+    // fully inside the viewport, clear of the icon column, and near the card's outer border. With a pad open it stays centred on the border.
+    const strip = await page.evaluate(() => {
+      const el = document.querySelector('#sidebar-right')
+      const r = el && !el.hasAttribute('hidden') ? el.getBoundingClientRect() : undefined
+      return r && r.width > 0 ? { left: r.left, open: el!.classList.contains('open') } : undefined
+    })
+    const vw = await page.evaluate(() => (globalThis as unknown as { innerWidth: number }).innerWidth)
+    if (strip && !strip.open) {
+      assert.ok(dr.x >= 0 && dr.x + dr.width <= vw, `desk "+" inside the viewport: ${dr.x}..${dr.x + dr.width} of ${vw}`)
+      assert.ok(dr.x + dr.width <= strip.left + 1, `desk "+" not under the icon column: right ${dr.x + dr.width} vs strip ${strip.left}`)
+      assert.ok(Math.abs(centre - c1.right) <= 20, `desk "+" near the card's outer border: ${centre} vs ${c1.right}`)
+    } else {
+      assert.ok(Math.abs(centre - c1.right) <= 4, `desk "+" centred on the card's right border: ${centre} vs ${c1.right}`)
+    }
     await page.mouse.move(400, 300) // inside a card, away from its edges: no "+" in the screenshot
 
     for (const scheme of ['dark', 'light'] as const) {
