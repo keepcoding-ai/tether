@@ -28,6 +28,18 @@ export function tetherHome(env: NodeJS.ProcessEnv = process.env): string {
   return join(homedir(), '.local', 'state', 'tether')
 }
 
+/**
+ * Where the person's own configuration lives (settings.json, keybindings.json), apart from the machine's state in
+ * `tetherHome`: TETHER_USER_DIR, else TETHER_HOME when it is set (tests stay inside their temp home), else `~/.tether`.
+ */
+export function userDir(env: NodeJS.ProcessEnv = process.env): string {
+  const fromUser = env.TETHER_USER_DIR?.trim()
+  if (fromUser) return fromUser
+  const fromHome = env.TETHER_HOME?.trim()
+  if (fromHome) return fromHome
+  return join(homedir(), '.tether')
+}
+
 export function slotsDir(home: string): string {
   return join(home, 'slots')
 }
