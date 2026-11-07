@@ -146,6 +146,7 @@ function isSlotMeta(x: unknown): x is SlotMeta {
   if (x.profileId !== undefined && typeof x.profileId !== 'string') return false
   if (x.profileArgs !== undefined && !(Array.isArray(x.profileArgs) && x.profileArgs.every((a) => typeof a === 'string'))) return false
   if (x.profileEnv !== undefined && !(isObject(x.profileEnv) && Object.values(x.profileEnv).every((v) => typeof v === 'string'))) return false
+  if (x.profileFeatures !== undefined && !(isObject(x.profileFeatures) && Object.values(x.profileFeatures).every((v) => typeof v === 'boolean'))) return false
   return true
 }
 

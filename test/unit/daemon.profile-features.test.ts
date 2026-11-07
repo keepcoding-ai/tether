@@ -1,15 +1,18 @@
 // Profile.features (src/core/profile.ts): an optional map feature → boolean, validated (shape, ids, no features on a shell,
 // a warning for an id no extension declares), kept by the normalizer, read by a v:1 file and absent ones unchanged; and
 // the round trip over tetherd's protocol (profile-save → the `profiles` reply and profiles.json → profiles-list); and the
-// server handing the slot's current profile's switches to the launch (DaemonOptions.transformPlan).
+// server handing the slot's profile's switches to the launch (DaemonOptions.transformPlan), from the slot's snapshot
+// (SlotMeta.profileFeatures) once the profile is gone.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { after, before, describe, test } from 'node:test'
 import type { AgentAdapter } from '../../src/agents/types.ts'
-import { isProfile, parseProfilesFile, profilesPath, upsertProfile, validateProfile, type Profile } from '../../src/core/profile.ts'
+import type { SlotMeta } from '../../src/core/event.ts'
+import { isProfile, parseProfilesFile, profilesPath, slotProfile, snapshotProfile, upsertProfile, validateProfile, type Profile } from '../../src/core/profile.ts'
 import { DaemonError } from '../../src/daemon/client.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
-import { Recorder, removeHome, tempHome, uniquePipe } from './daemon.helpers.ts'
+import { readSlot } from '../../src/core/store.ts'
+import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 describe('Profile.features: validation and normalization', () => {
   test('a map of booleans for a known feature is valid; the normalizer keeps it', () => {
@@ -39,6 +42,21 @@ describe('Profile.features: validation and normalization', () => {
       assert.deepEqual(parsed.profiles.map(p => [p.id, p.features]), [['p', { bridge: true }], ['r', undefined]])
       assert.equal(parsed.skipped, 1)
     }
+  })
+})
+
+describe('Profile.features in the slot snapshot (core)', () => {
+  test('snapshotProfile copies them next to args/env, clears them for a profile without; slotProfile reads the snapshot once the profile is gone', () => {
+    const meta: SlotMeta = { v: 1, slotId: 's1', agent: 'claude', cwd: 'C:\\w', args: [], createdAt: '2026-11-07T00:00:00.000Z' }
+    const p: Profile = { id: 'p', name: 'P', agent: 'claude', args: ['--x'], features: { bridge: false } }
+    assert.equal(snapshotProfile(meta, p), true)
+    assert.deepEqual([meta.profileArgs, meta.profileFeatures], [['--x'], { bridge: false }])
+    assert.equal(snapshotProfile(meta, p), false, 'nothing changed')
+    assert.deepEqual(slotProfile(meta, [p]).features, { bridge: false })
+    assert.deepEqual(slotProfile(meta, []), { id: 'p', launch: { args: ['--x'] }, features: { bridge: false }, missing: true })
+    assert.equal(snapshotProfile(meta, { ...p, features: undefined }), true)
+    assert.equal(meta.profileFeatures, undefined)
+    assert.equal(slotProfile(meta, []).features, undefined)
   })
 })
 
@@ -84,6 +102,39 @@ describe('the launch carries the slot profile\'s features to transformPlan', () 
       assert.deepEqual(seen, [{ bridge: false }, undefined])
       await c.client.request({ t: 'stop', slotId: a.slot!.slotId })
       await c.client.request({ t: 'stop', slotId: b.slot!.slotId })
+    } finally { c.close(); await d.close(); await removeHome(home) }
+  })
+
+  test('the slot snapshot keeps the features: a deleted profile still launches with them; set-profile refreshes or clears them', async () => {
+    const home = tempHome()
+    const seen: Array<Readonly<Record<string, boolean>> | undefined> = []
+    const env: Record<string, string> = {}
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+    const inert: AgentAdapter = { name: 'claude', plan: input => ({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: input.slot.cwd, env }), sessionExists: async () => true, title: async () => undefined }
+    const d = await startDaemon({ home, pipe: uniquePipe(home), adapters: { claude: inert }, readyFallbackMs: 60_000, minAgentAgeMs: 0, transformPlan: (plan, _meta, info) => { seen.push(info?.profileFeatures); return plan } })
+    const c = await Recorder.connect(d.pipe)
+    const stopped = async (slotId: string): Promise<void> => {
+      await c.client.request({ t: 'stop', slotId })
+      await waitUntil(() => ['exited', 'unconfirmed'].includes(c.states.filter(s => s.slotId === slotId).at(-1)?.status ?? ''), 10_000, 'no process')
+    }
+    try {
+      const off = (await c.client.request({ t: 'profile-save', profile: { name: 'Sem ponte', agent: 'claude', args: [], features: { bridge: false } } })).profile!
+      const on = (await c.client.request({ t: 'profile-save', profile: { name: 'Com ponte', agent: 'claude', args: [], features: { bridge: true } } })).profile!
+      const { slot } = await c.client.request({ t: 'create', kind: 'claude', cwd: home, profileId: off.id, start: true })
+      const id = slot!.slotId
+      assert.deepEqual(readSlot(home, id)!.profileFeatures, { bridge: false }, 'the snapshot on disk')
+      await stopped(id)
+      await c.client.request({ t: 'profile-delete', profileId: off.id })
+      c.states.length = 0
+      await c.client.request({ t: 'start', slotId: id, choice: 'new' })
+      assert.deepEqual(seen.at(-1), { bridge: false }, 'the deleted profile launches with its snapshot\'s switches')
+      await stopped(id)
+      await c.client.request({ t: 'set-profile', slotId: id, profileId: on.id })
+      assert.deepEqual(readSlot(home, id)!.profileFeatures, { bridge: true }, 'set-profile refreshes the snapshot')
+      await c.client.request({ t: 'set-profile', slotId: id, profileId: null })
+      const meta = readSlot(home, id)!
+      assert.equal(meta.profileFeatures, undefined, 'no profile: no snapshot')
+      assert.equal(meta.profileId, undefined)
     } finally { c.close(); await d.close(); await removeHome(home) }
   })
 })

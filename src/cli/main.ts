@@ -612,7 +612,7 @@ async function cmdProfileSet(args: string[]): Promise<number> {
     const meta = readSlot(ctx.home, slot.slotId)
     if (!meta) throw new SlotNotFound(`slot sem metadados no disco: ${slot.slotId}`)
     if (profile) snapshotProfile(meta, profile)
-    else { delete meta.profileId; delete meta.profileArgs; delete meta.profileEnv }
+    else { delete meta.profileId; delete meta.profileArgs; delete meta.profileEnv; delete meta.profileFeatures }
     writeSlotMeta(ctx.home, meta)
     out(`slot ${slot.slotId}: ${label}; vale no próximo início\n`)
     return 0

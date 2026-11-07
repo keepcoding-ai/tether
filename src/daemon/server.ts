@@ -252,10 +252,11 @@ class DaemonImpl implements Daemon {
     let changed: boolean
     if (profile) changed = snapshotProfile(meta, profile)
     else {
-      changed = meta.profileId !== undefined || meta.profileArgs !== undefined || meta.profileEnv !== undefined
+      changed = meta.profileId !== undefined || meta.profileArgs !== undefined || meta.profileEnv !== undefined || meta.profileFeatures !== undefined
       delete meta.profileId
       delete meta.profileArgs
       delete meta.profileEnv
+      delete meta.profileFeatures
     }
     if (changed) writeSlotMeta(this.home, meta)
     this.broadcastState(slot)
@@ -263,11 +264,12 @@ class DaemonImpl implements Daemon {
   }
 
   /** Puts the profile fields back as they were (a refused restart undoes the assignment). */
-  private restoreProfileFields(slot: Slot, saved: Pick<SlotMeta, 'profileId' | 'profileArgs' | 'profileEnv'>): void {
+  private restoreProfileFields(slot: Slot, saved: Pick<SlotMeta, 'profileId' | 'profileArgs' | 'profileEnv' | 'profileFeatures'>): void {
     const { meta } = slot
     if (saved.profileId === undefined) delete meta.profileId; else meta.profileId = saved.profileId
     if (saved.profileArgs === undefined) delete meta.profileArgs; else meta.profileArgs = saved.profileArgs
     if (saved.profileEnv === undefined) delete meta.profileEnv; else meta.profileEnv = saved.profileEnv
+    if (saved.profileFeatures === undefined) delete meta.profileFeatures; else meta.profileFeatures = saved.profileFeatures
     try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot restore the profile fields: ${(e as Error).message}`) }
     this.broadcastState(slot)
   }
@@ -624,7 +626,8 @@ class DaemonImpl implements Daemon {
     if (current && snapshotProfile(meta, current)) {
       try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot refresh the profile snapshot: ${(e as Error).message}`) }
     }
-    const profile = this.profileOf(meta, profiles).launch
+    const slotProf = this.profileOf(meta, profiles)
+    const profile = slotProf.launch
     let plan: LaunchPlan
     if (meta.agent === 'shell') plan = shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile })
     else {
@@ -632,8 +635,8 @@ class DaemonImpl implements Daemon {
       if (!adapter) throw new RequestError('agent-unavailable', `o agente ${meta.agent} não está disponível`)
       plan = adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
     }
-    // A profile that is gone launches with the general switches (its snapshot keeps args and env, not features).
-    return this.transformPlan ? this.transformPlan(plan, meta, current?.features ? { profileFeatures: current.features } : {}) : plan
+    // A profile that is gone launches with the feature switches of its snapshot, like its args and env.
+    return this.transformPlan ? this.transformPlan(plan, meta, slotProf.features ? { profileFeatures: slotProf.features } : {}) : plan
   }
 
   /** A start event of the agent arrived at/after the last spawn (the binding describes what this run opened). */
@@ -887,7 +890,7 @@ class DaemonImpl implements Daemon {
         if (req.restart && live && slot.meta.agent !== 'shell' && slot.status === 'running' && !this.reportedThisRun(slot)) {
           throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa. Troque o perfil na próxima abertura, ou encerre o slot e escolha a sessão ao iniciar`)
         }
-        const before = { profileId: slot.meta.profileId, profileArgs: slot.meta.profileArgs, profileEnv: slot.meta.profileEnv }
+        const before = { profileId: slot.meta.profileId, profileArgs: slot.meta.profileArgs, profileEnv: slot.meta.profileEnv, profileFeatures: slot.meta.profileFeatures }
         const changed = this.assignProfile(slot, profile)
         this.log(`slot ${slot.meta.slotId}: profile ${profile ? profile.id : '(none)'}${changed ? '' : ' (unchanged)'}${req.restart && live ? ', restarting' : ''}`)
         if (req.restart && live) {

@@ -51,9 +51,10 @@ export interface SlotMeta {
   createdAt: string
   /** The launch profile (core/profile.ts) applied, as it is now, on every start. Absent on slots created without one. */
   profileId?: string
-  /** Snapshot of the profile's launch args/env from its last run: used when the profile no longer exists. */
+  /** Snapshot of the profile's launch args/env/feature switches from its last run: used when the profile no longer exists. */
   profileArgs?: string[]
   profileEnv?: Record<string, string>
+  profileFeatures?: Record<string, boolean>
 }
 
 /** Who is running the slot right now: <home>/slots/<slotId>.run.json (written by the launcher). */

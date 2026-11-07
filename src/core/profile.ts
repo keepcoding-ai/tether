@@ -1,7 +1,8 @@
 // Launch profiles: a named set of args/env for an agent ("Claude", "Claude modo dev", "soul", "PowerShell"),
 // kept in <home>/profiles.json. A slot references a profile by id (SlotMeta.profileId) and keeps a snapshot of
-// its args/env (profileArgs/profileEnv) for the day the profile is deleted; while the profile exists, every
-// launch (new session or resume) applies the profile as it is NOW, so an edit takes effect on the next start.
+// its args/env/feature switches (profileArgs/profileEnv/profileFeatures) for the day the profile is deleted; while
+// the profile exists, every launch (new session or resume) applies the profile as it is NOW, so an edit takes effect
+// on the next start.
 // Validation refuses whatever tether itself puts on the command line (session choice, settings, fork) and the
 // env vars that carry the slot's identity. Reads are tolerant: a corrupt file is copied aside, never lost.
 // A profile may switch features (src/core/features.ts) on or off for its launches (`features`, optional: the file stays
@@ -356,7 +357,9 @@ export interface SlotProfile {
   /** The current name; absent when the slot has no profile or its profile is gone. */
   name?: string
   launch?: ProfileLaunch
-  /** The slot references a profile that no longer exists: `launch` is the snapshot taken when it last ran. */
+  /** The profile's explicit feature switches (Profile.features), or the snapshot's when the profile is gone. */
+  features?: Record<string, boolean>
+  /** The slot references a profile that no longer exists: `launch` and `features` are the snapshot taken when it last ran. */
   missing: boolean
 }
 
@@ -364,21 +367,24 @@ export interface SlotProfile {
 export function slotProfile(meta: SlotMeta, profiles: Profile[]): SlotProfile {
   if (!meta.profileId) return { missing: false }
   const p = profiles.find((x) => x.id === meta.profileId)
-  if (p) return { id: p.id, name: p.name, launch: launchOf(p), missing: false }
+  if (p) return { id: p.id, name: p.name, launch: launchOf(p), ...(p.features ? { features: { ...p.features } } : {}), missing: false }
   const launch: ProfileLaunch = { args: meta.profileArgs ?? [] }
   if (meta.profileEnv && Object.keys(meta.profileEnv).length) launch.env = { ...meta.profileEnv }
-  return { id: meta.profileId, launch, missing: true }
+  const features = meta.profileFeatures && Object.keys(meta.profileFeatures).length ? { features: { ...meta.profileFeatures } } : {}
+  return { id: meta.profileId, launch, ...features, missing: true }
 }
 
 /** Records the profile on the slot (id + snapshot). Returns true when something changed. */
 export function snapshotProfile(meta: SlotMeta, p: Profile): boolean {
   const launch = launchOf(p)
-  const before = JSON.stringify([meta.profileId, meta.profileArgs, meta.profileEnv])
+  const before = JSON.stringify([meta.profileId, meta.profileArgs, meta.profileEnv, meta.profileFeatures])
   meta.profileId = p.id
   meta.profileArgs = launch.args
   if (launch.env) meta.profileEnv = launch.env
   else delete meta.profileEnv
-  return JSON.stringify([meta.profileId, meta.profileArgs, meta.profileEnv]) !== before
+  if (p.features && Object.keys(p.features).length) meta.profileFeatures = { ...p.features }
+  else delete meta.profileFeatures
+  return JSON.stringify([meta.profileId, meta.profileArgs, meta.profileEnv, meta.profileFeatures]) !== before
 }
 
 /** The launch skips Claude's permission prompts: the UI shows a badge for it. */
