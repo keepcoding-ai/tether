@@ -70,6 +70,9 @@ import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
+import { installFaultReporting, reportFault } from './faults.ts'
+
+installFaultReporting()
 
 const COMPONENT = TERMINAL_COMPONENT
 const TAB = TERMINAL_TAB
@@ -3228,7 +3231,7 @@ function activateRendererExtensions(): void {
       },
     }
   }
-  rendererActivation = activateExtensions(extensions, apiFor, extensionStore, extSettings.disabled)
+  rendererActivation = activateExtensions(extensions, apiFor, extensionStore, extSettings.disabled, (id, err) => reportFault({ kind: 'uncaught', error: err, ext: id, context: { phase: 'activate' } }))
   // A failed extension takes back what it declared (its keys, ≡ items, chooser items); a disabled or failed one leaves
   // placeholders for its saved panes.
   for (const f of rendererActivation.failed) contributionStores.get(f.id)?.dispose()

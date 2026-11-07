@@ -145,6 +145,8 @@ export interface TetherApi {
   listMainExtensions(): Promise<MainExtensionsList>
   /** What the enabled extensions offer the agents (src/core/features.ts), with the general switch in force (the profile editor). */
   listFeatures(): Promise<FeatureInfo[]>
+  /** Files an error of this page in the fault registry (main validates and records it; `ext` attributes it to an extension). */
+  reportFault(fault: { kind: 'uncaught' | 'rejection'; message: string; stack: string; ext?: string; context?: Record<string, string | number | boolean> }): void
   /** The "Extensões" toggle: on or off at the next start ("Reiniciar o app"); answers settings.json `extensions.disabled`. */
   setExtensionEnabled(id: string, on: boolean): Promise<string[]>
   /** The configuration registry's settings (app/main/main.ts settings:*): list, write one key, remove one key, the file, and its ensure-then-path for "Abrir settings.json". */
