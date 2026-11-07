@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { QuickOpenChannels } from './ipc.ts'
+import { record } from '../../src/core/faults.ts'
 import { QuickOpenService } from './service.ts'
 
 export { manifest } from './manifest.ts'
@@ -13,7 +14,9 @@ const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is
 
 export function activate(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<QuickOpenChannels>()
-  const service = new QuickOpenService(join(main.dist, 'file-index-worker.cjs'), join(main.dist, '..', '..'))
+  const service = new QuickOpenService(join(main.dist, 'file-index-worker.cjs'), join(main.dist, '..', '..'), err => {
+    record({ proc: 'worker', kind: 'uncaught', message: err.message, stack: err.stack ?? '', context: { worker: 'file-index' } }, { fromDir: main.dist })
+  })
   return [
     ipc.handle('search', (paneCwd, query, recent) => service.search(paneCwd, typeof query === 'string' ? query : '', strings(recent))),
     ipc.on('refresh', paneCwd => service.refresh(paneCwd)),

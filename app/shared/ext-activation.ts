@@ -42,7 +42,7 @@ export function activationOrder<A>(list: readonly ExtensionEntry<A>[]): { ordere
 }
 
 /** Activates `list` minus `disabled` with the api `apiFor` builds per extension; everything registered goes into `store`. */
-export function activateExtensions<A>(list: readonly ExtensionEntry<A>[], apiFor: (id: string) => A, store: DisposableStore, disabled: readonly string[] = []): ActivationResult {
+export function activateExtensions<A>(list: readonly ExtensionEntry<A>[], apiFor: (id: string) => A, store: DisposableStore, disabled: readonly string[] = [], onFail?: (id: string, err: unknown) => void): ActivationResult {
   const off = list.filter(e => disabled.includes(e.manifest.id)).map(e => e.manifest.id)
   const { ordered, failed } = activationOrder(list.filter(e => !off.includes(e.manifest.id)))
   const active: string[] = []
@@ -58,6 +58,7 @@ export function activateExtensions<A>(list: readonly ExtensionEntry<A>[], apiFor
       const error = err instanceof Error ? err.message : String(err)
       console.error(`extensão ${e.manifest.id}: falha ao ativar: ${error}`)
       failed.push({ id: e.manifest.id, error })
+      try { onFail?.(e.manifest.id, err) } catch { /* reporting never changes the outcome */ }
     }
   }
   return { active, disabled: off, failed }

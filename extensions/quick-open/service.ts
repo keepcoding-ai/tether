@@ -26,9 +26,13 @@ export class QuickOpenService {
   /** The root the open box reads (its search session); null while the box is closed. */
   private sessionRoot: string | undefined
 
-  constructor(workerPath: string, repo: string) {
+  /** Told about every worker `error` (the fault registry: the parent reports for a worker that died). */
+  private readonly onWorkerError: ((err: Error) => void) | undefined
+
+  constructor(workerPath: string, repo: string, onWorkerError?: (err: Error) => void) {
     this.workerPath = workerPath
     this.repo = repo
+    this.onWorkerError = onWorkerError
   }
 
   private ensureWorker(): Worker {
@@ -44,6 +48,7 @@ export class QuickOpenService {
     })
     w.on('error', err => {
       console.error('quick open: o índice parou', err)
+      try { this.onWorkerError?.(err) } catch { /* reporting must not break the reset */ }
       if (this.worker === w) this.reset(`o índice de arquivos parou: ${err.message}`)
     })
     w.on('exit', code => { if (this.worker === w) this.reset(`o índice de arquivos saiu (código ${code})`) })

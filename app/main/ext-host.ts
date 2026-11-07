@@ -15,6 +15,7 @@ import type { BrowserWindow, WebContents } from 'electron'
 import { summaryOf, type ExtensionEntry } from '../../extensions/types.ts'
 import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts'
 import { activateExtensions, type ActivationResult } from '../shared/ext-activation.ts'
+import { record } from '../../src/core/faults.ts'
 import { applyMigrations, stateOf, withState } from '../shared/ext-migrations.ts'
 import { mainIpc, type MainIpcTransport } from '../shared/ext-ipc.ts'
 import { ConfigurationRegistry, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
@@ -82,7 +83,9 @@ export class MainExtensionHost {
     for (const p of declared.problems) this.deps.log(`extensões: ${p}`)
     this.features = declared.features
     if (this.features.length) this.store.add(this.configuration.registerConfiguration(featuresConfigurationNode(this.features)))
-    this.result = activateExtensions(this.list, id => this.apiFor(id), this.store, disabled)
+    this.result = activateExtensions(this.list, id => this.apiFor(id), this.store, disabled, (id, err) => {
+      record({ proc: `ext:${id}`, kind: 'uncaught', message: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack ?? '' : '', context: { phase: 'activate' } }, { fromDir: __dirname })
+    })
     if (this.result.active.length || this.result.failed.length) this.deps.log(`extensões (main): ativas ${this.result.active.join(', ') || '—'}; falharam ${this.result.failed.map(f => `${f.id} (${f.error})`).join(', ') || '—'}`)
     return this.result
   }

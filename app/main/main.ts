@@ -39,6 +39,7 @@ import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 import { BRAND } from '../shared/brand.ts'
+import { injectTestThrow, installMainFaults, registerFaultsIpc } from './faults-main.ts'
 
 const home = tetherHome()
 const pipe = pipePath(home, userInfo().username)
@@ -66,6 +67,8 @@ const daemonMain = join(__dirname, '..', '..', 'src', 'daemon', 'main.ts')
 const replacedPid = relaunchedFrom(process.argv)
 /** What this launch decides, on disk (<home>/tether-app.log) and on stderr: a Start Menu launch has no console. */
 const appLog = createAppLog(join(home, 'tether-app.log'))
+installMainFaults({ log: appLog, hidden })
+registerFaultsIpc()
 appLog(`start: ppid ${process.ppid}, exec ${process.execPath}, cwd ${process.cwd()}, args ${JSON.stringify(process.argv.slice(1))}${replacedPid ? `, replaces pid ${replacedPid} (Reiniciar o app)` : ''}`)
 
 let daemon: DaemonClient | undefined
@@ -620,6 +623,7 @@ function createWindow(): void {
   })
   windowLoaded = new Promise(resolve => {
     created.webContents.once('did-finish-load', () => {
+      injectTestThrow(created.webContents)
       // A window recreated from the tray finds the daemon already connected: it only needs to be told.
       if (daemon) sendConnection(connectionState())
       else void connectDaemon()
