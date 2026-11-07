@@ -32,7 +32,8 @@ export const claudeAgent: AgentContribution = {
   envArgsVar: 'TETHER_CLAUDE_ARGS',
   // `claude --mcp-config <file>`: added to the project's own .mcp.json servers (the default; --strict-mcp-config would drop them).
   mcp: { inject: withMcpConfigFlag },
-  // The composed features become a session-only plugin (src/agents/claude-plugin.ts): `--plugin-dir <share>/claude-plugin`.
+  // The composed features (src/agents/claude-plugin.ts): the servers as `--mcp-config <share>/claude.mcp.json` (tool names
+  // unchanged), the skills as a session-only plugin `--plugin-dir <share>/claude-plugin` (`/tether:<name>`).
   share: { inject: withClaudePlugin },
 }
 

@@ -1,8 +1,8 @@
 // Features at launch (src/daemon/ext-host.ts), with the committed daemon index (claude, soul, web-bridge) activated in a
 // host of its own: the Tether Bridge is the feature `bridge` (on by default), whose content is the folder web-bridge
 // provides (<home>/web-bridge/share/mcps/tether-bridge/mcp.json). An AI agent plan with the feature on gets the composed
-// <home>/share/bridge/ through its contribution (claude: `--plugin-dir <share>/claude-plugin`, soul: `-S <share>/soul` and
-// `--mcp-config <share>/soul.mcp.json`) and its
+// <home>/share/bridge/ through its contribution (claude: `--mcp-config <share>/claude.mcp.json`, plus `--plugin-dir
+// <share>/claude-plugin` when there are skills; soul: `-S <share>/soul` and `--mcp-config <share>/soul.mcp.json`) and its
 // identity for the bridge in the env; off (profile > settings.json `agents.features.bridge` > default, the old
 // `extensions.web-bridge.serveToAgents` still read through the migration), a shell plan, or a feature with no content
 // leave the plan untouched. A static feature (`share` folder of an extension) composes the same way, and an extension may
@@ -18,7 +18,7 @@ import { CLIENT_ID_PATTERN, CLIENT_NAME_MAX, clientIdOf, clientNameOf, createLau
 import { mcpConfigOf, writeMcpConfig } from '../../extensions/web-bridge/bridge-home.ts'
 import { bridgeShareDirOf, legacyMcpConfigPathOf, mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
 import type { ExtensionEntry } from '../../extensions/types.ts'
-import { CLAUDE_PLUGIN_DIR, PLUGIN_DIR_FLAG } from '../../src/agents/claude-plugin.ts'
+import { CLAUDE_MCP_FILE, CLAUDE_PLUGIN_DIR, PLUGIN_DIR_FLAG } from '../../src/agents/claude-plugin.ts'
 import { AgentRegistry, type AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
@@ -60,17 +60,18 @@ describe('the bridge feature at launch', () => {
     assert.ok(!existsSync(legacyMcpConfigPathOf(home)) && !existsSync(join(home, 'mcp')))
   })
 
-  test('claude: --plugin-dir <share>/bridge/claude-plugin LAST and the identity env; the plugin carries the bridge', () => {
+  test('claude: --mcp-config <share>/bridge/claude.mcp.json LAST and the identity env; no plugin (the bridge has no skill)', () => {
     const input = plan()
     const out = host.transformPlan(input, meta('claude', { name: 'Pesquisa' }))
-    assert.deepEqual(out.args, [...input.args, PLUGIN_DIR_FLAG, join(composed(), CLAUDE_PLUGIN_DIR)])
+    assert.deepEqual(out.args, [...input.args, '--mcp-config', join(composed(), CLAUDE_MCP_FILE)])
+    assert.ok(!out.args.includes(PLUGIN_DIR_FLAG) && !existsSync(join(composed(), CLAUDE_PLUGIN_DIR)))
     assert.equal(out.env[ENV_CLIENT_ID], 'tether:a1b2c3d4')
     assert.equal(out.env[ENV_CLIENT_NAME], 'Claude · Pesquisa')
     assert.equal(out.env.PATH, 'p'); assert.equal(out.command, input.command); assert.equal(out.cwd, input.cwd)
     assert.deepEqual(input, plan(), 'the plan given is never mutated')
     assert.ok(existsSync(join(composed(), 'mcps', 'tether-bridge', 'mcp.json')))
-    const merged = JSON.parse(readFileSync(join(composed(), CLAUDE_PLUGIN_DIR, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> }
-    assert.deepEqual(Object.keys(merged.mcpServers), ['tether-bridge'])
+    const merged = JSON.parse(readFileSync(join(composed(), CLAUDE_MCP_FILE), 'utf8')) as { mcpServers: Record<string, unknown> }
+    assert.deepEqual(Object.keys(merged.mcpServers), ['tether-bridge'], 'the server keeps its own name: tools mcp__tether-bridge__*')
   })
 
   test('soul: -S <share>/bridge/soul and --mcp-config <share>/bridge/soul.mcp.json, and the identity env', () => {
@@ -96,7 +97,7 @@ describe('the bridge feature at launch', () => {
     const input = plan()
     writeFileSync(settings(), JSON.stringify({ agents: { features: { bridge: false } } }))
     assert.equal(host.transformPlan(input, meta('claude')), input)
-    assert.ok(host.transformPlan(input, meta('claude'), { profileFeatures: { bridge: true } }).args.includes(PLUGIN_DIR_FLAG), 'the profile wins')
+    assert.ok(host.transformPlan(input, meta('claude'), { profileFeatures: { bridge: true } }).args.includes('--mcp-config'), 'the profile wins')
     writeFileSync(settings(), JSON.stringify({ agents: { features: { bridge: 'garbage' } } }))
     assert.notEqual(host.transformPlan(input, meta('claude')), input, 'an invalid value reads as the default (on)')
     writeFileSync(settings(), JSON.stringify({ extensions: { 'web-bridge': { serveToAgents: false } } }))
@@ -112,10 +113,10 @@ describe('the bridge feature at launch', () => {
     const before = logs.length
     const input = plan()
     assert.equal(host.transformPlan(input, meta('claude')), input, 'no plugin and no bridge identity: the same object')
-    assert.ok(!host.transformPlan(plan(), meta('claude')).args.includes(PLUGIN_DIR_FLAG))
+    assert.ok(!host.transformPlan(plan(), meta('claude')).args.includes('--mcp-config'))
     assert.equal(logs.slice(before).filter(l => /feature bridge: sem conteúdo/.test(l)).length, 1)
     mkdirSync(join(file, '..'), { recursive: true }); writeFileSync(file, saved)
-    assert.ok(host.transformPlan(plan(), meta('claude')).args.includes(PLUGIN_DIR_FLAG))
+    assert.ok(host.transformPlan(plan(), meta('claude')).args.includes('--mcp-config'))
   })
 })
 
@@ -141,7 +142,9 @@ describe('a static feature and the rules of provide', () => {
       assert.ok(existsSync(join(dir, 'soul', 'skills', 'tether-faults', 'SKILL.md')), "the soul's view holds a copy of the skill")
       assert.ok(existsSync(join(dir, 'mcps', 'tether-bridge', 'mcp.json')))
       const claude = host.transformPlan(plan(), meta('claude'), { profileFeatures: { faults: true, bridge: false } })
-      assert.equal(claude.args.at(-1), join(shareRootOf(home), 'faults', CLAUDE_PLUGIN_DIR))
+      assert.deepEqual(claude.args.slice(-2), [PLUGIN_DIR_FLAG, join(shareRootOf(home), 'faults', CLAUDE_PLUGIN_DIR)], 'skills only: the plugin, no --mcp-config')
+      const both = host.transformPlan(plan(), meta('claude'), { profileFeatures: { faults: true } })
+      assert.deepEqual(both.args.slice(-4), [PLUGIN_DIR_FLAG, join(dir, CLAUDE_PLUGIN_DIR), '--mcp-config', join(dir, CLAUDE_MCP_FILE)])
       assert.ok(existsSync(join(shareRootOf(home), 'faults', CLAUDE_PLUGIN_DIR, 'skills', 'tether-faults', 'SKILL.md')))
       assert.equal(claude.env[ENV_CLIENT_ID], undefined, 'no bridge, no bridge identity')
     } finally { host.dispose(); cleanShares(home); await removeHome(home) }

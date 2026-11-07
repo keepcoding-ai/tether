@@ -1,6 +1,6 @@
-// How each agent takes the composed share folder: Claude Code as a session-only plugin generated next to it
-// (src/agents/claude-plugin.ts: .claude-plugin/plugin.json, skills/ merged from the loose skills and each MCP's own,
-// .mcp.json merged from every mcps/<slug>/mcp.json, `--plugin-dir` on the plan), the soul (src/agents/soul-share.ts) as one
+// How each agent takes the composed share folder: Claude Code (src/agents/claude-plugin.ts) with the merged servers as
+// `--mcp-config <share>/claude.mcp.json` (their tools keep `mcp__<slug>__*`) and a session-only plugin with the skills only
+// (.claude-plugin/plugin.json, skills/ merged from the loose skills and each MCP's own, `--plugin-dir`), the soul (src/agents/soul-share.ts) as one
 // more shared folder holding REAL copies of the skills (`-S <share>/soul`, after the SOUL_CLI_SHARED_FOLDERS list when no -S
 // was typed, before a `--`) plus the merged servers as `--mcp-config <share>/soul.mcp.json`.
 import assert from 'node:assert/strict'
@@ -11,7 +11,7 @@ import { after, before, describe, test } from 'node:test'
 import '../../extensions/index.daemon.ts'
 import { claudeAgent } from '../../extensions/claude/daemon.ts'
 import { soulAgent } from '../../extensions/soul/daemon.ts'
-import { CLAUDE_PLUGIN_DIR, ensureClaudePlugin, mergedMcpServers, PLUGIN_DIR_FLAG, withClaudePlugin } from '../../src/agents/claude-plugin.ts'
+import { CLAUDE_MCP_FILE, CLAUDE_PLUGIN_DIR, ensureClaudeMcpConfig, ensureClaudePlugin, PLUGIN_DIR_FLAG, withClaudePlugin } from '../../src/agents/claude-plugin.ts'
 import { ENV_SOUL_SHARED, withSharedFolder } from '../../src/agents/soul.ts'
 import { ensureSoulView, SOUL_MCP_FILE, SOUL_VIEW_DIR } from '../../src/agents/soul-share.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
@@ -42,27 +42,28 @@ after(async () => { cleanShares(home); await removeHome(root) })
 
 const plan = (args: string[] = ['--settings', 's.json', '--model', 'haiku'], env: Record<string, string> = { PATH: 'p' }): LaunchPlan => ({ command: 'x', args, cwd: 'C:\\w', env })
 
-describe('Claude: the share folder as a plugin', () => {
-  test('.claude-plugin/plugin.json names the plugin "tether" and the features', () => {
-    const dir = ensureClaudePlugin(shareDir)
+describe('Claude: the MCPs as --mcp-config, the skills as a plugin', () => {
+  test('.claude-plugin/plugin.json names the plugin "tether" and the features; the plugin has no .mcp.json', () => {
+    const dir = ensureClaudePlugin(shareDir)!
     assert.equal(dir, join(shareDir, CLAUDE_PLUGIN_DIR))
     const manifest = JSON.parse(readFileSync(join(dir, '.claude-plugin', 'plugin.json'), 'utf8')) as { name: string; version: string; description: string }
     assert.equal(manifest.name, 'tether')
     assert.match(manifest.version, /^\d+\.\d+\.\d+$/)
     assert.match(manifest.description, /a, b/)
     assert.deepEqual(readdirSync(join(dir, '.claude-plugin')), ['plugin.json'])
+    assert.deepEqual(readdirSync(dir).sort(), ['.claude-plugin', 'skills'], 'skills only: the servers are not the plugin\'s (their tools would be renamed)')
   })
 
-  test('.mcp.json merges every mcps/<slug>/mcp.json, leaving out a connection with enabled:false', () => {
-    const dir = ensureClaudePlugin(shareDir)
-    const merged = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> }
+  test('claude.mcp.json merges every mcps/<slug>/mcp.json under its own name, leaving out a connection with enabled:false', () => {
+    const file = ensureClaudeMcpConfig(shareDir)!
+    assert.equal(file, join(shareDir, CLAUDE_MCP_FILE))
+    const merged = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers: Record<string, unknown> }
     assert.deepEqual(Object.keys(merged.mcpServers).sort(), ['other', 'tether-bridge'])
     assert.deepEqual(merged.mcpServers['tether-bridge'], server('bridge'))
-    assert.deepEqual(mergedMcpServers(shareDir), merged.mcpServers)
   })
 
   test("skills/ holds the loose skills and each MCP's own, as links to the real folders", () => {
-    const dir = ensureClaudePlugin(shareDir)
+    const dir = ensureClaudePlugin(shareDir)!
     assert.deepEqual(readdirSync(join(dir, 'skills')).sort(), ['browse', 'tether-faults'])
     for (const [name, src] of [['tether-faults', join(root, 'feat-a', 'skills', 'tether-faults')], ['browse', join(root, 'feat-a', 'mcps', 'tether-bridge', 'skills', 'browse')]] as const) {
       const p = join(dir, 'skills', name)
@@ -72,21 +73,36 @@ describe('Claude: the share folder as a plugin', () => {
     }
   })
 
-  test('the plan gains --plugin-dir <share>/claude-plugin last; the rest is kept and the input not mutated', () => {
+  test('the plan gains --plugin-dir <share>/claude-plugin and, LAST (variadic), --mcp-config <share>/claude.mcp.json', () => {
     const input = plan()
     const out = withClaudePlugin(input, shareDir)
-    assert.deepEqual(out.args, [...input.args, PLUGIN_DIR_FLAG, join(shareDir, CLAUDE_PLUGIN_DIR)])
+    assert.deepEqual(out.args, [...input.args, PLUGIN_DIR_FLAG, join(shareDir, CLAUDE_PLUGIN_DIR), '--mcp-config', join(shareDir, CLAUDE_MCP_FILE)])
     assert.deepEqual(input, plan())
-    assert.equal(claudeAgent.share?.inject(plan(), shareDir).args.at(-2), PLUGIN_DIR_FLAG, 'the claude contribution uses it')
-    assert.ok(!out.args.includes('--mcp-config'))
+    assert.deepEqual(claudeAgent.share?.inject(plan(), shareDir).args, out.args, 'the claude contribution uses it')
   })
 
-  test('idempotent: a second launch rewrites nothing (same mtimes)', () => {
-    const dir = ensureClaudePlugin(shareDir)
-    const stamp = (f: string): number => lstatSync(join(dir, f)).mtimeMs
-    const before = [stamp('.mcp.json'), stamp(join('.claude-plugin', 'plugin.json'))]
+  test('a folder with servers and no skill: --mcp-config only, no plugin folder; one with skills and no server: --plugin-dir only', () => {
+    const onlyMcp = composeShare(home, [{ id: 'b', dir: join(root, 'feat-b') }]).dir
+    const out = withClaudePlugin(plan([]), onlyMcp)
+    assert.deepEqual(out.args, ['--mcp-config', join(onlyMcp, CLAUDE_MCP_FILE)])
+    assert.ok(!existsSync(join(onlyMcp, CLAUDE_PLUGIN_DIR)))
+    const skillsDir = join(root, 'feat-c')
+    write(join(skillsDir, 'skills', 'solo', 'SKILL.md'), '---\nname: solo\n---\n')
+    const onlySkills = composeShare(home, [{ id: 'c', dir: skillsDir }]).dir
+    assert.deepEqual(withClaudePlugin(plan([]), onlySkills).args, [PLUGIN_DIR_FLAG, join(onlySkills, CLAUDE_PLUGIN_DIR)])
+    assert.ok(!existsSync(join(onlySkills, CLAUDE_MCP_FILE)))
+  })
+
+  test('idempotent: a second launch rewrites nothing (same mtimes); an older plugin .mcp.json is removed', () => {
+    const dir = ensureClaudePlugin(shareDir)!
+    writeFileSync(join(dir, '.mcp.json'), '{}')
     ensureClaudePlugin(shareDir)
-    assert.deepEqual([stamp('.mcp.json'), stamp(join('.claude-plugin', 'plugin.json'))], before)
+    assert.ok(!existsSync(join(dir, '.mcp.json')))
+    const file = ensureClaudeMcpConfig(shareDir)!
+    const stamp = (p: string): number => lstatSync(p).mtimeMs
+    const before = [stamp(file), stamp(join(dir, '.claude-plugin', 'plugin.json'))]
+    withClaudePlugin(plan(), shareDir)
+    assert.deepEqual([stamp(file), stamp(join(dir, '.claude-plugin', 'plugin.json'))], before)
   })
 })
 

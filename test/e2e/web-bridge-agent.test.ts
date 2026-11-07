@@ -1,8 +1,8 @@
 // E2E of the Tether Bridge reaching an agent (F7 slice C3), with REAL Claude Code (haiku) in a PRIVATE tetherd (temp home,
 // unique pipe, TETHER_BRIDGE_PORT on a free port, so the tetherd warms a REAL vendored bridge daemon of its own). The bridge
-// is the feature `bridge` (on by default): a claude slot is launched with `--plugin-dir <home>/share/bridge/claude-plugin`
-// (the composed share folder translated into a session-only plugin whose .mcp.json carries mcps/tether-bridge/mcp.json),
-// the agent calls `mcp__plugin_tether_tether-bridge__list_browsers` (a plugin's server is `plugin:tether:<slug>`) and gets
+// is the feature `bridge` (on by default): a claude slot is launched with `--mcp-config <home>/share/bridge/claude.mcp.json`
+// (the composed folder's mcps/tether-bridge/mcp.json merged; no --plugin-dir: the bridge brings no skill), the agent calls
+// `mcp__tether-bridge__list_browsers` (the tool name unchanged: its transcript names exactly that tool) and gets
 // the daemon's answer (NO_BROWSER_CONNECTED: nothing is paired in this home, which is exactly what proves the wiring
 // daemon → MCP shell → bridge daemon), and on /exit the tetherd posts the release of the slot's client to the bridge daemon
 // (route /clients/:id/release of the vendored bundle: 200, "abas soltas"). A second slot, of a profile with
@@ -18,7 +18,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ENV_CLIENT_ID, ENV_CLIENT_NAME } from '../../extensions/web-bridge/agents.ts'
 import { bridgeHomeOf, mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
-import { CLAUDE_PLUGIN_DIR } from '../../src/agents/claude-plugin.ts'
+import { findTranscript } from '../../src/agents/claude.ts'
+import { CLAUDE_MCP_FILE } from '../../src/agents/claude-plugin.ts'
 import { cleanShares, shareRootOf } from '../../src/daemon/share.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
@@ -47,7 +48,7 @@ async function waitUntil(cond: () => Promise<boolean> | boolean, timeoutMs: numb
 }
 const health = (port: number): Promise<boolean> => fetch(`http://127.0.0.1:${port}/health`).then(r => r.ok, () => false)
 
-const TOOL = 'mcp__plugin_tether_tether-bridge__list_browsers'
+const TOOL = 'mcp__tether-bridge__list_browsers'
 
 test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_browsers, and its exit releases the client', { timeout: 300_000 }, async () => {
   const base = mkdtempSync(join(tmpdir(), 'tether-wb-agent-'))
@@ -93,13 +94,14 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
     const self = (await term.tree()).find(p => p.pid === term!.pid)
     assert.ok(self?.cmd, `the claude process has a command line (tree: ${JSON.stringify(trees[0])})`)
     const composed = join(shareRootOf(home), 'bridge')
-    const pluginDir = join(composed, CLAUDE_PLUGIN_DIR)
-    assert.ok(self!.cmd!.includes(`--plugin-dir ${pluginDir}`) || self!.cmd!.includes(`--plugin-dir "${pluginDir}"`), `--plugin-dir <composed plugin> on the command line: ${self!.cmd}`)
-    assert.ok(!self!.cmd!.includes('--mcp-config'), 'the MCP goes through the plugin, not --mcp-config')
-    assert.ok(/--session-id [0-9a-f-]{36}/.test(self!.cmd!), 'the tether\'s own args are still there')
+    const claudeMcp = join(composed, CLAUDE_MCP_FILE)
+    assert.ok(self!.cmd!.includes(`--mcp-config ${claudeMcp}`) || self!.cmd!.includes(`--mcp-config "${claudeMcp}"`), `--mcp-config <composed>/claude.mcp.json on the command line: ${self!.cmd}`)
+    assert.ok(!self!.cmd!.includes('--plugin-dir'), 'no skill in the bridge feature: no plugin')
+    const sessionId = /--session-id ([0-9a-f-]{36})/.exec(self!.cmd!)?.[1]
+    assert.ok(sessionId, 'the tether\'s own args are still there')
     assert.equal(readFileSync(join(composed, 'mcps', 'tether-bridge', 'mcp.json'), 'utf8'), readFileSync(mcpPath, 'utf8'), 'the composed folder carries the feature\'s MCP')
-    const pluginMcp = JSON.parse(readFileSync(join(pluginDir, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> }
-    assert.deepEqual(Object.keys(pluginMcp.mcpServers), ['tether-bridge'])
+    const merged = JSON.parse(readFileSync(claudeMcp, 'utf8')) as { mcpServers: Record<string, unknown> }
+    assert.deepEqual(Object.keys(merged.mcpServers), ['tether-bridge'])
 
     // 3. The agent calls the bridge tool. No browser is paired in this home: the daemon answers NO_BROWSER_CONNECTED (or an
     //    empty list), and that answer on screen, in the form asked for, is the whole chain working (agent → MCP shell →
@@ -108,6 +110,12 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
     await term.waitIdle({ timeout: 180_000 })
     const screen = term.screen()
     assert.match(screen, /navegadores\s*=\s*0|erro\s*=\s*NO_BROWSER_CONNECTED/i, `the bridge's answer reached the agent\n--- screen ---\n${screen}`)
+    // The tool the agent called, by its name in the transcript: unchanged, `mcp__tether-bridge__list_browsers`.
+    const transcript = findTranscript({ sessionId: sessionId!, cwd: work })
+    assert.ok(transcript, `the session's transcript (${sessionId})`)
+    const called = [...readFileSync(transcript!, 'utf8').matchAll(/"type":"tool_use","id":"[^"]*","name":"([^"]+)"/g)].map(m => m[1])
+    assert.ok(called.includes(TOOL), `the tool called is ${TOOL} (called: ${called.join(', ') || 'none'})`)
+    assert.ok(!called.some(n => n!.startsWith('mcp__plugin_')), 'no plugin-namespaced tool')
 
     // 4. /exit: the slot exits and the tetherd posts the release of tether:<slotId>; the vendored daemon (A6 and later) has
     //    the route and answers 200, which the tetherd logs as "abas soltas no bridge".
