@@ -39,6 +39,8 @@ export interface NoteParams {
     cwd?: string
     /** This editor's own minimap choice; absent means it follows the general setting (`extensions.note.minimap`). */
     minimap?: boolean
+    /** This editor's own line-numbers choice; absent means it follows the general setting (`extensions.note.lineNumbers`). */
+    lineNumbers?: boolean
   }
 }
 
@@ -47,19 +49,20 @@ export function noteParams(params: unknown): NoteParams['note'] | undefined {
   if (!params || typeof params !== 'object') return undefined
   const note = (params as { note?: unknown }).note
   if (!note || typeof note !== 'object' || typeof (note as { path?: unknown }).path !== 'string') return undefined
-  const { path, view, cwd, minimap } = note as { path: string; view?: unknown; cwd?: unknown; minimap?: unknown }
-  return { path, ...(view && typeof view === 'object' ? { view: view as NoteView } : {}), ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}), ...(typeof minimap === 'boolean' ? { minimap } : {}) }
+  const { path, view, cwd, minimap, lineNumbers } = note as { path: string; view?: unknown; cwd?: unknown; minimap?: unknown; lineNumbers?: unknown }
+  return { path, ...(view && typeof view === 'object' ? { view: view as NoteView } : {}), ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}), ...(typeof minimap === 'boolean' ? { minimap } : {}), ...(typeof lineNumbers === 'boolean' ? { lineNumbers } : {}) }
 }
 
 /**
  * The params with the note's view replaced (or the path changed); other params are kept, the opening folder too when `note` names none.
- * `minimap`: absent keeps the stored choice, `null` clears it (back to the general setting), a boolean sets it.
+ * `minimap` and `lineNumbers`: absent keeps the stored choice, `null` clears it (back to the general setting), a boolean sets it.
  */
-export function withNote(params: Record<string, unknown> | undefined, note: Omit<NoteParams['note'], 'minimap'> & { minimap?: boolean | null }): Record<string, unknown> {
+export function withNote(params: Record<string, unknown> | undefined, note: Omit<NoteParams['note'], 'minimap' | 'lineNumbers'> & { minimap?: boolean | null; lineNumbers?: boolean | null }): Record<string, unknown> {
   const current = noteParams(params)
   const cwd = note.cwd ?? current?.cwd
   const minimap = note.minimap === undefined ? current?.minimap : note.minimap ?? undefined
-  return { ...(params ?? {}), note: { path: note.path, ...(note.view ? { view: note.view } : {}), ...(cwd ? { cwd } : {}), ...(minimap !== undefined ? { minimap } : {}) } }
+  const lineNumbers = note.lineNumbers === undefined ? current?.lineNumbers : note.lineNumbers ?? undefined
+  return { ...(params ?? {}), note: { path: note.path, ...(note.view ? { view: note.view } : {}), ...(cwd ? { cwd } : {}), ...(minimap !== undefined ? { minimap } : {}), ...(lineNumbers !== undefined ? { lineNumbers } : {}) } }
 }
 
 /** What the tab shows: the file name. */

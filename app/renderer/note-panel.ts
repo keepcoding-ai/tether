@@ -53,6 +53,8 @@ export interface NoteHost {
   toggleWordWrap(): void
   /** The general minimap preference (settings.json `extensions.note.minimap`). */
   getMinimap(): boolean
+  /** The general line-numbers preference (settings.json `extensions.note.lineNumbers`). */
+  getLineNumbers(): boolean
   /** The editor's widget got or lost the keyboard. */
   onFocus(panel: NotePanel, focused: boolean): void
   /** The view state (or the path) changed: persist the pane params with the layout. */
@@ -154,6 +156,7 @@ export class NotePanel implements IContentRenderer {
     this.path = note.path
     this.cwd = note.cwd
     this.minimapOverride = note.minimap
+    this.lineNumbersOverride = note.lineNumbers
     this.initialView = note.view
     this.createEditor()
     this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
@@ -181,7 +184,7 @@ export class NotePanel implements IContentRenderer {
       folding: true,
       foldingHighlight: false,
       showFoldingControls: 'mouseover',
-      lineNumbers: 'on',
+      lineNumbers: this.lineNumbersEnabled() ? 'on' : 'off',
       glyphMargin: false,
       renderWhitespace: 'selection',
       renderLineHighlight: 'line',
@@ -501,6 +504,28 @@ export class NotePanel implements IContentRenderer {
   setMinimapOverride(value: boolean | undefined): void {
     this.minimapOverride = value
     this.refreshMinimap()
+    this.flushView()
+  }
+
+  /** This editor's own line-numbers choice (undefined: follows the general setting). Persisted in the pane params. */
+  lineNumbersOverride: boolean | undefined
+
+  /** Whether the line numbers show: the editor's own choice wins over the general setting. */
+  lineNumbersEnabled(): boolean { return this.lineNumbersOverride ?? this.host.getLineNumbers() }
+
+  /** What the editor really runs with: the lineNumbers render type and the width of Monaco's gutter numbers (0 when hidden, or when the tab is not showing). */
+  lineNumbersShown(): { option: number; width: number } {
+    const el = this.element.querySelector<HTMLElement>('.monaco-editor .line-numbers')
+    return { option: this.editor ? this.editor.getOption(monaco.editor.EditorOption.lineNumbers).renderType : -1, width: el ? el.offsetWidth : 0 }
+  }
+
+  /** Applies the effective line numbers to the editor (after the general setting or the override changed). */
+  refreshLineNumbers(): void { this.editor?.updateOptions({ lineNumbers: this.lineNumbersEnabled() ? 'on' : 'off' }) }
+
+  /** "Números de linha deste editor": sets the editor's own choice; undefined resets it to the general setting. */
+  setLineNumbersOverride(value: boolean | undefined): void {
+    this.lineNumbersOverride = value
+    this.refreshLineNumbers()
     this.flushView()
   }
 

@@ -47,6 +47,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   const wordWrap = (): boolean => ui.settings.get<boolean>('wordWrap') ?? true
   const minimap = (): boolean => ui.settings.get<boolean>('minimap') ?? true
+  const lineNumbers = (): boolean => ui.settings.get<boolean>('lineNumbers') ?? true
   const activeId = (): string | undefined => ui.panes.activeId()
   const setActive = (id: string): void => ui.panes.find(id)?.api.setActive()
 
@@ -61,6 +62,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     getWordWrap: wordWrap,
     toggleWordWrap: () => ui.settings.set('wordWrap', !wordWrap()),
     getMinimap: minimap,
+    getLineNumbers: lineNumbers,
     onFocus: (panel, focused) => {
       // The actions stay registered while the focus is on a transient surface (the palette lists them); the next
       // focused note replaces them, and a disposed note removes its own.
@@ -71,7 +73,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const p = ui.panes.find(panel.id)
       if (!p) return
       const view = panel.viewState()
-      p.api.updateParameters(withNote(p.params, { path: panel.path, ...(view ? { view } : {}), minimap: panel.minimapOverride ?? null }))
+      p.api.updateParameters(withNote(p.params, { path: panel.path, ...(view ? { view } : {}), minimap: panel.minimapOverride ?? null, lineNumbers: panel.lineNumbersOverride ?? null }))
       ui.layout.scheduleSave()
     },
     onDirtyChange: panel => noteTabs.get(panel.id)?.render(),
@@ -309,6 +311,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       'sep',
       { icon: 'pencil-simple', label: 'Renomear…', run: () => noteTabs.get(id)?.startRename() },
       { icon: 'map-trifold', label: 'Minimapa neste editor', checked: note.minimapEnabled(), run: () => note.setMinimapOverride(!note.minimapEnabled()) },
+      { icon: 'list-numbers', label: 'Números de linha neste editor', checked: note.lineNumbersEnabled(), run: () => note.setLineNumbersOverride(!note.lineNumbersEnabled()) },
+      ...(note.lineNumbersOverride !== undefined ? [{ icon: 'arrow-counter-clockwise', label: 'Números de linha: usar o padrão', run: () => note.setLineNumbersOverride(undefined) }] : []),
       ...(note.minimapOverride !== undefined ? [{ icon: 'arrow-counter-clockwise', label: 'Minimapa: usar o padrão', run: () => note.setMinimapOverride(undefined) }] : []),
       { icon: 'floppy-disk', label: 'Salvar nota como…', run: () => { void saveNoteAs(id) } },
       ...(isPreviewablePath(note.path) ? [{ icon: 'eye', label: 'Abrir prévia', run: () => { openPreview({ side: false, reference: id }) } }, { icon: 'square-split-horizontal', label: 'Abrir prévia ao lado', run: () => { openPreview({ side: true, reference: id }) } }] : []),
@@ -432,6 +436,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.commands.registerCommand('ui.word-wrap', () => noteHost.toggleWordWrap()),
     ui.commands.registerCommand('ui.minimap', () => ui.settings.set('minimap', !minimap())),
     ui.commands.registerCommand('note.minimap', () => { const n = notes.get(activeNoteId() ?? ''); n?.setMinimapOverride(!n.minimapEnabled()) }),
+    ui.commands.registerCommand('ui.line-numbers', () => ui.settings.set('lineNumbers', !lineNumbers())),
+    ui.commands.registerCommand('note.line-numbers', () => { const n = notes.get(activeNoteId() ?? ''); n?.setLineNumbersOverride(!n.lineNumbersEnabled()) }),
+    ui.commands.registerCommand('note.line-numbers.reset', () => notes.get(activeNoteId() ?? '')?.setLineNumbersOverride(undefined)),
     ui.commands.registerCommand('note.minimap.reset', () => notes.get(activeNoteId() ?? '')?.setMinimapOverride(undefined)),
   )
 
@@ -494,6 +501,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.theme.onAppearance(a => { for (const n of notes.values()) n.setAppearance(a); restyle(); remeasureEditorFonts() }),
     ui.settings.onChange('wordWrap', v => { for (const n of notes.values()) n.setWordWrap(v === true) }),
     ui.settings.onChange('minimap', () => { for (const n of notes.values()) n.refreshMinimap() }),
+    ui.settings.onChange('lineNumbers', () => { for (const n of notes.values()) n.refreshLineNumbers() }),
   )
   // Editors can be created (a restored layout) before the web font is in: Monaco then caches the fallback font's
   // character widths and draws the caret off the text. Whenever a face finishes loading, measure again.
@@ -519,6 +527,10 @@ export function activate(ui: TetherUi): IDisposable[] {
   ui.test.expose('minimap', () => ({
     setting: minimap(),
     editors: [...notes.values()].map(n => ({ id: n.id, override: n.minimapOverride ?? null, enabled: n.minimapEnabled(), shown: n.minimapShown(), visible: n.element.offsetWidth > 0 })),
+  }))
+  ui.test.expose('lineNumbers', () => ({
+    setting: lineNumbers(),
+    editors: [...notes.values()].map(n => ({ id: n.id, override: n.lineNumbersOverride ?? null, enabled: n.lineNumbersEnabled(), shown: n.lineNumbersShown(), visible: n.element.offsetWidth > 0 })),
   }))
   ui.test.expose('scrollNote', (id: string, top: number) => { notes.get(id)?.editor?.setScrollTop(top, 1 /* ScrollType.Immediate */) })
   ui.test.expose('previews', () => [...previews.values()].flatMap(p => (p instanceof PreviewPanel ? [p.snapshot()] : [])))

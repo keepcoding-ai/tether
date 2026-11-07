@@ -264,3 +264,14 @@ test('note params: the per-editor minimap choice is read, kept by withNote, set 
   assert.equal(noteParams(withNote(own, { path: 'a.md', minimap: true }))?.minimap, true)
   assert.equal(noteParams(withNote(own, { path: 'a.md', minimap: null }))?.minimap, undefined, 'null clears it')
 })
+
+test('note params: the per-editor line-numbers choice is read, kept by withNote, set and cleared', () => {
+  assert.equal(noteParams({ note: { path: 'a.md' } })?.lineNumbers, undefined)
+  assert.equal(noteParams({ note: { path: 'a.md', lineNumbers: 'off' } })?.lineNumbers, undefined, 'malformed reads as no choice')
+  const own = withNote(undefined, { path: 'a.md', lineNumbers: false, minimap: true })
+  assert.equal(noteParams(own)?.lineNumbers, false)
+  assert.equal(noteParams(withNote(own, { path: 'a.md', view: { x: 1 } }))?.lineNumbers, false, 'absent keeps the choice')
+  assert.equal(noteParams(withNote(own, { path: 'a.md', minimap: null }))?.lineNumbers, false, 'clearing the minimap keeps line numbers')
+  assert.equal(noteParams(withNote(own, { path: 'a.md', lineNumbers: null }))?.lineNumbers, undefined, 'null clears it')
+  assert.equal(noteParams(withNote(own, { path: 'a.md', lineNumbers: null }))?.minimap, true)
+})

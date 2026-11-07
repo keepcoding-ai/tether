@@ -21,6 +21,7 @@ export const manifest: ExtensionManifest = {
     settings: {
       wordWrap: { type: 'boolean', default: true, title: 'Quebra de linha no editor' },
       minimap: { type: 'boolean', default: true, title: 'Minimapa nos editores' },
+      lineNumbers: { type: 'boolean', default: true, title: 'Números de linha nos editores' },
     },
     commands: [
       { command: 'note.new', title: 'Nova nota', category: NOTE, icon: 'note-pencil' },
@@ -34,6 +35,9 @@ export const manifest: ExtensionManifest = {
       { command: 'ui.minimap', title: 'Minimapa: ligar/desligar', category: LOOK, icon: 'map-trifold' },
       { command: 'note.minimap', title: 'Minimapa deste editor: ligar/desligar', category: NOTE, icon: 'map-trifold', when: 'focus == editor' },
       { command: 'note.minimap.reset', title: 'Minimapa deste editor: usar o padrão', category: NOTE, icon: 'arrow-counter-clockwise', when: 'focus == editor' },
+      { command: 'ui.line-numbers', title: 'Números de linha: ligar/desligar', category: LOOK, icon: 'list-numbers' },
+      { command: 'note.line-numbers', title: 'Números de linha deste editor: ligar/desligar', category: NOTE, icon: 'list-numbers', when: 'focus == editor' },
+      { command: 'note.line-numbers.reset', title: 'Números de linha deste editor: usar o padrão', category: NOTE, icon: 'arrow-counter-clockwise', when: 'focus == editor' },
     ],
     keybindings: [
       { key: 'ctrl+o', command: 'note.open' },                          // "open file" (window and note; in a terminal Ctrl+O is Claude Code's verbose toggle)
@@ -49,6 +53,7 @@ export const manifest: ExtensionManifest = {
         { command: 'note.save-as', group: 'note', order: 30, icon: 'floppy-disk', label: 'Salvar nota como…' },
         { command: 'ui.word-wrap', group: 'look', order: 70, kind: 'checkbox', toggled: 'wordWrap', label: 'Quebra de linha no editor' },
         { command: 'ui.minimap', group: 'look', order: 71, kind: 'checkbox', toggled: 'minimap', label: 'Minimapa nos editores' },
+        { command: 'ui.line-numbers', group: 'look', order: 72, kind: 'checkbox', toggled: 'lineNumbers', label: 'Números de linha nos editores' },
       ],
     },
     chooser: {

@@ -983,3 +983,13 @@ Decisões para validar (Foco de Mesa):
 - A gaveta e um quadro de teclado no Foco de Mesa (nunca recebe `.focused`): seu quadro com foco mostra o anel neutro `--kbd-ring`; `--drawer-line` pinta a linha sob a barra superior com a gaveta aberta (so o `#workbench::before` e sobrescrito, entao a aura da mesa segue na cor da mesa atras da gaveta) e a cor do escopo Gaveta no dialogo de mover.
 - `--desk-line-width` (2px) e a espessura unica da linha de topo, da borda na guia (mesa) e do anel neutro (`.frame.kbd-focused`, agora `outline` de mesma largura, sem mexer no layout).
 - **Gaveta com Foco proprio** (corrige a regra acima): a gaveta e desk-like; seu quadro com foco usa `.frame.drawer-focused` (focusKind `drawer`), com a borda na guia F6 em `--drawer-line`, na espessura `--desk-line-width`, separado do Foco de Mesa da mesa escondida (`.focused`, intacto). O anel fraco `--kbd-ring` fica so para pads.
+
+## Números de linha do editor de notas: geral e por editor (2026-11-06)
+
+Mesmo molde do minimapa (ec57670), para os números de linha do Monaco (`lineNumbers` on/off). Padrão continua **ligado**.
+
+- **Geral**: configuração `lineNumbers` da extensão `note` (`extensions.note.lineNumbers`, padrão `true`). Menu ≡ "Números de linha nos editores" (caixa marcável) e paleta "Números de linha: ligar/desligar" (`ui.line-numbers`).
+- **Por editor**: `note.lineNumbers` nos parâmetros do painel (`layout.json`), vence a geral e sobrevive a reabrir o app. Menu "⋯" da aba: "Números de linha neste editor" e, só com escolha própria, "Números de linha: usar o padrão". Paleta (editor em foco): "Números de linha deste editor: ligar/desligar" e "...: usar o padrão".
+- **Código**: `withNote` aceita `lineNumbers` (ausente mantém, `null` apaga); `NotePanel.lineNumbersOverride/lineNumbersEnabled/setLineNumbersOverride/refreshLineNumbers`; `NoteHost.getLineNumbers`. O código do minimapa ficou como estava (sem generalização, para não mexer no que já foi provado).
+- **Provas**: `app:build` ok; `npm run check` só com as 2 falhas conhecidas de perfil; e2e novo `test/e2e/app.note-linenumbers.test.ts` (padrão ligado, geral desliga/liga com `settings.json`, o editor vence a geral, "usar o padrão", relançar mantém) e `app.extensions` com o item novo do menu. Capturas em `D:/atrium/.tmp/tether-linenumbers/`.
+- **Decisão para validar**: como no minimapa, o item do editor mostra o estado efetivo, não a escolha própria.
