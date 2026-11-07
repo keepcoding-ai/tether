@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { buildInfo } from '../../src/core/faults.ts'
+import { canonicalDir } from '../../src/core/paths.ts'
 import { applyAction, describeNotFound, listFaults, showFault, type FaultAction } from '../../src/core/faults-ops.ts'
 import type { FaultsChannels, FaultsList, ScreenAction, UpdateOutcome } from './ipc.ts'
 
@@ -28,11 +29,11 @@ export function sourceRootOf(dist: string): string | undefined {
   } catch { return undefined }
 }
 
-/** Where a new pane that investigates a fault opens: the setting (when the folder exists), else the source folder, else the user's folder. */
+/** Where a new pane that investigates a fault opens: the setting (when the folder exists), else the source folder, else the user's folder in its canonical spelling (core/paths.ts canonicalDir, as every slot's cwd). */
 export function investigateCwd(setting: string | undefined, dist: string, home: string = homedir()): string {
   const chosen = setting?.trim()
   if (chosen && existsSync(chosen)) return chosen
-  return sourceRootOf(dist) ?? home
+  return sourceRootOf(dist) ?? canonicalDir(home)
 }
 
 /** The screen's verb as the registry's, or a message when the screen sent something it should not have. */

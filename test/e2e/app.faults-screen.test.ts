@@ -230,9 +230,9 @@ test('app faults screen: rows, detail, resolve/tag/note persist, live refresh, t
     assert.equal(await page.locator('.fl-choice[data-key="pane:' + busy + '"] input').isDisabled(), true)
     await shot(app, 'faults-chooser-dark')
     await page.click('.fl-chooser [data-act="confirm-send"]')
-    await until('typed into the free pane', async () => /got: \/tether-fault-investigate /.test(await page.evaluate(id => window.__tether.text(id), idle)), 20_000)
-    assert.match(await page.evaluate(id => window.__tether.text(id), idle), new RegExp(`got: /tether-fault-investigate ${a.shortId}`))
-    assert.doesNotMatch(await page.evaluate(id => window.__tether.text(id), busy), /tether-fault-investigate/, 'the busy pane got nothing')
+    await until('typed into the free pane', async () => /got: \/tether:fault-investigate /.test(await page.evaluate(id => window.__tether.text(id), idle)), 20_000)
+    assert.match(await page.evaluate(id => window.__tether.text(id), idle), new RegExp(`got: /tether:fault-investigate ${a.shortId}`))
+    assert.doesNotMatch(await page.evaluate(id => window.__tether.text(id), busy), /tether:fault-investigate/, 'the busy pane got nothing')
     // Back to the screen: the row says where it went, until the fault is investigando.
     await page.evaluate(() => window.__tether.openFaults())
     await until('sent mark', async () => !!(await snap(page))?.rows.find(r => r.id === a.shortId)?.sent)
@@ -260,7 +260,7 @@ test('app faults screen: rows, detail, resolve/tag/note persist, live refresh, t
     await page.click('.fl-chooser [data-act="confirm-send"]')
     let fresh = ''
     await until('the new pane', async () => { fresh = (await page.evaluate(() => window.__tether.panelIds())).find(x => !panesBefore.includes(x) && !x.startsWith('faults:')) ?? ''; return !!fresh })
-    await until('typed into the new pane once its agent was up', async () => new RegExp(`got: /tether-fault-investigate ${d.shortId}`).test(await page.evaluate(id => window.__tether.text(id), fresh)), 40_000)
+    await until('typed into the new pane once its agent was up', async () => new RegExp(`got: /tether:fault-investigate ${d.shortId}`).test(await page.evaluate(id => window.__tether.text(id), fresh)), 40_000)
     const created = (await page.evaluate(() => window.__tether.slots())).find(x => x.slotId === fresh)!
     assert.equal(created.cwd.toLowerCase(), root.toLowerCase(), 'the new pane opens in the tether source folder')
     await page.evaluate(() => window.__tether.openFaults())

@@ -1,6 +1,6 @@
 // The Faults screen's renderer entry: the pane type (the screen as a tab of the active group, one at a time), the command
 // faults.show, the top bar's status icon ("3 falhas novas no tether · Ver", present only while something is new), the
-// "Mandar para o agente" flow (types `/tether-fault-investigate <id>` into an idle agent pane, or opens a new pane and
+// "Mandar para o agente" flow (types `/tether:fault-investigate <id>` into an idle agent pane, or opens a new pane and
 // types once its agent is up) and the test hooks. The data is the registry in Electron main, over the bus ext:faults:*.
 import type { PaneType, ContextMenuEntry, StatusHandle, TetherUi } from '../../app/renderer/ext-api.ts'
 import { agentUi } from '../../app/renderer/agent-ui.ts'

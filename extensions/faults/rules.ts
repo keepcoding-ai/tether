@@ -112,6 +112,11 @@ export interface Chooser { choices: Choice[]; selected: string | undefined }
 export const featureOn = (profile: Pick<Profile, 'features'> | undefined, general: boolean): boolean => profile?.features?.[FAULTS_FEATURE] ?? general
 
 export const FEATURE_OFF = 'feature faults desligada neste perfil'
+/** The profile has it on now, but this pane's agent started without it: only a new start gets the skills. */
+export const FEATURE_NOT_LAUNCHED = 'este painel abriu sem a feature faults; reinicie o agente'
+
+/** Whether a running pane's agent actually received the feature: what it launched with (SlotState.features), not today's switches. Undefined while nothing runs or on a daemon that does not say. */
+export const launchedWith = (s: Pick<SlotState, 'features'>): boolean | undefined => s.features ? s.features.includes(FAULTS_FEATURE) : undefined
 
 /** "workspace/tether": the last two segments of a folder. */
 export function shortFolder(path: string): string {
@@ -138,8 +143,11 @@ export function buildChooser(input: ChoiceInput): Chooser {
     const profile = s.profileId ? input.profiles.find(p => p.id === s.profileId) : undefined
     const label = input.labelOf(s.slotId)
     const t = turnState(s)
-    if (!featureOn(profile, input.general)) {
-      choices.push({ key: `pane:${s.slotId}`, kind: 'pane', label, state: t.state, enabled: false, reason: FEATURE_OFF, ...(s.profileId && profile ? { link: { text: 'Ligar', profileId: s.profileId } } : {}), slotId: s.slotId })
+    const launched = launchedWith(s)
+    const has = launched ?? featureOn(profile, input.general)
+    if (!has) {
+      const reason = launched === false && featureOn(profile, input.general) ? FEATURE_NOT_LAUNCHED : FEATURE_OFF
+      choices.push({ key: `pane:${s.slotId}`, kind: 'pane', label, state: t.state, enabled: false, reason, ...(reason === FEATURE_OFF && s.profileId && profile ? { link: { text: 'Ligar', profileId: s.profileId } } : {}), slotId: s.slotId })
     } else {
       choices.push({ key: `pane:${s.slotId}`, kind: 'pane', label, state: t.state, enabled: t.enabled, ...(t.enabled ? {} : { reason: t.state }), slotId: s.slotId })
     }
@@ -159,7 +167,7 @@ export function buildChooser(input: ChoiceInput): Chooser {
 }
 
 /** The command typed into the pane: the skill, then the fault's id. */
-export const investigateCommand = (id: string): string => `/tether-fault-investigate ${id}`
+export const investigateCommand = (id: string): string => `/tether:fault-investigate ${id}`
 
 /** Whether a row that was sent to a pane still shows "enviada para ...": until the fault is no longer open. */
 export const stillSent = (status: FaultStatus): boolean => status === 'open'
