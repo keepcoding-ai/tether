@@ -330,7 +330,7 @@ body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
 #pads .frame-dock { transition: opacity var(--motion-fast) ease-out, filter var(--motion-fast) ease-out; }
 @media (prefers-reduced-motion: reduce) { #pads .frame-dock, .sb-sash::after { transition: none !important; } body.drawer-open #pads .frame-dock { filter: none; } }
 
-/* --- desk: a gridview of frames, each frame a dockview; the "+" near the borders --- */
+/* --- desk: a gridview of frames, each frame a dockview; the builder mode's "+" at the borders --- */
 /* Frames are cards floating on the desk: half the gap around the desk plus half around each card makes a full
    --gap between cards and at the desk's border. The desk-level sashes (between cards) sit in that gutter;
    dockview positions them 4 px wide on the boundary, so they are widened to the gutter and re-centred. */
@@ -404,25 +404,48 @@ body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
   --dv-paneview-header-border-color: var(--border);
   --dv-scrollbar-background-color: var(--bg-hover);
 }
+/* --- builder mode (builder-mode.ts): the "+" exist only here, the content is inert and dimmed, the tabs only drag ---
+   Outside the mode the "+" are in the DOM but never shown: nothing appears on hover over a tab, a scrollbar or a sash. */
+body:not([data-builder="true"]) .edge-plus { display: none; }
 .edge-plus {
   position: absolute; z-index: 40; display: inline-flex; align-items: center; justify-content: center;
   padding: 0; border: 1px solid var(--accent); border-radius: 999px; background: var(--bg-2); color: var(--accent);
   cursor: pointer; box-shadow: var(--shadow);
 }
 .edge-plus:hover { background: var(--accent); color: var(--on-accent); }
-.edge-plus[hidden] { display: none; }
 .edge-plus.frame { width: 20px; height: 20px; }
 .edge-plus.frame .ph { width: 13px; height: 13px; }
 .edge-plus.desk { width: 28px; height: 28px; }
 .edge-plus.desk .ph { width: 18px; height: 18px; }
-.edge-plus[data-side="left"] { left: calc(var(--gap) / 2 + 2px); top: 50%; transform: translateY(-50%); }
-.edge-plus[data-side="right"] { right: calc(var(--gap) / 2 + 2px); top: 50%; transform: translateY(-50%); }
-.edge-plus[data-side="top"] { top: calc(var(--gap) / 2 + 2px); left: 50%; transform: translateX(-50%); }
-.edge-plus[data-side="bottom"] { bottom: calc(var(--gap) / 2 + 2px); left: 50%; transform: translateX(-50%); }
+.edge-plus[data-side="left"], .edge-plus[data-side="right"] { top: 50%; transform: translateY(-50%); }
+.edge-plus[data-side="top"], .edge-plus[data-side="bottom"] { left: 50%; transform: translateX(-50%); }
+/* All eight are shown at once, so the frame's "+" stand clear of the desk's: inside the card, 30 px in from its border
+   (the desk's "+" reaches 26 px into the desk from its edge), the top one under the tab bar (never over a tab). */
+.edge-plus.frame[data-side="left"] { left: calc(var(--gap) / 2 + 30px); }
+.edge-plus.frame[data-side="right"] { right: calc(var(--gap) / 2 + 30px); }
+.edge-plus.frame[data-side="top"] { top: calc(var(--gap) / 2 + var(--dv-tabs-and-actions-container-height, 32px) + 12px); }
+.edge-plus.frame[data-side="bottom"] { bottom: calc(var(--gap) / 2 + 30px); }
+/* The desk's on its outer gutter, on the border of the cards at the desk's edge. */
 .edge-plus.desk[data-side="left"] { left: calc(var(--gap) / 2 - 6px + var(--desk-ext-l, 0px)); }
 .edge-plus.desk[data-side="right"] { right: calc(var(--gap) / 2 - 6px + var(--desk-ext-r, 0px)); }
 .edge-plus.desk[data-side="top"] { top: calc(var(--gap) / 2 - 6px); }
 .edge-plus.desk[data-side="bottom"] { bottom: calc(var(--gap) / 2 - 6px); }
+/* No doubt about the mode: a faint grid on every desk (the desks, the drawer, a pad), dashed accent cards. */
+body[data-builder="true"] .desk {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--fg) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--fg) 6%, transparent) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+body[data-builder="true"] .frame-dock { border-style: dashed; border-color: var(--accent); }
+/* The content dims and takes no pointer (the tab bar stays: its tabs drag, its buttons work; builder-mode.ts guards the
+   rest). Only what is inside the content box: the box itself stays a drop target (a tab dropped on a pane's edge splits
+   there), and dockview's drop overlay inside it is not dimmed. */
+body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-container) > :not(.dv-drop-target-dropzone) { pointer-events: none; opacity: .35; }
+.frame-dock :is(.dv-content-container, .dv-watermark-container) > * { transition: opacity var(--motion-fast) ease-out; }
+@media (prefers-reduced-motion: reduce) { .frame-dock :is(.dv-content-container, .dv-watermark-container) > * { transition: none; } }
+.ib[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.ib[aria-pressed="true"]:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--accent); }
 
 /* --- panel (dockview content) --- */
 .panel { display: flex; flex-direction: column; height: 100%; background: var(--frame-bg); }

@@ -44,6 +44,7 @@ type Hooks = {
   switchState(): { visible: string[]; hidden: string[]; active: string }
   deskLine(): boolean
   drawer(): { open: boolean; panes: string[] }
+  builder(): boolean
 }
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number }
 declare const window: { __tether: Hooks; innerWidth: number; getComputedStyle(el: unknown, pseudo?: string): Record<string, string> & { getPropertyValue(n: string): string } }
@@ -160,7 +161,7 @@ async function assertScheme(app: ElectronApplication, page: Page, scheme: 'light
   assert.equal(divider, want.border, `${scheme}: pane divider`)
 }
 
-/** Slice 2: icon-only toolbar sides (5 left, 3 right), no "tether" name, every icon button labelled. */
+/** Slice 2: icon-only toolbar sides (6 left, 3 right), no "tether" name, every icon button labelled. */
 async function toolbarChecks(page: Page): Promise<void> {
   const text = await page.locator('#toolbar').innerText()
   assert.ok(!/tether(?!d)/i.test(text.replace(/Mesa \d+/g, '')), `no "tether" in the toolbar: ${JSON.stringify(text)}`)
@@ -168,7 +169,7 @@ async function toolbarChecks(page: Page): Promise<void> {
     const read = (sel: string) => Array.from(document.querySelectorAll(sel) as unknown as ArrayLike<{ innerText: string; getAttribute(n: string): string | null }>).map(b => ({ text: b.innerText.trim(), label: b.getAttribute('aria-label') ?? '' }))
     return { left: read('#toolbar .tb-left button.ib'), right: read('#toolbar .tb-right button.ib') }
   })
-  assert.equal(sides.left.length, 5, 'five icons on the left')
+  assert.equal(sides.left.length, 6, 'six icons on the left')
   assert.equal(sides.left.at(-1)!.label, 'Extensões', 'the extensions button ends the left side')
   // Three of the app's own, plus one per extension status icon (left of the connection icon; the web bridge brings one).
   const statusIcons = await page.locator('#toolbar .tb-right #status-area button.ib.status-btn').count()
@@ -286,17 +287,28 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     const sash = (await rects(page, '.desk-layer:not(.inactive) .desk-grid .dv-sash:not(.frame-dock *)')).filter(r => r.left >= cards[0]!.right - 2 && r.right <= cards[1]!.left + 2 && r.height > 100)
     assert.ok(sash.length >= 1 && sash[0]!.width >= 8, `desk sash in the gutter: ${JSON.stringify(sash)}`)
 
-    // The "+" at a card's edge (inside the card's top band) and in the desk's outer gutter, on the card border.
+    // The "+" exist only in the builder mode (the toolbar button): none outside it, wherever the mouse goes.
     const c1 = cards[1]!
     await page.mouse.move(c1.left + c1.width / 2, c1.top + 6)
-    const fp = page.locator('.edge-plus.frame[data-side="top"]:not([hidden])')
-    await fp.waitFor()
-    const fr = (await fp.boundingBox())!
-    assert.ok(fr.y >= c1.top && fr.y <= c1.top + 6, `frame "+" sits on the card's top: ${fr.y} vs ${c1.top}`)
-    assert.equal(await page.locator('.edge-plus.desk:not([hidden])').count(), 0, 'only the frame "+" inside the card')
     await page.mouse.move(desk.right - 3, desk.top + desk.height / 2)
-    const dp = page.locator('.edge-plus.desk[data-side="right"]:not([hidden])')
-    await dp.waitFor()
+    assert.equal(await page.locator('.edge-plus:visible').count(), 0, 'no "+" on hover outside the builder mode')
+    await page.click('#btn-builder')
+    await page.waitForFunction(() => window.__tether.builder())
+    assert.equal(await page.locator('#btn-builder').getAttribute('aria-pressed'), 'true', 'the button is lit')
+    assert.equal(await page.locator('.desk-layer:not(.inactive) .edge-plus.desk:visible').count(), 4, 'the desk\'s four "+"')
+    assert.equal(await page.locator('.desk-layer:not(.inactive) .edge-plus.frame:visible').count(), 8, 'four "+" per card')
+    // A card's top "+" is inside the card, under its tab bar (never over a tab).
+    const fr = (await rects(page, '.desk-layer:not(.inactive) .edge-plus.frame[data-side="top"]')).find(r => r.left >= c1.left && r.right <= c1.right)!
+    assert.ok(fr && fr.top >= c1.top + 32 && fr.bottom <= c1.bottom, `frame "+" under the card's tab bar: ${fr?.top} vs ${c1.top}`)
+    // All shown at once, so no two "+" overlap (the frame's stand 30 px inside the card, clear of the desk's).
+    const boxes = await rects(page, '.desk-layer:not(.inactive) .edge-plus')
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const p = boxes[i]!, q = boxes[j]!
+      const overlap = p.left < q.right && q.left < p.right && p.top < q.bottom && q.top < p.bottom
+      assert.ok(!overlap, `"+" ${i} and ${j} overlap: ${JSON.stringify(p)} ${JSON.stringify(q)}`)
+    }
+    await shot(app, 'chrome-builder')
+    const dp = page.locator('.desk-layer:not(.inactive) .edge-plus.desk[data-side="right"]')
     const dr = (await dp.boundingBox())!
     const centre = dr.x + dr.width / 2
     // Pad closed (icon strip showing): the card is flush with the strip, so the "+" sits inward of the border (intentional, 92bf90d):
@@ -315,7 +327,9 @@ test('app chrome: tokens, cards, toolbar and desk capsule (phase 4, slices 1 to 
     } else {
       assert.ok(Math.abs(centre - c1.right) <= 4, `desk "+" centred on the card's right border: ${centre} vs ${c1.right}`)
     }
-    await page.mouse.move(400, 300) // inside a card, away from its edges: no "+" in the screenshot
+    await page.keyboard.press('Escape') // leaves the builder mode: no "+" in the screenshots
+    await page.waitForFunction(() => !window.__tether.builder())
+    await page.mouse.move(400, 300)
 
     for (const scheme of ['dark', 'light'] as const) {
       await setTheme(page, scheme)

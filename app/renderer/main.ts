@@ -9,6 +9,7 @@ import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { appCommands, type CommandHost } from './app-commands.ts'
+import { installBuilderGuard, isBuilder, onBuilderChange, setBuilder } from './builder-mode.ts'
 import { commandFromContribution, CommandRegistry, type CommandContext } from './commands.ts'
 import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
 import { terminalKeyOwner } from './key-capture.ts'
@@ -246,7 +247,7 @@ const host: PanelHost = {
   onRename: (id, name) => { void renameSlot(id, name) },
   onKey: (ev, panel) => {
     if (ev.type !== 'keydown') return false
-    if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) return drawerEscapeInTerminal(panel)
+    if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) return drawerEscapeInTerminal(panel) || builderEscape()
     // Line editing (macOS: Cmd/Option + arrows, Backspace; Shift+Enter everywhere in an agent pane): bytes for the prompt, not app chords.
     const seq = terminalInputOf(ev, slots.get(panel.slotId)?.kind !== 'shell')
     if (seq !== undefined) {
@@ -906,7 +907,6 @@ function setDrawerOpen(open: boolean): void {
     $('btn-menu').setAttribute('aria-expanded', 'false')
     $('closed-list').hidden = true
     closeToolbarPopups()
-    desks.active.hidePlus()
   } else {
     drawerState = closeDrawer(drawerState)
   }
@@ -2111,8 +2111,59 @@ async function duplicateActive(target: Target): Promise<void> {
   await duplicatePanel(active.id, target)
 }
 
+// ---------- builder mode ----------
+
 /**
- * A "+" near a border: the frame's active pane (or the desk's) is the reference. A click ADDS an empty pane there
+ * The builder mode (builder-mode.ts) for the window: the toolbar button shows it (aria-pressed). Entering takes the
+ * keyboard out of a pane (the content is inert: keys must not reach a terminal behind the dim). The mode belongs to the
+ * window, not to a desk: a desk switch, the drawer or a pad keeps it on, so several places can be built in one go.
+ */
+function setupBuilder(): void {
+  const btn = $('btn-builder')
+  btn.addEventListener('click', () => commandHost.toggleBuilder())
+  onBuilderChange(on => {
+    btn.setAttribute('aria-pressed', String(on))
+    const active = document.activeElement
+    if (on && active instanceof HTMLElement && active.closest('.frame')) active.blur()
+  })
+  installBuilderGuard({ onFrameDoubleClick: frame => leaveBuilderInto(frame) })
+}
+
+/** Leaves the builder mode; the keyboard goes back to the current place's active pane. */
+function leaveBuilder(): void {
+  if (!isBuilder()) return
+  setBuilder(false)
+  const id = currentDesk().activePanel?.id
+  if (id) requestAnimationFrame(() => focusPane(id))
+}
+
+/** A double click on a frame in the builder mode: leaves it with that frame in focus (its active pane takes the keyboard). */
+function leaveBuilderInto(frame: HTMLElement): void {
+  const places = [...desks.desks.map(d => desks.desk(d.id)), drawer.desk, ...[...framePads].map(p => p.desk)]
+  for (const desk of places) {
+    const frameId = desk?.frameIdAt(frame)
+    if (!desk || !frameId) continue
+    const pad = [...framePads].find(p => p.desk === desk)
+    if (pad) setFocusedPad(pad)
+    else if (desk !== drawer.desk) setFocusedPad(undefined)
+    desk.focusFrame(frameId)
+    setBuilder(false)
+    const id = desk.frames.get(frameId)?.dock.activePanel?.id
+    if (id) requestAnimationFrame(() => focusPane(id))
+    return
+  }
+  leaveBuilder()
+}
+
+/** Esc for the builder mode, once nothing above it (a dialog, a menu, a popup) wants the key. True when it left the mode. */
+function builderEscape(): boolean {
+  if (!isBuilder() || escBlocked()) return false
+  leaveBuilder()
+  return true
+}
+
+/**
+ * A "+" at a border (builder mode): the frame's active pane (or the desk's) is the reference. A click ADDS an empty pane there
  * (the chooser inside it, the reference's folder suggested; Esc closes it). The right-click menu: the same, duplicate
  * the reference there (the one place that still clones without asking, and the name says so), the chooser in focus mode.
  */
@@ -2157,6 +2208,7 @@ const commandHost: CommandHost = {
   createDesk: side => { desks.create(side) },
   cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, step)),
   goToDesk: position => { const id = deskAt(desks.desks, position); if (id) desks.switchTo(id) },
+  toggleBuilder: () => { if (isBuilder()) leaveBuilder(); else setBuilder(true) },
   deskActions: () => { const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },
   closeDesk: () => { void closeDesk(desks.activeDeskId) },
   toggleDrawer: () => setDrawerOpen(!drawer.isOpen),
@@ -2282,6 +2334,8 @@ function paintKeyHints(): void {
   const dupTitle = `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right} (${hint('pane', 'right')}): outro painel com o mesmo perfil e a mesma pasta, numa sessão nova. Setas com os mesmos modificadores duplicam para os outros lados; ${hint('frame', 'right')} na borda do quadro; ${hint('desk', 'right')} num quadro novo.`
   $('btn-duplicate').title = dupTitle
   $('drawer-duplicate').title = dupTitle
+  const builderKey = shortcutHint('desk.builder')
+  $('btn-builder').title = `Montar a mesa${builderKey ? ` (${builderKey})` : ''}: os "+" nas bordas dos quadros e da mesa; o conteúdo fica esmaecido e as abas só arrastam. Esc ou clique duplo num quadro saem.`
   const newTab = shortcutHint('pane.new-tab')
   $('btn-new').title = `${NEW_PANEL_LABEL}: escolha o perfil, a pasta e onde abrir.${newTab ? ` ${newTab} abre uma aba vazia no grupo ativo, com o seletor dentro.` : ''}`
   renderStrip()
@@ -2513,6 +2567,7 @@ function setupUi(): void {
   palette = new CommandPalette($<HTMLDialogElement>('palette'), commands, () => paletteMode)
   setupMenu()
   $('btn-duplicate').addEventListener('click', () => { void duplicateActive({ level: 'pane', placement: 'right' }) })
+  setupBuilder()
   paintKeyHints() // the tooltips and the menu hints that read the key table (painted again when the table changes)
   $('btn-retry').addEventListener('click', () => window.tether.reconnect())
   setupThemeMenu()
@@ -2586,8 +2641,13 @@ function setupUi(): void {
       }
     }
   }, true)
-  // Esc outside a terminal closes the drawer (the dispatcher left it alone: no chord was pending).
+  // Esc outside a terminal closes the drawer (the dispatcher left it alone: no chord was pending); after it, the builder
+  // mode's (a lower priority: an Esc the drawer, a popup, a menu or a dialog took never leaves the builder).
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape') drawerEscapeOutside(ev) })
+  document.addEventListener('keydown', ev => {
+    if (ev.key !== 'Escape' || ev.defaultPrevented || ev.ctrlKey || ev.altKey || ev.shiftKey || ev.metaKey) return
+    if (builderEscape()) ev.preventDefault()
+  })
   // A pending prefix does not survive a click or the window losing the focus.
   document.addEventListener('mousedown', () => { if (dispatcher.waiting) { dispatcher.cancel(); pill.hide() } }, true)
   window.addEventListener('blur', () => { dispatcher.cancel(); pill.hide() })
@@ -2624,6 +2684,9 @@ declare global {
       frameLayout(frameId?: string): SerializedDockview | undefined
       frameIds(): string[]
       activeFrameId(): string | undefined
+      /** The builder mode (builder-mode.ts): on or off, and switching it (leaving gives the keyboard back as the button does). */
+      builder(): boolean
+      setBuilder(on: boolean): void
       frameOf(slotId: string): string | undefined
       panelIds(): string[]
       /** The JSON language service's diagnostics of an open file (Monaco markers; severity 8 error, 4 warning). */
@@ -2782,6 +2845,8 @@ function setupTestHooks(): void {
     restorePad: id => sidebars?.restore(id),
     frameLayout: frameId => (frameId ? desks.frames.get(frameId) : desks.activeFrame)?.dock.toJSON(),
     frameIds: () => desks.frameIds,
+    builder: () => isBuilder(),
+    setBuilder: on => { if (!on) leaveBuilder(); else setBuilder(true) },
     activeFrameId: () => desks.activeFrame?.id,
     frameOf: slotId => desks.frameOf(slotId)?.id,
     panelIds: () => desks.panels.map(p => p.id),

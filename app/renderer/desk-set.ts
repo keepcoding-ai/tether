@@ -82,7 +82,6 @@ export class DeskSet {
     if (!this.mounted.has(id)) return
     this.activeId = id
     this.mru = touchMru(this.mru, id)
-    this.activeOrNone?.hidePlus()
     this.paint()
     this.host.onDesksChange()
     this.host.onSwitch(id) // also when it already was the active desk: the focus goes back to its pane

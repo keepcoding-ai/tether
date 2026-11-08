@@ -1,27 +1,17 @@
 // A desk: a gridview whose cells are frames, each frame its own dockview of terminal panes. The desk is the
 // one place that knows which frame a pane lives in and which frame has the focus, so the renderer keeps
 // talking about panes (`getPanel`, `addPanel`, `activePanel`…) and the desk routes to the right dockview.
-// Also the "+" that appears near the borders: at a frame's edge (a pane spanning that edge) and at the
-// desk's edge (a new frame there); click ADDS an empty pane there (the chooser inside it), right-click opens the
-// menu (add, duplicate the focused pane there, the chooser in focus mode).
+// Also the "+" at the borders: four at each frame's edges (a pane spanning that edge) and four at the desk's edges (a
+// new frame there; none in a single-frame place); click ADDS an empty pane there (the chooser inside it), right-click
+// opens the menu (add, duplicate the focused pane there, the chooser in focus mode). They are always in the DOM but
+// shown only in the builder mode (builder-mode.ts; styles.css): no control is ever revealed on hover over a tab, a
+// scrollbar or a sash.
 import { createDockview, createGridview, GridviewPanel, LocalSelectionTransfer, PanelTransfer, type AddPanelOptions, type DockviewApi, type DockviewComponentOptions, type DockviewDidDropEvent, type DockviewTheme, type GridviewApi, type IDockviewPanel, type IFrameworkPart, type SerializedDockview } from 'dockview-core'
 import type { Direction, Target } from './create.ts'
 import { DEFAULT_DESK_HUE } from './desks.ts'
 import { deskDropZone, DOCKVIEW_USED_EVENT, draggedPanes, dropPlacements, type DeskDropZone, type PanePlacement } from './frame-drop-rules.ts'
 import { icon } from './icons.ts'
 import { type DeskLayout, emptyDesk, FRAME_COMPONENT, frameInsertion, isLayoutV1, nextFrameId, panelIdsOf } from './layout.ts'
-
-/**
- * How close to a border (px) the pointer must be for the "+" to show. Frames are cards inset by half of
- * `--gap` (8 px, styles.css) inside their `.frame` box, and the desk pads another half: the desk band is the whole
- * outer gutter (8 px) up to the card's border, and the frame band (measured on the `.frame` box) is its 4 px half
- * gutter plus 14 px into the card. Any wider desk band would swallow the band of a frame on the desk's edge.
- * On a frame's top edge that band lies over the tab bar, so there the "+" yields to the tabs (see `TAB_BAR_HIT`).
- */
-const FRAME_EDGE_PX = 18
-const DESK_EDGE_PX = 8
-/** Clickable parts of a frame's tab bar: a "+" showing over one would steal the click meant for it. */
-const TAB_BAR_HIT = '.dv-tab, .tab-more, .dv-left-actions-container, .dv-right-actions-container, .dv-prefix-actions-container'
 
 type Side = 'left' | 'right' | 'top' | 'bottom'
 const SIDES: readonly Side[] = ['left', 'right', 'top', 'bottom']
@@ -105,8 +95,6 @@ export class Desk {
   private set activeFrameId(id: string | undefined) { this.focusedFrameId = id; this.paintFocus() }
   /** Views to load into frames created by `fromJSON` (looked up by frame id as each frame initializes). */
   private pendingViews: Record<string, SerializedDockview> = {}
-  private readonly deskPlus = new Map<Side, HTMLElement>()
-  private readonly framePlus = new Map<string, Map<Side, HTMLElement>>()
 
   constructor(container: HTMLElement, host: DeskHost, theme: DockviewTheme) {
     this.container = container
@@ -124,7 +112,6 @@ export class Desk {
     this.grid.onDidAddPanel(p => { this.frames.set(p.id, p as Frame); this.paintFocus() })
     this.grid.onDidRemovePanel(p => {
       this.frames.delete(p.id)
-      this.framePlus.delete(p.id)
       // The focused frame left: the mark goes to the frame that takes over (activeFrame's fallback) once the grid settles.
       if (this.activeFrameId === p.id) { this.activeFrameId = undefined; queueMicrotask(() => this.paintFocus()) }
     })
@@ -140,14 +127,12 @@ export class Desk {
     }
     container.addEventListener('focusin', follow)
     container.addEventListener('pointerdown', follow, true)
-    container.addEventListener('mousemove', ev => this.onMouseMove(ev))
     // Drop anywhere: a tab dragged over the outer edge of this place (a new frame there) or over an empty frame (its
     // first pane) is claimed here, in the capture phase, before any dockview drop target sees the event.
     container.addEventListener('dragover', ev => this.onPlaceDragOver(ev), true)
     container.addEventListener('drop', ev => this.onPlaceDrop(ev), true)
     container.addEventListener('dragleave', ev => { if (!container.contains(ev.relatedTarget as Node | null)) this.hideDropHint() })
     document.addEventListener('dragend', () => this.hideDropHint(), true)
-    container.addEventListener('mouseleave', () => this.hidePlus())
   }
 
   // ---------- frames ----------
@@ -455,6 +440,12 @@ export class Desk {
     return only && only.dock.panels.length === 0 ? only : this.addFrame(direction)
   }
 
+  /** The frame whose element is `el` or holds it (a double click in the builder mode names a `.frame` element). */
+  frameIdAt(el: Element): string | undefined {
+    for (const f of this.frames.values()) if (f.element === el || f.element.contains(el)) return f.id
+    return undefined
+  }
+
   /** Marks a frame as the one with the focus (after something was moved into it). */
   focusFrame(frameId: string): void {
     if (this.frames.has(frameId)) this.activeFrameId = frameId
@@ -538,14 +529,12 @@ export class Desk {
     this.grid.clear()
     this.grid.dispose()
     this.frames.clear()
-    this.framePlus.clear()
     this.container.remove()
   }
 
   clear(): void {
     this.grid.clear()
     this.frames.clear()
-    this.framePlus.clear()
     this.activeFrameId = undefined
   }
 
@@ -577,7 +566,7 @@ export class Desk {
     this.activeFrameId = this.frameIds[0]
   }
 
-  // ---------- the "+" near the borders ----------
+  // ---------- the "+" at the borders (shown only in the builder mode) ----------
 
   plusButton(level: 'frame' | 'desk', side: Side, frameId: string | undefined): HTMLElement {
     const btn = document.createElement('button')
@@ -585,49 +574,16 @@ export class Desk {
     btn.dataset.side = side
     btn.dataset.level = level
     if (frameId) btn.dataset.frame = frameId
-    btn.hidden = true
     btn.append(icon('plus'))
     const direction = SIDE_DIRECTION[side]
     const what = level === 'desk' ? 'Novo quadro' : 'Novo painel na borda do quadro'
     btn.title = `${what}: escolha dentro dele o que abrir · clique direito: duplicar`
     btn.setAttribute('aria-label', what)
     btn.addEventListener('mousedown', ev => ev.preventDefault()) // the keyboard moves only when the new pane's chooser takes it
-    btn.addEventListener('click', ev => { ev.stopPropagation(); this.hidePlus(); this.host.onEdge({ level, placement: direction }, 'add', frameId, { x: ev.clientX, y: ev.clientY }) })
-    btn.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.hidePlus(); this.host.onEdge({ level, placement: direction }, 'menu', frameId, { x: ev.clientX, y: ev.clientY }) })
-    if (level === 'desk') this.deskPlus.set(side, btn)
-    else if (frameId) {
-      if (!this.framePlus.has(frameId)) this.framePlus.set(frameId, new Map())
-      this.framePlus.get(frameId)!.set(side, btn)
-    }
+    // The builder mode stays on after a "+" was used: the person builds several things in one go.
+    btn.addEventListener('click', ev => { ev.stopPropagation(); this.host.onEdge({ level, placement: direction }, 'add', frameId, { x: ev.clientX, y: ev.clientY }) })
+    btn.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.host.onEdge({ level, placement: direction }, 'menu', frameId, { x: ev.clientX, y: ev.clientY }) })
     return btn
-  }
-
-  private onMouseMove(ev: MouseEvent): void {
-    // Over a "+" already shown: keep it. Its centre may lie outside the band that revealed it (the desk's "+"
-    // overhangs the gutter), and re-arbitrating there would swap it for a frame's "+" under the pointer.
-    if ((ev.target as Element | null)?.closest?.('.edge-plus')) return
-    const { clientX: x, clientY: y } = ev
-    const overTabBar = !!(ev.target as Element | null)?.closest?.(TAB_BAR_HIT)
-    const near = nearestSide(this.container.getBoundingClientRect(), x, y)
-    if (near && near.distance <= DESK_EDGE_PX) { this.showOnly(this.deskPlus, near.side); for (const m of this.framePlus.values()) this.showOnly(m, undefined); return }
-    this.showOnly(this.deskPlus, undefined)
-    for (const [id, buttons] of this.framePlus) {
-      const frame = this.frames.get(id)
-      const r = frame?.element.getBoundingClientRect()
-      const inside = r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
-      const n = inside ? nearestSide(r, x, y) : undefined
-      const side = n && n.distance <= FRAME_EDGE_PX ? n.side : undefined
-      this.showOnly(buttons, side === 'top' && overTabBar ? undefined : side)
-    }
-  }
-
-  private showOnly(buttons: Map<Side, HTMLElement>, side: Side | undefined): void {
-    for (const [s, b] of buttons) b.hidden = s !== side
-  }
-
-  hidePlus(): void {
-    this.showOnly(this.deskPlus, undefined)
-    for (const m of this.framePlus.values()) this.showOnly(m, undefined)
   }
 }
 
@@ -660,13 +616,4 @@ export function transferFrame(source: Desk, target: Desk, frameId: string): bool
     return false
   }
   return true
-}
-
-function nearestSide(r: DOMRect, x: number, y: number): { side: Side; distance: number } | undefined {
-  if (r.width === 0 || r.height === 0) return undefined
-  const candidates: Array<{ side: Side; distance: number }> = [
-    { side: 'left', distance: x - r.left }, { side: 'right', distance: r.right - x },
-    { side: 'top', distance: y - r.top }, { side: 'bottom', distance: r.bottom - y },
-  ]
-  return candidates.reduce((a, b) => b.distance < a.distance ? b : a)
 }

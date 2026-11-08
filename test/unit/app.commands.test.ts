@@ -17,7 +17,7 @@ function stubHost(calls: string[]): CommandHost {
     newPanel: log('newPanel'), newTab: log('newTab'), duplicateActive: log('duplicateActive'), activePane: () => 'slot-1',
     renamePane: log('renamePane'), switchProfile: log('switchProfile'), toggleDetails: log('toggleDetails'),
     copyFolder: log('copyFolder'), openFolder: log('openFolder'), movePane: log('movePane'), closePane: log('closePane'),
-    createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), deskActions: log('deskActions'), closeDesk: log('closeDesk'),
+    createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), deskActions: log('deskActions'), toggleBuilder: log('toggleBuilder'), closeDesk: log('closeDesk'),
     toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'),
     setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), toggleTabBorder: log('toggleTabBorder'), toggleDimUnfocused: log('toggleDimUnfocused'), setDimLevel: log('setDimLevel'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
     openProfiles: log('openProfiles'), restoreConfirmations: log('restoreConfirmations'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),

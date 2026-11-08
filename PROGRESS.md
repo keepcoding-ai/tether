@@ -1033,3 +1033,47 @@ Conserto: `--desk-line-width` arredondada para baixo em pixels inteiros de tela 
 Medida (px físicos, claro e escuro, mesa e gaveta): a 125%, antes linha 2 / aura 2 + ~0,5 / anel 1; depois tudo 2. A 100%, linha e aura 2, anel 1 → 2. Capturas e ampliações em `D:/atrium/.tmp/tether-espessura/`.
 
 Provas: `app:build` ok; `npm run check` só com as 2 falhas conhecidas de perfis; E2E `app.signals` (asserções trocadas de sombra para borda), `app.foco-mesa`, `app.chrome`, `app.drawer`, `app.pads-chrome` verdes.
+
+## Modo builder: os "+" de borda saem do hover (2026-11-08)
+
+Só o app (`app/renderer`); nada em `src/`, o tetherd não reinicia. Fatia 2 da revisão dos alvos de clique. A fatia 1 (565ffaa) pôs o "+ Nova aba" fixo depois da última aba.
+
+**Por que mudou.** O "+" revelado pelo hover nas bordas de quadros e da mesa nascia em cima de aba, scrollbar e sash e roubava o clique. O guard de 594c1b8 tapava só o caso da aba. Agora valem três regras:
+- nenhum controle aparece no hover em cima de outro alvo;
+- a ação frequente tem lugar fixo ("+ Nova aba");
+- a direção de onde criar vem por gesto (arrastar aba), por menu (clique direito, ≡, paleta) ou por um modo explícito.
+
+Os "+" de borda passaram a existir só nesse modo.
+
+**O que entrou.**
+- `app/renderer/builder-mode.ts` guarda um estado booleano por janela e aplica `<body data-builder="true">`. Comando `desk.builder` "Montar a mesa (modo builder)", no grupo Mesa do ≡ e na paleta. Botão `#btn-builder` no toolbar, depois de Duplicar, com `aria-pressed` e aceso. Atalho **Ctrl+K M** (M de montar; Ctrl+K Ctrl+B já é a barra lateral). Ícone `square-split-horizontal` (não existe `squares-four` em `icons.ts`, e esse arquivo tem mudanças de outra frente).
+- No modo:
+  - os 4 "+" de cada quadro e os 4 da mesa aparecem todos de uma vez (a prancheta só tem os do quadro; a gaveta tem os dois);
+  - os cartões ficam com borda tracejada em `--accent` e a mesa ganha uma grade leve;
+  - o conteúdo dos painéis esmaece (0,35) e não recebe ponteiro.
+- Aba: o guard na captura do documento corta `pointerdown`/`mousedown`/`click` e o foco que vem do clique. Assim a aba não ativa e o Foco de Mesa não muda. O arraste nativo continua. Não dá para tirar o foco da aba (`blur`) porque isso cancela o arraste no Chromium. Os botões da barra continuam ativos (×, "+ Nova aba", "+N", ⋯) e os sashes também.
+- Os "+" de quadro ficam 30 px para dentro do cartão, e o de cima fica abaixo da barra de abas. Com os oito à vista, nenhum encosta no "+" da mesa, que ficou na posição antiga.
+- Clique no "+" adiciona e clique direito abre o menu, como antes. Depois de criar, o modo **continua ligado**.
+- Para sair, há quatro caminhos:
+  - o mesmo botão, comando ou atalho;
+  - **Esc**, quando nenhum diálogo, menu ou popup o pega (fica depois do Esc da gaveta; o Esc do seletor e o do menu de contexto não saem do modo);
+  - Esc dentro de um terminal;
+  - **duplo clique num quadro**, que sai e dá o teclado ao painel ativo daquele quadro.
+- O modo é da janela: continua ao trocar de mesa, abrir a gaveta ou uma prancheta. Não é salvo, e o app abre fora dele.
+- Saiu o hover: `onMouseMove`, `showOnly`, `hidePlus`, os mapas `deskPlus`/`framePlus`, `FRAME_EDGE_PX`, `DESK_EDGE_PX`, `TAB_BAR_HIT` e `nearestSide`, e as chamadas em `drawer.ts`, `desk-set.ts`, `frames-pad.ts` e `main.ts`. Os botões continuam no DOM e o CSS os esconde fora do modo.
+- Hooks de e2e: `window.__tether.builder()` e `setBuilder(on)`.
+
+**Provas.**
+- `npm run typecheck` ok e `npm test` com as falhas de perfis já conhecidas.
+- E2E reescritos e verdes:
+  - `app.frames`: entra pelo botão; 4+8 "+" sem mover o mouse; clique em aba não troca a ativa nem o Foco; desk "+" → Duplicar; o modo segue ligado; o "+" de cima fica abaixo das abas; duplo clique sai com foco no painel ativo do quadro; no modo, uma aba ainda arrasta para outro quadro; Esc sai.
+  - `app.chooser`: entra por Ctrl+K M a partir do terminal; o "+" adiciona e o modo fica; o Esc do seletor e o do menu mantêm o modo; o próximo Esc sai.
+  - `app.chrome`: nenhum "+" no hover fora do modo; "+" sob a barra de abas; nenhum "+" sobrepõe outro; 6 ícones à esquerda.
+- Também verdes: `app.drawer`, `app.pads-chrome`, `app.frame-drag` e `app.menubar`. Fixture do ≡ e `app.menu` atualizados.
+
+**Decisões para validar.**
+- Os "+" de quadro não ficam mais colados na borda: ficam 30 px para dentro, para não encostar nos da mesa quando todos aparecem juntos. O "+" de cima da mesa ainda fica sobre o vazio central da barra de abas dos quadros do topo (no modo, a barra só arrasta).
+- Clicar no conteúdo esmaecido não faz nada, nem foca o quadro. Só o duplo clique foca.
+- Ao ligar o modo pelo atalho, o terminal perde o teclado (as teclas não vão para um terminal inerte). Ao sair pelo botão ou pelo Esc, o teclado volta ao painel ativo do lugar atual.
+- Atalho Ctrl+K M e ícone provisório (`square-split-horizontal`), até o `squares-four` entrar em `icons.ts`.
+- Falta validar com o Guga, usando de verdade, se a grade da mesa basta para reconhecer o modo (a mesa quase não aparece entre os cartões; o que mais avisa são o tracejado e o botão aceso).

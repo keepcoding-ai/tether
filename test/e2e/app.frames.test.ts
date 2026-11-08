@@ -5,11 +5,13 @@
 //      same arrangement, same shell PIDs), keeps layout.v1.bak byte for byte, and writes the current version (v3) back;
 //   2. Ctrl+Alt+Shift+↓ duplicates the focused pane at the frame's bottom edge, spanning the frame's width;
 //   3. Alt+Shift+→ duplicates into a new frame at the desk's right edge;
-//   4. the "+" near the desk's edge (click = duplicate into a new frame) and near a frame's edge (Shift+click =
-//      the chooser, preset to that edge);
+//   4. the builder mode: the "+" at every border shown at once (none outside it); a click on a tab activates nothing;
+//      the desk's "+" right-click duplicates into a new frame, a frame's "+" opens the chooser preset to that edge
+//      (the mode stays on); a double click on a frame leaves it with that frame in focus;
 //   5. the chooser's "Onde" has the three levels; "Mesa · abaixo" opens a PowerShell in a frame spanning the desk;
 //   6. window kill + relaunch: same frames, same pane-to-frame assignment, same PIDs;
-//   7. the last pane of a frame leaves (slot forgotten): the frame goes with it.
+//   7. the last pane of a frame leaves (slot forgotten): the frame goes with it;
+//   8. in the builder mode a tab still drags into another frame.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -34,6 +36,8 @@ type Hooks = {
   text(id: string): string
   connection(): { connected: boolean; pid?: number } | undefined
   activate(id: string): void
+  builder(): boolean
+  setBuilder(on: boolean): void
 }
 declare const window: {
   __tether: Hooks
@@ -237,14 +241,23 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     near(f2.height, f1.height, 8, 'the new frame spans the desk height')
     await page.screenshot({ path: join(artifacts, 'frames-two.png') })
 
-    // ---- 4. the "+" near the borders ----
-    const dock = (await hooks.rect(page, '#dock'))!
-    await page.mouse.move(dock.x + dock.width / 2, dock.y + dock.height / 2)
-    await page.mouse.move(dock.x + dock.width - 3, dock.y + dock.height / 2)
-    await page.waitForSelector('.edge-plus.desk[data-side="right"]:not([hidden])')
+    // ---- 4. the "+" at the borders: only in the builder mode ----
+    assert.equal(await page.locator('.edge-plus:visible').count(), 0, 'no "+" outside the builder mode')
+    await page.click('#btn-builder')
+    await page.waitForFunction(() => window.__tether.builder())
+    assert.equal(await page.locator('#btn-builder').getAttribute('aria-pressed'), 'true')
+    // Every "+" at once, the mouse never moved to an edge: 4 at the desk's edges, 4 per frame.
+    assert.equal(await page.locator('#dock .edge-plus.desk:visible').count(), 4, 'four "+" at the desk edges')
+    assert.equal(await page.locator('#dock .edge-plus.frame:visible').count(), 8, 'four "+" per frame')
     await page.screenshot({ path: join(artifacts, 'frames-plus-desk.png') })
+    // A click on a tab of another frame activates nothing (the tabs only drag in the builder).
+    assert.equal(await page.evaluate(() => window.__tether.activeId()), d)
+    await page.locator(`.dv-tab:has(.tether-tab[data-slot="${a}"])`).click()
+    await sleep(250)
+    assert.equal(await page.evaluate(() => window.__tether.activeId()), d, 'a click on a tab activates nothing in the builder')
+    assert.equal(await hooks.activeFrame(page), 'frame-2', 'the Foco de Mesa stays put')
     // A click ADDS an empty pane in a new frame (the chooser inside it); "Duplicar" lives in its right-click menu.
-    await page.click('.edge-plus.desk[data-side="right"]', { button: 'right' })
+    await page.click('.edge-plus.desk[data-side="right"]:visible', { button: 'right' })
     await page.waitForSelector('#ctx-menu')
     await page.click('#ctx-menu li:has-text("Duplicar")')
     await waitTabs(page, 5)
@@ -252,20 +265,13 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await page.waitForFunction(() => window.__tether.frameIds().length === 3)
     assert.equal(await hooks.frameOf(page, e), 'frame-3')
     assert.equal((await hooks.slots(page)).find(s => s.slotId === e)?.kind, 'shell', 'a duplicate of the focused pane')
-    const f3 = (await hooks.rect(page, '.frame:has([data-slot-id="' + e + '"])'))!
-    await page.mouse.move(f3.x + f3.width / 2, f3.y + f3.height / 2)
-    // 8 px inside the frame: within its 14 px band, outside the desk's 6 px band (frame-3 sits on the desk's top edge).
-    await page.mouse.move(f3.x + f3.width / 2, f3.y + 8)
-    await page.waitForSelector('.edge-plus.frame[data-frame="frame-3"][data-side="top"]:not([hidden])')
-    assert.equal(await page.locator('.edge-plus.desk:not([hidden])').count(), 0, 'only the frame "+" shows inside the frame')
-    await page.screenshot({ path: join(artifacts, 'frames-plus-frame.png') })
-    // Over a tab (same 8 px band) the top "+" yields, so the click activates the tab instead of adding a pane.
+    assert.ok(await page.evaluate(() => window.__tether.builder()), 'the builder mode stays on after a "+"')
+    assert.equal(await page.locator('#dock .edge-plus.frame:visible').count(), 12, 'the new frame has its four "+" at once')
+    // The frame's top "+" sits under the tab bar, never over a tab.
     const tab = (await hooks.rect(page, '.frame:has([data-slot-id="' + e + '"]) .dv-tab'))!
-    await page.mouse.move(tab.x + tab.width / 2, f3.y + 8)
-    await page.waitForSelector('.edge-plus.frame[data-side="top"]:not([hidden])', { state: 'detached', timeout: 2000 })
-    assert.equal(await page.locator('.edge-plus.frame[data-side="top"]:not([hidden])').count(), 0, 'no top "+" over a tab')
-    await page.mouse.move(f3.x + f3.width / 2, f3.y + 8)
-    await page.waitForSelector('.edge-plus.frame[data-frame="frame-3"][data-side="top"]:not([hidden])')
+    const topPlus = (await page.locator('.edge-plus.frame[data-frame="frame-3"][data-side="top"]').boundingBox())!
+    assert.ok(topPlus.y >= tab.y + tab.height, `the top "+" is below the tab bar: ${topPlus.y} vs ${tab.y + tab.height}`)
+    await page.screenshot({ path: join(artifacts, 'frames-plus-frame.png') })
     await page.click('.edge-plus.frame[data-frame="frame-3"][data-side="top"]', { button: 'right' })
     await page.waitForSelector('#ctx-menu')
     await page.click('#ctx-menu li:has-text("modo foco")')
@@ -276,6 +282,20 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     assert.equal(await page.locator('#dlg-new .placement-group').count(), 3, 'three levels in "Onde"')
     await page.click('#dlg-new .btn.cancel')
     await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' }) // a closed <dialog> is not visible: wait for it to go, not to show
+    assert.ok(await page.evaluate(() => window.__tether.builder()), 'still in the builder mode')
+    // A double click on frame-1 (over a's dimmed content) leaves the builder with frame-1 in focus: its active pane (c,
+    // the last one used there) takes the keyboard.
+    const aRect = (await hooks.rect(page, `.panel[data-slot-id="${a}"]`))!
+    await page.mouse.dblclick(aRect.x + aRect.width / 2, aRect.y + aRect.height / 2)
+    await page.waitForFunction(() => !window.__tether.builder())
+    assert.equal(await page.locator('#btn-builder').getAttribute('aria-pressed'), 'false')
+    assert.equal(await hooks.activeFrame(page), 'frame-1', 'the double-clicked frame has the focus')
+    await page.waitForFunction(id => window.__tether.activeId() === id, c)
+    await page.waitForFunction(id => {
+      const doc = (globalThis as unknown as { document: { activeElement: { closest(s: string): { getAttribute(n: string): string | null } | null } | null } }).document
+      return doc.activeElement?.closest('.panel')?.getAttribute('data-slot-id') === id
+    }, c)
+    assert.equal(await page.locator('.edge-plus:visible').count(), 0, 'out of the builder: no "+"')
 
     // ---- 5. chooser: "Mesa · abaixo" opens a PowerShell in a frame spanning the desk ----
     await focusPane(page, a!)
@@ -313,6 +333,21 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await sleep(800)
     const finalFile = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutV2
     assert.deepEqual(Object.keys(finalFile.desks[0]!.frames.views).sort(), ['frame-1', 'frame-3', 'frame-4'])
+
+    // ---- 8. builder mode: a tab still drags into another frame (dockview's native drag is never guarded) ----
+    await page.evaluate(() => window.__tether.setBuilder(true))
+    const from = (await hooks.rect(page, `.dv-tab:has(.tether-tab[data-slot="${e}"])`))!
+    const to = (await hooks.rect(page, `.dv-tab:has(.tether-tab[data-slot="${a}"])`))!
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 8, { steps: 3 })
+    await page.mouse.move(to.x + to.width * 0.8, to.y + to.height / 2, { steps: 15 })
+    await sleep(120)
+    await page.mouse.up()
+    await page.waitForFunction(id => window.__tether.frameOf(id) === 'frame-1', e)
+    assert.ok(await page.evaluate(() => window.__tether.builder()), 'still in the builder after the drag')
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !window.__tether.builder())
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })

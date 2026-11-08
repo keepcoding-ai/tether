@@ -1,4 +1,4 @@
-// The drawer: one quick desk shared by all desks. It is a full Desk (frames, panes, the "+" near the borders)
+// The drawer: one quick desk shared by all desks. It is a full Desk (frames, panes, the builder mode's "+" at the borders)
 // inside an elevated card 16 px from every window edge, over the toolbar, with no backdrop: the cards behind fade
 // (styles.css) and a click on the 16 px margin closes it. The card has its own slim bar (index.html).
 //
@@ -57,7 +57,6 @@ export class Drawer {
     this.root.dataset.open = String(open)
     this.root.toggleAttribute('inert', !open)
     this.root.setAttribute('aria-hidden', String(!open))
-    if (!open) this.current.hidePlus()
   }
 
   /**

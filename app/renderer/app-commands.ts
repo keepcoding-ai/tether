@@ -36,6 +36,8 @@ export interface CommandHost {
   createDesk(side: 'before' | 'after'): void
   cycleDesk(step: 1 | -1): void
   goToDesk(position: number): void
+  /** The builder mode (builder-mode.ts) on or off: the "+" at the borders of frames and desks, the content inert. */
+  toggleBuilder(): void
   /** The current desk's menu (rename, colour, move…), opened under its chip. */
   deskActions(): void
   closeDesk(): void
@@ -146,6 +148,7 @@ export function appCommands(host: CommandHost): Command[] {
       id: `desk.go.${position}`, title: `Ir para a mesa ${position}`, group: GROUP.desk, icon: 'cards',
       when: ctx => !ctx.drawerOpen && ctx.desks >= position, run: () => host.goToDesk(position),
     })),
+    { id: 'desk.builder', title: 'Montar a mesa (modo builder)', group: GROUP.desk, icon: 'square-split-horizontal', ignoreRepeat: true, run: () => host.toggleBuilder() },
     { id: 'desk.actions', title: 'Mesa atual: renomear, cor, mover…', group: GROUP.desk, icon: 'pencil-simple', run: () => host.deskActions() },
     { id: 'desk.close', title: 'Fechar mesa…', group: GROUP.desk, icon: 'x', when: ctx => ctx.desks > 1, run: () => host.closeDesk() },
     // ----- drawer -----

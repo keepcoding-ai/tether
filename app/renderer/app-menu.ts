@@ -43,6 +43,7 @@ export const CORE_APP_MENU: readonly Item[] = [
   // The 'note' group is the note extension's (extensions/note/manifest.ts: Nova nota, Abrir nota…, Salvar nota como…).
   ...items('desk', [
     { command: 'desk.new', icon: 'cards', label: 'Nova mesa' },
+    { command: 'desk.builder', icon: 'square-split-horizontal', label: 'Montar a mesa (modo builder)' },
     { command: 'pane.move', icon: 'arrow-square-out', label: 'Mover…' },
     { command: 'desk.actions', icon: 'pencil-simple', label: 'Mesa atual: renomear, cor, mover…' },
     { command: 'desk.close', icon: 'x', label: 'Fechar mesa…' },

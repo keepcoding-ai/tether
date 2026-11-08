@@ -1,5 +1,5 @@
 // A pad that holds frames (F10b): the view a `frames: true` pad shows is a full Desk (frames, tabs, empty panes, the
-// "+" near the borders, splits, any pane type), the same way the drawer hosts its quick desk (drawer.ts). Its state in
+// builder mode's "+" at its frame's borders, splits, any pane type), the same way the drawer hosts its quick desk (drawer.ts). Its state in
 // layout.json is the drawer's shape (frames → panes), so the core prunes it and lists its panes (layout.ts
 // prunePadStates/padPanelIds). Mounted once, kept mounted while hidden (sidebars.ts): its terminals never resize.
 import type { DockviewTheme } from 'dockview-core'
@@ -73,7 +73,7 @@ export class FramesPad implements PadView {
 
   setVisible(visible: boolean): void {
     this.visible = visible
-    if (!visible) { this.desk.hidePlus(); this.host.onHidden(this) }
+    if (!visible) this.host.onHidden(this)
   }
 
   /** Seeds the empty pane again when the pad's frame has no tab left (not while it is being disposed). True when it did. */

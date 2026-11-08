@@ -41,6 +41,7 @@ type Hooks = {
   layout(): unknown
   profiles(): { id: string }[]
   rect(sel: string): { x: number; y: number; width: number; height: number } | undefined
+  builder(): boolean
 }
 declare const window: { __tether: Hooks }
 declare const document: { documentElement: { dataset: Record<string, string> }; querySelector(sel: string): { getBoundingClientRect(): { x: number; y: number; width: number; height: number } } | null; querySelectorAll(sel: string): { length: number } }
@@ -246,16 +247,18 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => window.__tether.empties().length === 0)
 
-    // 7. The desk-edge "+": adds (no duplicate); right-click names the three actions.
+    // 7. The desk-edge "+" (builder mode, Ctrl+K M from the terminal): adds (no duplicate) and the mode stays on;
+    //    right-click names the three actions; an Esc a chooser or a menu takes keeps the mode, the next one leaves it.
     await focusShell(page, shell!)
-    const dock = (await page.evaluate(() => document.querySelector('#dock')?.getBoundingClientRect()))!
-    await page.mouse.move(dock.x + dock.width / 2, dock.y + dock.height / 2)
-    await page.mouse.move(dock.x + dock.width - 3, dock.y + dock.height / 2)
-    await page.waitForSelector('.edge-plus.desk[data-side="right"]:not([hidden])')
-    assert.ok((await page.locator('.edge-plus.desk[data-side="right"]:not([hidden])').getAttribute('title'))!.includes('clique direito: duplicar'))
+    assert.equal(await page.locator('.edge-plus:visible').count(), 0, 'no "+" outside the builder mode')
+    await page.keyboard.press('Control+K')
+    await page.keyboard.press('M')
+    await page.waitForFunction(() => window.__tether.builder())
+    await page.locator('.edge-plus.desk[data-side="right"]:visible').waitFor({ state: 'visible' })
+    assert.ok((await page.locator('.edge-plus.desk[data-side="right"]:visible').getAttribute('title'))!.includes('clique direito: duplicar'))
     const slotsBefore = (await page.evaluate(() => window.__tether.slots())).length
     const framesBefore = (await page.evaluate(() => window.__tether.frameIds())).length
-    await page.click('.edge-plus.desk[data-side="right"]:not([hidden])')
+    await page.click('.edge-plus.desk[data-side="right"]:visible')
     await page.waitForFunction(() => window.__tether.empties().length === 1)
     const e5 = (await empties(page))[0]!
     assert.equal(e5.origin, 'add')
@@ -263,14 +266,12 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     assert.equal((await page.evaluate(() => window.__tether.frameIds())).length, framesBefore + 1, 'a new frame')
     assert.equal((await page.evaluate(() => window.__tether.slots())).length, slotsBefore, 'nothing was duplicated')
     await page.waitForFunction(id => window.__tether.empty(id)?.focused === true, e5.id)
-    await page.keyboard.press('Escape')
+    assert.ok(await page.evaluate(() => window.__tether.builder()), 'the builder mode stays on after a "+"')
+    await page.keyboard.press('Escape') // the chooser's: the empty pane closes
     await page.waitForFunction(() => window.__tether.empties().length === 0)
     await page.waitForFunction(n => window.__tether.frameIds().length === n, framesBefore, undefined)
-    await focusShell(page, shell!)
-    await page.mouse.move(dock.x + dock.width / 2, dock.y + dock.height / 2)
-    await page.mouse.move(dock.x + dock.width - 3, dock.y + dock.height / 2)
-    await page.waitForSelector('.edge-plus.desk[data-side="right"]:not([hidden])')
-    await page.click('.edge-plus.desk[data-side="right"]:not([hidden])', { button: 'right' })
+    assert.ok(await page.evaluate(() => window.__tether.builder()), 'the chooser took that Esc: still in the builder mode')
+    await page.click('.edge-plus.desk[data-side="right"]:visible', { button: 'right' })
     await page.waitForSelector('#ctx-menu')
     const menu = await page.locator('#ctx-menu li[role=menuitem]').allTextContents()
     assert.equal(menu[0], 'Novo quadro aqui')
@@ -278,6 +279,10 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     assert.equal(menu[2], 'Novo painel… (modo foco)')
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => !document.querySelector('#ctx-menu'))
+    assert.ok(await page.evaluate(() => window.__tether.builder()), 'the menu took that Esc: still in the builder mode')
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !window.__tether.builder())
+    assert.equal(await page.locator('.edge-plus:visible').count(), 0, 'out of the builder: no "+"')
 
     // 8. The contextless popup with a pane active: "Onde" in one line; the grid in a click; "abaixo" honoured.
     await focusShell(page, shell!)
