@@ -16,9 +16,12 @@ import { type DeskLayout, emptyDesk, FRAME_COMPONENT, frameInsertion, isLayoutV1
  * `--gap` (8 px, styles.css) inside their `.frame` box, and the desk pads another half: the desk band is the whole
  * outer gutter (8 px) up to the card's border, and the frame band (measured on the `.frame` box) is its 4 px half
  * gutter plus 14 px into the card. Any wider desk band would swallow the band of a frame on the desk's edge.
+ * On a frame's top edge that band lies over the tab bar, so there the "+" yields to the tabs (see `TAB_BAR_HIT`).
  */
 const FRAME_EDGE_PX = 18
 const DESK_EDGE_PX = 8
+/** Clickable parts of a frame's tab bar: a "+" showing over one would steal the click meant for it. */
+const TAB_BAR_HIT = '.dv-tab, .tab-more, .dv-left-actions-container, .dv-right-actions-container, .dv-prefix-actions-container'
 
 type Side = 'left' | 'right' | 'top' | 'bottom'
 const SIDES: readonly Side[] = ['left', 'right', 'top', 'bottom']
@@ -604,6 +607,7 @@ export class Desk {
     // overhangs the gutter), and re-arbitrating there would swap it for a frame's "+" under the pointer.
     if ((ev.target as Element | null)?.closest?.('.edge-plus')) return
     const { clientX: x, clientY: y } = ev
+    const overTabBar = !!(ev.target as Element | null)?.closest?.(TAB_BAR_HIT)
     const near = nearestSide(this.container.getBoundingClientRect(), x, y)
     if (near && near.distance <= DESK_EDGE_PX) { this.showOnly(this.deskPlus, near.side); for (const m of this.framePlus.values()) this.showOnly(m, undefined); return }
     this.showOnly(this.deskPlus, undefined)
@@ -612,7 +616,8 @@ export class Desk {
       const r = frame?.element.getBoundingClientRect()
       const inside = r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
       const n = inside ? nearestSide(r, x, y) : undefined
-      this.showOnly(buttons, n && n.distance <= FRAME_EDGE_PX ? n.side : undefined)
+      const side = n && n.distance <= FRAME_EDGE_PX ? n.side : undefined
+      this.showOnly(buttons, side === 'top' && overTabBar ? undefined : side)
     }
   }
 

@@ -259,6 +259,13 @@ test('frames: v1 migration keeps the panes; pane at the frame edge; frame at the
     await page.waitForSelector('.edge-plus.frame[data-frame="frame-3"][data-side="top"]:not([hidden])')
     assert.equal(await page.locator('.edge-plus.desk:not([hidden])').count(), 0, 'only the frame "+" shows inside the frame')
     await page.screenshot({ path: join(artifacts, 'frames-plus-frame.png') })
+    // Over a tab (same 8 px band) the top "+" yields, so the click activates the tab instead of adding a pane.
+    const tab = (await hooks.rect(page, '.frame:has([data-slot-id="' + e + '"]) .dv-tab'))!
+    await page.mouse.move(tab.x + tab.width / 2, f3.y + 8)
+    await page.waitForSelector('.edge-plus.frame[data-side="top"]:not([hidden])', { state: 'detached', timeout: 2000 })
+    assert.equal(await page.locator('.edge-plus.frame[data-side="top"]:not([hidden])').count(), 0, 'no top "+" over a tab')
+    await page.mouse.move(f3.x + f3.width / 2, f3.y + 8)
+    await page.waitForSelector('.edge-plus.frame[data-frame="frame-3"][data-side="top"]:not([hidden])')
     await page.click('.edge-plus.frame[data-frame="frame-3"][data-side="top"]', { button: 'right' })
     await page.waitForSelector('#ctx-menu')
     await page.click('#ctx-menu li:has-text("modo foco")')
