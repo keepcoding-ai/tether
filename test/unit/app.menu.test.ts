@@ -36,7 +36,7 @@ describe('the ≡ menu from the registry', () => {
       '---',
       'Novo painel…', 'Abrir pasta…', 'Abrir gaveta',
       '---',
-      'Painel ›', '  Nova aba neste grupo', '  Duplicar painel à direita', '  Duplicar painel abaixo', '  Novo painel na borda do quadro…', '  Novo quadro…', '  Trocar perfil do painel…',
+      'Painel ›', '  Nova aba', '  Duplicar painel à direita', '  Duplicar painel abaixo', '  Novo painel na borda do quadro…', '  Novo quadro…', '  Trocar perfil do painel…',
       'Nota ›', '  Nova nota', '  Abrir nota…', '  Salvar nota como…',
       'Mesa ›', '  Nova mesa', '  Mover…', '  Mesa atual: renomear, cor, mover…', '  Fechar mesa…',
       'Ferramentas ›', '  Perfis de lançamento…', '  Atalhos de teclado', '  Extensões', '  Instalar Tether Bridge…',

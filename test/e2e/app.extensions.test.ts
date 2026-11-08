@@ -82,7 +82,7 @@ const EXPECTED: Array<[string, string, string | null, string | null, string | nu
   ['drawer.toggle', 'Abrir gaveta', 'Ctrl+`', null, 'false'],
   ['sep', '', null, null, null],
   ['sub:pane', 'Painel', null, null, null],
-  ['pane.new-tab', 'Nova aba neste grupo', 'Ctrl+N', null, 'false'],
+  ['pane.new-tab', 'Nova aba', 'Ctrl+N', null, 'false'],
   ['pane.duplicate.pane.right', 'Duplicar painel à direita', 'Ctrl+Alt+→', null, 'true'],
   ['pane.duplicate.pane.below', 'Duplicar painel abaixo', 'Ctrl+Alt+↓', null, 'true'],
   ['pane.new-at-frame-edge', 'Novo painel na borda do quadro…', null, null, 'false'],

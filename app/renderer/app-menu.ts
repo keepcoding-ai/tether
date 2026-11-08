@@ -33,7 +33,7 @@ export const CORE_APP_MENU: readonly Item[] = [
     { command: 'drawer.toggle', icon: 'lightning', label: 'Abrir gaveta', order: 30 },
   ]),
   ...items('pane', [
-    { command: 'pane.new-tab', icon: 'plus', label: 'Nova aba neste grupo' },
+    { command: 'pane.new-tab', icon: 'plus', label: 'Nova aba' },
     { command: 'pane.duplicate.pane.right', icon: 'copy', label: 'Duplicar painel à direita' },
     { command: 'pane.duplicate.pane.below', icon: 'copy', label: 'Duplicar painel abaixo' },
     { command: 'pane.new-at-frame-edge', icon: 'square-half', label: 'Novo painel na borda do quadro…' },

@@ -183,7 +183,7 @@ describe('the empty pane\'s origin and the new-tab command', () => {
     assert.equal(shortcutOf(key, false), 'pane.new-tab', 'Ctrl+N since delivery 5 (Ctrl+Shift+T reopens the last closed pane)')
     assert.equal(r.hint(list.find(c => c.id === 'pane.new-tab')!, false), 'Ctrl+N')
     assert.equal(r.hint(list.find(c => c.id === 'pane.new')!, false), 'Ctrl+K Ctrl+O')
-    assert.equal(list.find(c => c.id === 'pane.new-tab')!.title, 'Nova aba neste grupo')
+    assert.equal(list.find(c => c.id === 'pane.new-tab')!.title, 'Nova aba')
     await r.run('pane.new-tab')
     await r.run('pane.new')
     assert.deepEqual(calls, ['newTab', 'newPanel'])

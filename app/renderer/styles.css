@@ -510,6 +510,7 @@ body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
 .tab-act { width: 26px; height: 24px; border-radius: 5px; padding: 0; }
 .tab-act .ph { width: 15px; height: 15px; }
 .tab-act:hover, .tab-act[aria-pressed="true"] { background: var(--bg-hover); color: var(--fg); }
+.tab-act.add { flex: none; align-self: center; margin: 0 2px; border: 0; background: none; color: var(--fg-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .tab-more { flex: none; align-self: center; margin: 0 2px; gap: 5px; height: 22px; padding: 0 8px; border-radius: 5px; }
 /* `.tab-actions button` above resets the font with higher specificity than a lone `.tab-more`, which left the "+N" at
    13px/400 instead of the intended 12px/600; this one wins. */

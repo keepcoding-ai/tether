@@ -347,7 +347,7 @@ test('new panel: "Novo painel…" chooses; "Duplicar painel" clones profile + fo
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
     assert.equal(await page.locator('#app-menu li[data-command="pane.new"]').textContent(), 'Novo painel…Ctrl+K Ctrl+O')
-    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"]').textContent(), 'Nova aba neste grupoCtrl+N')
+    assert.equal(await page.locator('#app-menu li[data-command="pane.new-tab"]').textContent(), 'Nova abaCtrl+N')
     assert.equal(await page.locator('#app-menu li[data-command="pane.duplicate.pane.right"]').getAttribute('aria-disabled'), 'false')
     assert.equal(await page.locator('#app-menu li[data-command="pane.duplicate.pane.below"]').count(), 1)
     await page.keyboard.press('Escape')

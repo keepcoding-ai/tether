@@ -136,7 +136,20 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     const shellPlace = await place(page, shell!)
 
     // 2. The "+" of the strip: an empty tab (add) in the group; Recentes = powershell, highlighted; Enter opens it in place.
-    await page.locator(`.dv-groupview:has(.panel[data-slot-id="${shell}"]) .dv-right-actions-container [data-action="add-tab"]`).click()
+    const addBtn = page.locator(`.dv-groupview:has(.panel[data-slot-id="${shell}"]) .dv-tabs-and-actions-container [data-action="add-tab"]`)
+    // Geometry: the "+" sits right after the last visible tab (or the "+N"), inside the tab strip, outside the right actions.
+    const geo = await addBtn.evaluate(btn => {
+      const head = btn.closest('.dv-tabs-and-actions-container')!
+      const right = (el: Element | null): number => el ? el.getBoundingClientRect().right : -Infinity
+      const tabs = [...head.querySelectorAll('.dv-tabs-container > .dv-tab:not(.tab-hidden)')]
+      const more = head.querySelector('.tab-more:not([hidden])')
+      const b = btn.getBoundingClientRect(), h = head.getBoundingClientRect()
+      return { left: b.left, right: b.right, lastTab: Math.max(...tabs.map(t => right(t))), more: right(more), headLeft: h.left, headRight: h.right, inActions: !!btn.closest('.tab-actions') }
+    })
+    assert.ok(geo.left >= Math.max(geo.lastTab, geo.more) - 1, `the "+" is right of the last tab / "+N" (${JSON.stringify(geo)})`)
+    assert.ok(geo.left >= geo.headLeft && geo.right <= geo.headRight, 'the "+" is inside the tab strip')
+    assert.equal(geo.inActions, false, 'the "+" is not in the right actions block')
+    await addBtn.click()
     await page.waitForFunction(() => window.__tether.empties().length === 1)
     let [e1] = await empties(page)
     assert.equal(e1!.origin, 'add')
