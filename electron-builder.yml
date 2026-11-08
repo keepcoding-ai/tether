@@ -1,0 +1,50 @@
+# Windows x64 distributable: `npm run dist` (NSIS installer + zip of the unpacked app).
+# Output goes outside the repo. No code signing, no auto-update feed.
+appId: dev.keepcoding.tether
+productName: tether
+executableName: tether
+artifactName: tether-${version}-${os}-${arch}.${ext}
+directories:
+  output: ../../.tmp/tether-dist
+# Use the Electron already installed in node_modules (no download).
+electronDist: node_modules/electron/dist
+electronVersion: 45.1.0
+asar: true
+# node-pty is loaded by tetherd under the system Node (its prebuilds match the Node ABI): never rebuild for Electron.
+npmRebuild: false
+nodeGypRebuild: false
+buildDependenciesFromSource: false
+icon: brand/assets/app/tether.ico
+files:
+  - package.json
+  - app/dist/**
+  - app/renderer/**
+  - extensions/**
+  - src/**
+  - node_modules/@xterm/xterm/css/xterm.css
+  - "!**/*.map"
+  - "!**/*.test.*"
+  - "!**/test/**"
+  - "!**/*.md"
+  - "!app/dist/**/*.icns"
+  - "!app/renderer/**/*.ts"
+  - "!app/renderer/tsconfig.json"
+  - "!node_modules/node-pty/prebuilds/{darwin-*,win32-arm64}/**"
+  - "!node_modules/node-pty/{src,deps,scripts,third_party,typings}/**"
+# Binaries and files read by a process outside Electron (rg, node-pty's conpty, the daemon's .ts) cannot live in the asar.
+asarUnpack:
+  - node_modules/@vscode/ripgrep-*/**
+  - node_modules/node-pty/**
+  - src/**
+  - extensions/**
+win:
+  target:
+    - target: nsis
+      arch: x64
+    - target: zip
+      arch: x64
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

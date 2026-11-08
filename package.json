@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Each terminal slot remembers which Claude Code / soul-cli session it runs, and resumes it after any restart.",
   "type": "module",
+  "main": "app/dist/main.cjs",
   "private": true,
   "engines": {
     "node": ">=24"
@@ -21,6 +22,7 @@
     "app:build": "node app/build.mjs",
     "app:install": "node app/install.mjs install",
     "app:uninstall": "node app/install.mjs uninstall",
+    "dist": "node app/build.mjs && electron-builder --win --x64 --config electron-builder.yml",
     "app": "node app/build.mjs && electron app/dist/main.cjs",
     "app:typecheck": "tsc -p app/renderer",
     "test:app": "node --test --test-concurrency=1 \"test/e2e/app.*.test.ts\""
@@ -40,6 +42,7 @@
     "@xterm/xterm": "^6.0.0",
     "dockview-core": "^8.8.0",
     "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
     "markdown-it": "^15.0.3",
     "monaco-editor": "^0.57.0",
