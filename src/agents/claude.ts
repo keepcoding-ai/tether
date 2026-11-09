@@ -30,11 +30,11 @@ function defaultHookPath(): string {
  */
 export function hookSettings(hookPath: string = defaultHookPath()): object {
   const script = hookPath.replace(/\\/g, '/')
-  const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification') => [
+  const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
   ]
-  // Stop / Notification feed the attention badge (turn finished / waiting for the user).
-  return { hooks: { SessionStart: hook('SessionStart'), SessionEnd: hook('SessionEnd'), Stop: hook('Stop'), Notification: hook('Notification') } }
+  // Stop / Notification feed the attention badge (turn finished / waiting for the user); UserPromptSubmit marks the turn start.
+  return { hooks: { SessionStart: hook('SessionStart'), SessionEnd: hook('SessionEnd'), Stop: hook('Stop'), Notification: hook('Notification'), UserPromptSubmit: hook('UserPromptSubmit') } }
 }
 
 /** Writes <home>/claude-settings.json only when its content changed (atomic: temp + rename). Returns the path. */

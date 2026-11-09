@@ -31,7 +31,7 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 
-export const DAEMON_VERSION = '0.3.1'
+export const DAEMON_VERSION = '0.3.2'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
@@ -239,6 +239,7 @@ class DaemonImpl implements Daemon {
     if (slot.restarting) s.restarting = true
     if (slot.stopping) s.stopping = true
     if (slot.attention.value) s.attention = slot.attention.value
+    if (slot.attention.turn === 'busy') s.turn = 'busy'
     return s
   }
 

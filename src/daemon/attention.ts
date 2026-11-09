@@ -18,6 +18,9 @@ import '../agents/load.ts'
 import { agentRegistry } from '../agents/registry.ts'
 
 export type Attention = 'done' | 'waiting'
+/** What a hook reports: a turn start (turn signal only) or an attention value. */
+export type HookKind = Attention | 'start'
+export type Turn = 'busy' | 'idle'
 
 export interface AttentionOptions {
   /** Detect "output went quiet after the user's turn" (soul). */
@@ -36,6 +39,8 @@ type Scan = 'text' | 'esc' | 'string' | 'string-esc'
 
 export class AttentionState {
   value: Attention | undefined
+  /** Is a turn in progress? Claude: UserPromptSubmit→busy, Stop→idle. Soul: Enter→busy, quiet→idle. Shells never. */
+  turn: Turn = 'idle'
   private readonly opts: Required<AttentionOptions>
   private scan: Scan = 'text'
   /** The user submitted a line; output that follows counts toward a turn. */
@@ -48,9 +53,11 @@ export class AttentionState {
   }
 
   /** A hook reported the turn's end or a wait. Returns true when the value changed. */
-  hook(kind: Attention): boolean {
+  hook(kind: HookKind): boolean {
     this.disarm()
-    return this.set(kind)
+    if (kind === 'start') return this.setTurn('busy')
+    const t = kind === 'done' ? this.setTurn('idle') : false // 'waiting' keeps the turn busy
+    return this.set(kind) || t
   }
 
   /**
@@ -61,7 +68,8 @@ export class AttentionState {
   input(data: string): boolean {
     if (data.startsWith('\x1b')) return false
     if (this.opts.idle && /[\r\n]/.test(data)) { this.armed = true; this.burst = 0 }
-    return this.set(undefined)
+    const t = this.armed ? this.setTurn('busy') : false
+    return this.set(undefined) || t
   }
 
   /** The user looked at the pane. */
@@ -107,19 +115,27 @@ export class AttentionState {
     const due = this.dueAt()
     if (due === undefined || now < due) return false
     this.disarm()
-    return this.set('done')
+    const t = this.setTurn('idle')
+    return this.set('done') || t
   }
 
   /** A new launch or the process exit: nothing is pending and nothing is shown. */
   reset(): boolean {
     this.disarm()
     this.scan = 'text'
-    return this.set(undefined)
+    const t = this.setTurn('idle')
+    return this.set(undefined) || t
   }
 
   private disarm(): void {
     this.armed = false
     this.burst = 0
+  }
+
+  private setTurn(v: Turn): boolean {
+    if (this.turn === v) return false
+    this.turn = v
+    return true
   }
 
   private set(v: Attention | undefined): boolean {
@@ -138,14 +154,14 @@ export function attentionOptions(kind: string): AttentionOptions {
   return { idle: false, bel: true }
 }
 
-/** The hook's file (<home>/slots/<id>.attention): `{ ts, kind, sessionId? }`; undefined when unreadable. */
-export interface AttentionReport { ts: string; kind: Attention; sessionId?: string }
+/** The hook's file (<home>/slots/<id>.attention): `{ ts, kind: start|done|waiting, sessionId? }`; undefined when unreadable. */
+export interface AttentionReport { ts: string; kind: HookKind; sessionId?: string }
 
 export function parseAttentionReport(text: string): AttentionReport | undefined {
   let x: unknown
   try { x = JSON.parse(text) } catch { return undefined }
   if (!x || typeof x !== 'object' || Array.isArray(x)) return undefined
   const r = x as Record<string, unknown>
-  if (typeof r.ts !== 'string' || (r.kind !== 'done' && r.kind !== 'waiting')) return undefined
+  if (typeof r.ts !== 'string' || (r.kind !== 'done' && r.kind !== 'waiting' && r.kind !== 'start')) return undefined
   return { ts: r.ts, kind: r.kind, ...(typeof r.sessionId === 'string' ? { sessionId: r.sessionId } : {}) }
 }

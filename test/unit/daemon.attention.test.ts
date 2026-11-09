@@ -45,6 +45,52 @@ describe('attention: claude (hooks only)', () => {
   })
 })
 
+describe('attention: turn signal', () => {
+  test('claude: start=busy, waiting keeps busy, done=idle; start leaves no badge', () => {
+    const a = new AttentionState(attentionOptions('claude'))
+    assert.equal(a.turn, 'idle')
+    assert.equal(a.hook('start'), true)
+    assert.equal(a.turn, 'busy')
+    assert.equal(a.value, undefined)
+    assert.equal(a.hook('start'), false)
+    assert.equal(a.hook('waiting'), true)
+    assert.equal(a.turn, 'busy')
+    assert.equal(a.hook('done'), true)
+    assert.equal(a.turn, 'idle')
+    assert.equal(a.value, 'done')
+    a.hook('start')
+    assert.equal(a.reset(), true)
+    assert.equal(a.turn, 'idle')
+  })
+  test('claude: Enter in the terminal does not make it busy (hooks only)', () => {
+    const a = new AttentionState(attentionOptions('claude'))
+    a.input('oi\r')
+    assert.equal(a.turn, 'idle')
+  })
+  test('soul: Enter=busy, quiet after a burst=idle', () => {
+    const a = new AttentionState(attentionOptions('soul'))
+    assert.equal(a.input('oi\r'), true)
+    assert.equal(a.turn, 'busy')
+    a.output('x'.repeat(BURST_BYTES), 1000)
+    assert.equal(a.poll(1000 + IDLE_MS), true)
+    assert.equal(a.turn, 'idle')
+    assert.equal(a.value, 'done')
+  })
+  test('shell never goes busy', () => {
+    const a = new AttentionState(attentionOptions('shell'))
+    a.input('ls\r')
+    assert.equal(a.turn, 'idle')
+  })
+  test('toAttention: UserPromptSubmit = start; subagent payloads (agent_id) are ignored', () => {
+    const ts = '2026-10-30T10:00:00.000Z'
+    const p = { session_id: 'abc', hook_event_name: 'UserPromptSubmit', prompt: 'oi' }
+    assert.deepEqual(toAttention('UserPromptSubmit', p, ts), { ts, kind: 'start', sessionId: 'abc' })
+    assert.equal(toAttention('UserPromptSubmit', { ...p, agent_id: 'sub1' }, ts), undefined)
+    assert.equal(toAttention('Stop', { session_id: 'abc', agent_id: 'sub1' }, ts), undefined)
+    assert.equal(parseAttentionReport(JSON.stringify({ ts, kind: 'start' }))?.kind, 'start')
+  })
+})
+
 describe('attention: BEL', () => {
   test('a bare BEL means waiting (shell)', () => {
     const a = new AttentionState(attentionOptions('shell'))
