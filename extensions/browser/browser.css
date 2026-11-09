@@ -89,3 +89,11 @@
 .br-pad-addr { font-family: var(--mono, ui-monospace, monospace); }
 .br-pad-meta { display: flex; gap: 6px; }
 .br-pad-row[data-control="user"] .br-pad-meta [data-role="control"] { color: var(--fg); font-weight: 600; }
+
+/* E13: "Baixados" in the pad */
+.br-pad-downloads { margin-top: 8px; }
+.br-pad-dgroup { display: flex; flex-direction: column; gap: 4px; }
+.br-pad-dagent { font-size: 11.5px; color: var(--fg-dim); margin-top: 4px; }
+.br-pad-drow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+.br-pad-dtext { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.br-pad-dtext .br-pad-title, .br-pad-dtext .br-pad-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -52,6 +52,8 @@ export interface DialogSpec {
   /** One or two sentences stating the situation (optional when the title and context say it all). */
   message?: string
   context?: DialogContext
+  /** A picture under the context (the page a decision is about, as it is now): a `data:image/` address only. */
+  image?: { src: string; alt: string }
   /**
    * A list to pick from before choosing (radio). `{option}` in a choice's consequence is replaced by the
    * picked option's label; the answer carries the picked id as `option`.

@@ -603,6 +603,7 @@ dialog.ask .ctx-icon .ph { width: 20px; height: 20px; }
 dialog.ask .ctx-text { flex: 1; min-width: 0; }
 dialog.ask .ctx-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 dialog.ask .ctx-line { font: 11.5px var(--mono); color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+dialog.ask .ask-image { display: block; max-width: 100%; max-height: 220px; margin: 0 auto 14px; border: 1px solid var(--border); border-radius: 6px; object-fit: contain; }
 dialog.ask .ctx-status { flex: none; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
 dialog.ask .ctx-status.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
 dialog.ask .ctx-status.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, transparent); }

@@ -85,9 +85,12 @@ export const PAGE_ALLOWED: ReadonlySet<string> = new Set([
   'Target.getTargetInfo', 'Target.setAutoAttach',
 ])
 
-/** Browser level: the 11 the gate answers on its own (bench B1), plus `Target.setDiscoverTargets`. Nothing here is forwarded. */
+/**
+ * Browser level: the 11 the gate answers on its own (bench B1), plus `Target.setDiscoverTargets` and (E13) `Browser.cancelDownload`
+ * (answered without effect: the tether keeps the agent's download). Nothing here is forwarded.
+ */
 export const BROWSER_ALLOWED: ReadonlySet<string> = new Set([
-  'Browser.getVersion', 'Browser.setDownloadBehavior', 'Runtime.runIfWaitingForDebugger', 'Target.attachToBrowserTarget',
+  'Browser.cancelDownload', 'Browser.getVersion', 'Browser.setDownloadBehavior', 'Runtime.runIfWaitingForDebugger', 'Target.attachToBrowserTarget',
   'Target.attachToTarget', 'Target.closeTarget', 'Target.createTarget', 'Target.detachFromTarget', 'Target.getTargetInfo',
   'Target.getTargets', 'Target.setAutoAttach', 'Target.setDiscoverTargets',
 ])

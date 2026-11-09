@@ -25,6 +25,13 @@
 // page's stored console and log are discarded when the tab leaves the agent and again when it comes back (H2: `Runtime.enable`
 // and `Log.enable` replay them); a connection whose client stops reading is closed past a write ceiling (M2); a capture's clip
 // is bounded before anything is drawn or decoded (M3); `<home>/browser` is the owner's alone (M4, private-dir.ts).
+// E13 (files, review M1): `Tether.confirmUpload` asks the person (upload-consent.ts) and a yes is a grant for ONE attach on that tab
+// into a frame of the origin asked, for a few seconds. The package's attach (playwright-core's `Runtime.callFunctionOn` that hands
+// the files to the input, files-rules.ts `attachCarriesFiles`) goes out only under a fresh grant, after the gate read the origin
+// of the frame it lands in (in that same object's context, just before forwarding); otherwise it is refused. The agent's own
+// JavaScript that builds a file some other way is not recognised: the disk read stays in the agent's process, under the
+// package's folder rule. Downloads (downloads.ts) reach the owner's connections as `Browser.downloadWillBegin` /
+// `Browser.downloadProgress` with the final name and size (never the path), only while the agent has the tab.
 import { randomBytes } from 'node:crypto'
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -46,6 +53,8 @@ import { checkAsk, type Control, heldError } from './control-rules.ts'
 import type { ControlHub } from './control.ts'
 import { acceptOf, frame, FrameParser, OP_CLOSE, OP_PONG, OP_TEXT } from './ws-frames.ts'
 import { actionKindOf, type ActionKind } from './pad-rules.ts'
+import type { DownloadEvent } from './downloads.ts'
+import { attachCarriesFiles, attachRefusal, UPLOAD_GRANT_MS, type UploadGrant } from './files-rules.ts'
 
 /** What the gate needs of the tab registry (tabs.ts). */
 export interface GateTabs {
@@ -69,7 +78,9 @@ export interface GateOptions {
   /** How often a deleted key is noticed (ms). */
   keyTtlMs?: number
   /** Who has each tab (E7). Without it every tab is the agent's and `Tether.*` is unknown. */
-  control?: Pick<ControlHub, 'control' | 'view' | 'onChange' | 'openAsks' | 'ask' | 'uploadAsks'>
+  control?: Pick<ControlHub, 'control' | 'view' | 'onChange' | 'openAsks' | 'ask'>
+  /** E13: the person's answer to an upload (`Tether.confirmUpload`); without it every upload is refused. */
+  confirmUpload?: (req: { tabId: string; slotId: string; path: string; frameOrigin: string }) => Promise<boolean>
   /** E9: the agent's command reached a tab it has (the tab's "agent acting" dot). E11: and the coarse kind of it ("typing"), nothing of the command's content. */
   activity?: (tabId: string, kind: ActionKind) => void
   /** Test builds only: one line per command, answer and event (method names and ids, never params nor keys). */
@@ -85,6 +96,8 @@ export interface Gate extends IDisposable {
   connections(): { slotId: string }[]
   /** Removes, on every agent session of the tab, the scripts that session's connection registered (the clean hand-off). */
   cleanTab(tabId: string): Promise<number>
+  /** E13: a download of a tab, told to its owner's connections that asked for download events. */
+  download(e: DownloadEvent): void
 }
 
 const WS_PATH = '/devtools/browser/tether'
@@ -92,6 +105,8 @@ const WS_PATH = '/devtools/browser/tether'
 const PRE_ALLOWED_MS = 30_000
 /** A capture that never answers (a page that draws no frame) fails instead of holding its session's lane forever. */
 const CAPTURE_TIMEOUT_MS = 15_000
+/** Reads, in the context of the object an attach is called on, the origin of the frame it belongs to. */
+const FRAME_ORIGIN_FN = "function () { try { const o = window.origin; if (o && o !== 'null') return o } catch (e) {} return location.origin }"
 
 function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined
@@ -281,6 +296,11 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     readonly preAllowed = new Map<string, number>()
     /** H1b: page commands not answered yet, by tab; leaving `agent` answers them with the held error. */
     readonly inflight = new Map<string, Set<(e: GateError) => void>>()
+    /** E13: the person's yes to an upload, by tab: one attach into a frame of that origin, before it runs out. */
+    readonly uploadGrants = new Map<string, UploadGrant>()
+    /** E13: `Browser.setDownloadBehavior` with events on; the downloads announced to it. */
+    downloadEvents = false
+    readonly downloads = new Set<string>()
     /** The tab of the last page command (what `Tether.requestLocalNetwork` without a target is about). */
     lastTab: string | undefined
     autoAttach = false
@@ -494,6 +514,9 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           if (tooLarge) throw refusal(method, tooLarge)
           return this.screenshot(s, surface, params, reply, fail)
         }
+        case 'Runtime.callFunctionOn':
+          if (attachCarriesFiles(params)) return this.attach(s, params, send, reply, fail)
+          break
         case 'Page.createIsolatedWorld':
           // N7: a world that ignores CORS with the partition's cookies is never granted.
           send(method, { ...params, grantUniveralAccess: false }).then(reply, fail)
@@ -522,6 +545,30 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         return { data: encodeShot(r.data, plan, params.format, params.quality) }
       })
       return shot.then(r => restore().then(() => reply(r)), e => restore().then(() => fail(e)))
+    }
+
+    /**
+     * The package's file attach (review M1): it goes out only under the person's fresh grant for this tab (used once), and only
+     * when the frame it lands in, read now in the same object's context, is of the origin she was shown. A frame that navigated
+     * meanwhile has a new context: the object is gone and the read fails, so nothing is attached.
+     */
+    async attach(s: GateSession<Conn>, params: Json, send: (m: string, p: Json) => Promise<unknown>, reply: (r: unknown) => void, fail: (e: unknown) => void): Promise<void> {
+      const grant = this.uploadGrants.get(s.tabId)
+      this.uploadGrants.delete(s.tabId)
+      const where: Json = typeof params.objectId === 'string' ? { objectId: params.objectId } : typeof params.executionContextId === 'number' ? { executionContextId: params.executionContextId } : {}
+      let origin: string | undefined
+      if (grant && Object.keys(where).length > 0) {
+        const r = await send('Runtime.callFunctionOn', { ...where, functionDeclaration: FRAME_ORIGIN_FN, returnByValue: true }).catch(() => undefined) as { result?: { value?: unknown } } | undefined
+        if (typeof r?.result?.value === 'string') origin = r.result.value
+      }
+      const why = attachRefusal(grant, origin, Date.now())
+      if (why) {
+        opts.log(`porteiro: anexo de arquivo recusado na guia ${s.tabId} (${why})`)
+        fail(refusal('Runtime.callFunctionOn', `file attach refused: ${why}`))
+        return
+      }
+      opts.log(`porteiro: anexo de arquivo permitido na guia ${s.tabId}`)
+      send('Runtime.callFunctionOn', params).then(reply, fail)
     }
 
     /** Consumes the person's yes to `url`, if still fresh. */
@@ -556,10 +603,15 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         case 'Tether.confirmUpload': {
           const t = await tabOf()
           if (typeof params.path !== 'string' || params.path === '') throw new GateError('Tether.confirmUpload: a path is needed', -32602)
-          // E13 shows the consent dialog; until then the request is recorded and refused.
-          control.uploadAsks.push({ tabId: t.tabId, path: params.path, ...(typeof params.frameUrl === 'string' ? { frameUrl: params.frameUrl } : {}) })
-          opts.log(`porteiro: upload pedido na guia ${t.tabId}, recusado (diálogo de consentimento ainda não existe)`)
-          return { allowed: false }
+          // The site that owns the field is what the person decides on: without it there is nothing to show her.
+          if (typeof params.frameUrl !== 'string' || params.frameUrl === '') return { allowed: false }
+          if (controlOf(t.tabId) !== 'agent' || !opts.confirmUpload) return { allowed: false }
+          this.uploadGrants.delete(t.tabId)
+          const allowed = await opts.confirmUpload({ tabId: t.tabId, slotId: this.slotId, path: params.path, frameOrigin: params.frameUrl })
+          // The answer counts only if the agent is still here and still has the tab (the person may have taken it meanwhile).
+          if (!allowed || this.closed || controlOf(t.tabId) !== 'agent') return { allowed: false }
+          this.uploadGrants.set(t.tabId, { origin: params.frameUrl, until: Date.now() + UPLOAD_GRANT_MS })
+          return { allowed: true }
         }
         case 'Tether.requestLocalNetwork': {
           const url = params.url
@@ -592,7 +644,10 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           return { protocolVersion: '1.3', product: chrome, revision: '@tether', userAgent: wc?.getUserAgent() ?? chrome, jsVersion: process.versions.v8 }
         }
         case 'Runtime.runIfWaitingForDebugger': return {}
-        case 'Browser.setDownloadBehavior': return {} // accepted, no effect yet (downloads are E13)
+        // The tether decides where downloads land (downloads.ts); events on means the client wants to hear of them.
+        case 'Browser.setDownloadBehavior': this.downloadEvents = params.eventsEnabled === true; return {}
+        // The package's adopt mode cancels every download it cannot save itself; the agent's copy is the tether's and stays.
+        case 'Browser.cancelDownload': return {}
         case 'Target.setDiscoverTargets': {
           this.discover = params.discover === true
           if (this.discover) for (const t of mine()) this.event('Target.targetCreated', { targetInfo: await targetInfoOf(t, this) })
@@ -681,6 +736,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         if (s.kind === 'page') this.event('Target.detachedFromTarget', { sessionId: s.outer, ...(targetId ? { targetId } : {}) })
       }
       this.attaching.delete(tabId)
+      this.uploadGrants.delete(tabId)
       this.scripts.delete(tabId)
       this.touched.delete(tabId)
       if ((mineTab || this.discover) && targetId) this.event('Target.targetDestroyed', { targetId })
@@ -721,7 +777,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     // H1b, H2: leaving the agent, what is in flight is answered with the held error and the stored console goes; back with it,
     // the console of the person's turn goes before the resync's Runtime.enable (and any new session's).
     discardStored(v.tabId)
-    if (v.control !== 'agent') for (const c of conns) c.cutInflight(v.tabId, v.control)
+    if (v.control !== 'agent') for (const c of conns) { c.cutInflight(v.tabId, v.control); c.uploadGrants.delete(v.tabId) }
     else resync(v.tabId)
     const owner = opts.tabs.list().find(t => t.tabId === v.tabId)?.ownerSlotId
     if (!owner) return
@@ -822,6 +878,25 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         c.scripts.delete(tabId)
       }
       return removed
+    },
+    download: e => {
+      const tellable = (c: Conn): boolean => c.slotId === e.slotId && c.downloadEvents && !c.closed
+      if (![...conns].some(tellable)) return
+      targetIdOf(e.tabId).then(frameId => {
+        for (const c of conns) {
+          if (!tellable(c)) continue
+          if (e.state === 'begin') {
+            // Rule 14: a download that starts while the person holds the tab is hers.
+            if (controlOf(e.tabId) !== 'agent') continue
+            c.downloads.add(e.guid)
+            c.event('Browser.downloadWillBegin', { frameId, guid: e.guid, url: e.url, suggestedFilename: e.name })
+            continue
+          }
+          if (!c.downloads.has(e.guid)) continue
+          if (e.state !== 'inProgress') c.downloads.delete(e.guid)
+          c.event('Browser.downloadProgress', { guid: e.guid, totalBytes: e.total, receivedBytes: e.received, state: e.state })
+        }
+      }, () => {})
     },
     dispose: () => {
       controlSub?.dispose()

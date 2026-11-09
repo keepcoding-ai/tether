@@ -116,7 +116,8 @@ export class TabRegistry {
     })).catch(() => {})
   }
 
-  private tabOfPage(webContentsId: number): string | undefined {
+  /** The tab whose page is `webContentsId` (a download's page, a refused request's). */
+  tabOfPage(webContentsId: number): string | undefined {
     for (const [tabId, e] of this.entries) if (!e.surface.webContents.isDestroyed() && e.surface.webContents.id === webContentsId) return tabId
     return undefined
   }

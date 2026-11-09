@@ -1,5 +1,6 @@
 // The browser extension's channels between its renderer and main sides (E2: the tab registry; E4: the local-network question).
 import type { ControlView } from './control.ts'
+import type { DownloadEntry, UploadAsk } from './files-rules.ts'
 import type { LocalNetworkAsk } from './local-network-rules.ts'
 import type { ActionKind, MainAgentView } from './pad-rules.ts'
 import type { SavedTab, TabInfo } from './tab-rules.ts'
@@ -40,6 +41,13 @@ export interface BrowserChannels {
     agents: () => MainAgentView[]
     /** E14: "Sair de todas as contas": cookies and storage of the tabs' partition cleared, open tabs reloaded. */
     logoutAll: () => void
+    /** E13: every agent's downloaded files ("Baixados"). */
+    downloads: () => DownloadEntry[]
+    /** E13: "Mostrar na pasta": the system's file browser on the file (never opens the file). */
+    showDownload: (slotId: string, name: string) => void
+    /** E13: the upload questions still waiting, and the person's answer ('allow'; anything else refuses). */
+    uploadOpen: () => UploadAsk[]
+    uploadAnswer: (id: string, choice: string) => void
   }
   events: {
     /** A tab was created or changed (title, address, loading). */
@@ -57,5 +65,11 @@ export interface BrowserChannels {
     activity: (tabId: string, kind: ActionKind) => void
     /** E12: an agent appeared, was renamed, exited or went away (alive false). */
     agent: (agent: MainAgentView) => void
+    /** E13: a download finished: the whole list again. */
+    downloads: (list: DownloadEntry[]) => void
+    /** E13: an agent asks to send a file to a page: ask the person (one question at a time, with the other questions). */
+    uploadAsk: (ask: UploadAsk) => void
+    /** E13: an upload question no longer needs an answer (its tab closed or left the agent). */
+    uploadCancelled: (id: string) => void
   }
 }

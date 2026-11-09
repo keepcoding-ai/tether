@@ -38,8 +38,6 @@ export class ControlHub {
   private readonly tabs = new Map<string, TabControl>()
   private readonly waiting = new Map<string, Waiting>()
   private readonly listeners = new Set<(v: ControlView) => void>()
-  /** Test builds: every upload consent asked (E13 shows the dialog). */
-  readonly uploadAsks: { tabId: string; path: string; frameUrl?: string }[] = []
   private readonly hooks: ControlHooks
 
   constructor(hooks: ControlHooks) { this.hooks = hooks }

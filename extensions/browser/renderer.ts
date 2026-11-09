@@ -30,6 +30,10 @@ import { controlTexts, helpLine } from './control-rules.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LOCAL_NETWORK_SITUATION, localNetworkDialog, type LocalNetworkAsk } from './local-network-rules.ts'
 import {
+  type DownloadEntry, downloadGroups, formatBytes, PAD_DOWNLOADS, PAD_SHOW_IN_FOLDER, UPLOAD_SITUATION, type UploadAsk, uploadDialog, whenText,
+} from './files-rules.ts'
+import type { DialogSpec } from '../../app/shared/dialog.ts'
+import {
   ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, buildPad, endedTabIds, hostOf, isEnded, type LastAction, lastActionText,
   PAD_NONE_OF_AGENT, PAD_SHOW_ALL, PAD_WITH_YOU, type PadAgentInfo, padBadge, padCloseAgent, padCloseEnded, padFiltered, type PadModel, padResumeAgent,
   logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, type PadTab, padWhere, resolveAgent, shortAddress,
@@ -228,10 +232,37 @@ export function activate(ui: TetherUi): IDisposable[] {
     root.replaceChildren(list)
   }
 
+  // ---- E13: "Baixados" (design §4.3, §12a): by agent, name, size, when, and "Mostrar na pasta" ----
+  let downloadsList: DownloadEntry[] = []
+  const drawDownloads = (root: HTMLElement): void => {
+    const shown = padFilter === undefined ? downloadsList : downloadsList.filter(d => d.slotId === padFilter)
+    if (shown.length === 0) return
+    const now = Date.now()
+    const sec = el('section', 'br-pad-section br-pad-downloads')
+    sec.dataset.section = 'downloads'
+    sec.append(el('h4', 'br-pad-head', `${PAD_DOWNLOADS} (${shown.length})`))
+    for (const g of downloadGroups(shown)) {
+      const group = el('div', 'br-pad-dgroup')
+      group.dataset.agent = g.slotId
+      group.append(el('div', 'br-pad-dagent', agentName(g.slotId)))
+      for (const f of g.files) {
+        const r = el('div', 'br-pad-row br-pad-drow')
+        r.dataset.name = f.name
+        const text = el('span', 'br-pad-dtext')
+        text.append(el('span', 'br-pad-title', f.name), el('span', 'br-pad-addr', `${formatBytes(f.bytes)} · ${whenText(f.at, now)}`))
+        r.append(text, btn(PAD_SHOW_IN_FOLDER, 'show-in-folder', () => { void ipc.invoke('showDownload', f.slotId, f.name).catch(() => {}) }))
+        group.append(r)
+      }
+      sec.append(group)
+    }
+    const host = root.querySelector('.br-pad-list') ?? root
+    host.append(sec)
+  }
   const drawPad = (root: HTMLElement): void => {
     const all = padModel()
     if (all.total === 0) drawEmpty(root)
     else drawList(root, all, padFilter === undefined ? all : padModel(padFilter))
+    drawDownloads(root)
   }
   const pads = new Set<Pad>()
   /** A signature of everything the list writes, so a redraw only follows a real change. */
@@ -239,7 +270,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const now = Date.now()
     const tabs = padTabs()
     return JSON.stringify([
-      padFilter, served(), persistentLogins,
+      padFilter, served(), persistentLogins, downloadsList.map(d => [d.slotId, d.name, d.bytes, whenText(d.at, now)]),
       tabs.map(t => [t.tabId, t.ownerSlotId, t.title, shortAddress(t.url), t.control, t.asking, t.expired, t.place, agentInfo(t.ownerSlotId), (() => { const a = actions.get(t.tabId); return a && now - a.at <= PAD_ACTION_FRESH_MS ? [a.kind, hostOf(t.url)] : 0 })()]),
     ])
   }
@@ -664,30 +695,41 @@ export function activate(ui: TetherUi): IDisposable[] {
   }).catch(() => {})
   void ipc.invoke('controls').then(list => { for (const v of list) onControl(v) }).catch(() => {})
 
-  const asks: LocalNetworkAsk[] = []
-  let asking: string | undefined
+  // The questions main puts to the person (the local network, E4; an upload, E13): one dialog at a time, in arrival order. Every
+  // one is the core's modal dialog, which freezes the surfaces while it is open (design §2.3).
+  interface Question { id: string; situation: string; spec: DialogSpec; answer(choice: string): Promise<unknown> }
+  const asks: Question[] = []
+  let asking: Question | undefined
   const nextAsk = (): void => {
     if (asking !== undefined) return
-    const ask = asks.shift()
-    if (!ask) return
-    asking = ask.id
-    void ui.dialogs.ask(localNetworkDialog(ask)).then(a => a.choice, () => 'deny')
-      .then(choice => ipc.invoke('localNetworkAnswer', ask.id, choice))
+    const q = asks.shift()
+    if (!q) return
+    asking = q
+    void ui.dialogs.ask(q.spec).then(a => a.choice, () => 'deny')
+      .then(choice => q.answer(choice))
       .catch(() => {})
       .finally(() => { asking = undefined; nextAsk() })
   }
-  const enqueue = (ask: LocalNetworkAsk): void => {
-    if (ask.id === asking || asks.some(a => a.id === ask.id)) return
-    asks.push(ask)
+  const enqueueQuestion = (q: Question): void => {
+    if (q.id === asking?.id || asks.some(a => a.id === q.id)) return
+    asks.push(q)
     nextAsk()
   }
+  const enqueue = (ask: LocalNetworkAsk): void => enqueueQuestion({
+    id: ask.id, situation: LOCAL_NETWORK_SITUATION, spec: localNetworkDialog(ask), answer: choice => ipc.invoke('localNetworkAnswer', ask.id, choice),
+  })
+  const enqueueUpload = (ask: UploadAsk): void => enqueueQuestion({
+    id: ask.id, situation: UPLOAD_SITUATION, spec: uploadDialog(ask), answer: choice => ipc.invoke('uploadAnswer', ask.id, choice),
+  })
   const withdraw = (id: string): void => {
     const i = asks.findIndex(a => a.id === id)
     if (i >= 0) { asks.splice(i, 1); return }
     // On screen: the dialog's own Esc path (a refusal; main already settled it and ignores the answer).
-    if (id === asking) document.querySelector(`dialog[data-dialog="${LOCAL_NETWORK_SITUATION}"]`)?.dispatchEvent(new Event('cancel', { cancelable: true }))
+    if (id === asking?.id) document.querySelector(`dialog[data-dialog="${asking.situation}"]`)?.dispatchEvent(new Event('cancel', { cancelable: true }))
   }
   void ipc.invoke('localNetworkOpen').then(list => { for (const a of list) enqueue(a) }).catch(() => {})
+  void ipc.invoke('uploadOpen').then(list => { for (const a of list) enqueueUpload(a) }).catch(() => {})
+  void ipc.invoke('downloads').then(list => { downloadsList = list; refreshPad() }).catch(() => {})
 
   void ipc.invoke('status').then(s => { persistentLogins = s.persistentLogins; for (const p of pads) p.redraw() })
   ui.test.expose('browserPanes', () => [...panels].map(([id, p]) => ({
@@ -755,7 +797,18 @@ export function activate(ui: TetherUi): IDisposable[] {
         buttons: buttons(g), rows: [...g.querySelectorAll('.br-pad-row')].map(rowOf),
       })),
       badge: lastBadge ?? null,
+      downloads: [...pad.element.querySelectorAll<HTMLElement>('[data-section="downloads"] .br-pad-dgroup')].map(g => ({
+        slotId: g.dataset.agent ?? '', agent: text(g.querySelector('.br-pad-dagent')),
+        files: [...g.querySelectorAll<HTMLElement>('.br-pad-drow')].map(r => ({ name: r.dataset.name ?? '', meta: text(r.querySelector('.br-pad-addr')) })),
+      })),
     }
+  })
+  /** Clicks "Mostrar na pasta" on a downloaded file of the pad, the way the person would. */
+  ui.test.expose('browserShowDownload', (name: string) => {
+    const pad = [...pads].find(p => p.element.isConnected)
+    const row = [...(pad?.element.querySelectorAll<HTMLElement>('.br-pad-drow') ?? [])].find(r => r.dataset.name === name)
+    row?.querySelector<HTMLButtonElement>('[data-action="show-in-folder"]')?.click()
+    return !!row
   })
   ui.test.expose('browserPadOpen', () => { ui.pads.open(PAD_ID) })
   ui.test.expose('browserSeals', () => [...seals].map(([tabId, hs]) => ({ tabId, count: hs.length })))
@@ -791,6 +844,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     ipc.on('agent', a => { slots.set(a.slotId, a); for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
     ui.agents.onDidChange(() => { for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
     ipc.on('localNetworkCancelled', withdraw),
+    ipc.on('uploadAsk', enqueueUpload),
+    ipc.on('uploadCancelled', withdraw),
+    ipc.on('downloads', list => { downloadsList = list; refreshPad() }),
     ipc.on('closed', tabId => {
       const id = paneIdOf(tabId)
       controls.delete(tabId)

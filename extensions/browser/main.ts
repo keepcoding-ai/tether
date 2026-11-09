@@ -5,14 +5,18 @@
 // `registry.requestLocalNetwork(tabId, ownerSlotId, url)`.
 // E5: the CDP gatekeeper (gate.ts) opens at activation: <home>/browser/endpoint.json and the agents' keys in <home>/browser/keys.
 // E7: who has each tab (control.ts): the gate refuses and holds outside 'agent', the shield follows, the clean hand-off lives here.
+// E13: files. Downloads land in the owner agent's folder (downloads.ts), the gate tells the agent, the pad lists them ("Baixados");
+// an upload asks the person in the tether's dialog (upload-consent.ts), with the page's picture, and the gate holds the attach to it.
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { WebContents } from 'electron'
+import { type NativeImage, shell, type WebContents } from 'electron'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { ControlHub, type ControlView } from './control.ts'
 import { helpLine } from './control-rules.ts'
 import { type Gate, startGate } from './gate.ts'
+import { DownloadStore } from './downloads.ts'
+import { UploadConsent } from './upload-consent.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LocalNetworkGate } from './local-network.ts'
 import { type ActionKind, hostOf } from './pad-rules.ts'
@@ -69,6 +73,39 @@ export function activate(main: TetherMain): IDisposable[] {
   let gate: Gate | undefined
   let gateDisposed = false
   const testing = typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__
+  // E13: downloads, by the agent that owns the tab.
+  const downloads = new DownloadStore(join(main.home, 'browser'), msg => main.log(msg))
+  void session.then(s => s.onDownload((item, page) => {
+    const tabId = registry.tabOfPage(page.id)
+    const owner = tabId === undefined ? undefined : registry.get(tabId)?.ownerSlotId
+    if (tabId === undefined || owner === undefined) { item.cancel(); main.log('download recusado (não é de uma guia)'); return }
+    downloads.take(item, owner, tabId)
+  })).catch(() => {})
+  /** Test builds: the files "Mostrar na pasta" would have shown (no window opens in a test). */
+  const shownInFolder: string[] = []
+  // E13: the upload consent; the page's picture goes in the dialog (design §2.3).
+  const uploads = new UploadConsent({
+    ask: ask => ipc.send('uploadAsk', ask),
+    cancelled: id => ipc.send('uploadCancelled', id),
+    log: msg => main.log(msg),
+  })
+  const pagePicture = async (tabId: string): Promise<string | undefined> => {
+    const surface = registry.surface(tabId)
+    const wc = surface?.webContents
+    if (!surface || !wc || wc.isDestroyed()) return undefined
+    const shot = (): Promise<NativeImage> => wc.capturePage()
+    const timeout = new Promise<undefined>(r => setTimeout(() => r(undefined), 3000))
+    const img = await Promise.race([(surface.state().visibility === 'hidden' ? surface.whileDrawing(shot) : shot()).catch(() => undefined), timeout])
+    if (!img || img.isEmpty()) return undefined
+    return `data:image/jpeg;base64,${img.resize({ width: 480, quality: 'good' }).toJPEG(70).toString('base64')}`
+  }
+  const confirmUpload = async (req: { tabId: string; slotId: string; path: string; frameOrigin: string }): Promise<boolean> => {
+    const wc = registry.webContents(req.tabId)
+    let pageOrigin = ''
+    try { pageOrigin = new URL(wc?.getURL() ?? '').origin } catch { /* no address */ }
+    const image = await pagePicture(req.tabId)
+    return uploads.request({ tabId: req.tabId, agent: main.agents.get(req.slotId)?.name || 'agente', path: req.path, frameOrigin: req.frameOrigin, pageOrigin, ...(image ? { image } : {}) })
+  }
   const traceFile = testing ? process.env.TETHER_GATE_TRACE : undefined
   const trace = traceFile ? (line: string): void => { try { appendFileSync(traceFile, `${Date.now() % 1_000_000} ${line}
 `) } catch { /* test trace only */ } } : undefined
@@ -117,9 +154,16 @@ export function activate(main: TetherMain): IDisposable[] {
   const controlSubs: IDisposable[] = [
     registry.watch({
       added: info => { control.added(info.tabId, registry.opener(info.tabId)); shieldOf(info.tabId) },
-      closed: tabId => { control.closed(tabId); lastPulse.delete(tabId); notices.get(tabId)?.resolve(); notices.delete(tabId) },
+      closed: tabId => { uploads.cancelTab(tabId, 'guia fechada'); control.closed(tabId); lastPulse.delete(tabId); notices.get(tabId)?.resolve(); notices.delete(tabId) },
     }),
-    control.onChange(v => { shieldOf(v.tabId); syncNotice(v); ipc.send('control', v) }),
+    control.onChange(v => {
+      if (v.control !== 'agent') uploads.cancelTab(v.tabId, v.control === 'paused' ? 'guia pausada' : 'a pessoa assumiu')
+      shieldOf(v.tabId); syncNotice(v); ipc.send('control', v)
+    }),
+    downloads.onEvent(e => {
+      gate?.download(e)
+      if (e.state === 'completed') ipc.send('downloads', downloads.list())
+    }),
     main.agents.onDidExit(e => control.agentExited(e.slotId)),
     main.agents.onDidChange(a => ipc.send('agent', { slotId: a.slotId, name: a.name, alive: a.alive })),
     { dispose: () => { for (const n of notices.values()) n.resolve(); notices.clear() } },
@@ -133,7 +177,7 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.send('activity', tabId, kind)
   }
   const tabIdsOf = (ids: unknown): string[] => (Array.isArray(ids) ? ids.filter(isId).slice(0, 512) : [])
-  const gateReady = startGate({ home: main.home, tabs: registry, control, activity: pulse, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {
+  const gateReady = startGate({ home: main.home, tabs: registry, control, confirmUpload, activity: pulse, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {
     if (gateDisposed) g.dispose()
     else gate = g
     return g
@@ -166,6 +210,16 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('localNetworkOpen', () => localGate.open()),
     ipc.handle('localNetworkAnswer', (id, choice) => { if (typeof id === 'string') localGate.answer(id, choice) }),
     ipc.handle('controls', () => control.views()),
+    ipc.handle('downloads', () => downloads.list()),
+    // Opens the system's file browser on the file (selected), never the file itself.
+    ipc.handle('showDownload', (slotId, name) => {
+      const path = typeof slotId === 'string' && typeof name === 'string' ? downloads.pathOf(slotId, name) : undefined
+      if (!path) return
+      if (testing) shownInFolder.push(path)
+      else shell.showItemInFolder(path)
+    }),
+    ipc.handle('uploadOpen', () => uploads.open()),
+    ipc.handle('uploadAnswer', (id, choice) => { if (typeof id === 'string') uploads.answer(id, choice) }),
     ipc.handle('take', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.take(tabId) }),
     ipc.handle('giveBack', async tabId => { if (typeof tabId === 'string' && registry.get(tabId)) await control.giveBack(tabId) }),
     ipc.handle('cleanReload', async tabId => { if (typeof tabId === 'string' && registry.get(tabId)) await control.cleanReload(tabId) }),
@@ -179,7 +233,7 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('pauseTabs', ids => control.pauseMany(tabIdsOf(ids))),
     ipc.handle('resumeTabs', ids => control.resumeMany(tabIdsOf(ids))),
     ...controlSubs,
-    { dispose: () => { gateDisposed = true; gate?.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
+    { dispose: () => { gateDisposed = true; gate?.dispose(); uploads.dispose(); downloads.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
   ]
   if (typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__) {
     const g = globalThis as { __browserTabs?: unknown }
@@ -213,6 +267,10 @@ export function activate(main: TetherMain): IDisposable[] {
       eval: (tabId: string, code: string) => registry.webContents(tabId)?.executeJavaScript(code, true),
       /** E7: who has each tab, and the person's actions. */
       control,
+      /** E13: where the downloads land, and what "Mostrar na pasta" would have shown. */
+      downloadsDir: () => join(main.home, 'browser', 'downloads'),
+      shownInFolder,
+      openUploads: () => uploads.open().map(a => ({ ...a, image: a.image ? a.image.slice(0, 32) : undefined })),
       shield: (tabId: string) => registry.surface(tabId)?.state().shield,
       /** The person's typing on the tab's page (what reaches the page when she holds it). */
       type: (tabId: string, text: string) => {
