@@ -433,6 +433,7 @@ function setupDock(): void {
     menu: (id, x, y) => showDeskMenu(id, x, y),
     overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
     hint: position => shortcutHint(`desk.go.${position}`),
+    move: (id, to) => desks.move(id, to),
   })
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
@@ -780,6 +781,8 @@ function showDeskMenu(id: string, x: number, y: number): void {
   ]
   if (index > 0) items.push({ icon: 'arrow-line-left', label: 'Mover para a esquerda', run: () => desks.move(id, index - 1) })
   if (index < desks.desks.length - 1) items.push({ icon: 'arrow-line-right', label: 'Mover para a direita', run: () => desks.move(id, index + 1) })
+  if (index > 1) items.push({ icon: 'arrow-line-left', label: 'Mover para o início', run: () => desks.move(id, 0) })
+  if (index < desks.desks.length - 2) items.push({ icon: 'arrow-line-right', label: 'Mover para o fim', run: () => desks.move(id, desks.desks.length - 1) })
   if (desks.desks.length > 1) items.push({ icon: 'x', label: 'Fechar mesa…', danger: true, run: () => { void closeDesk(id) } })
   showContextMenu(x, y, items)
 }
@@ -2207,6 +2210,13 @@ const commandHost: CommandHost = {
   closePane: id => { void closePanel(id) },
   createDesk: side => { desks.create(side) },
   cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, step)),
+  moveActiveDesk: where => {
+    const last = desks.desks.length - 1
+    const at = desks.desks.findIndex(d => d.id === desks.activeDeskId)
+    if (at < 0) return
+    const to = where === 'left' ? at - 1 : where === 'right' ? at + 1 : where === 'first' ? 0 : last
+    if (to !== at && to >= 0 && to <= last) desks.move(desks.activeDeskId, to)
+  },
   goToDesk: position => { const id = deskAt(desks.desks, position); if (id) desks.switchTo(id) },
   toggleBuilder: () => { if (isBuilder()) leaveBuilder(); else setBuilder(true) },
   deskActions: () => { const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },

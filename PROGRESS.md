@@ -1077,3 +1077,26 @@ Os "+" de borda passaram a existir só nesse modo.
 - Ao ligar o modo pelo atalho, o terminal perde o teclado (as teclas não vão para um terminal inerte). Ao sair pelo botão ou pelo Esc, o teclado volta ao painel ativo do lugar atual.
 - Atalho Ctrl+K M e ícone provisório (`square-split-horizontal`), até o `squares-four` entrar em `icons.ts`.
 - Falta validar com o Guga, usando de verdade, se a grade da mesa basta para reconhecer o modo (a mesa quase não aparece entre os cartões; o que mais avisa são o tracejado e o botão aceso).
+
+## Reordenar mesas arrastando (2026-11-08)
+
+**O que entrou.**
+- Arrastar um segmento da cápsula reordena as mesas (Pointer Events; limiar de 4 px; as vizinhas abrem espaço; `Esc` antes de soltar cancela; o clique que segue o arraste é descartado).
+- Shift+←/→/Home/End na tablist, comandos `desk.move-left/right/first/last` (paleta; `Ctrl+K Shift+←/→`), e "Mover para o início/fim" no menu do clique direito.
+- Retoque 1: ao soltar, os transforms ficam até o `layout()` do host medir o FLIP, então o segmento desliza de onde foi solto (sem salto); só o cancelamento os zera antes.
+- Retoque 2: `.seg.dragging` com sombra de pílula (`0 2px 6px rgba(0,0,0,.28)`) e sem `transform` na classe (o inline manda).
+- Correção achada pelo E2E: o lugar de pouso usava o centro já preso ao interior da cápsula; um segmento mais largo que o primeiro (a mesa ativa mostra o nome) nunca cruzava o centro do primeiro. Agora o lugar segue o centro bruto (preso à linha inteira) e só o visual é preso.
+
+**Arquivos.** `app/renderer/desk-switch.ts`, `app/renderer/desk-drag-rules.ts`, `app/renderer/styles.css`, `app/renderer/app-commands.ts`, `app/renderer/shortcuts.ts`, `test/e2e/app.desk-drag.test.ts` (novo), `README.md`.
+
+**Regra de pouso.** Índice visível pelo centro do segmento contra os centros de repouso (precisa cruzar, empate não conta). Na fila completa a mesa fica logo depois da vizinha visível à esquerda, ou no início se solta antes de todas; mesas escondidas não são atravessadas às cegas.
+
+**Provas.**
+- `npm run check`: 1422 testes, 1418 ok, 2 falhas já conhecidas (`daemon.profiles`/`set-profile`).
+- `app.desk-drag` verde (~24 s): 4 mesas, M4 arrastada até M1 (ordem do DOM e do `layout.json`, M4 segue ativa); clique troca e duplo clique renomeia; Esc cancela (e o soltar não troca de mesa); 3 px é clique; `Ctrl+1`; Shift+→; com "+N" (10 mesas a 900 px) a solta fica logo depois da vizinha visível na fila completa; relançar mantém a ordem. Screenshots: `test/e2e/artifacts/desk-drag-live.png`, `desk-drag-done.png`, `desk-drag-more.png`.
+- `app.desks` verde (~37 s).
+
+**Decisões para validar.**
+- Shift+setas/Home/End movem a mesa quando o foco está na cápsula (em vez de só mover o foco).
+- `Ctrl+K Shift+←/→` para mover a mesa ativa.
+- Toque: segurar 300 ms antes de arrastar (um toque que se move antes disso não arrasta).

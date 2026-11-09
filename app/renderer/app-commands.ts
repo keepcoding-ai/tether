@@ -36,6 +36,8 @@ export interface CommandHost {
   createDesk(side: 'before' | 'after'): void
   cycleDesk(step: 1 | -1): void
   goToDesk(position: number): void
+  /** Moves the active desk along the queue; at the edge it does nothing. */
+  moveActiveDesk(where: 'left' | 'right' | 'first' | 'last'): void
   /** The builder mode (builder-mode.ts) on or off: the "+" at the borders of frames and desks, the content inert. */
   toggleBuilder(): void
   /** The current desk's menu (rename, colour, move…), opened under its chip. */
@@ -148,6 +150,10 @@ export function appCommands(host: CommandHost): Command[] {
       id: `desk.go.${position}`, title: `Ir para a mesa ${position}`, group: GROUP.desk, icon: 'cards',
       when: ctx => !ctx.drawerOpen && ctx.desks >= position, run: () => host.goToDesk(position),
     })),
+    { id: 'desk.move-left', title: 'Mover mesa para a esquerda', group: GROUP.desk, icon: 'arrow-line-left', when: ctx => !ctx.drawerOpen && ctx.desks > 1, run: () => host.moveActiveDesk('left') },
+    { id: 'desk.move-right', title: 'Mover mesa para a direita', group: GROUP.desk, icon: 'arrow-line-right', when: ctx => !ctx.drawerOpen && ctx.desks > 1, run: () => host.moveActiveDesk('right') },
+    { id: 'desk.move-first', title: 'Mover mesa para o início', group: GROUP.desk, icon: 'arrow-line-left', when: ctx => !ctx.drawerOpen && ctx.desks > 1, run: () => host.moveActiveDesk('first') },
+    { id: 'desk.move-last', title: 'Mover mesa para o fim', group: GROUP.desk, icon: 'arrow-line-right', when: ctx => !ctx.drawerOpen && ctx.desks > 1, run: () => host.moveActiveDesk('last') },
     { id: 'desk.builder', title: 'Montar a mesa (modo builder)', group: GROUP.desk, icon: 'square-split-horizontal', ignoreRepeat: true, run: () => host.toggleBuilder() },
     { id: 'desk.actions', title: 'Mesa atual: renomear, cor, mover…', group: GROUP.desk, icon: 'pencil-simple', run: () => host.deskActions() },
     { id: 'desk.close', title: 'Fechar mesa…', group: GROUP.desk, icon: 'x', when: ctx => ctx.desks > 1, run: () => host.closeDesk() },

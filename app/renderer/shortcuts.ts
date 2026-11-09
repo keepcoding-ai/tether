@@ -252,6 +252,8 @@ export const DEFAULT_KEYBINDINGS: readonly DefaultEntry[] = [
   { key: 'ctrl+shift+tab', command: 'desk.previous', literal: true },
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n): DefaultEntry => ({ key: `ctrl+${n}`, command: `desk.go.${n}` })),
   { key: 'ctrl+k f', command: 'desk.close' },                       // "close folder/workspace"
+  { key: 'ctrl+k shift+left', command: 'desk.move-left' },          // move the active desk in the queue (ctrl+k ctrl+arrows is pane focus, shift+alt+arrows is duplicate)
+  { key: 'ctrl+k shift+right', command: 'desk.move-right' },
   { key: 'ctrl+k m', command: 'desk.builder' },                     // "Montar a mesa": the builder mode (no VS Code twin; M of montar)
   // ----- drawer (the terminal panel) -----
   { key: 'ctrl+`', command: 'drawer.toggle', literal: true },       // "toggle terminal"
