@@ -883,10 +883,31 @@ var LOCAL_TOOL_TEXTS = {
   },
   upload: {
     name: "WebUpload",
-    description: 'Attach a file from the disk of this computer to a file field of the page (an input of type file, or the button that opens the file chooser). Give the absolute path of the file. This sends the file contents to the website, so on EVERY call the operator is asked to confirm (the MCP client shows the file and the destination site); if the operator declines, or the client cannot ask, nothing is sent, unless the file is in a folder the operator pre-authorized (ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED). Only files inside the allowed upload folders are accepted (by default the Downloads folder of the user; the operator can list others in the ATRIUM_BROWSER_UPLOAD_DIRS environment variable of this MCP server, absolute paths separated by ";" on Windows and ":" elsewhere). A path outside them is refused with an explanation. Returns how many files were attached and their names.',
+    description: 'Attach a file from the disk of this computer to a file field of the page (an input of type file, or the button that opens the file chooser). Give the absolute path of the file. This sends the file contents to the website, so the operator must authorize it: unless an authorization already covers it, the operator is asked (the MCP client shows the file, its folder and the destination site) and answers "decline", "only this file" or "this folder to this site until the end of the session". An authorization is always a PAIR of one folder (and its subfolders) and one exact site (scheme, host and port of the page that owns the field); any other folder or site asks again. A folder that is too broad (a drive root, the home folder, an allowed upload folder itself, or a folder with .env, .git or .ssh in it) never becomes a pair: its files go only one at a time. If the page that owns the field changes site while the file is being attached, the field is emptied and the upload is refused. If the operator declines, or nobody can answer (a client without elicitation, or an agent running in the background), nothing is sent and the error says how to get it authorized: the operator calls WebAllowUploads with that folder and that site, from a session where the question can be shown. Files in a folder the operator pre-authorized (ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED) go without asking. A field inside an embedded frame from another site than the tab is never covered by an authorization or a pre-authorized folder: it is asked every time, or refused. Only files inside the allowed upload folders are accepted (by default the Downloads folder of the user; the operator can list others in the ATRIUM_BROWSER_UPLOAD_DIRS environment variable of this MCP server, absolute paths separated by ";" on Windows and ":" elsewhere). A path outside them is refused with an explanation. Returns how many files were attached and their names.',
     params: {
       ref: 'Ref of the file input or of the control that opens the file chooser, from the latest WebSnapshot of this tab (for example "e12").',
       path: 'Absolute path of the file on this computer, for example "C:/Users/me/Downloads/report.pdf" or "/home/me/Downloads/report.pdf".'
+    }
+  },
+  allow_uploads: {
+    name: "WebAllowUploads",
+    description: "Ask the operator, ahead of time, to allow WebUpload to send files from one folder (and its subfolders) to one exact site until this MCP session ends, without asking again for each file. Use it before uploads that will run where the question cannot be shown (for example a background agent), or when many files from the same folder go to the same site. The operator sees the folder and the site and answers yes or no; if this MCP client cannot ask (no elicitation), the request is refused. The folder must be inside the allowed upload folders (ATRIUM_BROWSER_UPLOAD_DIRS; by default Downloads) and must not be too broad: a drive root, the home folder, an allowed upload folder itself, or a folder with .env, .git or .ssh directly in it is refused without asking; use a subfolder that holds only the files to send. The authorization lives only in the memory of this MCP server: it is never written to disk and ends when the server stops, or when the browser process has to be restarted after a crash (the answer that follows says so); WebSetGpu keeps it. It never covers a field embedded from another site. See the current authorizations with WebUploadPermissions; remove them with WebRevokeUploads.",
+    params: {
+      folder: 'Absolute path of the folder whose files may be sent, for example "C:/Users/me/Downloads/invoices". Links are resolved: the real folder is what is authorized.',
+      origin: 'The exact site that may receive them: scheme, host and port, for example "https://portal.example.com" or "http://localhost:3000". A path after it is ignored.'
+    }
+  },
+  upload_permissions: {
+    name: "WebUploadPermissions",
+    description: "List the upload authorizations of this MCP session: each pair of folder and site that WebUpload may use without asking, with when and how it was granted. They live only in memory and end with the session. Folders pre-authorized by the operator in ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED are listed apart.",
+    params: {}
+  },
+  revoke_uploads: {
+    name: "WebRevokeUploads",
+    description: "Remove upload authorizations of this MCP session for one site: all of them for that site, or only the one for a given folder. Uploads from then on ask the operator again. Returns what was removed and what is left. It does not touch ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED.",
+    params: {
+      folder: "Absolute path of the folder to remove. Omit it to remove every authorization for the site.",
+      origin: 'The site whose authorizations are removed: scheme, host and port, for example "https://portal.example.com".'
     }
   },
   set_gpu: {
@@ -1010,6 +1031,9 @@ var BROWSER_CATALOG = Object.freeze([
 var LOCAL_CATALOG = Object.freeze([
   defLocal("evaluate", { expression: str }, ["expression"], false),
   defLocal("upload", { ref: str, path: str }, ["ref", "path"], true),
+  defLocal("allow_uploads", { folder: str, origin: str }, ["folder", "origin"], true),
+  defLocal("upload_permissions", {}, [], false),
+  defLocal("revoke_uploads", { folder: str, origin: str }, ["origin"], false),
   defLocal("set_gpu", { gpu: { ...str, enum: ["on", "off"] }, confirm: bool }, ["gpu"], false)
 ]);
 var STANDARD_TOOLS = Object.freeze(BROWSER_CATALOG.filter((t) => t.tier === "standard"));
@@ -2532,19 +2556,108 @@ async function callOn2(s, objectId, functionDeclaration) {
   }
   return r.result?.value;
 }
+function ownerFrameIn(node, target, frame) {
+  if (node.backendNodeId === target) return frame;
+  for (const child of [...node.children ?? [], ...node.shadowRoots ?? [], ...node.templateContent ? [node.templateContent] : []]) {
+    const hit = ownerFrameIn(child, target, frame);
+    if (hit !== null) return hit;
+  }
+  if (node.contentDocument) return ownerFrameIn(node.contentDocument, target, node.frameId ?? frame);
+  return null;
+}
+function originOfFrame(f) {
+  if (f.securityOrigin && f.securityOrigin !== "://") return f.securityOrigin;
+  try {
+    return new URL(f.url).origin;
+  } catch {
+    return "null";
+  }
+}
+async function originsOf(s, backendNodeId) {
+  return (await ownerOf(s, backendNodeId))?.origins ?? null;
+}
+async function ownerOf(s, backendNodeId) {
+  const { root } = await s.transport.send("DOM.getDocument", { depth: -1, pierce: true });
+  const { frameTree } = await s.transport.send("Page.getFrameTree");
+  const frames = /* @__PURE__ */ new Map();
+  const walk = (n) => {
+    frames.set(n.frame.id, n.frame);
+    for (const c of n.childFrames ?? []) walk(c);
+  };
+  walk(frameTree);
+  const owner = ownerFrameIn(root, backendNodeId, frameTree.frame.id);
+  if (owner === null) return null;
+  const origins = [];
+  for (let f = frames.get(owner); f; f = f.parentId ? frames.get(f.parentId) : void 0) origins.push(originOfFrame(f));
+  if (origins.length === 0) throw new BridgeError("UPLOAD_FAILED", "could not tell which page owns the file field; nothing was sent");
+  return { frameId: owner, origins };
+}
+async function emptyField(s, backendNodeId, frameId) {
+  await s.transport.send("DOM.setFileInputFiles", { files: [], backendNodeId }).catch(() => void 0);
+  try {
+    const { executionContextId } = await s.transport.send("Page.createIsolatedWorld", { frameId, worldName: "bridge-upload-guard" });
+    const { object } = await s.transport.send("DOM.resolveNode", { backendNodeId, executionContextId });
+    try {
+      return await callOn2(s, object.objectId, `function () { this.value = ''; return this.files ? this.files.length : 0 }`);
+    } finally {
+      await s.transport.send("Runtime.releaseObject", { objectId: object.objectId }).catch(() => void 0);
+    }
+  } catch {
+    return -1;
+  }
+}
+var sameChain = (a, b) => !!a && a.length === b.length && a.every((o, i) => o === b[i]);
+function changeOf(now, before) {
+  if (!now) return "the field is no longer in the page";
+  if (now[0] !== before[0]) return `the page that owns the field is now ${now[0]}, not ${before[0]}`;
+  if (now[now.length - 1] !== before[before.length - 1]) return `the tab is now ${now[now.length - 1]}, not ${before[before.length - 1]}`;
+  return `the frame chain is now ${now.join(" > ")}, not ${before.join(" > ")}`;
+}
+async function uploadTarget(s, a) {
+  return withObject2(s, a.ref, async (objectId, backendNodeId) => {
+    const probe = await callOn2(s, objectId, PROBE_FILE_INPUT);
+    if (!probe) throw new BridgeError("NOT_A_FILE_INPUT", `ref "${a.ref}" is not an <input type="file">; find the file field of the form and pass its ref`);
+    const origins = await originsOf(s, backendNodeId);
+    if (!origins) throw new BrowserError("STALE_REF", `ref "${a.ref}" no longer exists in the page; take a new snapshot`);
+    return { tab: String(s.tabId), origins, multiple: probe.multiple };
+  });
+}
 async function upload(s, a) {
   if (!Array.isArray(a.paths) || a.paths.length === 0) throw new BrowserError("INVALID_ARGUMENT", "upload: give at least one path");
+  const expect = a.expect;
   return withObject2(s, a.ref, async (objectId, backendNodeId) => {
     const probe = await callOn2(s, objectId, PROBE_FILE_INPUT);
     if (!probe) throw new BridgeError("NOT_A_FILE_INPUT", `ref "${a.ref}" is not an <input type="file">; find the file field of the form and pass its ref`);
     if (a.paths.length > 1 && !probe.multiple) {
       throw new BrowserError("INVALID_ARGUMENT", `upload: this file input accepts a single file (no multiple attribute); ${a.paths.length} paths were given`);
     }
+    const refused = (chain, change, emptied) => new BridgeError(
+      "UPLOAD_NOT_ALLOWED",
+      `The destination of the upload changed ${emptied ? "while the files were being attached" : "after it was authorized"} (${change}); the authorization was for ${chain[0]}` + (chain.length > 1 ? ` in ${chain[chain.length - 1]}` : "") + `. ${emptied ? "The field was emptied and the" : "Nothing was attached; the"} upload was refused. Look at the page again (snapshot) before trying anything else; do not try to work around this.`,
+      { expected: chain }
+    );
+    let frameId = "";
+    if (expect) {
+      const before = await ownerOf(s, backendNodeId);
+      if (!before || !sameChain(before.origins, expect)) throw refused(expect, changeOf(before?.origins ?? null, expect), false);
+      frameId = before.frameId;
+    }
+    let failure = null;
     try {
       await s.transport.send("DOM.setFileInputFiles", { files: a.paths, backendNodeId });
-    } catch (e) {
-      throw new BridgeError("UPLOAD_FAILED", `the browser refused to attach the files: ${e.message}`);
+    } catch (err) {
+      failure = { err };
     }
+    if (expect) {
+      const after2 = await originsOf(s, backendNodeId).catch(() => null);
+      if (!sameChain(after2, expect)) {
+        const left = await emptyField(s, backendNodeId, frameId);
+        const err = refused(expect, changeOf(after2, expect), true);
+        if (left !== 0) err.message += " Warning: the field could not be confirmed empty; tell the user.";
+        throw err;
+      }
+    }
+    if (failure) throw new BridgeError("UPLOAD_FAILED", `the browser refused to attach the files: ${failure.err.message}`);
     const after = await callOn2(s, objectId, PROBE_FILE_INPUT);
     const files = after?.files ?? [];
     if (files.length !== a.paths.length) {
@@ -2825,7 +2938,7 @@ async function onTabFor(tool, a, client, fn) {
   const tabId = await resolveTabId(a.tab, client);
   return inTabQueue(tabId, async () => guardedByDialog(await attachedSession(tabId, client), tool, fn));
 }
-var GATED = { upload: "upload", download: "download", downloads: "download", pdf: "pdf", readNetwork: "readNetwork" };
+var GATED = { upload: "upload", uploadTarget: "upload", download: "download", downloads: "download", pdf: "pdf", readNetwork: "readNetwork" };
 async function assertCapability(tool) {
   const name = GATED[tool];
   if (name && !await capability(name, true)) throw new BridgeError("CAPABILITY_DISABLED", EVALUATE.capabilityOff(tool, name), { capability: name });
@@ -2876,8 +2989,10 @@ async function runTool(tool, a, client) {
       return onTab(a, (s) => setChecked(s, { ref: a.ref, checked: a.checked }));
     case "readConsole":
       return onTab(a, async (s) => readConsole(s, { level: a.level, afterSeq: a.afterSeq, limit: a.limit, clear: a.clear }));
+    case "uploadTarget":
+      return onTab(a, (s) => uploadTarget(s, { ref: a.ref }));
     case "upload":
-      return onTab(a, (s) => upload(s, { ref: a.ref, paths: a.paths }));
+      return onTab(a, (s) => upload(s, { ref: a.ref, paths: a.paths, ...Array.isArray(a.expect) ? { expect: a.expect } : {} }));
     case "download":
       return onTab(a, (s) => download(s, { ref: a.ref, url: a.url, timeoutMs: a.timeoutMs }));
     case "downloads":
@@ -3076,7 +3191,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
       case "is-scoped":
         return { scoped: await isScoped(msg.tabId) };
       case "handover":
-        await takeControl(msg.tabId, ownerOf(msg.owner), { handed: true });
+        await takeControl(msg.tabId, ownerOf2(msg.owner), { handed: true });
         return { ok: true };
       case "release":
         await releaseControl(msg.tabId);
@@ -3101,7 +3216,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   run().then(reply, (e) => reply({ error: e.message }));
   return true;
 });
-function ownerOf(raw) {
+function ownerOf2(raw) {
   if (!raw || !isClientId(raw.id)) return void 0;
   const name = cleanClientName(raw.name);
   return name ? { id: raw.id, name } : { id: raw.id };

@@ -331,14 +331,16 @@ function removeDaemonPid(home3, pid) {
   } catch {
   }
 }
-var KEY_SCOPES, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, localKeyPath, configPath, lockPath, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
+var KEY_SCOPES, UPLOAD_TOOLS, UPLOAD_KEY_NAME, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, localKeyPath, uploadKeyPath, configPath, lockPath, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
 var init_config = __esm({
   "daemon/src/config.ts"() {
     "use strict";
     init_protocol();
     init_package_info();
     init_secrets();
-    KEY_SCOPES = ["use", "admin"];
+    KEY_SCOPES = ["use", "admin", "upload"];
+    UPLOAD_TOOLS = /* @__PURE__ */ new Set(["upload", "uploadTarget"]);
+    UPLOAD_KEY_NAME = "mcp-upload";
     DEFAULT_KEY_NAME = "default";
     LEGACY_KEY_NAME = "legacy";
     KEY_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -347,6 +349,7 @@ var init_config = __esm({
     daemonLogPath = (home3) => join2(home3, "daemon.log");
     mcpLogPath = (home3) => join2(home3, "mcp.log");
     localKeyPath = (home3) => join2(home3, "api.key");
+    uploadKeyPath = (home3) => join2(home3, "upload.key");
     configPath = (home3) => join2(home3, "config.json");
     lockPath = (home3) => join2(home3, "config.lock");
     isKey = (v) => {
@@ -374,7 +377,7 @@ var init_config = __esm({
 });
 
 // daemon/src/keys.ts
-import { rmSync as rmSync2 } from "node:fs";
+import { readFileSync as readFileSync3, rmSync as rmSync2 } from "node:fs";
 function addKey(home3, name, opts = {}) {
   if (!KEY_NAME_PATTERN.test(name)) {
     throw keyError("KEY_INVALID_NAME", `invalid key name "${name}": use 1-64 letters, digits, ".", "_" or "-", starting with a letter or digit`);
@@ -407,7 +410,31 @@ function revokeKey(home3, name) {
     config2.apiKeys = config2.apiKeys.filter((k) => k !== revoked);
     const local = readLocalKey(home3);
     if (local !== null && hashSecret(local) === revoked.hash) rmSync2(localKeyPath(home3), { force: true });
+    const upload = readUploadKey(home3);
+    if (upload !== null && hashSecret(upload) === revoked.hash) rmSync2(uploadKeyPath(home3), { force: true });
     return true;
+  });
+}
+function ensureUploadKey(home3) {
+  const ready = (() => {
+    try {
+      return validUploadKey(home3, ensureConfig(home3).apiKeys);
+    } catch {
+      return null;
+    }
+  })();
+  if (ready !== null) return ready;
+  return updateConfig(home3, (config2) => {
+    const again = validUploadKey(home3, config2.apiKeys);
+    if (again !== null) return again;
+    const value = newSecret();
+    const key = { name: UPLOAD_KEY_NAME, hash: hashSecret(value), createdAt: (/* @__PURE__ */ new Date()).toISOString(), scope: "upload" };
+    writeFileAtomic(uploadKeyPath(home3), `${value}
+`);
+    const i = config2.apiKeys.findIndex((k) => k.name === UPLOAD_KEY_NAME);
+    if (i >= 0) config2.apiKeys[i] = key;
+    else config2.apiKeys.push(key);
+    return value;
   });
 }
 function setBrand(home3, brand) {
@@ -471,7 +498,7 @@ function rotatePairingToken(home3) {
   });
   return value;
 }
-var keyError, info, capabilitiesError;
+var keyError, info, readUploadKey, validUploadKey, capabilitiesError;
 var init_keys = __esm({
   "daemon/src/keys.ts"() {
     "use strict";
@@ -480,6 +507,19 @@ var init_keys = __esm({
     init_protocol();
     keyError = (code, message) => Object.assign(new Error(message), { code });
     info = (k) => ({ name: k.name, createdAt: k.createdAt, ...k.scope ? { scope: k.scope } : {} });
+    readUploadKey = (home3) => {
+      try {
+        return readFileSync3(uploadKeyPath(home3), "utf8").trim() || null;
+      } catch {
+        return null;
+      }
+    };
+    validUploadKey = (home3, keys) => {
+      const value = readUploadKey(home3);
+      if (value === null) return null;
+      const hash = hashSecret(value);
+      return keys.some((k) => k.hash === hash && k.scope === "upload") ? value : null;
+    };
     capabilitiesError = () => keyError("CAPABILITIES_INVALID", 'invalid capabilities: an object of booleans or short modes, e.g. { evaluate: "own-tabs", download: true }');
   }
 });
@@ -502,7 +542,7 @@ var init_extension_id = __esm({
 });
 
 // daemon/src/install.ts
-import { cpSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync3, readdirSync, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
+import { cpSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync4, readdirSync, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
 import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 function brandFromPackage(packaged) {
@@ -527,7 +567,7 @@ function seedFromPackage(home3, packaged, hadBrand) {
 function extensionIdOf(dir) {
   const manifestPath = join3(dir, "manifest.json");
   if (!existsSync3(manifestPath)) throw installError("EXTENSION_NOT_FOUND", `no manifest.json in ${dir}`);
-  const manifest = JSON.parse(readFileSync3(manifestPath, "utf8"));
+  const manifest = JSON.parse(readFileSync4(manifestPath, "utf8"));
   if (typeof manifest.key !== "string" || !manifest.key) {
     throw installError("EXTENSION_NO_KEY", `${manifestPath} has no "key": the extension id would change at every load`);
   }
@@ -1803,17 +1843,17 @@ var init_parse = __esm({
       return result.issues.length === 0;
     };
     _encode = (_Err) => {
-      const parse3 = _parse(_Err);
+      const parse4 = _parse(_Err);
       const fn = (schema, value, _ctx, _params) => {
         const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-        return parse3(schema, value, ctx, finalizeParams(fn, _params));
+        return parse4(schema, value, ctx, finalizeParams(fn, _params));
       };
       return fn;
     };
     _decode = (_Err) => {
-      const parse3 = _parse(_Err);
+      const parse4 = _parse(_Err);
       const fn = (schema, value, _ctx, _params) => {
-        return parse3(schema, value, _ctx, finalizeParams(fn, _params));
+        return parse4(schema, value, _ctx, finalizeParams(fn, _params));
       };
       return fn;
     };
@@ -2427,7 +2467,7 @@ function capSize(inst, size) {
   if (!caps.length)
     return;
   const cap = Math.min(...caps.map((c) => c[0]));
-  const parse3 = inst._zod.parse;
+  const parse4 = inst._zod.parse;
   inst._zod.parse = (payload, ctx) => {
     const n = size(payload.value);
     if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
@@ -2441,7 +2481,7 @@ function capSize(inst, size) {
         }
       }
     }
-    return parse3(payload, ctx);
+    return parse4(payload, ctx);
   };
 }
 function handleArrayResult(result, final, index) {
@@ -3985,7 +4025,7 @@ function isRef(value) {
 function cloneIssues(issues) {
   return issues.map((iss) => iss.path ? { ...iss, path: iss.path.slice() } : { ...iss });
 }
-function isRecursive(inst, stack, resolve8) {
+function isRecursive(inst, stack, resolve9) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -3995,7 +4035,7 @@ function isRecursive(inst, stack, resolve8) {
   let result = NONE;
   const check = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve8);
+      const answer = isRecursive(child, stack, resolve9);
       if (answer > result)
         result = answer;
     }
@@ -4006,7 +4046,7 @@ function isRecursive(inst, stack, resolve8) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve8) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve9) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -4070,7 +4110,7 @@ function isRecursive(inst, stack, resolve8) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def3._cachedInner ?? (resolve8 ? inst._zod.innerType : void 0);
+      const inner = def3._cachedInner ?? (resolve9 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -4930,13 +4970,13 @@ function _array(Class2, element, params) {
 }
 // @__NO_SIDE_EFFECTS__
 function _custom(Class2, fn, _params) {
-  const norm = normalizeParams(_params);
-  norm.abort ?? (norm.abort = true);
+  const norm2 = normalizeParams(_params);
+  norm2.abort ?? (norm2.abort = true);
   const schema = new Class2({
     type: "custom",
     check: "custom",
     fn,
-    ...norm
+    ...norm2
   });
   return schema;
 }
@@ -8842,12 +8882,12 @@ var init_stdio2 = __esm({
         this.onclose?.();
       }
       send(message) {
-        return new Promise((resolve8) => {
+        return new Promise((resolve9) => {
           const json = serializeMessage(message);
           if (this._stdout.write(json)) {
-            resolve8();
+            resolve9();
           } else {
-            this._stdout.once("drain", resolve8);
+            this._stdout.once("drain", resolve9);
           }
         });
       }
@@ -8892,7 +8932,7 @@ var init_errors3 = __esm({
 });
 
 // daemon/src/client.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 function clientFromEnv(env = process.env) {
   const id = env.ATRIUM_BRIDGE_CLIENT_ID?.trim();
   if (!id) return void 0;
@@ -8916,7 +8956,7 @@ function apiKeyFromEnv(env = process.env) {
   if (file) {
     let value = "";
     try {
-      value = readFileSync4(file, "utf8").trim();
+      value = readFileSync5(file, "utf8").trim();
     } catch (e) {
       throw new BridgeError("KEY_UNAVAILABLE", `cannot read the API key file ATRIUM_BRIDGE_KEY_FILE=${file} (${e.code ?? "error"})`);
     }
@@ -8946,6 +8986,13 @@ function targetFromEnv(env = process.env) {
   }
   const client = clientFromEnv(env);
   return { port: envPort(env) ?? config2.port, apiKey, ...client ? { client } : {} };
+}
+function uploadKeyOf(get) {
+  try {
+    return get();
+  } catch (e) {
+    throw new BridgeError("KEY_UNAVAILABLE", `cannot prepare the upload key of the MCP server (upload.key): ${e.message}`);
+  }
 }
 function causeCodes(e) {
   const codes = [];
@@ -9007,15 +9054,16 @@ var init_client = __esm({
         this.controlTimeoutMs = opts.controlTimeoutMs ?? CONTROL_TIMEOUT_MS;
         this.callMarginMs = opts.callMarginMs ?? CALL_MARGIN_MS;
       }
-      async request(method, path, timeoutMs, body) {
+      async request(method, path, timeoutMs, body, upload = false) {
         const target = typeof this.target === "function" ? this.target() : this.target;
+        const bearer = upload && target.uploadKey ? uploadKeyOf(target.uploadKey) : target.apiKey;
         let res;
         let text;
         try {
           res = await fetch(`http://127.0.0.1:${target.port}${path}`, {
             method,
             headers: {
-              authorization: `Bearer ${target.apiKey}`,
+              authorization: `Bearer ${bearer}`,
               // Uma conexão nova por pedido. Com o keep-alive do pool, o 1º pedido depois da morte do daemon reaproveita o
               // socket morto e falha como ECONNRESET ("em voo"), mesmo sem ter saído nada. Assim, ECONNREFUSED prova que o
               // pedido não saiu, e a classificação de classifyFetchFailure vale. Em loopback a conexão nova custa microssegundos.
@@ -9067,7 +9115,7 @@ var init_client = __esm({
       async call(browserId, tool, args, timeoutMs) {
         const body = { tool, args, ...timeoutMs ? { timeoutMs } : {} };
         const deadline = Math.min(timeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5) + this.callMarginMs;
-        return (await this.request("POST", `/browsers/${encodeURIComponent(browserId)}/call`, deadline, body)).result;
+        return (await this.request("POST", `/browsers/${encodeURIComponent(browserId)}/call`, deadline, body, UPLOAD_TOOLS.has(tool))).result;
       }
     };
   }
@@ -9228,10 +9276,28 @@ var init_texts = __esm({
         }
       },
       upload: {
-        description: 'Attach files from the local disk to a file input (<input type="file">) of the page, like the user picking them in the file dialog: the input gets the files and fires input/change. Give the ref of the file input (find it with snapshot or find: role is usually button or textbox named like the field) and absolute paths of files on this machine. Fails with NOT_A_FILE_INPUT when the ref is not a file input and FILE_NOT_FOUND when a path does not exist. Returns { files: [{ name, size, type }] }.',
+        description: 'Attach files from the disk of this computer to a file input (<input type="file">) of the page, like the user picking them in the file dialog: the input gets the files and fires input/change. Give the ref of the file input (find it with snapshot or find) and absolute paths of files on this machine. This sends the file contents to the website, so the operator must authorize it: unless an authorization already covers it, the operator is asked for each file (the MCP client shows the file, its folder and the destination site) and answers "decline", "only this file" or "this folder to this site until the end of the session". An authorization is always a PAIR of one folder (and its subfolders) and one exact site (scheme, host and port of the page that owns the field); any other folder or site asks again. A folder that is too broad (a drive root, the home folder, an allowed upload folder itself, a folder that contains one of those, a .ssh, .git or .gnupg folder, or a folder with .env, .git or .ssh in it) never becomes a pair: its files go only one at a time. If the page that owns the field changes site before or while the files are attached, the field is emptied and the upload is refused. If the operator declines, or nobody can answer (a client without elicitation, or an agent running in the background), nothing is sent and the error says how to get it authorized: the operator calls allowUploads with that folder and that site, from a session where the question can be shown. Files in a folder the operator pre-authorized (ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED) go without asking. A field inside an embedded frame from another site than the tab is never covered by an authorization or a pre-authorized folder: it is asked every time, or refused. Only files inside the allowed upload folders are accepted (by default the Downloads folder of the user; the operator can list others in the ATRIUM_BRIDGE_UPLOAD_DIRS environment variable of this MCP server, absolute paths separated by ";" on Windows and ":" elsewhere); a path outside them is refused with an explanation. Fails with NOT_A_FILE_INPUT when the ref is not a file input and UPLOAD_NOT_ALLOWED when it is not authorized. Returns { files: [{ name, size, type }] }.',
         params: {
           ref: `The file input. ${REF}`,
           paths: "Absolute paths of the files to attach (several only if the input has the multiple attribute)."
+        }
+      },
+      allowUploads: {
+        description: "Ask the operator, ahead of time, to allow upload to send files from one folder (and its subfolders) to one exact site until this MCP session ends, without asking again for each file. Use it before uploads that will run where the question cannot be shown (for example a background agent), or when many files from the same folder go to the same site. The operator sees the folder and the site and answers yes or no; if this MCP client cannot ask (no elicitation), the request is refused. The folder must be inside the allowed upload folders (ATRIUM_BRIDGE_UPLOAD_DIRS; by default Downloads) and must not be too broad: a drive root, the home folder, an allowed upload folder itself, a folder that contains one of those, a .ssh, .git or .gnupg folder, or a folder with .env, .git or .ssh directly in it is refused without asking; use a subfolder that holds only the files to send. The authorization lives only in the memory of this MCP server (not in the Bridge daemon, not on disk) and ends when this MCP server stops. It never covers a field embedded from another site. See the current authorizations with uploadPermissions; remove them with revokeUploads.",
+        params: {
+          folder: 'Absolute path of the folder whose files may be sent, for example "C:/Users/me/Downloads/invoices". Links are resolved: the real folder is what is authorized.',
+          origin: 'The exact site that may receive them: scheme, host and port, for example "https://portal.example.com" or "http://localhost:3000". A path after it is ignored.'
+        }
+      },
+      uploadPermissions: {
+        description: "List the upload authorizations of this MCP session: each pair of folder and site that upload may use without asking, with when and how it was granted. They live only in memory and end with the session. Folders pre-authorized by the operator in ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED are listed apart.",
+        params: {}
+      },
+      revokeUploads: {
+        description: "Remove upload authorizations of this MCP session for one site: all of them for that site, or only the one for a given folder. Uploads from then on ask the operator again. Returns what was removed and what is left. It does not touch ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED.",
+        params: {
+          folder: "Absolute path of the folder to remove. Omit it to remove every authorization for the site.",
+          origin: 'The site whose authorizations are removed: scheme, host and port, for example "https://portal.example.com".'
         }
       },
       download: {
@@ -9512,7 +9578,7 @@ var init_embedded = __esm({
 
 // daemon/src/ensure.ts
 import { execFile as execFile2, spawn as spawn2 } from "node:child_process";
-import { appendFileSync, closeSync, fstatSync, mkdirSync as mkdirSync4, openSync, readSync, renameSync as renameSync2, statSync as statSync3 } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync as mkdirSync4, openSync, readFileSync as readFileSync6, readSync, renameSync as renameSync2, statSync as statSync3 } from "node:fs";
 import { request } from "node:http";
 import { dirname as dirname3, resolve as resolve4 } from "node:path";
 function createEnsure(ops, opts) {
@@ -9658,7 +9724,7 @@ function daemonEnv(home3) {
   return childEnv({ ATRIUM_BRIDGE_HOME: resolve4(home3) });
 }
 function probeHealth(port, timeoutMs) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     let settled = false;
     let timer;
     const finish = (result, req2) => {
@@ -9666,7 +9732,7 @@ function probeHealth(port, timeoutMs) {
       settled = true;
       if (timer) clearTimeout(timer);
       req2?.destroy();
-      resolve8(result);
+      resolve9(result);
     };
     const req = request(
       { host: "127.0.0.1", port, path: "/health", method: "GET", agent: false, headers: { connection: "close" } },
@@ -9702,8 +9768,8 @@ function parseListenOwner(output, port) {
   return null;
 }
 function exec(cmd, args) {
-  return new Promise((resolve8) => {
-    execFile2(cmd, args, { windowsHide: true, timeout: 1e4, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve8(String(stdout ?? "")));
+  return new Promise((resolve9) => {
+    execFile2(cmd, args, { windowsHide: true, timeout: 1e4, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve9(String(stdout ?? "")));
   });
 }
 async function portOwner(port) {
@@ -9761,6 +9827,10 @@ function redactTokens(text, home3) {
       secrets.push(apiKeyFromEnv() ?? void 0);
     } catch {
     }
+    try {
+      secrets.push(readFileSync6(uploadKeyPath(home3), "utf8").trim() || void 0);
+    } catch {
+    }
     return secrets.filter((x) => !!x).reduce((t, secret) => t.split(secret).join("[redacted]"), text);
   } catch {
     return text;
@@ -9803,9 +9873,9 @@ function spawnDaemon(home3, launch2, port) {
       windowsHide: true,
       stdio: ["ignore", fd, fd]
     });
-    const exited = new Promise((resolve8) => {
-      child.once("error", (e) => resolve8({ code: null, error: e.message }));
-      child.once("exit", (code) => resolve8({ code }));
+    const exited = new Promise((resolve9) => {
+      child.once("error", (e) => resolve9({ code: null, error: e.message }));
+      child.once("exit", (code) => resolve9({ code }));
     });
     child.unref();
     return { pid: child.pid, exited };
@@ -9826,7 +9896,7 @@ function nodeEnsureOps(cfg) {
     portOwner,
     killTree,
     logTail: () => redactTokens(readTail(daemonLogPath(home3)), home3),
-    sleep: (ms) => new Promise((resolve8) => setTimeout(resolve8, ms)),
+    sleep: (ms) => new Promise((resolve9) => setTimeout(resolve9, ms)),
     now: () => Date.now(),
     log: log2
   };
@@ -10928,7 +10998,7 @@ var init_protocol2 = __esm({
               return;
             }
             const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-            await new Promise((resolve8) => setTimeout(resolve8, pollInterval));
+            await new Promise((resolve9) => setTimeout(resolve9, pollInterval));
             options?.signal?.throwIfAborted();
           }
         } catch (error2) {
@@ -10945,7 +11015,7 @@ var init_protocol2 = __esm({
        */
       request(request2, resultSchema, options) {
         const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-        return new Promise((resolve8, reject) => {
+        return new Promise((resolve9, reject) => {
           const earlyReject = (error2) => {
             reject(error2);
           };
@@ -11023,7 +11093,7 @@ var init_protocol2 = __esm({
               if (!parseResult.success) {
                 reject(parseResult.error);
               } else {
-                resolve8(parseResult.data);
+                resolve9(parseResult.data);
               }
             } catch (error2) {
               reject(error2);
@@ -11284,12 +11354,12 @@ var init_protocol2 = __esm({
           }
         } catch {
         }
-        return new Promise((resolve8, reject) => {
+        return new Promise((resolve9, reject) => {
           if (signal.aborted) {
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
             return;
           }
-          const timeoutId = setTimeout(resolve8, interval);
+          const timeoutId = setTimeout(resolve9, interval);
           signal.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -14316,7 +14386,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve8.call(this, root, ref);
+      let _sch = resolve9.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -14343,7 +14413,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve8(root, ref) {
+    function resolve9(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -15169,11 +15239,11 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse3(serialize(uri, options), options);
+        parse4(serialize(uri, options), options);
       }
       return uri;
     }
-    function resolve8(baseURI, relativeURI, options) {
+    function resolve9(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -15206,49 +15276,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative, options, skipNormalization) {
+    function resolveComponent(base, relative2, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse3(serialize(base, options), options);
-        relative = parse3(serialize(relative, options), options);
+        base = parse4(serialize(base, options), options);
+        relative2 = parse4(serialize(relative2, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative.scheme) {
-        target.scheme = relative.scheme;
-        target.userinfo = relative.userinfo;
-        target.host = relative.host;
-        target.port = relative.port;
-        target.path = removeDotSegments(relative.path || "");
-        target.query = relative.query;
+      if (!options.tolerant && relative2.scheme) {
+        target.scheme = relative2.scheme;
+        target.userinfo = relative2.userinfo;
+        target.host = relative2.host;
+        target.port = relative2.port;
+        target.path = removeDotSegments(relative2.path || "");
+        target.query = relative2.query;
       } else {
-        if (relative.userinfo !== void 0 || relative.host !== void 0 || relative.port !== void 0) {
-          target.userinfo = relative.userinfo;
-          target.host = relative.host;
-          target.port = relative.port;
-          target.path = removeDotSegments(relative.path || "");
-          target.query = relative.query;
+        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
+          target.userinfo = relative2.userinfo;
+          target.host = relative2.host;
+          target.port = relative2.port;
+          target.path = removeDotSegments(relative2.path || "");
+          target.query = relative2.query;
         } else {
-          if (!relative.path) {
+          if (!relative2.path) {
             target.path = base.path;
-            if (relative.query !== void 0) {
-              target.query = relative.query;
+            if (relative2.query !== void 0) {
+              target.query = relative2.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative.path[0] === "/") {
-              target.path = removeDotSegments(relative.path);
+            if (relative2.path[0] === "/") {
+              target.path = removeDotSegments(relative2.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative.path;
+                target.path = "/" + relative2.path;
               } else if (!base.path) {
-                target.path = relative.path;
+                target.path = relative2.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative.query;
+            target.query = relative2.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -15256,7 +15326,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative.fragment;
+      target.fragment = relative2.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -15509,7 +15579,7 @@ var require_fast_uri = __commonJS({
       }
       return { parsed, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
-    function parse3(uri, opts) {
+    function parse4(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
     }
     function normalizeString(uri, opts) {
@@ -15542,11 +15612,11 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize2,
-      resolve: resolve8,
+      resolve: resolve9,
       resolveComponent,
       equal,
       serialize,
-      parse: parse3
+      parse: parse4
     };
     module.exports = fastUri;
     module.exports.default = fastUri;
@@ -19252,9 +19322,24 @@ var init_transport = __esm({
 });
 
 // ../../packages/browser/src/core/errors.ts
+var BrowserError;
 var init_errors4 = __esm({
   "../../packages/browser/src/core/errors.ts"() {
     "use strict";
+    BrowserError = class extends Error {
+      code;
+      /** Elemento que cobre o alvo (só em TARGET_OBSCURED); null = nada sob o ponto. */
+      occluder;
+      /** Diálogo aberto (só em DIALOG_PENDING). */
+      dialog;
+      constructor(code, message, options) {
+        super(message, options?.cause === void 0 ? void 0 : { cause: options.cause });
+        this.name = "BrowserError";
+        this.code = code;
+        if (options && "occluder" in options) this.occluder = options.occluder;
+        if (options?.dialog) this.dialog = options.dialog;
+      }
+    };
   }
 });
 
@@ -19518,10 +19603,31 @@ var init_tool_texts = __esm({
       },
       upload: {
         name: "WebUpload",
-        description: 'Attach a file from the disk of this computer to a file field of the page (an input of type file, or the button that opens the file chooser). Give the absolute path of the file. This sends the file contents to the website, so on EVERY call the operator is asked to confirm (the MCP client shows the file and the destination site); if the operator declines, or the client cannot ask, nothing is sent, unless the file is in a folder the operator pre-authorized (ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED). Only files inside the allowed upload folders are accepted (by default the Downloads folder of the user; the operator can list others in the ATRIUM_BROWSER_UPLOAD_DIRS environment variable of this MCP server, absolute paths separated by ";" on Windows and ":" elsewhere). A path outside them is refused with an explanation. Returns how many files were attached and their names.',
+        description: 'Attach a file from the disk of this computer to a file field of the page (an input of type file, or the button that opens the file chooser). Give the absolute path of the file. This sends the file contents to the website, so the operator must authorize it: unless an authorization already covers it, the operator is asked (the MCP client shows the file, its folder and the destination site) and answers "decline", "only this file" or "this folder to this site until the end of the session". An authorization is always a PAIR of one folder (and its subfolders) and one exact site (scheme, host and port of the page that owns the field); any other folder or site asks again. A folder that is too broad (a drive root, the home folder, an allowed upload folder itself, or a folder with .env, .git or .ssh in it) never becomes a pair: its files go only one at a time. If the page that owns the field changes site while the file is being attached, the field is emptied and the upload is refused. If the operator declines, or nobody can answer (a client without elicitation, or an agent running in the background), nothing is sent and the error says how to get it authorized: the operator calls WebAllowUploads with that folder and that site, from a session where the question can be shown. Files in a folder the operator pre-authorized (ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED) go without asking. A field inside an embedded frame from another site than the tab is never covered by an authorization or a pre-authorized folder: it is asked every time, or refused. Only files inside the allowed upload folders are accepted (by default the Downloads folder of the user; the operator can list others in the ATRIUM_BROWSER_UPLOAD_DIRS environment variable of this MCP server, absolute paths separated by ";" on Windows and ":" elsewhere). A path outside them is refused with an explanation. Returns how many files were attached and their names.',
         params: {
           ref: 'Ref of the file input or of the control that opens the file chooser, from the latest WebSnapshot of this tab (for example "e12").',
           path: 'Absolute path of the file on this computer, for example "C:/Users/me/Downloads/report.pdf" or "/home/me/Downloads/report.pdf".'
+        }
+      },
+      allow_uploads: {
+        name: "WebAllowUploads",
+        description: "Ask the operator, ahead of time, to allow WebUpload to send files from one folder (and its subfolders) to one exact site until this MCP session ends, without asking again for each file. Use it before uploads that will run where the question cannot be shown (for example a background agent), or when many files from the same folder go to the same site. The operator sees the folder and the site and answers yes or no; if this MCP client cannot ask (no elicitation), the request is refused. The folder must be inside the allowed upload folders (ATRIUM_BROWSER_UPLOAD_DIRS; by default Downloads) and must not be too broad: a drive root, the home folder, an allowed upload folder itself, or a folder with .env, .git or .ssh directly in it is refused without asking; use a subfolder that holds only the files to send. The authorization lives only in the memory of this MCP server: it is never written to disk and ends when the server stops, or when the browser process has to be restarted after a crash (the answer that follows says so); WebSetGpu keeps it. It never covers a field embedded from another site. See the current authorizations with WebUploadPermissions; remove them with WebRevokeUploads.",
+        params: {
+          folder: 'Absolute path of the folder whose files may be sent, for example "C:/Users/me/Downloads/invoices". Links are resolved: the real folder is what is authorized.',
+          origin: 'The exact site that may receive them: scheme, host and port, for example "https://portal.example.com" or "http://localhost:3000". A path after it is ignored.'
+        }
+      },
+      upload_permissions: {
+        name: "WebUploadPermissions",
+        description: "List the upload authorizations of this MCP session: each pair of folder and site that WebUpload may use without asking, with when and how it was granted. They live only in memory and end with the session. Folders pre-authorized by the operator in ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED are listed apart.",
+        params: {}
+      },
+      revoke_uploads: {
+        name: "WebRevokeUploads",
+        description: "Remove upload authorizations of this MCP session for one site: all of them for that site, or only the one for a given folder. Uploads from then on ask the operator again. Returns what was removed and what is left. It does not touch ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED.",
+        params: {
+          folder: "Absolute path of the folder to remove. Omit it to remove every authorization for the site.",
+          origin: 'The site whose authorizations are removed: scheme, host and port, for example "https://portal.example.com".'
         }
       },
       set_gpu: {
@@ -19681,6 +19787,9 @@ var init_catalog = __esm({
     LOCAL_CATALOG = Object.freeze([
       defLocal("evaluate", { expression: str }, ["expression"], false),
       defLocal("upload", { ref: str, path: str }, ["ref", "path"], true),
+      defLocal("allow_uploads", { folder: str, origin: str }, ["folder", "origin"], true),
+      defLocal("upload_permissions", {}, [], false),
+      defLocal("revoke_uploads", { folder: str, origin: str }, ["origin"], false),
       defLocal("set_gpu", { gpu: { ...str, enum: ["on", "off"] }, confirm: bool }, ["gpu"], false)
     ]);
     STANDARD_TOOLS = Object.freeze(BROWSER_CATALOG.filter((t) => t.tier === "standard"));
@@ -19818,11 +19927,11 @@ function def2(name, params, required2 = [], opts = {}) {
     inputSchema: { type: "object", properties, ...required2.length ? { required: required2 } : {}, additionalProperties: false }
   };
 }
-function findBridgeTool(name) {
-  return BRIDGE_CATALOG.find((t) => t.name === name);
+function findBridgeTool(name, opts = {}) {
+  return (opts.internal ? INTERNAL_CATALOG.find((t) => t.name === name) : void 0) ?? BRIDGE_CATALOG.find((t) => t.name === name);
 }
-function assertValidCall(tool, args) {
-  const t = findBridgeTool(tool);
+function assertValidCall(tool, args, opts = {}) {
+  const t = findBridgeTool(tool, opts);
   if (!t) throw new BridgeError("UNKNOWN_TOOL", `unknown tool "${tool}"`);
   const problems = validateArgs(t, args ?? {});
   if (problems.length) {
@@ -19830,7 +19939,7 @@ function assertValidCall(tool, args) {
   }
   return t;
 }
-var str2, num2, int3, bool2, BRIDGE_CATALOG;
+var str2, num2, int3, bool2, BRIDGE_CATALOG, SHELL_ONLY_TOOLS, EXPECT, INTERNAL_CATALOG;
 var init_catalog2 = __esm({
   "src/catalog.ts"() {
     "use strict";
@@ -19878,6 +19987,11 @@ var init_catalog2 = __esm({
         clear: bool2
       }),
       def2("upload", { ref: str2, paths: { type: "string[]" } }, ["ref", "paths"]),
+      // Autorizações de upload da sessão (molde do WebAllowUploads/WebUploadPermissions/WebRevokeUploads do @atrium/browser):
+      // moram na casca MCP, não na extensão nem no daemon, por isso não levam browser/tab.
+      def2("allowUploads", { folder: str2, origin: str2 }, ["folder", "origin"], { common: false }),
+      def2("uploadPermissions", {}, [], { common: false }),
+      def2("revokeUploads", { folder: str2, origin: str2 }, ["origin"], { common: false }),
       def2("download", { ref: str2, url: str2, timeoutMs: { ...int3, minimum: 1, maximum: 6e5 } }),
       def2("downloads", { action: { ...str2, enum: ["list"] }, limit: { ...int3, minimum: 1, maximum: 200 } }, ["action"]),
       def2("pdf", {
@@ -19898,10 +20012,330 @@ var init_catalog2 = __esm({
       def2("resize", { width: { ...int3, minimum: 1, maximum: 1e4 }, height: { ...int3, minimum: 1, maximum: 1e4 }, reset: bool2 }),
       def2("evaluate", { expression: str2, awaitPromise: bool2 }, ["expression"])
     ]);
+    SHELL_ONLY_TOOLS = /* @__PURE__ */ new Set(["allowUploads", "uploadPermissions", "revokeUploads"]);
+    EXPECT = { type: "array", items: { type: "string" }, description: "internal: the authorized origin chain, owner first" };
+    INTERNAL_CATALOG = Object.freeze([
+      ...BRIDGE_CATALOG.filter((t) => t.name === "upload").map((t) => ({
+        ...t,
+        inputSchema: { ...t.inputSchema, properties: { ...t.inputSchema.properties, expect: EXPECT } }
+      })),
+      {
+        name: "uploadTarget",
+        description: "internal",
+        inputSchema: {
+          type: "object",
+          properties: {
+            ref: { type: "string", description: "internal" },
+            browser: { type: "string", description: COMMON_PARAMS.browser },
+            tab: { type: "string", description: COMMON_PARAMS.tab }
+          },
+          required: ["ref"],
+          additionalProperties: false
+        }
+      }
+    ]);
+  }
+});
+
+// ../../packages/browser/src/errors.ts
+var init_errors5 = __esm({
+  "../../packages/browser/src/errors.ts"() {
+    "use strict";
+    init_errors4();
+  }
+});
+
+// ../../packages/browser/src/host/policy.ts
+import { lstatSync, realpathSync, statSync as statSync4 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { basename, delimiter, dirname as dirname4, join as join4, parse as parse3, relative, resolve as resolve5, isAbsolute, sep } from "node:path";
+function dirsFrom(env, name) {
+  const listed = (env[name] ?? "").split(delimiter).map((d) => d.trim()).filter(Boolean);
+  for (const d of listed) {
+    if (!isAbsolute(d)) {
+      throw new BrowserError("INVALID_ARGUMENT", `${name}: ${JSON.stringify(d)} is a relative path; every entry must be absolute (a relative one would depend on where the server was launched).`);
+    }
+  }
+  return listed.map((d) => resolve5(d));
+}
+function uploadDirs(env = process.env, home3 = homedir2(), name = UPLOAD_DIRS_ENV) {
+  const listed = dirsFrom(env, name);
+  return listed.length ? listed : [join4(home3, "Downloads")];
+}
+function uploadDirsTrusted(env = process.env, name = UPLOAD_DIRS_TRUSTED_ENV) {
+  return dirsFrom(env, name);
+}
+function real(path) {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return null;
+  }
+}
+function inside(dir, file) {
+  const rel = relative(norm(dir), norm(file));
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function isNetworkOrDevicePath(path) {
+  return /^[\\/]{2}/.test(path) || /^\\\?\?\\/.test(path);
+}
+function uploadElicitSchema(options) {
+  return {
+    type: "object",
+    properties: {
+      decision: {
+        type: "string",
+        title: "Your answer",
+        description: "What to do with this upload request.",
+        oneOf: options.map((o) => ({ const: o.value, title: o.title })),
+        ...options.some((o) => o.value === "decline") ? { default: "decline" } : {}
+      }
+    },
+    required: ["decision"]
+  };
+}
+function elicitUploadConfirm(server, log2 = () => {
+}) {
+  return async (message, options) => {
+    const e = server.getClientCapabilities()?.elicitation;
+    if (!e || !(e.form || Object.keys(e).length === 0)) return "unsupported";
+    try {
+      const answer = await server.elicitInput({ message, requestedSchema: uploadElicitSchema(options) });
+      const decision = answer.action === "accept" ? answer.content?.decision : void 0;
+      const chosen = options.find((o) => o.value === decision);
+      return chosen ? chosen.value : "decline";
+    } catch (err) {
+      log2(`upload confirmation failed: ${err.message}`);
+      return "decline";
+    }
+  };
+}
+function exists(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function uploadOrigin(input) {
+  let url;
+  try {
+    url = typeof input === "string" ? new URL(input.trim()) : void 0;
+  } catch {
+    url = void 0;
+  }
+  if (!url || url.protocol !== "https:" && url.protocol !== "http:" || !url.hostname) {
+    throw new BrowserError("INVALID_ARGUMENT", `origin must be an http or https site such as "https://portal.example.com" (scheme, host and optional port), got ${JSON.stringify(input)}.`);
+  }
+  return url.origin;
+}
+function insideOrSame(dir, path) {
+  return relative(norm(dir), norm(path)) === "" || inside(dir, path);
+}
+function uploadPolicy(dirs, opts = {}) {
+  const trusted = (opts.trusted ?? []).map((d) => resolve5(d));
+  const listed = [...dirs.map((d) => resolve5(d)), ...trusted];
+  const log2 = opts.log ?? (() => {
+  });
+  const now = opts.now ?? (() => /* @__PURE__ */ new Date());
+  const grants = [];
+  const home3 = resolve5(opts.home ?? homedir2());
+  const names = { ...BROWSER_UPLOAD_NAMES, ...opts.names };
+  const broadReason = (target) => {
+    const f = resolve5(target);
+    if (parse3(f).root === f || dirname4(f) === f) return `${f} is the root of a drive`;
+    const refs = (list) => list.flatMap((d) => [d, real(d)].filter((x) => x !== null));
+    const same = (list) => refs(list).some((d) => sameFolder(d, f));
+    if (same([home3])) return `${f} is the user's home folder`;
+    if (same(listed)) return `${f} is itself one of the folders allowed for upload (${names.dirsEnv}), so it would cover everything allowed`;
+    const fr = real(f);
+    const contains = (list) => refs(list).some((d) => [f, fr].some((x) => x !== null && !sameFolder(d, x) && inside(x, d)));
+    if (contains([home3])) return `${f} contains the user's home folder, so it would cover everything in it (keys, secrets)`;
+    if (contains(listed)) return `${f} contains a folder allowed for upload (${names.dirsEnv}), so it would cover everything allowed`;
+    for (const x of [f, fr]) {
+      if (x === null) continue;
+      const base = refs(listed).find((d) => inside(d, x));
+      const segs = (base ? relative(norm(base), norm(x)) : norm(x)).split(/[\\/]+/).filter(Boolean);
+      const hit = segs.find((n) => SENSITIVE_SEGMENTS.has(n.toLowerCase()));
+      if (hit) return `${f} is, or is inside, a ${hit} folder (keys or a repository)`;
+    }
+    const name = basename(f).toLowerCase();
+    if (name.startsWith(".env")) return `${f} looks like a secrets file (${basename(f)})`;
+    const found = SENSITIVE_ENTRIES.filter((n) => exists(join4(f, n)));
+    if (found.length) return `${f} directly contains ${found.join(", ")} (secrets, a repository or keys)`;
+    return null;
+  };
+  const tooBroad = (folder, reason) => new BrowserError(
+    "UPLOAD_NOT_ALLOWED",
+    `${folder} is too broad to authorize for a whole session: ${reason}. Nothing was authorized. Authorize a subfolder that holds only the files to send (for example ${join4(folder, "to-send")}), or send files one at a time with ${names.upload}.`
+  );
+  const grantFor = (file, site) => grants.find((g) => g.origin === site && inside(g.folder, file));
+  const addGrant = (folder, origin, via) => {
+    const broad = broadReason(folder);
+    if (broad) throw tooBroad(folder, broad);
+    const existing = grants.find((g) => g.origin === origin && sameFolder(g.folder, folder));
+    if (existing) return existing;
+    const grant = { folder, origin, grantedAt: now().toISOString(), via };
+    grants.push(grant);
+    log2(`upload authorization granted for this session (${via}): folder=${folder} origin=${origin} at=${grant.grantedAt}`);
+    return grant;
+  };
+  const howToAllow = (folder, site, reason) => {
+    const broad = reason ?? broadReason(folder);
+    if (broad) {
+      return `${folder} cannot be authorized for the session (${broad}). To send several files to ${site} without a question each, the operator puts them in a subfolder (for example ${join4(folder, "to-send")}) and calls ${names.allow} with that folder and origin ${JSON.stringify(site)}. Do not try to work around this.`;
+    }
+    return howToAllowFolder(folder, site);
+  };
+  const howToAllowFolder = (folder, site) => `To send files from ${folder} to ${site} without this question, the operator calls ${names.allow} with folder ${JSON.stringify(folder)} and origin ${JSON.stringify(site)} from a session where the question can be shown (it lasts until this MCP server stops). Do not try to work around this.`;
+  return {
+    resolveUploadPath(path) {
+      if (typeof path !== "string" || !isAbsolute(path) || isNetworkOrDevicePath(path)) {
+        throw new BrowserError("INVALID_ARGUMENT", `upload: path must be a local absolute path, got ${JSON.stringify(path)}.`);
+      }
+      if (!listed.some((d) => inside(d, resolve5(path)))) throw refusal(path, listed, names);
+      const file = real(path);
+      if (!file || !statSync4(file).isFile()) throw refusal(path, listed, names);
+      const allowed = listed.map((d) => real(d)).filter((d) => d !== null);
+      if (!allowed.some((d) => inside(d, file))) throw refusal(path, listed, names);
+      return file;
+    },
+    async authorizeUpload({ file, site, top = site, ancestors = [] }) {
+      const embedded = site !== top || ancestors.some((o) => o !== top);
+      const owner = embedded ? `WARNING: the field belongs to ${site}, embedded in ${top}` + (ancestors.length > 1 ? ` (frame chain: ${[site, ...ancestors].join(" > ")})` : "") : null;
+      const folder = dirname4(file);
+      if (!embedded) {
+        const trustedReal = trusted.map((d) => real(d)).filter((d) => d !== null);
+        if (trustedReal.some((d) => inside(d, file))) return;
+        const grant = broadReason(file) || broadReason(folder) ? void 0 : grantFor(file, site);
+        if (grant) {
+          log2(`upload sent under session authorization: file=${file} origin=${site} at=${now().toISOString()} (granted for folder=${grant.folder})`);
+          return;
+        }
+      }
+      const broad = broadReason(folder) ?? broadReason(file);
+      const offerSession = !embedded && isWebOrigin(site) && !broad;
+      const options = offerSession ? [DECLINE, ONCE, SESSION] : [DECLINE, ONCE];
+      const answer = opts.confirm ? await opts.confirm(
+        `The AI wants to send a file from this computer to a website.
+
+File: ${show(file)}
+Folder: ${show(folder)}
+Site: ${show(site)}
+` + (owner ? `${show(owner)}
+` : "") + (broad && !embedded && isWebOrigin(site) ? `Only this file can be allowed: ${show(broad)}.
+` : "") + `
+Send it?` + (offerSession ? ` "${SESSION.title}" lets every file in ${show(folder)} (and its subfolders) go to ${show(site)} without asking again, until this ${names.server} stops.` : ""),
+        options
+      ) : "unsupported";
+      if (answer === "once") return;
+      if (answer === "session" && offerSession) {
+        addGrant(folder, site, "upload");
+        return;
+      }
+      throw new BrowserError(
+        "UPLOAD_NOT_ALLOWED",
+        answer === "unsupported" ? embedded ? `The upload field belongs to ${site}, embedded in ${top}, and this MCP client cannot ask the operator to confirm uploads (it does not support elicitation). Neither a pre-authorized folder nor a session authorization applies to a field embedded from another site, so ${file} was not sent. Do not try to work around this.` : `No authorization to send files from ${folder} to ${site}, and this MCP client cannot ask the operator (it does not support elicitation), so ${file} was not sent. ` + howToAllow(folder, site, broad) + ` (The operator can also pre-authorize a folder in the ${names.trustedEnv} environment variable of the ${names.server}, absolute paths separated by "${delimiter}".)` : `The operator declined to send ${file} to ${site}${embedded ? ` (embedded in ${top})` : ""}, or the question could not be shown (for example to an agent running in the background); nothing was sent. ` + (embedded || !isWebOrigin(site) ? "Do not try again or work around this; ask the user." : `Do not insist; ask the user. ${howToAllow(folder, site, broad)}`)
+      );
+    },
+    async allowUploads({ folder: input, origin: rawOrigin }) {
+      const origin = uploadOrigin(rawOrigin);
+      if (typeof input !== "string" || !isAbsolute(input) || isNetworkOrDevicePath(input)) {
+        throw new BrowserError("INVALID_ARGUMENT", `${names.allow}: folder must be a local absolute path, got ${JSON.stringify(input)}.`);
+      }
+      const notAllowed = () => new BrowserError(
+        "UPLOAD_NOT_ALLOWED",
+        `${input} cannot be authorized: it is not a folder inside the folders allowed for upload (${listed.join(", ")}). The operator adds it (or a parent) to the ${names.dirsEnv} environment variable of the ${names.server} and restarts the server. Nothing was authorized.`
+      );
+      if (!listed.some((d) => insideOrSame(d, resolve5(input)))) throw notAllowed();
+      const folder = real(input);
+      if (!folder || !statSync4(folder).isDirectory()) throw notAllowed();
+      const allowed = listed.map((d) => real(d)).filter((d) => d !== null);
+      if (!allowed.some((d) => insideOrSame(d, folder))) throw notAllowed();
+      const broad = broadReason(input) ?? broadReason(folder);
+      if (broad) throw tooBroad(folder, broad);
+      const existing = grants.find((g) => g.origin === origin && sameFolder(g.folder, folder));
+      if (existing) return { grant: { ...existing }, already: true };
+      const answer = opts.confirm ? await opts.confirm(
+        `The AI asks to send files from this computer to a website, without asking again for each file.
+
+Folder: ${show(folder)} (and its subfolders)
+Site: ${show(origin)}
+
+Allow uploads from this folder to this site until this ${names.server} stops? Nothing is saved to disk; it can be revoked with ${names.revoke}.`,
+        [DECLINE, ALLOW]
+      ) : "unsupported";
+      if (answer === "session") return { grant: { ...addGrant(folder, origin, "WebAllowUploads") }, already: false };
+      throw new BrowserError(
+        "UPLOAD_NOT_ALLOWED",
+        answer === "unsupported" ? `This MCP client cannot ask the operator (it does not support elicitation), so uploads from ${folder} to ${origin} were not authorized. Call ${names.allow} from a client that can show the question, or the operator pre-authorizes the folder in ${names.trustedEnv}. Do not try to work around this.` : `The operator declined to allow uploads from ${folder} to ${origin}, or the question could not be shown (for example to an agent running in the background); nothing was authorized. Do not insist; ask the user.`
+      );
+    },
+    uploadGrants() {
+      return { grants: grants.map((g) => ({ ...g })), trusted: [...trusted] };
+    },
+    revokeUploads({ folder: input, origin: rawOrigin }) {
+      const origin = uploadOrigin(rawOrigin);
+      if (input !== void 0 && (typeof input !== "string" || !isAbsolute(input))) {
+        throw new BrowserError("INVALID_ARGUMENT", `${names.revoke}: folder must be an absolute path, got ${JSON.stringify(input)}.`);
+      }
+      const keys = input === void 0 ? [] : [input, real(input)].filter((k) => k !== null);
+      const removed = [];
+      for (let i = grants.length - 1; i >= 0; i--) {
+        const g = grants[i];
+        if (g.origin !== origin || input !== void 0 && !keys.some((k) => sameFolder(k, g.folder))) continue;
+        removed.unshift(...grants.splice(i, 1));
+      }
+      for (const g of removed) log2(`upload authorization revoked: folder=${g.folder} origin=${g.origin} at=${now().toISOString()}`);
+      return { removed, grants: grants.map((g) => ({ ...g })) };
+    }
+  };
+}
+var UPLOAD_DIRS_ENV, UPLOAD_DIRS_TRUSTED_ENV, norm, BROWSER_UPLOAD_NAMES, ONCE, SESSION, DECLINE, ALLOW, SENSITIVE_ENTRIES, SENSITIVE_SEGMENTS, CONTROL_CHARS, show, isWebOrigin, refusal, sameFolder;
+var init_policy = __esm({
+  "../../packages/browser/src/host/policy.ts"() {
+    "use strict";
+    init_errors5();
+    UPLOAD_DIRS_ENV = "ATRIUM_BROWSER_UPLOAD_DIRS";
+    UPLOAD_DIRS_TRUSTED_ENV = "ATRIUM_BROWSER_UPLOAD_DIRS_TRUSTED";
+    norm = (p) => process.platform === "win32" ? p.toLowerCase() : p;
+    BROWSER_UPLOAD_NAMES = Object.freeze({
+      upload: "WebUpload",
+      allow: "WebAllowUploads",
+      revoke: "WebRevokeUploads",
+      server: "browser MCP server",
+      dirsEnv: UPLOAD_DIRS_ENV,
+      trustedEnv: UPLOAD_DIRS_TRUSTED_ENV
+    });
+    ONCE = { value: "once", title: "Send only this file" };
+    SESSION = { value: "session", title: "Allow this folder to this site until the end of the session" };
+    DECLINE = { value: "decline", title: "Decline" };
+    ALLOW = { value: "session", title: "Allow for this session" };
+    SENSITIVE_ENTRIES = [".env", ".git", ".ssh"];
+    SENSITIVE_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".git", ".gnupg"]);
+    CONTROL_CHARS = new RegExp("[\0-\x7F-\x9F\u2028\u2029]");
+    show = (text) => CONTROL_CHARS.test(text) ? JSON.stringify(text) : text;
+    isWebOrigin = (site) => /^https?:\/\/[^/]+$/.test(site);
+    refusal = (path, dirs, names) => new BrowserError(
+      "UPLOAD_NOT_ALLOWED",
+      // Mensagem única para "não existe", "não é arquivo" e "fora das pastas": a LLM não usa a recusa para sondar o disco.
+      `${path} cannot be uploaded: it is not a file inside the folders allowed for upload (${dirs.join(", ")}); nothing was sent. To allow it, the operator adds its folder to the ${names.dirsEnv} environment variable of the ${names.server} (absolute paths, separated by "${delimiter}") and restarts the server, or moves the file into an allowed folder. Do not try to work around this.`
+    );
+    sameFolder = (a, b) => norm(resolve5(a)) === norm(resolve5(b));
+  }
+});
+
+// src/upload-policy.ts
+var init_upload_policy = __esm({
+  "src/upload-policy.ts"() {
+    "use strict";
+    init_policy();
   }
 });
 
 // daemon/src/mcp-server.ts
+import { homedir as homedir3 } from "node:os";
 function describeBrowsers(list) {
   return list.map((b) => `"${b.name}" (id ${b.id})`).join(", ");
 }
@@ -19976,6 +20410,7 @@ function isPureRead(tool, args) {
     case "links":
     case "wait":
     case "readNetwork":
+    case "uploadTarget":
       return true;
     case "readConsole":
       return args.clear !== true;
@@ -19997,7 +20432,7 @@ function createResilientBridge(client, shell2) {
       listBrowsers: async () => ({ value: await client.browsers(), restarted: false }),
       callTool: async (tool, args, requested) => {
         const { browser, notice } = chooseBrowser(await client.browsers(), requested);
-        return { value: await client.call(browser.id, tool, args), restarted: false, ...notice ? { notice } : {} };
+        return { value: await client.call(browser.id, tool, args), restarted: false, browser: browser.id, ...notice ? { notice } : {} };
       }
     };
   }
@@ -20006,7 +20441,7 @@ function createResilientBridge(client, shell2) {
   const waitCallMs = shell2.waitCallMs ?? REAPPEAR_DEFAULTS.waitCallMs;
   const waitListMs = shell2.waitListMs ?? REAPPEAR_DEFAULTS.waitListMs;
   const pollMs = shell2.waitPollMs ?? REAPPEAR_DEFAULTS.waitPollMs;
-  const sleep = shell2.sleep ?? ((ms) => new Promise((resolve8) => setTimeout(resolve8, ms)));
+  const sleep = shell2.sleep ?? ((ms) => new Promise((resolve9) => setTimeout(resolve9, ms)));
   const now = shell2.now ?? (() => Date.now());
   async function alive(request2) {
     try {
@@ -20056,7 +20491,7 @@ function createResilientBridge(client, shell2) {
       const progress = { stage: "lookup" };
       try {
         const value = await run(progress);
-        return { value, restarted, ...progress.notice ? { notice: progress.notice } : {} };
+        return { value, restarted, ...progress.notice ? { notice: progress.notice } : {}, ...progress.browser ? { browser: progress.browser } : {} };
       } catch (e) {
         const phase = downPhase(e);
         if (phase === void 0) {
@@ -20082,6 +20517,7 @@ function createResilientBridge(client, shell2) {
       const waited = await browsersWhen((list) => present(list, requested), waitCallMs);
       const { browser, notice } = resolveAfterWait(waited, requested);
       if (notice) progress.notice = notice;
+      progress.browser = browser.id;
       progress.stage = "call";
       return alive(client.call(browser.id, tool, args));
     })
@@ -20091,9 +20527,64 @@ function serverNameFromEnv(env = process.env, fallback = SERVER_NAME) {
   const name = env.ATRIUM_BRIDGE_SERVER_NAME?.trim();
   return name && SERVER_NAME_PATTERN2.test(name) ? name : fallback;
 }
+function uploadSetupFromEnv(env = process.env) {
+  return {
+    dirs: uploadDirs(env, homedir3(), BRIDGE_UPLOAD_NAMES.dirsEnv),
+    trusted: uploadDirsTrusted(env, BRIDGE_UPLOAD_NAMES.trustedEnv)
+  };
+}
 function buildMcpServer(client, shell2, info2 = {}) {
   const server = new Server({ name: info2.name ?? SERVER_NAME, version: "0.1.0" }, { capabilities: { tools: {} } });
   const bridge = createResilientBridge(client, shell2);
+  const policyLog = (line) => shell2?.log("upload_policy", { line });
+  let policy = null;
+  const uploads = () => {
+    if (policy) return policy;
+    const setup = typeof info2.upload === "function" ? info2.upload() : info2.upload ?? uploadSetupFromEnv();
+    policy = uploadPolicy(setup.dirs, {
+      trusted: setup.trusted ?? [],
+      confirm: elicitUploadConfirm(server, policyLog),
+      log: policyLog,
+      names: BRIDGE_UPLOAD_NAMES,
+      ...setup.home ? { home: setup.home } : {}
+    });
+    return policy;
+  };
+  async function grantTool(tool, a) {
+    const p = uploads();
+    if (tool === "allowUploads") {
+      const { grant, already } = await p.allowUploads({ folder: a.folder, origin: a.origin });
+      return {
+        authorized: showGrant(grant),
+        note: already ? "This folder was already authorized for this site in this session; nothing changed." : "The operator allowed it. upload now sends files from this folder (and its subfolders) to this exact site without asking, until this MCP server stops."
+      };
+    }
+    if (tool === "uploadPermissions") {
+      const view = p.uploadGrants();
+      return {
+        grants: view.grants.map(showGrant),
+        trusted: view.trusted,
+        note: view.grants.length ? "Session authorizations live only in the memory of this MCP server and end when it stops. A field embedded from another site is never covered." : "No session authorizations: every upload outside the pre-authorized folders asks the operator."
+      };
+    }
+    const r = p.revokeUploads({ origin: a.origin, ...a.folder !== void 0 ? { folder: a.folder } : {} });
+    return { removed: r.removed.map(showGrant), grants: r.grants.map(showGrant) };
+  }
+  async function uploadCall(a) {
+    const p = uploads();
+    const { browser, tab, ref, paths } = a;
+    const files = paths.map((path) => p.resolveUploadPath(path));
+    const target = await bridge.callTool("uploadTarget", { ref, ...tab !== void 0 ? { tab } : {} }, browser);
+    const { tab: tabId, origins, multiple } = target.value;
+    if (files.length > 1 && !multiple) {
+      throw Object.assign(new Error(`upload: this file input accepts a single file (no multiple attribute); ${files.length} paths were given`), { code: "INVALID_ARGUMENT" });
+    }
+    for (const file of files) {
+      await p.authorizeUpload({ file, site: origins[0], top: origins[origins.length - 1], ancestors: origins.slice(1) });
+    }
+    const done = await bridge.callTool("upload", { ref, tab: tabId, paths: files, expect: origins }, target.browser ?? browser);
+    return { ...done, restarted: target.restarted || done.restarted, ...target.notice ? { notice: target.notice } : {} };
+  }
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: BRIDGE_CATALOG.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
   }));
@@ -20105,6 +20596,11 @@ function buildMcpServer(client, shell2, info2 = {}) {
       if (tool === "list_browsers") {
         const { value: value2, restarted: restarted2 } = await bridge.listBrowsers();
         return { content: withNotice([{ type: "text", text: JSON.stringify(value2, null, 2) }], restarted2) };
+      }
+      if (SHELL_ONLY_TOOLS.has(tool)) return { content: render(tool, await grantTool(tool, args)) };
+      if (tool === "upload") {
+        const { value: value2, restarted: restarted2, notice: notice2 } = await uploadCall(args);
+        return { content: withNotice(render(tool, value2), restarted2, notice2) };
       }
       const { browser, ...rest2 } = args;
       const { value, restarted, notice } = await bridge.callTool(tool, rest2, browser);
@@ -20118,7 +20614,7 @@ ${JSON.stringify(w.data)}` : "";
   });
   return server;
 }
-var REAPPEAR_DEFAULTS, MAX_ROUNDS, isRemote, withNotice, SERVER_NAME_PATTERN2;
+var REAPPEAR_DEFAULTS, MAX_ROUNDS, isRemote, withNotice, SERVER_NAME_PATTERN2, BRIDGE_UPLOAD_NAMES, showGrant;
 var init_mcp_server = __esm({
   "daemon/src/mcp-server.ts"() {
     "use strict";
@@ -20128,6 +20624,7 @@ var init_mcp_server = __esm({
     init_errors3();
     init_texts();
     init_client();
+    init_upload_policy();
     REAPPEAR_DEFAULTS = { waitCallMs: 4e4, waitListMs: 5e3, waitPollMs: 500 };
     MAX_ROUNDS = 3;
     isRemote = (e, code) => e instanceof RemoteError && e.code === code;
@@ -20138,27 +20635,37 @@ var init_mcp_server = __esm({
       return [...notices, ...content];
     };
     SERVER_NAME_PATTERN2 = /^[A-Za-z0-9_-]{1,64}$/;
+    BRIDGE_UPLOAD_NAMES = Object.freeze({
+      upload: "upload",
+      allow: "allowUploads",
+      revoke: "revokeUploads",
+      server: "Bridge MCP server",
+      dirsEnv: "ATRIUM_BRIDGE_UPLOAD_DIRS",
+      trustedEnv: "ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED"
+    });
+    showGrant = (g) => ({ ...g, via: g.via === "WebAllowUploads" ? "allowUploads" : g.via });
   }
 });
 
 // daemon/src/mcp.ts
 var mcp_exports = {};
 import { existsSync as existsSync5 } from "node:fs";
-import { join as join4 } from "node:path";
-var home, log, sourceCli, launch, ensure, serverName;
+import { join as join5 } from "node:path";
+var home, log, sourceCli, launch, ensure, serverName, uploadKey;
 var init_mcp = __esm({
   async "daemon/src/mcp.ts"() {
     "use strict";
     init_stdio2();
     init_client();
     init_config();
+    init_keys();
     init_ensure();
     init_mcp_server();
     init_package_info();
     init_texts();
     home = bridgeHome();
     log = createShellLog(mcpLogPath(home));
-    sourceCli = join4(import.meta.dirname, "cli.ts");
+    sourceCli = join5(import.meta.dirname, "cli.ts");
     launch = {
       entry: existsSync5(sourceCli) ? sourceCli : process.argv[1],
       args: ["start"],
@@ -20170,7 +20677,8 @@ var init_mcp = __esm({
       logFile: daemonLogPath(home)
     });
     serverName = serverNameFromEnv(process.env, packagedServerName(buildInfoOfScript()) ?? SERVER_NAME);
-    await buildMcpServer(new BridgeClient(() => targetFromEnv()), { ensure, log }, { name: serverName }).connect(
+    uploadKey = () => ensureUploadKey(home);
+    await buildMcpServer(new BridgeClient(() => ({ ...targetFromEnv(), uploadKey })), { ensure, log }, { name: serverName }).connect(
       new StdioServerTransport()
     );
     void ensure.warmup();
@@ -22264,7 +22772,7 @@ var require_extension = __commonJS({
       if (dest[name] === void 0) dest[name] = [elem];
       else dest[name].push(elem);
     }
-    function parse3(header) {
+    function parse4(header) {
       const offers = /* @__PURE__ */ Object.create(null);
       let params = /* @__PURE__ */ Object.create(null);
       let mustUnescape = false;
@@ -22404,7 +22912,7 @@ var require_extension = __commonJS({
         }).join(", ");
       }).join(", ");
     }
-    module.exports = { format, parse: parse3 };
+    module.exports = { format, parse: parse4 };
   }
 });
 
@@ -22438,7 +22946,7 @@ var require_websocket = __commonJS({
     var {
       EventTarget: { addEventListener, removeEventListener }
     } = require_event_target();
-    var { format, parse: parse3 } = require_extension();
+    var { format, parse: parse4 } = require_extension();
     var { toBuffer } = require_buffer_util();
     var kAborted = Symbol("kAborted");
     var protocolVersions = [8, 13];
@@ -23128,7 +23636,7 @@ var require_websocket = __commonJS({
           }
           let extensions;
           try {
-            extensions = parse3(secWebSocketExtensions);
+            extensions = parse4(secWebSocketExtensions);
           } catch (err) {
             const message = "Invalid Sec-WebSocket-Extensions header";
             abortHandshake(websocket, socket, message);
@@ -23420,7 +23928,7 @@ var require_subprotocol = __commonJS({
   "node_modules/ws/lib/subprotocol.js"(exports, module) {
     "use strict";
     var { tokenChars } = require_validation2();
-    function parse3(header) {
+    function parse4(header) {
       const protocols = /* @__PURE__ */ new Set();
       let start = -1;
       let end = -1;
@@ -23456,7 +23964,7 @@ var require_subprotocol = __commonJS({
       protocols.add(protocol);
       return protocols;
     }
-    module.exports = { parse: parse3 };
+    module.exports = { parse: parse4 };
   }
 });
 
@@ -23953,29 +24461,29 @@ var init_approval_page = __esm({
 });
 
 // daemon/src/files.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync5, statSync as statSync4, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { basename, isAbsolute, join as join5, resolve as resolve5 } from "node:path";
+import { existsSync as existsSync6, mkdirSync as mkdirSync5, statSync as statSync5, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join6, resolve as resolve6 } from "node:path";
 function assertUploadPaths(paths) {
   if (!Array.isArray(paths) || paths.length === 0) {
     throw Object.assign(new Error('upload: "paths" must be a non-empty array of absolute file paths'), { code: "INVALID_ARGUMENT" });
   }
   return paths.map((p) => {
-    if (typeof p !== "string" || !isAbsolute(p)) {
+    if (typeof p !== "string" || !isAbsolute2(p)) {
       throw Object.assign(new Error(`upload: "${String(p)}" is not an absolute path`), { code: "INVALID_ARGUMENT" });
     }
     let st;
     try {
-      st = statSync4(p);
+      st = statSync5(p);
     } catch {
       throw new BridgeError("FILE_NOT_FOUND", `upload: file not found: ${p}`, { path: p });
     }
     if (!st.isFile()) throw new BridgeError("FILE_NOT_FOUND", `upload: not a file: ${p}`, { path: p });
-    return resolve5(p);
+    return resolve6(p);
   });
 }
 function pdfFilename(requested, title) {
-  let name = basename((requested ?? "").replace(/\\/g, "/")).trim();
+  let name = basename2((requested ?? "").replace(/\\/g, "/")).trim();
   if (!name) name = (title ?? "").replace(/\s+/g, " ").trim();
   name = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/, "").slice(0, 150);
   if (!name || /^\.+$/.test(name)) name = "page";
@@ -23986,8 +24494,8 @@ function uniquePath(dir, name) {
   const dot = name.lastIndexOf(".");
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : "";
-  let candidate = join5(dir, name);
-  for (let n = 2; existsSync6(candidate); n++) candidate = join5(dir, `${stem} (${n})${ext}`);
+  let candidate = join6(dir, name);
+  for (let n = 2; existsSync6(candidate); n++) candidate = join6(dir, `${stem} (${n})${ext}`);
   return candidate;
 }
 function persistPdf(dir, result) {
@@ -24011,7 +24519,7 @@ var init_files = __esm({
   "daemon/src/files.ts"() {
     "use strict";
     init_errors3();
-    defaultDownloadsDir = () => join5(homedir2(), "Downloads");
+    defaultDownloadsDir = () => join6(homedir4(), "Downloads");
   }
 });
 
@@ -24160,12 +24668,12 @@ var init_registry = __esm({
       /** Um pedido com resposta (`{t:'result'}` com o mesmo rid) a uma extensão: o que `call` e `releaseClient` têm em comum. */
       request(conn, what, build2, timeoutMs) {
         const rid = randomUUID();
-        return new Promise((resolve8, reject) => {
+        return new Promise((resolve9, reject) => {
           const timer = setTimeout(() => {
             conn.pending.delete(rid);
             reject(new BridgeError("CALL_TIMEOUT", `browser "${conn.info.name}" did not answer ${what} within ${timeoutMs} ms`));
           }, timeoutMs);
-          conn.pending.set(rid, { resolve: resolve8, reject, timer });
+          conn.pending.set(rid, { resolve: resolve9, reject, timer });
           try {
             conn.send(build2(rid));
           } catch (e) {
@@ -24190,9 +24698,9 @@ var init_registry = __esm({
 });
 
 // daemon/src/server.ts
-import { statSync as statSync5 } from "node:fs";
+import { statSync as statSync6 } from "node:fs";
 import { createServer as createServer2 } from "node:http";
-import { resolve as resolve6 } from "node:path";
+import { resolve as resolve7 } from "node:path";
 function statusFor(code) {
   switch (code) {
     case "BROWSER_NOT_FOUND":
@@ -24226,7 +24734,7 @@ async function startDaemon(opts) {
   let config2 = ensureConfig(opts.home, opts.port);
   const registry2 = new Registry();
   const stamp = () => {
-    const s = statSync5(configPath(opts.home), { bigint: true });
+    const s = statSync6(configPath(opts.home), { bigint: true });
     return `${s.ino}:${s.mtimeNs}:${s.size}`;
   };
   let seen = stamp();
@@ -24303,7 +24811,7 @@ async function startDaemon(opts) {
     const error2 = toWireError(e);
     json(res, statusFor(error2.code), { ok: false, error: error2 });
   };
-  const readBody = (req) => new Promise((resolve8, reject) => {
+  const readBody = (req) => new Promise((resolve9, reject) => {
     const chunks = [];
     let size = 0;
     req.on("data", (c) => {
@@ -24315,7 +24823,7 @@ async function startDaemon(opts) {
       }
       chunks.push(c);
     });
-    req.on("end", () => resolve8(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve9(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
   const page = (res, status, html) => {
@@ -24391,7 +24899,7 @@ async function startDaemon(opts) {
         return json(res, 200, { ok: true, paused: false });
       }
       if (req.method === "POST" && url.pathname === "/embedded/approve") {
-        if (key.scope === "use") throw new BridgeError("FORBIDDEN", `key "${key.name}" has scope "use"; approving a login needs a full or admin key`);
+        if (key.scope === "use" || key.scope === "upload") throw new BridgeError("FORBIDDEN", `key "${key.name}" has scope "${key.scope}"; approving a login needs a full or admin key`);
         if (!embedded) throw new BridgeError("EMBEDDED_UNAVAILABLE", "embedded mode is off (start the daemon with --embedded)");
         let body;
         try {
@@ -24430,7 +24938,17 @@ async function startDaemon(opts) {
         }
         if (typeof body.tool !== "string") throw Object.assign(new Error('"tool" is required'), { code: "INVALID_ARGUMENT" });
         const args = body.args ?? {};
-        assertValidCall(body.tool, args);
+        assertValidCall(body.tool, args, { internal: true });
+        if (SHELL_ONLY_TOOLS.has(body.tool)) {
+          throw Object.assign(new Error(`${body.tool} runs only in the MCP server of the Bridge (the upload authorizations live in its memory), not in the daemon API`), { code: "INVALID_ARGUMENT" });
+        }
+        if (UPLOAD_TOOLS.has(body.tool) && key.scope !== "upload") {
+          log2("upload_refused", { key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool });
+          throw new BridgeError(
+            "FORBIDDEN",
+            `upload only through the MCP server of the Bridge, with the operator's consent: key "${key.name}" has no "upload" scope`
+          );
+        }
         if (body.tool === "list_browsers") {
           throw Object.assign(new Error("list_browsers is GET /browsers"), { code: "INVALID_ARGUMENT" });
         }
@@ -24553,13 +25071,13 @@ async function startDaemon(opts) {
     });
     ws.on("error", () => ws.terminate());
   };
-  await new Promise((resolve8, reject) => {
+  await new Promise((resolve9, reject) => {
     server.once("error", (e) => {
       reject(
         e.code === "EADDRINUSE" ? new Error(`port ${opts.port ?? config2.port} is already in use (is another Atrium Bridge daemon running?)`) : e
       );
     });
-    server.listen(opts.port ?? config2.port, "127.0.0.1", () => resolve8());
+    server.listen(opts.port ?? config2.port, "127.0.0.1", () => resolve9());
   });
   boundPort = server.address().port;
   if (boundPort !== config2.port) {
@@ -24570,7 +25088,7 @@ async function startDaemon(opts) {
   config2 = { ...config2, port: boundPort };
   log2("listening", { host: "127.0.0.1", port: boundPort });
   if (opts.embedded ?? config2.embedded === true) {
-    const envFile = opts.supervisorEnvFile !== void 0 ? resolve6(opts.supervisorEnvFile) : config2.supervisorEnvFile !== void 0 ? resolve6(opts.home, config2.supervisorEnvFile) : void 0;
+    const envFile = opts.supervisorEnvFile !== void 0 ? resolve7(opts.supervisorEnvFile) : config2.supervisorEnvFile !== void 0 ? resolve7(opts.home, config2.supervisorEnvFile) : void 0;
     embedded = startEmbeddedSupervisor({
       home: opts.home,
       port: opts.supervisorPort ?? boundPort + 1,
@@ -24641,10 +25159,12 @@ var init_cli = __esm({
                             config.json) also hosts the Atrium supervisor on 127.0.0.1:<port+1> for the Assistant
   token pairing|api [--copy] show a secret on request (pairing: typed into the extension options; api: the local
                             API key in api.key, the one the MCP server uses when no key is given to it)
-  key create <name> [--scope use|admin] [--replace] [--json]
+  key create <name> [--scope use|admin|upload] [--replace] [--json]
                             create a named API key and print its value ONCE (only its hash is stored). Give it to
                             a caller by ATRIUM_BRIDGE_KEY_FILE (a file holding the value) or ATRIUM_BRIDGE_KEY.
-                            No --scope = full access. The running daemon accepts it on the next request
+                            No --scope = full access except upload. --scope upload = use + upload/uploadTarget
+                            straight through the API, WITHOUT the operator's consent (insecure; only the MCP server
+                            should upload, with its own upload.key). The running daemon accepts it on the next request
   key list [--json]         list the API keys (names, dates, scopes; never values)
   key revoke <name>         revoke a key; the running daemon refuses it on the next request
   install --dir <folder> [--from <extension dir>] [--no-pin] [--json]
@@ -24742,6 +25262,11 @@ ${USAGE}`, 2);
             process.stderr.write(`key "${created.name}" created; this is the only time its value is shown
 `);
           }
+          if (created.scope === "upload") {
+            process.stderr.write(
+              'WARNING: scope "upload" lets this key send local files to sites through the daemon API directly, with no question\nto the operator and no folder rule (the consent lives only in the MCP server). Revoke it with `key revoke` when done.\n'
+            );
+          }
         } else if (sub === "list") {
           const keys = listKeys(home2);
           if (json) process.stdout.write(`${JSON.stringify(keys)}
@@ -24799,8 +25324,8 @@ ${USAGE}
 });
 
 // daemon/src/bundle.ts
-import { realpathSync } from "node:fs";
-import { resolve as resolve7 } from "node:path";
+import { realpathSync as realpathSync2 } from "node:fs";
+import { resolve as resolve8 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // package.json
@@ -24845,7 +25370,7 @@ var USAGE2 = `Atrium Bridge ${package_default.version}
   start [--port N]            start the daemon (WebSocket + HTTP on 127.0.0.1)
   mcp                         MCP server (stdio); starts the daemon by itself when it does not answer
   token pairing|api [--copy]  show a secret on request
-  key create <name> [--scope use|admin] [--replace] [--json]
+  key create <name> [--scope use|admin|upload] [--replace] [--json]
                               create a named API key; its value is printed once (only its hash is stored)
   key list [--json]           list the API keys (never values)
   key revoke <name>           revoke a key (the running daemon refuses it on the next request)
@@ -24859,8 +25384,8 @@ function isMain() {
   const entry = process.argv[1];
   if (!entry) return false;
   try {
-    const norm = (p) => process.platform === "win32" ? p.toLowerCase() : p;
-    return norm(realpathSync(resolve7(entry))) === norm(realpathSync(fileURLToPath2(import.meta.url)));
+    const norm2 = (p) => process.platform === "win32" ? p.toLowerCase() : p;
+    return norm2(realpathSync2(resolve8(entry))) === norm2(realpathSync2(fileURLToPath2(import.meta.url)));
   } catch {
     return false;
   }

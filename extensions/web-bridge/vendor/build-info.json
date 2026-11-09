@@ -1,7 +1,7 @@
 {
   "name": "tether-bridge",
   "version": "0.1.0",
-  "extensionVersion": "0.1.0.5739",
+  "extensionVersion": "0.1.0.5758",
   "extensionId": "injmgjkjjfjeamlnnpacjcfnfkjgpmnk",
   "brand": {
     "slug": "tether",
@@ -60,12 +60,12 @@
   },
   "bundle": {
     "file": "atrium-bridge.mjs",
-    "sha256": "b204b108abe7a740e275f23acbc4f08a1fcfb3c8b07cf8addc3ddb050c6a15f8",
-    "bytes": 937873
+    "sha256": "45dd6d58de84b284b8c685b37bbb6502e6c00fa0a2637d63f5163264c5587e0f",
+    "bytes": 972197
   },
   "extension": {
     "dir": "extension",
-    "sha256": "56b08fa3bb26b72e29c23acc78417ebcab1de110b56573478c67d343147c8f96",
+    "sha256": "0de6a08e576b1b77c6b134a390e157a7c2d6f9f586e6ef8ec7fb1e8aa61b24b0",
     "files": 15
   }
 }
