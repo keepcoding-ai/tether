@@ -1563,6 +1563,23 @@ body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-acti
   content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: 0 0 calc(var(--frame-radius) - 1px) calc(var(--frame-radius) - 1px);
   border: var(--desk-line-width) solid var(--desk-line-color, transparent); border-top: 0;
 }
+/* The keyboard mark (app/renderer/tab-marks.ts): a bar on top of the ONE tab whose pane has the keyboard, wherever it lives
+   (a desk, a pad, the drawer). An inset shadow, so it takes no pseudo-element from dockview or from the folder border above.
+   The colour is the place's line colour (the desk's, the neutral drawer line in the drawer). */
+.dv-tab.keyboard-tab {
+  --keyboard-tab-bar: 3px;
+  box-shadow: inset 0 var(--keyboard-tab-bar) 0 0 var(--desk-line-color, var(--accent));
+}
+/* Attention (tab-marks.ts pulseTab, 1200 ms): the tab glows in the line colour twice and settles, to draw the eye after
+   a pane came up from far away. Reduced motion: one steady tint for the same time. */
+@keyframes attention-tab {
+  0%, 50%, 100% { background-color: transparent; }
+  20%, 70% { background-color: color-mix(in srgb, var(--desk-line-color, var(--accent)) 35%, transparent); }
+}
+.dv-tab.attention-tab { animation: attention-tab 1200ms ease-in-out; }
+@media (prefers-reduced-motion: reduce) {
+  .dv-tab.attention-tab { animation: none; background-color: color-mix(in srgb, var(--desk-line-color, var(--accent)) 25%, transparent); }
+}
 /* Foco de Mesa: `.focused` is only ever a desk's frame; the drawer has its own `.drawer-focused`. A pad (`.kbd-focused`, a
    behaviour marker only) has no ring, aura or dim: it looks the same with or without the keyboard. */
 

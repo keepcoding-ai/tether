@@ -160,6 +160,8 @@ export interface TetherUi {
     reveal(id: string): void
     /** "Copiar link do painel": a tether:// link that brings the pane back from anywhere. */
     copyLink(id: string): void
+    /** Draws the eye to a pane's tab with a short pulse (bring it up first: `reveal`). */
+    attention(id: string): void
     /** Closes a pane without a slot behind it (remembered for "reabrir o último painel fechado"). */
     close(id: string): void
     /** The pane's tab menu at page coordinates (the type's own `tabMenu`). */
