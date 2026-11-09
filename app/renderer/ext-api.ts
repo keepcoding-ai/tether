@@ -259,6 +259,11 @@ export interface TetherUi {
      * activated and focused. An agent that exited is not restarted. False when no pane shows that slot.
      */
     focus(slotId: string): boolean
+    /**
+     * Rows an extension adds to the tab menu of an agent's pane, before "Fechar painel…". The provider gets the pane's slot id
+     * and returns its rows (none: an empty list); it runs each time the menu opens.
+     */
+    tabMenu(provider: (slotId: string) => ContextMenuEntry[]): IDisposable
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */

@@ -14,6 +14,7 @@ import { ControlHub } from './control.ts'
 import { type Gate, startGate } from './gate.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LocalNetworkGate } from './local-network.ts'
+import type { ActionKind } from './pad-rules.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
 import { isWebUrl, savedTabOf } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
@@ -98,7 +99,7 @@ export function activate(main: TetherMain): IDisposable[] {
     log: msg => main.log(msg),
   })
   // E9: the agent's commands light the tab's dot; at most one event per tab every 400 ms (forgotten when the tab closes).
-  const lastPulse = new Map<string, number>()
+  const lastPulse = new Map<string, { at: number; kind: ActionKind }>()
   const shieldOf = (tabId: string): void => {
     void registry.surface(tabId)?.setInputShield(control.control(tabId) === 'agent').catch(() => {})
   }
@@ -110,11 +111,13 @@ export function activate(main: TetherMain): IDisposable[] {
     control.onChange(v => { shieldOf(v.tabId); ipc.send('control', v) }),
     main.agents.onDidExit(e => control.agentExited(e.slotId)),
   ]
-  const pulse = (tabId: string): void => {
+  const pulse = (tabId: string, kind: ActionKind): void => {
     const now = Date.now()
-    if (now - (lastPulse.get(tabId) ?? 0) < 400) return
-    lastPulse.set(tabId, now)
-    ipc.send('activity', tabId)
+    const last = lastPulse.get(tabId)
+    // A new kind of action goes through at once (the pad says what the agent does now); the same one at most every 400 ms.
+    if (last && last.kind === kind && now - last.at < 400) return
+    lastPulse.set(tabId, { at: now, kind })
+    ipc.send('activity', tabId, kind)
   }
   const tabsOf = (slotId?: string): string[] => registry.list().filter(t => slotId === undefined || t.ownerSlotId === slotId).map(t => t.tabId)
   const gateReady = startGate({ home: main.home, tabs: registry, control, activity: pulse, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {

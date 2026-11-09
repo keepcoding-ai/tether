@@ -1,6 +1,7 @@
 // The browser extension's channels between its renderer and main sides (E2: the tab registry; E4: the local-network question).
 import type { ControlView } from './control.ts'
 import type { LocalNetworkAsk } from './local-network-rules.ts'
+import type { ActionKind } from './pad-rules.ts'
 import type { SavedTab, TabInfo } from './tab-rules.ts'
 import type { TabBlocked } from './tabs.ts'
 
@@ -50,6 +51,6 @@ export interface BrowserChannels {
     /** E7: a tab's control changed (held, paused, a help request opened, ran out or ended). */
     control: (view: ControlView) => void
     /** E9: the agent acted on the tab (its dot lights for a moment). */
-    activity: (tabId: string) => void
+    activity: (tabId: string, kind: ActionKind) => void
   }
 }

@@ -45,6 +45,7 @@ import type { TabInfo } from './tab-rules.ts'
 import { checkAsk, type Control, heldError } from './control-rules.ts'
 import type { ControlHub } from './control.ts'
 import { acceptOf, frame, FrameParser, OP_CLOSE, OP_PONG, OP_TEXT } from './ws-frames.ts'
+import { actionKindOf, type ActionKind } from './pad-rules.ts'
 
 /** What the gate needs of the tab registry (tabs.ts). */
 export interface GateTabs {
@@ -69,8 +70,8 @@ export interface GateOptions {
   keyTtlMs?: number
   /** Who has each tab (E7). Without it every tab is the agent's and `Tether.*` is unknown. */
   control?: Pick<ControlHub, 'control' | 'view' | 'onChange' | 'openAsks' | 'ask' | 'uploadAsks'>
-  /** E9: the agent's command reached a tab it has (the tab's "agent acting" dot). Only the tab id, nothing of the command. */
-  activity?: (tabId: string) => void
+  /** E9: the agent's command reached a tab it has (the tab's "agent acting" dot). E11: and the coarse kind of it ("typing"), nothing of the command's content. */
+  activity?: (tabId: string, kind: ActionKind) => void
   /** Test builds only: one line per command, answer and event (method names and ids, never params nor keys). */
   trace?: (line: string) => void
   /** M2: the bytes a connection may have waiting in its socket before it is closed (tests lower it). */
@@ -405,7 +406,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     /** `pageCommand` once the tab is the agent's and the answer is guarded. */
     pageCommandHeld(s: GateSession<Conn>, method: string, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): Promise<void> | void {
       this.lastTab = s.tabId
-      opts.activity?.(s.tabId)
+      opts.activity?.(s.tabId, actionKindOf(method, params.type))
       if (!PAGE_ALLOWED.has(method)) throw refusal(method, refusalReason(method))
       const surface = opts.tabs.surface(s.tabId)
       if (!surface) throw new GateError('Target closed', -32000)

@@ -1739,6 +1739,8 @@ function revealPane(id: string): void {
 // ---------- the agents' panes for extensions (TetherUi.agents) ----------
 
 const agentPaneListeners = new Set<(pane: AgentPane) => void>()
+/** The rows extensions add to an agent pane's tab menu (TetherUi.agents.tabMenu). */
+const agentTabMenuProviders = new Set<(slotId: string) => ContextMenuEntry[]>()
 let agentPaneSnapshot: AgentPane[] = []
 let agentPaneQueued = false
 
@@ -1920,6 +1922,13 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     return
   }
   panel?.api.setActive()
+  const fromExtensions: MenuEntry[] = []
+  if (slot.kind !== 'shell') {
+    for (const provider of [...agentTabMenuProviders]) {
+      try { fromExtensions.push(...provider(slotId).map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName })) } catch (err) { console.error('agents.tabMenu', err) }
+    }
+    if (fromExtensions.length > 0) fromExtensions.push(SEP)
+  }
   showContextMenu(x, y, [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'right' }) } },
@@ -1936,6 +1945,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     SEP,
     { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
     SEP,
+    ...fromExtensions,
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
 }
@@ -3459,6 +3469,7 @@ function activateRendererExtensions(): void {
         get: slotId => agentPanes().find(p => p.slotId === slotId),
         onDidChange: listener => { agentPaneListeners.add(listener); return add(toDisposable(() => { agentPaneListeners.delete(listener) })) },
         focus: slotId => focusAgentPane(slotId),
+        tabMenu: provider => { agentTabMenuProviders.add(provider); return add(toDisposable(() => { agentTabMenuProviders.delete(provider) })) },
       },
       chooser: {
         resolve: (itemId, fn) => {
