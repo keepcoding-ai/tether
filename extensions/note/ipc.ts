@@ -5,8 +5,16 @@ import type { NotePrepared, NoteRead, NoteRenamed, NoteWritten, PreviewKey, Prev
 
 export interface NoteChannels {
   invoke: {
-    /** Creates the empty file of a new note under the pane's folder (`<cwd>/.tether/notes/`) or the person's. */
-    prepare: (paneCwd?: string) => NotePrepared
+    /**
+     * Creates the empty file of a new note: without a destination, under the pane's folder (`<cwd>/.tether/notes/`) or
+     * the person's; with one, `project` (`<cwd>/.tether/notes/`), `home` ("Minhas notas") or `other` (`cwd` itself),
+     * remembered for the next time.
+     */
+    prepare: (paneCwd?: string, destination?: 'project' | 'home' | 'other') => NotePrepared
+    /** The destination the chooser starts on (the last one used) and a warning when it could not be kept. */
+    destination: () => { id: 'project' | 'home' | 'other'; folder?: string; warning?: string }
+    /** The folder of "Minhas notas" (the setting, or `~/.tether/notes`). */
+    personalFolder: () => string
     read: (path: string) => NoteRead
     /** Atomic write. */
     write: (path: string, text: string) => NoteWritten

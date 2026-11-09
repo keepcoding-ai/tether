@@ -17,6 +17,23 @@ export function userNotesDir(env: NodeJS.ProcessEnv = process.env, home: string 
   return fromEnv ? join(fromEnv, 'notes') : join(home, '.tether', 'notes')
 }
 
+/** The default of the setting "Pasta das minhas notas" (extensions.note.personalFolder). */
+export const PERSONAL_FOLDER_DEFAULT = '~/.tether/notes'
+
+/**
+ * "Minhas notas": the folder of the setting (a leading `~` is the person's home), or, at its default or empty, the
+ * person's own folder (under TETHER_HOME when it is set, so a test home never writes into the real one).
+ */
+export function personalNotesDir(setting: string | undefined, env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+  const raw = (setting ?? '').trim()
+  if (!raw || raw === PERSONAL_FOLDER_DEFAULT) return userNotesDir(env, home)
+  return resolve(/^~(?=$|[\\/])/.test(raw) ? join(home, raw.slice(1)) : raw)
+}
+
+/** The destination of a new note picked in the chooser: the project's `.tether/notes`, "Minhas notas", or a folder as chosen. */
+export type NoteDestinationId = 'project' | 'home' | 'other'
+export const isDestinationId = (v: unknown): v is NoteDestinationId => v === 'project' || v === 'home' || v === 'other'
+
 /** Where a note born now goes: the pane's folder when there is one, else the person's. */
 export function notesDirFor(paneCwd: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
   return paneCwd ? join(paneCwd, ...NOTES_SUBDIR.split('/')) : userNotesDir(env)
@@ -95,14 +112,15 @@ export interface PreparedNote {
  * unique, the empty file is written (the tab has a name and the watcher a file from the first moment). In a
  * repository without `.tether/` in `.gitignore`, says which repository, unless `declined` has it.
  */
-export function prepareNote(paneCwd: string | undefined, opts: { env?: NodeJS.ProcessEnv; now?: Date; declined?: readonly string[] } = {}): PreparedNote {
-  const dir = notesDirFor(paneCwd, opts.env)
+export function prepareNote(paneCwd: string | undefined, opts: { env?: NodeJS.ProcessEnv; now?: Date; declined?: readonly string[]; dir?: string } = {}): PreparedNote {
+  // `dir`: the folder exactly ("Minhas notas", "Outro"); the `.gitignore` question is only for a project's own `.tether/`.
+  const dir = opts.dir ?? notesDirFor(paneCwd, opts.env)
   mkdirSync(dir, { recursive: true })
   const name = uniqueFileName(noteFileName(opts.now), candidate => existsSync(join(dir, candidate)))
   const path = join(dir, name)
   writeTextAtomic(path, '')
   const out: PreparedNote = { path }
-  if (paneCwd) {
+  if (paneCwd && !opts.dir) {
     const root = findGitRoot(paneCwd)
     if (root && gitignoreStatus(root) === 'missing' && !(opts.declined ?? []).some(d => sameDir(d, root))) out.askGitignore = root
   }

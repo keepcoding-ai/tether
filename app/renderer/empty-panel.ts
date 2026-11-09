@@ -8,11 +8,12 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import type { Choice } from './chooser-rules.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
 import { icon } from './icons.ts'
+import type { ChooserDestination } from './ext-api.ts'
 import { EMPTY_TITLE, emptyOrigin, emptyParams, type EmptyOrigin } from '../shared/empty.ts'
 
 export interface EmptyHost extends ChooserHost {
   /** The person picked: the host opens it in this pane's place. Resolves with an error message to show, or nothing. */
-  fill(panel: EmptyPanel, choice: Choice, cwd: string): Promise<string | undefined>
+  fill(panel: EmptyPanel, choice: Choice, cwd: string, destination?: ChooserDestination): Promise<string | undefined>
   /** Esc / Cancelar with nothing left to undo: close the pane (`add`) or give the keyboard back (`layout`). */
   cancel(panel: EmptyPanel, origin: EmptyOrigin): void
   /** The ⤢: the same chooser as a popup, with this state; the popup hands the pick (or the state) back to the pane. */
@@ -61,7 +62,7 @@ export class EmptyPanel implements IContentRenderer {
       mode: 'pane',
       origin: this.origin,
       state,
-      onOpen: (choice, cwd) => this.host.fill(this, choice, cwd),
+      onOpen: (choice, cwd, _where, destination) => this.host.fill(this, choice, cwd, destination),
       onCancel: () => this.host.cancel(this, this.origin),
       onExpand: s => this.host.expand(this, s),
     })

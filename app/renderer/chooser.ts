@@ -15,6 +15,8 @@ import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import { defaultOf } from './profiles.ts'
 import { LEVELS } from './shortcuts.ts'
 import { UNSAFE_LABEL, UNSAFE_TOOLTIP } from './panel.ts'
+import type { ChooserDestination, ChooserDestinationOption, ChooserDestinations } from './ext-api.ts'
+import { folderSuffix } from '../shared/tether-folder.ts'
 
 const ICON_SET = new Set<string>(ICON_NAMES)
 const iconEl = (name: string): SVGSVGElement => icon((ICON_SET.has(name) ? name : 'question') as IconName)
@@ -32,6 +34,8 @@ export interface ChooserHost {
   pickFolder(initial?: string): Promise<string | null>
   /** "Gerenciar perfis…" / "Criar perfil…". */
   openProfiles(id?: string): void
+  /** The destination choices of an item kind (the note's "Nova nota"); none for the other items. */
+  destinations?(kind: string): ChooserDestinations | undefined
 }
 
 /** What travels between a pane's chooser and its focus-mode popup (and what a test reads). */
@@ -56,7 +60,7 @@ export interface ChooserOptions {
   offerEmpty?: boolean
   state?: Partial<ChooserState>
   /** The pick: resolves with an error message to show (the chooser stays), or nothing (the host replaced / added the pane). */
-  onOpen(choice: Choice, cwd: string, where: Target | undefined): Promise<string | undefined>
+  onOpen(choice: Choice, cwd: string, where: Target | undefined, destination?: ChooserDestination): Promise<string | undefined>
   onCancel(): void
   /** The ⤢: open the same chooser in focus mode with this state (pane mode only). */
   onExpand?(state: ChooserState): void
@@ -110,6 +114,16 @@ export class Chooser {
   private recentsOpen = false
   private whereOpen = false
   private disposed = false
+  private readonly dest: HTMLElement
+  private readonly destChips: HTMLElement
+  private readonly destNote: HTMLElement
+  private readonly folderSfx: HTMLElement
+  private readonly browseBtn: HTMLButtonElement
+  /** The destination picked per item kind (loaded from the item's last one the first time it is highlighted). */
+  private readonly destByKind = new Map<string, { id: ChooserDestination; warning?: string }>()
+  private readonly destLoading = new Set<string>()
+  /** A `fixed` option's folder, once asked. */
+  private readonly fixedFolders = new Map<string, string>()
 
   constructor(host: ChooserHost, opts: ChooserOptions) {
     this.host = host
@@ -161,15 +175,28 @@ export class Chooser {
     this.folderInput.type = 'text'; this.folderInput.spellcheck = false; this.folderInput.autocomplete = 'off'; this.folderInput.placeholder = 'D:\\projetos\\meu-app'
     this.folderInput.setAttribute('aria-label', 'Pasta')
     this.folderTag = el('span', 'tag', 'do perfil'); this.folderTag.title = 'A pasta própria deste perfil; edite para usar outra'
-    const path = el('div', 'ch-path', this.folderInput, this.folderTag)
+    // The grey suffix after the typed text (a destination's `.tether\\notes`): beside the text, never below it (nothing moves).
+    this.folderSfx = el('span', 'ch-sfx'); this.folderSfx.hidden = true
+    const path = el('div', 'ch-path', this.folderInput, this.folderSfx, this.folderTag)
+    path.addEventListener('mousedown', ev => { if (ev.target === path || ev.target === this.folderSfx) { ev.preventDefault(); this.folderInput.focus() } })
     this.recentsBtn = button('ib ch-rec', 'Pastas recentes'); this.recentsBtn.setAttribute('aria-expanded', 'false'); this.recentsBtn.setAttribute('aria-haspopup', 'listbox')
     this.recentsBtn.append(iconEl('caret-down'))
     const browse = button('ib ch-browse', 'Procurar…'); browse.append(iconEl('folder-open'))
+    this.browseBtn = browse
     this.recentsList = el('ul', 'ch-recents'); this.recentsList.hidden = true; this.recentsList.setAttribute('role', 'listbox'); this.recentsList.setAttribute('aria-label', 'Pastas recentes')
     const folder = el('div', 'ch-folder', iconEl('folder'), path, this.recentsBtn, browse, this.recentsList)
     folder.querySelector('svg')!.classList.add('fo')
 
-    const row = el('div', 'ch-row', folder)
+    // The destination of a new file (only items with destinations: "Nova nota"); hidden for every other item.
+    this.destChips = el('div', 'ch-dest-chips'); this.destChips.setAttribute('role', 'radiogroup'); this.destChips.setAttribute('aria-label', 'Salvar em')
+    this.destNote = el('span', 'ch-dest-note'); this.destNote.hidden = true
+    this.dest = el('div', 'ch-dest', el('span', 'lbl', 'Salvar em'), this.destChips, this.destNote); this.dest.hidden = true
+    this.destChips.addEventListener('click', ev => {
+      const chip = (ev.target as HTMLElement).closest<HTMLElement>('.ch-dest-chip')
+      if (chip) this.setDest(chip.dataset.dest!)
+    })
+
+    const row = el('div', 'ch-row', this.dest, folder)
     if (opts.where) {
       this.whereSum = button('where-sum'); this.whereSum.setAttribute('aria-expanded', 'false')
       this.placements = el('div', 'placements'); this.placements.hidden = true
@@ -205,13 +232,19 @@ export class Chooser {
 
     // ---- wiring ----
     this.query.addEventListener('input', () => { this.state.query = this.query.value; this.state.highlight = undefined; this.render() })
-    this.folderInput.addEventListener('input', () => { this.state.folder = this.folderInput.value; this.state.touched = true; this.openRecents(this.folderInput.value); this.paintFolderTag() })
-    this.folderInput.addEventListener('focus', () => { this.folderInput.value = this.effective().folder })
+    this.folderInput.addEventListener('input', () => { this.state.folder = this.folderInput.value; this.state.touched = true; this.openRecents(this.folderInput.value); this.paintFolderTag(); this.paintSuffix() })
+    this.folderInput.addEventListener('focus', () => { if (!this.fixedOption()) { this.folderInput.value = this.effective().folder; this.paintSuffix() } })
     this.folderInput.addEventListener('blur', () => { setTimeout(() => { if (this.disposed) return; if (!this.recentsList.contains(document.activeElement)) { this.closeRecents(); this.paintFolder() } }, 120) })
     this.folderInput.addEventListener('keydown', ev => this.onFolderKey(ev))
-    this.recentsBtn.addEventListener('mousedown', ev => { ev.preventDefault(); if (this.recentsOpen) this.closeRecents(); else { this.folderInput.focus(); this.openRecents('') } })
+    this.recentsBtn.addEventListener('mousedown', ev => { ev.preventDefault(); if (this.fixedOption()) return; if (this.recentsOpen) this.closeRecents(); else { this.folderInput.focus(); this.openRecents('') } })
     this.recentsList.addEventListener('mousedown', ev => { const li = (ev.target as HTMLElement).closest<HTMLElement>('li[data-folder]'); if (!li) return; ev.preventDefault(); this.pickFolder(li.dataset.folder!) })
-    browse.addEventListener('click', () => { void this.browse() })
+    browse.addEventListener('click', () => {
+      const fixed = this.fixedOption()
+      if (!fixed) { void this.browse(); return }
+      // The settings page opens as a tab: the popup steps aside so it is not hidden behind it.
+      this.destProvider()?.provider.configure(fixed.id)
+      if (this.opts.mode === 'popup') this.opts.onCancel()
+    })
     root.addEventListener('keydown', ev => this.onKey(ev))
 
     this.query.value = this.state.query
@@ -330,13 +363,117 @@ export class Chooser {
   }
 
   private paintFolder(): void {
-    if (document.activeElement !== this.folderInput) this.folderInput.value = this.effective().folder
-    this.folderInput.title = this.effective().folder
+    if (!this.fixedOption()) {
+      if (document.activeElement !== this.folderInput) this.folderInput.value = this.effective().folder
+      this.folderInput.title = this.effective().folder
+    }
     this.paintFolderTag()
+    this.paintDest()
   }
 
   private paintFolderTag(): void {
-    this.folderTag.hidden = !this.effective().fromProfile
+    this.folderTag.hidden = !this.effective().fromProfile || !!this.fixedOption()
+  }
+
+  // ---------- the destination (items with destinations only) ----------
+
+  private destProvider(): { kind: string; provider: ChooserDestinations } | undefined {
+    const cur = this.highlighted()
+    const provider = cur && cur.kind !== 'profile' ? this.host.destinations?.(cur.kind) : undefined
+    return cur && provider ? { kind: cur.kind, provider } : undefined
+  }
+
+  /** The option in use for the highlighted item; undefined for an item without destinations. */
+  private currentOption(): ChooserDestinationOption | undefined {
+    const p = this.destProvider()
+    if (!p) return undefined
+    const id = this.destByKind.get(p.kind)?.id
+    return p.provider.options.find(o => o.id === id) ?? p.provider.options[0]
+  }
+
+  private currentDest(): ChooserDestination | undefined { return this.currentOption()?.id }
+
+  /** The option in use when it is `fixed` (the field read only, the folder button configures). */
+  private fixedOption(): ChooserDestinationOption | undefined {
+    const o = this.currentOption()
+    return o?.folder === 'fixed' ? o : undefined
+  }
+
+  private paintDest(): void {
+    const p = this.destProvider()
+    this.dest.hidden = !p
+    if (p && !this.destByKind.has(p.kind) && !this.destLoading.has(p.kind)) {
+      this.destLoading.add(p.kind)
+      void p.provider.initial().then(r => {
+        this.destLoading.delete(p.kind)
+        if (this.disposed || this.destByKind.has(p.kind)) return
+        this.destByKind.set(p.kind, { id: r.id, ...(r.warning ? { warning: r.warning } : {}) })
+        // A remembered folder (the last "Outro") is a folder the person chose: kept as is.
+        if (r.folder && !this.state.touched) { this.state.folder = r.folder; this.state.touched = true }
+        this.paintFolder()
+      }, () => { this.destLoading.delete(p.kind) })
+    }
+    const opt = this.currentOption()
+    const fixed = opt?.folder === 'fixed' ? opt : undefined
+    // The folder field: read only with the fixed folder, or the person's field as always.
+    this.folderInput.readOnly = !!fixed
+    this.folderInput.closest('.ch-folder')?.classList.toggle('ro', !!fixed)
+    this.recentsBtn.hidden = !!fixed
+    this.browseBtn.replaceChildren(iconEl(fixed ? 'gear-six' : 'folder-open'))
+    const browseTitle = fixed ? fixed.configureTitle ?? 'Configurar' : 'Procurar…'
+    this.browseBtn.title = browseTitle; this.browseBtn.setAttribute('aria-label', browseTitle)
+    if (fixed && p) {
+      const known = this.fixedFolders.get(fixed.id)
+      this.folderInput.value = known ?? ''
+      this.folderInput.title = known ?? ''
+      if (known === undefined) void p.provider.fixedFolder(fixed.id).then(f => { if (this.disposed) return; this.fixedFolders.set(fixed.id, f); if (this.fixedOption()?.id === fixed.id) { this.folderInput.value = f; this.folderInput.title = f } })
+    } else if (this.folderInput.readOnly === false && document.activeElement !== this.folderInput) {
+      this.folderInput.value = this.effective().folder
+    }
+    this.paintSuffix()
+    if (!p || !opt) return
+    const active = document.activeElement as HTMLElement | null
+    const focused = active?.classList.contains('ch-dest-chip') ? active.dataset.dest : undefined
+    this.destChips.replaceChildren()
+    for (const o of p.provider.options) {
+      const on = o.id === opt.id
+      const b = button('ch-dest-chip'); b.dataset.dest = o.id; b.textContent = o.label
+      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); b.tabIndex = on ? 0 : -1
+      if (o.title) b.title = o.title
+      this.destChips.append(b)
+    }
+    if (focused) this.destChips.querySelector<HTMLElement>(`[data-dest="${CSS.escape(focused)}"]`)?.focus()
+    const warning = this.destByKind.get(p.kind)?.warning
+    this.destNote.hidden = !warning
+    this.destNote.replaceChildren(...(warning ? [iconEl('warning'), el('span', undefined, warning)] : []))
+    this.destNote.title = warning ?? ''
+  }
+
+  /** The grey folders after the typed text (an `edit` option's suffix), in the separator the person types. */
+  private paintSuffix(): void {
+    const opt = this.currentOption()
+    const text = opt?.folder === 'edit' && opt.suffix ? folderSuffix(this.folderInput.value, opt.suffix) : ''
+    this.folderSfx.textContent = text
+    this.folderSfx.hidden = !text
+    this.folderInput.closest('.ch-path')?.classList.toggle('has-sfx', !!text)
+  }
+
+  private setDest(id: ChooserDestination): void {
+    const p = this.destProvider()
+    if (!p) return
+    this.destByKind.set(p.kind, { id })
+    this.closeRecents()
+    this.paintFolder()
+  }
+
+  /** Left/right on a destination chip: the neighbour becomes the destination (a radio group). */
+  private moveDest(step: number): void {
+    const chips = [...this.destChips.querySelectorAll<HTMLElement>('.ch-dest-chip')]
+    const i = chips.findIndex(c => c === document.activeElement)
+    const next = chips[(i + step + chips.length) % chips.length]
+    if (!next) return
+    this.setDest(next.dataset.dest!)
+    this.destChips.querySelector<HTMLElement>(`[data-dest="${CSS.escape(next.dataset.dest!)}"]`)?.focus()
   }
 
   private paintGo(): void {
@@ -447,6 +584,7 @@ export class Chooser {
         return
       case 'ArrowDown':
         ev.preventDefault(); ev.stopPropagation()
+        if (this.fixedOption()) return
         if (this.recentsOpen) this.moveRecents(1); else this.openRecents(this.folderInput.value)
         return
       case 'ArrowUp':
@@ -478,13 +616,15 @@ export class Chooser {
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return // the app's chords
     const target = ev.target as HTMLElement
     const inSearch = target === this.query || target === this.element || target === this.list
+    if (target.closest('.ch-dest-chips') && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) { ev.preventDefault(); ev.stopPropagation(); this.moveDest(ev.key === 'ArrowLeft' ? -1 : 1); return }
     switch (ev.key) {
       case 'ArrowDown': ev.preventDefault(); ev.stopPropagation(); this.move(1); return
       case 'ArrowUp': ev.preventDefault(); ev.stopPropagation(); this.move(-1); return
       case 'PageDown': ev.preventDefault(); ev.stopPropagation(); this.move(PAGE); return
       case 'PageUp': ev.preventDefault(); ev.stopPropagation(); this.move(-PAGE); return
       case 'Enter':
-        if (target.closest('button') && !target.closest('.go')) return // the focused button takes it
+        // The focused button takes it; a destination chip is already applied, so Enter there creates.
+        if (target.closest('button') && !target.closest('.go') && !target.classList.contains('ch-dest-chip')) return
         ev.preventDefault(); ev.stopPropagation()
         void this.open(this.highlighted())
         return
@@ -522,7 +662,7 @@ export class Chooser {
     this.setError(undefined)
     this.setBusy(true)
     try {
-      const error = await this.opts.onOpen(choice, cwd, this.opts.where ? this.state.where : undefined)
+      const error = await this.opts.onOpen(choice, cwd, this.opts.where ? this.state.where : undefined, this.currentDest())
       if (!this.disposed && error) this.setError(error)
     } finally {
       if (!this.disposed) this.setBusy(false)

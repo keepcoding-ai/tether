@@ -17,6 +17,7 @@ import { editorChordCommand, editorKeybindings, runEditorChord } from '../../app
 import type { FixedBinding } from '../../app/renderer/keybindings-rules.ts'
 import { fileOpenFailedSituation, type OpenFileOptions } from '../../app/renderer/file-open.ts'
 import { isHtmlPath, isPreviewablePath, newPreviewPanelId, withPreview } from '../../app/shared/preview.ts'
+import { stripTether } from '../../app/shared/tether-folder.ts'
 import { cleanNoteName, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, rebasePath, withNote } from '../../app/shared/notes.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { noteConflictSituation, noteGitignoreSituation } from './situations.ts'
@@ -102,10 +103,17 @@ export function activate(ui: TetherUi): IDisposable[] {
     await ipc.invoke('gitignore', repoRoot, answer.choice === 'add')
   }
 
-  /** "Nova nota": a file under the active pane's folder (`.tether/notes/`), opened beside it; in a git repository, the `.gitignore` question once. */
+  /**
+   * "Nova nota" (menu, palette): at the last destination used — the active pane's project (`.tether/notes/`, the folder
+   * cut at `.tether`), "Minhas notas", or the last "Outro" folder — opened beside it; in a git repository, the
+   * `.gitignore` question once.
+   */
   async function newNote(): Promise<void> {
     const reference = activeId()
-    const prepared = await ipc.invoke('prepare', paneCwdForNote())
+    const last = await ipc.invoke('destination')
+    const paneCwd = paneCwdForNote()
+    const cwd = last.id === 'other' ? last.folder : paneCwd ? stripTether(paneCwd) : undefined
+    const prepared = await ipc.invoke('prepare', cwd, last.id)
     const panel = addNotePanel(prepared.path, reference)
     requestAnimationFrame(() => ui.panes.focus(panel.id))
     if (prepared.askGitignore) {
@@ -445,10 +453,21 @@ export function activate(ui: TetherUi): IDisposable[] {
   // ---------- chooser items ----------
 
   subs.push(
-    ui.chooser.resolve('note-new', async cwd => {
-      const prepared = await ipc.invoke('prepare', cwd || undefined)
+    ui.chooser.resolve('note-new', async (cwd, destination) => {
+      const prepared = await ipc.invoke('prepare', cwd || undefined, destination === 'home' || destination === 'other' ? destination : 'project')
       const repo = prepared.askGitignore
       return { options: notePanelOptions(prepared.path), ...(repo ? { after: () => askGitignore(repo) } : {}) }
+    }),
+    // Where "Nova nota" writes (Guga, 09/11): the project's notes, "Minhas notas" (the setting), or a folder as chosen.
+    ui.chooser.destinations('note-new', {
+      options: [
+        { id: 'project', label: 'Notas do projeto', title: 'Na pasta do projeto, em .tether\\notes', folder: 'edit', suffix: ['.tether', 'notes'] },
+        { id: 'home', label: 'Minhas notas', title: 'Na pasta das suas notas (Configurações)', folder: 'fixed', configureTitle: 'Configurar a pasta das minhas notas' },
+        { id: 'other', label: 'Outro', title: 'Exatamente na pasta escolhida', folder: 'edit' },
+      ],
+      initial: () => ipc.invoke('destination'),
+      fixedFolder: () => ipc.invoke('personalFolder'),
+      configure: () => ui.configuration.reveal('extensions.note.personalFolder'),
     }),
     ui.chooser.resolve('note-open', async cwd => {
       const picked = await ipc.invoke('pickOpen', cwd || undefined)

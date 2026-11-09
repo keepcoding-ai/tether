@@ -51,7 +51,7 @@ import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneT
 import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
-import type { ChoiceResolution, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -93,7 +93,10 @@ const paneTypes = new PaneRegistry<PaneType>()
 const themeListeners = new Set<(scheme: ThemeState['scheme']) => void>()
 const appearanceListeners = new Set<(a: TerminalAppearance) => void>()
 /** The chooser items extensions contribute, by item id: what picking one opens (TetherUi.chooser). */
-const chooserResolvers = new Map<string, (cwd: string) => Promise<ChoiceResolution>>()
+const chooserResolvers = new Map<string, (cwd: string, destination?: ChooserDestination) => Promise<ChoiceResolution>>()
+const chooserDestinations = new Map<string, ChooserDestinations>()
+/** The settings page's "show this setting" (the settings-screen extension registers it). */
+let settingsRevealer: ((key: string) => void) | undefined
 /** The panes standing in for a disabled extension's saved panes (app/renderer/disabled-pane.ts). */
 const placeholders = new Map<string, DisabledPane>()
 /** Error of the last refused `start` per slot (the daemon does not store `already-open` / `unconfirmed`). */
@@ -1835,7 +1838,7 @@ function newEmptyDesk(): void {
  * what an extension's item resolves into (a note file prepared or picked). `undefined` when nothing is to be added (a file dialog cancelled, a note
  * already open and now focused); `{ error }` with the message to show in the chooser.
  */
-async function resolveChoice(choice: Choice, cwd: string): Promise<{ options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined> {
+async function resolveChoice(choice: Choice, cwd: string, destination?: ChooserDestination): Promise<{ options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined> {
   if (choice.profile) {
     const reply = await window.tether.request({ t: 'create', kind: choice.profile.agent, cwd, start: true, profileId: choice.profile.id })
     if (reply.t === 'error' || !reply.slot) return { error: reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot' }
@@ -1851,7 +1854,7 @@ async function resolveChoice(choice: Choice, cwd: string): Promise<{ options: Ad
   // An item an extension contributes (the note's "Nova nota", "Abrir nota…"): its own resolver.
   const resolve = chooserResolvers.get(choice.kind)
   if (!resolve) return { error: 'Este item vem de uma extensão que não está ligada.' }
-  const r = await resolve(cwd)
+  const r = await resolve(cwd, destination)
   if (r && !('error' in r) && cwd) await window.tether.rememberFolder(cwd)
   return r
 }
@@ -1863,18 +1866,21 @@ const chooserHost: ChooserHost = {
   recentFolders: () => window.tether.recentFolders(),
   pickFolder: initial => window.tether.pickFolder(initial),
   openProfiles: id => openProfiles(id),
+  destinations: kind => chooserDestinations.get(kind),
 }
 
 /** What the empty panes need from the renderer. */
 const emptyHost: EmptyHost = {
   ...chooserHost,
-  fill: async (panel, choice, cwd) => {
-    const r = await resolveChoice(choice, cwd)
+  fill: async (panel, choice, cwd, destination) => {
+    const r = await resolveChoice(choice, cwd, destination)
     if (!r) return undefined
     if ('error' in r) return r.error
     const old = findPanel(panel.id)
     // The pane went away while the daemon answered: what was chosen still opens, where the person is.
-    const replaced = old ? (inDrawer(panel.id) ? drawer.desk : desks).replacePanel(panel.id, r.options) : undefined
+    // The pane is replaced where it lives: a pad's frames, the drawer, or a desk.
+    const holder = framePadOf(panel.id)?.desk ?? (inDrawer(panel.id) ? drawer.desk : desks)
+    const replaced = old ? holder.replacePanel(panel.id, r.options) : undefined
     const added = replaced ?? addPaneOptions(r.options)
     added.api.setActive()
     scheduleSave()
@@ -2055,14 +2061,14 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
     ...(!ctx && reference ? { where: { refName: paneDisplayName(reference), initial: opts.target ?? { level: 'pane', placement: 'within' } } } : {}),
     offerEmpty: !ctx,
     state: ctx ? ctx.state : { ...(wanted ? { highlight: wanted.id } : {}), touched: !!opts.cwd },
-    onOpen: async (choice, cwd, where) => {
+    onOpen: async (choice, cwd, where, destination) => {
       if (ctx) {
-        const error = await emptyHost.fill(ctx.panel, choice, cwd)
+        const error = await emptyHost.fill(ctx.panel, choice, cwd, destination)
         if (error) return error
         closeNewDialog()
         return undefined
       }
-      const r = await resolveChoice(choice, cwd)
+      const r = await resolveChoice(choice, cwd, destination)
       if (!r) return undefined // a file dialog cancelled (the chooser stays), or a note already open (now focused)
       if ('error' in r) return r.error
       closeNewDialog()
@@ -3238,6 +3244,8 @@ function activateRendererExtensions(): void {
           if (r.ok) await openFile(fileOpenHost, r.path, { side: false, root: '', source: true })
           else console.error(`settings.json: ${r.message}`)
         },
+        reveal: key => { if (settingsRevealer) settingsRevealer(key); else console.error(`configurações: nenhuma tela para mostrar ${key}`) },
+        onReveal: handler => { settingsRevealer = handler; return add(toDisposable(() => { if (settingsRevealer === handler) settingsRevealer = undefined })) },
       },
       menus: {
         app: (item: RegistryMenuItem<CommandContext>) => add(menuRegistry.appendMenuItem(MenuId.App, item as RegistryMenuItem)),
@@ -3268,6 +3276,11 @@ function activateRendererExtensions(): void {
           if (!manifest.contributes?.chooser?.items.some(i => i.id === itemId)) throw new Error(`item do seletor não declarado no manifesto de ${id}: ${itemId}`)
           chooserResolvers.set(itemId, fn)
           return add(toDisposable(() => { if (chooserResolvers.get(itemId) === fn) chooserResolvers.delete(itemId) }))
+        },
+        destinations: (itemId, d) => {
+          if (!manifest.contributes?.chooser?.items.some(i => i.id === itemId)) throw new Error(`item do seletor não declarado no manifesto de ${id}: ${itemId}`)
+          chooserDestinations.set(itemId, d)
+          return add(toDisposable(() => { if (chooserDestinations.get(itemId) === d) chooserDestinations.delete(itemId) }))
         },
       },
       status: {

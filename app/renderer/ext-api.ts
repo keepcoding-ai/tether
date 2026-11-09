@@ -106,6 +106,38 @@ export interface PadView {
 /** What a chooser item resolves into: the pane to add (and what runs once it is there), nothing (cancelled), or an error to show. */
 export type ChoiceResolution = { options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined
 
+/** The id of the destination option picked in the chooser (the note's 'project', 'home', 'other'). */
+export type ChooserDestination = string
+
+/**
+ * One destination option of a chooser item. `edit`: the chooser's folder field is the destination's folder, editable
+ * (with `suffix`, the folders added after it, shown grey after the text). `fixed`: the field shows `fixedFolder`, read
+ * only, and its folder button calls `configure` instead of browsing.
+ */
+export interface ChooserDestinationOption {
+  id: string
+  label: string
+  title?: string
+  folder: 'edit' | 'fixed'
+  suffix?: readonly string[]
+  /** The tooltip of the folder button of a `fixed` option. */
+  configureTitle?: string
+}
+
+/**
+ * The destination choices of a chooser item (only the note's "Nova nota" has them): a row of options above the folder
+ * field while the item is highlighted; other items keep the band as it is.
+ */
+export interface ChooserDestinations {
+  options: readonly ChooserDestinationOption[]
+  /** What comes selected (the last one used), a folder for the field (a remembered `edit` folder), and a warning when the last one could not be kept. */
+  initial(): Promise<{ id: string; folder?: string; warning?: string }>
+  /** The folder a `fixed` option shows. */
+  fixedFolder(id: string): Promise<string>
+  /** The folder button of a `fixed` option. */
+  configure(id: string): void
+}
+
 export interface TetherUi {
   /** The extension's id. */
   readonly id: string
@@ -199,6 +231,10 @@ export interface TetherUi {
     fileState(): Promise<SettingsFileState>
     /** "Abrir settings.json": the file in an editor tab (an empty `{}` is created first when absent). */
     openFile(): Promise<void>
+    /** Opens the settings page on one setting (its full key): the page comes forward, scrolls to it and focuses it. */
+    reveal(key: string): void
+    /** The settings page's side of `reveal` (one handler; the last registered wins). */
+    onReveal(handler: (key: string) => void): IDisposable
   }
   menus: {
     /** An item of the ≡ menu; the core fixes the group order (app/renderer/app-menu.ts APP_MENU_GROUPS). */
@@ -240,7 +276,9 @@ export interface TetherUi {
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */
-    resolve(itemId: string, fn: (cwd: string) => Promise<ChoiceResolution>): IDisposable
+    resolve(itemId: string, fn: (cwd: string, destination?: ChooserDestination) => Promise<ChoiceResolution>): IDisposable
+    /** The destination choices of the item `itemId` (the chooser shows them while it is highlighted). */
+    destinations(itemId: string, destinations: ChooserDestinations): IDisposable
   }
   /**
    * The top bar's status icons (left of the connection icon). The manifest declares the icon (`contributes.status`); this

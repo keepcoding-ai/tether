@@ -7,7 +7,8 @@
 import { dialog } from 'electron'
 import { join } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
-import { addTetherToGitignore, NoteWatchers, notesDirFor, prepareNote, readNote, renameNote, writeNote } from '../../app/main/note-files.ts'
+import { existsSync, statSync } from 'node:fs'
+import { addTetherToGitignore, isDestinationId, NoteWatchers, notesDirFor, personalNotesDir, prepareNote, readNote, renameNote, writeNote, type NoteDestinationId } from '../../app/main/note-files.ts'
 import { guardHtmlPreviews, openHtmlInBrowser } from '../../app/main/html-preview-main.ts'
 import { NOTE_EXTENSION } from '../../app/shared/notes.ts'
 import { canonicalDir } from '../../src/core/paths.ts'
@@ -25,8 +26,31 @@ export function activate(main: TetherMain): IDisposable[] {
     const list = main.state.get<unknown>('gitignoreDeclined')
     return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : []
   }
+  const personal = (): string => personalNotesDir(main.settings.get<string>('personalFolder'))
+  /** The destination the chooser starts on: the last one used; a remembered "Outro" folder that is gone falls back to the project's, with a warning. */
+  const lastDestination = (): { id: NoteDestinationId; folder?: string; warning?: string } => {
+    const last = main.state.get<{ id?: unknown; folder?: unknown }>('lastDestination')
+    const id = isDestinationId(last?.id) ? last.id : 'project'
+    if (id !== 'other') return { id }
+    const folder = typeof last?.folder === 'string' ? last.folder : ''
+    let exists = false
+    try { exists = !!folder && existsSync(folder) && statSync(folder).isDirectory() } catch { /* unreachable drive */ }
+    return exists ? { id, folder } : { id: 'project', warning: 'A pasta usada da última vez não foi encontrada.' }
+  }
   return [
-    ipc.handle('prepare', paneCwd => prepareNote(isPath(paneCwd) ? canonicalDir(paneCwd) : undefined, { declined: declined() })),
+    // A new note's file. With a destination (the chooser, "Nova nota" of the menu), the destination is remembered once
+    // the file exists: the chooser offers it next time.
+    ipc.handle('prepare', (paneCwd, destination) => {
+      const cwd = isPath(paneCwd) ? canonicalDir(paneCwd) : undefined
+      if (!isDestinationId(destination)) return prepareNote(cwd, { declined: declined() })
+      const prepared = destination === 'home' ? prepareNote(undefined, { dir: personal() })
+        : destination === 'other' ? prepareNote(undefined, { dir: cwd ?? personal() })
+        : prepareNote(cwd, { declined: declined() })
+      main.state.update('lastDestination', destination === 'other' && cwd ? { id: destination, folder: cwd } : { id: destination })
+      return prepared
+    }),
+    ipc.handle('destination', () => lastDestination()),
+    ipc.handle('personalFolder', () => personal()),
     ipc.handle('read', path => isPath(path) ? readNote(path) : { ok: false, missing: false, message: 'Caminho inválido.' }),
     ipc.handle('write', (path, text) => isPath(path) && typeof text === 'string' ? writeNote(path, text) : { ok: false, message: 'Caminho inválido.' }),
     ipc.on('flush', (path, text) => { if (isPath(path) && typeof text === 'string') writeNote(path, text) }),
