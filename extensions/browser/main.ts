@@ -10,13 +10,14 @@ import { join } from 'node:path'
 import type { WebContents } from 'electron'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
-import { ControlHub } from './control.ts'
+import { ControlHub, type ControlView } from './control.ts'
+import { helpLine } from './control-rules.ts'
 import { type Gate, startGate } from './gate.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LocalNetworkGate } from './local-network.ts'
-import type { ActionKind } from './pad-rules.ts'
+import { type ActionKind, hostOf } from './pad-rules.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
-import { isWebUrl, savedTabOf } from './tab-rules.ts'
+import { isId, isWebUrl, savedTabOf } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 
 export { manifest } from './manifest.ts'
@@ -103,13 +104,25 @@ export function activate(main: TetherMain): IDisposable[] {
   const shieldOf = (tabId: string): void => {
     void registry.surface(tabId)?.setInputShield(control.control(tabId) === 'agent').catch(() => {})
   }
+  // E12: a pending help request also reaches the system tray (the same attention the terminals raise), until handed back.
+  const notices = new Map<string, { resolve(): void; update(message: string): void }>()
+  const syncNotice = (v: ControlView): void => {
+    const have = notices.get(v.tabId)
+    if (v.holder !== 'user' || (!v.ask && !v.askExpired)) { have?.resolve(); notices.delete(v.tabId); return }
+    const info = registry.get(v.tabId)
+    const message = helpLine(main.agents.get(info?.ownerSlotId ?? '')?.name || 'agente', hostOf(info?.url ?? ''), v.ask)
+    if (have) have.update(message)
+    else notices.set(v.tabId, main.notices.raise({ ...(info?.ownerSlotId ? { slotId: info.ownerSlotId } : {}), message }))
+  }
   const controlSubs: IDisposable[] = [
     registry.watch({
       added: info => { control.added(info.tabId, registry.opener(info.tabId)); shieldOf(info.tabId) },
-      closed: tabId => { control.closed(tabId); lastPulse.delete(tabId) },
+      closed: tabId => { control.closed(tabId); lastPulse.delete(tabId); notices.get(tabId)?.resolve(); notices.delete(tabId) },
     }),
-    control.onChange(v => { shieldOf(v.tabId); ipc.send('control', v) }),
+    control.onChange(v => { shieldOf(v.tabId); syncNotice(v); ipc.send('control', v) }),
     main.agents.onDidExit(e => control.agentExited(e.slotId)),
+    main.agents.onDidChange(a => ipc.send('agent', { slotId: a.slotId, name: a.name, alive: a.alive })),
+    { dispose: () => { for (const n of notices.values()) n.resolve(); notices.clear() } },
   ]
   const pulse = (tabId: string, kind: ActionKind): void => {
     const now = Date.now()
@@ -119,7 +132,7 @@ export function activate(main: TetherMain): IDisposable[] {
     lastPulse.set(tabId, { at: now, kind })
     ipc.send('activity', tabId, kind)
   }
-  const tabsOf = (slotId?: string): string[] => registry.list().filter(t => slotId === undefined || t.ownerSlotId === slotId).map(t => t.tabId)
+  const tabIdsOf = (ids: unknown): string[] => (Array.isArray(ids) ? ids.filter(isId).slice(0, 512) : [])
   const gateReady = startGate({ home: main.home, tabs: registry, control, activity: pulse, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {
     if (gateDisposed) g.dispose()
     else gate = g
@@ -133,7 +146,22 @@ export function activate(main: TetherMain): IDisposable[] {
       const saved = savedTabOf(raw)
       return saved ? (await registry.restore(saved)) ?? null : null
     }),
-    ipc.handle('close', tabId => { if (typeof tabId === 'string') registry.close(tabId) }),
+    ipc.handle('close', tabId => { if (typeof tabId === 'string') { registry.close(tabId); control.closed(tabId) } }),
+    ipc.handle('agents', () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive }))),
+    ipc.handle('logoutAll', async () => {
+      const ses = await session
+      await ses.session.clearStorageData()
+      await ses.session.clearAuthCache()
+      ses.flush()
+      const open = registry.list()
+      await Promise.all(open.map(async t => {
+        const wc = registry.webContents(t.tabId)
+        if (!wc || wc.isDestroyed()) return
+        await reloadAndWait(wc, url => registry.grantLocal(t.tabId, url))
+        await registry.surface(t.tabId)?.reapplyEmulation().catch(() => {})
+      }))
+      main.log(`sair de todas as contas: cookies e armazenamento limpos, ${open.length} ${open.length === 1 ? 'guia recarregada' : 'guias recarregadas'}`)
+    }),
     ipc.handle('status', async () => ({ persistentLogins: (await session).persistentLogins })),
     ipc.handle('localNetworkOpen', () => localGate.open()),
     ipc.handle('localNetworkAnswer', (id, choice) => { if (typeof id === 'string') localGate.answer(id, choice) }),
@@ -144,12 +172,12 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('back', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'back') }),
     ipc.handle('forward', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'forward') }),
     ipc.handle('reload', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'reload') }),
-    ipc.handle('pause', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.pause(tabId) }),
-    ipc.handle('resume', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.resume(tabId) }),
-    ipc.handle('pauseAll', () => control.pauseMany(tabsOf())),
-    ipc.handle('resumeAll', () => control.resumeMany(tabsOf())),
-    ipc.handle('pauseAgent', slotId => { if (typeof slotId === 'string') control.pauseMany(tabsOf(slotId)) }),
-    ipc.handle('resumeAgent', slotId => { if (typeof slotId === 'string') control.resumeMany(tabsOf(slotId)) }),
+    // E12: a tab restored from layout.json and not loaded yet has no entry in the registry; pausing it keeps the state in the hub,
+    // and the tab is born paused when the person shows it.
+    ipc.handle('pause', tabId => { if (isId(tabId)) control.pause(tabId) }),
+    ipc.handle('resume', tabId => { if (isId(tabId)) control.resume(tabId) }),
+    ipc.handle('pauseTabs', ids => control.pauseMany(tabIdsOf(ids))),
+    ipc.handle('resumeTabs', ids => control.resumeMany(tabIdsOf(ids))),
     ...controlSubs,
     { dispose: () => { gateDisposed = true; gate?.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
   ]

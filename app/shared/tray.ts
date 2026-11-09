@@ -11,7 +11,16 @@ export type TrayItem =
   | { kind: 'info'; label: string }
   /** A pane: clicking it opens the window focused on it. */
   | { kind: 'pane'; slotId: string; label: string; status: SlotStatus }
+  /** An extension's notice that wants the person (a help request): clicking it opens the window on the agent's pane, when it has one. */
+  | { kind: 'notice'; slotId?: string; label: string }
   | { kind: 'separator' }
+
+/** What an extension asks the tray to show (TetherMain.notices): the same attention the terminals' seal raises. */
+export interface TrayNotice {
+  id: string
+  slotId?: string
+  message: string
+}
 
 export interface TrayModel {
   items: TrayItem[]
@@ -63,13 +72,18 @@ function plural(n: number, one: string, many: string): string {
   return n === 1 ? `1 ${one}` : `${n} ${many}`
 }
 
-export function trayModel(slots: Iterable<SlotState>): TrayModel {
+export function trayModel(slots: Iterable<SlotState>, notices: readonly TrayNotice[] = []): TrayModel {
   const list = [...slots]
     .map((s, i) => ({ s, i }))
     .sort((a, b) => ORDER[a.s.status] - ORDER[b.s.status] || a.i - b.i)
     .map(x => x.s)
   const running = list.filter(s => s.status === 'running' || s.status === 'starting').length
   const items: TrayItem[] = [{ kind: 'command', id: 'open', label: 'Abrir tether' }, { kind: 'command', id: 'open-drawer', label: 'Abrir gaveta' }]
+  if (notices.length > 0) {
+    items.push({ kind: 'separator' })
+    for (const n of notices.slice(0, TRAY_PANE_LIMIT)) items.push({ kind: 'notice', ...(n.slotId ? { slotId: n.slotId } : {}), label: n.message })
+    if (notices.length > TRAY_PANE_LIMIT) items.push({ kind: 'info', label: `e mais ${notices.length - TRAY_PANE_LIMIT}` })
+  }
   if (list.length > 0) {
     items.push({ kind: 'separator' })
     for (const s of list.slice(0, TRAY_PANE_LIMIT)) {
@@ -84,7 +98,7 @@ export function trayModel(slots: Iterable<SlotState>): TrayModel {
     { kind: 'command', id: 'quit-keep', label: 'Sair (manter agentes)' },
     { kind: 'command', id: 'quit-all', label: 'Sair e encerrar tudo…' },
   )
-  const attention = list.filter(s => s.attention !== undefined).length
+  const attention = list.filter(s => s.attention !== undefined).length + notices.length
   let tooltip = running === 0 ? 'tether: nenhum agente rodando' : `tether: ${plural(running, 'agente rodando', 'agentes rodando')}`
   if (attention > 0) tooltip += ` · ${plural(attention, 'esperando você', 'esperando você')}`
   return { items, tooltip, running, attention, badge: attention > 0 ? 'attention' : running > 0 ? 'active' : 'none' }

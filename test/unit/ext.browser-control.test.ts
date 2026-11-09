@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ASK_MESSAGE_MAX, ASK_TIMEOUT_DEFAULT_MS, ASK_TIMEOUT_MAX_MS, ASK_TIMEOUT_MIN_MS, ASKS_PER_AGENT, checkAsk, cleanAskMessage, controlOf,
-  controlTexts, heldError, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack, type TabControl, transition,
+  controlTexts, heldError, helpLine, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack, type TabControl, transition,
 } from '../../extensions/browser/control-rules.ts'
 import { ControlHub, type ControlView } from '../../extensions/browser/control.ts'
 
@@ -189,4 +189,10 @@ test('control hub: pause many, resume many, popup inherits, listeners hear only 
   assert.equal(h.control('pop'), 'user')
   h.added('other', undefined)
   assert.equal(h.control('other'), 'agent')
+})
+
+test('helpLine: the line of a pending request where the person looks (seals, badges, tray)', () => {
+  assert.equal(helpLine('Sonda', 'github.com', { message: 'fazer login' }), 'Sonda pede ajuda em github.com: fazer login')
+  assert.equal(helpLine('Sonda', '', { message: 'fazer login' }), 'Sonda pede ajuda: fazer login')
+  assert.equal(helpLine('Sonda', 'github.com', undefined), 'Sonda espera você devolver a página')
 })

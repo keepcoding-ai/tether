@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ACTION_FRESH_MS, actionKindOf, buildPad, endedTabIds, lastActionText, padBadge, padCloseEnded, shortAddress, type PadAgentInfo, type PadTab,
+  ACTION_FRESH_MS, actionKindOf, buildPad, endedTabIds, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, padCloseEnded, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
 } from '../../extensions/browser/pad-rules.ts'
 
 const tab = (tabId: string, ownerSlotId: string, over: Partial<PadTab> = {}): PadTab =>
@@ -88,5 +88,51 @@ describe('browser pad: the last action in words', () => {
     assert.equal(shortAddress('https://github.com/'), 'github.com')
     assert.equal(shortAddress(`https://a.test/${'x'.repeat(100)}`).length, 48)
     assert.equal(shortAddress('about:blank'), 'about:blank')
+  })
+})
+
+describe('browser pad: the agent\'s real life (E12)', () => {
+  const slot = (alive: boolean) => ({ slotId: 'a', name: 'Slot A', alive })
+
+  test('closed pane with a live slot: the agent is not ended, and its tabs are not for "Fechar guias de agentes encerrados"', () => {
+    const info = resolveAgent(undefined, slot(true), true)
+    assert.deepEqual(info, { name: 'Slot A', alive: true })
+    assert.equal(isEnded(info), false)
+    assert.deepEqual(endedTabIds([tab('a1', 'a')], () => info), [])
+  })
+
+  test('open pane with an exited slot is ended; main\'s word on life wins over the pane\'s', () => {
+    assert.equal(isEnded(resolveAgent({ name: 'Sonda', alive: true }, slot(false), true)), true)
+    assert.equal(isEnded(resolveAgent({ name: 'Sonda', alive: false }, slot(true), true)), false)
+  })
+
+  test('no slot at all: ended, even with no pane (the slot is gone)', () => {
+    const info = resolveAgent(undefined, undefined, true)
+    assert.equal(isEnded(info), true)
+    assert.equal(info?.name, 'Agente')
+    assert.deepEqual(endedTabIds([tab('a1', 'a')], () => info), ['a1'])
+  })
+
+  test('the pane\'s name wins; before main answered the pane\'s word stands and nothing is ended by guess', () => {
+    assert.equal(resolveAgent({ name: 'Sonda', alive: true }, slot(true), true)?.name, 'Sonda')
+    assert.deepEqual(resolveAgent({ name: 'Sonda', alive: true }, undefined, false), { name: 'Sonda', alive: true })
+    assert.equal(resolveAgent(undefined, undefined, false), undefined)
+  })
+})
+
+describe('browser pad: where a pending request leads (E12)', () => {
+  test('the oldest request; none when nothing pends', () => {
+    assert.equal(oldestAsking([]), undefined)
+    assert.equal(oldestAsking([{ tabId: 'b', at: 30 }, { tabId: 'a', at: 10 }, { tabId: 'c', at: 20 }]), 'a')
+  })
+})
+
+describe('browser pad: logout of every account (E14)', () => {
+  test('the dialog carries the confirmation of the design and defaults to cancelling', () => {
+    const d = logoutDialog()
+    assert.equal(d.message, 'Todos os agentes perdem o acesso às contas logadas.')
+    assert.equal(d.title, 'Sair de todas as contas')
+    assert.equal(d.defaultChoice, 'cancel')
+    assert.equal(d.choices.find(c => c.id === 'logout')?.tone, 'destructive')
   })
 })

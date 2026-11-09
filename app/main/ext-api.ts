@@ -8,6 +8,7 @@ import type { IDisposable } from '../shared/vscode-lifecycle.ts'
 import type { Brand } from '../shared/brand.ts'
 import type { Rect, Size, Visibility } from './surface-rules.ts'
 import type { MainAgents } from './agents.ts'
+import type { MainNotices } from './tray-notices.ts'
 
 export type { Brand } from '../shared/brand.ts'
 export type { Rect, Size, Visibility } from './surface-rules.ts'
@@ -143,6 +144,12 @@ export interface TetherMain {
    * a live agent stops (its process ended, the slot was removed, or the daemon connection was lost).
    */
   agents: MainAgents
+  /**
+   * What reaches the system tray beyond the terminals' own attention: a line in the tray menu, the attention dot on its icon and
+   * the count in its tooltip, for as long as the notice stands. `slotId` is the agent whose pane a click opens. The extension owns
+   * only the notices it raised (they go with it).
+   */
+  notices: MainNotices
   /** The operating system's file shell. `trash` moves a file or folder to the system's trash (Electron's shell.trashItem); it rejects when it cannot. */
   shell: { trash(path: string): Promise<void> }
   /** A line in tether-app.log, prefixed with the extension's id. */

@@ -177,3 +177,12 @@ export const controlTexts = (agent: string) => ({
   pauseAgent: `Pausar as guias do ${agent}`,
   resume: 'Retomar',
 })
+
+/**
+ * The line of a pending help request where the person looks (the seals, the badges, the tray): "‹Agente› pede ajuda em ‹site›:
+ * ‹mensagem›". A request that ran out and was not handed back says the agent waits for the page.
+ */
+export function helpLine(agent: string, host: string, ask: { message: string } | undefined): string {
+  if (!ask) return controlTexts(agent).waiting
+  return host ? `${agent} pede ajuda em ${host}: ${ask.message}` : `${agent} pede ajuda: ${ask.message}`
+}

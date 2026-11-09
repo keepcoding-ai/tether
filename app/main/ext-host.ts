@@ -18,6 +18,7 @@ import { ConfigurationRegistry, withSetting, type ExtensionsSettings, type Setti
 import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
 import type { ExtSurfaces, TetherMain } from './ext-api.ts'
 import { AgentTracker, type MainAgents } from './agents.ts'
+import { type MainNotices, TrayNotices } from './tray-notices.ts'
 import { BRAND } from '../shared/brand.ts'
 
 import type { ExtSettingChange, MainExtensionsList } from '../shared/api.ts'
@@ -43,11 +44,14 @@ export interface MainHostDeps {
   surfaces?(owner: string): ExtSurfaces
   /** The agents main follows from the daemon (app/main/agents.ts); absent in the unit tests (an empty tracker). */
   agents?: MainAgents
+  /** The tray's notices (app/main/tray-notices.ts); absent in the unit tests (a private set). */
+  notices?: MainNotices
 }
 
 const noSurfaces: ExtSurfaces = { create: () => Promise.reject(new Error('superfícies indisponíveis')), get: () => undefined, list: () => [] }
 
 const noAgents: MainAgents = new AgentTracker()
+const noNotices: MainNotices = new TrayNotices(() => {})
 
 const KEY = /^[a-zA-Z0-9][a-zA-Z0-9.-]*$/
 const ID = /^[a-z0-9][a-z0-9-]*$/
@@ -173,6 +177,7 @@ export class MainExtensionHost {
       window: { current: () => deps.window() },
       surfaces: deps.surfaces ? deps.surfaces(id) : noSurfaces,
       agents: deps.agents ?? noAgents,
+      notices: deps.notices ?? noNotices,
       shell: { trash: path => (deps.trash ? deps.trash(path) : Promise.reject(new Error('lixeira indisponível'))) },
       log: msg => deps.log(`[${id}] ${msg}`),
     }

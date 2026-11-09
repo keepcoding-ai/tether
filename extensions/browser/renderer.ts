@@ -26,13 +26,13 @@ import { factsOf } from '../../app/renderer/surface-host.ts'
 import { hostVisible } from '../../app/shared/surface-panel-rules.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { ControlView } from './control.ts'
-import { controlTexts } from './control-rules.ts'
+import { controlTexts, helpLine } from './control-rules.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LOCAL_NETWORK_SITUATION, localNetworkDialog, type LocalNetworkAsk } from './local-network-rules.ts'
 import {
   ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, buildPad, endedTabIds, hostOf, isEnded, type LastAction, lastActionText,
   PAD_NONE_OF_AGENT, PAD_SHOW_ALL, PAD_WITH_YOU, type PadAgentInfo, padBadge, padCloseAgent, padCloseEnded, padFiltered, type PadModel, padResumeAgent,
-  padSeeAgent, type PadTab, padWhere, shortAddress,
+  logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, type PadTab, padWhere, resolveAgent, shortAddress,
 } from './pad-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
 import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, OFF_HELP, ownerChip, ownerHue, POPUPS_REFUSED, READ_ONLY_ADDRESS, RELOAD, shortName } from './rules.ts'
@@ -64,7 +64,15 @@ export function activate(ui: TetherUi): IDisposable[] {
   const ipc = ui.ipc<BrowserChannels>()
   const served = (): boolean => ui.settings.get<boolean>('serveToAgents') === true
   /** The agent's name as the texts use it. */
-  const agentName = (slotId: string | undefined): string => (slotId ? ui.agents.get(slotId)?.name : undefined) || 'agente'
+  const agentName = (slotId: string | undefined): string => (slotId ? agentOf(slotId)?.name : undefined) || 'agente'
+  /** E12: the agents' real life, as main's slots say it (a closed pane does not end an agent); `known` after the first answer. */
+  const slots = new Map<string, MainAgentView>()
+  let slotsKnown = false
+  /** The agent as the interface tells it: the pane's name, main's word on whether it lives. */
+  const agentOf = (slotId: string): PadAgentInfo | undefined => {
+    const pane = ui.agents.get(slotId)
+    return resolveAgent(pane ? { name: pane.name, alive: pane.alive } : undefined, slots.get(slotId), slotsKnown)
+  }
   /** Who has each tab (main's views, kept as they come). */
   const controls = new Map<string, ControlView>()
   let persistentLogins = true
@@ -98,7 +106,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   let padFilter: string | undefined
   /** The agents' last action per tab, from the gatekeeper's activity events. */
   const actions = new Map<string, LastAction>()
-  const agentInfo = (slotId: string): PadAgentInfo | undefined => { const a = ui.agents.get(slotId); return a ? { name: a.name, alive: a.alive } : undefined }
+  const agentInfo = (slotId: string): PadAgentInfo | undefined => agentOf(slotId)
   /** The tabs in the order their panes are on screen. */
   const padTabs = (): PadTab[] => {
     const order = ui.panes.all().map(p => p.id).filter(id => panels.has(id))
@@ -123,6 +131,12 @@ export function activate(ui: TetherUi): IDisposable[] {
     return b
   }
 
+  /** "Sair de todas as contas" (design §12a): asks first; the answer clears every login of every agent. */
+  const confirmLogout = async (): Promise<void> => {
+    const a = await ui.dialogs.ask(logoutDialog()).catch(() => undefined)
+    if (a?.choice === 'logout') await ipc.invoke('logoutAll').catch(() => {})
+  }
+
   const drawList = (root: HTMLElement, all: PadModel, model: PadModel): void => {
     const now = Date.now()
     const list = el('div', 'br-pad-list')
@@ -134,10 +148,11 @@ export function activate(ui: TetherUi): IDisposable[] {
     const bar = el('div', 'br-pad-bar')
     bar.dataset.role = 'controls'
     bar.append(
-      btn(t.pauseAll, 'pause-all', () => { void ipc.invoke('pauseAll') }, all.total === 0 || all.paused === all.total),
-      btn(t.resumeAll, 'resume-all', () => { void ipc.invoke('resumeAll') }, all.paused === 0),
+      btn(t.pauseAll, 'pause-all', () => { void ipc.invoke('pauseTabs', all$.map(x => x.tabId)) }, all.total === 0 || all.paused === all.total),
+      btn(t.resumeAll, 'resume-all', () => { void ipc.invoke('resumeTabs', all$.map(x => x.tabId)) }, all.paused === 0),
     )
     if (ended.length > 0) bar.append(btn(padCloseEnded(ended.length), 'close-ended', () => closeTabs(ended)))
+    bar.append(btn(PAD_LOGOUT_ALL, 'logout-all', () => { void confirmLogout() }))
     list.append(bar)
     if (padFilter !== undefined) {
       const f = el('div', 'br-pad-filter')
@@ -203,8 +218,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       const allPaused = g.paused === g.total && g.total > 0
       acts.append(
         allPaused
-          ? btn(padResumeAgent(g.name), 'resume-agent', () => { void ipc.invoke('resumeAgent', g.slotId) })
-          : btn(controlTexts(g.name).pauseAgent, 'pause-agent', () => { void ipc.invoke('pauseAgent', g.slotId) }),
+          ? btn(padResumeAgent(g.name), 'resume-agent', () => { void ipc.invoke('resumeTabs', all$.filter(x => x.ownerSlotId === g.slotId).map(x => x.tabId)) })
+          : btn(controlTexts(g.name).pauseAgent, 'pause-agent', () => { void ipc.invoke('pauseTabs', all$.filter(x => x.ownerSlotId === g.slotId).map(x => x.tabId)) }),
         btn(padCloseAgent(g.name), 'close-agent', () => closeTabs(all$.filter(x => x.ownerSlotId === g.slotId).map(x => x.tabId))),
       )
       sec.append(head, acts, ...g.tabs.map(row))
@@ -247,6 +262,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     }, 0)
   }
   let drawnSignature = ''
+  /** Set while the extension itself opens the pad ("Ver guias do ‹agente›"): that opening is not a click on the icon. */
+  let ownOpen = false
 
   class Pad implements PadView {
     readonly element = el('div', 'br-pad')
@@ -258,7 +275,11 @@ export function activate(ui: TetherUi): IDisposable[] {
       pads.add(this)
     }
     redraw(): void { drawPad(this.element) }
-    focus(): void { this.element.querySelector<HTMLElement>('button')?.focus() }
+    focus(): void {
+      // The icon was clicked (or the pad opened from the keyboard) with a help request pending: straight to the tab that asks.
+      if (!ownOpen && goToOldestAsk()) return
+      this.element.querySelector<HTMLElement>('button')?.focus()
+    }
     dispose(): void { this.sub.dispose(); pads.delete(this) }
   }
 
@@ -395,11 +416,12 @@ export function activate(ui: TetherUi): IDisposable[] {
       const tabId = this.info?.tabId ?? this.saved?.tabId
       const v = tabId ? controls.get(tabId) : undefined
       const t = controlTexts(agentName(this.saved?.ownerSlotId))
-      const control = this.info ? (v?.control ?? 'agent') : undefined
+      // A tab not loaded yet can be paused (E12): its state waits in main and applies when it loads.
+      const control = this.info ? (v?.control ?? 'agent') : v?.paused ? 'paused' : undefined
       this.paintNav()
       this.element.dataset.control = control ?? ''
       // E9: with the agent gone, the bar does not say it is using the tab (the chip says "encerrado" too).
-      const owner = this.saved ? ui.agents.get(this.saved.ownerSlotId) : undefined
+      const owner = this.saved ? agentOf(this.saved.ownerSlotId) : undefined
       this.ctlEl.textContent = control === 'agent' && owner && !owner.alive ? t.ended : control ? t[control] : ''
       const act = control === 'agent' ? ['take', t.take] : control === 'user' ? ['give-back', t.giveBack] : control === 'paused' ? ['resume', t.resume] : undefined
       this.actBtn.hidden = !act
@@ -427,7 +449,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.titleEl.textContent = title
       this.urlEl.textContent = displayUrl(url)
       this.urlEl.title = url.length <= 2048 && !/^data:/i.test(url) ? url : ''
-      dressChip(this.ownerEl, s?.ownerSlotId, s ? ui.agents.get(s.ownerSlotId) : undefined)
+      dressChip(this.ownerEl, s?.ownerSlotId, s ? agentOf(s.ownerSlotId) : undefined)
       const state = this.info ? (this.info.loading ? 'loading' : 'live') : s?.url ? 'not-loaded' : 'no-address'
       this.element.dataset.state = state
       this.stateEl.textContent = state === 'loading' ? LOADING : state === 'not-loaded' ? NOT_LOADED : state === 'no-address' ? CRED_NOT_KEPT : ''
@@ -450,7 +472,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     /** The owner's chip follows the agent (name, ended). */
     repaintOwner(): void {
-      dressChip(this.ownerEl, this.saved?.ownerSlotId, this.saved ? ui.agents.get(this.saved.ownerSlotId) : undefined)
+      dressChip(this.ownerEl, this.saved?.ownerSlotId, this.saved ? agentOf(this.saved.ownerSlotId) : undefined)
       this.paintControl()
     }
 
@@ -461,7 +483,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const v = controls.get(s.tabId)
       return {
         tabId: s.tabId, ownerSlotId: s.ownerSlotId, title: this.info?.title || s.title, url: this.info?.url ?? s.url ?? '',
-        control: this.info ? (v?.control ?? 'agent') : 'agent', asking: !!v?.ask, expired: !!v?.askExpired && v.holder === 'user',
+        control: this.info ? (v?.control ?? 'agent') : v?.paused ? 'paused' : 'agent', asking: !!v?.ask, expired: !!v?.askExpired && v.holder === 'user',
         ...(ui.panes.describe(this.paneId)?.place !== undefined ? { place: ui.panes.describe(this.paneId)!.place! } : {}),
       }
     }
@@ -545,7 +567,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     paint(): void {
       const panel = panels.get(this.paneId)
       const owner = panel?.saved?.ownerSlotId ?? this.element.dataset.owner
-      dressChip(this.chip, owner, owner ? ui.agents.get(owner) : undefined)
+      dressChip(this.chip, owner, owner ? agentOf(owner) : undefined)
       const favicon = panel?.favicon()
       if (favicon) { if (this.iconEl.src !== favicon) this.iconEl.src = favicon } else this.iconEl.removeAttribute('src')
       this.iconEl.hidden = !favicon
@@ -575,14 +597,14 @@ export function activate(ui: TetherUi): IDisposable[] {
   /** The sticky seals of the tabs whose agent asks for help (the agent's pane and the tab's pane), until handed back. */
   const seals = new Map<string, AttentionHandle[]>()
   const sealText = (v: ControlView, owner: string | undefined): string => {
-    const name = agentName(owner)
-    if (!v.ask) return controlTexts(name).waiting
-    const url = panels.get(paneIdOf(v.tabId))?.saved?.url
     let host = ''
-    try { host = url ? new URL(url).host : '' } catch { /* no address */ }
-    return host ? `${name} pede ajuda em ${host}: ${v.ask.message}` : `${name} pede ajuda: ${v.ask.message}`
+    try { const url = panels.get(paneIdOf(v.tabId))?.saved?.url; host = url ? new URL(url).host : '' } catch { /* no address */ }
+    return helpLine(agentName(owner), host, v.ask)
   }
+  /** When each pending help request was first seen: the pill and the pad's icon lead to the oldest. */
+  const askedAt = new Map<string, number>()
   const syncSeals = (v: ControlView): void => {
+    if (v.holder === 'user' && (v.ask || v.askExpired)) { if (!askedAt.has(v.tabId)) askedAt.set(v.tabId, Date.now()) } else askedAt.delete(v.tabId)
     const owner = panels.get(paneIdOf(v.tabId))?.saved?.ownerSlotId
     const wanted = v.holder === 'user' && (!!v.ask || !!v.askExpired)
     const have = seals.get(v.tabId)
@@ -606,6 +628,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.systemDesks.setBadge(DESK_ID, badge)
     refreshPad()
   }
+  /** Takes the person to the tab that has waited longest for her help; false when no request is pending. */
+  const goToOldestAsk = (): boolean => {
+    const tabId = oldestAsking([...askedAt].map(([id, at]) => ({ tabId: id, at })))
+    if (!tabId || !ui.panes.find(paneIdOf(tabId))) return false
+    ui.panes.reveal(paneIdOf(tabId))
+    return true
+  }
   /**
    * Taking the tab maximizes its pane and handing it back restores the earlier size (design §6.1). Only a take by the person
    * ("Assumir o controle") does it: a help request does not rearrange her screen. Only what we maximized is restored.
@@ -627,6 +656,12 @@ export function activate(ui: TetherUi): IDisposable[] {
     followMaximize(v)
     syncSeals(v)
   }
+  void ipc.invoke('agents').then(list => {
+    for (const a of list) slots.set(a.slotId, a)
+    slotsKnown = true
+    for (const p of panels.values()) p.repaintOwner()
+    paintTabs(); refreshPad()
+  }).catch(() => {})
   void ipc.invoke('controls').then(list => { for (const v of list) onControl(v) }).catch(() => {})
 
   const asks: LocalNetworkAsk[] = []
@@ -747,12 +782,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     }),
     // A move re-creates the pane (init above), but the desk a pane is in also changes with the desk coming and going.
     ui.panes.onDidChangeActive(() => refreshPad()),
-    ui.systemDesks.onDidChangeActive(() => refreshPad()),
+    ui.systemDesks.onDidChangeActive(e => { if (e.id === DESK_ID && e.active) goToOldestAsk(); refreshPad() }),
     ui.agents.tabMenu(slotId => {
       if (!padTabs().some(t => t.ownerSlotId === slotId)) return []
-      return [{ icon: 'globe-simple', label: padSeeAgent(agentName(slotId)), run: () => { padFilter = slotId; ui.pads.open(PAD_ID); refreshPad() } }]
+      return [{ icon: 'globe-simple', label: padSeeAgent(agentName(slotId)), run: () => { padFilter = slotId; ownOpen = true; setTimeout(() => { ownOpen = false }, 300); ui.pads.open(PAD_ID); refreshPad() } }]
     }),
     // The agent's name or life changed (it exited): every chip is dressed again.
+    ipc.on('agent', a => { slots.set(a.slotId, a); for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
     ui.agents.onDidChange(() => { for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
     ipc.on('localNetworkCancelled', withdraw),
     ipc.on('closed', tabId => {

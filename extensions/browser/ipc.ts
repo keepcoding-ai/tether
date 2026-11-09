@@ -1,7 +1,7 @@
 // The browser extension's channels between its renderer and main sides (E2: the tab registry; E4: the local-network question).
 import type { ControlView } from './control.ts'
 import type { LocalNetworkAsk } from './local-network-rules.ts'
-import type { ActionKind } from './pad-rules.ts'
+import type { ActionKind, MainAgentView } from './pad-rules.ts'
 import type { SavedTab, TabInfo } from './tab-rules.ts'
 import type { TabBlocked } from './tabs.ts'
 
@@ -33,10 +33,13 @@ export interface BrowserChannels {
     back: (tabId: string) => void
     forward: (tabId: string) => void
     reload: (tabId: string) => void
-    pauseAll: () => void
-    resumeAll: () => void
-    pauseAgent: (slotId: string) => void
-    resumeAgent: (slotId: string) => void
+    /** The brake on a set of tabs (all, or one agent's): the interface knows which, loaded or not. */
+    pauseTabs: (tabIds: string[]) => void
+    resumeTabs: (tabIds: string[]) => void
+    /** E12: the agents' real life, from the slots (main.agents): the interface's "encerrado" follows it, not the open panes. */
+    agents: () => MainAgentView[]
+    /** E14: "Sair de todas as contas": cookies and storage of the tabs' partition cleared, open tabs reloaded. */
+    logoutAll: () => void
   }
   events: {
     /** A tab was created or changed (title, address, loading). */
@@ -52,5 +55,7 @@ export interface BrowserChannels {
     control: (view: ControlView) => void
     /** E9: the agent acted on the tab (its dot lights for a moment). */
     activity: (tabId: string, kind: ActionKind) => void
+    /** E12: an agent appeared, was renamed, exited or went away (alive false). */
+    agent: (agent: MainAgentView) => void
   }
 }

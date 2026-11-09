@@ -39,6 +39,7 @@ import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
 import type { TrayCommand } from '../shared/tray.ts'
 import { createTray, type TrayController } from './tray.ts'
+import { TrayNotices } from './tray-notices.ts'
 import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
@@ -87,6 +88,8 @@ let tray: TrayController | undefined
 const slotStates = new Map<string, SlotState>()
 /** The agents extensions see (TetherMain.agents), fed by the same daemon events. */
 const agentTracker = new AgentTracker()
+/** The extensions' notices the tray shows next to the terminals' attention (TetherMain.notices). */
+const trayNotices = new TrayNotices(() => updateTray())
 
 function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
@@ -211,7 +214,7 @@ async function syncSlots(client: DaemonClient): Promise<void> {
   updateTray()
 }
 
-function updateTray(): void { tray?.update(slotStates.values()) }
+function updateTray(): void { tray?.update(slotStates.values(), trayNotices.list()) }
 
 async function request(body: RequestBody): Promise<Reply> {
   if (!daemon) return { t: 'error', id: -1, code: 'bad-request', message: 'sem conexão com o tetherd' }
@@ -417,6 +420,7 @@ const extensionHost = new MainExtensionHost(mainExtensions, {
   trash: path => shell.trashItem(path),
   surfaces: owner => surfaces.forOwner(owner),
   agents: agentTracker,
+  notices: trayNotices,
 })
 
 // ---------- settings registry (the settings page's channels) ----------
@@ -785,7 +789,7 @@ function setupTray(): void {
 Object.defineProperty(globalThis, '__tetherTray', {
   value: {
     windowOpen: () => !!win && !win.isDestroyed(),
-    model: () => (tray ? tray.model() : trayModel([])),
+    model: () => (tray ? tray.model() : trayModel([], trayNotices.list())),
     hasTray: () => !!tray,
     open: (slotId?: string) => openWindow(slotId),
     toggle: () => toggleWindow(),

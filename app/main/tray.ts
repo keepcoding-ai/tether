@@ -4,7 +4,7 @@
 import { Menu, nativeImage, Tray } from 'electron'
 import { join } from 'node:path'
 import type { SlotState } from '../../src/daemon/protocol.ts'
-import { trayModel, type TrayCommand, type TrayModel } from '../shared/tray.ts'
+import { trayModel, type TrayCommand, type TrayModel, type TrayNotice } from '../shared/tray.ts'
 
 export interface TrayActions {
   toggle(): void
@@ -13,7 +13,7 @@ export interface TrayActions {
 }
 
 export interface TrayController {
-  update(slots: Iterable<SlotState>): void
+  update(slots: Iterable<SlotState>, notices?: readonly TrayNotice[]): void
   model(): TrayModel
   destroy(): void
 }
@@ -33,6 +33,7 @@ export function createTray(assetDir: string, actions: TrayActions): TrayControll
       case 'separator': return { type: 'separator' }
       case 'info': return { label: escapeLabel(item.label), enabled: false }
       case 'command': return { label: item.label, click: () => actions.command(item.id) }
+      case 'notice': return { label: escapeLabel(item.label), click: () => (item.slotId ? actions.pane(item.slotId) : actions.command('open')) }
       case 'pane': return { label: escapeLabel(item.label), click: () => actions.pane(item.slotId) }
     }
   }))
@@ -46,7 +47,7 @@ export function createTray(assetDir: string, actions: TrayActions): TrayControll
   apply()
 
   return {
-    update(slots) { current = trayModel(slots); apply() },
+    update(slots, notices) { current = trayModel(slots, notices); apply() },
     model: () => current,
     destroy() { tray.destroy() },
   }
