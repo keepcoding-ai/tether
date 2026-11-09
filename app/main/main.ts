@@ -169,6 +169,7 @@ function connectDaemon(): Promise<void> {
       client.on('state', slot => { slotStates.set(slot.slotId, slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
       client.on('removed', slotId => { slotStates.delete(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('close', () => {
         if (daemon !== client) return
@@ -187,6 +188,7 @@ function connectDaemon(): Promise<void> {
       })
       sendConnection(connectionState())
       void syncSlots(client)
+      void syncPause(client)
       // A restarted daemon has no agents running: a fresh page restores the layout and resumes each slot's session.
       if (reloadOnReconnect) { reloadOnReconnect = false; win?.webContents.reloadIgnoringCache() }
     } catch (err) {
@@ -205,6 +207,13 @@ async function syncSlots(client: DaemonClient): Promise<void> {
   slotStates.clear()
   for (const s of list.slots ?? []) slotStates.set(s.slotId, s)
   updateTray()
+}
+
+/** The renderer opens with the batch the daemon already holds (a pause survives an app restart). */
+async function syncPause(client: DaemonClient): Promise<void> {
+  const r = await request({ t: 'pause-get' })
+  if (daemon !== client || r.t !== 'ok' || !r.pause) return
+  win?.webContents.send('tether:event', { t: 'pause', batch: r.pause })
 }
 
 function updateTray(): void { tray?.update(slotStates.values()) }

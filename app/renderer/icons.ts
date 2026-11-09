@@ -49,6 +49,7 @@ import squareSplitVertical from '@phosphor-icons/core/assets/regular/square-spli
 import stopCircle from '@phosphor-icons/core/assets/regular/stop-circle.svg'
 import terminalWindow from '@phosphor-icons/core/assets/regular/terminal-window.svg'
 import trash from '@phosphor-icons/core/assets/regular/trash.svg'
+import pause from '@phosphor-icons/core/assets/regular/pause.svg'
 import tray from '@phosphor-icons/core/assets/regular/tray.svg'
 import warning from '@phosphor-icons/core/assets/regular/warning.svg'
 import x from '@phosphor-icons/core/assets/regular/x.svg'
@@ -157,6 +158,7 @@ const SVG = {
   plugs,
   'puzzle-piece': puzzlePiece,
   'plugs-connected': plugsConnected,
+  pause,
   plus,
   power,
   question,

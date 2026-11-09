@@ -3,7 +3,7 @@
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
 import { type AddPanelOptions, type DockviewTheme, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
-import type { ConnectionState } from '../shared/api.ts'
+import type { ConnectionState, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -34,6 +34,8 @@ import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
 import { FramesPad } from './frames-pad.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
+import type { PauseBatch } from '../../src/daemon/pause.ts'
+import { NOBODY_BUSY_MESSAGE, buttonTitle as pauseButtonTitle, canResume, counterText, entryText, entryTone, hasBatch, orderedEntries, summaryText } from './pause-rules.ts'
 import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText, type ClosedGroups } from './closed-slots.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
@@ -1357,6 +1359,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
     case 'data': panels.get(ev.slotId)?.write(ev.data); break
     case 'profiles': setProfiles(ev.profiles, undefined); break
+    case 'pause': pauseBatch = ev.batch; refreshPauseMenu(); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
@@ -1637,6 +1640,112 @@ function refreshClosedMenu(): void {
     ft.append(all)
     list.append(ft)
   }
+}
+
+// ---------- polite pause ----------
+// Not a force: every agent is asked to stop at its own safe point. The button starts a batch, or opens its menu.
+
+let pauseBatch: PauseBatch | null = null
+/** A gentle one-off message shown at the top of the menu (e.g. nobody was busy). */
+let pauseNotice: string | undefined
+let pauseTicker: ReturnType<typeof setInterval> | undefined
+
+function pauseMenuOpen(): boolean { return !$('pause-list').hidden }
+
+function setPauseMenu(open: boolean): void {
+  $('pause-list').hidden = !open
+  $('btn-pause').setAttribute('aria-expanded', String(open))
+  if (!open) pauseNotice = undefined
+  // "Ainda finalizando" depends on the clock: re-render while the menu is open.
+  if (open && !pauseTicker) pauseTicker = setInterval(refreshPauseMenu, 15_000)
+  if (!open && pauseTicker) { clearInterval(pauseTicker); pauseTicker = undefined }
+  if (open) refreshPauseMenu()
+}
+
+/** Stub for the management popup (B7): "Acompanhar…" calls it. */
+function openPauseDialog(): void {
+  setPauseMenu(false)
+}
+
+async function pauseRequest(body: RequestBody): Promise<void> {
+  const r = await window.tether.request(body)
+  if (r.t === 'error') pauseNotice = r.message
+  refreshPauseMenu()
+}
+
+async function onPauseClick(): Promise<void> {
+  if (hasBatch(pauseBatch)) { setPauseMenu(!pauseMenuOpen()); return }
+  if (pauseMenuOpen()) { setPauseMenu(false); return }
+  const r = await window.tether.request({ t: 'pause-start' })
+  if (r.t === 'error') {
+    // Nobody mid-turn is not a failure: say so kindly.
+    pauseNotice = r.code === 'bad-request' ? NOBODY_BUSY_MESSAGE : r.message
+    setPauseMenu(true)
+    return
+  }
+  if (r.pause) pauseBatch = r.pause
+  setPauseMenu(true)
+}
+
+function pauseRow(batch: PauseBatch, e: PauseBatch['entries'][number]): HTMLElement {
+  const slotId = e.slotId
+  const s = slots.get(slotId)
+  const row = document.createElement('div'); row.className = `pz-row ${entryTone(e)}`; row.dataset.slot = slotId
+  const led = document.createElement('span'); led.className = 'led'
+  const tx = document.createElement('div'); tx.className = 'tx'
+  const title = document.createElement('span'); title.className = 'tt'; title.textContent = s ? panelTitle(s) : slotId
+  const text = document.createElement('span'); text.className = 'cw'; text.textContent = entryText(e, Date.now()); text.title = text.textContent
+  tx.append(title, text)
+  const acts = document.createElement('div'); acts.className = 'acts'
+  const open = closedButton('open', 'Abrir painel', 'arrow-square-out', 'Abrir o painel deste agente')
+  open.disabled = !s
+  open.addEventListener('click', ev => { ev.stopPropagation(); setPauseMenu(false); openSlot(slotId) })
+  acts.append(open)
+  if (batch.state !== 'resuming' && e.state !== 'resumed' && e.state !== 'resume-skipped') {
+    const out = closedButton('ic', '', 'x', 'Tirar da fila: este agente segue o trabalho e não entra na pausa')
+    out.setAttribute('aria-label', 'Tirar da fila')
+    out.addEventListener('click', ev => { ev.stopPropagation(); void pauseRequest({ t: 'pause-remove', slotId }) })
+    acts.append(out)
+  }
+  row.append(led, tx, acts)
+  return row
+}
+
+function refreshPauseMenu(): void {
+  const btn = $('btn-pause')
+  const count = $('pause-count')
+  const batch = hasBatch(pauseBatch) ? pauseBatch : null
+  const text = counterText(batch)
+  count.textContent = text
+  count.hidden = text === ''
+  btn.classList.toggle('active', batch !== null)
+  btn.title = pauseButtonTitle(batch)
+  btn.setAttribute('aria-label', pauseButtonTitle(batch))
+  const list = $('pause-list')
+  if (list.hidden) return
+  if (!batch && !pauseNotice) { setPauseMenu(false); return }
+  const scroll = list.querySelector('.pz-rows')?.scrollTop ?? 0
+  list.replaceChildren()
+  const hd = document.createElement('div'); hd.className = 'pz-hd'
+  hd.textContent = batch ? summaryText(batch, Date.now()) : (pauseNotice ?? '')
+  list.append(hd)
+  if (!batch) return
+  if (pauseNotice) { const n = document.createElement('div'); n.className = 'pz-note'; n.textContent = pauseNotice; list.append(n) }
+  const rows = document.createElement('div'); rows.className = 'pz-rows'
+  for (const e of orderedEntries(batch)) rows.append(pauseRow(batch, e))
+  list.append(rows)
+  rows.scrollTop = scroll
+  const ft = document.createElement('div'); ft.className = 'pz-ft'
+  const ok = canResume(batch)
+  const resume = closedButton('primary', 'Retomar', 'arrow-clockwise', ok ? 'Pedir a cada agente que continue de onde parou' : 'Fica disponível quando todos tiverem parado')
+  resume.disabled = !ok
+  resume.addEventListener('click', ev => { ev.stopPropagation(); void pauseRequest({ t: 'pause-resume' }) })
+  const follow = closedButton('', 'Acompanhar…', undefined, 'Abrir o acompanhamento da pausa')
+  follow.addEventListener('click', ev => { ev.stopPropagation(); openPauseDialog() })
+  const cancel = closedButton('', 'Cancelar pausa', undefined, 'Desfazer o pedido: os agentes seguem como estavam')
+  cancel.addEventListener('click', ev => { ev.stopPropagation(); void pauseRequest({ t: 'pause-cancel' }) })
+  ft.append(resume, follow, cancel)
+  list.append(ft)
 }
 
 /** Opens a panel for a slot the daemon knows; an exited slot is started (an unconfirmed one shows the choice). */
@@ -2792,7 +2901,9 @@ function setupUi(): void {
     closedBtn.setAttribute('aria-expanded', String(!closedList.hidden))
     if (closedList.hidden) { askingForget = undefined; refreshClosedMenu() }
   })
+  $('btn-pause').addEventListener('click', ev => { ev.stopPropagation(); void onPauseClick() })
   document.addEventListener('click', ev => {
+    if (pauseMenuOpen() && !$('pause-list').contains(ev.target as Node)) setPauseMenu(false)
     if (closedList.contains(ev.target as Node)) return
     closedList.hidden = true
     closedBtn.setAttribute('aria-expanded', 'false')
