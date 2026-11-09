@@ -9,6 +9,8 @@
 //   5. the agent ends: "Fechar guias de agentes encerrados (n)" with the right count, only those;
 //   6. the app reopens: the order by owner is kept;
 //   7. "Fechar as guias do ‹agente›" and the ended ones again; the empty state.
+// E12: an agent that lives with its pane closed is still "usando" and its tabs are not "encerrados" (the slot's life decides, not the
+// open panes); a tab restored and not loaded yet can be paused and resumed (the state waits in main and applies when it loads).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -30,7 +32,7 @@ type PadView = {
   groups: { slotId: string; ended: boolean; chip: string; count: string; buttons: Btn[]; rows: Row[] }[]
   badge: { count: number; attention: boolean; tooltip: string } | null
 }
-type Pane = { id: string; tabId?: string; owner?: string; chip: string; place?: string; control: string }
+type Pane = { id: string; tabId?: string; owner?: string; chip: string; place?: string; control: string; controlText: string; action: string; state?: string }
 declare const window: {
   __tether: {
     connection(): { connected: boolean; pid?: number } | undefined
@@ -45,6 +47,8 @@ declare const window: {
     browserPad(): PadView | undefined
     browserPadOpen(): void
     browserClick(tabId: string, where: string): void
+    browserReveal(id: string): void
+    detachPane(slotId: string): void
   }
   tether: { request(r: unknown): Promise<{ t: string; slot?: SlotState }> }
 }
@@ -138,7 +142,7 @@ test('browser pad: list by agent, filter, taken on top, moved tab, pause, reopen
     assert.equal(r1.action, 'sem ação agora')
     assert.equal(r1.place, '', 'a tab in the Browser desk says no place')
     assert.equal(v.groups[2]!.rows[0]!.control, 'Agente encerrado')
-    assert.deepEqual(v.controls.map(b => [b.text, b.disabled]), [['Pausar todas as guias', false], ['Retomar todas', true], ['Fechar guias de agentes encerrados (1)', false]])
+    assert.deepEqual(v.controls.map(b => [b.text, b.disabled]), [['Pausar todas as guias', false], ['Retomar todas', true], ['Fechar guias de agentes encerrados (1)', false], ['Sair de todas as contas', false]])
     assert.equal(v.badge, null, 'nobody holds a tab: no number on the icon')
     await until('titles', async () => (await pad()).groups[0]!.rows[0]!.title === 'Página a1')
 
@@ -211,6 +215,17 @@ test('browser pad: list by agent, filter, taken on top, moved tab, pause, reopen
     await click(`[data-section="agent"][data-agent="${beta}"] [data-action="resume-agent"]`)
     await until('Beta resumed', async () => (await control(b1)) === 'agent')
 
+    // ---- 4b. E12: the pane of a LIVE agent is closed; its tabs are not "encerradas" ----
+    await win.evaluate(id => window.__tether.detachPane(id), sonda)
+    await until('the pane of Sonda is gone', async () => (await win.locator(`.tether-tab[data-slot="${sonda}"]`).count()) === 0)
+    v = await until('Sonda stays alive in the pad', async () => { const x = await pad(); return x.groups[0]!.slotId === sonda && x.groups[0]!.chip === 'Sonda' ? x : undefined })
+    assert.equal(v.groups[0]!.ended, false, 'a closed pane does not end a live agent')
+    assert.equal(v.groups[0]!.rows[0]!.control, 'Sonda usando')
+    assert.equal(v.controls.find(b => b.action === 'close-ended')!.text, 'Fechar guias de agentes encerrados (1)', 'only the gone owner counts, not Sonda')
+    assert.equal((await panes()).find(p => p.tabId === a2)!.controlText, 'Sonda usando', "the tab's own bar agrees")
+    await win.evaluate(id => window.__tether.openSlot(id), sonda)
+    await until('the pane of Sonda is back', async () => (await win.locator(`.tether-tab[data-slot="${sonda}"]`).count()) === 1)
+
     // ---- 5. the agent ends; the app reopens ----
     void win.evaluate(id => window.tether.request({ t: 'stop', slotId: id }), beta)
     v = await until('"Beta encerrado" in the pad', async () => { const x = await pad(); return x.groups[1]!.chip === 'Beta encerrado' ? x : undefined }, 50_000)
@@ -245,6 +260,24 @@ test('browser pad: list by agent, filter, taken on top, moved tab, pause, reopen
     assert.deepEqual(v.groups[1]!.rows.map(r => r.tabId), [x1, x2])
     assert.equal(v.groups[1]!.chip, 'Agente encerrado', 'an owner without a pane: "Agente encerrado" (design 7.3)')
     assert.equal((await panes()).find(p => p.tabId === a1)!.owner, sonda, "a1 is still Sonda's after the reopening")
+
+    // ---- 6b. E12: a restored tab that is not loaded yet can be paused and resumed ----
+    const unloaded = (await panes()).find(p => p.tabId === x1)!
+    assert.equal(unloaded.state, 'not-loaded', 'x1 came back from layout.json without loading')
+    await click('[data-action="pause-all"]')
+    await until('the unloaded tab is paused in main', async () => (await control(x1)) === 'paused')
+    await until('and its bar says so', async () => { const p = (await panes()).find(q => q.tabId === x1)!; return p.controlText === 'Pausada' && p.action === 'Retomar' && p.state === 'not-loaded' })
+    v = await until('the pad says Pausada for it', async () => { const x = await pad(); return x.groups.find(g => g.slotId === 'owner-x')!.rows[0]!.control === 'Pausada' ? x : undefined })
+    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), x1) // "Retomar" on the unloaded tab
+    await until('resumed while not loaded', async () => (await control(x1)) === 'agent')
+    await click('[data-action="pause-all"]')
+    await until('paused again', async () => (await control(x1)) === 'paused')
+    await win.evaluate(id => window.__tether.browserReveal(id), `web:${x1}`)
+    await until('the tab loads when shown', async () => (await panes()).find(p => p.tabId === x1)!.state === 'live')
+    assert.equal(await control(x1), 'paused', 'and it is born paused')
+    assert.equal((await panes()).find(p => p.tabId === x1)!.controlText, 'Pausada')
+    await click('[data-action="resume-all"]')
+    await until('all resumed', async () => (await control(x1)) === 'agent' && (await control(x2)) === 'agent')
 
     // ---- 7. close one agent's, then the rest ----
     await click('[data-section="agent"][data-agent="owner-x"] [data-action="close-agent"]')

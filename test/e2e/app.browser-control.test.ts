@@ -18,10 +18,16 @@
 //      (what the person typed and did not send is gone); the login hand-back of step 4 posted nothing again;
 //   8. H3: a page opening popups in a loop ends with at most 3 more tabs, the app alive and the seal on the tab; M3: a capture
 //      with scale 50 is refused by the gate.
+// A second test (E12, E14), with a real agent (an inert "soul" slot) and no MCP:
+//   9. "Sair de todas as contas": the confirmation of the design (cancelling changes nothing); confirming clears the cookie and the
+//      storage the local site planted, reloads the open tab without the session, and leaves one log line with no address;
+//  10. a pending help request reaches the system tray ("Agente pede ajuda em site: mensagem", the attention badge and count), a click
+//      on the Browser pill and on the pad's icon takes the person to the OLDEST request (not the first in the list), and handing it
+//      back moves the way to the next; with none left the tray has no notice.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -32,7 +38,7 @@ import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 import { cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep } from './browser-kit.ts'
 
-type Pane = { id: string; tabId?: string; control: string; controlText: string; action: string; notice: string; noticeKind: string; noticeAction: string }
+type Pane = { id: string; tabId?: string; control: string; controlText: string; action: string; notice: string; noticeKind: string; noticeAction: string; front?: boolean }
 declare const window: {
   __tether: {
     connection(): { connected: boolean; pid?: number } | undefined
@@ -43,16 +49,24 @@ declare const window: {
     browserReveal(id: string): void
     browserClick(tabId: string, where: string): void
     browserSeals(): { tabId: string; count: number }[]
+    browserPadOpen(): void
+    openSlot(id: string): Promise<void>
+    activeDesk(): string
+    switchDesk(id: string): void
   }
+  tether: { request(r: unknown): Promise<{ t: string; slot?: SlotState }> }
 }
 type Hub = {
   take(id: string): void; pause(id: string): void; resume(id: string): void; giveBack(id: string): Promise<void>; control(id: string): string
   view(id: string): { askExpired?: boolean }
+  ask(id: string, owner: string, input: { message: string; kind: 'login' | 'other'; timeoutMs: number }): unknown
 }
 type Tabs = {
   create(owner: string, url: string, ticket?: boolean): Promise<{ tabId: string }>
   eval(tabId: string, code: string): Promise<unknown>
   type(tabId: string, text: string): void
+  load(tabId: string, url: string): Promise<string> | undefined
+  allowOnce(tabId: string, url: string): unknown
   shield(tabId: string): boolean | undefined
   control: Hub
   gate(): Promise<{ port: number } | null>
@@ -130,15 +144,13 @@ async function until<T>(what: string, fn: () => Promise<T | undefined | false>, 
   throw new Error(`timed out: ${what}${last ? ` (${(last as Error).message})` : ''}`)
 }
 
-async function createShell(win: Page, cwd: string): Promise<string> {
-  const before = await win.evaluate(() => window.__tether.panelIds())
-  await win.click('#btn-new')
-  await win.waitForSelector('#dlg-new[open]')
-  await win.fill('#dlg-new .ch-path-input', cwd)
-  await win.click('#dlg-new .ch-item[data-id="powershell"]')
-  await win.waitForFunction(() => document.querySelector('#dlg-new[open]') === null)
-  await win.waitForFunction(n => window.__tether.panelIds().length === n, before.length + 1)
-  return (await win.evaluate(() => window.__tether.panelIds())).filter(id => !before.includes(id))[0]!
+/** An agent (an inert "soul" slot, E12: a shell is no agent, so its tabs would be "encerradas") with its pane open. */
+async function createAgent(win: Page, cwd: string): Promise<string> {
+  return win.evaluate(async dir => {
+    const r = await (window as unknown as { tether: { request(r: unknown): Promise<{ slot?: { slotId: string } }> } }).tether.request({ t: 'create', kind: 'soul', cwd: dir, name: 'Sonda', start: true })
+    await window.__tether.openSlot(r.slot!.slotId)
+    return r.slot!.slotId
+  }, cwd)
 }
 
 test('browser control: take, pause, shield, help request with the clean hand-off, timeout, in-flight answers, console, popups', { timeout: 420_000 }, async () => {
@@ -146,6 +158,8 @@ test('browser control: take, pause, shield, help request with the clean hand-off
   assert.equal(build.status, 0, 'app build failed')
   const site = await serve()
   const origin = site.base
+  const soulBefore = process.env.TETHER_SOUL_CMD
+  process.env.TETHER_SOUL_CMD = FAKE_SOUL
   const home = mkdtempSync(join(tmpdir(), 'tether-brcontrol-'))
   writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { browser: { localNetwork: 'allow' } } }))
   const keysDir = join(home, 'browser', 'keys')
@@ -163,7 +177,7 @@ test('browser control: take, pause, shield, help request with the clean hand-off
       T.evaluate(new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
 
     // The agent: a shell pane's slot, so the seal has the agent's pane to land on.
-    const slot = await createShell(win, root)
+    const slot = await createAgent(win, root)
     await win.waitForFunction(id => window.__tether.slots().some(s => s.slotId === id && s.status === 'running'), slot, { timeout: 20_000 })
     const KEY = 'ctrlCTRLctrlCTRLctrlCTRLctrlCTRL1234'
     writeFileSync(join(keysDir, `${slot}.key`), KEY)
@@ -366,6 +380,137 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     for (const d of daemons) await killOwned(d, { tree: true })
     for (let i = 0; i < 20 && daemons.some(d => pidAlive(d.pid)); i++) await sleep(500)
     site.server.close()
+    if (soulBefore === undefined) delete process.env.TETHER_SOUL_CMD; else process.env.TETHER_SOUL_CMD = soulBefore
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+    }
+  }
+})
+
+const FAKE_SOUL = `"${process.execPath}" -e "setInterval(()=>{},1000)"`
+const SESSION = 'SESSION-COOKIE-4Q8'
+type TrayModel = { items: { kind: string; label?: string; slotId?: string }[]; badge: string; attention: number; tooltip: string }
+
+test('browser accounts and help requests: logout of all accounts, tray, pill and icon lead to the oldest request', { timeout: 420_000 }, async () => {
+  const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit', env: { ...process.env, TETHER_TEST_EXTENSIONS: '1' } })
+  assert.equal(build.status, 0, 'app build failed')
+  const server = createServer((req, res) => {
+    const path = new URL(req.url ?? '/', 'http://x').pathname
+    if (path === '/set') res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': `sid=${SESSION}; Path=/; Max-Age=3600` })
+    else res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(`<!doctype html><title>Site ${path.slice(1)}</title><body>cookie=${path === '/set' ? 'set' : (req.headers.cookie ?? 'none')}`)
+  })
+  const base = await new Promise<string>(r => server.listen(0, '127.0.0.1', () => r(`http://localhost:${(server.address() as AddressInfo).port}`)))
+  const host = new URL(base).host
+  const home = mkdtempSync(join(tmpdir(), 'tether-brlogin-'))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { browser: { localNetwork: 'allow' } } }))
+  const previous = process.env.TETHER_SOUL_CMD
+  process.env.TETHER_SOUL_CMD = FAKE_SOUL
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    let win: Page
+    ;({ app, page: win } = await launchHidden(home, `\\\\.\\pipe\\tether-brlogin-${process.pid}`))
+    win.on('pageerror', e => console.error(`renderer error: ${e.message}`))
+    daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    const T = app
+    const B = <R>(fn: (t: Tabs, a: any) => R | Promise<R>, a?: unknown): Promise<R> =>
+      T.evaluate(new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
+    const d1 = await win.evaluate(() => window.__tether.activeDesk())
+    const slot = await win.evaluate(async cwd => {
+      const r = await window.tether.request({ t: 'create', kind: 'soul', cwd, name: 'Sonda', start: true })
+      await window.__tether.openSlot(r.slot!.slotId)
+      return r.slot!.slotId
+    }, home)
+    await win.waitForFunction(id => window.__tether.slots().some(s => s.slotId === id && s.status === 'running'), slot, { timeout: 20_000 })
+    const panes = (): Promise<Pane[]> => win.evaluate(() => window.__tether.browserPanes())
+    const mk = async (path: string): Promise<string> => (await B((t, a) => t.create(a.slot, a.url), { slot, url: `${base}${path}` })).tabId
+    const evalIn = (tabId: string, code: string): Promise<unknown> => B((t, a) => t.eval(a.tabId, a.code), { tabId, code })
+    const body = (tabId: string): Promise<string> => evalIn(tabId, 'document.body.innerText') as Promise<string>
+    const tray = (): Promise<TrayModel> => T.evaluate(() => (globalThis as unknown as { __tetherTray: { model(): TrayModel } }).__tetherTray.model())
+
+    // ---- 9. "Sair de todas as contas" ----
+    const tab = await mk('/set')
+    await until('the site set its cookie', async () => (await body(tab)) === 'cookie=set')
+    await evalIn(tab, "localStorage.setItem('k', 'v'); 1")
+    await B((t, a) => t.allowOnce(a.tab, a.url), { tab, url: `${base}/who` })
+    assert.equal(await B((t, a) => t.load(a.tab, a.url), { tab, url: `${base}/who` }), '')
+    await until('the page carries the session', async () => (await body(tab)) === `cookie=sid=${SESSION}`)
+    await win.evaluate(() => window.__tether.browserPadOpen())
+    const logout = win.locator('[data-pad="browser.tabs"] [data-action="logout-all"]')
+    await logout.waitFor()
+    assert.equal(await logout.textContent(), 'Sair de todas as contas')
+
+    await logout.click()
+    const dlg = win.locator('dialog[data-dialog="browser-logout-all"]')
+    await dlg.waitFor()
+    assert.match(await dlg.textContent() ?? '', /Todos os agentes perdem o acesso às contas logadas\./)
+    await dlg.locator('button.choice[data-choice="cancel"]').click()
+    await dlg.waitFor({ state: 'detached' })
+    await sleep(800)
+    assert.equal(await body(tab), `cookie=sid=${SESSION}`, 'cancelling changes nothing')
+
+    await logout.click()
+    await dlg.waitFor()
+    await dlg.locator('button.choice[data-choice="logout"]').click()
+    await until('the open tab was reloaded without the session', async () => (await body(tab)) === 'cookie=none')
+    assert.equal(await evalIn(tab, "localStorage.getItem('k')"), null, 'the storage is gone too')
+    const log = await until('the log line', async () => { const f = join(home, 'tether-app.log'); const t = existsSync(f) ? readFileSync(f, 'utf8') : ''; return /sair de todas as contas/.test(t) ? t : undefined })
+    const line = log.split('\n').find(l => /sair de todas as contas/.test(l))!
+    assert.ok(!/localhost|http|:\d{4,}/.test(line), `the log line has no address: ${line}`)
+
+    // ---- 10. help requests: tray, pill, icon ----
+    const c = await mk('/c')
+    const a = await mk('/a')
+    await until('two more panes', async () => (await panes()).length === 3)
+    const ask = (id: string, message: string): Promise<unknown> => B((t, x) => { void t.control.ask(x.id, x.slot, { message: x.message, kind: 'other', timeoutMs: 600_000 }); return 1 }, { id, slot, message })
+    await ask(c, 'primeiro')
+    await until('the first seal', async () => (await win.evaluate(() => window.__tether.browserSeals())).length === 1)
+    await sleep(30)
+    await ask(a, 'segundo')
+    await until('both seals', async () => (await win.evaluate(() => window.__tether.browserSeals())).length === 2)
+
+    let m = await until('the tray carries both', async () => { const x = await tray(); return x.items.filter(i => i.kind === 'notice').length === 2 ? x : undefined })
+    assert.deepEqual(m.items.filter(i => i.kind === 'notice').map(i => [i.label, i.slotId]), [
+      [`Sonda pede ajuda em ${host}: primeiro`, slot], [`Sonda pede ajuda em ${host}: segundo`, slot],
+    ], 'the tray menu says who asks, where and what, and a click opens the agent')
+    assert.equal(m.badge, 'attention')
+    assert.ok(m.attention >= 2)
+    assert.match(m.tooltip, /esperando você/)
+
+    const front = async (): Promise<string | undefined> => (await panes()).find(p => p.front && (p.tabId === c || p.tabId === a))?.tabId
+    const show = async (id: string): Promise<void> => {
+      await win.evaluate(x => window.__tether.browserReveal(`web:${x}`), id)
+      await until('shown', async () => (await front()) === id)
+      await win.evaluate(d => window.__tether.switchDesk(d), d1)
+      await until('back on the first desk', async () => (await win.evaluate(() => window.__tether.activeDesk())) === d1)
+    }
+    const away = async (): Promise<boolean> => (await win.evaluate(() => window.__tether.activeDesk())) !== d1
+    const pill = '#desk-switch .seg.sys[data-system="browser.desk"]'
+    await show(a)
+    await win.click(pill)
+    await until('the pill leads to the oldest request', async () => (await front()) === c && await away())
+
+    await show(a)
+    await win.click('.sb-icon[data-pad="browser.tabs"]')
+    if (!(await win.locator('[data-pad="browser.tabs"] .br-pad-list').isVisible())) await win.click('.sb-icon[data-pad="browser.tabs"]')
+    await until('the icon leads to the oldest request', async () => (await front()) === c && await away())
+
+    // handing the oldest back moves the way to the next
+    await B((t, x) => t.control.giveBack(x), c)
+    await until('one notice left', async () => (await tray()).items.filter(i => i.kind === 'notice').length === 1)
+    await show(c)
+    await win.click(pill)
+    await until('the pill now leads to the other one', async () => (await front()) === a && await away())
+    await B((t, x) => t.control.giveBack(x), a)
+    m = await until('no notice left', async () => { const x = await tray(); return x.items.every(i => i.kind !== 'notice') ? x : undefined })
+    assert.equal(m.attention, 0)
+  } finally {
+    if (app) await killElectron(app, root).catch(() => {})
+    for (const d of daemons) await killOwned(d, { tree: true })
+    for (let i = 0; i < 20 && daemons.some(d => pidAlive(d.pid)); i++) await sleep(500)
+    server.close()
+    if (previous === undefined) delete process.env.TETHER_SOUL_CMD; else process.env.TETHER_SOUL_CMD = previous
     for (let i = 0; i < 5; i++) {
       try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
     }
