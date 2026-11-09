@@ -1,13 +1,13 @@
 // Who has each tab, on the main side (Tether Browser E7, design §6): the state per tab (control-rules.ts), the open help
 // requests and their timers, and the effects of each transition. Listeners hear every change: the gate tells the owner's
 // connections (`Tether.tabStateChanged`), main tells the renderer and puts the input shield on (agent) or off (person).
-// The clean hand-off (rule 15) and the reload of a login hand-back with a password field left (rule 16) are the `handoff`
-// hooks main gives (they need the gate's scripts and the tab's session); the state flips to `user` before the hand-off runs,
+// The clean hand-off (rule 15, every help request whatever its kind) and the reload of every help request's hand-back (rule 16)
+// are the hooks main gives (they need the gate's scripts and the tab's session); the state flips to `user` before the hand-off runs,
 // so the gate holds the page's events from the first instant.
 import { randomUUID } from 'node:crypto'
 import {
-  type AskInput, type AskOutcome, controlOf, type Control, type ControlEvent, INITIAL, needsCleanHandoff, reasonOf, type TabControl,
-  transition,
+  type AskInput, type AskOutcome, controlOf, type Control, type ControlEvent, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack,
+  type TabControl, transition,
 } from './control-rules.ts'
 
 /** What the renderer and the gate are told of a tab's control. */
@@ -27,7 +27,7 @@ export interface ControlHooks {
   ownerOf(tabId: string): string | undefined
   /** Scripts out, the origin's service worker out, reload (rule 15). */
   cleanHandoff(tabId: string): Promise<void>
-  /** Before a login tab goes back to the agent: reload when a password field is still there (rule 16). */
+  /** Before a help request's tab goes back to the agent: reload, so nothing the person typed and did not send is left (rule 16). */
   beforeGiveBack(tabId: string): Promise<void>
   log(msg: string): void
 }
@@ -96,11 +96,11 @@ export class ControlHub {
     await this.hooks.cleanHandoff(tabId).catch(e => this.hooks.log(`controle: entrega limpa falhou (${(e as Error).message})`))
   }
 
-  /** The person hands the tab back: a login hand-back first reloads a page that still has a password field (rule 16). */
+  /** The person hands the tab back: the hand-back of a help request (any kind) first reloads the page (rule 16). */
   async giveBack(tabId: string): Promise<void> {
     const t = this.state(tabId)
     if (t.holder !== 'user') return
-    if (t.why === 'login') await this.hooks.beforeGiveBack(tabId).catch(e => this.hooks.log(`controle: recarga da devolução falhou (${(e as Error).message})`))
+    if (reloadsOnGiveBack(t)) await this.hooks.beforeGiveBack(tabId).catch(e => this.hooks.log(`controle: recarga da devolução falhou (${(e as Error).message})`))
     this.apply(tabId, { type: 'giveBack' })
   }
 
@@ -117,8 +117,8 @@ export class ControlHub {
   }
 
   /**
-   * The agent's help request (already checked by `checkAsk`): the tab goes to the person now (with the clean hand-off for a
-   * login) and the promise settles when she hands it back, the time runs out, the tab closes or the agent gives up (`cancel`).
+   * The agent's help request (already checked by `checkAsk`): the tab goes to the person now (with the clean hand-off, whatever
+   * the kind) and the promise settles when she hands it back, the time runs out, the tab closes or the agent gives up (`cancel`).
    */
   ask(tabId: string, owner: string, input: AskInput): { outcome: Promise<AskOutcome>; cancel(): void } {
     const id = randomUUID()

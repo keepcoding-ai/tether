@@ -20,17 +20,27 @@ import { type TabBlocked, TabRegistry } from './tabs.ts'
 
 export { manifest } from './manifest.ts'
 
-/** The isolated world the hand-back asks for a password field in (none of the page's scripts live there). */
-const PASSWORD_WORLD = 1717
-
-/** Reloads the page and waits until it stopped loading (bounded: a page that never settles does not hold the hand-off). */
-function reloadAndWait(wc: WebContents, ms = 10_000): Promise<void> {
-  return new Promise(resolve => {
-    const done = (): void => { clearTimeout(timer); wc.off('did-stop-loading', done); resolve() }
+/**
+ * Reloads the page and waits until it stopped loading (bounded: a page that never settles does not hold the hand-off). A reload
+ * that does not start (the page is a form's answer: Chromium holds a reload that would post again) loads the address afresh.
+ * A local page needs a ticket for a reload the browser starts (the filter's rule): `ticket` gives it without asking, since it
+ * is the page already open, reloaded by the tether and not at the agent's request.
+ */
+function reloadAndWait(wc: WebContents, ticket: (url: string) => Promise<unknown>, ms = 10_000): Promise<void> {
+  return ticket(wc.getURL()).catch(() => {}).then(() => new Promise<void>(resolve => {
+    let started = false
+    const onStart = (): void => { started = true }
+    const done = (): void => {
+      clearTimeout(timer); clearTimeout(nudge)
+      wc.off('did-stop-loading', done); wc.off('did-start-loading', onStart)
+      resolve()
+    }
     const timer = setTimeout(done, ms)
+    const nudge = setTimeout(() => { if (!started && !wc.isDestroyed()) wc.loadURL(wc.getURL()).catch(() => {}) }, 1000)
+    wc.on('did-start-loading', onStart)
     wc.once('did-stop-loading', done)
     wc.reload()
-  })
+  }))
 }
 
 // Defined by app/build.mjs: true only in a build made with TETHER_TEST_EXTENSIONS=1 (the E2E).
@@ -72,7 +82,7 @@ export function activate(main: TetherMain): IDisposable[] {
       const url = wc.getURL()
       // The service worker survives a reload (it is the origin's, not the document's): it goes first (rule 15).
       if (isWebUrl(url)) await wc.session.clearStorageData({ origin: new URL(url).origin, storages: ['serviceworkers'] })
-      await reloadAndWait(wc)
+      await reloadAndWait(wc, url => registry.grantLocal(tabId, url))
       await surface.reapplyEmulation().catch(() => {})
       main.log(`guia ${tabId}: entrega limpa`)
     },
@@ -80,28 +90,26 @@ export function activate(main: TetherMain): IDisposable[] {
       const surface = registry.surface(tabId)
       const wc = surface?.webContents
       if (!surface || !wc || wc.isDestroyed()) return
-      // Rule 16: what the person left typed in a page that did not navigate, the agent would read. Asked in a world of its own.
-      const field = await wc.executeJavaScriptInIsolatedWorld(PASSWORD_WORLD, [{ code: `!!document.querySelector('input[type=password]')` }]).catch(() => false)
-      if (field !== true) return
-      await reloadAndWait(wc)
+      // Rule 16 (H1/M1): what the person left typed and did not send (a 2FA code, a card, a password), the agent would read.
+      await reloadAndWait(wc, url => registry.grantLocal(tabId, url))
       await surface.reapplyEmulation().catch(() => {})
-      main.log(`guia ${tabId}: recarregada ao devolver (campo de senha)`)
+      main.log(`guia ${tabId}: recarregada ao devolver`)
     },
     log: msg => main.log(msg),
   })
+  // E9: the agent's commands light the tab's dot; at most one event per tab every 400 ms (forgotten when the tab closes).
+  const lastPulse = new Map<string, number>()
   const shieldOf = (tabId: string): void => {
     void registry.surface(tabId)?.setInputShield(control.control(tabId) === 'agent').catch(() => {})
   }
   const controlSubs: IDisposable[] = [
     registry.watch({
       added: info => { control.added(info.tabId, registry.opener(info.tabId)); shieldOf(info.tabId) },
-      closed: tabId => control.closed(tabId),
+      closed: tabId => { control.closed(tabId); lastPulse.delete(tabId) },
     }),
     control.onChange(v => { shieldOf(v.tabId); ipc.send('control', v) }),
     main.agents.onDidExit(e => control.agentExited(e.slotId)),
   ]
-  // E9: the agent's commands light the tab's dot; at most one event per tab every 400 ms.
-  const lastPulse = new Map<string, number>()
   const pulse = (tabId: string): void => {
     const now = Date.now()
     if (now - (lastPulse.get(tabId) ?? 0) < 400) return

@@ -91,9 +91,27 @@ function withoutAsk(t: TabControl): TabControl {
   return rest
 }
 
-/** Does handing the tab to the person need the clean hand-off (scripts out, service worker out, reload)? Rule 15. */
+/** The person holds the tab because the agent asked for help (login or any other kind). */
+export function heldOnRequest(t: TabControl): boolean {
+  return t.holder === 'user' && (t.why === 'login' || t.why === 'asked')
+}
+
+/**
+ * Does handing the tab to the person need the clean hand-off (scripts out, service worker out, reload)? Rule 15, for EVERY
+ * help request: the kind is the agent's word ("other" may still say "sign in"), so it never decides what the person is shielded
+ * from. A request riding on a hold the person already has (she took it) does not reload under her hands; she saw the warning.
+ */
 export function needsCleanHandoff(before: TabControl, after: TabControl): boolean {
-  return before.holder === 'agent' && after.holder === 'user' && after.why === 'login'
+  return before.holder === 'agent' && heldOnRequest(after)
+}
+
+/**
+ * Does handing the tab back reload it first? Every hand-back of a help request (rule 16, widened): whatever the person typed and
+ * did not send (a 2FA code, a card) would be read by the agent's next snapshot. A manual take keeps the page as she left it
+ * (she was warned, with "Recarregar limpo").
+ */
+export function reloadsOnGiveBack(t: TabControl): boolean {
+  return heldOnRequest(t)
 }
 
 // ---- Tether.askUser's limits ----
@@ -141,6 +159,8 @@ export function heldError(c: Exclude<Control, 'agent'>): { code: string; message
 
 export const controlTexts = (agent: string) => ({
   agent: `${agent} usando`,
+  /** The bar of a tab whose agent exited (its chip says the same). */
+  ended: `${agent} encerrado`,
   user: 'Com você',
   paused: 'Pausada',
   take: 'Assumir o controle',

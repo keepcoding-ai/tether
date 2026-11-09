@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ASK_MESSAGE_MAX, ASK_TIMEOUT_DEFAULT_MS, ASK_TIMEOUT_MAX_MS, ASK_TIMEOUT_MIN_MS, ASKS_PER_AGENT, checkAsk, cleanAskMessage, controlOf,
-  controlTexts, heldError, INITIAL, needsCleanHandoff, reasonOf, type TabControl, transition,
+  controlTexts, heldError, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack, type TabControl, transition,
 } from '../../extensions/browser/control-rules.ts'
 import { ControlHub, type ControlView } from '../../extensions/browser/control.ts'
 
@@ -68,12 +68,21 @@ test('control: a new request on the same tab dismisses the earlier one', () => {
   assert.equal(second.state.why, 'login')
 })
 
-test('control: the clean hand-off runs only from the agent to the person for a login', () => {
+test('control: the clean hand-off runs from the agent to the person for EVERY help request, whatever its kind (H1)', () => {
   assert.equal(needsCleanHandoff(INITIAL, transition(INITIAL, ask('a', 'login')).state), true)
-  assert.equal(needsCleanHandoff(INITIAL, transition(INITIAL, ask('a')).state), false)
+  assert.equal(needsCleanHandoff(INITIAL, transition(INITIAL, ask('a')).state), true, "kind 'other' is the agent's word: cleaned too")
   assert.equal(needsCleanHandoff(INITIAL, transition(INITIAL, { type: 'take' }).state), false)
   const held = transition(INITIAL, { type: 'take' }).state
   assert.equal(needsCleanHandoff(held, transition(held, ask('a', 'login')).state), false, 'already with the person')
+})
+
+test('control: every help request hand-back reloads; a manual take does not (H1, M1)', () => {
+  assert.equal(reloadsOnGiveBack(transition(INITIAL, ask('a', 'login')).state), true)
+  assert.equal(reloadsOnGiveBack(transition(INITIAL, ask('a')).state), true)
+  const expired = transition(transition(INITIAL, ask('a')).state, { type: 'askTimeout', id: 'a' }).state
+  assert.equal(reloadsOnGiveBack(expired), true, 'a request that ran out still reloads when handed back')
+  assert.equal(reloadsOnGiveBack(transition(INITIAL, { type: 'take' }).state), false)
+  assert.equal(reloadsOnGiveBack(INITIAL), false)
 })
 
 test('control: a popup of a tab the person holds is hers from birth', () => {
@@ -137,13 +146,18 @@ test('control hub: ask → returned on give back, with the login clean hand-off 
   assert.deepEqual(h.openAsks('t1', 'agent-a'), { tab: true, agent: 1 })
   await h.giveBack('t1')
   assert.equal(await req.outcome, 'returned')
-  assert.deepEqual(reloaded, ['t1'], 'a login hand-back is checked for a password field')
+  assert.deepEqual(reloaded, ['t1'], 'a login hand-back reloads')
   assert.equal(h.control('t1'), 'agent')
   assert.deepEqual(h.openAsks('t1', 'agent-a'), { tab: false, agent: 0 })
 })
 
 test('control hub: timeout, dismissed by close, by the agent giving up, by the agent exiting', async () => {
-  const { h } = hub()
+  const { h, cleaned, reloaded } = hub()
+  const other = h.ask('t0', 'agent-a', { message: 'entre na sua conta', kind: 'other', timeoutMs: 60_000 })
+  assert.deepEqual(cleaned, ['t0'], "kind 'other': the clean hand-off runs")
+  await h.giveBack('t0')
+  assert.equal(await other.outcome, 'returned')
+  assert.deepEqual(reloaded, ['t0'], "kind 'other': the hand-back reloads")
   const short = h.ask('t1', 'agent-a', { message: 'x', kind: 'other', timeoutMs: 20 })
   assert.equal(await short.outcome, 'timeout')
   assert.equal(h.view('t1').askExpired, true)
