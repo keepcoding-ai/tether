@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import type { SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { PauseBatch, PauseEntry, PauseEntryState } from '../../src/daemon/pause.ts'
 import {
-  bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, groupClosed, isIdleForCleanup, pauseAction, sessionRows, sessionsCounter,
+  bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, groupClosed, isIdleForCleanup, pauseAction, pausePreview, popupGroups,
+  resolvePopupSelection, resumePreview, shortFolder, sessionRows, sessionsCounter,
   sessionsSummary, type SessionSlot,
 } from '../../app/renderer/sessions-rules.ts'
 
@@ -215,5 +216,87 @@ describe('sessionsSummary', () => {
   test('empty, and the tooltip carries the pause state', () => {
     assert.equal(sessionsSummary([], none, null).header, 'Nenhuma sessão')
     assert.match(sessionsSummary([], none, batchOf('stopped', 'listening')).tooltip, /Pausa em andamento: 1 de 2 pararam/)
+  })
+})
+
+describe('popup: groups and previews', () => {
+  const rowsOf = (slots: SessionSlot[]) => sessionRows(slots, none, NOW)
+  const mixed = [
+    mk('i1', { idleSince: ago(30 * MIN) }), mk('b1', { turn: 'busy' }), mk('a1', { attention: 'waiting' }),
+    mk('b2', { turn: 'busy' }), mk('i2', { idleSince: ago(5 * MIN) }), mk('x', { status: 'exited', endedAt: ago(MIN) }),
+  ]
+
+  test('shortFolder keeps the last two segments', () => {
+    assert.equal(shortFolder('D:\\atrium\\workspace\\tether'), 'workspace/tether')
+    assert.equal(shortFolder('/work/x'), 'work/x')
+    assert.equal(shortFolder('/x'), 'x')
+    assert.equal(shortFolder('/'), '/')
+  })
+
+  test('without a pause: attention, busy, idle; ended and empty groups left out', () => {
+    const g = popupGroups(rowsOf(mixed), null)
+    assert.deepEqual(g.map(x => [x.id, x.title]), [['attention', 'Pedem atenção'], ['busy', 'Em andamento'], ['idle', 'Ociosas']])
+    assert.deepEqual(g[1]!.slotIds, ['b1', 'b2'])
+    assert.deepEqual(g[2]!.slotIds, ['i1', 'i2'])
+    assert.deepEqual(popupGroups(rowsOf([mk('b1', { turn: 'busy' })]), null).map(x => x.id), ['busy'])
+    assert.deepEqual(popupGroups([], null), [])
+  })
+
+  test('with a pause: the batch first, every other live session under Fora da pausa', () => {
+    const batch = batchOf('stopped', 'preparing')
+    const slots = [mk('p0'), mk('p1', { turn: 'busy' }), mk('o1', { turn: 'busy' }), mk('o2', { idleSince: ago(MIN) })]
+    const g = popupGroups(rowsOf(slots), batch)
+    assert.deepEqual(g.map(x => x.id), ['pause', 'outside'])
+    assert.deepEqual(g[0]!.slotIds, ['p1', 'p0'])
+    assert.deepEqual(g[1]!.slotIds, ['o1', 'o2'])
+    assert.deepEqual(popupGroups(rowsOf([mk('p0'), mk('p1')]), batch).map(x => x.id), ['pause'])
+  })
+
+  test('selection stays while the session is listed, else the first row', () => {
+    const g = popupGroups(rowsOf(mixed), null)
+    assert.equal(resolvePopupSelection(g, 'b2'), 'b2')
+    assert.equal(resolvePopupSelection(g, 'gone'), 'a1')
+    assert.equal(resolvePopupSelection([], 'a1'), undefined)
+  })
+
+  test('pause preview: who gets the request, who does not, singular and plural', () => {
+    const p = pausePreview(mixed)
+    assert.equal(p.n, 2)
+    assert.equal(p.enabled, true)
+    assert.equal(p.text, 'Vão receber o pedido: 2 em andamento · 2 ociosas e 1 pedindo atenção não são afetadas')
+    assert.equal(p.buttonLabel, 'Pedir pausa aos 2 em andamento')
+    const one = pausePreview([mk('b', { turn: 'busy' }), mk('i')])
+    assert.equal(one.text, 'Vai receber o pedido: 1 em andamento · 1 ociosa não é afetada')
+    assert.equal(one.buttonLabel, 'Pedir pausa ao agente em andamento')
+    assert.equal(pausePreview([mk('b', { turn: 'busy' })]).text, 'Vai receber o pedido: 1 em andamento')
+  })
+
+  test('pause preview: nobody busy disables the button', () => {
+    const p = pausePreview([mk('i'), mk('a', { attention: 'done' })])
+    assert.deepEqual([p.n, p.enabled], [0, false])
+    assert.match(p.text, /Ninguém em andamento/)
+    assert.equal(pausePreview([mk('x', { status: 'exited' })]).text, 'Nenhuma sessão rodando agora')
+  })
+
+  test('resume preview: everyone with a note returns', () => {
+    const batch = batchOf('stopped', 'stopped')
+    ;(batch.entries[0] as PauseEntry).note = 'a'; (batch.entries[1] as PauseEntry).note = 'b'
+    const r = resumePreview(batch, [mk('p0'), mk('p1')])
+    assert.deepEqual([r.returning, r.withNote, r.skipped.length], [2, 2, 0])
+    assert.equal(r.text, 'Vão voltar: 2, cada uma com sua nota')
+    assert.equal(r.skippedText, '')
+  })
+
+  test('resume preview: busy, waiting and gone are skipped with the reason; silent stops return without a note', () => {
+    const batch = batchOf('stopped', 'stopped', 'stopped-silent', 'stopped', 'stopped')
+    ;(batch.entries[0] as PauseEntry).note = 'a'
+    const r = resumePreview(batch, [mk('p0'), mk('p1', { turn: 'busy' }), mk('p2'), mk('p3', { attention: 'waiting' })])
+    assert.deepEqual([r.returning, r.withNote], [2, 1])
+    assert.equal(r.text, 'Vão voltar: 2 · 1 com nota')
+    assert.deepEqual(r.skipped.map(s => [s.slotId, s.reason]), [['p1', 'ocupada'], ['p3', 'esperando você'], ['p4', 'não existe mais']])
+    assert.equal(r.skippedText, '3 não voltam: 1 ocupada, 1 esperando você, 1 não existe mais')
+    const one = resumePreview(batchOf('stopped'), [mk('p0', { turn: 'busy' })])
+    assert.equal(one.text, 'Nenhuma sessão volta agora')
+    assert.equal(one.skippedText, '1 não volta: ocupada')
   })
 })

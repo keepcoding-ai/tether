@@ -43,7 +43,7 @@ import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
 import { openMoveDialog } from './move-dialog.ts'
-import { openPauseDialog as showPauseDialog, refreshPauseDialog } from './pause-dialog.ts'
+import { openSessionsDialog, refreshSessionsDialog } from './sessions-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
 import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
 import { SideBars } from './sidebars.ts'
@@ -1579,6 +1579,7 @@ function applyState(slot: SlotState): void {
   for (const id of slots.keys()) if (id !== slot.slotId && slots.get(id)?.status === 'queued') panels.get(id)?.render()
   renderSlot(slot.slotId)
   refreshSessions()
+  refreshSessionsDialog()
   renderStrip()
   if (slot.attention && slot.slotId === watchedPane()) void window.tether.request({ t: 'seen', slotId: slot.slotId })
   recomputeProjects() // the slot's kind or folder may have changed
@@ -1588,7 +1589,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
     case 'data': panels.get(ev.slotId)?.write(ev.data); break
     case 'profiles': setProfiles(ev.profiles, undefined); break
-    case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshPauseDialog(); break
+    case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshSessionsDialog(); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
@@ -1765,11 +1766,18 @@ function setupSessionsMenu(): void {
   sessionsMenu.refresh()
 }
 
-/** The management popup ("Acompanhar…"): from the Sessões menu or the palette. */
+/** The "Sessões" popup ("Acompanhar…" in the menu, or the palette): everything running, the pause, the resume. */
 function openPauseDialog(): void {
   sessionsMenu?.setOpen(false)
-  showPauseDialog({
+  openSessionsDialog({
+    slots: () => slots.values(),
     batch: () => pauseBatch,
+    hasTab: id => findPanel(id) !== undefined,
+    placeOf: slotId => {
+      if (!findPanel(slotId)) return undefined
+      const pad = framePadOf(slotId)
+      return inDrawer(slotId) ? 'Gaveta' : pad ? padRegistry.get(pad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(slotId) ?? desks.activeDeskId)
+    },
     titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
     request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
     openSlot,
@@ -2562,7 +2570,7 @@ const commandHost: CommandHost = {
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
-  pauseManage: () => openPauseDialog(),
+  sessionsManage: () => openPauseDialog(),
   sessionsMenu: focusPause => { if (focusPause) sessionsMenu?.openOnPause(); else sessionsMenu?.setOpen(true) },
   restoreConfirmations: () => window.tether.command('restore-confirmations'),
   associateLinks: () => { void associateLinks() },

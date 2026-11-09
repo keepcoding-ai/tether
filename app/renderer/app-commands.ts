@@ -56,8 +56,8 @@ export interface CommandHost {
   openTerminalTheme(): void
   fontSize(command: FontSizeCommand): void
   openProfiles(): void
-  /** Acompanhar a pausa: the polite pause management dialog. */
-  pauseManage(): void
+  /** The "Sessões" popup: everything running, the polite pause and the resume. */
+  sessionsManage(): void
   /** "Sessões…" / "Pedir pausa…": opens the Sessões menu (the second one with the focus on the pause button); never pauses by itself. */
   sessionsMenu(focusPause: boolean): void
   restoreConfirmations(): void
@@ -197,7 +197,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'profiles.manage', title: 'Perfis de lançamento…', group: GROUP.app, icon: 'sliders-horizontal', run: () => host.openProfiles() },
     { id: 'sessions.menu', title: 'Sessões…', group: GROUP.app, icon: 'tray', run: () => host.sessionsMenu(false) },
     { id: 'pause.start', title: 'Pedir pausa aos agentes…', group: GROUP.app, icon: 'pause', run: () => host.sessionsMenu(true) },
-    { id: 'pause.manage', title: 'Acompanhar a pausa…', group: GROUP.app, icon: 'pause', run: () => host.pauseManage() },
+    { id: 'sessions.manage', title: 'Sessões em andamento…', group: GROUP.app, icon: 'tray', run: () => host.sessionsManage() },
     { id: 'links.associate', title: 'Associar links tether:// a este tether…', group: GROUP.app, icon: 'link', run: () => host.associateLinks() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },
     { id: 'daemon.restart', title: 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'plugs', run: () => host.restartDaemon() },

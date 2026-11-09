@@ -20,7 +20,7 @@ function stubHost(calls: string[]): CommandHost {
     createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), moveActiveDesk: log('moveActiveDesk'), deskActions: log('deskActions'), toggleBuilder: log('toggleBuilder'), closeDesk: log('closeDesk'),
     toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'),
     setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), toggleTabBorder: log('toggleTabBorder'), toggleDimUnfocused: log('toggleDimUnfocused'), setDimLevel: log('setDimLevel'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
-    openProfiles: log('openProfiles'), pauseManage: log('pauseManage'), sessionsMenu: log('sessionsMenu'), restoreConfirmations: log('restoreConfirmations'), associateLinks: log('associateLinks'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
+    openProfiles: log('openProfiles'), sessionsManage: log('sessionsManage'), sessionsMenu: log('sessionsMenu'), restoreConfirmations: log('restoreConfirmations'), associateLinks: log('associateLinks'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
     restartDaemon: log('restartDaemon'), reloadAll: log('reloadAll'), relaunchApp: log('relaunchApp'), toggleDevTools: log('toggleDevTools'), toggleFullscreen: log('toggleFullscreen'), showPalette: log('showPalette'),
     splitEmpty: log('splitEmpty'), newEmptyDesk: log('newEmptyDesk'),
     reopenClosed: log('reopenClosed'), cycleTab: log('cycleTab'), goToTab: log('goToTab'), focusNeighbour: log('focusNeighbour'),

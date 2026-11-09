@@ -283,7 +283,7 @@ button.primary:hover { background: var(--accent-hover); }
   #sessions-list .sx-ft { flex-wrap: wrap; }
   #sessions-list .sx-ft .forget-all { margin-left: 0; }
 }
-/* --- "Acompanhar a pausa" (app/renderer/pause-dialog.ts): the app's dialog in four tiers (data-tier from the window's width:
+/* --- "Sessões" popup (app/renderer/sessions-dialog.ts): the app's dialog in four tiers (data-tier from the window's width:
    phone <768, narrow <1280, desktop <2560, wide). Sizes are in em so the wide tier scales type and spacing together.
    Colours follow pause-rules: --accent in progress, --ok stopped, --fg-dim queued; --warn stays out of it. */
 dialog.ask.pause-dlg { --pd-cols: 320px; font-size: 14px; flex-direction: column; overflow: hidden; width: min(1080px, 92vw); height: min(700px, 88vh); max-height: 88vh; }
@@ -301,7 +301,7 @@ dialog.ask.pause-dlg header .spacer { flex: 1; }
 .pd-left { min-height: 0; overflow-y: auto; border-right: 1px solid var(--border); background: var(--bg-2); padding: .5em; }
 .pd-right { min-height: 0; overflow-y: auto; padding: 1.2em 1.4em; }
 .pd-list { display: flex; flex-direction: column; gap: 2px; }
-.pd-row { all: unset; box-sizing: border-box; position: relative; display: flex; align-items: center; gap: .75em; min-height: 3em; padding: .35em .7em; border-radius: 6px; cursor: pointer; color: var(--fg); }
+.pd-row { all: unset; box-sizing: border-box; min-width: 0; position: relative; display: flex; align-items: center; gap: .75em; min-height: 3em; padding: .35em .7em; border-radius: 6px; cursor: pointer; color: var(--fg); }
 .pd-row:hover { background: var(--bg-hover); }
 .pd-row.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .pd-row.sel::before { content: ""; position: absolute; left: 0; top: .5em; bottom: .5em; width: 3px; border-radius: 2px; background: var(--accent); }
@@ -309,14 +309,31 @@ dialog.ask.pause-dlg header .spacer { flex: 1; }
 .pd-row .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .pd-row .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-row .cw { color: var(--fg-dim); font-size: .86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pd-row .led, .pd-dh .led { width: .6em; height: .6em; border-radius: 50%; flex: none; background: var(--fg-dim); opacity: .6; }
-.pd-row.progress .led, .pd-dh.progress .led { background: var(--accent); opacity: 1; box-shadow: 0 0 0 .25em color-mix(in srgb, var(--accent) 25%, transparent); }
-.pd-row.stopped .led, .pd-dh.stopped .led { background: var(--ok); opacity: 1; }
+/* The dot is the turn (orange = attention, green = working, nothing = idle); the pause glyph is the pause state (blue = stopping, green = stopped, grey = queued). */
+.pd-row .led, .pd-dh .led { width: .6em; height: .6em; border-radius: 50%; flex: none; background: transparent; }
+.pd-row.attention .led, .pd-dh.attention .led { background: var(--x-alert); box-shadow: 0 0 0 .25em color-mix(in srgb, var(--x-alert) 25%, transparent); }
+.pd-row.busy .led, .pd-dh.busy .led { background: var(--ok); opacity: .8; }
+.pd-row .pg, .pd-dh .pg { display: inline-flex; flex: none; color: var(--fg-dim); }
+.pd-row .pg .ph, .pd-dh .pg .ph { width: 1.05em; height: 1.05em; }
+.pd-row.progress .pg, .pd-dh.progress .pg { color: var(--accent); }
+.pd-row.stopped .pg, .pd-dh.stopped .pg { color: var(--ok); }
+.pd-row.attention .cw { color: var(--x-alert); font-weight: 600; }
+.pd-gt { position: sticky; top: -.5em; z-index: 1; display: flex; align-items: center; gap: .6em; margin: 0 -.5em; padding: .7em 1.2em .35em; background: var(--bg-2); font-size: .74em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); }
+.pd-gt .n { margin-left: auto; font-weight: 600; letter-spacing: 0; }
+.pd-group:first-child .pd-gt { padding-top: .25em; }
+/* a button does not stretch as a block: the group is a column so every row takes the full width (and ellipsises its line) */
+.pd-group { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pd-dh.idle .led { display: none; }
+.pd-left { overflow-x: hidden; }
+.pd-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .45em 1.1em; margin: 0 0 .8em; }
+.pd-facts dt { color: var(--fg-dim); font-size: .86em; padding-top: .1em; }
+.pd-facts dd { margin: 0; overflow-wrap: anywhere; }
 .pd-dh { display: flex; align-items: center; gap: .7em; margin-bottom: 1em; }
 .pd-dh h3 { margin: 0; font-size: 1.2em; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-state { flex: none; font-size: .82em; font-weight: 600; padding: .15em .75em; border-radius: 999px; color: var(--fg-dim); background: var(--bg-3); }
 .pd-dh.progress .pd-state { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.pd-dh.stopped .pd-state { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.pd-dh.stopped .pd-state, .pd-dh.busy .pd-state { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.pd-dh.attention .pd-state { color: var(--x-alert); background: color-mix(in srgb, var(--x-alert) 16%, transparent); }
 .pd-note { margin: 0 0 .8em; padding: .65em .9em; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .pd-note .k { display: block; margin-bottom: .2em; font-size: .78em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--fg-dim); }
 .pd-note p { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -337,7 +354,7 @@ dialog.ask.pause-dlg header .spacer { flex: 1; }
 .pd-step .clock { color: var(--fg-dim); font: .86em var(--mono); }
 .pd-step .span { color: var(--fg-dim); font-size: .86em; min-width: 8em; text-align: right; font-variant-numeric: tabular-nums; }
 .pd-acts { display: flex; flex-wrap: wrap; gap: .6em; margin-top: 1.4em; }
-.pd-acts button, .pd-cancel, .pd-resume { display: inline-flex; align-items: center; gap: .5em; font-size: 1em; }
+.pd-acts button, .pd-cancel, .pd-resume, .pd-start { display: inline-flex; align-items: center; gap: .5em; font-size: 1em; }
 .pd-acts .ph, .pd-resume .ph { width: 1.05em; height: 1.05em; }
 .pd-out { color: var(--fg-dim); }
 .pd-empty { display: grid; place-items: center; align-content: center; gap: .6em; height: 100%; min-height: 10em; text-align: center; color: var(--fg-dim); }
@@ -346,8 +363,15 @@ dialog.ask.pause-dlg header .spacer { flex: 1; }
 .pd-body > * { min-width: 0; }
 .pd-empty p { margin: 0; max-width: 26em; line-height: 1.5; }
 .pd-foot { flex: none; display: flex; align-items: center; gap: .7em; padding: .8em 1.3em 1em; border-top: 1px solid var(--border); }
-.pd-foot .spacer { flex: 1; }
-.pd-sum { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: .1em .8em; }
+.pd-foot .spacer { flex: 0 0 0; }
+.pd-sum { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: .15em; }
+.pd-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1em .8em; }
+.pd-prev { color: var(--fg-dim); font-size: .92em; }
+.pd-prev:empty { display: none; }
+.pd-prev.notice { color: var(--err); }
+.pd-foot [hidden] { display: none !important; }
+.pd-start { display: inline-flex; align-items: center; gap: .5em; flex: none; font-size: 1em; font-weight: 600; }
+.pd-start .ph { width: 1.05em; height: 1.05em; }
 .pd-sum b { font-weight: 650; }
 .pd-age { color: var(--fg-dim); font-size: .88em; font-variant-numeric: tabular-nums; }
 .pd-cancel { background: none; border: 1px solid transparent; color: var(--fg-dim); }
@@ -355,14 +379,14 @@ dialog.ask.pause-dlg header .spacer { flex: 1; }
 .pd-foot button:disabled { opacity: .5; cursor: default; }
 .pd-resume { font-weight: 600; }
 .pd-resume.ready { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
-/* phone: one column, the list over the detail, only the body scrolls; the footer stays. */
-dialog.ask.pause-dlg[data-tier="phone"] .pd-body { display: block; overflow-y: auto; }
-dialog.ask.pause-dlg[data-tier="phone"] .pd-left { overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
-dialog.ask.pause-dlg[data-tier="phone"] .pd-right { overflow: visible; padding: 1em; }
+/* phone: one column, the list over the detail; each scrolls on its own, the footer stays. */
+dialog.ask.pause-dlg[data-tier="phone"] .pd-body { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(7em, 44%) minmax(0, 1fr); }
+dialog.ask.pause-dlg[data-tier="phone"] .pd-left { border-right: 0; border-bottom: 1px solid var(--border); }
+dialog.ask.pause-dlg[data-tier="phone"] .pd-right { padding: 1em; }
 dialog.ask.pause-dlg[data-tier="phone"] .pd-foot { flex-wrap: wrap; padding: .7em 1em calc(.8em + env(safe-area-inset-bottom, 0px)); }
 dialog.ask.pause-dlg[data-tier="phone"] .pd-sum { flex: 1 1 100%; }
 dialog.ask.pause-dlg[data-tier="phone"] .pd-foot .spacer { display: none; }
-dialog.ask.pause-dlg[data-tier="phone"] .pd-resume { flex: 1; justify-content: center; }
+dialog.ask.pause-dlg[data-tier="phone"] .pd-resume, dialog.ask.pause-dlg[data-tier="phone"] .pd-start { flex: 1; justify-content: center; }
 dialog.ask.pause-dlg[data-tier="phone"] .pd-step { grid-template-columns: 1.1em 1fr auto; }
 dialog.ask.pause-dlg[data-tier="phone"] .pd-step .span { grid-column: 2 / 4; text-align: left; min-width: 0; }
 dialog.ask.pause-dlg[data-tier="phone"] .pd-acts button { flex: 1; justify-content: center; }

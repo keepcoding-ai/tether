@@ -4,13 +4,13 @@
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import type { PauseBatch } from '../../src/daemon/pause.ts'
 import type { DialogSpec } from '../shared/dialog.ts'
-import { buttonTitle as pauseButtonTitle, counter as pauseCounter, hasBatch, pauseAction } from './pause-rules.ts'
+import { buttonTitle as pauseButtonTitle, counter as pauseCounter, hasBatch, orderedEntries, pauseAction } from './pause-rules.ts'
 
 export { pauseAction }
 
 /** What the model needs of a slot. `idleSince` (ISO: idle since) and `endedAt` (ISO: process ended) are absent on older daemons. */
 export type SessionSlot = Pick<SlotState, 'slotId' | 'cwd' | 'status'> &
-  Partial<Pick<SlotState, 'name' | 'title' | 'attention' | 'turn'>> & { idleSince?: string; endedAt?: string }
+  Partial<Pick<SlotState, 'name' | 'title' | 'attention' | 'turn' | 'kind' | 'binding'>> & { idleSince?: string; endedAt?: string }
 
 export type TurnState = 'attention' | 'busy' | 'idle' | 'ended'
 
@@ -254,4 +254,130 @@ export function sessionsSummary(slots: Iterable<SessionSlot>, hasTab: (slotId: s
 export function pauseFirstConsequence(busy: number): string {
   const who = busy === 1 ? 'Pede ao agente em andamento' : `Pede aos ${busy} agentes em andamento`
   return `${who} que pare no seu passo e abre o Acompanhar. Nada é encerrado agora.`
+}
+
+// ---------- the "Sessões" popup (what is running, and what a pause or a resume would touch) ----------
+
+/** Last two segments of a folder, "work/tether": enough to tell sessions apart in a narrow list. */
+export function shortFolder(cwd: string): string {
+  const parts = cwd.split(/[\\/]+/).filter(Boolean)
+  return parts.length <= 2 ? parts.join('/') || cwd : parts.slice(-2).join('/')
+}
+
+export type PopupGroupId = 'attention' | 'busy' | 'idle' | 'pause' | 'outside'
+
+export interface PopupGroup {
+  id: PopupGroupId
+  title: string
+  /** Display order. The pause group lists the batch's entries (a session may be gone from the slots); the others, live sessions. */
+  slotIds: string[]
+}
+
+const GROUP_OF: Record<Exclude<TurnState, 'ended'>, PopupGroupId> = { attention: 'attention', busy: 'busy', idle: 'idle' }
+const GROUP_TITLE: Record<PopupGroupId, string> = {
+  attention: 'Pedem atenção', busy: 'Em andamento', idle: 'Ociosas', pause: 'Na pausa', outside: 'Fora da pausa',
+}
+
+/**
+ * The popup's groups from the rows (sessionRows order; ended ones are not shown here). Without a pause: attention, busy,
+ * idle. With one: the batch's sessions first ("Na pausa", in the pause's order), then every other live session together
+ * ("Fora da pausa"). Empty groups are left out.
+ */
+export function popupGroups(rows: readonly SessionRow[], batch: PauseBatch | null | undefined): PopupGroup[] {
+  const live = rows.filter(r => r.state !== 'ended')
+  const out: PopupGroup[] = []
+  if (hasBatch(batch)) {
+    const inBatch = orderedEntries(batch).map(e => e.slotId)
+    const member = new Set(inBatch)
+    if (inBatch.length > 0) out.push({ id: 'pause', title: GROUP_TITLE.pause, slotIds: inBatch })
+    const rest = live.filter(r => !member.has(r.slotId)).map(r => r.slotId)
+    if (rest.length > 0) out.push({ id: 'outside', title: GROUP_TITLE.outside, slotIds: rest })
+    return out
+  }
+  for (const id of ['attention', 'busy', 'idle'] as const) {
+    const slotIds = live.filter(r => r.state !== 'ended' && GROUP_OF[r.state] === id).map(r => r.slotId)
+    if (slotIds.length > 0) out.push({ id, title: GROUP_TITLE[id], slotIds })
+  }
+  return out
+}
+
+/** The chosen session while it is still on the list, else the first row of the first group. */
+export function resolvePopupSelection(groups: readonly PopupGroup[], slotId: string | undefined): string | undefined {
+  if (slotId && groups.some(g => g.slotIds.includes(slotId))) return slotId
+  return groups[0]?.slotIds[0]
+}
+
+export interface PausePreview {
+  /** Mid-turn sessions: the ones that would get the request. */
+  n: number
+  enabled: boolean
+  /** "Vão receber o pedido: 3 em andamento · 5 ociosas não são afetadas". */
+  text: string
+  /** "Pedir pausa aos 3 em andamento". */
+  buttonLabel: string
+}
+
+/** Before asking for a pause: who gets the request and who does not. Counts live sessions, with or without a tab. */
+export function pausePreview(slots: Iterable<SessionSlot>): PausePreview {
+  const list = [...slots].filter(isLive)
+  const act = pauseAction(list, null)
+  const idle = list.filter(s => s.turn !== 'busy' && !s.attention).length
+  const attention = list.filter(s => s.turn !== 'busy' && s.attention).length
+  const others = idle + attention
+  if (list.length === 0) return { n: 0, enabled: false, text: 'Nenhuma sessão rodando agora', buttonLabel: act.label }
+  if (act.n === 0) return { n: 0, enabled: false, text: 'Ninguém em andamento agora: não há o que pausar', buttonLabel: act.label }
+  const who: string[] = []
+  if (idle > 0) who.push(idle === 1 ? '1 ociosa' : `${idle} ociosas`)
+  if (attention > 0) who.push(`${attention} pedindo atenção`)
+  const head = act.n === 1 ? 'Vai receber o pedido: 1 em andamento' : `Vão receber o pedido: ${act.n} em andamento`
+  const tail = others > 0 ? ` · ${who.join(' e ')} ${others === 1 ? 'não é afetada' : 'não são afetadas'}` : ''
+  return { n: act.n, enabled: true, text: head + tail, buttonLabel: act.label }
+}
+
+export interface ResumePreview {
+  returning: number
+  /** Of those, how many have a note to resume from. */
+  withNote: number
+  skipped: { slotId: string; reason: string }[]
+  /** "Vão voltar: 3, cada uma com sua nota". */
+  text: string
+  /** "1 não volta: ocupada", empty when everyone returns. */
+  skippedText: string
+}
+
+/** Why the daemon would skip a resume right now (mirrors Server.resumeOne), in the short form shown to people. */
+function skipWhy(s: SessionSlot | undefined): string | undefined {
+  if (!s) return 'não existe mais'
+  if (!isLive(s)) return 'não está rodando'
+  if (s.turn === 'busy') return 'ocupada'
+  if (s.attention === 'waiting') return 'esperando você'
+  return undefined
+}
+
+/** Before "Retomar": who goes back (and with which note) and who would be skipped, from the sessions' state right now. */
+export function resumePreview(batch: PauseBatch | null | undefined, slots: Iterable<SessionSlot>): ResumePreview {
+  const bySlot = new Map<string, SessionSlot>()
+  for (const s of slots) bySlot.set(s.slotId, s)
+  let returning = 0
+  let withNote = 0
+  const skipped: ResumePreview['skipped'] = []
+  for (const e of hasBatch(batch) ? orderedEntries(batch) : []) {
+    if (e.state !== 'stopped' && e.state !== 'stopped-silent') continue
+    const why = skipWhy(bySlot.get(e.slotId))
+    if (why) { skipped.push({ slotId: e.slotId, reason: why }); continue }
+    returning++
+    if (e.state === 'stopped' && e.note) withNote++
+  }
+  let text: string
+  if (returning === 0) text = 'Nenhuma sessão volta agora'
+  else if (withNote === returning) text = returning === 1 ? 'Vai voltar: 1, com a sua nota' : `Vão voltar: ${returning}, cada uma com sua nota`
+  else text = returning === 1 ? 'Vai voltar: 1, sem nota' : `Vão voltar: ${returning} · ${withNote} com nota`
+  let skippedText = ''
+  if (skipped.length > 0) {
+    const counts = new Map<string, number>()
+    for (const s of skipped) counts.set(s.reason, (counts.get(s.reason) ?? 0) + 1)
+    const list = [...counts].map(([r, n]) => (skipped.length === 1 ? r : `${n} ${r}`)).join(', ')
+    skippedText = skipped.length === 1 ? `1 não volta: ${list}` : `${skipped.length} não voltam: ${list}`
+  }
+  return { returning, withNote, skipped, text, skippedText }
 }

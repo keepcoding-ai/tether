@@ -1,6 +1,6 @@
 // E2E of the polite pause in the app with the REAL Claude Code (--model haiku, CLAUDE* stripped, hidden window, private
 // home/pipe): a Claude runs a long task (turn busy -> the tab ball), the "Pedir pausa" button in the Sessões menu starts the batch, the counter goes
-// 0/1 -> 1/1 as the agent stops by itself, the menu lists it, the pause.manage command opens the "Acompanhar a pausa"
+// 0/1 -> 1/1 as the agent stops by itself, the menu lists it, the pause.manage command opens the "Sessões"
 // popup, whose light/dark captures at 900 and 1280 px go to PAUSE_SHOTS_DIR (default D:/atrium/.tmp/pause-proof, outside the repo);
 // Retomar brings the turn back. No Claude session is killed before 11 s of life (fullscreen canary).
 import { test } from 'node:test'
@@ -187,13 +187,13 @@ test('app pause: busy ball, Pausar button + counter, menu, pause.manage popup (l
       for (const scheme of ['light', 'dark'] as const) {
         await setTheme(page, scheme)
         assert.equal(await page.evaluate(() => window.__tether.runCommand('pause.manage')), 'ran')
-        await page.waitForSelector('dialog[data-dialog="pause"][open]')
+        await page.waitForSelector('dialog[data-dialog="sessions"][open]')
         await sleep(400)
-        const tier = await page.locator('dialog[data-dialog="pause"]').getAttribute('data-tier')
+        const tier = await page.locator('dialog[data-dialog="sessions"]').getAttribute('data-tier')
         console.log(`# app: popup at ${width}px (${scheme}) tier=${tier}`)
         await page.screenshot({ path: join(shots, `app-popup-${width}-${scheme}.png`) })
-        await page.locator('dialog[data-dialog="pause"] .pd-close').click()
-        await page.waitForFunction(() => document.querySelectorAll('dialog[data-dialog="pause"][open]').length === 0)
+        await page.locator('dialog[data-dialog="sessions"] .pd-close').click()
+        await page.waitForFunction(() => document.querySelectorAll('dialog[data-dialog="sessions"][open]').length === 0)
       }
     }
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1280, 800))

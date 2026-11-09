@@ -156,7 +156,8 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     const row = el('div', `sx-row ${group} ${r.state}`)
     row.dataset.slot = r.slotId
     const led = el('span', 'led')
-    const kind = el('span', `kind ${r.slot.kind}`); kind.append(icon(KIND_ICON[r.slot.kind] ?? 'terminal-window'))
+    const kindName = r.slot.kind ?? 'shell'
+    const kind = el('span', `kind ${kindName}`); kind.append(icon(KIND_ICON[kindName] ?? 'terminal-window'))
     const tx = el('div', 'tx')
     const tt = el('span', 'tt', r.name)
     const cw = el('span', 'cw', r.text); cw.title = r.slot.cwd

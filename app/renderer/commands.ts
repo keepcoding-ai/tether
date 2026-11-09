@@ -100,6 +100,9 @@ export function isCommandId(id: string): boolean {
   return ID_SHAPE.test(id)
 }
 
+/** Ids that were renamed: the old id still runs (keybindings and scripts written for it keep working). */
+export const COMMAND_ALIASES: Readonly<Record<string, string>> = { 'pause.manage': 'sessions.manage' }
+
 export class CommandRegistry {
   private readonly commands = new Map<string, Command>()
   private readonly context: () => CommandContext
@@ -123,7 +126,7 @@ export class CommandRegistry {
   }
 
   get(id: string): Command | undefined {
-    return this.commands.get(id)
+    return this.commands.get(id) ?? this.commands.get(COMMAND_ALIASES[id] ?? '')
   }
 
   /** Every command, in registration order. */
@@ -151,10 +154,10 @@ export class CommandRegistry {
 
   /** Runs a command by id. Only a run from the palette counts as "recently used" (a chord held all day would flood it). */
   async run(id: string, source: RunSource = 'test'): Promise<RunOutcome> {
-    const c = this.commands.get(id)
+    const c = this.get(id)
     if (!c) return 'unknown'
     if (!this.isAvailable(c)) return 'unavailable'
-    if (source === 'palette') this.markUsed(id)
+    if (source === 'palette') this.markUsed(c.id)
     await c.run(source)
     return 'ran'
   }
