@@ -18,6 +18,8 @@
 // agent on that tab is refused with a named error (TAB_WITH_USER, TAB_PAUSED) and every event of it is dropped (rule 14:
 // refusing commands alone lets the form's POST with the password reach the agent); `Tether.tabStateChanged` goes to the owner's
 // browser sessions at each change. `cleanTab` removes the scripts the agents registered on a tab (the clean hand-off).
+// E7b: auto-attach forwarded with the gate's filter (frames and dedicated workers only): a page's service worker is never
+// attached, so it is never announced and never detached (detaching one crashed Electron's main process).
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -29,7 +31,7 @@ import type { Surface } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { KeyStore } from './gate-keys.ts'
 import {
-  BROWSER_ALLOWED, cropRect, dragCarriesFiles, fromBrowser, GateError, type GateSession, hiddenCapture, inputScale, keyOf,
+  autoAttachParams, BROWSER_ALLOWED, childDisposal, cropRect, dragCarriesFiles, fromBrowser, GateError, type GateSession, hiddenCapture, inputScale, keyOf,
   loopbackHost, navigable, noTarget, PAGE_ALLOWED, refusal, refusalReason, scaleInput, scrubEvent, SessionTable,
 } from './gate-rules.ts'
 import type { FirstTicket } from './tabs.ts'
@@ -193,25 +195,26 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     const s = sessions.ofInner(tabId, inner)
     if (!s) return
     let out = params as Json
-    if (controlOf(tabId) !== 'agent') {
-      // Rule 14: nothing of the page reaches the agent while it does not have the tab. A child born now is let go (it would
-      // be announced to nobody); one that leaves is forgotten.
-      if (method === 'Target.attachedToTarget') surface.debugger.send('Target.detachFromTarget', { sessionId: out.sessionId as string }, inner).catch(() => {})
-      else if (method === 'Target.detachedFromTarget') { const c = sessions.ofInner(tabId, out.sessionId as string); if (c) sessions.remove(c) }
-      heldTabs.add(tabId)
-      opts.trace?.(`-- held ${s.conn.slotId} ${method}`)
-      return
-    }
+    const agentHasTab = controlOf(tabId) === 'agent'
     if (method === 'Target.attachedToTarget') {
+      // Only the page's own children (out-of-process frames, dedicated workers) are announced, and only while the agent has
+      // the tab (rule 14). Anything else is let go: detached, or released when it is a worker of the origin (gate-rules,
+      // CHILD_TARGETS: detaching a service worker's session crashes Electron's main process).
       const child = out.sessionId as string
-      const type = (out.targetInfo as Json | undefined)?.type
-      // Only the page's own children (out-of-process frames, dedicated workers): a service or shared worker serves every tab
-      // of its origin (another agent's too), so it is let go and never announced, like anything else.
-      if (type !== 'iframe' && type !== 'worker') {
-        surface.debugger.send('Target.detachFromTarget', { sessionId: child }, inner).catch(() => {})
+      const disposal = childDisposal((out.targetInfo as Json | undefined)?.type, agentHasTab)
+      if (disposal === 'detach') surface.debugger.send('Target.detachFromTarget', { sessionId: child }, inner).catch(() => {})
+      else if (disposal === 'release' && out.waitingForDebugger === true) surface.debugger.send('Runtime.runIfWaitingForDebugger', {}, child).catch(() => {})
+      if (disposal !== 'announce') {
+        if (!agentHasTab) { heldTabs.add(tabId); opts.trace?.(`-- held ${s.conn.slotId} ${method}`) }
         return
       }
       out = { ...out, sessionId: sessions.add(s.conn, tabId, child, 'child').outer }
+    } else if (!agentHasTab) {
+      // Rule 14: nothing of the page reaches the agent while it does not have the tab; a child that leaves is forgotten.
+      if (method === 'Target.detachedFromTarget') { const c = sessions.ofInner(tabId, out.sessionId as string); if (c) sessions.remove(c) }
+      heldTabs.add(tabId)
+      opts.trace?.(`-- held ${s.conn.slotId} ${method}`)
+      return
     } else if (method === 'Target.detachedFromTarget') {
       const c = sessions.ofInner(tabId, out.sessionId as string)
       if (!c) return
@@ -341,6 +344,11 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           else wc.reload()
           return reply({})
         }
+        case 'Target.setAutoAttach':
+          // Only frames and dedicated workers are ever attached (gate-rules, CHILD_TARGETS): a service worker never reaches the
+          // tab's debugger, so it is never announced and never detached.
+          send(method, autoAttachParams(params)).then(reply, fail)
+          return
         case 'Target.getTargetInfo':
           if (params.targetId !== undefined) {
             return targetIdOf(s.tabId).then(own => {

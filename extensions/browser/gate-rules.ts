@@ -161,6 +161,34 @@ export function noTarget(): GateError {
 }
 
 /**
+ * The children a page session may have, announced to its agent: out-of-process frames and dedicated workers. A service or
+ * shared worker serves every tab of its origin (another agent's too) and is never attached at all.
+ *
+ * Why at the source: on Electron 45, `Target.detachFromTarget` sent through `webContents.debugger` to an auto-attached
+ * service worker's session crashes the main process (access violation, 0xC0000005: the whole app goes, from any page that
+ * calls `navigator.serviceWorker.register`). So the gate never lets one be attached: every `Target.setAutoAttach` it forwards
+ * carries this filter (whatever filter the client sent), and Chromium skips the other targets before attaching them.
+ */
+export const CHILD_TARGETS: readonly string[] = ['iframe', 'worker']
+
+/** `Target.setAutoAttach` as forwarded: the client's flags, the gate's filter (only `CHILD_TARGETS`; the rest is excluded). */
+export function autoAttachParams(params: Record<string, unknown>): Record<string, unknown> {
+  return { ...params, filter: CHILD_TARGETS.map(type => ({ type, exclude: false })) }
+}
+
+/**
+ * What the gate does with a child the debugger attached: `announce` it to the agent (a frame or dedicated worker while the agent
+ * has the tab), `detach` it (a frame or worker of a held tab, an unknown kind), or `release` it: a worker of the origin (service,
+ * shared) is never detached (the crash above) but resumed if it waits for a debugger and left unannounced; its session ends with
+ * the page's. With the filter in force this last case does not happen; it is the guard if Chromium ever ignores the filter.
+ */
+export function childDisposal(type: unknown, agentHasTab: boolean): 'announce' | 'detach' | 'release' {
+  if (type === 'service_worker' || type === 'shared_worker' || type === 'worklet' || type === 'shared_storage_worklet' || type === 'auction_worklet') return 'release'
+  if (typeof type === 'string' && CHILD_TARGETS.includes(type)) return agentHasTab ? 'announce' : 'detach'
+  return 'detach'
+}
+
+/**
  * The scale CDP input must be multiplied by (rule 4): the scale the page is drawn at, i.e. the fit while shown or parked and 1
  * while hidden (app/main/surfaces.ts, `drawScale`).
  */

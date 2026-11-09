@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { KeyStore } from '../../extensions/browser/gate-keys.ts'
 import {
-  BROWSER_ALLOWED, cropRect, dragCarriesFiles, fromBrowser, hiddenCapture, inputScale, keyOf, keysEqual, loopbackHost, navigable,
+  autoAttachParams, BROWSER_ALLOWED, CHILD_TARGETS, childDisposal, cropRect, dragCarriesFiles, fromBrowser, hiddenCapture, inputScale, keyOf, keysEqual, loopbackHost, navigable,
   ownerOfKey, PAGE_ALLOWED, parseKeyFile, refusal, refusalReason, scaleInput, scaleMouse, scrubEvent, SessionTable, slotOfKeyFile,
   validKeyShape,
 } from '../../extensions/browser/gate-rules.ts'
@@ -229,4 +229,26 @@ test('gate: WebSocket handshake and frames', () => {
   assert.equal(errors.at(-1), 'message too large')
   assert.deepEqual([...frame(1, Buffer.from('hi'))], [0x81, 2, 0x68, 0x69])
   assert.equal(frame(1, Buffer.alloc(70000)).subarray(0, 2)[1], 127)
+})
+
+test('gate: auto-attach only ever attaches frames and dedicated workers, whatever filter the client sent (E7b)', () => {
+  assert.deepEqual(CHILD_TARGETS, ['iframe', 'worker'])
+  const plain = autoAttachParams({ autoAttach: true, waitForDebuggerOnStart: true, flatten: true })
+  assert.deepEqual(plain, { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'iframe', exclude: false }, { type: 'worker', exclude: false }] })
+  const asked = autoAttachParams({ autoAttach: true, flatten: true, filter: [{ type: 'service_worker' }, {}] })
+  assert.deepEqual(asked.filter, plain.filter, "the client's filter is replaced")
+  const off = autoAttachParams({ autoAttach: false, waitForDebuggerOnStart: false })
+  assert.equal(off.autoAttach, false)
+})
+
+test('gate: a child is announced, detached or released; a worker of the origin is never detached (E7b)', () => {
+  assert.equal(childDisposal('iframe', true), 'announce')
+  assert.equal(childDisposal('worker', true), 'announce')
+  assert.equal(childDisposal('iframe', false), 'detach', 'a held tab announces nothing')
+  assert.equal(childDisposal('worker', false), 'detach')
+  for (const t of ['service_worker', 'shared_worker', 'worklet', 'shared_storage_worklet', 'auction_worklet']) {
+    assert.equal(childDisposal(t, true), 'release', t)
+    assert.equal(childDisposal(t, false), 'release', t)
+  }
+  for (const t of ['page', 'tab', 'browser', 'other', undefined, 7]) assert.equal(childDisposal(t, true), 'detach', String(t))
 })
