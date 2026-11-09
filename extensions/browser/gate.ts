@@ -851,7 +851,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
   // holding the file on Windows fails the rename for a moment; a few more tries, each from a temp file of its own.
   const endpointFile = join(dir, 'endpoint.json')
   await writeAtomicRetry(endpointFile, JSON.stringify({ v: 1, port, pid: process.pid, instance }))
-  opts.log(`porteiro em 127.0.0.1:${port}`)
+  opts.log('porteiro aberto (só 127.0.0.1)')
 
   // Deleted keys: live connections are swept on the key store's clock.
   const sweep = setInterval(() => {

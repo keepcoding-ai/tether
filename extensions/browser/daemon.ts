@@ -11,6 +11,7 @@ import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { findNode } from '../web-bridge/warmup.ts'
 import { createBrowserLaunchMiddleware, releaseSlot, sweepStale } from './agents.ts'
 import { manifest } from './manifest.ts'
+import { scrubLogLine } from './log-scrub.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -31,7 +32,7 @@ export function activate(api: TetherDaemon): IDisposable[] {
     server: resolve(import.meta.dirname ?? '.', 'vendor', 'tether-browser', 'server.mjs'),
     // The system node, like the bridge's MCP shell and tetherd itself; the daemon's own binary (a renamed node) is the last resort.
     node: () => findNode() ?? (existsSync(process.execPath) ? process.execPath : undefined),
-    log: msg => api.log(msg),
+    log: msg => api.log(scrubLogLine(msg)),
   })
   return [
     api.onStarted(() => { const n = sweepStale(api.home); if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`) }),

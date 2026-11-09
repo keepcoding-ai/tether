@@ -17,7 +17,8 @@ import { startTabEgress, type TabEgress } from './egress-session.ts'
 import { type BlockedRequest, createNetFilter, type NetFilter } from './net-filter.ts'
 import { cookieEncryptionOn, FUSE_SENTINEL, fuseWireAt } from './tab-rules.ts'
 
-export const PERSIST_PARTITION = 'persist:tether-browser'
+export { PERSIST_PARTITION } from './disk-partition.ts'
+import { PERSIST_PARTITION } from './disk-partition.ts'
 export const MEMORY_PARTITION = 'tether-browser'
 const FLUSH_MS = 5_000
 

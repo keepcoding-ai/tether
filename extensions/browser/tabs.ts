@@ -30,6 +30,7 @@ import type { AgentInfo } from '../../app/main/agents.ts'
 import type { LocalNetworkGate } from './local-network.ts'
 import type { BlockedRequest } from './net-filter.ts'
 import type { TabSession } from './session.ts'
+import { scrubLogLine } from './log-scrub.ts'
 import {
   cleanTitle, faviconPlan, FAVICON_MAX, isId, isNavigable, isWebUrl, makeTab, POPUP_WINDOW_MS, POPUPS_PER_WINDOW, popupVerdict, type SavedTab,
   storableUrl, type Tab, type TabInfo, TABS_PER_OWNER,
@@ -98,6 +99,8 @@ export class TabRegistry {
   private readonly pendingOwner = new Map<string, string>()
   private readonly main: TetherMain
   private readonly session: Promise<TabSession>
+  /** E15: the main log without page addresses or keys (log-scrub.ts). */
+  private scrubbedLog(msg: string): void { this.main.log(scrubLogLine(msg)) }
   private readonly events: TabEvents
   private readonly local: TabLocalNetwork
   private readonly watchers = new Set<TabWatcher>()
@@ -262,7 +265,7 @@ export class TabRegistry {
       this.events.closed(tabId)
       for (const w of [...this.watchers]) w.closed(tabId)
     })
-    this.main.log(`guia ${tabId} criada para ${owner}`)
+    this.scrubbedLog(`guia ${tabId} criada para ${owner}`)
     this.events.changed(infoOf(entry))
     for (const w of [...this.watchers]) w.added(infoOf(entry))
     // The first load is not awaited: a slow or failing site still gives the tab (its frame shows the state). An agent's local
@@ -316,25 +319,25 @@ export class TabRegistry {
           entry.popupsRefused++
           if (now - entry.popupLoggedAt >= POPUP_WINDOW_MS) {
             entry.popupLoggedAt = now
-            this.main.log(`guia ${tabId}: popups recusados (${verdict === 'owner' ? `o agente já tem ${TABS_PER_OWNER} guias` : `mais de ${POPUPS_PER_WINDOW} em ${POPUP_WINDOW_MS / 1000} s`})`)
+            this.scrubbedLog(`guia ${tabId}: popups recusados (${verdict === 'owner' ? `o agente já tem ${TABS_PER_OWNER} guias` : `mais de ${POPUPS_PER_WINDOW} em ${POPUP_WINDOW_MS / 1000} s`})`)
           }
           changed()
           return { action: 'deny' }
         }
         const opener = details.referrer?.url ?? ''
         const ticket = opener !== '' && ses.net.isLocal(opener) && ses.net.isLocal(wc.getURL())
-        this.create(ownerSlotId, details.url, { ticket: ticket ? 'granted' : false, openerTabId: tabId }).catch(e => this.main.log(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
-      } else this.main.log(`guia ${tabId}: popup recusado`)
+        this.create(ownerSlotId, details.url, { ticket: ticket ? 'granted' : false, openerTabId: tabId }).catch(e => this.scrubbedLog(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
+      } else this.scrubbedLog(`guia ${tabId}: popup recusado`)
       return { action: 'deny' }
     })
     const refuse = (e: ElectronEvent, url: string): void => {
       if (isNavigable(url)) return
       e.preventDefault()
-      this.main.log(`guia ${tabId}: navegação recusada (esquema não permitido)`)
+      this.scrubbedLog(`guia ${tabId}: navegação recusada (esquema não permitido)`)
     }
     const onNavigate = (e: ElectronEvent, url: string): void => refuse(e, url)
     const onRedirect = (e: ElectronEvent, url: string, _inPlace: boolean, isMainFrame: boolean): void => { if (isMainFrame) refuse(e, url) }
-    const onAttach = (e: ElectronEvent): void => { e.preventDefault(); this.main.log(`guia ${tabId}: webview recusado`) }
+    const onAttach = (e: ElectronEvent): void => { e.preventDefault(); this.scrubbedLog(`guia ${tabId}: webview recusado`) }
     const onTitle = (_e: ElectronEvent, title: string): void => { entry.tab.title = cleanTitle(title); changed() }
     let faviconFor = ''
     const onUrl = (_e: ElectronEvent, url: string): void => {

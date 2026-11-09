@@ -9,7 +9,7 @@
 // an upload asks the person in the tether's dialog (upload-consent.ts), with the page's picture, and the gate holds the attach to it.
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { type NativeImage, shell, type WebContents } from 'electron'
+import { app, type NativeImage, shell, type WebContents } from 'electron'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { ControlHub, type ControlView } from './control.ts'
@@ -21,6 +21,8 @@ import type { BrowserChannels } from './ipc.ts'
 import { LocalNetworkGate } from './local-network.ts'
 import { type ActionKind, hostOf } from './pad-rules.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
+import { prepareDiskPartition } from './disk-partition.ts'
+import { scrubLogLine } from './log-scrub.ts'
 import { isId, isWebUrl, savedTabOf } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 
@@ -54,16 +56,21 @@ declare const __TETHER_TEST_EXTENSIONS__: boolean | undefined
 
 export function activate(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<BrowserChannels>()
+  // E15: no page address, key or endpoint content reaches the log (log-scrub.ts).
+  const log = (msg: string): void => main.log(scrubLogLine(msg))
   let made: TabSession | undefined
   let testBlocked: TabBlocked[] | undefined
   // The session waits for the fuse to be read (rule 19), once; the first tab waits for it.
-  const session = cookieEncryptionInForce().then(async on => (made = await createTabSession(on, msg => main.log(msg))))
+  const session = cookieEncryptionInForce().then(async on => {
+    prepareDiskPartition({ fuseOn: on, home: main.home, userData: app.getPath('userData'), log })
+    return (made = await createTabSession(on, log))
+  })
   const localGate = new LocalNetworkGate({
     dir: join(main.home, 'browser'),
     setting: () => main.settings.get('localNetwork'),
     ask: ask => ipc.send('localNetworkAsk', ask),
     cancelled: id => ipc.send('localNetworkCancelled', id),
-    log: msg => main.log(msg),
+    log,
   })
   const registry = new TabRegistry(main, session, {
     changed: info => ipc.send('tab', info),
@@ -74,11 +81,11 @@ export function activate(main: TetherMain): IDisposable[] {
   let gateDisposed = false
   const testing = typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__
   // E13: downloads, by the agent that owns the tab.
-  const downloads = new DownloadStore(join(main.home, 'browser'), msg => main.log(msg))
+  const downloads = new DownloadStore(join(main.home, 'browser'), log)
   void session.then(s => s.onDownload((item, page) => {
     const tabId = registry.tabOfPage(page.id)
     const owner = tabId === undefined ? undefined : registry.get(tabId)?.ownerSlotId
-    if (tabId === undefined || owner === undefined) { item.cancel(); main.log('download recusado (não é de uma guia)'); return }
+    if (tabId === undefined || owner === undefined) { item.cancel(); log('download recusado (não é de uma guia)'); return }
     downloads.take(item, owner, tabId)
   })).catch(() => {})
   /** Test builds: the files "Mostrar na pasta" would have shown (no window opens in a test). */
@@ -87,7 +94,7 @@ export function activate(main: TetherMain): IDisposable[] {
   const uploads = new UploadConsent({
     ask: ask => ipc.send('uploadAsk', ask),
     cancelled: id => ipc.send('uploadCancelled', id),
-    log: msg => main.log(msg),
+    log,
   })
   const pagePicture = async (tabId: string): Promise<string | undefined> => {
     const surface = registry.surface(tabId)
@@ -123,7 +130,7 @@ export function activate(main: TetherMain): IDisposable[] {
       if (isWebUrl(url)) await wc.session.clearStorageData({ origin: new URL(url).origin, storages: ['serviceworkers'] })
       await reloadAndWait(wc, url => registry.grantLocal(tabId, url))
       await surface.reapplyEmulation().catch(() => {})
-      main.log(`guia ${tabId}: entrega limpa`)
+      log(`guia ${tabId}: entrega limpa`)
     },
     beforeGiveBack: async tabId => {
       const surface = registry.surface(tabId)
@@ -132,9 +139,9 @@ export function activate(main: TetherMain): IDisposable[] {
       // Rule 16 (H1/M1): what the person left typed and did not send (a 2FA code, a card, a password), the agent would read.
       await reloadAndWait(wc, url => registry.grantLocal(tabId, url))
       await surface.reapplyEmulation().catch(() => {})
-      main.log(`guia ${tabId}: recarregada ao devolver`)
+      log(`guia ${tabId}: recarregada ao devolver`)
     },
-    log: msg => main.log(msg),
+    log,
   })
   // E9: the agent's commands light the tab's dot; at most one event per tab every 400 ms (forgotten when the tab closes).
   const lastPulse = new Map<string, { at: number; kind: ActionKind }>()
@@ -177,11 +184,11 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.send('activity', tabId, kind)
   }
   const tabIdsOf = (ids: unknown): string[] => (Array.isArray(ids) ? ids.filter(isId).slice(0, 512) : [])
-  const gateReady = startGate({ home: main.home, tabs: registry, control, confirmUpload, activity: pulse, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {
+  const gateReady = startGate({ home: main.home, tabs: registry, control, confirmUpload, activity: pulse, log, ...(trace ? { trace } : {}) }).then(g => {
     if (gateDisposed) g.dispose()
     else gate = g
     return g
-  }, e => { main.log(`porteiro não abriu (${(e as Error).message})`); return undefined })
+  }, e => { log(`porteiro não abriu (${(e as Error).message})`); return undefined })
   // An agent that exits keeps its tabs: only its open help requests are dismissed; the interface marks them "encerrado".
   const subs: IDisposable[] = [
     ipc.handle('list', () => registry.list()),
@@ -204,7 +211,7 @@ export function activate(main: TetherMain): IDisposable[] {
         await reloadAndWait(wc, url => registry.grantLocal(t.tabId, url))
         await registry.surface(t.tabId)?.reapplyEmulation().catch(() => {})
       }))
-      main.log(`sair de todas as contas: cookies e armazenamento limpos, ${open.length} ${open.length === 1 ? 'guia recarregada' : 'guias recarregadas'}`)
+      log(`sair de todas as contas: cookies e armazenamento limpos, ${open.length} ${open.length === 1 ? 'guia recarregada' : 'guias recarregadas'}`)
     }),
     ipc.handle('status', async () => ({ persistentLogins: (await session).persistentLogins })),
     ipc.handle('localNetworkOpen', () => localGate.open()),

@@ -176,3 +176,14 @@ export function faviconPlan(pageUrl: string, candidates: readonly unknown[]): { 
   }
   return undefined
 }
+
+/**
+ * E15, rule 18: what the tabs' partition does at start. Fuse off: in memory (logins are never written in plain text). Fuse on:
+ * the persistent partition, wiped first when it exists without the marker the first fused start leaves (a partition written by
+ * an earlier build without the fuse would keep its plain-text cookies forever: the fuse only encrypts what is written anew).
+ */
+export type PartitionStep = 'memory' | 'use' | 'wipe-then-use'
+export function partitionStep(fuseOn: boolean, partitionExists: boolean, markerExists: boolean): PartitionStep {
+  if (!fuseOn) return 'memory'
+  return partitionExists && !markerExists ? 'wipe-then-use' : 'use'
+}
