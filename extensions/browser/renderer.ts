@@ -106,7 +106,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     return order.map(id => panels.get(id)!.padTab()).filter((t): t is PadTab => !!t)
   }
   const padModel = (only?: string): PadModel => buildPad(padTabs(), agentInfo, only)
-  const closeTabs = (tabIds: readonly string[]): void => { for (const id of tabIds) void ipc.invoke('close', id) }
+  /** Closes tabs: the live ones in main, and every pane (one back from layout.json has no tab in main yet). */
+  const closeTabs = (tabIds: readonly string[]): void => {
+    for (const id of tabIds) {
+      void ipc.invoke('close', id)
+      if (ui.panes.find(paneIdOf(id))) ui.panes.close(paneIdOf(id))
+    }
+  }
 
   const btn = (text: string, action: string, onClick: () => void, disabled = false): HTMLButtonElement => {
     const b = el('button', 'br-pad-btn', text)
@@ -743,7 +749,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.panes.onDidChangeActive(() => refreshPad()),
     ui.systemDesks.onDidChangeActive(() => refreshPad()),
     ui.agents.tabMenu(slotId => {
-      if (!served() || !padTabs().some(t => t.ownerSlotId === slotId)) return []
+      if (!padTabs().some(t => t.ownerSlotId === slotId)) return []
       return [{ icon: 'globe-simple', label: padSeeAgent(agentName(slotId)), run: () => { padFilter = slotId; ui.pads.open(PAD_ID); refreshPad() } }]
     }),
     // The agent's name or life changed (it exited): every chip is dressed again.
