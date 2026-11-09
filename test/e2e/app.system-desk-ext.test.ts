@@ -36,6 +36,7 @@ type Hooks = {
   layout(): FileLayout
   ext: Record<string, Record<string, () => unknown>>
 }
+type Sib = { id: string; getAttribute(n: string): string | null; previousElementSibling: Sib | null }
 type El = { textContent: string | null; getAttribute(n: string): string | null; previousElementSibling: { id: string } | null }
 type Doc = { querySelectorAll(selector: string): { length: number } & Iterable<El>; getElementById(id: string): { style: { getPropertyValue(n: string): string } } | null }
 declare const window: { __tether: Hooks; __off?: () => void }
@@ -74,7 +75,15 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 const h = {
   active: (page: Page) => page.evaluate(() => window.__tether.activeDesk()),
   deskIds: (page: Page) => page.evaluate(() => window.__tether.desks().map(d => d.id)),
-  pills: (page: Page) => page.evaluate(() => [...document.querySelectorAll('#desk-switch .seg.sys')].map(el => ({ id: el.getAttribute('data-system'), text: el.textContent, pressed: el.getAttribute('aria-pressed'), after: el.previousElementSibling?.id ?? '' }))),
+  // The product's own system desk (browser.desk) is left out: these pills are the probe's and the test's.
+  pills: (page: Page) => page.evaluate(() => {
+    const own = (e: Sib | null): boolean => e?.getAttribute('data-system') === 'browser.desk'
+    return [...document.querySelectorAll('#desk-switch .seg.sys')].filter(el => !own(el as unknown as Sib)).map(el => {
+      let prev = el.previousElementSibling as unknown as Sib | null
+      while (own(prev)) prev = prev!.previousElementSibling
+      return { id: el.getAttribute('data-system'), text: el.textContent, pressed: el.getAttribute('aria-pressed'), after: prev?.id ?? '' }
+    })
+  }),
   line: (page: Page) => page.evaluate(() => document.getElementById('workbench')!.style.getPropertyValue('--desk-line-color')),
   file: (home: string) => JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as FileLayout,
   filePanes: (home: string, id = SYS) => Object.values(h.file(home).systemDesks[id]!.frames.views).flatMap(v => Object.keys(v.panels)),
@@ -118,7 +127,7 @@ test('systemDesks: contribution point, undeclare, extension off and on', { timeo
     console.log('step 1')
     assert.deepEqual(await h.pills(page), [{ id: SYS, text: 'Prova', pressed: 'false', after: 'btn-drawer' }])
     assert.ok(await page.evaluate(id => window.__tether.commands().some(c => c.id === `desk.system.${id}` && c.title === 'Ir para Prova'), SYS))
-    assert.deepEqual(await page.evaluate(() => Object.keys(window.__tether.layout().systemDesks)), [SYS])
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.__tether.layout().systemDesks).filter(k => k !== 'browser.desk')), [SYS])
     assert.deepEqual(await h.deskIds(page), [d1], 'the queue does not list it')
     const queueLine = await h.line(page)
     assert.equal(await probe(page, 'isActive'), false)

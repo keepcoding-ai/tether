@@ -115,7 +115,7 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-sidebars-'))
   // Part 2 is the window with no pad at all: the frame pads extension is off.
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads', 'explorer'] } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads', 'explorer', 'browser'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -207,7 +207,7 @@ test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relau
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-pads-'))
   // The explorer (left strip) has its own e2e; this one is about the frame pads' sides.
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer'] } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer', 'browser'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   const bars = (page: Page) => page.evaluate(() => window.__tether.sidebars()!)
@@ -333,7 +333,7 @@ test('frame pads in the focus (F10b-2): one focused frame, new panes, Ctrl+K, Mo
   const home = mkdtempSync(join(tmpBase, 'tether-padfocus-'))
   // A folder of its own: the note the test creates lands in <cwd>/.tether/notes, never in the repo.
   const work = mkdtempSync(join(tmpBase, 'tether-padfocus-work-'))
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ theme: 'light', ui: { deskLine: true, tabBorder: true, dimUnfocused: true, dimLevel: 'medium' } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['browser'] }, theme: 'light', ui: { deskLine: true, tabBorder: true, dimUnfocused: true, dimLevel: 'medium' } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   const frames = (page: Page) => page.evaluate(() => window.__tether.padFrames())
