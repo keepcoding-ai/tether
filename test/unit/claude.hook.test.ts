@@ -2,7 +2,7 @@
 import { test, describe, after, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { TetherEvent } from '../../src/core/event.ts'
 import { tempDirs } from './tmp.helpers.ts'
@@ -195,5 +195,67 @@ describe('claude-hook: never breaks Claude', () => {
     assert.ok(Date.now() - started < 10_000, 'gave up on stdin on its own')
     // what arrived was recorded anyway
     assert.equal(readEvents(home, 's1').length, 1)
+  })
+})
+
+describe('claude-hook: polite pause delivery', () => {
+  const REQ = (batchId: string) => JSON.stringify({ v: 1, batchId, slotId: 's1', createdAt: '2026-01-01T00:00:00Z', text: 'pare com calma' })
+  const plant = (home: string, batchId = 'b1') => {
+    mkdirSync(join(home, 'slots'), { recursive: true })
+    writeFileSync(join(home, 'slots', 's1.pause-request.json'), REQ(batchId))
+  }
+  const lines = (home: string) => {
+    const f = join(home, 'slots', 's1.pause.jsonl')
+    return existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>) : []
+  }
+  const run = (home: string, event: string, extra: Record<string, unknown> = {}) =>
+    runHook([event], JSON.stringify({ session_id: 'sid', cwd: 'C:/x', ...extra }), { TETHER_HOME: home, TETHER_SLOT_ID: 's1' })
+
+  test('no request: stdout stays empty', () => {
+    const home = tmpHome()
+    for (const ev of ['PostToolUse', 'UserPromptSubmit', 'Stop']) {
+      const r = run(home, ev)
+      assert.equal(r.status, 0)
+      assert.equal(r.stdout, '')
+    }
+    assert.deepEqual(lines(home), [])
+  })
+
+  test('request: PostToolUse and UserPromptSubmit print additionalContext once and log delivered', () => {
+    const home = tmpHome()
+    plant(home)
+    const r = run(home, 'PostToolUse')
+    const out = JSON.parse(r.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } }
+    assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'PostToolUse', additionalContext: 'pare com calma' })
+    assert.deepEqual(lines(home).map(l => [l.kind, l.batchId]), [['delivered', 'b1']])
+    assert.equal(run(home, 'PostToolUse').stdout, '', 'not redelivered for the same batch')
+    assert.equal(lines(home).length, 1)
+    const home2 = tmpHome()
+    plant(home2)
+    const r2 = run(home2, 'UserPromptSubmit')
+    assert.equal((JSON.parse(r2.stdout) as { hookSpecificOutput: { hookEventName: string } }).hookSpecificOutput.hookEventName, 'UserPromptSubmit')
+    assert.equal(readEvents(home2, 's1').length, 0)
+    assert.ok(existsSync(join(home2, 'slots', 's1.attention')), 'UserPromptSubmit still writes the turn start')
+  })
+
+  test('request: Stop logs the last assistant message', () => {
+    const home = tmpHome()
+    plant(home)
+    const r = run(home, 'Stop', { last_assistant_message: 'parei aqui' })
+    assert.equal(r.stdout, '')
+    const l = lines(home)
+    assert.equal(l.length, 1)
+    assert.equal(l[0]!.kind, 'stop')
+    assert.equal(l[0]!.text, 'parei aqui')
+    assert.equal(l[0]!.batchId, 'b1')
+  })
+
+  test('subagent payloads (agent_id) are ignored', () => {
+    const home = tmpHome()
+    plant(home)
+    for (const ev of ['PostToolUse', 'UserPromptSubmit', 'Stop']) {
+      assert.equal(run(home, ev, { agent_id: 'a1', last_assistant_message: 'x' }).stdout, '')
+    }
+    assert.deepEqual(lines(home), [])
   })
 })

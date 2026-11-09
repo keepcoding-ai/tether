@@ -3,10 +3,10 @@
 // with the hook payload on stdin and the slot's env (TETHER_SLOT_ID, TETHER_HOME).
 //
 // Rules (PRD RNF3): never write to stdout (SessionStart stdout is injected into Claude's
-// context), never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
+// context), except the polite-pause delivery on PostToolUse/UserPromptSubmit, never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
 // Plain JS on purpose: Node's TypeScript loader added ~40% to the hook's run time.
 // It does not import the core: it appends one JSON line itself.
-import { appendFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -104,6 +104,34 @@ export function toAttention(hookName, payload, ts) {
   return sessionId ? { ts, kind, sessionId } : { ts, kind }
 }
 
+
+/**
+ * Polite pause: when <home>/slots/<slot>.pause-request.json exists, PostToolUse / UserPromptSubmit hand its text to the
+ * agent as additionalContext (stdout) and log `delivered` once per batch; Stop logs the agent's last message as `stop`.
+ * @param {string} home @param {string} slotId @param {string} hookName @param {Payload} payload @param {string} ts */
+function pauseStep(home, slotId, hookName, payload, ts) {
+  if (str(payload.agent_id)) return
+  const dir = join(home, 'slots')
+  /** @type {{ batchId?: unknown, text?: unknown } | undefined} */
+  let req
+  try { req = JSON.parse(readFileSync(join(dir, `${slotId}.pause-request.json`), 'utf8')) } catch { return }
+  const batchId = str(req?.batchId)
+  if (!batchId) return
+  const report = join(dir, `${slotId}.pause.jsonl`)
+  if (hookName === 'Stop') {
+    appendFileSync(report, JSON.stringify({ ts, batchId, kind: 'stop', text: str(payload.last_assistant_message) ?? '' }) + '\n')
+    return
+  }
+  if (hookName !== 'PostToolUse' && hookName !== 'UserPromptSubmit') return
+  const text = str(req?.text)
+  if (!text) return
+  let seen = ''
+  try { seen = readFileSync(report, 'utf8') } catch { /* no report yet */ }
+  if (seen.includes(`"batchId":${JSON.stringify(batchId)},"kind":"delivered"`)) return
+  appendFileSync(report, JSON.stringify({ ts, batchId, kind: 'delivered' }) + '\n')
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: hookName, additionalContext: text } }))
+}
+
 /** @param {string} stdin */
 function record(stdin) {
   const home = tetherHome()
@@ -123,6 +151,8 @@ function record(stdin) {
     }
     const hookName = process.argv[2] ?? str(payload.hook_event_name) ?? ''
     const ts = new Date().toISOString()
+    try { pauseStep(home, slotId, hookName, payload, ts) } catch (e) { log(home, `pause: ${/** @type {Error} */ (e).message}`) }
+    if (hookName === 'PostToolUse') return
     const attention = toAttention(hookName, payload, ts)
     if (attention) {
       const dir = join(home, 'slots')
