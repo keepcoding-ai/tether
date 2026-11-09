@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { createAppLog } from './app-log.ts'
+import { handOffToCookieRuntime } from './cookie-runtime-main.ts'
 import { ackFromLiveInstance, relaunchArgs, relaunchedFrom } from './relaunch.ts'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -72,6 +73,9 @@ const replacedPid = relaunchedFrom(process.argv)
 /** What this launch decides, on disk (<home>/tether-app.log) and on stderr: a Start Menu launch has no console. */
 const appLog = createAppLog(join(home, 'tether-app.log'))
 appLog(`start: ppid ${process.ppid}, exec ${process.execPath}, cwd ${process.cwd()}, args ${JSON.stringify(process.argv.slice(1))}${replacedPid ? `, replaces pid ${replacedPid} (Reiniciar o app)` : ''}`)
+// The Start Menu launch prefers the runtime copy with the cookie fuse on (app/shared/cookie-runtime.ts): handed over, this
+// process leaves before taking the single-instance lock or touching any state.
+if (handOffToCookieRuntime({ home, argv: process.argv, execPath: process.execPath, electronVersion: process.versions.electron, log: appLog })) process.exit(0)
 
 let daemon: DaemonClient | undefined
 let connecting: Promise<void> | undefined

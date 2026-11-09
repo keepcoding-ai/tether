@@ -10,6 +10,10 @@ directories:
 electronDist: node_modules/electron/dist
 electronVersion: 45.1.0
 asar: true
+# Cookies of the browser's persistent partition are encrypted on disk (Tether Browser, design §12b rules 17-19). One-way:
+# turning it off later drops every cookie. Only this fuse is set; the others keep Electron's defaults.
+electronFuses:
+  enableCookieEncryption: true
 # node-pty is loaded by tetherd under the system Node (its prebuilds match the Node ABI): never rebuild for Electron.
 npmRebuild: false
 nodeGypRebuild: false
