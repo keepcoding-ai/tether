@@ -132,7 +132,9 @@ body { display: flex; flex-direction: column; }
 }
 .seg:not(.on):hover { background: var(--bg-hover); }
 .seg:active { transform: translateY(1px) scale(.97); }
-.seg.on { background: var(--seg-fill); color: var(--seg-fg); font-weight: 650; }
+/* Softened: inactive text is muted toward --fg-dim; active is a light tint of the desk hue (no solid block). Falls back to neutral when --seg-fill is absent (.seg.gav). */
+.seg:not(.on) { color: color-mix(in srgb, var(--seg-text, var(--fg-dim)) 55%, var(--fg-dim)); }
+.seg.on { background: color-mix(in srgb, var(--seg-fill, var(--fg-dim)) 22%, transparent); color: var(--seg-text, var(--fg)); font-weight: 650; }
 .seg .seg-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .seg .desk-rename { width: 120px; font: inherit; font-weight: 500; color: var(--fg); background: var(--bg-2); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 8px; outline: none; }
 .cnt { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; background: var(--x-alert); color: var(--x-alert-foreground); box-shadow: 0 0 0 2px var(--desk-bg); }
