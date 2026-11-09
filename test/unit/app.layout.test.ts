@@ -268,6 +268,19 @@ describe('the drawer field', () => {
     assert.deepEqual(allPanelIds(out.layout).sort(), ['a', 'g', 'p', 'x'])
   })
 
+  test('a per-panel pad state is kept while its panel is known or it holds panes, and dropped when neither', () => {
+    const pads = {
+      'frame-pads.panel@live': drawerWith([]),
+      'frame-pads.panel@dead': drawerWith([]),
+      'frame-pads.panel@deadWithPane': drawerWith(['p']),
+      'frame-pads.panel@inLayout': drawerWith([]),
+      'frame-pads.global': drawerWith([]),
+    }
+    const v3 = { ...file([deskWith(['inLayout'])], drawerWith([])), v: 3 as const, sidebars: { ...emptyLayout().sidebars, pads } }
+    const out = pruneLayoutV2(v3, new Set(['live', 'inLayout', 'p']))
+    assert.deepEqual(Object.keys(out.layout.sidebars.pads).sort(), ['frame-pads.global', 'frame-pads.panel@deadWithPane', 'frame-pads.panel@inLayout', 'frame-pads.panel@live'])
+  })
+
   test('an untouched drawer survives pruning byte for byte', () => {
     const drawer = drawerWith(['x', 'y'])
     assert.deepEqual(pruneDrawer(drawer, new Set(['x', 'y'])), drawer)

@@ -25,6 +25,7 @@ export class FramesPad implements PadView {
   readonly element: HTMLElement
   readonly padId: string
   readonly deskId: string | undefined
+  readonly panelId: string | undefined
   readonly desk: Desk
   private visible = false
   private disposing = false
@@ -34,6 +35,7 @@ export class FramesPad implements PadView {
   constructor(pad: PadHost, host: FramesPadHost, theme: DockviewTheme) {
     this.padId = pad.padId
     this.deskId = pad.deskId
+    this.panelId = pad.panelId
     this.host = host
     this.pad = pad
     this.element = document.createElement('div')
@@ -42,7 +44,8 @@ export class FramesPad implements PadView {
     el.className = 'pad-desk-box'
     this.element.append(el)
     this.desk = new Desk(el, host.deskHost(this), theme)
-    const id = `pad:${pad.padId}${pad.deskId ? `@${pad.deskId}` : ''}`
+    const owner = pad.deskId ?? pad.panelId
+    const id = `pad:${pad.padId}${owner ? `@${owner}` : ''}`
     this.desk.meta = { id, name: id, color: DEFAULT_DESK_HUE }
     host.onCreate(this)
     const state: DrawerLayout | undefined = isDrawerLayout(pad.state) ? pad.state : undefined

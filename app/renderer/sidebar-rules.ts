@@ -27,6 +27,7 @@
 // storage service. Left out: views inside containers, generated containers, drag and drop, badges, context keys.
 import { toDisposable, type IDisposable } from '../shared/vscode-lifecycle.ts'
 
+export type PadScope = 'global' | 'desk' | 'panel'
 export type Side = 'left' | 'right'
 export const SIDES: readonly Side[] = ['left', 'right']
 export const otherSide = (s: Side): Side => s === 'left' ? 'right' : 'left'
@@ -41,8 +42,11 @@ export interface PadDescriptor {
   icon: string
   /** The side bar it lives on until the person moves it (VS Code's default ViewContainerLocation). */
   defaultSide: Side
-  /** 'global': one view and one state for the window; 'desk': one per desk, swapped with the desk. */
-  scope: 'global' | 'desk'
+  /**
+   * 'global': one view and one state for the window; 'desk': one per desk, swapped with the desk; 'panel': one per
+   * focusable panel (the pane the Foco de Mesa is on), swapped with the focus.
+   */
+  scope: PadScope
   /** Its state is a frames layout (frames → panes): the core prunes it and lists its panes. */
   frames?: boolean
   /** The view draws the pad's header itself (extensions/types.ts PadContribution.absorbsHeader). */
@@ -97,7 +101,10 @@ export interface SideBarsLayout {
   right: SideBarState
   /** Pad → side, only for pads moved away from their default side ("Restaurar posição padrão" drops the entry). */
   placement: Record<string, Side>
-  /** The saved state of each global pad (what its view serialized); per-desk pads keep theirs in the desk. */
+  /**
+   * The saved state of each global pad (what its view serialized), keyed by pad id; per-desk pads keep theirs in the desk.
+   * A per-panel pad's state is here too, keyed `<pad id>@<panel id>` (see `panelPadKey`).
+   */
   pads: Record<string, unknown>
 }
 
@@ -231,4 +238,15 @@ export function setWidth(layout: SideBarsLayout, side: Side, width: number): Sid
 /** The command id of a pad's own toggle (VS Code registers an "open" command per container, `openCommandActionDescriptor`). */
 export function padToggleCommand(padId: string): string {
   return `pad.toggle.${padId}`
+}
+
+/** Where a per-panel pad's state lives in `SideBarsLayout.pads`: `<pad id>@<panel id>`. */
+export function panelPadKey(padId: string, panelId: string): string {
+  return `${padId}@${panelId}`
+}
+
+/** The inverse of `panelPadKey` for one pad: the panel ids whose state is saved for it. */
+export function panelIdsOfPad(pads: Record<string, unknown>, padId: string): string[] {
+  const prefix = `${padId}@`
+  return Object.keys(pads).filter(k => k.startsWith(prefix)).map(k => k.slice(prefix.length))
 }

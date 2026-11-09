@@ -402,8 +402,10 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
     onPanelsChange: () => {
       refreshClosedMenu(); renderStrip(); recomputeProjects()
-      // A pad is never empty: its one frame shows the chooser ("O que abrir aqui?") when its last tab leaves.
+      // A pad is never empty: its one frame shows the blank view ("Abrir algo aqui") when its last tab leaves.
       if (scope instanceof FramesPad) queueMicrotask(() => { if (scope.reseedIfEmpty()) scheduleSave(); scope.syncMenuHosted() })
+      // The per-panel pads follow the Foco de Mesa's pane: closing it moves the target.
+      notifyActivePane()
     },
     singleFrame: scope instanceof FramesPad,
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
@@ -451,6 +453,8 @@ function setupDock(): void {
     padType: id => padTypes.get(id),
     activeDeskId: () => desks.activeDeskId,
     deskName: id => deskName(id),
+    activePanelId: () => focusablePanelId(),
+    panelName: id => findPanel(id)?.api.title ?? id,
     hint: id => commands.hint(id),
     onChange: () => scheduleSave(),
     onPadMenu: (id, x, y, opener) => showPadMenu(id, x, y, opener),
@@ -555,11 +559,20 @@ function describePane(id: string | undefined): PaneInfo | undefined {
   return { id, type: liveTypeOf(paneTypes, id)?.id ?? 'unknown', ...(cwd ? { cwd } : {}), ...(file ? { file } : {}), ...(slot && slot.kind !== 'shell' ? { agent: slot.kind } : {}), place }
 }
 
+/**
+ * The pane the per-panel pads follow: the Foco de Mesa's (the one whose frame wears the coloured focus border). A pad or the
+ * drawer taking the keyboard leaves it where it is, so the pad stays on its panel while the person works inside it.
+ */
+function focusablePanelId(): string | undefined {
+  return desks?.active.activePanel?.id
+}
+
 function notifyActivePane(): void {
   // The Foco de Mesa's pane: a pad or the drawer taking the keyboard does not change what the explorer's "Seguir" follows.
-  const id = desks.active.activePanel?.id
+  const id = focusablePanelId()
   if (id === lastActivePane) return
   lastActivePane = id
+  sidebars?.render()
   const info = describePane(id)
   for (const l of activePaneListeners) l(info)
 }
@@ -697,7 +710,7 @@ function renderSlot(slotId: string): void {
 function deskAttention(deskId: string): DeskAttention {
   const out = { done: 0, waiting: 0 }
   // A desk pad's panes are the desk's: its badge counts them too.
-  for (const p of [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId).flatMap(x => x.desk.panels)]) {
+  for (const p of [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId || (x.panelId !== undefined && desks.deskOf(x.panelId) === deskId)).flatMap(x => x.desk.panels)]) {
     const a = slots.get(p.id)?.attention
     if (a === 'done') out.done++
     else if (a === 'waiting') out.waiting++
@@ -758,7 +771,10 @@ async function closeDesk(id: string): Promise<void> {
   if (desks.desks.length <= 1) return
   // The desk's pads go with it: their panes are the desk's panes for this question (same dialog, same answers).
   const deskPads = [...framePads].filter(p => p.deskId === id)
-  const panes = [...(desks.desk(id)?.panels ?? []), ...deskPads.flatMap(p => p.desk.panels)]
+  // The pads of the desk's panels stay with their panels (which move with the desk, or close with it): they only join the question.
+  const panelPads = [...framePads].filter(p => p.panelId !== undefined && desks.deskOf(p.panelId) === id)
+  // A blank pane holds nothing: a desk with only those closes without asking, like an empty desk.
+  const panes = [...(desks.desk(id)?.panels ?? []), ...deskPads.flatMap(p => p.desk.panels), ...panelPads.flatMap(p => p.desk.panels)].filter(p => !empties.get(p.id)?.blank)
   if (panes.length > 0) {
     const neighbour = neighbourDesk(desks.desks, id)!
     const states = panes.map(p => slots.get(p.id)).filter((s): s is SlotState => s !== undefined)
@@ -849,8 +865,8 @@ function framePadOf(slotId: string): FramesPad | undefined {
 }
 
 /** The live frames of a pad (of a desk, for a desk pad). */
-function framePadFor(padId: string, deskId: string | undefined): FramesPad | undefined {
-  for (const p of framePads) if (p.padId === padId && p.deskId === deskId) return p
+function framePadFor(padId: string, owner: { deskId?: string; panelId?: string }): FramesPad | undefined {
+  for (const p of framePads) if (p.padId === padId && p.deskId === owner.deskId && p.panelId === owner.panelId) return p
   return undefined
 }
 
@@ -1059,18 +1075,26 @@ function moveFrameFromDrawer(slotId: string): void {
 // ---------- "Mover…" (app/renderer/move-dialog.ts draws it, move-rules.ts maps the placement to an op) ----------
 
 /** The Desk of a scope of the dialog: the drawer's, or a desk's. */
-/** A pad's scope in "Mover…": `pad:<pad id>` (global) or `pad:<pad id>@<desk id>`, the same as its Desk's meta id. */
-function padScope(padId: string, deskId: string | undefined): string {
-  return `pad:${padId}${deskId ? `@${deskId}` : ''}`
+/** A pad's scope in "Mover…": `pad:<pad id>` (global) or `pad:<pad id>@<desk or panel id>`, the same as its Desk's meta id. */
+function padScope(padId: string, owner: string | undefined): string {
+  return `pad:${padId}${owner ? `@${owner}` : ''}`
+}
+
+/** Whose view a pad is: the active desk's (desk pad), the focusable panel's (panel pad; none without one), or nobody's (global). */
+function padOwner(pad: { id: string; scope: string }): { deskId?: string; panelId?: string } | undefined {
+  if (pad.scope === 'desk') return { deskId: desks.activeDeskId }
+  if (pad.scope === 'panel') { const panelId = focusablePanelId(); return panelId ? { panelId } : undefined }
+  return {}
 }
 
 /** The frames pad a scope names, created if it never showed (a fresh pad's seeded empty pane is dropped: a pane is on its way). */
 function scopePad(scope: string): FramesPad | undefined {
   if (!scope.startsWith('pad:')) return undefined
-  const [padId = '', deskId] = scope.slice(4).split('@')
-  const live = framePadFor(padId, deskId)
+  const [padId = '', owner] = scope.slice(4).split('@')
+  const isPanel = padRegistry.get(padId)?.scope === 'panel'
+  const live = framePadFor(padId, isPanel ? (owner ? { panelId: owner } : {}) : (owner ? { deskId: owner } : {}))
   if (live) return live
-  const view = sidebars?.viewOf(padId, deskId)
+  const view = sidebars?.viewOf(padId, owner)
   if (!(view instanceof FramesPad)) return undefined
   for (const p of [...view.desk.panels]) if (empties.has(p.id)) view.desk.removePanel(p)
   return view
@@ -1083,14 +1107,15 @@ function scopeDesk(scope: string): Desk | undefined {
 function scopeOf(slotId: string): string | undefined {
   if (inDrawer(slotId)) return DRAWER_SCOPE
   const pad = framePadOf(slotId)
-  return pad ? padScope(pad.padId, pad.deskId) : desks.deskOf(slotId)
+  return pad ? padScope(pad.padId, pad.deskId ?? pad.panelId) : desks.deskOf(slotId)
 }
 
-/** The frames pads "Mover…" offers: the current desk's desk pads and the global pads. */
+/** The frames pads "Mover…" offers: the focusable panel's panel pad (none without one), the current desk's desk pad and the global pad. */
 function movePads(): { id: string; padId: string; name: string; icon: string; desk: Desk | undefined }[] {
-  return padRegistry.all().filter(p => p.frames).map(p => {
-    const deskId = p.scope === 'desk' ? desks.activeDeskId : undefined
-    return { id: padScope(p.id, deskId), padId: p.id, name: p.title, icon: p.icon, desk: framePadFor(p.id, deskId)?.desk }
+  return padRegistry.all().filter(p => p.frames).flatMap(p => {
+    const owner = padOwner(p)
+    if (!owner) return []
+    return [{ id: padScope(p.id, owner.deskId ?? owner.panelId), padId: p.id, name: p.title, icon: p.icon, desk: framePadFor(p.id, owner)?.desk }]
   })
 }
 
@@ -1606,6 +1631,13 @@ function openSlot(slotId: string): void {
   const pad = framePadOf(slotId)
   if (pad) {
     if (pad.deskId && pad.deskId !== desks.activeDeskId) desks.switchTo(pad.deskId)
+    // A panel pad shows its own panel's pane: that panel takes the Foco de Mesa first.
+    if (pad.panelId && pad.panelId !== focusablePanelId()) {
+      const ownerDesk = desks.deskOf(pad.panelId)
+      if (ownerDesk && ownerDesk !== desks.activeDeskId) desks.switchTo(ownerDesk)
+      desks.getPanel(pad.panelId)?.api.setActive()
+      sidebars?.render()
+    }
     sidebars?.open(pad.padId, false)
     if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
     pad.desk.getPanel(slotId)?.api.setActive()
@@ -2716,6 +2748,8 @@ declare global {
       /** The live frames of the pads (F10b): which pad, which desk, its panes, shown or not. */
       padFrames(): { pad: string; desk?: string; panes: string[]; shown: boolean }[]
       /** Opens a slot as a pane in the shown frames of a pad (the active desk's, for a desk pad). */
+      focusablePanel(): string | undefined
+      activatePanel(id: string): void
       openSlotInPad(slotId: string, padId: string): void
       movePad(id: string): void
       restorePad(id: string): void
@@ -2874,12 +2908,16 @@ function setupTestHooks(): void {
     padFrames: () => [...framePads].map(p => ({ pad: p.padId, ...(p.deskId ? { desk: p.deskId } : {}), panes: p.desk.panels.map(x => x.id), shown: p.isVisible })),
     openSlotInPad: (slotId, padId) => {
       const s = slots.get(slotId)
-      const pad = sidebars?.viewOf(padId, desks.activeDeskId)
+      const descriptor = padRegistry.get(padId)
+      const owner = descriptor ? padOwner(descriptor) : undefined
+      const pad = sidebars?.viewOf(padId, owner?.deskId ?? owner?.panelId)
       if (!s || !(pad instanceof FramesPad) || findPanel(slotId)) return
       const ref = pad.desk.activePanel?.id
       const panel = addPanel(s, undefined, ref)
       panel.api.setActive()
     },
+    focusablePanel: () => focusablePanelId(),
+    activatePanel: id => { findPanel(id)?.api.setActive() },
     movePad: id => sidebars?.move(id),
     restorePad: id => sidebars?.restore(id),
     frameLayout: frameId => (frameId ? desks.frames.get(frameId) : desks.activeFrame)?.dock.toJSON(),

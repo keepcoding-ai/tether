@@ -76,6 +76,8 @@ export interface PadHost {
   readonly padId: string
   /** The desk this view belongs to (scope 'desk'). */
   readonly deskId?: string
+  /** The focusable panel this view belongs to (scope 'panel'). */
+  readonly panelId?: string
   /** What `serialize` returned when layout.json was last written (undefined the first time). */
   readonly state: unknown
   /** The view's state changed: layout.json is written soon (it calls `serialize`). */

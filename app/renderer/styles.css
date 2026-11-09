@@ -492,6 +492,9 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 .blank-view { height: 100%; min-height: 0; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; color: var(--fg-dim); background: var(--frame-bg); }
 .blank-message { margin: 0; font-size: 13px; }
 .blank-action { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font: 13px var(--ui); color: var(--fg); background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+/* A per-panel pad with no panel in focus draws its line on a card, level with the frames' cards. */
+.pad-no-target .pad-body { padding: var(--gap) 0; box-sizing: border-box; }
+.pad-no-target .blank-view { border-radius: 8px; }
 .blank-action:hover { background: var(--bg-2); }
 .blank-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .blank-action .ph { width: 14px; height: 14px; }
