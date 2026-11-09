@@ -75,7 +75,7 @@ import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPa
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
-import { closedTabSituation, missingTabSituation } from './situations.ts'
+import { associateLinksFailedSituation, associateLinksSituation, closedTabSituation, linksAssociatedSituation, missingTabSituation } from './situations.ts'
 import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
@@ -1678,6 +1678,18 @@ async function followTetherLink(url: string): Promise<void> {
   void askDialog(missingTabSituation())
 }
 
+/**
+ * "Associar links tether:// a este tether…": says which program opens the links today and, on the person's word, makes it
+ * this one (the previous association is removed: only one program answers them). The result is read back from the OS.
+ */
+async function associateLinks(): Promise<void> {
+  const before = await window.tether.linkAssociation()
+  const answer = await askDialog(associateLinksSituation(before))
+  if (answer.choice !== 'associate') return
+  const after = await window.tether.associateLinks()
+  void askDialog(after.isMine ? linksAssociatedSituation(after) : associateLinksFailedSituation(after))
+}
+
 // Links from the OS: the one the app started with (or that came while the window was loading), then each one as it comes.
 void daemonReadyPromise.then(async () => {
   window.tether.onTetherLink(url => { void followTetherLink(url) })
@@ -2306,6 +2318,7 @@ const commandHost: CommandHost = {
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
   restoreConfirmations: () => window.tether.command('restore-confirmations'),
+  associateLinks: () => { void associateLinks() },
   closeWindow: () => window.tether.closeWindow(),
   quitAll: () => window.tether.command('quit-all'),
   restartDaemon: () => window.tether.command('restart-daemon'),

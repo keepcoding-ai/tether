@@ -5,6 +5,7 @@
 import { agentTable } from './agent-ui.ts'
 import type { Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
+import type { LinkAssociation } from '../shared/api.ts'
 import { KIND_ICON } from './icons.ts'
 
 /** "o Claude", "o soul", "o shell": the subject of every sentence about the panel. */
@@ -369,5 +370,57 @@ export function missingTabSituation(): DialogSpec {
     title: 'Essa guia não existe mais',
     message: 'O link aponta para uma guia que foi esquecida ou que nunca existiu neste tether. Nada foi aberto.',
     choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Fecha este aviso.', tone: 'neutral' }],
+  }
+}
+
+/** "Associar links tether:// a este tether…": what opens the links today, and the offer to make it this tether. */
+export function associateLinksSituation(s: LinkAssociation): DialogSpec {
+  const now = s.isMine
+    ? 'Os links tether:// já abrem este tether.'
+    : s.current ? 'Hoje os links tether:// abrem outro programa.' : 'Hoje nenhum programa abre os links tether://: clicar num deles fora do tether não faz nada.'
+  return {
+    situation: 'associate-links',
+    tone: 'info',
+    icon: 'link',
+    title: s.isMine ? 'Links tether:// já são deste tether' : 'Associar links tether:// a este tether?',
+    message: now,
+    context: {
+      icon: 'link',
+      name: 'Abre os links hoje',
+      lines: [s.current ?? 'nenhum programa', ...(s.isMine ? [] : [`Este tether: ${s.mine}`])],
+      status: s.isMine ? { label: 'este tether', tone: 'ok' } : { label: s.current ? 'outro programa' : 'nenhum', tone: 'dim' },
+    },
+    choices: [{
+      id: 'associate',
+      icon: 'link',
+      label: s.isMine ? 'Associar de novo' : 'Associar a este tether',
+      consequence: s.current && !s.isMine
+        ? 'A associação atual é removida e os links passam a abrir este tether, de qualquer lugar do Windows.'
+        : 'Os links passam a abrir este tether, de qualquer lugar do Windows.',
+      tone: 'safe',
+    }],
+    cancelLabel: s.isMine ? 'Fechar' : 'Agora não',
+  }
+}
+
+export function linksAssociatedSituation(s: LinkAssociation): DialogSpec {
+  return {
+    situation: 'links-associated',
+    tone: 'info',
+    icon: 'link',
+    title: 'Links tether:// associados a este tether',
+    message: `Clicar num link tether:// em qualquer lugar abre este tether: ${s.mine}`,
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Fecha este aviso.', tone: 'neutral' }],
+  }
+}
+
+export function associateLinksFailedSituation(s: LinkAssociation): DialogSpec {
+  return {
+    situation: 'associate-links-failed',
+    tone: 'warn',
+    icon: 'link-break',
+    title: 'Não consegui associar os links tether://',
+    message: s.current ? `O Windows continua abrindo os links com: ${s.current}` : 'O Windows não guardou a associação: nenhum programa abre os links agora.',
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Fecha este aviso. Tente de novo pelo menu Ferramentas.', tone: 'neutral' }],
   }
 }

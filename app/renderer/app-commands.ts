@@ -57,6 +57,8 @@ export interface CommandHost {
   fontSize(command: FontSizeCommand): void
   openProfiles(): void
   restoreConfirmations(): void
+  /** "Associar links tether:// a este tether…". */
+  associateLinks(): void
   closeWindow(): void
   quitAll(): void
   restartDaemon(): void
@@ -189,6 +191,7 @@ export function appCommands(host: CommandHost): Command[] {
     // (keybindings.show / keybindings.record, Ctrl+K Ctrl+S, come from the keybindings-screen extension)
     { id: 'extensions.show', title: 'Extensões', group: GROUP.app, icon: 'puzzle-piece', run: () => host.showExtensions() },
     { id: 'profiles.manage', title: 'Perfis de lançamento…', group: GROUP.app, icon: 'sliders-horizontal', run: () => host.openProfiles() },
+    { id: 'links.associate', title: 'Associar links tether:// a este tether…', group: GROUP.app, icon: 'link', run: () => host.associateLinks() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },
     { id: 'daemon.restart', title: 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'plugs', run: () => host.restartDaemon() },
     { id: 'app.reload-all', title: 'Reiniciar tudo… (app e tetherd; encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'arrows-clockwise', danger: true, run: () => host.reloadAll() },

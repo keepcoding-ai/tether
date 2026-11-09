@@ -257,6 +257,16 @@ test('tether:// links: a pane comes up wherever it lives (desk, pad, drawer, not
     await missingDlg.waitFor({ state: 'detached' })
     assert.deepEqual(await snap(), before, 'nothing moved after it')
 
+    // ---- 6b. "Associar links tether:// a este tether…" shows the association; cancelled (associating would touch the person's registry) ----
+    console.log('step 6b')
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('links.associate')), 'ran')
+    const assocDlg = page.locator('dialog[open][data-dialog="associate-links"]')
+    await assocDlg.waitFor()
+    assert.equal(await assocDlg.locator('button.choice[data-choice="associate"]').count(), 1, 'the offer to associate is there')
+    await page.screenshot({ path: join(artifacts, 'tether-links-associate.png') })
+    await page.keyboard.press('Escape')
+    await assocDlg.waitFor({ state: 'detached' })
+
     // ---- 7. Copiar link do painel ----
     console.log('step 7')
     await follow(app, tabUrl(b))
