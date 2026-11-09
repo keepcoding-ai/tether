@@ -74,7 +74,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const p = ui.panes.find(panel.id)
       if (!p) return
       const view = panel.viewState()
-      p.api.updateParameters(withNote(p.params, { path: panel.path, ...(view ? { view } : {}), minimap: panel.minimapOverride ?? null, lineNumbers: panel.lineNumbersOverride ?? null }))
+      p.api.updateParameters(withNote(p.params, { path: panel.path, ...(view ? { view } : {}), minimap: panel.minimapOverride ?? null, lineNumbers: panel.lineNumbersOverride ?? null, wordWrap: panel.wordWrapOverride ?? null }))
       ui.layout.scheduleSave()
     },
     onDirtyChange: panel => noteTabs.get(panel.id)?.render(),
@@ -320,8 +320,10 @@ export function activate(ui: TetherUi): IDisposable[] {
       { icon: 'pencil-simple', label: 'Renomear…', run: () => noteTabs.get(id)?.startRename() },
       { icon: 'map-trifold', label: 'Minimapa neste editor', checked: note.minimapEnabled(), run: () => note.setMinimapOverride(!note.minimapEnabled()) },
       { icon: 'list-numbers', label: 'Números de linha neste editor', checked: note.lineNumbersEnabled(), run: () => note.setLineNumbersOverride(!note.lineNumbersEnabled()) },
+      { icon: 'arrow-elbow-down-left', label: 'Quebra de linha neste editor', checked: note.wordWrapEnabled(), run: () => note.setWordWrapOverride(!note.wordWrapEnabled()) },
       ...(note.lineNumbersOverride !== undefined ? [{ icon: 'arrow-counter-clockwise', label: 'Números de linha: usar o padrão', run: () => note.setLineNumbersOverride(undefined) }] : []),
       ...(note.minimapOverride !== undefined ? [{ icon: 'arrow-counter-clockwise', label: 'Minimapa: usar o padrão', run: () => note.setMinimapOverride(undefined) }] : []),
+      ...(note.wordWrapOverride !== undefined ? [{ icon: 'arrow-counter-clockwise', label: 'Quebra de linha: usar o padrão', run: () => note.setWordWrapOverride(undefined) }] : []),
       { icon: 'floppy-disk', label: 'Salvar nota como…', run: () => { void saveNoteAs(id) } },
       ...(isPreviewablePath(note.path) ? [{ icon: 'eye', label: 'Abrir prévia', run: () => { openPreview({ side: false, reference: id }) } }, { icon: 'square-split-horizontal', label: 'Abrir prévia ao lado', run: () => { openPreview({ side: true, reference: id }) } }] : []),
       { icon: 'copy', label: 'Copiar caminho da nota', run: () => ui.shell.writeClipboard(note.path) },
@@ -518,7 +520,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   subs.push(
     ui.theme.onChange(applyScheme),
     ui.theme.onAppearance(a => { for (const n of notes.values()) n.setAppearance(a); restyle(); remeasureEditorFonts() }),
-    ui.settings.onChange('wordWrap', v => { for (const n of notes.values()) n.setWordWrap(v === true) }),
+    ui.settings.onChange('wordWrap', v => { for (const n of notes.values()) n.refreshWordWrap() }),
     ui.settings.onChange('minimap', () => { for (const n of notes.values()) n.refreshMinimap() }),
     ui.settings.onChange('lineNumbers', () => { for (const n of notes.values()) n.refreshLineNumbers() }),
   )
