@@ -13,8 +13,12 @@ import type { AgentAdapter, LaunchPlan } from './types.ts'
 
 /** How this agent's CLI loads an MCP config file (`{ "mcpServers": {...} }`); absent = the agent takes no MCP servers. */
 export interface AgentMcp {
-  /** `plan` with the servers of `configFile` added (a copy). The env those servers read is set by the caller on the plan. */
-  inject(plan: LaunchPlan, configFile: string): LaunchPlan
+  /**
+   * `plan` with the servers of `configFile` added (a copy). The env those servers read is set by the caller on the plan.
+   * Several extensions may inject into one plan (one repeated `--mcp-config` each, registration order). `servers` declares
+   * the server names the file holds: a name already injected from another file throws McpNameCollisionError.
+   */
+  inject(plan: LaunchPlan, configFile: string, servers?: readonly string[]): LaunchPlan
 }
 
 export interface AgentContribution {

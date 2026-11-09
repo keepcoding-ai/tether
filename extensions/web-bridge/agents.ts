@@ -14,6 +14,7 @@ import { basename, join } from 'node:path'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import { MCP_SERVER_NAME } from './paths.ts'
 
 export const ENV_CLIENT_ID = 'ATRIUM_BRIDGE_CLIENT_ID'
 export const ENV_CLIENT_NAME = 'ATRIUM_BRIDGE_CLIENT_NAME'
@@ -62,8 +63,8 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
     }
     warnedMissing = false
     const id = clientIdOf(slot.slotId)
-    if (!CLIENT_ID_PATTERN.test(id)) { deps.log(`slot ${slot.slotId}: id de cliente inválido para o bridge; lançado sem identidade`); return agent.mcp.inject(plan, deps.configFile) }
-    const out = agent.mcp.inject(plan, deps.configFile)
+    if (!CLIENT_ID_PATTERN.test(id)) { deps.log(`slot ${slot.slotId}: id de cliente inválido para o bridge; lançado sem identidade`); return agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME]) }
+    const out = agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME])
     return { ...out, env: { ...out.env, [ENV_CLIENT_ID]: id, [ENV_CLIENT_NAME]: clientNameOf(slot.agent, slot) } }
   }
 }
