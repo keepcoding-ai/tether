@@ -14,6 +14,10 @@
 //     loads without a ticket and the filter shows the block). A restored tab the person showed and a popup between local pages
 //     get their ticket without asking (`ticket: 'granted'`): neither is the agent's request. A closed tab's questions are
 //     withdrawn.
+//   - E6: no native surface opens from the page (design §3.1): JavaScript dialogs wait for CDP (`-run-dialog` replaced; internal
+//     Electron API, so a tab refuses to open on an Electron major it was not proven on), HTTP authentication is cancelled, no
+//     client certificate is chosen, `beforeunload` is accepted, the native file chooser is intercepted, `window.print` does
+//     nothing.
 // When an agent exits its tabs stay (the "encerrado" chip is the interface's); nothing here destroys them.
 import { randomUUID } from 'node:crypto'
 import type { Event as ElectronEvent, WebContents } from 'electron'
@@ -26,6 +30,20 @@ import type { TabSession } from './session.ts'
 import { cleanTitle, isId, isNavigable, isWebUrl, makeTab, type SavedTab, storableUrl, type Tab, type TabInfo } from './tab-rules.ts'
 
 export const PAGE_SIZE = { width: 1280, height: 800 } as const
+
+/**
+ * The Electron major the dialog replacement was proven on (test/e2e/app.browser-gate.test.ts: a dialog stays open, with no native
+ * box, until `Page.handleJavaScriptDialog`). Another major: tabs refuse to open until the test passes there and this moves.
+ */
+export const DIALOGS_PROVEN_ELECTRON_MAJOR = 45
+
+/** True when `version` (process.versions.electron) is the major the dialog replacement was proven on. */
+export function dialogsProven(version: string | undefined): boolean {
+  return Number.parseInt(version ?? '', 10) === DIALOGS_PROVEN_ELECTRON_MAJOR
+}
+
+/** `window.print` does nothing (Electron would open the system's print box); every frame of the tab's own process. */
+const NO_PRINT = `(() => { try { const print = function print() {}; Object.defineProperty(window, 'print', { value: print, writable: false, configurable: false }) } catch {} })()`
 
 interface Entry { tab: Tab; surface: Surface; loading: boolean }
 
@@ -68,6 +86,8 @@ export class TabRegistry {
   private readonly events: TabEvents
   private readonly local: TabLocalNetwork
   private readonly watchers = new Set<TabWatcher>()
+  /** A popup's tab -> the tab that opened it (the gatekeeper's `openerId`). */
+  private readonly openers = new Map<string, string>()
   private disposed = false
 
   constructor(main: TetherMain, session: Promise<TabSession>, events: TabEvents, local: TabLocalNetwork) {
@@ -124,16 +144,20 @@ export class TabRegistry {
   get(tabId: string): TabInfo | undefined { const e = this.entries.get(tabId); return e ? infoOf(e) : undefined }
   /** The tab's page (test hooks and, later, the gatekeeper). */
   webContents(tabId: string): WebContents | undefined { return this.entries.get(tabId)?.surface.webContents }
+  /** The tab that opened `tabId` (a popup), while it is still open. */
+  opener(tabId: string): string | undefined { const o = this.openers.get(tabId); return o !== undefined && this.entries.has(o) ? o : undefined }
   /** The tab's surface (its debugger is the gatekeeper's way in). */
   surface(tabId: string): Surface | undefined { return this.entries.get(tabId)?.surface }
 
   /** A new tab for `owner` opening `url` (http/https, or the blank page the gatekeeper's `Target.createTarget` asks for), hidden; `tabId` keeps a saved tab's id. Same id twice: the same tab. */
-  create(owner: string, url: string, opts: { tabId?: string; title?: string; ticket?: FirstTicket } = {}): Promise<TabInfo> {
+  create(owner: string, url: string, opts: { tabId?: string; title?: string; ticket?: FirstTicket; openerTabId?: string } = {}): Promise<TabInfo> {
     if (this.disposed) return Promise.reject(new Error('guia: extensão desligada'))
     if (!isId(owner)) return Promise.reject(new Error('guia: dono inválido'))
+    if (!dialogsProven(process.versions.electron)) return Promise.reject(new Error('guia: diálogos não provados nesta versão do Electron'))
     if (!isNavigable(url)) return Promise.reject(new Error('guia: só endereços http e https'))
     if (opts.tabId !== undefined && !isId(opts.tabId)) return Promise.reject(new Error('guia: id inválido'))
     const tabId = opts.tabId ?? randomUUID()
+    if (opts.openerTabId !== undefined) this.openers.set(tabId, opts.openerTabId)
     const known = this.entries.get(tabId)
     if (known) return Promise.resolve(infoOf(known))
     const inFlight = this.pending.get(tabId)
@@ -174,6 +198,7 @@ export class TabRegistry {
       for (const s of subs) s.dispose()
       if (this.entries.get(tabId) !== entry) return
       this.entries.delete(tabId)
+      this.openers.delete(tabId)
       this.events.closed(tabId)
       for (const w of [...this.watchers]) w.closed(tabId)
     })
@@ -197,14 +222,33 @@ export class TabRegistry {
     // nothing is shown and the dialog waits for CDP (`Page.handleJavaScriptDialog`, the agent's). Internal Electron API (E6
     // pins it with a test per Electron version).
     // The listener must prevent the default: otherwise Electron answers the dialog at once (cancelled) and CDP sees it close.
+    // E6 found the "dialog closed 2 ms after opening" of E5 was the test harness's own Playwright (attached to every page of the
+    // app, it dismisses dialogs nobody listens to), not Electron: with this listener the dialog stays open until CDP answers.
     wc.removeAllListeners('-run-dialog' as never)
-    wc.on('-run-dialog' as never, ((e: { preventDefault?: () => void }) => { e?.preventDefault?.() }) as never)
+    wc.on('-run-dialog' as never, (() => { /* held for CDP */ }) as never)
+    // HTTP authentication: no box, the request is cancelled (the page gets its 401).
+    const onLogin = (e: ElectronEvent, _d: unknown, _a: unknown, cb: () => void): void => { e.preventDefault(); cb() }
+    // Client certificate: none is chosen (Electron's default picks the first one, silently).
+    const onCert = (e: ElectronEvent, _u: unknown, _l: unknown, cb: () => void): void => { e.preventDefault(); cb() }
+    // beforeunload: accepted (decision E6). Electron shows no box and would keep the page, leaving the agent's navigation or the
+    // person's close stuck on a page that asks; the agent sees the navigation go through.
+    const onUnload = (e: ElectronEvent): void => { e.preventDefault() }
+    wc.on('login', onLogin as never)
+    wc.on('select-client-certificate', onCert as never)
+    wc.on('will-prevent-unload', onUnload)
+    // The native file chooser is intercepted on the core's own session (an upload goes through the tether's dialog, §4.3), and
+    // `window.print` does nothing.
+    const dbg = entry.surface.debugger
+    dbg.send('Page.enable')
+      .then(() => dbg.send('Page.setInterceptFileChooserDialog', { enabled: true }))
+      .then(() => dbg.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_PRINT, runImmediately: true }))
+      .catch(err => this.main.log(`guia ${tabId}: superfícies nativas não neutralizadas (${(err as Error).message})`))
     const changed = (): void => this.events.changed(infoOf(entry))
     wc.setWindowOpenHandler(details => {
       if (isWebUrl(details.url) && POPUP_DISPOSITIONS.has(details.disposition)) {
         const opener = details.referrer?.url ?? ''
         const ticket = opener !== '' && ses.net.isLocal(opener) && ses.net.isLocal(wc.getURL())
-        this.create(ownerSlotId, details.url, { ticket: ticket ? 'granted' : false }).catch(e => this.main.log(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
+        this.create(ownerSlotId, details.url, { ticket: ticket ? 'granted' : false, openerTabId: tabId }).catch(e => this.main.log(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
       } else this.main.log(`guia ${tabId}: popup recusado`)
       return { action: 'deny' }
     })
@@ -234,6 +278,7 @@ export class TabRegistry {
       wc.off('will-navigate', onNavigate); wc.off('will-redirect', onRedirect); wc.off('will-attach-webview', onAttach)
       wc.off('page-title-updated', onTitle); wc.off('did-navigate', onUrl); wc.off('did-navigate-in-page', onInPage)
       wc.off('did-start-loading', onStart); wc.off('did-stop-loading', onStop)
+      wc.off('login', onLogin as never); wc.off('select-client-certificate', onCert as never); wc.off('will-prevent-unload', onUnload)
     })]
   }
 }

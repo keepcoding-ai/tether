@@ -10,19 +10,24 @@
 //   - Browser level is answered here from the tab registry, only ever with the owner's tabs; nothing target-related is
 //     forwarded. Page level is forwarded through the tab surface's debugger by the strict list (gate-rules.ts), under session
 //     ids the gate makes; events go back only to the session they belong to, in the order the debugger produced them.
-// Later slices: E6 hardens the remappings, the event filter and the dialogs; E7 adds `Tether.*` and the control state.
+// E6 hardened it: refusals named by domain, every network event scrubbed of cookies and credentials (rule 12), input scaled
+// (mouse, touch, drag; rule 4), emulation re-applied after a clipped capture and when an agent leaves (rules 3, 5), a hidden
+// tab's capture rewritten so it comes back, only http(s) and the blank page navigable, and one lane per session: commands go out
+// in the order they came even when one waits (the local-network question, a hidden capture).
+// Later slices: E7 adds `Tether.*` and the control state.
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { nativeImage } from 'electron'
 import { join } from 'node:path'
 import type { Duplex } from 'node:stream'
 import type { Surface } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { KeyStore } from './gate-keys.ts'
 import {
-  BROWSER_ALLOWED, fromBrowser, GateError, type GateSession, keyOf, loopbackHost, navigable, noTarget, PAGE_ALLOWED, refusal,
-  scaleMouse, scrubEvent, SessionTable,
+  BROWSER_ALLOWED, cropRect, dragCarriesFiles, fromBrowser, GateError, type GateSession, hiddenCapture, inputScale, keyOf,
+  loopbackHost, navigable, noTarget, PAGE_ALLOWED, refusal, refusalReason, scaleInput, scrubEvent, SessionTable,
 } from './gate-rules.ts'
 import type { FirstTicket } from './tabs.ts'
 import type { TabInfo } from './tab-rules.ts'
@@ -32,6 +37,8 @@ import { acceptOf, frame, FrameParser, OP_CLOSE, OP_PONG, OP_TEXT } from './ws-f
 export interface GateTabs {
   list(): TabInfo[]
   surface(tabId: string): Surface | undefined
+  /** The tab that opened `tabId` (a popup), if any. */
+  opener?(tabId: string): string | undefined
   create(owner: string, url: string, opts: { ticket?: FirstTicket }): Promise<TabInfo>
   close(tabId: string): void
   requestLocalNetwork(tabId: string, ownerSlotId: string, url: string): Promise<boolean>
@@ -57,6 +64,27 @@ export interface Gate extends IDisposable {
 }
 
 const WS_PATH = '/devtools/browser/tether'
+/** A capture that never answers (a page that draws no frame) fails instead of holding its session's lane forever. */
+const CAPTURE_TIMEOUT_MS = 15_000
+
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const t = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new GateError(`${what}: no answer in ${ms / 1000} s`)), ms) })
+  return Promise.race([p, t]).finally(() => clearTimeout(timer))
+}
+
+/** A capture's image cropped (device px) and encoded the way it was asked. */
+function encodeShot(data: string, plan: ReturnType<typeof hiddenCapture>, format: unknown, quality: unknown): string {
+  const { want, got } = plan
+  const same = want.x === got.x && want.y === got.y && want.width === got.width && want.height === got.height && want.scale === 1
+  if (same && format !== 'jpeg') return data
+  let img = nativeImage.createFromBuffer(Buffer.from(data, 'base64'))
+  const r = cropRect(want, got, img.getSize().width)
+  if (!same) img = img.crop({ x: r.x, y: r.y, width: r.width, height: r.height })
+  if (r.outWidth !== r.width || r.outHeight !== r.height) img = img.resize({ width: r.outWidth, height: r.outHeight, quality: 'best' })
+  const buf = format === 'jpeg' ? img.toJPEG(typeof quality === 'number' ? quality : 80) : img.toPNG()
+  return buf.toString('base64')
+}
 
 type Json = Record<string, unknown>
 
@@ -70,6 +98,16 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
   const targetIds = new Map<string, Promise<string>>()
   /** tabId → the subscription to its debugger's messages. */
   const hooked = new Map<string, IDisposable>()
+  /** Each page session's lane: the hand-off of the command still waiting (a question, a capture); later ones queue behind it. */
+  const lanes = new WeakMap<GateSession<Conn>, Promise<void>>()
+  const lane = (s: GateSession<Conn>, run: () => Promise<void> | void, fail: (e: unknown) => void): void => {
+    const go = (): Promise<void> | void => { try { return run() } catch (e) { fail(e) } }
+    const prev = lanes.get(s)
+    const next = prev ? prev.then(go) : go()
+    if (!next) return
+    const p: Promise<void> = next.catch(() => {}).then(() => { if (lanes.get(s) === p) lanes.delete(s) })
+    lanes.set(s, p)
+  }
   let port = 0
 
   const ownedTab = (slotId: string, tabId: string): TabInfo | undefined => {
@@ -98,9 +136,12 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
   const targetInfoOf = async (t: TabInfo, conn: Conn): Promise<Json> => {
     const wc = opts.tabs.surface(t.tabId)?.webContents
     const alive = wc && !wc.isDestroyed()
+    // A popup names its opener, only when the opener is a tab of the same owner (a popup is always the opener's owner's).
+    const openerTab = opts.tabs.opener?.(t.tabId)
+    const openerId = openerTab !== undefined && ownedTab(t.ownerSlotId, openerTab) ? await targetIdOf(openerTab).catch(() => undefined) : undefined
     return {
       targetId: await targetIdOf(t.tabId), type: 'page', title: alive ? wc.getTitle() : '', url: alive ? wc.getURL() : '',
-      attached: true, canAccessOpener: false, browserContextId: conn.contextId,
+      attached: true, canAccessOpener: false, browserContextId: conn.contextId, ...(openerId ? { openerId } : {}),
     }
   }
 
@@ -119,8 +160,9 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     if (method === 'Target.attachedToTarget') {
       const child = out.sessionId as string
       const type = (out.targetInfo as Json | undefined)?.type
-      // Only the page's own children (frames, workers): anything else is let go and never announced.
-      if (type !== 'iframe' && type !== 'worker' && type !== 'service_worker' && type !== 'shared_worker') {
+      // Only the page's own children (out-of-process frames, dedicated workers): a service or shared worker serves every tab
+      // of its origin (another agent's too), so it is let go and never announced, like anything else.
+      if (type !== 'iframe' && type !== 'worker') {
         surface.debugger.send('Target.detachFromTarget', { sessionId: child }, inner).catch(() => {})
         return
       }
@@ -215,15 +257,18 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         }
         const s = sessions.get(this, sessionId)
         if (!s) throw new GateError('Session with given id not found.', -32001)
-        this.pageCommand(s, method, params, reply, fail)
+        lane(s, () => this.pageCommand(s, method, params, reply, fail), fail)
       } catch (err) {
         fail(err)
       }
     }
 
-    /** Page level: by the strict list; no `await` before the debugger on the common path, so commands keep their order. */
-    pageCommand(s: GateSession<Conn>, method: string, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): void {
-      if (!PAGE_ALLOWED.has(method)) throw refusal(method, 'not on the list')
+    /**
+     * Page level: by the strict list. Returns, when the command waits before reaching the debugger, the promise of that
+     * hand-off: the session's lane holds the next commands behind it (their order is kept).
+     */
+    pageCommand(s: GateSession<Conn>, method: string, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): Promise<void> | void {
+      if (!PAGE_ALLOWED.has(method)) throw refusal(method, refusalReason(method))
       const surface = opts.tabs.surface(s.tabId)
       if (!surface) throw new GateError('Target closed', -32000)
       const send = (m: string, p: Json): Promise<unknown> => surface.debugger.send(m, p, s.inner)
@@ -242,24 +287,22 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         }
         case 'Target.getTargetInfo':
           if (params.targetId !== undefined) {
-            targetIdOf(s.tabId).then(own => {
+            return targetIdOf(s.tabId).then(own => {
               if (s.kind !== 'page' || params.targetId !== own) throw noTarget()
-              return send(method, params)
-            }).then(reply, fail)
-            return
+              send(method, params).then(reply, fail)
+            }).catch(fail)
           }
           break
         case 'Page.navigate': {
           const url = params.url
-          if (!navigable(url)) throw refusal(method, 'scheme not allowed')
-          if (/^https?:/i.test(url)) {
-            // An agent's navigation to a local address asks first (E4); a public one needs nobody.
-            const owner = this.slotId
-            opts.tabs.requestLocalNetwork(s.tabId, owner, url).then(ok => {
+          if (!navigable(url)) throw refusal(method, 'only http(s) and about:blank')
+          if (url !== 'about:blank') {
+            // An agent's navigation to a local address asks first (E4); a public one needs nobody. The session's next
+            // commands wait in its lane until the navigation is handed to the debugger.
+            return opts.tabs.requestLocalNetwork(s.tabId, this.slotId, url).then(ok => {
               if (!ok) throw refusal(method, 'the local network was not allowed')
-              return send(method, params)
-            }).then(reply, fail)
-            return
+              send(method, params).then(reply, fail)
+            }).catch(fail)
           }
           break
         }
@@ -280,8 +323,13 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           set.delete(params.identifier)
           break
         }
+        case 'Input.dispatchDragEvent':
+          if (dragCarriesFiles(params)) throw refusal(method, 'files from disk')
+          send(method, scaleInput(method, params, inputScale(surface.state()))).then(reply, fail)
+          return
         case 'Input.dispatchMouseEvent':
-          send(method, scaleMouse(params, surface.state().scale)).then(reply, fail)
+        case 'Input.dispatchTouchEvent':
+          send(method, scaleInput(method, params, inputScale(surface.state()))).then(reply, fail)
           return
         case 'Page.captureScreenshot':
           return this.screenshot(s, surface, params, reply, fail)
@@ -289,19 +337,29 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       send(method, params).then(reply, fail)
     }
 
-    screenshot(s: GateSession<Conn>, surface: Surface, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): void {
-      const send = (p: Json): Promise<unknown> => surface.debugger.send('Page.captureScreenshot', p, s.inner)
-      // A clipped (or beyond-viewport) capture drops the tether's scale (rule 5): re-applied before the answer goes back.
-      if ((params.clip || params.captureBeyondViewport) && surface.state().scale !== 1) {
-        this.touched.add(s.tabId)
-        send(params).then(r => surface.reapplyEmulation().then(() => reply(r)), fail)
-        return
-      }
-      send(params).then(reply, fail)
+    /**
+     * A capture. Clipped or beyond the viewport, it drops the tether's emulation (rule 5): re-applied, always, before the answer
+     * goes back. A hidden tab draws no frame for a capture smaller than its viewport: the capture is asked at least that size,
+     * beyond the viewport, and cropped back here (never on a shown tab, where the person would see the page resized).
+     */
+    screenshot(s: GateSession<Conn>, surface: Surface, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): Promise<void> {
+      const send = (p: Json): Promise<unknown> => withTimeout(surface.debugger.send('Page.captureScreenshot', p, s.inner), CAPTURE_TIMEOUT_MS, 'Page.captureScreenshot')
+      const hidden = surface.state().visibility === 'hidden'
+      const resets = hidden || !!params.clip || params.captureBeyondViewport === true
+      if (resets) this.touched.add(s.tabId)
+      const restore = (): Promise<void> => (resets ? surface.reapplyEmulation().catch(() => {}) : Promise.resolve())
+      const shot: Promise<unknown> = !hidden ? send(params) : (async () => {
+        const m = await surface.debugger.send('Page.getLayoutMetrics', {}, s.inner) as { cssVisualViewport?: Json; visualViewport?: Json }
+        const vv = (m.cssVisualViewport ?? m.visualViewport ?? {}) as { pageX?: number; pageY?: number; clientWidth?: number; clientHeight?: number }
+        const plan = hiddenCapture(params, { x: vv.pageX ?? 0, y: vv.pageY ?? 0, width: vv.clientWidth ?? 1280, height: vv.clientHeight ?? 800 })
+        const r = await send(plan.request) as { data: string }
+        return { data: encodeShot(r.data, plan, params.format, params.quality) }
+      })()
+      return shot.then(r => restore().then(() => reply(r)), e => restore().then(() => fail(e)))
     }
 
     async browserCommand(method: string, params: Json): Promise<unknown> {
-      if (!BROWSER_ALLOWED.has(method)) throw refusal(method, 'not on the browser-level list')
+      if (!BROWSER_ALLOWED.has(method)) throw refusal(method, refusalReason(method))
       const mine = (): TabInfo[] => opts.tabs.list().filter(t => t.ownerSlotId === this.slotId)
       switch (method) {
         case 'Browser.getVersion': {
@@ -356,7 +414,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         }
         case 'Target.createTarget': {
           const url = typeof params.url === 'string' && params.url !== '' ? params.url : 'about:blank'
-          if (url !== 'about:blank' && !/^https?:\/\//i.test(url)) throw refusal(method, 'scheme not allowed')
+          if (!navigable(url)) throw refusal(method, 'only http(s) and about:blank')
           // The agent's request: a local address goes to the local-network question before the tab loads it.
           const t = await opts.tabs.create(this.slotId, url, { ticket: true })
           const targetId = await targetIdOf(t.tabId)
