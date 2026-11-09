@@ -22,7 +22,7 @@ import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
 type Snap = { query: string; highlight: string | undefined; folder: string; touched: boolean; busy: boolean; error: string | undefined; recentsOpen: boolean; shown: { id: string; n: number | undefined }[]; effectiveFolder: string; focused: boolean }
-type Empty = Snap & { id: string; cwd: string; origin: 'add' | 'layout' }
+type Empty = Snap & { id: string; cwd: string; origin: 'add' | 'layout'; blank: boolean }
 type Hooks = {
   panelIds(): string[]
   activate(id: string): void
@@ -44,7 +44,7 @@ type Hooks = {
   builder(): boolean
 }
 declare const window: { __tether: Hooks }
-declare const document: { documentElement: { dataset: Record<string, string> }; querySelector(sel: string): { getBoundingClientRect(): { x: number; y: number; width: number; height: number } } | null; querySelectorAll(sel: string): { length: number } }
+declare const document: { activeElement: { classList: { contains(s: string): boolean } } | null; documentElement: { dataset: Record<string, string> }; querySelector(sel: string): { getBoundingClientRect(): { x: number; y: number; width: number; height: number } } | null; querySelectorAll(sel: string): { length: number } }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -269,9 +269,11 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     assert.equal(e5.cwd, work, 'the focused pane\'s folder')
     assert.equal((await page.evaluate(() => window.__tether.frameIds())).length, framesBefore + 1, 'a new frame')
     assert.equal((await page.evaluate(() => window.__tether.slots())).length, slotsBefore, 'nothing was duplicated')
-    await page.waitForFunction(id => window.__tether.empty(id)?.focused === true, e5.id)
+    // A new frame starts blank (the layout is being drawn): the keyboard is on its action; Esc still withdraws the request.
+    assert.equal((await page.evaluate(id => window.__tether.empty(id), e5.id))!.blank, true)
+    await page.waitForFunction(() => document.activeElement?.classList.contains('blank-action'))
     assert.ok(await page.evaluate(() => window.__tether.builder()), 'the builder mode stays on after a "+"')
-    await page.keyboard.press('Escape') // the chooser's: the empty pane closes
+    await page.keyboard.press('Escape') // the blank view's: the request is withdrawn, the empty pane closes
     await page.waitForFunction(() => window.__tether.empties().length === 0)
     await page.waitForFunction(n => window.__tether.frameIds().length === n, framesBefore, undefined)
     assert.ok(await page.evaluate(() => window.__tether.builder()), 'the chooser took that Esc: still in the builder mode')

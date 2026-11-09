@@ -240,16 +240,20 @@ test('Foco de Mesa: a pad with the keyboard keeps the aura on the desk, files op
     console.log('step b')
     const padFrameCount = () => page.evaluate(() => (document as unknown as { querySelectorAll(s: string): { length: number } }).querySelectorAll('.pad.shown .pad-frames .frame:has(> .frame-dock)').length)
     const shownPanes = async () => (await h.pads(page)).find(p => p.shown)!.panes
+    // The pad's blank seed was taken by the note ("Nova nota" with the pad in focus fills the blank): the note is alone in it,
+    // so a second tab (an empty pane, as the old seed was) is added for the drags below.
+    await page.click('.pad.shown .pad-frames .tab-act.add')
+    await page.waitForFunction(() => window.__tether.padFrames().some(p => p.shown && p.panes.length === 2))
     const seed0 = (await shownPanes()).find(id => id !== padNote.id)!
     for (const id of [padNote.id, seed0]) {
       await page.evaluate(id => window.__tether.activate(id), id)
       await drag(page, await point(page, `.pad-frames ${tab(id)}`), await point(page, groupContent(b)))
       await page.waitForFunction(id => window.__tether.frameOf(id) === 'frame-2', id)
     }
-    // Emptied: the pad seeds its chooser again, in its one frame.
+    // Emptied: the pad seeds its blank view ("Abrir algo aqui") again, in its one frame.
     await page.waitForFunction(() => window.__tether.padFrames().some(p => p.shown && p.panes.length === 1 && p.panes[0]!.startsWith('empty:')))
-    await page.waitForSelector('.pad.shown .pad-frames .ch')
-    assert.equal(await padFrameCount(), 1, 'an empty pad is one frame with the chooser')
+    await page.waitForSelector('.pad.shown .pad-frames .empty-panel[data-blank="true"] .blank-action')
+    assert.equal(await padFrameCount(), 1, 'an empty pad is one frame with the blank view')
     await page.screenshot({ path: join(shots, 'b-pad-empty.png') })
     const seed1 = (await shownPanes())[0]!
     await drag(page, await point(page, tab(b)), await point(page, groupContent(seed1, '.pad-frames')), join(shots, 'b-drop-hint.png'))

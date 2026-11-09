@@ -98,7 +98,8 @@ async function createShell(page: Page, cwd: string): Promise<string> {
   await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
   await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
   await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
-  await waitTabs(page, before.length + 1)
+  // On a fresh desk the new pane takes the place of the blank pane (the tab count does not grow): wait for the new id.
+  await page.waitForFunction(before => window.__tether.panelIds().some(id => !before.includes(id)), before)
   const added = (await h.ids(page)).filter(id => !before.includes(id))
   assert.equal(added.length, 1)
   return added[0]!

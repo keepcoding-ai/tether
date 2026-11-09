@@ -4,9 +4,14 @@
 // replaces this pane, in the same group and at the same index, by what they chose. Cancelling depends on where
 // the pane came from (`origin`): a "+" pane closes, a laid-out pane only gives the keyboard back. Nothing here
 // talks to tetherd.
+//
+// A pane can start blank (`empty.blank` in its params): it then shows the blank view (blank-view.ts: a calm line and
+// "Abrir algo aqui") instead of the chooser, and that action swaps the view for the chooser in the same pane. The
+// pane is the same one before and after (same id, tab, place), only its content changes.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import type { Choice } from './chooser-rules.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
+import { createBlankView } from './blank-view.ts'
 import { icon } from './icons.ts'
 import type { ChooserDestination } from './ext-api.ts'
 import { EMPTY_TITLE, emptyOrigin, emptyParams, type EmptyOrigin } from '../shared/empty.ts'
@@ -18,6 +23,10 @@ export interface EmptyHost extends ChooserHost {
   cancel(panel: EmptyPanel, origin: EmptyOrigin): void
   /** The ⤢: the same chooser as a popup, with this state; the popup hands the pick (or the state) back to the pane. */
   expand(panel: EmptyPanel, state: ChooserState): void
+  /** The folder to suggest when the chooser takes the place of the blank view (a panel pad: its target panel's folder), asked at that moment. */
+  suggestFolder?(panel: EmptyPanel): string | undefined
+  /** The pane left the blank state (its action was used): persist it with the layout. */
+  onUnblank(panel: EmptyPanel): void
   /** The pane's suggested folder changed (the person typed one): persist it with the layout. */
   onCwdChange(panel: EmptyPanel): void
   /** Right-click on the tab / the strip's "⋯". */
@@ -27,12 +36,16 @@ export interface EmptyHost extends ChooserHost {
 }
 
 /** What a test reads of an empty pane. */
-export interface EmptySnapshot extends ChooserSnapshot { id: string; cwd: string; origin: EmptyOrigin }
+export interface EmptySnapshot extends ChooserSnapshot { id: string; cwd: string; origin: EmptyOrigin; blank: boolean }
 
 export class EmptyPanel implements IContentRenderer {
   readonly element: HTMLElement
   id = ''
   origin: EmptyOrigin = 'layout'
+  /** Showing the blank view, not the chooser. */
+  blank = false
+  private blankView: HTMLElement | undefined
+  private folder = ''
   private api: DockviewPanelApi | undefined
   private readonly host: EmptyHost
   private chooser: Chooser | undefined
@@ -52,8 +65,32 @@ export class EmptyPanel implements IContentRenderer {
     this.element.dataset.emptyId = this.id
     this.origin = emptyOrigin(params.params)
     this.element.dataset.origin = this.origin
-    this.mount({ folder: emptyParams(params.params)?.cwd ?? '' })
+    this.folder = emptyParams(params.params)?.cwd ?? ''
+    this.blank = emptyParams(params.params)?.blank === true
+    this.element.dataset.blank = String(this.blank)
+    if (this.blank) this.mountBlank()
+    else this.mount({ folder: this.folder })
     this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
+  }
+
+  private mountBlank(): void {
+    this.blankView = createBlankView({ onAction: () => this.unblank() })
+    // Esc means here what it means in the chooser: withdraw a request in progress (`add`), or give the keyboard back (`layout`).
+    this.blankView.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); this.host.cancel(this, this.origin) } })
+    this.element.append(this.blankView)
+  }
+
+  /** The blank view's action: it leaves and the chooser enters in its place, with the keyboard. */
+  private unblank(): void {
+    if (!this.blank || this.disposed) return
+    this.blank = false
+    this.element.dataset.blank = 'false'
+    this.blankView?.remove()
+    this.blankView = undefined
+    this.folder = this.host.suggestFolder?.(this) ?? this.folder
+    this.mount({ folder: this.folder })
+    this.host.onUnblank(this)
+    requestAnimationFrame(() => this.focus())
   }
 
   private mount(state: Partial<ChooserState>): void {
@@ -72,7 +109,7 @@ export class EmptyPanel implements IContentRenderer {
   }
 
   /** The folder the chooser holds now (what the layout keeps). */
-  get cwd(): string { return this.chooser?.snapshot().folder.trim() ?? '' }
+  get cwd(): string { return this.chooser ? this.chooser.snapshot().folder.trim() : this.folder }
 
   /** The profiles changed: the list is redrawn with the same state. */
   renderProfiles(): void { this.chooser?.render() }
@@ -85,6 +122,7 @@ export class EmptyPanel implements IContentRenderer {
   /** The keyboard to the chooser's search field. */
   focus(): void {
     if (this.disposed) return
+    if (this.blank) { this.blankView?.querySelector<HTMLElement>('.blank-action')?.focus(); return }
     this.chooser?.focus()
   }
 
@@ -92,7 +130,7 @@ export class EmptyPanel implements IContentRenderer {
 
   snapshot(): EmptySnapshot {
     const s = this.chooser?.snapshot()
-    return { ...(s ?? { query: '', highlight: undefined, folder: '', touched: false, where: { level: 'pane', placement: 'within' }, busy: false, error: undefined, recentsOpen: false, shown: [], effectiveFolder: '', fromProfile: false, focused: false }), id: this.id, cwd: this.cwd, origin: this.origin }
+    return { ...(s ?? { query: '', highlight: undefined, folder: '', touched: false, where: { level: 'pane', placement: 'within' }, busy: false, error: undefined, recentsOpen: false, shown: [], effectiveFolder: '', fromProfile: false, focused: false }), id: this.id, cwd: this.cwd, origin: this.origin, blank: this.blank }
   }
 
   dispose(): void {

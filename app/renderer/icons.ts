@@ -25,6 +25,7 @@ import clipboardText from '@phosphor-icons/core/assets/regular/clipboard-text.sv
 import globeSimple from '@phosphor-icons/core/assets/regular/globe-simple.svg'
 // The side bars' open pads wear the fill weight of their icon (sidebars.ts): `<name>-fill` next to each pad icon.
 import clipboardTextFill from '@phosphor-icons/core/assets/fill/clipboard-text-fill.svg'
+import appWindowFill from '@phosphor-icons/core/assets/fill/app-window-fill.svg'
 import globeSimpleFill from '@phosphor-icons/core/assets/fill/globe-simple-fill.svg'
 import filesFill from '@phosphor-icons/core/assets/fill/files-fill.svg'
 import folderOpen from '@phosphor-icons/core/assets/regular/folder-open.svg'
@@ -208,6 +209,7 @@ const SVG = {
   'clipboard-text': clipboardText,
   'globe-simple': globeSimple,
   'clipboard-text-fill': clipboardTextFill,
+  'app-window-fill': appWindowFill,
   'globe-simple-fill': globeSimpleFill,
   'files-fill': filesFill,
   'floppy-disk': floppyDisk,

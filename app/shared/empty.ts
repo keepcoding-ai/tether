@@ -39,6 +39,12 @@ export interface EmptyParams {
     cwd?: string
     /** Absent in panes saved before the origin existed: those are `layout`. */
     origin?: EmptyOrigin
+    /**
+     * Still blank: the pane shows the blank view (app/renderer/blank-view.ts) with one action instead of the chooser. The
+     * action clears the flag in place, and the chooser takes over. Set where the layout is being drawn (a pad, a new desk,
+     * a new frame); a pane the person asks for with "+" or a chord opens straight in the chooser.
+     */
+    blank?: true
   }
 }
 
@@ -47,8 +53,9 @@ export function emptyParams(params: unknown): EmptyParams['empty'] | undefined {
   if (!params || typeof params !== 'object') return undefined
   const empty = (params as { empty?: unknown }).empty
   if (!empty || typeof empty !== 'object') return undefined
-  const { cwd, origin } = empty as { cwd?: unknown; origin?: unknown }
+  const { cwd, origin, blank } = empty as { cwd?: unknown; origin?: unknown; blank?: unknown }
   const out: EmptyParams['empty'] = {}
+  if (blank === true) out.blank = true
   if (typeof cwd === 'string' && cwd !== '') out.cwd = cwd
   if (origin === 'add') out.origin = 'add'
   return out
@@ -60,6 +67,6 @@ export function emptyOrigin(params: unknown): EmptyOrigin {
 }
 
 /** The params of a new empty pane. */
-export function withEmpty(cwd: string | undefined, origin: EmptyOrigin = 'layout'): EmptyParams {
-  return { empty: { ...(cwd ? { cwd } : {}), ...(origin === 'add' ? { origin } : {}) } }
+export function withEmpty(cwd: string | undefined, origin: EmptyOrigin = 'layout', blank = false): EmptyParams {
+  return { empty: { ...(cwd ? { cwd } : {}), ...(origin === 'add' ? { origin } : {}), ...(blank ? { blank: true as const } : {}) } }
 }

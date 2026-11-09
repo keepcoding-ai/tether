@@ -230,6 +230,7 @@ export class Chooser {
 
     // ---- wiring ----
     this.query.addEventListener('input', () => { this.state.query = this.query.value; this.state.highlight = undefined; this.render() })
+    new ResizeObserver(() => this.showTail()).observe(this.folderInput)
     this.folderInput.addEventListener('input', () => { this.state.folder = this.folderInput.value; this.state.touched = true; this.openRecents(this.folderInput.value); this.paintFolderTag(); this.paintSuffix() })
     this.folderInput.addEventListener('focus', () => { if (!this.fixedOption()) { this.folderInput.value = this.effective().folder; this.paintSuffix() } })
     this.folderInput.addEventListener('blur', () => { setTimeout(() => { if (this.disposed) return; if (!this.recentsList.contains(document.activeElement)) { this.closeRecents(); this.paintFolder() } }, 120) })
@@ -373,6 +374,13 @@ export class Chooser {
     }
     this.paintFolderTag()
     this.paintDest()
+    this.showTail()
+  }
+
+  /** A folder longer than the field shows its end (the folder's own name), not its start; while the field is being edited the caret decides. */
+  private showTail(): void {
+    if (document.activeElement === this.folderInput) return
+    this.folderInput.scrollLeft = this.folderInput.scrollWidth
   }
 
   private paintFolderTag(): void {
