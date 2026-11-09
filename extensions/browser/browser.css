@@ -17,3 +17,14 @@
 .br-web-state { flex: none; color: var(--fg-dim); font-size: 11.5px; }
 .br-web-page { position: relative; flex: 1 1 auto; min-height: 0; }
 .br-web[data-state="not-loaded"] .br-web-page, .br-web[data-state="no-address"] .br-web-page { display: grid; place-items: center; }
+/* E7: who has the tab, its action, and the strip under the bar (help request, ignored click, scripts warning). */
+.br-web-control { flex: none; color: var(--fg-dim); font-size: 11.5px; }
+.br-web-control:empty { display: none; }
+.br-web[data-control="user"] .br-web-control { color: var(--fg); font-weight: 600; }
+.br-web-act, .br-web-notice-act { flex: none; padding: 1px 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--fg); font: inherit; font-size: 11.5px; cursor: pointer; }
+.br-web-act:hover, .br-web-notice-act:hover { background: var(--bg-3, var(--bg-2)); }
+.br-web-act[hidden], .br-web-notice[hidden] { display: none; }
+.br-web-notice { flex: none; display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); font-size: 12px; }
+.br-web-notice-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; white-space: pre-line; }
+.br-web-notice[data-kind="ask"], .br-web-notice[data-kind="expired"] { font-weight: 600; }
+.br-web-notice[data-kind="ask"] .br-web-notice-act { border-color: currentColor; }

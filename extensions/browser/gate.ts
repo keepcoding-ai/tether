@@ -123,6 +123,28 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
   }
   let port = 0
   const controlOf = (tabId: string): Control => opts.control?.control(tabId) ?? 'agent'
+  /** Tabs whose events were dropped while held: the agent's view of them is stale until resynced. */
+  const heldTabs = new Set<string>()
+  /**
+   * A held tab back with the agent: its client missed the page's events (a reload, a navigation), so its execution contexts are
+   * dead ids. Each page session is told its contexts are gone and Runtime is restarted, which makes Chromium announce the live
+   * ones; in the session's lane, so the agent's next commands wait for it.
+   */
+  const resync = (tabId: string): void => {
+    if (!heldTabs.delete(tabId)) return
+    const surface = opts.tabs.surface(tabId)
+    if (!surface) return
+    for (const c of conns) {
+      for (const s of sessions.of(c, tabId)) {
+        if (s.kind !== 'page') continue
+        lane(s, async () => {
+          c.event('Runtime.executionContextsCleared', {}, s.outer)
+          await surface.debugger.send('Runtime.disable', {}, s.inner).catch(() => {})
+          await surface.debugger.send('Runtime.enable', {}, s.inner).catch(() => {})
+        }, () => {})
+      }
+    }
+  }
 
   const ownedTab = (slotId: string, tabId: string): TabInfo | undefined => {
     const t = opts.tabs.list().find(x => x.tabId === tabId)
@@ -176,6 +198,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       // be announced to nobody); one that leaves is forgotten.
       if (method === 'Target.attachedToTarget') surface.debugger.send('Target.detachFromTarget', { sessionId: out.sessionId as string }, inner).catch(() => {})
       else if (method === 'Target.detachedFromTarget') { const c = sessions.ofInner(tabId, out.sessionId as string); if (c) sessions.remove(c) }
+      heldTabs.add(tabId)
       opts.trace?.(`-- held ${s.conn.slotId} ${method}`)
       return
     }
@@ -591,6 +614,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
   })
 
   const controlSub = opts.control?.onChange(v => {
+    if (v.control === 'agent') resync(v.tabId)
     const owner = opts.tabs.list().find(t => t.tabId === v.tabId)?.ownerSlotId
     if (!owner) return
     targetIdOf(v.tabId).then(targetId => {
