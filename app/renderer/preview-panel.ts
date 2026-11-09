@@ -367,7 +367,7 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
     const target = classifyLink(href, noteDirOf(this.path))
     // The anchor is the preview's own; the rest goes to the app's single link opener (app/renderer/link-open.ts).
     if (target.kind === 'anchor') this.scrollToAnchor(target.id)
-    else if (target.kind === 'external') openLink(target)
+    else if (target.kind === 'external' || target.kind === 'tether') openLink(target)
     else if (target.kind === 'file') openLink({ kind: 'file', path: target.path, ...(target.line ? { position: { line: target.line } } : {}) }, { baseDir: noteDirOf(this.path) })
   }
 

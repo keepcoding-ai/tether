@@ -3,10 +3,11 @@
 //   - a link provider that finds paths in the text with the terminal's own detection (VS Code's parser,
 //     app/shared/vscode-terminal-link-parsing.ts) and keeps only those that exist, a relative path read against the
 //     folder of the file being edited (the same resolver as the terminal, app/main/terminal-links-main.ts);
-//   - one link opener for everything Monaco follows (these paths and the http(s) URLs Monaco's own detection finds), so
+//   - tether:// links (app/shared/tether-url.ts), which Monaco's own detection does not know;
+//   - one link opener for everything Monaco follows (these paths, tether:// and the http(s) URLs Monaco's own detection finds), so
 //     nothing goes through Monaco's default `window.open`: it all lands on openLink, like the terminal and the preview.
 // Monaco already follows a link only with Ctrl (Cmd) + click and underlines it on hover.
-import { parsePositionFragment, positionFragment, isExternalUrl } from '../shared/links.ts'
+import { detectUrlLinks, isExternalUrl, linkTargetOfUrl, parsePositionFragment, positionFragment } from '../shared/links.ts'
 import { detectLinks, getLinkSuffix, type LinkOs } from '../shared/vscode-terminal-link-parsing.ts'
 import { openLink } from './link-open.ts'
 import { monaco } from './monaco.ts'
@@ -35,11 +36,15 @@ export function installMonacoLinks(): void {
       for (let n = 1; n <= model.getLineCount(); n++) {
         const line = model.getLineContent(n)
         if (line.length === 0 || line.length > MAX_LINE) continue
+        // tether:// links (Monaco's own detection only knows http(s)): no disk to ask.
+        for (const u of detectUrlLinks(line)) {
+          if (linkTargetOfUrl(u.url).kind === 'tether') links.push({ range: new monaco.Range(n, u.start + 1, n, u.end + 1), url: u.url })
+        }
         for (const parsed of detectLinks(line, os).slice(0, MAX_PER_LINE)) {
           const start = parsed.prefix?.index ?? parsed.path.index
           const end = parsed.path.index + parsed.path.text.length + (parsed.suffix?.suffix.text.length ?? 0)
           const text = line.slice(start, end)
-          if (/^https?:/i.test(text)) continue // a URL: Monaco's own detection has it
+          if (/^(?:https?|tether):/i.test(text)) continue // a URL: found above, or by Monaco's own detection
           jobs.push((async () => {
             const hit = await window.tether.resolveTerminalLink(baseDir, [text]).catch(() => null)
             if (!hit || token.isCancellationRequested) return
@@ -63,6 +68,7 @@ export function installMonacoLinks(): void {
       } else {
         const url = resource.toString(true)
         if (isExternalUrl(url)) openLink({ kind: 'external', url })
+        else if (linkTargetOfUrl(url).kind === 'tether') openLink({ kind: 'tether', url })
       }
       return true // handled (or refused): never Monaco's window.open
     },

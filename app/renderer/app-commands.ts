@@ -29,6 +29,8 @@ export interface CommandHost {
   renamePane(id: string): void
   switchProfile(id: string): void
   toggleDetails(id: string): void
+  /** "Copiar link do painel": a tether:// link to the pane (app/shared/tether-url.ts). */
+  copyLink(id: string): void
   copyFolder(id: string): void
   openFolder(id: string): void
   movePane(id: string): void
@@ -135,6 +137,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.rename', title: 'Renomear painel…', group: GROUP.pane, icon: 'pencil-simple', ...pane, run: withPane(id => host.renamePane(id)) },
     { id: 'pane.switch-profile', title: 'Trocar perfil do painel…', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.switchProfile(id)) },
     { id: 'pane.details', title: 'Mostrar ou ocultar a barra de status do painel', group: GROUP.pane, icon: 'rows', ...pane, run: withPane(id => host.toggleDetails(id)) },
+    { id: 'pane.copy-link', title: 'Copiar link do painel', group: GROUP.pane, icon: 'link', ...pane, run: withPane(id => host.copyLink(id)) },
     { id: 'pane.copy-folder', title: 'Copiar pasta do painel', group: GROUP.pane, icon: 'copy', ...pane, run: withPane(id => host.copyFolder(id)) },
     { id: 'pane.open-folder', title: 'Abrir pasta do painel no Explorer', group: GROUP.pane, icon: 'folder-open', ...pane, run: withPane(id => host.openFolder(id)) },
     { id: 'pane.move', title: 'Mover painel…', group: GROUP.pane, icon: 'arrow-square-out', ...pane, run: withPane(id => host.movePane(id)) },

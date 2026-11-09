@@ -346,3 +346,28 @@ export function closeDeskSituation(deskName: string, slots: SlotState[], neighbo
     cancelLabel: 'Cancelar',
   }
 }
+
+/** A tether:// link named a pane that is closed but still known (its slot is in "Slots fechados"). */
+export function closedTabSituation(name: string): DialogSpec {
+  return {
+    situation: 'tether-link-closed',
+    tone: 'info',
+    icon: 'link',
+    title: `A guia “${name}” está fechada`,
+    message: 'O link aponta para uma guia que não está aberta em nenhum lugar do tether.',
+    choices: [{ id: 'reopen', icon: 'arrow-counter-clockwise', label: 'Reabrir a guia', consequence: 'Ela volta para a mesa atual e retoma a sessão de onde parou.', tone: 'safe' }],
+    cancelLabel: 'Agora não',
+  }
+}
+
+/** A tether:// link named a pane the app no longer knows. */
+export function missingTabSituation(): DialogSpec {
+  return {
+    situation: 'tether-link-missing',
+    tone: 'warn',
+    icon: 'link-break',
+    title: 'Essa guia não existe mais',
+    message: 'O link aponta para uma guia que foi esquecida ou que nunca existiu neste tether. Nada foi aberto.',
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Fecha este aviso.', tone: 'neutral' }],
+  }
+}

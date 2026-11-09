@@ -82,6 +82,10 @@ export interface TetherApi {
   /** In-app menu commands that live in main: "Sair e encerrar tudo…" (asks through onAsk) and "Voltar a perguntar". */
   command(cmd: MainCommand): void
   openExternal(url: string): void
+  /** A tether:// link the app was started with or got before the renderer listened; after this call, links come through onTetherLink. */
+  pendingTetherLink(): Promise<string | undefined>
+  /** A tether:// link followed while the app runs (app/shared/tether-url.ts). */
+  onTetherLink(listener: (url: string) => void): () => void
   /** Opens a folder in the file manager (Explorer). Validates that the path exists and is a directory; never runs anything. */
   openPath(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   readClipboard(): Promise<string>

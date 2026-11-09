@@ -1,7 +1,7 @@
 // The app's links core (app/shared/links.ts): the one policy every surface (terminal, note editor, preview) follows.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { detectWebLinks, followLinkTip, isExternalUrl, isFollowModifier, parsePositionFragment, positionFragment } from '../../app/shared/links.ts'
+import { detectUrlLinks, followLinkTip, linkTargetOfUrl, isExternalUrl, isFollowModifier, parsePositionFragment, positionFragment } from '../../app/shared/links.ts'
 
 describe('links core', () => {
   test('isExternalUrl: http(s) with a host only', () => {
@@ -13,13 +13,21 @@ describe('links core', () => {
     assert.equal(isExternalUrl('mailto:a@b.example'), false)
   })
 
-  test('detectWebLinks: ranges, and closing punctuation left out', () => {
-    assert.deepEqual(detectWebLinks('veja https://a.example/x?y=1.'), [{ start: 5, end: 28, url: 'https://a.example/x?y=1' }])
-    assert.deepEqual(detectWebLinks('(https://a.example) e http://b.example/c'), [
+  test('detectUrlLinks: ranges, and closing punctuation left out', () => {
+    assert.deepEqual(detectUrlLinks('veja https://a.example/x?y=1.'), [{ start: 5, end: 28, url: 'https://a.example/x?y=1' }])
+    assert.deepEqual(detectUrlLinks('(https://a.example) e http://b.example/c'), [
       { start: 1, end: 18, url: 'https://a.example' },
       { start: 22, end: 40, url: 'http://b.example/c' },
     ])
-    assert.deepEqual(detectWebLinks('sem link aqui'), [])
+    assert.deepEqual(detectUrlLinks('sem link aqui'), [])
+    assert.deepEqual(detectUrlLinks('guia: tether://tab/1a2b3c4d.'), [{ start: 6, end: 27, url: 'tether://tab/1a2b3c4d' }])
+    assert.deepEqual(detectUrlLinks('tether://nada/x'), [], 'a tether link that names nothing is no link')
+  })
+
+  test('linkTargetOfUrl: browser, a place in the app, or nothing', () => {
+    assert.deepEqual(linkTargetOfUrl('https://a.example'), { kind: 'external', url: 'https://a.example' })
+    assert.deepEqual(linkTargetOfUrl('tether://tab/1a2b3c4d'), { kind: 'tether', url: 'tether://tab/1a2b3c4d' })
+    assert.deepEqual(linkTargetOfUrl('javascript:alert(1)'), { kind: 'ignore' })
   })
 
   test('the follow modifier and the tip are the same on every surface', () => {

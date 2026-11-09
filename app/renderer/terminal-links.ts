@@ -1,5 +1,5 @@
 // The terminal's adapter of the app's links (app/shared/links.ts → app/renderer/link-open.ts): one xterm link provider
-// for both kinds a terminal shows — http(s) URLs (app/shared/links.ts detectWebLinks) and paths (VS Code's detection,
+// for both kinds a terminal shows — URLs, http(s) and tether:// (app/shared/links.ts detectUrlLinks) and paths (VS Code's detection,
 // app/shared/vscode-terminal-link-detector.ts; whether a candidate exists is asked of main, app/main/terminal-links-main.ts,
 // which reads a relative path against the folder the pane was OPENED in — only a path that exists becomes a link).
 // Like VS Code, and like every other surface of the app: a link is underlined as soon as the pointer is over it and says
@@ -7,7 +7,7 @@
 // only a click with it follows the link.
 import type { IBufferRange, ILink, ILinkDecorations, ILinkProvider, Terminal } from '@xterm/xterm'
 import type { LinkTarget } from '../shared/links.ts'
-import { detectWebLinks } from '../shared/links.ts'
+import { detectUrlLinks, linkTargetOfUrl } from '../shared/links.ts'
 import {
   convertLinkRangeToBuffer, getXtermLineContent, type LinkBufferLine, provideLocalLinks,
 } from '../shared/vscode-terminal-link-detector.ts'
@@ -88,7 +88,7 @@ function webLinksAt(term: Terminal, bufferLineNumber: number): { range: IBufferR
   while (start > 0 && buffer.getLine(start)?.isWrapped) { const prev = buffer.getLine(start - 1); if (!prev) break; lines.unshift(prev); start-- }
   while (end + 1 < buffer.length && buffer.getLine(end + 1)?.isWrapped) { const next = buffer.getLine(end + 1); if (!next) break; lines.push(next); end++ }
   const text = getXtermLineContent(buffer, start, end, term.cols)
-  return detectWebLinks(text).map(l => ({
+  return detectUrlLinks(text).map(l => ({
     url: l.url,
     range: convertLinkRangeToBuffer(lines, term.cols, { startColumn: l.start + 1, startLineNumber: 1, endColumn: l.end + 1, endLineNumber: 1 }, start),
   }))
@@ -106,7 +106,7 @@ export function terminalLinkProvider(term: Terminal, host: TerminalLinkHost): IL
   const open = (t: LinkTarget): void => host.open(t)
   return {
     provideLinks(bufferLineNumber, callback) {
-      const web = webLinksAt(term, bufferLineNumber).map(w => new FollowLink(w.range, w.url, { kind: 'external', url: w.url }, open, tip))
+      const web = webLinksAt(term, bufferLineNumber).map(w => new FollowLink(w.range, w.url, linkTargetOfUrl(w.url), open, tip))
       const cwd = host.openingCwd()
       provideLocalLinks(term, bufferLineNumber, os, async candidates => {
         try { return await window.tether.resolveTerminalLink(cwd, candidates) } catch (err) { console.error('terminal links:', err); return null }

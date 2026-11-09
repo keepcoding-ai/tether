@@ -7,11 +7,13 @@
 // Paths are handled lexically with both separators, so a Windows note path works the same in a unit test on any OS.
 
 import { isExternalUrl } from './links.ts'
+import { parseTetherUrl } from './tether-url.ts'
 
 export type LinkTarget =
   | { kind: 'external'; url: string }
   | { kind: 'anchor'; id: string }
   | { kind: 'file'; path: string; line?: number }
+  | { kind: 'tether'; url: string }
   | { kind: 'ignore' }
 
 const SCHEME = /^([a-zA-Z][a-zA-Z0-9+.-]*):/
@@ -83,7 +85,8 @@ export function classifyLink(href: string, noteDir: string): LinkTarget {
   const scheme = SCHEME.exec(link)
   if (scheme) {
     // `C:\x` looks like a scheme; only http(s) goes anywhere.
-    return isExternalUrl(link) ? { kind: 'external', url: link } : { kind: 'ignore' }
+    if (isExternalUrl(link)) return { kind: 'external', url: link }
+    return parseTetherUrl(link) ? { kind: 'tether', url: link } : { kind: 'ignore' }
   }
   if (link.startsWith('//')) return { kind: 'ignore' } // protocol-relative: a remote host, not a file
   const cut = link.search(/[?#]/)

@@ -4,12 +4,15 @@
 // a new kind of target, a detection rule, the tip, which schemes go out — reaches every surface at once.
 // Pure: no DOM, no disk (unit-tested in test/unit/app.links.test.ts).
 import type { LineColumn } from './file-open.ts'
+import { parseTetherUrl } from './tether-url.ts'
 
 /** Where a followed link goes. */
 export type LinkTarget =
   | { kind: 'external'; url: string }
   | { kind: 'anchor'; id: string }
   | { kind: 'file'; path: string; isDirectory?: boolean; position?: LineColumn }
+  /** A place in the app (app/shared/tether-url.ts): a pane anywhere, or a note. */
+  | { kind: 'tether'; url: string }
   | { kind: 'ignore' }
 
 /** Whether a URL may leave the app for the system browser: http(s) only (javascript:, file:, mailto:… never). */
@@ -21,13 +24,20 @@ export function isExternalUrl(url: string): boolean {
 export interface TextLink { start: number; end: number; url: string }
 
 // The web-link rule of @xterm/addon-web-links: a URL never ends on punctuation that usually closes the sentence around it.
-const WEB_LINK = /https?:\/\/[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~[\]`()<>]/gi
+const URL_LINK = /(?:https?|tether):\/\/[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~[\]`()<>]/gi
 
-/** The http(s) URLs written in `text`. */
-export function detectWebLinks(text: string): TextLink[] {
+/** What following a URL means: http(s) to the browser, a valid tether:// link to that place in the app, anything else nothing. */
+export function linkTargetOfUrl(url: string): LinkTarget {
+  if (isExternalUrl(url)) return { kind: 'external', url }
+  if (parseTetherUrl(url)) return { kind: 'tether', url }
+  return { kind: 'ignore' }
+}
+
+/** The URLs written in `text` that lead somewhere: http(s) and tether:// links. */
+export function detectUrlLinks(text: string): TextLink[] {
   const out: TextLink[] = []
-  for (const m of text.matchAll(WEB_LINK)) {
-    if (isExternalUrl(m[0])) out.push({ start: m.index, end: m.index + m[0].length, url: m[0] })
+  for (const m of text.matchAll(URL_LINK)) {
+    if (linkTargetOfUrl(m[0]).kind !== 'ignore') out.push({ start: m.index, end: m.index + m[0].length, url: m[0] })
   }
   return out
 }

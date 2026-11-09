@@ -75,6 +75,8 @@ import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPa
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
+import { closedTabSituation, missingTabSituation } from './situations.ts'
+import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -1612,16 +1614,76 @@ function openSlot(slotId: string): void {
   panel.api.setActive()
 }
 
-/** A pane to the front and focused: a slot's pane through openSlot (desk, drawer, pad), any other by activating its tab. */
+/**
+ * A pane to the front and focused, wherever it lives — any desk, the drawer, a pad (of a desk or global): a slot's pane
+ * through openSlot (which also restarts an ended agent), any other the same way: its place opens, its tab is activated.
+ */
 function revealPane(id: string): void {
   if (slots.has(id)) { openSlot(id); requestAnimationFrame(() => focusPane(id)); return }
   const panel = findPanel(id)
   if (!panel) return
-  const deskId = desks.deskOf(id)
-  if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
+  if (drawer.desk.getPanel(id)) {
+    setDrawerOpen(true)
+  } else {
+    if (drawer.isOpen) setDrawerOpen(false)
+    const pad = framePadOf(id)
+    if (pad) {
+      if (pad.deskId && pad.deskId !== desks.activeDeskId) desks.switchTo(pad.deskId)
+      sidebars?.open(pad.padId, false)
+      setFocusedPad(pad)
+    } else {
+      setFocusedPad(undefined)
+      const deskId = desks.deskOf(id)
+      if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
+    }
+  }
   panel.api.setActive()
   requestAnimationFrame(() => focusPane(id))
 }
+
+// ---------- tether:// links (app/shared/tether-url.ts) ----------
+
+/** The link of a pane: a note's names its file (it survives closing the note and reopens it), any other pane its id. */
+function paneLinkOf(id: string): string {
+  const type = liveTypeOf(paneTypes, id)
+  const file = type?.linkFileOf?.(id)
+  return file ? noteUrl(file) : tabUrl(id)
+}
+
+/** "Copiar link do painel": a tether:// link that brings this pane back from anywhere. */
+function copyPaneLink(id: string): void {
+  window.tether.writeClipboard(paneLinkOf(id))
+}
+
+/**
+ * A tether:// link was followed (from the OS, or Ctrl+click inside the app): the place it names comes to the front,
+ * searched everywhere in the app. A pane closed but still known is offered back; an unknown one is said so. A note's
+ * link reveals the note open on that file or opens it.
+ */
+async function followTetherLink(url: string): Promise<void> {
+  const link = parseTetherUrl(url)
+  if (!link) return
+  if (link.kind === 'note') {
+    const root = link.path.replace(/[\\/][^\\/]*$/, '')
+    void openFile(fileOpenHost, link.path, { side: false, root })
+    return
+  }
+  if (findPanel(link.id)) { revealPane(link.id); return }
+  const slot = slots.get(link.id)
+  if (slot) {
+    const answer = await askDialog(closedTabSituation(slot.name ?? folderName(slot.cwd)))
+    if (answer.choice === 'reopen') revealPane(link.id)
+    return
+  }
+  void askDialog(missingTabSituation())
+}
+
+// Links from the OS: the one the app started with (or that came while the window was loading), then each one as it comes.
+void daemonReadyPromise.then(async () => {
+  window.tether.onTetherLink(url => { void followTetherLink(url) })
+  const pending = await window.tether.pendingTetherLink()
+  if (pending) void followTetherLink(pending)
+})
 
 // ---------- switching a panel's profile ----------
 
@@ -1771,6 +1833,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
     SEP,
     { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
+    { icon: 'link', label: 'Copiar link do painel', run: () => copyPaneLink(slotId) },
     { icon: 'copy', label: 'Copiar pasta', run: () => copyFolder(slotId) },
     { icon: 'folder-open', label: 'Abrir pasta no Explorer', run: () => openFolder(slotId) },
     SEP,
@@ -1917,6 +1980,7 @@ const emptyHost: EmptyHost = {
  */
 function followLink(target: LinkTarget, origin: LinkOrigin): void {
   if (target.kind === 'external') { window.tether.openExternal(target.url); return }
+  if (target.kind === 'tether') { void followTetherLink(target.url); return }
   if (target.kind !== 'file') return
   if (target.isDirectory) {
     void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
@@ -2213,6 +2277,7 @@ const commandHost: CommandHost = {
   renamePane: id => { const type = liveTypeOf(paneTypes, id); if (type?.rename) type.rename(id); else tabs.get(id)?.startRename() },
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
+  copyLink: id => copyPaneLink(id),
   copyFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) window.tether.writeClipboard(f); else if (slots.has(id)) copyFolder(id) },
   openFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) void window.tether.openPath(f); else if (slots.has(id)) openFolder(id) },
   movePane: id => { void openMove(id) },
@@ -3181,6 +3246,7 @@ function activateRendererExtensions(): void {
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
+        copyLink: paneId => copyPaneLink(paneId),
         close: paneId => closeSlotless(paneId),
         showTabMenu: (paneId, x, y) => showTabMenu(paneId, x, y),
         newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
