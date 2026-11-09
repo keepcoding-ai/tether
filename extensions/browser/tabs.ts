@@ -15,10 +15,10 @@
 //     get their ticket without asking (`ticket: 'granted'`): neither is the agent's request. A closed tab's questions are
 //     withdrawn.
 //   - E6: no native surface opens from the page (design §3.1): JavaScript dialogs wait for CDP (`-run-dialog` replaced; internal
-//     Electron API, so a tab refuses to open on an Electron major it was not proven on), `beforeunload` is accepted. Not yet
-//     (E7): HTTP authentication, client certificate, the native file chooser and `window.print`. A `login` or
-//     `select-client-certificate` listener on the tab, or intercepting the chooser on the core's debugger session, hung the
-//     next tab's creation in the E6 probe (cause not found).
+//     Electron API, so a tab refuses to open on an Electron major it was not proven on), HTTP authentication is cancelled, no
+//     client certificate is chosen, `beforeunload` is accepted, the native file chooser is intercepted on the core's own
+//     debugger session (an upload goes through the tether's consent, E13), `window.print` does nothing. The tab's first load
+//     waits until the chooser and print are held; failing that, the tab is not created.
 // When an agent exits its tabs stay (the "encerrado" chip is the interface's); nothing here destroys them.
 import { randomUUID } from 'node:crypto'
 import type { Event as ElectronEvent, WebContents } from 'electron'
@@ -42,6 +42,12 @@ export const DIALOGS_PROVEN_ELECTRON_MAJOR = 45
 export function dialogsProven(version: string | undefined): boolean {
   return Number.parseInt(version ?? '', 10) === DIALOGS_PROVEN_ELECTRON_MAJOR
 }
+
+/**
+ * `window.print` does nothing (Electron would open the system's print box): every new document of the tab's own process,
+ * frames included, and the current one. Not configurable, so the page cannot put the original back.
+ */
+const NO_PRINT = `(() => { try { Object.defineProperty(window, 'print', { value: function print() {}, writable: false, configurable: false }) } catch {} })()`
 
 interface Entry { tab: Tab; surface: Surface; loading: boolean }
 
@@ -186,6 +192,13 @@ export class TabRegistry {
     const surface = await this.main.surfaces.create({ pageSize: { ...PAGE_SIZE }, webPreferences: { partition: ses.partition, backgroundThrottling: false } })
     const tab = makeTab({ tabId, ownerSlotId: owner, surfaceId: surface.id, url, title, createdAt: Date.now() })
     if (!tab || this.disposed) { surface.destroy(); throw new Error('guia: não criada') }
+    try {
+      await holdNativeSurfaces(surface)
+    } catch (e) {
+      surface.destroy()
+      throw new Error(`guia: superfícies nativas não neutralizadas (${(e as Error).message})`)
+    }
+    if (this.disposed) { surface.destroy(); throw new Error('guia: não criada') }
     const entry: Entry = { tab, surface, loading: false }
     this.entries.set(tabId, entry)
     const subs = this.guard(entry, ses)
@@ -228,6 +241,22 @@ export class TabRegistry {
     // person's close stuck on a page that asks; the agent sees the navigation go through.
     const onUnload = (e: ElectronEvent): void => { e.preventDefault() }
     wc.on('will-prevent-unload', onUnload)
+    // HTTP authentication: no box, the request is cancelled (the page gets its 401). Electron forwards the tab's `login` to
+    // the app's `login` from a listener of its own registered first, so the egress proxy's challenge (egress-session.ts) is
+    // already answered with the proxy's credential when this runs: answering it again calls Electron's callback a second time,
+    // and that froze the whole main process in the E6b probe (what E6 saw as "the next tab's creation hangs"). Only a
+    // challenge nobody answered is cancelled here.
+    const onLogin = (e: ElectronEvent, _d: unknown, info: { isProxy?: boolean } | undefined, cb: () => void): void => {
+      if (info?.isProxy || e.defaultPrevented) return
+      e.preventDefault(); cb()
+    }
+    // Client certificate: none is chosen (Electron's default picks the first one, silently).
+    const onCert = (e: ElectronEvent, _u: unknown, _l: unknown, cb: () => void): void => {
+      if (e.defaultPrevented) return
+      e.preventDefault(); cb()
+    }
+    wc.on('login', onLogin as never)
+    wc.on('select-client-certificate', onCert as never)
     const changed = (): void => this.events.changed(infoOf(entry))
     wc.setWindowOpenHandler(details => {
       if (isWebUrl(details.url) && POPUP_DISPOSITIONS.has(details.disposition)) {
@@ -263,9 +292,21 @@ export class TabRegistry {
       wc.off('will-navigate', onNavigate); wc.off('will-redirect', onRedirect); wc.off('will-attach-webview', onAttach)
       wc.off('page-title-updated', onTitle); wc.off('did-navigate', onUrl); wc.off('did-navigate-in-page', onInPage)
       wc.off('did-start-loading', onStart); wc.off('did-stop-loading', onStop)
-      wc.off('will-prevent-unload', onUnload)
+      wc.off('login', onLogin as never); wc.off('select-client-certificate', onCert as never); wc.off('will-prevent-unload', onUnload)
     })]
   }
+}
+
+/**
+ * The file chooser and `window.print`, held on the core's own (root) debugger session before the tab loads anything: the
+ * chooser is intercepted (no native box; the gate does not route root-session events, so nobody sees `fileChooserOpened`
+ * unless an agent's own session intercepts it too), print replaced in every new document.
+ */
+async function holdNativeSurfaces(surface: Surface): Promise<void> {
+  const dbg = surface.debugger
+  await dbg.send('Page.enable')
+  await dbg.send('Page.setInterceptFileChooserDialog', { enabled: true })
+  await dbg.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_PRINT, runImmediately: true })
 }
 
 function infoOf(e: Entry): TabInfo {
