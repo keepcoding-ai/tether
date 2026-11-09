@@ -249,3 +249,9 @@ export function sessionsSummary(slots: Iterable<SessionSlot>, hasTab: (slotId: s
   const tooltip = hasBatch(batch) ? `Sessões: ${header}. ${pauseButtonTitle(batch)}` : `Sessões: ${header}`
   return { header, tooltip }
 }
+
+/** "Pedir pausa gentil primeiro" in the quit-all dialog: what it does, with the number of agents mid-turn. */
+export function pauseFirstConsequence(busy: number): string {
+  const who = busy === 1 ? 'Pede ao agente em andamento' : `Pede aos ${busy} agentes em andamento`
+  return `${who} que pare no seu passo e abre o Acompanhar. Nada é encerrado agora.`
+}

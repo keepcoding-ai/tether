@@ -85,6 +85,7 @@ import { associateLinksFailedSituation, associateLinksSituation, closedTabSituat
 import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
 import { markKeyboardTab, pulseTab, tabCell } from './tab-marks.ts'
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 
@@ -668,15 +669,15 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   rememberClosed(slotId)
   if (!slot) { removeAnyPanel(panel); return }
   const spec = closePanelSituation(slot)
-  let choice: string | undefined = opts.ask === false ? 'detach' : confirmations[spec.situation]
-  // Only an answer the spec can remember is honoured: a destructive one never runs without asking.
-  if (choice !== 'detach' && choice !== spec.remember?.choice) choice = undefined
+  // Only an answer the dialog offers to remember is honoured ('stop' only where the person ticked it); 'forget' always asks.
+  let choice: string | undefined = opts.ask === false ? 'detach' : rememberedClose(spec, confirmations[spec.situation])
   if (!choice) {
     const answer = await askDialog(spec)
     choice = answer.choice
-    if (answer.remember && spec.remember) {
-      confirmations = { ...confirmations, [spec.situation]: spec.remember.choice }
-      window.tether.rememberConfirmation(spec.situation, spec.remember.choice)
+    const remembered = choiceToRemember(spec, answer)
+    if (remembered) {
+      confirmations = { ...confirmations, [spec.situation]: remembered }
+      window.tether.rememberConfirmation(spec.situation, remembered)
     }
   }
   if (choice === 'cancel') return
@@ -691,6 +692,14 @@ async function onAsk(req: AskRequest): Promise<void> {
   switch (req.situation) {
     case 'quit-all': {
       const answer = await askDialog(quitAllSituation(req.slots ?? [...slots.values()]))
+      if (answer.choice === 'pause-first') {
+        // Not leaving: start the batch and show it; main gets a cancel, so nothing quits.
+        window.tether.answer(req.askId, { choice: 'cancel', remember: false })
+        const r = await window.tether.request({ t: 'pause-start' })
+        if (r.t !== 'error') openPauseDialog()
+        else console.warn(`tether: pedido de pausa recusado (${r.message})`)
+        return
+      }
       window.tether.answer(req.askId, answer)
       return
     }

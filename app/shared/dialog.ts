@@ -67,6 +67,8 @@ export interface DialogSpec {
   escChoice?: string
   /** "Não perguntar de novo": remembers `choice` for this situation (never a destructive one). */
   remember?: { choice: string; label: string }
+  /** A second remember box, exclusive with the first ("sempre encerrar o agente"). */
+  rememberAlso?: { choice: string; label: string }
 }
 
 export interface DialogAnswer {
@@ -74,6 +76,8 @@ export interface DialogAnswer {
   choice: string
   /** The remember box was ticked (only possible with `spec.remember`). */
   remember: boolean
+  /** The choice the ticked remember box stands for; absent when none is ticked. */
+  rememberChoice?: string
   /** The picked option id (only with `spec.options`). */
   option?: string
 }
@@ -89,3 +93,20 @@ export type MainSituation = 'quit-all' | 'reload-all' | 'restart-daemon' | 'tray
  * (the window may have just been recreated from the tray). `message`: the reason, for the situations that carry one.
  */
 export interface AskRequest { askId: number; situation: MainSituation; slots?: SlotState[]; message?: string }
+
+/**
+ * The remembered answer to apply when a tab with a live agent closes: only the two the dialog offers to remember
+ * (a stored 'forget' or anything unknown asks again). Undefined = ask.
+ */
+export function rememberedClose(spec: DialogSpec, stored: string | undefined): string | undefined {
+  if (!stored) return undefined
+  return stored === spec.remember?.choice || stored === spec.rememberAlso?.choice ? stored : undefined
+}
+
+/** What to persist after the answer: the ticked box counts only when it stands for the choice the person clicked. */
+export function choiceToRemember(spec: DialogSpec, answer: { choice: string; remember: boolean; rememberChoice?: string }): string | undefined {
+  if (!answer.remember) return undefined
+  const ticked = answer.rememberChoice ?? spec.remember?.choice
+  const offered = ticked === spec.remember?.choice || ticked === spec.rememberAlso?.choice
+  return offered && ticked === answer.choice ? ticked : undefined
+}

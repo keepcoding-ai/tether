@@ -79,6 +79,8 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
   const glyph = btn.querySelector<HTMLElement>('.i')!
   /** Sessions with a stop / forget in flight (the daemon may wait for a young Claude before ending it). */
   const busy = new Set<string>()
+  /** The ended row whose trash was clicked: its actions are replaced by "Esquecer esta sessão? [Esquecer] [Não]" (forgetting cannot be undone). */
+  let askingForget: string | undefined
   /** A gentle one-off message in the pause section (e.g. the daemon refused). */
   let notice: string | undefined
   let bulking = false
@@ -101,7 +103,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     }
   }
 
-  function close(): void { setOpen(false) }
+  function close(): void { askingForget = undefined; setOpen(false) }
 
   async function run(body: RequestBody): Promise<void> {
     const err = await host.request(body)
@@ -171,11 +173,22 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       stop.disabled = busy.has(r.slotId)
       stop.addEventListener('click', ev => { ev.stopPropagation(); void stopSession(r.slotId) })
       acts.append(stop)
+    } else if (askingForget === r.slotId) {
+      acts.replaceChildren()
+      row.classList.add('asking')
+      const q = el('span', 'sx-ask', 'Esquecer esta sessão?')
+      const yes = button('danger forget-yes', 'Esquecer', undefined, 'Esquecer: some da lista. Não dá para desfazer')
+      yes.disabled = busy.has(r.slotId)
+      yes.addEventListener('click', ev => { ev.stopPropagation(); askingForget = undefined; void forgetSession(r.slotId) })
+      const no = button('forget-no', 'Não', undefined, 'Manter a sessão em Encerradas')
+      no.addEventListener('click', ev => { ev.stopPropagation(); askingForget = undefined; refresh() })
+      acts.append(q, yes, no)
+      queueMicrotask(() => no.focus({ preventScroll: true }))
     } else {
       const forget = iconButton('ic forget', 'trash', 'Esquecer a sessão')
       forget.title = 'Esquecer: some da lista. Não dá para desfazer'
       forget.disabled = busy.has(r.slotId)
-      forget.addEventListener('click', ev => { ev.stopPropagation(); void forgetSession(r.slotId) })
+      forget.addEventListener('click', ev => { ev.stopPropagation(); askingForget = r.slotId; refresh() })
       acts.append(forget)
     }
     row.append(led, kind, tx, acts)
@@ -306,9 +319,14 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
 
   // The icon only opens/closes: a click out of curiosity must have no effect.
   btn.addEventListener('click', ev => { ev.stopPropagation(); setOpen(!isOpen()) })
+  // A click anywhere but on the question cancels it.
+  list.addEventListener('click', ev => {
+    if (askingForget && !(ev.target as Element).closest('.sx-row.asking')) { askingForget = undefined; refresh() }
+  })
   list.addEventListener('keydown', ev => {
     if (ev.key !== 'Escape') return
     ev.stopPropagation()
+    if (askingForget) { askingForget = undefined; refresh(); return }
     close()
     btn.focus({ preventScroll: true })
   })

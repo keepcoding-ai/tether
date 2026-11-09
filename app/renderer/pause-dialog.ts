@@ -141,7 +141,8 @@ export function openPauseDialog(host: PauseDialogHost): void {
     const e = entryOf(batch)
     if (!batch || !e) {
       const empty = el('div', 'pd-empty')
-      empty.append(icon('pause'), el('p', undefined, hasBatch(batch) ? 'Ninguém na pausa agora.' : 'Não há pausa em andamento. Quando você pedir uma, ela aparece aqui.'))
+      empty.append(icon('pause'), el('b', undefined, hasBatch(batch) ? 'Ninguém na pausa agora' : 'Nenhuma pausa em andamento'),
+        el('p', undefined, hasBatch(batch) ? 'Todos os agentes saíram da fila.' : 'Ela começa em Sessões › "Pedir pausa aos N em andamento". Quando você pedir, os agentes aparecem aqui.'))
       detail.append(empty)
       return
     }

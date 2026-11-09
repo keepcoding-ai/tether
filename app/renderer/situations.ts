@@ -7,6 +7,7 @@ import type { Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import type { LinkAssociation } from '../shared/api.ts'
 import { KIND_ICON } from './icons.ts'
+import { pauseFirstConsequence } from './sessions-rules.ts'
 
 /** "o Claude", "o soul", "o shell": the subject of every sentence about the panel. */
 const SUBJECT: Record<SlotKind, string> = agentTable('o shell', ui => `o ${ui.label}`, n => `o ${n}`)
@@ -44,45 +45,46 @@ export function closePanelSituation(s: SlotState): DialogSpec {
   const shell = kind === 'shell'
   if (isLive(s)) {
     const keep = shell
-      ? 'O shell continua aberto em segundo plano. Reabra o painel em Slots fechados.'
-      : `${SUBJECT_CAP[kind]} continua rodando em segundo plano. Reabra o painel em Slots fechados.`
+      ? 'O shell continua rodando sem guia e usando memória. Dá para abrir de novo em Sessões.'
+      : `${SUBJECT_CAP[kind]} continua rodando sem guia e usando memória. Dá para abrir de novo em Sessões.`
     const stop = shell
-      ? 'O processo e o que roda nele são finalizados agora. Um shell não tem sessão: reabrir cria um shell novo na mesma pasta.'
-      : 'O processo é finalizado agora. A conversa fica salva: reabrir o slot em Slots fechados a retoma.'
+      ? 'O processo e o que roda nele terminam agora. Um shell não tem conversa: reabrir cria um shell novo na mesma pasta.'
+      : 'Encerrar guarda a conversa; dá para reabrir em Sessões.'
     return {
       situation: 'close-panel-live',
       tone: 'warn',
       icon: 'warning',
       title: s.status === 'running'
-        ? (shell ? 'Este painel tem um shell aberto' : `Este painel tem ${SUBJECT[kind]} rodando`)
-        : `${SUBJECT_CAP[kind]} está iniciando neste painel`,
+        ? (shell ? 'Esta guia tem um shell aberto' : `Esta guia tem ${SUBJECT[kind]} rodando`)
+        : `${SUBJECT_CAP[kind]} está iniciando nesta guia`,
       context: panelContext(s),
       choices: [
-        { id: 'detach', icon: 'arrow-square-out', label: 'Só fechar o painel', consequence: keep, tone: 'safe' },
+        { id: 'detach', icon: 'arrow-square-out', label: 'Só fechar a guia', consequence: keep, tone: 'safe' },
         { id: 'stop', icon: 'stop-circle', label: `Encerrar ${SUBJECT[kind]}`, consequence: stop, tone: 'destructive' },
       ],
       cancelLabel: 'Deixar aberto',
-      remember: { choice: 'detach', label: 'Não perguntar de novo: só fechar o painel' },
+      remember: { choice: 'detach', label: 'Sempre só fechar a guia' },
+      rememberAlso: { choice: 'stop', label: 'Sempre encerrar o agente' },
     }
   }
   const keep = shell
-    ? 'O slot fica em Slots fechados; reabrir abre um shell novo na mesma pasta.'
-    : 'O slot fica guardado em Slots fechados; reabrir retoma a conversa.'
+    ? 'A sessão fica em Encerradas, em Sessões; reabrir abre um shell novo na mesma pasta.'
+    : 'A sessão fica em Encerradas, em Sessões; reabrir retoma a conversa.'
   const forget = shell
-    ? 'O slot some do tether. Um shell não tem sessão: nada se perde.'
-    : `O slot some do tether. A conversa continua no histórico d${SUBJECT[kind]} e pode ser retomada por lá.`
+    ? 'A sessão some do tether. Um shell não tem conversa: nada se perde.'
+    : `A sessão some do tether. A conversa continua no histórico d${SUBJECT[kind]} e pode ser retomada por lá.`
   return {
     situation: 'close-panel-idle',
     tone: 'info',
     icon: 'question',
-    title: shell ? 'Nenhum shell aberto neste painel' : `${SUBJECT_CAP[kind]} não está rodando neste painel`,
+    title: shell ? 'Nenhum shell aberto nesta guia' : `${SUBJECT_CAP[kind]} não está rodando nesta guia`,
     context: panelContext(s),
     choices: [
-      { id: 'detach', icon: 'arrow-square-out', label: 'Fechar o painel', consequence: keep, tone: 'safe' },
-      { id: 'forget', icon: 'trash', label: 'Esquecer o slot', consequence: forget, tone: 'destructive' },
+      { id: 'detach', icon: 'arrow-square-out', label: 'Fechar a guia', consequence: keep, tone: 'safe' },
+      { id: 'forget', icon: 'trash', label: 'Esquecer a sessão', consequence: forget, tone: 'destructive' },
     ],
     cancelLabel: 'Deixar aberto',
-    remember: { choice: 'detach', label: 'Não perguntar de novo: fechar o painel e guardar o slot' },
+    remember: { choice: 'detach', label: 'Sempre só fechar a guia' },
   }
 }
 
@@ -92,6 +94,7 @@ export function closePanelSituation(s: SlotState): DialogSpec {
  */
 export function quitAllSituation(slots: SlotState[]): DialogSpec {
   const live = slots.filter(isLive)
+  const busy = live.filter(s => s.turn === 'busy').length
   const names = live.map(s => s.title ?? s.name ?? folderName(s.cwd))
   const shown = names.slice(0, 4)
   if (names.length > 4) shown.push(`e mais ${names.length - 4}`)
@@ -106,6 +109,7 @@ export function quitAllSituation(slots: SlotState[]): DialogSpec {
     context,
     choices: [
       { id: 'close-window', icon: 'app-window', label: 'Só fechar a janela', consequence: 'Os agentes continuam rodando no tetherd. Ao abrir o tether de novo, tudo volta no lugar.', tone: 'safe' },
+      ...(busy > 0 ? [{ id: 'pause-first', icon: 'pause', label: 'Pedir pausa gentil primeiro', consequence: pauseFirstConsequence(busy), tone: 'neutral' as const }] : []),
       { id: 'quit', icon: 'power', label: 'Encerrar tudo e sair', consequence: 'Todos os agentes e o tetherd são finalizados agora. As conversas ficam salvas e são retomadas quando o tether abrir de novo.', tone: 'destructive' },
     ],
     cancelLabel: 'Cancelar',

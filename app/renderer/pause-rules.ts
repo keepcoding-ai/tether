@@ -62,9 +62,9 @@ export function counterText(batch: PauseBatch | null | undefined): string {
 export function buttonTitle(batch: PauseBatch | null | undefined): string {
   if (!hasBatch(batch)) return 'Pausar com gentileza: pede a cada agente em andamento que pare no seu passo'
   const c = counter(batch)
-  if (batch.state === 'resuming') return `Retomando os agentes (${c.total})`
-  if (c.total > 0 && c.stopped === c.total) return `Pausa pronta: ${c.stopped} de ${c.total} pararam`
-  return `Pausa em andamento: ${c.stopped} de ${c.total} pararam`
+  if (batch.state === 'resuming') return c.total === 1 ? 'Retomando o agente' : `Retomando os agentes (${c.total})`
+  if (c.total > 0 && c.stopped === c.total) return c.total === 1 ? 'Pausa pronta: o agente parou' : `Pausa pronta: ${c.stopped} de ${c.total} pararam`
+  return c.total === 1 ? 'Pausa em andamento: o agente ainda não parou' : `Pausa em andamento: ${c.stopped} de ${c.total} pararam`
 }
 
 /** Resume is enabled when there is something to resume and every active agent has stopped. */
@@ -119,7 +119,7 @@ export function pauseAction(slots: Iterable<{ turn?: string }>, batch: PauseBatc
   if (hasBatch(batch)) return { label: '', n, enabled: false }
   return n === 0
     ? { label: 'Ninguém em andamento agora', n, enabled: false }
-    : { label: `Pedir pausa aos ${n} em andamento`, n, enabled: true }
+    : { label: n === 1 ? 'Pedir pausa ao agente em andamento' : `Pedir pausa aos ${n} em andamento`, n, enabled: true }
 }
 
 // ---------- management popup ("Acompanhar…") ----------

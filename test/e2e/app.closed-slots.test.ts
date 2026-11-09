@@ -2,7 +2,7 @@
 //   1. a pane closed with "só fechar" while its shell keeps running shows under "Sem guia" (summary, tooltip, no counter);
 //   2. "Abrir" brings it back to a pane with the same PID;
 //   3. "Encerrar" on a session without a tab asks nothing, ends the process and KEEPS the conversation: it moves to "Encerradas";
-//   4. an ended session shows "Reabrir" (resumes it in a pane) and its trash forgets without asking;
+//   4. an ended session shows "Reabrir" (resumes it in a pane) and its trash asks first (2 clicks);
 //   5. "Esquecer todas as encerradas" asks once with the app dialog; sessions without a tab are untouched;
 //   6. the icon and Enter do nothing (only a labelled button inside the menu has an effect);
 //   7. "Encerrar os N ociosos sem guia": one confirmation listing the names, then all of them end and show under "Encerradas";
@@ -180,11 +180,19 @@ test('sessões: sem guia, abrir, encerrar guarda a conversa, encerradas, esquece
     assert.equal(await page.locator('#sessions-list .sx-free').count(), 0)
     assert.equal(await header(page), '1 encerrada')
 
-    // ---- 4. ended: Reabrir resumes, the trash forgets without asking ----
+    // ---- 4. ended: Reabrir resumes, the trash forgets after a confirmation ----
     console.log('step 4')
     await row(page, a).hover()
     assert.equal(await row(page, a).locator('button.open').textContent(), 'Reabrir')
-    await row(page, a).locator('button.forget').click() // no confirmation for an ended session
+    await row(page, a).locator('button.forget').click() // forgetting cannot be undone: the row asks first
+    assert.match((await row(page, a).locator('.sx-ask').textContent())!, /Esquecer esta sessão?/)
+    await row(page, a).locator('button.forget-no').click()
+    assert.equal(await row(page, a).locator('button.forget').count(), 1, 'Não: the row is as before')
+    await row(page, a).locator('button.forget').click()
+    await page.keyboard.press('Escape')
+    assert.equal(await row(page, a).locator('button.forget').count(), 1, 'Esc cancels only the question')
+    await row(page, a).locator('button.forget').click()
+    await row(page, a).locator('button.forget-yes').click()
     await page.waitForFunction(id => !window.__tether.slots().some(s => s.slotId === id), a)
     assert.equal(await header(page), 'Nenhuma sessão')
     await closeMenu(page)
@@ -200,6 +208,7 @@ test('sessões: sem guia, abrir, encerrar guarda a conversa, encerradas, esquece
     await exited(b)
     await openMenu(page)
     await row(page, b).locator('button.forget').click()
+    await row(page, b).locator('button.forget-yes').click()
     await page.waitForFunction(id => !window.__tether.slots().some(s => s.slotId === id), b)
     await closeMenu(page)
 
