@@ -15,9 +15,10 @@
 //     get their ticket without asking (`ticket: 'granted'`): neither is the agent's request. A closed tab's questions are
 //     withdrawn.
 //   - E6: no native surface opens from the page (design §3.1): JavaScript dialogs wait for CDP (`-run-dialog` replaced; internal
-//     Electron API, so a tab refuses to open on an Electron major it was not proven on), HTTP authentication is cancelled, no
-//     client certificate is chosen, `beforeunload` is accepted, the native file chooser is intercepted, `window.print` does
-//     nothing.
+//     Electron API, so a tab refuses to open on an Electron major it was not proven on), `beforeunload` is accepted. Not yet
+//     (E7): HTTP authentication, client certificate, the native file chooser and `window.print`. A `login` or
+//     `select-client-certificate` listener on the tab, or intercepting the chooser on the core's debugger session, hung the
+//     next tab's creation in the E6 probe (cause not found).
 // When an agent exits its tabs stay (the "encerrado" chip is the interface's); nothing here destroys them.
 import { randomUUID } from 'node:crypto'
 import type { Event as ElectronEvent, WebContents } from 'electron'
@@ -41,9 +42,6 @@ export const DIALOGS_PROVEN_ELECTRON_MAJOR = 45
 export function dialogsProven(version: string | undefined): boolean {
   return Number.parseInt(version ?? '', 10) === DIALOGS_PROVEN_ELECTRON_MAJOR
 }
-
-/** `window.print` does nothing (Electron would open the system's print box); every frame of the tab's own process. */
-const NO_PRINT = `(() => { try { const print = function print() {}; Object.defineProperty(window, 'print', { value: print, writable: false, configurable: false }) } catch {} })()`
 
 interface Entry { tab: Tab; surface: Surface; loading: boolean }
 
@@ -226,23 +224,10 @@ export class TabRegistry {
     // app, it dismisses dialogs nobody listens to), not Electron: with this listener the dialog stays open until CDP answers.
     wc.removeAllListeners('-run-dialog' as never)
     wc.on('-run-dialog' as never, (() => { /* held for CDP */ }) as never)
-    // HTTP authentication: no box, the request is cancelled (the page gets its 401).
-    const onLogin = (e: ElectronEvent, _d: unknown, _a: unknown, cb: () => void): void => { e.preventDefault(); cb() }
-    // Client certificate: none is chosen (Electron's default picks the first one, silently).
-    const onCert = (e: ElectronEvent, _u: unknown, _l: unknown, cb: () => void): void => { e.preventDefault(); cb() }
     // beforeunload: accepted (decision E6). Electron shows no box and would keep the page, leaving the agent's navigation or the
     // person's close stuck on a page that asks; the agent sees the navigation go through.
     const onUnload = (e: ElectronEvent): void => { e.preventDefault() }
-    wc.on('login', onLogin as never)
-    wc.on('select-client-certificate', onCert as never)
     wc.on('will-prevent-unload', onUnload)
-    // The native file chooser is intercepted on the core's own session (an upload goes through the tether's dialog, §4.3), and
-    // `window.print` does nothing.
-    const dbg = entry.surface.debugger
-    dbg.send('Page.enable')
-      .then(() => dbg.send('Page.setInterceptFileChooserDialog', { enabled: true }))
-      .then(() => dbg.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_PRINT, runImmediately: true }))
-      .catch(err => this.main.log(`guia ${tabId}: superfícies nativas não neutralizadas (${(err as Error).message})`))
     const changed = (): void => this.events.changed(infoOf(entry))
     wc.setWindowOpenHandler(details => {
       if (isWebUrl(details.url) && POPUP_DISPOSITIONS.has(details.disposition)) {
@@ -278,7 +263,7 @@ export class TabRegistry {
       wc.off('will-navigate', onNavigate); wc.off('will-redirect', onRedirect); wc.off('will-attach-webview', onAttach)
       wc.off('page-title-updated', onTitle); wc.off('did-navigate', onUrl); wc.off('did-navigate-in-page', onInPage)
       wc.off('did-start-loading', onStart); wc.off('did-stop-loading', onStop)
-      wc.off('login', onLogin as never); wc.off('select-client-certificate', onCert as never); wc.off('will-prevent-unload', onUnload)
+      wc.off('will-prevent-unload', onUnload)
     })]
   }
 }
