@@ -14,11 +14,11 @@ import { shortcutHint } from './shortcuts.ts'
 import { fitTabs, hiddenTabs, pickIndex, touchTab } from './tab-strip-rules.ts'
 
 /** One hidden tab as the "+N" lists it. */
-export interface HiddenTab { id: string; icon: IconName; label: string; attention: boolean }
+export interface HiddenTab { id: string; icon: IconName; label: string; attention: boolean; busy?: boolean }
 
 export interface TabStripHost {
   /** What the "+N" shows for a pane: agent icon, title, attention. */
-  describe(id: string): { icon: IconName; label: string; attention: boolean }
+  describe(id: string): { icon: IconName; label: string; attention: boolean; busy?: boolean }
   /** The "+N" list at (x, y); `pick` brings one back. `opener` is the "+N" button (aria-expanded, focus return). */
   showHidden(x: number, y: number, tabs: HiddenTab[], pick: (id: string) => void, opener: HTMLElement): void
   /** "⋯": the pane menu (the same one as a right-click on the tab). `opener` is the "⋯" button. */
@@ -122,7 +122,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
     queueMicrotask(() => {
       const head = this.header()
       if (!head) return
-      mo.observe(head, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-attention', 'data-slot'] })
+      mo.observe(head, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-attention', 'data-mark', 'data-slot'] })
       ro.observe(head)
       this.measure()
     })
@@ -197,6 +197,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
     const n = this.hidden.length
     const attention = this.hidden.some(id => this.host.describe(id).attention)
     this.more.classList.toggle('attention', attention)
+    this.more.classList.toggle('busy', !attention && this.hidden.some(id => this.host.describe(id).busy))
     if (attention) { const dot = document.createElement('span'); dot.className = 'more-dot'; this.more.append(dot) }
     const label = n === 1 ? '1 aba escondida' : `${n} abas escondidas`
     this.more.title = label

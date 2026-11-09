@@ -382,7 +382,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
       createRightHeaderActionComponent: () => new TabStripActions({
         describe: id => {
           const s = slots.get(id)
-          return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention }
+          return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention, busy: s?.turn === 'busy' }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         paneMenu: (id, x, y, opener) => {

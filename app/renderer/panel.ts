@@ -8,6 +8,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import type { LinkTarget } from '../shared/links.ts'
 import { terminalLinkProvider } from './terminal-links.ts'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { tabMark, tabMarkTip } from './turn-rules.ts'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
 import { terminalFontOptions, terminalTheme, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -750,8 +751,10 @@ export class SlotTab implements ITabRenderer {
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.unsafe.hidden = !s?.unsafe
-    this.attn.className = `attn${s?.attention ? ` ${s.attention}` : ''}`
-    this.attn.title = s?.attention === 'waiting' ? 'Esperando você' : s?.attention === 'done' ? 'Terminou' : ''
+    const mark = tabMark(s)
+    this.attn.className = `attn${mark ? ` ${mark}` : ''}`
+    this.attn.dataset.mark = mark
+    this.attn.title = tabMarkTip(s)
     this.element.dataset.attention = s?.attention ?? ''
     this.element.title = s ? panelTooltip(s) + (s.attention === 'waiting' ? '\nEsperando você' : s.attention === 'done' ? '\nTerminou' : '') : `Slot ${this.api.id} (desconhecido)`
   }
