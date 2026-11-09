@@ -34,6 +34,8 @@ export interface PauseEntry {
   phrase?: string
   /** Resume note (done, or the fallback text of a silent stop). */
   note?: string
+  /** Why a resume was skipped (resume-skipped only). */
+  skipReason?: string
 }
 
 export interface PauseBatch {
@@ -82,12 +84,13 @@ export function transition(
   entry: PauseEntry,
   to: PauseEntryState,
   now: string,
-  patch: { phrase?: string; note?: string } = {},
+  patch: { phrase?: string; note?: string; skipReason?: string } = {},
 ): PauseEntry {
   if (!canTransition(entry.state, to)) throw new PauseTransitionError(entry.state, to)
   const next: PauseEntry = { ...entry, state: to, since: now, history: [...entry.history, { state: to, at: now }] }
   if (patch.phrase !== undefined) next.phrase = patch.phrase
   if (patch.note !== undefined) next.note = patch.note
+  if (patch.skipReason !== undefined) next.skipReason = patch.skipReason
   return next
 }
 
@@ -156,6 +159,14 @@ export function applyReportLine(entry: PauseEntry, raw: unknown, batchId?: strin
     case 'stop':
       return live ? transition(entry, 'stopped-silent', line.ts, note) : entry
   }
+}
+
+/** The text typed into a slot to resume it; the note is flattened to one line and cut (a newline would submit early). */
+export function buildResumeText(note?: string): string {
+  const flat = (note ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').replaceAll('"', "'").trim()
+  if (!flat) return '[tether] Retomando a pausa. Continue de onde parou.'
+  const cut = flat.length > 500 ? flat.slice(0, 500).trimEnd() + '…' : flat
+  return `[tether] Retomando a pausa. Sua nota: "${cut}". Continue de onde parou.`
 }
 
 /** Plain-language status for the UI. Derived, never stored. `now` is epoch ms, an ISO string or a Date. */

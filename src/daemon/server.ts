@@ -13,7 +13,7 @@ import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { canonicalDir, slotAttentionPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
-import { applyReportLine, buildRequestText, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
+import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
 import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
@@ -49,6 +49,11 @@ export function defaultAgentArgs(agent: AgentName, env: NodeJS.ProcessEnv = proc
   return raw ? raw.split(/\s+/) : []
 }
 const WATCH_DEBOUNCE_MS = 100
+/** Pause resume: slots typed into at once, and the gap between the text and the Enter (else the TUI sees a paste). */
+const PAUSE_RESUME_PARALLEL = 3
+const PAUSE_RESUME_ENTER_DELAY_MS = 130
+const ENTER = String.fromCharCode(13)
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 30
 
@@ -887,6 +892,12 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id, pause: this.pauseStart(req.slotIds) }
       case 'pause-get':
         return { t: 'ok', id, pause: this.batch ?? null }
+      case 'pause-remove':
+        return { t: 'ok', id, pause: this.pauseRemove(req.slotId) }
+      case 'pause-cancel':
+        return { t: 'ok', id, pause: this.pauseCancel() }
+      case 'pause-resume':
+        return { t: 'ok', id, pause: this.pauseResume(req.slotIds) }
       case 'set-profile': {
         const slot = this.slot(req.slotId)
         if (req.profileId !== null && typeof req.profileId !== 'string') throw new RequestError('bad-request', 'profileId obrigatório (ou null para nenhum perfil)')
@@ -1013,6 +1024,109 @@ class DaemonImpl implements Daemon {
     this.savePause()
     this.log(`pause ${batch.id}: ${batch.entries.length} slot(s)`)
     return batch
+  }
+
+  /** Takes one slot out of the batch. */
+  private pauseRemove(slotId: unknown): PauseBatch {
+    const batch = this.activeBatch()
+    const idx = batch.entries.findIndex((e) => e.slotId === slotId)
+    if (idx < 0) throw new RequestError('unknown-slot', `slot fora do lote: ${String(slotId)}`)
+    const entry = batch.entries[idx]!
+    if (!canTransition(entry.state, 'removed')) throw new RequestError('bad-request', `o slot ${entry.slotId} já está em "${entry.state}" e não sai mais do lote`)
+    batch.entries[idx] = transition(entry, 'removed', new Date().toISOString())
+    this.clearPauseRequest(entry.slotId)
+    this.settlePause(batch)
+    const closed = this.closeIfSpent(batch)
+    this.savePause()
+    if (closed) this.batch = undefined
+    return batch
+  }
+
+  /** Drops the batch. Agents that already got the request carry on as they see fit; there is just no resume. */
+  private pauseCancel(): PauseBatch {
+    const batch = this.activeBatch()
+    for (const e of batch.entries) this.clearPauseRequest(e.slotId)
+    batch.state = 'closed'
+    this.savePause()
+    this.batch = undefined
+    this.log(`pause ${batch.id}: cancelled`)
+    return batch
+  }
+
+  private activeBatch(): PauseBatch {
+    if (!this.batch || this.batch.state === 'closed') throw new RequestError('no-pause', 'não há pausa em andamento')
+    return this.batch
+  }
+
+  /** The batch is spent when nothing is awaited and nothing is left to resume. */
+  private closeIfSpent(batch: PauseBatch): boolean {
+    const pending = batch.entries.some((e) => DaemonImpl.PAUSE_LIVE.has(e.state) || e.state === 'stopped' || e.state === 'stopped-silent')
+    if (!pending) batch.state = 'closed'
+    return !pending
+  }
+
+  /** In-flight resumes, so two requests never type into the same slot twice. */
+  private readonly resuming = new Set<string>()
+
+  private pauseResume(slotIds: unknown): PauseBatch {
+    const batch = this.activeBatch()
+    if (slotIds !== undefined && (!Array.isArray(slotIds) || slotIds.some((x) => typeof x !== 'string'))) throw new RequestError('bad-request', 'slotIds deve ser uma lista de ids')
+    const only = slotIds === undefined ? undefined : new Set(slotIds as string[])
+    const targets = batch.entries
+      .filter((e) => (e.state === 'stopped' || e.state === 'stopped-silent') && (!only || only.has(e.slotId)) && !this.resuming.has(e.slotId))
+      .map((e) => e.slotId)
+    if (targets.length === 0) throw new RequestError('bad-request', 'nenhum agente parado para retomar')
+    for (const id of targets) this.resuming.add(id)
+    if (batch.state === 'paused') batch.state = 'resuming'
+    this.savePause()
+    void this.runResume(batch, targets)
+    return batch
+  }
+
+  /** 3 at a time. A failure on one slot never stops the others. */
+  private async runResume(batch: PauseBatch, slotIds: string[]): Promise<void> {
+    try {
+      for (let i = 0; i < slotIds.length; i += PAUSE_RESUME_PARALLEL) {
+        if (this.batch !== batch || batch.state === 'closed') return
+        await Promise.all(slotIds.slice(i, i + PAUSE_RESUME_PARALLEL).map((id) =>
+          this.resumeOne(batch, id).catch((e: Error) => this.log(`pause: resume of ${id} failed: ${e.message}`))))
+      }
+    } finally {
+      for (const id of slotIds) this.resuming.delete(id)
+      if (this.batch === batch && batch.state !== 'closed') {
+        const closed = this.closeIfSpent(batch)
+        if (!closed && batch.state === 'resuming' && this.resuming.size === 0) batch.state = 'paused'
+        this.savePause()
+        if (closed) this.batch = undefined
+      }
+    }
+  }
+
+  private async resumeOne(batch: PauseBatch, slotId: string): Promise<void> {
+    const idx = batch.entries.findIndex((e) => e.slotId === slotId)
+    const entry = batch.entries[idx]
+    if (!entry || (entry.state !== 'stopped' && entry.state !== 'stopped-silent')) return
+    const slot = this.slotMap.get(slotId)
+    const skip = !slot ? 'o slot não existe mais'
+      : !isAlive(slot) ? 'o processo do slot não está rodando'
+      : slot.attention.turn === 'busy' ? 'o agente está ocupado com outro turno'
+      : slot.attention.value === 'waiting' ? 'o agente está esperando uma resposta sua'
+      : undefined
+    const now = (): string => new Date().toISOString()
+    if (skip || !slot) {
+      batch.entries[idx] = transition(entry, 'resume-skipped', now(), { skipReason: skip ?? 'slot indisponível' })
+      this.savePause()
+      return
+    }
+    // Text and Enter in separate chunks: the Claude TUI takes a burst as a paste and would not submit it.
+    slot.pty?.write(buildResumeText(entry.note))
+    await sleep(PAUSE_RESUME_ENTER_DELAY_MS)
+    if (isAlive(slot)) {
+      slot.pty?.write(ENTER)
+      if (slot.attention.input(ENTER)) this.broadcastState(slot)
+    }
+    batch.entries[idx] = transition(batch.entries[idx]!, 'resumed', now())
+    this.savePause()
   }
 
   /** Atomic (temp + rename): the hook may read the file at any moment. */

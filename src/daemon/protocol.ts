@@ -133,6 +133,12 @@ export type Request =
   | { t: 'pause-start'; id: number; slotIds?: string[] }
   /** The current batch (`pause: null` when none). */
   | { t: 'pause-get'; id: number }
+  /** Take one slot out of the batch (state removed; its request is deleted). */
+  | { t: 'pause-remove'; id: number; slotId: string }
+  /** Drop the whole batch: every request deleted, batch closed. Agents that already got it carry on as they wish. */
+  | { t: 'pause-cancel'; id: number }
+  /** Resume the stopped entries (all, or those of `slotIds`) through the PTY, 3 at a time. Reply: `pause` (state resuming). */
+  | { t: 'pause-resume'; id: number; slotIds?: string[] }
 
 /** Fire-and-forget (no reply): keystrokes. */
 export type Notice = { t: 'input'; slotId: string; data: string }

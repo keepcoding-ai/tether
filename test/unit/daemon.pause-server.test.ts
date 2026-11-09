@@ -1,10 +1,10 @@
 // The polite pause in the daemon: pause-start writes the request file, the agent's reports (jsonl) fold into the
 // batch in order, a stop without `done` is stopped-silent, and a restarted daemon reloads the batch.
 import assert from 'node:assert/strict'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
-import { pausePath, slotPauseReportPath, slotPauseRequestPath } from '../../src/core/paths.ts'
+import { pausePath, slotAttentionPath, slotPauseReportPath, slotPauseRequestPath } from '../../src/core/paths.ts'
 import { DaemonError } from '../../src/daemon/client.ts'
 import type { PauseBatch } from '../../src/daemon/pause.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
@@ -28,8 +28,8 @@ async function boot(home?: string): Promise<{ home: string; daemon: Daemon; rec:
   return { home: h, daemon, rec, events }
 }
 
-async function shell(rec: Recorder, home: string, name: string): Promise<string> {
-  return (await rec.client.request({ t: 'create', kind: 'shell', cwd: join(home, 'work'), name })).slot!.slotId
+async function shell(rec: Recorder, home: string, name: string, start = false): Promise<string> {
+  return (await rec.client.request({ t: 'create', kind: 'shell', cwd: join(home, 'work'), name, ...(start ? { start: true } : {}) })).slot!.slotId
 }
 
 const report = (home: string, slotId: string, batchId: string, kind: string, text?: string): void => {
@@ -119,5 +119,100 @@ describe('pause in the daemon', () => {
     // and it keeps folding reports after the reboot
     report(first.home, a, batch.id, 'done', 'depois do reboot')
     await waitUntil(() => second.events.some((x) => x.state === 'paused'), 5_000, 'paused after reboot')
+  })
+})
+
+describe('pause: remove, cancel, resume', () => {
+  /** Starts a batch over `ids` and brings each to `stopped` with a note. */
+  async function stopped(rec: Recorder, home: string, events: PauseBatch[], ids: string[]): Promise<PauseBatch> {
+    const batch = (await rec.client.request({ t: 'pause-start', slotIds: ids })).pause!
+    for (const id of ids) {
+      report(home, id, batch.id, 'delivered')
+      report(home, id, batch.id, 'done', `nota de ${id}`)
+    }
+    await waitUntil(() => events.at(-1)!.state === 'paused', 5_000, 'batch paused')
+    return batch
+  }
+
+  test('remove takes an entry out, clears its request; the last removal closes the batch; no batch = no-pause', async () => {
+    const { home, rec, events } = await boot()
+    const a = await shell(rec, home, 'a')
+    const b = await shell(rec, home, 'b')
+    await assert.rejects(rec.client.request({ t: 'pause-remove', slotId: a }), isErr('no-pause'))
+    const batch = (await rec.client.request({ t: 'pause-start', slotIds: [a, b] })).pause!
+    await assert.rejects(rec.client.request({ t: 'pause-remove', slotId: 'nope' }), isErr('unknown-slot'))
+
+    const after = (await rec.client.request({ t: 'pause-remove', slotId: a })).pause!
+    assert.equal(after.entries.find((e) => e.slotId === a)!.state, 'removed')
+    assert.ok(!existsSync(slotPauseRequestPath(home, a)))
+    assert.ok(existsSync(slotPauseRequestPath(home, b)))
+    assert.equal(JSON.parse(readFileSync(pausePath(home), 'utf8')).entries[0].state, 'removed')
+    await assert.rejects(rec.client.request({ t: 'pause-remove', slotId: a }), isErr('bad-request'))
+
+    const last = (await rec.client.request({ t: 'pause-remove', slotId: b })).pause!
+    assert.equal(last.state, 'closed')
+    assert.equal(last.id, batch.id)
+    assert.equal((await rec.client.request({ t: 'pause-get' })).pause, null)
+    assert.equal(events.at(-1)!.state, 'closed')
+  })
+
+  test('cancel deletes every request and closes the batch', async () => {
+    const { home, rec, events } = await boot()
+    const a = await shell(rec, home, 'a')
+    const b = await shell(rec, home, 'b')
+    await assert.rejects(rec.client.request({ t: 'pause-cancel' }), isErr('no-pause'))
+    const batch = (await rec.client.request({ t: 'pause-start', slotIds: [a, b] })).pause!
+    report(home, a, batch.id, 'done', 'x')
+    await waitUntil(() => states(events, a).includes('stopped'), 5_000, 'a stopped')
+    const res = (await rec.client.request({ t: 'pause-cancel' })).pause!
+    assert.equal(res.state, 'closed')
+    assert.ok(!existsSync(slotPauseRequestPath(home, a)) && !existsSync(slotPauseRequestPath(home, b)))
+    assert.equal((await rec.client.request({ t: 'pause-get' })).pause, null)
+    assert.equal(JSON.parse(readFileSync(pausePath(home), 'utf8')).state, 'closed')
+    assert.equal(events.at(-1)!.state, 'closed')
+    await assert.rejects(rec.client.request({ t: 'pause-resume' }), isErr('no-pause'))
+    // a new batch is allowed again
+    assert.equal((await rec.client.request({ t: 'pause-start', slotIds: [a] })).pause!.state, 'pausing')
+  })
+
+  test('resume types the note then Enter into idle slots, skips a busy one, and closes the batch when none is left', async () => {
+    const { home, rec, events } = await boot()
+    const a = await shell(rec, home, 'a', true)
+    const b = await shell(rec, home, 'b', true)
+    for (const id of [a, b]) await rec.client.request({ t: 'attach', slotId: id, cols: 100, rows: 30 })
+    const batch = await stopped(rec, home, events, [a, b])
+    // b becomes mid-turn (the hook says a turn started)
+    writeFileSync(slotAttentionPath(home, b), JSON.stringify({ ts: new Date().toISOString(), kind: 'start' }))
+    await rec.state(b, (s) => s.turn === 'busy', 5_000, 'busy')
+
+    const res = (await rec.client.request({ t: 'pause-resume' })).pause!
+    assert.equal(res.id, batch.id)
+    assert.equal(res.state, 'resuming')
+    await waitUntil(() => events.at(-1)!.state === 'closed', 8_000, 'batch closed')
+
+    const last = events.at(-1)!
+    assert.equal(last.state, 'closed')
+    assert.equal(last.entries.find((e) => e.slotId === a)!.state, 'resumed')
+    const eb = last.entries.find((e) => e.slotId === b)!
+    assert.equal(eb.state, 'resume-skipped')
+    assert.match(eb.skipReason!, /ocupado/)
+    // the shell echoes the typed line (it may wrap at the terminal width, so match the parts)
+    await rec.see(a, /Retomando a pausa/, 10_000)
+    await rec.see(a, /nota de/, 10_000)
+    assert.ok(!rec.text(b).includes('Retomando a pausa'), 'busy slot got nothing')
+    assert.equal((await rec.client.request({ t: 'pause-get' })).pause, null)
+  })
+
+  test('resume with slotIds only takes those; the batch goes back to paused with the rest', async () => {
+    const { home, rec, events } = await boot()
+    const a = await shell(rec, home, 'a', true)
+    const b = await shell(rec, home, 'b', true)
+    for (const id of [a, b]) await rec.client.request({ t: 'attach', slotId: id, cols: 100, rows: 30 })
+    await stopped(rec, home, events, [a, b])
+    await assert.rejects(rec.client.request({ t: 'pause-resume', slotIds: ['nope'] }), isErr('bad-request'))
+    await rec.client.request({ t: 'pause-resume', slotIds: [a] })
+    await waitUntil(() => events.at(-1)!.entries.find((e) => e.slotId === a)!.state === 'resumed' && events.at(-1)!.state === 'paused', 8_000, 'a resumed, batch paused')
+    assert.equal(events.at(-1)!.entries.find((e) => e.slotId === b)!.state, 'stopped')
+    assert.ok(!rec.text(b).includes('Retomando a pausa'))
   })
 })
