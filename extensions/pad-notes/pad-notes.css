@@ -1,0 +1,67 @@
+/* The notes manager (extensions/pad-notes/panel.ts), its toast, and the panel pad's notes counter
+   (extensions/frame-pads/renderer.ts). Tokens from app/renderer/styles.css. */
+.pn-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; background: var(--frame-bg); color: var(--fg); font: 13px var(--ui); }
+.pn-pane .sp { flex: 1; }
+.pn-pane button:focus-visible, .pn-list:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pn-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.pn-title { font-weight: 600; font-size: 14px; }
+.pn-filter { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.pn-chip { height: 28px; padding: 0 12px; border: 0; background: var(--bg); color: var(--fg); font: 12.5px var(--ui); cursor: pointer; white-space: nowrap; }
+.pn-chip + .pn-chip { border-left: 1px solid var(--border); }
+.pn-chip:hover { background: var(--bg-hover); }
+.pn-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+.pn-btn { height: 28px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: 12.5px var(--ui); cursor: pointer; white-space: nowrap; }
+.pn-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.pn-btn:disabled { opacity: .5; cursor: default; }
+.pn-btn.danger { border-color: color-mix(in srgb, var(--err) 55%, var(--border)); color: var(--err); }
+.pn-btn.danger:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
+.pn-link { background: none; border: 0; padding: 0; color: var(--accent); font: 12px var(--ui); cursor: pointer; }
+.pn-link:hover { text-decoration: underline; }
+.pn-body { flex: 1; min-height: 0; display: flex; }
+.pn-list { flex: 0 0 52%; min-width: 220px; overflow: auto; padding: 6px; border-right: 1px solid var(--border); scrollbar-width: thin; }
+.pn-group { padding: 10px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-dim); }
+.pn-group:first-child { padding-top: 4px; }
+.pn-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title meta" "owner badge"; column-gap: 8px; row-gap: 1px; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.pn-row:hover { background: var(--bg-hover); }
+.pn-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.pn-r-title { grid-area: title; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-row.empty .pn-r-title { color: var(--fg-dim); font-style: italic; }
+.pn-r-owner { grid-area: owner; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
+.pn-row.loose .pn-r-owner { color: var(--warn); }
+.pn-r-meta { grid-area: meta; font-size: 12px; color: var(--fg-dim); white-space: nowrap; text-align: right; }
+.pn-badge { grid-area: badge; justify-self: end; font-size: 11px; color: var(--accent); }
+.pn-empty { margin: 16px 12px; color: var(--fg-dim); line-height: 1.5; }
+.pn-preview { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: hidden; }
+.pn-p-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.pn-p-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.pn-p-owner { font-size: 12px; color: var(--fg-dim); }
+.pn-p-tabs { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.pn-p-tabs li { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; color: var(--fg-dim); max-width: 100%; }
+.pn-p-tabs li svg { width: 13px; height: 13px; flex: none; }
+.pn-p-tabs li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-p-text { flex: 1; min-height: 0; margin: 0; padding: 10px 12px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 12.5px/1.5 var(--mono, ui-monospace, monospace); white-space: pre-wrap; word-break: break-word; scrollbar-width: thin; }
+.pn-bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg-2); }
+.pn-bar[hidden] { display: none; }
+.pn-sel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: 12px; min-width: 0; }
+.pn-confirm { font-size: 12.5px; }
+
+/* A narrow manager: the preview goes under the list. */
+@container (max-width: 520px) { .pn-body { flex-direction: column; } .pn-list { flex: 0 0 50%; border-right: 0; border-bottom: 1px solid var(--border); } }
+.pn-pane { container-type: inline-size; }
+
+/* The toast. */
+.pn-toast { position: fixed; z-index: 1000; left: 50%; bottom: 36px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: min(560px, calc(100vw - 32px)); padding: 8px 8px 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); color: var(--fg); font: 13px var(--ui); box-shadow: var(--shadow); }
+.pn-toast > span { min-width: 0; }
+.pn-toast-action { border: 0; background: none; color: var(--accent); font: 600 13px var(--ui); cursor: pointer; padding: 4px 6px; border-radius: 4px; }
+.pn-toast-action:hover { background: var(--bg-hover); }
+.pn-toast-close { border: 0; background: none; color: var(--fg-dim); font: 16px var(--ui); cursor: pointer; width: 24px; height: 24px; border-radius: 4px; }
+.pn-toast-close:hover { background: var(--bg-hover); color: var(--fg); }
+
+/* The panel pad's notes counter, in the pad's bottom-right corner (the top edge belongs to the frame's tab strip and its actions). */
+.pad-notes-count { position: absolute; z-index: 3; bottom: 6px; right: 8px; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-2); color: var(--fg-dim); font: 11.5px var(--ui); cursor: pointer; opacity: .85; }
+.pad-notes-count:hover { opacity: 1; color: var(--fg); background: var(--bg-hover); }
+.pad-notes-count[hidden] { display: none; }
+.pad-notes-count svg { width: 13px; height: 13px; }
+.pad-notes-count .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.pad-notes-count .dot[hidden] { display: none; }
+.pad-notes-count.warn { color: var(--fg); border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); }

@@ -47,7 +47,8 @@ import { openPauseDialog as showPauseDialog, refreshPauseDialog } from './pause-
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
 import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
 import { SideBars } from './sidebars.ts'
-import { otherSide, PadRegistry, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
+import { otherSide, PadRegistry, panelIdsOfPad, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
+import { buildNoteTree, closeNotes, hasContent, panesOf, pruneMeta, readNoteMeta, type NoteSnapshot, type NoteSource, type NoteTree, type PadNoteMeta } from './pad-notes.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
@@ -418,6 +419,8 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
       if (scope instanceof FramesPad) queueMicrotask(() => { if (scope.reseedIfEmpty()) scheduleSave(); scope.syncMenuHosted() })
       // The per-panel pads follow the Foco de Mesa's pane: closing it moves the target.
       notifyActivePane()
+      // A panel that closed may have left its panel pad's note loose.
+      scheduleNotesCheck()
     },
     singleFrame: scope instanceof FramesPad,
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
@@ -593,7 +596,12 @@ function notifyActivePane(): void {
 function layoutJSON(): Layout {
   const live = desks.toJSON()
   const deskList = live.desks.map(d => { const pads = sidebars?.deskPads(d.id); return pads ? { ...d, pads } : d })
-  return { ...layoutFile, v: 3, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  const out: Layout = { ...layoutFile, v: 3, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  if (!sidebars) return out
+  // The notes' records follow what is live now (owner label, desk, last change): written into the side bars before saving.
+  const { meta: _stale, ...bars } = out.sidebars
+  const meta = refreshNoteMeta(out)
+  return { ...out, sidebars: Object.keys(meta).length ? { ...bars, meta } : bars }
 }
 
 function scheduleSave(): void {
@@ -1131,6 +1139,213 @@ function scopePad(scope: string): FramesPad | undefined {
   return view
 }
 
+// ---------- the pads' notes (app/renderer/pad-notes.ts; the pad-notes extension draws the manager) ----------
+
+type NoteOwnerRef = { deskId?: string; panelId?: string }
+
+/** A note's key: `<pad id>@<owner>` for a desk or panel pad, the pad id for a global pad (the keys of SideBarsLayout.pads and .meta). */
+function noteKeyOf(padId: string, owner: NoteOwnerRef): string {
+  const o = owner.deskId ?? owner.panelId
+  return o ? `${padId}@${o}` : padId
+}
+
+/** The pad and owner a note key names (only `frames: true` pads have notes). */
+function noteOwnerOf(key: string): { padId: string; owner: NoteOwnerRef } | undefined {
+  const at = key.indexOf('@')
+  const padId = at === -1 ? key : key.slice(0, at)
+  const id = at === -1 ? undefined : key.slice(at + 1)
+  const pad = padRegistry.get(padId)
+  if (!pad?.frames) return undefined
+  if (pad.scope === 'global') return id ? undefined : { padId, owner: {} }
+  if (!id) return undefined
+  return { padId, owner: pad.scope === 'desk' ? { deskId: id } : { panelId: id } }
+}
+
+/** Every note of a layout: the global pads', the panel pads' (one per panel id saved) and each desk's desk pads'. */
+function noteSourcesOf(layout: Layout): NoteSource[] {
+  const out: NoteSource[] = []
+  const pads = layout.sidebars?.pads ?? {}
+  for (const pad of padRegistry.all()) {
+    if (!pad.frames) continue
+    if (pad.scope === 'global') { if (pads[pad.id] !== undefined) out.push({ key: pad.id, padId: pad.id, owner: { kind: 'global' }, state: pads[pad.id] }) }
+    else if (pad.scope === 'panel') for (const panelId of panelIdsOfPad(pads, pad.id)) out.push({ key: noteKeyOf(pad.id, { panelId }), padId: pad.id, owner: { kind: 'panel', panelId }, state: pads[noteKeyOf(pad.id, { panelId })] })
+    else for (const d of layout.desks) if (d.pads?.[pad.id] !== undefined) out.push({ key: noteKeyOf(pad.id, { deskId: d.id }), padId: pad.id, owner: { kind: 'desk', deskId: d.id }, state: d.pads[pad.id] })
+  }
+  return out
+}
+
+/** The panels alive now, anywhere in the window: their tab's name and their desk. */
+function livePanelMap(): Map<string, { label: string; deskId?: string }> {
+  const out = new Map<string, { label: string; deskId?: string }>()
+  for (const p of allPanels()) { const deskId = desks.deskOf(p.id); out.set(p.id, { label: p.api.title ?? p.id, ...(deskId ? { deskId } : {}) }) }
+  return out
+}
+
+/** What each note held when its record was last refreshed (its panes and their titles): a change bumps `updatedAt`. */
+const noteHashes = new Map<string, string>()
+
+/**
+ * The notes' records refreshed from what is live: a note whose owner lives gets its owner's label and desk, and `updatedAt`
+ * moves when its panes changed. A loose note keeps the record it had. Records of notes that no longer exist go.
+ */
+function refreshNoteMeta(layout: Layout): Record<string, PadNoteMeta> {
+  const meta = readNoteMeta(sidebars?.meta)
+  const live = livePanelMap()
+  const sources = noteSourcesOf(layout)
+  const now = Date.now()
+  for (const s of sources) {
+    const hash = JSON.stringify(panesOf(s.state).map(p => [p.id, p.title]))
+    const prev = noteHashes.get(s.key)
+    noteHashes.set(s.key, hash)
+    let label: string | undefined
+    let deskId: string | undefined
+    if (s.owner.kind === 'panel') { const l = live.get(s.owner.panelId); label = l?.label; deskId = l?.deskId }
+    else if (s.owner.kind === 'desk') { label = deskName(s.owner.deskId); deskId = s.owner.deskId }
+    else label = padRegistry.get(s.padId)?.title
+    if (label === undefined) continue // loose: the record stays as the owner left it
+    const old = meta[s.key]
+    if (!old && !hasContent(s.state)) continue // an empty note never recorded: nothing to remember yet
+    const changed = prev !== undefined && prev !== hash
+    meta[s.key] = { ownerLabel: label, ...(deskId ? { deskId } : {}), updatedAt: changed || !old ? now : old.updatedAt }
+  }
+  const pruned = pruneMeta(meta, sources.map(s => s.key))
+  sidebars?.setMeta(pruned as Record<string, unknown>)
+  return pruned
+}
+
+/** The map the manager shows, from the live window. */
+function noteTree(): NoteTree {
+  const layout = layoutJSON()
+  const focused = focusablePanelId()
+  return buildNoteTree({
+    sources: noteSourcesOf(layout), meta: readNoteMeta(layout.sidebars?.meta), desks: desks.desks.map(d => ({ id: d.id, name: d.name })),
+    livePanels: livePanelMap(), ...(focused ? { focusedPanel: focused } : {}),
+  })
+}
+
+const notesListeners = new Set<() => void>()
+const looseListeners = new Set<(key: string) => void>()
+/** The loose notes with content already told (undefined until the first check after the restore, which tells nothing). */
+let toldLoose: Set<string> | undefined
+let notesTimer: ReturnType<typeof setTimeout> | undefined
+
+function scheduleNotesCheck(): void {
+  if (notesTimer) return
+  notesTimer = setTimeout(() => { notesTimer = undefined; checkNotes() }, 60)
+}
+
+/**
+ * After the panes changed: a note that just became loose is told (the extension shows "A nota ficou solta"), a loose
+ * empty one is removed at once (nothing in it to keep), and the manager's listeners redraw.
+ */
+function checkNotes(): void {
+  if (!layoutRestored || !sidebars) return
+  const tree = noteTree()
+  const first = toldLoose === undefined
+  const fresh = tree.loose.filter(r => !r.empty && !toldLoose?.has(r.key))
+  toldLoose = new Set(tree.loose.filter(r => !r.empty).map(r => r.key))
+  const empty = tree.loose.filter(r => r.empty).map(r => r.key)
+  if (empty.length) { dropNotes(empty); scheduleSave() }
+  if (!first) for (const r of fresh) for (const l of [...looseListeners]) { try { l(r.key) } catch (err) { console.error('onDidLoose', err) } }
+  for (const l of [...notesListeners]) { try { l() } catch (err) { console.error('notes.onDidChange', err) } }
+}
+
+/** Removes notes (views, states, records), without anything to undo. */
+function dropNotes(keys: readonly string[]): void {
+  const meta = { ...readNoteMeta(sidebars?.meta) }
+  for (const key of keys) {
+    const o = noteOwnerOf(key)
+    if (o) sidebars?.dropNote(o.padId, o.owner)
+    delete meta[key]
+    noteHashes.delete(key)
+  }
+  sidebars?.setMeta(meta as Record<string, unknown>)
+}
+
+function afterNotes(): void {
+  refreshClosedMenu()
+  scheduleSave()
+  scheduleNotesCheck()
+}
+
+/** "Fechar": the notes go; the snapshot (their saved states and records) brings them back. */
+function closeNotesLive(keys: readonly string[]): NoteSnapshot {
+  const layout = layoutJSON()
+  const store = { pads: Object.fromEntries(noteSourcesOf(layout).map(s => [s.key, s.state])), meta: readNoteMeta(layout.sidebars?.meta) }
+  const { undo } = closeNotes(store, keys)
+  dropNotes(undo.entries.map(e => e.key))
+  for (const e of undo.entries) toldLoose?.delete(e.key)
+  afterNotes()
+  return undo
+}
+
+/** "Desfazer": each note back as it was (a loose one back among the loose ones, not told again). */
+function restoreNotesLive(snap: NoteSnapshot): void {
+  const meta = { ...readNoteMeta(sidebars?.meta) }
+  for (const e of snap.entries) {
+    const o = noteOwnerOf(e.key)
+    if (!o) continue
+    if (e.state === undefined) sidebars?.dropNote(o.padId, o.owner); else sidebars?.putNote(o.padId, o.owner, e.state)
+    if (e.meta) meta[e.key] = e.meta; else delete meta[e.key]
+    if (e.state !== undefined && hasContent(e.state)) toldLoose?.add(e.key)
+  }
+  sidebars?.setMeta(meta as Record<string, unknown>)
+  afterNotes()
+}
+
+/** The live frames of a note (its view is created when it never showed, without the seeded empty pane). */
+function notePad(key: string): FramesPad | undefined {
+  const o = noteOwnerOf(key)
+  if (!o) return undefined
+  return framePadFor(o.padId, o.owner) ?? scopePad(padScope(o.padId, o.owner.deskId ?? o.owner.panelId))
+}
+
+/**
+ * "Mover…": the note's panes become tabs of the target note's frame (the tabs add up; the target's empty panes give way),
+ * then the source note closes. Panes are re-created from their options (a terminal re-attaches; no process is touched).
+ */
+function moveNoteLive(from: string, to: string): boolean {
+  if (from === to) return false
+  const src = notePad(from)
+  const dst = notePad(to)
+  if (!src || !dst || src === dst) return false
+  const moving = src.desk.panels.filter(p => !empties.has(p.id))
+  if (!moving.length) return false
+  for (const p of moving) transferPanel(src.desk, dst.desk, p.id, paneTypes.optionsOf(p))
+  for (const p of [...dst.desk.panels]) if (empties.has(p.id)) dst.desk.removePanel(p)
+  dst.desk.getPanel(moving[0]!.id)?.api.setActive()
+  dropNotes([from])
+  toldLoose?.delete(from)
+  afterNotes()
+  return true
+}
+
+/** Where a note can go: each desk's desk pad and its panels' panel pads, then the global pads. */
+function noteTargets(): { key: string; label: string; group: string }[] {
+  const out: { key: string; label: string; group: string }[] = []
+  const frames = padRegistry.all().filter(p => p.frames)
+  for (const d of desks.desks) {
+    for (const pad of frames.filter(p => p.scope === 'desk')) out.push({ key: noteKeyOf(pad.id, { deskId: d.id }), label: pad.title, group: /^mesa\b/i.test(d.name) ? d.name : `Mesa ${d.name}` })
+    for (const pad of frames.filter(p => p.scope === 'panel')) {
+      for (const p of desks.desk(d.id)?.panels ?? []) if (!empties.has(p.id)) out.push({ key: noteKeyOf(pad.id, { panelId: p.id }), label: p.api.title ?? p.id, group: /^mesa\b/i.test(d.name) ? d.name : `Mesa ${d.name}` })
+    }
+  }
+  for (const pad of frames.filter(p => p.scope === 'global')) out.push({ key: pad.id, label: pad.title, group: 'Global' })
+  return out
+}
+
+/** Brings a live note forward: its owner panel (or desk) comes to the front and its pad opens. A loose note has nowhere to go. */
+function showNote(key: string): void {
+  const o = noteOwnerOf(key)
+  if (!o) return
+  if (o.owner.panelId) {
+    if (!findPanel(o.owner.panelId)) return
+    revealPane(o.owner.panelId)
+    sidebars?.render()
+  } else if (o.owner.deskId && o.owner.deskId !== desks.activeDeskId) desks.switchTo(o.owner.deskId)
+  sidebars?.open(o.padId)
+}
+
 function scopeDesk(scope: string): Desk | undefined {
   return scope === DRAWER_SCOPE ? drawer.desk : scope.startsWith('pad:') ? scopePad(scope)?.desk : desks.desk(scope)
 }
@@ -1450,6 +1665,8 @@ async function restoreLayout(): Promise<void> {
   // Panes that predate the hint get it now (saved with the next change the person makes).
   for (const panel of allPanels()) { const s = slots.get(panel.id); if (s) updateHint(s) }
   refreshClosedMenu()
+  // The first look at the notes: the loose empty ones left by earlier sessions go; nothing is told.
+  scheduleNotesCheck()
 }
 
 /**
@@ -3622,6 +3839,16 @@ function activateRendererExtensions(): void {
         frames: host => {
           if (!manifest.contributes?.pads?.some(p => p.id === host.padId && p.frames)) throw new Error(`prancheta sem quadros no manifesto de ${id}: ${host.padId}`)
           return newFramesPad(host)
+        },
+        notes: {
+          tree: () => noteTree(),
+          onDidChange: listener => { notesListeners.add(listener); return add(toDisposable(() => { notesListeners.delete(listener) })) },
+          onDidLoose: listener => { looseListeners.add(listener); return add(toDisposable(() => { looseListeners.delete(listener) })) },
+          targets: () => noteTargets(),
+          move: (from, to) => moveNoteLive(from, to),
+          close: keys => closeNotesLive(keys),
+          restore: snap => restoreNotesLive(snap),
+          show: key => showNote(key),
         },
       },
       keybindings: {

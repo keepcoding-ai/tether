@@ -24,6 +24,7 @@ import type { ProjectFolder } from './workspace.ts'
 import type { AgentUi } from './agent-ui.ts'
 import type { Brand } from '../shared/brand.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
+import type { NoteSnapshot, NoteTree } from './pad-notes.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
@@ -32,6 +33,7 @@ export type { ProjectFolder } from './workspace.ts'
 export type { AgentUi } from './agent-ui.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
+export type { NoteDeskGroup, NoteFilter, NotePane, NoteRow, NoteSnapshot, NoteTree } from './pad-notes.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
 export interface PaneInfo {
@@ -305,6 +307,26 @@ export interface TetherUi {
      * that the core knows as a place panes live (found, moved, pruned, listed, focused like a desk's).
      */
     frames(host: PadHost): PadView
+    /**
+     * The frames pads' notes (one frame per panel, per desk, the global one), alive or loose (app/renderer/pad-notes.ts). The
+     * core keeps them; the pad-notes extension manages them. Keys: `<pad id>@<owner>`, or the pad id for a global pad.
+     */
+    notes: {
+      tree(): NoteTree
+      /** The notes may have changed (a pane opened or closed somewhere, an operation ran). */
+      onDidChange(listener: () => void): IDisposable
+      /** A note with content just became loose (its panel closed). */
+      onDidLoose(listener: (key: string) => void): IDisposable
+      /** Where a note can go ("Mover…"): each desk's pad and its panels' pads, then the global pad. */
+      targets(): { key: string; label: string; group: string }[]
+      /** The note's panes become tabs of the target's frame (they add up), and the source closes. */
+      move(from: string, to: string): boolean
+      /** Closes notes; the snapshot brings them back (`restore`). */
+      close(keys: readonly string[]): NoteSnapshot
+      restore(snapshot: NoteSnapshot): void
+      /** A live note to the front: its owner comes forward and its pad opens. */
+      show(key: string): void
+    }
   }
   /**
    * The key table and the person's keybindings.json, which stay the core's (the dispatcher honours the file with the

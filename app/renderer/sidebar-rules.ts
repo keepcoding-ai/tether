@@ -106,6 +106,11 @@ export interface SideBarsLayout {
    * A per-panel pad's state is here too, keyed `<pad id>@<panel id>` (see `panelPadKey`).
    */
   pads: Record<string, unknown>
+  /**
+   * A small record per frames pad note (`<pad id>@<owner>`, or the pad id for a global pad), written while its owner lives:
+   * the owner's label and desk and when its content last changed (app/renderer/pad-notes.ts PadNoteMeta). Absent = none.
+   */
+  meta?: Record<string, unknown>
 }
 
 export const DEFAULT_SIDEBAR_WIDTH = 380
@@ -135,7 +140,8 @@ export function readSideBars(raw: unknown): SideBarsLayout {
   if (!isObject(raw)) return emptySideBars()
   const placement: Record<string, Side> = {}
   if (isObject(raw.placement)) for (const [id, side] of Object.entries(raw.placement)) if (isSide(side)) placement[id] = side
-  return { left: readSide(raw.left), right: readSide(raw.right), placement, pads: isObject(raw.pads) ? { ...raw.pads } : {} }
+  const meta = isObject(raw.meta) && Object.keys(raw.meta).length ? { meta: { ...raw.meta } } : {}
+  return { left: readSide(raw.left), right: readSide(raw.right), placement, pads: isObject(raw.pads) ? { ...raw.pads } : {}, ...meta }
 }
 
 /** A width the side bar can take on its own; the window's room is applied on screen (`fitWidth`). */
