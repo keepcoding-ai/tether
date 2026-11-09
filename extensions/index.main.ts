@@ -7,6 +7,10 @@ import * as quickOpen from './quick-open/main.ts'
 import * as explorer from './explorer/main.ts'
 import * as keybindingsScreen from './keybindings-screen/main.ts'
 import * as webBridge from './web-bridge/main.ts'
+import * as surfaceProbe from '../test/e2e/fixtures/surface-probe/main.ts'
+
+// Defined by app/build.mjs: true only in a build made with TETHER_TEST_EXTENSIONS=1 (the E2E); every other build drops the probe.
+declare const __TETHER_TEST_EXTENSIONS__: boolean | undefined
 
 export const extensions: readonly ExtensionEntry<TetherMain>[] = [
   { manifest: note.manifest, activate: note.activate },
@@ -14,4 +18,6 @@ export const extensions: readonly ExtensionEntry<TetherMain>[] = [
   { manifest: explorer.manifest, activate: explorer.activate },
   { manifest: keybindingsScreen.manifest, activate: keybindingsScreen.activate },
   { manifest: webBridge.manifest, activate: webBridge.activate },
+  // E2E only: the probe that drives native surfaces.
+  ...(typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__ ? [{ manifest: surfaceProbe.manifest, activate: surfaceProbe.activate }] : []),
 ]
