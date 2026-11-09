@@ -63,6 +63,8 @@ export interface GateOptions {
   keyTtlMs?: number
   /** Who has each tab (E7). Without it every tab is the agent's and `Tether.*` is unknown. */
   control?: Pick<ControlHub, 'control' | 'view' | 'onChange' | 'openAsks' | 'ask' | 'uploadAsks'>
+  /** E9: the agent's command reached a tab it has (the tab's "agent acting" dot). Only the tab id, nothing of the command. */
+  activity?: (tabId: string) => void
   /** Test builds only: one line per command, answer and event (method names and ids, never params nor keys). */
   trace?: (line: string) => void
 }
@@ -325,6 +327,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       const c = controlOf(s.tabId)
       if (c !== 'agent') throw new GateError(heldError(c).message, -32000, true)
       this.lastTab = s.tabId
+      opts.activity?.(s.tabId)
       if (!PAGE_ALLOWED.has(method)) throw refusal(method, refusalReason(method))
       const surface = opts.tabs.surface(s.tabId)
       if (!surface) throw new GateError('Target closed', -32000)

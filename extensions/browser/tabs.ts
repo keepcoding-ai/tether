@@ -28,7 +28,7 @@ import type { AgentInfo } from '../../app/main/agents.ts'
 import type { LocalNetworkGate } from './local-network.ts'
 import type { BlockedRequest } from './net-filter.ts'
 import type { TabSession } from './session.ts'
-import { cleanTitle, isId, isNavigable, isWebUrl, makeTab, type SavedTab, storableUrl, type Tab, type TabInfo } from './tab-rules.ts'
+import { cleanTitle, faviconPlan, FAVICON_MAX, isId, isNavigable, isWebUrl, makeTab, type SavedTab, storableUrl, type Tab, type TabInfo } from './tab-rules.ts'
 
 export const PAGE_SIZE = { width: 1280, height: 800 } as const
 
@@ -49,7 +49,7 @@ export function dialogsProven(version: string | undefined): boolean {
  */
 const NO_PRINT = `(() => { try { Object.defineProperty(window, 'print', { value: function print() {}, writable: false, configurable: false }) } catch {} })()`
 
-interface Entry { tab: Tab; surface: Surface; loading: boolean }
+interface Entry { tab: Tab; surface: Surface; loading: boolean; favicon?: string; cookies: number }
 
 /** A request of a tab refused by the network filter: never the full address, only the destination's origin. */
 export interface TabBlocked {
@@ -185,6 +185,15 @@ export class TabRegistry {
     return this.create(saved.ownerSlotId, saved.url, { tabId: saved.tabId, title: saved.title, ticket: 'granted' })
   }
 
+  /** The person's history buttons (the interface offers them while she holds the tab; main checks it too). */
+  navigate(tabId: string, how: 'back' | 'forward' | 'reload'): void {
+    const wc = this.webContents(tabId)
+    if (!wc || wc.isDestroyed()) return
+    if (how === 'back') { if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack() }
+    else if (how === 'forward') { if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward() }
+    else wc.reload()
+  }
+
   close(tabId: string): void {
     this.entries.get(tabId)?.surface.destroy()
   }
@@ -206,7 +215,7 @@ export class TabRegistry {
       throw new Error(`guia: superfícies nativas não neutralizadas (${(e as Error).message})`)
     }
     if (this.disposed) { surface.destroy(); throw new Error('guia: não criada') }
-    const entry: Entry = { tab, surface, loading: false }
+    const entry: Entry = { tab, surface, loading: false, cookies: 0 }
     this.entries.set(tabId, entry)
     const subs = this.guard(entry, ses)
     const pageId = surface.webContents.id
@@ -282,10 +291,39 @@ export class TabRegistry {
     const onRedirect = (e: ElectronEvent, url: string, _inPlace: boolean, isMainFrame: boolean): void => { if (isMainFrame) refuse(e, url) }
     const onAttach = (e: ElectronEvent): void => { e.preventDefault(); this.main.log(`guia ${tabId}: webview recusado`) }
     const onTitle = (_e: ElectronEvent, title: string): void => { entry.tab.title = cleanTitle(title); changed() }
-    const onUrl = (_e: ElectronEvent, url: string): void => { if (isNavigable(url)) { entry.tab.url = url; changed() } }
+    let faviconFor = ''
+    const onUrl = (_e: ElectronEvent, url: string): void => {
+      if (!isNavigable(url)) return
+      // The icon belongs to the site: another origin drops it until the new page names its own.
+      if (entry.favicon && originOf(url) !== originOf(entry.tab.url)) { entry.favicon = undefined; faviconFor = '' }
+      entry.tab.url = url
+      changed()
+    }
     const onInPage = (e: ElectronEvent, url: string, isMainFrame: boolean): void => { if (isMainFrame) onUrl(e, url) }
     const onStart = (): void => { entry.loading = true; changed() }
-    const onStop = (): void => { entry.loading = false; changed(); ses.flush() }
+    const onStop = (): void => { entry.loading = false; changed(); ses.flush(); void countCookies() }
+    // E9: the cookie count of the page's address (a sign, never the cookies), and the icon fetched by main.
+    const countCookies = async (): Promise<void> => {
+      const url = entry.tab.url
+      if (!isWebUrl(url) || wc.isDestroyed()) return
+      const n = (await wc.session.cookies.get({ url }).catch(() => [])).length
+      if (n !== entry.cookies) { entry.cookies = n; changed() }
+    }
+    const onIcon = (_e: ElectronEvent, icons: string[]): void => {
+      const plan = faviconPlan(entry.tab.url, icons)
+      if (!plan || plan.url === faviconFor) return
+      faviconFor = plan.url
+      if (plan.kind === 'data') { entry.favicon = plan.url; changed(); return }
+      void wc.session.fetch(plan.url, { credentials: 'omit' }).then(async r => {
+        const type = r.headers.get('content-type') ?? ''
+        if (!r.ok || !/^image\/(png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon|svg\+xml)/.test(type)) return
+        const body = Buffer.from(await r.arrayBuffer())
+        if (body.length === 0 || body.length > FAVICON_MAX || wc.isDestroyed() || faviconFor !== plan.url) return
+        entry.favicon = `data:${type.split(';')[0]};base64,${body.toString('base64')}`
+        changed()
+      }).catch(() => {})
+    }
+    wc.on('page-favicon-updated', onIcon as never)
     wc.on('will-navigate', onNavigate)
     wc.on('will-redirect', onRedirect)
     wc.on('will-attach-webview', onAttach)
@@ -298,7 +336,7 @@ export class TabRegistry {
       if (wc.isDestroyed()) return
       wc.off('will-navigate', onNavigate); wc.off('will-redirect', onRedirect); wc.off('will-attach-webview', onAttach)
       wc.off('page-title-updated', onTitle); wc.off('did-navigate', onUrl); wc.off('did-navigate-in-page', onInPage)
-      wc.off('did-start-loading', onStart); wc.off('did-stop-loading', onStop)
+      wc.off('did-start-loading', onStart); wc.off('did-stop-loading', onStop); wc.off('page-favicon-updated', onIcon as never)
       wc.off('login', onLogin as never); wc.off('select-client-certificate', onCert as never); wc.off('will-prevent-unload', onUnload)
     })]
   }
@@ -316,6 +354,14 @@ async function holdNativeSurfaces(surface: Surface): Promise<void> {
   await dbg.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_PRINT, runImmediately: true })
 }
 
+const originOf = (url: string): string => { try { return new URL(url).origin } catch { return '' } }
+
 function infoOf(e: Entry): TabInfo {
-  return { ...e.tab, loading: e.loading }
+  const wc = e.surface.webContents
+  const live = !wc.isDestroyed()
+  return {
+    ...e.tab, loading: e.loading,
+    canGoBack: live && wc.navigationHistory.canGoBack(), canGoForward: live && wc.navigationHistory.canGoForward(),
+    ...(e.favicon ? { favicon: e.favicon } : {}), cookies: e.cookies,
+  }
 }

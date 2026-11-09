@@ -100,8 +100,16 @@ export function activate(main: TetherMain): IDisposable[] {
     control.onChange(v => { shieldOf(v.tabId); ipc.send('control', v) }),
     main.agents.onDidExit(e => control.agentExited(e.slotId)),
   ]
+  // E9: the agent's commands light the tab's dot; at most one event per tab every 400 ms.
+  const lastPulse = new Map<string, number>()
+  const pulse = (tabId: string): void => {
+    const now = Date.now()
+    if (now - (lastPulse.get(tabId) ?? 0) < 400) return
+    lastPulse.set(tabId, now)
+    ipc.send('activity', tabId)
+  }
   const tabsOf = (slotId?: string): string[] => registry.list().filter(t => slotId === undefined || t.ownerSlotId === slotId).map(t => t.tabId)
-  const gateReady = startGate({ home: main.home, tabs: registry, control, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {
+  const gateReady = startGate({ home: main.home, tabs: registry, control, activity: pulse, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {
     if (gateDisposed) g.dispose()
     else gate = g
     return g
@@ -122,6 +130,9 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('take', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.take(tabId) }),
     ipc.handle('giveBack', async tabId => { if (typeof tabId === 'string' && registry.get(tabId)) await control.giveBack(tabId) }),
     ipc.handle('cleanReload', async tabId => { if (typeof tabId === 'string' && registry.get(tabId)) await control.cleanReload(tabId) }),
+    ipc.handle('back', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') registry.navigate(tabId, 'back') }),
+    ipc.handle('forward', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') registry.navigate(tabId, 'forward') }),
+    ipc.handle('reload', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') registry.navigate(tabId, 'reload') }),
     ipc.handle('pause', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.pause(tabId) }),
     ipc.handle('resume', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.resume(tabId) }),
     ipc.handle('pauseAll', () => control.pauseMany(tabsOf())),

@@ -12,7 +12,10 @@
 // usando esta página. Assumir o controle?"), carries a help request ("‹Agente› pede sua ajuda: ‹mensagem›" with "Pronto,
 // devolver ao ‹agente›"), its timeout, and, after a manual take, the scripts warning with "Recarregar limpo". A help request
 // raises a sticky seal on the agent's pane and on the tab's pane, and the Browser pill and the pad's icon carry the attention
-// badge: none goes away by focusing, only when the tab is handed back. Taking does not maximize the pane yet (no core API: E9).
+// badge: none goes away by focusing, only when the tab is handed back. Taking maximizes the pane and handing back restores it (E9).
+// E9: the bar (history buttons, the real address read-only and cut, loading, the owner chip with a colour derived from the slot id,
+// cookies of the site, logins not kept) and the tab (icon, title, owner chip, activity); the page area is the letterbox (the native
+// view sits at the fitted rectangle, the bands show the interface).
 import type { GroupPanelPartInitParameters, IContentRenderer, IDockviewPanel, ITabRenderer } from 'dockview-core'
 import type { AttentionHandle, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
@@ -24,7 +27,7 @@ import { controlTexts } from './control-rules.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LOCAL_NETWORK_SITUATION, localNetworkDialog, type LocalNetworkAsk } from './local-network-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { CRED_NOT_KEPT, EMPTY_HELP, EMPTY_TITLE, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, OFF_HELP, ownerLabel } from './rules.ts'
+import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, OFF_HELP, ownerChip, ownerHue, READ_ONLY_ADDRESS, RELOAD } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 
 export { manifest }
@@ -37,6 +40,16 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 }
 
 const paneIdOf = (tabId: string): string => `${WEB_PANE_PREFIX}${tabId}`
+/** Dresses a chip with its owner's colour (the hue only; the theme gives saturation and lightness) and its name. */
+function dressChip(chip: HTMLElement, slotId: string | undefined, agent: { name: string; alive: boolean } | undefined): void {
+  const c = ownerChip(agent)
+  chip.textContent = slotId ? c.text : ''
+  chip.dataset.ended = c.ended ? 'true' : 'false'
+  chip.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
+  chip.title = agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : ''
+}
+/** How long the tab's dot stays lit after the agent's last command. */
+const ACTIVE_MS = 1500
 const ownerOfPanel = (p: IDockviewPanel): string | undefined => (p.params as { ownerSlotId?: string } | undefined)?.ownerSlotId
 
 export function activate(ui: TetherUi): IDisposable[] {
@@ -97,7 +110,16 @@ export function activate(ui: TetherUi): IDisposable[] {
     private readonly bar = el('div', 'br-web-bar')
     private readonly titleEl = el('span', 'br-web-title')
     private readonly urlEl = el('span', 'br-web-url')
-    private readonly ownerEl = el('span', 'br-web-owner')
+    private readonly ownerEl = el('button', 'br-web-owner')
+    private readonly backBtn = el('button', 'br-web-nav')
+    private readonly fwdBtn = el('button', 'br-web-nav')
+    private readonly reloadBtn = el('button', 'br-web-nav')
+    private readonly spinner = el('span', 'br-web-spin')
+    private readonly cookiesEl = el('span', 'br-web-cookies', COOKIES_HERE_SHORT)
+    private readonly memoryEl = el('span', 'br-web-memory', BAR_LOGINS_NOT_KEPT)
+    private actedAt = 0
+    /** Set when this pane was maximized by taking the tab (so handing back restores only what we did). */
+    maximizedByTake = false
     private readonly stateEl = el('span', 'br-web-state')
     private readonly ctlEl = el('span', 'br-web-control')
     private readonly actBtn = el('button', 'br-web-act')
@@ -123,7 +145,28 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.ctlEl.dataset.role = 'control'
       this.notice.dataset.role = 'notice'
       this.notice.append(this.noticeText, this.noticeBtn)
-      this.bar.append(this.ownerEl, this.titleEl, this.urlEl, this.stateEl, this.ctlEl, this.actBtn)
+      for (const [b, name, label, action] of [[this.backBtn, 'arrow-left', BACK, 'back'], [this.fwdBtn, 'arrow-right', FORWARD, 'forward'], [this.reloadBtn, 'arrow-clockwise', RELOAD, 'reload']] as const) {
+        b.type = 'button'
+        b.dataset.nav = action
+        b.title = label
+        b.setAttribute('aria-label', label)
+        b.append(icon(name))
+        b.addEventListener('click', () => { const id = this.info?.tabId; if (id && !b.disabled) void ipc.invoke(action, id) })
+      }
+      this.ownerEl.type = 'button'
+      this.ownerEl.dataset.role = 'owner'
+      this.ownerEl.addEventListener('click', () => { const o = this.saved?.ownerSlotId; if (o) ui.agents.focus(o) })
+      this.urlEl.dataset.role = 'address'
+      this.urlEl.setAttribute('aria-label', READ_ONLY_ADDRESS)
+      this.spinner.dataset.role = 'loading'
+      this.spinner.hidden = true
+      this.cookiesEl.dataset.role = 'cookies'
+      this.cookiesEl.title = COOKIES_HERE
+      this.cookiesEl.hidden = true
+      this.memoryEl.dataset.role = 'memory'
+      this.memoryEl.title = LOGINS_NOT_KEPT
+      this.memoryEl.hidden = true
+      this.bar.append(this.backBtn, this.fwdBtn, this.reloadBtn, this.ownerEl, this.titleEl, this.urlEl, this.spinner, this.cookiesEl, this.memoryEl, this.stateEl, this.ctlEl, this.actBtn)
       this.element.append(this.bar, this.notice, this.page)
       const run = (action: string | undefined): void => {
         const tabId = this.info?.tabId ?? this.saved?.tabId
@@ -190,6 +233,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const v = tabId ? controls.get(tabId) : undefined
       const t = controlTexts(agentName(this.saved?.ownerSlotId))
       const control = this.info ? (v?.control ?? 'agent') : undefined
+      this.paintNav()
       this.element.dataset.control = control ?? ''
       this.ctlEl.textContent = control ? t[control] : ''
       const act = control === 'agent' ? ['take', t.take] : control === 'user' ? ['give-back', t.giveBack] : control === 'paused' ? ['resume', t.resume] : undefined
@@ -214,11 +258,51 @@ export function activate(ui: TetherUi): IDisposable[] {
       const title = this.info?.title || s?.title || ''
       const url = this.info?.url ?? s?.url ?? ''
       this.titleEl.textContent = title
-      this.urlEl.textContent = url
-      this.ownerEl.textContent = s ? ownerLabel(ui.agents.get(s.ownerSlotId), s.ownerSlotId) : ''
+      this.urlEl.textContent = displayUrl(url)
+      this.urlEl.title = url.length <= 2048 && !/^data:/i.test(url) ? url : ''
+      dressChip(this.ownerEl, s?.ownerSlotId, s ? ui.agents.get(s.ownerSlotId) : undefined)
       const state = this.info ? (this.info.loading ? 'loading' : 'live') : s?.url ? 'not-loaded' : 'no-address'
       this.element.dataset.state = state
       this.stateEl.textContent = state === 'loading' ? LOADING : state === 'not-loaded' ? NOT_LOADED : state === 'no-address' ? CRED_NOT_KEPT : ''
+      this.spinner.hidden = state !== 'loading'
+      this.cookiesEl.hidden = !(this.info?.cookies && this.info.cookies > 0)
+      this.memoryEl.hidden = persistentLogins
+      this.paintNav()
+      paintTabs()
+    }
+
+    /** History and reload answer only while the person holds the tab (U16). */
+    private paintNav(): void {
+      const tabId = this.info?.tabId
+      const mine = !!tabId && controls.get(tabId)?.control === 'user'
+      this.backBtn.disabled = !(mine && this.info?.canGoBack)
+      this.fwdBtn.disabled = !(mine && this.info?.canGoForward)
+      this.reloadBtn.disabled = !mine
+    }
+
+    /** The owner's chip follows the agent (name, ended). */
+    repaintOwner(): void { dressChip(this.ownerEl, this.saved?.ownerSlotId, this.saved ? ui.agents.get(this.saved.ownerSlotId) : undefined) }
+
+    favicon(): string | undefined { return this.info?.favicon }
+
+    /** What the tab's dot says: the page loads, the agent just acted, or nothing. */
+    activity(): 'loading' | 'agent' | 'idle' {
+      if (this.info?.loading) return 'loading'
+      return Date.now() - this.actedAt < ACTIVE_MS ? 'agent' : 'idle'
+    }
+
+    acted(): void {
+      this.actedAt = Date.now()
+      paintTabs()
+      setTimeout(paintTabs, ACTIVE_MS + 50)
+    }
+
+    /** The letterbox: what main reports of the fitted page (the bands are the page area's own background). */
+    letterbox(): { host: { width: number; height: number }; effective: { x: number; y: number; width: number; height: number } | undefined; scale: number; visibility: string } | undefined {
+      const st = this.binding?.state()
+      if (!st) return undefined
+      const r = this.page.getBoundingClientRect()
+      return { host: { width: r.width, height: r.height }, effective: st.effective, scale: st.scale, visibility: st.visibility }
     }
 
     /** A pane back from layout.json loads when it is on screen (the person showed it). */
@@ -248,17 +332,49 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
   }
 
+  /** The tab of a pane: icon, title, the owner's chip and a dot while the page loads or the agent acts. */
+  const tabs = new Set<Tab>()
   class Tab implements ITabRenderer {
     readonly element = el('div', 'br-web-tab')
+    private readonly iconEl = el('img', 'br-web-tab-icon')
+    private readonly globe = icon('globe-simple', 'br-web-tab-globe')
+    private readonly titleEl = el('span', 'br-web-tab-title')
+    private readonly chip = el('span', 'br-web-tab-owner')
+    private readonly dot = el('span', 'br-web-tab-dot')
     private sub: IDisposable | undefined
+    paneId = ''
     init(p: GroupPanelPartInitParameters & { api: { title?: string } }): void {
-      this.element.textContent = p.api.title ?? 'Guia'
+      this.paneId = p.api.id
+      this.iconEl.alt = ''
+      this.iconEl.hidden = true
+      this.dot.hidden = true
+      this.dot.dataset.role = 'activity'
+      this.chip.dataset.role = 'tab-owner'
+      this.titleEl.textContent = p.api.title ?? 'Guia'
+      this.element.append(this.iconEl, this.globe, this.titleEl, this.chip, this.dot)
       const owner = (p.params as { ownerSlotId?: string } | undefined)?.ownerSlotId
       if (owner) this.element.dataset.owner = owner
-      this.sub = p.api.onDidTitleChange(e => { this.element.textContent = e.title })
+      this.sub = p.api.onDidTitleChange(e => { this.titleEl.textContent = e.title })
+      tabs.add(this)
+      this.paint()
     }
-    dispose(): void { this.sub?.dispose() }
+    /** From the pane's state: the icon, the owner's chip, and the activity (loading; the agent acting). */
+    paint(): void {
+      const panel = panels.get(this.paneId)
+      const owner = panel?.saved?.ownerSlotId ?? this.element.dataset.owner
+      dressChip(this.chip, owner, owner ? ui.agents.get(owner) : undefined)
+      const favicon = panel?.favicon()
+      if (favicon) { if (this.iconEl.src !== favicon) this.iconEl.src = favicon } else this.iconEl.removeAttribute('src')
+      this.iconEl.hidden = !favicon
+      this.globe.style.display = favicon ? 'none' : ''
+      const a = panel?.activity() ?? 'idle'
+      this.dot.hidden = a === 'idle'
+      this.element.dataset.activity = a
+      this.dot.title = a === 'loading' ? LOADING : a === 'agent' ? 'O agente está agindo' : ''
+    }
+    dispose(): void { this.sub?.dispose(); tabs.delete(this) }
   }
+  const paintTabs = (): void => { for (const t of tabs) t.paint() }
 
   /** A new tab: a pane in the Browser desk, behind, next to its owner's tabs (each agent's tabs together, in order of arrival). */
   const openTab = (info: TabInfo): void => {
@@ -307,9 +423,25 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.pads.setBadge(PAD_ID, badge)
     ui.systemDesks.setBadge(DESK_ID, badge)
   }
+  /**
+   * Taking the tab maximizes its pane and handing it back restores the earlier size (design §6.1). Only a take by the person
+   * ("Assumir o controle") does it: a help request does not rearrange her screen. Only what we maximized is restored.
+   */
+  const followMaximize = (v: ControlView): void => {
+    const p = panels.get(paneIdOf(v.tabId))
+    const panel = p ? ui.panes.find(paneIdOf(v.tabId)) : undefined
+    if (!p || !panel) return
+    if (v.holder === 'user' && v.why === 'taken') {
+      if (!panel.api.isMaximized()) { panel.api.maximize(); p.maximizedByTake = true }
+    } else if (v.holder === 'agent' && p.maximizedByTake) {
+      p.maximizedByTake = false
+      if (panel.api.isMaximized()) panel.api.exitMaximized()
+    }
+  }
   const onControl = (v: ControlView): void => {
     controls.set(v.tabId, v)
     panels.get(paneIdOf(v.tabId))?.paintControl()
+    followMaximize(v)
     syncSeals(v)
   }
   void ipc.invoke('controls').then(list => { for (const v of list) onControl(v) }).catch(() => {})
@@ -351,7 +483,31 @@ export function activate(ui: TetherUi): IDisposable[] {
     noticeAction: p.element.querySelector('.br-web-notice-act')?.textContent ?? '',
     group: ui.panes.find(id)?.group.panels.map(x => x.id) ?? [], front: ui.panes.find(id)?.group.activePanel?.id === id,
     place: ui.panes.describe(id)?.place,
+    // E9: the bar and the tab
+    chip: p.element.querySelector('.br-web-owner')?.textContent ?? '',
+    ownerEnded: (p.element.querySelector('.br-web-owner') as HTMLElement | null)?.dataset.ended === 'true',
+    ownerHue: (p.element.querySelector('.br-web-owner') as HTMLElement | null)?.style.getPropertyValue('--br-hue') ?? '',
+    address: p.element.querySelector('.br-web-url')?.textContent ?? '',
+    nav: Object.fromEntries([...p.element.querySelectorAll<HTMLButtonElement>('.br-web-nav')].map(b => [b.dataset.nav, !b.disabled])),
+    loadingShown: (p.element.querySelector('.br-web-spin') as HTMLElement | null)?.hidden === false,
+    cookiesShown: (p.element.querySelector('.br-web-cookies') as HTMLElement | null)?.hidden === false,
+    memoryShown: (p.element.querySelector('.br-web-memory') as HTMLElement | null)?.hidden === false,
+    memoryText: p.element.querySelector('.br-web-memory')?.textContent ?? '',
+    tab: tabInfoOf(id),
+    maximized: ui.panes.find(id)?.api.isMaximized() ?? false,
+    letterbox: p.letterbox(),
   })))
+  /** The pane's tab strip element as the person sees it. */
+  const tabInfoOf = (paneId: string): { title: string; owner: string; ownerHue: string; ownerEnded: boolean; icon: boolean; activity: string } | undefined => {
+    const t = [...tabs].find(x => x.element.isConnected && x.paneId === paneId)
+    if (!t) return undefined
+    const chip = t.element.querySelector('.br-web-tab-owner') as HTMLElement
+    return {
+      title: t.element.querySelector('.br-web-tab-title')?.textContent ?? '', owner: chip.textContent ?? '', ownerHue: chip.style.getPropertyValue('--br-hue'),
+      ownerEnded: chip.dataset.ended === 'true', icon: (t.element.querySelector('.br-web-tab-icon') as HTMLElement | null)?.hidden === false,
+      activity: t.element.dataset.activity ?? '',
+    }
+  }
   ui.test.expose('browserReveal', (id: string) => { ui.panes.reveal(id) })
   /** Clicks a control button of a tab's pane the way the person would ('bar' or 'notice'). */
   ui.test.expose('browserClick', (tabId: string, where: string) => {
@@ -374,6 +530,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     }),
     ipc.on('localNetworkAsk', enqueue),
     ipc.on('control', onControl),
+    ipc.on('activity', tabId => { panels.get(paneIdOf(tabId))?.acted() }),
+    // The agent's name or life changed (it exited): every chip is dressed again.
+    ui.agents.onDidChange(() => { for (const p of panels.values()) p.repaintOwner(); paintTabs() }),
     ipc.on('localNetworkCancelled', withdraw),
     ipc.on('closed', tabId => {
       const id = paneIdOf(tabId)

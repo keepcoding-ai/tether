@@ -28,6 +28,10 @@ export interface BrowserChannels {
     cleanReload: (tabId: string) => void
     pause: (tabId: string) => void
     resume: (tabId: string) => void
+    /** E9: the history buttons of the bar (only while the person holds the tab). */
+    back: (tabId: string) => void
+    forward: (tabId: string) => void
+    reload: (tabId: string) => void
     pauseAll: () => void
     resumeAll: () => void
     pauseAgent: (slotId: string) => void
@@ -45,5 +49,7 @@ export interface BrowserChannels {
     localNetworkCancelled: (id: string) => void
     /** E7: a tab's control changed (held, paused, a help request opened, ran out or ended). */
     control: (view: ControlView) => void
+    /** E9: the agent acted on the tab (its dot lights for a moment). */
+    activity: (tabId: string) => void
   }
 }

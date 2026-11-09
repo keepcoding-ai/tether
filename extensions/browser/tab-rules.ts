@@ -15,6 +15,13 @@ export interface Tab {
 /** What the renderer is told about a tab (the registry's record plus whether its page is loading). */
 export interface TabInfo extends Tab {
   loading: boolean
+  /** E9: the page's history lets the bar go back / forward. */
+  canGoBack?: boolean
+  canGoForward?: boolean
+  /** E9: the page's icon as an `data:image/` address, fetched by main (the interface never requests an address the page names). */
+  favicon?: string
+  /** E9: how many cookies the partition holds for the page's address (a count only: the sign that an account may be logged in). */
+  cookies?: number
 }
 
 /** What layout.json keeps of a `web:` pane (its params): enough to bring the tab back, never loaded on its own. */
@@ -123,4 +130,27 @@ export function fuseWireAt(buf: Uint8Array, at: number): number[] | undefined {
 /** Whether a fuse wire has cookie encryption on (an unknown wire counts as off). */
 export function cookieEncryptionOn(wire: readonly number[] | undefined): boolean {
   return wire?.[FUSE_COOKIE_ENCRYPTION] === FUSE_ENABLE
+}
+
+/** The largest icon the tab keeps (bytes of the data address / of the fetched body). */
+export const FAVICON_MAX = 64 * 1024
+
+/**
+ * Which of the icons a page names the tab may use: a `data:image/` one as it comes (bounded), else the first one on the page's own
+ * origin (fetched by main through the tab's session); an icon on another origin is never requested (it would be a request the
+ * page did not make, outside the filter's view of the page).
+ */
+export function faviconPlan(pageUrl: string, candidates: readonly unknown[]): { kind: 'data' | 'fetch'; url: string } | undefined {
+  let origin = ''
+  try { origin = new URL(pageUrl).origin } catch { /* no page address */ }
+  for (const c of candidates) {
+    if (typeof c !== 'string') continue
+    if (/^data:image\/(png|jpeg|gif|webp|x-icon|vnd\.microsoft\.icon|svg\+xml)[;,]/i.test(c)) {
+      if (c.length <= FAVICON_MAX) return { kind: 'data', url: c }
+      continue
+    }
+    if (!isWebUrl(c) || origin === '' || origin === 'null') continue
+    try { if (new URL(c).origin === origin) return { kind: 'fetch', url: c } } catch { /* next */ }
+  }
+  return undefined
 }
