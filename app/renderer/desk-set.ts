@@ -131,6 +131,27 @@ export class DeskSet {
     else this.host.onDesksChange()
   }
 
+  /**
+   * Takes a declared system desk back (its owner is off): if it is the visible desk the person goes back to the queue
+   * desk they came from; its panels stop being shown (the desk is disposed; slots stay in the daemon). What it held is
+   * returned and kept for a later declaration; the caller keeps it in the layout file. Not declared: undefined.
+   */
+  undeclareSystem(id: string): SystemDeskLayout | undefined {
+    const m = this.mounted.get(id)
+    if (!this.system.has(id) || !m) return undefined
+    const { frames, activeFrame } = m.desk.toJSON()
+    const content: SystemDeskLayout = { frames, ...(activeFrame ? { activeFrame } : {}) }
+    if (this.activeId === id) this.switchTo(this.returnDeskId)
+    this.system.delete(id)
+    this.mounted.delete(id)
+    m.desk.dispose()
+    m.layer.remove()
+    this.saved = { ...this.saved, [id]: content }
+    if (this.pendingActive === id) this.pendingActive = undefined
+    this.host.onDesksChange()
+    return content
+  }
+
   private mountSystem(info: DeskInfo): void {
     const m = this.mount(info)
     const saved = this.saved[info.id]

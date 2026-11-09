@@ -250,6 +250,19 @@ export interface TetherUi {
   status: {
     register(item: StatusItem): StatusHandle
   }
+  /**
+   * The extension's own system desks (`contributes.systemDesks`; a desk of another extension, or an undeclared id, throws).
+   * The core mounts and shows the desk; what goes in it is the extension's: open a pane there with `panes.open` while it is
+   * the visible desk (a `reference` pane of the desk also works), since `open` without a reference adds to the visible desk.
+   */
+  systemDesks: {
+    /** Enters the desk, or, when it is the visible one, goes back to the queue desk the person came from. */
+    toggle(id: string): void
+    /** Is it the visible desk now. */
+    isActive(id: string): boolean
+    /** A system desk was entered (`active: true`) or left (`false`); the listener is released with the extension. */
+    onDidChangeActive(listener: (e: { id: string; active: boolean }) => void): IDisposable
+  }
   /** The side bars' pads (F10). */
   pads: {
     /** What a pad of the manifest shows. */

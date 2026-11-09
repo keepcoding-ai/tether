@@ -27,7 +27,7 @@ import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
-import { deskTokens, readDeskColor } from './desks.ts'
+import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
 import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
@@ -42,6 +42,7 @@ import { StatusBar } from './status-bar.ts'
 import { openMoveDialog } from './move-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
 import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore, withSystemDesk } from './layout.ts'
+import { SystemDeskRegistry, type SystemDeskDescriptor } from './system-desk-rules.ts'
 import { SideBars } from './sidebars.ts'
 import { otherSide, PadRegistry, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
@@ -109,6 +110,8 @@ let drawer: Drawer
 const padRegistry = new PadRegistry()
 /** The top bar's status icons the extensions declare and register (TetherUi.status), and the bar that draws them. */
 const statusRegistry = new StatusRegistry()
+/** The system desks the extensions declare (`contributes.systemDesks`), mirrored into the DeskSet by setupDock. */
+const systemDeskRegistry = new SystemDeskRegistry()
 let statusBar: StatusBar | undefined
 const padTypes = new Map<string, PadType>()
 let sidebars: SideBars | undefined
@@ -439,10 +442,18 @@ function setupDock(): void {
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.allDeskIds); scheduleSave() },
-    onSwitch: () => { focusActivePane(); notifyActivePane() },
+    onSwitch: () => { focusActivePane(); notifyActivePane(); notifySystemDeskActive() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
+  // The extensions activated before the dock existed declared their system desks in the registry: mount them, then follow it.
+  const live = new Map<string, () => void>()
+  const mirror = (c: { type: 'add' | 'remove'; desk: SystemDeskDescriptor }): void => {
+    if (c.type === 'add') live.set(c.desk.id, declareSystemDesk({ id: c.desk.id, title: c.desk.title, ...(c.desk.icon ? { icon: c.desk.icon as IconName } : {}), ...(c.desk.color ? { color: c.desk.color as DeskHue } : {}) }))
+    else { live.get(c.desk.id)?.(); live.delete(c.desk.id) }
+  }
+  for (const desk of systemDeskRegistry.all()) mirror({ type: 'add', desk })
+  systemDeskRegistry.onDidChange(mirror)
   drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onMargin: () => setDrawerOpen(false) }, DOCK_THEME)
   sidebars = new SideBars($('workbench'), {
     pads: () => padRegistry.all(),
@@ -704,20 +715,45 @@ function deskAttention(deskId: string): DeskAttention {
 
 /** Icons of the declared system desks (the set keeps id, name and colour; the pill also wants an icon). */
 const systemIcons = new Map<string, IconName>()
+/** Which system desks were the visible one at the last switch (what `onDidChangeActive` compares with). */
+let activeSystemDesk: string | undefined
+const systemDeskListeners = new Set<(e: { id: string; active: boolean }) => void>()
+
+function notifySystemDeskActive(): void {
+  const now = desks.isSystem(desks.activeDeskId) ? desks.activeDeskId : undefined
+  if (now === activeSystemDesk) return
+  const before = activeSystemDesk
+  activeSystemDesk = now
+  for (const [id, active] of [[before, false], [now, true]] as const) {
+    if (!id) continue
+    for (const l of [...systemDeskListeners]) { try { l({ id, active }) } catch (err) { console.error('systemDesks.onDidChangeActive', err) } }
+  }
+}
 
 /**
  * Declares a system desk for this run: a complete desk outside the queue (no number, no rename, no reorder, not in the
  * next/previous cycle) with a pill in the capsule beside the Gaveta's and a "Ir para <title>" command. The pill, or the
  * command, enters it and, again, goes back to the desk the person was on. What it holds is saved in `systemDesks` of
- * layout.json under `id`, and reopens there the next time it is declared. Returns the function that removes the command.
+ * layout.json under `id`, and reopens there the next time it is declared. Returns the function that takes it back
+ * (undeclares it): the pill and the command go, the person leaves it for the desk they came from, its panels stop being
+ * shown, and what it held stays in layout.json untouched.
  */
-function declareSystemDesk(decl: { id: string; title: string; icon?: IconName }): () => void {
+function declareSystemDesk(decl: { id: string; title: string; icon?: IconName; color?: DeskHue }): () => void {
   if (decl.icon) systemIcons.set(decl.id, decl.icon)
-  desks.declareSystem({ id: decl.id, name: decl.title })
-  return commands.register({
+  desks.declareSystem({ id: decl.id, name: decl.title, ...(decl.color ? { color: decl.color } : {}) })
+  const unregister = commands.register({
     id: `desk.system.${decl.id}`, title: `Ir para ${decl.title}`, group: GROUP.desk, icon: decl.icon ?? 'cards',
     run: () => desks.toggleSystem(decl.id),
   })
+  return () => {
+    unregister()
+    systemIcons.delete(decl.id)
+    // Its content (and its desk pads' state) stays in the file: the file's entry is refreshed before the desk goes.
+    const pads = sidebars?.deskPads(decl.id)
+    const content = desks.undeclareSystem(decl.id)
+    if (content) layoutFile = withSystemDesk(layoutFile, decl.id, pads ? { ...content, pads } : content)
+    scheduleSave()
+  }
 }
 
 function renderStrip(): void {
@@ -726,7 +762,9 @@ function renderStrip(): void {
   strip.renderSystem(desks.systemDesks.map(d => ({ id: d.id, title: d.name, ...(systemIcons.has(d.id) ? { icon: systemIcons.get(d.id)! } : {}), active: d.id === desks.activeDeskId })))
   const active = desks.desks.find(d => d.id === desks.activeDeskId)
   // On the workbench: the line spans the window (over the side bars) and the pads' frames take the colour for the F6 outline.
-  if (active) $('workbench').style.setProperty('--desk-line-color', deskTokens(active.color).fill)
+  // A system desk showing tints the line with its own colour, not with the last queue desk's.
+  const tinted = active ?? desks.systemDesks.find(d => d.id === desks.activeDeskId)
+  if (tinted) $('workbench').style.setProperty('--desk-line-color', deskTokens(tinted.color).fill)
   renderDrawerButton()
 }
 
@@ -3142,6 +3180,8 @@ function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore)
   if (c.chooser) store.add(toDisposable(contributeChooser(c.chooser)))
   // Pads: the strip draws them from the manifest; each gets its own toggle command (VS Code registers an "open" command per view container).
   for (const s of c.status ?? []) store.add(statusRegistry.declare({ ...s, extension: manifest.id }))
+  // System desks: declared in the registry; the dock mirrors them into the DeskSet (and takes them back with the store).
+  for (const d of c.systemDesks ?? []) store.add(systemDeskRegistry.declare({ ...d, extension: manifest.id }))
   for (const p of c.pads ?? []) {
     store.add(padRegistry.register({ ...p, extension: manifest.id }))
     store.add(toDisposable(commands.register({
@@ -3197,6 +3237,9 @@ function activateRendererExtensions(): void {
     contributionStores.set(id, own)
     contributeDeclared(manifest, own)
     const add = <T extends IDisposable>(d: T): T => own.add(d)
+    const ownSystemDesk = (deskId: string): void => {
+      if (!manifest.contributes?.systemDesks?.some(d => d.id === deskId)) throw new Error(`mesa de sistema não declarada no manifesto de ${id}: ${deskId}`)
+    }
     return {
       id,
       brand: BRAND,
@@ -3313,6 +3356,11 @@ function activateRendererExtensions(): void {
           add(handle)
           return handle
         },
+      },
+      systemDesks: {
+        toggle: deskId => { ownSystemDesk(deskId); desks.toggleSystem(deskId) },
+        isActive: deskId => { ownSystemDesk(deskId); return desks.activeDeskId === deskId },
+        onDidChangeActive: listener => { systemDeskListeners.add(listener); return add(toDisposable(() => { systemDeskListeners.delete(listener) })) },
       },
       pads: {
         register: type => {
