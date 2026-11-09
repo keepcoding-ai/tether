@@ -291,6 +291,12 @@ export interface TetherUi {
     setBadge(id: string, badge: Badge | undefined): void
     /** Enters the desk, or, when it is the visible one, goes back to the queue desk the person came from. */
     toggle(id: string): void
+    /**
+     * Adds a pane to this system desk without showing it: the desk is not entered, the pane does not become the active tab
+     * (the first pane of an empty frame is its only tab). `reference` (a pane of the desk) puts it in that pane's group, at
+     * `index` among its tabs; without one, in the desk's active frame, last.
+     */
+    addPane(id: string, options: AddPanelOptions, where?: { reference?: string; index?: number }): IDockviewPanel
     /** Is it the visible desk now. */
     isActive(id: string): boolean
     /** A system desk was entered (`active: true`) or left (`false`); the listener is released with the extension. */

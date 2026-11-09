@@ -3500,6 +3500,14 @@ function activateRendererExtensions(): void {
         setBadge: (deskId, badge) => { ownSystemDesk(deskId); if (badges.set(id, deskId, badge)) renderStrip() },
         toggle: deskId => { ownSystemDesk(deskId); desks.toggleSystem(deskId) },
         isActive: deskId => { ownSystemDesk(deskId); return desks.activeDeskId === deskId },
+        addPane: (deskId, options, where) => {
+          ownSystemDesk(deskId)
+          const desk = desks.desk(deskId)
+          if (!desk) throw new Error(`mesa de sistema não montada: ${deskId}`)
+          const ref = where?.reference && desk.getPanel(where.reference) ? where.reference : undefined
+          const position = ref ? { referencePanel: ref, direction: 'within', ...(where?.index !== undefined ? { index: where.index } : {}) } : undefined
+          return desk.addPanel({ ...options, inactive: true, ...(position ? { position } : {}) } as AddPanelOptions, undefined, ref)
+        },
         onDidChangeActive: listener => { systemDeskListeners.add(listener); return add(toDisposable(() => { systemDeskListeners.delete(listener) })) },
       },
       surfaces: {
