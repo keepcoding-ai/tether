@@ -209,8 +209,11 @@ test('browser files: downloads by agent with "Baixados", the ceiling, the upload
     assert.equal((await tool('WebClick', { ref: refOf(tree, 'link "Baixar relatório"') })).isError, false)
     await until('second download saved with a suffix', async () => existsSync(join(folder, 'report-1.txt')))
     assert.equal(readFileSync(join(folder, 'report.txt'), 'utf8'), 'the report')
-    const listed = await until('WebDownload lists it by the final name', async () => { const r = await tool('WebDownload'); return /report-1\.txt/.test(r.text) && r.text })
-    console.log(`WebDownload in adopt mode: ${listed.replace(/\s+/g, ' ').slice(0, 400)}`)
+    const listed = await until('WebDownload lists it by the final name', async () => { const r = await tool('WebDownload'); return /report-1\.txt[^}]*"status": "saved"/.test(r.text) && r.text })
+    console.log(`WebDownload: ${listed.replace(/\s+/g, ' ').slice(0, 400)}`)
+    // The gate tells the package's browser session too, so the package reads the state and the size.
+    assert.match(listed, /saved/i, listed)
+    assert.equal((listed.match(/"bytes": 10\b/g) ?? []).length, 2, listed)
     await win.evaluate(() => window.__tether.browserPadOpen())
     const pad = await until('"Baixados" in the pad', async () => { const p = await win.evaluate(() => window.__tether.browserPad()); return p && p.downloads.length > 0 && p.downloads[0]!.files.length === 2 && p })
     assert.equal(pad.downloads[0]!.slotId, slot)

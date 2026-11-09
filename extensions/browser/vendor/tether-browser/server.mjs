@@ -37332,6 +37332,7 @@ import { mkdir as mkdir2, rm as rm2, stat as stat2 } from "node:fs/promises";
 import { basename, relative, isAbsolute } from "node:path";
 var MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 var MAX_SESSION_DOWNLOAD_BYTES = 200 * 1024 * 1024;
+var HOST_SAVED_NOTE = "Saved by the host app in your own downloads folder. You do not have the file path; tell the person the file name.";
 function safeFilename(suggested) {
   let name = basename(suggested.replace(/\\/g, "/")).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/, "").slice(0, 200);
   if (name === "" || /^\.+$/.test(name)) name = "download";
@@ -37339,13 +37340,54 @@ function safeFilename(suggested) {
   return name;
 }
 var DownloadLog = class {
-  constructor(artifactsDir) {
+  /** `hostSaves`: modo adotar, quem salva o arquivo é o hospedeiro; aqui só se registra o que ele conta. */
+  constructor(artifactsDir, hostSaves = false) {
     this.artifactsDir = artifactsDir;
+    this.hostSaves = hostSaves;
   }
   artifactsDir;
+  hostSaves;
   #entries = [];
   #done = [];
   #savedBytes = 0;
+  /** Modo adotar: guid do hospedeiro -> nome e bytes vistos nos eventos CDP de browser. */
+  #host = /* @__PURE__ */ new Map();
+  /** Modo adotar: um evento CDP de download vindo do hospedeiro (os bytes são os dele; o Playwright não os expõe). */
+  hostEvent(method, p) {
+    if (typeof p.guid !== "string") return;
+    if (method === "Browser.downloadWillBegin") {
+      this.#host.set(p.guid, { name: String(p.suggestedFilename ?? ""), bytes: 0 });
+    } else if (method === "Browser.downloadProgress") {
+      const h = this.#host.get(p.guid);
+      if (!h) return;
+      const n = Number(p.receivedBytes ?? p.totalBytes);
+      if (Number.isFinite(n) && n >= h.bytes) h.bytes = n;
+    }
+  }
+  /** O maior tamanho que o hospedeiro contou para um arquivo com este nome (o mais recente primeiro). */
+  #hostBytes(name) {
+    let found;
+    for (const h of this.#host.values()) if (h.name === name) found = h.bytes;
+    return found;
+  }
+  async #adopted(entry, download) {
+    try {
+      const failure2 = await download.failure();
+      await new Promise((r) => setTimeout(r, 50));
+      if (failure2) {
+        entry.status = "failed";
+        entry.error = failure2 === "canceled" ? "The download was canceled by the host app (a size limit, or the download failed)." : `Download failed: ${failure2}`;
+        return;
+      }
+      const bytes = this.#hostBytes(entry.suggestedFilename);
+      if (bytes !== void 0 && bytes > 0) entry.bytes = bytes;
+      entry.status = "saved";
+      entry.note = HOST_SAVED_NOTE;
+    } catch (err) {
+      entry.status = "failed";
+      entry.error = `Download could not be followed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
   list() {
     return this.#entries.map((e) => ({ ...e }));
   }
@@ -37360,7 +37402,7 @@ var DownloadLog = class {
       status: "saving"
     };
     this.#entries.push(entry);
-    this.#done.push(this.#save(entry, download));
+    this.#done.push(this.hostSaves ? this.#adopted(entry, download) : this.#save(entry, download));
   }
   async #save(entry, download) {
     const fail2 = (error62) => {
@@ -41094,7 +41136,7 @@ function wrapAll(ops, a) {
 async function openSession(context, params) {
   const { timeout, snapshotTimeout } = params;
   const rng = params.seed === void 0 ? Math.random : mulberry32(params.seed);
-  const downloads = new DownloadLog(params.artifactsDir);
+  const downloads = new DownloadLog(params.artifactsDir, params.adopted);
   const unsubs = params.adopted ? [] : void 0;
   const releases = [];
   const initScript = async (key2, add) => {
@@ -41110,6 +41152,17 @@ async function openSession(context, params) {
   const tabLog = new TabLog((id) => tabs.get(id)?.page.url() ?? "");
   let counter = 0;
   let browserCdp = null;
+  if (params.adopted) {
+    browserCdp = context.browser().newBrowserCDPSession();
+    browserCdp.then(
+      (cdp) => {
+        const on = cdp.on.bind(cdp);
+        for (const m of ["Browser.downloadWillBegin", "Browser.downloadProgress"]) on(m, (p) => downloads.hostEvent(m, p));
+      },
+      () => {
+      }
+    );
+  }
   let activeId = null;
   let viewport = { ...VIEWPORT };
   let status = "open";
@@ -42140,6 +42193,7 @@ var CONTROL_TEXTS = {
   uploadDeclined: (path) => `The person did not allow sending ${path} to the page; nothing was sent. Do not try again or work around this; ask the user.`,
   localNetworkDenied: (url2) => `The person did not allow opening ${url2} (localhost or the local network); nothing was done. Do not try other ways to reach it; ask the user.`
 };
+var ADOPT_DOWNLOAD_DESCRIPTION = 'List the files the page downloaded, or wait for the next one to finish. In this app the app itself saves each download in your own downloads folder; you do not get the path and cannot open the file. Each entry gives the final file name (suggestedFilename), the size when known (bytes) and the status: "saved" means the file is there, "failed" says why (for example the app canceled it over a size limit). Tell the person the file name so they can find it.';
 
 // src/core/catalog.ts
 var TOOL_TIERS = {
@@ -42579,7 +42633,8 @@ function createAdoptedMcp(opts) {
   };
   const upload = toolFor({ def: localDef("upload"), op: "upload", run: uploadRun, description: UPLOAD_DESCRIPTION }, bindings);
   const evaluate2 = opts.allowEvaluate ? [toolFor({ def: localDef("evaluate"), op: "evaluate", run: (s, a) => s.evaluate(a.expression), description: EVALUATE_DESCRIPTION }, bindings)] : [];
-  return { ...base, tools: [...base.tools, askUser, upload, ...evaluate2] };
+  const baseTools = base.tools.map((t) => t.name === "WebDownload" ? { ...t, description: ADOPT_DOWNLOAD_DESCRIPTION } : t);
+  return { ...base, tools: [...baseTools, askUser, upload, ...evaluate2] };
 }
 var UPLOAD_DESCRIPTION = "Attach a file from the disk of this computer to a file field of the page (an input of type file, or the button that opens the file chooser). Give the absolute path of the file. This sends the file contents to the website, so the person must allow it: they are asked in the app, which shows the file and the site that owns the field, and they answer yes or no. If they say no, nothing is sent; do not try again or work around it, ask the user. Only files inside the allowed upload folders are accepted (by default the Downloads folder of the user); a path outside them is refused with an explanation. If the page that owns the field changes site while the file is being attached, the field is emptied and the upload is refused. Returns how many files were attached and their names.";
 var EVALUATE_DESCRIPTION = "Run a JavaScript expression in the page of the active tab and return its value as JSON (top-level await works; a returned promise is awaited). The code runs with full page privileges: it can read and change anything the page can. Use it to read data the other Web tools cannot reach; for ordinary clicking and typing prefer WebClick, WebType and WebFill, which behave like a real user. Results over 100000 characters are refused, not cut.";

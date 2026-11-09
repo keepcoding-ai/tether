@@ -327,6 +327,11 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     event(method: string, params: unknown, sessionId?: string): void {
       this.send({ method, params, ...(sessionId ? { sessionId } : {}) })
     }
+    /** An event of the browser level: the root of the connection and every browser session it attached (the package listens on the latter). */
+    browserEvent(method: string, params: unknown): void {
+      this.event(method, params)
+      for (const bs of this.browserSessions) this.event(method, params, bs)
+    }
     close(): void {
       if (this.closed) return
       if (!this.socket.destroyed) this.socket.end(frame(OP_CLOSE, Buffer.from([0x03, 0xe8])))
@@ -889,12 +894,12 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
             // Rule 14: a download that starts while the person holds the tab is hers.
             if (controlOf(e.tabId) !== 'agent') continue
             c.downloads.add(e.guid)
-            c.event('Browser.downloadWillBegin', { frameId, guid: e.guid, url: e.url, suggestedFilename: e.name })
+            c.browserEvent('Browser.downloadWillBegin', { frameId, guid: e.guid, url: e.url, suggestedFilename: e.name })
             continue
           }
           if (!c.downloads.has(e.guid)) continue
           if (e.state !== 'inProgress') c.downloads.delete(e.guid)
-          c.event('Browser.downloadProgress', { guid: e.guid, totalBytes: e.total, receivedBytes: e.received, state: e.state })
+          c.browserEvent('Browser.downloadProgress', { guid: e.guid, totalBytes: e.total, receivedBytes: e.received, state: e.state })
         }
       }, () => {})
     },
