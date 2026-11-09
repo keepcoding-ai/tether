@@ -22,6 +22,7 @@ import { icon } from './icons.ts'
 import { clampDragX, dragTargetIndex, fullIndexAfterDrop, passedThreshold } from './desk-drag-rules.ts'
 
 /** What a desk's badge says: how many panes finished (done) or wait for the user (waiting). */
+import { markAttention, type DeskMark } from './desk-mark.ts'
 export interface DeskAttention { done: number; waiting: number }
 
 export interface DeskSwitchHost {
@@ -65,7 +66,8 @@ export class DeskSwitch {
   private readonly sides: readonly HTMLElement[]
   private desks: readonly DeskInfo[] = []
   private active = ''
-  private attention: (deskId: string) => DeskAttention = () => ({ done: 0, waiting: 0 })
+  private mark: (deskId: string) => DeskMark = () => ''
+  private attention = (deskId: string): DeskAttention => markAttention(this.mark(deskId))
   private visible: string[] = []
   private lastUsed: LastUsed = {}
   private renaming: string | undefined
@@ -110,11 +112,11 @@ export class DeskSwitch {
     for (const s of sides) ro.observe(s)
   }
 
-  render(desks: readonly DeskInfo[], active: string, attention: (deskId: string) => DeskAttention): void {
+  render(desks: readonly DeskInfo[], active: string, mark: (deskId: string) => DeskMark): void {
     if (active !== this.active) this.lastUsed = touchUsed(this.lastUsed, active)
     this.desks = desks
     this.active = active
-    this.attention = attention
+    this.mark = mark
     if (this.renaming || this.dragging) return // the input in a segment is being edited: repainting would drop it
     this.layout()
   }
@@ -203,6 +205,11 @@ export class DeskSwitch {
       badge.className = `cnt desk-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
       badge.textContent = String(total)
       seg.append(badge)
+    } else if (this.mark(d.id) === 'busy') {
+      const dot = document.createElement('span')
+      dot.className = 'busy-dot'
+      dot.setAttribute('aria-label', 'em andamento')
+      seg.append(dot)
     }
     if (measuring) return seg
     seg.setAttribute('role', 'tab')
@@ -210,7 +217,7 @@ export class DeskSwitch {
     seg.tabIndex = active ? 0 : -1
     seg.setAttribute('aria-label', `${d.name}${total === 0 ? '' : `, ${total} com atenção`}`)
     const go = index < 9 ? ` (${this.host.hint(index + 1)})` : ''
-    const what = total === 0 ? '' : `\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
+    const what = total === 0 ? (this.mark(d.id) === 'busy' ? '\nEm andamento' : '') : `\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
     seg.title = `${d.name}${go}${what}\nDuplo clique renomeia; clique direito: mais opções. Arraste para reordenar.`
     seg.addEventListener('mousedown', ev => { if (ev.button === 0 && !(ev.target as Element).closest('input')) ev.preventDefault() })
     seg.addEventListener('click', () => { if (this.swallowClick) return; this.host.switchTo(d.id) })

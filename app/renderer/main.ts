@@ -27,6 +27,7 @@ import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
+import { deskMark, markAttention } from './desk-mark.ts'
 import { deskTokens, readDeskColor } from './desks.ts'
 import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
@@ -717,21 +718,20 @@ function renderSlot(slotId: string): void {
 
 // ---------- desks ----------
 
+/** The slots of a desk: its panes and those of the frame pads that belong to it. */
+function deskSlots(deskId: string): (SlotState | undefined)[] {
+  // A desk pad's panes are the desk's: its mark counts them too.
+  return [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId || (x.panelId !== undefined && desks.deskOf(x.panelId) === deskId)).flatMap(x => x.desk.panels)].map(p => slots.get(p.id))
+}
+
 /** How many panes of a desk finished their turn / wait for the user. */
 function deskAttention(deskId: string): DeskAttention {
-  const out = { done: 0, waiting: 0 }
-  // A desk pad's panes are the desk's: its badge counts them too.
-  for (const p of [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId || (x.panelId !== undefined && desks.deskOf(x.panelId) === deskId)).flatMap(x => x.desk.panels)]) {
-    const a = slots.get(p.id)?.attention
-    if (a === 'done') out.done++
-    else if (a === 'waiting') out.waiting++
-  }
-  return out
+  return markAttention(deskMark(deskSlots(deskId)))
 }
 
 function renderStrip(): void {
   if (!strip || !desks) return
-  strip.render(desks.desks, desks.activeDeskId, deskAttention)
+  strip.render(desks.desks, desks.activeDeskId, id => deskMark(deskSlots(id)))
   const active = desks.desks.find(d => d.id === desks.activeDeskId)
   // On the workbench: the line spans the window (over the side bars) and the pads' frames take the colour for the F6 outline.
   if (active) $('workbench').style.setProperty('--desk-line-color', deskTokens(active.color).fill)
@@ -932,11 +932,14 @@ function renderDrawerButton(): void {
   if (!drawer) return
   const btn = $('btn-drawer')
   const badge = $('drawer-badge')
-  const att = drawerAttention()
+  const mark = deskMark(drawer.desk.panels.map(p => slots.get(p.id)))
+  const att = markAttention(mark)
   const total = att.done + att.waiting
   badge.hidden = total === 0
   badge.className = `cnt desk-badge drawer-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
   badge.textContent = String(total)
+  btn.querySelector('.busy-dot')?.remove()
+  if (mark === 'busy') { const dot = document.createElement('span'); dot.className = 'busy-dot'; dot.setAttribute('aria-label', 'em andamento'); btn.append(dot) }
   btn.setAttribute('aria-expanded', String(drawer.isOpen))
   const n = drawer.desk.panels.length
   // The invitation shows when nothing is in the drawer and no quick shell is on its way (that one has the stage).
