@@ -7,6 +7,7 @@ import * as quickOpen from './quick-open/main.ts'
 import * as explorer from './explorer/main.ts'
 import * as keybindingsScreen from './keybindings-screen/main.ts'
 import * as webBridge from './web-bridge/main.ts'
+import * as padNotes from './pad-notes/main.ts'
 
 export const extensions: readonly ExtensionEntry<TetherMain>[] = [
   { manifest: note.manifest, activate: note.activate },
@@ -14,4 +15,5 @@ export const extensions: readonly ExtensionEntry<TetherMain>[] = [
   { manifest: explorer.manifest, activate: explorer.activate },
   { manifest: keybindingsScreen.manifest, activate: keybindingsScreen.activate },
   { manifest: webBridge.manifest, activate: webBridge.activate },
+  { manifest: padNotes.manifest, activate: padNotes.activate },
 ]
