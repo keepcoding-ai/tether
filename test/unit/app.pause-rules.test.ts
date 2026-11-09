@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import type { PauseBatch, PauseEntry, PauseEntryState } from '../../src/daemon/pause.ts'
 import { STILL_FINISHING_MS } from '../../src/daemon/pause.ts'
 import { derivedLabel } from '../../src/daemon/pause.ts'
-import { buttonTitle, entryLabel, canResume, counter, counterText, entryText, entryTone, hasBatch, orderedEntries, summaryText, toneColor, tierOf, stateLabel, formatElapsed, formatClock, timeline, resolveSelection, followSummary, batchElapsedText, canRemoveEntry } from '../../app/renderer/pause-rules.ts'
+import { pauseAction, buttonTitle, entryLabel, canResume, counter, counterText, entryText, entryTone, hasBatch, orderedEntries, summaryText, toneColor, tierOf, stateLabel, formatElapsed, formatClock, timeline, resolveSelection, followSummary, batchElapsedText, canRemoveEntry } from '../../app/renderer/pause-rules.ts'
 
 const T0 = '2026-01-01T00:00:00.000Z'
 const t0 = Date.parse(T0)
@@ -150,5 +150,15 @@ describe('management popup rules', () => {
     assert.equal(canRemoveEntry(batch([]), entry('a', 'preparing')), true)
     assert.equal(canRemoveEntry(batch([], 'resuming'), entry('a', 'stopped')), false)
     assert.equal(canRemoveEntry(batch([]), entry('a', 'resumed')), false)
+  })
+})
+
+describe('pauseAction', () => {
+  test('counts busy slots; none disables the button', () => {
+    assert.deepEqual(pauseAction([{ turn: 'busy' }, { turn: 'idle' }, {}, { turn: 'busy' }], null), { label: 'Pedir pausa aos 2 em andamento', n: 2, enabled: true })
+    assert.deepEqual(pauseAction([{ turn: 'idle' }], null), { label: 'Ninguém em andamento agora', n: 0, enabled: false })
+  })
+  test('with a batch it is not offered', () => {
+    assert.equal(pauseAction([{ turn: 'busy' }], batch([entry('a', 'preparing')])).enabled, false)
   })
 })

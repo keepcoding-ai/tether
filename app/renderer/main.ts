@@ -35,7 +35,7 @@ import { Drawer } from './drawer.ts'
 import { FramesPad } from './frames-pad.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import type { PauseBatch } from '../../src/daemon/pause.ts'
-import { NOBODY_BUSY_MESSAGE, buttonTitle as pauseButtonTitle, canResume, counterText, entryText, entryTone, hasBatch, orderedEntries, summaryText } from './pause-rules.ts'
+import { pauseAction, buttonTitle as pauseButtonTitle, canResume, counterText, entryText, entryTone, hasBatch, orderedEntries, summaryText } from './pause-rules.ts'
 import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText, type ClosedGroups } from './closed-slots.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
@@ -75,6 +75,7 @@ import type { PaneInfo } from './ext-api.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
+import { trackedTab } from './tab-tracking.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
@@ -1660,7 +1661,7 @@ function setPauseMenu(open: boolean): void {
   // "Ainda finalizando" depends on the clock: re-render while the menu is open.
   if (open && !pauseTicker) pauseTicker = setInterval(refreshPauseMenu, 15_000)
   if (!open && pauseTicker) { clearInterval(pauseTicker); pauseTicker = undefined }
-  if (open) refreshPauseMenu()
+  if (open) { refreshPauseMenu(); const l = $('pause-list'); l.tabIndex = -1; l.focus({ preventScroll: true }) }
 }
 
 /** The management popup ("Acompanhar…"): from the pause menu or the palette. */
@@ -1680,18 +1681,16 @@ async function pauseRequest(body: RequestBody): Promise<void> {
   refreshPauseMenu()
 }
 
-async function onPauseClick(): Promise<void> {
-  if (hasBatch(pauseBatch)) { setPauseMenu(!pauseMenuOpen()); return }
-  if (pauseMenuOpen()) { setPauseMenu(false); return }
+function onPauseClick(): void {
+  // The icon only toggles the menu: a click out of curiosity must have no effect.
+  setPauseMenu(!pauseMenuOpen())
+}
+
+async function startPause(): Promise<void> {
   const r = await window.tether.request({ t: 'pause-start' })
-  if (r.t === 'error') {
-    // Nobody mid-turn is not a failure: say so kindly.
-    pauseNotice = r.code === 'bad-request' ? NOBODY_BUSY_MESSAGE : r.message
-    setPauseMenu(true)
-    return
-  }
-  if (r.pause) pauseBatch = r.pause
-  setPauseMenu(true)
+  if (r.t === 'error') pauseNotice = r.message
+  else if (r.pause) pauseBatch = r.pause
+  refreshPauseMenu()
 }
 
 function pauseRow(batch: PauseBatch, e: PauseBatch['entries'][number]): HTMLElement {
@@ -1730,13 +1729,24 @@ function refreshPauseMenu(): void {
   btn.setAttribute('aria-label', pauseButtonTitle(batch))
   const list = $('pause-list')
   if (list.hidden) return
-  if (!batch && !pauseNotice) { setPauseMenu(false); return }
   const scroll = list.querySelector('.pz-rows')?.scrollTop ?? 0
   list.replaceChildren()
   const hd = document.createElement('div'); hd.className = 'pz-hd'
   hd.textContent = batch ? summaryText(batch, Date.now()) : (pauseNotice ?? '')
+  if (!batch) {
+    const act = pauseAction(slots.values(), null)
+    hd.textContent = pauseNotice ?? 'Pausar com gentileza'
+    list.append(hd)
+    const ft = document.createElement('div'); ft.className = 'pz-ft'
+    const go = closedButton('primary', act.label, 'pause', 'Pede a cada agente em andamento que pare no seu passo')
+    go.id = 'pause-start'
+    go.disabled = !act.enabled
+    go.addEventListener('click', ev => { ev.stopPropagation(); void startPause() })
+    ft.append(go)
+    list.append(ft)
+    return
+  }
   list.append(hd)
-  if (!batch) return
   if (pauseNotice) { const n = document.createElement('div'); n.className = 'pz-note'; n.textContent = pauseNotice; list.append(n) }
   const rows = document.createElement('div'); rows.className = 'pz-rows'
   for (const e of orderedEntries(batch)) rows.append(pauseRow(batch, e))
@@ -2909,7 +2919,7 @@ function setupUi(): void {
     closedBtn.setAttribute('aria-expanded', String(!closedList.hidden))
     if (closedList.hidden) { askingForget = undefined; refreshClosedMenu() }
   })
-  $('btn-pause').addEventListener('click', ev => { ev.stopPropagation(); void onPauseClick() })
+  $('btn-pause').addEventListener('click', ev => { ev.stopPropagation(); onPauseClick() })
   document.addEventListener('click', ev => {
     if (pauseMenuOpen() && !$('pause-list').contains(ev.target as Node)) setPauseMenu(false)
     if (closedList.contains(ev.target as Node)) return
@@ -3346,15 +3356,6 @@ function tracked<T extends M & { init(params: never): void; dispose(): void }, M
   const dispose = pane.dispose.bind(pane)
   pane.dispose = () => { dispose(); const k = key(); if (map.get(k) === pane) map.delete(k) }
   return pane
-}
-
-/** Keeps `map` (pane id → tab) in step with a tab's life. */
-function trackedTab<T extends { init(params: never): void; dispose(): void }>(tab: T, map: Map<string, T>): T {
-  const init = tab.init.bind(tab) as (params: { api: { id: string } }) => void
-  tab.init = ((params: { api: { id: string } }) => { init(params); map.set(params.api.id, tab) }) as T['init']
-  const dispose = tab.dispose.bind(tab)
-  tab.dispose = () => { dispose(); for (const [id, t] of map) if (t === tab) map.delete(id) }
-  return tab
 }
 
 function registerCorePaneTypes(): void {

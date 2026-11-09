@@ -112,7 +112,15 @@ export function summaryText(batch: PauseBatch, now: number): string {
 }
 
 /** Gentle message when pause-start finds no agent mid-turn. */
-export const NOBODY_BUSY_MESSAGE = 'Nenhum agente está em andamento agora, então não há o que pausar.'
+/** The menu's start button without a batch: how many are mid-turn decides its text and whether it works. */
+export function pauseAction(slots: Iterable<{ turn?: string }>, batch: PauseBatch | null | undefined): { label: string; n: number; enabled: boolean } {
+  let n = 0
+  for (const s of slots) if (s.turn === 'busy') n++
+  if (hasBatch(batch)) return { label: '', n, enabled: false }
+  return n === 0
+    ? { label: 'Ninguém em andamento agora', n, enabled: false }
+    : { label: `Pedir pausa aos ${n} em andamento`, n, enabled: true }
+}
 
 // ---------- management popup ("Acompanhar…") ----------
 

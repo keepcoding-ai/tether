@@ -152,7 +152,14 @@ test('app pause: busy ball, Pausar button + counter, menu, pause.manage popup (l
     await page.screenshot({ path: join(shots, 'app-busy-ball.png') })
 
     // ---- Pausar: counter 0/1 then 1/1 when the agent stops itself ----
+    // The icon alone never pauses: open the menu, press Enter right away, nothing starts.
     await page.click('#btn-pause')
+    await page.waitForSelector('#pause-list:not([hidden]) #pause-start:not([disabled])')
+    await page.keyboard.press('Enter')
+    await sleep(800)
+    assert.equal(await page.locator('#pause-count').isVisible(), false, 'clicking the icon and pressing Enter creates no batch')
+    assert.equal(await page.locator('#pause-list .pz-row').count(), 0, 'no batch rows')
+    await page.click('#pause-start')
     await page.waitForFunction(() => document.querySelector('#pause-count')?.textContent === '0/1' || document.querySelector('#pause-count')?.textContent === '1/1')
     await page.waitForSelector('#pause-list:not([hidden]) .pz-row')
     console.log(`# app: counter after click = ${JSON.stringify(await page.locator('#pause-count').textContent())}; row = ${JSON.stringify(await page.locator('#pause-list .pz-row .cw').first().textContent())}`)
