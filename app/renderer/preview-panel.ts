@@ -15,6 +15,7 @@ import type { PreviewPane } from './preview-pane.ts'
 import { previewShell, readPreviewTokens, tokensCss } from './preview-style.ts'
 import { noteDirOf } from '../shared/notes.ts'
 import { classifyLink } from '../shared/markdown-links.ts'
+import { openLink } from './link-open.ts'
 import { renderMarkdown, slugify } from '../shared/markdown-render.ts'
 import { lineAtOffset, offsetOfLine, type LineBlock } from '../shared/markdown-scroll.ts'
 import { previewParams, previewTitle } from '../shared/preview.ts'
@@ -36,9 +37,6 @@ export interface PreviewHost {
   getAppearance(): TerminalAppearance
   /** The open editor of the file, when there is one that has read it. */
   editorFor(path: string): NotePanel | undefined
-  /** Opens a file next to the note (a relative link), like Quick Open: `line` is 1-based. */
-  openFile(path: string, noteDir: string, line?: number): void
-  openExternal(url: string): void
   /** The path or the scroll changed: persist the pane params with the layout. */
   onParamsChange(panel: PreviewPanel): void
   /** The pane got a click inside the frame, where dockview cannot see it: it becomes the active pane (false when it already is). */
@@ -367,9 +365,10 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
     const href = link.getAttribute('href')
     if (!href) return
     const target = classifyLink(href, noteDirOf(this.path))
-    if (target.kind === 'external') this.host.openExternal(target.url)
-    else if (target.kind === 'anchor') this.scrollToAnchor(target.id)
-    else if (target.kind === 'file') this.host.openFile(target.path, noteDirOf(this.path), target.line)
+    // The anchor is the preview's own; the rest goes to the app's single link opener (app/renderer/link-open.ts).
+    if (target.kind === 'anchor') this.scrollToAnchor(target.id)
+    else if (target.kind === 'external') openLink(target)
+    else if (target.kind === 'file') openLink({ kind: 'file', path: target.path, ...(target.line ? { position: { line: target.line } } : {}) }, { baseDir: noteDirOf(this.path) })
   }
 
   private scrollToAnchor(id: string): void {

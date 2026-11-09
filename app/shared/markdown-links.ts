@@ -3,7 +3,10 @@
 //     is a file of the note's folder (opened like Quick Open opens it), anything else is ignored;
 //   - an image is allowed only when it is a small inline `data:` image or a relative path that stays inside the note's
 //     folder (`resolveImageSource`); a remote image is never fetched (the page's CSP says the same).
+// Which URLs may leave the app is the app's links policy (app/shared/links.ts isExternalUrl), the same for every surface.
 // Paths are handled lexically with both separators, so a Windows note path works the same in a unit test on any OS.
+
+import { isExternalUrl } from './links.ts'
 
 export type LinkTarget =
   | { kind: 'external'; url: string }
@@ -80,7 +83,7 @@ export function classifyLink(href: string, noteDir: string): LinkTarget {
   const scheme = SCHEME.exec(link)
   if (scheme) {
     // `C:\x` looks like a scheme; only http(s) goes anywhere.
-    return /^https?$/i.test(scheme[1]!) ? { kind: 'external', url: link } : { kind: 'ignore' }
+    return isExternalUrl(link) ? { kind: 'external', url: link } : { kind: 'ignore' }
   }
   if (link.startsWith('//')) return { kind: 'ignore' } // protocol-relative: a remote host, not a file
   const cut = link.search(/[?#]/)

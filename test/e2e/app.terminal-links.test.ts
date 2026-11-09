@@ -8,7 +8,7 @@
 //   3. after `cd` to another folder: a relative path that only exists there is no link; `docs/note.md` still resolves
 //      against the folder the pane was OPENED in (the other folder has its own, different docs/note.md);
 //   4. a folder goes to the Explorer, a binary to the system program (both recorded, not run), an .exe is refused with
-//      a message; 5. a web link still shows the pointer without Ctrl. Every kill goes through test/kill.ts.
+//      a message; 5. a web link shows the hand only with Ctrl, like a path. Every kill goes through test/kill.ts.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -254,10 +254,12 @@ test('app terminal links: Ctrl+click opens the printed path (opening folder, tab
     assert.equal((await opened()).length, 2, 'the executable was not handed to the system')
     await page.click('button.choice[data-choice="ok"]')
 
-    // 5. web links are untouched: the pointer shows over a URL without Ctrl.
+    // 5. a web link follows the same rule as a path (the app's links, app/shared/links.ts): the hand only with Ctrl.
     await focusPane(page, shell!)
     const url = await print(page, shell!, 'https://exam', 'ple.com/x')
-    assert.equal(await hover(page, await pointOf(page, shell!, url), false), true, 'the web link still shows the pointer without Ctrl')
+    assert.equal(await hover(page, await pointOf(page, shell!, url), false), false, 'no hand over a web link without Ctrl')
+    await page.mouse.move(5, 5)
+    assert.equal(await hover(page, await pointOf(page, shell!, url), true), true, 'the hand over a web link with Ctrl')
     await page.mouse.move(5, 5)
 
     // 6. a plain click on an existing path that is not open yet opens nothing.

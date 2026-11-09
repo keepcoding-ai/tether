@@ -60,6 +60,9 @@ import { uiIpc } from '../shared/ext-ipc.ts'
 import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { generateSettingsSchema } from '../shared/settings-schema.ts'
 import { monaco, setSettingsSchema } from './monaco.ts'
+import { installMonacoLinks } from './monaco-links.ts'
+import { openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
+import type { LinkTarget } from '../shared/links.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
@@ -268,7 +271,7 @@ const host: PanelHost = {
   onToggleDetails: id => togglePaneDetails(id),
   onOpenFolder: id => openFolder(id),
   onCopyFolder: id => copyFolder(id),
-  onOpenLink: (id, target) => openTerminalLink(id, target),
+  onOpenLink: (id, target) => openLink(target, { slotId: id }),
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
   isDaemonReady: () => daemonIsReady,
   daemonReady: () => daemonReadyPromise,
@@ -1908,18 +1911,24 @@ const emptyHost: EmptyHost = {
 }
 
 /**
- * A path printed in a terminal was Ctrl+clicked (app/renderer/terminal-links.ts): a folder opens in the Explorer; a file
- * opens the way Ctrl+P opens it, in the clicked pane's tab group, at the line and column the text names.
+ * What following a link means, for every surface (app/renderer/link-open.ts): http(s) goes to the browser, a folder opens
+ * in the Explorer, a file opens the way Ctrl+P opens it — from a terminal in the clicked pane's tab group (from a pad's
+ * terminal in the Foco de Mesa), at the line and column the link names.
  */
-function openTerminalLink(slotId: string, target: { path: string; isDirectory: boolean; position?: { line: number; column?: number } }): void {
+function followLink(target: LinkTarget, origin: LinkOrigin): void {
+  if (target.kind === 'external') { window.tether.openExternal(target.url); return }
+  if (target.kind !== 'file') return
   if (target.isDirectory) {
     void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
     return
   }
-  // From a pad's terminal the file goes to the Foco de Mesa (no reference); from a desk's or the drawer's, into the clicked pane's group.
-  const reference = framePadOf(slotId) ? undefined : slotId
-  void openFile(fileOpenHost, target.path, { side: false, root: paneCwdOf(slotId) ?? '', ...(reference ? { reference } : {}), ...(target.position ? { position: target.position } : {}) })
+  const slotId = origin.slotId
+  const reference = slotId && !framePadOf(slotId) ? slotId : undefined
+  const root = (slotId ? paneCwdOf(slotId) : undefined) ?? origin.baseDir ?? ''
+  void openFile(fileOpenHost, target.path, { side: false, root, ...(reference ? { reference } : {}), ...(target.position ? { position: target.position } : {}) })
 }
+setLinkHandler(followLink)
+installMonacoLinks()
 
 // ---------- opening a file ----------
 // Ctrl+P (the quick-open extension), a terminal link and the extensions' "abrir o arquivo-fonte" open a file through the

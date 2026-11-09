@@ -199,8 +199,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     getScheme: () => ui.theme.scheme(),
     getAppearance: () => ui.theme.appearance(),
     editorFor: path => { const n = noteByPath(path); return n && n.isReady ? n : undefined },
-    openFile: (path, noteDir, line) => { void ui.openers.open(path, { side: false, root: noteDir, ...(line ? { position: { line } } : {}) }) },
-    openExternal: url => ui.shell.openExternal(url),
     onParamsChange: panel => {
       const p = ui.panes.find(panel.id)
       if (!p) return
