@@ -54,6 +54,11 @@ export function activate(ui: TetherUi): IDisposable[] {
   ui.test.expose('activate', (id: string) => { ui.panes.find(id)?.api.setActive() })
   ui.test.expose('close', (id: string) => { ui.panes.close(id) })
   ui.test.expose('refresh', () => { for (const m of mounted.values()) m.binding.refresh() })
+  /** An overlay of the extension's own that freezes (ui.surfaces.freezeWhile), held until unfreeze(n). */
+  const holds = new Map<number, IDisposable>()
+  let h = 0
+  ui.test.expose('freezeWhile', (reason: string) => { holds.set(++h, ui.surfaces.freezeWhile(reason)); return h })
+  ui.test.expose('unfreeze', (n: number) => { holds.get(n)?.dispose(); holds.delete(n) })
 
   return [ui.panes.register({
     id: 'surface-probe', idPrefix: PANEL_PREFIX, component: PANEL_COMPONENT, tabComponent: PANEL_TAB, hasSlot: false, icon: 'question',
