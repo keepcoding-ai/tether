@@ -7,8 +7,11 @@
 // written without it stay in plain text forever, and turning it on later does not encrypt them). The fuse is read from the
 // executable's fuse wire (the same bytes @electron/fuses flips); unreadable counts as off. Off: the partition is in memory
 // (`tether-browser`, no `persist:`), logged once, and `persistentLogins` is false so the interface can say logins are not kept.
+//
+// E3: the network filter (net-filter.ts) is installed here, on the partition, before any tab loads.
 import { app, session as electronSession, type Session, type WebContents } from 'electron'
 import { open } from 'node:fs/promises'
+import { type BlockedRequest, createNetFilter, type NetFilter } from './net-filter.ts'
 import { cookieEncryptionOn, FUSE_SENTINEL, fuseWireAt } from './tab-rules.ts'
 
 export const PERSIST_PARTITION = 'persist:tether-browser'
@@ -22,6 +25,10 @@ export interface TabSession {
   readonly persistentLogins: boolean
   /** What every tab's webContents gets once (WebRTC without UDP outside the proxy). */
   prepare(wc: WebContents): void
+  /** The network filter (E3): local network only from a local origin or with a ticket; schemes limited. */
+  readonly net: NetFilter
+  /** Follows the filter's refusals (one listener: the tab registry). */
+  onBlocked(listener: (b: BlockedRequest) => void): void
   /** Forces the cookies to disk now (a no-op in memory). */
   flush(): void
   dispose(): void
@@ -65,6 +72,9 @@ export function createTabSession(persistentLogins: boolean, log: (msg: string) =
   ses.setPermissionCheckHandler(() => false)
   ses.setDevicePermissionHandler(() => false)
   ses.setDisplayMediaRequestHandler((_req, callback) => callback({}))
+  // The filter is in place before any tab exists: the first request of the first tab already goes through it.
+  let blockedListener: ((b: BlockedRequest) => void) | undefined
+  const net = createNetFilter(ses, log, b => blockedListener?.(b))
   const onDownload = (_e: unknown, item: { cancel(): void }): void => { item.cancel(); log('download recusado (a fatia de downloads ainda não existe)') }
   ses.on('will-download', onDownload)
   const flush = (): void => { if (persistentLogins) ses.cookies.flushStore().catch(() => {}) }
@@ -74,13 +84,16 @@ export function createTabSession(persistentLogins: boolean, log: (msg: string) =
   app.on('before-quit', onQuit)
   let disposed = false
   return {
-    partition, session: ses, persistentLogins,
+    partition, session: ses, persistentLogins, net,
+    onBlocked: listener => { blockedListener = listener },
     prepare: wc => { wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp') },
     flush,
     dispose: () => {
       if (disposed) return
       disposed = true
       flush()
+      net.dispose()
+      blockedListener = undefined
       if (timer) clearInterval(timer)
       app.removeListener('before-quit', onQuit)
       ses.removeListener('will-download', onDownload as never)

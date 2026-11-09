@@ -3,12 +3,18 @@
 // and lists tabs and tells the renderer what changes (title, address, loading, closed). The page is held in:
 //   - a popup never opens a window: a web address becomes a new tab of the same owner, anything else is denied;
 //   - `<webview>` is never attached; a navigation to a scheme other than http(s) (or the blank page) is refused;
-//   - addresses never go to the log.
+//   - addresses never go to the log;
+//   - E3: the network filter (net-filter.ts) refuses the local network to a public origin. A tab created with `ticket` (the
+//     gatekeeper's request, a restored tab the person showed) gets one ticket for its first address; `allowOnce` gives one
+//     for a later navigation. A popup gets a ticket only when the frame that opened it and its page are both local (the
+//     package's origin gate reads the opener's `Referer` the same way; no referrer, no ticket). Each refusal is a `blocked`
+//     event with the reason and the destination's origin.
 // When an agent exits its tabs stay (the "encerrado" chip is the interface's); nothing here destroys them.
 import { randomUUID } from 'node:crypto'
 import type { Event as ElectronEvent, WebContents } from 'electron'
 import type { Surface, TetherMain } from '../../app/main/ext-api.ts'
 import { type IDisposable, toDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import type { BlockedRequest } from './net-filter.ts'
 import type { TabSession } from './session.ts'
 import { cleanTitle, isId, isNavigable, isWebUrl, makeTab, type SavedTab, storableUrl, type Tab, type TabInfo } from './tab-rules.ts'
 
@@ -16,9 +22,18 @@ export const PAGE_SIZE = { width: 1280, height: 800 } as const
 
 interface Entry { tab: Tab; surface: Surface; loading: boolean }
 
+/** A request of a tab refused by the network filter: never the full address, only the destination's origin. */
+export interface TabBlocked {
+  tabId: string
+  reason: BlockedRequest['reason']
+  resourceType: string
+  destination: string
+}
+
 export interface TabEvents {
   changed(info: TabInfo): void
   closed(tabId: string): void
+  blocked?(event: TabBlocked): void
 }
 
 const POPUP_DISPOSITIONS = new Set(['default', 'foreground-tab', 'background-tab', 'new-window'])
@@ -35,15 +50,36 @@ export class TabRegistry {
     this.main = main
     this.session = session
     this.events = events
+    session.then(s => s.onBlocked(b => {
+      const tabId = b.webContentsId === undefined ? undefined : this.tabOfPage(b.webContentsId)
+      if (tabId !== undefined) this.events.blocked?.({ tabId, reason: b.reason, resourceType: b.resourceType, destination: b.destination })
+    })).catch(() => {})
+  }
+
+  private tabOfPage(webContentsId: number): string | undefined {
+    for (const [tabId, e] of this.entries) if (!e.surface.webContents.isDestroyed() && e.surface.webContents.id === webContentsId) return tabId
+    return undefined
+  }
+
+  /**
+   * One ticket for the tab's next main-frame navigation to exactly `url` (one use, a few seconds): what the gatekeeper calls
+   * before navigating at an agent's request. A redirect from it to another local destination does not inherit it.
+   */
+  async allowOnce(tabId: string, url: string): Promise<boolean> {
+    const wc = this.webContents(tabId)
+    if (!wc || wc.isDestroyed()) return false
+    return (await this.session).net.allowOnce(wc.id, url)
   }
 
   list(): TabInfo[] { return [...this.entries.values()].map(infoOf) }
   get(tabId: string): TabInfo | undefined { const e = this.entries.get(tabId); return e ? infoOf(e) : undefined }
   /** The tab's page (test hooks and, later, the gatekeeper). */
   webContents(tabId: string): WebContents | undefined { return this.entries.get(tabId)?.surface.webContents }
+  /** The tab's surface (its debugger is the gatekeeper's way in). */
+  surface(tabId: string): Surface | undefined { return this.entries.get(tabId)?.surface }
 
   /** A new tab for `owner` opening `url` (http/https only), hidden; `tabId` keeps a saved tab's id. Same id twice: the same tab. */
-  create(owner: string, url: string, opts: { tabId?: string; title?: string } = {}): Promise<TabInfo> {
+  create(owner: string, url: string, opts: { tabId?: string; title?: string; ticket?: boolean } = {}): Promise<TabInfo> {
     if (this.disposed) return Promise.reject(new Error('guia: extensão desligada'))
     if (!isId(owner)) return Promise.reject(new Error('guia: dono inválido'))
     if (!isWebUrl(url)) return Promise.reject(new Error('guia: só endereços http e https'))
@@ -53,7 +89,7 @@ export class TabRegistry {
     if (known) return Promise.resolve(infoOf(known))
     const inFlight = this.pending.get(tabId)
     if (inFlight) return inFlight
-    const p = this.open(tabId, owner, url, opts.title).finally(() => this.pending.delete(tabId))
+    const p = this.open(tabId, owner, url, opts.title, opts.ticket === true).finally(() => this.pending.delete(tabId))
     this.pending.set(tabId, p)
     return p
   }
@@ -61,7 +97,8 @@ export class TabRegistry {
   /** A tab saved in layout.json, created again with its id and owner; undefined when its address was not kept. */
   async restore(saved: SavedTab): Promise<TabInfo | undefined> {
     if (!storableUrl(saved.url)) return undefined
-    return this.create(saved.ownerSlotId, saved.url, { tabId: saved.tabId, title: saved.title })
+    // The person showed the pane: its saved address opens once, even on the local network.
+    return this.create(saved.ownerSlotId, saved.url, { tabId: saved.tabId, title: saved.title, ticket: true })
   }
 
   close(tabId: string): void {
@@ -73,7 +110,7 @@ export class TabRegistry {
     for (const e of [...this.entries.values()]) e.surface.destroy()
   }
 
-  private async open(tabId: string, owner: string, url: string, title: string | undefined): Promise<TabInfo> {
+  private async open(tabId: string, owner: string, url: string, title: string | undefined, ticket: boolean): Promise<TabInfo> {
     const ses = await this.session
     const surface = await this.main.surfaces.create({ pageSize: { ...PAGE_SIZE }, webPreferences: { partition: ses.partition, backgroundThrottling: false } })
     const tab = makeTab({ tabId, ownerSlotId: owner, surfaceId: surface.id, url, title, createdAt: Date.now() })
@@ -81,7 +118,9 @@ export class TabRegistry {
     const entry: Entry = { tab, surface, loading: false }
     this.entries.set(tabId, entry)
     const subs = this.guard(entry, ses)
+    const pageId = surface.webContents.id
     surface.onDidDestroy(() => {
+      ses.net.forget(pageId)
       for (const s of subs) s.dispose()
       if (this.entries.get(tabId) !== entry) return
       this.entries.delete(tabId)
@@ -89,6 +128,7 @@ export class TabRegistry {
     })
     this.main.log(`guia ${tabId} criada para ${owner}`)
     this.events.changed(infoOf(entry))
+    if (ticket) ses.net.allowOnce(pageId, url)
     // The first load is not awaited: a slow or failing site still gives the tab (its frame shows the state).
     surface.webContents.loadURL(url).catch(() => {})
     return infoOf(entry)
@@ -102,7 +142,9 @@ export class TabRegistry {
     const changed = (): void => this.events.changed(infoOf(entry))
     wc.setWindowOpenHandler(details => {
       if (isWebUrl(details.url) && POPUP_DISPOSITIONS.has(details.disposition)) {
-        this.create(ownerSlotId, details.url).catch(e => this.main.log(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
+        const opener = details.referrer?.url ?? ''
+        const ticket = opener !== '' && ses.net.isLocal(opener) && ses.net.isLocal(wc.getURL())
+        this.create(ownerSlotId, details.url, { ticket }).catch(e => this.main.log(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
       } else this.main.log(`guia ${tabId}: popup recusado`)
       return { action: 'deny' }
     })

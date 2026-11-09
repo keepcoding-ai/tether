@@ -1,5 +1,6 @@
 // The browser extension's channels between its renderer and main sides (E2: the tab registry).
 import type { SavedTab, TabInfo } from './tab-rules.ts'
+import type { TabBlocked } from './tabs.ts'
 
 export interface BrowserStatus {
   /** False when the tabs' partition is in memory (the cookie-encryption fuse is off): "logins não são guardados". */
@@ -19,5 +20,7 @@ export interface BrowserChannels {
     /** A tab was created or changed (title, address, loading). */
     tab: (info: TabInfo) => void
     closed: (tabId: string) => void
+    /** A request of the tab was refused by the network filter (reason and destination origin only). */
+    blocked: (event: TabBlocked) => void
   }
 }
