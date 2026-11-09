@@ -135,7 +135,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const picked = path ?? await ipc.invoke('pickOpen', paneCwdForNote())
     if (!picked) return
     const existing = noteByPath(picked)
-    if (existing) { setActive(existing.id); existing.focus(); return }
+    if (existing) { ui.panes.reveal(existing.id); return }
     const panel = addNotePanel(picked, reference)
     requestAnimationFrame(() => ui.panes.focus(panel.id))
   }
@@ -147,8 +147,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   function openTextFile(path: string, opts: OpenFileOptions): void {
     const existing = noteByPath(path)
     if (existing) {
-      setActive(existing.id)
-      existing.focus()
+      // Wherever the tab is (another desk, a pad, the drawer): its place comes to the front.
+      ui.panes.reveal(existing.id)
       if (opts.position) existing.reveal(opts.position)
       return
     }
@@ -207,8 +207,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     getScheme: () => ui.theme.scheme(),
     getAppearance: () => ui.theme.appearance(),
     editorFor: path => { const n = noteByPath(path); return n && n.isReady ? n : undefined },
-    openFile: (path, noteDir, line) => { void ui.openers.open(path, { side: false, root: noteDir, ...(line ? { position: { line } } : {}) }) },
-    openExternal: url => ui.shell.openExternal(url),
     onParamsChange: panel => {
       const p = ui.panes.find(panel.id)
       if (!p) return
@@ -218,7 +216,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     activate: panel => { const p = ui.panes.find(panel.id); if (p && !p.api.isGroupActive) p.api.setActive() },
     revealSource: (panel, line) => {
       const note = noteByPath(panel.path)
-      if (note) { setActive(note.id); note.reveal({ line }); note.focus(); return }
+      if (note) { ui.panes.reveal(note.id); note.reveal({ line }); return }
       void ui.openers.open(panel.path, { side: false, root: noteDirOf(panel.path), reference: panel.id, position: { line } })
     },
     onTabMenu: (id, x, y) => ui.panes.showTabMenu(id, x, y),
@@ -275,9 +273,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     const file = path ?? preview.path
     const note = noteByPath(file)
     if (note) {
-      setActive(note.id)
+      ui.panes.reveal(note.id)
       if (preview.kind === 'md') note.scrollToLine(preview.topLine())
-      note.focus()
       return
     }
     void ui.openers.open(file, { side: false, root: noteDirOf(file), reference: id, source: true })
@@ -326,6 +323,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       ...(note.wordWrapOverride !== undefined ? [{ icon: 'arrow-counter-clockwise', label: 'Quebra de linha: usar o padrão', run: () => note.setWordWrapOverride(undefined) }] : []),
       { icon: 'floppy-disk', label: 'Salvar nota como…', run: () => { void saveNoteAs(id) } },
       ...(isPreviewablePath(note.path) ? [{ icon: 'eye', label: 'Abrir prévia', run: () => { openPreview({ side: false, reference: id }) } }, { icon: 'square-split-horizontal', label: 'Abrir prévia ao lado', run: () => { openPreview({ side: true, reference: id }) } }] : []),
+      { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
       { icon: 'copy', label: 'Copiar caminho da nota', run: () => ui.shell.writeClipboard(note.path) },
       { icon: 'folder-open', label: 'Abrir pasta da nota no Explorer', run: () => openFolder(note.path) },
       ...revealEntry(),
@@ -343,6 +341,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.menus.context(x, y, [
       { icon: 'note-pencil', label: preview.kind === 'html' ? 'Ver código' : 'Abrir o arquivo-fonte', run: () => openPreviewSource(id) },
       ...(preview instanceof HtmlPreviewPanel ? [{ icon: 'arrow-square-out', label: 'Abrir no navegador', run: () => openInBrowser(preview.path) }, { icon: 'arrow-clockwise', label: 'Recarregar a página', run: () => preview.reload() }] : []),
+      { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
       { icon: 'copy', label: 'Copiar caminho do arquivo', run: () => ui.shell.writeClipboard(preview.path) },
       { icon: 'folder-open', label: 'Abrir pasta do arquivo no Explorer', run: () => openFolder(preview.path) },
       ...revealEntry(),
@@ -417,6 +416,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       return { key: `note:${path}`, reopen: () => { if (noteByPath(path)) return false; void openNote(path); return true } }
     },
     tabMenu: showNoteMenu,
+    // A note's link names its file: it reveals the note, or opens it again after it was closed.
+    linkFileOf: id => notes.get(id)?.path,
     // The tab strip's "prévia ao lado" button.
     canPreviewSide: id => { const n = notes.get(id); return !!n && isPreviewablePath(n.path) },
     previewSide: id => { openPreview({ side: true, reference: id }) },
@@ -475,7 +476,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const picked = await ipc.invoke('pickOpen', cwd || undefined)
       if (!picked) return undefined
       const existing = noteByPath(picked)
-      if (existing) { setActive(existing.id); existing.focus(); return undefined }
+      if (existing) { ui.panes.reveal(existing.id); return undefined }
       return { options: notePanelOptions(picked) }
     }),
   )

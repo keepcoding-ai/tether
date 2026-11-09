@@ -74,6 +74,8 @@ import arrowLineRight from '@phosphor-icons/core/assets/regular/arrow-line-right
 import arrowLineUp from '@phosphor-icons/core/assets/regular/arrow-line-up.svg'
 import arrowLineDown from '@phosphor-icons/core/assets/regular/arrow-line-down.svg'
 import arrowCounterClockwise from '@phosphor-icons/core/assets/regular/arrow-counter-clockwise.svg'
+import linkIcon from '@phosphor-icons/core/assets/regular/link.svg'
+import linkBreak from '@phosphor-icons/core/assets/regular/link-break.svg'
 import palette from '@phosphor-icons/core/assets/regular/palette.svg'
 import cards from '@phosphor-icons/core/assets/regular/cards.svg'
 import lightning from '@phosphor-icons/core/assets/regular/lightning.svg'
@@ -133,6 +135,8 @@ const SVG = {
   'list-numbers': listNumbers,
   'arrow-elbow-down-left': arrowElbowDownLeft,
   'arrow-counter-clockwise': arrowCounterClockwise,
+  link: linkIcon,
+  'link-break': linkBreak,
   'arrow-square-out': arrowSquareOut,
   'caret-down': caretDown,
   'caret-up': caretUp,

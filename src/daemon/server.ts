@@ -1,6 +1,7 @@
 // tetherd: owns one PTY per slot, keeps each slot's scrollback, launches agents through the adapters and
 // watches <home>/slots/*.jsonl so every client sees the current binding. Speaks protocol.ts over a named
 // pipe / unix socket (NDJSON). "Running" means: this process holds the PTY and it has not exited.
+import { withTabEnv } from '../core/tab-env.ts'
 import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { AttentionState, attentionOptions, parseAttentionReport } from './attention.ts'
@@ -631,6 +632,7 @@ class DaemonImpl implements Daemon {
       if (!adapter) throw new RequestError('agent-unavailable', `o agente ${meta.agent} não está disponível`)
       plan = adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
     }
+    plan = withTabEnv(plan, meta)
     return this.transformPlan ? this.transformPlan(plan, meta) : plan
   }
 

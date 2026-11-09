@@ -5,8 +5,8 @@ import { agentTable, isAgentUnavailable } from './agent-ui.ts'
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { terminalLinkProvider, type TerminalLinkTarget } from './terminal-links.ts'
+import type { LinkTarget } from '../shared/links.ts'
+import { terminalLinkProvider } from './terminal-links.ts'
 import { WebglAddon } from '@xterm/addon-webgl'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
@@ -199,7 +199,7 @@ export interface PanelHost {
   /** "Copiar pasta" from the status bar's pinned action. */
   onCopyFolder(slotId: string): void
   /** A path printed in the pane's terminal was Ctrl+clicked. */
-  onOpenLink(slotId: string, target: TerminalLinkTarget): void
+  onOpenLink(slotId: string, target: LinkTarget): void
   /** The status-bar toggle at the tab strip's right end (and Ctrl+Shift+H): show or hide the pane's header. */
   onToggleDetails(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
@@ -321,8 +321,7 @@ export class TerminalPanel implements IContentRenderer {
       theme: terminalTheme(host.getAppearance(), host.getScheme()),
     })
     this.term.loadAddon(this.fit)
-    this.term.loadAddon(new WebLinksAddon((_ev, uri) => window.tether.openExternal(uri)))
-    // Ctrl+click on a path that exists (relative ones read against the folder this pane was opened in).
+    // Ctrl+click on a URL or on a path that exists (relative ones read against the folder this pane was opened in): the app's links.
     this.term.registerLinkProvider(terminalLinkProvider(this.term, {
       openingCwd: () => this.host.getSlot(this.slotId)?.cwd ?? this.hint?.cwd,
       open: target => this.host.onOpenLink(this.slotId, target),
