@@ -4,7 +4,7 @@
 //      keyboard in the search; Recentes shows the shell just opened and is the highlight; Enter opens it in place;
 //   3. Ctrl+N from inside the terminal: an empty tab (origin add) in the same group; Esc closes it;
 //   4. "Dividir à direita (vazio)" (palette): origin layout, no Cancelar; Esc leaves it there;
-//   5. the digits open the item with that number as shown (renumbered under a filter);
+//   5. the digits select the item with that number as shown (renumbered under a filter); Enter opens it;
 //   6. ⤢: the same chooser as a popup with the typed text, a context chip, no "Onde"; Esc hands the text back;
 //   7. the desk-edge "+" ADDS an empty pane (no duplicate); its right-click menu names the three actions;
 //   8. the contextless popup with a pane active: "Onde" in one line, the grid in one click, "abaixo" honoured;
@@ -130,6 +130,7 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     assert.equal(await page.locator('#dlg-new .btn.primary .go-l').innerText(), 'Abrir')
     await page.fill('#dlg-new .ch-path-input', work)
     await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await noDialog(page)
     await page.waitForFunction(() => window.__tether.panelIds().length === 1)
     const [shell] = await ids(page)
@@ -216,9 +217,12 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     await page.locator(`.empty-panel[data-empty-id="${e3.id}"] .ch-path-input`).fill(work)
     await page.locator(`.empty-panel[data-empty-id="${e3.id}"] .ch-q`).focus()
     await page.keyboard.press(String(n))
+    await page.waitForFunction(id => window.__tether.empty(id)?.highlight === 'soul', e3.id)
+    assert.ok((await ids(page)).includes(e3.id), 'the digit only selects: the pane is still there')
+    await page.keyboard.press('Enter')
     await page.waitForFunction(() => window.__tether.empties().length === 0)
     const soul = newOf(before, await ids(page))
-    assert.equal((await page.evaluate(() => window.__tether.slots())).find(s => s.slotId === soul)?.kind, 'soul', 'the digit opened soul in the pane\'s place')
+    assert.equal((await page.evaluate(() => window.__tether.slots())).find(s => s.slotId === soul)?.kind, 'soul', 'Enter opened soul in the pane\'s place')
 
     // 6. ⤢: the same chooser in focus mode with the typed text; Esc hands it back.
     await focusShell(page, shell!)
@@ -303,6 +307,7 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     await page.fill('#dlg-new .ch-path-input', work)
     before = await ids(page)
     await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await noDialog(page)
     await page.waitForFunction(n => window.__tether.panelIds().length === n, before.length + 1)
     const below = newOf(before, await ids(page))

@@ -144,6 +144,7 @@ async function createShell(page: Page, cwd: string, placement?: string): Promise
     assert.equal(await page.locator(`#dlg-new .placement[data-level="${level}"][data-placement="${where}"]`).getAttribute('aria-pressed'), 'true', `${placement} chosen`)
   }
   await page.click('#dlg-new .ch-item[data-id="powershell"]')
+  await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
   await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
   await waitTabs(page, before + 1)
 }

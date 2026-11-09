@@ -77,6 +77,14 @@ async function highlightNewNote(page: Page): Promise<void> {
   await page.waitForTimeout(300)
   assert.ok(await page.locator(`${D}[open]`).isVisible(), 'a click only selects "Nova nota"')
   assert.equal(await page.evaluate(() => window.__tether.panelIds().length), before, 'nothing opened')
+  const hl = (await page.locator(`${D} .ch-item.hl`).boundingBox())!
+  const list = (await page.locator(`${D} .ch-list`).boundingBox())!
+  assert.ok(hl.y >= list.y - 1 && hl.y + hl.height <= list.y + list.height + 1, 'the selected row is fully in view')
+  assert.deepEqual(await page.locator(`${D} .ch-item.hl`).evaluateAll(els => els.map(e => e.getAttribute('data-id'))), ['kind:note-new'], 'one selected item: the clicked one')
+  // The mouse over another row is a hover only: the selection stays.
+  await page.hover(`${D} .ch-item[data-id="powershell"]`)
+  await page.waitForTimeout(150)
+  assert.equal((await page.evaluate(() => window.__tether.chooser()))?.highlight, 'kind:note-new', 'the selection does not follow the mouse')
 }
 const chipOn = (page: Page) => page.locator(`${D} .ch-dest-chip.on`).innerText()
 
@@ -104,6 +112,7 @@ test('app note destination: .tether cut, Notas do projeto / Minhas notas / Outro
     await openPopup(page)
     await page.fill(`${D} .ch-path-input`, inside)
     await page.click(`${D} .ch-item[data-id="powershell"]`)
+    await page.click(`${D} .btn.primary.go`) // two steps: the click selects, the button opens
     await noDialog(page)
     await page.waitForFunction(() => window.__tether.panelIds().length === 1)
 
@@ -153,6 +162,12 @@ test('app note destination: .tether cut, Notas do projeto / Minhas notas / Outro
     assert.ok(await page.locator(`${D} .ch-sfx`).isHidden(), 'Outro: no suffix')
     await page.fill(`${D} .ch-path-input`, chosen)
     await page.locator(`${D} .ch-q`).focus()
+    await page.waitForTimeout(100)
+    {
+      const hl = (await page.locator(`${D} .ch-item.hl`).boundingBox())!
+      const list = (await page.locator(`${D} .ch-list`).boundingBox())!
+      assert.ok(hl.y + hl.height <= list.y + list.height + 1, 'after a destination change the selected row is still in view')
+    }
     await shot(app, 'note-dest-other')
     await page.keyboard.press('Enter')
     await noDialog(page)

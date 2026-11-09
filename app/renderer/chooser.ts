@@ -3,8 +3,10 @@
 // "Onde"), and as the contextless popup (≡ "Novo painel…", the toolbar "+", the palette), which alone carries the
 // "Onde" row. Three fixed bands: the search on top (palette style), the list in the middle (the only part that
 // scrolls), the folder + actions at the bottom, so "Abrir" never leaves the screen. Rules in chooser-rules.ts.
-// Keys: type to filter; ↑/↓ wrap; 1–9 open the item with that number as shown; Enter opens the highlighted item;
-// a click on an item opens it at once; Esc clears the text, then closes the folder list, then cancels (the host
+// Two steps, always (Guga, 09/11): an item has parameters to check (the folder, a note's destination), so a click or
+// a digit only selects it; the footer button (or Enter) opens it.
+// Keys: type to filter; ↑/↓ wrap; 1–9 select the item with that number as shown; Enter opens the highlighted item;
+// a click on an item selects it; Esc clears the text, then closes the folder list, then cancels (the host
 // decides what cancelling means from the pane's origin). Nothing here talks to tetherd: the host resolves the pick.
 import type { Profile } from '../../src/daemon/protocol.ts'
 import type { EmptyOrigin } from '../shared/empty.ts'
@@ -162,14 +164,8 @@ export class Chooser {
       if (!row) return
       this.state.highlight = row.dataset.id
       this.paintHighlight()
-      // An item with a destination ("Nova nota") is only selected: the person checks where it goes, then the button opens it.
-      if (this.destProvider()) return
-      void this.open(this.highlighted())
     })
-    this.list.addEventListener('mousemove', ev => {
-      const row = (ev.target as HTMLElement).closest<HTMLElement>('.ch-item')
-      if (row && row.dataset.id !== this.state.highlight) { this.state.highlight = row.dataset.id; this.paintHighlight() }
-    })
+    // The selection moves only by a click, the arrows, a digit or the search; the mouse over a row is only a hover (CSS).
 
     // ---- bottom: folder, where, actions ----
     this.error = el('div', 'ch-err'); this.error.hidden = true; this.error.setAttribute('role', 'alert')
@@ -211,7 +207,7 @@ export class Chooser {
         this.paintWhere()
       })
     }
-    const hints = el('div', 'ch-hints', el('span', undefined, kbd('↑'), kbd('↓')), el('span', undefined, kbd('1'), '–', kbd('9'), ' abre'))
+    const hints = el('div', 'ch-hints', el('span', undefined, kbd('↑'), kbd('↓')), el('span', undefined, kbd('1'), '–', kbd('9'), ' seleciona'))
     const actions = el('div', 'ch-actions', hints)
     if (opts.mode === 'popup') {
       const manage = button('ch-manage'); manage.append(iconEl('sliders-horizontal'), 'Gerenciar perfis…')
@@ -362,6 +358,12 @@ export class Chooser {
     this.paintFolder()
     this.paintGo()
     this.paintWhere()
+    this.keepSelectedInView()
+  }
+
+  /** The bottom band can change height ("Salvar em", a warning): once laid out, the selected row is scrolled back into view. */
+  private keepSelectedInView(): void {
+    requestAnimationFrame(() => { if (!this.disposed) this.list.querySelector<HTMLElement>('.ch-item.hl')?.scrollIntoView({ block: 'nearest' }) })
   }
 
   private paintFolder(): void {
@@ -449,6 +451,7 @@ export class Chooser {
     this.destNote.hidden = !warning
     this.destNote.replaceChildren(...(warning ? [iconEl('warning'), el('span', undefined, warning)] : []))
     this.destNote.title = warning ?? ''
+    this.keepSelectedInView()
   }
 
   /** The grey folders after the typed text (an `edit` option's suffix), in the separator the person types. */
@@ -638,7 +641,7 @@ export class Chooser {
     }
     if (inSearch && /^[1-9]$/.test(ev.key)) {
       const item = itemForDigit(this.rows, ev.key)
-      if (item) { ev.preventDefault(); ev.stopPropagation(); this.state.highlight = item.id; this.paintHighlight(); if (!this.destProvider()) void this.open(item) }
+      if (item) { ev.preventDefault(); ev.stopPropagation(); this.state.highlight = item.id; this.paintHighlight() }
       return
     }
     // A letter typed anywhere in the chooser goes to the search.

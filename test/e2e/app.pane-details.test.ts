@@ -99,6 +99,7 @@ test('pane details: collapsed by default, three ways to toggle, refit, persisten
     await page.waitForSelector('#dlg-new[open]')
     await page.fill('#dlg-new .ch-path-input', root)
     await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
     await page.waitForFunction(() => window.__tether.panelIds().length === 1)
     const id = (await page.evaluate(() => window.__tether.panelIds()))[0]!
