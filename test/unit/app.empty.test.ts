@@ -55,6 +55,14 @@ describe('empty pane identity and params', () => {
     assert.equal(emptyParams({ slotId: 'x' }), undefined)
     assert.equal(emptyParams(undefined), undefined)
   })
+
+  test('a blank pane (the blank view, until its action is used) round-trips in the params; the default is not blank', () => {
+    assert.deepEqual(withEmpty('D:\\p', 'layout', true), { empty: { cwd: 'D:\\p', blank: true } })
+    assert.deepEqual(withEmpty(undefined, 'add', true), { empty: { origin: 'add', blank: true } })
+    assert.deepEqual(emptyParams(withEmpty('D:\\p', 'layout', true)), { cwd: 'D:\\p', blank: true })
+    assert.equal(emptyParams(withEmpty('D:\\p'))?.blank, undefined)
+    assert.equal(emptyParams({ empty: { blank: 'yes' } })?.blank, undefined, 'only true counts')
+  })
 })
 
 /** A layout with one frame holding `ids` as tabs of one group. */

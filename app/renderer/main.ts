@@ -430,7 +430,7 @@ function setupDock(): void {
   const bar = $('toolbar')
   strip = new DeskSwitch($('desk-switch'), bar, [bar.querySelector<HTMLElement>('.tb-left')!, bar.querySelector<HTMLElement>('.tb-right')!], {
     switchTo: id => desks.switchTo(id),
-    create: () => { if (!drawer.isOpen) desks.create('after', desks.desks.at(-1)?.id) },
+    create: () => { if (!drawer.isOpen) createBlankDesk('after', desks.desks.at(-1)?.id) },
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
@@ -592,9 +592,12 @@ function slotPanelOptions(slot: SlotState): AddPanelOptions {
   return { id: slot.slotId, component: COMPONENT, tabComponent: TAB, title: panelTitle(slot), params: { slotId: slot.slotId, hint: hintOf(slot) } }
 }
 
-/** The dockview options of an empty pane (a fresh id), suggesting `cwd` in its chooser; `origin` says what Esc does in it. */
-function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layout'): AddPanelOptions {
-  return { id: newEmptyPanelId(), component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: withEmpty(cwd, origin) }
+/**
+ * The dockview options of an empty pane (a fresh id), suggesting `cwd` in its chooser; `origin` says what Esc does in it.
+ * `blank`: it starts as the blank view (a calm line and "Abrir algo aqui") and only shows the chooser once that is used.
+ */
+function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layout', blank = false): AddPanelOptions {
+  return { id: newEmptyPanelId(), component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: withEmpty(cwd, origin, blank) }
 }
 
 /** Adds any pane (slot, note, empty) relative to `reference` at `target`'s level, in its desk or the drawer; `into` forces the drawer. */
@@ -603,7 +606,13 @@ function addPaneOptions(options: AddPanelOptions, target?: Target, reference?: s
   // opened, which goes to the Foco de Mesa (fileTargetDesk).
   const pad = into === 'drawer' ? undefined : reference ? framePadOf(reference) : !drawer.isOpen && !openingFile ? padInFocus() : undefined
   const useDrawer = into === 'drawer' || (reference ? inDrawer(reference) : drawer.isOpen)
-  const panel = (pad ? pad.desk : useDrawer ? drawer.desk : desks).addPanel(options, target, reference)
+  const dest = pad ? pad.desk : useDrawer ? drawer.desk : desks
+  // A blank pane is a place kept for what comes next: opening something there (as a tab of it, or with no place named at
+  // all) takes its place instead of sitting beside it, so a new desk and then Ctrl+N leave no "Vazio" tab behind. A split
+  // beside it, or another empty pane, leaves it alone.
+  const asTab = !target || (target.level === 'pane' && target.placement === 'within')
+  const blankId = asTab && options.component !== EMPTY_COMPONENT ? (reference ?? dest.activePanel?.id) : undefined
+  const panel = (blankId && empties.get(blankId)?.blank ? dest.replacePanel(blankId, options) : undefined) ?? dest.addPanel(options, target, reference)
   panel.api.setActive()
   return panel
 }
@@ -779,8 +788,8 @@ function showDeskMenu(id: string, x: number, y: number): void {
   const items: MenuItem[] = [
     { icon: 'pencil-simple', label: 'Renomear', run: () => strip.startRename(id) },
     { icon: 'palette', label: 'Cor…', run: () => strip.pickColor(id, desks.desks[index]?.color ?? 'blue', x, y) },
-    { icon: 'arrow-line-left', label: 'Nova mesa antes', run: () => { desks.create('before', id) } },
-    { icon: 'arrow-line-right', label: 'Nova mesa depois', run: () => { desks.create('after', id) } },
+    { icon: 'arrow-line-left', label: 'Nova mesa antes', run: () => { createBlankDesk('before', id) } },
+    { icon: 'arrow-line-right', label: 'Nova mesa depois', run: () => { createBlankDesk('after', id) } },
   ]
   if (index > 0) items.push({ icon: 'arrow-line-left', label: 'Mover para a esquerda', run: () => desks.move(id, index - 1) })
   if (index < desks.desks.length - 1) items.push({ icon: 'arrow-line-right', label: 'Mover para a direita', run: () => desks.move(id, index + 1) })
@@ -849,7 +858,7 @@ function framePadFor(padId: string, deskId: string | undefined): FramesPad | und
 function newFramesPad(host: PadHost): FramesPad {
   return new FramesPad(host, {
     deskHost: pad => deskHost(pad),
-    seed: pad => { pad.desk.addPanel(emptyPanelOptions(paneCwdOf(currentDesk().activePanel?.id))) },
+    seed: pad => { pad.desk.addPanel(emptyPanelOptions(paneCwdOf(currentDesk().activePanel?.id), 'layout', true)) },
     focusPane: id => focusPane(id),
     onCreate: pad => { framePads.add(pad) },
     onHidden: pad => { if (focusedPad === pad) setFocusedPad(undefined) },
@@ -1800,8 +1809,8 @@ function showEmptyMenu(id: string, x: number, y: number): void {
 // in the same group and at the same index.
 
 /** An empty pane relative to `reference` (the active pane when absent), suggesting that pane's folder. `add`: born from a "+" (Esc closes it). */
-function addEmptyPanel(target?: Target, reference?: string, cwd = paneCwdOf(reference), origin: EmptyOrigin = 'layout'): IDockviewPanel {
-  const panel = addPaneOptions(emptyPanelOptions(cwd, origin), target, reference)
+function addEmptyPanel(target?: Target, reference?: string, cwd = paneCwdOf(reference), origin: EmptyOrigin = 'layout', blank = target?.level === 'desk'): IDockviewPanel {
+  const panel = addPaneOptions(emptyPanelOptions(cwd, origin, blank), target, reference)
   scheduleSave()
   requestAnimationFrame(() => focusPane(panel.id))
   return panel
@@ -1828,9 +1837,19 @@ function splitEmpty(target: Target, origin: EmptyOrigin = 'layout', reference = 
 /** "Nova mesa vazia": a desk after the current one with one empty pane (the active pane's folder suggested). */
 function newEmptyDesk(): void {
   if (drawer.isOpen) return
+  createBlankDesk('after')
+}
+
+/** A new desk whose one frame starts blank ("Abrir algo aqui"): the layout is being drawn, what opens there comes later. */
+function createBlankDesk(side: 'before' | 'after', relativeTo?: string): string {
   const cwd = paneCwdOf(currentDesk().activePanel?.id)
-  desks.create('after')
-  addEmptyPanel(undefined, undefined, cwd)
+  const id = desks.create(side, relativeTo)
+  setFocusedPad(undefined)
+  const panel = desks.active.addPanel(emptyPanelOptions(cwd, 'layout', true))
+  panel.api.setActive()
+  scheduleSave()
+  requestAnimationFrame(() => focusPane(panel.id))
+  return id
 }
 
 /**
@@ -1903,6 +1922,10 @@ const emptyHost: EmptyHost = {
     else (document.activeElement as HTMLElement | null)?.blur()
   },
   expand: (panel, state) => { void openNewDialog({ context: { panel, state } }) },
+  onUnblank: panel => {
+    findPanel(panel.id)?.api.updateParameters(withEmpty(panel.cwd || undefined, panel.origin))
+    scheduleSave()
+  },
   onCwdChange: panel => {
     const p = findPanel(panel.id)
     if (!p) return
@@ -2214,7 +2237,7 @@ const commandHost: CommandHost = {
   openFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) void window.tether.openPath(f); else if (slots.has(id)) openFolder(id) },
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
-  createDesk: side => { desks.create(side) },
+  createDesk: side => { createBlankDesk(side) },
   cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, step)),
   moveActiveDesk: where => {
     const last = desks.desks.length - 1

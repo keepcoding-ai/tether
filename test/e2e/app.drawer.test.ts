@@ -295,7 +295,8 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     // a whole frame, by the hooks (desk 2 holds only b's frame)
     await page.evaluate(id => window.__tether.moveFrameToDrawer(id), b)
     await page.waitForFunction(id => window.__tether.inDrawer(id), b)
-    assert.deepEqual(await h.ids(page), [a], 'desk 2 is empty now: only desk 1 holds a pane')
+    // Desk 2 was born blank (its "Abrir algo aqui" pane stays: the frame moved in beside it, nothing filled it).
+    assert.deepEqual((await h.ids(page)).filter(id => !id.startsWith('empty:')), [a], 'desk 2 has no pane of its own now: only desk 1 holds one')
     await page.evaluate(id => window.__tether.moveFrameFromDrawer(id), b)
     await page.waitForFunction(id => !window.__tether.inDrawer(id), b)
     assert.equal((await pidsOf(page, [b]))[b], bPid)
