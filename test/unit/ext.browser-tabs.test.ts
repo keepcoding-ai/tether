@@ -61,3 +61,14 @@ describe('browser: tab rules', () => {
     assert.equal(ownerLabel(undefined, 's'), 'Agente')
   })
 })
+
+test('tab rules (E7c, H3): a tab opens at most 3 popups per 10 s, an owner has at most 30 tabs', async () => {
+  const { popupVerdict, POPUPS_PER_WINDOW, POPUP_WINDOW_MS, TABS_PER_OWNER } = await import('../../extensions/browser/tab-rules.ts')
+  const recent: number[] = []
+  for (let i = 0; i < POPUPS_PER_WINDOW; i++) assert.equal(popupVerdict(recent, 1000 + i, 1 + i), 'ok')
+  assert.equal(popupVerdict(recent, 1100, 4), 'rate', 'the fourth inside the window')
+  assert.equal(recent.length, POPUPS_PER_WINDOW, 'a refused popup takes no place in the bucket')
+  assert.equal(popupVerdict(recent, 1000 + POPUP_WINDOW_MS, 4), 'ok', 'the oldest left the window')
+  assert.equal(popupVerdict([], 0, TABS_PER_OWNER), 'owner')
+  assert.equal(popupVerdict([], 0, TABS_PER_OWNER - 1), 'ok')
+})

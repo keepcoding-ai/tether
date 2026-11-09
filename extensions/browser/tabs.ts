@@ -19,6 +19,8 @@
 //     client certificate is chosen, `beforeunload` is accepted, the native file chooser is intercepted on the core's own
 //     debugger session (an upload goes through the tether's consent, E13), `window.print` does nothing. The tab's first load
 //     waits until the chooser and print are held; failing that, the tab is not created.
+//   - E7c (H3): a page opens at most POPUPS_PER_WINDOW popups per POPUP_WINDOW_MS and an owner has at most TABS_PER_OWNER tabs;
+//     past either, the popup is refused, one log line per burst, and the tab carries the count (its seal).
 // When an agent exits its tabs stay (the "encerrado" chip is the interface's); nothing here destroys them.
 import { randomUUID } from 'node:crypto'
 import type { Event as ElectronEvent, WebContents } from 'electron'
@@ -28,7 +30,10 @@ import type { AgentInfo } from '../../app/main/agents.ts'
 import type { LocalNetworkGate } from './local-network.ts'
 import type { BlockedRequest } from './net-filter.ts'
 import type { TabSession } from './session.ts'
-import { cleanTitle, faviconPlan, FAVICON_MAX, isId, isNavigable, isWebUrl, makeTab, type SavedTab, storableUrl, type Tab, type TabInfo } from './tab-rules.ts'
+import {
+  cleanTitle, faviconPlan, FAVICON_MAX, isId, isNavigable, isWebUrl, makeTab, POPUP_WINDOW_MS, POPUPS_PER_WINDOW, popupVerdict, type SavedTab,
+  storableUrl, type Tab, type TabInfo, TABS_PER_OWNER,
+} from './tab-rules.ts'
 
 export const PAGE_SIZE = { width: 1280, height: 800 } as const
 
@@ -49,7 +54,11 @@ export function dialogsProven(version: string | undefined): boolean {
  */
 const NO_PRINT = `(() => { try { Object.defineProperty(window, 'print', { value: function print() {}, writable: false, configurable: false }) } catch {} })()`
 
-interface Entry { tab: Tab; surface: Surface; loading: boolean; favicon?: string; cookies: number }
+interface Entry {
+  tab: Tab; surface: Surface; loading: boolean; favicon?: string; cookies: number
+  /** H3: the times of the page's last popups, how many were refused, and when the last refusal was logged. */
+  popups: number[]; popupsRefused: number; popupLoggedAt: number
+}
 
 /** A request of a tab refused by the network filter: never the full address, only the destination's origin. */
 export interface TabBlocked {
@@ -85,6 +94,8 @@ const POPUP_DISPOSITIONS = new Set(['default', 'foreground-tab', 'background-tab
 export class TabRegistry {
   private readonly entries = new Map<string, Entry>()
   private readonly pending = new Map<string, Promise<TabInfo>>()
+  /** The owner of each tab still opening (the per-owner ceiling counts them). */
+  private readonly pendingOwner = new Map<string, string>()
   private readonly main: TetherMain
   private readonly session: Promise<TabSession>
   private readonly events: TabEvents
@@ -146,6 +157,14 @@ export class TabRegistry {
     return (await this.session).net.allowOnce(e.surface.webContents.id, url)
   }
 
+  /** The owner's tabs, open and opening (H3). */
+  private tabsOf(owner: string): number {
+    let n = 0
+    for (const e of this.entries.values()) if (e.tab.ownerSlotId === owner) n++
+    for (const o of this.pendingOwner.values()) if (o === owner) n++
+    return n
+  }
+
   watch(w: TabWatcher): IDisposable {
     this.watchers.add(w)
     return toDisposable(() => { this.watchers.delete(w) })
@@ -173,8 +192,11 @@ export class TabRegistry {
     if (known) return Promise.resolve(infoOf(known))
     const inFlight = this.pending.get(tabId)
     if (inFlight) return inFlight
-    const p = this.open(tabId, owner, url, opts.title, opts.ticket ?? false).finally(() => this.pending.delete(tabId))
+    // H3: a new tab (not a saved one coming back) counts against its owner's ceiling.
+    if (opts.tabId === undefined && this.tabsOf(owner) >= TABS_PER_OWNER) return Promise.reject(new Error(`guia: no máximo ${TABS_PER_OWNER} guias por agente`))
+    const p = this.open(tabId, owner, url, opts.title, opts.ticket ?? false).finally(() => { this.pending.delete(tabId); this.pendingOwner.delete(tabId) })
     this.pending.set(tabId, p)
+    this.pendingOwner.set(tabId, owner)
     return p
   }
 
@@ -225,7 +247,7 @@ export class TabRegistry {
       throw new Error(`guia: superfícies nativas não neutralizadas (${(e as Error).message})`)
     }
     if (this.disposed) { surface.destroy(); throw new Error('guia: não criada') }
-    const entry: Entry = { tab, surface, loading: false, cookies: 0 }
+    const entry: Entry = { tab, surface, loading: false, cookies: 0, popups: [], popupsRefused: 0, popupLoggedAt: 0 }
     this.entries.set(tabId, entry)
     const subs = this.guard(entry, ses)
     const pageId = surface.webContents.id
@@ -286,6 +308,18 @@ export class TabRegistry {
     const changed = (): void => this.events.changed(infoOf(entry))
     wc.setWindowOpenHandler(details => {
       if (isWebUrl(details.url) && POPUP_DISPOSITIONS.has(details.disposition)) {
+        const now = Date.now()
+        const verdict = popupVerdict(entry.popups, now, this.tabsOf(ownerSlotId))
+        if (verdict !== 'ok') {
+          // H3: refused; one log line per burst (at most one per window), and the tab's seal counts them.
+          entry.popupsRefused++
+          if (now - entry.popupLoggedAt >= POPUP_WINDOW_MS) {
+            entry.popupLoggedAt = now
+            this.main.log(`guia ${tabId}: popups recusados (${verdict === 'owner' ? `o agente já tem ${TABS_PER_OWNER} guias` : `mais de ${POPUPS_PER_WINDOW} em ${POPUP_WINDOW_MS / 1000} s`})`)
+          }
+          changed()
+          return { action: 'deny' }
+        }
         const opener = details.referrer?.url ?? ''
         const ticket = opener !== '' && ses.net.isLocal(opener) && ses.net.isLocal(wc.getURL())
         this.create(ownerSlotId, details.url, { ticket: ticket ? 'granted' : false, openerTabId: tabId }).catch(e => this.main.log(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
@@ -372,6 +406,6 @@ function infoOf(e: Entry): TabInfo {
   return {
     ...e.tab, loading: e.loading,
     canGoBack: live && wc.navigationHistory.canGoBack(), canGoForward: live && wc.navigationHistory.canGoForward(),
-    ...(e.favicon ? { favicon: e.favicon } : {}), cookies: e.cookies,
+    ...(e.favicon ? { favicon: e.favicon } : {}), cookies: e.cookies, ...(e.popupsRefused > 0 ? { popupsRefused: e.popupsRefused } : {}),
   }
 }

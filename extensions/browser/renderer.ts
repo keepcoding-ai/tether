@@ -27,7 +27,7 @@ import { controlTexts } from './control-rules.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LOCAL_NETWORK_SITUATION, localNetworkDialog, type LocalNetworkAsk } from './local-network-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, OFF_HELP, ownerChip, ownerHue, READ_ONLY_ADDRESS, RELOAD } from './rules.ts'
+import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, OFF_HELP, ownerChip, ownerHue, POPUPS_REFUSED, READ_ONLY_ADDRESS, RELOAD } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 
 export { manifest }
@@ -235,7 +235,9 @@ export function activate(ui: TetherUi): IDisposable[] {
       const control = this.info ? (v?.control ?? 'agent') : undefined
       this.paintNav()
       this.element.dataset.control = control ?? ''
-      this.ctlEl.textContent = control ? t[control] : ''
+      // E9: with the agent gone, the bar does not say it is using the tab (the chip says "encerrado" too).
+      const owner = this.saved ? ui.agents.get(this.saved.ownerSlotId) : undefined
+      this.ctlEl.textContent = control === 'agent' && owner && !owner.alive ? t.ended : control ? t[control] : ''
       const act = control === 'agent' ? ['take', t.take] : control === 'user' ? ['give-back', t.giveBack] : control === 'paused' ? ['resume', t.resume] : undefined
       this.actBtn.hidden = !act
       this.actBtn.dataset.action = act?.[0] ?? ''
@@ -245,7 +247,9 @@ export function activate(ui: TetherUi): IDisposable[] {
       else if (v?.askExpired && v.holder === 'user') strip = ['expired', t.expired, 'give-back', t.giveBack]
       else if (control === 'agent' && Date.now() < this.ignoredUntil) strip = ['ignored', t.ignored, 'take', t.take]
       else if (v?.holder === 'user' && v.why === 'taken') strip = ['scripts', t.scripts, 'clean-reload', t.cleanReload]
+      else if ((this.info?.popupsRefused ?? 0) > 0) strip = ['popups', POPUPS_REFUSED, '', '']
       this.notice.hidden = !strip
+      this.noticeBtn.hidden = !strip?.[3]
       this.notice.dataset.kind = strip?.[0] ?? ''
       this.noticeText.textContent = strip?.[1] ?? ''
       this.noticeBtn.dataset.action = strip?.[2] ?? ''
@@ -281,7 +285,10 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
 
     /** The owner's chip follows the agent (name, ended). */
-    repaintOwner(): void { dressChip(this.ownerEl, this.saved?.ownerSlotId, this.saved ? ui.agents.get(this.saved.ownerSlotId) : undefined) }
+    repaintOwner(): void {
+      dressChip(this.ownerEl, this.saved?.ownerSlotId, this.saved ? ui.agents.get(this.saved.ownerSlotId) : undefined)
+      this.paintControl()
+    }
 
     favicon(): string | undefined { return this.info?.favicon }
 

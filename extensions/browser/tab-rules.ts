@@ -22,6 +22,28 @@ export interface TabInfo extends Tab {
   favicon?: string
   /** E9: how many cookies the partition holds for the page's address (a count only: the sign that an account may be logged in). */
   cookies?: number
+  /** E7c (H3): popups of this page refused by the limits (the tab's seal). */
+  popupsRefused?: number
+}
+
+// ---- H3: popups and tabs have a ceiling (a page's `window.open` in a loop would exhaust the main process) ----
+
+/** Popups one tab may open per window of time. */
+export const POPUPS_PER_WINDOW = 3
+export const POPUP_WINDOW_MS = 10_000
+/** Tabs one owner may have (its agent's and its pages' popups together; a restored tab is not counted against). */
+export const TABS_PER_OWNER = 30
+
+/**
+ * May a tab open one more popup at `now`? `recent` holds the times of its last popups and is kept here (old ones dropped, the new
+ * one added when allowed). `ownerTabs` counts the owner's tabs, open and opening.
+ */
+export function popupVerdict(recent: number[], now: number, ownerTabs: number): 'ok' | 'rate' | 'owner' {
+  while (recent.length > 0 && now - recent[0]! >= POPUP_WINDOW_MS) recent.shift()
+  if (ownerTabs >= TABS_PER_OWNER) return 'owner'
+  if (recent.length >= POPUPS_PER_WINDOW) return 'rate'
+  recent.push(now)
+  return 'ok'
 }
 
 /** What layout.json keeps of a `web:` pane (its params): enough to bring the tab back, never loaded on its own. */
