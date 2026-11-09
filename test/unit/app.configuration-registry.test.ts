@@ -10,6 +10,7 @@ import { DEFAULT_THEME, normalizeTheme, THEME_SETTINGS } from '../../app/shared/
 import { manifest as note } from '../../extensions/note/manifest.ts'
 import { manifest as explorer } from '../../extensions/explorer/manifest.ts'
 import { manifest as webBridge } from '../../extensions/web-bridge/manifest.ts'
+import { manifest as browser } from '../../extensions/browser/manifest.ts'
 
 const bool = (title: string, order?: number): SettingSchema => ({ type: 'boolean', default: true, title, ...(order !== undefined ? { order } : {}) })
 
@@ -100,7 +101,7 @@ test('the core node agrees with normalizeUi and normalizeTheme (defaults, enums,
 })
 
 test('every extension setting declares a description, and enum labels match the enum', () => {
-  for (const e of [note, explorer, webBridge].map(manifest => ({ manifest }))) {
+  for (const e of [note, explorer, webBridge, browser].map(manifest => ({ manifest }))) {
     for (const [k, s] of Object.entries(e.manifest.contributes?.settings ?? {})) {
       assert.ok(s.description, `${e.manifest.id}.${k}`)
       if (s.type === 'string' && s.enumLabels) assert.equal(s.enumLabels.length, s.enum?.length)

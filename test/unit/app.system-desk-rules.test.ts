@@ -7,6 +7,7 @@ import { manifest as framePads } from '../../extensions/frame-pads/manifest.ts'
 import { manifest as explorer } from '../../extensions/explorer/manifest.ts'
 import { manifest as note } from '../../extensions/note/manifest.ts'
 import { manifest as webBridge } from '../../extensions/web-bridge/manifest.ts'
+import { manifest as browser } from '../../extensions/browser/manifest.ts'
 import { manifest as probe } from '../e2e/fixtures/system-desk-probe/manifest.ts'
 
 describe('systemDeskProblems', () => {
@@ -66,7 +67,7 @@ describe('SystemDeskRegistry', () => {
 describe('contracts', () => {
   test('every system desk a manifest declares is valid, prefixed by its extension, and unique across extensions', () => {
     const ids = new Set<string>()
-    for (const m of [framePads, explorer, note, webBridge, probe]) for (const d of m.contributes?.systemDesks ?? []) {
+    for (const m of [framePads, explorer, note, webBridge, browser, probe]) for (const d of m.contributes?.systemDesks ?? []) {
       assert.deepEqual(systemDeskProblems(m.id, d), [], `${m.id}: ${d.id}`)
       assert.ok(!ids.has(d.id), `${d.id} declared twice`)
       ids.add(d.id)
