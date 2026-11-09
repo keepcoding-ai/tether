@@ -162,6 +162,8 @@ export class Chooser {
       if (!row) return
       this.state.highlight = row.dataset.id
       this.paintHighlight()
+      // An item with a destination ("Nova nota") is only selected: the person checks where it goes, then the button opens it.
+      if (this.destProvider()) return
       void this.open(this.highlighted())
     })
     this.list.addEventListener('mousemove', ev => {
@@ -636,7 +638,7 @@ export class Chooser {
     }
     if (inSearch && /^[1-9]$/.test(ev.key)) {
       const item = itemForDigit(this.rows, ev.key)
-      if (item) { ev.preventDefault(); ev.stopPropagation(); this.state.highlight = item.id; this.paintHighlight(); void this.open(item) }
+      if (item) { ev.preventDefault(); ev.stopPropagation(); this.state.highlight = item.id; this.paintHighlight(); if (!this.destProvider()) void this.open(item) }
       return
     }
     // A letter typed anywhere in the chooser goes to the search.

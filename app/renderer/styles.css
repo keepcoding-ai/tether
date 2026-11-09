@@ -36,6 +36,7 @@
   --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .3), 0 12px 28px rgba(0, 0, 0, .45), 0 32px 72px rgba(0, 0, 0, .55);
   --x-alert: oklch(0.70 0.19 50);
   --x-alert-foreground: #10131a;
+  --on-warn: #1b1300;
   --mono: "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace;
   --ui: "Segoe UI", system-ui, sans-serif;
   --motion-fast: 160ms;
@@ -46,7 +47,7 @@
   :root:not([data-theme]) {
     --bg: #fbfbfd; --bg-2: #f1f2f5; --bg-3: #e6e7ec; --bg-hover: #dcdde3; --bg-hover-2: #d2d3da;
     --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
-    --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
+    --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --on-warn: #ffffff; --err: #c62828;
     --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
     --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --drawer-line: #3d3d3d; --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
     color-scheme: light;
@@ -55,7 +56,7 @@
 :root[data-theme="light"] {
   --bg: #fbfbfd; --bg-2: #f1f2f5; --bg-3: #e6e7ec; --bg-hover: #dcdde3; --bg-hover-2: #d2d3da;
   --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
-  --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
+  --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --on-warn: #ffffff; --err: #c62828;
   --veil: rgba(251, 251, 253, .8); --backdrop: rgba(0, 0, 0, .35); --shadow: 0 6px 20px rgba(0, 0, 0, .18);
   --desk-bg: #e7e9ed; --frame-bg: #fbfbfd; --frame-border: rgba(0, 0, 0, .09); --drawer-line: #3d3d3d; --drawer-shadow: 0 2px 4px rgba(0, 0, 0, .08), 0 10px 24px rgba(0, 0, 0, .14), 0 28px 64px rgba(0, 0, 0, .22);
   color-scheme: light;
@@ -1343,9 +1344,9 @@ dialog.ask.move .primary:disabled { opacity: .45; cursor: not-allowed; backgroun
 .ch .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 .ch .btn.primary:hover { background: var(--accent-hover); }
 .ch .btn.primary kbd { color: var(--on-accent); background: color-mix(in srgb, var(--on-accent) 15%, transparent); border-color: color-mix(in srgb, var(--on-accent) 35%, transparent); }
-.ch .btn.primary.warnb { background: var(--warn); border-color: var(--warn); color: var(--x-alert-foreground); }
+.ch .btn.primary.warnb { background: var(--warn); border-color: var(--warn); color: var(--on-warn); }
 .ch .btn.primary.warnb:hover { filter: brightness(1.08); }
-.ch .btn.primary.warnb kbd { color: var(--x-alert-foreground); background: color-mix(in srgb, var(--x-alert-foreground) 14%, transparent); border-color: color-mix(in srgb, var(--x-alert-foreground) 35%, transparent); }
+.ch .btn.primary.warnb kbd { color: var(--on-warn); background: color-mix(in srgb, var(--on-warn) 16%, transparent); border-color: color-mix(in srgb, var(--on-warn) 40%, transparent); }
 .ch .btn.primary:disabled { opacity: .6; cursor: progress; }
 .ch .btn .nm { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 .ch .btn .ph { width: 15px; height: 15px; }

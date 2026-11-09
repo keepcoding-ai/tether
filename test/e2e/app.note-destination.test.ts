@@ -1,6 +1,6 @@
 // E2E of "Nova nota" destination (Guga, 09/11), against the real tetherd on a private home/pipe, hidden window:
 //   1. a recent folder inside `.tether` is suggested cut at `.tether` (the general rule of the folder field);
-//   2. "Nova nota" highlighted: "Salvar em" with Notas do projeto · Minhas notas · Outro; the project's is the first
+//   2. "Nova nota" selected by a click (it never opens on click: the button does): "Salvar em" with Notas do projeto · Minhas notas · Outro; the project's is the first
 //      default, with `\.tether\notes` grey right after the typed text (the field does not move);
 //   3. Minhas notas: the field read only with the personal folder, the folder button is a gear that opens the settings
 //      page on "Pasta das minhas notas" (the popup steps aside);
@@ -67,11 +67,16 @@ async function shot(app: ElectronApplication, name: string): Promise<void> {
 const D = '#dlg-new'
 const openPopup = async (page: Page): Promise<void> => { await page.click('#btn-new'); await page.waitForSelector(`${D}[open]`) }
 const noDialog = (page: Page) => page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
-/** "Nova nota" highlighted from the keyboard (a click would open it). */
+/** "Nova nota" selected by a click: it only selects (the person checks the destination); the dialog stays, nothing opens. */
 async function highlightNewNote(page: Page): Promise<void> {
-  await page.fill(`${D} .ch-q`, 'nova nota')
+  const before = await page.evaluate(() => window.__tether.panelIds().length)
+  await page.fill(`${D} .ch-q`, '')
+  await page.click(`${D} .ch-item[data-id="kind:note-new"]`)
   await page.waitForFunction(() => window.__tether.chooser()?.highlight === 'kind:note-new')
   await page.waitForSelector(`${D} .ch-dest:not([hidden])`)
+  await page.waitForTimeout(300)
+  assert.ok(await page.locator(`${D}[open]`).isVisible(), 'a click only selects "Nova nota"')
+  assert.equal(await page.evaluate(() => window.__tether.panelIds().length), before, 'nothing opened')
 }
 const chipOn = (page: Page) => page.locator(`${D} .ch-dest-chip.on`).innerText()
 
