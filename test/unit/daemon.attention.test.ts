@@ -45,6 +45,33 @@ describe('attention: claude (hooks only)', () => {
   })
 })
 
+describe('attention: a new turn voids the previous attention', () => {
+  test('claude: done then start clears it and the turn is busy', () => {
+    const a = new AttentionState(attentionOptions('claude'))
+    a.hook('done')
+    assert.equal(a.hook('start'), true)
+    assert.equal(a.value, undefined)
+    assert.equal(a.turn, 'busy')
+  })
+  test('claude: waiting during the turn stands; the next start clears it', () => {
+    const a = new AttentionState(attentionOptions('claude'))
+    a.hook('start')
+    a.hook('waiting')
+    assert.equal(a.value, 'waiting')
+    assert.equal(a.turn, 'busy')
+    a.hook('start')
+    assert.equal(a.value, undefined)
+  })
+  test('soul: signal busy clears a previous done', () => {
+    const a = new AttentionState(attentionOptions('soul'))
+    a.signal('busy'); a.signal('idle')
+    assert.equal(a.value, 'done')
+    assert.equal(a.signal('busy'), true)
+    assert.equal(a.value, undefined)
+    assert.equal(a.turn, 'busy')
+  })
+})
+
 describe('attention: turn signal', () => {
   test('claude: start=busy, waiting keeps busy, done=idle; start leaves no badge', () => {
     const a = new AttentionState(attentionOptions('claude'))

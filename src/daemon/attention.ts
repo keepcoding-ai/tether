@@ -58,7 +58,8 @@ export class AttentionState {
   /** A hook reported the turn's end or a wait. Returns true when the value changed. */
   hook(kind: HookKind): boolean {
     this.disarm()
-    if (kind === 'start') return this.setTurn('busy')
+    // A new turn voids the previous 'done' / 'waiting': the agent is working again.
+    if (kind === 'start') { const t = this.setTurn('busy'); return this.set(undefined) || t }
     const t = kind === 'done' ? this.setTurn('idle') : false // 'waiting' keeps the turn busy
     return this.set(kind) || t
   }
@@ -71,7 +72,7 @@ export class AttentionState {
   signal(state: Turn): boolean {
     this.signaled = true
     this.disarm()
-    if (state === 'busy') return this.setTurn('busy')
+    if (state === 'busy') { const t = this.setTurn('busy'); return this.set(undefined) || t }
     const finished = this.turn === 'busy'
     const t = this.setTurn('idle')
     return (finished ? this.set('done') : false) || t
