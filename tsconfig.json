@@ -27,6 +27,7 @@
     "extensions/index.daemon.ts"
   ],
   "exclude": [
-    "test/e2e/fixtures/system-desk-probe/renderer.ts"
+    "test/e2e/fixtures/system-desk-probe/renderer.ts",
+    "test/e2e/fixtures/surface-probe/renderer.ts"
   ]
 }
