@@ -36,8 +36,8 @@ import { Drawer } from './drawer.ts'
 import { FramesPad } from './frames-pad.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import type { PauseBatch } from '../../src/daemon/pause.ts'
-import { pauseAction, buttonTitle as pauseButtonTitle, canResume, counterText, entryText, entryTone, hasBatch, orderedEntries, summaryText } from './pause-rules.ts'
-import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText, type ClosedGroups } from './closed-slots.ts'
+import { bulkCloseSituation, forgetEndedSituation } from './sessions-rules.ts'
+import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
@@ -414,7 +414,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     // Only changes the person can make are saved: a hint or title the app updates is not one (isPersonChange).
     onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
     onPanelsChange: () => {
-      refreshClosedMenu(); renderStrip(); recomputeProjects()
+      refreshSessions(); renderStrip(); recomputeProjects()
       // A pad is never empty: its one frame shows the blank view ("Abrir algo aqui") when its last tab leaves.
       if (scope instanceof FramesPad) queueMicrotask(() => { if (scope.reseedIfEmpty()) scheduleSave(); scope.syncMenuHosted() })
       // The per-panel pads follow the Foco de Mesa's pane: closing it moves the target.
@@ -434,7 +434,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
       if (scope instanceof FramesPad) setFocusedPad(scope)
       else if (scope === 'desk') setFocusedPad(undefined)
       requestAnimationFrame(() => focusPane(id))
-      refreshClosedMenu()
+      refreshSessions()
       renderStrip()
       scheduleSave()
     },
@@ -814,7 +814,7 @@ async function closeDesk(id: string): Promise<void> {
     } else return
   }
   desks.remove(id)
-  refreshClosedMenu()
+  refreshSessions()
 }
 
 /** Right-click on a desk chip. */
@@ -835,13 +835,13 @@ function showDeskMenu(id: string, x: number, y: number): void {
 }
 
 function movePaneToDesk(slotId: string, to: string): void {
-  if (desks.movePanel(slotId, to)) { refreshClosedMenu(); renderStrip() }
+  if (desks.movePanel(slotId, to)) { refreshSessions(); renderStrip() }
 }
 
 function moveFrameToDesk(slotId: string, to: string): void {
   const from = desks.deskOf(slotId)
   const frame = desks.frameOf(slotId)
-  if (from && frame && desks.moveFrame(from, frame.id, to)) { refreshClosedMenu(); renderStrip() }
+  if (from && frame && desks.moveFrame(from, frame.id, to)) { refreshSessions(); renderStrip() }
 }
 
 // ---------- the drawer ----------
@@ -913,7 +913,7 @@ function newFramesPad(host: PadHost): FramesPad {
         if (lost && id) focusPane(id)
       })
     },
-    onDispose: pad => { if (focusedPad === pad) setFocusedPad(undefined); framePads.delete(pad); refreshClosedMenu() },
+    onDispose: pad => { if (focusedPad === pad) setFocusedPad(undefined); framePads.delete(pad); refreshSessions() },
   }, DOCK_THEME)
 }
 
@@ -975,7 +975,7 @@ function setDrawerOpen(open: boolean): void {
     // Menus of the toolbar belong to the desks behind: they close, they do not stay floating over the drawer.
     $('app-menu').hidden = true
     $('btn-menu').setAttribute('aria-expanded', 'false')
-    $('closed-list').hidden = true
+    sessionsMenu?.setOpen(false)
     closeToolbarPopups()
   } else {
     drawerState = closeDrawer(drawerState)
@@ -1038,7 +1038,7 @@ async function quickShell(): Promise<void> {
 function escBlocked(): boolean {
   return dialogOpen() || manager.open || themeDialog.open
     || document.querySelector('dialog[open], #ctx-menu, #desk-colors, input.desk-rename') !== null
-    || !$('app-menu').hidden || !$('closed-list').hidden
+    || !$('app-menu').hidden || (sessionsMenu?.isOpen() ?? false)
 }
 
 /**
@@ -1077,7 +1077,7 @@ function drawerEscapeOutside(ev: KeyboardEvent): void {
 // other, the process is never touched (transferPanel / transferFrame in app/renderer/desk.ts).
 
 function afterDrawerMove(): void {
-  refreshClosedMenu()
+  refreshSessions()
   renderStrip()
   scheduleSave()
 }
@@ -1263,7 +1263,7 @@ function dropNotes(keys: readonly string[]): void {
 }
 
 function afterNotes(): void {
-  refreshClosedMenu()
+  refreshSessions()
   scheduleSave()
   scheduleNotesCheck()
 }
@@ -1412,7 +1412,7 @@ async function runMove(op: MoveOp, slotId: string): Promise<boolean> {
     try { (scopeDesk(p.scope ?? '') ?? desks.active).addPanel(p.options) } catch (err) { console.error(`mover: não foi possível reabrir ${p.id}`, err) }
     error ??= 'Um painel não chegou ao destino.'
   }
-  refreshClosedMenu()
+  refreshSessions()
   renderStrip()
   scheduleSave()
   if (error) {
@@ -1569,7 +1569,7 @@ function applyState(slot: SlotState): void {
   // Every queued pane's position may have moved.
   for (const id of slots.keys()) if (id !== slot.slotId && slots.get(id)?.status === 'queued') panels.get(id)?.render()
   renderSlot(slot.slotId)
-  refreshClosedMenu()
+  refreshSessions()
   renderStrip()
   if (slot.attention && slot.slotId === watchedPane()) void window.tether.request({ t: 'seen', slotId: slot.slotId })
   recomputeProjects() // the slot's kind or folder may have changed
@@ -1579,14 +1579,14 @@ function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
     case 'data': panels.get(ev.slotId)?.write(ev.data); break
     case 'profiles': setProfiles(ev.profiles, undefined); break
-    case 'pause': pauseBatch = ev.batch; refreshPauseMenu(); refreshPauseDialog(); break
+    case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshPauseDialog(); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
       startErrors.delete(ev.slotId)
       const panel = findPanel(ev.slotId)
       if (panel) removeAnyPanel(panel)
-      refreshClosedMenu()
+      refreshSessions()
       renderStrip()
       break
     }
@@ -1664,7 +1664,7 @@ async function restoreLayout(): Promise<void> {
   recomputeProjects()
   // Panes that predate the hint get it now (saved with the next change the person makes).
   for (const panel of allPanels()) { const s = slots.get(panel.id); if (s) updateHint(s) }
-  refreshClosedMenu()
+  refreshSessions()
   // The first look at the notes: the loose empty ones left by earlier sessions go; nothing is told.
   scheduleNotesCheck()
 }
@@ -1727,262 +1727,44 @@ async function onConnection(state: ConnectionState): Promise<void> {
     for (const p of panels.values()) { p.render(); void p.reattach() }
     recomputeProjects()
     for (const t of tabs.values()) t.render()
-    refreshClosedMenu()
+    refreshSessions()
   }
   autoStartPanels()
 }
 
-// ---------- closed slots menu ----------
-
-/** The running slot whose "Esquecer" is waiting for the inline confirmation (one at a time). */
-let askingForget: string | undefined
-/** Slots with a forget in flight (the daemon may wait for a young Claude before killing it). */
-const forgetting = new Set<string>()
-
-function closedGroups(): ClosedGroups {
-  return groupClosed(slots.values(), id => findPanel(id) !== undefined)
-}
-
-function closedButton(cls: string, label: string, iconName?: IconName, title?: string): HTMLButtonElement {
-  const b = document.createElement('button')
-  b.className = cls
-  if (iconName) b.append(icon(iconName))
-  if (label) b.append(document.createTextNode(label))
-  if (title) b.title = title
-  return b
-}
-
-function closedGroupTitle(text: string, count: number): HTMLElement {
-  const gt = document.createElement('div'); gt.className = 'cl-gt'
-  const label = document.createElement('span'); label.textContent = text
-  const n = document.createElement('span'); n.className = 'n'; n.textContent = String(count)
-  gt.append(label, n)
-  return gt
-}
-
-function closedRow(s: SlotState, group: 'running' | 'ended'): HTMLElement {
-  const row = document.createElement('div')
-  row.className = `cl-row ${group}`
-  row.dataset.slot = s.slotId
-  if (group === 'running' && askingForget === s.slotId) row.classList.add('asking')
-  const led = document.createElement('span'); led.className = 'led'
-  const kind = document.createElement('span'); kind.className = `kind ${s.kind}`; kind.append(icon(KIND_ICON[s.kind] ?? 'terminal-window'))
-  const tx = document.createElement('div'); tx.className = 'tx'
-  const title = document.createElement('span'); title.className = 'tt'; title.textContent = panelTitle(s)
-  const cwd = document.createElement('span'); cwd.className = 'cw'; cwd.textContent = s.cwd; cwd.title = s.cwd
-  tx.append(title, cwd)
-  const acts = document.createElement('div'); acts.className = 'acts'
-  const open = group === 'running'
-    ? closedButton('open primary', 'Abrir', 'arrow-square-out', `Abrir em um painel (${KIND_LABEL[s.kind]} segue rodando)`)
-    : closedButton('open', 'Reabrir', 'arrow-clockwise', `Reabrir o painel (${KIND_LABEL[s.kind]}, ${STATUS_LABEL[effectiveStatus(s)]})`)
-  open.addEventListener('click', ev => { ev.stopPropagation(); $('closed-list').hidden = true; $('btn-closed').setAttribute('aria-expanded', 'false'); openSlot(s.slotId) })
-  const trash = closedButton('ic forget', '', 'trash', group === 'running' ? 'Encerrar e esquecer' : 'Esquecer')
-  trash.setAttribute('aria-label', group === 'running' ? 'Encerrar e esquecer o slot' : 'Esquecer o slot')
-  trash.addEventListener('click', ev => {
-    ev.stopPropagation()
-    if (group === 'running') { askingForget = s.slotId; refreshClosedMenu() } // kills a live process: ask first
-    else void forgetClosed(s.slotId)
-  })
-  acts.append(open, trash)
-  const cf = document.createElement('div'); cf.className = 'cf'
-  const msg = document.createElement('span'); msg.className = 'm'; msg.textContent = 'Encerra o processo. Esquecer?'
-  const cancel = closedButton('cancel', 'Cancelar')
-  cancel.addEventListener('click', ev => { ev.stopPropagation(); askingForget = undefined; refreshClosedMenu() })
-  const yes = closedButton('danger confirm', 'Esquecer')
-  yes.disabled = forgetting.has(s.slotId)
-  yes.addEventListener('click', ev => { ev.stopPropagation(); void forgetClosed(s.slotId) })
-  cf.append(msg, cancel, yes)
-  row.append(led, kind, tx, acts, cf)
-  return row
-}
-
-/** Forgets a slot through the daemon (it kills by identity and waits for a young Claude, as the other forget paths do). */
-async function forgetClosed(slotId: string): Promise<void> {
-  if (forgetting.has(slotId)) return
-  forgetting.add(slotId)
-  try {
-    await window.tether.request({ t: 'forget', slotId })
-  } finally {
-    forgetting.delete(slotId)
-    if (askingForget === slotId) askingForget = undefined
-    refreshClosedMenu()
-  }
-}
-
-/** "Esquecer todos os encerrados": asked once; only the slots still ended when the answer comes are forgotten. */
-async function forgetAllEnded(): Promise<void> {
-  const count = closedGroups().ended.length
-  if (count === 0 || dialogOpen()) return
-  $('closed-list').hidden = true
-  $('btn-closed').setAttribute('aria-expanded', 'false')
-  const answer = await askDialog(forgetEndedSituation(count))
-  if (answer.choice !== 'forget') return
-  const ids = closedGroups().ended.map(s => s.slotId)
-  await Promise.all(ids.map(id => forgetClosed(id)))
-}
-
-function refreshClosedMenu(): void {
-  const list = $('closed-list')
-  const g = closedGroups()
-  if (askingForget && !g.running.some(s => s.slotId === askingForget)) askingForget = undefined
-  const badge = badgeParts(g)
-  $('closed-count-run').textContent = badge.running
-  $('closed-count-end').textContent = badge.ended
-  const btn = $('btn-closed')
-  btn.title = buttonTitle(g)
-  btn.setAttribute('aria-label', buttonTitle(g))
-  // Keep the scroll of the ended list across the live re-renders.
-  const scroll = list.querySelector('.cl-ended')?.scrollTop ?? 0
-  list.replaceChildren()
-
-  const hd = document.createElement('div'); hd.className = 'cl-hd'
-  if (g.running.length > 0) {
-    const rn = document.createElement('span'); rn.className = 'rn'; rn.textContent = `${g.running.length} rodando`
-    hd.append(rn)
-    if (g.ended.length > 0) hd.append(document.createTextNode(` · ${g.ended.length} ${g.ended.length === 1 ? 'encerrado' : 'encerrados'}`))
-  } else {
-    hd.textContent = headerText(g)
-  }
-  list.append(hd)
-  if (g.running.length === 0 && g.ended.length === 0) return
-
-  if (g.running.length > 0) {
-    const grp = document.createElement('div'); grp.className = 'cl-run'; grp.dataset.group = 'running'
-    grp.append(closedGroupTitle('Rodando sem painel', g.running.length), ...g.running.map(s => closedRow(s, 'running')))
-    list.append(grp)
-  }
-  if (g.ended.length > 0) {
-    const grp = document.createElement('div'); grp.className = 'cl-ended'; grp.dataset.group = 'ended'
-    grp.append(closedGroupTitle('Encerrados', g.ended.length), ...g.ended.map(s => closedRow(s, 'ended')))
-    list.append(grp)
-    grp.scrollTop = scroll
-    const ft = document.createElement('div'); ft.className = 'cl-ft'
-    const all = closedButton('fb forget-all', 'Esquecer todos os encerrados', 'trash')
-    all.addEventListener('click', ev => { ev.stopPropagation(); void forgetAllEnded() })
-    ft.append(all)
-    list.append(ft)
-  }
-}
-
-// ---------- polite pause ----------
-// Not a force: every agent is asked to stop at its own safe point. The button starts a batch, or opens its menu.
+// ---------- sessions menu (one icon, one menu: sessions without a tab, the polite pause, the ended ones) ----------
 
 let pauseBatch: PauseBatch | null = null
-/** A gentle one-off message shown at the top of the menu (e.g. nobody was busy). */
-let pauseNotice: string | undefined
-let pauseTicker: ReturnType<typeof setInterval> | undefined
+let sessionsMenu: SessionsMenu | undefined
 
-function pauseMenuOpen(): boolean { return !$('pause-list').hidden }
+/** Re-renders the Sessões menu and its icon (counter, tooltip, glyph). Safe before the menu exists. */
+function refreshSessions(): void { sessionsMenu?.refresh() }
 
-function setPauseMenu(open: boolean): void {
-  $('pause-list').hidden = !open
-  $('btn-pause').setAttribute('aria-expanded', String(open))
-  if (!open) pauseNotice = undefined
-  // "Ainda finalizando" depends on the clock: re-render while the menu is open.
-  if (open && !pauseTicker) pauseTicker = setInterval(refreshPauseMenu, 15_000)
-  if (!open && pauseTicker) { clearInterval(pauseTicker); pauseTicker = undefined }
-  if (open) { refreshPauseMenu(); const l = $('pause-list'); l.tabIndex = -1; l.focus({ preventScroll: true }) }
+function setupSessionsMenu(): void {
+  sessionsMenu = createSessionsMenu({
+    slots: () => slots.values(),
+    hasTab: id => findPanel(id) !== undefined,
+    batch: () => pauseBatch,
+    titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
+    openSlot,
+    request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
+    confirmBulkClose: async names => (await askDialog(bulkCloseSituation(names))).choice === 'close',
+    confirmForgetAll: async count => (await askDialog(forgetEndedSituation(count))).choice === 'forget',
+    openFollow: openPauseDialog,
+    dialogOpen,
+  })
+  sessionsMenu.refresh()
 }
 
-/** The management popup ("Acompanhar…"): from the pause menu or the palette. */
+/** The management popup ("Acompanhar…"): from the Sessões menu or the palette. */
 function openPauseDialog(): void {
-  setPauseMenu(false)
+  sessionsMenu?.setOpen(false)
   showPauseDialog({
     batch: () => pauseBatch,
     titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
     request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
     openSlot,
   })
-}
-
-async function pauseRequest(body: RequestBody): Promise<void> {
-  const r = await window.tether.request(body)
-  if (r.t === 'error') pauseNotice = r.message
-  refreshPauseMenu()
-}
-
-function onPauseClick(): void {
-  // The icon only toggles the menu: a click out of curiosity must have no effect.
-  setPauseMenu(!pauseMenuOpen())
-}
-
-async function startPause(): Promise<void> {
-  const r = await window.tether.request({ t: 'pause-start' })
-  if (r.t === 'error') pauseNotice = r.message
-  else if (r.pause) pauseBatch = r.pause
-  refreshPauseMenu()
-}
-
-function pauseRow(batch: PauseBatch, e: PauseBatch['entries'][number]): HTMLElement {
-  const slotId = e.slotId
-  const s = slots.get(slotId)
-  const row = document.createElement('div'); row.className = `pz-row ${entryTone(e)}`; row.dataset.slot = slotId
-  const led = document.createElement('span'); led.className = 'led'
-  const tx = document.createElement('div'); tx.className = 'tx'
-  const title = document.createElement('span'); title.className = 'tt'; title.textContent = s ? panelTitle(s) : slotId
-  const text = document.createElement('span'); text.className = 'cw'; text.textContent = entryText(e, Date.now()); text.title = text.textContent
-  tx.append(title, text)
-  const acts = document.createElement('div'); acts.className = 'acts'
-  const open = closedButton('open', 'Abrir painel', 'arrow-square-out', 'Abrir o painel deste agente')
-  open.disabled = !s
-  open.addEventListener('click', ev => { ev.stopPropagation(); setPauseMenu(false); openSlot(slotId) })
-  acts.append(open)
-  if (batch.state !== 'resuming' && e.state !== 'resumed' && e.state !== 'resume-skipped') {
-    const out = closedButton('ic', '', 'x', 'Tirar da fila: este agente segue o trabalho e não entra na pausa')
-    out.setAttribute('aria-label', 'Tirar da fila')
-    out.addEventListener('click', ev => { ev.stopPropagation(); void pauseRequest({ t: 'pause-remove', slotId }) })
-    acts.append(out)
-  }
-  row.append(led, tx, acts)
-  return row
-}
-
-function refreshPauseMenu(): void {
-  const btn = $('btn-pause')
-  const count = $('pause-count')
-  const batch = hasBatch(pauseBatch) ? pauseBatch : null
-  const text = counterText(batch)
-  count.textContent = text
-  count.hidden = text === ''
-  btn.classList.toggle('active', batch !== null)
-  btn.title = pauseButtonTitle(batch)
-  btn.setAttribute('aria-label', pauseButtonTitle(batch))
-  const list = $('pause-list')
-  if (list.hidden) return
-  const scroll = list.querySelector('.pz-rows')?.scrollTop ?? 0
-  list.replaceChildren()
-  const hd = document.createElement('div'); hd.className = 'pz-hd'
-  hd.textContent = batch ? summaryText(batch, Date.now()) : (pauseNotice ?? '')
-  if (!batch) {
-    const act = pauseAction(slots.values(), null)
-    hd.textContent = pauseNotice ?? 'Pausar com gentileza'
-    list.append(hd)
-    const ft = document.createElement('div'); ft.className = 'pz-ft'
-    const go = closedButton('primary', act.label, 'pause', 'Pede a cada agente em andamento que pare no seu passo')
-    go.id = 'pause-start'
-    go.disabled = !act.enabled
-    go.addEventListener('click', ev => { ev.stopPropagation(); void startPause() })
-    ft.append(go)
-    list.append(ft)
-    return
-  }
-  list.append(hd)
-  if (pauseNotice) { const n = document.createElement('div'); n.className = 'pz-note'; n.textContent = pauseNotice; list.append(n) }
-  const rows = document.createElement('div'); rows.className = 'pz-rows'
-  for (const e of orderedEntries(batch)) rows.append(pauseRow(batch, e))
-  list.append(rows)
-  rows.scrollTop = scroll
-  const ft = document.createElement('div'); ft.className = 'pz-ft'
-  const ok = canResume(batch)
-  const resume = closedButton('primary', 'Retomar', 'arrow-clockwise', ok ? 'Pedir a cada agente que continue de onde parou' : 'Fica disponível quando todos tiverem parado')
-  resume.disabled = !ok
-  resume.addEventListener('click', ev => { ev.stopPropagation(); void pauseRequest({ t: 'pause-resume' }) })
-  const follow = closedButton('', 'Acompanhar…', undefined, 'Abrir o acompanhamento da pausa')
-  follow.addEventListener('click', ev => { ev.stopPropagation(); openPauseDialog() })
-  const cancel = closedButton('', 'Cancelar pausa', undefined, 'Desfazer o pedido: os agentes seguem como estavam')
-  cancel.addEventListener('click', ev => { ev.stopPropagation(); void pauseRequest({ t: 'pause-cancel' }) })
-  ft.append(resume, follow, cancel)
-  list.append(ft)
 }
 
 /** Opens a panel for a slot the daemon knows; an exited slot is started (an unconfirmed one shows the choice). */
@@ -2772,6 +2554,7 @@ const commandHost: CommandHost = {
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
   pauseManage: () => openPauseDialog(),
+  sessionsMenu: focusPause => { if (focusPause) sessionsMenu?.openOnPause(); else sessionsMenu?.setOpen(true) },
   restoreConfirmations: () => window.tether.command('restore-confirmations'),
   associateLinks: () => { void associateLinks() },
   closeWindow: () => window.tether.closeWindow(),
@@ -3131,21 +2914,9 @@ function setupUi(): void {
   dlgNew.addEventListener('cancel', ev => { ev.preventDefault(); popupCancel?.() })
   dlgNew.addEventListener('mousedown', ev => { if (ev.target === dlgNew) { ev.preventDefault(); popupCancel?.() } })
   $('btn-new-close').addEventListener('click', () => popupCancel?.())
-  const closedBtn = $('btn-closed')
-  const closedList = $('closed-list')
-  closedBtn.addEventListener('click', ev => {
-    ev.stopPropagation()
-    closedList.hidden = !closedList.hidden
-    closedBtn.setAttribute('aria-expanded', String(!closedList.hidden))
-    if (closedList.hidden) { askingForget = undefined; refreshClosedMenu() }
-  })
-  $('btn-pause').addEventListener('click', ev => { ev.stopPropagation(); onPauseClick() })
+  setupSessionsMenu()
   document.addEventListener('click', ev => {
-    if (pauseMenuOpen() && !$('pause-list').contains(ev.target as Node)) setPauseMenu(false)
-    if (closedList.contains(ev.target as Node)) return
-    closedList.hidden = true
-    closedBtn.setAttribute('aria-expanded', 'false')
-    if (askingForget) { askingForget = undefined; refreshClosedMenu() }
+    if (sessionsMenu?.isOpen() && !sessionsMenu.contains(ev.target as Node)) sessionsMenu.setOpen(false)
   })
 
   // The keyboard dispatch (chord-dispatch.ts): a key in a scope (terminal, note, window) resolves through the key

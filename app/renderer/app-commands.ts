@@ -58,6 +58,8 @@ export interface CommandHost {
   openProfiles(): void
   /** Acompanhar a pausa: the polite pause management dialog. */
   pauseManage(): void
+  /** "Sessões…" / "Pedir pausa…": opens the Sessões menu (the second one with the focus on the pause button); never pauses by itself. */
+  sessionsMenu(focusPause: boolean): void
   restoreConfirmations(): void
   /** "Associar links tether:// a este tether…". */
   associateLinks(): void
@@ -193,6 +195,8 @@ export function appCommands(host: CommandHost): Command[] {
     // (keybindings.show / keybindings.record, Ctrl+K Ctrl+S, come from the keybindings-screen extension)
     { id: 'extensions.show', title: 'Extensões', group: GROUP.app, icon: 'puzzle-piece', run: () => host.showExtensions() },
     { id: 'profiles.manage', title: 'Perfis de lançamento…', group: GROUP.app, icon: 'sliders-horizontal', run: () => host.openProfiles() },
+    { id: 'sessions.menu', title: 'Sessões…', group: GROUP.app, icon: 'tray', run: () => host.sessionsMenu(false) },
+    { id: 'pause.start', title: 'Pedir pausa aos agentes…', group: GROUP.app, icon: 'pause', run: () => host.sessionsMenu(true) },
     { id: 'pause.manage', title: 'Acompanhar a pausa…', group: GROUP.app, icon: 'pause', run: () => host.pauseManage() },
     { id: 'links.associate', title: 'Associar links tether:// a este tether…', group: GROUP.app, icon: 'link', run: () => host.associateLinks() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },

@@ -25,12 +25,8 @@
       <button id="btn-builder" class="ib" title="Montar a mesa" aria-label="Montar a mesa" aria-pressed="false"><span class="i" data-icon="square-split-horizontal"></span></button>
       <button id="btn-profiles" class="ib" title="Perfis de lançamento" aria-label="Perfis de lançamento"><span class="i" data-icon="sliders-horizontal"></span></button>
       <div class="dropdown">
-        <button id="btn-closed" class="ib" title="Slots fechados: rodando no tetherd sem painel aberto" aria-label="Slots fechados"><span class="i" data-icon="tray"></span><span id="closed-count" class="ib-count"><b id="closed-count-run" class="r"></b><b id="closed-count-end" class="e"></b></span></button>
-        <div id="closed-list" hidden></div>
-      </div>
-      <div class="dropdown">
-        <button id="btn-pause" class="ib" title="Pausar com gentileza: pede a cada agente em andamento que pare no seu passo" aria-label="Pausar com gentileza" aria-haspopup="true" aria-expanded="false"><span class="i" data-icon="pause"></span><span id="pause-count" class="ib-count pause-count" hidden></span></button>
-        <div id="pause-list" hidden></div>
+        <button id="btn-sessions" class="ib" title="Sessões" aria-label="Sessões" aria-haspopup="true" aria-expanded="false" aria-controls="sessions-list"><span class="i" data-icon="tray"></span><span id="sessions-count" class="ib-count" hidden></span></button>
+        <div id="sessions-list" role="region" aria-label="Sessões" hidden></div>
       </div>
       <button id="btn-extensions" class="ib" title="Extensões" aria-label="Extensões"><span class="i" data-icon="puzzle-piece"></span></button>
     </div>

@@ -1,5 +1,5 @@
 // E2E of the polite pause in the app with the REAL Claude Code (--model haiku, CLAUDE* stripped, hidden window, private
-// home/pipe): a Claude runs a long task (turn busy -> the tab ball), the Pausar button starts the batch, the counter goes
+// home/pipe): a Claude runs a long task (turn busy -> the tab ball), the "Pedir pausa" button in the Sessões menu starts the batch, the counter goes
 // 0/1 -> 1/1 as the agent stops by itself, the menu lists it, the pause.manage command opens the "Acompanhar a pausa"
 // popup, whose light/dark captures at 900 and 1280 px go to PAUSE_SHOTS_DIR (default D:/atrium/.tmp/pause-proof, outside the repo);
 // Retomar brings the turn back. No Claude session is killed before 11 s of life (fullscreen canary).
@@ -87,6 +87,10 @@ async function waitPanel(page: Page, id: string, cond: (t: string) => boolean, o
 const TASK = 'Faça este trabalho em 10 passos, UM de cada vez, cada passo numa chamada Bash separada e sequencial (nunca em paralelo, nunca junte passos): '
   + 'no passo N rode `sleep 6; echo passo-N` trocando N pelo número. Depois do passo 10 responda apenas: tudo-pronto.'
 
+async function openMenuIfClosed(page: Page): Promise<void> {
+  if (await page.locator('#sessions-list').isHidden()) await page.click('#btn-sessions')
+}
+
 async function setTheme(page: Page, scheme: 'light' | 'dark'): Promise<void> {
   await page.click('#btn-theme')
   await page.click(`#theme-menu li[data-theme="${scheme}"]`)
@@ -134,9 +138,9 @@ test('app pause: busy ball, Pausar button + counter, menu, pause.manage popup (l
     await waitPanel(page, id, t => !TRUST.test(t) && hasPrompt(t) && !busy(t), { quietMs: 1_500, timeout: 90_000, what: 'idle prompt' })
 
     // ---- the button is there, idle: no counter, no batch ----
-    assert.equal(await page.locator('#btn-pause').count(), 1, 'the Pausar button exists')
-    assert.equal(await page.locator('#pause-count').textContent(), '', 'no counter text without a batch')
-    assert.equal(await page.locator('#pause-count').isVisible(), false, 'no counter pill without a batch (hidden, not just empty)')
+    assert.equal(await page.locator('#btn-sessions').count(), 1, 'the Sessões icon exists')
+    assert.equal(await page.locator('#btn-pause, #btn-closed').count(), 0, 'the two old icons are gone')
+    assert.equal(await page.locator('#sessions-count').isVisible(), false, 'no counter pill without a batch or a call to action (hidden, not just empty)')
     await page.screenshot({ path: join(shots, 'app-idle-no-batch.png') })
 
     // ---- long task: the ball (turn busy) ----
@@ -153,23 +157,26 @@ test('app pause: busy ball, Pausar button + counter, menu, pause.manage popup (l
 
     // ---- Pausar: counter 0/1 then 1/1 when the agent stops itself ----
     // The icon alone never pauses: open the menu, press Enter right away, nothing starts.
-    await page.click('#btn-pause')
-    await page.waitForSelector('#pause-list:not([hidden]) #pause-start:not([disabled])')
+    await page.click('#btn-sessions')
+    await page.waitForSelector('#sessions-list:not([hidden]) #pause-start:not([disabled])')
+    assert.match((await page.locator('#pause-start').textContent())!, /^Pedir pausa aos 1 em andamento$/)
     await page.keyboard.press('Enter')
     await sleep(800)
-    assert.equal(await page.locator('#pause-count').isVisible(), false, 'clicking the icon and pressing Enter creates no batch')
-    assert.equal(await page.locator('#pause-list .pz-row').count(), 0, 'no batch rows')
+    assert.equal(await page.locator('#sessions-count').isVisible(), false, 'clicking the icon and pressing Enter creates no batch')
+    assert.equal(await page.locator('#sessions-list .pz-row').count(), 0, 'no batch rows')
     await page.click('#pause-start')
-    await page.waitForFunction(() => document.querySelector('#pause-count')?.textContent === '0/1' || document.querySelector('#pause-count')?.textContent === '1/1')
-    await page.waitForSelector('#pause-list:not([hidden]) .pz-row')
-    console.log(`# app: counter after click = ${JSON.stringify(await page.locator('#pause-count').textContent())}; row = ${JSON.stringify(await page.locator('#pause-list .pz-row .cw').first().textContent())}`)
+    await page.waitForFunction(() => document.querySelector('#sessions-count')?.textContent === '0/1' || document.querySelector('#sessions-count')?.textContent === '1/1')
+    await page.waitForSelector('#sessions-list:not([hidden]) .pz-row')
+    console.log(`# app: counter after click = ${JSON.stringify(await page.locator('#sessions-count').textContent())}; row = ${JSON.stringify(await page.locator('#sessions-list .pz-row .cw').first().textContent())}`)
     await page.screenshot({ path: join(shots, 'app-menu-waiting.png') })
-    await page.waitForFunction(() => document.querySelector('#pause-count')?.textContent === '1/1', undefined, { timeout: 180_000 })
-    const rowText = await page.locator('#pause-list .pz-row .cw').first().textContent()
+    await page.waitForFunction(() => document.querySelector('#sessions-count')?.textContent === '1/1', undefined, { timeout: 180_000 })
+    const rowText = await page.locator('#sessions-list .pz-row .cw').first().textContent()
     console.log(`# app: counter = 1/1; row text = ${JSON.stringify(rowText)}`)
-    assert.equal(await page.locator('#pause-list .pz-hd').count(), 1)
+    assert.equal(await page.locator('#sessions-list .sx-hd').count(), 1)
+    assert.equal(await page.locator('#btn-sessions .i svg').count(), 1, 'one glyph; the pause glyph shows while the batch is on screen')
+    assert.equal(await page.locator('#btn-sessions .i').getAttribute('data-icon'), 'pause')
     await page.screenshot({ path: join(shots, 'app-menu-stopped.png') })
-    assert.equal(await page.locator('#pause-list .primary:not([disabled])').count(), 1, 'Retomar is enabled once everybody stopped')
+    assert.equal(await page.locator('#pause-resume:not([disabled])').count(), 1, 'Retomar is enabled once everybody stopped')
     await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.turn === undefined, id, { timeout: 60_000 })
     assert.equal(await page.locator('.tether-tab .attn[data-mark="busy"]').count(), 0, 'the ball is gone after the Stop')
 
@@ -192,12 +199,12 @@ test('app pause: busy ball, Pausar button + counter, menu, pause.manage popup (l
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1280, 800))
 
     // ---- Retomar (from the menu): the turn comes back ----
-    await page.click('#btn-pause')
-    await page.waitForSelector('#pause-list:not([hidden]) .primary:not([disabled])')
-    await page.click('#pause-list .primary')
+    await openMenuIfClosed(page)
+    await page.waitForSelector('#sessions-list:not([hidden]) #pause-resume:not([disabled])')
+    await page.click('#pause-resume')
     await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.turn === 'busy', id, { timeout: 90_000 })
     console.log('# app: after Retomar the turn is busy again')
-    await page.waitForFunction(() => document.querySelector('#pause-count')?.hasAttribute('hidden') === true, undefined, { timeout: 60_000 })
+    await page.waitForFunction(() => document.querySelector('#sessions-count')?.hasAttribute('hidden') === true, undefined, { timeout: 60_000 })
     await page.screenshot({ path: join(shots, 'app-resumed.png') })
   } finally {
     const wait = readyAt + MIN_UPTIME_MS - Date.now()

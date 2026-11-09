@@ -38,16 +38,33 @@ export function groupClosed(slots: Iterable<SlotState>, hasPane: (slotId: string
   return { running, ended }
 }
 
-/** "Esquecer todos os encerrados": one question for the whole batch. Nothing live is in it, so nothing is killed. */
+/** "Esquecer todas as encerradas": one question for the whole batch. Nothing live is in it, so nothing is stopped. */
 export function forgetEndedSituation(count: number): DialogSpec {
-  const many = count === 1 ? '1 slot encerrado' : `${count} slots encerrados`
+  const many = count === 1 ? '1 sessão encerrada' : `${count} sessões encerradas`
   return {
     situation: 'forget-ended',
     tone: 'warn',
     icon: 'trash',
     title: `Esquecer ${many}?`,
-    message: 'Eles somem do tether. Nenhum processo está rodando neles; as conversas continuam no histórico do agente e podem ser retomadas por lá.',
-    choices: [{ id: 'forget', icon: 'trash', label: count === 1 ? 'Esquecer o slot' : `Esquecer os ${count} slots`, consequence: 'Remove da lista de Slots fechados. Não dá para desfazer.', tone: 'destructive' }],
+    message: 'Elas somem do tether. Nenhuma está rodando; as conversas continuam no histórico do agente e podem ser retomadas por lá.',
+    choices: [{ id: 'forget', icon: 'trash', label: count === 1 ? 'Esquecer a sessão' : `Esquecer as ${count} sessões`, consequence: 'Remove da lista de Encerradas. Não dá para desfazer.', tone: 'destructive' }],
+    cancelLabel: 'Cancelar',
+  }
+}
+
+/** "Encerrar os N ociosos sem guia": the single confirmation, listing the names. Stopping keeps the conversations. */
+export function bulkCloseSituation(names: readonly string[]): DialogSpec {
+  const n = names.length
+  const shown = names.slice(0, 12)
+  const lines = n > shown.length ? [...shown, `e mais ${n - shown.length}`] : shown
+  return {
+    situation: 'bulk-close',
+    tone: 'info',
+    icon: 'tray',
+    title: n === 1 ? 'Encerrar a sessão ociosa sem guia?' : `Encerrar as ${n} sessões ociosas sem guia?`,
+    message: 'Nenhuma está trabalhando nem pede atenção.',
+    context: { icon: 'tray', name: n === 1 ? '1 sessão' : `${n} sessões`, lines },
+    choices: [{ id: 'close', icon: 'power', label: n === 1 ? 'Encerrar a sessão' : `Encerrar as ${n} sessões`, consequence: 'O processo termina. As conversas ficam guardadas em Encerradas e podem ser reabertas.', tone: 'neutral' }],
     cancelLabel: 'Cancelar',
   }
 }

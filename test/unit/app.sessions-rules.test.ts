@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import type { SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { PauseBatch, PauseEntry, PauseEntryState } from '../../src/daemon/pause.ts'
 import {
-  bulkCloseAction, forgetEndedSituation, formatAgo, groupClosed, isIdleForCleanup, pauseAction, sessionRows, sessionsCounter,
+  bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, groupClosed, isIdleForCleanup, pauseAction, sessionRows, sessionsCounter,
   sessionsSummary, type SessionSlot,
 } from '../../app/renderer/sessions-rules.ts'
 
@@ -48,9 +48,23 @@ describe('grouping (moved from closed-slots)', () => {
   })
   test('forget-all dialog: one destructive choice and the count in the title', () => {
     const spec = forgetEndedSituation(12)
-    assert.match(spec.title, /12 slots encerrados/)
+    assert.match(spec.title, /12 sessões encerradas/)
     assert.deepEqual(spec.choices.map(c => [c.id, c.tone]), [['forget', 'destructive']])
-    assert.match(forgetEndedSituation(1).title, /1 slot encerrado\?/)
+    assert.match(forgetEndedSituation(1).title, /1 sessão encerrada\?/)
+  })
+})
+
+describe('bulkCloseSituation', () => {
+  test('lists the names and has one non-destructive choice', () => {
+    const spec = bulkCloseSituation(['a', 'b', 'c'])
+    assert.match(spec.title, /3 sessões ociosas sem guia/)
+    assert.deepEqual(spec.context?.lines, ['a', 'b', 'c'])
+    assert.deepEqual(spec.choices.map(c => [c.id, c.tone]), [['close', 'neutral']])
+  })
+  test('long lists are cut with "e mais K"', () => {
+    const spec = bulkCloseSituation(Array.from({ length: 15 }, (_, i) => `s${i}`))
+    assert.equal(spec.context?.lines.length, 13)
+    assert.equal(spec.context?.lines.at(-1), 'e mais 3')
   })
 })
 
