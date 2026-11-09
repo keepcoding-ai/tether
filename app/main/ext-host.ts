@@ -16,7 +16,7 @@ import { applyMigrations, stateOf, withState } from '../shared/ext-migrations.ts
 import { mainIpc, type MainIpcTransport } from '../shared/ext-ipc.ts'
 import { ConfigurationRegistry, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
-import type { TetherMain } from './ext-api.ts'
+import type { ExtSurfaces, TetherMain } from './ext-api.ts'
 import { BRAND } from '../shared/brand.ts'
 
 import type { ExtSettingChange, MainExtensionsList } from '../shared/api.ts'
@@ -38,7 +38,11 @@ export interface MainHostDeps {
   log(msg: string): void
   /** Moves a path to the system's trash (shell.trashItem); absent in the unit tests. */
   trash?(path: string): Promise<void>
+  /** One extension's native surfaces (app/main/surfaces.ts); absent in the unit tests. */
+  surfaces?(owner: string): ExtSurfaces
 }
+
+const noSurfaces: ExtSurfaces = { create: () => Promise.reject(new Error('superfícies indisponíveis')), get: () => undefined, list: () => [] }
 
 const KEY = /^[a-zA-Z0-9][a-zA-Z0-9.-]*$/
 const ID = /^[a-z0-9][a-z0-9-]*$/
@@ -162,6 +166,7 @@ export class MainExtensionHost {
         },
       },
       window: { current: () => deps.window() },
+      surfaces: deps.surfaces ? deps.surfaces(id) : noSurfaces,
       shell: { trash: path => (deps.trash ? deps.trash(path) : Promise.reject(new Error('lixeira indisponível'))) },
       log: msg => deps.log(`[${id}] ${msg}`),
     }
