@@ -74,6 +74,12 @@ export interface SlotState {
   attention?: 'done' | 'waiting'
   /** A turn is in progress (Claude: prompt submitted and not yet Stop; soul: Enter and output not yet quiet). Absent = idle. */
   turn?: 'busy'
+  /**
+   * Since when the slot has no turn in progress (ISO): the last busy→idle transition, launch or exit; for a slot that had
+   * no turn since the daemon booted, the spawn time or the last event in its log. Absent while `turn` is 'busy'.
+   * Absent on daemons older than 0.3.3.
+   */
+  idleSince?: string
 }
 
 export type ErrorCode =

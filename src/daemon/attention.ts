@@ -42,6 +42,8 @@ export class AttentionState {
   value: Attention | undefined
   /** Is a turn in progress? Claude: UserPromptSubmit→busy, Stop→idle. Soul: its `turn` events, else Enter→busy, quiet→idle. Shells never. */
   turn: Turn = 'idle'
+  /** ISO time the turn last became idle (a finished turn, a signal, a reset); undefined while busy or when it never changed here. */
+  idleSince: string | undefined
   /** The agent reports its own turns (`signal`): the Enter / quiet heuristic stands down for this run. */
   private signaled = false
   private readonly opts: Required<AttentionOptions>
@@ -143,6 +145,7 @@ export class AttentionState {
     this.signaled = false
     this.scan = 'text'
     const t = this.setTurn('idle')
+    this.idleSince = new Date().toISOString() // a launch / exit starts the idle clock even when the turn was already idle
     return this.set(undefined) || t
   }
 
@@ -154,6 +157,7 @@ export class AttentionState {
   private setTurn(v: Turn): boolean {
     if (this.turn === v) return false
     this.turn = v
+    this.idleSince = v === 'idle' ? new Date().toISOString() : undefined
     return true
   }
 

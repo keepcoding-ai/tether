@@ -33,7 +33,7 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 
-export const DAEMON_VERSION = '0.3.2'
+export const DAEMON_VERSION = '0.3.3'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
@@ -227,6 +227,12 @@ class DaemonImpl implements Daemon {
     return env ? { env } : {}
   }
 
+  /** Timestamp of the slot's last logged event: the best idle-since for a slot that had no turn since the daemon booted. */
+  private lastEventTs(slot: Slot): string | undefined {
+    const events = readEvents(this.home, slot.meta.slotId)
+    return events.length ? events[events.length - 1]!.ts : undefined
+  }
+
   private stateOf(slot: Slot, profiles = this.profileStore.profiles()): SlotState {
     const s: SlotState = {
       slotId: slot.meta.slotId,
@@ -252,6 +258,10 @@ class DaemonImpl implements Daemon {
     if (slot.stopping) s.stopping = true
     if (slot.attention.value) s.attention = slot.attention.value
     if (slot.attention.turn === 'busy') s.turn = 'busy'
+    else {
+      const idleSince = slot.attention.idleSince ?? slot.spawnedAt ?? this.lastEventTs(slot)
+      if (idleSince) s.idleSince = idleSince
+    }
     return s
   }
 

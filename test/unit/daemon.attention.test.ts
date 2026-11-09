@@ -206,3 +206,29 @@ describe('attention report', () => {
     assert.ok(!existsSync(join(home, 'slots', 'slot1.jsonl')))
   })
 })
+
+describe('attention: idleSince', () => {
+  test('never changed: absent (the daemon falls back to spawn time / last event)', () => {
+    assert.equal(new AttentionState(attentionOptions('claude')).idleSince, undefined)
+  })
+  test('start: absent; done: set to now; the next start clears it', () => {
+    const a = new AttentionState(attentionOptions('claude'))
+    a.hook('start')
+    assert.equal(a.idleSince, undefined)
+    const before = Date.now()
+    a.hook('done')
+    assert.ok(a.idleSince && Date.parse(a.idleSince) >= before - 5 && Date.parse(a.idleSince) <= Date.now() + 5)
+    a.hook('start')
+    assert.equal(a.idleSince, undefined)
+  })
+  test('signal idle sets it; reset sets it even when already idle', () => {
+    const a = new AttentionState(attentionOptions('soul'))
+    a.signal('busy')
+    assert.equal(a.idleSince, undefined)
+    a.signal('idle')
+    assert.ok(a.idleSince)
+    const b = new AttentionState(attentionOptions('claude'))
+    b.reset()
+    assert.ok(b.idleSince)
+  })
+})
