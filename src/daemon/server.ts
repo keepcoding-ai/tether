@@ -2,7 +2,7 @@
 // watches <home>/slots/*.jsonl so every client sees the current binding. Speaks protocol.ts over a named
 // pipe / unix socket (NDJSON). "Running" means: this process holds the PTY and it has not exited.
 import { withTabEnv } from '../core/tab-env.ts'
-import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { AttentionState, attentionOptions, parseAttentionReport } from './attention.ts'
 import '../agents/load.ts'
@@ -11,7 +11,9 @@ import { shellAdapter } from '../agents/shell.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
-import { canonicalDir, slotAttentionPath, slotMetaPath, slotsDir } from '../core/paths.ts'
+import { canonicalDir, slotAttentionPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
+import { cliScript } from '../core/tab-env.ts'
+import { applyReportLine, buildRequestText, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
 import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
@@ -158,6 +160,8 @@ class DaemonImpl implements Daemon {
   /** Slots waiting for a 'starting' seat, in request order. */
   private readonly queue: Slot[] = []
   private closing = false
+  /** The pause batch (<home>/pause.json); a closed one is kept on disk but not here. */
+  private batch: PauseBatch | undefined
   /** This process' OS start time: goes into every run file so a later tetherd can tell this one is gone. */
   private startedAt = new Date().toISOString()
 
@@ -184,6 +188,7 @@ class DaemonImpl implements Daemon {
     const profiles = this.profileStore.read()
     if (profiles.problem) this.log(`profiles: ${profiles.problem}`)
     for (const meta of listSlots(this.home)) this.load(meta)
+    this.loadPause()
     this.startWatching()
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
     await new Promise<void>((resolve, reject) => {
@@ -878,6 +883,10 @@ class DaemonImpl implements Daemon {
         this.broadcastProfiles()
         return { t: 'ok', id }
       }
+      case 'pause-start':
+        return { t: 'ok', id, pause: this.pauseStart(req.slotIds) }
+      case 'pause-get':
+        return { t: 'ok', id, pause: this.batch ?? null }
       case 'set-profile': {
         const slot = this.slot(req.slotId)
         if (req.profileId !== null && typeof req.profileId !== 'string') throw new RequestError('bad-request', 'profileId obrigatório (ou null para nenhum perfil)')
@@ -926,6 +935,8 @@ class DaemonImpl implements Daemon {
     try {
       this.watcher = watch(slotsDir(this.home), (_event, filename) => {
         if (typeof filename !== 'string') return
+        const pr = /^([^.]+)\.pause\.jsonl$/.exec(filename)
+        if (pr && SLOT_ID_RE.test(pr[1]!)) { this.schedulePauseReport(pr[1]!); return }
         const a = /^([^.]+)\.attention$/.exec(filename)
         if (a && SLOT_ID_RE.test(a[1]!)) { this.scheduleAttentionReport(a[1]!); return }
         const m = /^([^.]+)\.(jsonl|json)$/.exec(filename)
@@ -972,6 +983,114 @@ class DaemonImpl implements Daemon {
       else this.scheduleAttention(slot)
     }, Math.max(50, due - Date.now()))
     slot.attentionTimer.unref()
+  }
+
+  // ---- polite pause ----------------------------------------------------------------------------
+
+  /** Entries still waiting for the agent (the request file stays until they are out of these states). */
+  private static readonly PAUSE_LIVE: ReadonlySet<string> = new Set(['queued', 'listening', 'delivered', 'preparing'])
+
+  private pauseStart(slotIds: unknown): PauseBatch {
+    if (this.batch && this.batch.state !== 'closed') throw new RequestError('pause-active', 'já existe uma pausa em andamento')
+    if (slotIds !== undefined && (!Array.isArray(slotIds) || slotIds.some((x) => typeof x !== 'string'))) throw new RequestError('bad-request', 'slotIds deve ser uma lista de ids')
+    const chosen: Slot[] = slotIds === undefined
+      ? [...this.slotMap.values()].filter((s) => s.attention.turn === 'busy' && isAlive(s))
+      : [...new Set(slotIds as string[])].map((x) => this.slot(x))
+    if (chosen.length === 0) throw new RequestError('bad-request', 'nenhum agente em andamento para pausar')
+    const now = new Date().toISOString()
+    const batch: PauseBatch = {
+      v: 1,
+      id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      createdAt: now,
+      state: 'pausing',
+      entries: chosen.map((s) => {
+        const e = newEntry(s.meta.slotId, s.meta.agent, now, s.binding?.sessionId)
+        return transition(e, 'listening', now)
+      }),
+    }
+    this.batch = batch
+    for (const e of batch.entries) this.writePauseRequest(batch, e)
+    this.savePause()
+    this.log(`pause ${batch.id}: ${batch.entries.length} slot(s)`)
+    return batch
+  }
+
+  /** Atomic (temp + rename): the hook may read the file at any moment. */
+  private writePauseRequest(batch: PauseBatch, entry: PauseEntry): void {
+    try {
+      const path = slotPauseRequestPath(this.home, entry.slotId)
+      const cli = `node "${cliScript().replaceAll('\\', '/')}"`
+      mkdirSync(slotsDir(this.home), { recursive: true })
+      const tmp = `${path}.${process.pid}.tmp`
+      writeFileSync(tmp, JSON.stringify({ batchId: batch.id, text: buildRequestText(cli) }) + '\n')
+      renameSync(tmp, path)
+    } catch (e) { this.log(`pause: cannot write the request of ${entry.slotId}: ${(e as Error).message}`) }
+  }
+
+  private clearPauseRequest(slotId: string): void {
+    rmSync(slotPauseRequestPath(this.home, slotId), { force: true })
+  }
+
+  /** Persists and tells every client. */
+  private savePause(): void {
+    const batch = this.batch
+    if (!batch) return
+    try { writePauseFile(this.home, batch) } catch (e) { this.log(`pause: cannot write pause.json: ${(e as Error).message}`) }
+    this.broadcast({ t: 'pause', batch })
+  }
+
+  private loadPause(): void {
+    const batch = readPauseFile(this.home)
+    if (!batch || batch.state === 'closed') return
+    this.batch = batch
+    // The request file may be gone or stale after a crash: entries still listening get it again.
+    for (const e of batch.entries) if (e.state === 'listening') this.writePauseRequest(batch, e)
+    this.log(`pause ${batch.id}: reloaded (${batch.state})`)
+  }
+
+  private schedulePauseReport(slotId: string): void {
+    const key = `${slotId}.pause.jsonl`
+    const prev = this.pending.get(key)
+    if (prev) clearTimeout(prev)
+    const t = setTimeout(() => {
+      this.pending.delete(key)
+      this.applyPauseReports(slotId)
+    }, WATCH_DEBOUNCE_MS)
+    this.pending.set(key, t)
+  }
+
+  /**
+   * Folds the slot's report file into its entry. The whole file is replayed each time: applyReportLine ignores lines
+   * of other batches, older than the entry, or that no longer apply, so replaying is idempotent.
+   */
+  private applyPauseReports(slotId: string): void {
+    const batch = this.batch
+    if (!batch || batch.state === 'closed') return
+    const idx = batch.entries.findIndex((e) => e.slotId === slotId)
+    if (idx < 0) return
+    let text: string
+    try { text = readFileSync(slotPauseReportPath(this.home, slotId), 'utf8') } catch { return }
+    const before = batch.entries[idx]!
+    let entry = before
+    // One transition per broadcast, so clients see delivered, preparing, stopped in order even when the lines arrive together.
+    const steps: PauseEntry[] = []
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue
+      const next = applyReportLine(entry, line, batch.id)
+      if (next !== entry) { entry = next; steps.push(next) }
+    }
+    if (steps.length === 0) return
+    for (const step of steps) {
+      batch.entries[idx] = step
+      this.settlePause(batch)
+      this.savePause()
+    }
+    if (!DaemonImpl.PAUSE_LIVE.has(entry.state)) this.clearPauseRequest(slotId)
+  }
+
+  /** The batch is 'paused' once no entry is still being waited for. */
+  private settlePause(batch: PauseBatch): void {
+    if (batch.state === 'pausing' && !batch.entries.some((e) => DaemonImpl.PAUSE_LIVE.has(e.state))) batch.state = 'paused'
   }
 
   /** Debounces per slot: the hook writes a line and the editor/CLI may write more right after. */

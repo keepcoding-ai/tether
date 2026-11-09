@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { ensureRenamedNode, exeLog } from '../core/exe.ts'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
-import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
+import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type PauseBatch, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
 
 export type Hello = { v: number; pid: number; version: string; exec?: string }
 export type OkReply = Extract<Reply, { t: 'ok' }>
@@ -53,6 +53,7 @@ type Events = {
   data: [slotId: string, data: string]
   removed: [slotId: string]
   profiles: [profiles: Profile[]]
+  pause: [batch: PauseBatch]
   close: []
 }
 
@@ -189,6 +190,9 @@ export class DaemonClient extends EventEmitter<Events> {
         return
       case 'profiles':
         this.emit('profiles', msg.profiles)
+        return
+      case 'pause':
+        this.emit('pause', msg.batch)
         return
     }
   }
