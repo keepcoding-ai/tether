@@ -9,7 +9,15 @@
 //   4. WebAskUser (login): the tab goes to the person, the clean hand-off removes the agent's init script and the service worker
 //      the agent's page registered (E7b), the person types a password and submits, nothing reaches the agent (no event, no POST); the
 //      sticky seal on the agent's pane survives focusing it; handing back resolves `returned` and the seal goes out;
-//   5. a short Tether.askUser runs out: `timeout`, the bar says the agent gave up, the tab stays with the person.
+//   5. a short Tether.askUser runs out: `timeout`, the bar says the agent gave up, the tab stays with the person;
+// E7c (the gatekeeper's security review):
+//   6. H1b: a `Runtime.evaluate` awaiting a promise when the person takes answers TAB_WITH_USER at once, never the value the
+//      page produced in her turn; H2: a bait the page writes to the console (and the log) in her turn reaches the agent neither
+//      through the resync after the hand-back nor through a new session that enables Runtime and Log;
+//   7. H1a/M1: a help request of kind 'other' gets the clean hand-off (the agent's init script is gone) and its hand-back reloads
+//      (what the person typed and did not send is gone); the login hand-back of step 4 posted nothing again;
+//   8. H3: a page opening popups in a loop ends with at most 3 more tabs, the app alive and the seal on the tab; M3: a capture
+//      with scale 50 is refused by the gate.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process'
@@ -37,7 +45,10 @@ declare const window: {
     browserSeals(): { tabId: string; count: number }[]
   }
 }
-type Hub = { take(id: string): void; pause(id: string): void; resume(id: string): void; control(id: string): string; view(id: string): { askExpired?: boolean } }
+type Hub = {
+  take(id: string): void; pause(id: string): void; resume(id: string): void; giveBack(id: string): Promise<void>; control(id: string): string
+  view(id: string): { askExpired?: boolean }
+}
 type Tabs = {
   create(owner: string, url: string, ticket?: boolean): Promise<{ tabId: string }>
   eval(tabId: string, code: string): Promise<unknown>
@@ -45,6 +56,7 @@ type Tabs = {
   shield(tabId: string): boolean | undefined
   control: Hub
   gate(): Promise<{ port: number } | null>
+  registry: { list(): { tabId: string; ownerSlotId: string; popupsRefused?: number }[] }
 }
 
 const pipe = `\\\\.\\pipe\\tether-brcontrol-${process.pid}`
@@ -129,7 +141,7 @@ async function createShell(win: Page, cwd: string): Promise<string> {
   return (await win.evaluate(() => window.__tether.panelIds())).filter(id => !before.includes(id))[0]!
 }
 
-test('browser control: take, pause, shield, help request with the clean hand-off, timeout', { timeout: 300_000 }, async () => {
+test('browser control: take, pause, shield, help request with the clean hand-off, timeout, in-flight answers, console, popups', { timeout: 420_000 }, async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit', env: { ...process.env, TETHER_TEST_EXTENSIONS: '1' } })
   assert.equal(build.status, 0, 'app build failed')
   const site = await serve()
@@ -290,6 +302,59 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     await win.evaluate(id => window.__tether.browserClick(id, 'notice'), tabId)
     await until('given back after timeout', async () => (await control()) === 'agent')
     assert.equal((await win.evaluate(() => window.__tether.browserSeals())).length, 0)
+
+    // ---- 6. H1b: the answer in flight; H2: the console of the person's turn ----
+    assert.ok(!(await spy.call('Page.navigate', { url: `${origin}/login.html` }, sid)).error)
+    await until('login page again', async () => (await hostEval(`document.readyState === 'complete' && !!document.getElementById('pw')`)) === true)
+    const inflight = spy.call('Runtime.evaluate', { expression: 'new Promise(r => { window.__h1 = r })', awaitPromise: true, returnByValue: true }, sid, 20_000)
+    await until('the promise waits in the page', async () => (await hostEval('typeof window.__h1')) === 'function')
+    await B((t, a) => t.control.take(a), tabId)
+    await until('taken (6)', async () => (await control()) === 'user')
+    await hostEval(`window.__h1('SECRET-H1B'); console.log('BAIT-H2-CONSOLE'); console.error('BAIT-H2-ERROR'); fetch('/bait-H2-LOG').catch(() => {}); 1`)
+    const late = await inflight
+    assert.match(String(late.error?.message), /^TAB_WITH_USER/, `the answer in flight is the held error: ${JSON.stringify(late)}`)
+    assert.ok(!JSON.stringify(spy.events).includes('SECRET-H1B') && !JSON.stringify(late).includes('SECRET-H1B'), 'the value of her turn never reaches the agent')
+    await sleep(500)
+    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), tabId) // manual take: handed back without a reload
+    await until('given back (6)', async () => (await control()) === 'agent')
+    await sleep(1200) // the resync's Runtime.disable/enable
+    const fresh = (await spy.call('Target.attachToTarget', { targetId: target, flatten: true })).result.sessionId as string
+    for (const m of ['Runtime.enable', 'Log.enable']) assert.ok(!(await spy.call(m, {}, fresh)).error, m)
+    await sleep(800)
+    const baits = spy.events.filter(e => JSON.stringify(e).includes('BAIT-H2') || JSON.stringify(e).includes('bait-H2'))
+    assert.deepEqual(baits.map(e => `${e.method} ${e.sessionId === fresh ? 'new session' : 'resync'}`), [], 'the bait of her turn reaches the agent by no way')
+    await spy.call('Target.detachFromTarget', { sessionId: fresh }, bs)
+
+    // ---- 7. H1a/M1: a request of kind 'other' ----
+    assert.equal(site.posts.filter(b => b.includes(PASSWORD)).length, 1, 'the login hand-back reloaded without posting the form again')
+    const script2 = await spy.call('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__agentScript2 = 1' }, sid)
+    assert.ok(script2.result?.identifier)
+    await hostEval('location.reload(); 1')
+    await until('init script 2 runs', async () => (await hostEval('window.__agentScript2 === 1 && document.readyState === "complete" && !!document.getElementById("pw")')) === true)
+    const other = spy.call('Tether.askUser', { targetId: target, message: 'Entre na sua conta', kind: 'other', timeoutMs: 120_000 }, bs, 120_000)
+    await until('asked (other): with the person', async () => (await control()) === 'user')
+    await until("clean hand-off (other): the agent's script is gone", async () => (await hostEval(`document.readyState === 'complete' && !!document.getElementById('pw') && window.__agentScript2 === undefined`)) === true)
+    await hostEval(`document.getElementById('user').value = 'TYPED-NOT-SENT'; window.__beforeGiveBack = 1; 1`)
+    await B((t, a) => t.control.giveBack(a), tabId)
+    assert.deepEqual((await other).result, { outcome: 'returned' })
+    await until('the hand-back reloaded', async () => (await hostEval(`window.__beforeGiveBack === undefined && document.readyState === 'complete'`)) === true)
+    const typed = await spy.call('Runtime.evaluate', { expression: "document.getElementById('user').value", returnByValue: true }, sid)
+    assert.equal(typed.result?.result?.value, 'me', `what she typed and did not send is gone: ${JSON.stringify(typed)}`)
+
+    // ---- 8. M3: a capture past the ceiling; H3: popups in a loop ----
+    const big = await spy.call('Page.captureScreenshot', { clip: { x: 0, y: 0, width: 100, height: 100, scale: 50 } }, sid)
+    assert.match(String(big.error?.message), /scale/, `the gate refuses the capture: ${JSON.stringify(big).slice(0, 200)}`)
+    const ownerTabs = (): Promise<number> => B((t, a) => t.registry.list().filter(x => x.ownerSlotId === a).length, slot)
+    const n0 = await ownerTabs()
+    await hostEval(`for (let i = 0; i < 60; i++) window.open('/login.html?p=' + i); 1`)
+    await sleep(4000)
+    const n1 = await ownerTabs()
+    console.log(`popups: ${n1 - n0} tab(s) opened from 60 window.open`)
+    assert.ok(n1 - n0 >= 1, 'a popup still opens')
+    assert.ok(n1 - n0 <= 3, `at most 3 popups per 10 s (got ${n1 - n0})`)
+    assert.equal(await B(() => 1 + 1), 2, 'the app is alive')
+    assert.ok(((await B((t, a) => t.registry.list().find(x => x.tabId === a)?.popupsRefused ?? 0, tabId)) as number) > 0)
+    await until('the tab carries the seal', async () => (await pane()).noticeKind === 'popups')
     spy.close()
   } finally {
     if (server) {
