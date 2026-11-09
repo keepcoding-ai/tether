@@ -6,18 +6,22 @@
 //      is deleted;
 //   2. the conformance battery (a representative subset of bench S2/B1, through MCP tools): the VENDORED `tether-browser`
 //      server (extensions/browser/vendor/tether-browser/server.mjs) run by the repo's Electron as Node, over stdio, as agent A.
+//      E6: dialogs and captures (viewport, element, full page) of the hidden tab pass; only the resize fails, on purpose;
+//   3. E6, raw CDP: the remappings (resize refused by name, focus on answered, off refused, bringToFront without effect, input
+//      scaled), a hidden tab's capture at the asked size, a dialog that stays open until the agent answers (no native box),
+//      commands of one session kept in order behind a navigation that waits, schemes, refusals by domain.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { _electron, type ElectronApplication, type Page } from 'playwright-core'
+import { join } from 'node:path'
+import type { ElectronApplication, Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep } from './browser-kit.ts'
 
 declare const window: { __tether: { connection(): { connected: boolean; pid?: number } | undefined } }
 type Tabs = {
@@ -27,15 +31,7 @@ type Tabs = {
   gate(): Promise<{ port: number; instance: string; connections: { slotId: string }[] } | null>
 }
 
-const require = createRequire(import.meta.url)
-const root = resolve(import.meta.dirname, '..', '..')
-const electronPath = require('electron') as string
-const mainPath = join(root, 'app', 'dist', 'main.cjs')
-const daemonMain = join(root, 'src', 'daemon', 'main.ts')
-const serverMjs = join(root, 'extensions', 'browser', 'vendor', 'tether-browser', 'server.mjs')
 const pipe = `\\\\.\\pipe\\tether-brgate-${process.pid}`
-const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
-const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' } }
 const KEY_A = 'aaaaAAAAbbbbBBBBccccCCCCddddDDDDeeee'
 const KEY_B = 'bbbbBBBBccccCCCCddddDDDDeeeeEEEEffff'
 
@@ -67,48 +63,9 @@ function servePages(): Promise<{ server: Server; base: string }> {
   return new Promise(r => server.listen(0, '127.0.0.1', () => r({ server, base: `http://localhost:${(server.address() as AddressInfo).port}` })))
 }
 
-async function launch(home: string): Promise<{ app: ElectronApplication; page: Page }> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
-  env.TETHER_PIPE = pipe
-  env.TETHER_HOME = home
-  env.TETHER_E2E_HIDDEN = '1'
-  if (process.env.TETHER_GATE_TRACE) env.TETHER_GATE_TRACE = process.env.TETHER_GATE_TRACE
-  delete env.TETHER_CLAUDE_ARGS
-  const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
-  const win = await app.firstWindow()
-  win.setDefaultTimeout(10_000)
-  try { await win.waitForSelector('#conn.on', { timeout: 30_000 }) } catch (e) { await killElectron(app, root).catch(() => {}); throw e }
-  return { app, page: win }
-}
-
-/** A raw CDP client over the gate's WebSocket (Node's own WebSocket, with the key header). */
-async function cdp(port: number, key: string): Promise<{ call(method: string, params?: object, sessionId?: string): Promise<any>; events: any[]; closed: Promise<void>; close(): void }> {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/browser/tether`, { headers: { 'x-tether-key': key } } as never)
-  const pending = new Map<number, (m: any) => void>()
-  const events: any[] = []
-  let next = 0
-  const closed = new Promise<void>(r => ws.addEventListener('close', () => r()))
-  ws.addEventListener('message', ev => {
-    const m = JSON.parse(String(ev.data))
-    if (m.id !== undefined) pending.get(m.id)?.(m)
-    else events.push(m)
-  })
-  await new Promise<void>((r, j) => { ws.addEventListener('open', () => r()); ws.addEventListener('error', () => j(new Error('ws refused'))) })
-  return {
-    call: (method, params = {}, sessionId) => new Promise(r => {
-      const id = ++next
-      pending.set(id, r)
-      ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
-    }),
-    events, closed, close: () => ws.close(),
-  }
-}
-
 /** The vendored MCP server over stdio (newline-delimited JSON-RPC). */
 function mcp(endpointFile: string, keyFile: string): { child: ChildProcessWithoutNullStreams; tool(name: string, args?: object): Promise<{ text: string; isError: boolean }>; stderr: () => string } {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
+  const env = cleanEnv()
   env.ELECTRON_RUN_AS_NODE = '1'
   const child = spawn(electronPath, [serverMjs, '--adopt-endpoint-file', endpointFile, '--adopt-key-file', keyFile, '--allow-evaluate'], { env, stdio: 'pipe', windowsHide: true })
   const pending = new Map<number, (m: any) => void>()
@@ -160,7 +117,7 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
   let server: ReturnType<typeof mcp> | undefined
   try {
     let win: Page
-    ;({ app, page: win } = await launch(home))
+    ;({ app, page: win } = await launchHidden(home, pipe))
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const T = app
     const gate = await T.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.gate())
@@ -183,15 +140,15 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     assert.equal((await fetch(`${base}/tether/identity`, { headers: { origin: 'http://evil.test' } })).status, 403, 'Origin refused on identity too')
     assert.equal((await fetch(`${base}/json/version`, { headers: { 'x-tether-key': KEY_A, referer: 'http://evil.test/' } })).status, 403, 'Referer refused')
     assert.equal((await fetch(`${base}/json/list`, { headers: { 'x-tether-key': KEY_A } })).status, 404)
-    await assert.rejects(cdp(gate.port, 'zzzzZZZZzzzzZZZZzzzzZZZZ'), 'a WebSocket with an unknown key is refused')
+    await assert.rejects(rawCdp(gate.port, 'zzzzZZZZzzzzZZZZzzzzZZZZ'), 'a WebSocket with an unknown key is refused')
 
     // ---- 2. isolation: B's tab is invisible and unreachable for A ----
     const bTab = await T.evaluate(async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('agent-b', url)).tabId, `${pages.base}/b.html`)
-    const b = await cdp(gate.port, KEY_B)
+    const b = await rawCdp(gate.port, KEY_B)
     const bTargets = (await b.call('Target.getTargets')).result.targetInfos
     assert.equal(bTargets.length, 1, 'B sees its own tab')
     const bTarget = bTargets[0].targetId as string
-    const a = await cdp(gate.port, KEY_A)
+    const a = await rawCdp(gate.port, KEY_A)
     assert.deepEqual((await a.call('Target.getTargets')).result.targetInfos, [], 'A sees none of B\'s tabs')
     assert.ok((await a.call('Target.attachToTarget', { targetId: bTarget, flatten: true })).error, 'A cannot attach to B\'s tab')
     assert.ok((await a.call('Target.closeTarget', { targetId: bTarget })).error, 'A cannot close B\'s tab')
@@ -293,12 +250,46 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     if (process.env.TETHER_GATE_TRACE) writeFileSync(`${process.env.TETHER_GATE_TRACE}.mcp.log`, server.stderr())
     const failed = steps.filter(s => !s.ok)
     console.log(`battery: ${steps.length - failed.length}/${steps.length} steps ok; failed: ${failed.map(f => f.name).join(' | ')}`)
-    // Known gaps handed to E6 (dialogs, and screenshots of a hidden tab); remove each name here when it passes.
-    const expected = new Set([
-      'resize (refused on purpose: the page size is the tether\'s)',
-      'screenshot (viewport)', 'screenshot (fullPage)', 'resolve dialog', 'confirm accepted (host truth)',
-    ])
-    assert.deepEqual(failed.map(f => f.name).filter(n => !expected.has(n)), [], 'no failure beyond the resize and the known E6 gaps')
+    // The resize fails on purpose (rule 3); a hidden tab's viewport and full-page captures are still open (E6 did not close them).
+    const expected = new Set(['resize (refused on purpose: the page size is the tether\'s)', 'screenshot (viewport)', 'screenshot (fullPage)'])
+    assert.deepEqual(failed.map(f => f.name).filter(n => !expected.has(n)), [], 'no failure beyond the resize and the hidden captures')
+
+    // ---- 3b. E6, raw CDP as agent A: remappings, captures, dialogs, order, schemes ----
+    const ra = await rawCdp(gate.port, KEY_A)
+    const aTarget = ((await ra.call('Target.getTargets')).result.targetInfos as { targetId: string; url: string }[]).find(t => /a\.html/.test(t.url))
+    assert.ok(aTarget, 'A\'s a.html tab')
+    const rs = (await ra.call('Target.attachToTarget', { targetId: aTarget.targetId, flatten: true })).result.sessionId as string
+    const P = (m: string, p: object = {}): Promise<any> => ra.call(m, p, rs)
+    await P('Page.enable')
+    await P('Runtime.enable')
+    const resize = await P('Emulation.setDeviceMetricsOverride', { width: 400, height: 300, deviceScaleFactor: 1, mobile: false })
+    assert.match(resize.error?.message ?? '', /refused by the gate: the page size is fixed by the tether/, 'resize refused by name')
+    assert.deepEqual((await P('Emulation.setFocusEmulationEnabled', { enabled: true })).result, {}, 'focus on: answered')
+    assert.match((await P('Emulation.setFocusEmulationEnabled', { enabled: false })).error?.message ?? '', /refused/, 'focus off: refused')
+    assert.deepEqual((await P('Page.bringToFront')).result, {}, 'bringToFront answered without effect')
+    assert.match((await P('Storage.getCookies')).error?.message ?? '', /the Storage domain/, 'refusal names the domain')
+    assert.match((await P('Network.getResponseBody', { requestId: '1' })).error?.message ?? '', /body/, 'getResponseBody refused')
+    for (const url of ['javascript:alert(1)', 'file:///C:/Windows/win.ini', 'chrome://gpu', 'devtools://devtools/bundled/inspector.html', 'view-source:http://x/', 'data:text/html,x']) {
+      assert.match((await P('Page.navigate', { url })).error?.message ?? '', /only http\(s\) and about:blank/, url)
+    }
+    // A dialog stays open, with no native box, until the agent answers it.
+    ra.events.length = 0
+    await P('Runtime.evaluate', { expression: `setTimeout(() => { window.__e6 = confirm('e6?') }, 10); 1` })
+    await sleep(1000)
+    const opened = ra.events.filter(e => e.method === 'Page.javascriptDialogOpening').length
+    const closedEarly = ra.events.filter(e => e.method === 'Page.javascriptDialogClosed').length
+    assert.deepEqual([opened, closedEarly], [1, 0], 'the dialog opened and is still open after 1 s')
+    assert.deepEqual((await P('Page.handleJavaScriptDialog', { accept: true })).result, {}, 'the agent answers it')
+    await sleep(200)
+    assert.equal(await host('window.__e6'), true, 'confirm() returned the agent\'s answer')
+    // Order: a navigation that waits (the local-network check) and a blank-page navigation sent right behind it reach the
+    // debugger in that order: the page ends on the blank page (out of order, the http one would land last).
+    const aTabId = await aTab()
+    await Promise.all([P('Page.navigate', { url: `${pages.base}/two.html` }), P('Page.navigate', { url: 'about:blank' })])
+    await sleep(1500)
+    const href = await T.evaluate(async (_e, tab) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(tab, 'location.href'), aTabId)
+    assert.equal(href, 'about:blank', 'the second navigation went out second')
+    ra.close()
 
     // ---- 4. a deleted key: refused, and its live connection drops ----
     unlinkSync(join(keysDir, 'agent-b.key'))
