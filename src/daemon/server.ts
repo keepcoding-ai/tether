@@ -4,14 +4,14 @@
 import { withTabEnv } from '../core/tab-env.ts'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
-import { AttentionState, attentionOptions, parseAttentionReport } from './attention.ts'
+import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports } from './attention.ts'
 import '../agents/load.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import { shellAdapter } from '../agents/shell.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
-import { canonicalDir, slotAttentionPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
+import { canonicalDir, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
 import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
@@ -124,6 +124,8 @@ interface Slot {
   attentionTimer?: NodeJS.Timeout
   /** ts of the last hook report applied (the file is rewritten per report; older ones are ignored). */
   attentionReportTs?: string
+  /** How many `turn` lines of the events file were already applied (the file is append-only and spans runs). */
+  turnLinesSeen?: number
   attached: Set<Client>
   cols: number
   rows: number
@@ -984,6 +986,26 @@ class DaemonImpl implements Daemon {
     if (slot.attention.hook(report.kind)) this.broadcastState(slot)
   }
 
+  /**
+   * The soul's `turn` events (busy|idle, in the slot's events file next to start/rename/end): applied in order, only the
+   * ones written by the current run of a live process. They feed the attention turn, replacing the Enter / quiet heuristic.
+   */
+  private applyTurnReports(slot: Slot): void {
+    let text: string
+    try { text = readFileSync(slotEventsPath(this.home, slot.meta.slotId), 'utf8') } catch { return }
+    const reports = parseTurnReports(text)
+    const seen = slot.turnLinesSeen ?? 0
+    if (reports.length <= seen) return
+    slot.turnLinesSeen = reports.length
+    if (!isAlive(slot)) return
+    let changed = false
+    for (const report of reports.slice(seen)) {
+      if (slot.spawnedAt && report.ts < slot.spawnedAt) continue
+      if (slot.attention.signal(report.state)) changed = true
+    }
+    if (changed) this.broadcastState(slot)
+  }
+
   /** Arms the idle heuristic's timer (soul) for the slot's next due time. */
   private scheduleAttention(slot: Slot): void {
     const due = slot.attention.dueAt()
@@ -1216,6 +1238,7 @@ class DaemonImpl implements Daemon {
       const slot = this.slotMap.get(slotId)
       if (slot) {
         this.refreshBinding(slot)
+        this.applyTurnReports(slot)
         return
       }
       // A slot created by another process (the CLI): adopt it.

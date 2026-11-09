@@ -3,7 +3,8 @@
 //
 // Sources, by slot kind:
 //   claude  the Stop / Notification hooks (src/report/claude-hook.mjs → <home>/slots/<id>.attention): exact.
-//   soul    no hook yet: a cheap heuristic. After the user submitted a line (input with Enter), an output burst
+//   soul    the client's own `turn` events (session-event.ts: busy|idle) once it has sent one: exact, see `signal`.
+//           Until then (an older soul) a cheap heuristic. After the user submitted a line (input with Enter), an output burst
 //           of at least BURST_BYTES followed by IDLE_MS of silence means the turn is over → 'done'. A TUI that
 //           keeps painting (a clock, a spinner that never stops) never goes idle: the heuristic misses rather
 //           than fires falsely. Plus a lone BEL → 'waiting'.
@@ -39,8 +40,10 @@ type Scan = 'text' | 'esc' | 'string' | 'string-esc'
 
 export class AttentionState {
   value: Attention | undefined
-  /** Is a turn in progress? Claude: UserPromptSubmit→busy, Stop→idle. Soul: Enter→busy, quiet→idle. Shells never. */
+  /** Is a turn in progress? Claude: UserPromptSubmit→busy, Stop→idle. Soul: its `turn` events, else Enter→busy, quiet→idle. Shells never. */
   turn: Turn = 'idle'
+  /** The agent reports its own turns (`signal`): the Enter / quiet heuristic stands down for this run. */
+  private signaled = false
   private readonly opts: Required<AttentionOptions>
   private scan: Scan = 'text'
   /** The user submitted a line; output that follows counts toward a turn. */
@@ -61,13 +64,27 @@ export class AttentionState {
   }
 
   /**
+   * The agent said its own turn state (soul's `turn` event). From the first one the heuristic is off: Enter no longer
+   * means busy and silence no longer means done. Busy→idle is a finished turn ('done', like the hook's Stop); an idle that
+   * finds no turn in progress is not. Returns true when the turn or the value changed.
+   */
+  signal(state: Turn): boolean {
+    this.signaled = true
+    this.disarm()
+    if (state === 'busy') return this.setTurn('busy')
+    const finished = this.turn === 'busy'
+    const t = this.setTurn('idle')
+    return (finished ? this.set('done') : false) || t
+  }
+
+  /**
    * Input from a client. Typing clears the attention; a line submitted (Enter) arms the idle heuristic.
    * Input that starts with ESC is not counted as typing: terminals answer queries (DA, cursor position,
    * focus reports) through the same channel, even from a pane nobody looks at.
    */
   input(data: string): boolean {
     if (data.startsWith('\x1b')) return false
-    if (this.opts.idle && /[\r\n]/.test(data)) { this.armed = true; this.burst = 0 }
+    if (this.opts.idle && !this.signaled && /[\r\n]/.test(data)) { this.armed = true; this.burst = 0 }
     const t = this.armed ? this.setTurn('busy') : false
     return this.set(undefined) || t
   }
@@ -122,6 +139,7 @@ export class AttentionState {
   /** A new launch or the process exit: nothing is pending and nothing is shown. */
   reset(): boolean {
     this.disarm()
+    this.signaled = false
     this.scan = 'text'
     const t = this.setTurn('idle')
     return this.set(undefined) || t
@@ -152,6 +170,24 @@ export function attentionOptions(kind: string): AttentionOptions {
     if (agent) return agent.attention
   }
   return { idle: false, bel: true }
+}
+
+/** One `turn` line of the soul's events file (<home>/slots/<id>.jsonl): the agent started or finished a turn. */
+export interface TurnReport { ts: string; state: Turn }
+
+/** The `turn` lines of an events file's text, in order; every other line (start/rename/end, noise) is skipped. */
+export function parseTurnReports(text: string): TurnReport[] {
+  const out: TurnReport[] = []
+  for (const line of text.split('\n')) {
+    if (!line.includes('"turn"')) continue
+    let x: unknown
+    try { x = JSON.parse(line) } catch { continue }
+    if (!x || typeof x !== 'object' || Array.isArray(x)) continue
+    const r = x as Record<string, unknown>
+    if (r.kind !== 'turn' || typeof r.ts !== 'string' || (r.state !== 'busy' && r.state !== 'idle')) continue
+    out.push({ ts: r.ts, state: r.state })
+  }
+  return out
 }
 
 /** The hook's file (<home>/slots/<id>.attention): `{ ts, kind: start|done|waiting, sessionId? }`; undefined when unreadable. */
