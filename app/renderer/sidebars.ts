@@ -170,6 +170,46 @@ export class SideBars {
     return m?.view
   }
 
+  /**
+   * Takes a frames pad note away (app/renderer/pad-notes.ts): its view goes without saving anything and so does its saved
+   * state. A pad shown for that owner right now gets a fresh view on the next render (seeded like a new one).
+   */
+  dropNote(padId: string, owner: { deskId?: string; panelId?: string }, redraw = true): void {
+    const key = this.viewKey(padId, owner.deskId, owner.panelId)
+    const m = this.views.get(key)
+    if (m) {
+      this.views.delete(key)
+      try { m.view.dispose() } catch (err) { console.error(`prancheta ${padId}: erro ao descartar a vista`, err) }
+      m.wrapper.remove()
+    }
+    if (owner.deskId !== undefined) {
+      const d = this.deskStates.get(owner.deskId)
+      if (d) delete d[padId]
+    } else {
+      const pads = { ...this.state.pads }
+      delete pads[owner.panelId === undefined ? padId : panelPadKey(padId, owner.panelId)]
+      this.state = { ...this.state, pads }
+    }
+    if (redraw) this.render()
+  }
+
+  /** Puts a note's saved state back (undo of `dropNote`): whatever view stands there now is replaced by one built from it. */
+  putNote(padId: string, owner: { deskId?: string; panelId?: string }, state: unknown): void {
+    this.dropNote(padId, owner, false)
+    if (owner.deskId !== undefined) this.deskStates.set(owner.deskId, { ...this.deskStates.get(owner.deskId), [padId]: state })
+    else this.state = { ...this.state, pads: { ...this.state.pads, [owner.panelId === undefined ? padId : panelPadKey(padId, owner.panelId)]: state } }
+    const pad = this.pad(padId)
+    if (pad) this.ensureView(pad, owner.deskId, owner.panelId)
+    this.render()
+  }
+
+  /** The notes' records (SideBarsLayout.meta), saved with the side bars. */
+  get meta(): Record<string, unknown> { return this.state.meta ?? {} }
+  setMeta(meta: Record<string, unknown>): void {
+    const { meta: _old, ...rest } = this.state
+    this.state = Object.keys(meta).length ? { ...rest, meta } : rest
+  }
+
   private pad(id: string): PadDescriptor | undefined { return this.host.pads().find(p => p.id === id) }
 
   /** A pad's title as its header shows it: a desk pad carries the active desk's name ('Prancheta da mesa · Soul'), a panel pad its panel's. */
