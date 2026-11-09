@@ -28,6 +28,7 @@
   ],
   "exclude": [
     "test/e2e/fixtures/system-desk-probe/renderer.ts",
-    "test/e2e/fixtures/surface-probe/renderer.ts"
+    "test/e2e/fixtures/surface-probe/renderer.ts",
+    "test/e2e/fixtures/agents-probe/renderer.ts"
   ]
 }

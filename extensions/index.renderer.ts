@@ -12,6 +12,7 @@ import * as settingsScreen from './settings-screen/renderer.ts'
 import * as webBridge from './web-bridge/renderer.ts'
 import * as surfaceProbe from '../test/e2e/fixtures/surface-probe/renderer.ts'
 import * as systemDeskProbe from '../test/e2e/fixtures/system-desk-probe/renderer.ts'
+import * as agentsProbe from '../test/e2e/fixtures/agents-probe/renderer.ts'
 
 // Defined by app/build.mjs: true only in a build made with TETHER_TEST_EXTENSIONS=1 (the E2E); every other build drops the probe.
 declare const __TETHER_TEST_EXTENSIONS__: boolean | undefined
@@ -27,5 +28,5 @@ export const extensions: readonly ExtensionEntry<TetherUi>[] = [
   { manifest: settingsScreen.manifest, activate: settingsScreen.activate },
   { manifest: webBridge.manifest, activate: webBridge.activate },
   // E2E only: the probes (a system desk; a pane hosting a surface).
-  ...(typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__ ? [{ manifest: systemDeskProbe.manifest, activate: systemDeskProbe.activate }, { manifest: surfaceProbe.manifest, activate: surfaceProbe.activate }] : []),
+  ...(typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__ ? [{ manifest: systemDeskProbe.manifest, activate: systemDeskProbe.activate }, { manifest: surfaceProbe.manifest, activate: surfaceProbe.activate }, { manifest: agentsProbe.manifest, activate: agentsProbe.activate }] : []),
 ]
