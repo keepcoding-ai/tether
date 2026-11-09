@@ -64,7 +64,7 @@ export interface TetherApi {
   loadLayout(): Promise<unknown | null>
   saveLayout(layout: unknown): Promise<void>
   /** Copies layout.json to layout.v<version>.bak (1 by default): the renderer asks when it read an older file (v1 or v2), before the first write in the current version. */
-  backupLayout(version?: 1 | 2): Promise<void>
+  backupLayout(version?: 1 | 2 | 3): Promise<void>
   recentFolders(): Promise<string[]>
   rememberFolder(folder: string): Promise<void>
   /** The OS folder browser (the one native UI kept: it is the file system's); null when cancelled. */

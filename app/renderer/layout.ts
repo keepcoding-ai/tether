@@ -6,6 +6,8 @@
 //        default side, and the state of the global pads; each desk may carry the state of its per-desk pads (`pads`).
 //        Additive: a v2 file reads as v3 with closed side bars, everything else untouched (the caller keeps a
 //        layout.v2.bak before the first v3 write, so an older build can be given its file back by hand).
+//   v4  v3 plus `systemDesks`: desks that belong to an extension, not to the person's queue (see "system desks" below).
+//        Additive: a v3 file reads as v4 with no system desks (the caller keeps a layout.v3.bak before the first v4 write).
 // Reading migrates v1 → v2 without touching the frame's dockview JSON (byte for byte the old file: the user's
 // panes come back exactly). Pruning drops the panes the daemon no longer knows, frame by frame, and the frames
 // that end up empty; a frame's root must stay a branch (dockview refuses a leaf there).
@@ -16,7 +18,7 @@ import { type DeskHue, DEFAULT_DESK_HUE, readDeskColor } from './desks.ts'
 import { emptySideBars, readSideBars, type SideBarsLayout } from './sidebar-rules.ts'
 import type { WorkspaceState } from './workspace.ts'
 
-export const LAYOUT_VERSION = 3
+export const LAYOUT_VERSION = 4
 export const FRAME_COMPONENT = 'frame'
 
 /** The gridview JSON of a desk (frames as leaves), as dockview-core serializes it. */
@@ -50,7 +52,7 @@ export interface LayoutV2 {
   drawer: DrawerLayout | null
 }
 
-/** The current file (and what the app keeps in memory): v2 plus the side bars. */
+/** v2 plus the side bars. */
 export interface LayoutV3 extends Omit<LayoutV2, 'v'> {
   v: 3
   sidebars: SideBarsLayout
@@ -58,7 +60,24 @@ export interface LayoutV3 extends Omit<LayoutV2, 'v'> {
   workspace?: WorkspaceState
 }
 
-export type Layout = LayoutV3
+/**
+ * A system desk's content: what a desk holds (frames, per-desk pads), without name or colour (those come from whoever
+ * declares the desk) and without a place in the queue. Same shape as the drawer plus the pads.
+ */
+export interface SystemDeskLayout extends DrawerLayout {
+  pads?: Record<string, unknown>
+}
+
+/** System desks by their stable id. Ids nobody declares in this run stay here untouched (an extension that is off keeps its data). */
+export type SystemDesks = Record<string, SystemDeskLayout>
+
+/** The current file (and what the app keeps in memory): v3 plus the system desks. */
+export interface LayoutV4 extends Omit<LayoutV3, 'v'> {
+  v: 4
+  systemDesks: SystemDesks
+}
+
+export type Layout = LayoutV4
 
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
 
@@ -72,6 +91,10 @@ export function isLayoutV2(raw: unknown): raw is LayoutV2 {
 }
 
 export function isLayoutV3(raw: unknown): raw is LayoutV3 {
+  return isObject(raw) && raw.v === 3 && Array.isArray(raw.desks) && typeof raw.activeDesk === 'string'
+}
+
+export function isLayoutV4(raw: unknown): raw is LayoutV4 {
   return isObject(raw) && raw.v === LAYOUT_VERSION && Array.isArray(raw.desks) && typeof raw.activeDesk === 'string'
 }
 
@@ -107,7 +130,100 @@ export function drawerOf(layout: Pick<LayoutV2, 'drawer'>): DrawerLayout {
 
 export function emptyLayout(): Layout {
   const desk = emptyDesk()
-  return { v: 3, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer(), sidebars: emptySideBars() }
+  return { v: 4, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer(), sidebars: emptySideBars(), systemDesks: {} }
+}
+
+// ---------- system desks ----------
+// A system desk is a complete desk (frames, panes, pads) that is not in the person's queue: it lives in
+// `systemDesks`, keyed by a stable id its owner declares, and never in `desks[]`. So it is never counted in the queue,
+// never reordered, closed or renamed (every such action gates on `isUserDesk`), and the core knows nothing about
+// what it is for.
+// "Active": `activeDesk` may hold a system desk's id, exactly as it holds a queue desk's id. One field, no second
+// pointer; the id space is shared (a system id never collides with a queue desk: `ensureSystemDesk` refuses, and
+// reading drops the system entry). The drawer is different: it is a toggle over the active desk, not an active target.
+// A system id that nobody declares in this run is kept in the file but resolves to the first queue desk.
+
+const validSystemId = (id: string): boolean => id.length > 0 && id !== '__proto__'
+
+/** A system desk with one empty frame. */
+export function emptySystemDesk(): SystemDeskLayout {
+  return emptyDrawer()
+}
+
+/**
+ * The `systemDesks` field as read from a file, tolerant: anything that is not a map of desk-shaped entries is empty,
+ * and one malformed entry (or one whose id is a queue desk's) is dropped without touching the others.
+ */
+export function readSystemDesks(raw: unknown, deskIds: ReadonlySet<string> = new Set()): SystemDesks {
+  if (!isObject(raw)) return {}
+  const out: SystemDesks = {}
+  for (const [id, value] of Object.entries(raw)) {
+    if (!validSystemId(id) || deskIds.has(id) || !isDrawerLayout(value)) continue
+    const pads = isObject((value as SystemDeskLayout).pads) ? { pads: (value as SystemDeskLayout).pads } : {}
+    out[id] = { frames: value.frames, ...(typeof value.activeFrame === 'string' ? { activeFrame: value.activeFrame } : {}), ...pads }
+  }
+  return out
+}
+
+/** Is `id` a system desk of this layout (declared or not)? */
+export function isSystemDeskId(layout: Pick<LayoutV4, 'systemDesks'>, id: string): boolean {
+  return Object.hasOwn(layout.systemDesks, id)
+}
+
+/** Is `id` a desk of the person's queue? Reordering, closing and renaming are only for these. */
+export function isUserDesk(layout: Pick<LayoutV4, 'desks' | 'systemDesks'>, id: string): boolean {
+  return !isSystemDeskId(layout, id) && layout.desks.some(d => d.id === id)
+}
+
+/** The queue: the person's desks, whatever a half-written file holds in `desks[]`. */
+export function queueDesks(layout: Pick<LayoutV4, 'desks' | 'systemDesks'>): DeskLayout[] {
+  return layout.desks.filter(d => !isSystemDeskId(layout, d.id))
+}
+
+/** The system desk with this id; an empty one when the layout has none (the layout itself is not changed). */
+export function systemDeskOf(layout: Pick<LayoutV4, 'systemDesks'>, id: string): SystemDeskLayout {
+  return isSystemDeskId(layout, id) ? layout.systemDesks[id]! : emptySystemDesk()
+}
+
+/** The layout with the system desk `id` present (created empty); the very same layout when it already is. */
+export function ensureSystemDesk<L extends LayoutV4>(layout: L, id: string): L {
+  if (isSystemDeskId(layout, id)) return layout
+  if (!validSystemId(id)) throw new Error(`invalid system desk id: ${JSON.stringify(id)}`)
+  if (layout.desks.some(d => d.id === id)) throw new Error(`system desk id ${id} is a queue desk's id`)
+  return { ...layout, systemDesks: { ...layout.systemDesks, [id]: emptySystemDesk() } }
+}
+
+/** The layout with the content of system desk `id` replaced (created if absent). */
+export function withSystemDesk<L extends LayoutV4>(layout: L, id: string, desk: SystemDeskLayout): L {
+  const ensured = ensureSystemDesk(layout, id)
+  return { ...ensured, systemDesks: { ...ensured.systemDesks, [id]: desk } }
+}
+
+/** The layout with a new queue: a system desk's id never enters `desks[]`. */
+export function withQueueDesks<L extends LayoutV4>(layout: L, desks: DeskLayout[]): L {
+  return { ...layout, desks: desks.filter(d => !isSystemDeskId(layout, d.id)) }
+}
+
+/**
+ * The system desks to show in this run: those in the file that `declared` names, in `declared` order. A desk in the
+ * file that nobody declares stays in the file and out of sight.
+ */
+export function visibleSystemDesks(layout: Pick<LayoutV4, 'systemDesks'>, declared: Iterable<string>): string[] {
+  return [...declared].filter(id => isSystemDeskId(layout, id))
+}
+
+/** The id `activeDesk` resolves to: a queue desk, or a system desk declared in this run; otherwise the first queue desk. */
+export function resolveActiveDesk(layout: Pick<LayoutV4, 'desks' | 'systemDesks' | 'activeDesk'>, declared: ReadonlySet<string> = new Set()): string {
+  const id = layout.activeDesk
+  if (isSystemDeskId(layout, id)) { if (declared.has(id)) return id }
+  else if (layout.desks.some(d => d.id === id)) return id
+  return layout.desks[0]!.id
+}
+
+/** A system desk restricted to `known` panel ids (an empty result is an empty frame; the pads' frames are pruned too). */
+export function pruneSystemDesk(desk: SystemDeskLayout, known: Set<string>): SystemDeskLayout {
+  const d = pruneDrawer(desk, known)
+  return desk.pads ? { ...d, pads: prunePadStates(desk.pads, known) } : d
 }
 
 /**
@@ -120,20 +236,25 @@ export function readDeskColors(desks: readonly DeskLayout[]): DeskLayout[] {
 }
 
 /**
- * The layout in v3 form, and the version it was read from. A v1 file becomes "Mesa 1" with one frame whose view IS the
+ * The layout in v4 form, and the version it was read from. A v1 file becomes "Mesa 1" with one frame whose view IS the
  * old file; `migrated` says the caller must keep a `layout.v1.bak` before the first write. A v2 file gains closed side
- * bars and nothing else changes (its desks and drawer are the very same objects); the caller keeps a `layout.v2.bak`.
+ * bars and a v3 file gains an empty `systemDesks`; nothing else changes (desks and drawer are the very same objects);
+ * the caller keeps a `layout.v<from>.bak`. A v4 file keeps every well-formed system desk, declared or not.
  * Anything else (empty, corrupt) is null.
  */
-export function migrateLayout(raw: unknown): { layout: Layout; migrated: boolean; from: 1 | 2 | 3 } | null {
-  if (isLayoutV3(raw)) return { layout: { ...raw, desks: readDeskColors(raw.desks), drawer: drawerOf(raw), sidebars: readSideBars(raw.sidebars) }, migrated: false, from: 3 }
-  if (isLayoutV2(raw)) return { layout: { v: 3, desks: readDeskColors(raw.desks), activeDesk: raw.activeDesk, drawer: drawerOf(raw), sidebars: emptySideBars() }, migrated: false, from: 2 }
+export function migrateLayout(raw: unknown): { layout: Layout; migrated: boolean; from: 1 | 2 | 3 | 4 } | null {
+  if (isLayoutV4(raw)) {
+    const desks = readDeskColors(raw.desks)
+    return { layout: { ...raw, desks, drawer: drawerOf(raw), sidebars: readSideBars(raw.sidebars), systemDesks: readSystemDesks(raw.systemDesks, new Set(desks.map(d => d.id))) }, migrated: false, from: 4 }
+  }
+  if (isLayoutV3(raw)) return { layout: { ...raw, v: 4, desks: readDeskColors(raw.desks), drawer: drawerOf(raw), sidebars: readSideBars(raw.sidebars), systemDesks: {} }, migrated: false, from: 3 }
+  if (isLayoutV2(raw)) return { layout: { v: 4, desks: readDeskColors(raw.desks), activeDesk: raw.activeDesk, drawer: drawerOf(raw), sidebars: emptySideBars(), systemDesks: {} }, migrated: false, from: 2 }
   if (isLayoutV1(raw)) {
     const frameId = 'frame-1'
     const width = typeof raw.grid.width === 'number' && raw.grid.width > 0 ? raw.grid.width : 1200
     const height = typeof raw.grid.height === 'number' && raw.grid.height > 0 ? raw.grid.height : 800
     const desk: DeskLayout = { id: 'desk-1', name: 'Mesa 1', color: DEFAULT_DESK_HUE, frames: { grid: singleFrameGrid(frameId, width, height), views: { [frameId]: raw } }, activeFrame: frameId }
-    return { layout: { v: 3, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer(), sidebars: emptySideBars() }, migrated: true, from: 1 }
+    return { layout: { v: 4, desks: [desk], activeDesk: desk.id, drawer: emptyDrawer(), sidebars: emptySideBars(), systemDesks: {} }, migrated: true, from: 1 }
   }
   return null
 }
@@ -234,7 +355,7 @@ function viewIds(frames: DeskLayout['frames']): string[] {
  * panels survived in total. A pane lives in one place only: an id the desks hold is dropped from the drawer and the
  * pads (a hand-edited or half-written file must not mount one terminal twice).
  */
-export function pruneLayoutV2<L extends LayoutV2 | LayoutV3>(layout: L, known: Set<string>): { layout: L; kept: number; total: number } {
+export function pruneLayoutV2<L extends LayoutV2 | LayoutV3 | LayoutV4>(layout: L, known: Set<string>): { layout: L; kept: number; total: number } {
   const total = allPanelIds(layout).length
   // A pane lives in one place: desks first, then the drawer, then the pads (desk pads in desk order, then the global ones).
   const taken = new Set<string>()
@@ -242,9 +363,20 @@ export function pruneLayoutV2<L extends LayoutV2 | LayoutV3>(layout: L, known: S
   const free = (): Set<string> => new Set([...known].filter(id => !taken.has(id)))
   const desks = layout.desks.map(d => pruneDesk(d, known))
   claim(desks.flatMap(d => viewIds(d.frames)))
-  const activeDesk = desks.some(d => d.id === layout.activeDesk) ? layout.activeDesk : desks[0]!.id
+  const systemIn = 'systemDesks' in layout && layout.systemDesks ? layout.systemDesks : undefined
+  const activeDesk = desks.some(d => d.id === layout.activeDesk) || (systemIn && Object.hasOwn(systemIn, layout.activeDesk)) ? layout.activeDesk : desks[0]!.id
   const drawer = pruneDrawer(drawerOf(layout), free())
   claim(viewIds(drawer.frames))
+  let systemDesks: SystemDesks | undefined
+  if (systemIn) {
+    systemDesks = {}
+    for (const [id, sd] of Object.entries(systemIn)) {
+      const pruned = pruneSystemDesk(sd, free())
+      claim(viewIds(pruned.frames))
+      claim(padPanelIds(pruned.pads))
+      systemDesks[id] = pruned
+    }
+  }
   const withPads = desks.map(d => {
     if (!d.pads) return d
     const pads = prunePadStates(d.pads, free())
@@ -252,7 +384,7 @@ export function pruneLayoutV2<L extends LayoutV2 | LayoutV3>(layout: L, known: S
     return { ...d, pads }
   })
   const sidebars = 'sidebars' in layout && layout.sidebars ? { ...layout.sidebars, pads: prunePadStates(layout.sidebars.pads, free()) } : undefined
-  const pruned: L = { ...layout, desks: withPads, activeDesk, drawer, ...(sidebars ? { sidebars } : {}) }
+  const pruned: L = { ...layout, desks: withPads, activeDesk, drawer, ...(systemDesks ? { systemDesks } : {}), ...(sidebars ? { sidebars } : {}) }
   return { layout: pruned, kept: allPanelIds(pruned).length, total }
 }
 
@@ -272,11 +404,12 @@ export function padPanelIds(pads: Record<string, unknown> | undefined): string[]
   return pads ? Object.values(pads).flatMap(s => (isDrawerLayout(s) ? viewIds(s.frames) : [])) : []
 }
 
-/** Every panel id in the layout, across desks, frames, the drawer and the pads' frames. */
-export function allPanelIds(layout: Pick<LayoutV2, 'desks' | 'drawer'> & { sidebars?: Pick<SideBarsLayout, 'pads'> }): string[] {
+/** Every panel id in the layout, across desks, frames, the drawer, the system desks and the pads' frames. */
+export function allPanelIds(layout: Pick<LayoutV2, 'desks' | 'drawer'> & { sidebars?: Pick<SideBarsLayout, 'pads'>; systemDesks?: SystemDesks }): string[] {
   const out: string[] = []
   for (const d of layout.desks) out.push(...viewIds(d.frames))
   if (isDrawerLayout(layout.drawer)) out.push(...viewIds(layout.drawer.frames))
+  for (const sd of Object.values(layout.systemDesks ?? {})) out.push(...viewIds(sd.frames), ...padPanelIds(sd.pads))
   for (const d of layout.desks) out.push(...padPanelIds(d.pads))
   out.push(...padPanelIds(layout.sidebars?.pads))
   return out
@@ -352,12 +485,12 @@ function knownWithSlotless(layout: Layout, known: Set<string>, slotless: (id: st
 }
 
 export interface RestorePlan {
-  /** What to show (v3; a v1 or v2 file migrated); null when there is nothing restorable. */
+  /** What to show (v4; an older file migrated); null when there is nothing restorable. */
   layout: Layout | null
   /** The file was v1 (the caller keeps a layout.v1.bak copy; the file itself is not rewritten for it). */
   migrated: boolean
   /** The version the file was read from (a v1 or v2 file gets its backup before the first write). */
-  from?: 1 | 2 | 3
+  from?: 1 | 2 | 3 | 4
   /** Panels left out of the display because the daemon does not know their slot. Never a reason to save. */
   orphaned: string[]
 }

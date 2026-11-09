@@ -565,7 +565,7 @@ function notifyActivePane(): void {
 function layoutJSON(): Layout {
   const live = desks.toJSON()
   const deskList = live.desks.map(d => { const pads = sidebars?.deskPads(d.id); return pads ? { ...d, pads } : d })
-  return { ...layoutFile, v: 3, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  return { ...layoutFile, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
 }
 
 function scheduleSave(): void {
@@ -1365,9 +1365,10 @@ async function restoreLayout(): Promise<void> {
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
     if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)); sidebars?.load(layout.sidebars, layout.desks) }
     // A v1 file is copied to layout.v1.bak now; layout.json itself stays v1 until the person changes something.
-    // A v2 file is copied to layout.v2.bak the same way: an older build reads only v2.
+    // A v2 or v3 file is copied to layout.v<n>.bak the same way: an older build reads only its own version.
     if (result?.migrated) await window.tether.backupLayout()
     else if (result?.from === 2) await window.tether.backupLayout(2)
+    else if (result?.from === 3) await window.tether.backupLayout(3)
   } else {
     layoutFile = emptyLayout()
   }
