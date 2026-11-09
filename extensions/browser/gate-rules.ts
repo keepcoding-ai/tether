@@ -1,8 +1,9 @@
-// The pure rules of the CDP gatekeeper (Tether Browser E5, design §3.1, §3.2, §12b): who may talk to it (no browser engine:
+// The pure rules of the CDP gatekeeper (Tether Browser E5-E6, design §3.1, §3.2, §12b): who may talk to it (no browser engine:
 // a request with Origin, Referer or Sec-Fetch-* is refused; only a loopback Host), how a key is read and compared (constant
-// time, never logged), which page methods pass by exact name (the strict list of bench B4 plus the two of rule 21) and which
-// addresses `Page.navigate` may open, and the table that maps the gate's session ids to the debugger's own (an agent never
-// sees nor names an internal session).
+// time, never logged), which page methods pass by exact name (the strict list of bench B4, the two of rule 21, the touch and
+// drag input of rule 4) and why the rest is refused (by name and by whole domain), which addresses `Page.navigate` may open,
+// the remappings (input scale, a hidden tab's capture), the event filter (rule 12), and the table that maps the gate's session
+// ids to the debugger's own (an agent never sees nor names an internal session).
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 
 type Headers = Record<string, string | string[] | undefined>
@@ -66,15 +67,16 @@ export function slotOfKeyFile(name: string): string | undefined {
 }
 
 /**
- * Page level: the strict list by exact name (bench B4: 29 names; rule 21 adds `Page.setFontFamilies` and
- * `Page.removeScriptToEvaluateOnNewDocument`). Several are answered or rewritten by the gate rather than forwarded:
- * `Page.bringToFront` (no-op), `Page.reload` (the tab's reload), the two Emulation methods (the tether's: rule 3),
- * `Page.navigate` (scheme and local network), `Page.removeScriptToEvaluateOnNewDocument` (own scripts only).
+ * Page level: the strict list by exact name (bench B4: 28 names; rule 21 adds `Page.setFontFamilies` and
+ * `Page.removeScriptToEvaluateOnNewDocument`; rule 4 adds the touch and drag input the gate scales). Several are answered or
+ * rewritten by the gate rather than forwarded: `Page.bringToFront` (no-op), `Page.reload` (the tab's reload), the two Emulation
+ * methods (the tether's: rule 3), `Page.navigate` (scheme and local network), `Page.removeScriptToEvaluateOnNewDocument` (own
+ * scripts only), the input methods (scaled), `Page.captureScreenshot` (emulation re-applied; a hidden tab's capture rewritten).
  */
 export const PAGE_ALLOWED: ReadonlySet<string> = new Set([
   'DOM.describeNode', 'DOM.getBoxModel', 'DOM.getFrameOwner', 'DOM.resolveNode',
   'Emulation.setDeviceMetricsOverride', 'Emulation.setEmulatedMedia', 'Emulation.setFocusEmulationEnabled',
-  'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent',
+  'Input.dispatchDragEvent', 'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent', 'Input.dispatchTouchEvent',
   'Log.enable', 'Network.enable',
   'Page.addScriptToEvaluateOnNewDocument', 'Page.bringToFront', 'Page.captureScreenshot', 'Page.createIsolatedWorld', 'Page.enable',
   'Page.getFrameTree', 'Page.getLayoutMetrics', 'Page.handleJavaScriptDialog', 'Page.navigate', 'Page.reload',
@@ -90,11 +92,48 @@ export const BROWSER_ALLOWED: ReadonlySet<string> = new Set([
   'Target.getTargets', 'Target.setAutoAttach', 'Target.setDiscoverTargets',
 ])
 
-/** What `Page.navigate` may open: http(s), the blank page, `about:srcdoc`, `data:` and `blob:` (design §3.1). */
+const COOKIES = 'cookies of every account'
+const BODY = 'a body the page itself may not read'
+const TETHERS = "the tether's"
+
+/** Methods refused by name, with the reason the Temper asked for (C1): the account is used, never exported. */
+const NAMED_REFUSALS: Record<string, string> = {
+  'Network.getCookies': COOKIES, 'Network.getAllCookies': COOKIES, 'Network.setCookie': COOKIES, 'Network.setCookies': COOKIES,
+  'Network.deleteCookies': COOKIES, 'Network.clearBrowserCookies': COOKIES, 'Page.getCookies': COOKIES,
+  'Network.setExtraHTTPHeaders': 'headers of every request', 'Network.setUserAgentOverride': `the page identity is ${TETHERS}`,
+  'Network.getResponseBody': `${BODY} (a cross-origin response)`, 'Network.getRequestPostData': BODY,
+  'Network.loadNetworkResource': 'a load outside the page', 'Network.takeResponseBodyForInterceptionAsStream': BODY,
+  'Page.getResourceContent': BODY, 'DOM.setFileInputFiles': 'files from disk', 'Page.setDownloadBehavior': `downloads are ${TETHERS}`,
+  'Page.printToPDF': 'not in Electron', 'Page.close': 'closing goes through Target.closeTarget', 'Page.crash': 'crashing the page',
+  'Emulation.clearDeviceMetricsOverride': `the page size is ${TETHERS}`, 'Emulation.setVisibleSize': `the page size is ${TETHERS}`,
+  'Browser.getBrowserCommandLine': "the machine's command line", 'Page.setInterceptFileChooserDialog': `the file chooser is ${TETHERS}`,
+}
+
+/** Whole domains refused, by name. */
+const DOMAIN_REFUSALS: Record<string, string> = {
+  Storage: `storage and ${COOKIES}`, Fetch: 'intercepts every request', IO: 'reads files and streams',
+  Tracing: 'records memory and headers', HeapProfiler: 'reads memory', Memory: 'reads memory', SystemInfo: 'the machine',
+  Audits: 'reports cookies and headers', Browser: `the browser is ${TETHERS}`, Target: "targets are the gate's",
+  Cast: 'devices', DeviceAccess: 'devices', WebAuthn: 'credentials', Security: `certificates are ${TETHERS}`,
+  ServiceWorker: "other tabs' workers", CacheStorage: `storage of every account`, IndexedDB: 'storage of every account',
+  DOMStorage: 'storage of every account', BackgroundService: 'storage of every account', FedCm: 'accounts', Autofill: 'saved data',
+  Extensions: `the browser is ${TETHERS}`, PWA: `the browser is ${TETHERS}`,
+}
+
+/** Why `method` is refused (the strict list refuses everything it does not name; some names carry a reason of their own). */
+export function refusalReason(method: string): string {
+  const named = NAMED_REFUSALS[method]
+  if (named) return named
+  const domain = method.split('.')[0] ?? ''
+  const d = Object.hasOwn(DOMAIN_REFUSALS, domain) ? DOMAIN_REFUSALS[domain] : undefined
+  return d ? `the ${domain} domain: ${d}` : 'not on the list'
+}
+
+/** What `Page.navigate` and `Target.createTarget` may open: http(s) and the blank page (the tab refuses every other scheme). */
 export function navigable(url: unknown): url is string {
-  if (typeof url !== 'string' || url.length > 2 * 1024 * 1024) return false
-  if (url === 'about:blank' || url === 'about:srcdoc') return true
-  return /^(https?:\/\/|data:|blob:)/i.test(url)
+  if (typeof url !== 'string' || url.length > 8192) return false
+  if (url === 'about:blank') return true
+  return /^https?:\/\//i.test(url)
 }
 
 /** A CDP error the gate answers. `refused` marks a policy refusal (vs. a failure of the page). */
@@ -121,10 +160,76 @@ export function noTarget(): GateError {
   return new GateError('No target with given id found', -32602, true)
 }
 
-/** Mouse coordinates in page px become view px under the tether's scale (rule 4); the wheel delta stays in page px. */
-export function scaleMouse(params: Record<string, unknown>, scale: number): Record<string, unknown> {
-  if (scale === 1 || typeof params.x !== 'number' || typeof params.y !== 'number') return params
+/**
+ * The scale CDP input must be multiplied by (rule 4): the scale the page is drawn at, i.e. the fit while shown or parked and 1
+ * while hidden (app/main/surfaces.ts, `drawScale`).
+ */
+export function inputScale(state: { visibility: string; scale: number }): number {
+  return state.visibility === 'hidden' ? 1 : state.scale
+}
+
+const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/**
+ * Input coordinates in page px become view px under the tether's scale (rule 4): the mouse (x, y; the wheel delta stays in page
+ * px, bench B1 `scale-wheel`), each touch point (x, y and its radii), the drag (x, y).
+ */
+export function scaleInput(method: string, params: Record<string, unknown>, scale: number): Record<string, unknown> {
+  if (scale === 1) return params
+  if (method === 'Input.dispatchTouchEvent') {
+    if (!Array.isArray(params.touchPoints)) return params
+    return {
+      ...params,
+      touchPoints: params.touchPoints.map((p: unknown) => {
+        if (!p || typeof p !== 'object') return p
+        const t = { ...(p as Record<string, unknown>) }
+        for (const k of ['x', 'y', 'radiusX', 'radiusY']) if (num(t[k])) t[k] = (t[k] as number) * scale
+        return t
+      }),
+    }
+  }
+  if (!num(params.x) || !num(params.y)) return params
   return { ...params, x: params.x * scale, y: params.y * scale }
+}
+
+/** The mouse case of `scaleInput`. */
+export function scaleMouse(params: Record<string, unknown>, scale: number): Record<string, unknown> {
+  return scaleInput('Input.dispatchMouseEvent', params, scale)
+}
+
+/** A drag that carries files from disk (`data.files`) is a disk read: refused like `DOM.setFileInputFiles`. */
+export function dragCarriesFiles(params: Record<string, unknown>): boolean {
+  const d = params.data as { files?: unknown } | undefined
+  return !!d && typeof d === 'object' && Array.isArray(d.files) && d.files.length > 0
+}
+
+/** A page capture's region: the clip asked (CSS px of the document) or the viewport at the scroll offset. */
+export interface Clip { x: number; y: number; width: number; height: number; scale: number }
+
+/**
+ * A hidden tab's capture (E6 probe): under a hidden window or the 1×1 view only a capture of at least the viewport's size comes
+ * back (a smaller clip, or none, waits for a frame that is never drawn). The capture asked becomes one of at least the
+ * viewport's size starting at the same point, beyond the viewport, and the answer is cropped back to what was asked.
+ */
+export function hiddenCapture(params: Record<string, unknown>, viewport: { x: number; y: number; width: number; height: number }): { request: Record<string, unknown>; want: Clip; got: Clip } {
+  const c = params.clip as Partial<Clip> | undefined
+  const want: Clip = c && num(c.x) && num(c.y) && num(c.width) && num(c.height)
+    ? { x: c.x, y: c.y, width: c.width, height: c.height, scale: num(c.scale) && c.scale > 0 ? c.scale : 1 }
+    : { x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height, scale: 1 }
+  const got: Clip = { x: want.x, y: want.y, width: Math.max(want.width, viewport.width), height: Math.max(want.height, viewport.height), scale: 1 }
+  const request: Record<string, unknown> = { format: 'png', clip: got, captureBeyondViewport: true }
+  return { request, want, got }
+}
+
+/** The device-pixel rectangle of `want` inside an image of `got` that is `imageWidth` px wide, and the output size. */
+export function cropRect(want: Clip, got: Clip, imageWidth: number): { x: number; y: number; width: number; height: number; outWidth: number; outHeight: number } {
+  const ratio = imageWidth / got.width
+  const width = Math.max(1, Math.round(want.width * ratio))
+  const height = Math.max(1, Math.round(want.height * ratio))
+  return {
+    x: Math.round((want.x - got.x) * ratio), y: Math.round((want.y - got.y) * ratio), width, height,
+    outWidth: Math.max(1, Math.round(width * want.scale)), outHeight: Math.max(1, Math.round(height * want.scale)),
+  }
 }
 
 /** One page session handed to a connection: the tab, the debugger's own id, page or child (frame, worker). */
@@ -184,9 +289,18 @@ export class SessionTable<C> {
   }
 }
 
-const SECRET_HEADERS = new Set(['cookie', 'set-cookie', 'authorization', 'proxy-authorization'])
+const SECRET_HEADERS = new Set(['cookie', 'set-cookie', 'set-cookie2', 'authorization', 'proxy-authorization'])
+/** Keys that hold headers (an object of name → value, or Fetch's array of { name, value }). */
+const HEADER_KEYS = new Set(['headers', 'requestheaders', 'responseheaders'])
+/** Raw header text (every header, cookies included). */
+const RAW_KEYS = new Set(['headerstext', 'requestheaderstext', 'responseheaderstext'])
+/** The cookie arrays of the ExtraInfo events and of the cookie issues. */
+const COOKIE_KEYS = new Set(['associatedcookies', 'exemptedcookies', 'blockedcookies', 'cookies', 'cookie', 'rawcookieline', 'cookiepartitionkey'])
 
 function scrubHeaders(h: unknown): unknown {
+  if (Array.isArray(h)) {
+    return h.filter(e => !(e && typeof e === 'object' && SECRET_HEADERS.has(String((e as { name?: unknown }).name ?? '').toLowerCase())))
+  }
   if (!h || typeof h !== 'object') return h
   let copy: Record<string, unknown> | undefined
   for (const k of Object.keys(h)) {
@@ -197,36 +311,45 @@ function scrubHeaders(h: unknown): unknown {
   return copy ?? h
 }
 
+/** Walks an event's params: header sets lose the secret headers; raw header text and cookie arrays go. Copies only what changes. */
+function scrubDeep(v: unknown, depth: number): unknown {
+  if (!v || typeof v !== 'object' || depth > 16) return v
+  if (Array.isArray(v)) {
+    let out: unknown[] | undefined
+    v.forEach((x, i) => {
+      const y = scrubDeep(x, depth + 1)
+      if (y !== x) { out ??= [...v]; out[i] = y }
+    })
+    return out ?? v
+  }
+  const o = v as Record<string, unknown>
+  let out: Record<string, unknown> | undefined
+  for (const k of Object.keys(o)) {
+    const lk = k.toLowerCase()
+    const x = o[k]
+    if (RAW_KEYS.has(lk) || COOKIE_KEYS.has(lk)) {
+      out ??= { ...o }
+      if (Array.isArray(x)) out[k] = []
+      else delete out[k]
+      continue
+    }
+    const y = HEADER_KEYS.has(lk) ? scrubDeep(scrubHeaders(x), depth + 1) : scrubDeep(x, depth + 1)
+    if (y !== x) { out ??= { ...o }; out[k] = y }
+  }
+  return out ?? v
+}
+
+/** Events not walked: the page's own console and DOM (what the page's JavaScript already sees). */
+const UNSCRUBBED_DOMAINS = new Set(['Runtime', 'Log', 'DOM', 'Input', 'Emulation'])
+
 /**
- * Rule 12: cookie and credential headers leave every network event (the ExtraInfo pair carries HttpOnly cookies raw, of every
- * account in the shared partition). Returns the params to send, a shallow copy when something was removed.
+ * Rule 12: cookie and credential headers leave EVERY network event (the ExtraInfo pair carries HttpOnly cookies raw, of every
+ * account in the shared partition; a redirect's `redirectResponse`, the WebSocket handshake, early hints and signed exchanges
+ * carry headers too). `Cookie`, `Set-Cookie`, `Authorization`, `Proxy-Authorization`, the raw header text and the cookie arrays
+ * (`associatedCookies`, `exemptedCookies`, `blockedCookies`, ...) are removed wherever they sit, in every event outside the
+ * page's own console and DOM. Returns the params to send, a copy when something was removed.
  */
 export function scrubEvent(method: string, params: unknown): unknown {
   if (!params || typeof params !== 'object') return params
-  const p = params as Record<string, unknown>
-  if (method === 'Network.requestWillBeSentExtraInfo') {
-    const out = { ...p, headers: scrubHeaders(p.headers) }
-    if ('associatedCookies' in out) out.associatedCookies = []
-    return out
-  }
-  if (method === 'Network.responseReceivedExtraInfo') {
-    const out: Record<string, unknown> = { ...p, headers: scrubHeaders(p.headers) }
-    delete out.headersText
-    delete out.cookiePartitionKey
-    if ('exemptedCookies' in out) out.exemptedCookies = []
-    return out
-  }
-  if (method === 'Network.requestWillBeSent' && p.request && typeof p.request === 'object') {
-    const r = p.request as Record<string, unknown>
-    return { ...p, request: { ...r, headers: scrubHeaders(r.headers) } }
-  }
-  if (method === 'Network.responseReceived' && p.response && typeof p.response === 'object') {
-    const r = p.response as Record<string, unknown>
-    const out: Record<string, unknown> = { ...r, headers: scrubHeaders(r.headers) }
-    if ('requestHeaders' in r) out.requestHeaders = scrubHeaders(r.requestHeaders)
-    delete out.headersText
-    delete out.requestHeadersText
-    return { ...p, response: out }
-  }
-  return params
+  return UNSCRUBBED_DOMAINS.has(method.slice(0, method.indexOf('.'))) ? params : scrubDeep(params, 0)
 }
