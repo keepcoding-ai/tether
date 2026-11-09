@@ -69,6 +69,11 @@ function serveBank(): Promise<{ server: Server; base: string }> {
     // The site echoes its own Cookie header to its own page: the documented limit (rule 13), never counted as the channel's.
     if (url.pathname === '/bank/echo') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end(req.headers.cookie ?? '') }
     if (url.pathname === '/bank/admin') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('admin area') }
+    // The page's own service worker (E7b): answers a message with what it can see of the cookies.
+    if (url.pathname === '/sw.js') {
+      res.writeHead(200, { 'content-type': 'text/javascript' })
+      return res.end("self.addEventListener('message', async e => { const all = await cookieStore.getAll().then(a => JSON.stringify(a), x => 'ERR ' + x); e.source.postMessage(all) })")
+    }
     const body = PAGES[url.pathname]
     res.writeHead(body ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' })
     res.end(body ?? 'not found')
@@ -279,6 +284,29 @@ test('browser escape: 0 leaks of HttpOnly cookies, credentials, the disk decoy o
     await sleep(500)
     const pub = (await P('Runtime.evaluate', { expression: `({ state: document.getElementById('bankstate')?.textContent, pub: document.cookie.includes(${JSON.stringify(PUBLIC_OK)}) })`, returnByValue: true })).result?.result?.value
     assert.deepEqual(pub, { state: 'LOGGED-IN-AS-OWNER', pub: true }, 'the agent uses the account')
+
+    // ---- a service worker registered by the page (E7b): never announced, never a target, no reach beyond the page's own.
+    // The agent asks for service workers in its auto-attach filter; the gate replaces the filter (gate-rules, CHILD_TARGETS). ----
+    const swMark = cdp.events.length
+    await attempt('sw', 'Target.setAutoAttach asking for service workers', () => P('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'service_worker' }, { type: 'shared_worker' }, {}] }))
+    const reg = await P('Runtime.evaluate', { expression: "navigator.serviceWorker.register('/sw.js').then(r => r.scope)", awaitPromise: true, returnByValue: true })
+    assert.equal(reg.result?.result?.value, `${origin}/`, `the page registers its worker: ${JSON.stringify(reg)}`)
+    await attempt('sw', "the worker reads the origin's cookies for the page", async () => (await P('Runtime.evaluate', {
+      expression: "navigator.serviceWorker.ready.then(r => new Promise(res => { navigator.serviceWorker.addEventListener('message', m => res(m.data), { once: true }); r.active.postMessage('cookies') }))",
+      awaitPromise: true, returnByValue: true,
+    })).result?.result?.value)
+    await sleep(500)
+    const swAnnounced = cdp.events.slice(swMark).filter(e => e.method === 'Target.attachedToTarget' || e.method === 'Target.targetCreated')
+    add('sw', 'the worker announced to the agent (attachedToTarget/targetCreated)', swAnnounced.length ? 'LEAKED' : 'SCOPED', swAnnounced.map(e => e.params?.targetInfo?.type).join(',') || 'none')
+    assert.deepEqual(swAnnounced.map(e => e.params?.targetInfo?.type), [], 'the service worker is not announced to the agent')
+    const swTargets = (await B('Target.getTargets')).result?.targetInfos as { type: string }[] | undefined
+    assert.deepEqual(swTargets?.map(t => t.type), ['page'], 'the worker is no target of the agent')
+    await attempt('sw', 'ServiceWorker.enable', () => P('ServiceWorker.enable'))
+    await attempt('sw', 'ServiceWorker.inspectWorker', () => P('ServiceWorker.inspectWorker', { versionId: '0' }))
+    await attempt('sw', 'Target.setAutoAttach on the browser session (workers of the origin)', () => B('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: [{ type: 'service_worker' }] }))
+    await sleep(300)
+    assert.ok(!cdp.events.slice(swMark).some(e => e.params?.targetInfo?.type === 'service_worker'), 'no event names the worker')
+    assert.equal((await P('Runtime.evaluate', { expression: '1+1', returnByValue: true })).result?.result?.value, 2, 'the app and the agent session are still up')
     cdp.close()
     bCdp.close()
 
@@ -321,7 +349,7 @@ test('browser escape: 0 leaks of HttpOnly cookies, credentials, the disk decoy o
     for (const r of rows) process.stderr.write(`${r.verdict.padEnd(9)} ${r.group.padEnd(10)} ${r.vector} — ${r.detail.replace(/\s+/g, ' ').slice(0, 100)}\n`)
     assert.deepEqual(rows.filter(r => r.verdict === 'LEAKED').map(r => `${r.group} ${r.vector}`), [], 'zero leaks')
     // The refusals the Temper asked for by name (C1) are refusals, not scoped answers.
-    const mustRefuse = ['Network.getAllCookies', 'Network.getCookies', 'Storage.getCookies (browser)', 'Storage.getCookies (page)', 'Network.setExtraHTTPHeaders', 'Fetch.enable', 'DOM.setFileInputFiles', 'Input.dispatchDragEvent with files', 'Network.getResponseBody', 'Emulation.setDeviceMetricsOverride', 'Emulation.setFocusEmulationEnabled(false)', 'Target.attachToTarget B', 'Target.closeTarget B', 'Page.navigate file:// decoy']
+    const mustRefuse = ['ServiceWorker.enable', 'ServiceWorker.inspectWorker', 'Network.getAllCookies', 'Network.getCookies', 'Storage.getCookies (browser)', 'Storage.getCookies (page)', 'Network.setExtraHTTPHeaders', 'Fetch.enable', 'DOM.setFileInputFiles', 'Input.dispatchDragEvent with files', 'Network.getResponseBody', 'Emulation.setDeviceMetricsOverride', 'Emulation.setFocusEmulationEnabled(false)', 'Target.attachToTarget B', 'Target.closeTarget B', 'Page.navigate file:// decoy']
     for (const v of mustRefuse) assert.equal(rows.find(r => r.vector === v)?.verdict, 'REFUSED', v)
   } finally {
     if (server) {

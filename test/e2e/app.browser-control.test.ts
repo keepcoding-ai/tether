@@ -6,8 +6,8 @@
 //      event (a reload of the page while held reaches nobody); the bar says "Com você" with the scripts warning;
 //   2. paused → TAB_PAUSED;
 //   3. a click on the shield (the agent has the tab) answers in the bar;
-//   4. WebAskUser (login): the tab goes to the person, the clean hand-off removes the agent's init script (and clears the origin's
-//      service workers; registering one closes the app in this build, so none is planted here), the person types a password and submits, nothing reaches the agent (no event, no POST); the
+//   4. WebAskUser (login): the tab goes to the person, the clean hand-off removes the agent's init script and the service worker
+//      the agent's page registered (E7b), the person types a password and submits, nothing reaches the agent (no event, no POST); the
 //      sticky seal on the agent's pane survives focusing it; handing back resolves `returned` and the seal goes out;
 //   5. a short Tether.askUser runs out: `timeout`, the bar says the agent gave up, the tab stays with the person.
 import { test } from 'node:test'
@@ -235,9 +235,13 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     assert.ok(script.result?.identifier, 'the init script is registered')
     await spy.call('Page.reload', {}, sid)
     await until('init script runs', async () => (await hostEval('window.__agentScript === 1 && !!document.getElementById("pw")')) === true)
-    // A service worker is not registered here: registering one in a tab closes the app in this build (seen 09/11, open for
-    // E12). The hand-off's clearStorageData still runs; its effect on a live worker is proven by bench B4.
+    // And a service worker, registered through the agent's page session (it survives a reload: rule 15). The gate never attaches
+    // it (E7b: detaching one crashed the main), so the agent's auto-attach announces nothing for it.
     const regs = (): Promise<unknown> => hostEval("navigator.serviceWorker.getRegistrations().then(r => r.length)")
+    const planted = await spy.call('Runtime.evaluate', { expression: "navigator.serviceWorker.register('/sw.js').then(r => r.scope)", awaitPromise: true, returnByValue: true }, sid)
+    assert.equal(planted.result?.result?.value, `${origin}/`, `the agent's page registers a worker: ${JSON.stringify(planted)}`)
+    await until('the worker is active', async () => (await hostEval("navigator.serviceWorker.getRegistrations().then(r => r.length === 1 && !!r[0].active)")) === true)
+    assert.ok(!spy.events.some(e => e.method === 'Target.attachedToTarget' && e.params?.targetInfo?.type === 'service_worker'), 'the worker is not announced')
 
     const asking = tool('WebAskUser', { message: 'Entre na sua conta, por favor', kind: 'login' }, 120_000)
     await until('asked: with the person', async () => (await control()) === 'user')
