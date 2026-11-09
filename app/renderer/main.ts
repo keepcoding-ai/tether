@@ -77,6 +77,7 @@ import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
 import { associateLinksFailedSituation, associateLinksSituation, closedTabSituation, linksAssociatedSituation, missingTabSituation } from './situations.ts'
 import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
+import { markKeyboardTab, pulseTab, tabCell } from './tab-marks.ts'
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -131,6 +132,7 @@ let focusedPad: FramesPad | undefined
 function setFocusedPad(pad: FramesPad | undefined): void {
   if (pad === focusedPad) return
   focusedPad = pad
+  scheduleKeyboardTab()
   for (const d of desks.desks) desks.desk(d.id)?.paintFocus()
   for (const p of framePads) p.desk.paintFocus()
 }
@@ -414,7 +416,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     },
     singleFrame: scope instanceof FramesPad,
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
-    onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane() },
+    onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane(); scheduleKeyboardTab() },
     // The desks always paint the Foco de Mesa (it changes only by a click/focus in a desk); a pad with the keyboard and
     // the open drawer paint a neutral outline on their frame instead, never the desk colour.
     focusKind: () => scope === 'drawer' ? 'drawer' : scope instanceof FramesPad ? (focusedPad === scope ? 'keyboard' : 'none') : 'foco',
@@ -448,7 +450,7 @@ function setupDock(): void {
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.desks.map(d => d.id)); scheduleSave() },
-    onSwitch: () => { focusActivePane(); notifyActivePane() },
+    onSwitch: () => { focusActivePane(); notifyActivePane(); scheduleKeyboardTab() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
@@ -887,7 +889,18 @@ function newFramesPad(host: PadHost): FramesPad {
     seed: pad => { pad.desk.addPanel(emptyPanelOptions(padTargetCwd(pad) ?? paneCwdOf(currentDesk().activePanel?.id), 'layout', true)) },
     focusPane: id => focusPane(id),
     onCreate: pad => { framePads.add(pad) },
-    onHidden: pad => { if (focusedPad === pad) setFocusedPad(undefined) },
+    // A pad closed while it had the keyboard: the keyboard goes back to the desks' active pane (else it falls on <body>,
+    // and the keyboard mark would sit on a tab that has no keyboard).
+    onHidden: pad => {
+      if (focusedPad !== pad) return
+      setFocusedPad(undefined)
+      requestAnimationFrame(() => {
+        const el = document.activeElement
+        const lost = !el || el === document.body || pad.element.contains(el)
+        const id = currentDesk().activePanel?.id
+        if (lost && id) focusPane(id)
+      })
+    },
     onDispose: pad => { if (focusedPad === pad) setFocusedPad(undefined); framePads.delete(pad); refreshClosedMenu() },
   }, DOCK_THEME)
 }
@@ -940,6 +953,7 @@ function focusedDeskPane(): string | undefined {
 function setDrawerOpen(open: boolean): void {
   if (open === drawer.isOpen || (open && !layoutRestored)) return
   lastEsc = undefined
+  scheduleKeyboardTab()
   if (open) {
     drawerReturnEl = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     drawerState = openDrawer(drawerState, focusedDeskPane())
@@ -1423,6 +1437,7 @@ async function restoreLayout(): Promise<void> {
   await discardPendingSave()
   workspaceState = readWorkspace(layoutFile.workspace)
   layoutRestored = true
+  scheduleKeyboardTab()
   recomputeProjects()
   // Panes that predate the hint get it now (saved with the next change the person makes).
   for (const panel of allPanels()) { const s = slots.get(panel.id); if (s) updateHint(s) }
@@ -1690,6 +1705,32 @@ function revealPane(id: string): void {
   requestAnimationFrame(() => focusPane(id))
 }
 
+// ---------- the tab marks (app/renderer/tab-marks.ts) ----------
+
+/** A pane's tab cell in its strip (wherever the pane lives). */
+function tabCellOf(id: string): HTMLElement | undefined {
+  return tabCell(findPanel(id)?.view.tab.element)
+}
+
+let keyboardTabFrame = 0
+/**
+ * The keyboard mark follows the pane that has the keyboard — currentDesk(): the open drawer, else the pad with the keyboard,
+ * else the visible desk — once the change that moved it has settled (one frame later, coalesced).
+ */
+function scheduleKeyboardTab(): void {
+  if (keyboardTabFrame) return
+  keyboardTabFrame = requestAnimationFrame(() => {
+    keyboardTabFrame = 0
+    const id = currentDesk().activePanel?.id
+    markKeyboardTab(id ? tabCellOf(id) : undefined)
+  })
+}
+
+/** Draws the eye to a pane's tab with a short pulse. For whoever brings a pane up from far away (a tether:// link, an extension). */
+function drawAttention(id: string): void {
+  requestAnimationFrame(() => pulseTab(tabCellOf(id)))
+}
+
 // ---------- tether:// links (app/shared/tether-url.ts) ----------
 
 /** The link of a pane: a note's names its file (it survives closing the note and reopens it), any other pane its id. */
@@ -1714,14 +1755,14 @@ async function followTetherLink(url: string): Promise<void> {
   if (!link) return
   if (link.kind === 'note') {
     const root = link.path.replace(/[\\/][^\\/]*$/, '')
-    void openFile(fileOpenHost, link.path, { side: false, root })
+    void openFile(fileOpenHost, link.path, { side: false, root }).then(() => { const id = currentDesk().activePanel?.id; if (id) drawAttention(id) })
     return
   }
-  if (findPanel(link.id)) { revealPane(link.id); return }
+  if (findPanel(link.id)) { revealPane(link.id); drawAttention(link.id); return }
   const slot = slots.get(link.id)
   if (slot) {
     const answer = await askDialog(closedTabSituation(slot.name ?? folderName(slot.cwd)))
-    if (answer.choice === 'reopen') revealPane(link.id)
+    if (answer.choice === 'reopen') { revealPane(link.id); drawAttention(link.id) }
     return
   }
   void askDialog(missingTabSituation())
@@ -3333,6 +3374,7 @@ function activateRendererExtensions(): void {
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
         copyLink: paneId => copyPaneLink(paneId),
+        attention: paneId => drawAttention(paneId),
         close: paneId => closeSlotless(paneId),
         showTabMenu: (paneId, x, y) => showTabMenu(paneId, x, y),
         newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
