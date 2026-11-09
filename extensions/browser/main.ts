@@ -4,18 +4,34 @@
 // E4: the local-network question (local-network.ts) lives here; the gatekeeper's `Tether.requestLocalNetwork` is
 // `registry.requestLocalNetwork(tabId, ownerSlotId, url)`.
 // E5: the CDP gatekeeper (gate.ts) opens at activation: <home>/browser/endpoint.json and the agents' keys in <home>/browser/keys.
+// E7: who has each tab (control.ts): the gate refuses and holds outside 'agent', the shield follows, the clean hand-off lives here.
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { WebContents } from 'electron'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { ControlHub } from './control.ts'
 import { type Gate, startGate } from './gate.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LocalNetworkGate } from './local-network.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
-import { savedTabOf } from './tab-rules.ts'
+import { isWebUrl, savedTabOf } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 
 export { manifest } from './manifest.ts'
+
+/** The isolated world the hand-back asks for a password field in (none of the page's scripts live there). */
+const PASSWORD_WORLD = 1717
+
+/** Reloads the page and waits until it stopped loading (bounded: a page that never settles does not hold the hand-off). */
+function reloadAndWait(wc: WebContents, ms = 10_000): Promise<void> {
+  return new Promise(resolve => {
+    const done = (): void => { clearTimeout(timer); wc.off('did-stop-loading', done); resolve() }
+    const timer = setTimeout(done, ms)
+    wc.once('did-stop-loading', done)
+    wc.reload()
+  })
+}
 
 // Defined by app/build.mjs: true only in a build made with TETHER_TEST_EXTENSIONS=1 (the E2E).
 declare const __TETHER_TEST_EXTENSIONS__: boolean | undefined
@@ -44,12 +60,53 @@ export function activate(main: TetherMain): IDisposable[] {
   const traceFile = testing ? process.env.TETHER_GATE_TRACE : undefined
   const trace = traceFile ? (line: string): void => { try { appendFileSync(traceFile, `${Date.now() % 1_000_000} ${line}
 `) } catch { /* test trace only */ } } : undefined
-  const gateReady = startGate({ home: main.home, tabs: registry, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {
+  // E7: who has each tab. The shield is on while the agent has it, off when the person does (rules 10-11).
+  const control = new ControlHub({
+    ownerOf: tabId => registry.get(tabId)?.ownerSlotId,
+    cleanHandoff: async tabId => {
+      const removed = (await gateReady)?.cleanTab(tabId)
+      await removed
+      const surface = registry.surface(tabId)
+      const wc = surface?.webContents
+      if (!surface || !wc || wc.isDestroyed()) return
+      const url = wc.getURL()
+      // The service worker survives a reload (it is the origin's, not the document's): it goes first (rule 15).
+      if (isWebUrl(url)) await wc.session.clearStorageData({ origin: new URL(url).origin, storages: ['serviceworkers'] })
+      await reloadAndWait(wc)
+      await surface.reapplyEmulation().catch(() => {})
+      main.log(`guia ${tabId}: entrega limpa`)
+    },
+    beforeGiveBack: async tabId => {
+      const surface = registry.surface(tabId)
+      const wc = surface?.webContents
+      if (!surface || !wc || wc.isDestroyed()) return
+      // Rule 16: what the person left typed in a page that did not navigate, the agent would read. Asked in a world of its own.
+      const field = await wc.executeJavaScriptInIsolatedWorld(PASSWORD_WORLD, [{ code: `!!document.querySelector('input[type=password]')` }]).catch(() => false)
+      if (field !== true) return
+      await reloadAndWait(wc)
+      await surface.reapplyEmulation().catch(() => {})
+      main.log(`guia ${tabId}: recarregada ao devolver (campo de senha)`)
+    },
+    log: msg => main.log(msg),
+  })
+  const shieldOf = (tabId: string): void => {
+    void registry.surface(tabId)?.setInputShield(control.control(tabId) === 'agent').catch(() => {})
+  }
+  const controlSubs: IDisposable[] = [
+    registry.watch({
+      added: info => { control.added(info.tabId, registry.opener(info.tabId)); shieldOf(info.tabId) },
+      closed: tabId => control.closed(tabId),
+    }),
+    control.onChange(v => { shieldOf(v.tabId); ipc.send('control', v) }),
+    main.agents.onDidExit(e => control.agentExited(e.slotId)),
+  ]
+  const tabsOf = (slotId?: string): string[] => registry.list().filter(t => slotId === undefined || t.ownerSlotId === slotId).map(t => t.tabId)
+  const gateReady = startGate({ home: main.home, tabs: registry, control, log: msg => main.log(msg), ...(trace ? { trace } : {}) }).then(g => {
     if (gateDisposed) g.dispose()
     else gate = g
     return g
   }, e => { main.log(`porteiro não abriu (${(e as Error).message})`); return undefined })
-  // An agent that exits keeps its tabs (main.agents.onDidExit is not followed): the interface marks them "encerrado".
+  // An agent that exits keeps its tabs: only its open help requests are dismissed; the interface marks them "encerrado".
   const subs: IDisposable[] = [
     ipc.handle('list', () => registry.list()),
     ipc.handle('get', tabId => (typeof tabId === 'string' ? registry.get(tabId) ?? null : null)),
@@ -61,7 +118,18 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('status', async () => ({ persistentLogins: (await session).persistentLogins })),
     ipc.handle('localNetworkOpen', () => localGate.open()),
     ipc.handle('localNetworkAnswer', (id, choice) => { if (typeof id === 'string') localGate.answer(id, choice) }),
-    { dispose: () => { gateDisposed = true; gate?.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
+    ipc.handle('controls', () => control.views()),
+    ipc.handle('take', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.take(tabId) }),
+    ipc.handle('giveBack', async tabId => { if (typeof tabId === 'string' && registry.get(tabId)) await control.giveBack(tabId) }),
+    ipc.handle('cleanReload', async tabId => { if (typeof tabId === 'string' && registry.get(tabId)) await control.cleanReload(tabId) }),
+    ipc.handle('pause', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.pause(tabId) }),
+    ipc.handle('resume', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.resume(tabId) }),
+    ipc.handle('pauseAll', () => control.pauseMany(tabsOf())),
+    ipc.handle('resumeAll', () => control.resumeMany(tabsOf())),
+    ipc.handle('pauseAgent', slotId => { if (typeof slotId === 'string') control.pauseMany(tabsOf(slotId)) }),
+    ipc.handle('resumeAgent', slotId => { if (typeof slotId === 'string') control.resumeMany(tabsOf(slotId)) }),
+    ...controlSubs,
+    { dispose: () => { gateDisposed = true; gate?.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
   ]
   if (typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__) {
     const g = globalThis as { __browserTabs?: unknown }
@@ -93,6 +161,16 @@ export function activate(main: TetherMain): IDisposable[] {
         return ((await surface.debugger.send('Page.navigate', { url })) as { errorText?: string }).errorText ?? ''
       },
       eval: (tabId: string, code: string) => registry.webContents(tabId)?.executeJavaScript(code, true),
+      /** E7: who has each tab, and the person's actions. */
+      control,
+      shield: (tabId: string) => registry.surface(tabId)?.state().shield,
+      /** The person's typing on the tab's page (what reaches the page when she holds it). */
+      type: (tabId: string, text: string) => {
+        const wc = registry.webContents(tabId)
+        if (!wc) return
+        wc.focus()
+        for (const ch of text) wc.sendInputEvent({ type: 'char', keyCode: ch })
+      },
     }
     subs.push({ dispose: () => { delete g.__browserTabs } })
   }

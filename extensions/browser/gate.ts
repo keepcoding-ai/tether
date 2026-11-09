@@ -14,7 +14,10 @@
 // (mouse, touch, drag; rule 4), emulation re-applied after a clipped capture and when an agent leaves (rules 3, 5), a hidden
 // tab's capture rewritten so it comes back, only http(s) and the blank page navigable, and one lane per session: commands go out
 // in the order they came even when one waits (the local-network question, a hidden capture).
-// Later slices: E7 adds `Tether.*` and the control state.
+// E7: the control channel `Tether.*` (browser level, design §3.3) and the control state: outside `agent` every command of the
+// agent on that tab is refused with a named error (TAB_WITH_USER, TAB_PAUSED) and every event of it is dropped (rule 14:
+// refusing commands alone lets the form's POST with the password reach the agent); `Tether.tabStateChanged` goes to the owner's
+// browser sessions at each change. `cleanTab` removes the scripts the agents registered on a tab (the clean hand-off).
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -31,6 +34,8 @@ import {
 } from './gate-rules.ts'
 import type { FirstTicket } from './tabs.ts'
 import type { TabInfo } from './tab-rules.ts'
+import { checkAsk, type Control, heldError } from './control-rules.ts'
+import type { ControlHub } from './control.ts'
 import { acceptOf, frame, FrameParser, OP_CLOSE, OP_PONG, OP_TEXT } from './ws-frames.ts'
 
 /** What the gate needs of the tab registry (tabs.ts). */
@@ -42,6 +47,8 @@ export interface GateTabs {
   create(owner: string, url: string, opts: { ticket?: FirstTicket }): Promise<TabInfo>
   close(tabId: string): void
   requestLocalNetwork(tabId: string, ownerSlotId: string, url: string): Promise<boolean>
+  /** One ticket for `url` on the tab without asking: only after the person allowed it through `Tether.requestLocalNetwork`. */
+  grantLocal?(tabId: string, url: string): Promise<boolean>
   watch(w: { added(info: TabInfo): void; closed(tabId: string): void }): IDisposable
 }
 
@@ -52,6 +59,8 @@ export interface GateOptions {
   log(msg: string): void
   /** How often a deleted key is noticed (ms). */
   keyTtlMs?: number
+  /** Who has each tab (E7). Without it every tab is the agent's and `Tether.*` is unknown. */
+  control?: Pick<ControlHub, 'control' | 'view' | 'onChange' | 'openAsks' | 'ask' | 'uploadAsks'>
   /** Test builds only: one line per command, answer and event (method names and ids, never params nor keys). */
   trace?: (line: string) => void
 }
@@ -61,9 +70,13 @@ export interface Gate extends IDisposable {
   readonly instance: string
   /** Live connections by owner (tests and the interface). */
   connections(): { slotId: string }[]
+  /** Removes, on every agent session of the tab, the scripts that session's connection registered (the clean hand-off). */
+  cleanTab(tabId: string): Promise<number>
 }
 
 const WS_PATH = '/devtools/browser/tether'
+/** How long a local address the person allowed through `Tether.requestLocalNetwork` waits for the navigation that uses it. */
+const PRE_ALLOWED_MS = 30_000
 /** A capture that never answers (a page that draws no frame) fails instead of holding its session's lane forever. */
 const CAPTURE_TIMEOUT_MS = 15_000
 
@@ -109,6 +122,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     lanes.set(s, p)
   }
   let port = 0
+  const controlOf = (tabId: string): Control => opts.control?.control(tabId) ?? 'agent'
 
   const ownedTab = (slotId: string, tabId: string): TabInfo | undefined => {
     const t = opts.tabs.list().find(x => x.tabId === tabId)
@@ -157,6 +171,14 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     const s = sessions.ofInner(tabId, inner)
     if (!s) return
     let out = params as Json
+    if (controlOf(tabId) !== 'agent') {
+      // Rule 14: nothing of the page reaches the agent while it does not have the tab. A child born now is let go (it would
+      // be announced to nobody); one that leaves is forgotten.
+      if (method === 'Target.attachedToTarget') surface.debugger.send('Target.detachFromTarget', { sessionId: out.sessionId as string }, inner).catch(() => {})
+      else if (method === 'Target.detachedFromTarget') { const c = sessions.ofInner(tabId, out.sessionId as string); if (c) sessions.remove(c) }
+      opts.trace?.(`-- held ${s.conn.slotId} ${method}`)
+      return
+    }
     if (method === 'Target.attachedToTarget') {
       const child = out.sessionId as string
       const type = (out.targetInfo as Json | undefined)?.type
@@ -187,6 +209,12 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     /** Script identifiers this connection registered, by tab (only those it may remove). */
     readonly scripts = new Map<string, Set<string>>()
     readonly touched = new Set<string>()
+    /** Open `Tether.askUser` requests: the agent leaving gives them up. */
+    readonly asks = new Set<() => void>()
+    /** Local addresses the person allowed through `Tether.requestLocalNetwork`, waiting for their navigation (url → until). */
+    readonly preAllowed = new Map<string, number>()
+    /** The tab of the last page command (what `Tether.requestLocalNetwork` without a target is about). */
+    lastTab: string | undefined
     autoAttach = false
     discover = false
     closed = false
@@ -268,6 +296,9 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
      * hand-off: the session's lane holds the next commands behind it (their order is kept).
      */
     pageCommand(s: GateSession<Conn>, method: string, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): Promise<void> | void {
+      const c = controlOf(s.tabId)
+      if (c !== 'agent') throw new GateError(heldError(c).message, -32000, true)
+      this.lastTab = s.tabId
       if (!PAGE_ALLOWED.has(method)) throw refusal(method, refusalReason(method))
       const surface = opts.tabs.surface(s.tabId)
       if (!surface) throw new GateError('Target closed', -32000)
@@ -298,6 +329,10 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         case 'Page.navigate': {
           const url = params.url
           if (!navigable(url)) throw refusal(method, 'only http(s) and about:blank')
+          if (url !== 'about:blank' && opts.tabs.grantLocal && this.takeAllowed(url)) {
+            // The person already said yes to this address (`Tether.requestLocalNetwork`): not asked twice.
+            return opts.tabs.grantLocal(s.tabId, url).then(() => { send(method, params).then(reply, fail) }).catch(fail)
+          }
           if (url !== 'about:blank') {
             // An agent's navigation to a local address asks first (E4); a public one needs nobody. The session's next
             // commands wait in its lane until the navigation is handed to the debugger.
@@ -362,7 +397,65 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       return shot.then(r => restore().then(() => reply(r)), e => restore().then(() => fail(e)))
     }
 
+    /** Consumes the person's yes to `url`, if still fresh. */
+    takeAllowed(url: string): boolean {
+      const until = this.preAllowed.get(url)
+      this.preAllowed.delete(url)
+      return until !== undefined && until >= Date.now()
+    }
+
+    /** The `Tether.*` domain (README of the package, "Canal de controle"). */
+    async tetherCommand(method: string, params: Json): Promise<unknown> {
+      const control = opts.control
+      if (!control) throw new GateError(`'${method}' wasn't found`, -32601)
+      const tabOf = async (): Promise<TabInfo> => {
+        const t = await tabOfTarget(this.slotId, params.targetId)
+        if (!t) throw noTarget()
+        return t
+      }
+      switch (method) {
+        case 'Tether.getTabState': {
+          const v = control.view((await tabOf()).tabId)
+          return { control: v.control, ...(v.reason ? { reason: v.reason } : {}) }
+        }
+        case 'Tether.askUser': {
+          const t = await tabOf()
+          const input = checkAsk(params, control.openAsks(t.tabId, this.slotId))
+          if (typeof input === 'string') throw new GateError(`Tether.askUser: ${input}`, -32602)
+          const req = control.ask(t.tabId, this.slotId, input)
+          this.asks.add(req.cancel)
+          try { return { outcome: await req.outcome } } finally { this.asks.delete(req.cancel) }
+        }
+        case 'Tether.confirmUpload': {
+          const t = await tabOf()
+          if (typeof params.path !== 'string' || params.path === '') throw new GateError('Tether.confirmUpload: a path is needed', -32602)
+          // E13 shows the consent dialog; until then the request is recorded and refused.
+          control.uploadAsks.push({ tabId: t.tabId, path: params.path, ...(typeof params.frameUrl === 'string' ? { frameUrl: params.frameUrl } : {}) })
+          opts.log(`porteiro: upload pedido na guia ${t.tabId}, recusado (diálogo de consentimento ainda não existe)`)
+          return { allowed: false }
+        }
+        case 'Tether.requestLocalNetwork': {
+          const url = params.url
+          if (typeof url !== 'string' || !navigable(url) || url === 'about:blank') return { allowed: false }
+          const mine = opts.tabs.list().filter(x => x.ownerSlotId === this.slotId)
+          const named = params.targetId !== undefined ? await tabOfTarget(this.slotId, params.targetId) : undefined
+          const t = named ?? mine.find(x => x.tabId === this.lastTab) ?? mine[mine.length - 1]
+          if (!t) return { allowed: false }
+          const allowed = await opts.tabs.requestLocalNetwork(t.tabId, this.slotId, url)
+          if (allowed) this.preAllowed.set(url, Date.now() + PRE_ALLOWED_MS)
+          return { allowed }
+        }
+      }
+      throw new GateError(`'${method}' wasn't found`, -32601)
+    }
+
+    /** `Tether.tabStateChanged` on every browser session of this connection. */
+    stateChanged(targetId: string, control: Control, reason: string | undefined): void {
+      for (const bs of this.browserSessions) this.event('Tether.tabStateChanged', { targetId, control, ...(reason ? { reason } : {}) }, bs)
+    }
+
     async browserCommand(method: string, params: Json): Promise<unknown> {
+      if (method.startsWith('Tether.')) return this.tetherCommand(method, params)
       if (!BROWSER_ALLOWED.has(method)) throw refusal(method, refusalReason(method))
       const mine = (): TabInfo[] => opts.tabs.list().filter(t => t.ownerSlotId === this.slotId)
       switch (method) {
@@ -420,7 +513,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           const url = typeof params.url === 'string' && params.url !== '' ? params.url : 'about:blank'
           if (!navigable(url)) throw refusal(method, 'only http(s) and about:blank')
           // The agent's request: a local address goes to the local-network question before the tab loads it.
-          const t = await opts.tabs.create(this.slotId, url, { ticket: true })
+          const t = await opts.tabs.create(this.slotId, url, { ticket: url !== 'about:blank' && this.takeAllowed(url) ? 'granted' : true })
           const targetId = await targetIdOf(t.tabId)
           if (this.autoAttach) await this.attachTab(t, true)
           return { targetId }
@@ -429,6 +522,8 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           // Decision 22: an explicit close by the agent is allowed, on its own tab only.
           const t = await tabOfTarget(this.slotId, params.targetId)
           if (!t) throw noTarget()
+          const c = controlOf(t.tabId)
+          if (c !== 'agent') throw new GateError(heldError(c).message, -32000, true)
           opts.tabs.close(t.tabId)
           return { success: true }
         }
@@ -468,6 +563,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       if (this.closed) return
       this.closed = true
       conns.delete(this)
+      for (const cancel of [...this.asks]) cancel() // the agent gave up its requests
       for (const s of sessions.of(this)) {
         sessions.remove(s)
         if (s.kind === 'page') {
@@ -492,6 +588,14 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       if (known) known.then(notify, () => notify(undefined))
       else notify(undefined)
     },
+  })
+
+  const controlSub = opts.control?.onChange(v => {
+    const owner = opts.tabs.list().find(t => t.tabId === v.tabId)?.ownerSlotId
+    if (!owner) return
+    targetIdOf(v.tabId).then(targetId => {
+      for (const c of conns) if (c.slotId === owner) c.stateChanged(targetId, v.control, v.reason)
+    }, () => {})
   })
 
   /** The common checks of every request: not from a browser engine, loopback Host. Returns the HTTP status to refuse with. */
@@ -564,7 +668,24 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     port,
     instance,
     connections: () => [...conns].map(c => ({ slotId: c.slotId })),
+    cleanTab: async tabId => {
+      const surface = opts.tabs.surface(tabId)
+      if (!surface) return 0
+      let removed = 0
+      for (const c of [...conns]) {
+        const ids = [...(c.scripts.get(tabId) ?? [])]
+        for (const s of sessions.of(c, tabId)) {
+          if (s.kind !== 'page') continue
+          for (const identifier of ids) {
+            await surface.debugger.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }, s.inner).then(() => { removed++ }, () => {})
+          }
+        }
+        c.scripts.delete(tabId)
+      }
+      return removed
+    },
     dispose: () => {
+      controlSub?.dispose()
       clearInterval(sweep)
       watcher.dispose()
       for (const c of [...conns]) c.close()

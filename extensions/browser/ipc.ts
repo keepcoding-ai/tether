@@ -1,4 +1,5 @@
 // The browser extension's channels between its renderer and main sides (E2: the tab registry; E4: the local-network question).
+import type { ControlView } from './control.ts'
 import type { LocalNetworkAsk } from './local-network-rules.ts'
 import type { SavedTab, TabInfo } from './tab-rules.ts'
 import type { TabBlocked } from './tabs.ts'
@@ -20,6 +21,17 @@ export interface BrowserChannels {
     localNetworkOpen: () => LocalNetworkAsk[]
     /** The person's answer to one question: 'once', 'always' or 'deny' (anything else refuses). */
     localNetworkAnswer: (id: string, choice: string) => void
+    /** E7: who has each tab, and the person's actions on it. */
+    controls: () => ControlView[]
+    take: (tabId: string) => void
+    giveBack: (tabId: string) => void
+    cleanReload: (tabId: string) => void
+    pause: (tabId: string) => void
+    resume: (tabId: string) => void
+    pauseAll: () => void
+    resumeAll: () => void
+    pauseAgent: (slotId: string) => void
+    resumeAgent: (slotId: string) => void
   }
   events: {
     /** A tab was created or changed (title, address, loading). */
@@ -31,5 +43,7 @@ export interface BrowserChannels {
     localNetworkAsk: (ask: LocalNetworkAsk) => void
     /** A question no longer needs an answer (its tab closed). */
     localNetworkCancelled: (id: string) => void
+    /** E7: a tab's control changed (held, paused, a help request opened, ran out or ended). */
+    control: (view: ControlView) => void
   }
 }

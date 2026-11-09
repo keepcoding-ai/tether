@@ -139,6 +139,13 @@ export class TabRegistry {
     return ses.net.allowOnce(wc.id, url)
   }
 
+  /** One ticket for `url` without asking: the gatekeeper's, only after the person allowed it through `Tether.requestLocalNetwork`. */
+  async grantLocal(tabId: string, url: string): Promise<boolean> {
+    const e = this.entries.get(tabId)
+    if (!e || e.surface.webContents.isDestroyed() || !isWebUrl(url)) return false
+    return (await this.session).net.allowOnce(e.surface.webContents.id, url)
+  }
+
   watch(w: TabWatcher): IDisposable {
     this.watchers.add(w)
     return toDisposable(() => { this.watchers.delete(w) })
