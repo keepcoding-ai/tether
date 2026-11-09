@@ -214,6 +214,7 @@ button.primary:hover { background: var(--accent-hover); }
 
 /* Polite pause: blue = in progress (--accent), green = stopped (--ok), grey = queued. Orange stays for attention. */
 .pause-count { background: var(--accent); color: var(--on-accent); padding: 0 4px; font-weight: 700; }
+.pause-count[hidden] { display: none; }
 #btn-pause.active { color: var(--accent); }
 #pause-list {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; width: 440px; max-width: calc(100vw - 16px);
