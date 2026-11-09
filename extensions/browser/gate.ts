@@ -272,6 +272,8 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       const surface = opts.tabs.surface(s.tabId)
       if (!surface) throw new GateError('Target closed', -32000)
       const send = (m: string, p: Json): Promise<unknown> => surface.debugger.send(m, p, s.inner)
+      /** On a hidden tab, `run` with the page drawing (the core's `whileDrawing`); a shown or parked one draws anyway. */
+      const drawn = <T>(run: () => Promise<T>): Promise<T> => (surface.state().visibility === 'hidden' ? surface.whileDrawing(run) : run())
       switch (method) {
         case 'Page.bringToFront': return reply({}) // never brings the window forward
         case 'Emulation.setFocusEmulationEnabled':
@@ -325,11 +327,12 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         }
         case 'Input.dispatchDragEvent':
           if (dragCarriesFiles(params)) throw refusal(method, 'files from disk')
-          send(method, scaleInput(method, params, inputScale(surface.state()))).then(reply, fail)
+          drawn(() => send(method, scaleInput(method, params, inputScale(surface.state())))).then(reply, fail)
           return
         case 'Input.dispatchMouseEvent':
         case 'Input.dispatchTouchEvent':
-          send(method, scaleInput(method, params, inputScale(surface.state()))).then(reply, fail)
+          // A hidden page handles pointer moves on its frames: without any, each one waits out Chromium's own timeout (~1 s).
+          drawn(() => send(method, scaleInput(method, params, inputScale(surface.state())))).then(reply, fail)
           return
         case 'Page.captureScreenshot':
           return this.screenshot(s, surface, params, reply, fail)
@@ -340,7 +343,8 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     /**
      * A capture. Clipped or beyond the viewport, it drops the tether's emulation (rule 5): re-applied, always, before the answer
      * goes back. A hidden tab draws no frame for a capture smaller than its viewport: the capture is asked at least that size,
-     * beyond the viewport, and cropped back here (never on a shown tab, where the person would see the page resized).
+     * beyond the viewport, and cropped back here (never on a shown tab, where the person would see the page resized); and it
+     * draws no frame at all unless the core keeps it drawing (`whileDrawing`) while the capture is out.
      */
     screenshot(s: GateSession<Conn>, surface: Surface, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): Promise<void> {
       const send = (p: Json): Promise<unknown> => withTimeout(surface.debugger.send('Page.captureScreenshot', p, s.inner), CAPTURE_TIMEOUT_MS, 'Page.captureScreenshot')
@@ -348,13 +352,13 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       const resets = hidden || !!params.clip || params.captureBeyondViewport === true
       if (resets) this.touched.add(s.tabId)
       const restore = (): Promise<void> => (resets ? surface.reapplyEmulation().catch(() => {}) : Promise.resolve())
-      const shot: Promise<unknown> = !hidden ? send(params) : (async () => {
+      const shot: Promise<unknown> = !hidden ? send(params) : surface.whileDrawing(async () => {
         const m = await surface.debugger.send('Page.getLayoutMetrics', {}, s.inner) as { cssVisualViewport?: Json; visualViewport?: Json }
         const vv = (m.cssVisualViewport ?? m.visualViewport ?? {}) as { pageX?: number; pageY?: number; clientWidth?: number; clientHeight?: number }
         const plan = hiddenCapture(params, { x: vv.pageX ?? 0, y: vv.pageY ?? 0, width: vv.clientWidth ?? 1280, height: vv.clientHeight ?? 800 })
         const r = await send(plan.request) as { data: string }
         return { data: encodeShot(r.data, plan, params.format, params.quality) }
-      })()
+      })
       return shot.then(r => restore().then(() => reply(r)), e => restore().then(() => fail(e)))
     }
 

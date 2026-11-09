@@ -197,6 +197,7 @@ export class SurfaceManager {
       }),
       onShieldInput: l => r.shieldInput.add(l),
       capture: () => run(() => this.capture(r)),
+      whileDrawing: fn => this.whileDrawing(r, fn),
       destroy: () => this.destroy(r),
       onDidDestroy: l => r.destroyedL.add(l),
     }
@@ -319,6 +320,24 @@ export class SurfaceManager {
     if (!wc.debugger.isAttached()) return img
     const shot = await wc.debugger.sendCommand('Page.captureScreenshot', { format: 'png' }) as { data?: string }
     return shot.data ? nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')) : img
+  }
+
+  /**
+   * `fn` with the hidden page drawing. The hidden 1×1 view draws no new frame, so a debugger screenshot waits forever (E6: with
+   * a second tab no form of `Page.captureScreenshot` answered); a `capturePage` in flight counts as a capturer and makes the page
+   * draw without changing its bounds (E6b probe: with one running alongside, the full-page screenshot answered in ~300 ms).
+   * So captures are pumped, one after the other, until `fn` settles. Outside the surface's chain: `fn` may use it.
+   */
+  private async whileDrawing<T>(r: SurfaceRecord, fn: () => Promise<T>): Promise<T> {
+    const wc = r.view.webContents
+    let done = false
+    const pump = (async () => {
+      while (!done && !r.destroyed && !wc.isDestroyed()) {
+        if (r.visibility === 'hidden') { try { await wc.capturePage() } catch { return } }
+        await new Promise(res => setTimeout(res, 50))
+      }
+    })()
+    try { return await fn() } finally { done = true; await pump }
   }
 
   /**

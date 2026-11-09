@@ -90,6 +90,11 @@ export interface Surface {
   onShieldInput(listener: (input: SurfaceShieldInput) => void): IDisposable
   /** The current image of the page (works hidden, shown and parked). */
   capture(): Promise<NativeImage>
+  /**
+   * Runs `fn` with the page drawing frames even while hidden (a hidden surface draws none on its own, so a debugger
+   * `Page.captureScreenshot` there never answers). Nothing moves on screen; shown and parked surfaces draw anyway.
+   */
+  whileDrawing<T>(fn: () => Promise<T>): Promise<T>
   /** Closes the page and lets everything go; also happens when the window closes. */
   destroy(): void
   onDidDestroy(listener: () => void): IDisposable
