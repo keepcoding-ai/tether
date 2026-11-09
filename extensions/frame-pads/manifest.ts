@@ -13,7 +13,7 @@ export const manifest: ExtensionManifest = {
   optional: true,
   contributes: {
     pads: [
-      { id: 'frame-pads.panel', title: 'Prancheta do painel', icon: 'app-window', defaultSide: 'right', scope: 'panel', frames: true, absorbsHeader: true, order: 5 },
+      { id: 'frame-pads.panel', title: 'Prancheta do painel', icon: 'push-pin', defaultSide: 'right', scope: 'panel', frames: true, absorbsHeader: true, order: 5 },
       { id: 'frame-pads.desk', title: 'Prancheta da mesa', icon: 'clipboard-text', defaultSide: 'right', scope: 'desk', frames: true, absorbsHeader: true, order: 10 },
       { id: 'frame-pads.global', title: 'Prancheta global', icon: 'globe-simple', defaultSide: 'right', scope: 'global', frames: true, absorbsHeader: true, order: 20 },
     ],

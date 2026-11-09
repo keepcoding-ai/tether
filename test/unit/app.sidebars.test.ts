@@ -17,7 +17,7 @@ import {
 import { allPanelIds, isLayoutV3, migrateLayout, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
 
 const desk: PadDescriptor = { id: 'frame-pads.desk', title: 'Prancheta da mesa', icon: 'clipboard-text', defaultSide: 'right', scope: 'desk', frames: true, order: 10 }
-const panel: PadDescriptor = { id: 'frame-pads.panel', title: 'Prancheta do painel', icon: 'app-window', defaultSide: 'right', scope: 'panel', frames: true, order: 5 }
+const panel: PadDescriptor = { id: 'frame-pads.panel', title: 'Prancheta do painel', icon: 'push-pin', defaultSide: 'right', scope: 'panel', frames: true, order: 5 }
 const global: PadDescriptor = { id: 'frame-pads.global', title: 'Prancheta global', icon: 'globe-simple', defaultSide: 'right', scope: 'global', frames: true, order: 20 }
 const files: PadDescriptor = { id: 'explorer.files', title: 'Arquivos', icon: 'folder', defaultSide: 'left', scope: 'global' }
 const PADS = [global, desk, files]
