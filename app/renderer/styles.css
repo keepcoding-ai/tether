@@ -211,6 +211,35 @@ button.primary:hover { background: var(--accent-hover); }
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); color: var(--fg);
 }
 #closed-list[hidden] { display: none; }
+
+/* Polite pause: blue = in progress (--accent), green = stopped (--ok), grey = queued. Orange stays for attention. */
+.pause-count { background: var(--accent); color: var(--on-accent); padding: 0 4px; font-weight: 700; }
+#btn-pause.active { color: var(--accent); }
+#pause-list {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; width: 440px; max-width: calc(100vw - 16px);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); color: var(--fg);
+}
+#pause-list[hidden] { display: none; }
+#pause-list .pz-hd { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); }
+#pause-list .pz-note { padding: 6px 12px; font-size: 12px; color: var(--fg-dim); border-bottom: 1px solid var(--border); }
+#pause-list .pz-rows { overflow-y: auto; max-height: 300px; padding: 4px 0; }
+#pause-list .pz-row { display: flex; align-items: center; gap: 8px; min-height: 38px; margin: 0 4px 2px; padding: 4px 6px 4px 8px; border-radius: 6px; }
+#pause-list .pz-row:hover { background: var(--bg-hover); }
+#pause-list .led { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--fg-dim); opacity: .6; }
+#pause-list .progress .led { background: var(--accent); opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+#pause-list .stopped .led { background: var(--ok); opacity: 1; }
+#pause-list .tx { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+#pause-list .tt { white-space: nowrap; font-weight: 500; }
+#pause-list .cw { color: var(--fg-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#pause-list .acts { display: flex; align-items: center; gap: 3px; flex: none; }
+#pause-list .acts .open, #pause-list .pz-ft button { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; font-size: 12px; }
+#pause-list .ic { width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--fg-dim); }
+#pause-list .ic:hover { background: var(--bg-3); color: var(--fg); }
+#pause-list .ic .ph { width: 14px; height: 14px; }
+#pause-list .pz-ft { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--border); padding: 6px; }
+#pause-list .pz-ft button:nth-child(3) { margin-left: auto; color: var(--fg-dim); }
+#pause-list .pz-ft button:disabled { opacity: .5; cursor: default; }
 #closed-list .cl-hd { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); }
 #closed-list .cl-hd .rn { color: var(--ok); font-weight: 650; }
 #closed-list .cl-gt { display: flex; align-items: center; gap: 7px; padding: 8px 12px 5px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); }
