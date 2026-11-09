@@ -8,3 +8,5 @@ app/dist/
 test/e2e/artifacts/
 .claude/scheduled_tasks.lock
 test/e2e/artifacts/
+# The vendored Tether Browser server carries its own node_modules (playwright-core): it is versioned.
+!extensions/browser/vendor/tether-browser/node_modules/
