@@ -8,7 +8,7 @@ import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
-import { appCommands, type CommandHost } from './app-commands.ts'
+import { appCommands, GROUP, type CommandHost } from './app-commands.ts'
 import { installBuilderGuard, isBuilder, onBuilderChange, setBuilder } from './builder-mode.ts'
 import { commandFromContribution, CommandRegistry, type CommandContext } from './commands.ts'
 import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
@@ -41,7 +41,7 @@ import { StatusRegistry } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
 import { openMoveDialog } from './move-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
-import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
+import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore, withSystemDesk } from './layout.ts'
 import { SideBars } from './sidebars.ts'
 import { otherSide, PadRegistry, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
@@ -123,7 +123,7 @@ let focusedPad: FramesPad | undefined
 function setFocusedPad(pad: FramesPad | undefined): void {
   if (pad === focusedPad) return
   focusedPad = pad
-  for (const d of desks.desks) desks.desk(d.id)?.paintFocus()
+  for (const id of desks.allDeskIds) desks.desk(id)?.paintFocus()
   for (const p of framePads) p.desk.paintFocus()
 }
 
@@ -434,10 +434,11 @@ function setupDock(): void {
     overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
     hint: position => shortcutHint(`desk.go.${position}`),
     move: (id, to) => desks.move(id, to),
+    toggleSystem: id => desks.toggleSystem(id),
   })
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
-    onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.desks.map(d => d.id)); scheduleSave() },
+    onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.allDeskIds); scheduleSave() },
     onSwitch: () => { focusActivePane(); notifyActivePane() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
@@ -565,7 +566,15 @@ function notifyActivePane(): void {
 function layoutJSON(): Layout {
   const live = desks.toJSON()
   const deskList = live.desks.map(d => { const pads = sidebars?.deskPads(d.id); return pads ? { ...d, pads } : d })
-  return { ...layoutFile, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
+  let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
+  for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
+  return { ...file, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+}
+
+/** The desks whose per-desk pad states the side bars restore: the queue and the system desks. */
+function deskPadsOf(layout: Layout): { id: string; pads?: Record<string, unknown> }[] {
+  return [...layout.desks, ...Object.entries(layout.systemDesks ?? {}).map(([id, sd]) => ({ id, ...(sd.pads ? { pads: sd.pads } : {}) }))]
 }
 
 function scheduleSave(): void {
@@ -693,9 +702,28 @@ function deskAttention(deskId: string): DeskAttention {
   return out
 }
 
+/** Icons of the declared system desks (the set keeps id, name and colour; the pill also wants an icon). */
+const systemIcons = new Map<string, IconName>()
+
+/**
+ * Declares a system desk for this run: a complete desk outside the queue (no number, no rename, no reorder, not in the
+ * next/previous cycle) with a pill in the capsule beside the Gaveta's and a "Ir para <title>" command. The pill, or the
+ * command, enters it and, again, goes back to the desk the person was on. What it holds is saved in `systemDesks` of
+ * layout.json under `id`, and reopens there the next time it is declared. Returns the function that removes the command.
+ */
+function declareSystemDesk(decl: { id: string; title: string; icon?: IconName }): () => void {
+  if (decl.icon) systemIcons.set(decl.id, decl.icon)
+  desks.declareSystem({ id: decl.id, name: decl.title })
+  return commands.register({
+    id: `desk.system.${decl.id}`, title: `Ir para ${decl.title}`, group: GROUP.desk, icon: decl.icon ?? 'cards',
+    run: () => desks.toggleSystem(decl.id),
+  })
+}
+
 function renderStrip(): void {
   if (!strip || !desks) return
   strip.render(desks.desks, desks.activeDeskId, deskAttention)
+  strip.renderSystem(desks.systemDesks.map(d => ({ id: d.id, title: d.name, ...(systemIcons.has(d.id) ? { icon: systemIcons.get(d.id)! } : {}), active: d.id === desks.activeDeskId })))
   const active = desks.desks.find(d => d.id === desks.activeDeskId)
   // On the workbench: the line spans the window (over the side bars) and the pads' frames take the colour for the F6 outline.
   if (active) $('workbench').style.setProperty('--desk-line-color', deskTokens(active.color).fill)
@@ -731,7 +759,7 @@ function focusActivePane(): void {
 }
 
 function deskName(id: string): string {
-  return desks.desks.find(d => d.id === id)?.name ?? id
+  return desks.desks.find(d => d.id === id)?.name ?? desks.systemDesks.find(d => d.id === id)?.name ?? id
 }
 
 function isLiveSlot(s: SlotState): boolean {
@@ -743,7 +771,7 @@ function isLiveSlot(s: SlotState): boolean {
  * desk (safe, default), or stop what runs and close the panes (their slots stay under "Slots fechados").
  */
 async function closeDesk(id: string): Promise<void> {
-  if (desks.desks.length <= 1) return
+  if (desks.desks.length <= 1 || desks.isSystem(id)) return
   // The desk's pads go with it: their panes are the desk's panes for this question (same dialog, same answers).
   const deskPads = [...framePads].filter(p => p.deskId === id)
   const panes = [...(desks.desk(id)?.panels ?? []), ...deskPads.flatMap(p => p.desk.panels)]
@@ -1089,7 +1117,7 @@ function moveTree(): ScopeModel[] {
   return buildTree({
     drawer: { frames: framesOf(drawer.desk) },
     pads: movePads().map(p => ({ id: p.id, name: p.name, icon: p.icon, frames: framesOf(p.desk) })),
-    desks: desks.desks.map(d => ({ id: d.id, name: d.name, color: d.color, frames: framesOf(desks.desk(d.id)) })),
+    desks: [...desks.desks, ...desks.systemDesks].map(d => ({ id: d.id, name: d.name, color: d.color, frames: framesOf(desks.desk(d.id)) })),
     currentDesk: desks.activeDeskId,
     titleOf: id => findPanel(id)?.api.title,
   })
@@ -1363,7 +1391,7 @@ async function restoreLayout(): Promise<void> {
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
-    if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)); sidebars?.load(layout.sidebars, layout.desks) }
+    if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)); sidebars?.load(layout.sidebars, deskPadsOf(layout)) }
     // A v1 file is copied to layout.v1.bak now; layout.json itself stays v1 until the person changes something.
     // A v2 or v3 file is copied to layout.v<n>.bak the same way: an older build reads only its own version.
     if (result?.migrated) await window.tether.backupLayout()
@@ -1391,7 +1419,7 @@ async function restoreLayout(): Promise<void> {
 function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
   geometry ??= window.tether.loadLayout().then(raw => {
     const result = migrateLayout(raw)
-    if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, result.layout.desks) }
+    if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, deskPadsOf(result.layout)) }
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
   return geometry!
@@ -2143,7 +2171,7 @@ function leaveBuilder(): void {
 
 /** A double click on a frame in the builder mode: leaves it with that frame in focus (its active pane takes the keyboard). */
 function leaveBuilderInto(frame: HTMLElement): void {
-  const places = [...desks.desks.map(d => desks.desk(d.id)), drawer.desk, ...[...framePads].map(p => p.desk)]
+  const places = [...desks.allDeskIds.map(id => desks.desk(id)), drawer.desk, ...[...framePads].map(p => p.desk)]
   for (const desk of places) {
     const frameId = desk?.frameIdAt(frame)
     if (!desk || !frameId) continue
@@ -2210,7 +2238,7 @@ const commandHost: CommandHost = {
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
   createDesk: side => { desks.create(side) },
-  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, step)),
+  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.isSystem(desks.activeDeskId) ? desks.returnDeskId : desks.activeDeskId, step)),
   moveActiveDesk: where => {
     const last = desks.desks.length - 1
     const at = desks.desks.findIndex(d => d.id === desks.activeDeskId)
@@ -2220,8 +2248,8 @@ const commandHost: CommandHost = {
   },
   goToDesk: position => { const id = deskAt(desks.desks, position); if (id) desks.switchTo(id) },
   toggleBuilder: () => { if (isBuilder()) leaveBuilder(); else setBuilder(true) },
-  deskActions: () => { const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },
-  closeDesk: () => { void closeDesk(desks.activeDeskId) },
+  deskActions: () => { if (desks.isSystem(desks.activeDeskId)) return; const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },
+  closeDesk: () => { if (!desks.isSystem(desks.activeDeskId)) void closeDesk(desks.activeDeskId) },
   toggleDrawer: () => setDrawerOpen(!drawer.isOpen),
   quickShell: () => { void quickShell() },
   setTheme: setting => window.tether.setTheme(normalizeTheme(setting)),
@@ -2784,6 +2812,10 @@ declare global {
       /** The row of desks with each desk's panes and attention counts, and the active desk. */
       desks(): { id: string; name: string; color: string; panes: string[]; attention: DeskAttention }[]
       activeDesk(): string
+      /** Declares a system desk (a desk outside the queue, with a pill in the capsule); returns the function that removes its command. */
+      declareSystemDesk(decl: { id: string; title: string; icon?: IconName }): () => void
+      toggleSystemDesk(id: string): void
+      systemDesks(): { id: string; name: string; panes: string[]; active: boolean }[]
       deskOf(slotId: string): string | undefined
       switchDesk(id: string): void
       createDesk(side: 'before' | 'after', relativeTo?: string): string
@@ -2972,6 +3004,9 @@ function setupTestHooks(): void {
     inject: (slotId, data) => panels.get(slotId)?.term.write(data),
     desks: () => desks.desks.map(d => ({ ...d, panes: (desks.desk(d.id)?.panels ?? []).map(p => p.id), attention: deskAttention(d.id) })),
     activeDesk: () => desks.activeDeskId,
+    declareSystemDesk,
+    toggleSystemDesk: id => desks.toggleSystem(id),
+    systemDesks: () => desks.systemDesks.map(d => ({ id: d.id, name: d.name, panes: (desks.desk(d.id)?.panels ?? []).map(p => p.id), active: d.id === desks.activeDeskId })),
     deskOf: slotId => desks.deskOf(slotId),
     switchDesk: id => desks.switchTo(id),
     createDesk: (side, relativeTo) => desks.create(side, relativeTo),

@@ -11,6 +11,10 @@
 // may only grow as far as the wider side lets it on both sides). A ResizeObserver watches the toolbar and its
 // two sides only, never the capsule, and lays out in the next frame: repainting the capsule cannot re-trigger it.
 //
+// System desks (declared by extensions, outside the queue) get a pill each, right after the Gaveta's and with the same
+// look: a toggle (aria-pressed) that enters the desk and, pressed again, goes back. They are not segments: no rename,
+// no drag, no number, not part of the fitting; their width only counts as capsule chrome.
+//
 // Keyboard and a11y: the row is a tablist with a roving tabindex (the active tab is the Tab stop); Left/Right/
 // Home/End move the focus, Enter/Space switch, Shift+F10 or the menu key open the desk's menu, Down on the "+N"
 // opens its menu, Shift+Left/Right/Home/End move the desk itself in the queue. When the capsule is repainted with focus inside it, the focus follows the same desk. A reorder
@@ -18,7 +22,7 @@
 // the person asked for reduced motion.
 import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
 import { fitDesks, overflowDesks, pickFromOverflow, touchUsed, type LastUsed } from './desk-switch-rules.ts'
-import { icon } from './icons.ts'
+import { icon, type IconName } from './icons.ts'
 import { clampDragX, dragTargetIndex, fullIndexAfterDrop, passedThreshold } from './desk-drag-rules.ts'
 
 /** What a desk's badge says: how many panes finished (done) or wait for the user (waiting). */
@@ -35,6 +39,8 @@ export interface DeskSwitchHost {
   overflowMenu(entries: { id: string; name: string; attention: number }[], x: number, y: number, pick: (id: string) => void, opener: HTMLElement): void
   /** Hint shown in a segment's tooltip ("Ctrl+1"). */
   hint(position: number): string
+  /** A system desk's pill: enters that desk, or leaves it for the queue desk the person came from. */
+  toggleSystem(id: string): void
   /** Moves a desk to `to`, an index in the FULL queue (hidden desks count). */
   move(id: string, to: number): void
 }
@@ -53,6 +59,9 @@ interface Press {
   /** Set once the drag started: resting centres and the dragged segment's geometry. */
   drag?: { els: HTMLElement[]; centers: number[]; from: number; to: number; step: number; min: number; max: number; lo: number; hi: number; center0: number }
 }
+
+/** What a system desk's pill shows. */
+export interface SystemPill { id: string; title: string; icon?: IconName; active: boolean; hint?: string }
 
 export class DeskSwitch {
   readonly element: HTMLElement
@@ -117,6 +126,30 @@ export class DeskSwitch {
     this.attention = attention
     if (this.renaming || this.dragging) return // the input in a segment is being edited: repainting would drop it
     this.layout()
+  }
+
+  /** Paints the system desks' pills after the Gaveta's. Without any, the capsule is exactly what it was. */
+  renderSystem(pills: readonly SystemPill[]): void {
+    this.element.querySelectorAll('.seg.sys').forEach(el => el.remove())
+    const anchor = this.element.querySelector('#btn-drawer')
+    if (!anchor) return
+    let after: Element = anchor
+    for (const p of pills) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'seg gav sys'
+      b.dataset.system = p.id
+      b.setAttribute('aria-pressed', String(p.active))
+      b.title = `${p.title}${p.hint ? ` (${p.hint})` : ''}${p.active ? ' — clique para voltar à mesa anterior' : ''}`
+      let glyph: SVGSVGElement
+      try { glyph = icon(p.icon ?? 'cards') } catch { glyph = icon('cards') } // an unknown icon name must not take the capsule down
+      b.append(glyph, document.createTextNode(p.title))
+      b.addEventListener('mousedown', ev => ev.preventDefault())
+      b.addEventListener('click', ev => { ev.stopPropagation(); this.host.toggleSystem(p.id) })
+      after.after(b)
+      after = b
+    }
+    this.schedule()
   }
 
   /** What the capsule shows now (test hook). */
