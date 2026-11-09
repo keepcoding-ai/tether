@@ -1,6 +1,6 @@
 // The polite-pause menu model, pure (the DOM lives in main.ts). Colours: blue = in progress, green = stopped,
 // grey = queued. Orange is reserved for attention and is never used here.
-import type { PauseBatch, PauseEntry } from '../../src/daemon/pause.ts'
+import type { PauseBatch, PauseEntry, PauseEntryState } from '../../src/daemon/pause.ts'
 // Type-only import: src/daemon/pause.ts reaches node:fs, which the renderer bundle cannot resolve, so the label rule
 // is mirrored below (the unit test pins it to derivedLabel).
 
@@ -14,11 +14,15 @@ export function activeEntries(batch: PauseBatch): PauseEntry[] {
   return batch.entries.filter(e => e.state !== 'removed')
 }
 
-export function entryTone(e: PauseEntry): PauseTone {
-  if (IN_PROGRESS.has(e.state)) return 'progress'
-  if (STOPPED.has(e.state) || e.state === 'resumed' || e.state === 'resume-skipped') return 'stopped'
-  if (e.state === 'queued') return 'queued'
+export function stateTone(state: PauseEntryState): PauseTone {
+  if (IN_PROGRESS.has(state)) return 'progress'
+  if (STOPPED.has(state) || state === 'resumed' || state === 'resume-skipped') return 'stopped'
+  if (state === 'queued') return 'queued'
   return 'gone'
+}
+
+export function entryTone(e: PauseEntry): PauseTone {
+  return stateTone(e.state)
 }
 
 /** CSS variable of the tone. */
@@ -109,3 +113,114 @@ export function summaryText(batch: PauseBatch, now: number): string {
 
 /** Gentle message when pause-start finds no agent mid-turn. */
 export const NOBODY_BUSY_MESSAGE = 'Nenhum agente está em andamento agora, então não há o que pausar.'
+
+// ---------- management popup ("Acompanhar…") ----------
+
+/** The popup's four tiers, by the width of the window it lives in: phone, narrow, desktop, wide (TV). */
+export type PauseTier = 'phone' | 'narrow' | 'desktop' | 'wide'
+
+export function tierOf(width: number): PauseTier {
+  if (width < 768) return 'phone'
+  if (width < 1280) return 'narrow'
+  if (width < 2560) return 'desktop'
+  return 'wide'
+}
+
+/** The plain label of a state, without the clock ("Ainda finalizando" is entryLabel's, for the current state only). */
+export function stateLabel(state: PauseEntryState): string {
+  switch (state) {
+    case 'queued': return 'Na fila'
+    case 'listening': return 'Pedido enviado'
+    case 'delivered': return 'Pedido recebido'
+    case 'preparing': return 'Preparando para parar'
+    case 'stopped': return 'Parou'
+    case 'stopped-silent': return 'Parou sem nota'
+    case 'removed': return 'Fora do lote'
+    case 'resumed': return 'Retomado'
+    case 'resume-skipped': return 'Não retomado'
+  }
+}
+
+/** "12 s", "3 min 05 s", "1 h 05 min", "2 d 03 h". Negative or invalid spans read as zero. */
+export function formatElapsed(ms: number): string {
+  const total = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0
+  const two = (n: number): string => String(n).padStart(2, '0')
+  if (total < 60) return `${total} s`
+  const min = Math.floor(total / 60)
+  if (total < 3600) return `${min} min ${two(total % 60)} s`
+  const h = Math.floor(total / 3600)
+  if (total < 86_400) return `${h} h ${two(min % 60)} min`
+  return `${Math.floor(total / 86_400)} d ${two(h % 24)} h`
+}
+
+/** Local wall-clock time, "09:05:07"; empty for an invalid date. */
+export function formatClock(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const two = (n: number): string => String(n).padStart(2, '0')
+  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`
+}
+
+export interface TimelineItem {
+  state: PauseEntryState
+  label: string
+  tone: PauseTone
+  /** ISO time the entry reached this state. */
+  at: string
+  clock: string
+  /** How long it stayed here; for the last item, how long it has been here so far. */
+  durationMs: number
+  /** The last item: its span is still running. */
+  current: boolean
+  /** "há 4 min 12 s" for the current item, "durou 1 min 03 s" for the ones left behind. */
+  spanText: string
+}
+
+/** The state history of an entry, oldest first, with the time spent in each state. An empty history is rebuilt from `state`/`since`. */
+export function timeline(e: PauseEntry, now: number): TimelineItem[] {
+  const raw = e.history.length > 0 ? e.history : [{ state: e.state, at: e.since }]
+  return raw.map((h, i) => {
+    const current = i === raw.length - 1
+    const start = Date.parse(h.at)
+    const end = current ? now : Date.parse(raw[i + 1]!.at)
+    const durationMs = Math.max(0, end - start)
+    const span = durationMs < 1000 && !current ? 'menos de 1 s' : formatElapsed(durationMs)
+    return {
+      state: h.state,
+      label: current ? entryLabel(e, now) : stateLabel(h.state),
+      tone: stateTone(h.state),
+      at: h.at,
+      clock: formatClock(h.at),
+      durationMs,
+      current,
+      spanText: current ? `há ${span}` : `durou ${span}`,
+    }
+  })
+}
+
+/** The entry to show on the right: the chosen one while it is still in the pause, else the first row on screen. */
+export function resolveSelection(batch: PauseBatch | null | undefined, slotId: string | undefined): string | undefined {
+  if (!batch) return undefined
+  const rows = orderedEntries(batch)
+  if (slotId && rows.some(e => e.slotId === slotId)) return slotId
+  return rows[0]?.slotId
+}
+
+/** Footer line: "3 de 5 já pararam". */
+export function followSummary(batch: PauseBatch | null | undefined): string {
+  if (!hasBatch(batch)) return 'Nenhuma pausa em andamento'
+  const c = counter(batch)
+  if (batch.state === 'resuming') return 'Retomando os agentes, um passo de cada vez'
+  if (c.total === 0) return 'Ninguém na pausa'
+  return c.total === 1 ? `${c.stopped} de 1 já parou` : `${c.stopped} de ${c.total} já pararam`
+}
+
+/** How long the pause has been going, "Pausa há 4 min 12 s". */
+export function batchElapsedText(batch: PauseBatch, now: number): string {
+  return `Pausa há ${formatElapsed(now - Date.parse(batch.createdAt))}`
+}
+
+/** Whether "Tirar da fila" makes sense for the entry. */
+export function canRemoveEntry(batch: PauseBatch, e: PauseEntry): boolean {
+  return batch.state !== 'resuming' && e.state !== 'resumed' && e.state !== 'resume-skipped'
+}

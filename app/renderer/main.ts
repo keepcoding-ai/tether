@@ -42,6 +42,7 @@ import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
 import { openMoveDialog } from './move-dialog.ts'
+import { openPauseDialog as showPauseDialog, refreshPauseDialog } from './pause-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
 import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
 import { SideBars } from './sidebars.ts'
@@ -1345,7 +1346,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
     case 'data': panels.get(ev.slotId)?.write(ev.data); break
     case 'profiles': setProfiles(ev.profiles, undefined); break
-    case 'pause': pauseBatch = ev.batch; refreshPauseMenu(); break
+    case 'pause': pauseBatch = ev.batch; refreshPauseMenu(); refreshPauseDialog(); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
@@ -1647,9 +1648,15 @@ function setPauseMenu(open: boolean): void {
   if (open) refreshPauseMenu()
 }
 
-/** Stub for the management popup (B7): "Acompanhar…" calls it. */
+/** The management popup ("Acompanhar…"): from the pause menu or the palette. */
 function openPauseDialog(): void {
   setPauseMenu(false)
+  showPauseDialog({
+    batch: () => pauseBatch,
+    titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
+    request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
+    openSlot,
+  })
 }
 
 async function pauseRequest(body: RequestBody): Promise<void> {
@@ -2493,6 +2500,7 @@ const commandHost: CommandHost = {
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
+  pauseManage: () => openPauseDialog(),
   restoreConfirmations: () => window.tether.command('restore-confirmations'),
   associateLinks: () => { void associateLinks() },
   closeWindow: () => window.tether.closeWindow(),
