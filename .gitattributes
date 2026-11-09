@@ -1,0 +1,2 @@
+# Vendored bundles are checked against sha256 manifests: keep their bytes exactly as built.
+extensions/browser/vendor/** -text
