@@ -61,7 +61,10 @@ export function activate(main: TetherMain): IDisposable[] {
   let made: TabSession | undefined
   let testBlocked: TabBlocked[] | undefined
   // The session waits for the fuse to be read (rule 19), once; the first tab waits for it.
-  const session = cookieEncryptionInForce().then(async on => {
+  // Test builds may ask for the persistent partition on a runtime without the fuse (to look at what reaches the disk).
+  const forcePersist = typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__ && process.env.TETHER_TEST_PERSIST_PARTITION === '1'
+  const session = cookieEncryptionInForce().then(async fuse => {
+    const on = fuse || forcePersist
     prepareDiskPartition({ fuseOn: on, home: main.home, userData: app.getPath('userData'), log })
     return (made = await createTabSession(on, log))
   })

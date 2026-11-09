@@ -74,7 +74,8 @@ export async function cookieEncryptionInForce(): Promise<boolean> {
 
 export async function createTabSession(persistentLogins: boolean, log: (msg: string) => void): Promise<TabSession> {
   const partition = persistentLogins ? PERSIST_PARTITION : MEMORY_PARTITION
-  const ses = electronSession.fromPartition(partition)
+  // The HTTP cache would keep page bodies on disk in clear text (the fuse only encrypts cookies): the tabs run without one.
+  const ses = electronSession.fromPartition(partition, { cache: false })
   if (!persistentLogins) log('fuse EnableCookieEncryption desligado neste executável: guias numa partição em memória, logins não são guardados')
   ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
   ses.setPermissionCheckHandler(() => false)
