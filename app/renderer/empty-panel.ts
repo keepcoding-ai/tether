@@ -23,6 +23,8 @@ export interface EmptyHost extends ChooserHost {
   cancel(panel: EmptyPanel, origin: EmptyOrigin): void
   /** The ⤢: the same chooser as a popup, with this state; the popup hands the pick (or the state) back to the pane. */
   expand(panel: EmptyPanel, state: ChooserState): void
+  /** The folder to suggest when the chooser takes the place of the blank view (a panel pad: its target panel's folder), asked at that moment. */
+  suggestFolder?(panel: EmptyPanel): string | undefined
   /** The pane left the blank state (its action was used): persist it with the layout. */
   onUnblank(panel: EmptyPanel): void
   /** The pane's suggested folder changed (the person typed one): persist it with the layout. */
@@ -85,6 +87,7 @@ export class EmptyPanel implements IContentRenderer {
     this.element.dataset.blank = 'false'
     this.blankView?.remove()
     this.blankView = undefined
+    this.folder = this.host.suggestFolder?.(this) ?? this.folder
     this.mount({ folder: this.folder })
     this.host.onUnblank(this)
     requestAnimationFrame(() => this.focus())

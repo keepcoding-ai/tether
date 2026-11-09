@@ -1325,8 +1325,8 @@ dialog.ask.move .primary:disabled { opacity: .45; cursor: not-allowed; backgroun
 .ch-folder > .ph.fo { width: 15px; height: 15px; }
 .ch-path { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 100%; }
 /* Always an input. Unfocused it shows the END of a long path (what distinguishes it); focused it is a normal field. */
-.ch input.ch-path-input[type="text"] { flex: 1; min-width: 0; width: 0; background: none; border: 0; border-radius: 0; padding: 0; color: var(--fg); font: 12px var(--mono); outline: none; text-overflow: ellipsis; }
-.ch input.ch-path-input[type="text"]:not(:focus) { direction: rtl; text-align: left; }
+.ch input.ch-path-input[type="text"] { flex: 1; min-width: 0; width: 0; background: none; border: 0; border-radius: 0; padding: 0; color: var(--fg); font: 12px var(--mono); outline: none; text-overflow: clip; }
+/* No `direction: rtl` to show the end of a long folder: the bidi algorithm moves the trailing `\` (and `:`) of "D:\" to the left ("\:D"). The end is scrolled into view instead (chooser.ts, showTail). */
 .ch input.ch-path-input[type="text"]:focus { outline: none; }
 .ch-path .tag { flex: none; font: 10.5px var(--ui); color: var(--fg-dim); background: var(--bg-3); padding: 0 6px; border-radius: 999px; }
 .ch-path .tag[hidden] { display: none; }

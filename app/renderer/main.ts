@@ -870,11 +870,16 @@ function framePadFor(padId: string, owner: { deskId?: string; panelId?: string }
   return undefined
 }
 
+/** A panel pad's target panel's folder (its process, profile or file folder), for the chooser opened there to suggest; none for the other pads. */
+function padTargetCwd(pad: { panelId?: string }): string | undefined {
+  return pad.panelId ? paneCwdOf(pad.panelId) : undefined
+}
+
 /** The view of a `frames: true` pad: a Desk hosted like the drawer's, seeded with an empty pane when it has no state. */
 function newFramesPad(host: PadHost): FramesPad {
   return new FramesPad(host, {
     deskHost: pad => deskHost(pad),
-    seed: pad => { pad.desk.addPanel(emptyPanelOptions(paneCwdOf(currentDesk().activePanel?.id), 'layout', true)) },
+    seed: pad => { pad.desk.addPanel(emptyPanelOptions(padTargetCwd(pad) ?? paneCwdOf(currentDesk().activePanel?.id), 'layout', true)) },
     focusPane: id => focusPane(id),
     onCreate: pad => { framePads.add(pad) },
     onHidden: pad => { if (focusedPad === pad) setFocusedPad(undefined) },
@@ -1954,6 +1959,7 @@ const emptyHost: EmptyHost = {
     else (document.activeElement as HTMLElement | null)?.blur()
   },
   expand: (panel, state) => { void openNewDialog({ context: { panel, state } }) },
+  suggestFolder: panel => { const pad = framePadOf(panel.id); return pad ? padTargetCwd(pad) : undefined },
   onUnblank: panel => {
     findPanel(panel.id)?.api.updateParameters(withEmpty(panel.cwd || undefined, panel.origin))
     scheduleSave()
