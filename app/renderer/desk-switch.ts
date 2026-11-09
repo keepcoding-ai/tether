@@ -13,12 +13,13 @@
 //
 // Keyboard and a11y: the row is a tablist with a roving tabindex (the active tab is the Tab stop); Left/Right/
 // Home/End move the focus, Enter/Space switch, Shift+F10 or the menu key open the desk's menu, Down on the "+N"
-// opens its menu. When the capsule is repainted with focus inside it, the focus follows the same desk. A reorder
+// opens its menu, Shift+Left/Right/Home/End move the desk itself in the queue. When the capsule is repainted with focus inside it, the focus follows the same desk. A reorder
 // (the "+N" swapping who is visible) slides the surviving segments to their new places (FLIP, 320 ms) unless
 // the person asked for reduced motion.
 import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
 import { fitDesks, overflowDesks, pickFromOverflow, touchUsed, type LastUsed } from './desk-switch-rules.ts'
 import { icon } from './icons.ts'
+import { clampDragX, dragTargetIndex, fullIndexAfterDrop, passedThreshold } from './desk-drag-rules.ts'
 
 /** What a desk's badge says: how many panes finished (done) or wait for the user (waiting). */
 export interface DeskAttention { done: number; waiting: number }
@@ -34,12 +35,24 @@ export interface DeskSwitchHost {
   overflowMenu(entries: { id: string; name: string; attention: number }[], x: number, y: number, pick: (id: string) => void, opener: HTMLElement): void
   /** Hint shown in a segment's tooltip ("Ctrl+1"). */
   hint(position: number): string
+  /** Moves a desk to `to`, an index in the FULL queue (hidden desks count). */
+  move(id: string, to: number): void
 }
 
 /** Breathing room between the capsule and each side, px. */
 const SIDE_MARGIN = 12
 /** Duration of the reorder animation, ms. */
 const FLIP_MS = 320
+/** A touch must rest this long before it can start a drag, ms. */
+const TOUCH_HOLD_MS = 300
+
+/** State of a press on a segment, from pointerdown until it ends. */
+interface Press {
+  id: string; seg: HTMLElement; pointerId: number; x0: number; y0: number
+  armed: boolean; timer: number
+  /** Set once the drag started: resting centres and the dragged segment's geometry. */
+  drag?: { els: HTMLElement[]; centers: number[]; from: number; to: number; step: number; min: number; max: number; lo: number; hi: number; center0: number }
+}
 
 export class DeskSwitch {
   readonly element: HTMLElement
@@ -56,6 +69,9 @@ export class DeskSwitch {
   private visible: string[] = []
   private lastUsed: LastUsed = {}
   private renaming: string | undefined
+  private dragging: string | undefined
+  private press: Press | undefined
+  private swallowClick = false
   private frame = 0
 
   constructor(element: HTMLElement, bar: HTMLElement, sides: readonly HTMLElement[], host: DeskSwitchHost) {
@@ -99,7 +115,7 @@ export class DeskSwitch {
     this.desks = desks
     this.active = active
     this.attention = attention
-    if (this.renaming) return // the input in a segment is being edited: repainting would drop it
+    if (this.renaming || this.dragging) return // the input in a segment is being edited: repainting would drop it
     this.layout()
   }
 
@@ -111,7 +127,7 @@ export class DeskSwitch {
 
   private schedule(): void {
     if (this.frame) return
-    this.frame = requestAnimationFrame(() => { this.frame = 0; if (!this.renaming) this.layout() })
+    this.frame = requestAnimationFrame(() => { this.frame = 0; if (!this.renaming && !this.dragging) this.layout() })
   }
 
   /** Measures every segment's natural width, decides who is visible, and paints. */
@@ -195,10 +211,14 @@ export class DeskSwitch {
     seg.setAttribute('aria-label', `${d.name}${total === 0 ? '' : `, ${total} com atenção`}`)
     const go = index < 9 ? ` (${this.host.hint(index + 1)})` : ''
     const what = total === 0 ? '' : `\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
-    seg.title = `${d.name}${go}${what}\nDuplo clique renomeia; clique direito: mais opções.`
+    seg.title = `${d.name}${go}${what}\nDuplo clique renomeia; clique direito: mais opções. Arraste para reordenar.`
     seg.addEventListener('mousedown', ev => { if (ev.button === 0 && !(ev.target as Element).closest('input')) ev.preventDefault() })
-    seg.addEventListener('click', () => this.host.switchTo(d.id))
-    seg.addEventListener('dblclick', ev => { ev.preventDefault(); this.startRename(d.id) })
+    seg.addEventListener('click', () => { if (this.swallowClick) return; this.host.switchTo(d.id) })
+    seg.addEventListener('dblclick', ev => { ev.preventDefault(); if (this.swallowClick) return; this.startRename(d.id) })
+    seg.addEventListener('pointerdown', ev => this.pressStart(ev, d.id, seg))
+    seg.addEventListener('pointermove', ev => this.pressMove(ev))
+    seg.addEventListener('pointerup', ev => this.pressEnd(ev, true))
+    seg.addEventListener('pointercancel', ev => this.pressEnd(ev, false))
     seg.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.host.menu(d.id, ev.clientX, ev.clientY) })
     return seg
   }
@@ -222,6 +242,15 @@ export class DeskSwitch {
     const tabs = [...this.segs.querySelectorAll<HTMLElement>('.seg[data-desk]')]
     const i = tabs.indexOf(target.closest<HTMLElement>('.seg[data-desk]')!)
     if (i < 0) return
+    if (ev.shiftKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight' || ev.key === 'Home' || ev.key === 'End')) {
+      // Reorders the focused desk in the full queue; layout() puts the focus back on it after the repaint.
+      ev.preventDefault()
+      const id = tabs[i]!.dataset.desk!
+      const at = this.desks.findIndex(d => d.id === id)
+      const to = ev.key === 'ArrowLeft' ? at - 1 : ev.key === 'ArrowRight' ? at + 1 : ev.key === 'Home' ? 0 : this.desks.length - 1
+      if (at >= 0 && to >= 0 && to < this.desks.length && to !== at) this.host.move(id, to)
+      return
+    }
     const go = (n: number): void => { ev.preventDefault(); const t = tabs[(n + tabs.length) % tabs.length]; if (t) { for (const s of tabs) s.tabIndex = s === t ? 0 : -1; t.focus() } }
     if (ev.key === 'ArrowRight') go(i + 1)
     else if (ev.key === 'ArrowLeft') go(i - 1)
@@ -233,6 +262,103 @@ export class DeskSwitch {
       const r = tabs[i]!.getBoundingClientRect()
       this.host.menu(tabs[i]!.dataset.desk!, r.left, r.bottom + 4)
     }
+  }
+
+  private pressStart(ev: PointerEvent, id: string, seg: HTMLElement): void {
+    if (ev.button !== 0 || this.renaming || this.dragging || this.press || (ev.target as Element).closest('input')) return
+    const touch = ev.pointerType === 'touch'
+    const press: Press = { id, seg, pointerId: ev.pointerId, x0: ev.clientX, y0: ev.clientY, armed: !touch, timer: 0 }
+    if (touch) press.timer = window.setTimeout(() => { press.armed = true }, TOUCH_HOLD_MS)
+    this.press = press
+    try { seg.setPointerCapture(ev.pointerId) } catch { /* the pointer is already gone */ }
+  }
+
+  private pressMove(ev: PointerEvent): void {
+    const p = this.press
+    if (!p || ev.pointerId !== p.pointerId) return
+    if (!p.drag) {
+      if (!passedThreshold(ev.clientX - p.x0, ev.clientY - p.y0)) return
+      if (!p.armed) { this.endPress(p); return } // a touch that moved before resting long enough is not a drag
+      if (!this.dragStart(p)) return
+    }
+    this.dragMove(p, ev.clientX)
+  }
+
+  private pressEnd(ev: PointerEvent, commit: boolean): void {
+    const p = this.press
+    if (!p || ev.pointerId !== p.pointerId) return
+    this.finishDrag(p, commit)
+  }
+
+  private dragStart(p: Press): boolean {
+    const els = [...this.segs.querySelectorAll<HTMLElement>('.seg[data-desk]')]
+    const from = els.indexOf(p.seg)
+    if (from < 0) { this.endPress(p); return false }
+    const rects = els.map(el => el.getBoundingClientRect())
+    const row = this.segs.getBoundingClientRect()
+    const w = rects[from]!.width
+    p.drag = { els, centers: rects.map(r => r.left + r.width / 2), from, to: from, step: w + this.segGap(), min: row.left + w / 2, max: row.right - w / 2, lo: row.left, hi: row.right, center0: rects[from]!.left + w / 2 }
+    this.dragging = p.id
+    this.swallowClick = true
+    p.seg.classList.add('dragging')
+    this.segs.classList.add('drag-live')
+    document.addEventListener('keydown', this.onDragKey, true)
+    return true
+  }
+
+  private dragMove(p: Press, clientX: number): void {
+    const d = p.drag!
+    const raw = d.center0 + (clientX - p.x0)
+    const center = clampDragX(raw, d.min, d.max)
+    p.seg.style.transform = `translateX(${center - d.center0}px) scale(1.04)`
+    // The place follows the unclamped centre (kept inside the row): a segment wider than the first one could never
+    // reach that place if the visual clamp, which keeps it inside the capsule, decided.
+    d.to = dragTargetIndex(d.centers, d.from, clampDragX(raw, d.lo, d.hi))
+    d.els.forEach((el, i) => {
+      if (i === d.from) return
+      const shift = d.to > d.from && i > d.from && i <= d.to ? -d.step : d.to < d.from && i >= d.to && i < d.from ? d.step : 0
+      el.style.transform = shift ? `translateX(${shift}px)` : ''
+    })
+  }
+
+  private readonly onDragKey = (ev: KeyboardEvent): void => {
+    if (ev.key !== 'Escape' || !this.press?.drag) return
+    ev.preventDefault()
+    ev.stopPropagation()
+    this.finishDrag(this.press, false)
+  }
+
+  /** Ends the press; a started drag commits the new place (when it changed) or puts everything back. */
+  private finishDrag(p: Press, commit: boolean): void {
+    const d = p.drag
+    this.endPress(p)
+    if (!d) return
+    p.seg.classList.remove('dragging')
+    this.segs.classList.remove('drag-live')
+    document.removeEventListener('keydown', this.onDragKey, true)
+    this.dragging = undefined
+    // The click that follows the release belongs to the gesture: it is dropped, then the flag clears.
+    window.setTimeout(() => { this.swallowClick = false }, 0)
+    const order = this.desks.map(x => x.id)
+    if (commit && d.to !== d.from) {
+      // The transforms stay on while the host repaints: layout() measures the visual positions (FLIP), so the segment
+      // slides from where it was dropped. The old elements left the DOM by then; clearing them is harmless.
+      this.host.move(p.id, fullIndexAfterDrop(order, this.visible, p.id, d.to))
+      for (const el of d.els) el.style.transform = ''
+    } else {
+      for (const el of d.els) el.style.transform = ''
+      this.layout() // repaint what was held back while dragging
+    }
+  }
+
+  private endPress(p: Press): void {
+    window.clearTimeout(p.timer)
+    try { p.seg.releasePointerCapture(p.pointerId) } catch { /* already released */ }
+    if (this.press === p) this.press = undefined
+  }
+
+  private segGap(): number {
+    return parseFloat(getComputedStyle(this.segs).columnGap) || 0
   }
 
   /** The left edge of every visible segment inside the row, by desk id. */
