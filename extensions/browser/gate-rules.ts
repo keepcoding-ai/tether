@@ -249,6 +249,33 @@ export function hiddenCapture(params: Record<string, unknown>, viewport: { x: nu
   return { request, want, got }
 }
 
+// ---- the gate's ceilings against exhausting the main process (M2, M3) ----
+
+/** M2: bytes a connection may have waiting in its socket (a client that stopped reading) before the gate closes it. */
+export const WRITE_CEILING = 32 * 1024 * 1024
+/** M3: a capture's clip, after its scale: the scale, each side and the area. */
+export const CAPTURE_MAX_SCALE = 4
+export const CAPTURE_MAX_SIDE = 16384
+export const CAPTURE_MAX_AREA = 64 * 1024 * 1024
+
+/**
+ * M3: why a capture is refused before anything is drawn or decoded (a hidden tab's capture is decoded and resized in the main
+ * process), or undefined. The clip comes from the client unbounded; the package's own ceiling is the client's.
+ */
+export function captureTooLarge(params: Record<string, unknown>): string | undefined {
+  const c = params.clip as Partial<Clip> | undefined
+  if (c === undefined || c === null) return undefined
+  if (typeof c !== 'object') return 'the clip must be an object'
+  const scale = c.scale === undefined ? 1 : c.scale
+  if (!num(scale) || scale <= 0 || scale > CAPTURE_MAX_SCALE) return `the clip's scale must be above 0 and at most ${CAPTURE_MAX_SCALE}`
+  if (!num(c.width) || !num(c.height) || c.width <= 0 || c.height <= 0) return 'the clip needs a positive width and height'
+  const w = c.width * scale
+  const h = c.height * scale
+  if (w > CAPTURE_MAX_SIDE || h > CAPTURE_MAX_SIDE) return `the capture would be ${Math.round(w)}x${Math.round(h)} px (each side at most ${CAPTURE_MAX_SIDE})`
+  if (w * h > CAPTURE_MAX_AREA) return `the capture would be ${Math.round((w * h) / 1e6)} Mpx (at most ${Math.round(CAPTURE_MAX_AREA / 1e6)})`
+  return undefined
+}
+
 /** The device-pixel rectangle of `want` inside an image of `got` that is `imageWidth` px wide, and the output size. */
 export function cropRect(want: Clip, got: Clip, imageWidth: number): { x: number; y: number; width: number; height: number; outWidth: number; outHeight: number } {
   const ratio = imageWidth / got.width

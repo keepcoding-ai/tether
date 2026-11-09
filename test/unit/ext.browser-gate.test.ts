@@ -252,3 +252,18 @@ test('gate: a child is announced, detached or released; a worker of the origin i
   }
   for (const t of ['page', 'tab', 'browser', 'other', undefined, 7]) assert.equal(childDisposal(t, true), 'detach', String(t))
 })
+
+test('gate (E7c, M3): a capture is refused past scale 4, a side of 16384 px or ~64 Mpx after its scale', async () => {
+  const { captureTooLarge } = await import('../../extensions/browser/gate-rules.ts')
+  assert.equal(captureTooLarge({}), undefined, 'no clip: the viewport')
+  assert.equal(captureTooLarge({ clip: { x: 0, y: 0, width: 1280, height: 800, scale: 1 } }), undefined)
+  assert.equal(captureTooLarge({ clip: { x: 0, y: 0, width: 1280, height: 800, scale: 4 } }), undefined)
+  assert.match(String(captureTooLarge({ clip: { x: 0, y: 0, width: 100, height: 100, scale: 50 } })), /scale/)
+  assert.match(String(captureTooLarge({ clip: { x: 0, y: 0, width: 100, height: 100, scale: 0 } })), /scale/)
+  assert.match(String(captureTooLarge({ clip: { x: 0, y: 0, width: 100, height: 100, scale: 'x' } })), /scale/)
+  assert.match(String(captureTooLarge({ clip: { x: 0, y: 0, width: 16385, height: 10, scale: 1 } })), /each side/)
+  assert.match(String(captureTooLarge({ clip: { x: 0, y: 0, width: 9000, height: 10, scale: 2 } })), /each side/)
+  assert.match(String(captureTooLarge({ clip: { x: 0, y: 0, width: 9000, height: 9000, scale: 1 } })), /Mpx/)
+  assert.match(String(captureTooLarge({ clip: { x: 0, y: 0, width: -1, height: 10 } })), /positive/)
+  assert.match(String(captureTooLarge({ clip: 'big' })), /object/)
+})

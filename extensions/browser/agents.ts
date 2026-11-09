@@ -20,6 +20,7 @@ import type { SlotMeta } from '../../src/core/event.ts'
 import { slotMetaPath } from '../../src/core/paths.ts'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
 import { slotOfKeyFile, validKeyShape } from './gate-rules.ts'
+import { ensurePrivateDir } from './private-dir.ts'
 
 /** The MCP server's name, the prefix of the agents' tools (`mcp__tether-browser__*`). Unique among the extensions' servers. */
 export const MCP_SERVER_NAME = 'tether-browser'
@@ -50,7 +51,7 @@ export function mcpConfigOf(o: { node: string; server: string; endpointFile: str
   }
 }
 
-/** Writes `text` to `path` in one move (temp + rename) with owner-only mode (a no-op on Windows, where the home's ACL rules). */
+/** Writes `text` to `path` in one move (temp + rename) with owner-only mode (a no-op on Windows: the folder's DACL rules, private-dir.ts). */
 function writeFileAtomic(path: string, text: string): void {
   mkdirSync(join(path, '..'), { recursive: true })
   const tmp = `${path}.${process.pid}.tmp`
@@ -127,6 +128,9 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
     try {
       const key = (deps.key ?? newKey)()
       if (!validKeyShape(key)) throw new Error('chave gerada com formato inválido')
+      // M4: the folders are the owner's alone before a key lands in them (a home outside the profile inherits an open ACL).
+      ensurePrivateDir(browserDirOf(deps.home))
+      ensurePrivateDir(keysDirOf(deps.home))
       writeFileAtomic(mcpFile, JSON.stringify(mcpConfigOf({ node, server: deps.server, endpointFile: endpointFileOf(deps.home), keyFile, evaluate: deps.evaluate() }), null, 2) + '\n')
       writeFileAtomic(keyFile, `${key}\n`)
     } catch (e) {

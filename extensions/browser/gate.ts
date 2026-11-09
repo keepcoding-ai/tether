@@ -20,8 +20,13 @@
 // browser sessions at each change. `cleanTab` removes the scripts the agents registered on a tab (the clean hand-off).
 // E7b: auto-attach forwarded with the gate's filter (frames and dedicated workers only): a page's service worker is never
 // attached, so it is never announced and never detached (detaching one crashed Electron's main process).
+// E7c (the gatekeeper's security review): leaving `agent`, every command of the tab still waiting for its answer is answered at
+// once with the held error and its late answer is dropped (H1b: nothing produced in the person's turn reaches the agent); the
+// page's stored console and log are discarded when the tab leaves the agent and again when it comes back (H2: `Runtime.enable`
+// and `Log.enable` replay them); a connection whose client stops reading is closed past a write ceiling (M2); a capture's clip
+// is bounded before anything is drawn or decoded (M3); `<home>/browser` is the owner's alone (M4, private-dir.ts).
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { nativeImage } from 'electron'
@@ -31,9 +36,10 @@ import type { Surface } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { KeyStore } from './gate-keys.ts'
 import {
-  autoAttachParams, BROWSER_ALLOWED, childDisposal, cropRect, dragCarriesFiles, fromBrowser, GateError, type GateSession, hiddenCapture, inputScale, keyOf,
-  loopbackHost, navigable, noTarget, PAGE_ALLOWED, refusal, refusalReason, scaleInput, scrubEvent, SessionTable,
+  autoAttachParams, BROWSER_ALLOWED, captureTooLarge, childDisposal, cropRect, dragCarriesFiles, fromBrowser, GateError, type GateSession, hiddenCapture,
+  inputScale, keyOf, loopbackHost, navigable, noTarget, PAGE_ALLOWED, refusal, refusalReason, scaleInput, scrubEvent, SessionTable, WRITE_CEILING,
 } from './gate-rules.ts'
+import { ensurePrivateDir } from './private-dir.ts'
 import type { FirstTicket } from './tabs.ts'
 import type { TabInfo } from './tab-rules.ts'
 import { checkAsk, type Control, heldError } from './control-rules.ts'
@@ -67,6 +73,8 @@ export interface GateOptions {
   activity?: (tabId: string) => void
   /** Test builds only: one line per command, answer and event (method names and ids, never params nor keys). */
   trace?: (line: string) => void
+  /** M2: the bytes a connection may have waiting in its socket before it is closed (tests lower it). */
+  writeCeiling?: number
 }
 
 export interface Gate extends IDisposable {
@@ -105,6 +113,23 @@ function encodeShot(data: string, plan: ReturnType<typeof hiddenCapture>, format
 
 type Json = Record<string, unknown>
 
+/** `text` to `file` through a randomly named temp file and a rename, tried again a few times (EPERM/EBUSY on Windows). */
+async function writeAtomicRetry(file: string, text: string, tries = 5): Promise<void> {
+  for (let i = 1; ; i++) {
+    const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+    try {
+      writeFileSync(tmp, text)
+      renameSync(tmp, file)
+      return
+    } catch (e) {
+      rmSync(tmp, { force: true })
+      const code = (e as NodeJS.ErrnoException).code
+      if (i >= tries || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw e
+      await new Promise(r => setTimeout(r, 50 * i))
+    }
+  }
+}
+
 export async function startGate(opts: GateOptions): Promise<Gate> {
   const dir = join(opts.home, 'browser')
   const keys = new KeyStore(join(dir, 'keys'), opts.keyTtlMs ?? 1000)
@@ -134,6 +159,18 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
    * dead ids. Each page session is told its contexts are gone and Runtime is restarted, which makes Chromium announce the live
    * ones; in the session's lane, so the agent's next commands wait for it.
    */
+  /**
+   * H2: Chromium keeps the page's console messages (V8, per context group) and log entries (Blink) and replays them at every
+   * `Runtime.enable` / `Log.enable`, the resync's and a new session's alike. Discarded on the core's own session (not an
+   * agent's): when the tab leaves the agent (what the agent already saw goes) and again when it comes back (what the person's
+   * turn left goes), before any agent session can enable anything.
+   */
+  const discardStored = (tabId: string): void => {
+    const surface = opts.tabs.surface(tabId)
+    if (!surface || surface.webContents.isDestroyed()) return
+    surface.debugger.send('Runtime.discardConsoleEntries').catch(() => {})
+    surface.debugger.send('Log.clear').catch(() => {})
+  }
   const resync = (tabId: string): void => {
     if (!heldTabs.delete(tabId)) return
     const surface = opts.tabs.surface(tabId)
@@ -241,6 +278,8 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     readonly asks = new Set<() => void>()
     /** Local addresses the person allowed through `Tether.requestLocalNetwork`, waiting for their navigation (url → until). */
     readonly preAllowed = new Map<string, number>()
+    /** H1b: page commands not answered yet, by tab; leaving `agent` answers them with the held error. */
+    readonly inflight = new Map<string, Set<(e: GateError) => void>>()
     /** The tab of the last page command (what `Tether.requestLocalNetwork` without a target is about). */
     lastTab: string | undefined
     autoAttach = false
@@ -255,7 +294,14 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
 
     send(obj: Json): void {
       opts.trace?.(`<< ${this.slotId} ${obj.id ?? ''} ${obj.method ?? (obj.error ? 'ERR ' + String((obj.error as Json).message).slice(0, 80) : 'ok')} ${String(obj.sessionId ?? '').slice(0, 6)}`)
-      if (!this.closed && !this.socket.destroyed) this.socket.write(frame(OP_TEXT, Buffer.from(JSON.stringify(obj), 'utf8')))
+      if (this.closed || this.socket.destroyed) return
+      this.socket.write(frame(OP_TEXT, Buffer.from(JSON.stringify(obj), 'utf8')))
+      // M2: a client that stops reading (stuck, suspended) would pile the page's events up in the main process.
+      const waiting = (this.socket as Duplex & { writableLength?: number }).writableLength ?? 0
+      if (waiting > (opts.writeCeiling ?? WRITE_CEILING)) {
+        opts.log(`porteiro: conexão de ${this.slotId} fechada (cliente não lê: ${Math.round(waiting / 1048576)} MB parados)`)
+        this.dispose()
+      }
     }
     event(method: string, params: unknown, sessionId?: string): void {
       this.send({ method, params, ...(sessionId ? { sessionId } : {}) })
@@ -326,6 +372,38 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     pageCommand(s: GateSession<Conn>, method: string, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): Promise<void> | void {
       const c = controlOf(s.tabId)
       if (c !== 'agent') throw new GateError(heldError(c).message, -32000, true)
+      // H1b: one answer per command, and none produced after the tab left the agent (`cutInflight` answers first).
+      let answered = false
+      const pending = this.inflight.get(s.tabId) ?? new Set<(e: GateError) => void>()
+      this.inflight.set(s.tabId, pending)
+      const once = <A>(f: (a: A) => void) => (a: A): void => {
+        if (answered) return
+        answered = true
+        pending.delete(cut)
+        f(a)
+      }
+      const cut = once<GateError>(fail)
+      pending.add(cut)
+      const ok = once<unknown>(reply)
+      const ko = once<unknown>(fail)
+      try {
+        const out = this.pageCommandHeld(s, method, params, ok, ko)
+        return out ? out.catch(ko) : out
+      } catch (e) {
+        ko(e)
+      }
+    }
+
+    /** Answers every command of the tab still waiting with the held error; their late answers are dropped (H1b). */
+    cutInflight(tabId: string, c: Exclude<Control, 'agent'>): void {
+      const pending = this.inflight.get(tabId)
+      if (!pending) return
+      this.inflight.delete(tabId)
+      for (const cut of [...pending]) cut(new GateError(heldError(c).message, -32000, true))
+    }
+
+    /** `pageCommand` once the tab is the agent's and the answer is guarded. */
+    pageCommandHeld(s: GateSession<Conn>, method: string, params: Json, reply: (r: unknown) => void, fail: (e: unknown) => void): Promise<void> | void {
       this.lastTab = s.tabId
       opts.activity?.(s.tabId)
       if (!PAGE_ALLOWED.has(method)) throw refusal(method, refusalReason(method))
@@ -363,15 +441,22 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
         case 'Page.navigate': {
           const url = params.url
           if (!navigable(url)) throw refusal(method, 'only http(s) and about:blank')
+          // B1: after a wait (the person's answer) the navigation goes out only if the connection is alive and the tab still the agent's.
+          const still = (): void => {
+            if (this.closed) throw new GateError('Target closed', -32000)
+            const now = controlOf(s.tabId)
+            if (now !== 'agent') throw new GateError(heldError(now).message, -32000, true)
+          }
           if (url !== 'about:blank' && opts.tabs.grantLocal && this.takeAllowed(url)) {
             // The person already said yes to this address (`Tether.requestLocalNetwork`): not asked twice.
-            return opts.tabs.grantLocal(s.tabId, url).then(() => { send(method, params).then(reply, fail) }).catch(fail)
+            return opts.tabs.grantLocal(s.tabId, url).then(() => { still(); send(method, params).then(reply, fail) }).catch(fail)
           }
           if (url !== 'about:blank') {
             // An agent's navigation to a local address asks first (E4); a public one needs nobody. The session's next
             // commands wait in its lane until the navigation is handed to the debugger.
             return opts.tabs.requestLocalNetwork(s.tabId, this.slotId, url).then(ok => {
               if (!ok) throw refusal(method, 'the local network was not allowed')
+              still()
               send(method, params).then(reply, fail)
             }).catch(fail)
           }
@@ -403,8 +488,15 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           // A hidden page handles pointer moves on its frames: without any, each one waits out Chromium's own timeout (~1 s).
           drawn(() => send(method, scaleInput(method, params, inputScale(surface.state())))).then(reply, fail)
           return
-        case 'Page.captureScreenshot':
+        case 'Page.captureScreenshot': {
+          const tooLarge = captureTooLarge(params)
+          if (tooLarge) throw refusal(method, tooLarge)
           return this.screenshot(s, surface, params, reply, fail)
+        }
+        case 'Page.createIsolatedWorld':
+          // N7: a world that ignores CORS with the partition's cookies is never granted.
+          send(method, { ...params, grantUniveralAccess: false }).then(reply, fail)
+          return
       }
       send(method, params).then(reply, fail)
     }
@@ -625,7 +717,11 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
   })
 
   const controlSub = opts.control?.onChange(v => {
-    if (v.control === 'agent') resync(v.tabId)
+    // H1b, H2: leaving the agent, what is in flight is answered with the held error and the stored console goes; back with it,
+    // the console of the person's turn goes before the resync's Runtime.enable (and any new session's).
+    discardStored(v.tabId)
+    if (v.control !== 'agent') for (const c of conns) c.cutInflight(v.tabId, v.control)
+    else resync(v.tabId)
     const owner = opts.tabs.list().find(t => t.tabId === v.tabId)?.ownerSlotId
     if (!owner) return
     targetIdOf(v.tabId).then(targetId => {
@@ -685,12 +781,19 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
   })
   port = (server.address() as AddressInfo).port
 
-  // endpoint.json, atomically (temp file + rename): the MCP server reads it at every connection.
-  mkdirSync(dir, { recursive: true })
+  // M4: `<home>/browser` and `keys/` are the owner's alone (a home outside the profile inherits a drive's open ACL). Failing
+  // that, the gate does not serve: anyone who can write keys/ can plant a key.
+  try {
+    ensurePrivateDir(dir)
+    ensurePrivateDir(join(dir, 'keys'))
+  } catch (e) {
+    server.close()
+    throw e
+  }
+  // endpoint.json, atomically (temp file + rename): the MCP server reads it at every connection. B2: a reader or an antivirus
+  // holding the file on Windows fails the rename for a moment; a few more tries, each from a temp file of its own.
   const endpointFile = join(dir, 'endpoint.json')
-  const tmp = `${endpointFile}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify({ v: 1, port, pid: process.pid, instance }))
-  renameSync(tmp, endpointFile)
+  await writeAtomicRetry(endpointFile, JSON.stringify({ v: 1, port, pid: process.pid, instance }))
   opts.log(`porteiro em 127.0.0.1:${port}`)
 
   // Deleted keys: live connections are swept on the key store's clock.
