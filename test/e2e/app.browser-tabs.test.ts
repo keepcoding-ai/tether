@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createRequire } from 'node:module'
@@ -88,6 +88,8 @@ test('browser tabs: born behind and grouped, real frame, popup, permissions, sch
   const server = await serve()
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   const home = mkdtempSync(join(tmpdir(), 'tether-brtabs-'))
+  // The tabs here are the agent's requests for 127.0.0.1 (the test's server): granted without the question (E4), which app.browser-net proves.
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { browser: { localNetwork: 'allow' } } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {

@@ -9,11 +9,18 @@
 //     for a later navigation. A popup gets a ticket only when the frame that opened it and its page are both local (the
 //     package's origin gate reads the opener's `Referer` the same way; no referrer, no ticket). Each refusal is a `blocked`
 //     event with the reason and the destination's origin.
+//   - E4: an agent's request for a LOCAL address (`requestLocalNetwork`, `allowOnce`, `create` with `ticket: true`) goes to the
+//     local-network question (local-network.ts) before any ticket; the tab's first load waits for the answer (refused, it
+//     loads without a ticket and the filter shows the block). A restored tab the person showed and a popup between local pages
+//     get their ticket without asking (`ticket: 'granted'`): neither is the agent's request. A closed tab's questions are
+//     withdrawn.
 // When an agent exits its tabs stay (the "encerrado" chip is the interface's); nothing here destroys them.
 import { randomUUID } from 'node:crypto'
 import type { Event as ElectronEvent, WebContents } from 'electron'
 import type { Surface, TetherMain } from '../../app/main/ext-api.ts'
 import { type IDisposable, toDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import type { AgentInfo } from '../../app/main/agents.ts'
+import type { LocalNetworkGate } from './local-network.ts'
 import type { BlockedRequest } from './net-filter.ts'
 import type { TabSession } from './session.ts'
 import { cleanTitle, isId, isNavigable, isWebUrl, makeTab, type SavedTab, storableUrl, type Tab, type TabInfo } from './tab-rules.ts'
@@ -36,6 +43,15 @@ export interface TabEvents {
   blocked?(event: TabBlocked): void
 }
 
+/** How the local network is asked: the gate, and who an owner slot id is (its name and profile). */
+export interface TabLocalNetwork {
+  gate: LocalNetworkGate
+  agent(slotId: string): AgentInfo | undefined
+}
+
+/** A first address's ticket: `true` is the agent's request (asked when local), `'granted'` needs no question. */
+export type FirstTicket = boolean | 'granted'
+
 const POPUP_DISPOSITIONS = new Set(['default', 'foreground-tab', 'background-tab', 'new-window'])
 
 export class TabRegistry {
@@ -44,12 +60,14 @@ export class TabRegistry {
   private readonly main: TetherMain
   private readonly session: Promise<TabSession>
   private readonly events: TabEvents
+  private readonly local: TabLocalNetwork
   private disposed = false
 
-  constructor(main: TetherMain, session: Promise<TabSession>, events: TabEvents) {
+  constructor(main: TetherMain, session: Promise<TabSession>, events: TabEvents, local: TabLocalNetwork) {
     this.main = main
     this.session = session
     this.events = events
+    this.local = local
     session.then(s => s.onBlocked(b => {
       const tabId = b.webContentsId === undefined ? undefined : this.tabOfPage(b.webContentsId)
       if (tabId !== undefined) this.events.blocked?.({ tabId, reason: b.reason, resourceType: b.resourceType, destination: b.destination })
@@ -65,10 +83,29 @@ export class TabRegistry {
    * One ticket for the tab's next main-frame navigation to exactly `url` (one use, a few seconds): what the gatekeeper calls
    * before navigating at an agent's request. A redirect from it to another local destination does not inherit it.
    */
-  async allowOnce(tabId: string, url: string): Promise<boolean> {
-    const wc = this.webContents(tabId)
-    if (!wc || wc.isDestroyed()) return false
-    return (await this.session).net.allowOnce(wc.id, url)
+  allowOnce(tabId: string, url: string): Promise<boolean> {
+    const e = this.entries.get(tabId)
+    return e ? this.requestLocalNetwork(tabId, e.tab.ownerSlotId, url) : Promise.resolve(false)
+  }
+
+  /**
+   * The gatekeeper's `Tether.requestLocalNetwork`: may the agent `ownerSlotId` open `url` in its tab `tabId` once? A public
+   * address needs nobody; a local one goes to the setting or the person (pending as long as the person takes, refused when
+   * the tab closes). True: the tab holds a ticket for exactly `url` (one use, a few seconds) and the caller navigates now.
+   */
+  async requestLocalNetwork(tabId: string, ownerSlotId: string, url: string): Promise<boolean> {
+    const e = this.entries.get(tabId)
+    if (!e || e.tab.ownerSlotId !== ownerSlotId || !isWebUrl(url)) return false
+    const wc = e.surface.webContents
+    if (wc.isDestroyed()) return false
+    const ses = await this.session
+    if (ses.net.isLocal(url)) {
+      const info = this.local.agent(ownerSlotId)
+      const agent = { name: info?.name ?? 'o agente', ...(info?.profile ? { profile: info.profile } : {}) }
+      const ok = await this.local.gate.request({ tabId, url, agent })
+      if (!ok || wc.isDestroyed() || this.entries.get(tabId) !== e) return false
+    }
+    return ses.net.allowOnce(wc.id, url)
   }
 
   list(): TabInfo[] { return [...this.entries.values()].map(infoOf) }
@@ -79,7 +116,7 @@ export class TabRegistry {
   surface(tabId: string): Surface | undefined { return this.entries.get(tabId)?.surface }
 
   /** A new tab for `owner` opening `url` (http/https only), hidden; `tabId` keeps a saved tab's id. Same id twice: the same tab. */
-  create(owner: string, url: string, opts: { tabId?: string; title?: string; ticket?: boolean } = {}): Promise<TabInfo> {
+  create(owner: string, url: string, opts: { tabId?: string; title?: string; ticket?: FirstTicket } = {}): Promise<TabInfo> {
     if (this.disposed) return Promise.reject(new Error('guia: extensão desligada'))
     if (!isId(owner)) return Promise.reject(new Error('guia: dono inválido'))
     if (!isWebUrl(url)) return Promise.reject(new Error('guia: só endereços http e https'))
@@ -89,7 +126,7 @@ export class TabRegistry {
     if (known) return Promise.resolve(infoOf(known))
     const inFlight = this.pending.get(tabId)
     if (inFlight) return inFlight
-    const p = this.open(tabId, owner, url, opts.title, opts.ticket === true).finally(() => this.pending.delete(tabId))
+    const p = this.open(tabId, owner, url, opts.title, opts.ticket ?? false).finally(() => this.pending.delete(tabId))
     this.pending.set(tabId, p)
     return p
   }
@@ -98,7 +135,7 @@ export class TabRegistry {
   async restore(saved: SavedTab): Promise<TabInfo | undefined> {
     if (!storableUrl(saved.url)) return undefined
     // The person showed the pane: its saved address opens once, even on the local network.
-    return this.create(saved.ownerSlotId, saved.url, { tabId: saved.tabId, title: saved.title, ticket: true })
+    return this.create(saved.ownerSlotId, saved.url, { tabId: saved.tabId, title: saved.title, ticket: 'granted' })
   }
 
   close(tabId: string): void {
@@ -110,7 +147,7 @@ export class TabRegistry {
     for (const e of [...this.entries.values()]) e.surface.destroy()
   }
 
-  private async open(tabId: string, owner: string, url: string, title: string | undefined, ticket: boolean): Promise<TabInfo> {
+  private async open(tabId: string, owner: string, url: string, title: string | undefined, ticket: FirstTicket): Promise<TabInfo> {
     const ses = await this.session
     const surface = await this.main.surfaces.create({ pageSize: { ...PAGE_SIZE }, webPreferences: { partition: ses.partition, backgroundThrottling: false } })
     const tab = makeTab({ tabId, ownerSlotId: owner, surfaceId: surface.id, url, title, createdAt: Date.now() })
@@ -121,6 +158,7 @@ export class TabRegistry {
     const pageId = surface.webContents.id
     surface.onDidDestroy(() => {
       ses.net.forget(pageId)
+      this.local.gate.cancelTab(tabId)
       for (const s of subs) s.dispose()
       if (this.entries.get(tabId) !== entry) return
       this.entries.delete(tabId)
@@ -128,9 +166,11 @@ export class TabRegistry {
     })
     this.main.log(`guia ${tabId} criada para ${owner}`)
     this.events.changed(infoOf(entry))
-    if (ticket) ses.net.allowOnce(pageId, url)
-    // The first load is not awaited: a slow or failing site still gives the tab (its frame shows the state).
-    surface.webContents.loadURL(url).catch(() => {})
+    // The first load is not awaited: a slow or failing site still gives the tab (its frame shows the state). An agent's local
+    // address waits for the question; refused, it loads without a ticket and the filter refuses it.
+    const granted = ticket === 'granted' ? Promise.resolve(ses.net.allowOnce(pageId, url))
+      : ticket ? this.requestLocalNetwork(tabId, owner, url) : Promise.resolve(false)
+    granted.catch(() => false).then(() => { if (!surface.webContents.isDestroyed()) surface.webContents.loadURL(url).catch(() => {}) })
     return infoOf(entry)
   }
 
@@ -144,7 +184,7 @@ export class TabRegistry {
       if (isWebUrl(details.url) && POPUP_DISPOSITIONS.has(details.disposition)) {
         const opener = details.referrer?.url ?? ''
         const ticket = opener !== '' && ses.net.isLocal(opener) && ses.net.isLocal(wc.getURL())
-        this.create(ownerSlotId, details.url, { ticket }).catch(e => this.main.log(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
+        this.create(ownerSlotId, details.url, { ticket: ticket ? 'granted' : false }).catch(e => this.main.log(`guia ${tabId}: popup não virou guia (${(e as Error).message})`))
       } else this.main.log(`guia ${tabId}: popup recusado`)
       return { action: 'deny' }
     })

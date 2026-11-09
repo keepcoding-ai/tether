@@ -9,8 +9,11 @@
 // (`tether-browser`, no `persist:`), logged once, and `persistentLogins` is false so the interface can say logins are not kept.
 //
 // E3: the network filter (net-filter.ts) is installed here, on the partition, before any tab loads.
+// E4: so is the egress proxy (egress-session.ts): the session is ready only once the proxy listens and the partition points
+// at it; a proxy that fails to start fails the session (no tab ever goes out direct).
 import { app, session as electronSession, type Session, type WebContents } from 'electron'
 import { open } from 'node:fs/promises'
+import { startTabEgress, type TabEgress } from './egress-session.ts'
 import { type BlockedRequest, createNetFilter, type NetFilter } from './net-filter.ts'
 import { cookieEncryptionOn, FUSE_SENTINEL, fuseWireAt } from './tab-rules.ts'
 
@@ -27,6 +30,8 @@ export interface TabSession {
   prepare(wc: WebContents): void
   /** The network filter (E3): local network only from a local origin or with a ticket; schemes limited. */
   readonly net: NetFilter
+  /** The egress proxy every tab connection goes through (E4). */
+  readonly egress: TabEgress
   /** Follows the filter's refusals (one listener: the tab registry). */
   onBlocked(listener: (b: BlockedRequest) => void): void
   /** Forces the cookies to disk now (a no-op in memory). */
@@ -64,7 +69,7 @@ export async function cookieEncryptionInForce(): Promise<boolean> {
   try { return cookieEncryptionOn(await readFuseWire(process.execPath)) } catch { return false }
 }
 
-export function createTabSession(persistentLogins: boolean, log: (msg: string) => void): TabSession {
+export async function createTabSession(persistentLogins: boolean, log: (msg: string) => void): Promise<TabSession> {
   const partition = persistentLogins ? PERSIST_PARTITION : MEMORY_PARTITION
   const ses = electronSession.fromPartition(partition)
   if (!persistentLogins) log('fuse EnableCookieEncryption desligado neste executável: guias numa partição em memória, logins não são guardados')
@@ -72,9 +77,10 @@ export function createTabSession(persistentLogins: boolean, log: (msg: string) =
   ses.setPermissionCheckHandler(() => false)
   ses.setDevicePermissionHandler(() => false)
   ses.setDisplayMediaRequestHandler((_req, callback) => callback({}))
-  // The filter is in place before any tab exists: the first request of the first tab already goes through it.
+  // The proxy and the filter are in place before any tab exists: the first request of the first tab already goes through them.
+  const egress = await startTabEgress(ses)
   let blockedListener: ((b: BlockedRequest) => void) | undefined
-  const net = createNetFilter(ses, log, b => blockedListener?.(b))
+  const net = createNetFilter(ses, egress, log, b => blockedListener?.(b))
   const onDownload = (_e: unknown, item: { cancel(): void }): void => { item.cancel(); log('download recusado (a fatia de downloads ainda não existe)') }
   ses.on('will-download', onDownload)
   const flush = (): void => { if (persistentLogins) ses.cookies.flushStore().catch(() => {}) }
@@ -84,7 +90,7 @@ export function createTabSession(persistentLogins: boolean, log: (msg: string) =
   app.on('before-quit', onQuit)
   let disposed = false
   return {
-    partition, session: ses, persistentLogins, net,
+    partition, session: ses, persistentLogins, net, egress,
     onBlocked: listener => { blockedListener = listener },
     prepare: wc => { wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp') },
     flush,
@@ -93,6 +99,7 @@ export function createTabSession(persistentLogins: boolean, log: (msg: string) =
       disposed = true
       flush()
       net.dispose()
+      egress.close().catch(() => {})
       blockedListener = undefined
       if (timer) clearInterval(timer)
       app.removeListener('before-quit', onQuit)

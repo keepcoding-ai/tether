@@ -4,6 +4,9 @@
 // the active one (§5.2), next to its owner's other tabs. After a restart the panes come back from layout.json without loading
 // ("Não carregada desde que o tether reabriu") and load when the person shows them (§7.3); a tab whose address carried a
 // credential was saved without it and is not reloaded.
+// E4: the local-network question (design §4.1): main asks, this side shows the core's dialog (modal: it freezes the surfaces
+// while open), one question at a time, and answers. Open questions are fetched at start, so a reload does not lose them; a
+// question whose tab closed is dropped from the queue, or, when on screen, dismissed as a refusal.
 import type { GroupPanelPartInitParameters, IContentRenderer, IDockviewPanel, ITabRenderer } from 'dockview-core'
 import type { PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
@@ -11,6 +14,7 @@ import { factsOf } from '../../app/renderer/surface-host.ts'
 import { hostVisible } from '../../app/shared/surface-panel-rules.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { BrowserChannels } from './ipc.ts'
+import { LOCAL_NETWORK_SITUATION, localNetworkDialog, type LocalNetworkAsk } from './local-network-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
 import { CRED_NOT_KEPT, EMPTY_HELP, EMPTY_TITLE, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, OFF_HELP, ownerLabel } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
@@ -199,6 +203,31 @@ export function activate(ui: TetherUi): IDisposable[] {
     }, where)
   }
 
+  const asks: LocalNetworkAsk[] = []
+  let asking: string | undefined
+  const nextAsk = (): void => {
+    if (asking !== undefined) return
+    const ask = asks.shift()
+    if (!ask) return
+    asking = ask.id
+    void ui.dialogs.ask(localNetworkDialog(ask)).then(a => a.choice, () => 'deny')
+      .then(choice => ipc.invoke('localNetworkAnswer', ask.id, choice))
+      .catch(() => {})
+      .finally(() => { asking = undefined; nextAsk() })
+  }
+  const enqueue = (ask: LocalNetworkAsk): void => {
+    if (ask.id === asking || asks.some(a => a.id === ask.id)) return
+    asks.push(ask)
+    nextAsk()
+  }
+  const withdraw = (id: string): void => {
+    const i = asks.findIndex(a => a.id === id)
+    if (i >= 0) { asks.splice(i, 1); return }
+    // On screen: the dialog's own Esc path (a refusal; main already settled it and ignores the answer).
+    if (id === asking) document.querySelector(`dialog[data-dialog="${LOCAL_NETWORK_SITUATION}"]`)?.dispatchEvent(new Event('cancel', { cancelable: true }))
+  }
+  void ipc.invoke('localNetworkOpen').then(list => { for (const a of list) enqueue(a) }).catch(() => {})
+
   void ipc.invoke('status').then(s => { persistentLogins = s.persistentLogins; for (const p of pads) p.redraw() })
   ui.test.expose('browserPanes', () => [...panels].map(([id, p]) => ({
     id, tabId: p.saved?.tabId, owner: p.saved?.ownerSlotId, state: p.element.dataset.state,
@@ -221,6 +250,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       if (p) p.bind(info)
       else openTab(info)
     }),
+    ipc.on('localNetworkAsk', enqueue),
+    ipc.on('localNetworkCancelled', withdraw),
     ipc.on('closed', tabId => {
       const id = paneIdOf(tabId)
       panels.get(id)?.closed()

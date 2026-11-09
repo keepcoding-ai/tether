@@ -8,8 +8,22 @@
 // address and the grant the chain had, so a hop is judged as a hop (net-rules `decide`). A refused request is cancelled: the
 // tab shows Chromium's own error page (net::ERR_BLOCKED_BY_CLIENT), and `onBlocked` gets the tab's page id, the reason and
 // the destination reduced to its origin. The log line never carries an address.
+//
+// E4: behind the filter sits the egress proxy (session.ts), which refuses every connection whose final IP is local unless it
+// holds a grant for that exact destination. The filter is where grants come from: a request it lets through to a local IP
+// literal or `localhost` (a local origin, a ticket, a same-origin hop) gets one proxy grant, for its exact address (http) or
+// host:port (https, ws, wss), one use, a few seconds, revoked when the request ends. A public NAME never gets one, so a name
+// that resolves to a local address is refused at the proxy even though the filter passed it (DNS rebinding).
 import type { Session } from 'electron'
+import { egressGrantUrl } from './local-network-rules.ts'
 import { type BlockReason, decide, type Grant, isLocalOrigin, type NetOptions, originOnly, Tickets } from './net-rules.ts'
+
+/** The egress proxy as the filter sees it (EgressProxy.grant/revoke and Egress.isPrivateHost). */
+export interface EgressGrants {
+  grant(url: string): number | null
+  revoke(id: number): void
+  isPrivateHost(host: string): boolean
+}
 
 export interface BlockedRequest {
   /** The page's webContents id (undefined for a service worker or another request without a page). */
@@ -40,14 +54,15 @@ const REASON_TEXT: Record<BlockReason, string> = {
 }
 const CHAIN_MAX = 4_000
 
-export function createNetFilter(ses: Session, log: (msg: string) => void, onBlocked: (b: BlockedRequest) => void): NetFilter {
+export function createNetFilter(ses: Session, egress: EgressGrants, log: (msg: string) => void, onBlocked: (b: BlockedRequest) => void): NetFilter {
   const tickets = new Tickets()
   const opts: { publicStandIns: Set<string> } & NetOptions = { publicStandIns: new Set() }
   /** Per live request id: the address it last asked for and the grant of the chain. */
-  const chains = new Map<number, { url: string; grant: Grant }>()
+  const chains = new Map<number, { url: string; grant: Grant; proxyGrants: number[] }>()
   /** Request ids whose next `onBeforeRequest` is a redirect hop (set by `onBeforeRedirect`). */
   const hopping = new Set<number>()
-  const end = (d: { id: number }): void => { chains.delete(d.id); hopping.delete(d.id) }
+  const revoke = (ids: readonly number[] | undefined): void => { for (const id of ids ?? []) egress.revoke(id) }
+  const end = (d: { id: number }): void => { revoke(chains.get(d.id)?.proxyGrants); chains.delete(d.id); hopping.delete(d.id) }
 
   ses.webRequest.onBeforeRedirect(d => { if (chains.has(d.id)) hopping.add(d.id) })
   ses.webRequest.onCompleted(end)
@@ -66,11 +81,15 @@ export function createNetFilter(ses: Session, log: (msg: string) => void, onBloc
     } catch { verdict = { allow: false as const, reason: 'scheme' as const } }
     if (verdict.allow) {
       if (verdict.useTicket && wc !== undefined) tickets.take(wc, d.url)
-      if (chains.size >= CHAIN_MAX) chains.delete(chains.keys().next().value!)
-      chains.set(d.id, { url: d.url, grant: verdict.grant })
+      if (chains.size >= CHAIN_MAX) { const oldest = chains.keys().next().value!; revoke(chains.get(oldest)?.proxyGrants); chains.delete(oldest) }
+      const proxyGrants = prev?.proxyGrants ?? []
+      const forProxy = egressGrantUrl(d.url, egress.isPrivateHost)
+      const id = forProxy === null ? null : egress.grant(forProxy)
+      chains.set(d.id, { url: d.url, grant: verdict.grant, proxyGrants: id === null ? proxyGrants : [...proxyGrants, id] })
       callback({})
       return
     }
+    revoke(prev?.proxyGrants)
     chains.delete(d.id)
     log(`rede: requisição barrada (${REASON_TEXT[verdict.reason]}, ${d.resourceType})`)
     try { onBlocked({ webContentsId: wc, reason: verdict.reason, resourceType: d.resourceType, destination: originOnly(d.url) }) } catch { /* the event is advisory */ }
@@ -87,7 +106,7 @@ export function createNetFilter(ses: Session, log: (msg: string) => void, onBloc
       // The filter stays installed: removing it would open the local network to pages that may still exist. Only the
       // tickets go, so nothing new is let through after the extension goes away.
       disposed = true
-      for (const k of [...chains.keys()]) chains.delete(k)
+      for (const [k, c] of [...chains]) { revoke(c.proxyGrants); chains.delete(k) }
       tickets.dropAll()
     },
   }

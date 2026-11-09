@@ -9,10 +9,17 @@
 // file: and a popup → all refused, nothing reaches LOCAL; a ticket opens localhost once and not twice, and expires; a
 // redirect from the ticket to another local port is refused while a same-origin one (login → dashboard) passes; a local
 // page reaches the local network; CDP `Page.navigate` (the gatekeeper's path) uses the ticket too.
+// E4 (egress proxy and the local-network question): steps 1–5 run with `localNetwork: allow` (settings.json of the home), so
+// the tickets need no person. Step 6: the proxy — a public NAME the proxy resolves to 127.0.0.1 (the test's resolver, no
+// lookup leaves the machine) is refused for fetch, WebSocket and the agent's navigation, and LOCAL gets nothing; no
+// WebTransport behind a proxy. Step 7: WebRTC with a STUN server on the test's own UDP socket: zero datagrams. Step 8: the
+// question — `ask` shows the dialog, "Só desta vez" opens once, "Não permitir" refuses, "Sempre" stops asking (and is kept
+// in <home>/browser/local-network.json), a closed tab withdraws its question; `deny` and `allow` never ask.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { createSocket } from 'node:dgram'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createRequire } from 'node:module'
@@ -32,7 +39,11 @@ type Tabs = {
   load(tabId: string, url: string): Promise<string>
   cdpNavigate(tabId: string, url: string): Promise<string>
   blocked: Blocked[]
-  registry: { list(): { tabId: string; ownerSlotId: string; url: string }[] }
+  registry: { list(): { tabId: string; ownerSlotId: string; url: string }[]; close(tabId: string): void }
+  requestLocalNetwork(tabId: string, owner: string, url: string): Promise<boolean>
+  setTestHosts(hosts: Record<string, string[]>): Promise<void>
+  egressBlocked(): Promise<number>
+  setLocalNetwork(value: string): void
 }
 
 const require = createRequire(import.meta.url)
@@ -90,6 +101,12 @@ const T = (app: ElectronApplication) => ({
   blocked: (): Promise<Blocked[]> => app.evaluate(() => [...(globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.blocked]),
   tabs: () => app.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => ({ tabId: t.tabId, url: t.url }))),
   standIns: (hosts: string[]): Promise<void> => app.evaluate((_e, h) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setPublicStandIns(h), hosts),
+  hosts: (hosts: Record<string, string[]>): Promise<void> => app.evaluate((_e, h) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setTestHosts(h), hosts),
+  egressBlocked: (): Promise<number> => app.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.egressBlocked()),
+  setLocalNetwork: (value: string): Promise<void> => app.evaluate((_e, v) => { (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setLocalNetwork(v) }, value),
+  requestLocalNetwork: (tabId: string, owner: string, url: string): Promise<boolean> =>
+    app.evaluate((_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.requestLocalNetwork(a.tabId, a.owner, a.url), { tabId, owner, url }),
+  close: (tabId: string): Promise<void> => app.evaluate((_e, id) => { (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.close(id) }, tabId),
 })
 
 async function until<T>(what: string, fn: () => Promise<T>, ok: (v: T) => boolean, ms = 15_000): Promise<T> {
@@ -122,6 +139,11 @@ test('browser network filter: the local network is closed to public pages, open 
   const port = new URL(L).port
   const localHits = (): string[] => [...local.hits, ...other.hits].filter(h => h.includes('hit-'))
   const home = mkdtempSync(join(tmpdir(), 'tether-brnet-'))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { browser: { localNetwork: 'allow' } } }))
+  const udp = createSocket('udp4')
+  let datagrams = 0
+  udp.on('message', () => { datagrams++ })
+  await new Promise<void>(r => udp.bind(0, '127.0.0.1', () => r()))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -130,6 +152,7 @@ test('browser network filter: the local network is closed to public pages, open 
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const t = T(app)
     await t.standIns(['127.0.0.2'])
+    await t.hosts({ 'rebind.test': ['127.0.0.1'] })
 
     // ---- 1. a public page reaching the local network ----
     console.log('step 1')
@@ -217,8 +240,91 @@ test('browser network filter: the local network is closed to public pages, open 
     assert.equal(await t.load(tab, `${pub.base}/page`), '')
     assert.match(await t.cdpNavigate(tab, `${L}/hit-cdp`), /ERR_BLOCKED_BY_CLIENT/, 'Page.navigate without a ticket')
     assert.equal(localHits().filter(h => h === '/hit-cdp').length, 1)
+
+    // ---- 6. the egress proxy: a public name that resolves to 127.0.0.1; no QUIC ----
+    console.log('step 6')
+    // A fresh public tab (the last CDP refusal of step 5 can still be settling in the first one).
+    const tab6 = await t.create('owner-a', `${pub.base}/page`, false)
+    await until('public page loaded', () => t.eval(tab6, 'document.title'), v => v === 'Pública /page')
+    const fetch6 = (url: string) => t.eval(tab6, `fetch(${JSON.stringify(url)}).then(r => 'ok ' + r.status, e => 'err')`)
+    const proxyBlocks = await t.egressBlocked()
+    assert.equal(await fetch6(`http://rebind.test:${port}/hit-rebind`), 'err', 'fetch to a name resolving to 127.0.0.1')
+    assert.equal(await t.eval(tab6, `new Promise(r => { const w = new WebSocket('ws://rebind.test:${port}/hit-rebind-ws'); w.onopen = () => r('open'); w.onerror = () => r('error'); setTimeout(() => r('timeout'), 4000) })`), 'error', 'WebSocket')
+    const navErr = await t.load(tab6, `http://rebind.test:${port}/hit-rebind-nav`)
+    assert.ok(navErr !== '' && !/ERR_BLOCKED_BY_CLIENT/.test(navErr), `the agent's navigation fails at the proxy, not the filter: ${navErr}`)
+    assert.ok((await t.egressBlocked()) >= proxyBlocks + 3, 'the proxy refused them')
+    assert.ok(!localHits().some(h => h.includes('rebind')), 'LOCAL received nothing')
+
+    // ---- 7. WebRTC: a STUN server on the test's UDP socket gets nothing ----
+    console.log('step 7')
+    const udpPort = udp.address().port
+    const candidates = await t.eval(tab6, `(async () => {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:127.0.0.1:${udpPort}' }] })
+      pc.createDataChannel('x')
+      await pc.setLocalDescription(await pc.createOffer())
+      await new Promise(r => setTimeout(r, 4000))
+      const n = (pc.localDescription?.sdp ?? '').split('\\n').filter(l => l.startsWith('a=candidate')).length
+      pc.close()
+      return n
+    })()`)
+    console.log(`webrtc candidates: ${String(candidates)}`)
+    // WebTransport is QUIC (UDP): it cannot go through an HTTP proxy, and it does not go around it.
+    const wt = await t.eval(tab6, `new Promise(r => { try { const w = new WebTransport('https://127.0.0.1:${udpPort}/hit-wt'); w.ready.then(() => r('ready'), () => r('failed')); setTimeout(() => r('timeout'), 4000) } catch { r('threw') } })`)
+    console.log(`webtransport: ${String(wt)}`)
+    assert.notEqual(wt, 'ready')
+    assert.equal(datagrams, 0, 'zero UDP datagrams (WebRTC STUN and WebTransport)')
+
+    // ---- 8. the local-network question ----
+    console.log('step 8')
+    await t.setLocalNetwork('ask')
+    const dlg = win.locator('dialog.ask[data-dialog="browser.localNetwork"][open]')
+    const dest = `127.0.0.1:${port}`
+    // A tab created at the agent's request for a local address waits for the person.
+    const q = await t.create('owner-q', `${L}/hit-q-once`)
+    await dlg.waitFor()
+    assert.match((await dlg.textContent()) ?? '', new RegExp(`Permitir que o agente abra ${dest.replace(/\./g, '\\.')}\\?`))
+    assert.ok(!localHits().includes('/hit-q-once'), 'nothing loads before the answer')
+    assert.equal(await dlg.locator('button.choice.safe.default[data-choice="deny"]').count(), 1, 'refusing is the default')
+    await dlg.locator('button.choice[data-choice="once"]').click()
+    await until('once: loaded', async () => localHits(), v => v.includes('/hit-q-once'))
+    // "Só desta vez" asks again next time; "Não permitir" refuses.
+    const denied = t.allowOnce(q, `${L}/hit-q-deny`)
+    await dlg.waitFor()
+    await dlg.locator('button.choice[data-choice="deny"]').click()
+    assert.equal(await denied, false, 'refused')
+    assert.match(await t.load(q, `${L}/hit-q-deny`), /ERR_BLOCKED_BY_CLIENT/)
+    // "Sempre para este perfil": granted, kept, never asked again for that destination.
+    const always = t.allowOnce(q, `${L}/hit-q-always`)
+    await dlg.waitFor()
+    await dlg.locator('button.choice[data-choice="always"]').click()
+    assert.equal(await always, true)
+    assert.equal(await t.load(q, `${L}/hit-q-always`), '')
+    await until('dialog closed', () => dlg.count(), n => n === 0)
+    assert.equal(await t.allowOnce(q, `${L}/hit-q-again`), true, 'no question the second time')
+    assert.equal(await dlg.count(), 0)
+    assert.equal(await t.load(q, `${L}/hit-q-again`), '')
+    const kept = join(home, 'browser', 'local-network.json')
+    assert.ok(existsSync(kept), 'kept in <home>/browser')
+    assert.deepEqual(JSON.parse(readFileSync(kept, 'utf8')), { profiles: { '': [dest] } })
+    // Another owner of the tab is refused without a question.
+    assert.equal(await t.requestLocalNetwork(q, 'owner-x', `${L}/hit-q-x`), false)
+    // A pending question is withdrawn when its tab closes.
+    const pending = t.requestLocalNetwork(q, 'owner-q', `${other.base}/hit-q-closed`)
+    await dlg.waitFor()
+    await t.close(q)
+    assert.equal(await pending, false, 'the closed tab refuses')
+    await until('withdrawn dialog closed', () => dlg.count(), n => n === 0)
+    // deny and allow never ask.
+    const q2 = await t.create('owner-q', `${pub.base}/page`, false)
+    await t.setLocalNetwork('deny')
+    assert.equal(await t.requestLocalNetwork(q2, 'owner-q', `${L}/hit-q-always`), false, 'deny wins over "always"')
+    await t.setLocalNetwork('allow')
+    assert.equal(await t.requestLocalNetwork(q2, 'owner-q', `${other.base}/hit-q-allow`), true)
+    assert.equal(await dlg.count(), 0, 'no question under deny or allow')
+    assert.ok(!localHits().includes('/hit-q-deny') && !localHits().includes('/hit-q-closed'))
     console.log(`local hits: ${JSON.stringify(localHits())}`)
   } finally {
+    udp.close()
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })
     for (let i = 0; i < 20 && daemons.some(d => pidAlive(d.pid)); i++) await sleep(500)
