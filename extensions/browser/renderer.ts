@@ -512,7 +512,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   /** Clicks a control button of a tab's pane the way the person would ('bar' or 'notice'). */
   ui.test.expose('browserClick', (tabId: string, where: string) => {
     const p = panels.get(paneIdOf(tabId))
-    p?.element.querySelector<HTMLButtonElement>(where === 'notice' ? '.br-web-notice-act' : '.br-web-act')?.click()
+    const sel = where === 'notice' ? '.br-web-notice-act' : where === 'back' || where === 'forward' || where === 'reload' ? `.br-web-nav[data-nav="${where}"]` : where === 'owner' ? '.br-web-owner' : '.br-web-act'
+    p?.element.querySelector<HTMLButtonElement>(sel)?.click()
   })
   ui.test.expose('browserSeals', () => [...seals].map(([tabId, hs]) => ({ tabId, count: hs.length })))
 

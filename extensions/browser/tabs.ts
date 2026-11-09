@@ -185,12 +185,22 @@ export class TabRegistry {
     return this.create(saved.ownerSlotId, saved.url, { tabId: saved.tabId, title: saved.title, ticket: 'granted' })
   }
 
-  /** The person's history buttons (the interface offers them while she holds the tab; main checks it too). */
-  navigate(tabId: string, how: 'back' | 'forward' | 'reload'): void {
+  /**
+   * The person's history buttons (the interface offers them while she holds the tab; main checks it too). The page she goes back
+   * to is one the tab already showed, so its address gets the one-use ticket a local address needs: her click is the consent.
+   */
+  async navigate(tabId: string, how: 'back' | 'forward' | 'reload'): Promise<void> {
     const wc = this.webContents(tabId)
     if (!wc || wc.isDestroyed()) return
-    if (how === 'back') { if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack() }
-    else if (how === 'forward') { if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward() }
+    const h = wc.navigationHistory
+    const at = h.getActiveIndex() + (how === 'back' ? -1 : how === 'forward' ? 1 : 0)
+    if (how === 'back' && !h.canGoBack()) return
+    if (how === 'forward' && !h.canGoForward()) return
+    const target = how === 'reload' ? wc.getURL() : h.getEntryAtIndex(at)?.url
+    if (target && isWebUrl(target)) await this.allowOnce(tabId, target)
+    if (wc.isDestroyed()) return
+    if (how === 'back') h.goBack()
+    else if (how === 'forward') h.goForward()
     else wc.reload()
   }
 
