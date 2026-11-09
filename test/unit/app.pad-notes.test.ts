@@ -67,7 +67,7 @@ describe('pad notes: the tree', () => {
   test('filters, counts and the empty loose keys', () => {
     const tree = buildNoteTree(input())
     assert.deepEqual(visibleRows(tree, 'loose').map(r => r.key), [pk('gone'), pk('gone2')])
-    assert.equal(visibleRows(tree, 'all').length, 5)
+    assert.deepEqual(visibleRows(tree, 'all').map(r => r.key), [pk('gone'), pk('gone2'), 'frame-pads.desk@d1', pk('a')], 'a live empty note is not listed; a loose empty one is')
     assert.deepEqual(noteCounts(tree), { loose: 1, looseEmpty: 1, withContent: 3 })
     assert.deepEqual(emptyLooseKeys(tree), [pk('gone2')])
   })

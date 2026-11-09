@@ -31,6 +31,11 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e
 }
 
+/** A desk's group heading: its name, with "Mesa" in front unless the name already says it ("Mesa 1"). */
+export function deskHeading(name: string): string {
+  return /^mesa\b/i.test(name) ? name : `Mesa ${name}`
+}
+
 /** Where the note lives, in a few words. */
 export function ownerText(r: NoteRow): string {
   if (r.owner.kind === 'desk') return r.loose ? `antes na mesa ${r.label || ''}`.trim() : 'prancheta da mesa'
@@ -149,13 +154,15 @@ export class NotesManagerPanel implements IContentRenderer {
       for (const r of tree.loose) out.push(this.rowEl(r))
     } else {
       if (tree.loose.length) { out.push(el('div', 'pn-group', `Soltas (${tree.loose.length})`)); for (const r of tree.loose) out.push(this.rowEl(r)) }
+      const shown = new Set(this.rows.map(r => r.key))
       for (const d of tree.desks) {
-        if (!d.deskPad && d.panels.length === 0) continue
-        out.push(el('div', 'pn-group', `Mesa ${d.name}`))
-        if (d.deskPad) out.push(this.rowEl(d.deskPad))
-        for (const r of d.panels) out.push(this.rowEl(r))
+        const rows = [...(d.deskPad ? [d.deskPad] : []), ...d.panels].filter(r => shown.has(r.key))
+        if (!rows.length) continue
+        out.push(el('div', 'pn-group', deskHeading(d.name)))
+        for (const r of rows) out.push(this.rowEl(r))
       }
-      if (tree.global.length) { out.push(el('div', 'pn-group', 'Global')); for (const r of tree.global) out.push(this.rowEl(r)) }
+      const global = tree.global.filter(r => shown.has(r.key))
+      if (global.length) { out.push(el('div', 'pn-group', 'Global')); for (const r of global) out.push(this.rowEl(r)) }
     }
     this.list.replaceChildren(...out)
     if (hadFocus) this.list.focus()

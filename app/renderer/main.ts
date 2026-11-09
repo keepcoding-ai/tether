@@ -1322,9 +1322,9 @@ function noteTargets(): { key: string; label: string; group: string }[] {
   const out: { key: string; label: string; group: string }[] = []
   const frames = padRegistry.all().filter(p => p.frames)
   for (const d of desks.desks) {
-    for (const pad of frames.filter(p => p.scope === 'desk')) out.push({ key: noteKeyOf(pad.id, { deskId: d.id }), label: pad.title, group: `Mesa ${d.name}` })
+    for (const pad of frames.filter(p => p.scope === 'desk')) out.push({ key: noteKeyOf(pad.id, { deskId: d.id }), label: pad.title, group: /^mesa\b/i.test(d.name) ? d.name : `Mesa ${d.name}` })
     for (const pad of frames.filter(p => p.scope === 'panel')) {
-      for (const p of desks.desk(d.id)?.panels ?? []) if (!empties.has(p.id)) out.push({ key: noteKeyOf(pad.id, { panelId: p.id }), label: p.api.title ?? p.id, group: `Mesa ${d.name}` })
+      for (const p of desks.desk(d.id)?.panels ?? []) if (!empties.has(p.id)) out.push({ key: noteKeyOf(pad.id, { panelId: p.id }), label: p.api.title ?? p.id, group: /^mesa\b/i.test(d.name) ? d.name : `Mesa ${d.name}` })
     }
   }
   for (const pad of frames.filter(p => p.scope === 'global')) out.push({ key: pad.id, label: pad.title, group: 'Global' })

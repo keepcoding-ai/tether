@@ -145,15 +145,16 @@ export function buildNoteTree(input: NoteTreeInput): NoteTree {
   return { loose, desks, global }
 }
 
-/** The rows a filter shows, in tree order. */
+/** The rows a filter shows, in tree order. A live owner's empty note (the blank a pad starts with) is not listed: nothing to look after. */
 export function visibleRows(tree: NoteTree, filter: NoteFilter): NoteRow[] {
   if (filter === 'loose') return tree.loose
-  return [...tree.loose, ...tree.desks.flatMap(d => [...(d.deskPad ? [d.deskPad] : []), ...d.panels]), ...tree.global]
+  const live = (r: NoteRow): boolean => !r.empty
+  return [...tree.loose, ...tree.desks.flatMap(d => [...(d.deskPad ? [d.deskPad] : []), ...d.panels]).filter(live), ...tree.global.filter(live)]
 }
 
 /** How many loose notes have content (the counter's warning dot) and how many notes have content at all. */
 export function noteCounts(tree: NoteTree): { loose: number; looseEmpty: number; withContent: number } {
-  const all = visibleRows(tree, 'all')
+  const all = [...tree.loose, ...tree.desks.flatMap(d => [...(d.deskPad ? [d.deskPad] : []), ...d.panels]), ...tree.global]
   return { loose: tree.loose.filter(r => !r.empty).length, looseEmpty: tree.loose.filter(r => r.empty).length, withContent: all.filter(r => !r.empty).length }
 }
 
