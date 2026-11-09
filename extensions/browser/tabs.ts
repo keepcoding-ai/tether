@@ -37,6 +37,12 @@ export interface TabBlocked {
   destination: string
 }
 
+/** Who follows the tabs besides the renderer (the gatekeeper): a tab added (its surface exists) and a tab closed. */
+export interface TabWatcher {
+  added(info: TabInfo): void
+  closed(tabId: string): void
+}
+
 export interface TabEvents {
   changed(info: TabInfo): void
   closed(tabId: string): void
@@ -61,6 +67,7 @@ export class TabRegistry {
   private readonly session: Promise<TabSession>
   private readonly events: TabEvents
   private readonly local: TabLocalNetwork
+  private readonly watchers = new Set<TabWatcher>()
   private disposed = false
 
   constructor(main: TetherMain, session: Promise<TabSession>, events: TabEvents, local: TabLocalNetwork) {
@@ -108,6 +115,11 @@ export class TabRegistry {
     return ses.net.allowOnce(wc.id, url)
   }
 
+  watch(w: TabWatcher): IDisposable {
+    this.watchers.add(w)
+    return toDisposable(() => { this.watchers.delete(w) })
+  }
+
   list(): TabInfo[] { return [...this.entries.values()].map(infoOf) }
   get(tabId: string): TabInfo | undefined { const e = this.entries.get(tabId); return e ? infoOf(e) : undefined }
   /** The tab's page (test hooks and, later, the gatekeeper). */
@@ -115,11 +127,11 @@ export class TabRegistry {
   /** The tab's surface (its debugger is the gatekeeper's way in). */
   surface(tabId: string): Surface | undefined { return this.entries.get(tabId)?.surface }
 
-  /** A new tab for `owner` opening `url` (http/https only), hidden; `tabId` keeps a saved tab's id. Same id twice: the same tab. */
+  /** A new tab for `owner` opening `url` (http/https, or the blank page the gatekeeper's `Target.createTarget` asks for), hidden; `tabId` keeps a saved tab's id. Same id twice: the same tab. */
   create(owner: string, url: string, opts: { tabId?: string; title?: string; ticket?: FirstTicket } = {}): Promise<TabInfo> {
     if (this.disposed) return Promise.reject(new Error('guia: extensão desligada'))
     if (!isId(owner)) return Promise.reject(new Error('guia: dono inválido'))
-    if (!isWebUrl(url)) return Promise.reject(new Error('guia: só endereços http e https'))
+    if (!isNavigable(url)) return Promise.reject(new Error('guia: só endereços http e https'))
     if (opts.tabId !== undefined && !isId(opts.tabId)) return Promise.reject(new Error('guia: id inválido'))
     const tabId = opts.tabId ?? randomUUID()
     const known = this.entries.get(tabId)
@@ -163,9 +175,11 @@ export class TabRegistry {
       if (this.entries.get(tabId) !== entry) return
       this.entries.delete(tabId)
       this.events.closed(tabId)
+      for (const w of [...this.watchers]) w.closed(tabId)
     })
     this.main.log(`guia ${tabId} criada para ${owner}`)
     this.events.changed(infoOf(entry))
+    for (const w of [...this.watchers]) w.added(infoOf(entry))
     // The first load is not awaited: a slow or failing site still gives the tab (its frame shows the state). An agent's local
     // address waits for the question; refused, it loads without a ticket and the filter refuses it.
     const granted = ticket === 'granted' ? Promise.resolve(ses.net.allowOnce(pageId, url))
@@ -179,6 +193,12 @@ export class TabRegistry {
     const wc = entry.surface.webContents
     const { tabId, ownerSlotId } = entry.tab
     ses.prepare(wc)
+    // JavaScript dialogs: Electron's default listener of its internal '-run-dialog' event shows a NATIVE box. It is replaced so
+    // nothing is shown and the dialog waits for CDP (`Page.handleJavaScriptDialog`, the agent's). Internal Electron API (E6
+    // pins it with a test per Electron version).
+    // The listener must prevent the default: otherwise Electron answers the dialog at once (cancelled) and CDP sees it close.
+    wc.removeAllListeners('-run-dialog' as never)
+    wc.on('-run-dialog' as never, ((e: { preventDefault?: () => void }) => { e?.preventDefault?.() }) as never)
     const changed = (): void => this.events.changed(infoOf(entry))
     wc.setWindowOpenHandler(details => {
       if (isWebUrl(details.url) && POPUP_DISPOSITIONS.has(details.disposition)) {
