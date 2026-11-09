@@ -26,7 +26,7 @@ import { fileOpenFailedSituation, openFile, type OpenFileOptions } from './file-
 import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
-import { SurfaceHosts } from './surface-host.ts'
+import { SurfaceHosts, type FreezeTiming } from './surface-host.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
 import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
 import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
@@ -77,6 +77,7 @@ import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
+import { watchOverlays } from './overlay-freeze.ts'
 
 const COMPONENT = TERMINAL_COMPONENT
 const TAB = TERMINAL_TAB
@@ -971,7 +972,7 @@ function setDrawerOpen(open: boolean): void {
   if (open === drawer.isOpen || (open && !layoutRestored)) return
   lastEsc = undefined
   // A surface in the drawer goes before the drawer does, not a frame after.
-  if (!open) surfaceHosts.suspendAll()
+  if (!open) surfaceHosts.suspendAll($('drawer'))
   if (open) {
     drawerReturnEl = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     drawerState = openDrawer(drawerState, focusedDeskPane())
@@ -983,7 +984,12 @@ function setDrawerOpen(open: boolean): void {
   } else {
     drawerState = closeDrawer(drawerState)
   }
-  for (const id of BEHIND_DRAWER) $(id).toggleAttribute('inert', open)
+  for (const id of BEHIND_DRAWER) {
+    $(id).toggleAttribute('inert', open)
+    // Inert only to keep the keyboard out: still on screen behind the drawer, so its surfaces freeze to a picture
+    // (surface-host.ts) instead of disappearing.
+    $(id).toggleAttribute('data-inert-onscreen', open)
+  }
   document.body.classList.toggle('drawer-open', open)
   drawer.setOpen(open)
   renderStrip()
@@ -2874,6 +2880,8 @@ declare global {
       moveFrameToDesk(slotId: string, deskId: string): void
       /** The drawer: open or not, its panes, the attention counts of its panes. */
       drawer(): { open: boolean; panes: string[]; frames: string[]; attention: DeskAttention }
+      /** The surface freeze: what holds the signal, the pictures on screen, the last freeze/thaw times. */
+      freeze(): { reasons: string[]; pictures: number; timings: FreezeTiming[] }
       toggleDrawer(): void
       openDrawer(): void
       closeDrawer(): void
@@ -2911,6 +2919,7 @@ declare global {
 function setupTestHooks(): void {
   window.__tether = {
     ext: extTestHooks,
+    freeze: () => ({ reasons: surfaceHosts.freezes.reasons(), pictures: surfaceHosts.pictures(), timings: surfaceHosts.freezeTimings() }),
     status: statusRegistry,
     layout: () => layoutJSON(),
     sidebars: () => sidebars?.snapshot(),
@@ -3174,7 +3183,11 @@ const surfaceHosts = new SurfaceHosts({
   place: msg => window.tether.surfacePlace(msg),
   release: msg => window.tether.surfaceRelease(msg),
   onEvent: listener => window.tether.onSurfaceEvent(listener),
+  capture: msg => window.tether.surfaceCapture(msg),
+  freeze: msg => window.tether.surfaceFreeze(msg),
 })
+// The core's overlays hold the freeze signal (the list and its rule live in overlay-freeze.ts).
+watchOverlays(surfaceHosts.freezes, $('drawer'))
 
 /** The manifest's data the core needs before `activate`: default keys, ≡ items, chooser items. */
 function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore): void {
@@ -3374,6 +3387,10 @@ function activateRendererExtensions(): void {
       },
       surfaces: {
         attach: (surfaceId, element) => add(surfaceHosts.attach(id, surfaceId, element)),
+        freezeWhile: reason => {
+          const release = surfaceHosts.freezes.hold(`${id}:${String(reason).slice(0, 64)}`)
+          return add(toDisposable(release))
+        },
       },
       pads: {
         register: type => {

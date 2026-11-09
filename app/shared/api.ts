@@ -142,6 +142,9 @@ export interface TetherApi {
   surfacePlace(msg: PlaceMessage): void
   surfaceRelease(msg: ReleaseMessage): void
   onSurfaceEvent(listener: (event: SurfaceEvent) => void): () => void
+  /** The freeze (app/main/surface-bridge.ts): the page as JPEG bytes (null when it cannot be had); park (true) or back and painted (false). */
+  surfaceCapture(msg: ReleaseMessage): Promise<Uint8Array | null>
+  surfaceFreeze(msg: ReleaseMessage & { frozen: boolean }): Promise<boolean>
   /** settings.json's `extensions` object, read synchronously once before the renderer's extensions activate. */
   extSettingsSync(): ExtensionsSettings
   setExtSetting(id: string, key: string, value: SettingValue): void

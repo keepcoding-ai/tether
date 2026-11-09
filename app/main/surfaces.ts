@@ -129,6 +129,9 @@ export class SurfaceManager {
       })
       await wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
       await this.emulate(r, false)
+      this.warmUp(r)
+      // The owner usually navigates right after create: the first page gets its own warm-up once it has loaded.
+      wc.once('did-finish-load', () => this.warmUp(r))
     } catch (e) {
       this.destroy(r)
       throw new Error(`superfície: não abriu (${(e as Error).message})`)
@@ -316,6 +319,18 @@ export class SurfaceManager {
     if (!wc.debugger.isAttached()) return img
     const shot = await wc.debugger.sendCommand('Page.captureScreenshot', { format: 'png' }) as { data?: string }
     return shot.data ? nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')) : img
+  }
+
+  /**
+   * A throwaway capture (design §12b rule 8). On the bench the first freeze of each process showed a wrong picture (the page's
+   * background with no content) for ~300 ms; the likely cause is the view's first copy request being served from a frame the
+   * compositor produced before the content was laid out, but it was not proven. Spending that first capture here, where
+   * nobody sees it, keeps the person's first freeze clean.
+   */
+  private warmUp(r: SurfaceRecord): void {
+    if (r.destroyed) return
+    const next = r.chain.then(() => (r.destroyed ? undefined : r.view.webContents.capturePage()))
+    r.chain = next.catch(() => {})
   }
 
   private closeView(win: BrowserWindow, view: WebContentsView): void {

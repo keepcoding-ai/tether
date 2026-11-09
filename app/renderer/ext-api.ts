@@ -276,6 +276,12 @@ export interface TetherUi {
    */
   surfaces: {
     attach(surfaceId: string, element: HTMLElement): SurfaceBinding
+    /**
+     * Freezes every shown surface (each swapped for a picture of itself, the page alive behind) until disposed: for an
+     * overlay of the extension's own that is modal or that the person opened. Never for a passing notice or a tooltip (the
+     * person may be typing in the page). Holds nest with the core's (palette, menus, dialogs, drawer, drags).
+     */
+    freezeWhile(reason: string): IDisposable
   }
   /** The side bars' pads (F10). */
   pads: {
