@@ -7,9 +7,11 @@ import type { SettingValue } from '../shared/vscode-configuration-registry.ts'
 import type { IDisposable } from '../shared/vscode-lifecycle.ts'
 import type { Brand } from '../shared/brand.ts'
 import type { Rect, Size, Visibility } from './surface-rules.ts'
+import type { MainAgents } from './agents.ts'
 
 export type { Brand } from '../shared/brand.ts'
 export type { Rect, Size, Visibility } from './surface-rules.ts'
+export type { AgentExit, AgentExitReason, AgentInfo, MainAgents } from './agents.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 
@@ -130,6 +132,12 @@ export interface TetherMain {
   window: { current(): BrowserWindow | undefined }
   /** Native views over the interface (app/main/surfaces.ts). */
   surfaces: ExtSurfaces
+  /**
+   * The window's AI agents (never plain shells), from the daemon's slot states: `slotId` is the daemon's id, the key shared
+   * with the renderer (`TetherUi.agents`). No layout here (desk, drawer, pane): that is the renderer's. `onDidExit` fires when
+   * a live agent stops (its process ended, the slot was removed, or the daemon connection was lost).
+   */
+  agents: MainAgents
   /** The operating system's file shell. `trash` moves a file or folder to the system's trash (Electron's shell.trashItem); it rejects when it cannot. */
   shell: { trash(path: string): Promise<void> }
   /** A line in tether-app.log, prefixed with the extension's id. */

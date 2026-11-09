@@ -18,6 +18,7 @@ import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
 import { detailsOpen } from './pane-details.ts'
 import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
+import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
 
@@ -57,7 +58,7 @@ export function effectiveStatus(s: SlotState): SlotStatus {
  * else the session title (set by the agent), else the folder name.
  */
 export function panelTitle(s: SlotState): string {
-  return s.name ?? s.title ?? folderName(s.cwd)
+  return slotTitle(s)
 }
 
 /** The unsafe marker (tab and header): the launch carries --dangerously-skip-permissions. */

@@ -34,6 +34,7 @@ import { extensions as mainExtensions } from '../../extensions/index.main.ts'
 import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
 import { SurfaceManager } from './surfaces.ts'
 import { SurfaceBridge } from './surface-bridge.ts'
+import { AgentTracker } from './agents.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
 import type { TrayCommand } from '../shared/tray.ts'
@@ -84,6 +85,8 @@ let restartingDaemon = false
 let tray: TrayController | undefined
 /** What the tray shows: the daemon's slots, kept up to date from the list at connect time and the state events. */
 const slotStates = new Map<string, SlotState>()
+/** The agents extensions see (TetherMain.agents), fed by the same daemon events. */
+const agentTracker = new AgentTracker()
 
 function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
@@ -165,14 +168,15 @@ function connectDaemon(): Promise<void> {
     try {
       const client = await connectOnce()
       daemon = client
-      client.on('state', slot => { slotStates.set(slot.slotId, slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
+      client.on('state', slot => { slotStates.set(slot.slotId, slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
-      client.on('removed', slotId => { slotStates.delete(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('removed', slotId => { slotStates.delete(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('close', () => {
         if (daemon !== client) return
         daemon = undefined
         slotStates.clear()
+        agentTracker.lost()
         updateTray()
         if (quittingAll || quitting) return
         // "Reiniciar serviço" (tray) brings its panels back through the renderer's reconnect path; any other
@@ -203,6 +207,7 @@ async function syncSlots(client: DaemonClient): Promise<void> {
   if (daemon !== client || list.t !== 'ok') return
   slotStates.clear()
   for (const s of list.slots ?? []) slotStates.set(s.slotId, s)
+  agentTracker.reset(list.slots ?? [])
   updateTray()
 }
 
@@ -411,6 +416,7 @@ const extensionHost = new MainExtensionHost(mainExtensions, {
   log: msg => appLog(msg),
   trash: path => shell.trashItem(path),
   surfaces: owner => surfaces.forOwner(owner),
+  agents: agentTracker,
 })
 
 // ---------- settings registry (the settings page's channels) ----------
@@ -730,6 +736,7 @@ async function restartDaemon(): Promise<void> {
       old.close()
     }
     slotStates.clear()
+    agentTracker.lost()
     updateTray()
     sendConnection({ connected: false, pipe, error: 'reiniciando o tetherd…' })
     // The old daemon answers until its server is closed: wait for the pipe to go quiet before spawning.

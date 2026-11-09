@@ -25,12 +25,14 @@ import type { AgentUi } from './agent-ui.ts'
 import type { Brand } from '../shared/brand.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
+import type { AgentPane } from './agent-panes.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
 export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
 export type { ProjectFolder } from './workspace.ts'
 export type { AgentUi } from './agent-ui.ts'
+export type { AgentPane, PanePlace } from './agent-panes.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
@@ -236,9 +238,25 @@ export interface TetherUi {
     /** Opens the box in that mode (empty field), as the mode's chord does. */
     showMode(): void
   }
-  /** How the app names and draws an agent the daemon side of this extension registers (F9 §4.8). */
+  /**
+   * The AI agents (F9 §4.8). `register` tells how the app names and draws an agent the daemon side of this extension registers;
+   * the rest is a read-only view of the agents' panes (never plain shells), keyed by `slotId`, the daemon's id of the slot,
+   * the same one `TetherMain.agents` and the daemon use and the one that survives a restart. `name` is what the pane's tab
+   * shows; `alive` is false once the process ended; the place is where the pane is now. The interface gives an agent no colour
+   * of its own, so there is none here.
+   */
   agents: {
     register(ui: AgentUi): IDisposable
+    /** Every agent pane in the window (desks, system desks, the drawer, the pads), in no particular order. */
+    list(): readonly AgentPane[]
+    get(slotId: string): AgentPane | undefined
+    /** A pane appeared, was renamed, moved (desk, drawer, pad), changed profile, exited or went away (then with `alive: false`). */
+    onDidChange(listener: (pane: AgentPane) => void): IDisposable
+    /**
+     * Brings the agent's pane to the front: its desk (a system desk too) comes forward, the drawer or its pad opens, its tab is
+     * activated and focused. An agent that exited is not restarted. False when no pane shows that slot.
+     */
+    focus(slotId: string): boolean
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */

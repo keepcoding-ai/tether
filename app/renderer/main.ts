@@ -71,6 +71,7 @@ import type { PaneInfo } from './ext-api.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
+import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
@@ -592,6 +593,7 @@ function deskPadsOf(layout: Layout): { id: string; pads?: Record<string, unknown
 }
 
 function scheduleSave(): void {
+  notifyAgentPanes() // every move, rename or pane added or removed saves the layout
   if (!layoutRestored) return
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(layoutJSON()) }, SAVE_DEBOUNCE_MS)
@@ -1366,6 +1368,7 @@ function applyState(slot: SlotState): void {
   renderStrip()
   if (slot.attention && slot.slotId === watchedPane()) void window.tether.request({ t: 'seen', slotId: slot.slotId })
   recomputeProjects() // the slot's kind or folder may have changed
+  notifyAgentPanes()
 }
 
 function onDaemonEvent(ev: DaemonEvent): void {
@@ -1380,6 +1383,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
       if (panel) removeAnyPanel(panel)
       refreshClosedMenu()
       renderStrip()
+      notifyAgentPanes()
       break
     }
   }
@@ -1655,14 +1659,14 @@ function refreshClosedMenu(): void {
 }
 
 /** Opens a panel for a slot the daemon knows; an exited slot is started (an unconfirmed one shows the choice). */
-function openSlot(slotId: string): void {
+function openSlot(slotId: string, start = true): void {
   const s = slots.get(slotId)
   if (!s) return
   // A pane of the drawer opens the drawer; any other brings the user back to the desks (and to the pane's desk).
   const inside = drawer.desk.getPanel(slotId)
   if (inside) {
     setDrawerOpen(true)
-    if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+    if (start && effectiveStatus(s) === 'exited') void startSlot(s.slotId)
     inside.api.setActive()
     return
   }
@@ -1672,7 +1676,7 @@ function openSlot(slotId: string): void {
   if (pad) {
     if (pad.deskId && pad.deskId !== desks.activeDeskId) desks.switchTo(pad.deskId)
     sidebars?.open(pad.padId, false)
-    if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+    if (start && effectiveStatus(s) === 'exited') void startSlot(s.slotId)
     pad.desk.getPanel(slotId)?.api.setActive()
     setFocusedPad(pad)
     requestAnimationFrame(() => focusPane(slotId))
@@ -1682,7 +1686,7 @@ function openSlot(slotId: string): void {
   const deskId = desks.deskOf(slotId)
   if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
   const panel = desks.getPanel(slotId) ?? addPanel(s)
-  if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+  if (start && effectiveStatus(s) === 'exited') void startSlot(s.slotId)
   panel.api.setActive()
 }
 
@@ -1695,6 +1699,53 @@ function revealPane(id: string): void {
   if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
   panel.api.setActive()
   requestAnimationFrame(() => focusPane(id))
+}
+
+// ---------- the agents' panes for extensions (TetherUi.agents) ----------
+
+const agentPaneListeners = new Set<(pane: AgentPane) => void>()
+let agentPaneSnapshot: AgentPane[] = []
+let agentPaneQueued = false
+
+/** Every pane that shows an agent's slot, with where it lives now. */
+function agentPanes(): AgentPane[] {
+  const out: AgentPane[] = []
+  for (const slot of slots.values()) {
+    if (slot.kind === 'shell' || !findPanel(slot.slotId)) continue
+    const pad = framePadOf(slot.slotId)
+    const drawerPane = inDrawer(slot.slotId)
+    const deskId = drawerPane ? undefined : pad ? pad.deskId : desks.deskOf(slot.slotId)
+    const pane = agentPaneOf(slot, {
+      paneId: slot.slotId,
+      ...(deskId !== undefined ? { deskId, deskTitle: deskName(deskId) } : {}),
+      isSystemDesk: deskId !== undefined && desks.isSystem(deskId),
+      inDrawer: drawerPane,
+      ...(pad ? { padId: pad.padId } : {}),
+    })
+    if (pane) out.push(pane)
+  }
+  return out
+}
+
+/** Tells the listeners what changed since the last call; coalesced to the end of the current task, after a move has settled. */
+function notifyAgentPanes(): void {
+  if (agentPaneQueued) return
+  agentPaneQueued = true
+  queueMicrotask(() => {
+    agentPaneQueued = false
+    const next = agentPanes()
+    const changes = agentPaneChanges(agentPaneSnapshot, next)
+    agentPaneSnapshot = next
+    for (const pane of changes) for (const l of [...agentPaneListeners]) { try { l(pane) } catch (err) { console.error('agents.onDidChange', err) } }
+  })
+}
+
+/** Brings an agent's pane forward without restarting an exited agent. */
+function focusAgentPane(slotId: string): boolean {
+  if (!slots.has(slotId) || !findPanel(slotId)) return false
+  openSlot(slotId, false)
+  requestAnimationFrame(() => focusPane(slotId))
+  return true
 }
 
 // ---------- switching a panel's profile ----------
@@ -3364,6 +3415,10 @@ function activateRendererExtensions(): void {
       },
       agents: {
         register: ui => add(registerAgentUi(ui)),
+        list: () => agentPanes(),
+        get: slotId => agentPanes().find(p => p.slotId === slotId),
+        onDidChange: listener => { agentPaneListeners.add(listener); return add(toDisposable(() => { agentPaneListeners.delete(listener) })) },
+        focus: slotId => focusAgentPane(slotId),
       },
       chooser: {
         resolve: (itemId, fn) => {
