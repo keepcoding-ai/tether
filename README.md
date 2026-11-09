@@ -106,6 +106,16 @@ tether doctor
 
 Regras de confiança na retomada (PRD §6.6): o `open` recusa, com a correção na mensagem, um vínculo **não confirmado** (use `--new` ou `--resume-anyway`), uma sessão que o agente não tem mais (`--new`), uma pasta que sumiu (`tether rm`) e uma sessão já aberta em outro slot (`tether attach`). Variáveis: `TETHER_HOME` (pasta de estado), `TETHER_PIPE` (pipe do daemon) e `TETHER_CLAUDE_ARGS` / `TETHER_SOUL_ARGS` (argumentos acrescentados pelo `tetherd` a todo lançamento do agente, ex.: `--model haiku` nos testes).
 
+## Tether Browser (extensão `browser`)
+
+Uma mesa "Browser" onde os agentes dos painéis abrem guias de um navegador de verdade (uma `WebContentsView` do Electron por guia), que você acompanha, assume e devolve. A prancheta "Guias" (barra esquerda) lista as guias por agente, com pausa, fechamento e o que foi baixado.
+
+- **Ligar.** Desligado por padrão. Em Configurações, `extensions.browser.serveToAgents` ("Oferecer o navegador aos agentes dos painéis") injeta o servidor MCP `tether-browser` nos agentes lançados depois da mudança. O texto da chave diz o alcance: "Os agentes do tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias." Há uma partição só, para todos os agentes. `extensions.browser.evaluate` (desligado) libera JavaScript na página. Ligar ou desligar a extensão inteira pede reiniciar o app.
+- **Rede local.** A página nunca alcança `localhost`, a rede local nem `file:`. Quando o agente pede um endereço local, o tether pergunta a você ("Permitir que o agente abra localhost:5173?"); `extensions.browser.localNetwork` guarda a resposta (`ask`, `allow`, `deny`).
+- **O que o agente pode.** Navegar, ler, clicar, digitar, tirar print, baixar arquivos (para `<home>/browser/downloads/<agente>/`, com teto) e enviar arquivos só com o seu OK por envio, mostrando o site dono do campo. Só enxerga as guias que ele mesmo abriu.
+- **O que não pode.** Ler ou exportar cookies e credenciais (o porteiro filtra os eventos de rede), usar um depurador do Chromium aberto (não existe porta aberta), redimensionar ou emular a guia, abrir permissões de site (câmera, localização e notificações são negadas), agir numa guia que você assumiu. Um agente enganado por uma página ainda pode **usar** as contas logadas; ele não as leva.
+- **Logins guardados.** Só com o runtime de cookies cifrados, que o `npm run app:install` prepara (o atalho do Menu Iniciar o usa). Fora dele (`npm run app`, testes) as guias ficam numa partição em memória e os logins acabam com o app. Mesmo com a trava, o cache HTTP das guias fica desligado, para nenhum corpo de página ir para o disco em texto puro. Limite: a trava cifra só o valor do cookie (nome e site seguem legíveis) e não protege de um programa rodando na sua conta.
+
 ## Onde fica o estado
 
 ```
