@@ -17,6 +17,7 @@ import { McpNameCollisionError } from '../../src/agents/mcp.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import { slotMetaPath } from '../../src/core/paths.ts'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
 import { slotOfKeyFile, validKeyShape } from './gate-rules.ts'
 
@@ -65,18 +66,22 @@ export function releaseSlot(home: string, slotId: string): void {
 }
 
 /**
- * At the start of the tetherd that owns the pipe no agent is alive (they die with the daemon): whatever sits in keys/ and
- * mcp/ is left over from a daemon that was killed. Returns how many files went.
+ * At the start of the tetherd that owns the pipe no agent is alive (they die with the daemon): the key and the MCP file of a
+ * slot that exists are left over from a daemon that was killed. Only files named after a slot of this home go (a key nobody's
+ * slot owns is not ours to judge). Returns how many files went.
  */
 export function sweepStale(home: string): number {
   let n = 0
-  const sweep = (dir: string, mine: (name: string) => boolean): void => {
+  const sweep = (dir: string, slotOf: (name: string) => string | undefined): void => {
     let names: string[] = []
     try { names = readdirSync(dir) } catch { /* no folder */ }
-    for (const f of names) if (mine(f) || f.endsWith('.tmp')) { rmSync(join(dir, f), { force: true }); n++ }
+    for (const f of names) {
+      const slotId = slotOf(f)
+      if (f.endsWith('.tmp') || (slotId !== undefined && existsSync(slotMetaPath(home, slotId)))) { rmSync(join(dir, f), { force: true }); n++ }
+    }
   }
-  sweep(keysDirOf(home), f => slotOfKeyFile(f) !== undefined)
-  sweep(mcpDirOf(home), f => f.endsWith('.json'))
+  sweep(keysDirOf(home), slotOfKeyFile)
+  sweep(mcpDirOf(home), f => (f.endsWith('.json') ? f.slice(0, -5) : undefined))
   return n
 }
 
