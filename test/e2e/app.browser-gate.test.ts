@@ -6,10 +6,12 @@
 //      is deleted;
 //   2. the conformance battery (a representative subset of bench S2/B1, through MCP tools): the VENDORED `tether-browser`
 //      server (extensions/browser/vendor/tether-browser/server.mjs) run by the repo's Electron as Node, over stdio, as agent A.
-//      E6: dialogs and captures (viewport, element, full page) of the hidden tab pass; only the resize fails, on purpose;
+//      E6/E6b: dialogs and captures (viewport, element, full page) of the hidden tab pass; only the resize fails, on purpose;
 //   3. E6, raw CDP: the remappings (resize refused by name, focus on answered, off refused, bringToFront without effect, input
 //      scaled), a hidden tab's capture at the asked size, a dialog that stays open until the agent answers (no native box),
-//      commands of one session kept in order behind a navigation that waits, schemes, refusals by domain.
+//      commands of one session kept in order behind a navigation that waits, schemes, refusals by domain;
+//   4. E6b, no native surface: HTTP authentication cancelled (and the next tab still opens), `window.print` replaced in the page
+//      and its frame, the page's file input intercepted on the core's own session.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process'
@@ -51,11 +53,24 @@ const PAGES: Record<string, string> = {
 <script>window.__clicks = []; window.__dialogs = []; console.log('page a ready')</script>`,
   '/two.html': '<!doctype html><title>Page two</title><link rel="icon" href="data:,"><h1>PAGE-TWO</h1>',
   '/pop.html': '<!doctype html><title>Popup</title><link rel="icon" href="data:,"><h1>POPUP-CONTENT</h1>',
+  '/native.html': `<!doctype html><title>Native</title><link rel="icon" href="data:,">
+<input type="file" id="f"><iframe id="fr" src="/two.html"></iframe>`,
   '/b.html': '<!doctype html><title>Page B</title><link rel="icon" href="data:,"><h1>AGENT-B-CONTENT</h1><script>window.__bClicks = 0; addEventListener("click", () => window.__bClicks++)</script>',
 }
 
+/** Requests to `/auth`, and those that carried credentials (a page's HTTP authentication must be cancelled: never any). */
+let authAsked = 0
+let authAnswered = 0
+
 function servePages(): Promise<{ server: Server; base: string }> {
   const server = createServer((req, res) => {
+    if (new URL(req.url ?? '/', 'http://x').pathname === '/auth') {
+      authAsked++
+      if (req.headers.authorization) authAnswered++
+      res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'www-authenticate': 'Basic realm="tether-e2e"' })
+      res.end('<!doctype html><title>Denied</title><h1>AUTH-DENIED</h1>')
+      return
+    }
     const body = PAGES[new URL(req.url ?? '/', 'http://x').pathname]
     res.writeHead(body ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' })
     res.end(body ?? 'not found')
@@ -250,9 +265,8 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     if (process.env.TETHER_GATE_TRACE) writeFileSync(`${process.env.TETHER_GATE_TRACE}.mcp.log`, server.stderr())
     const failed = steps.filter(s => !s.ok)
     console.log(`battery: ${steps.length - failed.length}/${steps.length} steps ok; failed: ${failed.map(f => f.name).join(' | ')}`)
-    // The resize fails on purpose (rule 3); a hidden tab's viewport and full-page captures are still open (E6 did not close them).
-    const expected = new Set(['resize (refused on purpose: the page size is the tether\'s)', 'screenshot (viewport)', 'screenshot (fullPage)'])
-    assert.deepEqual(failed.map(f => f.name).filter(n => !expected.has(n)), [], 'no failure beyond the resize and the hidden captures')
+    // Only the resize fails, on purpose (rule 3): a hidden tab's viewport and full-page captures pass (E6b: the core keeps it drawing).
+    assert.deepEqual(failed.map(f => f.name), ['resize (refused on purpose: the page size is the tether\'s)'], 'only the resize fails')
 
     // ---- 3b. E6, raw CDP as agent A: remappings, captures, dialogs, order, schemes ----
     const ra = await rawCdp(gate.port, KEY_A)
@@ -290,6 +304,53 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     const href = await T.evaluate(async (_e, tab) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(tab, 'location.href'), aTabId)
     assert.equal(href, 'about:blank', 'the second navigation went out second')
     ra.close()
+
+    // ---- 3c. E6b: no native surface opens from the page; the main process keeps answering ----
+    type Hook = { __browserTabs: Tabs & { registry: { surface(tabId: string): { debugger: { onMessage(l: (m: string, p: unknown, s?: string) => void): { dispose(): void } } } } } }
+    const pageEval = (tab: string, code: string): Promise<any> => T.evaluate(async (_e, a) => (globalThis as unknown as Hook).__browserTabs.eval(a.tab, a.code), { tab, code })
+    const newTab = (url: string): Promise<string> => T.evaluate(async (_e, u) => (await (globalThis as unknown as Hook).__browserTabs.create('agent-a', u)).tabId, url)
+    const until = async (tab: string, code: string, ok: (v: any) => boolean): Promise<any> => {
+      let v: any
+      for (let i = 0; i < 40; i++) { v = await pageEval(tab, code).catch(() => undefined); if (ok(v)) return v; await sleep(250) }
+      return v
+    }
+    // HTTP authentication: the page gets its 401, nobody answers it, and another tab still opens right after (E6's hang: a tab
+    // listener answering the egress proxy's challenge a second time froze the main process).
+    const authTab = await newTab(`${pages.base}/auth`)
+    assert.match(String(await until(authTab, 'document.body.textContent', v => /AUTH-DENIED/.test(String(v)))), /AUTH-DENIED/, 'the 401 page shows (authentication cancelled, no box)')
+    assert.ok(authAsked >= 1, 'the page asked for authentication')
+    assert.equal(authAnswered, 0, 'no credential was ever sent')
+    const after = await Promise.race([newTab(`${pages.base}/native.html`), sleep(10_000).then(() => 'TIMEOUT')])
+    assert.notEqual(after, 'TIMEOUT', 'the next tab opens after an authentication challenge')
+    const nativeTab = after
+    assert.equal(await until(nativeTab, `!!document.getElementById('fr')?.contentWindow?.document.querySelector('h1')`, v => v === true), true, 'native.html and its frame loaded')
+    // window.print: replaced before the page ran, in the page and its frame, and the page cannot put it back. Checked before it is
+    // called: a real print() would open the system's box.
+    const printOf = (where: string): Promise<any> => pageEval(nativeTab, `(() => { const w = ${where}; const d = Object.getOwnPropertyDescriptor(w, 'print'); return { configurable: d?.configurable, writable: d?.writable, native: /native code/.test(String(w.print)) } })()`)
+    assert.deepEqual(await printOf('window'), { configurable: false, writable: false, native: false }, 'print replaced in the page')
+    assert.deepEqual(await printOf(`document.getElementById('fr').contentWindow`), { configurable: false, writable: false, native: false }, 'print replaced in the frame')
+    assert.deepEqual(await pageEval(nativeTab, `(() => { try { window.print = () => 1 } catch {} try { delete window.print } catch {} return [window.print() ?? null, /native code/.test(String(window.print))] })()`), [null, false], 'print() does nothing and stays replaced')
+    // The native file chooser: a click of the page's <input type=file> (with a user gesture) is intercepted on the core's own
+    // session (Page.fileChooserOpened there, host truth), so no box opens; the agent's session never sees it.
+    await T.evaluate((_e, tab) => {
+      const g = globalThis as unknown as Hook & { __rootEvents: string[]; __rootSub: { dispose(): void } }
+      g.__rootEvents = []
+      g.__rootSub = g.__browserTabs.registry.surface(tab).debugger.onMessage((m, _p, sid) => { if (!sid) g.__rootEvents.push(m) })
+    }, nativeTab)
+    const rn = await rawCdp(gate.port, KEY_A)
+    const nTarget = ((await rn.call('Target.getTargets')).result.targetInfos as { targetId: string; url: string }[]).find(t => /native\.html/.test(t.url))
+    assert.ok(nTarget, 'A sees the native tab')
+    const ns = (await rn.call('Target.attachToTarget', { targetId: nTarget.targetId, flatten: true })).result.sessionId as string
+    await rn.call('Page.enable', {}, ns)
+    rn.events.length = 0
+    await rn.call('Runtime.evaluate', { expression: `document.getElementById('f').click(); 'clicked'`, userGesture: true }, ns)
+    const rootEvents = (): Promise<string[]> => T.evaluate(() => (globalThis as unknown as { __rootEvents: string[] }).__rootEvents)
+    for (let i = 0; i < 20 && !(await rootEvents()).includes('Page.fileChooserOpened'); i++) await sleep(150)
+    assert.ok((await rootEvents()).includes('Page.fileChooserOpened'), 'the chooser was intercepted on the core\'s session (no native box)')
+    assert.equal(rn.events.filter(e => e.method === 'Page.fileChooserOpened').length, 0, 'the agent\'s session did not see it')
+    assert.equal(await pageEval(nativeTab, `document.getElementById('f').files.length`), 0, 'no file was chosen')
+    await T.evaluate(() => (globalThis as unknown as { __rootSub: { dispose(): void } }).__rootSub.dispose())
+    rn.close()
 
     // ---- 4. a deleted key: refused, and its live connection drops ----
     unlinkSync(join(keysDir, 'agent-b.key'))
