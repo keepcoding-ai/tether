@@ -24,6 +24,7 @@ import type { ProjectFolder } from './workspace.ts'
 import type { AgentUi } from './agent-ui.ts'
 import type { Brand } from '../shared/brand.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
+import type { SurfaceBinding } from './surface-host.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
@@ -31,6 +32,7 @@ export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
 export type { ProjectFolder } from './workspace.ts'
 export type { AgentUi } from './agent-ui.ts'
 export type { Brand } from '../shared/brand.ts'
+export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
@@ -262,6 +264,18 @@ export interface TetherUi {
     isActive(id: string): boolean
     /** A system desk was entered (`active: true`) or left (`false`); the listener is released with the extension. */
     onDidChangeActive(listener: (e: { id: string; active: boolean }) => void): IDisposable
+  }
+  /**
+   * Native surfaces (the extension's main side creates them, TetherMain.surfaces; the id reaches the pane over the
+   * extension's own channel). attach ties the surface to a pane's element: the core keeps the view on the element's
+   * rectangle while the element is on screen (its desk is the visible one, its tab the active one, its drawer or pad open,
+   * the window not minimized) and hides it otherwise, also on its own when the element is removed. Only the extension's
+   * own surfaces can be attached. Dispose when the pane goes; the surface is never destroyed by it (a pane moved between
+   * desks attaches the same surface to its new element). The binding reports the effective rectangle and scale (draw the
+   * bands around it) and, with the shield on (Surface.setInputShield, main side), where the person tried to click.
+   */
+  surfaces: {
+    attach(surfaceId: string, element: HTMLElement): SurfaceBinding
   }
   /** The side bars' pads (F10). */
   pads: {

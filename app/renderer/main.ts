@@ -26,6 +26,7 @@ import { fileOpenFailedSituation, openFile, type OpenFileOptions } from './file-
 import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
+import { SurfaceHosts } from './surface-host.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
 import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
 import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
@@ -442,6 +443,7 @@ function setupDock(): void {
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.allDeskIds); scheduleSave() },
+    onBeforeSwitch: () => { surfaceHosts.suspendAll() },
     onSwitch: () => { focusActivePane(); notifyActivePane(); notifySystemDeskActive() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
@@ -968,6 +970,8 @@ function focusedDeskPane(): string | undefined {
 function setDrawerOpen(open: boolean): void {
   if (open === drawer.isOpen || (open && !layoutRestored)) return
   lastEsc = undefined
+  // A surface in the drawer goes before the drawer does, not a frame after.
+  if (!open) surfaceHosts.suspendAll()
   if (open) {
     drawerReturnEl = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     drawerState = openDrawer(drawerState, focusedDeskPane())
@@ -3165,6 +3169,12 @@ function onExtSetting(change: { id: string; key: string; value: SettingValue }):
 const contributionStores = new Map<string, DisposableStore>()
 /** What extensions expose for the e2e (TetherUi.test.expose), merged into window.__tether by setupTestHooks. */
 const extTestHooks: Record<string, Record<string, unknown>> = {}
+/** Panes' host elements tied to their native surfaces (TetherUi.surfaces). */
+const surfaceHosts = new SurfaceHosts({
+  place: msg => window.tether.surfacePlace(msg),
+  release: msg => window.tether.surfaceRelease(msg),
+  onEvent: listener => window.tether.onSurfaceEvent(listener),
+})
 
 /** The manifest's data the core needs before `activate`: default keys, ≡ items, chooser items. */
 function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore): void {
@@ -3361,6 +3371,9 @@ function activateRendererExtensions(): void {
         toggle: deskId => { ownSystemDesk(deskId); desks.toggleSystem(deskId) },
         isActive: deskId => { ownSystemDesk(deskId); return desks.activeDeskId === deskId },
         onDidChangeActive: listener => { systemDeskListeners.add(listener); return add(toDisposable(() => { systemDeskListeners.delete(listener) })) },
+      },
+      surfaces: {
+        attach: (surfaceId, element) => add(surfaceHosts.attach(id, surfaceId, element)),
       },
       pads: {
         register: type => {

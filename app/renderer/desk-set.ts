@@ -17,6 +17,8 @@ export interface DeskSetHost {
   deskHost(deskId: () => string): DeskHost
   /** The row changed (order, names, colours, active desk): repaint the strip and save. */
   onDesksChange(): void
+  /** A desk is about to be shown (before anything repaints): what a native view over the old one must do first. */
+  onBeforeSwitch?(): void
   /** A desk became the visible one. */
   onSwitch(deskId: string): void
   /** The options to re-create a pane elsewhere (component, tab, title, params). */
@@ -101,6 +103,7 @@ export class DeskSet {
   /** Shows desk `id`. Nothing in the other desks changes. */
   switchTo(id: string): void {
     if (!this.mounted.has(id)) return
+    this.host.onBeforeSwitch?.()
     this.activeId = id
     this.pendingActive = undefined
     if (!this.system.has(id)) this.mru = touchMru(this.mru, id)

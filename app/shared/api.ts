@@ -10,6 +10,7 @@ import type { FileTarget } from './file-open.ts'
 import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 import type { ExtTransport } from './ext-ipc.ts'
+import type { PlaceMessage, ReleaseMessage, SurfaceEvent } from './surface-panel-rules.ts'
 import type { ExtensionsSettings, SettingSchema, SettingValue } from './vscode-configuration-registry.ts'
 import type { SettingsError } from './settings-file.ts'
 import type { ExtensionSummary } from '../../extensions/types.ts'
@@ -137,6 +138,10 @@ export interface TetherApi {
   onKeybindingsChanged(listener: (state: KeybindingsFileState) => void): () => void
   /** The extensions' IPC bus (app/shared/ext-ipc.ts): channels `ext:<id>:<channel>`; extensions use it through TetherUi.ipc. */
   ext: ExtTransport
+  /** Native surfaces (app/main/surface-bridge.ts): where a pane's host element is and whether it is on screen, the surface let go, and what main tells back. */
+  surfacePlace(msg: PlaceMessage): void
+  surfaceRelease(msg: ReleaseMessage): void
+  onSurfaceEvent(listener: (event: SurfaceEvent) => void): () => void
   /** settings.json's `extensions` object, read synchronously once before the renderer's extensions activate. */
   extSettingsSync(): ExtensionsSettings
   setExtSetting(id: string, key: string, value: SettingValue): void

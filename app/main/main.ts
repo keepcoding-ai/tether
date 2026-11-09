@@ -33,6 +33,7 @@ import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { extensions as mainExtensions } from '../../extensions/index.main.ts'
 import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
 import { SurfaceManager } from './surfaces.ts'
+import { SurfaceBridge } from './surface-bridge.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
 import type { TrayCommand } from '../shared/tray.ts'
@@ -395,6 +396,7 @@ type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; 
 // (app/main/ext-host.ts). The handlers exist from the start; activation runs when the app is ready, before the window.
 // Native views over the interface, owned by the extension that creates them (app/main/surfaces.ts).
 const surfaces = new SurfaceManager({ dist: __dirname, window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
+new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
 const extensionHost = new MainExtensionHost(mainExtensions, {
   home,
   userDir: userHome,
