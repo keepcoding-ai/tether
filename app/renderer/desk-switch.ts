@@ -23,10 +23,11 @@
 import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
 import { fitDesks, overflowDesks, pickFromOverflow, touchUsed, type LastUsed } from './desk-switch-rules.ts'
 import { icon, type IconName } from './icons.ts'
+import { pillMark, type Badge } from './seal-rules.ts'
 import { clampDragX, dragTargetIndex, fullIndexAfterDrop, passedThreshold } from './desk-drag-rules.ts'
 
 /** What a desk's badge says: how many panes finished (done) or wait for the user (waiting). */
-export interface DeskAttention { done: number; waiting: number }
+export interface DeskAttention { done: number; waiting: number; lines?: string[] }
 
 export interface DeskSwitchHost {
   switchTo(id: string): void
@@ -61,7 +62,7 @@ interface Press {
 }
 
 /** What a system desk's pill shows. */
-export interface SystemPill { id: string; title: string; icon?: IconName; active: boolean; hint?: string }
+export interface SystemPill { id: string; title: string; icon?: IconName; active: boolean; hint?: string; attention?: DeskAttention; badge?: Badge }
 
 export class DeskSwitch {
   readonly element: HTMLElement
@@ -144,6 +145,14 @@ export class DeskSwitch {
       let glyph: SVGSVGElement
       try { glyph = icon(p.icon ?? 'cards') } catch { glyph = icon('cards') } // an unknown icon name must not take the capsule down
       b.append(glyph, document.createTextNode(p.title))
+      const mark = pillMark(p.attention, p.badge)
+      if (mark) {
+        const el = document.createElement('span')
+        el.className = `cnt sys-badge ${mark.tone}${mark.text ? '' : ' pip'}`
+        el.textContent = mark.text
+        b.append(el)
+        b.title += mark.lines.map(l => `\n${l}`).join('')
+      }
       b.addEventListener('mousedown', ev => ev.preventDefault())
       b.addEventListener('click', ev => { ev.stopPropagation(); this.host.toggleSystem(p.id) })
       after.after(b)
@@ -243,7 +252,7 @@ export class DeskSwitch {
     seg.tabIndex = active ? 0 : -1
     seg.setAttribute('aria-label', `${d.name}${total === 0 ? '' : `, ${total} com atenção`}`)
     const go = index < 9 ? ` (${this.host.hint(index + 1)})` : ''
-    const what = total === 0 ? '' : `\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
+    const what = total === 0 ? '' : `${(att.lines ?? []).map(l => `\n${l}`).join('')}\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
     seg.title = `${d.name}${go}${what}\nDuplo clique renomeia; clique direito: mais opções. Arraste para reordenar.`
     seg.addEventListener('mousedown', ev => { if (ev.button === 0 && !(ev.target as Element).closest('input')) ev.preventDefault() })
     seg.addEventListener('click', () => { if (this.swallowClick) return; this.host.switchTo(d.id) })

@@ -180,6 +180,10 @@ const UNKNOWN: OverlaySpec = {
 
 export interface PanelHost {
   getSlot(slotId: string): SlotState | undefined
+  /** The seal a pane shows: the terminal's own merged with the extensions' (seal-rules.ts), and its tooltip lines. Without it, the slot's own. */
+  attentionOf?(slotId: string): { level: 'done' | 'waiting' | undefined; lines: string[] }
+  /** The person clicked the pane's seal: the extensions that raised one hear it (the core focuses the pane when none listens). */
+  onSealClick?(slotId: string): void
   /** The error of the last refused `start` (cleared when the slot comes up). */
   getStartError(slotId: string): SlotError | undefined
   /** A `start` was sent and not answered yet: show "iniciando…" instead of "encerrado". */
@@ -443,9 +447,10 @@ export class TerminalPanel implements IContentRenderer {
     this.head.unsafe.hidden = !s.unsafe
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
-    const bellTip = s.attention === 'waiting' ? 'Esperando você' : s.attention === 'done' ? 'Terminou' : ''
-    this.head.bell.hidden = !s.attention
-    this.head.bell.className = `bell${s.attention ? ` ${s.attention}` : ''}`
+    const att = this.host.attentionOf?.(this.slotId) ?? { level: s.attention, lines: s.attention === 'waiting' ? ['Esperando você'] : s.attention === 'done' ? ['Terminou'] : [] }
+    const bellTip = att.lines.join('\n')
+    this.head.bell.hidden = !att.level
+    this.head.bell.className = `bell${att.level ? ` ${att.level}` : ''}`
     this.head.bell.title = bellTip
     this.head.bell.setAttribute('aria-label', bellTip)
     if (s.restarting) this.setStatus('starting', 'reiniciando…')
@@ -716,6 +721,7 @@ export class SlotTab implements ITabRenderer {
     this.text = document.createElement('span'); this.text.className = 'text'
     this.unsafe = unsafeBadge(false)
     this.attn = document.createElement('span'); this.attn.className = 'attn'
+    this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
     const close = document.createElement('button')
     close.className = 'close'; close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
     close.append(icon('x'))
@@ -752,10 +758,11 @@ export class SlotTab implements ITabRenderer {
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.unsafe.hidden = !s?.unsafe
-    this.attn.className = `attn${s?.attention ? ` ${s.attention}` : ''}`
-    this.attn.title = s?.attention === 'waiting' ? 'Esperando você' : s?.attention === 'done' ? 'Terminou' : ''
-    this.element.dataset.attention = s?.attention ?? ''
-    this.element.title = s ? panelTooltip(s) + (s.attention === 'waiting' ? '\nEsperando você' : s.attention === 'done' ? '\nTerminou' : '') : `Slot ${this.api.id} (desconhecido)`
+    const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
+    this.attn.className = `attn${att.level ? ` ${att.level}` : ''}`
+    this.attn.title = att.lines.join('\n')
+    this.element.dataset.attention = att.level ?? ''
+    this.element.title = s ? panelTooltip(s) + att.lines.map(l => `\n${l}`).join('') : `Slot ${this.api.id} (desconhecido)`
   }
 
   /**

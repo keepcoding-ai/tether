@@ -10,6 +10,7 @@
 // side bar itself (strip, the slot the pad covers, the sash) is in the flex row beside #dock, so an open pad takes its
 // width from the desks and a closed one gives it back.
 import type { ContextMenuEntry, PadType, PadView } from './ext-api.ts'
+import { countLabel, type Badge } from './seal-rules.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import {
   DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, openPadOn, padsOn, padToggleCommand, restorePad, setWidth, SIDES, sideOf,
@@ -21,6 +22,8 @@ export interface SideBarsHost {
   pads(): readonly PadDescriptor[]
   /** What a pad shows (registered by its extension's activate), if any. */
   padType(id: string): PadType | undefined
+  /** The badge an extension put on the pad's icon. */
+  badgeOf?(padId: string): Badge | undefined
   activeDeskId(): string
   deskName(id: string): string
   /** The key hint of a command ('' when none). */
@@ -235,6 +238,15 @@ export class SideBars {
     // Closed: the regular (outline) weight; open: the fill weight, when the icon has one (Phosphor's `<name>-fill`).
     const fill = `${pad.icon}-fill` as IconName
     b.append(icon(open && ICON_NAMES.includes(fill) ? fill : pad.icon as IconName))
+    const badge = this.host.badgeOf?.(pad.id)
+    if (badge) {
+      const el = document.createElement('span')
+      el.className = `sb-badge ${badge.attention ? 'waiting' : 'plain'}${badge.count ? '' : ' pip'}`
+      el.textContent = badge.count ? countLabel(badge.count) : ''
+      b.append(el)
+      if (badge.tooltip) b.title += `\n${badge.tooltip}`
+      if (badge.count) b.setAttribute('aria-label', `${pad.title}, ${badge.count}`)
+    }
     b.addEventListener('mousedown', ev => ev.preventDefault()) // the keyboard moves only into the pad that opens
     b.addEventListener('click', () => this.toggle(pad.id))
     b.addEventListener('contextmenu', ev => { ev.preventDefault(); this.host.onPadMenu(pad.id, ev.clientX, ev.clientY, b) })

@@ -22,6 +22,7 @@ import type { PaneType } from './pane-registry.ts'
 import type { OpenFileOptions } from './file-open.ts'
 import type { ProjectFolder } from './workspace.ts'
 import type { AgentUi } from './agent-ui.ts'
+import type { AttentionHandle, AttentionRaise, Badge } from './seal-rules.ts'
 import type { Brand } from '../shared/brand.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
@@ -33,6 +34,7 @@ export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
 export type { ProjectFolder } from './workspace.ts'
 export type { AgentUi } from './agent-ui.ts'
 export type { AgentPane, PanePlace } from './agent-panes.ts'
+export type { Badge, AttentionHandle, AttentionRaise } from './seal-rules.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
@@ -275,7 +277,18 @@ export interface TetherUi {
    * The core mounts and shows the desk; what goes in it is the extension's: open a pane there with `panes.open` while it is
    * the visible desk (a `reference` pane of the desk also works), since `open` without a reference adds to the visible desk.
    */
+  /**
+   * Attention seals on panes (the same seal the terminals have: on the pane's tab and on its desk's pill, with the message in
+   * their tooltips). Any pane may be warned, an agent's too; the extension owns only the seals it raised, and they go with it.
+   * Normal: the seal goes out when the pane is seen. `sticky`: seeing it does not clear it, only `resolve()` (or dispose) does.
+   * Clicking the seal tells `onDidActivate` of the seal's handle; with no listener, the core brings the pane forward.
+   */
+  attention: {
+    raise(opts: AttentionRaise): AttentionHandle
+  }
   systemDesks: {
+    /** The badge on this system desk's pill (count, attention flag, tooltip); an empty badge or a zero count clears it. */
+    setBadge(id: string, badge: Badge | undefined): void
     /** Enters the desk, or, when it is the visible one, goes back to the queue desk the person came from. */
     toggle(id: string): void
     /** Is it the visible desk now. */
@@ -307,6 +320,8 @@ export interface TetherUi {
     register(type: PadType): IDisposable
     /** Opens a pad on its side bar (a no-op when it is shown). */
     open(id: string): void
+    /** The badge on this pad's icon in the side bar (count, attention flag, tooltip); an empty badge or a zero count clears it. */
+    setBadge(id: string, badge: Badge | undefined): void
     /**
      * The view of a pad declared `frames: true`: a full Desk of frames (tabs, empty panes, "+", splits, any pane type)
      * that the core knows as a place panes live (found, moved, pruned, listed, focused like a desk's).
