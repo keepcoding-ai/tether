@@ -23,6 +23,7 @@ import { agentChoices, agentRegistry } from '../agents/registry.ts'
 import { cmdPause } from './pause.ts'
 import { cmdRonda } from './ronda.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
+import { cmdUsage } from './usage.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
 export const USAGE = `uso: tether <comando> [opções]
@@ -74,6 +75,7 @@ export const USAGE = `uso: tether <comando> [opções]
                                       aberta em outro lugar (mesa, outra prancheta, gaveta) MUDA
                                       para a prancheta; já lá, só vem para a frente. --slot: o painel
                                       (padrão: o deste terminal, TETHER_SLOT_ID)
+  usage [--json] [--fresh]            uso de LLM do plano do Claude Code (limites e renovação)
   doctor                              confere o ambiente
   help                                esta ajuda
 
@@ -105,6 +107,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'link': out(`${ownTabUrl()}
 `); return 0
       case 'focus': await openTetherUrl(focusLink(parseFocusArgs(rest))); return 0
+      case 'usage': return await cmdUsage(rest, { out, err })
       case 'show': return await cmdShow(rest)
       case 'new': return await cmdNew(rest)
       case 'open': return await cmdOpen(rest)
