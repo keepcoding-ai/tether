@@ -2112,6 +2112,14 @@ async function followTetherLink(url: string): Promise<void> {
     const root = link.path.replace(/[\\/][^\\/]*$/, '')
     const pad = link.pad ? openPadForLink(link.pad) : undefined
     if (link.pad && !pad) return // said to the person already
+    // A note asked into a pad while open somewhere else (a desk, another pad, the drawer) MOVES there: the pad is where it lives now.
+    if (pad) {
+      const open = panelOfFile(link.path)
+      if (open && !pad.desk.getPanel(open)) {
+        if (await movePaneIntoPad(open, pad)) drawAttention(open)
+        return
+      }
+    }
     // In a pad: the file opens next to the pad's active pane (a blank one is replaced). A note already open anywhere is only revealed.
     const reference = pad?.desk.activePanel?.id
     void openFile(fileOpenHost, link.path, { side: false, root, ...(reference ? { reference } : {}) }).then(() => {
@@ -2128,6 +2136,24 @@ async function followTetherLink(url: string): Promise<void> {
     return
   }
   void askDialog(missingTabSituation())
+}
+
+/**
+ * Moves an open pane into a frames pad, as "Mover…" would: beside the pad's active pane as a tab of its group (a blank pane
+ * there is dropped, as a file opened into the pad replaces it), or alone in a new frame when the pad is empty.
+ */
+async function movePaneIntoPad(slotId: string, pad: FramesPad): Promise<boolean> {
+  const from = scopeOf(slotId)
+  if (!from) return false
+  const scope = padScope(pad.padId, pad.deskId ?? pad.panelId)
+  const ref = pad.desk.activePanel
+  const frame = ref ? pad.desk.frameOf(ref.id) : undefined
+  const op: MoveOp = ref && frame
+    ? { op: 'pane-beside', slotId, from, scope, frameId: frame.id, reference: ref.id, direction: 'within' }
+    : { op: 'pane-new-frame', slotId, from, scope, direction: 'right' }
+  const ok = await runMove(op, slotId)
+  if (ok && ref && empties.has(ref.id) && pad.desk.getPanel(ref.id)) { pad.desk.removePanel(ref); scheduleSave() }
+  return ok
 }
 
 /** The pane showing a file (a note's `fileOf`, paths compared case-insensitively: Windows), wherever it lives. */

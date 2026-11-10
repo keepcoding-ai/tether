@@ -1657,3 +1657,16 @@ body.dim-unfocused .desk-set .frame:not(.focused)::after { opacity: var(--dim-ve
 /* The settings page's reveal (a chooser's "Minhas notas" gear): the row is marked for a moment. */
 @keyframes st-flash { from { background: color-mix(in srgb, var(--accent) 18%, transparent); } to { background: transparent; } }
 .st-item.st-flash { animation: st-flash 1.6s ease-out; }
+
+/* --- ronda (tether's nudge clock for the agent): a calm chip in the status bar, a small timer on the tab --- */
+.status-bar .ronda { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border: 0; border-radius: 4px; font: inherit; font-size: 11px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); cursor: pointer; }
+.status-bar .ronda[hidden] { display: none; }
+.status-bar .ronda .ph { width: 13px; height: 13px; }
+.status-bar .ronda:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.status-bar .ronda:hover span::after { content: ' · desligar'; font-weight: 400; }
+.status-bar .ronda.due .ph { animation: ronda-due 1.6s ease-in-out infinite; }
+@keyframes ronda-due { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .status-bar .ronda.due .ph { animation: none; } }
+.tether-tab .ronda-mark { display: inline-flex; flex: none; color: var(--accent); }
+.tether-tab .ronda-mark[hidden] { display: none; }
+.tether-tab .ronda-mark .ph { width: 12px; height: 12px; }

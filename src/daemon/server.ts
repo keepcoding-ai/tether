@@ -14,6 +14,7 @@ import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { canonicalDir, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
+import { applyChange, buildNudgeText, clearRonda, criterionStimulus, ENV_RONDA_TEST_SECONDS, readRonda, RondaError, writeRonda, type Ronda } from './ronda.ts'
 import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
 import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
@@ -34,7 +35,7 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 
-export const DAEMON_VERSION = '0.3.4'
+export const DAEMON_VERSION = '0.3.5'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
@@ -55,6 +56,10 @@ const WATCH_DEBOUNCE_MS = 100
 /** Pause resume: slots typed into at once, and the gap between the text and the Enter (else the TUI sees a paste). */
 const PAUSE_RESUME_PARALLEL = 3
 const PAUSE_RESUME_ENTER_DELAY_MS = 130
+/** A due ronda re-checks a busy agent this often. */
+const RONDA_RETRY_MS = 2_000
+/** A due ronda never types over the user: it waits this long after their last keystroke in the slot. */
+const RONDA_INPUT_QUIET_MS = 10_000
 const ENTER = String.fromCharCode(13)
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 const DEFAULT_COLS = 120
@@ -82,6 +87,12 @@ export interface DaemonOptions {
   killWaitCapMs?: number
   /** How often live slots' memory is sampled (default MEMORY_INTERVAL_MS); 0 turns the sampler off (tests). */
   memoryIntervalMs?: number
+  /** Ronda intervals in seconds are accepted (tests); default: TETHER_RONDA_TEST_SECONDS=1 in the daemon's env. */
+  rondaAllowSeconds?: boolean
+  /** How often a due ronda re-checks a busy agent (default RONDA_RETRY_MS). */
+  rondaRetryMs?: number
+  /** How long after the user typed into the slot a due ronda still waits (default RONDA_INPUT_QUIET_MS). */
+  rondaInputQuietMs?: number
 }
 
 export interface Daemon {
@@ -133,6 +144,14 @@ interface Slot {
   attentionReportTs?: string
   /** How many `turn` lines of the events file were already applied (the file is append-only and spans runs). */
   turnLinesSeen?: number
+  /** The slot's ronda (persisted in <home>/slots/<id>.ronda.json); `rondaDue`: its time came and it waits for an idle agent. */
+  ronda?: Ronda
+  rondaDue?: boolean
+  rondaTimer?: NodeJS.Timeout
+  /** A nudge is being typed (text, then Enter). */
+  rondaTyping?: boolean
+  /** ms epoch of the user's last keystroke into the slot (terminal replies excluded). */
+  lastInputAt?: number
   attached: Set<Client>
   cols: number
   rows: number
@@ -170,6 +189,9 @@ class DaemonImpl implements Daemon {
   private readonly killWaitCapMs: number
   private readonly titlePollMs: number | undefined
   private readonly memoryIntervalMs: number
+  private readonly rondaAllowSeconds: boolean
+  private readonly rondaRetryMs: number
+  private readonly rondaInputQuietMs: number
   private memoryTimer: NodeJS.Timeout | undefined
   private memorySampling = false
   private memoryKick: NodeJS.Timeout | undefined
@@ -196,6 +218,9 @@ class DaemonImpl implements Daemon {
     this.killWaitCapMs = opts.killWaitCapMs ?? KILL_WAIT_CAP_MS
     this.titlePollMs = opts.titlePollMs
     this.memoryIntervalMs = opts.memoryIntervalMs ?? MEMORY_INTERVAL_MS
+    this.rondaAllowSeconds = opts.rondaAllowSeconds ?? process.env[ENV_RONDA_TEST_SECONDS] === '1'
+    this.rondaRetryMs = opts.rondaRetryMs ?? RONDA_RETRY_MS
+    this.rondaInputQuietMs = opts.rondaInputQuietMs ?? RONDA_INPUT_QUIET_MS
     this.profileStore = new ProfileStore(opts.home)
     this.server = createServer((socket) => this.onConnection(socket))
   }
@@ -285,6 +310,7 @@ class DaemonImpl implements Daemon {
       const endedAt = slot.meta.endedAt ?? this.lastEventTs(slot)
       if (endedAt) s.endedAt = endedAt
     } else if (slot.memoryMB !== undefined) s.memoryMB = slot.memoryMB
+    if (slot.ronda) s.ronda = { ...slot.ronda, ...(slot.rondaDue ? { due: true } : {}) }
     return s
   }
 
@@ -440,6 +466,7 @@ class DaemonImpl implements Daemon {
     this.closing = true
     if (this.memoryTimer) clearInterval(this.memoryTimer)
     if (this.memoryKick) clearTimeout(this.memoryKick)
+    for (const s of this.slotMap.values()) if (s.rondaTimer) clearTimeout(s.rondaTimer)
     this.queue.length = 0
     // Every slot is stopped in parallel (each waits for its own agent to be old enough) while the event files
     // are still watched: a young Claude's start report must be seen to let its kill go ahead.
@@ -482,6 +509,8 @@ class DaemonImpl implements Daemon {
     }
     this.slotMap.set(meta.slotId, slot)
     this.refreshBinding(slot, false)
+    const ronda = readRonda(this.home, meta.slotId)
+    if (ronda) { slot.ronda = ronda; this.armRonda(slot) }
     return slot
   }
 
@@ -830,6 +859,8 @@ class DaemonImpl implements Daemon {
 
   private broadcastState(slot: Slot): void {
     this.broadcast({ t: 'state', slot: this.stateOf(slot) })
+    // A due ronda goes as soon as the agent turns idle, not at the next retry.
+    if (slot.rondaDue && !slot.rondaTyping && this.rondaBlocker(slot) === undefined) setImmediate(() => void this.rondaTick(slot))
   }
 
   private async onLine(client: Client, value: Record<string, unknown> | undefined, raw: string): Promise<void> {
@@ -843,6 +874,7 @@ class DaemonImpl implements Daemon {
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
       if (slot && typeof msg.data === 'string') {
         slot.pty?.write(msg.data)
+        if (msg.data && !msg.data.startsWith('\x1b')) slot.lastInputAt = Date.now()
         if (slot.attention.input(msg.data)) this.broadcastState(slot)
       }
       return
@@ -927,6 +959,8 @@ class DaemonImpl implements Daemon {
         const slot = this.slot(req.slotId)
         await this.stopSlot(slot)
         this.slotMap.delete(slot.meta.slotId)
+        if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
+        slot.ronda = undefined
         for (const c of slot.attached) c.attached.delete(slot.meta.slotId)
         removeSlot(this.home, slot.meta.slotId)
         this.broadcast({ t: 'removed', slotId: slot.meta.slotId })
@@ -982,6 +1016,39 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id, pause: this.pauseCancel() }
       case 'pause-resume':
         return { t: 'ok', id, pause: this.pauseResume(req.slotIds) }
+      case 'ronda-set': {
+        const slot = this.slot(req.slotId)
+        for (const k of ['interval', 'nudge', 'criterion'] as const) {
+          if (req[k] !== undefined && typeof req[k] !== 'string') throw new RequestError('bad-request', `${k} deve ser texto`)
+        }
+        let r: ReturnType<typeof applyChange>
+        try {
+          r = applyChange(slot.ronda, { ...(req.interval !== undefined ? { interval: req.interval } : {}), ...(req.nudge !== undefined ? { nudge: req.nudge } : {}), ...(req.criterion !== undefined ? { criterion: req.criterion } : {}) }, Date.now(), this.rondaAllowSeconds)
+        } catch (e) {
+          if (e instanceof RondaError) throw new RequestError('bad-request', e.message)
+          throw e
+        }
+        if (r.outcome !== 'unchanged') {
+          if (r.outcome === 'created' || r.ronda.nextAt !== slot.ronda?.nextAt) slot.rondaDue = false
+          slot.ronda = r.ronda
+          writeRonda(this.home, slot.meta.slotId, r.ronda)
+          this.log(`slot ${slot.meta.slotId}: ronda ${r.outcome} (${r.ronda.intervalMs} ms${r.ronda.criterion ? ', com critério' : ''})`)
+          this.armRonda(slot)
+          this.broadcastState(slot)
+        }
+        return { t: 'ok', id, ronda: this.stateOf(slot).ronda ?? null, rondaOutcome: r.outcome }
+      }
+      case 'ronda-get': {
+        const slot = this.slot(req.slotId)
+        return { t: 'ok', id, ronda: this.stateOf(slot).ronda ?? null }
+      }
+      case 'ronda-off': {
+        const slot = this.slot(req.slotId)
+        if (!slot.ronda) return { t: 'ok', id, ronda: null, rondaOutcome: 'was-off' }
+        if (slot.ronda.criterion && req.force !== true) throw new RequestError('ronda-criterion', criterionStimulus(slot.ronda.criterion))
+        this.rondaOff(slot)
+        return { t: 'ok', id, ronda: null, rondaOutcome: 'off' }
+      }
       case 'set-profile': {
         const slot = this.slot(req.slotId)
         if (req.profileId !== null && typeof req.profileId !== 'string') throw new RequestError('bad-request', 'profileId obrigatório (ou null para nenhum perfil)')
@@ -1098,6 +1165,74 @@ class DaemonImpl implements Daemon {
       else this.scheduleAttention(slot)
     }, Math.max(50, due - Date.now()))
     slot.attentionTimer.unref()
+  }
+
+  // ---- ronda ------------------------------------------------------------------------------------
+
+  /** Why a due nudge cannot be typed now; undefined = go. Only an idle, running agent nobody is typing into gets it. */
+  private rondaBlocker(slot: Slot, now = Date.now()): string | undefined {
+    if (slot.meta.agent === 'shell') return 'shell'
+    if (!isAlive(slot) || slot.status !== 'running') return 'not-running'
+    if (slot.restarting || slot.stopping) return 'restarting'
+    // 'running' may come from the ready fallback while the agent still shows a menu (profile picker, trust prompt): text
+    // typed there would pick an option. Only an agent that opened the session of this run (its start report) gets a nudge.
+    if (!this.reportedThisRun(slot)) return 'not-ready'
+    // Claude: a permission prompt keeps the turn busy; the idle prompt (Notification after a finished turn) does not.
+    if (slot.attention.turn === 'busy') return 'busy'
+    if (slot.lastInputAt !== undefined && now - slot.lastInputAt < this.rondaInputQuietMs) return 'typing'
+    const pause = this.batch?.entries.find((e) => e.slotId === slot.meta.slotId)
+    if (this.batch && this.batch.state !== 'closed' && pause && pause.state !== 'removed' && pause.state !== 'resumed' && pause.state !== 'resume-skipped') return 'paused'
+    return undefined
+  }
+
+  /** (Re)arms the slot's ronda timer: at nextAt, or a retry while it is due. */
+  private armRonda(slot: Slot): void {
+    if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
+    slot.rondaTimer = undefined
+    if (!slot.ronda || this.closing) return
+    const wait = slot.rondaDue ? this.rondaRetryMs : Math.max(0, Date.parse(slot.ronda.nextAt) - Date.now())
+    slot.rondaTimer = setTimeout(() => { slot.rondaTimer = undefined; void this.rondaTick(slot) }, Math.min(wait, 2 ** 31 - 1))
+    slot.rondaTimer.unref()
+  }
+
+  private async rondaTick(slot: Slot): Promise<void> {
+    const ronda = slot.ronda
+    if (!ronda || slot.rondaTyping || this.closing || this.slotMap.get(slot.meta.slotId) !== slot) return
+    const now = Date.now()
+    if (!slot.rondaDue && now < Date.parse(ronda.nextAt)) { this.armRonda(slot); return }
+    const blocker = this.rondaBlocker(slot, now)
+    if (blocker !== undefined) {
+      if (!slot.rondaDue) { slot.rondaDue = true; this.log(`slot ${slot.meta.slotId}: ronda due, waiting (${blocker})`); this.broadcastState(slot) }
+      this.armRonda(slot)
+      return
+    }
+    slot.rondaTyping = true
+    try {
+      // Text and Enter in separate chunks, as the pause's resume: the Claude TUI takes a burst as a paste and would not submit it.
+      slot.pty?.write(buildNudgeText(ronda))
+      await sleep(PAUSE_RESUME_ENTER_DELAY_MS)
+      if (isAlive(slot) && slot.ronda === ronda) {
+        slot.pty?.write(ENTER)
+        slot.attention.input(ENTER)
+      }
+    } finally { slot.rondaTyping = false }
+    if (slot.ronda !== ronda) return // switched off or reassembled while typing
+    slot.ronda = { ...ronda, lastAt: new Date().toISOString(), nextAt: new Date(Date.now() + ronda.intervalMs).toISOString() }
+    slot.rondaDue = false
+    try { writeRonda(this.home, slot.meta.slotId, slot.ronda) } catch (e) { this.log(`ronda: cannot save ${slot.meta.slotId}: ${(e as Error).message}`) }
+    this.log(`slot ${slot.meta.slotId}: ronda nudge typed`)
+    this.armRonda(slot)
+    this.broadcastState(slot)
+  }
+
+  private rondaOff(slot: Slot): void {
+    if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
+    slot.rondaTimer = undefined
+    slot.ronda = undefined
+    slot.rondaDue = false
+    clearRonda(this.home, slot.meta.slotId)
+    this.log(`slot ${slot.meta.slotId}: ronda off`)
+    this.broadcastState(slot)
   }
 
   // ---- polite pause ----------------------------------------------------------------------------

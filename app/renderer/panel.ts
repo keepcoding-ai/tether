@@ -16,6 +16,7 @@ import type { ColorScheme } from '../shared/theme.ts'
 import { renderChoices, roveWithArrows } from './dialog.ts'
 import { decodeOsc52 } from './clipboard.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
+import { rondaLabel, rondaTooltip } from './ronda-rules.ts'
 import { detailsOpen } from './pane-details.ts'
 import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
@@ -242,7 +243,7 @@ export class TerminalPanel implements IContentRenderer {
   readonly term: Terminal
   slotId = ''
   private readonly fit = new FitAddon()
-  private readonly head: { status: HTMLElement; bell: HTMLElement; profile: HTMLElement; unsafe: HTMLElement; cwd: HTMLElement; openFolder: HTMLButtonElement; copyFolder: HTMLButtonElement; switchProfile: HTMLButtonElement }
+  private readonly head: { status: HTMLElement; bell: HTMLElement; ronda: HTMLButtonElement; profile: HTMLElement; unsafe: HTMLElement; cwd: HTMLElement; openFolder: HTMLButtonElement; copyFolder: HTMLButtonElement; switchProfile: HTMLButtonElement }
   private readonly termHost: HTMLElement
   private readonly details: HTMLElement
   private readonly overlay: HTMLElement
@@ -277,6 +278,10 @@ export class TerminalPanel implements IContentRenderer {
     const profile = document.createElement('span'); profile.className = 'info-profile'; profile.hidden = true
     const cwd = document.createElement('span'); cwd.className = 'info-cwd'
     const unsafe = unsafeBadge(true)
+    // The ronda (tether's nudge clock for this agent): visible while on; one click switches it off, no questions asked.
+    const ronda = document.createElement('button'); ronda.type = 'button'; ronda.className = 'ronda'; ronda.dataset.action = 'ronda-off'; ronda.hidden = true
+    ronda.append(icon('timer'), document.createElement('span'))
+    ronda.addEventListener('click', ev => { ev.stopPropagation(); if (this.slotId) void window.tether.request({ t: 'ronda-off', slotId: this.slotId, force: true }) })
     const spacer = document.createElement('span'); spacer.className = 'sp'
     const action = (name: string, ic: IconName, label: string, run: () => void): HTMLButtonElement => {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'sb-action'; b.dataset.action = name
@@ -288,8 +293,8 @@ export class TerminalPanel implements IContentRenderer {
     switchProfile.hidden = true
     const openFolder = action('open-folder', 'folder-open', OPEN_FOLDER_TOOLTIP, () => { if (this.slotId) this.host.onOpenFolder(this.slotId) })
     const copyFolder = action('copy-folder', 'copy', COPY_FOLDER_TOOLTIP, () => { if (this.slotId) this.host.onCopyFolder(this.slotId) })
-    head.append(status, bell, profile, cwd, unsafe, spacer, switchProfile, openFolder, copyFolder)
-    this.head = { status, bell, profile, unsafe, cwd, openFolder, copyFolder, switchProfile }
+    head.append(status, bell, profile, cwd, unsafe, ronda, spacer, switchProfile, openFolder, copyFolder)
+    this.head = { status, bell, ronda, profile, unsafe, cwd, openFolder, copyFolder, switchProfile }
     this.termHost = document.createElement('div')
     this.termHost.className = 'panel-term'
     this.overlay = document.createElement('div')
@@ -445,6 +450,14 @@ export class TerminalPanel implements IContentRenderer {
     this.head.switchProfile.title = `${profileTip}\n${SWITCH_PROFILE_TOOLTIP}`
     this.head.switchProfile.setAttribute('aria-label', `Perfil: ${profileLabel} · ${SWITCH_PROFILE_TOOLTIP}`)
     this.head.unsafe.hidden = !s.unsafe
+    this.head.ronda.hidden = !s.ronda
+    if (s.ronda) {
+      this.head.ronda.lastElementChild!.textContent = rondaLabel(s.ronda)
+      const tip = rondaTooltip(s.ronda)
+      this.head.ronda.title = tip
+      this.head.ronda.setAttribute('aria-label', tip)
+      this.head.ronda.classList.toggle('due', !!s.ronda.due)
+    }
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
     const att = this.host.attentionOf?.(this.slotId) ?? { level: s.attention, lines: s.attention === 'waiting' ? ['Esperando você'] : s.attention === 'done' ? ['Terminou'] : [] }
@@ -476,6 +489,7 @@ export class TerminalPanel implements IContentRenderer {
     this.head.profile.hidden = !showProfile
     this.head.switchProfile.hidden = !showProfile
     this.head.unsafe.hidden = !hint?.unsafe
+    this.head.ronda.hidden = true
     this.head.bell.hidden = true
     this.head.cwd.textContent = hint?.cwd ?? ''
     this.head.cwd.title = hint?.cwd ?? ''
@@ -704,6 +718,7 @@ export class SlotTab implements ITabRenderer {
   private readonly text: HTMLElement
   private readonly dot: HTMLElement
   private readonly unsafe: HTMLElement
+  private readonly ronda: HTMLElement
   private readonly attn: HTMLElement
   private disposers: Array<() => void> = []
   private readonly host: PanelHost
@@ -720,6 +735,7 @@ export class SlotTab implements ITabRenderer {
     this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.append(icon('circle-fill'))
     this.text = document.createElement('span'); this.text.className = 'text'
     this.unsafe = unsafeBadge(false)
+    this.ronda = document.createElement('span'); this.ronda.className = 'ronda-mark'; this.ronda.hidden = true; this.ronda.append(icon('timer'))
     this.attn = document.createElement('span'); this.attn.className = 'attn'
     this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
     const close = document.createElement('button')
@@ -727,7 +743,7 @@ export class SlotTab implements ITabRenderer {
     close.append(icon('x'))
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    this.element.append(this.kind, this.text, this.unsafe, this.attn, this.dot, close)
+    this.element.append(this.kind, this.text, this.unsafe, this.ronda, this.attn, this.dot, close)
     this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
     this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
   }
@@ -751,6 +767,7 @@ export class SlotTab implements ITabRenderer {
       this.text.textContent = this.api.title ?? this.api.id
       this.dot.className = 'dot starting'
       this.unsafe.hidden = !hint?.unsafe
+      this.ronda.hidden = true
       this.element.title = `${this.api.title ?? this.api.id}\nConectando ao serviço…`
       return
     }
@@ -758,6 +775,8 @@ export class SlotTab implements ITabRenderer {
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.unsafe.hidden = !s?.unsafe
+    this.ronda.hidden = !s?.ronda
+    if (s?.ronda) this.ronda.title = rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, '')
     const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
     // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
     const mark = att.level ? 'attention' : tabMark(s)

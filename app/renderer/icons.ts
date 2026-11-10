@@ -18,6 +18,7 @@ import caretDown from '@phosphor-icons/core/assets/regular/caret-down.svg'
 import caretUp from '@phosphor-icons/core/assets/regular/caret-up.svg'
 import circleFill from '@phosphor-icons/core/assets/fill/circle-fill.svg'
 import circleHalf from '@phosphor-icons/core/assets/regular/circle-half.svg'
+import timerIcon from '@phosphor-icons/core/assets/regular/timer.svg'
 import clockCounterClockwise from '@phosphor-icons/core/assets/regular/clock-counter-clockwise.svg'
 import eye from '@phosphor-icons/core/assets/regular/eye.svg'
 import sidebarSimple from '@phosphor-icons/core/assets/regular/sidebar-simple.svg'
@@ -148,6 +149,7 @@ const SVG = {
   'circle-fill': circleFill,
   'circle-half': circleHalf,
   'clock-counter-clockwise': clockCounterClockwise,
+  timer: timerIcon,
   'folder-open': folderOpen,
   'file-plus': filePlusIcon,
   'folder-plus': folderPlusIcon,
