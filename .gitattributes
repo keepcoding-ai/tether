@@ -1,2 +1,5 @@
 # Vendored bundles are checked against sha256 manifests: keep their bytes exactly as built.
 extensions/browser/vendor/** -text
+# Vendored extension text files were hashed over CRLF bytes (vendored on Windows); keep them CRLF so manifest.json hashes match on every OS.
+extensions/web-bridge/vendor/extension/*.html text eol=crlf
+extensions/web-bridge/vendor/extension/*.css text eol=crlf
