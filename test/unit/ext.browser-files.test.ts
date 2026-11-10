@@ -4,13 +4,13 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   attachCarriesFiles, attachRefusal, downloadGroups, downloadOver, fieldOwnerText, formatBytes, MAX_AGENT_DOWNLOAD_BYTES, MAX_DOWNLOAD_BYTES,
-  originText, safeDownloadName, splitPath, uniqueName, uploadDialog, whenText,
+  originText, safeDownloadName, splitPath, uniqueName, uploadDialog, whenText, zoneIdentifier,
 } from '../../extensions/browser/files-rules.ts'
 
 describe('browser files: downloads', () => {
   test('the name loses its folder, Windows-invalid characters, trailing dots and reserved device names', () => {
     assert.equal(safeDownloadName('../../etc/passwd'), 'passwd')
-    assert.equal(safeDownloadName('C:\\Users\\x\\evil.exe'), 'evil.exe')
+    assert.equal(safeDownloadName('C:\\Users\\x\\evil.txt'), 'evil.txt')
     assert.equal(safeDownloadName('a<b>c:d"e|f?g*h.txt'), 'a_b_c_d_e_f_g_h.txt')
     assert.equal(safeDownloadName('report.pdf. . '), 'report.pdf')
     assert.equal(safeDownloadName('..'), 'download')
@@ -19,7 +19,52 @@ describe('browser files: downloads', () => {
     assert.equal(safeDownloadName('nul.txt'), '_nul.txt')
     assert.equal(safeDownloadName('com1.log'), '_com1.log')
     assert.equal(safeDownloadName('line\nbreak.txt'), 'line_break.txt')
-    assert.equal(safeDownloadName('x'.repeat(300)).length, 200)
+    assert.equal(safeDownloadName('x'.repeat(300)).length, 190)
+    assert.equal(safeDownloadName('x'.repeat(200)).length, 200)
+  })
+  test('the name loses invisible format characters (bidi, zero width) and is NFC (review N-M1)', () => {
+    assert.equal(safeDownloadName('fatura\u202Efdp.exe'), 'faturafdp.exe.download')
+    assert.equal(safeDownloadName('a\u202A\u202B\u202C\u202D\u202Eb.txt'), 'ab.txt')
+    assert.equal(safeDownloadName('a\u2066\u2067\u2068\u2069b.txt'), 'ab.txt')
+    assert.equal(safeDownloadName('a\u200E\u200F\u061Cb.txt'), 'ab.txt')
+    assert.equal(safeDownloadName('a\u200B\u200C\u200D\uFEFF\u2060b.txt'), 'ab.txt')
+    assert.equal(safeDownloadName('a\u00ADb\uFE0F\u{E0041}.txt'), 'ab.txt')
+    assert.equal(safeDownloadName('nota.txt\u202E'), 'nota.txt')
+    assert.equal(safeDownloadName('cafe\u0301.txt'), 'caf\u00e9.txt')
+    assert.equal(safeDownloadName('a\u0085b.txt'), 'a_b.txt')
+  })
+  test('a dangerous type is made inert with .download; reserved names with spaces or superscripts are prefixed (review N-M1)', () => {
+    for (const ext of ['exe', 'bat', 'cmd', 'com', 'ps1', 'vbs', 'js', 'jse', 'wsf', 'hta', 'msi', 'scr', 'cpl', 'reg', 'jar', 'lnk', 'url', 'scf', 'library-ms', 'searchConnector-ms', 'desktop']) {
+      assert.equal(safeDownloadName(`x.${ext}`), `x.${ext}.download`, ext)
+    }
+    assert.equal(safeDownloadName('X.URL'), 'X.URL.download')
+    assert.equal(safeDownloadName('evil.url. . '), 'evil.url.download')
+    assert.equal(safeDownloadName('desktop.ini'), 'desktop.ini.download')
+    assert.equal(safeDownloadName('Desktop.INI'), 'Desktop.INI.download')
+    assert.equal(safeDownloadName('report.pdf'), 'report.pdf')
+    assert.equal(safeDownloadName('x.exe.download'), 'x.exe.download')
+    assert.equal(safeDownloadName('con .txt'), '_con .txt')
+    assert.equal(safeDownloadName('COM\u00b9.log'), '_COM\u00b9.log')
+    assert.equal(safeDownloadName('lpt\u00b3'), '_lpt\u00b3')
+    assert.equal(safeDownloadName('CONIN$'), '_CONIN$')
+    assert.equal(safeDownloadName('conout$.txt'), '_conout$.txt')
+    const long = safeDownloadName(`${'y'.repeat(300)}.exe`)
+    assert.equal(long.length, 190)
+    assert.ok(long.endsWith('.exe.download'), long)
+  })
+  test('idempotent: every name it gives comes back unchanged (the pad finds the file by it)', () => {
+    for (const raw of ['x.url', 'fatura\u202Efdp.exe', `${'y'.repeat(300)}.lnk`, `${'z'.repeat(300)}.txt`, 'CON', 'desktop.ini', 'a.exe-1.download']) {
+      const once = safeDownloadName(raw)
+      assert.equal(safeDownloadName(once), once, raw)
+      const second = uniqueName(once, n => n === once)
+      assert.equal(safeDownloadName(second), second, second)
+    }
+  })
+  test('the Mark of the Web: Internet zone with the origin only', () => {
+    assert.equal(zoneIdentifier('https://site.example:8443/a/b.exe?token=SECRET#x'), '[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://site.example:8443\r\nHostUrl=https://site.example:8443\r\n')
+    assert.equal(zoneIdentifier('blob:https://site.example/1234-uuid'), '[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://site.example\r\nHostUrl=https://site.example\r\n')
+    assert.equal(zoneIdentifier('data:text/plain,hi'), '[ZoneTransfer]\r\nZoneId=3\r\n')
+    assert.equal(zoneIdentifier('not a url'), '[ZoneTransfer]\r\nZoneId=3\r\n')
   })
   test('never overwrites: a numeric suffix before the extension', () => {
     const have = new Set(['a.txt', 'a-1.txt', 'b'])

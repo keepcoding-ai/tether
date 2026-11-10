@@ -8,6 +8,12 @@
 // executable's fuse wire (the same bytes @electron/fuses flips); unreadable counts as off. Off: the partition is in memory
 // (`tether-browser`, no `persist:`), logged once, and `persistentLogins` is false so the interface can say logins are not kept.
 //
+// N-M2: the persistent partition keeps the cookies only. Everything else a page stores (IndexedDB, CacheStorage, service
+// workers, localStorage...) sits on disk in clear text (the fuse encrypts cookies only), so it is cleared when the session
+// opens and when the app quits (quit waits for it, up to CLEAR_AT_QUIT_MS); disk-partition.ts removes it from disk before
+// Electron opens the partition, for a run that ended without quitting. A site that wants its localStorage across starts
+// starts afresh each time: the accepted cost.
+//
 // E3: the network filter (net-filter.ts) is installed here, on the partition, before any tab loads.
 // E4: so is the egress proxy (egress-session.ts): the session is ready only once the proxy listens and the partition points
 // at it; a proxy that fails to start fails the session (no tab ever goes out direct).
@@ -18,9 +24,11 @@ import { type BlockedRequest, createNetFilter, type NetFilter } from './net-filt
 import { cookieEncryptionOn, FUSE_SENTINEL, fuseWireAt } from './tab-rules.ts'
 
 export { PERSIST_PARTITION } from './disk-partition.ts'
-import { PERSIST_PARTITION } from './disk-partition.ts'
+import { PAGE_STORAGES, PERSIST_PARTITION } from './disk-partition.ts'
 export const MEMORY_PARTITION = 'tether-browser'
 const FLUSH_MS = 5_000
+/** How long quitting waits for the page storages to be cleared before it goes on regardless. */
+const CLEAR_AT_QUIT_MS = 4_000
 
 export interface TabSession {
   readonly partition: string
@@ -92,9 +100,22 @@ export async function createTabSession(persistentLogins: boolean, log: (msg: str
   }
   ses.on('will-download', onDownload)
   const flush = (): void => { if (persistentLogins) ses.cookies.flushStore().catch(() => {}) }
+  const clearPageStorage = (): Promise<void> => ses.clearStorageData({ storages: [...PAGE_STORAGES] })
+  if (persistentLogins) await clearPageStorage().catch(e => log(`não consegui limpar os armazenamentos das páginas (${(e as Error).message})`))
   const timer = persistentLogins ? setInterval(flush, FLUSH_MS) : undefined
   timer?.unref?.()
-  const onQuit = (): void => flush()
+  let clearedAtQuit = !persistentLogins
+  const onQuit = (e: Electron.Event): void => {
+    flush()
+    if (clearedAtQuit) return
+    // The quit is held until the page storages are gone (or CLEAR_AT_QUIT_MS passed), then asked again.
+    e.preventDefault()
+    clearedAtQuit = true
+    const limit = new Promise<void>(r => setTimeout(r, CLEAR_AT_QUIT_MS))
+    void Promise.race([clearPageStorage().catch(() => {}), limit])
+      .then(() => ses.cookies.flushStore().catch(() => {}))
+      .finally(() => app.quit())
+  }
   app.on('before-quit', onQuit)
   let disposed = false
   return {

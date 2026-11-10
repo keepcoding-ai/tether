@@ -18,7 +18,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { BRAND } from './shared/brand.ts'
-import { COOKIE_RUNTIME_FLAG, cookieRuntimeDir, parseManifest, RUNTIME_FUSE, RUNTIME_MANIFEST, runtimeExe, runtimeReusable, sha256File } from './shared/cookie-runtime.ts'
+import { COOKIE_RUNTIME_FLAG, cookieRuntimeDir, hashTree, parseManifest, RUNTIME_FUSE, RUNTIME_MANIFEST, runtimeExe, runtimeReusable, sha256File } from './shared/cookie-runtime.ts'
+import { ensurePrivateDir } from '../extensions/browser/private-dir.ts'
 import { tetherHome } from '../src/core/paths.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -229,26 +230,28 @@ export async function flipCookieFuse(exe) {
 
 /**
  * Makes (or keeps) <home>/runtime/electron-<version>-cookiefuse/: a copy of `sourceDist` (node_modules/electron/dist, only
- * read) with the fuse flipped on the copy's executable, and its manifest. Kept as is when the manifest matches the source
- * binary and the copy's executable still hashes to it. Assembled in a sibling temp folder and swapped in; copies for other
+ * read) with the fuse flipped on the copy's executable, and its manifest (the sha256 of every file). <home>/runtime is made its
+ * owner's alone first (`privatize`, private-dir.ts: review N-M3; a failure stops the install). Kept as is when the manifest
+ * matches the source binary and every file of the copy still hashes to it. Assembled in a sibling temp folder and swapped in; copies for other
  * Electron versions are removed (best effort: one in use stays). Returns { dir, exe, reused, manifest }.
  */
-export async function prepareCookieRuntime({ home, sourceDist, electronVersion, flip = flipCookieFuse }) {
+export async function prepareCookieRuntime({ home, sourceDist, electronVersion, flip = flipCookieFuse, privatize = ensurePrivateDir }) {
   const dir = cookieRuntimeDir(home, electronVersion)
+  const parent = dirname(dir)
+  privatize(parent)
   const sourceSha256 = sha256File(runtimeExe(sourceDist))
   let current
   try { current = parseManifest(readFileSync(join(dir, RUNTIME_MANIFEST), 'utf8')) } catch { /* none */ }
-  let exeSha256
-  try { exeSha256 = sha256File(runtimeExe(dir)) } catch { /* none */ }
-  if (runtimeReusable(current, { electronVersion, sourceSha256, exeSha256 })) return { dir, exe: runtimeExe(dir), reused: true, manifest: current }
-  const parent = dirname(dir)
-  mkdirSync(parent, { recursive: true })
+  let files
+  try { files = hashTree(dir) } catch { /* none */ }
+  if (runtimeReusable(current, { electronVersion, sourceSha256, files })) return { dir, exe: runtimeExe(dir), reused: true, manifest: current }
   const tmp = `${dir}.tmp-${process.pid}`
   rmSync(tmp, { recursive: true, force: true })
   try {
     cpSync(sourceDist, tmp, { recursive: true })
     await flip(runtimeExe(tmp))
-    const manifest = { v: 1, electronVersion, fuse: RUNTIME_FUSE, sourceSha256, exeSha256: sha256File(runtimeExe(tmp)) }
+    const files = hashTree(tmp)
+    const manifest = { v: 2, electronVersion, fuse: RUNTIME_FUSE, sourceSha256, exeSha256: files['electron.exe'], files }
     writeFileSync(join(tmp, RUNTIME_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`)
     try { rmSync(dir, { recursive: true, force: true }) } catch (e) {
       throw new Error(`não consegui substituir ${dir} (o tether está aberto por ele? feche-o e rode de novo): ${e instanceof Error ? e.message : String(e)}`)

@@ -66,6 +66,18 @@ export function checkDacl(sddl: string, owner: string): DaclCheck {
   return { protected: flags.includes('P'), others: [...others] }
 }
 
+/**
+ * Whether `dir` is reachable by its owner only, without changing anything: protected and owner-only (`inherited`: owner-only,
+ * its entries may come from a private parent). Any failure to read counts as not private.
+ */
+export function isPrivateDir(dir: string, opts: { inherited?: boolean } = {}): boolean {
+  try {
+    if (process.platform !== 'win32') return (statSync(dir).mode & 0o077) === 0
+    const c = checkDacl(daclOf(dir), currentUserSid())
+    return c.others.length === 0 && (opts.inherited === true || c.protected)
+  } catch { return false }
+}
+
 /** Creates `dir` if needed and leaves it reachable by its owner only; throws when that cannot be made true. */
 export function ensurePrivateDir(dir: string): void {
   mkdirSync(dir, { recursive: true })

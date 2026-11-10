@@ -83,12 +83,20 @@ async function pageSite(frameOrigin: string): Promise<{ server: Server; origin: 
     const url = new URL(req.url ?? '/', 'http://x')
     if (url.pathname === '/page.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      return res.end(html('Página', `<p>Página do site</p><a href="/dl/report">Baixar relatório</a> <a href="/dl/big">Baixar grande</a>
+      return res.end(html('Página', `<p>Página do site</p><a href="/dl/report">Baixar relatório</a> <a href="/dl/big">Baixar grande</a> <a href="/dl/rlo">Baixar fatura</a> <a href="/dl/url">Baixar atalho</a>
         <iframe src="${frameOrigin}/form.html" width="400" height="120"></iframe>`))
     }
     if (url.pathname === '/dl/report') {
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="report.txt"' })
       return res.end('the report')
+    }
+    if (url.pathname === '/dl/rlo') {
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="fatura.bin"; filename*=UTF-8''${encodeURIComponent('fatura\u202Efdp.exe')}` })
+      return res.end('MZ not really')
+    }
+    if (url.pathname === '/dl/url') {
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="atalho.url"' })
+      return res.end('[InternetShortcut]\r\nURL=https://example.invalid/\r\nIconFile=\\\\192.0.2.1\\share\\x.ico\r\n')
     }
     if (url.pathname === '/dl/big') {
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="big.bin"', 'content-length': String(BIG) })
@@ -223,6 +231,26 @@ test('browser files: downloads by agent with "Baixados", the ceiling, the upload
     assert.equal(await win.evaluate(() => window.__tether.browserShowDownload('report.txt')), true)
     const shown = await until('"Mostrar na pasta"', async () => { const s = await B(t => t.shownInFolder); return s.length > 0 && s })
     assert.deepEqual(shown, [join(folder, 'report.txt')], 'the folder is shown on the file; the file is not opened')
+    // The Mark of the Web (review N-M1): the Internet zone and the origin only, whoever wrote it (the log says which).
+    const motw = readFileSync(join(folder, 'report.txt') + ':Zone.Identifier', 'utf8')
+    console.log(`Zone.Identifier: ${JSON.stringify(motw)}; log: ${(readFileSync(join(home, 'tether-app.log'), 'utf8').match(/download concluído[^\n]*/g) ?? []).join(' | ')}`)
+    assert.match(motw, /\[ZoneTransfer\]\r?\nZoneId=3/)
+    assert.ok(!motw.includes('/dl/'), 'only the origin, never the path')
+
+    // ---- 1b. a name with a bidi control and a shortcut arrive inert (review N-M1). Chromium already turns the RLO into `_`
+    //      before the tether sees the name, and turns `.url` into `.download`; safeDownloadName does both when a name gets through
+    //      (the unit test). ----
+    for (const [link, file] of [['Baixar fatura', 'fatura_fdp.exe.download'], ['Baixar atalho', 'atalho.download']] as const) {
+      tree = (await tool('WebSnapshot')).text
+      assert.equal((await tool('WebClick', { ref: refOf(tree, `link "${link}"`) })).isError, false)
+      await until(`${file} saved`, async () => existsSync(join(folder, file)), 10_000).catch(() => {
+        throw new Error(`${file} not saved; the folder has ${JSON.stringify(readdirSync(folder))}`)
+      })
+      assert.match(readFileSync(join(folder, file) + ':Zone.Identifier', 'utf8'), /ZoneId=3/)
+    }
+    const names = readdirSync(folder)
+    assert.ok(names.every(n => !/[\u202a-\u202e\u2066-\u2069\u200e\u200f]/.test(n)), JSON.stringify(names))
+    assert.ok(names.every(n => !/\.(exe|url)$/i.test(n)), JSON.stringify(names))
 
     // ---- 2. over the ceiling: cancelled, nothing left ----
     tree = (await tool('WebSnapshot')).text
@@ -232,7 +260,7 @@ test('browser files: downloads by agent with "Baixados", the ceiling, the upload
       return /download cancelado: acima de 50 MB/.test(log)
     })
     await sleep(500)
-    assert.deepEqual(readdirSync(folder).sort(), ['report-1.txt', 'report.txt'], 'nothing of the big download is left')
+    assert.deepEqual(readdirSync(folder).sort(), ['atalho.download', 'fatura_fdp.exe.download', 'report-1.txt', 'report.txt'], 'nothing of the big download is left')
 
     // ---- 3. upload into the frame of another origin ----
     const dialogText = (): Promise<string | undefined> => win.evaluate(() => document.querySelector('dialog[data-dialog="browser-upload"]')?.textContent ?? undefined)
