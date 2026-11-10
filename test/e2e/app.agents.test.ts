@@ -90,13 +90,14 @@ test('agents: list, focus across desks, exit event, moves and the same slotId af
     const [d1] = await page.evaluate(() => window.__tether.desks().map(d => d.id)) as [string]
 
     // ---- 1. the list ----
-    const slotId = await page.evaluate(async cwd => {
-      const shell = await window.tether.request({ t: 'create', kind: 'shell', cwd, start: false })
-      await window.__tether.openSlot(shell.slot!.slotId)
-      const r = await window.tether.request({ t: 'create', kind: 'soul', cwd, name: 'Sonda', start: true })
-      await window.__tether.openSlot(r.slot!.slotId)
-      return r.slot!.slotId
-    }, home)
+    // openSlot opens the pane of a slot the renderer already knows: each one waits for its state event after the create.
+    const known = (id: string): Promise<void> => until(`the renderer knows ${id}`, async () => (await page.evaluate(() => window.__tether.slots())).some(s => s.slotId === id))
+    const shellId = await page.evaluate(async cwd => (await window.tether.request({ t: 'create', kind: 'shell', cwd, start: false })).slot!.slotId, home)
+    await known(shellId)
+    await page.evaluate(id => window.__tether.openSlot(id), shellId)
+    const slotId = await page.evaluate(async cwd => (await window.tether.request({ t: 'create', kind: 'soul', cwd, name: 'Sonda', start: true })).slot!.slotId, home)
+    await known(slotId)
+    await page.evaluate(id => window.__tether.openSlot(id), slotId)
     await until('the soul runs', async () => (await page.evaluate(() => window.__tether.slots())).find(s => s.slotId === slotId)?.status === 'running', 20_000)
     await until('the pane is listed', async () => (await get(page, slotId)) !== null)
     const first = await list(page)
