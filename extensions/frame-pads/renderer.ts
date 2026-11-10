@@ -1,8 +1,8 @@
 // The frame pads' renderer entry: each pad's view is the core's frames view (a Desk hosted like the drawer's). The panel
-// pad's view also carries the notes counter ("≡ n", with a dot while some note is loose): a click opens the notes manager
-// (the pad-notes extension) on the loose notes, or on all of them when none is loose. Without that extension the counter
-// stays hidden.
-import type { NoteTree, PadView, TetherUi } from '../../app/renderer/ext-api.ts'
+// pad's "⋯" menu also carries "Notas das pranchetas…", which opens the notes manager (the pad-notes extension) on the
+// loose notes, or on all of them when none is loose; the same opener sits pinned in the pad's header, before the frame's
+// own buttons. Without that extension neither is offered.
+import type { PadView, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { manifest } from './manifest.ts'
@@ -11,50 +11,44 @@ export { manifest }
 
 const PANEL_PAD = 'frame-pads.panel'
 const MANAGER_COMMAND = 'notes.manager.loose'
+const MANAGER_LABEL = 'Notas das pranchetas…'
 
-/** The counter's numbers: notes with something in them, and how many of those are loose. */
-export function counterOf(tree: NoteTree): { notes: number; loose: number } {
-  const all = [...tree.loose, ...tree.desks.flatMap(d => [...(d.deskPad ? [d.deskPad] : []), ...d.panels]), ...tree.global]
-  return { notes: all.filter(r => !r.empty).length, loose: tree.loose.filter(r => !r.empty).length }
-}
-
-function withCounter(ui: TetherUi, view: PadView): PadView {
-  const b = document.createElement('button')
-  b.type = 'button'
-  b.className = 'pad-notes-count'
-  b.dataset.notesCounter = ''
-  const n = document.createElement('span')
-  const dot = document.createElement('span')
-  dot.className = 'dot'
-  b.append(icon('list'), n, dot)
-  b.addEventListener('mousedown', ev => ev.preventDefault())
-  b.addEventListener('click', ev => { ev.stopPropagation(); void ui.commands.run(MANAGER_COMMAND) })
-  const paint = (): void => {
-    const on = ui.commands.ids().includes(MANAGER_COMMAND)
-    b.hidden = !on
-    if (!on) return
-    const { notes, loose } = counterOf(ui.pads.notes.tree())
-    n.textContent = String(notes)
-    dot.hidden = loose === 0
-    b.classList.toggle('warn', loose > 0)
-    const what = loose ? `${notes} ${notes === 1 ? 'nota' : 'notas'}, ${loose} ${loose === 1 ? 'solta' : 'soltas'}` : `${notes} ${notes === 1 ? 'nota' : 'notas'}`
-    b.title = `Notas das pranchetas: ${what}. Clique para abrir o gerenciador.`
-    b.setAttribute('aria-label', `Notas das pranchetas: ${what}`)
+/** The panel pad's "⋯" gets one item that opens the notes manager (no counter: the manager itself shows the numbers). */
+function withManagerItem(ui: TetherUi, view: PadView): PadView {
+  const own = view.menu?.bind(view)
+  view.menu = () => {
+    const base = own?.() ?? []
+    if (!ui.commands.ids().includes(MANAGER_COMMAND)) return base
+    return [...base, { icon: 'clipboard-text', label: MANAGER_LABEL, run: () => { void ui.commands.run(MANAGER_COMMAND) } }]
   }
-  view.element.append(b)
-  // One panel pad view per panel: only the one on screen repaints; a hidden one repaints when it shows.
-  let visible = false
-  const setVisible = view.setVisible?.bind(view)
-  view.setVisible = v => { visible = v; setVisible?.(v); if (v) paint() }
-  const sub = ui.pads.notes.onDidChange(() => { if (visible) paint() })
+  // The pinned button: one per tab strip of the pad's frames (a split adds a strip; the observer catches it).
+  const pin = (): void => {
+    const on = ui.commands.ids().includes(MANAGER_COMMAND)
+    for (const bar of view.element.querySelectorAll<HTMLElement>('.tab-actions')) {
+      let b = bar.querySelector<HTMLButtonElement>(':scope > [data-action="notes-manager"]')
+      if (!b) {
+        b = document.createElement('button')
+        b.type = 'button'; b.className = 'tab-act'; b.dataset.action = 'notes-manager'
+        b.title = MANAGER_LABEL.replace('…', ''); b.setAttribute('aria-label', b.title)
+        b.append(icon('clipboard-text'))
+        b.addEventListener('mousedown', ev => ev.preventDefault())
+        b.addEventListener('click', ev => { ev.stopPropagation(); void ui.commands.run(MANAGER_COMMAND) })
+        bar.prepend(b)
+      }
+      b.hidden = !on
+    }
+  }
+  const mo = new MutationObserver(pin)
+  mo.observe(view.element, { childList: true, subtree: true })
+  pin()
   const dispose = view.dispose.bind(view)
-  view.dispose = () => { sub.dispose(); b.remove(); dispose() }
+  view.dispose = () => { mo.disconnect(); dispose() }
   return view
 }
 
 export function activate(ui: TetherUi): IDisposable[] {
   return (manifest.contributes?.pads ?? []).map(pad => ui.pads.register({
     id: pad.id,
-    create: host => { const view = ui.pads.frames(host); return pad.id === PANEL_PAD ? withCounter(ui, view) : view },
+    create: host => { const view = ui.pads.frames(host); return pad.id === PANEL_PAD ? withManagerItem(ui, view) : view },
   }))
 }

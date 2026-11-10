@@ -19,6 +19,7 @@ export const manifest: ExtensionManifest = {
     ],
     keybindings: [
       { key: 'ctrl+k n', command: 'notes.manager' },
+      { key: 'ctrl+shift+m', command: 'notes.manager' },                 // works in a terminal too (Ctrl+K chords pass to the shell there)
     ],
   },
 }

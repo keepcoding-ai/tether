@@ -20,7 +20,7 @@ import {
   batchElapsedText, canRemoveEntry, canResume, entryText, entryTone, followSummary, hasBatch, tierOf, timeline,
 } from './pause-rules.ts'
 import {
-  pausePreview, popupGroups, resolvePopupSelection, resumePreview, sessionRows, shortFolder, type SessionRow,
+  liveMemoryTotal, pausePreview, popupGroups, resolvePopupSelection, resumePreview, sessionRows, shortFolder, type SessionRow,
 } from './sessions-rules.ts'
 
 export interface SessionsDialogHost {
@@ -119,7 +119,7 @@ export function openSessionsDialog(host: SessionsDialogHost): void {
     if (e) return entryText(e, now)
     const r = v.rows.get(slotId)
     if (!r) return ''
-    return [r.text, host.placeOf(slotId) ?? 'sem guia', shortFolder(r.slot.cwd)].filter(Boolean).join(' · ')
+    return [r.text, r.memory, host.placeOf(slotId) ?? 'sem guia', shortFolder(r.slot.cwd)].filter(Boolean).join(' · ')
   }
 
   // ---- drawing ----
@@ -195,7 +195,7 @@ export function openSessionsDialog(host: SessionsDialogHost): void {
 
   function stateSentence(r: SessionRow): string {
     if (r.state === 'attention') return r.slot.attention === 'waiting' ? 'Pede atenção: espera uma resposta sua' : 'Pede atenção: terminou o que estava fazendo'
-    if (r.state === 'busy') return 'Trabalhando agora'
+    if (r.state === 'busy') return cap(r.text)
     return cap(r.text)
   }
 
@@ -225,6 +225,7 @@ export function openSessionsDialog(host: SessionsDialogHost): void {
       fact(dl, 'Pasta', r.slot.cwd)
       fact(dl, 'Sessão', r.slot.binding?.sessionId ?? 'Ainda sem sessão registrada')
       fact(dl, 'Estado', stateSentence(r))
+      if (r.memory) fact(dl, 'Memória', `${r.memory} (medida há até 1 min)`)
       detail.append(dl)
     }
     if (e) {
@@ -267,7 +268,8 @@ export function openSessionsDialog(host: SessionsDialogHost): void {
     const slots = [...host.slots()]
     if (!v.batch) {
       const p = pausePreview(slots)
-      sumMain.textContent = p.text
+      const mem = liveMemoryTotal(slots)
+      sumMain.textContent = mem ? `${p.text} · Memória das sessões vivas: ${mem}` : p.text
       prev.textContent = state.notice ?? ''
       start.replaceChildren(icon('pause'), p.buttonLabel)
       start.disabled = !p.enabled || state.busy

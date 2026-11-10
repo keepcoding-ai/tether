@@ -34,3 +34,20 @@ describe('tether:// links', () => {
     assert.equal(tetherUrlInArgv(['electron.exe', '--x']), undefined)
   })
 })
+
+describe('tether:// note links into a pad', () => {
+  const p = String.raw`D:\work\.tether\notes\todo.md`
+
+  test('round-trip with the pad scope and the owning pane', () => {
+    assert.equal(noteUrl(p), `tether://note?path=${encodeURIComponent(p)}`)
+    assert.deepEqual(parseTetherUrl(noteUrl(p, { scope: 'panel', slot: '1a2b3c4d' })), { kind: 'note', path: p, pad: { scope: 'panel', slot: '1a2b3c4d' } })
+    assert.deepEqual(parseTetherUrl(noteUrl(p, { scope: 'global' })), { kind: 'note', path: p, pad: { scope: 'global' } })
+    assert.deepEqual(parseTetherUrl(noteUrl(p)), { kind: 'note', path: p })
+  })
+
+  test('refused: an unknown scope, an unsafe slot, a slot with no pad', () => {
+    assert.equal(parseTetherUrl(`${noteUrl(p)}&pad=drawer`), undefined)
+    assert.equal(parseTetherUrl(`${noteUrl(p)}&pad=panel&slot=..%2Fx`), undefined)
+    assert.equal(parseTetherUrl(`${noteUrl(p)}&slot=1a2b3c4d`), undefined)
+  })
+})

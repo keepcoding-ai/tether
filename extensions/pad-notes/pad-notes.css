@@ -57,11 +57,3 @@
 .pn-toast-close { border: 0; background: none; color: var(--fg-dim); font: 16px var(--ui); cursor: pointer; width: 24px; height: 24px; border-radius: 4px; }
 .pn-toast-close:hover { background: var(--bg-hover); color: var(--fg); }
 
-/* The panel pad's notes counter, in the pad's bottom-right corner (the top edge belongs to the frame's tab strip and its actions). */
-.pad-notes-count { position: absolute; z-index: 3; bottom: 6px; right: 8px; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-2); color: var(--fg-dim); font: 11.5px var(--ui); cursor: pointer; opacity: .85; }
-.pad-notes-count:hover { opacity: 1; color: var(--fg); background: var(--bg-hover); }
-.pad-notes-count[hidden] { display: none; }
-.pad-notes-count svg { width: 13px; height: 13px; }
-.pad-notes-count .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
-.pad-notes-count .dot[hidden] { display: none; }
-.pad-notes-count.warn { color: var(--fg); border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); }

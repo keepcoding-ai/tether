@@ -68,6 +68,27 @@ export class ChordPill {
     this.timer = setTimeout(() => { if (this.state === 'unknown') this.hide() }, UNKNOWN_MS)
   }
 
+  /**
+   * A navigation key (arrows, PageUp/PageDown, Home/End, no modifier) while waiting scrolls the list instead of
+   * being the second key, unless a continuation is bound to that plain key. Opens the list if it was not open yet.
+   * True when the key was taken.
+   */
+  scrollKey(ev: KeyboardEvent): boolean {
+    if (this.state !== 'wait' && this.state !== 'list') return false
+    if (ev.ctrlKey || ev.altKey || ev.metaKey || ev.shiftKey) return false
+    const step: Record<string, (h: number) => number> = {
+      ArrowDown: () => 40, ArrowUp: () => -40, PageDown: h => h * 0.9, PageUp: h => -h * 0.9, End: () => 1e9, Home: () => -1e9,
+    }
+    const by = step[ev.code]
+    if (!by) return false
+    const plain = (c: Chord | undefined): boolean => !!c && c.code === ev.code && !c.mod && !c.ctrl && !c.alt && !c.shift && !c.meta
+    if (this.next.some(b => plain(b.keys[1]))) return false
+    if (this.state === 'wait') { this.clearTimer(); this.render('list') }
+    const box = [this.element, ...this.element.querySelectorAll<HTMLElement>('*')].find(e => e.scrollHeight > e.clientHeight + 1)
+    if (box) box.scrollBy({ top: by(box.clientHeight) })
+    return true
+  }
+
   hide(): void {
     this.clearTimer()
     this.state = 'hidden'

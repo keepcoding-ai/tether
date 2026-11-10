@@ -4,7 +4,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildNoteTree, cleanEmptyNotes, closeNotes, emptyLooseKeys, hasContent, moveNote, noteCounts, panesOf, pruneMeta, readNoteMeta, restoreNotes,
+  buildNoteTree, cleanEmptyNotes, closeNotes, emptyLooseKeys, hasContent, moveNote, noteCounts, panelNotesOnly, panesOf, pruneMeta, readNoteMeta, restoreNotes,
   visibleRows, whenLabel, type NoteSource, type NoteStore, type NoteTreeInput,
 } from '../../app/renderer/pad-notes.ts'
 
@@ -70,6 +70,18 @@ describe('pad notes: the tree', () => {
     assert.deepEqual(visibleRows(tree, 'all').map(r => r.key), [pk('gone'), pk('gone2'), 'frame-pads.desk@d1', pk('a')], 'a live empty note is not listed; a loose empty one is')
     assert.deepEqual(noteCounts(tree), { loose: 1, looseEmpty: 1, withContent: 3 })
     assert.deepEqual(emptyLooseKeys(tree), [pk('gone2')])
+  })
+
+  test('the manager sees only the panel pads: no desk pad, no global pad', () => {
+    const base = input()
+    const withGlobal = input({ sources: [...base.sources.filter(x => x.owner.kind !== 'global'), { key: 'frame-pads.global', padId: 'frame-pads.global', owner: { kind: 'global' }, state: frame({ id: 'note:7', title: 'global' }) }] })
+    const full = buildNoteTree(withGlobal)
+    assert.ok(full.global.length === 1 && full.desks.some(d => d.deskPad), 'the whole tree has the desk and global notes')
+    const tree = panelNotesOnly(full)
+    assert.deepEqual(visibleRows(tree, 'all').map(r => r.key), [pk('gone'), pk('gone2'), pk('a')])
+    assert.deepEqual(visibleRows(tree, 'loose').map(r => r.key), [pk('gone'), pk('gone2')])
+    assert.deepEqual(emptyLooseKeys(tree), [pk('gone2')])
+    assert.ok(tree.desks.every(d => !d.deskPad) && tree.global.length === 0)
   })
 
   test('a panel that comes back takes its note back (alive again, not loose)', () => {

@@ -145,6 +145,16 @@ export function buildNoteTree(input: NoteTreeInput): NoteTree {
   return { loose, desks, global }
 }
 
+/** The tree reduced to the panel pads' notes (what the manager looks after): no desk pad, no global pad. A live panel outside every desk stays (it is still a panel's note). */
+export function panelNotesOnly(tree: NoteTree): NoteTree {
+  const isPanel = (r: NoteRow): boolean => r.owner.kind === 'panel'
+  return {
+    loose: tree.loose.filter(isPanel),
+    desks: tree.desks.map(({ deskPad: _drop, ...d }) => ({ ...d, panels: d.panels.filter(isPanel) })),
+    global: tree.global.filter(isPanel),
+  }
+}
+
 /** The rows a filter shows, in tree order. A live owner's empty note (the blank a pad starts with) is not listed: nothing to look after. */
 export function visibleRows(tree: NoteTree, filter: NoteFilter): NoteRow[] {
   if (filter === 'loose') return tree.loose

@@ -148,12 +148,12 @@ test('notes manager: a note left loose by a closed panel is found, moved, closed
     assert.ok(m.rows[0]!.owner.startsWith('antes em '), `owner says where it was: ${m.rows[0]!.owner}`)
     await page.waitForFunction(() => window.__tether.notesManager()[0]?.preview.includes('lembrar do bug do cwd'))
     await page.screenshot({ path: join(shots, '2-gerenciador-soltas.png') })
-    // The counter on B's panel pad: the warning dot while a note is loose.
+    // The panel pad's "⋯" offers the manager (no counter), and it opens on Soltas while a note is loose.
     await page.evaluate(id => window.__tether.activatePanel(id), b)
-    await page.waitForSelector(`${shown}[data-panel="${b}"] .pad-notes-count.warn:not([hidden])`)
-    await page.screenshot({ path: join(shots, '3-contador-com-solta.png') })
-    // The counter's click brings the manager back on Soltas.
-    await page.click(`${shown} .pad-notes-count`)
+    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="pane-menu"]`)
+    await page.waitForSelector('#ctx-menu')
+    await page.screenshot({ path: join(shots, '3-menu-com-solta.png') })
+    await page.locator('#ctx-menu li[role="menuitem"]', { hasText: 'Notas das pranchetas' }).first().click()
     await page.waitForSelector('.pn-pane .pn-bar button[data-action="move"]', { state: 'visible' })
     assert.equal((await manager(page))!.filter, 'loose')
 
@@ -165,8 +165,7 @@ test('notes manager: a note left loose by a closed panel is found, moved, closed
     await page.waitForFunction(id => window.__tether.padFrames().some(f => f.pad === 'frame-pads.panel' && f.panes.includes(id)), noteId)
     await page.waitForFunction(() => window.__tether.notesTree().loose.length === 0)
     assert.ok(await padHas(page, b, noteId), "the note's tab is in B's pad")
-    m = (await manager(page))!
-    assert.equal(m.rows.length, 0, 'Soltas is empty now')
+    await page.waitForFunction(() => window.__tether.notesManager()[0]?.rows.length === 0, undefined, { timeout: 5_000 }) // Soltas is empty now
     await page.screenshot({ path: join(shots, '4-movida-para-b.png') })
 
     // ---- 5. Fechar with Desfazer ----
@@ -199,6 +198,39 @@ test('notes manager: a note left loose by a closed panel is found, moved, closed
     assert.equal(rec.ownerLabel, bTitle)
     assert.ok(rec.deskId && rec.updatedAt > 0)
     assert.equal(saved!.sidebars!.meta![key(a)], undefined, "A's record went with its note")
+
+    // ---- 7. the keyboard: Ctrl+Shift+M from inside a terminal (Ctrl+K chords pass to the shell there), Ctrl+K N outside ----
+    const mtab = page.locator(`#dock .tether-tab[data-slot="${(await manager(page))!.id}"]`)
+    await mtab.hover()
+    await mtab.locator('.close').click()
+    await page.waitForFunction(() => window.__tether.notesManager().length === 0)
+    await page.evaluate(id => window.__tether.activatePanel(id), b)
+    await page.locator(`.panel[data-slot-id="${b}"] .xterm-screen`).click()
+    await page.waitForFunction(() => !!document.activeElement?.closest('.xterm'))
+    await page.keyboard.press('Control+Shift+M')
+    await page.waitForFunction(() => window.__tether.notesManager().length === 1, undefined, { timeout: 5_000 })
+    const mtab2 = page.locator(`#dock .tether-tab[data-slot="${(await manager(page))!.id}"]`)
+    await mtab2.hover()
+    await mtab2.locator('.close').click()
+    await page.waitForFunction(() => window.__tether.notesManager().length === 0)
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await page.keyboard.press('Control+K')
+    await page.keyboard.press('N')
+    await page.waitForFunction(() => window.__tether.notesManager().length === 1, undefined, { timeout: 5_000 })
+
+    // ---- 8. the pinned button in the panel pad's header, with the pad in focus: the manager opens on the desk ----
+    const mtab3 = page.locator(`#dock .tether-tab[data-slot="${(await manager(page))!.id}"]`)
+    await mtab3.hover()
+    await mtab3.locator('.close').click()
+    await page.waitForFunction(() => window.__tether.notesManager().length === 0)
+    await page.evaluate(id => window.__tether.activatePanel(id), b)
+    await page.click(`${shown}[data-panel="${b}"] .frame-dock`) // the keyboard into the pad
+    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="notes-manager"]`)
+    await page.waitForFunction(() => window.__tether.notesManager().length === 1, undefined, { timeout: 5_000 })
+    const mid = (await manager(page))!.id
+    assert.ok(!(await page.evaluate(() => window.__tether.padFrames())).some(f => f.panes.includes(mid)), 'the manager is not inside a pad')
+    await page.waitForSelector(`#dock .tether-tab[data-slot="${mid}"]`, { state: 'visible' })
+    await page.screenshot({ path: join(shots, '8-botao-fixo.png') })
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const p of daemons) await killOwned(p, { tree: true })

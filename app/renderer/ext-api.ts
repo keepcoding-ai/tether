@@ -160,6 +160,8 @@ export interface TetherUi {
     find(id: string): IDockviewPanel | undefined
     /** The current desk's (or the open drawer's) active pane. */
     activeId(): string | undefined
+    /** The Foco de Mesa's active pane (the visible desk's, or the open drawer's), never a pad's. */
+    deskActiveId(): string | undefined
     /** A pane's opening folder (a terminal's cwd, a note's repository…). */
     cwdOf(id: string | undefined): string | undefined
     /** The keyboard to a pane. */

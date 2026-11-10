@@ -50,7 +50,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       return
     }
     pending = { filter, ...(key ? { key } : {}) }
-    const reference = ui.panes.activeId()
+    // Always on the desk (the Foco de Mesa), never inside a pad: opened from a pad's menu, the pad has the focus.
+    const reference = ui.panes.deskActiveId()
     const within = reference && ui.panes.find(reference)
     const panel = ui.panes.open(
       { id: newNotesManagerId(), component: NOTES_MANAGER_COMPONENT, tabComponent: NOTES_MANAGER_TAB, title: NOTES_MANAGER_TITLE, params: {} },

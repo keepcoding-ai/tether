@@ -51,6 +51,7 @@ import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orph
 import { SystemDeskRegistry, type SystemDeskDescriptor } from './system-desk-rules.ts'
 import { SideBars } from './sidebars.ts'
 import { otherSide, PadRegistry, panelIdsOfPad, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
+import { planPadLink } from './pad-link-rules.ts'
 import { buildNoteTree, closeNotes, hasContent, panesOf, pruneMeta, readNoteMeta, type NoteSnapshot, type NoteSource, type NoteTree, type PadNoteMeta } from './pad-notes.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
@@ -2084,7 +2085,14 @@ async function followTetherLink(url: string): Promise<void> {
   if (!link) return
   if (link.kind === 'note') {
     const root = link.path.replace(/[\\/][^\\/]*$/, '')
-    void openFile(fileOpenHost, link.path, { side: false, root }).then(() => { const id = currentDesk().activePanel?.id; if (id) drawAttention(id) })
+    const pad = link.pad ? openPadForLink(link.pad) : undefined
+    if (link.pad && !pad) return // said to the person already
+    // In a pad: the file opens next to the pad's active pane (a blank one is replaced). A note already open anywhere is only revealed.
+    const reference = pad?.desk.activePanel?.id
+    void openFile(fileOpenHost, link.path, { side: false, root, ...(reference ? { reference } : {}) }).then(() => {
+      const id = pad ? panelOfFile(link.path) : currentDesk().activePanel?.id
+      if (id) drawAttention(id)
+    })
     return
   }
   if (findPanel(link.id)) { revealPane(link.id); drawAttention(link.id); return }
@@ -2095,6 +2103,39 @@ async function followTetherLink(url: string): Promise<void> {
     return
   }
   void askDialog(missingTabSituation())
+}
+
+/** The pane showing a file (a note's `fileOf`, paths compared case-insensitively: Windows), wherever it lives. */
+function panelOfFile(path: string): string | undefined {
+  const key = path.toLowerCase()
+  return allPanels().find(p => liveTypeOf(paneTypes, p.id)?.fileOf?.(p.id)?.toLowerCase() === key)?.id
+}
+
+/**
+ * A note link with `&pad=` (`tether focus <file> --pad`): brings the pad's owner forward (the panel of a panel pad, the desk of a
+ * desk pad), opens the pad on its side bar and returns its frames — the person's own gesture, done for them. Undefined (and
+ * said so) when there is no such pad.
+ */
+function openPadForLink(want: { scope: 'panel' | 'desk' | 'global'; slot?: string }): FramesPad | undefined {
+  const fail = (message: string): undefined => { void askDialog(fileOpenFailedSituation(message)); return undefined }
+  const plan = planPadLink(want, { deskOf: id => desks.deskOf(id), activeDeskId: desks.activeDeskId, focusablePanelId: focusablePanelId() })
+  if (!plan.ok) return fail(plan.message)
+  if (!padRegistry.get(plan.padId) || !sidebars) return fail('A prancheta pedida não está disponível: a extensão Pranchetas está desligada.')
+  if (drawer.isOpen) setDrawerOpen(false)
+  setFocusedPad(undefined)
+  if (plan.deskId && plan.deskId !== desks.activeDeskId) desks.switchTo(plan.deskId)
+  if (plan.panelId) {
+    // The panel pad shows the pane in the Foco de Mesa: that panel takes it first (as openSlot does for a pane of a panel pad).
+    const ownerDesk = desks.deskOf(plan.panelId)
+    if (ownerDesk && ownerDesk !== desks.activeDeskId) desks.switchTo(ownerDesk)
+    desks.getPanel(plan.panelId)?.api.setActive()
+  }
+  sidebars.open(plan.padId, false)
+  sidebars.render() // `open` draws nothing when the pad was already open
+  const pad = framePadFor(plan.padId, plan.deskId ? { deskId: plan.deskId } : plan.panelId ? { panelId: plan.panelId } : {})
+  if (!pad) return fail('Não consegui abrir a prancheta.')
+  setFocusedPad(pad)
+  return pad
 }
 
 /**
@@ -3141,6 +3182,8 @@ function setupUi(): void {
     // its row): the key is the widget's, unless a chord is pending or a modifier is held.
     const owner = target?.closest<HTMLElement>('[data-own-keys]')
     if (owner && !dispatcher.waiting && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.shiftKey && (owner.dataset.ownKeys ?? '').split(' ').includes(ev.key)) return
+    // While a chord waits, the navigation keys scroll the pill's list (it is often taller than the window).
+    if (dispatcher.waiting && pill.scrollKey(ev)) { ev.preventDefault(); ev.stopPropagation(); return }
     const where = keyScopeOf(target)
     if (where === 'note' && !dispatcher.waiting && /^Arrow(Up|Down|Left|Right)$/.test(ev.code)) return
     const action = dispatcher.press(ev, where)
@@ -3720,6 +3763,7 @@ function activateRendererExtensions(): void {
         open: (options, where) => addPaneOptions(options, where?.target, where?.reference),
         find: paneId => findPanel(paneId),
         activeId: () => (openingFile ? fileTargetDesk() : currentDesk()).activePanel?.id,
+        deskActiveId: () => fileTargetDesk().activePanel?.id,
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),

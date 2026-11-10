@@ -200,6 +200,11 @@ test('sessions popup: live, pause, ready and many layouts in 4 tiers, light/dark
       await feed(page, s5, { idleSince: ago(3 * MIN) })
     }
 
+    // The daemon's first memory sample (a few seconds after the slots start) broadcasts every slot and would wipe what
+    // feed() injects: let it land before injecting.
+    await page.waitForFunction(ids => ids.every(id => (window.__tether.slots().find(s => s.slotId === id) as { memoryMB?: number } | undefined)?.memoryMB !== undefined), ids, { timeout: 30_000 })
+    await sleep(1_000)
+
     // ---------- live: no pause, the preview of who would get the request ----------
     let invariantDone = false
     await round('live', async (tag, _g, width) => {
@@ -210,18 +215,18 @@ test('sessions popup: live, pause, ready and many layouts in 4 tiers, light/dark
       assert.equal(await page.locator(`${dlgSel} .pd-row.busy`).count(), 2)
       assert.equal(await page.locator(`${dlgSel} .pd-row.idle`).count(), 3)
       assert.equal(await page.locator(`${dlgSel} .pd-row .pg`).count(), 0, `${tag}: no pause glyph without a pause`)
-      assert.equal((await texts(page, '.pd-line b'))[0], 'Vão receber o pedido: 2 em andamento · 3 ociosas e 1 pedindo atenção não são afetadas', `${tag}: preview`)
+      assert.equal((await texts(page, '.pd-line b'))[0]?.replace(/ · Memória das sessões vivas: .*$/, ''), 'Vão receber o pedido: 2 em andamento · 3 ociosas e 1 pedindo atenção não são afetadas', `${tag}: preview`)
       assert.equal((await texts(page, '.pd-start'))[0], 'Pedir pausa aos 2 em andamento')
       assert.equal(await page.locator(`${dlgSel} .pd-start`).isDisabled(), false)
       assert.equal(await page.locator(`${dlgSel} .pd-start`).isVisible(), true)
       assert.equal(await page.locator(`${dlgSel} .pd-resume`).isVisible(), false)
       assert.equal(await page.locator(`${dlgSel} .pd-cancel`).isVisible(), false)
       const noTab = await page.locator(`${dlgSel} .pd-row[data-slot="${s2}"] .cw`).textContent()
-      assert.match(noTab!, /trabalhando agora · sem guia · /, `${tag}: row of a session without a tab`)
+      assert.match(noTab!, /trabalhando agora(?: · [0-9,]+ [MG]B)? · sem guia · /, `${tag}: row of a session without a tab`)
       const withTab = await page.locator(`${dlgSel} .pd-row[data-slot="${s3}"] .cw`).textContent()
       assert.match(withTab!, /ocioso há 30 min · /, `${tag}: idle since`)
       assert.doesNotMatch(withTab!, /sem guia/, `${tag}: a session with a tab says where it is`)
-      assert.match((await page.locator(`${dlgSel} .pd-row[data-slot="${s4}"] .cw`).textContent())!, /ocioso há 2 h · sem guia/)
+      assert.match((await page.locator(`${dlgSel} .pd-row[data-slot="${s4}"] .cw`).textContent())!, /ocioso há 2 h(?: · [0-9,]+ [MG]B)? · sem guia/)
       // the first row is selected: its detail names the type, place, folder, session and state
       assert.match((await page.locator(`${dlgSel} .pd-facts`).textContent())!, /TipoShellOnde.*Pasta.*SessãoAinda sem sessão registradaEstadoPede atenção: espera uma resposta sua/)
       if (width === 1250 && !invariantDone) {

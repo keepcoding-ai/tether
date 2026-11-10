@@ -1,7 +1,7 @@
 // CLI entry point (`bin/tether.mjs`): a client of tetherd. Every command talks to the daemon when it answers;
 // `ls`/`show`/`stop`/`rm`/`rename` fall back to the store on disk, and `new`/`open` run the agent in this
 // terminal (`--here`, or when there is no daemon). Output in Portuguese; exit codes 0 ok / 1 error / 2 usage.
-import { focusTarget, openTetherUrl, ownTabUrl } from './focus.ts'
+import { focusLink, openTetherUrl, ownTabUrl, parseFocusArgs } from './focus.ts'
 import { execFile } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -57,9 +57,15 @@ export const USAGE = `uso: tether <comando> [opções]
   pause done "<nota>"                 registra a parada, com a nota de retomada
   pause status [--json]               mostra a pausa em andamento, slot a slot
   link                                imprime o link tether:// deste painel (só dentro do tether)
-  focus [arquivo|link]                traz para a frente: o arquivo como nota (abre se não estiver
+  focus [arquivo|link] [--pad [panel|desk|global]] [--slot id]
+                                      traz para a frente: o arquivo como nota (abre se não estiver
                                       aberta; relativo à pasta de abertura do painel), um link
-                                      tether://, ou, sem nada, este painel
+                                      tether://, ou, sem nada, este painel.
+                                      --pad abre a nota DENTRO de uma prancheta, abrindo-a na barra
+                                      lateral se preciso: panel (padrão) = a do painel deste
+                                      terminal, desk = a da mesa dele, global = a global. Uma nota
+                                      já aberta só é trazida para a frente. --slot indica o painel
+                                      (padrão: o deste terminal, TETHER_SLOT_ID)
   doctor                              confere o ambiente
   help                                esta ajuda
 
@@ -90,7 +96,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'ls': return await cmdLs(rest)
       case 'link': out(`${ownTabUrl()}
 `); return 0
-      case 'focus': await openTetherUrl(focusTarget(rest[0])); return 0
+      case 'focus': await openTetherUrl(focusLink(parseFocusArgs(rest))); return 0
       case 'show': return await cmdShow(rest)
       case 'new': return await cmdNew(rest)
       case 'open': return await cmdOpen(rest)
