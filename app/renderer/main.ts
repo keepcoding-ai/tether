@@ -3541,6 +3541,7 @@ function activateRendererExtensions(): void {
         open: (options, where) => addPaneOptions(options, where?.target, where?.reference),
         find: paneId => findPanel(paneId),
         activeId: () => (openingFile ? fileTargetDesk() : currentDesk()).activePanel?.id,
+        deskActiveId: () => fileTargetDesk().activePanel?.id,
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),

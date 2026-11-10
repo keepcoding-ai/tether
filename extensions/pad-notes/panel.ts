@@ -5,7 +5,7 @@
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { icon, type IconName } from '../../app/renderer/icons.ts'
 import type { ContextMenuEntry, NoteFilter, NoteRow, NoteTree } from '../../app/renderer/ext-api.ts'
-import { visibleRows, whenLabel } from '../../app/renderer/pad-notes.ts'
+import { panelNotesOnly, visibleRows, whenLabel } from '../../app/renderer/pad-notes.ts'
 import { NOTES_MANAGER_TITLE } from './layouts.ts'
 
 export interface ManagerHost {
@@ -82,7 +82,7 @@ export class NotesManagerPanel implements IContentRenderer {
     this.clean.type = 'button'
     this.clean.title = 'Fecha as notas soltas que não têm nada'
     this.clean.addEventListener('click', () => {
-      const keys = this.host.tree().loose.filter(r => r.empty).map(r => r.key)
+      const keys = panelNotesOnly(this.host.tree()).loose.filter(r => r.empty).map(r => r.key)
       if (keys.length) this.host.close(keys, 'empty')
     })
     head.append(title, group, el('span', 'sp'), this.clean)
@@ -129,7 +129,7 @@ export class NotesManagerPanel implements IContentRenderer {
 
   /** Redraws from the core's notes (they may have changed anywhere in the window). */
   refresh(): void {
-    const tree = this.host.tree()
+    const tree = panelNotesOnly(this.host.tree())
     this.rows = visibleRows(tree, this.filter)
     if (!this.rows.some(r => r.key === this.selected)) this.selected = this.rows[0]?.key
     const loose = tree.loose.filter(r => !r.empty).length
