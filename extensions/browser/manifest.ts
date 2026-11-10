@@ -24,7 +24,12 @@ export const manifest: ExtensionManifest = {
       optionsOf: p => ({ id: p.id, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: p.title ?? 'Guia', params: p.params ?? {} }),
     }],
     settings: {
-      serveToAgents: { type: 'boolean', default: false, title: 'Oferecer o navegador aos agentes dos painéis', description: 'Os agentes do tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias.' },
+      serveToAgents: {
+        type: 'string', default: 'perProfile', enum: ['perProfile', 'all', 'off'], fromBoolean: { true: 'all', false: 'perProfile' },
+        enumLabels: ['Só nos perfis marcados', 'Todos os agentes', 'Ninguém'],
+        title: 'Navegador para os agentes dos painéis',
+        description: 'Os agentes do tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias. Em "Só nos perfis marcados", vale para os agentes lançados com um perfil que tenha a opção "Navegador para os agentes" ligada; agentes sem perfil não recebem.',
+      },
       evaluate: { type: 'boolean', default: false, title: 'Permitir que o agente execute JavaScript na página', description: 'Desligado, o agente lê e age na página, mas não roda código nela.' },
       localNetwork: { type: 'string', default: 'ask', enum: ['ask', 'allow', 'deny'], enumLabels: ['Perguntar na primeira vez', 'Sempre permitir neste perfil', 'Nunca permitir'], title: 'Abrir localhost e a rede local', description: 'Se o agente pode abrir localhost e endereços da rede local nas guias.' },
     },

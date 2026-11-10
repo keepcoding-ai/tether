@@ -34,6 +34,11 @@ export interface Profile {
   shell?: ShellCommand
   /** The profile new slots of this agent get when none is chosen (at most one per agent). */
   default?: boolean
+  /**
+   * Per-extension options of this profile, by extension id (`extensions.browser.serveToAgents`). Opaque to the core: each
+   * extension reads and validates its own keys; the editor writes what the extensions' `profiles.registerOption` declare.
+   */
+  extensions?: Record<string, Record<string, unknown>>
 }
 
 /** What a client sends to create or edit a profile: the id is optional (absent = new profile, derived from the name). */
@@ -106,6 +111,15 @@ function isStringMap(x: unknown): x is Record<string, string> {
   return isObject(x) && Object.values(x).every((v) => typeof v === 'string')
 }
 
+function isExtensionsMap(x: unknown): x is Record<string, Record<string, unknown>> {
+  return isObject(x) && Object.values(x).every(isObject)
+}
+
+/** One option a profile carries for an extension (undefined = unset). */
+export function profileOption(p: Profile | undefined, extensionId: string, key: string): unknown {
+  return p?.extensions?.[extensionId]?.[key]
+}
+
 export function isProfileAgent(x: unknown): x is ProfileAgent {
   return x === 'shell' || isAgentName(x)
 }
@@ -117,6 +131,7 @@ export function isProfile(x: unknown): x is Profile {
   if (x.env !== undefined && !isStringMap(x.env)) return false
   if (x.cwd !== undefined && typeof x.cwd !== 'string') return false
   if (x.default !== undefined && typeof x.default !== 'boolean') return false
+  if (x.extensions !== undefined && !isExtensionsMap(x.extensions)) return false
   if (x.shell !== undefined && !(isObject(x.shell) && typeof x.shell.command === 'string' && isStringArray(x.shell.args))) return false
   return true
 }
@@ -247,6 +262,7 @@ export function validateProfile(p: ProfileInput): Validation {
     }
   }
   if (p.default !== undefined && typeof p.default !== 'boolean') errors.push('default precisa ser true ou false')
+  if (p.extensions !== undefined && !isExtensionsMap(p.extensions)) errors.push('extensions precisa ser um mapa de extensão para opções')
   return { errors, warnings }
 }
 
@@ -276,6 +292,8 @@ function normalize(p: ProfileInput, id: string): Profile {
   if (p.cwd?.trim()) out.cwd = p.cwd.trim()
   if (p.shell && p.agent === 'shell') out.shell = { command: p.shell.command.trim(), args: [...p.shell.args] }
   if (p.default) out.default = true
+  const ext = Object.entries(p.extensions ?? {}).filter(([, v]) => Object.keys(v).length)
+  if (ext.length) out.extensions = Object.fromEntries(ext.map(([k, v]) => [k, { ...v }]))
   return out
 }
 

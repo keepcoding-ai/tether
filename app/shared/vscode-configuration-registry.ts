@@ -30,7 +30,11 @@ interface SchemaCommon {
 
 export type SettingSchema =
   | ({ type: 'boolean'; default: boolean } & SchemaCommon)
-  | ({ type: 'string'; default: string; enum?: readonly string[]; enumLabels?: readonly string[] } & SchemaCommon)
+  | ({
+    type: 'string'; default: string; enum?: readonly string[]; enumLabels?: readonly string[]
+    /** A setting that used to be a boolean: what a stored `true` / `false` reads as now (a value of `enum`). */
+    fromBoolean?: { true: string; false: string }
+  } & SchemaCommon)
   | ({ type: 'number' | 'integer'; default: number; min?: number; max?: number } & SchemaCommon)
 
 export type SettingValue = boolean | string | number
@@ -79,6 +83,7 @@ export function isValidSetting(schema: SettingSchema, value: unknown): value is 
 
 /** A stored value as the schema allows it, else the default. */
 export function normalizeSetting(schema: SettingSchema, value: unknown): SettingValue {
+  if (schema.type === 'string' && schema.fromBoolean && typeof value === 'boolean') return schema.fromBoolean[value ? 'true' : 'false']
   return isValidSetting(schema, value) ? value : schema.default
 }
 

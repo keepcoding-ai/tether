@@ -60,6 +60,7 @@ import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneT
 import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
+import { registerProfileOption } from './profile-options.ts'
 import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
@@ -3880,6 +3881,9 @@ function activateRendererExtensions(): void {
         onDidChange: listener => { agentPaneListeners.add(listener); return add(toDisposable(() => { agentPaneListeners.delete(listener) })) },
         focus: slotId => focusAgentPane(slotId),
         tabMenu: provider => { agentTabMenuProviders.add(provider); return add(toDisposable(() => { agentTabMenuProviders.delete(provider) })) },
+      },
+      profiles: {
+        registerOption: option => add(registerProfileOption(id, option)),
       },
       chooser: {
         resolve: (itemId, fn) => {

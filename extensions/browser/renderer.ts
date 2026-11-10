@@ -39,7 +39,7 @@ import {
   logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, type PadTab, padWhere, resolveAgent, shortAddress,
 } from './pad-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, OFF_HELP, ownerChip, ownerHue, POPUPS_REFUSED, READ_ONLY_ADDRESS, RELOAD, shortName } from './rules.ts'
+import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, serveModeOf, shortName, type ServeMode } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 
 export { manifest }
@@ -66,7 +66,8 @@ const ownerOfPanel = (p: IDockviewPanel): string | undefined => (p.params as { o
 
 export function activate(ui: TetherUi): IDisposable[] {
   const ipc = ui.ipc<BrowserChannels>()
-  const served = (): boolean => ui.settings.get<boolean>('serveToAgents') === true
+  /** The mode as the settings page stores it (a stored boolean reads through the manifest's fromBoolean). */
+  const serveMode = (): ServeMode => serveModeOf(ui.settings.get<string>('serveToAgents'))
   /** The agent's name as the texts use it. */
   const agentName = (slotId: string | undefined): string => (slotId ? agentOf(slotId)?.name : undefined) || 'agente'
   /** E12: the agents' real life, as main's slots say it (a closed pane does not end an agent); `known` after the first answer. */
@@ -88,14 +89,24 @@ export function activate(ui: TetherUi): IDisposable[] {
     art.append(icon('globe-simple'))
     box.dataset.state = 'empty'
     box.append(art, el('h3', 'br-empty-title', EMPTY_TITLE), el('p', 'br-empty-help', EMPTY_HELP))
-    if (!served()) {
-      const off = el('p', 'br-empty-off', OFF_HELP)
+    const mode = serveMode()
+    const offHelp = offHelpFor(mode)
+    if (offHelp) {
+      const off = el('p', 'br-empty-off', offHelp)
       off.dataset.role = 'off'
+      off.dataset.mode = mode
       const go = el('button', 'br-empty-go', OFF_ACTION)
       go.type = 'button'
       go.dataset.action = 'open-settings'
       go.addEventListener('click', () => { void ui.commands.run('settings.show') })
       box.append(off, go)
+      if (mode === 'perProfile') {
+        const profiles = el('button', 'br-empty-go', PROFILE_ACTION)
+        profiles.type = 'button'
+        profiles.dataset.action = 'open-profiles'
+        profiles.addEventListener('click', () => { void ui.commands.run('profiles.manage') })
+        box.append(profiles)
+      }
     }
     if (!persistentLogins) {
       const mem = el('p', 'br-empty-off', LOGINS_NOT_KEPT)
@@ -270,7 +281,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const now = Date.now()
     const tabs = padTabs()
     return JSON.stringify([
-      padFilter, served(), persistentLogins, downloadsList.map(d => [d.slotId, d.name, d.bytes, whenText(d.at, now)]),
+      padFilter, serveMode(), persistentLogins, downloadsList.map(d => [d.slotId, d.name, d.bytes, whenText(d.at, now)]),
       tabs.map(t => [t.tabId, t.ownerSlotId, t.title, shortAddress(t.url), t.control, t.asking, t.expired, t.place, agentInfo(t.ownerSlotId), (() => { const a = actions.get(t.tabId); return a && now - a.at <= PAD_ACTION_FRESH_MS ? [a.kind, hostOf(t.url)] : 0 })()]),
     ])
   }
@@ -814,6 +825,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   ui.test.expose('browserSeals', () => [...seals].map(([tabId, hs]) => ({ tabId, count: hs.length })))
 
   return [
+    ui.profiles.registerOption({ key: PROFILE_OPTION, label: PROFILE_OPTION_LABEL, hint: PROFILE_OPTION_HINT }),
     ui.pads.register({ id: PAD_ID, create: () => new Pad() }),
     ui.panes.register({
       id: 'web', idPrefix: WEB_PANE_PREFIX, component: WEB_COMPONENT, tabComponent: WEB_TAB, hasSlot: false, icon: 'globe-simple',

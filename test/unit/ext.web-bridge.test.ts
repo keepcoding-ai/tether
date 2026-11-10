@@ -395,6 +395,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
       doctor: { register: c => { checks.push(c); return toDisposable(() => {}) } },
       onStarted: l => { started.push(l); return toDisposable(() => {}) },
       settings: { get: () => undefined },
+      profiles: { get: () => undefined },
       log: m => log.push(m),
       onSlot: () => toDisposable(() => {}),
     }
