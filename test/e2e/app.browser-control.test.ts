@@ -70,7 +70,7 @@ type Tabs = {
   shield(tabId: string): boolean | undefined
   control: Hub
   gate(): Promise<{ port: number } | null>
-  registry: { list(): { tabId: string; ownerSlotId: string; popupsRefused?: number }[] }
+  registry: { list(): { tabId: string; ownerSlotId: string; popupsRefused?: number }[]; close(tabId: string): void }
 }
 
 const pipe = `\\\\.\\pipe\\tether-brcontrol-${process.pid}`
