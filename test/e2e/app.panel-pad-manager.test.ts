@@ -249,6 +249,8 @@ test('panel pad manager: the panels of the desk with a frame; a loose one comes 
     const barBox = (await page.locator(`${shown}[data-panel="${b}"] .dv-tabs-and-actions-container:visible`).first().boundingBox())!
     const mgrBox = (await page.locator(inPad).boundingBox())!
     await page.screenshot({ path: join(shots, '8-botao-fixo.png') })
+    assert.ok(await page.locator('.toolbar, #toolbar, #topbar, header').first().isVisible().catch(() => true), 'the top bar stays')
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('*')].filter(e => e.scrollTop > 0 && !e.closest('.pf-list, .xterm')).map(e => e.id || e.className).join(',')), '', 'nothing outside the list was scrolled')
     assert.ok(Math.abs(mgrBox.y - (barBox.y + barBox.height)) <= 1, `the manager starts where the tab bar ends (${mgrBox.y} vs ${barBox.y}+${barBox.height})`)
     await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"]`)
     await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })

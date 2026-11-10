@@ -22,7 +22,7 @@
 .pf-btn.danger:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
 .pf-link { background: none; border: 0; padding: 0; color: var(--accent); font: 12px var(--ui); cursor: pointer; }
 .pf-link:hover { text-decoration: underline; }
-.pf-list { flex: 1; min-height: 0; overflow: auto; padding: 6px; scrollbar-width: thin; }
+.pf-list { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 6px; scrollbar-width: thin; }
 .pf-group { padding: 10px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-dim); }
 .pf-group:first-child { padding-top: 4px; }
 .pf-row { display: flex; flex-direction: column; gap: 3px; padding: 7px 10px; border-radius: 6px; cursor: pointer; user-select: none; }

@@ -110,7 +110,7 @@ export class PanelPadManager implements ManagerView {
     this.element.append(head, this.list)
   }
 
-  focus(): void { this.list.focus() }
+  focus(): void { this.list.focus({ preventScroll: true }) }
 
   /** Opens on a filter, with a row selected when given. */
   open(filter: FrameFilter, key?: string): void {
@@ -161,8 +161,14 @@ export class PanelPadManager implements ManagerView {
       if (live.length) { if (loose.length) out.push(el('div', 'pf-group', 'Painéis')); for (const r of live) out.push(this.rowEl(r)) }
     }
     this.list.replaceChildren(...out)
-    if (hadFocus) this.list.focus()
-    this.list.querySelector<HTMLElement>('.pf-row[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+    if (hadFocus) this.list.focus({ preventScroll: true })
+    // Scroll only the list: scrollIntoView would also scroll the window's own containers and push the top bar away.
+    const sel = this.list.querySelector<HTMLElement>('.pf-row[aria-selected="true"]')
+    if (sel) {
+      const top = sel.offsetTop, bottom = top + sel.offsetHeight
+      if (top < this.list.scrollTop) this.list.scrollTop = top
+      else if (bottom > this.list.scrollTop + this.list.clientHeight) this.list.scrollTop = bottom - this.list.clientHeight
+    }
   }
 
   private rowEl(r: PanelFrameRow): HTMLElement {
@@ -230,7 +236,7 @@ export class PanelPadManager implements ManagerView {
       b.append(acts)
     }
     // What the tab does, the row does.
-    b.addEventListener('click', () => { this.select(r.key); if (!r.loose) this.host.reveal(r.panelId); this.list.focus() })
+    b.addEventListener('click', () => { this.select(r.key); if (!r.loose) this.host.reveal(r.panelId); this.list.focus({ preventScroll: true }) })
     b.addEventListener('dblclick', () => { if (!r.loose) { this.host.reveal(r.panelId); this.host.exit() } })
     b.addEventListener('contextmenu', ev => { if (r.loose) return; ev.preventDefault(); ev.stopPropagation(); this.select(r.key); this.host.tabMenu(r.panelId, ev.clientX, ev.clientY) })
     if (!r.loose) {
