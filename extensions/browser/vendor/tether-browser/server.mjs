@@ -40221,12 +40221,12 @@ function dirsFrom(env, name) {
   }
   return listed.map((d) => resolve4(d));
 }
-function uploadDirs(env = process.env, home = homedir2()) {
-  const listed = dirsFrom(env, UPLOAD_DIRS_ENV);
+function uploadDirs(env = process.env, home = homedir2(), name = UPLOAD_DIRS_ENV) {
+  const listed = dirsFrom(env, name);
   return listed.length ? listed : [join6(home, "Downloads")];
 }
-function uploadDirsTrusted(env = process.env) {
-  return dirsFrom(env, UPLOAD_DIRS_TRUSTED_ENV);
+function uploadDirsTrusted(env = process.env, name = UPLOAD_DIRS_TRUSTED_ENV) {
+  return dirsFrom(env, name);
 }
 function real(path) {
   try {
@@ -40243,6 +40243,14 @@ function inside(dir, file2) {
 function isNetworkOrDevicePath(path) {
   return /^[\\/]{2}/.test(path) || /^\\\?\?\\/.test(path);
 }
+var BROWSER_UPLOAD_NAMES = Object.freeze({
+  upload: "WebUpload",
+  allow: "WebAllowUploads",
+  revoke: "WebRevokeUploads",
+  server: "browser MCP server",
+  dirsEnv: UPLOAD_DIRS_ENV,
+  trustedEnv: UPLOAD_DIRS_TRUSTED_ENV
+});
 var ONCE = { value: "once", title: "Send only this file" };
 var SESSION = { value: "session", title: "Allow this folder to this site until the end of the session" };
 var DECLINE = { value: "decline", title: "Decline" };
@@ -40272,10 +40280,10 @@ function uploadOrigin(input3) {
   return url2.origin;
 }
 var isWebOrigin = (site) => /^https?:\/\/[^/]+$/.test(site);
-var refusal = (path, dirs) => new BrowserError(
+var refusal = (path, dirs, names) => new BrowserError(
   "UPLOAD_NOT_ALLOWED",
   // Mensagem única para "não existe", "não é arquivo" e "fora das pastas": a LLM não usa a recusa para sondar o disco.
-  `${path} cannot be uploaded: it is not a file inside the folders allowed for upload (${dirs.join(", ")}); nothing was sent. To allow it, the operator adds its folder to the ${UPLOAD_DIRS_ENV} environment variable of the browser MCP server (absolute paths, separated by "${delimiter}") and restarts the server, or moves the file into an allowed folder. Do not try to work around this.`
+  `${path} cannot be uploaded: it is not a file inside the folders allowed for upload (${dirs.join(", ")}); nothing was sent. To allow it, the operator adds its folder to the ${names.dirsEnv} environment variable of the ${names.server} (absolute paths, separated by "${delimiter}") and restarts the server, or moves the file into an allowed folder. Do not try to work around this.`
 );
 function insideOrSame(dir, path) {
   return relative2(norm(dir), norm(path)) === "" || inside(dir, path);
@@ -40289,17 +40297,18 @@ function uploadPolicy(dirs, opts = {}) {
   const now = opts.now ?? (() => /* @__PURE__ */ new Date());
   const grants = [];
   const home = resolve4(opts.home ?? homedir2());
+  const names = { ...BROWSER_UPLOAD_NAMES, ...opts.names };
   const broadReason = (target2) => {
     const f = resolve4(target2);
     if (parse3(f).root === f || dirname2(f) === f) return `${f} is the root of a drive`;
     const refs = (list) => list.flatMap((d) => [d, real(d)].filter((x) => x !== null));
     const same = (list) => refs(list).some((d) => sameFolder(d, f));
     if (same([home])) return `${f} is the user's home folder`;
-    if (same(listed)) return `${f} is itself one of the folders allowed for upload (${UPLOAD_DIRS_ENV}), so it would cover everything allowed`;
+    if (same(listed)) return `${f} is itself one of the folders allowed for upload (${names.dirsEnv}), so it would cover everything allowed`;
     const fr = real(f);
     const contains = (list) => refs(list).some((d) => [f, fr].some((x) => x !== null && !sameFolder(d, x) && inside(x, d)));
     if (contains([home])) return `${f} contains the user's home folder, so it would cover everything in it (keys, secrets)`;
-    if (contains(listed)) return `${f} contains a folder allowed for upload (${UPLOAD_DIRS_ENV}), so it would cover everything allowed`;
+    if (contains(listed)) return `${f} contains a folder allowed for upload (${names.dirsEnv}), so it would cover everything allowed`;
     for (const x of [f, fr]) {
       if (x === null) continue;
       const base = refs(listed).find((d) => inside(d, x));
@@ -40315,7 +40324,7 @@ function uploadPolicy(dirs, opts = {}) {
   };
   const tooBroad = (folder, reason) => new BrowserError(
     "UPLOAD_NOT_ALLOWED",
-    `${folder} is too broad to authorize for a whole session: ${reason}. Nothing was authorized. Authorize a subfolder that holds only the files to send (for example ${join6(folder, "to-send")}), or send files one at a time with WebUpload.`
+    `${folder} is too broad to authorize for a whole session: ${reason}. Nothing was authorized. Authorize a subfolder that holds only the files to send (for example ${join6(folder, "to-send")}), or send files one at a time with ${names.upload}.`
   );
   const grantFor = (file2, site) => grants.find((g) => g.origin === site && inside(g.folder, file2));
   const addGrant = (folder, origin, via) => {
@@ -40331,21 +40340,21 @@ function uploadPolicy(dirs, opts = {}) {
   const howToAllow = (folder, site, reason) => {
     const broad = reason ?? broadReason(folder);
     if (broad) {
-      return `${folder} cannot be authorized for the session (${broad}). To send several files to ${site} without a question each, the operator puts them in a subfolder (for example ${join6(folder, "to-send")}) and calls WebAllowUploads with that folder and origin ${JSON.stringify(site)}. Do not try to work around this.`;
+      return `${folder} cannot be authorized for the session (${broad}). To send several files to ${site} without a question each, the operator puts them in a subfolder (for example ${join6(folder, "to-send")}) and calls ${names.allow} with that folder and origin ${JSON.stringify(site)}. Do not try to work around this.`;
     }
     return howToAllowFolder(folder, site);
   };
-  const howToAllowFolder = (folder, site) => `To send files from ${folder} to ${site} without this question, the operator calls WebAllowUploads with folder ${JSON.stringify(folder)} and origin ${JSON.stringify(site)} from a session where the question can be shown (it lasts until this MCP server stops). Do not try to work around this.`;
+  const howToAllowFolder = (folder, site) => `To send files from ${folder} to ${site} without this question, the operator calls ${names.allow} with folder ${JSON.stringify(folder)} and origin ${JSON.stringify(site)} from a session where the question can be shown (it lasts until this MCP server stops). Do not try to work around this.`;
   return {
     resolveUploadPath(path) {
       if (typeof path !== "string" || !isAbsolute3(path) || isNetworkOrDevicePath(path)) {
         throw new BrowserError("INVALID_ARGUMENT", `upload: path must be a local absolute path, got ${JSON.stringify(path)}.`);
       }
-      if (!listed.some((d) => inside(d, resolve4(path)))) throw refusal(path, listed);
+      if (!listed.some((d) => inside(d, resolve4(path)))) throw refusal(path, listed, names);
       const file2 = real(path);
-      if (!file2 || !statSync(file2).isFile()) throw refusal(path, listed);
+      if (!file2 || !statSync(file2).isFile()) throw refusal(path, listed, names);
       const allowed = listed.map((d) => real(d)).filter((d) => d !== null);
-      if (!allowed.some((d) => inside(d, file2))) throw refusal(path, listed);
+      if (!allowed.some((d) => inside(d, file2))) throw refusal(path, listed, names);
       return file2;
     },
     async authorizeUpload({ file: file2, site, top = site, ancestors = [] }) {
@@ -40373,7 +40382,7 @@ Site: ${show(site)}
 ` + (owner ? `${show(owner)}
 ` : "") + (broad && !embedded && isWebOrigin(site) ? `Only this file can be allowed: ${show(broad)}.
 ` : "") + `
-Send it?` + (offerSession ? ` "${SESSION.title}" lets every file in ${show(folder)} (and its subfolders) go to ${show(site)} without asking again, until this browser MCP server stops.` : ""),
+Send it?` + (offerSession ? ` "${SESSION.title}" lets every file in ${show(folder)} (and its subfolders) go to ${show(site)} without asking again, until this ${names.server} stops.` : ""),
         options
       ) : "unsupported";
       if (answer === "once") return;
@@ -40383,17 +40392,17 @@ Send it?` + (offerSession ? ` "${SESSION.title}" lets every file in ${show(folde
       }
       throw new BrowserError(
         "UPLOAD_NOT_ALLOWED",
-        answer === "unsupported" ? embedded ? `The upload field belongs to ${site}, embedded in ${top}, and this MCP client cannot ask the operator to confirm uploads (it does not support elicitation). Neither a pre-authorized folder nor a session authorization applies to a field embedded from another site, so ${file2} was not sent. Do not try to work around this.` : `No authorization to send files from ${folder} to ${site}, and this MCP client cannot ask the operator (it does not support elicitation), so ${file2} was not sent. ` + howToAllow(folder, site, broad) + ` (The operator can also pre-authorize a folder in the ${UPLOAD_DIRS_TRUSTED_ENV} environment variable of the browser MCP server, absolute paths separated by "${delimiter}".)` : `The operator declined to send ${file2} to ${site}${embedded ? ` (embedded in ${top})` : ""}, or the question could not be shown (for example to an agent running in the background); nothing was sent. ` + (embedded || !isWebOrigin(site) ? "Do not try again or work around this; ask the user." : `Do not insist; ask the user. ${howToAllow(folder, site, broad)}`)
+        answer === "unsupported" ? embedded ? `The upload field belongs to ${site}, embedded in ${top}, and this MCP client cannot ask the operator to confirm uploads (it does not support elicitation). Neither a pre-authorized folder nor a session authorization applies to a field embedded from another site, so ${file2} was not sent. Do not try to work around this.` : `No authorization to send files from ${folder} to ${site}, and this MCP client cannot ask the operator (it does not support elicitation), so ${file2} was not sent. ` + howToAllow(folder, site, broad) + ` (The operator can also pre-authorize a folder in the ${names.trustedEnv} environment variable of the ${names.server}, absolute paths separated by "${delimiter}".)` : `The operator declined to send ${file2} to ${site}${embedded ? ` (embedded in ${top})` : ""}, or the question could not be shown (for example to an agent running in the background); nothing was sent. ` + (embedded || !isWebOrigin(site) ? "Do not try again or work around this; ask the user." : `Do not insist; ask the user. ${howToAllow(folder, site, broad)}`)
       );
     },
     async allowUploads({ folder: input3, origin: rawOrigin }) {
       const origin = uploadOrigin(rawOrigin);
       if (typeof input3 !== "string" || !isAbsolute3(input3) || isNetworkOrDevicePath(input3)) {
-        throw new BrowserError("INVALID_ARGUMENT", `WebAllowUploads: folder must be a local absolute path, got ${JSON.stringify(input3)}.`);
+        throw new BrowserError("INVALID_ARGUMENT", `${names.allow}: folder must be a local absolute path, got ${JSON.stringify(input3)}.`);
       }
       const notAllowed = () => new BrowserError(
         "UPLOAD_NOT_ALLOWED",
-        `${input3} cannot be authorized: it is not a folder inside the folders allowed for upload (${listed.join(", ")}). The operator adds it (or a parent) to the ${UPLOAD_DIRS_ENV} environment variable of the browser MCP server and restarts the server. Nothing was authorized.`
+        `${input3} cannot be authorized: it is not a folder inside the folders allowed for upload (${listed.join(", ")}). The operator adds it (or a parent) to the ${names.dirsEnv} environment variable of the ${names.server} and restarts the server. Nothing was authorized.`
       );
       if (!listed.some((d) => insideOrSame(d, resolve4(input3)))) throw notAllowed();
       const folder = real(input3);
@@ -40410,13 +40419,13 @@ Send it?` + (offerSession ? ` "${SESSION.title}" lets every file in ${show(folde
 Folder: ${show(folder)} (and its subfolders)
 Site: ${show(origin)}
 
-Allow uploads from this folder to this site until this browser MCP server stops? Nothing is saved to disk; it can be revoked with WebRevokeUploads.`,
+Allow uploads from this folder to this site until this ${names.server} stops? Nothing is saved to disk; it can be revoked with ${names.revoke}.`,
         [DECLINE, ALLOW]
       ) : "unsupported";
       if (answer === "session") return { grant: { ...addGrant(folder, origin, "WebAllowUploads") }, already: false };
       throw new BrowserError(
         "UPLOAD_NOT_ALLOWED",
-        answer === "unsupported" ? `This MCP client cannot ask the operator (it does not support elicitation), so uploads from ${folder} to ${origin} were not authorized. Call WebAllowUploads from a client that can show the question, or the operator pre-authorizes the folder in ${UPLOAD_DIRS_TRUSTED_ENV}. Do not try to work around this.` : `The operator declined to allow uploads from ${folder} to ${origin}, or the question could not be shown (for example to an agent running in the background); nothing was authorized. Do not insist; ask the user.`
+        answer === "unsupported" ? `This MCP client cannot ask the operator (it does not support elicitation), so uploads from ${folder} to ${origin} were not authorized. Call ${names.allow} from a client that can show the question, or the operator pre-authorizes the folder in ${names.trustedEnv}. Do not try to work around this.` : `The operator declined to allow uploads from ${folder} to ${origin}, or the question could not be shown (for example to an agent running in the background); nothing was authorized. Do not insist; ask the user.`
       );
     },
     uploadGrants() {
@@ -40425,7 +40434,7 @@ Allow uploads from this folder to this site until this browser MCP server stops?
     revokeUploads({ folder: input3, origin: rawOrigin }) {
       const origin = uploadOrigin(rawOrigin);
       if (input3 !== void 0 && (typeof input3 !== "string" || !isAbsolute3(input3))) {
-        throw new BrowserError("INVALID_ARGUMENT", `WebRevokeUploads: folder must be an absolute path, got ${JSON.stringify(input3)}.`);
+        throw new BrowserError("INVALID_ARGUMENT", `${names.revoke}: folder must be an absolute path, got ${JSON.stringify(input3)}.`);
       }
       const keys = input3 === void 0 ? [] : [input3, real(input3)].filter((k) => k !== null);
       const removed = [];

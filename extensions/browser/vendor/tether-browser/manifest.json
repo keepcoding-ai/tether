@@ -5,9 +5,9 @@
   "node": {
     "min": "20"
   },
-  "commit": "60443cbe91cacbaba6b53fb3a291ca858c7f1f8f",
-  "builtAt": "2026-11-09T23:28:47.921Z",
-  "contentSha256": "d207c961fb7a9bc2b0b222836025778b12e20991e9c60ec7461ad6581c6fb915",
+  "commit": "ecdc3ea82c18ba046b3c8393e3db01003923abb0",
+  "builtAt": "2026-11-10T00:45:49.067Z",
+  "contentSha256": "0d123b6f04062c895c46523586a4bfbc7e9e2c13d1d20edde25e8e88c05d744e",
   "files": {
     "node_modules/playwright-core/LICENSE": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb",
     "node_modules/playwright-core/NOTICE": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d",
@@ -119,6 +119,6 @@
     "node_modules/playwright-core/lib/webp_codec.wasm": "164cd9583a3e4d081f767d3b41ff0a730443dc7535fcc5caff83561463384b79",
     "node_modules/playwright-core/lib/xdg-open": "7d759d54f0d4ce1beeb34ee62c587985b5042374e8de237b0dcb8cd47aa698cf",
     "node_modules/playwright-core/package.json": "f061c58427e47e843e26d201f0a57076c734e57c734ecbbd87d4a23b7a20db9b",
-    "server.mjs": "6a3277ce61d408f2673ed33486bcc5db006a2d461d58e21dce571d7100b44345"
+    "server.mjs": "2d105392d50527c46585cb58288e34c2c433a3fc50c58a6d921e101de5da6a06"
   }
 }
