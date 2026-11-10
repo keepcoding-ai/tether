@@ -160,7 +160,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     const kind = el('span', `kind ${kindName}`); kind.append(icon(KIND_ICON[kindName] ?? 'terminal-window'))
     const tx = el('div', 'tx')
     const tt = el('span', 'tt', r.name)
-    const cw = el('span', 'cw', r.text); cw.title = r.slot.cwd
+    const cw = el('span', 'cw', r.memory ? `${r.text} · ${r.memory}` : r.text); cw.title = r.slot.cwd
     tx.append(tt, cw)
     const acts = el('div', 'acts')
     const open = group === 'free'

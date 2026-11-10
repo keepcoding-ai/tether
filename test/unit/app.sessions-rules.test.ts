@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import type { SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { PauseBatch, PauseEntry, PauseEntryState } from '../../src/daemon/pause.ts'
 import {
-  bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, groupClosed, isIdleForCleanup, pauseAction, pausePreview, popupGroups,
+  bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, formatMemory, liveMemoryTotal, groupClosed, isIdleForCleanup, pauseAction, pausePreview, popupGroups,
   resolvePopupSelection, resumePreview, shortFolder, sessionRows, sessionsCounter,
   sessionsSummary, type SessionSlot,
 } from '../../app/renderer/sessions-rules.ts'
@@ -298,5 +298,49 @@ describe('popup: groups and previews', () => {
     const one = resumePreview(batchOf('stopped'), [mk('p0', { turn: 'busy' })])
     assert.equal(one.text, 'Nenhuma sessão volta agora')
     assert.equal(one.skippedText, '1 não volta: ocupada')
+  })
+})
+
+describe('memory and time texts', () => {
+  test('formatMemory: MB rounded, GB with one decimal and comma', () => {
+    assert.equal(formatMemory(420.4), '420 MB')
+    assert.equal(formatMemory(1023.4), '1023 MB')
+    assert.equal(formatMemory(1229), '1,2 GB')
+    assert.equal(formatMemory(3277), '3,2 GB')
+    assert.equal(formatMemory(0), '')
+    assert.equal(formatMemory(undefined), '')
+    assert.equal(formatMemory(Number.NaN), '')
+  })
+  test('busySince and endedAt phrase the row', () => {
+    const rows = sessionRows([
+      mk('b1', { turn: 'busy', busySince: ago(12 * MIN) }), mk('b2', { turn: 'busy', busySince: ago(10_000) }), mk('b3', { turn: 'busy' }),
+      mk('e1', { status: 'exited', endedAt: ago(2 * 60 * MIN) }), mk('e2', { status: 'exited', endedAt: ago(20 * 24 * 60 * MIN) }),
+    ], none, NOW)
+    const t = (id: string) => rows.find(r => r.slotId === id)!.text
+    assert.equal(t('b1'), 'trabalhando há 12 min')
+    assert.equal(t('b2'), 'trabalhando agora')
+    assert.equal(t('b3'), 'trabalhando agora')
+    assert.equal(t('e1'), 'encerrada há 2 h')
+    assert.match(t('e2'), /^encerrada em \d{1,2} out$/)
+  })
+  test('row memory: live only', () => {
+    const rows = sessionRows([mk('a', { memoryMB: 420 }), mk('b', { status: 'exited', memoryMB: 99 }), mk('c')], none, NOW)
+    assert.deepEqual(rows.map(r => [r.slotId, r.memory]), [['a', '420 MB'], ['c', ''], ['b', '']])
+  })
+  test('idle ties go to the heavier one first', () => {
+    const at = ago(30 * MIN)
+    const rows = sessionRows([mk('a', { idleSince: at, memoryMB: 100 }), mk('b', { idleSince: at, memoryMB: 900 }), mk('c', { idleSince: at })], none, NOW)
+    assert.deepEqual(rows.map(r => r.slotId), ['b', 'a', 'c'])
+  })
+  test('summary adds the total of the sessions without a tab; tooltip too', () => {
+    const slots = [mk('t', { turn: 'busy', memoryMB: 5000 }), mk('a', { memoryMB: 1500 }), mk('b', { memoryMB: 1777 })]
+    const s = sessionsSummary(slots, tabs('t'), null)
+    assert.equal(s.header, '1 em andamento · 2 sem guia · 3,2 GB')
+    assert.equal(s.tooltip, `Sessões: ${s.header}`)
+    assert.equal(sessionsSummary([mk('a')], none, null).header, '1 sem guia')
+  })
+  test('liveMemoryTotal sums live sessions only', () => {
+    assert.equal(liveMemoryTotal([mk('a', { memoryMB: 500 }), mk('b', { memoryMB: 600 }), mk('c', { status: 'exited', memoryMB: 9000 })]), '1,1 GB')
+    assert.equal(liveMemoryTotal([mk('a')]), '')
   })
 })

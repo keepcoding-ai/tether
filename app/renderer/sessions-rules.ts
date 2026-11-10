@@ -10,7 +10,7 @@ export { pauseAction }
 
 /** What the model needs of a slot. `idleSince` (ISO: idle since) and `endedAt` (ISO: process ended) are absent on older daemons. */
 export type SessionSlot = Pick<SlotState, 'slotId' | 'cwd' | 'status'> &
-  Partial<Pick<SlotState, 'name' | 'title' | 'attention' | 'turn' | 'kind' | 'binding'>> & { idleSince?: string; endedAt?: string }
+  Partial<Pick<SlotState, 'name' | 'title' | 'attention' | 'turn' | 'kind' | 'binding'>> & { idleSince?: string; endedAt?: string; busySince?: string; memoryMB?: number }
 
 export type TurnState = 'attention' | 'busy' | 'idle' | 'ended'
 
@@ -83,6 +83,25 @@ export function formatAgo(ms: number): string {
   return d < 2 ? 'ontem' : `há ${d} dias`
 }
 
+const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+
+/** "420 MB" (rounded) below 1 GB, "1,2 GB" from there. Invalid or non-positive reads as empty. */
+export function formatMemory(mb: number | undefined): string {
+  if (mb === undefined || !Number.isFinite(mb) || mb <= 0) return ''
+  const rounded = Math.round(mb)
+  if (rounded < 1024) return `${rounded} MB`
+  return `${(mb / 1024).toFixed(1).replace('.', ',')} GB`
+}
+
+/** "encerrada há 2 h", "encerrada ontem", and from a week on the date: "encerrada em 3 nov". */
+export function endedText(ms: number, endedAt: number): string {
+  if (ms >= 7 * 24 * 60 * 60_000) {
+    const d = new Date(endedAt)
+    return `encerrada em ${d.getDate()} ${MONTHS[d.getMonth()]}`
+  }
+  return `encerrada ${formatAgo(ms)}`
+}
+
 const sinceMs = (iso: string | undefined, now: number): number | undefined => {
   if (!iso) return undefined
   const t = Date.parse(iso)
@@ -99,6 +118,8 @@ export interface SessionRow {
   noTab: boolean
   /** Short line: "trabalhando agora", "pede atenção", "ocioso há 2 h", "encerrada ontem". */
   text: string
+  /** Working set of the session's process tree, formatted ("420 MB"); empty when unknown or ended. */
+  memory: string
   /** Eligible for "Encerrar os N ociosos sem guia". */
   cleanup: boolean
   slot: SessionSlot
@@ -127,14 +148,17 @@ export function isIdleForCleanup(s: SessionSlot, now: number, hasTab: (slotId: s
 function rowText(s: SessionSlot, state: TurnState, now: number): string {
   switch (state) {
     case 'attention': return 'pede atenção'
-    case 'busy': return 'trabalhando agora'
+    case 'busy': {
+      const busy = sinceMs(s.busySince, now)
+      return busy === undefined ? 'trabalhando agora' : `trabalhando ${formatAgo(busy)}`
+    }
     case 'idle': {
       const idle = sinceMs(s.idleSince, now)
       return idle === undefined ? 'ocioso' : `ocioso ${formatAgo(idle)}`
     }
     case 'ended': {
       const ended = sinceMs(s.endedAt, now)
-      return ended === undefined ? 'encerrada' : `encerrada ${formatAgo(ended)}`
+      return ended === undefined ? 'encerrada' : endedText(ended, Date.parse(s.endedAt!))
     }
   }
 }
@@ -151,6 +175,7 @@ export function sessionRows(slots: Iterable<SessionSlot>, hasTab: (slotId: strin
       state,
       noTab: state !== 'ended' && !hasTab(slot.slotId),
       text: rowText(slot, state, now),
+      memory: state === 'ended' ? '' : formatMemory(slot.memoryMB),
       cleanup: isIdleForCleanup(slot, now, hasTab),
       slot,
     }
@@ -159,11 +184,17 @@ export function sessionRows(slots: Iterable<SessionSlot>, hasTab: (slotId: strin
   })
   rows.sort((a, b) => {
     if (RANK[a.row.state] !== RANK[b.row.state]) return RANK[a.row.state] - RANK[b.row.state]
-    if (a.at !== undefined && b.at !== undefined && a.at !== b.at) {
-      // idle: oldest first (the cleanup candidates); ended: newest first
-      return a.row.state === 'ended' ? b.at - a.at : a.at - b.at
-    }
+    // idle: oldest first (the cleanup candidates), by the minute the row shows; ended: newest first
+    const bucket = (r: typeof a): number | undefined => (r.at === undefined ? undefined : r.row.state === 'idle' ? Math.floor(r.at / 60_000) : r.at)
+    const ba = bucket(a)
+    const bb = bucket(b)
+    if (ba !== undefined && bb !== undefined && ba !== bb) return a.row.state === 'ended' ? bb - ba : ba - bb
     if ((a.at === undefined) !== (b.at === undefined)) return a.at === undefined ? 1 : -1
+    // tie-break among idle sessions: the heaviest first, so cleaning up frees the most
+    if (a.row.state === 'idle') {
+      const d = (b.row.slot.memoryMB ?? 0) - (a.row.slot.memoryMB ?? 0)
+      if (d !== 0) return d
+    }
     return a.i - b.i
   })
   return rows.map(r => r.row)
@@ -231,6 +262,7 @@ export function sessionsSummary(slots: Iterable<SessionSlot>, hasTab: (slotId: s
   let attention = 0
   let noTab = 0
   let ended = 0
+  let noTabMB = 0
   for (const s of slots) {
     if (!isLive(s)) {
       if (!hasTab(s.slotId)) ended++
@@ -238,16 +270,23 @@ export function sessionsSummary(slots: Iterable<SessionSlot>, hasTab: (slotId: s
     }
     if (s.attention) attention++
     else if (s.turn === 'busy') busy++
-    if (!hasTab(s.slotId)) noTab++
+    if (!hasTab(s.slotId)) { noTab++; noTabMB += s.memoryMB ?? 0 }
   }
   const parts: string[] = []
   if (busy > 0) parts.push(`${busy} em andamento`)
   if (attention > 0) parts.push(attention === 1 ? '1 pede atenção' : `${attention} pedem atenção`)
-  if (noTab > 0) parts.push(`${noTab} sem guia`)
+  if (noTab > 0) parts.push([`${noTab} sem guia`, formatMemory(noTabMB)].filter(Boolean).join(' · '))
   if (ended > 0) parts.push(`${ended} ${ended === 1 ? 'encerrada' : 'encerradas'}`)
   const header = parts.length > 0 ? parts.join(' · ') : 'Nenhuma sessão'
   const tooltip = hasBatch(batch) ? `Sessões: ${header}. ${pauseButtonTitle(batch)}` : `Sessões: ${header}`
   return { header, tooltip }
+}
+
+/** Total memory of the live sessions (with or without a tab), formatted; empty when nothing was measured. */
+export function liveMemoryTotal(slots: Iterable<SessionSlot>): string {
+  let mb = 0
+  for (const s of slots) if (isLive(s)) mb += s.memoryMB ?? 0
+  return formatMemory(mb)
 }
 
 /** "Pedir pausa gentil primeiro" in the quit-all dialog: what it does, with the number of agents mid-turn. */
