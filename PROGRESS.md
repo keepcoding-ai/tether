@@ -1152,3 +1152,19 @@ Os "+" de borda passaram a existir só nesse modo.
 8. Pausa: azul = em curso, verde = parou, cinza = fila.
 9. `done` e `waiting` viram laranja sólido na guia.
 (Observado na prova: haiku obedeceu nas 3 execuções, com frase e nota úteis; um agente que ignore o pedido cai em "parou sem nota", caminho coberto só por unitários.)
+
+## Skills do tether + use-todo (2026-11-10, branch feat/tether-skills)
+
+**O que entrou.**
+- Conceito "skill do tether": `extensions/skills/library/<nome>/SKILL.md`, escrita uma vez, sem depender de agente. A extensão `skills` (só daemon) registra um middleware de lançamento que entrega a biblioteca a todo agente de IA (nunca ao shell) pelo `AgentContribution.skills` do próprio agente (`src/agents/skills.ts`). Nada cai em `~/.claude`, `~/.soul` ou config global: cada adaptador grava o seu formato em `<TETHER_HOME>/skills/<agente>/` (staging + rename, reescrito só quando a biblioteca muda) e entrega por flag/env no lançamento.
+  - Claude Code: plugin `tether` (`.claude-plugin/plugin.json` + `skills/<nome>/SKILL.md`) por `--plugin-dir`, no início da linha de comando (o `--mcp-config` variádico vem depois). Comando: `/tether:use-todo`.
+  - soul-cli: pasta compartilhada (`<dir>/skills/<nome>/SKILL.md`) por `SOUL_CLI_SHARED_FOLDERS` (o mesmo que `-S`, somado ao que o env já tem). Comando: `/use-todo`. O soul não tem `--plugin-dir`; `--add-dir` não carrega skills numa sessão soul.
+  - Reserva para agente sem skills: `systemPromptSkills(<flag>)` anexa o texto das skills pela flag de prompt de sistema. Agente novo só escreve o seu `AgentSkills`.
+- Skill `use-todo` reescrita: 3 caixas (🚨 PRECISO DE VOCÊ, Plano, Pendências suas), guia do agente, tabela de chamadas (sem argumento / `--focus` / `--pad` / `<arquivo>`), sem frente/ronda/.gitignore.
+- `tether focus <nota> --pad` com a nota aberta em outro lugar (mesa, outra prancheta, gaveta) agora MOVE a nota para a prancheta (antes só a trazia para a frente), pelo mesmo `runMove` do "Mover…"; um painel vazio da prancheta é descartado. Vale para CLI e link (mesmo caminho).
+
+**Provas.** Unitário `agents.skills` 6/6; E2E novo `app.pad-move` 1/1 (nota na mesa → `--pad` → está na prancheta do painel, saiu da mesa, uma só). Claude real com o plano do daemon lista `tether:use-todo` e executa `/tether:use-todo <arquivo>`; soul real lista `use-todo` (e não lista no controle sem a variável) e executa `/use-todo <arquivo>`. `npm run check`: 1843 testes, 11 falhas, todas anteriores ao branch (as 10 conhecidas + `extension indexes`, que falha igual no develop por `extensions/browser/private-dir.ts`). Evidências em `D:/atrium/.tmp/use-todo-proof/`.
+
+**Decisões para validar.**
+1. soul pela variável `SOUL_CLI_SHARED_FOLDERS` e não por `-S`: não colide com os args de comando do soul (`node <cli>`/`bash <script>`); um `-S` explícito no perfil vence a variável (aí o soul fica sem as skills do tether).
+2. A extensão `skills` não tem chave de liga/desliga própria além de desligar a extensão.
