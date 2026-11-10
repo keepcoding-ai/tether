@@ -42,6 +42,7 @@ import type { Duplex } from 'node:stream'
 import type { Surface } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { KeyStore } from './gate-keys.ts'
+import { connectionQuestionKey, questionTabOf } from './local-network-rules.ts'
 import {
   autoAttachParams, BROWSER_ALLOWED, captureTooLarge, childDisposal, cropRect, dragCarriesFiles, fromBrowser, GateError, type GateSession, hiddenCapture,
   inputScale, keyOf, loopbackHost, navigable, noTarget, PAGE_ALLOWED, refusal, refusalReason, scaleInput, scrubEvent, SessionTable, WRITE_CEILING,
@@ -65,6 +66,10 @@ export interface GateTabs {
   create(owner: string, url: string, opts: { ticket?: FirstTicket }): Promise<TabInfo>
   close(tabId: string): void
   requestLocalNetwork(tabId: string, ownerSlotId: string, url: string): Promise<boolean>
+  /** The same question for an agent with no tab: filed under `questionKey` (no ticket; the tab is created afterwards). */
+  requestLocalNetworkNoTab(questionKey: string, ownerSlotId: string, url: string): Promise<boolean>
+  /** Refuses and withdraws the questions filed under `questionKey` (the connection that asked went away). */
+  cancelQuestions(questionKey: string): void
   /** One ticket for `url` on the tab without asking: only after the person allowed it through `Tether.requestLocalNetwork`. */
   grantLocal?(tabId: string, url: string): Promise<boolean>
   watch(w: { added(info: TabInfo): void; closed(tabId: string): void }): IDisposable
@@ -306,10 +311,13 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     autoAttach = false
     discover = false
     closed = false
+    /** Where this connection's local-network questions are filed when it has no tab (withdrawn when it goes). */
+    readonly questionKey: string
 
     constructor(socket: Duplex, slotId: string, key: string) {
       this.socket = socket
       this.slotId = slotId
+      this.questionKey = connectionQuestionKey(slotId, randomBytes(4).toString('hex'))
       this.key = key
     }
 
@@ -623,9 +631,12 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           if (typeof url !== 'string' || !navigable(url) || url === 'about:blank') return { allowed: false }
           const mine = opts.tabs.list().filter(x => x.ownerSlotId === this.slotId)
           const named = params.targetId !== undefined ? await tabOfTarget(this.slotId, params.targetId) : undefined
-          const t = named ?? mine.find(x => x.tabId === this.lastTab) ?? mine[mine.length - 1]
-          if (!t) return { allowed: false }
-          const allowed = await opts.tabs.requestLocalNetwork(t.tabId, this.slotId, url)
+          // No tab (the last one closed, or `new_tab` as the first move): the question is still asked, under this connection.
+          const tabId = questionTabOf(mine, named, this.lastTab)
+          const allowed = tabId === undefined
+            ? await opts.tabs.requestLocalNetworkNoTab(this.questionKey, this.slotId, url)
+            : await opts.tabs.requestLocalNetwork(tabId, this.slotId, url)
+          if (this.closed) return { allowed: false }
           if (allowed) this.preAllowed.set(url, Date.now() + PRE_ALLOWED_MS)
           return { allowed }
         }
@@ -752,6 +763,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       this.closed = true
       conns.delete(this)
       for (const cancel of [...this.asks]) cancel() // the agent gave up its requests
+      opts.tabs.cancelQuestions(this.questionKey)
       for (const s of sessions.of(this)) {
         sessions.remove(s)
         if (s.kind === 'page') {

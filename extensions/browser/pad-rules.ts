@@ -208,3 +208,13 @@ export function logoutDialog(): DialogSpec {
     escChoice: 'cancel',
   }
 }
+
+/**
+ * The count the Browser pill's badge adds. The pill already counts the seals of the panes that sit in the Browser desk (the core
+ * adds `pillMark`: seals + badge), and a help request seals its tab's pane: counting those again in the badge showed 2 for one
+ * request. The badge counts only the requests whose tab pane is NOT in the Browser desk (moved to another desk, or not drawn
+ * yet), which no seal of this desk counts; the flag keeps the pill lit either way.
+ */
+export function pillBadgeCount(waiting: readonly { paneInBrowserDesk: boolean }[]): number {
+  return waiting.filter(w => !w.paneInBrowserDesk).length
+}

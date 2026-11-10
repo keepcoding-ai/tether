@@ -32,6 +32,21 @@ export function destinationOf(url: string): string | null {
   return `${u.hostname.toLowerCase().replace(/\.$/, '')}:${port}`
 }
 
+/**
+ * The key a local-network question is filed under when the agent has no tab to attach it to (its last tab closed, a `new_tab`
+ * as the first move): the question belongs to the connection that asked, and goes away when the connection does. Tab ids
+ * are UUIDs the tether mints (tabs.ts) or ones it saved itself, never starting with `conn:`, so the key never meets one.
+ */
+export const connectionQuestionKey = (slotId: string, connectionId: string): string => `conn:${slotId}:${connectionId}`
+
+/**
+ * The tab a `Tether.requestLocalNetwork` is about: the one the agent named, else its last page command's, else its newest.
+ * Undefined when the agent has no tab at all (the question then goes under `connectionQuestionKey`, and is still asked).
+ */
+export function questionTabOf(mine: readonly { tabId: string }[], named: { tabId: string } | undefined, lastTab: string | undefined): string | undefined {
+  return (named ?? mine.find(x => x.tabId === lastTab) ?? mine[mine.length - 1])?.tabId
+}
+
 /** The key of an agent's profile in the grants file. */
 export const profileKeyOf = (profileId: string | undefined): string => profileId ?? ''
 

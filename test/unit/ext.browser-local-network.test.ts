@@ -11,9 +11,11 @@ import { join } from 'node:path'
 import { Egress } from '../../extensions/browser/egress/egress.ts'
 import { EgressProxy } from '../../extensions/browser/egress/egress-proxy.ts'
 import { LocalNetworkGate } from '../../extensions/browser/local-network.ts'
+import { TabRegistry } from '../../extensions/browser/tabs.ts'
+import type { TabSession } from '../../extensions/browser/session.ts'
 import {
-  choiceOf, decideLocalNetwork, destinationOf, egressGrantUrl, GRANTS_PER_PROFILE_MAX, grantsOf, hasGrant, localNetworkDialog,
-  profileKeyOf, settingOf, TAB_EGRESS_POLICY, withGrant, type LocalNetworkAsk,
+  choiceOf, connectionQuestionKey, decideLocalNetwork, destinationOf, egressGrantUrl, GRANTS_PER_PROFILE_MAX, grantsOf, hasGrant, localNetworkDialog,
+  profileKeyOf, questionTabOf, settingOf, TAB_EGRESS_POLICY, withGrant, type LocalNetworkAsk,
 } from '../../extensions/browser/local-network-rules.ts'
 
 describe('browser: local-network rules', () => {
@@ -198,5 +200,54 @@ describe('browser: the egress proxy as the tabs use it', () => {
       await proxy.close()
       server.close()
     }
+  })
+})
+
+// V2b: an agent whose last tab closed (or whose first move is `new_tab`) has no tab to attach the question to. It was refused
+// without any dialog (the gate answered `allowed: false`); it is now asked like any other, under its connection's key.
+describe('browser: the local-network question without a tab', () => {
+  const agent = { name: 'Beta', profile: { id: 'p1', name: 'trabalho' } }
+  const key = connectionQuestionKey('slot-b', 'c0ffee')
+
+  test('the tab of the question: named, then the last command\'s, then the newest, and none when the agent has no tab', () => {
+    const mine = [{ tabId: 't1' }, { tabId: 't2' }, { tabId: 't3' }]
+    assert.equal(questionTabOf(mine, { tabId: 't2' }, 't1'), 't2')
+    assert.equal(questionTabOf(mine, undefined, 't1'), 't1')
+    assert.equal(questionTabOf(mine, undefined, 't9'), 't3', 'a last tab that no longer exists falls to the newest')
+    assert.equal(questionTabOf([], undefined, 't1'), undefined, 'no tab: the gate must still ask, not refuse')
+  })
+
+  test('the connection key never meets a tab id', () => {
+    assert.ok(key.startsWith('conn:') && !/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(key), 'tabs are UUIDs')
+    assert.notEqual(connectionQuestionKey('slot-b', 'a'), connectionQuestionKey('slot-b', 'b'))
+  })
+
+  test('the registry asks for an agent with no tab: the person\'s "always" is honored and "once" asks again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tether-lng-'))
+    const asks: LocalNetworkAsk[] = []
+    const gate = new LocalNetworkGate({ dir, setting: () => 'ask', ask: a => asks.push(a), cancelled: () => {}, log: () => {} })
+    const session = Promise.resolve({ onBlocked: () => ({ dispose() {} }), net: { isLocal: (u: string) => /localhost|127\./.test(u) } } as unknown as TabSession)
+    const registry = new TabRegistry({} as never, session, { changed() {}, closed() {} }, { gate, agent: () => ({ name: 'Beta', profile: agent.profile }) as never })
+    try {
+      assert.equal(await registry.requestLocalNetworkNoTab(key, 'slot-b', 'https://public.test/'), true, 'a public address needs nobody')
+      const first = registry.requestLocalNetworkNoTab(key, 'slot-b', 'http://localhost:5173/a')
+      await session
+      assert.equal(asks.length, 1, 'the dialog is shown: before the fix this answered false without asking')
+      assert.equal(asks[0]!.destination, 'localhost:5173')
+      assert.equal(asks[0]!.profile, 'trabalho')
+      gate.answer(asks[0]!.id, 'always')
+      assert.equal(await first, true)
+      // The tab closed again, a new move: the "always" given before holds, no second dialog.
+      assert.equal(await registry.requestLocalNetworkNoTab(connectionQuestionKey('slot-b', 'other'), 'slot-b', 'http://localhost:5173/b'), true)
+      assert.equal(asks.length, 1)
+      // Another port still asks, and the connection going away withdraws the question and refuses it.
+      const other = registry.requestLocalNetworkNoTab(key, 'slot-b', 'http://localhost:3000/')
+      await session
+      assert.equal(asks.length, 2)
+      registry.cancelQuestions(key)
+      assert.equal(await other, false)
+      assert.equal(gate.open().length, 0)
+      assert.equal(await registry.requestLocalNetworkNoTab(key, 'slot-b', 'file:///C:/x'), false, 'only http(s)')
+    } finally { gate.dispose(); rmSync(dir, { recursive: true, force: true }) }
   })
 })

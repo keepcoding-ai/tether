@@ -154,6 +154,24 @@ export class TabRegistry {
     return ses.net.allowOnce(wc.id, url)
   }
 
+  /**
+   * The same question for an agent that has no tab to ask it on (its last tab closed, or `new_tab` before any exists): it is
+   * filed under `questionKey` (local-network-rules, connectionQuestionKey) instead of a tab id, and no ticket is given: the
+   * caller opens the tab afterwards with a granted first ticket. The setting and the profile's "always" apply exactly as for a
+   * tab; `cancelQuestions(questionKey)` withdraws it when the asking connection goes.
+   */
+  async requestLocalNetworkNoTab(questionKey: string, ownerSlotId: string, url: string): Promise<boolean> {
+    if (this.disposed || !isWebUrl(url)) return false
+    const ses = await this.session
+    if (!ses.net.isLocal(url)) return true
+    const info = this.local.agent(ownerSlotId)
+    const agent = { name: info?.name ?? 'o agente', ...(info?.profile ? { profile: info.profile } : {}) }
+    return this.local.gate.request({ tabId: questionKey, url, agent })
+  }
+
+  /** Withdraws (refuses) the questions filed under `questionKey`. */
+  cancelQuestions(questionKey: string): void { this.local.gate.cancelTab(questionKey) }
+
   /** One ticket for `url` without asking: the gatekeeper's, only after the person allowed it through `Tether.requestLocalNetwork`. */
   async grantLocal(tabId: string, url: string): Promise<boolean> {
     const e = this.entries.get(tabId)
