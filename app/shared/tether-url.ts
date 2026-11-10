@@ -3,7 +3,7 @@
 // wherever it lives (a desk, a pad, the drawer). Two kinds:
 //   tether://tab/<pane id>          a pane (a terminal's slot id, or any pane's id)
 //   tether://note?path=<abs path>   a file: the note open on it is revealed, or the file is opened as a note
-//       &pad=panel|desk|global     opened INSIDE that pad (a note already open is revealed, never duplicated)
+//       &pad=panel|desk|global     opened INSIDE that pad (a note already open elsewhere MOVES into it, never duplicated)
 //       &slot=<pane id>            the pane the pad belongs to (panel pad: that panel; desk pad: that panel's desk)
 // A link only ever FOCUSES or OPENS: it never runs a command, never passes arguments to an agent (any program can fire a
 // tether:// link, so nothing in it may be an action). Pure (unit-tested in test/unit/app.tether-url.test.ts); shared

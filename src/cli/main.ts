@@ -64,7 +64,8 @@ export const USAGE = `uso: tether <comando> [opções]
                                       --pad abre a nota DENTRO de uma prancheta, abrindo-a na barra
                                       lateral se preciso: panel (padrão) = a do painel deste
                                       terminal, desk = a da mesa dele, global = a global. Uma nota
-                                      já aberta só é trazida para a frente. --slot indica o painel
+                                      aberta em outro lugar (mesa, outra prancheta, gaveta) MUDA
+                                      para a prancheta; já lá, só vem para a frente. --slot: o painel
                                       (padrão: o deste terminal, TETHER_SLOT_ID)
   doctor                              confere o ambiente
   help                                esta ajuda
