@@ -79,3 +79,8 @@ export function slotPauseRequestPath(home: string, slotId: string): string {
 export function slotPauseReportPath(home: string, slotId: string): string {
   return join(slotsDir(home), `${slotId}.pause.jsonl`)
 }
+
+/** The slot's ronda (tether's nudge clock): interval, extra nudge, stop criterion, next due time. */
+export function slotRondaPath(home: string, slotId: string): string {
+  return join(slotsDir(home), `${slotId}.ronda.json`)
+}

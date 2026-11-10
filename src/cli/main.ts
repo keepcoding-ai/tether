@@ -21,6 +21,7 @@ import { localTime, relativeTime, shortId, statusLabel, table, truncate, truncat
 import { ownSlotOf, restartDaemon, selfShutdownMessage } from '../daemon/restart.ts'
 import { agentChoices, agentRegistry } from '../agents/registry.ts'
 import { cmdPause } from './pause.ts'
+import { cmdRonda } from './ronda.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
@@ -56,6 +57,12 @@ export const USAGE = `uso: tether <comando> [opções]
                                       dentro de um painel, ou com --slot)
   pause done "<nota>"                 registra a parada, com a nota de retomada
   pause status [--json]               mostra a pausa em andamento, slot a slot
+  ronda [intervalo] [--nudge "<texto>"] [--criterion "<critério>"]
+                                      liga a ronda deste painel (padrão 20m) ou a remonta: o
+                                      tether digita um cutucão no agente quando ele está ocioso
+  ronda --status [--json]             mostra a ronda deste painel
+  ronda --off [--force]               desliga (com critério de parada, pergunta antes; --force
+                                      desliga mesmo assim)
   link                                imprime o link tether:// deste painel (só dentro do tether)
   focus [arquivo|link] [--pad [panel|desk|global]] [--slot id]
                                       traz para a frente: o arquivo como nota (abre se não estiver
@@ -109,6 +116,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'profile': return await cmdProfile(rest)
       case 'daemon': return await cmdDaemon(rest)
       case 'pause': return await cmdPause(rest, { out, err, env: process.env })
+      case 'ronda': return await cmdRonda(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
       default:
         throw new UsageError(`comando desconhecido: ${command}`, true)
     }

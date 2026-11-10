@@ -5,8 +5,9 @@
 import type { AgentName, Binding } from '../core/event.ts'
 import type { Profile, ProfileInput } from '../core/profile.ts'
 import type { PauseBatch } from './pause.ts'
+import type { Ronda } from './ronda.ts'
 
-export type { Profile, ProfileInput, PauseBatch }
+export type { Profile, ProfileInput, PauseBatch, Ronda }
 
 export const PROTOCOL_VERSION = 1
 
@@ -89,6 +90,11 @@ export interface SlotState {
   endedAt?: string
   /** Working-set memory in MB summed over the slot's whole process tree (agent/shell and children); live slots only, sampled about every 30 s. Absent on daemons older than 0.3.4. */
   memoryMB?: number
+  /**
+   * The slot's ronda (tether's nudge clock), when on. `due`: the time has come and tether waits for the agent to be idle.
+   * Absent on daemons older than 0.3.5.
+   */
+  ronda?: Ronda & { due?: boolean }
 }
 
 export type ErrorCode =
@@ -103,6 +109,7 @@ export type ErrorCode =
   | 'invalid-profile'   // profile-save refused: the message lists every problem (Portuguese)
   | 'pause-active'      // pause-start refused: a batch is already pausing/paused/resuming
   | 'no-pause'          // the request needs an active batch and there is none
+  | 'ronda-criterion'   // ronda-off refused: the ronda has a stop criterion (message = the stimulus); resend with force
   | 'agent-unavailable' // the slot's agent is not registered (its extension is off or gone); the slot is kept
 
 // --- client → daemon ------------------------------------------------------------------------
@@ -154,6 +161,15 @@ export type Request =
   | { t: 'pause-cancel'; id: number }
   /** Resume the stopped entries (all, or those of `slotIds`) through the PTY, 3 at a time. Reply: `pause` (state resuming). */
   | { t: 'pause-resume'; id: number; slotIds?: string[] }
+  /**
+   * Switch the slot's ronda on or reassemble it: `interval` (10m, 1h; undefined keeps, 20m when new), `nudge`/`criterion`
+   * (undefined keeps, '' clears). One per slot. Reply: `ronda` and `rondaOutcome`.
+   */
+  | { t: 'ronda-set'; id: number; slotId: string; interval?: string; nudge?: string; criterion?: string }
+  /** The slot's ronda (`ronda: null` when off). */
+  | { t: 'ronda-get'; id: number; slotId: string }
+  /** Switch the ronda off; with a criterion and no `force` → `ronda-criterion` (the stimulus). The UI always forces. */
+  | { t: 'ronda-off'; id: number; slotId: string; force?: boolean }
 
 /** Fire-and-forget (no reply): keystrokes. */
 export type Notice = { t: 'input'; slotId: string; data: string }
@@ -179,6 +195,9 @@ export type Reply =
       problem?: string
       /** pause-start / pause-get: the batch (null = none). */
       pause?: PauseBatch | null
+      /** ronda-set / ronda-get / ronda-off: the slot's ronda (null = off). */
+      ronda?: (Ronda & { due?: boolean }) | null
+      rondaOutcome?: 'created' | 'updated' | 'unchanged' | 'off' | 'was-off'
     }
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 
