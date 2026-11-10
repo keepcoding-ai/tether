@@ -28,6 +28,8 @@ export interface CommandHost {
   activePane(): string | undefined
   renamePane(id: string): void
   switchProfile(id: string): void
+  /** "Reiniciar agente": relaunch the pane's agent resuming the same session (the daemon refuses shells and unreported sessions). */
+  restartAgent(id: string): void
   toggleDetails(id: string): void
   /** "Copiar link do painel": a tether:// link to the pane (app/shared/tether-url.ts). */
   copyLink(id: string): void
@@ -142,6 +144,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'frame.close-tabs', title: 'Fechar todas as abas do quadro…', group: GROUP.frame, icon: 'x', ...pane, run: () => host.closeFrameTabs() },
     { id: 'pane.rename', title: 'Renomear painel…', group: GROUP.pane, icon: 'pencil-simple', ...pane, run: withPane(id => host.renamePane(id)) },
     { id: 'pane.switch-profile', title: 'Trocar perfil do painel…', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.switchProfile(id)) },
+    { id: 'pane.restart', title: 'Reiniciar agente do painel', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.restartAgent(id)) },
     { id: 'pane.details', title: 'Mostrar ou ocultar a barra de status do painel', group: GROUP.pane, icon: 'rows', ...pane, run: withPane(id => host.toggleDetails(id)) },
     { id: 'pane.copy-link', title: 'Copiar link do painel', group: GROUP.pane, icon: 'link', ...pane, run: withPane(id => host.copyLink(id)) },
     { id: 'pane.copy-folder', title: 'Copiar pasta do painel', group: GROUP.pane, icon: 'copy', ...pane, run: withPane(id => host.copyFolder(id)) },

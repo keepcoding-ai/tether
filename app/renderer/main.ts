@@ -90,7 +90,7 @@ import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable
 import { associateLinksFailedSituation, associateLinksSituation, closedTabSituation, linksAssociatedSituation, missingTabSituation } from './situations.ts'
 import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
 import { markKeyboardTab, pulseTab, tabCell } from './tab-marks.ts'
-import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, restartFailedSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -2237,6 +2237,34 @@ async function switchProfile(slotId: string): Promise<void> {
   await sendSetProfile(slot, profileId, name, answer.choice === 'now')
 }
 
+/** "Reiniciar agente": the daemon kills the agent and resumes the SAME session in the same panel (no confirmation). */
+const pendingRestarts = new Set<string>()
+async function restartAgent(slotId: string): Promise<void> {
+  const slot = slots.get(slotId)
+  if (!slot || slot.kind === 'shell' || pendingRestarts.has(slotId) || dialogOpen()) return
+  pendingRestarts.add(slotId)
+  try {
+    const reply = await window.tether.request({ t: 'restart', slotId })
+    if (reply.t === 'ok') { if (reply.slot) applyState(reply.slot); return }
+    const current = slots.get(slotId) ?? slot
+    // The restart itself failed after the kill (session gone, already open…): the panel overlay shows that state.
+    if (current.status === 'error') return
+    await askDialog(restartFailedSituation(current, reply.message))
+  } finally {
+    pendingRestarts.delete(slotId)
+  }
+}
+
+const RESTART_UNREGISTERED_TIP = 'O agente ainda não registrou a sessão; reiniciar agora perderia a conversa.'
+/** Agents that resume a session (the daemon's `canRestart` is the live truth; this only decides whether to show the entry at all). */
+function restartMenuEntry(slotId: string): MenuEntry[] {
+  const slot = slots.get(slotId)
+  if (!slot || slot.kind === 'shell' || !isLiveSlot(slot) || slot.restarting || slot.stopping) return []
+  if (slot.canRestart) return [{ icon: 'arrow-clockwise', label: 'Reiniciar agente', run: () => { void restartAgent(slotId) } }]
+  if (slot.kind !== 'claude' && slot.kind !== 'soul') return [] // extension agents: only with the daemon's capability
+  return [{ icon: 'arrow-clockwise', label: 'Reiniciar agente', tip: RESTART_UNREGISTERED_TIP, disabled: true, run: () => {} }]
+}
+
 async function sendSetProfile(slot: SlotState, profileId: string | null, name: string, restart: boolean): Promise<void> {
   const { slotId } = slot
   pendingSwitches.add(slotId)
@@ -2259,8 +2287,8 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 
 // ---------- tab context menu ----------
 
-/** `pin`: how the item also shows outside the menu (ext-api MenuPin). `standalone`: it acts without the pane on screen (a closed tab's menu runs it as is). */
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean }
+/** `pin`: how the item also shows outside the menu (ext-api MenuPin). `standalone`: it acts without the pane on screen (a closed tab's menu runs it as is). `tip`: tooltip. */
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean; tip?: string }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
 /** A line naming what the items under it act on (a pad's title over its items); not an item. */
@@ -2319,6 +2347,7 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     if (item.checked !== undefined) li.setAttribute('aria-checked', String(item.checked))
     if (item.danger) li.classList.add('danger')
     if (item.disabled) li.setAttribute('aria-disabled', 'true')
+    if (item.tip) li.title = item.tip
     li.append(icon(item.icon), document.createTextNode(item.label))
     if (item.checked) li.append(icon('check', 'ctx-check'))
     if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
@@ -2447,6 +2476,7 @@ function slotMenuEntries(slot: SlotState): MenuEntry[] {
     SEP,
     { icon: 'pencil-simple', label: 'Renomear…', run: () => tabs.get(slotId)?.startRename() },
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', standalone: true, run: () => { void switchProfile(slotId) } },
+    ...restartMenuEntry(slotId),
     SEP,
     { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
     { icon: 'link', label: LINK_LABEL, pin: 'icon', standalone: true, run: () => copyPaneLink(slotId) },
@@ -2911,6 +2941,7 @@ const commandHost: CommandHost = {
   activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || liveTypeOf(paneTypes, a.id)) ? a.id : undefined },
   renamePane: id => { const type = liveTypeOf(paneTypes, id); if (type?.rename) type.rename(id); else tabs.get(id)?.startRename() },
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
+  restartAgent: id => { if (slots.has(id)) void restartAgent(id) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
   copyLink: id => copyPaneLink(id),
   copyFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) window.tether.writeClipboard(f); else if (slots.has(id)) copyFolder(id) },

@@ -283,6 +283,20 @@ export function switchProfileFailedSituation(s: SlotState, message: string): Dia
   }
 }
 
+/** "Reiniciar agente" was refused or failed: say why (nothing to decide). */
+export function restartFailedSituation(s: SlotState, message: string): DialogSpec {
+  return {
+    situation: 'restart-failed',
+    tone: 'danger',
+    icon: 'x-circle',
+    title: 'O agente não foi reiniciado',
+    message,
+    context: panelContext(s),
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'O painel continua como estava.', tone: 'neutral' }],
+    escChoice: 'ok',
+  }
+}
+
 /** A "Mover…" that could not be done: everything is back where it was (no pane is ever lost). */
 export function moveFailedSituation(message: string): DialogSpec {
   return {
