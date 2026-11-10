@@ -134,7 +134,7 @@ test('app keybindings: Ctrl+K Ctrl+S opens the screen, Ctrl+W recorded with its 
     assert.ok(pill.continuations >= 8, `after ~800 ms the list of what can come: ${pill.continuations}`)
     assert.match(pill.text, /Atalhos de teclado/)
     // The arrows scroll the list instead of ending the chord (it is often taller than the window).
-    const scrollOf = (): Promise<number> => page.evaluate(() => Math.max(...[...document.querySelectorAll('#chord-pill, #chord-pill *')].map(e => e.scrollTop)))
+    const scrollOf = (): Promise<number> => page.evaluate(() => Math.max(...Array.from(document.querySelectorAll('#chord-pill, #chord-pill *'), (e: { scrollTop: number }) => e.scrollTop)))
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('PageDown')
     assert.equal(await page.evaluate(() => window.__tether.pill().state), 'list', 'arrow/PageDown keep the pill open')
     assert.ok(await scrollOf() > 0, 'arrow/PageDown scrolled the list')
