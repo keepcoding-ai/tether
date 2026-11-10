@@ -19,7 +19,7 @@ export const emptyLayout: PaneLayout = {
 }
 
 export const extensionsLayout: PaneLayout = {
-  id: 'extensions', idPrefix: EXTENSIONS_PANEL_PREFIX, component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, hasSlot: false,
+  id: 'extensions', idPrefix: EXTENSIONS_PANEL_PREFIX, component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, hasSlot: false, affinity: 'desk',
   optionsOf: p => ({ id: p.id, component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, title: EXTENSIONS_TITLE, params: {} }),
 }
 

@@ -670,7 +670,21 @@ function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layou
 }
 
 /** Adds any pane (slot, note, empty) relative to `reference` at `target`'s level, in its desk or the drawer; `into` forces the drawer. */
+/** The pane (by its id, or the component it is being opened with) belongs to the general area only (`affinity: 'desk'`). */
+function deskOnly(id: string, component?: string): boolean {
+  return (component ? paneTypes.byComponent(component) : liveTypeOf(paneTypes, id))?.affinity === 'desk'
+}
+
 function addPaneOptions(options: AddPanelOptions, target?: Target, reference?: string, into?: 'drawer'): IDockviewPanel {
+  // Affinity: a desk-only screen opened from a pad goes to the Foco de Mesa, beside its active pane.
+  if (deskOnly(options.id, options.component) && (reference ? framePadOf(reference) : !drawer.isOpen && padInFocus())) {
+    reference = fileTargetDesk().activePanel?.id
+    if (!reference) target = undefined
+    const dest = drawer.isOpen ? drawer.desk : desks
+    const panel = dest.addPanel(options, reference ? target : undefined, reference)
+    panel.api.setActive()
+    return panel
+  }
   // No reference: the focused pad's frames, when a pad has the focus (and the drawer is closed) — except for a file being
   // opened, which goes to the Foco de Mesa (fileTargetDesk).
   const pad = into === 'drawer' ? undefined : reference ? framePadOf(reference) : !drawer.isOpen && !openingFile ? padInFocus() : undefined
@@ -1508,12 +1522,12 @@ function movePads(): { id: string; padId: string; name: string; icon: string; de
 }
 
 /** The destination tree from the live desks, frames and drawer. */
-function moveTree(): ScopeModel[] {
+function moveTree(paneId?: string): ScopeModel[] {
   const framesOf = (d: Desk | undefined): { id: string; view: FrameViewJSON }[] =>
     (d?.frameIds ?? []).flatMap(id => { const f = d!.frames.get(id); return f ? [{ id, view: f.dock.toJSON() as unknown as FrameViewJSON }] : [] })
   return buildTree({
     drawer: { frames: framesOf(drawer.desk) },
-    pads: movePads().map(p => ({ id: p.id, name: p.name, icon: p.icon, frames: framesOf(p.desk) })),
+    pads: (paneId && deskOnly(paneId) ? [] : movePads()).map(p => ({ id: p.id, name: p.name, icon: p.icon, frames: framesOf(p.desk) })),
     desks: [...desks.desks, ...desks.systemDesks].map(d => ({ id: d.id, name: d.name, color: d.color, frames: framesOf(desks.desk(d.id)) })),
     currentDesk: desks.activeDeskId,
     titleOf: id => findPanel(id)?.api.title,
@@ -1527,7 +1541,7 @@ async function openMove(slotId: string, mode?: MoveMode): Promise<void> {
   const frame = scope ? scopeDesk(scope)?.frameOf(slotId) : undefined
   if (!scope || !frame) return
   const op = await openMoveDialog({
-    scopes: moveTree(),
+    scopes: moveTree(slotId),
     source: { slotId, title: findPanel(slotId)?.api.title ?? slotId, scope, frameId: frame.id },
     paneIcon: id => { const kind = slots.get(id)?.kind; return kind ? KIND_ICON[kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question' },
     ...(mode ? { mode } : {}),

@@ -4,6 +4,6 @@ import { KEYBINDINGS_COMPONENT, KEYBINDINGS_PANEL_PREFIX, KEYBINDINGS_TAB, KEYBI
 import type { PaneTypeContribution } from '../types.ts'
 
 export const KEYBINDINGS_SCREEN_LAYOUT: PaneTypeContribution = {
-  id: 'keybindings', idPrefix: KEYBINDINGS_PANEL_PREFIX, component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB,
+  id: 'keybindings', affinity: 'desk', idPrefix: KEYBINDINGS_PANEL_PREFIX, component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB,
   optionsOf: p => ({ id: p.id, component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, title: KEYBINDINGS_TITLE, params: {} }),
 }
