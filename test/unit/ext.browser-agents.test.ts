@@ -27,7 +27,9 @@ const BRIDGE = 'C:/home/mcp/tether-bridge.json'
 const base = (): LaunchPlan => ({ command: 'agent.exe', args: ['--model', 'haiku'], cwd: 'D:/w', env: { PATH: 'p' } })
 const slotOf = (agent: SlotMeta['agent'], slotId = 'abc123'): SlotMeta => ({ slotId, agent, cwd: 'D:/w', createdAt: '2026-11-09T00:00:00Z' } as SlotMeta)
 
-function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | undefined; exists?: boolean } = {}) {
+const PROXY = 'C:/app/extensions/browser/mcp-proxy.mjs'
+
+function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | undefined; exists?: boolean; proxy?: string; existing?: string[] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'tether-bragents-'))
   const logs: string[] = []
   const mw = createBrowserLaunchMiddleware({
@@ -36,9 +38,10 @@ function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | unde
     serve: () => over.serve ?? true,
     evaluate: () => over.evaluate ?? false,
     server: SERVER,
+    ...(over.proxy ? { proxy: over.proxy } : {}),
     node: () => ('node' in over ? over.node : NODE),
     log: m => logs.push(m),
-    exists: () => over.exists ?? true,
+    exists: p => (over.existing ? over.existing.includes(p) : over.exists ?? true),
   })
   return { home, logs, mw, done: () => rmSync(home, { recursive: true, force: true }) }
 }
@@ -122,6 +125,21 @@ describe('the MCP file: paths and flags, never the key', () => {
       assert.deepEqual(JSON.parse(readFileSync(mcpFileOf(t.home, 'abc123'), 'utf8')), {
         mcpServers: { [MCP_SERVER_NAME]: { command: NODE, args: [SERVER, '--adopt-endpoint-file', endpointFileOf(t.home), '--adopt-key-file', keyFileOf(t.home, 'abc123')] } },
       })
+    } finally { t.done() }
+  })
+  // V2b: the vendored server's texts are corrected by a stdio proxy (mcp-proxy.mjs) that runs the server as its first argument.
+  test('with the proxy: node runs the proxy, which gets the server and its arguments', () => {
+    const t = setup({ proxy: PROXY, evaluate: true })
+    try {
+      t.mw(base(), slotOf('claude'))
+      assert.deepEqual(read(t.home).args, [PROXY, SERVER, '--adopt-endpoint-file', endpointFileOf(t.home), '--adopt-key-file', keyFileOf(t.home, 'abc123'), '--allow-evaluate'])
+    } finally { t.done() }
+  })
+  test('a proxy that is missing from disk leaves the server running bare (the agent still gets the browser)', () => {
+    const t = setup({ proxy: PROXY, existing: [SERVER] })
+    try {
+      t.mw(base(), slotOf('claude'))
+      assert.equal(read(t.home).args[0], SERVER)
     } finally { t.done() }
   })
   test('with evaluate: --allow-evaluate, last', () => {

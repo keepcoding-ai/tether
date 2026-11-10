@@ -48,6 +48,7 @@ export function activate(api: TetherDaemon): IDisposable[] {
     evaluate: () => browserFlag(api, 'evaluate'),
     // Read on use: Electron main bundles this module as CommonJS (import.meta.dirname is undefined there), and never runs it.
     server: resolve(import.meta.dirname ?? '.', 'vendor', 'tether-browser', 'server.mjs'),
+    proxy: resolve(import.meta.dirname ?? '.', 'mcp-proxy.mjs'),
     // The system node, like the bridge's MCP shell and tetherd itself; the daemon's own binary (a renamed node) is the last resort.
     node: () => findNode() ?? (existsSync(process.execPath) ? process.execPath : undefined),
     log: msg => api.log(scrubLogLine(msg)),

@@ -40,12 +40,13 @@ export interface BrowserMcpConfig {
 }
 
 /** The per-pane MCP file: paths and flags only, never the key's text. */
-export function mcpConfigOf(o: { node: string; server: string; endpointFile: string; keyFile: string; evaluate: boolean }): BrowserMcpConfig {
+export function mcpConfigOf(o: { node: string; server: string; proxy?: string; endpointFile: string; keyFile: string; evaluate: boolean }): BrowserMcpConfig {
   return {
     mcpServers: {
       [MCP_SERVER_NAME]: {
         command: o.node,
-        args: [o.server, '--adopt-endpoint-file', o.endpointFile, '--adopt-key-file', o.keyFile, ...(o.evaluate ? ['--allow-evaluate'] : [])],
+        // With the proxy (mcp-proxy.mjs) the server is its first argument: it relays the server's stdio and corrects its texts.
+        args: [...(o.proxy ? [o.proxy] : []), o.server, '--adopt-endpoint-file', o.endpointFile, '--adopt-key-file', o.keyFile, ...(o.evaluate ? ['--allow-evaluate'] : [])],
       },
     },
   }
@@ -96,6 +97,8 @@ export interface BrowserInjectDeps {
   evaluate(): boolean
   /** The vendored `server.mjs`. */
   server: string
+  /** The stdio proxy that runs the server and corrects what it tells the agent (mcp-proxy.mjs); without it (or when missing) the server runs bare. */
+  proxy?: string
   /** The node that runs it (an absolute path), or undefined when there is none. */
   node(): string | undefined
   log(msg: string): void
@@ -131,7 +134,7 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
       // M4: the folders are the owner's alone before a key lands in them (a home outside the profile inherits an open ACL).
       ensurePrivateDir(browserDirOf(deps.home))
       ensurePrivateDir(keysDirOf(deps.home))
-      writeFileAtomic(mcpFile, JSON.stringify(mcpConfigOf({ node, server: deps.server, endpointFile: endpointFileOf(deps.home), keyFile, evaluate: deps.evaluate() }), null, 2) + '\n')
+      writeFileAtomic(mcpFile, JSON.stringify(mcpConfigOf({ node, server: deps.server, ...(deps.proxy && exists(deps.proxy) ? { proxy: deps.proxy } : {}), endpointFile: endpointFileOf(deps.home), keyFile, evaluate: deps.evaluate() }), null, 2) + '\n')
       writeFileAtomic(keyFile, `${key}\n`)
     } catch (e) {
       releaseSlot(deps.home, slot.slotId)
