@@ -80,6 +80,15 @@ export interface SlotState {
    * Absent on daemons older than 0.3.3.
    */
   idleSince?: string
+  /** Since when the current turn runs (ISO); present only while `turn` is 'busy'. Absent on daemons older than 0.3.4. */
+  busySince?: string
+  /**
+   * When the session ended (ISO; status exited/error). Persisted in the slot's meta, so it survives a daemon restart;
+   * for a slot ended before this field existed, the timestamp of its last logged event. Absent on daemons older than 0.3.4.
+   */
+  endedAt?: string
+  /** Working-set memory in MB summed over the slot's whole process tree (agent/shell and children); live slots only, sampled about every 30 s. Absent on daemons older than 0.3.4. */
+  memoryMB?: number
 }
 
 export type ErrorCode =

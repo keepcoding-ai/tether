@@ -54,6 +54,8 @@ export interface SlotMeta {
   /** Snapshot of the profile's launch args/env from its last run: used when the profile no longer exists. */
   profileArgs?: string[]
   profileEnv?: Record<string, string>
+  /** ISO time the last run ended (written by tetherd on exit, cleared on launch). */
+  endedAt?: string
 }
 
 /** Who is running the slot right now: <home>/slots/<slotId>.run.json (written by the launcher). */

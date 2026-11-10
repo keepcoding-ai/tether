@@ -44,6 +44,8 @@ export class AttentionState {
   turn: Turn = 'idle'
   /** ISO time the turn last became idle (a finished turn, a signal, a reset); undefined while busy or when it never changed here. */
   idleSince: string | undefined
+  /** ISO time the current turn began; undefined while idle. */
+  busySince: string | undefined
   /** The agent reports its own turns (`signal`): the Enter / quiet heuristic stands down for this run. */
   private signaled = false
   private readonly opts: Required<AttentionOptions>
@@ -157,7 +159,9 @@ export class AttentionState {
   private setTurn(v: Turn): boolean {
     if (this.turn === v) return false
     this.turn = v
-    this.idleSince = v === 'idle' ? new Date().toISOString() : undefined
+    const now = new Date().toISOString()
+    this.idleSince = v === 'idle' ? now : undefined
+    this.busySince = v === 'busy' ? now : undefined
     return true
   }
 

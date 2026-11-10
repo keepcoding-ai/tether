@@ -5,6 +5,7 @@ import { withTabEnv } from '../core/tab-env.ts'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports } from './attention.ts'
+import { memoryChanged, sampleProcessTable, treeBytes } from './memory.ts'
 import '../agents/load.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import { shellAdapter } from '../agents/shell.ts'
@@ -33,10 +34,12 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 
-export const DAEMON_VERSION = '0.3.3'
+export const DAEMON_VERSION = '0.3.4'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
+/** Period of the memory sample. One PowerShell process-table query for all slots costs ~0.9 s wall / ~0.9 s CPU on Windows (385 processes), so 60 s keeps it near 1.5 % of one core. */
+export const MEMORY_INTERVAL_MS = 60_000
 export { KILL_WAIT_CAP_MS, MIN_AGENT_AGE_MS }
 /** Agent processes allowed in 'starting' at the same time (PRD RA8); the rest wait as 'queued'. */
 export const MAX_STARTING = 3
@@ -77,6 +80,8 @@ export interface DaemonOptions {
   minAgentAgeMs?: number
   /** Overrides KILL_WAIT_CAP_MS (tests). */
   killWaitCapMs?: number
+  /** How often live slots' memory is sampled (default MEMORY_INTERVAL_MS); 0 turns the sampler off (tests). */
+  memoryIntervalMs?: number
 }
 
 export interface Daemon {
@@ -121,6 +126,8 @@ interface Slot {
   scrollback: Scrollback
   /** Finished / waiting for the user (see attention.ts); `attentionTimer` runs the idle heuristic. */
   attention: AttentionState
+  /** Working set of the process tree in MB, from the last memory sample (live slots only). */
+  memoryMB?: number
   attentionTimer?: NodeJS.Timeout
   /** ts of the last hook report applied (the file is rewritten per report; older ones are ignored). */
   attentionReportTs?: string
@@ -162,6 +169,10 @@ class DaemonImpl implements Daemon {
   private readonly minAgentAgeMs: number
   private readonly killWaitCapMs: number
   private readonly titlePollMs: number | undefined
+  private readonly memoryIntervalMs: number
+  private memoryTimer: NodeJS.Timeout | undefined
+  private memorySampling = false
+  private memoryKick: NodeJS.Timeout | undefined
   /** <home>/profiles.json, re-read when it changes on disk (the CLI edits it while tetherd runs). */
   private readonly profileStore: ProfileStore
   /** Slots waiting for a 'starting' seat, in request order. */
@@ -184,6 +195,7 @@ class DaemonImpl implements Daemon {
     this.minAgentAgeMs = opts.minAgentAgeMs ?? MIN_AGENT_AGE_MS
     this.killWaitCapMs = opts.killWaitCapMs ?? KILL_WAIT_CAP_MS
     this.titlePollMs = opts.titlePollMs
+    this.memoryIntervalMs = opts.memoryIntervalMs ?? MEMORY_INTERVAL_MS
     this.profileStore = new ProfileStore(opts.home)
     this.server = createServer((socket) => this.onConnection(socket))
   }
@@ -206,6 +218,10 @@ class DaemonImpl implements Daemon {
       })
     })
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
+    if (this.memoryIntervalMs > 0) {
+      this.memoryTimer = setInterval(() => void this.sampleMemory(), this.memoryIntervalMs)
+      this.memoryTimer.unref()
+    }
     this.log(`listening on ${this.pipe} (${this.slotMap.size} slots)`)
   }
 
@@ -257,12 +273,51 @@ class DaemonImpl implements Daemon {
     if (slot.restarting) s.restarting = true
     if (slot.stopping) s.stopping = true
     if (slot.attention.value) s.attention = slot.attention.value
-    if (slot.attention.turn === 'busy') s.turn = 'busy'
+    if (slot.attention.turn === 'busy') {
+      s.turn = 'busy'
+      if (slot.attention.busySince) s.busySince = slot.attention.busySince
+    }
     else {
       const idleSince = slot.attention.idleSince ?? slot.spawnedAt ?? this.lastEventTs(slot)
       if (idleSince) s.idleSince = idleSince
     }
+    if (slot.status === 'exited' || slot.status === 'error' || slot.status === 'unconfirmed') {
+      const endedAt = slot.meta.endedAt ?? this.lastEventTs(slot)
+      if (endedAt) s.endedAt = endedAt
+    } else if (slot.memoryMB !== undefined) s.memoryMB = slot.memoryMB
     return s
+  }
+
+  /** A fresh slot should not wait a whole interval for its first reading: one sample a few seconds after a spawn (coalesced). */
+  private kickMemory(): void {
+    if (this.memoryIntervalMs <= 0 || this.memoryKick) return
+    this.memoryKick = setTimeout(() => { this.memoryKick = undefined; void this.sampleMemory() }, Math.min(5_000, this.memoryIntervalMs))
+    this.memoryKick.unref()
+  }
+
+  /** One process-table query for every live slot; broadcasts the slots whose memory moved enough. Never overlaps itself. */
+  private async sampleMemory(): Promise<void> {
+    if (this.memorySampling || this.closing) return
+    const live = [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit)
+    if (!live.length) return
+    this.memorySampling = true
+    try {
+      const sums = treeBytes(await sampleProcessTable(), live.map((s) => s.pty!.pid))
+      for (const slot of live) {
+        if (!slot.pty || slot.pty.exit) continue
+        const bytes = sums.get(slot.pty.pid)
+        if (bytes === undefined) continue
+        const mb = Math.round(bytes / 1048576)
+        if (memoryChanged(slot.memoryMB, mb)) {
+          slot.memoryMB = mb
+          this.broadcastState(slot)
+        }
+      }
+    } catch (e) {
+      this.log(`memory sample failed: ${(e as Error).message}`)
+    } finally {
+      this.memorySampling = false
+    }
   }
 
   /**
@@ -383,6 +438,8 @@ class DaemonImpl implements Daemon {
   async close(): Promise<void> {
     if (this.closing) return
     this.closing = true
+    if (this.memoryTimer) clearInterval(this.memoryTimer)
+    if (this.memoryKick) clearTimeout(this.memoryKick)
     this.queue.length = 0
     // Every slot is stopped in parallel (each waits for its own agent to be old enough) while the event files
     // are still watched: a young Claude's start report must be seen to let its kill go ahead.
@@ -586,6 +643,11 @@ class DaemonImpl implements Daemon {
     slot.scrollback.clear()
     slot.attention.reset()
     slot.error = undefined
+    slot.memoryMB = undefined
+    if (meta.endedAt) {
+      delete meta.endedAt
+      try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot clear endedAt: ${(e as Error).message}`) }
+    }
     slot.spawnedAt = new Date().toISOString()
     slot.runUnsafe = isUnsafe(plan.args)
     try {
@@ -604,7 +666,9 @@ class DaemonImpl implements Daemon {
           if (slot.readyTimer) clearTimeout(slot.readyTimer)
           slot.readyTimer = undefined
           slot.status = 'exited'
+          slot.memoryMB = undefined
           slot.attention.reset()
+          this.markEnded(slot)
           if (slot.attentionTimer) clearTimeout(slot.attentionTimer)
           this.unwatchTitle(slot)
           // PRD C18: an agent run that never reported its session (old version, hook removed, crashed before the
@@ -634,6 +698,7 @@ class DaemonImpl implements Daemon {
     }
     this.broadcastState(slot)
     this.watchTitle(slot)
+    this.kickMemory()
     this.emitSlot('spawned', slot)
   }
 
@@ -664,9 +729,16 @@ class DaemonImpl implements Daemon {
     return slot.binding !== undefined && slot.spawnedAt !== undefined && slot.binding.since >= slot.spawnedAt
   }
 
+  /** Records when the run ended (in the meta, so a restarted daemon still knows). */
+  private markEnded(slot: Slot): void {
+    slot.meta.endedAt = new Date().toISOString()
+    try { writeSlotMeta(this.home, slot.meta) } catch (e) { this.log(`slot ${slot.meta.slotId}: cannot record endedAt: ${(e as Error).message}`) }
+  }
+
   private fail(slot: Slot, code: ErrorCode, message: string): RequestError {
     slot.status = 'error'
     slot.error = { code, message }
+    this.markEnded(slot)
     this.log(`slot ${slot.meta.slotId}: ${code}: ${message}`)
     this.broadcastState(slot)
     return new RequestError(code, message)
