@@ -1,11 +1,11 @@
 // E15 (design §4.3, §12b rule 18): the browser's partition on disk and what never reaches a log.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { partitionStep } from '../../extensions/browser/tab-rules.ts'
-import { fusedMarkerOf, persistPartitionDir, prepareDiskPartition } from '../../extensions/browser/disk-partition.ts'
+import { fusedMarkerOf, persistPartitionDir, prepareDiskPartition, wipePageStorage } from '../../extensions/browser/disk-partition.ts'
 import { ADDRESS, KEY, PORT, scrubLogLine } from '../../extensions/browser/log-scrub.ts'
 
 test('browser disk: partition step (memory without the fuse; wipe a partition found without the fused marker)', () => {
@@ -59,4 +59,26 @@ test('browser disk: log lines lose page addresses, ports, keys and endpoint cont
   assert.equal(scrubLogLine(`slot ${slot}: guia t-12 criada`), `slot ${slot}: guia t-12 criada`, 'slot and tab ids stay')
   assert.equal(scrubLogLine('rede: requisição barrada (rede local, xhr)'), 'rede: requisição barrada (rede local, xhr)')
   assert.equal(scrubLogLine(`chave em C:\\Users\\x\\tether\\browser\\keys\\${slot}.key`), `chave em C:\\Users\\x\\tether\\browser\\keys\\${slot}.key`, 'a Windows path is not an address')
+})
+
+test('browser disk: a fused partition keeps only the cookies and the network state between starts (review N-M2)', () => {
+  const base = mkdtempSync(join(tmpdir(), 'tether-nm2-disk-'))
+  try {
+    const home = join(base, 'home'), userData = join(home, 'electron')
+    const dir = persistPartitionDir(userData)
+    for (const d of ['Network', 'IndexedDB/https_mail.example_0.indexeddb.leveldb', 'Local Storage/leveldb', 'Service Worker/CacheStorage', 'Session Storage', 'Code Cache/js', 'GPUCache']) mkdirSync(join(dir, d), { recursive: true })
+    writeFileSync(join(dir, 'Network', 'Cookies'), 'encrypted cookie')
+    writeFileSync(join(dir, 'Preferences'), '{}')
+    writeFileSync(join(dir, 'IndexedDB', 'https_mail.example_0.indexeddb.leveldb', '000003.log'), 'BAIT message body')
+    writeFileSync(join(dir, 'Local Storage', 'leveldb', '000003.log'), 'BAIT bearer token')
+    writeFileSync(join(dir, 'Service Worker', 'CacheStorage', 'body'), 'BAIT response body')
+    mkdirSync(join(home, 'browser'), { recursive: true })
+    writeFileSync(fusedMarkerOf(home), '{}')
+    const logs: string[] = []
+    assert.equal(prepareDiskPartition({ fuseOn: true, home, userData, log: m => { logs.push(m) } }), 'use')
+    assert.deepEqual(readdirSync(dir).sort(), ['Network', 'Preferences'])
+    assert.equal(readFileSync(join(dir, 'Network', 'Cookies'), 'utf8'), 'encrypted cookie', 'the logins survive')
+    assert.deepEqual(logs, [])
+    assert.deepEqual(wipePageStorage(dir, () => {}), [], 'nothing more to remove')
+  } finally { rmSync(base, { recursive: true, force: true }) }
 })
