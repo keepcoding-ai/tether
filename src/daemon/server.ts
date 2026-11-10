@@ -297,6 +297,7 @@ class DaemonImpl implements Daemon {
     if (unsafe) s.unsafe = true
     if (slot.restarting) s.restarting = true
     if (slot.stopping) s.stopping = true
+    if (this.adapterOf(slot.meta.agent)?.resumes && isAlive(slot) && this.reportedThisRun(slot) && !slot.restarting && !slot.stopping) s.canRestart = true
     if (slot.attention.value) s.attention = slot.attention.value
     if (slot.attention.turn === 'busy') {
       s.turn = 'busy'
@@ -397,7 +398,7 @@ class DaemonImpl implements Daemon {
           throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa. Troque o perfil na próxima abertura, ou encerre o slot e escolha a sessão ao iniciar`)
         }
       }
-      this.log(`slot ${slot.meta.slotId}: restarting pid ${pty.pid} with profile ${slot.meta.profileId ?? '(none)'}`)
+      this.log(`slot ${slot.meta.slotId}: restarting pid ${pty.pid} (profile ${slot.meta.profileId ?? '(none)'})`)
       await this.stopSlot(slot)
       await this.startSlot(slot, slot.meta.agent === 'shell' ? undefined : 'resume')
     } finally {
@@ -1048,6 +1049,17 @@ class DaemonImpl implements Daemon {
         if (slot.ronda.criterion && req.force !== true) throw new RequestError('ronda-criterion', criterionStimulus(slot.ronda.criterion))
         this.rondaOff(slot)
         return { t: 'ok', id, ronda: null, rondaOutcome: 'off' }
+      }
+      case 'restart': {
+        const slot = this.slot(req.slotId)
+        if (!this.adapterOf(slot.meta.agent)?.resumes) throw new RequestError('bad-request', `o ${slot.meta.agent} não retoma sessão: não há como reiniciar o slot ${slot.meta.slotId}`)
+        if (!isAlive(slot)) throw new RequestError('bad-request', `o slot ${slot.meta.slotId} não está rodando`)
+        // Same early refusal as set-profile: nothing is touched when the agent never reported its session.
+        if (slot.status === 'running' && !this.reportedThisRun(slot)) {
+          throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa`)
+        }
+        await this.restartSlot(slot)
+        return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'set-profile': {
         const slot = this.slot(req.slotId)

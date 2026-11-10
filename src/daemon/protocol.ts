@@ -65,6 +65,8 @@ export interface SlotState {
   unsafe?: boolean
   /** A `set-profile` restart is under way: waiting for the agent's minimum age, or relaunching with the new profile. */
   restarting?: boolean
+  /** The agent can be relaunched in place resuming its session (adapter `resumes`, alive, session reported this run, not restarting/stopping): the UI offers "Reiniciar agente". */
+  canRestart?: boolean
   /** A stop is waiting for the agent to be old enough to kill (young Claudes are never killed; see MIN_AGENT_AGE_MS). */
   stopping?: boolean
   /**
@@ -146,6 +148,11 @@ export type Request =
    * `unconfirmed` (nothing changed) when the running agent never reported its session, so no session is lost.
    */
   | { t: 'set-profile'; id: number; slotId: string; profileId: string | null; restart?: boolean }
+  /**
+   * Relaunch the slot's live agent in the same slot resuming the SAME session (killed only after its minimum age).
+   * Agents only (adapter `resumes`); refused with `unconfirmed` (nothing touched) when the running agent never reported its session.
+   */
+  | { t: 'restart'; id: number; slotId: string }
   /** The user looked at the slot's pane (it got the focus): clears `attention`. Daemons before 0.3.0 answer bad-request. */
   | { t: 'seen'; id: number; slotId: string }
   /**
