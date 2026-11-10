@@ -202,6 +202,7 @@ async function bareShell(page: Page): Promise<string> {
 
 const DESK_PAD = 'frame-pads.desk'
 const GLOBAL_PAD = 'frame-pads.global'
+const PANEL_PAD = 'frame-pads.panel'
 
 test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relaunch', { timeout: 300_000 }, async () => {
   mkdirSync(artifacts, { recursive: true })
@@ -218,7 +219,7 @@ test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relau
     daemons.push(await claim((await page.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const deskTerm = await shell(page)
     const desk1 = await page.evaluate(() => window.__tether.activeDesk())
-    assert.deepEqual((await bars(page)).right.strip, [DESK_PAD, GLOBAL_PAD], 'both pads on the right strip')
+    assert.deepEqual((await bars(page)).right.strip, [PANEL_PAD, DESK_PAD, GLOBAL_PAD], 'the three pads on the right strip: panel, desk, global')
     assert.deepEqual((await bars(page)).left.strip, [])
 
     // ---- by icon ----
@@ -255,14 +256,14 @@ test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relau
     await page.evaluate(id => window.__tether.togglePad(id), GLOBAL_PAD)
     await page.evaluate(id => window.__tether.movePad(id), GLOBAL_PAD)
     let b = await bars(page)
-    assert.deepEqual([b.left.strip, b.right.strip, b.left.open], [[GLOBAL_PAD], [DESK_PAD], GLOBAL_PAD])
+    assert.deepEqual([b.left.strip, b.right.strip, b.left.open], [[GLOBAL_PAD], [PANEL_PAD, DESK_PAD], GLOBAL_PAD])
     await page.evaluate(id => window.__tether.togglePad(id), DESK_PAD)
     b = await bars(page)
     assert.deepEqual([b.left.open, b.right.open], [GLOBAL_PAD, DESK_PAD], 'one open on each side')
     await page.screenshot({ path: join(artifacts, 'pads-moved-left.png') })
     await page.evaluate(id => window.__tether.restorePad(id), GLOBAL_PAD)
     b = await bars(page)
-    assert.deepEqual([b.left.strip, b.right.strip], [[], [DESK_PAD, GLOBAL_PAD]], 'restored to the right')
+    assert.deepEqual([b.left.strip, b.right.strip], [[], [PANEL_PAD, DESK_PAD, GLOBAL_PAD]], 'restored to the right')
 
     // ---- desk swap and global identity ----
     await page.evaluate(id => { if (window.__tether.sidebars()!.right.open !== id) window.__tether.togglePad(id) }, GLOBAL_PAD)
@@ -401,8 +402,9 @@ test('frame pads in the focus (F10b-2): one focused frame, new panes, Ctrl+K, Mo
     assert.equal(await page.evaluate(() => window.__tether.runCommand('frame.focus.right')), 'ran')
     await page.waitForFunction(id => window.__tether.currentPane() === id, seeded)
     assert.equal(await page.evaluate(() => window.__tether.runCommand('note.new')), 'ran')
-    await page.waitForFunction(p => window.__tether.padFrames().some(f => f.pad === p && f.panes.length === 2), DESK_PAD)
-    const note = (await padPanes(page, desk1)).find(id => id !== seeded)!
+    // The note takes the place of the pad's blank seed (a blank pane is a place kept for what comes next).
+    await page.waitForFunction(([p, seed]) => window.__tether.padFrames().some(f => f.pad === p && f.panes.length === 1 && !f.panes.includes(seed!)), [DESK_PAD, seeded])
+    const note = (await padPanes(page, desk1))[0]!
     assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(note), 'the note is in the pad, not on the desk')
     await page.waitForFunction(id => window.__tether.currentPane() === id, note)
     await sleep(500)
@@ -416,7 +418,10 @@ test('frame pads in the focus (F10b-2): one focused frame, new panes, Ctrl+K, Mo
 
     // ---- "Mover…": the pads are destinations; b goes into the desk pad and comes back ----
     const tree = await page.evaluate(() => window.__tether.moveTree())
-    assert.deepEqual(tree.filter(s => s.kind === 'pad').map(s => [s.id, s.name]), [[`pad:${DESK_PAD}@${desk1}`, 'Prancheta da mesa'], [`pad:${GLOBAL_PAD}`, 'Prancheta global']])
+    const padNodes = tree.filter(s => s.kind === 'pad')
+    assert.deepEqual(padNodes.map(s => s.name), ['Prancheta do painel', 'Prancheta da mesa', 'Prancheta global'], 'the panel pad (of the focused panel) comes first')
+    assert.ok(padNodes[0]!.id.startsWith(`pad:${PANEL_PAD}@`))
+    assert.deepEqual(padNodes.slice(1).map(s => s.id), [`pad:${DESK_PAD}@${desk1}`, `pad:${GLOBAL_PAD}`])
     const bPid = await pidOf(page, b)
     await page.evaluate(id => window.__tether.openMove(id), b)
     await page.waitForSelector('dialog.move[open]')

@@ -48,6 +48,7 @@ test('tab ×: a running shell asks before closing, and "Encerrar" stops it', asy
     await page.waitForSelector('#dlg-new[open]')
     await page.fill('#dlg-new .ch-path-input', root)
     await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 1)
     const id = (await page.evaluate(() => window.__tether.panelIds()))[0]!
     await page.waitForFunction(id => /PS.*>/.test(window.__tether.text(id).replace(/\s+/g, '')), id, { timeout: 20_000 })

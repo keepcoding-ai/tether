@@ -112,6 +112,7 @@ test('app note menu: the editor context menu is opaque, bordered and shadowed in
     await page.waitForSelector('#dlg-new[open]')
     await page.fill('#dlg-new .ch-path-input', cwd)
     await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 1)
     const [shell] = await page.evaluate(() => window.__tether.panelIds())

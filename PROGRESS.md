@@ -1116,3 +1116,34 @@ Os "+" de borda passaram a existir só nesse modo.
 - **Bancada B6** (runtime do dia a dia com a trava de cookies, instalador, Menu Iniciar) e o login do Google com a conta do Guga.
 - **Proof** (experiência real) e **parecer final** antes de integrar.
 - Limites registrados: a trava cifra só o valor do cookie; um agente enganado pode usar as contas logadas na partição; o build empacotado ainda não sobe o tetherd (caminho dentro do `app.asar`).
+
+## Pausa gentil — B8: prova com Claude real e docs (2026-11-09)
+
+**O que entrou.**
+- `test/e2e/pause.test.ts` (novo, daemon): tetherd privado (home e pipe temporários), 2 slots Claude haiku com uma tarefa de 10 passos `sleep 6; echo passo-N` em chamadas Bash separadas. Prova a bolinha (`turn: busy` durante a resposta, ausente depois do Stop), `pause-start` sem `slotIds` (entram os dois ocupados), a linha do tempo de cada entrada (`listening > delivered > preparing > stopped`), a frase e a nota reais do agente, `pause-resume` (turno `busy` de novo nos dois, lote `closed`, entradas `resumed`) e, no transcript de cada sessão, a linha `[tether] Retomando a pausa` com o começo da nota.
+- `test/e2e/app.pause.test.ts` (novo, app Electron, molde do `app.attention`): Claude real pela UI; botão Pausar presente e sem contador antes do lote; bolinha da guia (`.attn[data-mark="busy"]`); clique em Pausar → contador `0/1` e linha "Pedido enviado" → `1/1` quando o agente para; menu com Retomar habilitado; comando `pause.manage` abre o popup (tiers `desktop` a 1280 e `narrow` a 900), capturas claro/escuro; Retomar pelo menu → turno `busy` de novo e contador some. Capturas fora do repo (`PAUSE_SHOTS_DIR`, padrão `D:/atrium/.tmp/pause-proof/`).
+- README (seção "Pausa gentil"), MANIFEST §4 (o hook não é mais mudo: escreve JSON só na pausa; módulos da pausa).
+
+**Provas (saída real).**
+- Daemon, 1/1 (~62 s). Os dois agentes obedeceram (nenhum `stopped-silent`):
+  - slot 1: frase "Fazendo a sequência de 10 passos sleep+echo, um por chamada Bash. Passo 1 concluído; parando antes do passo 2." / nota "Sequência de 10 passos (sleep 6; echo passo-N, um por chamada, sequencial). Concluído: passo 1 (saída: passo-1). Parei antes do passo 2. Próximo passo: rodar 'sleep 6; echo passo-2' e seguir até o passo 10; depois responder apenas 'tudo-pronto'." (+24 s do `pause-start`).
+  - slot 2: frase "Executando a sequência de 10 passos (sleep 6; echo passo-N), um por chamada Bash. Passo 1 concluído; parando agora antes do passo 2, conforme o pedido de pausa." / nota "Parou após o passo 1 de 10 (sleep 6; echo passo-1 executado, saída: passo-1). Próximo passo: passo 2 — rodar sleep 6; echo passo-2 em chamada Bash separada, depois seguir sequencialmente até o passo 10, e então responder apenas: tudo-pronto." (+33 s).
+  - Retomar: os dois voltaram a `busy`; lote `closed`, `resumed/resumed`; transcript com a linha de retomada e a nota. Log: `D:/atrium/.tmp/pause-proof/daemon-run2.log`.
+- App, 2/2 (~56 s, com a canária): contador `0/1` ao clicar, linha "Pedido enviado"; `1/1` com a nota "Parei após o passo 1 de 10 (…)"; popup nos dois temas e tiers; Retomar → `busy`. Log `app-run2.log`. Capturas (claro e escuro, 900 e 1280 px): `app-popup-{1280,900}-{light,dark}.png`, além de `app-busy-ball.png`, `app-menu-waiting.png`, `app-menu-stopped.png`, `app-resumed.png`, `app-idle-no-batch.png`. Revisadas: o popup (lista, selo "Parou", cartão "Nota para retomar", linha do tempo, rodapé "1 de 1 já parou") lê bem nos 4; no 900 px a lista fica estreita à esquerda sem quebrar.
+- `npm run check`: typecheck limpo; 1514 testes, 1502 ok, 2 pulados, **10 falhas já conhecidas** (`profiles over the protocol`, `set-profile…`, e os 8 do `web-bridge`: vendor/daemon host/install/update).
+
+**Falhas achadas (código de B1–B7, não corrigidas aqui).**
+1. **Pílula vazia ao lado do ícone Pausar sem lote** (B6, cosmético): `#pause-count` leva `.ib-count` (`styles.css:120`, `display: flex`) e `.pause-count` (`:216`, fundo e padding), e nenhuma regra `[hidden] { display: none }` para ele (`#pause-list[hidden]` tem, `#pause-count` não), então o atributo `hidden` que `refreshPauseMenu` põe não esconde: aparece uma bolinha azul vazia (ver `app-idle-no-batch.png`). Conserto: `.pause-count[hidden] { display: none }` (como `.cnt[hidden]`). O E2E afirma só o texto vazio por causa disso.
+2. Ao escrever o teste (não é bug de produto): o transcript do Claude é gravado um instante depois de o turno ficar `busy`; o teste faz poll de até 20 s pela linha de retomada.
+
+**Decisões para validar.**
+1. O texto do pedido é em português.
+2. Sem skill instalada: o texto do hook carrega o comportamento.
+3. Um lote ativo por vez.
+4. Agente esperando permissão entra no lote.
+5. "Ainda finalizando" aos 5 min.
+6. Nota de fallback = última mensagem do agente.
+7. Retomar pelo PTY, 3 por vez.
+8. Pausa: azul = em curso, verde = parou, cinza = fila.
+9. `done` e `waiting` viram laranja sólido na guia.
+(Observado na prova: haiku obedeceu nas 3 execuções, com frase e nota úteis; um agente que ignore o pedido cai em "parou sem nota", caminho coberto só por unitários.)

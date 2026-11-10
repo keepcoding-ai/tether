@@ -51,6 +51,17 @@ Tudo o que se vê vive sobre uma superfície só (a cor da mesa), com os quadros
 - **Comandos e paleta:** toda ação do app é um comando com id estável (`app/renderer/app-commands.ts`); o menu ≡, as teclas e a paleta leem do mesmo registro. `Ctrl+Shift+P` abre a paleta (busca aproximada, atalho ao lado, recentes primeiro, Enter executa, Esc fecha); `Ctrl+P` abre a mesma caixa no modo "Ir para…" (arquivos chegam numa próxima entrega; `>` vira comandos). Dentro de um terminal, Ctrl+letra é do programa, exceto Ctrl+P (lista explícita em `app/renderer/key-capture.ts`).
 - **Teclado:** tudo o que a barra tem se alcança com `Tab`, com foco visível. Na cápsula, `←/→/Home/End` movem o foco entre as mesas e `Enter` troca; nos menus (tema, ≡, "+N", ⋯) `↑/↓/Home/End` navegam, `Enter` escolhe e `Esc` fecha devolvendo o foco ao botão. Com "reduzir movimento" no sistema, as animações (a da cápsula, a da gaveta, o esmaecer) ficam desligadas.
 
+## Pausa gentil
+
+O botão **Pausar** (barra do topo, ao lado dos slots fechados) pede a cada agente em andamento que **pare no seu próprio passo**, sabendo que é temporário. Nada é forçado: sem Esc, sem prazo punitivo. Parar à força continua sendo o tether (Parar o slot).
+
+- **Como o pedido chega:** o hook do Claude entrega o texto como contexto no próximo passo do agente (depois de uma ferramenta ou de um prompt). O agente responde pela CLI: \`tether pause ack "<o que está fazendo>"\` ao receber e \`tether pause done "<nota para retomar>"\` ao parar. \`tether pause status\` mostra o pedido.
+- **Estados de cada agente:** na fila, ouvindo, pedido enviado, pedido recebido, preparando para parar, **parou** (com a nota dele) ou **parou sem nota** (o agente terminou o turno sem avisar: vale a última mensagem dele). Passados 5 min em "enviado/preparando", o rótulo vira "ainda finalizando".
+- **Acompanhar:** o contador "2/5" ao lado do ícone e o menu do botão listam os agentes (Abrir painel, Tirar da fila); **Acompanhar…** (ou o comando \`pause.manage\`) abre o popup com a lista, a nota de cada um e a linha do tempo ao vivo.
+- **Retomar:** escreve no terminal de cada agente que parou pelo pedido \`[tether] Retomando a pausa. Sua nota: "…". Continue de onde parou.\` (3 por vez, só com o agente ocioso). **Cancelar pausa** desfaz o pedido.
+- **A bolinha da guia:** laranja sólido = pede sua atenção (terminou ou espera você; vence tudo), verde discreto = em andamento (sem pulso), nada = ocioso.
+- Um lote por vez. Soul ainda não participa (a leitura do pedido pelo soul é a fatia C).
+
 ## Tether Bridge
 
 O **Tether Bridge** é a extensão de navegador que deixa os agentes dos painéis (Claude, soul) usarem o **seu** Chrome, Edge ou Brave — só nas abas que eles abriram ou que você entregou — por um serviço local (o daemon do bridge, em `127.0.0.1:47831`) que o tetherd sobe sozinho. Ele vem **dentro do tether** (`extensions/web-bridge/vendor/`): nada para baixar, nenhuma loja.

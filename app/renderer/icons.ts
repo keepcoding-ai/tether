@@ -9,6 +9,7 @@ import arrowsOutSimple from '@phosphor-icons/core/assets/regular/arrows-out-simp
 import bug from '@phosphor-icons/core/assets/regular/bug.svg'
 import appWindow from '@phosphor-icons/core/assets/regular/app-window.svg'
 import listNumbers from '@phosphor-icons/core/assets/regular/list-numbers.svg'
+import arrowElbowDownLeft from '@phosphor-icons/core/assets/regular/arrow-elbow-down-left.svg'
 import mapTrifold from '@phosphor-icons/core/assets/regular/map-trifold.svg'
 import arrowClockwise from '@phosphor-icons/core/assets/regular/arrow-clockwise.svg'
 import arrowSquareOut from '@phosphor-icons/core/assets/regular/arrow-square-out.svg'
@@ -24,6 +25,7 @@ import clipboardText from '@phosphor-icons/core/assets/regular/clipboard-text.sv
 import globeSimple from '@phosphor-icons/core/assets/regular/globe-simple.svg'
 // The side bars' open pads wear the fill weight of their icon (sidebars.ts): `<name>-fill` next to each pad icon.
 import clipboardTextFill from '@phosphor-icons/core/assets/fill/clipboard-text-fill.svg'
+import appWindowFill from '@phosphor-icons/core/assets/fill/app-window-fill.svg'
 import globeSimpleFill from '@phosphor-icons/core/assets/fill/globe-simple-fill.svg'
 import filesFill from '@phosphor-icons/core/assets/fill/files-fill.svg'
 import folderOpen from '@phosphor-icons/core/assets/regular/folder-open.svg'
@@ -47,6 +49,7 @@ import squareSplitVertical from '@phosphor-icons/core/assets/regular/square-spli
 import stopCircle from '@phosphor-icons/core/assets/regular/stop-circle.svg'
 import terminalWindow from '@phosphor-icons/core/assets/regular/terminal-window.svg'
 import trash from '@phosphor-icons/core/assets/regular/trash.svg'
+import pause from '@phosphor-icons/core/assets/regular/pause.svg'
 import tray from '@phosphor-icons/core/assets/regular/tray.svg'
 import warning from '@phosphor-icons/core/assets/regular/warning.svg'
 import x from '@phosphor-icons/core/assets/regular/x.svg'
@@ -72,6 +75,8 @@ import arrowLineRight from '@phosphor-icons/core/assets/regular/arrow-line-right
 import arrowLineUp from '@phosphor-icons/core/assets/regular/arrow-line-up.svg'
 import arrowLineDown from '@phosphor-icons/core/assets/regular/arrow-line-down.svg'
 import arrowCounterClockwise from '@phosphor-icons/core/assets/regular/arrow-counter-clockwise.svg'
+import linkIcon from '@phosphor-icons/core/assets/regular/link.svg'
+import linkBreak from '@phosphor-icons/core/assets/regular/link-break.svg'
 import palette from '@phosphor-icons/core/assets/regular/palette.svg'
 import cards from '@phosphor-icons/core/assets/regular/cards.svg'
 import lightning from '@phosphor-icons/core/assets/regular/lightning.svg'
@@ -129,7 +134,10 @@ const SVG = {
   'arrow-clockwise': arrowClockwise,
   'map-trifold': mapTrifold,
   'list-numbers': listNumbers,
+  'arrow-elbow-down-left': arrowElbowDownLeft,
   'arrow-counter-clockwise': arrowCounterClockwise,
+  link: linkIcon,
+  'link-break': linkBreak,
   'arrow-square-out': arrowSquareOut,
   'caret-down': caretDown,
   'caret-up': caretUp,
@@ -150,6 +158,7 @@ const SVG = {
   plugs,
   'puzzle-piece': puzzlePiece,
   'plugs-connected': plugsConnected,
+  pause,
   plus,
   power,
   question,
@@ -206,6 +215,7 @@ const SVG = {
   'clipboard-text': clipboardText,
   'globe-simple': globeSimple,
   'clipboard-text-fill': clipboardTextFill,
+  'app-window-fill': appWindowFill,
   'globe-simple-fill': globeSimpleFill,
   'files-fill': filesFill,
   'floppy-disk': floppyDisk,

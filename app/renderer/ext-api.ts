@@ -27,6 +27,7 @@ import type { Brand } from '../shared/brand.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
 import type { AgentPane } from './agent-panes.ts'
+import type { NoteSnapshot, NoteTree } from './pad-notes.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
@@ -38,6 +39,7 @@ export type { Badge, AttentionHandle, AttentionRaise } from './seal-rules.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
+export type { NoteDeskGroup, NoteFilter, NotePane, NoteRow, NoteSnapshot, NoteTree } from './pad-notes.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
 export interface PaneInfo {
@@ -82,6 +84,8 @@ export interface PadHost {
   readonly padId: string
   /** The desk this view belongs to (scope 'desk'). */
   readonly deskId?: string
+  /** The focusable panel this view belongs to (scope 'panel'). */
+  readonly panelId?: string
   /** What `serialize` returned when layout.json was last written (undefined the first time). */
   readonly state: unknown
   /** The view's state changed: layout.json is written soon (it calls `serialize`). */
@@ -112,6 +116,38 @@ export interface PadView {
 /** What a chooser item resolves into: the pane to add (and what runs once it is there), nothing (cancelled), or an error to show. */
 export type ChoiceResolution = { options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined
 
+/** The id of the destination option picked in the chooser (the note's 'project', 'home', 'other'). */
+export type ChooserDestination = string
+
+/**
+ * One destination option of a chooser item. `edit`: the chooser's folder field is the destination's folder, editable
+ * (with `suffix`, the folders added after it, shown grey after the text). `fixed`: the field shows `fixedFolder`, read
+ * only, and its folder button calls `configure` instead of browsing.
+ */
+export interface ChooserDestinationOption {
+  id: string
+  label: string
+  title?: string
+  folder: 'edit' | 'fixed'
+  suffix?: readonly string[]
+  /** The tooltip of the folder button of a `fixed` option. */
+  configureTitle?: string
+}
+
+/**
+ * The destination choices of a chooser item (only the note's "Nova nota" has them): a row of options above the folder
+ * field while the item is highlighted; other items keep the band as it is.
+ */
+export interface ChooserDestinations {
+  options: readonly ChooserDestinationOption[]
+  /** What comes selected (the last one used), a folder for the field (a remembered `edit` folder), and a warning when the last one could not be kept. */
+  initial(): Promise<{ id: string; folder?: string; warning?: string }>
+  /** The folder a `fixed` option shows. */
+  fixedFolder(id: string): Promise<string>
+  /** The folder button of a `fixed` option. */
+  configure(id: string): void
+}
+
 export interface TetherUi {
   /** The extension's id. */
   readonly id: string
@@ -130,6 +166,10 @@ export interface TetherUi {
     focus(id: string): void
     /** Brings a pane to the front wherever it lives (its desk comes forward, the drawer or its pad opens, its tab is activated) and focuses it. */
     reveal(id: string): void
+    /** "Copiar link do painel": a tether:// link that brings the pane back from anywhere. */
+    copyLink(id: string): void
+    /** Draws the eye to a pane's tab with a short pulse (bring it up first: `reveal`). */
+    attention(id: string): void
     /** Closes a pane without a slot behind it (remembered for "reabrir o último painel fechado"). */
     close(id: string): void
     /** The pane's tab menu at page coordinates (the type's own `tabMenu`). */
@@ -205,6 +245,10 @@ export interface TetherUi {
     fileState(): Promise<SettingsFileState>
     /** "Abrir settings.json": the file in an editor tab (an empty `{}` is created first when absent). */
     openFile(): Promise<void>
+    /** Opens the settings page on one setting (its full key): the page comes forward, scrolls to it and focuses it. */
+    reveal(key: string): void
+    /** The settings page's side of `reveal` (one handler; the last registered wins). */
+    onReveal(handler: (key: string) => void): IDisposable
   }
   menus: {
     /** An item of the ≡ menu; the core fixes the group order (app/renderer/app-menu.ts APP_MENU_GROUPS). */
@@ -267,7 +311,9 @@ export interface TetherUi {
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */
-    resolve(itemId: string, fn: (cwd: string) => Promise<ChoiceResolution>): IDisposable
+    resolve(itemId: string, fn: (cwd: string, destination?: ChooserDestination) => Promise<ChoiceResolution>): IDisposable
+    /** The destination choices of the item `itemId` (the chooser shows them while it is highlighted). */
+    destinations(itemId: string, destinations: ChooserDestinations): IDisposable
   }
   /**
    * The top bar's status icons (left of the connection icon). The manifest declares the icon (`contributes.status`); this
@@ -338,6 +384,26 @@ export interface TetherUi {
      * that the core knows as a place panes live (found, moved, pruned, listed, focused like a desk's).
      */
     frames(host: PadHost): PadView
+    /**
+     * The frames pads' notes (one frame per panel, per desk, the global one), alive or loose (app/renderer/pad-notes.ts). The
+     * core keeps them; the pad-notes extension manages them. Keys: `<pad id>@<owner>`, or the pad id for a global pad.
+     */
+    notes: {
+      tree(): NoteTree
+      /** The notes may have changed (a pane opened or closed somewhere, an operation ran). */
+      onDidChange(listener: () => void): IDisposable
+      /** A note with content just became loose (its panel closed). */
+      onDidLoose(listener: (key: string) => void): IDisposable
+      /** Where a note can go ("Mover…"): each desk's pad and its panels' pads, then the global pad. */
+      targets(): { key: string; label: string; group: string }[]
+      /** The note's panes become tabs of the target's frame (they add up), and the source closes. */
+      move(from: string, to: string): boolean
+      /** Closes notes; the snapshot brings them back (`restore`). */
+      close(keys: readonly string[]): NoteSnapshot
+      restore(snapshot: NoteSnapshot): void
+      /** A live note to the front: its owner comes forward and its pad opens. */
+      show(key: string): void
+    }
   }
   /**
    * The key table and the person's keybindings.json, which stay the core's (the dispatcher honours the file with the

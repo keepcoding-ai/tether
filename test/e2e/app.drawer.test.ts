@@ -112,6 +112,7 @@ async function createShell(page: Page, cwd: string): Promise<string> {
   await page.waitForSelector('#dlg-new[open]')
   await page.fill('#dlg-new .ch-path-input', cwd)
   await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
   await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await page.waitForFunction(n => window.__tether.panelIds().length === n, before.length + 1)
   const added = (await h.ids(page)).filter(id => !before.includes(id))
@@ -295,7 +296,8 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
     // a whole frame, by the hooks (desk 2 holds only b's frame)
     await page.evaluate(id => window.__tether.moveFrameToDrawer(id), b)
     await page.waitForFunction(id => window.__tether.inDrawer(id), b)
-    assert.deepEqual(await h.ids(page), [a], 'desk 2 is empty now: only desk 1 holds a pane')
+    // Desk 2 was born blank (its "Abrir algo aqui" pane stays: the frame moved in beside it, nothing filled it).
+    assert.deepEqual((await h.ids(page)).filter(id => !id.startsWith('empty:')), [a], 'desk 2 has no pane of its own now: only desk 1 holds one')
     await page.evaluate(id => window.__tether.moveFrameFromDrawer(id), b)
     await page.waitForFunction(id => !window.__tether.inDrawer(id), b)
     assert.equal((await pidsOf(page, [b]))[b], bPid)

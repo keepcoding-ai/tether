@@ -89,6 +89,7 @@ async function createPanel(page: Page, kind: 'claude' | 'soul' | 'shell', cwd: s
   await page.fill('#dlg-new .ch-path-input', cwd)
   if (shot) await page.screenshot({ path: join(artifacts, shot) })
   await page.click(`#dlg-new .ch-item[data-id="${{ claude: 'claude', soul: 'soul', shell: 'powershell' }[kind]}"]`)
+  await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
   await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
   await page.waitForFunction(n => document.querySelectorAll('.tether-tab').length === n, before + 1)
 }

@@ -385,6 +385,15 @@ export function pruneLayoutV2<L extends LayoutV2 | LayoutV3 | LayoutV4>(layout: 
   })
   const sidebars = 'sidebars' in layout && layout.sidebars ? { ...layout.sidebars, pads: prunePadStates(layout.sidebars.pads, free()) } : undefined
   const pruned: L = { ...layout, desks: withPads, activeDesk, drawer, ...(systemDesks ? { systemDesks } : {}), ...(sidebars ? { sidebars } : {}) }
+  // A per-panel pad's state is keyed `<pad id>@<panel id>`: one whose panel is gone for good (no slot, not in the layout) and
+  // that holds no pane any more is dropped. A closed slot is still known, so its pad waits for the slot to be reopened.
+  if (sidebars) {
+    const alive = new Set([...known, ...allPanelIds(pruned)])
+    sidebars.pads = Object.fromEntries(Object.entries(sidebars.pads).filter(([key, state]) => {
+      const at = key.indexOf('@')
+      return at === -1 || alive.has(key.slice(at + 1)) || (isDrawerLayout(state) && viewIds(state.frames).length > 0)
+    }))
+  }
   return { layout: pruned, kept: allPanelIds(pruned).length, total }
 }
 

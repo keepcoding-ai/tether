@@ -1,6 +1,7 @@
 // CLI entry point (`bin/tether.mjs`): a client of tetherd. Every command talks to the daemon when it answers;
 // `ls`/`show`/`stop`/`rm`/`rename` fall back to the store on disk, and `new`/`open` run the agent in this
 // terminal (`--here`, or when there is no daemon). Output in Portuguese; exit codes 0 ok / 1 error / 2 usage.
+import { focusTarget, openTetherUrl, ownTabUrl } from './focus.ts'
 import { execFile } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -19,6 +20,7 @@ import { attach } from './attach.ts'
 import { localTime, relativeTime, shortId, statusLabel, table, truncate, truncateStart } from './format.ts'
 import { ownSlotOf, restartDaemon, selfShutdownMessage } from '../daemon/restart.ts'
 import { agentChoices, agentRegistry } from '../agents/registry.ts'
+import { cmdPause } from './pause.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
@@ -50,6 +52,14 @@ export const USAGE = `uso: tether <comando> [opções]
   daemon <status|restart|stop> [--force]
                                       gerencia o tetherd (restart/stop encerram todos os agentes; os apps
                                       reconectam; recusado de dentro de um slot dele sem --force)
+  pause ack "<frase>"                 avisa que você está preparando a parada (pausa gentil;
+                                      dentro de um painel, ou com --slot)
+  pause done "<nota>"                 registra a parada, com a nota de retomada
+  pause status [--json]               mostra a pausa em andamento, slot a slot
+  link                                imprime o link tether:// deste painel (só dentro do tether)
+  focus [arquivo|link]                traz para a frente: o arquivo como nota (abre se não estiver
+                                      aberta; relativo à pasta de abertura do painel), um link
+                                      tether://, ou, sem nada, este painel
   doctor                              confere o ambiente
   help                                esta ajuda
 
@@ -78,6 +88,9 @@ export async function main(argv: string[]): Promise<number> {
         return exitCodeFor(results)
       }
       case 'ls': return await cmdLs(rest)
+      case 'link': out(`${ownTabUrl()}
+`); return 0
+      case 'focus': await openTetherUrl(focusTarget(rest[0])); return 0
       case 'show': return await cmdShow(rest)
       case 'new': return await cmdNew(rest)
       case 'open': return await cmdOpen(rest)
@@ -88,6 +101,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'profiles': return await cmdProfiles(rest)
       case 'profile': return await cmdProfile(rest)
       case 'daemon': return await cmdDaemon(rest)
+      case 'pause': return await cmdPause(rest, { out, err, env: process.env })
       default:
         throw new UsageError(`comando desconhecido: ${command}`, true)
     }

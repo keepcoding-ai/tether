@@ -179,6 +179,18 @@ export class SettingsPanel implements IContentRenderer {
     this.list.addEventListener('scroll', () => this.paintTocActive(), { passive: true })
   }
 
+  /** One setting on screen: the search cleared, the row scrolled to, its control focused and briefly marked. */
+  async reveal(key: string): Promise<void> {
+    await (this.loading ?? this.refresh())
+    if (this.disposed) return
+    this.setQuery('')
+    const row = this.rows.get(key)
+    if (!row) { this.focus(); return }
+    row.el.scrollIntoView({ block: 'center' })
+    row.el.querySelector<HTMLElement>('.st-ctl')?.focus()
+    row.el.classList.remove('st-flash'); void row.el.offsetWidth; row.el.classList.add('st-flash')
+  }
+
   private setQuery(text: string): void {
     if (this.searchTimer) { clearTimeout(this.searchTimer); this.searchTimer = undefined }
     this.input.value = text

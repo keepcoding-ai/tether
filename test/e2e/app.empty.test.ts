@@ -123,6 +123,7 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     assert.equal(await page.locator('#dlg-new .where').count(), 0, 'nothing to be relative to yet')
     await page.fill('#dlg-new .ch-path-input', work)
     await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
     await page.waitForFunction(() => window.__tether.panelIds().length === 1)
     const [shell] = await page.evaluate(() => window.__tether.panelIds())
@@ -162,6 +163,7 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     assert.match(await page.locator('#dlg-new .where-sum .w').innerText(), /^como aba, ao lado de /, '"como aba" by default')
     await page.fill('#dlg-new .ch-path-input', other)
     await page.click('#dlg-new .ch-item[data-id="kind:empty"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
     await page.waitForFunction(() => window.__tether.empties().length === 3)
     const e3 = (await empties(page)).find(e => e.id !== e1!.id && e.id !== e2.id)!
@@ -235,7 +237,7 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     await page.evaluate(id => window.__tether.activate(id), e1!.id)
     const pane1 = page.locator(`.empty-panel[data-empty-id="${e1!.id}"]`)
     await pane1.locator('.ch-path-input').fill(other)
-    await pane1.locator('.ch-item[data-id="kind:note-new"]').hover()
+    await pane1.locator('.ch-item[data-id="kind:note-new"]').click()
     await page.waitForFunction(id => window.__tether.empty(id)?.highlight === 'kind:note-new', e1!.id)
     assert.equal(await pane1.locator('.btn.primary .go-l').innerText(), 'Criar', 'the button says what it does')
     await pane1.locator('.btn.primary').click()

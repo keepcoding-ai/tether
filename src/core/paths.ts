@@ -64,3 +64,18 @@ export function logPath(home: string): string {
 export function slotAttentionPath(home: string, slotId: string): string {
   return join(slotsDir(home), `${slotId}.attention`)
 }
+
+/** The pause batch (one active at a time): <home>/pause.json. */
+export function pausePath(home: string): string {
+  return join(home, 'pause.json')
+}
+
+/** The pending polite pause request for a slot, read by the Claude hook. */
+export function slotPauseRequestPath(home: string, slotId: string): string {
+  return join(slotsDir(home), `${slotId}.pause-request.json`)
+}
+
+/** The agent's pause reports for a slot (jsonl: delivered, ack, done, stop). */
+export function slotPauseReportPath(home: string, slotId: string): string {
+  return join(slotsDir(home), `${slotId}.pause.jsonl`)
+}

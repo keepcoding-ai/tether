@@ -22,6 +22,7 @@ export const manifest: ExtensionManifest = {
       wordWrap: { type: 'boolean', default: true, title: 'Quebra de linha no editor', description: 'Linhas longas quebram na largura do editor em vez de rolar para o lado.' },
       minimap: { type: 'boolean', default: true, title: 'Minimapa nos editores', description: 'Uma miniatura do arquivo à direita do editor, para ver e saltar pelo texto.' },
       lineNumbers: { type: 'boolean', default: true, title: 'Números de linha nos editores', description: 'Os números das linhas à esquerda do texto.' },
+      personalFolder: { type: 'string', default: '~/.tether/notes', title: 'Pasta das minhas notas', description: 'Onde "Nova nota" grava quando o destino é "Minhas notas". ~ é a sua pasta de usuário.' },
     },
     commands: [
       { command: 'note.new', title: 'Nova nota', category: NOTE, icon: 'note-pencil' },
@@ -56,7 +57,7 @@ export const manifest: ExtensionManifest = {
     chooser: {
       groups: [{ id: 'note', label: 'Nota', icon: 'note-pencil' }],
       items: [
-        { id: 'note-new', group: 'note', name: 'Nova nota', hint: 'arquivo .md novo em <pasta>/.tether/notes', icon: 'note-pencil', keywords: ['nota', 'note', 'nova', 'novo', 'md', 'markdown', 'arquivo', 'texto'], button: { verb: 'create', name: 'nota' } },
+        { id: 'note-new', group: 'note', name: 'Nova nota', hint: 'arquivo .md novo, no destino escolhido abaixo', icon: 'note-pencil', keywords: ['nota', 'note', 'nova', 'novo', 'md', 'markdown', 'arquivo', 'texto'], button: { verb: 'create', name: 'nota' } },
         { id: 'note-open', group: 'note', name: 'Abrir nota…', hint: 'um arquivo existente, pelo seletor de arquivos', icon: 'folder-open', keywords: ['nota', 'note', 'abrir', 'md', 'markdown', 'arquivo', 'existente'], button: { verb: 'open', name: 'nota…' } },
       ],
     },

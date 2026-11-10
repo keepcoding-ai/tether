@@ -29,6 +29,8 @@ export interface CommandHost {
   renamePane(id: string): void
   switchProfile(id: string): void
   toggleDetails(id: string): void
+  /** "Copiar link do painel": a tether:// link to the pane (app/shared/tether-url.ts). */
+  copyLink(id: string): void
   copyFolder(id: string): void
   openFolder(id: string): void
   movePane(id: string): void
@@ -54,7 +56,13 @@ export interface CommandHost {
   openTerminalTheme(): void
   fontSize(command: FontSizeCommand): void
   openProfiles(): void
+  /** The "Sessões" popup: everything running, the polite pause and the resume. */
+  sessionsManage(): void
+  /** "Sessões…" / "Pedir pausa…": opens the Sessões menu (the second one with the focus on the pause button); never pauses by itself. */
+  sessionsMenu(focusPause: boolean): void
   restoreConfirmations(): void
+  /** "Associar links tether:// a este tether…". */
+  associateLinks(): void
   closeWindow(): void
   quitAll(): void
   restartDaemon(): void
@@ -135,6 +143,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.rename', title: 'Renomear painel…', group: GROUP.pane, icon: 'pencil-simple', ...pane, run: withPane(id => host.renamePane(id)) },
     { id: 'pane.switch-profile', title: 'Trocar perfil do painel…', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.switchProfile(id)) },
     { id: 'pane.details', title: 'Mostrar ou ocultar a barra de status do painel', group: GROUP.pane, icon: 'rows', ...pane, run: withPane(id => host.toggleDetails(id)) },
+    { id: 'pane.copy-link', title: 'Copiar link do painel', group: GROUP.pane, icon: 'link', ...pane, run: withPane(id => host.copyLink(id)) },
     { id: 'pane.copy-folder', title: 'Copiar pasta do painel', group: GROUP.pane, icon: 'copy', ...pane, run: withPane(id => host.copyFolder(id)) },
     { id: 'pane.open-folder', title: 'Abrir pasta do painel no Explorer', group: GROUP.pane, icon: 'folder-open', ...pane, run: withPane(id => host.openFolder(id)) },
     { id: 'pane.move', title: 'Mover painel…', group: GROUP.pane, icon: 'arrow-square-out', ...pane, run: withPane(id => host.movePane(id)) },
@@ -186,6 +195,10 @@ export function appCommands(host: CommandHost): Command[] {
     // (keybindings.show / keybindings.record, Ctrl+K Ctrl+S, come from the keybindings-screen extension)
     { id: 'extensions.show', title: 'Extensões', group: GROUP.app, icon: 'puzzle-piece', run: () => host.showExtensions() },
     { id: 'profiles.manage', title: 'Perfis de lançamento…', group: GROUP.app, icon: 'sliders-horizontal', run: () => host.openProfiles() },
+    { id: 'sessions.menu', title: 'Sessões…', group: GROUP.app, icon: 'tray', run: () => host.sessionsMenu(false) },
+    { id: 'pause.start', title: 'Pedir pausa aos agentes…', group: GROUP.app, icon: 'pause', run: () => host.sessionsMenu(true) },
+    { id: 'sessions.manage', title: 'Sessões em andamento…', group: GROUP.app, icon: 'tray', run: () => host.sessionsManage() },
+    { id: 'links.associate', title: 'Associar links tether:// a este tether…', group: GROUP.app, icon: 'link', run: () => host.associateLinks() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },
     { id: 'daemon.restart', title: 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'plugs', run: () => host.restartDaemon() },
     { id: 'app.reload-all', title: 'Reiniciar tudo… (app e tetherd; encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'arrows-clockwise', danger: true, run: () => host.reloadAll() },

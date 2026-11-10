@@ -4,7 +4,7 @@
 //      keyboard in the search; Recentes shows the shell just opened and is the highlight; Enter opens it in place;
 //   3. Ctrl+N from inside the terminal: an empty tab (origin add) in the same group; Esc closes it;
 //   4. "Dividir à direita (vazio)" (palette): origin layout, no Cancelar; Esc leaves it there;
-//   5. the digits open the item with that number as shown (renumbered under a filter);
+//   5. the digits select the item with that number as shown (renumbered under a filter); Enter opens it;
 //   6. ⤢: the same chooser as a popup with the typed text, a context chip, no "Onde"; Esc hands the text back;
 //   7. the desk-edge "+" ADDS an empty pane (no duplicate); its right-click menu names the three actions;
 //   8. the contextless popup with a pane active: "Onde" in one line, the grid in one click, "abaixo" honoured;
@@ -22,7 +22,7 @@ import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
 type Snap = { query: string; highlight: string | undefined; folder: string; touched: boolean; busy: boolean; error: string | undefined; recentsOpen: boolean; shown: { id: string; n: number | undefined }[]; effectiveFolder: string; focused: boolean }
-type Empty = Snap & { id: string; cwd: string; origin: 'add' | 'layout' }
+type Empty = Snap & { id: string; cwd: string; origin: 'add' | 'layout'; blank: boolean }
 type Hooks = {
   panelIds(): string[]
   activate(id: string): void
@@ -44,7 +44,7 @@ type Hooks = {
   builder(): boolean
 }
 declare const window: { __tether: Hooks }
-declare const document: { documentElement: { dataset: Record<string, string> }; querySelector(sel: string): { getBoundingClientRect(): { x: number; y: number; width: number; height: number } } | null; querySelectorAll(sel: string): { length: number } }
+declare const document: { activeElement: { classList: { contains(s: string): boolean } } | null; documentElement: { dataset: Record<string, string> }; querySelector(sel: string): { getBoundingClientRect(): { x: number; y: number; width: number; height: number } } | null; querySelectorAll(sel: string): { length: number } }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -130,6 +130,7 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     assert.equal(await page.locator('#dlg-new .btn.primary .go-l').innerText(), 'Abrir')
     await page.fill('#dlg-new .ch-path-input', work)
     await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await noDialog(page)
     await page.waitForFunction(() => window.__tether.panelIds().length === 1)
     const [shell] = await ids(page)
@@ -216,9 +217,12 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     await page.locator(`.empty-panel[data-empty-id="${e3.id}"] .ch-path-input`).fill(work)
     await page.locator(`.empty-panel[data-empty-id="${e3.id}"] .ch-q`).focus()
     await page.keyboard.press(String(n))
+    await page.waitForFunction(id => window.__tether.empty(id)?.highlight === 'soul', e3.id)
+    assert.ok((await ids(page)).includes(e3.id), 'the digit only selects: the pane is still there')
+    await page.keyboard.press('Enter')
     await page.waitForFunction(() => window.__tether.empties().length === 0)
     const soul = newOf(before, await ids(page))
-    assert.equal((await page.evaluate(() => window.__tether.slots())).find(s => s.slotId === soul)?.kind, 'soul', 'the digit opened soul in the pane\'s place')
+    assert.equal((await page.evaluate(() => window.__tether.slots())).find(s => s.slotId === soul)?.kind, 'soul', 'Enter opened soul in the pane\'s place')
 
     // 6. ⤢: the same chooser in focus mode with the typed text; Esc hands it back.
     await focusShell(page, shell!)
@@ -265,9 +269,11 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     assert.equal(e5.cwd, work, 'the focused pane\'s folder')
     assert.equal((await page.evaluate(() => window.__tether.frameIds())).length, framesBefore + 1, 'a new frame')
     assert.equal((await page.evaluate(() => window.__tether.slots())).length, slotsBefore, 'nothing was duplicated')
-    await page.waitForFunction(id => window.__tether.empty(id)?.focused === true, e5.id)
+    // A new frame starts blank (the layout is being drawn): the keyboard is on its action; Esc still withdraws the request.
+    assert.equal((await page.evaluate(id => window.__tether.empty(id), e5.id))!.blank, true)
+    await page.waitForFunction(() => document.activeElement?.classList.contains('blank-action'))
     assert.ok(await page.evaluate(() => window.__tether.builder()), 'the builder mode stays on after a "+"')
-    await page.keyboard.press('Escape') // the chooser's: the empty pane closes
+    await page.keyboard.press('Escape') // the blank view's: the request is withdrawn, the empty pane closes
     await page.waitForFunction(() => window.__tether.empties().length === 0)
     await page.waitForFunction(n => window.__tether.frameIds().length === n, framesBefore, undefined)
     assert.ok(await page.evaluate(() => window.__tether.builder()), 'the chooser took that Esc: still in the builder mode')
@@ -303,6 +309,7 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     await page.fill('#dlg-new .ch-path-input', work)
     before = await ids(page)
     await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await noDialog(page)
     await page.waitForFunction(n => window.__tether.panelIds().length === n, before.length + 1)
     const below = newOf(before, await ids(page))

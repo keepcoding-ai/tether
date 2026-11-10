@@ -99,8 +99,10 @@ async function createShell(page: Page, cwd: string): Promise<string> {
   await page.waitForSelector('#dlg-new[open]')
   await page.fill('#dlg-new .ch-path-input', cwd)
   await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
   await page.locator('#dlg-new[open]').waitFor({ state: 'hidden' })
-  await page.waitForFunction(n => window.__tether.panelIds().length === n, before.length + 1)
+  // On a fresh desk the new pane takes the place of the blank pane (the count does not grow): wait for the new id.
+  await page.waitForFunction(before => window.__tether.panelIds().some(id => !before.includes(id)), before)
   const added = (await h.ids(page)).filter(id => !before.includes(id))
   assert.equal(added.length, 1)
   return added[0]!

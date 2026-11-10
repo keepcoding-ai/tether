@@ -4,8 +4,9 @@
 
 import type { AgentName, Binding } from '../core/event.ts'
 import type { Profile, ProfileInput } from '../core/profile.ts'
+import type { PauseBatch } from './pause.ts'
 
-export type { Profile, ProfileInput }
+export type { Profile, ProfileInput, PauseBatch }
 
 export const PROTOCOL_VERSION = 1
 
@@ -71,6 +72,23 @@ export interface SlotState {
    * the slot or by `seen`. Absent on daemons older than 0.3.0.
    */
   attention?: 'done' | 'waiting'
+  /** A turn is in progress (Claude: prompt submitted and not yet Stop; soul: Enter and output not yet quiet). Absent = idle. */
+  turn?: 'busy'
+  /**
+   * Since when the slot has no turn in progress (ISO): the last busy→idle transition, launch or exit; for a slot that had
+   * no turn since the daemon booted, the spawn time or the last event in its log. Absent while `turn` is 'busy'.
+   * Absent on daemons older than 0.3.3.
+   */
+  idleSince?: string
+  /** Since when the current turn runs (ISO); present only while `turn` is 'busy'. Absent on daemons older than 0.3.4. */
+  busySince?: string
+  /**
+   * When the session ended (ISO; status exited/error). Persisted in the slot's meta, so it survives a daemon restart;
+   * for a slot ended before this field existed, the timestamp of its last logged event. Absent on daemons older than 0.3.4.
+   */
+  endedAt?: string
+  /** Working-set memory in MB summed over the slot's whole process tree (agent/shell and children); live slots only, sampled about every 30 s. Absent on daemons older than 0.3.4. */
+  memoryMB?: number
 }
 
 export type ErrorCode =
@@ -83,6 +101,8 @@ export type ErrorCode =
   | 'bad-request'
   | 'unknown-profile'   // create/profile-delete named a profile that does not exist
   | 'invalid-profile'   // profile-save refused: the message lists every problem (Portuguese)
+  | 'pause-active'      // pause-start refused: a batch is already pausing/paused/resuming
+  | 'no-pause'          // the request needs an active batch and there is none
   | 'agent-unavailable' // the slot's agent is not registered (its extension is off or gone); the slot is kept
 
 // --- client → daemon ------------------------------------------------------------------------
@@ -121,6 +141,19 @@ export type Request =
   | { t: 'set-profile'; id: number; slotId: string; profileId: string | null; restart?: boolean }
   /** The user looked at the slot's pane (it got the focus): clears `attention`. Daemons before 0.3.0 answer bad-request. */
   | { t: 'seen'; id: number; slotId: string }
+  /**
+   * Politely ask agents to stop at a safe point (one batch at a time; `pause-active` otherwise). `slotIds`: those
+   * slots; omitted = every slot whose agent is mid-turn (`turn === 'busy'`). Reply: `pause` (the new batch).
+   */
+  | { t: 'pause-start'; id: number; slotIds?: string[] }
+  /** The current batch (`pause: null` when none). */
+  | { t: 'pause-get'; id: number }
+  /** Take one slot out of the batch (state removed; its request is deleted). */
+  | { t: 'pause-remove'; id: number; slotId: string }
+  /** Drop the whole batch: every request deleted, batch closed. Agents that already got it carry on as they wish. */
+  | { t: 'pause-cancel'; id: number }
+  /** Resume the stopped entries (all, or those of `slotIds`) through the PTY, 3 at a time. Reply: `pause` (state resuming). */
+  | { t: 'pause-resume'; id: number; slotIds?: string[] }
 
 /** Fire-and-forget (no reply): keystrokes. */
 export type Notice = { t: 'input'; slotId: string; data: string }
@@ -144,6 +177,8 @@ export type Reply =
       warnings?: string[]
       /** profiles-list: the file was unusable and repaired (backup kept), or had entries that were skipped. */
       problem?: string
+      /** pause-start / pause-get: the batch (null = none). */
+      pause?: PauseBatch | null
     }
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 
@@ -155,5 +190,7 @@ export type Event =
   | { t: 'removed'; slotId: string }
   /** The profile list changed (save/delete through any client). Sent to every client. */
   | { t: 'profiles'; profiles: Profile[] }
+  /** The pause batch changed (any state or entry). Sent to every client. */
+  | { t: 'pause'; batch: PauseBatch }
 
 export type DaemonMessage = Reply | Event

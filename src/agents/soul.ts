@@ -3,6 +3,10 @@
 // (the binding's recipe, verbatim: the client knows the flags that find the session: -a, -H, -g, -P...).
 // Sessions live on the soul server, so nothing about them can be read locally: sessionExists is 'unknown'
 // and the title is whatever the rename events put in the binding.
+// The same file also carries the client's `turn` lines (busy|idle, written on every change): the daemon feeds them to
+// the attention turn (daemon/attention.ts `signal`), and from the first one the Enter / quiet heuristic stands down.
+// The polite pause request (<slot>.pause-request.json) is read by the client itself, which answers in <slot>.pause.jsonl
+// (client: resume/pause-request.ts); TETHER_HOME and TETHER_SLOT_ID, set below, are how it finds them.
 //
 // Finding the executable (resolveSoulCommand):
 //   1. TETHER_SOUL_CMD: a full command line ("node D:/x/bin/soul"), for a build that is not installed yet.

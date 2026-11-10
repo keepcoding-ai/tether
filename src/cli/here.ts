@@ -1,6 +1,7 @@
 // `--here`: run the slot's agent in THIS terminal (stdio inherited) instead of a tetherd PTY. The plan comes
 // from the same adapters the daemon uses (so the hooks/report still record the slot's events), the run file
 // says who holds the slot while it runs, and the agent's exit code becomes ours.
+import { withTabEnv } from '../core/tab-env.ts'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import '../agents/load.ts'
@@ -31,8 +32,8 @@ export function profileFor(home: string, meta: SlotMeta): SlotProfile {
 
 export function planFor(home: string, meta: SlotMeta, resume: Binding | undefined, extraArgs: string[]): LaunchPlan {
   const profile = profileFor(home, meta).launch
-  if (meta.agent === 'shell') return shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile })
-  return adapterOf(meta.agent).plan({ slot: meta, home, resume, extraArgs, profile })
+  if (meta.agent === 'shell') return withTabEnv(shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile }), meta)
+  return withTabEnv(adapterOf(meta.agent).plan({ slot: meta, home, resume, extraArgs, profile }), meta)
 }
 
 /** `.cmd`/`.bat` need a shell on Windows (Node refuses to spawn them directly); args are quoted for it. */

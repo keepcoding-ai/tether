@@ -109,6 +109,7 @@ test('restore: panes painted before the daemon answers, loading stages, then ter
       await page.fill('#dlg-new .ch-path-input', cwd)
       if (i > 0) { await page.click('#dlg-new .where-sum'); await page.click('#dlg-new .placement[data-level="pane"][data-placement="right"]') }
       await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+      await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
       await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
       await page.waitForFunction(n => window.__tether.panelIds().length === n, before.length + 1)
       ids.push((await page.evaluate(() => window.__tether.panelIds())).find(id => !before.includes(id))!)

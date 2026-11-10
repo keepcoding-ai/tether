@@ -11,9 +11,11 @@
 // width from the desks and a closed one gives it back.
 import type { ContextMenuEntry, PadType, PadView } from './ext-api.ts'
 import { countLabel, type Badge } from './seal-rules.ts'
+
+import { createBlankView } from './blank-view.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import {
-  DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, openPadOn, padsOn, padToggleCommand, restorePad, setWidth, SIDES, sideOf,
+  DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, openPadOn, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, restorePad, setWidth, SIDES, sideOf,
   togglePad, toggleSideBar, type PadDescriptor, type Side, type SideBarsLayout,
 } from './sidebar-rules.ts'
 
@@ -26,6 +28,10 @@ export interface SideBarsHost {
   badgeOf?(padId: string): Badge | undefined
   activeDeskId(): string
   deskName(id: string): string
+  /** The focusable panel the per-panel pads follow (the pane the Foco de Mesa is on); undefined when there is none. */
+  activePanelId(): string | undefined
+  /** A panel's name as its tab shows it. */
+  panelName(id: string): string
   /** The key hint of a command ('' when none). */
   hint(commandId: string): string
   /** The person changed something of the side bars (a pad opened or closed, a width, a side, a pad's state): save soon. */
@@ -41,6 +47,8 @@ export interface SideBarsHost {
 interface Mounted {
   padId: string
   deskId?: string
+  /** The focusable panel a per-panel pad's view belongs to. */
+  panelId?: string
   wrapper: HTMLElement
   view: PadView
   shown: boolean
@@ -63,6 +71,8 @@ export class SideBars {
   /** The saved state of each desk's per-desk pads (desk id → pad id → state), as read; live views overwrite at save time. */
   private readonly deskStates = new Map<string, Record<string, unknown>>()
   private readonly views = new Map<string, Mounted>()
+  /** A per-panel pad shown while no panel has the focus: just the blank view saying so (one per pad, no state). */
+  private readonly noTarget = new Map<string, HTMLElement>()
   /** Pads by how recently they were opened or focused (the palette's "Mover prancheta…" acts on the first one still open). */
   private mru: string[] = []
 
@@ -87,11 +97,14 @@ export class SideBars {
   load(layout: SideBarsLayout, desks: readonly { id: string; pads?: Record<string, unknown> }[]): void {
     for (const m of this.views.values()) this.disposeView(m)
     this.views.clear()
+    for (const el of this.noTarget.values()) el.remove()
+    this.noTarget.clear()
     this.deskStates.clear()
     this.state = layout
     for (const d of desks) if (d.pads && Object.keys(d.pads).length) this.deskStates.set(d.id, { ...d.pads })
     for (const pad of this.host.pads()) {
       if (pad.scope === 'global') { if (pad.id in layout.pads) this.ensureView(pad, undefined) }
+      else if (pad.scope === 'panel') for (const panelId of panelIdsOfPad(layout.pads, pad.id)) this.ensureView(pad, undefined, panelId)
       else for (const d of desks) if (this.deskStates.get(d.id)?.[pad.id] !== undefined) this.ensureView(pad, d.id)
     }
     this.mru = SIDES.map(s => layout[s].open).filter((x): x is string => !!x)
@@ -101,7 +114,10 @@ export class SideBars {
   /** The side bars as layout.json keeps them: the global pads' states serialized from their live views. */
   toJSON(): SideBarsLayout {
     const pads = { ...this.state.pads }
-    for (const m of this.views.values()) if (m.deskId === undefined && m.view.serialize) pads[m.padId] = m.view.serialize()
+    for (const m of this.views.values()) {
+      if (m.deskId !== undefined || !m.view.serialize) continue
+      pads[m.panelId === undefined ? m.padId : panelPadKey(m.padId, m.panelId)] = m.view.serialize()
+    }
     return { ...this.state, pads }
   }
 
@@ -148,23 +164,66 @@ export class SideBars {
 
   focus(padId: string): void { this.shownView(padId)?.focus() }
 
-  /** A pad's view (of a desk, for a desk pad), created if it never showed: where a closing desk's pad content goes. */
-  viewOf(padId: string, deskId: string | undefined): PadView | undefined {
+  /** A pad's view (of a desk for a desk pad, of a panel for a panel pad: `owner`), created if it never showed: where a closing desk's pad content goes. */
+  viewOf(padId: string, owner: string | undefined): PadView | undefined {
     const pad = this.pad(padId)
     if (!pad) return undefined
-    const m = this.ensureView(pad, pad.scope === 'desk' ? deskId : undefined)
+    if (pad.scope === 'panel' && !owner) return undefined
+    const m = this.ensureView(pad, pad.scope === 'desk' ? owner : undefined, pad.scope === 'panel' ? owner : undefined)
     if (m) this.render()
     return m?.view
   }
 
+  /**
+   * Takes a frames pad note away (app/renderer/pad-notes.ts): its view goes without saving anything and so does its saved
+   * state. A pad shown for that owner right now gets a fresh view on the next render (seeded like a new one).
+   */
+  dropNote(padId: string, owner: { deskId?: string; panelId?: string }, redraw = true): void {
+    const key = this.viewKey(padId, owner.deskId, owner.panelId)
+    const m = this.views.get(key)
+    if (m) {
+      this.views.delete(key)
+      try { m.view.dispose() } catch (err) { console.error(`prancheta ${padId}: erro ao descartar a vista`, err) }
+      m.wrapper.remove()
+    }
+    if (owner.deskId !== undefined) {
+      const d = this.deskStates.get(owner.deskId)
+      if (d) delete d[padId]
+    } else {
+      const pads = { ...this.state.pads }
+      delete pads[owner.panelId === undefined ? padId : panelPadKey(padId, owner.panelId)]
+      this.state = { ...this.state, pads }
+    }
+    if (redraw) this.render()
+  }
+
+  /** Puts a note's saved state back (undo of `dropNote`): whatever view stands there now is replaced by one built from it. */
+  putNote(padId: string, owner: { deskId?: string; panelId?: string }, state: unknown): void {
+    this.dropNote(padId, owner, false)
+    if (owner.deskId !== undefined) this.deskStates.set(owner.deskId, { ...this.deskStates.get(owner.deskId), [padId]: state })
+    else this.state = { ...this.state, pads: { ...this.state.pads, [owner.panelId === undefined ? padId : panelPadKey(padId, owner.panelId)]: state } }
+    const pad = this.pad(padId)
+    if (pad) this.ensureView(pad, owner.deskId, owner.panelId)
+    this.render()
+  }
+
+  /** The notes' records (SideBarsLayout.meta), saved with the side bars. */
+  get meta(): Record<string, unknown> { return this.state.meta ?? {} }
+  setMeta(meta: Record<string, unknown>): void {
+    const { meta: _old, ...rest } = this.state
+    this.state = Object.keys(meta).length ? { ...rest, meta } : rest
+  }
+
   private pad(id: string): PadDescriptor | undefined { return this.host.pads().find(p => p.id === id) }
 
-  /** A pad's title as its header shows it: a desk pad carries the active desk's name ('Prancheta da mesa · Soul'). */
-  padTitle(padId: string, deskId?: string): string {
+  /** A pad's title as its header shows it: a desk pad carries the active desk's name ('Prancheta da mesa · Soul'), a panel pad its panel's. */
+  padTitle(padId: string, deskId?: string, panelId?: string): string {
     const pad = this.pad(padId)
     if (!pad) return padId
     const desk = pad.scope === 'desk' ? (deskId ?? this.host.activeDeskId()) : undefined
-    return desk ? `${pad.title} · ${this.host.deskName(desk)}` : pad.title
+    if (desk) return `${pad.title} · ${this.host.deskName(desk)}`
+    const panel = pad.scope === 'panel' ? (panelId ?? this.host.activePanelId()) : undefined
+    return panel ? `${pad.title} · ${this.host.panelName(panel)}` : pad.title
   }
 
   private touch(id: string): void { this.mru = [id, ...this.mru.filter(x => x !== id)].slice(0, 16) }
@@ -186,6 +245,7 @@ export class SideBars {
   render(): void {
     const pads = this.host.pads()
     const desk = this.host.activeDeskId()
+    const panel = this.host.activePanelId()
     for (const side of SIDES) {
       const here = padsOn(pads, this.state, side)
       const open = this.openOn(side)
@@ -198,18 +258,31 @@ export class SideBars {
       const focused = (strip.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.pad : undefined)
       strip.replaceChildren(...here.map(p => this.iconButton(p, p.id === open?.id)))
       if (focused) strip.querySelector<HTMLElement>(`[data-pad="${CSS.escape(focused)}"]`)?.focus()
-      if (open) this.ensureView(open, open.scope === 'desk' ? desk : undefined)
+      if (open) {
+        if (open.scope === 'panel' && !panel) this.ensureNoTarget(open)
+        else this.ensureView(open, open.scope === 'desk' ? desk : undefined, open.scope === 'panel' ? panel : undefined)
+      }
+    }
+    for (const [padId, el] of this.noTarget) {
+      const pad = this.pad(padId)
+      const side = pad ? sideOf(this.state, pad) : undefined
+      const shown = !!pad && !!side && !panel && this.openOn(side)?.id === pad.id
+      if (side) el.dataset.side = side
+      el.classList.toggle('shown', shown)
+      el.toggleAttribute('inert', !shown)
+      el.setAttribute('aria-hidden', String(!shown))
     }
     for (const m of this.views.values()) {
       const pad = this.pad(m.padId)
       const side = pad ? sideOf(this.state, pad) : undefined
-      const shown = !!pad && !!side && this.openOn(side)?.id === pad.id && (m.deskId === undefined || m.deskId === desk)
+      const shown = !!pad && !!side && this.openOn(side)?.id === pad.id && (m.deskId === undefined || m.deskId === desk) && (m.panelId === undefined || m.panelId === panel)
       if (side) m.wrapper.dataset.side = side
       m.wrapper.classList.toggle('shown', shown)
       m.wrapper.toggleAttribute('inert', !shown)
       m.wrapper.setAttribute('aria-hidden', String(!shown))
       const title = m.wrapper.querySelector<HTMLElement>('.pad-desk')
       if (title && m.deskId) title.textContent = this.host.deskName(m.deskId)
+      else if (title && m.panelId) title.textContent = this.host.panelName(m.panelId)
       if (shown !== m.shown) { m.shown = shown; m.view.setVisible?.(shown) }
     }
     this.applyWidths()
@@ -253,19 +326,17 @@ export class SideBars {
     return b
   }
 
-  private viewKey(padId: string, deskId: string | undefined): string { return deskId === undefined ? padId : `${padId}@${deskId}` }
+  private viewKey(padId: string, deskId: string | undefined, panelId?: string): string {
+    return panelId !== undefined ? `${padId}@panel:${panelId}` : deskId === undefined ? padId : `${padId}@${deskId}`
+  }
 
-  /** The view of a pad (for a desk), created on first need; none when no extension registered what the pad shows. */
-  private ensureView(pad: PadDescriptor, deskId: string | undefined): Mounted | undefined {
-    const key = this.viewKey(pad.id, deskId)
-    const existing = this.views.get(key)
-    if (existing) return existing
-    const type = this.host.padType(pad.id)
-    if (!type) return undefined
+  /** The wrapper of a pad's area (header or floating "⋯") and the body its content goes in. */
+  private buildWrapper(pad: PadDescriptor, deskId: string | undefined, panelId: string | undefined): { wrapper: HTMLElement; body: HTMLElement } {
     const wrapper = document.createElement('section')
     wrapper.className = pad.absorbsHeader ? 'pad absorbed' : 'pad'
     wrapper.dataset.pad = pad.id
     if (deskId) wrapper.dataset.desk = deskId
+    if (panelId) wrapper.dataset.panel = panelId
     wrapper.dataset.side = sideOf(this.state, pad)
     wrapper.setAttribute('role', 'region')
     wrapper.setAttribute('aria-label', pad.title)
@@ -277,6 +348,7 @@ export class SideBars {
     title.textContent = pad.title
     head.append(title)
     if (deskId) { const d = document.createElement('span'); d.className = 'pad-desk'; d.textContent = this.host.deskName(deskId); head.append(d) }
+    if (panelId) { const d = document.createElement('span'); d.className = 'pad-desk'; d.textContent = this.host.panelName(panelId); head.append(d) }
     const sp = document.createElement('span'); sp.className = 'sp'
     const more = document.createElement('button')
     more.className = 'ib pad-more'; more.type = 'button'; more.title = 'Mais ações da prancheta'; more.setAttribute('aria-label', 'Mais ações da prancheta')
@@ -299,13 +371,33 @@ export class SideBars {
       wrapper.append(head, body)
     }
     this.layer.append(wrapper)
-    const state = deskId === undefined ? this.state.pads[pad.id] : this.deskStates.get(deskId)?.[pad.id]
+    return { wrapper, body }
+  }
+
+  /** A per-panel pad open while no panel has the focus: nothing to show but a discreet line saying why. */
+  private ensureNoTarget(pad: PadDescriptor): void {
+    if (this.noTarget.has(pad.id)) return
+    const { wrapper, body } = this.buildWrapper(pad, undefined, undefined)
+    wrapper.classList.add('pad-no-target')
+    body.append(createBlankView({ message: 'Nenhum painel em foco.' }))
+    this.noTarget.set(pad.id, wrapper)
+  }
+
+  /** The view of a pad (for a desk, or for a panel), created on first need; none when no extension registered what the pad shows. */
+  private ensureView(pad: PadDescriptor, deskId: string | undefined, panelId?: string): Mounted | undefined {
+    const key = this.viewKey(pad.id, deskId, panelId)
+    const existing = this.views.get(key)
+    if (existing) return existing
+    const type = this.host.padType(pad.id)
+    if (!type) return undefined
+    const { wrapper, body } = this.buildWrapper(pad, deskId, panelId)
+    const state = panelId !== undefined ? this.state.pads[panelPadKey(pad.id, panelId)] : deskId === undefined ? this.state.pads[pad.id] : this.deskStates.get(deskId)?.[pad.id]
     let view: PadView
     try {
       view = type.create({
-        padId: pad.id, ...(deskId ? { deskId } : {}), state,
+        padId: pad.id, ...(deskId ? { deskId } : {}), ...(panelId ? { panelId } : {}), state,
         persist: () => this.host.onChange(),
-        title: () => this.padTitle(pad.id, deskId),
+        title: () => this.padTitle(pad.id, deskId, panelId),
         menuItems: () => this.host.padMenuItems(pad.id),
         setMenuHosted: hosted => { wrapper.classList.toggle('menu-hosted', !!pad.absorbsHeader && hosted) },
       })
@@ -315,7 +407,7 @@ export class SideBars {
       return undefined
     }
     body.append(view.element)
-    const m: Mounted = { padId: pad.id, ...(deskId ? { deskId } : {}), wrapper, view, shown: false }
+    const m: Mounted = { padId: pad.id, ...(deskId ? { deskId } : {}), ...(panelId ? { panelId } : {}), wrapper, view, shown: false }
     this.views.set(key, m)
     return m
   }
@@ -325,7 +417,7 @@ export class SideBars {
     try {
       const s = m.view.serialize?.()
       if (s !== undefined) {
-        if (m.deskId === undefined) this.state = { ...this.state, pads: { ...this.state.pads, [m.padId]: s } }
+        if (m.deskId === undefined) this.state = { ...this.state, pads: { ...this.state.pads, [m.panelId === undefined ? m.padId : panelPadKey(m.padId, m.panelId)]: s } }
       }
       m.view.dispose()
     } catch (err) { console.error(`prancheta ${m.padId}: erro ao descartar a vista`, err) }
@@ -370,7 +462,7 @@ export class SideBars {
   }
 
   /** What the e2e reads: each side's strip, open pad and width; each live view. */
-  snapshot(): { left: SideSnapshot; right: SideSnapshot; placement: Record<string, Side>; views: { pad: string; desk?: string; side: string; shown: boolean; width: number }[] } {
+  snapshot(): { left: SideSnapshot; right: SideSnapshot; placement: Record<string, Side>; views: { pad: string; desk?: string; panel?: string; side: string; shown: boolean; width: number }[] } {
     const side = (s: Side): SideSnapshot => ({
       strip: this.asides[s].hidden ? [] : [...this.asides[s].querySelectorAll<HTMLElement>('.sb-icon')].map(b => b.dataset.pad!),
       open: this.openOn(s)?.id,
@@ -380,7 +472,7 @@ export class SideBars {
     })
     return {
       left: side('left'), right: side('right'), placement: { ...this.state.placement },
-      views: [...this.views.values()].map(m => ({ pad: m.padId, ...(m.deskId ? { desk: m.deskId } : {}), side: m.wrapper.dataset.side ?? '', shown: m.shown, width: m.wrapper.offsetWidth })),
+      views: [...this.views.values()].map(m => ({ pad: m.padId, ...(m.deskId ? { desk: m.deskId } : {}), ...(m.panelId ? { panel: m.panelId } : {}), side: m.wrapper.dataset.side ?? '', shown: m.shown, width: m.wrapper.offsetWidth })),
     }
   }
 }

@@ -110,6 +110,7 @@ test('app note: minimap toggled in general and per editor, remembered across ses
     await page.waitForSelector('#dlg-new[open]')
     await page.fill('#dlg-new .ch-path-input', dir)
     await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
     const body = Array.from({ length: 60 }, (_, i) => `# linha ${i + 1} ${'texto '.repeat(6)}`).join('\n')
     for (let n = 1; n <= 2; n++) {

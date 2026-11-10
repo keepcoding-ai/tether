@@ -157,6 +157,7 @@ export class NotePanel implements IContentRenderer {
     this.cwd = note.cwd
     this.minimapOverride = note.minimap
     this.lineNumbersOverride = note.lineNumbers
+    this.wordWrapOverride = note.wordWrap
     this.initialView = note.view
     this.createEditor()
     this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
@@ -178,7 +179,7 @@ export class NotePanel implements IContentRenderer {
       fontSize: font.fontSize,
       fontWeight: String(font.fontWeight),
       lineHeight: Math.round(font.fontSize * font.lineHeight),
-      wordWrap: this.host.getWordWrap() ? 'on' : 'off',
+      wordWrap: this.wordWrapEnabled() ? 'on' : 'off',
       wrappingIndent: 'same',
       minimap: { enabled: this.minimapEnabled(), renderCharacters: false },
       folding: true,
@@ -533,7 +534,21 @@ export class NotePanel implements IContentRenderer {
     this.flushView()
   }
 
-  setWordWrap(on: boolean): void { this.editor?.updateOptions({ wordWrap: on ? 'on' : 'off' }) }
+  /** This editor's own word-wrap choice (undefined: follows the general setting). Persisted in the pane params. */
+  wordWrapOverride: boolean | undefined
+
+  /** Whether long lines wrap: the editor's own choice wins over the general setting. */
+  wordWrapEnabled(): boolean { return this.wordWrapOverride ?? this.host.getWordWrap() }
+
+  /** Applies the effective word wrap to the editor (after the general setting or the override changed). */
+  refreshWordWrap(): void { this.editor?.updateOptions({ wordWrap: this.wordWrapEnabled() ? 'on' : 'off' }) }
+
+  /** "Quebra de linha deste editor": sets the editor's own choice; undefined resets it to the general setting. */
+  setWordWrapOverride(value: boolean | undefined): void {
+    this.wordWrapOverride = value
+    this.refreshWordWrap()
+    this.flushView()
+  }
 
   setAppearance(appearance: TerminalAppearance): void {
     const font = terminalFontOptions(appearance)

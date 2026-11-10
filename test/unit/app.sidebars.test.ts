@@ -12,11 +12,12 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   clampWidth, DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, MAX_SIDEBAR_WIDTH, MIN_DOCK_WIDTH, MIN_SIDEBAR_WIDTH, movePad, openPad, openPadOn,
-  PadRegistry, padsOn, padToggleCommand, readSideBars, restorePad, setWidth, sideOf, togglePad, toggleSideBar, type PadDescriptor, type SideBarsLayout,
+  PadRegistry, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, readSideBars, restorePad, setWidth, sideOf, togglePad, toggleSideBar, type PadDescriptor, type SideBarsLayout,
 } from '../../app/renderer/sidebar-rules.ts'
 import { allPanelIds, isLayoutV4, migrateLayout, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
 
 const desk: PadDescriptor = { id: 'frame-pads.desk', title: 'Prancheta da mesa', icon: 'clipboard-text', defaultSide: 'right', scope: 'desk', frames: true, order: 10 }
+const panel: PadDescriptor = { id: 'frame-pads.panel', title: 'Prancheta do painel', icon: 'push-pin', defaultSide: 'right', scope: 'panel', frames: true, order: 5 }
 const global: PadDescriptor = { id: 'frame-pads.global', title: 'Prancheta global', icon: 'globe-simple', defaultSide: 'right', scope: 'global', frames: true, order: 20 }
 const files: PadDescriptor = { id: 'explorer.files', title: 'Arquivos', icon: 'folder', defaultSide: 'left', scope: 'global' }
 const PADS = [global, desk, files]
@@ -166,5 +167,30 @@ describe('layout.json v3: a v2 file migrates intact', () => {
     assert.deepEqual(back.layout.sidebars.placement, { [global.id]: 'left' })
     assert.equal(back.layout.sidebars.right.open, desk.id)
     assert.equal(back.layout.sidebars.left.open, global.id)
+  })
+})
+
+describe('the per-panel pad', () => {
+  test('is first on its strip: panel, desk, global', () => {
+    const l = emptySideBars()
+    assert.deepEqual(padsOn([global, desk, panel], l, 'right').map(p => p.id), [panel.id, desk.id, global.id])
+  })
+
+  test('its state is keyed by the panel inside the pad states and read back per pad', () => {
+    assert.equal(panelPadKey(panel.id, 'p1'), 'frame-pads.panel@p1')
+    const pads = { [global.id]: { a: 1 }, [panelPadKey(panel.id, 'p1')]: { b: 1 }, [panelPadKey(panel.id, 'p2')]: { b: 2 }, [panelPadKey(desk.id, 'p9')]: {} }
+    assert.deepEqual(panelIdsOfPad(pads, panel.id), ['p1', 'p2'])
+    assert.deepEqual(panelIdsOfPad(pads, global.id), [], 'a global pad id is not a prefix of itself without the @')
+  })
+
+  test('toggles, moves and restores like any pad', () => {
+    const pads = [panel, desk, global]
+    let l = togglePad(emptySideBars(), pads, panel.id)
+    assert.equal(openPadOn(pads, l, 'right')?.id, panel.id)
+    l = movePad(l, pads, panel.id)
+    assert.equal(sideOf(l, panel), 'left')
+    assert.equal(isMoved(l, panel), true)
+    l = restorePad(l, pads, panel.id)
+    assert.equal(sideOf(l, panel), 'right')
   })
 })

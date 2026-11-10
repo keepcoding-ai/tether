@@ -234,6 +234,7 @@ async function newPanelViaChooser(page: Page, profileId: string, cwd: string, pl
     assert.ok(await placementChecked(page, placement), `placement ${placement} chosen`)
   }
   await page.click(`#dlg-new .ch-item[data-id="${profileId}"]`)
+  await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
   await dlg.waitFor({ state: 'hidden' })
   return waitNewPanel(page, before)
 }

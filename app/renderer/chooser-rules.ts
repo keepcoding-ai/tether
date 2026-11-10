@@ -3,6 +3,7 @@
 // alias: "bash", "pwsh", "nota", "dev"), how the list is laid out (Recentes first, then the groups in the profile
 // manager's order, numbered 1–9 as shown), which folder applies (the profile's own until the field is touched),
 // what the open button says, and the Esc ladder. app/renderer/chooser.ts renders it; main.ts resolves a Choice.
+import { stripTether } from '../shared/tether-folder.ts'
 import type { Profile } from '../../src/daemon/protocol.ts'
 import type { ProfileAgent } from '../../src/core/profile.ts'
 import { foldChars, foldQuery, fuzzyMatch } from './fuzzy.ts'
@@ -235,8 +236,9 @@ export function rememberProfile(recent: readonly string[], id: string): string[]
 
 /** The folder that applies to an item: the profile's own while the field is untouched, else what the field holds. */
 export function effectiveFolder(item: ChooserItem | undefined, folder: string, touched: boolean): { folder: string; fromProfile: boolean } {
-  if (!touched && item?.cwd) return { folder: item.cwd, fromProfile: true }
-  return { folder, fromProfile: false }
+  // A suggested folder inside `.tether` is cut there (app/shared/tether-folder.ts); a folder the person chose is kept.
+  if (!touched && item?.cwd) return { folder: stripTether(item.cwd), fromProfile: true }
+  return { folder: touched ? folder : stripTether(folder), fromProfile: false }
 }
 
 /** What the primary button says for the highlighted item ("Abrir Claude", "Criar nota", "Abrir nota…"; the busy form while opening). */

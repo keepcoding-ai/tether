@@ -103,6 +103,7 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
     await page.waitForSelector('#dlg-new[open]')
     await page.fill('#dlg-new .ch-path-input', work)
     await page.click('#dlg-new .ch-item[data-id=\"claude\"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 1)
     const id = (await page.evaluate(() => window.__tether.panelIds()))[0]!

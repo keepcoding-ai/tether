@@ -5,9 +5,10 @@ import { agentTable, isAgentUnavailable } from './agent-ui.ts'
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { terminalLinkProvider, type TerminalLinkTarget } from './terminal-links.ts'
+import type { LinkTarget } from '../shared/links.ts'
+import { terminalLinkProvider } from './terminal-links.ts'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { tabMark, tabMarkTip } from './turn-rules.ts'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
 import { terminalFontOptions, terminalTheme, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -204,7 +205,7 @@ export interface PanelHost {
   /** "Copiar pasta" from the status bar's pinned action. */
   onCopyFolder(slotId: string): void
   /** A path printed in the pane's terminal was Ctrl+clicked. */
-  onOpenLink(slotId: string, target: TerminalLinkTarget): void
+  onOpenLink(slotId: string, target: LinkTarget): void
   /** The status-bar toggle at the tab strip's right end (and Ctrl+Shift+H): show or hide the pane's header. */
   onToggleDetails(slotId: string): void
   /** Right-click on a tab: the host shows the panel's context menu at the pointer. */
@@ -326,8 +327,7 @@ export class TerminalPanel implements IContentRenderer {
       theme: terminalTheme(host.getAppearance(), host.getScheme()),
     })
     this.term.loadAddon(this.fit)
-    this.term.loadAddon(new WebLinksAddon((_ev, uri) => window.tether.openExternal(uri)))
-    // Ctrl+click on a path that exists (relative ones read against the folder this pane was opened in).
+    // Ctrl+click on a URL or on a path that exists (relative ones read against the folder this pane was opened in): the app's links.
     this.term.registerLinkProvider(terminalLinkProvider(this.term, {
       openingCwd: () => this.host.getSlot(this.slotId)?.cwd ?? this.hint?.cwd,
       open: target => this.host.onOpenLink(this.slotId, target),
@@ -759,8 +759,11 @@ export class SlotTab implements ITabRenderer {
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.unsafe.hidden = !s?.unsafe
     const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
-    this.attn.className = `attn${att.level ? ` ${att.level}` : ''}`
-    this.attn.title = att.lines.join('\n')
+    // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
+    const mark = att.level ? 'attention' : tabMark(s)
+    this.attn.className = `attn${att.level ? ` ${att.level}` : mark ? ` ${mark}` : ''}`
+    this.attn.dataset.mark = mark
+    this.attn.title = att.level ? att.lines.join('\n') : tabMarkTip(s)
     this.element.dataset.attention = att.level ?? ''
     this.element.title = s ? panelTooltip(s) + att.lines.map(l => `\n${l}`).join('') : `Slot ${this.api.id} (desconhecido)`
   }

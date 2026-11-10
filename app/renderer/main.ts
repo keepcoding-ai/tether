@@ -3,7 +3,7 @@
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
 import { type AddPanelOptions, type DockviewTheme, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
-import type { ConnectionState } from '../shared/api.ts'
+import type { ConnectionState, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -29,6 +29,7 @@ import { DeskSet } from './desk-set.ts'
 import { SurfaceHosts, type FreezeTiming } from './surface-host.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
 import { attentionLines, BadgeBoard, effectiveAttention, SealBoard, type AttentionHandle } from './seal-rules.ts'
+import { deskMark, type DeskMark } from './desk-mark.ts'
 import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
 import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
@@ -36,17 +37,21 @@ import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
 import { FramesPad } from './frames-pad.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
-import { badgeParts, buttonTitle, forgetEndedSituation, groupClosed, headerText, type ClosedGroups } from './closed-slots.ts'
+import type { PauseBatch } from '../../src/daemon/pause.ts'
+import { bulkCloseSituation, forgetEndedSituation } from './sessions-rules.ts'
+import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
 import { openMoveDialog } from './move-dialog.ts'
+import { openSessionsDialog, refreshSessionsDialog } from './sessions-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
 import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore, withSystemDesk } from './layout.ts'
 import { SystemDeskRegistry, type SystemDeskDescriptor } from './system-desk-rules.ts'
 import { SideBars } from './sidebars.ts'
-import { otherSide, PadRegistry, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
+import { otherSide, PadRegistry, panelIdsOfPad, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
+import { buildNoteTree, closeNotes, hasContent, panesOf, pruneMeta, readNoteMeta, type NoteSnapshot, type NoteSource, type NoteTree, type PadNoteMeta } from './pad-notes.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
@@ -54,7 +59,7 @@ import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneT
 import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
-import type { ChoiceResolution, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -63,6 +68,9 @@ import { uiIpc } from '../shared/ext-ipc.ts'
 import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { generateSettingsSchema } from '../shared/settings-schema.ts'
 import { monaco, setSettingsSchema } from './monaco.ts'
+import { installMonacoLinks } from './monaco-links.ts'
+import { openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
+import type { LinkTarget } from '../shared/links.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
@@ -73,10 +81,15 @@ import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extension
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
+import { trackedTab } from './tab-tracking.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
+import { associateLinksFailedSituation, associateLinksSituation, closedTabSituation, linksAssociatedSituation, missingTabSituation } from './situations.ts'
+import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
+import { markKeyboardTab, pulseTab, tabCell } from './tab-marks.ts'
 import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 import { watchOverlays } from './overlay-freeze.ts'
@@ -103,7 +116,10 @@ const paneTypes = new PaneRegistry<PaneType>()
 const themeListeners = new Set<(scheme: ThemeState['scheme']) => void>()
 const appearanceListeners = new Set<(a: TerminalAppearance) => void>()
 /** The chooser items extensions contribute, by item id: what picking one opens (TetherUi.chooser). */
-const chooserResolvers = new Map<string, (cwd: string) => Promise<ChoiceResolution>>()
+const chooserResolvers = new Map<string, (cwd: string, destination?: ChooserDestination) => Promise<ChoiceResolution>>()
+const chooserDestinations = new Map<string, ChooserDestinations>()
+/** The settings page's "show this setting" (the settings-screen extension registers it). */
+let settingsRevealer: ((key: string) => void) | undefined
 /** The panes standing in for a disabled extension's saved panes (app/renderer/disabled-pane.ts). */
 const placeholders = new Map<string, DisabledPane>()
 /** Error of the last refused `start` per slot (the daemon does not store `already-open` / `unconfirmed`). */
@@ -135,6 +151,7 @@ let focusedPad: FramesPad | undefined
 function setFocusedPad(pad: FramesPad | undefined): void {
   if (pad === focusedPad) return
   focusedPad = pad
+  scheduleKeyboardTab()
   for (const id of desks.allDeskIds) desks.desk(id)?.paintFocus()
   for (const p of framePads) p.desk.paintFocus()
 }
@@ -282,7 +299,7 @@ const host: PanelHost = {
   onToggleDetails: id => togglePaneDetails(id),
   onOpenFolder: id => openFolder(id),
   onCopyFolder: id => copyFolder(id),
-  onOpenLink: (id, target) => openTerminalLink(id, target),
+  onOpenLink: (id, target) => openLink(target, { slotId: id }),
   onTabMenu: (id, ev) => showTabMenu(id, ev.clientX, ev.clientY),
   isDaemonReady: () => daemonIsReady,
   daemonReady: () => daemonReadyPromise,
@@ -388,7 +405,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
       createRightHeaderActionComponent: () => new TabStripActions({
         describe: id => {
           const s = slots.get(id)
-          return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!paneAttention(id) }
+          return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!paneAttention(id), busy: s?.turn === 'busy' }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         paneMenu: (id, x, y, opener) => {
@@ -412,13 +429,17 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     // Only changes the person can make are saved: a hint or title the app updates is not one (isPersonChange).
     onLayoutChange: reasons => { if (isPersonChange(reasons)) scheduleSave() },
     onPanelsChange: () => {
-      refreshClosedMenu(); renderStrip(); recomputeProjects()
-      // A pad is never empty: its one frame shows the chooser ("O que abrir aqui?") when its last tab leaves.
+      refreshSessions(); renderStrip(); recomputeProjects()
+      // A pad is never empty: its one frame shows the blank view ("Abrir algo aqui") when its last tab leaves.
       if (scope instanceof FramesPad) queueMicrotask(() => { if (scope.reseedIfEmpty()) scheduleSave(); scope.syncMenuHosted() })
+      // The per-panel pads follow the Foco de Mesa's pane: closing it moves the target.
+      notifyActivePane()
+      // A panel that closed may have left its panel pad's note loose.
+      scheduleNotesCheck()
     },
     singleFrame: scope instanceof FramesPad,
     onEdge: (target, op, frameId, at) => onEdge(target, op, frameId, at, scope === 'drawer' ? drawer.desk : scope instanceof FramesPad ? scope.desk : undefined),
-    onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane() },
+    onActivePanelChange: () => { noteActive(currentDesk().activePanel?.id); markSeenIfWatched(); notifyActivePane(); scheduleKeyboardTab() },
     // The desks always paint the Foco de Mesa (it changes only by a click/focus in a desk); a pad with the keyboard and
     // the open drawer paint a neutral outline on their frame instead, never the desk colour.
     focusKind: () => scope === 'drawer' ? 'drawer' : scope instanceof FramesPad ? (focusedPad === scope ? 'keyboard' : 'none') : 'foco',
@@ -428,7 +449,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
       if (scope instanceof FramesPad) setFocusedPad(scope)
       else if (scope === 'desk') setFocusedPad(undefined)
       requestAnimationFrame(() => focusPane(id))
-      refreshClosedMenu()
+      refreshSessions()
       renderStrip()
       scheduleSave()
     },
@@ -441,7 +462,7 @@ function setupDock(): void {
   const bar = $('toolbar')
   strip = new DeskSwitch($('desk-switch'), bar, [bar.querySelector<HTMLElement>('.tb-left')!, bar.querySelector<HTMLElement>('.tb-right')!], {
     switchTo: id => desks.switchTo(id),
-    create: () => { if (!drawer.isOpen) desks.create('after', desks.desks.at(-1)?.id) },
+    create: () => { if (!drawer.isOpen) createBlankDesk('after', desks.desks.at(-1)?.id) },
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
@@ -454,7 +475,7 @@ function setupDock(): void {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.allDeskIds); scheduleSave() },
     onBeforeSwitch: () => { surfaceHosts.suspendAll() },
-    onSwitch: () => { focusActivePane(); notifyActivePane(); notifySystemDeskActive() },
+    onSwitch: () => { focusActivePane(); notifyActivePane(); notifySystemDeskActive(); scheduleKeyboardTab() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
@@ -473,6 +494,8 @@ function setupDock(): void {
     badgeOf: id => badges.get(id),
     activeDeskId: () => desks.activeDeskId,
     deskName: id => deskName(id),
+    activePanelId: () => focusablePanelId(),
+    panelName: id => findPanel(id)?.api.title ?? id,
     hint: id => commands.hint(id),
     onChange: () => scheduleSave(),
     onPadMenu: (id, x, y, opener) => showPadMenu(id, x, y, opener),
@@ -577,11 +600,20 @@ function describePane(id: string | undefined): PaneInfo | undefined {
   return { id, type: liveTypeOf(paneTypes, id)?.id ?? 'unknown', ...(cwd ? { cwd } : {}), ...(file ? { file } : {}), ...(slot && slot.kind !== 'shell' ? { agent: slot.kind } : {}), place }
 }
 
+/**
+ * The pane the per-panel pads follow: the Foco de Mesa's (the one whose frame wears the coloured focus border). A pad or the
+ * drawer taking the keyboard leaves it where it is, so the pad stays on its panel while the person works inside it.
+ */
+function focusablePanelId(): string | undefined {
+  return desks?.active.activePanel?.id
+}
+
 function notifyActivePane(): void {
   // The Foco de Mesa's pane: a pad or the drawer taking the keyboard does not change what the explorer's "Seguir" follows.
-  const id = desks.active.activePanel?.id
+  const id = focusablePanelId()
   if (id === lastActivePane) return
   lastActivePane = id
+  sidebars?.render()
   const info = describePane(id)
   for (const l of activePaneListeners) l(info)
 }
@@ -593,7 +625,12 @@ function layoutJSON(): Layout {
   // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
   let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
   for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
-  return { ...file, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  const out: Layout = { ...file, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  if (!sidebars) return out
+  // The notes' records follow what is live now (owner label, desk, last change): written into the side bars before saving.
+  const { meta: _stale, ...bars } = out.sidebars
+  const meta = refreshNoteMeta(out)
+  return { ...out, sidebars: Object.keys(meta).length ? { ...bars, meta } : bars }
 }
 
 /** The desks whose per-desk pad states the side bars restore: the queue and the system desks. */
@@ -623,9 +660,12 @@ function slotPanelOptions(slot: SlotState): AddPanelOptions {
   return { id: slot.slotId, component: COMPONENT, tabComponent: TAB, title: panelTitle(slot), params: { slotId: slot.slotId, hint: hintOf(slot) } }
 }
 
-/** The dockview options of an empty pane (a fresh id), suggesting `cwd` in its chooser; `origin` says what Esc does in it. */
-function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layout'): AddPanelOptions {
-  return { id: newEmptyPanelId(), component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: withEmpty(cwd, origin) }
+/**
+ * The dockview options of an empty pane (a fresh id), suggesting `cwd` in its chooser; `origin` says what Esc does in it.
+ * `blank`: it starts as the blank view (a calm line and "Abrir algo aqui") and only shows the chooser once that is used.
+ */
+function emptyPanelOptions(cwd: string | undefined, origin: EmptyOrigin = 'layout', blank = false): AddPanelOptions {
+  return { id: newEmptyPanelId(), component: EMPTY_COMPONENT, tabComponent: EMPTY_TAB, title: EMPTY_TITLE, params: withEmpty(cwd, origin, blank) }
 }
 
 /** Adds any pane (slot, note, empty) relative to `reference` at `target`'s level, in its desk or the drawer; `into` forces the drawer. */
@@ -634,7 +674,13 @@ function addPaneOptions(options: AddPanelOptions, target?: Target, reference?: s
   // opened, which goes to the Foco de Mesa (fileTargetDesk).
   const pad = into === 'drawer' ? undefined : reference ? framePadOf(reference) : !drawer.isOpen && !openingFile ? padInFocus() : undefined
   const useDrawer = into === 'drawer' || (reference ? inDrawer(reference) : drawer.isOpen)
-  const panel = (pad ? pad.desk : useDrawer ? drawer.desk : desks).addPanel(options, target, reference)
+  const dest = pad ? pad.desk : useDrawer ? drawer.desk : desks
+  // A blank pane is a place kept for what comes next: opening something there (as a tab of it, or with no place named at
+  // all) takes its place instead of sitting beside it, so a new desk and then Ctrl+N leave no "Vazio" tab behind. A split
+  // beside it, or another empty pane, leaves it alone.
+  const asTab = !target || (target.level === 'pane' && target.placement === 'within')
+  const blankId = asTab && options.component !== EMPTY_COMPONENT ? (reference ?? dest.activePanel?.id) : undefined
+  const panel = (blankId && empties.get(blankId)?.blank ? dest.replacePanel(blankId, options) : undefined) ?? dest.addPanel(options, target, reference)
   panel.api.setActive()
   return panel
 }
@@ -657,15 +703,15 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   rememberClosed(slotId)
   if (!slot) { removeAnyPanel(panel); return }
   const spec = closePanelSituation(slot)
-  let choice: string | undefined = opts.ask === false ? 'detach' : confirmations[spec.situation]
-  // Only an answer the spec can remember is honoured: a destructive one never runs without asking.
-  if (choice !== 'detach' && choice !== spec.remember?.choice) choice = undefined
+  // Only an answer the dialog offers to remember is honoured ('stop' only where the person ticked it); 'forget' always asks.
+  let choice: string | undefined = opts.ask === false ? 'detach' : rememberedClose(spec, confirmations[spec.situation])
   if (!choice) {
     const answer = await askDialog(spec)
     choice = answer.choice
-    if (answer.remember && spec.remember) {
-      confirmations = { ...confirmations, [spec.situation]: spec.remember.choice }
-      window.tether.rememberConfirmation(spec.situation, spec.remember.choice)
+    const remembered = choiceToRemember(spec, answer)
+    if (remembered) {
+      confirmations = { ...confirmations, [spec.situation]: remembered }
+      window.tether.rememberConfirmation(spec.situation, remembered)
     }
   }
   if (choice === 'cancel') return
@@ -680,6 +726,14 @@ async function onAsk(req: AskRequest): Promise<void> {
   switch (req.situation) {
     case 'quit-all': {
       const answer = await askDialog(quitAllSituation(req.slots ?? [...slots.values()]))
+      if (answer.choice === 'pause-first') {
+        // Not leaving: start the batch and show it; main gets a cancel, so nothing quits.
+        window.tether.answer(req.askId, { choice: 'cancel', remember: false })
+        const r = await window.tether.request({ t: 'pause-start' })
+        if (r.t !== 'error') openPauseDialog()
+        else console.warn(`tether: pedido de pausa recusado (${r.message})`)
+        return
+      }
       window.tether.answer(req.askId, answer)
       return
     }
@@ -715,12 +769,17 @@ function renderSlot(slotId: string): void {
 
 // ---------- desks ----------
 
+/** The panes of a desk: its own and those of the frame pads that belong to it (a desk pad's, and its panels' pads). */
+function deskPanes(deskId: string): { id: string }[] {
+  // A desk pad's panes are the desk's: its mark counts them too.
+  return [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId || (x.panelId !== undefined && desks.deskOf(x.panelId) === deskId)).flatMap(x => x.desk.panels)]
+}
+
 /** How many panes of a desk finished their turn / wait for the user. */
 function deskAttention(deskId: string): DeskAttention {
   const out: DeskAttention = { done: 0, waiting: 0 }
   const lines: string[] = []
-  // A desk pad's panes are the desk's: its badge counts them too.
-  for (const p of [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId).flatMap(x => x.desk.panels)]) {
+  for (const p of deskPanes(deskId)) {
     const a = paneAttention(p.id)
     if (a === 'done') out.done++
     else if (a === 'waiting') out.waiting++
@@ -728,6 +787,19 @@ function deskAttention(deskId: string): DeskAttention {
   }
   if (lines.length) out.lines = lines
   return out
+}
+
+/**
+ * A desk's (or the drawer's) mark with the extensions' seals: attention (the terminal's or a seal) beats a busy pane
+ * (quiet green dot) beats nothing (desk-mark.ts).
+ */
+function markWith(att: DeskAttention, panes: readonly { id: string }[]): DeskMark {
+  if (att.done + att.waiting > 0) return { attention: att }
+  return deskMark(panes.map(p => slots.get(p.id))) === 'busy' ? 'busy' : ''
+}
+
+function deskMarkOf(deskId: string): DeskMark {
+  return markWith(deskAttention(deskId), deskPanes(deskId))
 }
 
 /** The seal a pane shows: the terminal's own merged with the extensions' (seal-rules.ts). */
@@ -797,7 +869,7 @@ function declareSystemDesk(decl: { id: string; title: string; icon?: IconName; c
 
 function renderStrip(): void {
   if (!strip || !desks) return
-  strip.render(desks.desks, desks.activeDeskId, deskAttention)
+  strip.render(desks.desks, desks.activeDeskId, deskMarkOf)
   strip.renderSystem(desks.systemDesks.map(d => ({ id: d.id, title: d.name, ...(systemIcons.has(d.id) ? { icon: systemIcons.get(d.id)! } : {}), active: d.id === desks.activeDeskId, attention: deskAttention(d.id), ...(badges.get(d.id) ? { badge: badges.get(d.id)! } : {}) })))
   const active = desks.desks.find(d => d.id === desks.activeDeskId)
   // On the workbench: the line spans the window (over the side bars) and the pads' frames take the colour for the F6 outline.
@@ -852,7 +924,10 @@ async function closeDesk(id: string): Promise<void> {
   if (desks.desks.length <= 1 || desks.isSystem(id)) return
   // The desk's pads go with it: their panes are the desk's panes for this question (same dialog, same answers).
   const deskPads = [...framePads].filter(p => p.deskId === id)
-  const panes = [...(desks.desk(id)?.panels ?? []), ...deskPads.flatMap(p => p.desk.panels)]
+  // The pads of the desk's panels stay with their panels (which move with the desk, or close with it): they only join the question.
+  const panelPads = [...framePads].filter(p => p.panelId !== undefined && desks.deskOf(p.panelId) === id)
+  // A blank pane holds nothing: a desk with only those closes without asking, like an empty desk.
+  const panes = [...(desks.desk(id)?.panels ?? []), ...deskPads.flatMap(p => p.desk.panels), ...panelPads.flatMap(p => p.desk.panels)].filter(p => !empties.get(p.id)?.blank)
   if (panes.length > 0) {
     const neighbour = neighbourDesk(desks.desks, id)!
     const states = panes.map(p => slots.get(p.id)).filter((s): s is SlotState => s !== undefined)
@@ -873,7 +948,7 @@ async function closeDesk(id: string): Promise<void> {
     } else return
   }
   desks.remove(id)
-  refreshClosedMenu()
+  refreshSessions()
 }
 
 /** Right-click on a desk chip. */
@@ -882,8 +957,8 @@ function showDeskMenu(id: string, x: number, y: number): void {
   const items: MenuItem[] = [
     { icon: 'pencil-simple', label: 'Renomear', run: () => strip.startRename(id) },
     { icon: 'palette', label: 'Cor…', run: () => strip.pickColor(id, desks.desks[index]?.color ?? 'blue', x, y) },
-    { icon: 'arrow-line-left', label: 'Nova mesa antes', run: () => { desks.create('before', id) } },
-    { icon: 'arrow-line-right', label: 'Nova mesa depois', run: () => { desks.create('after', id) } },
+    { icon: 'arrow-line-left', label: 'Nova mesa antes', run: () => { createBlankDesk('before', id) } },
+    { icon: 'arrow-line-right', label: 'Nova mesa depois', run: () => { createBlankDesk('after', id) } },
   ]
   if (index > 0) items.push({ icon: 'arrow-line-left', label: 'Mover para a esquerda', run: () => desks.move(id, index - 1) })
   if (index < desks.desks.length - 1) items.push({ icon: 'arrow-line-right', label: 'Mover para a direita', run: () => desks.move(id, index + 1) })
@@ -894,13 +969,13 @@ function showDeskMenu(id: string, x: number, y: number): void {
 }
 
 function movePaneToDesk(slotId: string, to: string): void {
-  if (desks.movePanel(slotId, to)) { refreshClosedMenu(); renderStrip() }
+  if (desks.movePanel(slotId, to)) { refreshSessions(); renderStrip() }
 }
 
 function moveFrameToDesk(slotId: string, to: string): void {
   const from = desks.deskOf(slotId)
   const frame = desks.frameOf(slotId)
-  if (from && frame && desks.moveFrame(from, frame.id, to)) { refreshClosedMenu(); renderStrip() }
+  if (from && frame && desks.moveFrame(from, frame.id, to)) { refreshSessions(); renderStrip() }
 }
 
 // ---------- the drawer ----------
@@ -943,20 +1018,36 @@ function framePadOf(slotId: string): FramesPad | undefined {
 }
 
 /** The live frames of a pad (of a desk, for a desk pad). */
-function framePadFor(padId: string, deskId: string | undefined): FramesPad | undefined {
-  for (const p of framePads) if (p.padId === padId && p.deskId === deskId) return p
+function framePadFor(padId: string, owner: { deskId?: string; panelId?: string }): FramesPad | undefined {
+  for (const p of framePads) if (p.padId === padId && p.deskId === owner.deskId && p.panelId === owner.panelId) return p
   return undefined
+}
+
+/** A panel pad's target panel's folder (its process, profile or file folder), for the chooser opened there to suggest; none for the other pads. */
+function padTargetCwd(pad: { panelId?: string }): string | undefined {
+  return pad.panelId ? paneCwdOf(pad.panelId) : undefined
 }
 
 /** The view of a `frames: true` pad: a Desk hosted like the drawer's, seeded with an empty pane when it has no state. */
 function newFramesPad(host: PadHost): FramesPad {
   return new FramesPad(host, {
     deskHost: pad => deskHost(pad),
-    seed: pad => { pad.desk.addPanel(emptyPanelOptions(paneCwdOf(currentDesk().activePanel?.id))) },
+    seed: pad => { pad.desk.addPanel(emptyPanelOptions(padTargetCwd(pad) ?? paneCwdOf(currentDesk().activePanel?.id), 'layout', true)) },
     focusPane: id => focusPane(id),
     onCreate: pad => { framePads.add(pad) },
-    onHidden: pad => { if (focusedPad === pad) setFocusedPad(undefined) },
-    onDispose: pad => { if (focusedPad === pad) setFocusedPad(undefined); framePads.delete(pad); refreshClosedMenu() },
+    // A pad closed while it had the keyboard: the keyboard goes back to the desks' active pane (else it falls on <body>,
+    // and the keyboard mark would sit on a tab that has no keyboard).
+    onHidden: pad => {
+      if (focusedPad !== pad) return
+      setFocusedPad(undefined)
+      requestAnimationFrame(() => {
+        const el = document.activeElement
+        const lost = !el || el === document.body || pad.element.contains(el)
+        const id = currentDesk().activePanel?.id
+        if (lost && id) focusPane(id)
+      })
+    },
+    onDispose: pad => { if (focusedPad === pad) setFocusedPad(undefined); framePads.delete(pad); refreshSessions() },
   }, DOCK_THEME)
 }
 
@@ -984,10 +1075,13 @@ function renderDrawerButton(): void {
   const btn = $('btn-drawer')
   const badge = $('drawer-badge')
   const att = drawerAttention()
+  const mark = markWith(att, drawer.desk.panels)
   const total = att.done + att.waiting
   badge.hidden = total === 0
   badge.className = `cnt desk-badge drawer-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
   badge.textContent = String(total)
+  btn.querySelector('.busy-dot')?.remove()
+  if (mark === 'busy') { const dot = document.createElement('span'); dot.className = 'busy-dot'; dot.setAttribute('aria-label', 'em andamento'); btn.append(dot) }
   btn.setAttribute('aria-expanded', String(drawer.isOpen))
   const n = drawer.desk.panels.length
   // The invitation shows when nothing is in the drawer and no quick shell is on its way (that one has the stage).
@@ -1008,6 +1102,7 @@ function focusedDeskPane(): string | undefined {
 function setDrawerOpen(open: boolean): void {
   if (open === drawer.isOpen || (open && !layoutRestored)) return
   lastEsc = undefined
+  scheduleKeyboardTab()
   // A surface in the drawer goes before the drawer does, not a frame after.
   if (!open) surfaceHosts.suspendAll($('drawer'))
   if (open) {
@@ -1016,7 +1111,7 @@ function setDrawerOpen(open: boolean): void {
     // Menus of the toolbar belong to the desks behind: they close, they do not stay floating over the drawer.
     $('app-menu').hidden = true
     $('btn-menu').setAttribute('aria-expanded', 'false')
-    $('closed-list').hidden = true
+    sessionsMenu?.setOpen(false)
     closeToolbarPopups()
   } else {
     drawerState = closeDrawer(drawerState)
@@ -1084,7 +1179,7 @@ async function quickShell(): Promise<void> {
 function escBlocked(): boolean {
   return dialogOpen() || manager.open || themeDialog.open
     || document.querySelector('dialog[open], #ctx-menu, #desk-colors, input.desk-rename') !== null
-    || !$('app-menu').hidden || !$('closed-list').hidden
+    || !$('app-menu').hidden || (sessionsMenu?.isOpen() ?? false)
 }
 
 /**
@@ -1123,7 +1218,7 @@ function drawerEscapeOutside(ev: KeyboardEvent): void {
 // other, the process is never touched (transferPanel / transferFrame in app/renderer/desk.ts).
 
 function afterDrawerMove(): void {
-  refreshClosedMenu()
+  refreshSessions()
   renderStrip()
   scheduleSave()
 }
@@ -1160,21 +1255,236 @@ function moveFrameFromDrawer(slotId: string): void {
 // ---------- "Mover…" (app/renderer/move-dialog.ts draws it, move-rules.ts maps the placement to an op) ----------
 
 /** The Desk of a scope of the dialog: the drawer's, or a desk's. */
-/** A pad's scope in "Mover…": `pad:<pad id>` (global) or `pad:<pad id>@<desk id>`, the same as its Desk's meta id. */
-function padScope(padId: string, deskId: string | undefined): string {
-  return `pad:${padId}${deskId ? `@${deskId}` : ''}`
+/** A pad's scope in "Mover…": `pad:<pad id>` (global) or `pad:<pad id>@<desk or panel id>`, the same as its Desk's meta id. */
+function padScope(padId: string, owner: string | undefined): string {
+  return `pad:${padId}${owner ? `@${owner}` : ''}`
+}
+
+/** Whose view a pad is: the active desk's (desk pad), the focusable panel's (panel pad; none without one), or nobody's (global). */
+function padOwner(pad: { id: string; scope: string }): { deskId?: string; panelId?: string } | undefined {
+  if (pad.scope === 'desk') return { deskId: desks.activeDeskId }
+  if (pad.scope === 'panel') { const panelId = focusablePanelId(); return panelId ? { panelId } : undefined }
+  return {}
 }
 
 /** The frames pad a scope names, created if it never showed (a fresh pad's seeded empty pane is dropped: a pane is on its way). */
 function scopePad(scope: string): FramesPad | undefined {
   if (!scope.startsWith('pad:')) return undefined
-  const [padId = '', deskId] = scope.slice(4).split('@')
-  const live = framePadFor(padId, deskId)
+  const [padId = '', owner] = scope.slice(4).split('@')
+  const isPanel = padRegistry.get(padId)?.scope === 'panel'
+  const live = framePadFor(padId, isPanel ? (owner ? { panelId: owner } : {}) : (owner ? { deskId: owner } : {}))
   if (live) return live
-  const view = sidebars?.viewOf(padId, deskId)
+  const view = sidebars?.viewOf(padId, owner)
   if (!(view instanceof FramesPad)) return undefined
   for (const p of [...view.desk.panels]) if (empties.has(p.id)) view.desk.removePanel(p)
   return view
+}
+
+// ---------- the pads' notes (app/renderer/pad-notes.ts; the pad-notes extension draws the manager) ----------
+
+type NoteOwnerRef = { deskId?: string; panelId?: string }
+
+/** A note's key: `<pad id>@<owner>` for a desk or panel pad, the pad id for a global pad (the keys of SideBarsLayout.pads and .meta). */
+function noteKeyOf(padId: string, owner: NoteOwnerRef): string {
+  const o = owner.deskId ?? owner.panelId
+  return o ? `${padId}@${o}` : padId
+}
+
+/** The pad and owner a note key names (only `frames: true` pads have notes). */
+function noteOwnerOf(key: string): { padId: string; owner: NoteOwnerRef } | undefined {
+  const at = key.indexOf('@')
+  const padId = at === -1 ? key : key.slice(0, at)
+  const id = at === -1 ? undefined : key.slice(at + 1)
+  const pad = padRegistry.get(padId)
+  if (!pad?.frames) return undefined
+  if (pad.scope === 'global') return id ? undefined : { padId, owner: {} }
+  if (!id) return undefined
+  return { padId, owner: pad.scope === 'desk' ? { deskId: id } : { panelId: id } }
+}
+
+/** Every note of a layout: the global pads', the panel pads' (one per panel id saved) and each desk's desk pads'. */
+function noteSourcesOf(layout: Layout): NoteSource[] {
+  const out: NoteSource[] = []
+  const pads = layout.sidebars?.pads ?? {}
+  for (const pad of padRegistry.all()) {
+    if (!pad.frames) continue
+    if (pad.scope === 'global') { if (pads[pad.id] !== undefined) out.push({ key: pad.id, padId: pad.id, owner: { kind: 'global' }, state: pads[pad.id] }) }
+    else if (pad.scope === 'panel') for (const panelId of panelIdsOfPad(pads, pad.id)) out.push({ key: noteKeyOf(pad.id, { panelId }), padId: pad.id, owner: { kind: 'panel', panelId }, state: pads[noteKeyOf(pad.id, { panelId })] })
+    else for (const d of layout.desks) if (d.pads?.[pad.id] !== undefined) out.push({ key: noteKeyOf(pad.id, { deskId: d.id }), padId: pad.id, owner: { kind: 'desk', deskId: d.id }, state: d.pads[pad.id] })
+  }
+  return out
+}
+
+/** The panels alive now, anywhere in the window: their tab's name and their desk. */
+function livePanelMap(): Map<string, { label: string; deskId?: string }> {
+  const out = new Map<string, { label: string; deskId?: string }>()
+  for (const p of allPanels()) { const deskId = desks.deskOf(p.id); out.set(p.id, { label: p.api.title ?? p.id, ...(deskId ? { deskId } : {}) }) }
+  return out
+}
+
+/** What each note held when its record was last refreshed (its panes and their titles): a change bumps `updatedAt`. */
+const noteHashes = new Map<string, string>()
+
+/**
+ * The notes' records refreshed from what is live: a note whose owner lives gets its owner's label and desk, and `updatedAt`
+ * moves when its panes changed. A loose note keeps the record it had. Records of notes that no longer exist go.
+ */
+function refreshNoteMeta(layout: Layout): Record<string, PadNoteMeta> {
+  const meta = readNoteMeta(sidebars?.meta)
+  const live = livePanelMap()
+  const sources = noteSourcesOf(layout)
+  const now = Date.now()
+  for (const s of sources) {
+    const hash = JSON.stringify(panesOf(s.state).map(p => [p.id, p.title]))
+    const prev = noteHashes.get(s.key)
+    noteHashes.set(s.key, hash)
+    let label: string | undefined
+    let deskId: string | undefined
+    if (s.owner.kind === 'panel') { const l = live.get(s.owner.panelId); label = l?.label; deskId = l?.deskId }
+    else if (s.owner.kind === 'desk') { label = deskName(s.owner.deskId); deskId = s.owner.deskId }
+    else label = padRegistry.get(s.padId)?.title
+    if (label === undefined) continue // loose: the record stays as the owner left it
+    const old = meta[s.key]
+    if (!old && !hasContent(s.state)) continue // an empty note never recorded: nothing to remember yet
+    const changed = prev !== undefined && prev !== hash
+    meta[s.key] = { ownerLabel: label, ...(deskId ? { deskId } : {}), updatedAt: changed || !old ? now : old.updatedAt }
+  }
+  const pruned = pruneMeta(meta, sources.map(s => s.key))
+  sidebars?.setMeta(pruned as Record<string, unknown>)
+  return pruned
+}
+
+/** The map the manager shows, from the live window. */
+function noteTree(): NoteTree {
+  const layout = layoutJSON()
+  const focused = focusablePanelId()
+  return buildNoteTree({
+    sources: noteSourcesOf(layout), meta: readNoteMeta(layout.sidebars?.meta), desks: desks.desks.map(d => ({ id: d.id, name: d.name })),
+    livePanels: livePanelMap(), ...(focused ? { focusedPanel: focused } : {}),
+  })
+}
+
+const notesListeners = new Set<() => void>()
+const looseListeners = new Set<(key: string) => void>()
+/** The loose notes with content already told (undefined until the first check after the restore, which tells nothing). */
+let toldLoose: Set<string> | undefined
+let notesTimer: ReturnType<typeof setTimeout> | undefined
+
+function scheduleNotesCheck(): void {
+  if (notesTimer) return
+  notesTimer = setTimeout(() => { notesTimer = undefined; checkNotes() }, 60)
+}
+
+/**
+ * After the panes changed: a note that just became loose is told (the extension shows "A nota ficou solta"), a loose
+ * empty one is removed at once (nothing in it to keep), and the manager's listeners redraw.
+ */
+function checkNotes(): void {
+  if (!layoutRestored || !sidebars) return
+  const tree = noteTree()
+  const first = toldLoose === undefined
+  const fresh = tree.loose.filter(r => !r.empty && !toldLoose?.has(r.key))
+  toldLoose = new Set(tree.loose.filter(r => !r.empty).map(r => r.key))
+  const empty = tree.loose.filter(r => r.empty).map(r => r.key)
+  if (empty.length) { dropNotes(empty); scheduleSave() }
+  if (!first) for (const r of fresh) for (const l of [...looseListeners]) { try { l(r.key) } catch (err) { console.error('onDidLoose', err) } }
+  for (const l of [...notesListeners]) { try { l() } catch (err) { console.error('notes.onDidChange', err) } }
+}
+
+/** Removes notes (views, states, records), without anything to undo. */
+function dropNotes(keys: readonly string[]): void {
+  const meta = { ...readNoteMeta(sidebars?.meta) }
+  for (const key of keys) {
+    const o = noteOwnerOf(key)
+    if (o) sidebars?.dropNote(o.padId, o.owner)
+    delete meta[key]
+    noteHashes.delete(key)
+  }
+  sidebars?.setMeta(meta as Record<string, unknown>)
+}
+
+function afterNotes(): void {
+  refreshSessions()
+  scheduleSave()
+  scheduleNotesCheck()
+}
+
+/** "Fechar": the notes go; the snapshot (their saved states and records) brings them back. */
+function closeNotesLive(keys: readonly string[]): NoteSnapshot {
+  const layout = layoutJSON()
+  const store = { pads: Object.fromEntries(noteSourcesOf(layout).map(s => [s.key, s.state])), meta: readNoteMeta(layout.sidebars?.meta) }
+  const { undo } = closeNotes(store, keys)
+  dropNotes(undo.entries.map(e => e.key))
+  for (const e of undo.entries) toldLoose?.delete(e.key)
+  afterNotes()
+  return undo
+}
+
+/** "Desfazer": each note back as it was (a loose one back among the loose ones, not told again). */
+function restoreNotesLive(snap: NoteSnapshot): void {
+  const meta = { ...readNoteMeta(sidebars?.meta) }
+  for (const e of snap.entries) {
+    const o = noteOwnerOf(e.key)
+    if (!o) continue
+    if (e.state === undefined) sidebars?.dropNote(o.padId, o.owner); else sidebars?.putNote(o.padId, o.owner, e.state)
+    if (e.meta) meta[e.key] = e.meta; else delete meta[e.key]
+    if (e.state !== undefined && hasContent(e.state)) toldLoose?.add(e.key)
+  }
+  sidebars?.setMeta(meta as Record<string, unknown>)
+  afterNotes()
+}
+
+/** The live frames of a note (its view is created when it never showed, without the seeded empty pane). */
+function notePad(key: string): FramesPad | undefined {
+  const o = noteOwnerOf(key)
+  if (!o) return undefined
+  return framePadFor(o.padId, o.owner) ?? scopePad(padScope(o.padId, o.owner.deskId ?? o.owner.panelId))
+}
+
+/**
+ * "Mover…": the note's panes become tabs of the target note's frame (the tabs add up; the target's empty panes give way),
+ * then the source note closes. Panes are re-created from their options (a terminal re-attaches; no process is touched).
+ */
+function moveNoteLive(from: string, to: string): boolean {
+  if (from === to) return false
+  const src = notePad(from)
+  const dst = notePad(to)
+  if (!src || !dst || src === dst) return false
+  const moving = src.desk.panels.filter(p => !empties.has(p.id))
+  if (!moving.length) return false
+  for (const p of moving) transferPanel(src.desk, dst.desk, p.id, paneTypes.optionsOf(p))
+  for (const p of [...dst.desk.panels]) if (empties.has(p.id)) dst.desk.removePanel(p)
+  dst.desk.getPanel(moving[0]!.id)?.api.setActive()
+  dropNotes([from])
+  toldLoose?.delete(from)
+  afterNotes()
+  return true
+}
+
+/** Where a note can go: each desk's desk pad and its panels' panel pads, then the global pads. */
+function noteTargets(): { key: string; label: string; group: string }[] {
+  const out: { key: string; label: string; group: string }[] = []
+  const frames = padRegistry.all().filter(p => p.frames)
+  for (const d of desks.desks) {
+    for (const pad of frames.filter(p => p.scope === 'desk')) out.push({ key: noteKeyOf(pad.id, { deskId: d.id }), label: pad.title, group: /^mesa\b/i.test(d.name) ? d.name : `Mesa ${d.name}` })
+    for (const pad of frames.filter(p => p.scope === 'panel')) {
+      for (const p of desks.desk(d.id)?.panels ?? []) if (!empties.has(p.id)) out.push({ key: noteKeyOf(pad.id, { panelId: p.id }), label: p.api.title ?? p.id, group: /^mesa\b/i.test(d.name) ? d.name : `Mesa ${d.name}` })
+    }
+  }
+  for (const pad of frames.filter(p => p.scope === 'global')) out.push({ key: pad.id, label: pad.title, group: 'Global' })
+  return out
+}
+
+/** Brings a live note forward: its owner panel (or desk) comes to the front and its pad opens. A loose note has nowhere to go. */
+function showNote(key: string): void {
+  const o = noteOwnerOf(key)
+  if (!o) return
+  if (o.owner.panelId) {
+    if (!findPanel(o.owner.panelId)) return
+    revealPane(o.owner.panelId)
+    sidebars?.render()
+  } else if (o.owner.deskId && o.owner.deskId !== desks.activeDeskId) desks.switchTo(o.owner.deskId)
+  sidebars?.open(o.padId)
 }
 
 function scopeDesk(scope: string): Desk | undefined {
@@ -1184,14 +1494,15 @@ function scopeDesk(scope: string): Desk | undefined {
 function scopeOf(slotId: string): string | undefined {
   if (inDrawer(slotId)) return DRAWER_SCOPE
   const pad = framePadOf(slotId)
-  return pad ? padScope(pad.padId, pad.deskId) : desks.deskOf(slotId)
+  return pad ? padScope(pad.padId, pad.deskId ?? pad.panelId) : desks.deskOf(slotId)
 }
 
-/** The frames pads "Mover…" offers: the current desk's desk pads and the global pads. */
+/** The frames pads "Mover…" offers: the focusable panel's panel pad (none without one), the current desk's desk pad and the global pad. */
 function movePads(): { id: string; padId: string; name: string; icon: string; desk: Desk | undefined }[] {
-  return padRegistry.all().filter(p => p.frames).map(p => {
-    const deskId = p.scope === 'desk' ? desks.activeDeskId : undefined
-    return { id: padScope(p.id, deskId), padId: p.id, name: p.title, icon: p.icon, desk: framePadFor(p.id, deskId)?.desk }
+  return padRegistry.all().filter(p => p.frames).flatMap(p => {
+    const owner = padOwner(p)
+    if (!owner) return []
+    return [{ id: padScope(p.id, owner.deskId ?? owner.panelId), padId: p.id, name: p.title, icon: p.icon, desk: framePadFor(p.id, owner)?.desk }]
   })
 }
 
@@ -1242,7 +1553,7 @@ async function runMove(op: MoveOp, slotId: string): Promise<boolean> {
     try { (scopeDesk(p.scope ?? '') ?? desks.active).addPanel(p.options) } catch (err) { console.error(`mover: não foi possível reabrir ${p.id}`, err) }
     error ??= 'Um painel não chegou ao destino.'
   }
-  refreshClosedMenu()
+  refreshSessions()
   renderStrip()
   scheduleSave()
   if (error) {
@@ -1399,7 +1710,8 @@ function applyState(slot: SlotState): void {
   // Every queued pane's position may have moved.
   for (const id of slots.keys()) if (id !== slot.slotId && slots.get(id)?.status === 'queued') panels.get(id)?.render()
   renderSlot(slot.slotId)
-  refreshClosedMenu()
+  refreshSessions()
+  refreshSessionsDialog()
   renderStrip()
   if (slot.attention && slot.slotId === watchedPane()) void window.tether.request({ t: 'seen', slotId: slot.slotId })
   recomputeProjects() // the slot's kind or folder may have changed
@@ -1410,13 +1722,14 @@ function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
     case 'data': panels.get(ev.slotId)?.write(ev.data); break
     case 'profiles': setProfiles(ev.profiles, undefined); break
+    case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshSessionsDialog(); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
       startErrors.delete(ev.slotId)
       const panel = findPanel(ev.slotId)
       if (panel) removeAnyPanel(panel)
-      refreshClosedMenu()
+      refreshSessions()
       renderStrip()
       notifyAgentPanes()
       break
@@ -1492,10 +1805,13 @@ async function restoreLayout(): Promise<void> {
   await discardPendingSave()
   workspaceState = readWorkspace(layoutFile.workspace)
   layoutRestored = true
+  scheduleKeyboardTab()
   recomputeProjects()
   // Panes that predate the hint get it now (saved with the next change the person makes).
   for (const panel of allPanels()) { const s = slots.get(panel.id); if (s) updateHint(s) }
-  refreshClosedMenu()
+  refreshSessions()
+  // The first look at the notes: the loose empty ones left by earlier sessions go; nothing is told.
+  scheduleNotesCheck()
 }
 
 /**
@@ -1556,141 +1872,51 @@ async function onConnection(state: ConnectionState): Promise<void> {
     for (const p of panels.values()) { p.render(); void p.reattach() }
     recomputeProjects()
     for (const t of tabs.values()) t.render()
-    refreshClosedMenu()
+    refreshSessions()
   }
   autoStartPanels()
 }
 
-// ---------- closed slots menu ----------
+// ---------- sessions menu (one icon, one menu: sessions without a tab, the polite pause, the ended ones) ----------
 
-/** The running slot whose "Esquecer" is waiting for the inline confirmation (one at a time). */
-let askingForget: string | undefined
-/** Slots with a forget in flight (the daemon may wait for a young Claude before killing it). */
-const forgetting = new Set<string>()
+let pauseBatch: PauseBatch | null = null
+let sessionsMenu: SessionsMenu | undefined
 
-function closedGroups(): ClosedGroups {
-  return groupClosed(slots.values(), id => findPanel(id) !== undefined)
-}
+/** Re-renders the Sessões menu and its icon (counter, tooltip, glyph). Safe before the menu exists. */
+function refreshSessions(): void { sessionsMenu?.refresh() }
 
-function closedButton(cls: string, label: string, iconName?: IconName, title?: string): HTMLButtonElement {
-  const b = document.createElement('button')
-  b.className = cls
-  if (iconName) b.append(icon(iconName))
-  if (label) b.append(document.createTextNode(label))
-  if (title) b.title = title
-  return b
-}
-
-function closedGroupTitle(text: string, count: number): HTMLElement {
-  const gt = document.createElement('div'); gt.className = 'cl-gt'
-  const label = document.createElement('span'); label.textContent = text
-  const n = document.createElement('span'); n.className = 'n'; n.textContent = String(count)
-  gt.append(label, n)
-  return gt
-}
-
-function closedRow(s: SlotState, group: 'running' | 'ended'): HTMLElement {
-  const row = document.createElement('div')
-  row.className = `cl-row ${group}`
-  row.dataset.slot = s.slotId
-  if (group === 'running' && askingForget === s.slotId) row.classList.add('asking')
-  const led = document.createElement('span'); led.className = 'led'
-  const kind = document.createElement('span'); kind.className = `kind ${s.kind}`; kind.append(icon(KIND_ICON[s.kind] ?? 'terminal-window'))
-  const tx = document.createElement('div'); tx.className = 'tx'
-  const title = document.createElement('span'); title.className = 'tt'; title.textContent = panelTitle(s)
-  const cwd = document.createElement('span'); cwd.className = 'cw'; cwd.textContent = s.cwd; cwd.title = s.cwd
-  tx.append(title, cwd)
-  const acts = document.createElement('div'); acts.className = 'acts'
-  const open = group === 'running'
-    ? closedButton('open primary', 'Abrir', 'arrow-square-out', `Abrir em um painel (${KIND_LABEL[s.kind]} segue rodando)`)
-    : closedButton('open', 'Reabrir', 'arrow-clockwise', `Reabrir o painel (${KIND_LABEL[s.kind]}, ${STATUS_LABEL[effectiveStatus(s)]})`)
-  open.addEventListener('click', ev => { ev.stopPropagation(); $('closed-list').hidden = true; $('btn-closed').setAttribute('aria-expanded', 'false'); openSlot(s.slotId) })
-  const trash = closedButton('ic forget', '', 'trash', group === 'running' ? 'Encerrar e esquecer' : 'Esquecer')
-  trash.setAttribute('aria-label', group === 'running' ? 'Encerrar e esquecer o slot' : 'Esquecer o slot')
-  trash.addEventListener('click', ev => {
-    ev.stopPropagation()
-    if (group === 'running') { askingForget = s.slotId; refreshClosedMenu() } // kills a live process: ask first
-    else void forgetClosed(s.slotId)
+function setupSessionsMenu(): void {
+  sessionsMenu = createSessionsMenu({
+    slots: () => slots.values(),
+    hasTab: id => findPanel(id) !== undefined,
+    batch: () => pauseBatch,
+    titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
+    openSlot,
+    request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
+    confirmBulkClose: async names => (await askDialog(bulkCloseSituation(names))).choice === 'close',
+    confirmForgetAll: async count => (await askDialog(forgetEndedSituation(count))).choice === 'forget',
+    openFollow: openPauseDialog,
+    dialogOpen,
   })
-  acts.append(open, trash)
-  const cf = document.createElement('div'); cf.className = 'cf'
-  const msg = document.createElement('span'); msg.className = 'm'; msg.textContent = 'Encerra o processo. Esquecer?'
-  const cancel = closedButton('cancel', 'Cancelar')
-  cancel.addEventListener('click', ev => { ev.stopPropagation(); askingForget = undefined; refreshClosedMenu() })
-  const yes = closedButton('danger confirm', 'Esquecer')
-  yes.disabled = forgetting.has(s.slotId)
-  yes.addEventListener('click', ev => { ev.stopPropagation(); void forgetClosed(s.slotId) })
-  cf.append(msg, cancel, yes)
-  row.append(led, kind, tx, acts, cf)
-  return row
+  sessionsMenu.refresh()
 }
 
-/** Forgets a slot through the daemon (it kills by identity and waits for a young Claude, as the other forget paths do). */
-async function forgetClosed(slotId: string): Promise<void> {
-  if (forgetting.has(slotId)) return
-  forgetting.add(slotId)
-  try {
-    await window.tether.request({ t: 'forget', slotId })
-  } finally {
-    forgetting.delete(slotId)
-    if (askingForget === slotId) askingForget = undefined
-    refreshClosedMenu()
-  }
-}
-
-/** "Esquecer todos os encerrados": asked once; only the slots still ended when the answer comes are forgotten. */
-async function forgetAllEnded(): Promise<void> {
-  const count = closedGroups().ended.length
-  if (count === 0 || dialogOpen()) return
-  $('closed-list').hidden = true
-  $('btn-closed').setAttribute('aria-expanded', 'false')
-  const answer = await askDialog(forgetEndedSituation(count))
-  if (answer.choice !== 'forget') return
-  const ids = closedGroups().ended.map(s => s.slotId)
-  await Promise.all(ids.map(id => forgetClosed(id)))
-}
-
-function refreshClosedMenu(): void {
-  const list = $('closed-list')
-  const g = closedGroups()
-  if (askingForget && !g.running.some(s => s.slotId === askingForget)) askingForget = undefined
-  const badge = badgeParts(g)
-  $('closed-count-run').textContent = badge.running
-  $('closed-count-end').textContent = badge.ended
-  const btn = $('btn-closed')
-  btn.title = buttonTitle(g)
-  btn.setAttribute('aria-label', buttonTitle(g))
-  // Keep the scroll of the ended list across the live re-renders.
-  const scroll = list.querySelector('.cl-ended')?.scrollTop ?? 0
-  list.replaceChildren()
-
-  const hd = document.createElement('div'); hd.className = 'cl-hd'
-  if (g.running.length > 0) {
-    const rn = document.createElement('span'); rn.className = 'rn'; rn.textContent = `${g.running.length} rodando`
-    hd.append(rn)
-    if (g.ended.length > 0) hd.append(document.createTextNode(` · ${g.ended.length} ${g.ended.length === 1 ? 'encerrado' : 'encerrados'}`))
-  } else {
-    hd.textContent = headerText(g)
-  }
-  list.append(hd)
-  if (g.running.length === 0 && g.ended.length === 0) return
-
-  if (g.running.length > 0) {
-    const grp = document.createElement('div'); grp.className = 'cl-run'; grp.dataset.group = 'running'
-    grp.append(closedGroupTitle('Rodando sem painel', g.running.length), ...g.running.map(s => closedRow(s, 'running')))
-    list.append(grp)
-  }
-  if (g.ended.length > 0) {
-    const grp = document.createElement('div'); grp.className = 'cl-ended'; grp.dataset.group = 'ended'
-    grp.append(closedGroupTitle('Encerrados', g.ended.length), ...g.ended.map(s => closedRow(s, 'ended')))
-    list.append(grp)
-    grp.scrollTop = scroll
-    const ft = document.createElement('div'); ft.className = 'cl-ft'
-    const all = closedButton('fb forget-all', 'Esquecer todos os encerrados', 'trash')
-    all.addEventListener('click', ev => { ev.stopPropagation(); void forgetAllEnded() })
-    ft.append(all)
-    list.append(ft)
-  }
+/** The "Sessões" popup ("Acompanhar…" in the menu, or the palette): everything running, the pause, the resume. */
+function openPauseDialog(): void {
+  sessionsMenu?.setOpen(false)
+  openSessionsDialog({
+    slots: () => slots.values(),
+    batch: () => pauseBatch,
+    hasTab: id => findPanel(id) !== undefined,
+    placeOf: slotId => {
+      if (!findPanel(slotId)) return undefined
+      const pad = framePadOf(slotId)
+      return inDrawer(slotId) ? 'Gaveta' : pad ? padRegistry.get(pad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(slotId) ?? desks.activeDeskId)
+    },
+    titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
+    request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
+    openSlot,
+  })
 }
 
 /** Opens a panel for a slot the daemon knows; an exited slot is started (an unconfirmed one shows the choice). */
@@ -1710,6 +1936,13 @@ function openSlot(slotId: string, start = true): void {
   const pad = framePadOf(slotId)
   if (pad) {
     if (pad.deskId && pad.deskId !== desks.activeDeskId) desks.switchTo(pad.deskId)
+    // A panel pad shows its own panel's pane: that panel takes the Foco de Mesa first.
+    if (pad.panelId && pad.panelId !== focusablePanelId()) {
+      const ownerDesk = desks.deskOf(pad.panelId)
+      if (ownerDesk && ownerDesk !== desks.activeDeskId) desks.switchTo(ownerDesk)
+      desks.getPanel(pad.panelId)?.api.setActive()
+      sidebars?.render()
+    }
     sidebars?.open(pad.padId, false)
     if (start && effectiveStatus(s) === 'exited') void startSlot(s.slotId)
     pad.desk.getPanel(slotId)?.api.setActive()
@@ -1725,13 +1958,29 @@ function openSlot(slotId: string, start = true): void {
   panel.api.setActive()
 }
 
-/** A pane to the front and focused: a slot's pane through openSlot (desk, drawer, pad), any other by activating its tab. */
+/**
+ * A pane to the front and focused, wherever it lives — any desk, the drawer, a pad (of a desk or global): a slot's pane
+ * through openSlot (which also restarts an ended agent), any other the same way: its place opens, its tab is activated.
+ */
 function revealPane(id: string): void {
   if (slots.has(id)) { openSlot(id); requestAnimationFrame(() => focusPane(id)); return }
   const panel = findPanel(id)
   if (!panel) return
-  const deskId = desks.deskOf(id)
-  if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
+  if (drawer.desk.getPanel(id)) {
+    setDrawerOpen(true)
+  } else {
+    if (drawer.isOpen) setDrawerOpen(false)
+    const pad = framePadOf(id)
+    if (pad) {
+      if (pad.deskId && pad.deskId !== desks.activeDeskId) desks.switchTo(pad.deskId)
+      sidebars?.open(pad.padId, false)
+      setFocusedPad(pad)
+    } else {
+      setFocusedPad(undefined)
+      const deskId = desks.deskOf(id)
+      if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
+    }
+  }
   panel.api.setActive()
   requestAnimationFrame(() => focusPane(id))
 }
@@ -1784,6 +2033,88 @@ function focusAgentPane(slotId: string): boolean {
   requestAnimationFrame(() => focusPane(slotId))
   return true
 }
+
+// ---------- the tab marks (app/renderer/tab-marks.ts) ----------
+
+/** A pane's tab cell in its strip (wherever the pane lives). */
+function tabCellOf(id: string): HTMLElement | undefined {
+  return tabCell(findPanel(id)?.view.tab.element)
+}
+
+let keyboardTabFrame = 0
+/**
+ * The keyboard mark follows the pane that has the keyboard — currentDesk(): the open drawer, else the pad with the keyboard,
+ * else the visible desk — once the change that moved it has settled (one frame later, coalesced).
+ */
+function scheduleKeyboardTab(): void {
+  if (keyboardTabFrame) return
+  keyboardTabFrame = requestAnimationFrame(() => {
+    keyboardTabFrame = 0
+    const id = currentDesk().activePanel?.id
+    markKeyboardTab(id ? tabCellOf(id) : undefined)
+  })
+}
+
+/** Draws the eye to a pane's tab with a short pulse. For whoever brings a pane up from far away (a tether:// link, an extension). */
+function drawAttention(id: string): void {
+  requestAnimationFrame(() => pulseTab(tabCellOf(id)))
+}
+
+// ---------- tether:// links (app/shared/tether-url.ts) ----------
+
+/** The link of a pane: a note's names its file (it survives closing the note and reopens it), any other pane its id. */
+function paneLinkOf(id: string): string {
+  const type = liveTypeOf(paneTypes, id)
+  const file = type?.linkFileOf?.(id)
+  return file ? noteUrl(file) : tabUrl(id)
+}
+
+/** "Copiar link do painel": a tether:// link that brings this pane back from anywhere. */
+function copyPaneLink(id: string): void {
+  window.tether.writeClipboard(paneLinkOf(id))
+}
+
+/**
+ * A tether:// link was followed (from the OS, or Ctrl+click inside the app): the place it names comes to the front,
+ * searched everywhere in the app. A pane closed but still known is offered back; an unknown one is said so. A note's
+ * link reveals the note open on that file or opens it.
+ */
+async function followTetherLink(url: string): Promise<void> {
+  const link = parseTetherUrl(url)
+  if (!link) return
+  if (link.kind === 'note') {
+    const root = link.path.replace(/[\\/][^\\/]*$/, '')
+    void openFile(fileOpenHost, link.path, { side: false, root }).then(() => { const id = currentDesk().activePanel?.id; if (id) drawAttention(id) })
+    return
+  }
+  if (findPanel(link.id)) { revealPane(link.id); drawAttention(link.id); return }
+  const slot = slots.get(link.id)
+  if (slot) {
+    const answer = await askDialog(closedTabSituation(slot.name ?? folderName(slot.cwd)))
+    if (answer.choice === 'reopen') { revealPane(link.id); drawAttention(link.id) }
+    return
+  }
+  void askDialog(missingTabSituation())
+}
+
+/**
+ * "Associar links tether:// a este tether…": says which program opens the links today and, on the person's word, makes it
+ * this one (the previous association is removed: only one program answers them). The result is read back from the OS.
+ */
+async function associateLinks(): Promise<void> {
+  const before = await window.tether.linkAssociation()
+  const answer = await askDialog(associateLinksSituation(before))
+  if (answer.choice !== 'associate') return
+  const after = await window.tether.associateLinks()
+  void askDialog(after.isMine ? linksAssociatedSituation(after) : associateLinksFailedSituation(after))
+}
+
+// Links from the OS: the one the app started with (or that came while the window was loading), then each one as it comes.
+void daemonReadyPromise.then(async () => {
+  window.tether.onTetherLink(url => { void followTetherLink(url) })
+  const pending = await window.tether.pendingTetherLink()
+  if (pending) void followTetherLink(pending)
+})
 
 // ---------- switching a panel's profile ----------
 
@@ -1940,6 +2271,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
     SEP,
     { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
+    { icon: 'link', label: 'Copiar link do painel', run: () => copyPaneLink(slotId) },
     { icon: 'copy', label: 'Copiar pasta', run: () => copyFolder(slotId) },
     { icon: 'folder-open', label: 'Abrir pasta no Explorer', run: () => openFolder(slotId) },
     SEP,
@@ -1970,8 +2302,8 @@ function showEmptyMenu(id: string, x: number, y: number): void {
 // in the same group and at the same index.
 
 /** An empty pane relative to `reference` (the active pane when absent), suggesting that pane's folder. `add`: born from a "+" (Esc closes it). */
-function addEmptyPanel(target?: Target, reference?: string, cwd = paneCwdOf(reference), origin: EmptyOrigin = 'layout'): IDockviewPanel {
-  const panel = addPaneOptions(emptyPanelOptions(cwd, origin), target, reference)
+function addEmptyPanel(target?: Target, reference?: string, cwd = paneCwdOf(reference), origin: EmptyOrigin = 'layout', blank = target?.level === 'desk'): IDockviewPanel {
+  const panel = addPaneOptions(emptyPanelOptions(cwd, origin, blank), target, reference)
   scheduleSave()
   requestAnimationFrame(() => focusPane(panel.id))
   return panel
@@ -1998,9 +2330,19 @@ function splitEmpty(target: Target, origin: EmptyOrigin = 'layout', reference = 
 /** "Nova mesa vazia": a desk after the current one with one empty pane (the active pane's folder suggested). */
 function newEmptyDesk(): void {
   if (drawer.isOpen) return
+  createBlankDesk('after')
+}
+
+/** A new desk whose one frame starts blank ("Abrir algo aqui"): the layout is being drawn, what opens there comes later. */
+function createBlankDesk(side: 'before' | 'after', relativeTo?: string): string {
   const cwd = paneCwdOf(currentDesk().activePanel?.id)
-  desks.create('after')
-  addEmptyPanel(undefined, undefined, cwd)
+  const id = desks.create(side, relativeTo)
+  setFocusedPad(undefined)
+  const panel = desks.active.addPanel(emptyPanelOptions(cwd, 'layout', true))
+  panel.api.setActive()
+  scheduleSave()
+  requestAnimationFrame(() => focusPane(panel.id))
+  return id
 }
 
 /**
@@ -2008,7 +2350,7 @@ function newEmptyDesk(): void {
  * what an extension's item resolves into (a note file prepared or picked). `undefined` when nothing is to be added (a file dialog cancelled, a note
  * already open and now focused); `{ error }` with the message to show in the chooser.
  */
-async function resolveChoice(choice: Choice, cwd: string): Promise<{ options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined> {
+async function resolveChoice(choice: Choice, cwd: string, destination?: ChooserDestination): Promise<{ options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined> {
   if (choice.profile) {
     const reply = await window.tether.request({ t: 'create', kind: choice.profile.agent, cwd, start: true, profileId: choice.profile.id })
     if (reply.t === 'error' || !reply.slot) return { error: reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot' }
@@ -2024,7 +2366,7 @@ async function resolveChoice(choice: Choice, cwd: string): Promise<{ options: Ad
   // An item an extension contributes (the note's "Nova nota", "Abrir nota…"): its own resolver.
   const resolve = chooserResolvers.get(choice.kind)
   if (!resolve) return { error: 'Este item vem de uma extensão que não está ligada.' }
-  const r = await resolve(cwd)
+  const r = await resolve(cwd, destination)
   if (r && !('error' in r) && cwd) await window.tether.rememberFolder(cwd)
   return r
 }
@@ -2036,18 +2378,21 @@ const chooserHost: ChooserHost = {
   recentFolders: () => window.tether.recentFolders(),
   pickFolder: initial => window.tether.pickFolder(initial),
   openProfiles: id => openProfiles(id),
+  destinations: kind => chooserDestinations.get(kind),
 }
 
 /** What the empty panes need from the renderer. */
 const emptyHost: EmptyHost = {
   ...chooserHost,
-  fill: async (panel, choice, cwd) => {
-    const r = await resolveChoice(choice, cwd)
+  fill: async (panel, choice, cwd, destination) => {
+    const r = await resolveChoice(choice, cwd, destination)
     if (!r) return undefined
     if ('error' in r) return r.error
     const old = findPanel(panel.id)
     // The pane went away while the daemon answered: what was chosen still opens, where the person is.
-    const replaced = old ? (inDrawer(panel.id) ? drawer.desk : desks).replacePanel(panel.id, r.options) : undefined
+    // The pane is replaced where it lives: a pad's frames, the drawer, or a desk.
+    const holder = framePadOf(panel.id)?.desk ?? (inDrawer(panel.id) ? drawer.desk : desks)
+    const replaced = old ? holder.replacePanel(panel.id, r.options) : undefined
     const added = replaced ?? addPaneOptions(r.options)
     added.api.setActive()
     scheduleSave()
@@ -2070,6 +2415,11 @@ const emptyHost: EmptyHost = {
     else (document.activeElement as HTMLElement | null)?.blur()
   },
   expand: (panel, state) => { void openNewDialog({ context: { panel, state } }) },
+  suggestFolder: panel => { const pad = framePadOf(panel.id); return pad ? padTargetCwd(pad) : undefined },
+  onUnblank: panel => {
+    findPanel(panel.id)?.api.updateParameters(withEmpty(panel.cwd || undefined, panel.origin))
+    scheduleSave()
+  },
   onCwdChange: panel => {
     const p = findPanel(panel.id)
     if (!p) return
@@ -2081,18 +2431,25 @@ const emptyHost: EmptyHost = {
 }
 
 /**
- * A path printed in a terminal was Ctrl+clicked (app/renderer/terminal-links.ts): a folder opens in the Explorer; a file
- * opens the way Ctrl+P opens it, in the clicked pane's tab group, at the line and column the text names.
+ * What following a link means, for every surface (app/renderer/link-open.ts): http(s) goes to the browser, a folder opens
+ * in the Explorer, a file opens the way Ctrl+P opens it — from a terminal in the clicked pane's tab group (from a pad's
+ * terminal in the Foco de Mesa), at the line and column the link names.
  */
-function openTerminalLink(slotId: string, target: { path: string; isDirectory: boolean; position?: { line: number; column?: number } }): void {
+function followLink(target: LinkTarget, origin: LinkOrigin): void {
+  if (target.kind === 'external') { window.tether.openExternal(target.url); return }
+  if (target.kind === 'tether') { void followTetherLink(target.url); return }
+  if (target.kind !== 'file') return
   if (target.isDirectory) {
     void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
     return
   }
-  // From a pad's terminal the file goes to the Foco de Mesa (no reference); from a desk's or the drawer's, into the clicked pane's group.
-  const reference = framePadOf(slotId) ? undefined : slotId
-  void openFile(fileOpenHost, target.path, { side: false, root: paneCwdOf(slotId) ?? '', ...(reference ? { reference } : {}), ...(target.position ? { position: target.position } : {}) })
+  const slotId = origin.slotId
+  const reference = slotId && !framePadOf(slotId) ? slotId : undefined
+  const root = (slotId ? paneCwdOf(slotId) : undefined) ?? origin.baseDir ?? ''
+  void openFile(fileOpenHost, target.path, { side: false, root, ...(reference ? { reference } : {}), ...(target.position ? { position: target.position } : {}) })
 }
+setLinkHandler(followLink)
+installMonacoLinks()
 
 // ---------- opening a file ----------
 // Ctrl+P (the quick-open extension), a terminal link and the extensions' "abrir o arquivo-fonte" open a file through the
@@ -2228,14 +2585,14 @@ async function openNewDialog(opts: NewPanelOptions = {}): Promise<void> {
     ...(!ctx && reference ? { where: { refName: paneDisplayName(reference), initial: opts.target ?? { level: 'pane', placement: 'within' } } } : {}),
     offerEmpty: !ctx,
     state: ctx ? ctx.state : { ...(wanted ? { highlight: wanted.id } : {}), touched: !!opts.cwd },
-    onOpen: async (choice, cwd, where) => {
+    onOpen: async (choice, cwd, where, destination) => {
       if (ctx) {
-        const error = await emptyHost.fill(ctx.panel, choice, cwd)
+        const error = await emptyHost.fill(ctx.panel, choice, cwd, destination)
         if (error) return error
         closeNewDialog()
         return undefined
       }
-      const r = await resolveChoice(choice, cwd)
+      const r = await resolveChoice(choice, cwd, destination)
       if (!r) return undefined // a file dialog cancelled (the chooser stays), or a note already open (now focused)
       if ('error' in r) return r.error
       closeNewDialog()
@@ -2377,11 +2734,12 @@ const commandHost: CommandHost = {
   renamePane: id => { const type = liveTypeOf(paneTypes, id); if (type?.rename) type.rename(id); else tabs.get(id)?.startRename() },
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
+  copyLink: id => copyPaneLink(id),
   copyFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) window.tether.writeClipboard(f); else if (slots.has(id)) copyFolder(id) },
   openFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) void window.tether.openPath(f); else if (slots.has(id)) openFolder(id) },
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
-  createDesk: side => { desks.create(side) },
+  createDesk: side => { createBlankDesk(side) },
   cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.isSystem(desks.activeDeskId) ? desks.returnDeskId : desks.activeDeskId, step)),
   moveActiveDesk: where => {
     const last = desks.desks.length - 1
@@ -2404,7 +2762,10 @@ const commandHost: CommandHost = {
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
+  sessionsManage: () => openPauseDialog(),
+  sessionsMenu: focusPause => { if (focusPause) sessionsMenu?.openOnPause(); else sessionsMenu?.setOpen(true) },
   restoreConfirmations: () => window.tether.command('restore-confirmations'),
+  associateLinks: () => { void associateLinks() },
   closeWindow: () => window.tether.closeWindow(),
   quitAll: () => window.tether.command('quit-all'),
   restartDaemon: () => window.tether.command('restart-daemon'),
@@ -2762,19 +3123,9 @@ function setupUi(): void {
   dlgNew.addEventListener('cancel', ev => { ev.preventDefault(); popupCancel?.() })
   dlgNew.addEventListener('mousedown', ev => { if (ev.target === dlgNew) { ev.preventDefault(); popupCancel?.() } })
   $('btn-new-close').addEventListener('click', () => popupCancel?.())
-  const closedBtn = $('btn-closed')
-  const closedList = $('closed-list')
-  closedBtn.addEventListener('click', ev => {
-    ev.stopPropagation()
-    closedList.hidden = !closedList.hidden
-    closedBtn.setAttribute('aria-expanded', String(!closedList.hidden))
-    if (closedList.hidden) { askingForget = undefined; refreshClosedMenu() }
-  })
+  setupSessionsMenu()
   document.addEventListener('click', ev => {
-    if (closedList.contains(ev.target as Node)) return
-    closedList.hidden = true
-    closedBtn.setAttribute('aria-expanded', 'false')
-    if (askingForget) { askingForget = undefined; refreshClosedMenu() }
+    if (sessionsMenu?.isOpen() && !sessionsMenu.contains(ev.target as Node)) sessionsMenu.setOpen(false)
   })
 
   // The keyboard dispatch (chord-dispatch.ts): a key in a scope (terminal, note, window) resolves through the key
@@ -2860,6 +3211,8 @@ declare global {
       /** The live frames of the pads (F10b): which pad, which desk, its panes, shown or not. */
       padFrames(): { pad: string; desk?: string; panes: string[]; shown: boolean }[]
       /** Opens a slot as a pane in the shown frames of a pad (the active desk's, for a desk pad). */
+      focusablePanel(): string | undefined
+      activatePanel(id: string): void
       openSlotInPad(slotId: string, padId: string): void
       movePad(id: string): void
       restorePad(id: string): void
@@ -3027,12 +3380,16 @@ function setupTestHooks(): void {
     padFrames: () => [...framePads].map(p => ({ pad: p.padId, ...(p.deskId ? { desk: p.deskId } : {}), panes: p.desk.panels.map(x => x.id), shown: p.isVisible })),
     openSlotInPad: (slotId, padId) => {
       const s = slots.get(slotId)
-      const pad = sidebars?.viewOf(padId, desks.activeDeskId)
+      const descriptor = padRegistry.get(padId)
+      const owner = descriptor ? padOwner(descriptor) : undefined
+      const pad = sidebars?.viewOf(padId, owner?.deskId ?? owner?.panelId)
       if (!s || !(pad instanceof FramesPad) || findPanel(slotId)) return
       const ref = pad.desk.activePanel?.id
       const panel = addPanel(s, undefined, ref)
       panel.api.setActive()
     },
+    focusablePanel: () => focusablePanelId(),
+    activatePanel: id => { findPanel(id)?.api.setActive() },
     movePad: id => sidebars?.move(id),
     restorePad: id => sidebars?.restore(id),
     frameLayout: frameId => (frameId ? desks.frames.get(frameId) : desks.activeFrame)?.dock.toJSON(),
@@ -3214,15 +3571,6 @@ function tracked<T extends M & { init(params: never): void; dispose(): void }, M
   return pane
 }
 
-/** Keeps `map` (pane id → tab) in step with a tab's life. */
-function trackedTab<T extends { init(params: never): void; dispose(): void }>(tab: T, map: Map<string, T>): T {
-  const init = tab.init.bind(tab) as (params: { api: { id: string } }) => void
-  tab.init = ((params: { api: { id: string } }) => { init(params); map.set(params.api.id, tab) }) as T['init']
-  const dispose = tab.dispose.bind(tab)
-  tab.dispose = () => { dispose(); for (const [id, t] of map) if (t === tab) map.delete(id) }
-  return tab
-}
-
 function registerCorePaneTypes(): void {
   const live = (layout: PaneLayout, type: Omit<PaneType, keyof PaneLayout>): PaneType => ({ ...layout, ...type })
   paneTypes.register(live(emptyPaneLayout, {
@@ -3375,6 +3723,8 @@ function activateRendererExtensions(): void {
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
+        copyLink: paneId => copyPaneLink(paneId),
+        attention: paneId => drawAttention(paneId),
         close: paneId => closeSlotless(paneId),
         showTabMenu: (paneId, x, y) => showTabMenu(paneId, x, y),
         newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
@@ -3441,6 +3791,8 @@ function activateRendererExtensions(): void {
           if (r.ok) await openFile(fileOpenHost, r.path, { side: false, root: '', source: true })
           else console.error(`settings.json: ${r.message}`)
         },
+        reveal: key => { if (settingsRevealer) settingsRevealer(key); else console.error(`configurações: nenhuma tela para mostrar ${key}`) },
+        onReveal: handler => { settingsRevealer = handler; return add(toDisposable(() => { if (settingsRevealer === handler) settingsRevealer = undefined })) },
       },
       menus: {
         app: (item: RegistryMenuItem<CommandContext>) => add(menuRegistry.appendMenuItem(MenuId.App, item as RegistryMenuItem)),
@@ -3476,6 +3828,11 @@ function activateRendererExtensions(): void {
           if (!manifest.contributes?.chooser?.items.some(i => i.id === itemId)) throw new Error(`item do seletor não declarado no manifesto de ${id}: ${itemId}`)
           chooserResolvers.set(itemId, fn)
           return add(toDisposable(() => { if (chooserResolvers.get(itemId) === fn) chooserResolvers.delete(itemId) }))
+        },
+        destinations: (itemId, d) => {
+          if (!manifest.contributes?.chooser?.items.some(i => i.id === itemId)) throw new Error(`item do seletor não declarado no manifesto de ${id}: ${itemId}`)
+          chooserDestinations.set(itemId, d)
+          return add(toDisposable(() => { if (chooserDestinations.get(itemId) === d) chooserDestinations.delete(itemId) }))
         },
       },
       status: {
@@ -3543,6 +3900,16 @@ function activateRendererExtensions(): void {
         frames: host => {
           if (!manifest.contributes?.pads?.some(p => p.id === host.padId && p.frames)) throw new Error(`prancheta sem quadros no manifesto de ${id}: ${host.padId}`)
           return newFramesPad(host)
+        },
+        notes: {
+          tree: () => noteTree(),
+          onDidChange: listener => { notesListeners.add(listener); return add(toDisposable(() => { notesListeners.delete(listener) })) },
+          onDidLoose: listener => { looseListeners.add(listener); return add(toDisposable(() => { looseListeners.delete(listener) })) },
+          targets: () => noteTargets(),
+          move: (from, to) => moveNoteLive(from, to),
+          close: keys => closeNotesLive(keys),
+          restore: snap => restoreNotesLive(snap),
+          show: key => showNote(key),
         },
       },
       keybindings: {

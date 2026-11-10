@@ -113,13 +113,14 @@ export function askDialog(spec: DialogSpec, host: HTMLElement = document.body): 
       desc.append(img)
     }
 
-    let remember: HTMLInputElement | undefined
+    const remembers: { box: HTMLInputElement; choice: string }[] = []
     let picked = spec.options?.selected
     const finish = (choice: string): void => {
       dlg.removeEventListener('keydown', onKey)
       dlg.close()
       dlg.remove()
-      resolve({ choice, remember: remember?.checked ?? false, ...(spec.options ? { option: picked } : {}) })
+      const ticked = remembers.find(r => r.box.checked)
+      resolve({ choice, remember: ticked !== undefined, ...(ticked ? { rememberChoice: ticked.choice } : {}), ...(spec.options ? { option: picked } : {}) })
     }
 
     const def = defaultChoice(spec)
@@ -163,10 +164,18 @@ export function askDialog(spec: DialogSpec, host: HTMLElement = document.body): 
 
     const foot = document.createElement('footer')
     if (spec.remember) {
-      const lbl = document.createElement('label'); lbl.className = 'remember'
-      remember = document.createElement('input'); remember.type = 'checkbox'; remember.name = 'remember'
-      lbl.append(remember, document.createTextNode(spec.remember.label))
-      foot.append(lbl)
+      const defs = [{ ...spec.remember, name: 'remember' }, ...(spec.rememberAlso ? [{ ...spec.rememberAlso, name: 'remember-also' }] : [])]
+      const group = document.createElement('div'); group.className = 'remembers'
+      for (const def of defs) {
+        const lbl = document.createElement('label'); lbl.className = 'remember'
+        const box = document.createElement('input'); box.type = 'checkbox'; box.name = def.name
+        // The boxes remember opposite answers: never both.
+        box.addEventListener('change', () => { if (box.checked) for (const r of remembers) if (r.box !== box) r.box.checked = false })
+        remembers.push({ box, choice: def.choice })
+        lbl.append(box, document.createTextNode(def.label))
+        group.append(lbl)
+      }
+      foot.append(group)
     }
     const spacer = document.createElement('span'); spacer.className = 'spacer'; foot.append(spacer)
     if (spec.cancelLabel) {

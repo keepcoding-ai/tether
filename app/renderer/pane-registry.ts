@@ -67,6 +67,8 @@ export interface PaneType extends PaneLayout {
   folderOf?(id: string): string | undefined
   /** The file a note or a preview shows ("Revelar no explorador"). */
   fileOf?(id: string): string | undefined
+  /** The file a link to this pane names instead of its id (a note: the link reopens it after it is closed). */
+  linkFileOf?(id: string): string | undefined
   /** The tab's menu (right-click, the strip's "⋯"); the core activates the pane first. */
   tabMenu?(id: string, x: number, y: number): void
   /** The tab strip's "prévia ao lado" button: shown while `canPreviewSide` holds. */

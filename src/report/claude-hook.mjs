@@ -1,12 +1,12 @@
 // Claude Code hook entry point. Claude runs it (via Git Bash on Windows) as:
-//   node "<abs path>/src/report/claude-hook.mjs" SessionStart|SessionEnd|Stop|Notification
+//   node "<abs path>/src/report/claude-hook.mjs" SessionStart|SessionEnd|Stop|Notification|UserPromptSubmit
 // with the hook payload on stdin and the slot's env (TETHER_SLOT_ID, TETHER_HOME).
 //
 // Rules (PRD RNF3): never write to stdout (SessionStart stdout is injected into Claude's
-// context), never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
+// context), except the polite-pause delivery on PostToolUse/UserPromptSubmit, never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
 // Plain JS on purpose: Node's TypeScript loader added ~40% to the hook's run time.
 // It does not import the core: it appends one JSON line itself.
-import { appendFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -86,19 +86,50 @@ export function toEvent(hookName, payload, slotId, ts) {
 }
 
 /**
- * Maps Stop / Notification to an attention report (<home>/slots/<slot>.attention, read by tetherd):
- * Stop = the turn is over ('done'); Notification = Claude waits for the user ('waiting': a permission prompt,
- * the idle prompt, a question). `auth_success` is only informative. Undefined for any other hook.
+ * Maps Stop / Notification / UserPromptSubmit to an attention report (<home>/slots/<slot>.attention, read by tetherd):
+ * UserPromptSubmit = a turn begins ('start', a turn signal only, never a badge); Stop = the turn is over ('done'); Notification = Claude waits for the user ('waiting': a permission prompt,
+ * the idle prompt, a question). `auth_success` is only informative. Undefined for any other hook, and for
+ * payloads with `agent_id` (a subagent's hook, not the main turn).
  * @param {string} hookName @param {Payload} payload @param {string} ts
- * @returns {{ ts: string, kind: 'done' | 'waiting', sessionId?: string } | undefined} */
+ * @returns {{ ts: string, kind: 'start' | 'done' | 'waiting', sessionId?: string } | undefined} */
 export function toAttention(hookName, payload, ts) {
-  /** @type {'done' | 'waiting' | undefined} */
+  if (str(payload.agent_id)) return undefined
+  /** @type {'start' | 'done' | 'waiting' | undefined} */
   let kind
-  if (hookName === 'Stop') kind = 'done'
+  if (hookName === 'UserPromptSubmit') kind = 'start'
+  else if (hookName === 'Stop') kind = 'done'
   else if (hookName === 'Notification') kind = str(payload.notification_type) === 'auth_success' ? undefined : 'waiting'
   if (!kind) return undefined
   const sessionId = str(payload.session_id)
   return sessionId ? { ts, kind, sessionId } : { ts, kind }
+}
+
+
+/**
+ * Polite pause: when <home>/slots/<slot>.pause-request.json exists, PostToolUse / UserPromptSubmit hand its text to the
+ * agent as additionalContext (stdout) and log `delivered` once per batch; Stop logs the agent's last message as `stop`.
+ * @param {string} home @param {string} slotId @param {string} hookName @param {Payload} payload @param {string} ts */
+function pauseStep(home, slotId, hookName, payload, ts) {
+  if (str(payload.agent_id)) return
+  const dir = join(home, 'slots')
+  /** @type {{ batchId?: unknown, text?: unknown } | undefined} */
+  let req
+  try { req = JSON.parse(readFileSync(join(dir, `${slotId}.pause-request.json`), 'utf8')) } catch { return }
+  const batchId = str(req?.batchId)
+  if (!batchId) return
+  const report = join(dir, `${slotId}.pause.jsonl`)
+  if (hookName === 'Stop') {
+    appendFileSync(report, JSON.stringify({ ts, batchId, kind: 'stop', text: str(payload.last_assistant_message) ?? '' }) + '\n')
+    return
+  }
+  if (hookName !== 'PostToolUse' && hookName !== 'UserPromptSubmit') return
+  const text = str(req?.text)
+  if (!text) return
+  let seen = ''
+  try { seen = readFileSync(report, 'utf8') } catch { /* no report yet */ }
+  if (seen.includes(`"batchId":${JSON.stringify(batchId)},"kind":"delivered"`)) return
+  appendFileSync(report, JSON.stringify({ ts, batchId, kind: 'delivered' }) + '\n')
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: hookName, additionalContext: text } }))
 }
 
 /** @param {string} stdin */
@@ -120,6 +151,8 @@ function record(stdin) {
     }
     const hookName = process.argv[2] ?? str(payload.hook_event_name) ?? ''
     const ts = new Date().toISOString()
+    try { pauseStep(home, slotId, hookName, payload, ts) } catch (e) { log(home, `pause: ${/** @type {Error} */ (e).message}`) }
+    if (hookName === 'PostToolUse') return
     const attention = toAttention(hookName, payload, ts)
     if (attention) {
       const dir = join(home, 'slots')

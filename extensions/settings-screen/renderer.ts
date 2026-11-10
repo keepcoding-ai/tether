@@ -35,13 +35,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     onClose: id => ui.panes.close(id),
   }
 
-  /** Ctrl+,: the page as a tab of the active group (one page: a second call brings it forward). */
-  function show(): void {
+  /** Ctrl+,: the page as a tab of the active group (one page: a second call brings it forward). `key`: the setting to show. */
+  function show(key?: string): void {
     const existing = panels.keys().next().value as string | undefined
     const found = existing ? ui.panes.find(existing) : undefined
     if (existing && found) {
       found.api.setActive()
-      requestAnimationFrame(() => ui.panes.focus(existing))
+      requestAnimationFrame(() => { if (key) void panels.get(existing)?.reveal(key); else ui.panes.focus(existing) })
       return
     }
     const reference = ui.panes.activeId()
@@ -51,7 +51,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       within ? { target: { level: 'pane', placement: 'within' }, reference } : {},
     )
     ui.layout.scheduleSave()
-    requestAnimationFrame(() => ui.panes.focus(panel.id))
+    requestAnimationFrame(() => { if (key) void panels.get(panel.id)?.reveal(key); else ui.panes.focus(panel.id) })
   }
 
   function tabMenu(id: string, x: number, y: number): void {
@@ -94,6 +94,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   return [
     ui.panes.register(type),
     ui.commands.registerCommand('settings.show', () => show()),
+    ui.configuration.onReveal(key => show(key)),
     ui.configuration.onDidChange(() => { void refreshAll() }),
   ]
 }

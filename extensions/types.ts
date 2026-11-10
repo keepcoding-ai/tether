@@ -136,8 +136,8 @@ export interface PadContribution {
   icon: string
   /** The side bar it lives on until the person moves it. */
   defaultSide: 'left' | 'right'
-  /** 'global': one view and one state for the window; 'desk': one per desk, swapped with the desk. */
-  scope: 'global' | 'desk'
+  /** 'global': one view and one state for the window; 'desk': one per desk, swapped with the desk; 'panel': one per focusable panel, swapped with the focus. */
+  scope: 'global' | 'desk' | 'panel'
   /** Its state is a frames layout (frames → panes): the core prunes it and lists its panes. */
   frames?: boolean
   /**

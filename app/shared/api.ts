@@ -17,6 +17,16 @@ import type { ExtensionSummary } from '../../extensions/types.ts'
 
 /** A change of one extension setting (`extensions.<id>.<key>` of settings.json). */
 /** One setting as the settings page lists it: its full key (the storage path), schema, value in force, and whether the file sets it. */
+
+/** The tether:// association with the OS, as the person reads it (app/main/protocol-association.ts). */
+export interface LinkAssociation {
+  isMine: boolean
+  /** What opens a link today (executable and script); undefined when nothing does. */
+  current?: string | undefined
+  /** What "this tether" is. */
+  mine: string
+}
+
 export interface SettingEntry { key: string; node: string; nodeTitle: string; schema: SettingSchema; value: SettingValue; configured: boolean }
 /** settings:list: every registered setting in page order, and the file's parse errors (none when it is valid or absent). */
 export interface SettingsList { entries: SettingEntry[]; errors: SettingsError[] }
@@ -83,6 +93,14 @@ export interface TetherApi {
   /** In-app menu commands that live in main: "Sair e encerrar tudo…" (asks through onAsk) and "Voltar a perguntar". */
   command(cmd: MainCommand): void
   openExternal(url: string): void
+  /** A tether:// link the app was started with or got before the renderer listened; after this call, links come through onTetherLink. */
+  pendingTetherLink(): Promise<string | undefined>
+  /** Which program opens tether:// links today, and whether it is this tether. */
+  linkAssociation(): Promise<LinkAssociation>
+  /** Makes this tether the one that opens tether:// links (the previous association is removed); the state after. */
+  associateLinks(): Promise<LinkAssociation>
+  /** A tether:// link followed while the app runs (app/shared/tether-url.ts). */
+  onTetherLink(listener: (url: string) => void): () => void
   /** Opens a folder in the file manager (Explorer). Validates that the path exists and is a directory; never runs anything. */
   openPath(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   readClipboard(): Promise<string>

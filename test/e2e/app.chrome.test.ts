@@ -93,6 +93,7 @@ async function createShell(page: Page, cwd: string): Promise<void> {
   await page.waitForSelector('#dlg-new[open]')
   await page.fill('#dlg-new .ch-path-input', cwd)
   await page.click('#dlg-new .ch-item[data-id=\"powershell\"]')
+  await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
   await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
   await page.waitForFunction(n => document.querySelectorAll('.tether-tab').length === n, before + 1)
 }
@@ -910,7 +911,7 @@ test('app chrome: aria, keyboard in the new menus, focus return, FLIP, drawer fr
     assert.deepEqual(await probe<string[]>(page, `return [...document.querySelectorAll('button')].filter(b => !b.textContent.trim() && !b.getAttribute('aria-label') && !b.getAttribute('aria-labelledby')).map(b => b.id || b.className)`), [], 'every icon-only button has an aria-label')
 
     // ---- Tab order: bar -> capsule (the pill, then the active tab) -> right side ----
-    await page.locator('#btn-closed').focus()
+    await page.locator('#btn-sessions').focus()
     const stops: string[] = []
     // Then the extensions' status icons, left to right, then the connection icon.
     const statusIcons = await page.locator('#status-area button.status-btn').count()

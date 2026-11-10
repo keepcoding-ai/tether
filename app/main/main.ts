@@ -45,6 +45,9 @@ import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 import { BRAND } from '../shared/brand.ts'
+import { TETHER_SCHEME, tetherUrlInArgv } from '../shared/tether-url.ts'
+import type { LinkAssociation } from '../shared/api.ts'
+import { type Association, commandLineFor, describeCommand, readAssociatedCommand, removeAssociation, sameCommand } from './protocol-association.ts'
 
 const home = tetherHome()
 const pipe = pipePath(home, userInfo().username)
@@ -178,6 +181,7 @@ function connectDaemon(): Promise<void> {
       client.on('state', slot => { slotStates.set(slot.slotId, slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
       client.on('removed', slotId => { slotStates.delete(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('close', () => {
         if (daemon !== client) return
@@ -197,6 +201,7 @@ function connectDaemon(): Promise<void> {
       })
       sendConnection(connectionState())
       void syncSlots(client)
+      void syncPause(client)
       // A restarted daemon has no agents running: a fresh page restores the layout and resumes each slot's session.
       if (reloadOnReconnect) { reloadOnReconnect = false; win?.webContents.reloadIgnoringCache() }
     } catch (err) {
@@ -216,6 +221,13 @@ async function syncSlots(client: DaemonClient): Promise<void> {
   for (const s of list.slots ?? []) slotStates.set(s.slotId, s)
   agentTracker.reset(list.slots ?? [])
   updateTray()
+}
+
+/** The renderer opens with the batch the daemon already holds (a pause survives an app restart). */
+async function syncPause(client: DaemonClient): Promise<void> {
+  const r = await request({ t: 'pause-get' })
+  if (daemon !== client || r.t !== 'ok' || !r.pause) return
+  win?.webContents.send('tether:event', { t: 'pause', batch: r.pause })
 }
 
 function updateTray(): void { tray?.update(slotStates.values(), trayNotices.list()) }
@@ -648,8 +660,9 @@ function createWindow(): void {
     e.preventDefault()
     void hideToTray()
   })
+  created.webContents.on('did-start-loading', () => { if (win === created) tetherLinkListening = false }) // a reload asks again too
   created.on('closed', () => {
-    if (win === created) win = undefined
+    if (win === created) { win = undefined; tetherLinkListening = false } // a new window asks for its pending link again
     // Nobody will answer the dialogs asked of a window that is gone.
     for (const resolve of pendingAsks.values()) resolve({ choice: 'cancel', remember: false })
     pendingAsks.clear()
@@ -1001,11 +1014,80 @@ async function acquireSingleInstance(): Promise<'acquired' | 'focused-other' | '
   }
 }
 
-function bringToFront(): void {
+function bringToFront(_event?: unknown, argv?: string[]): void {
   appLog('second launch poked this instance; bringing the window up')
   writeJson(ackPath, { at: Date.now(), pid: process.pid })
+  const link = argv ? tetherUrlInArgv(argv) : undefined
+  if (link) queueTetherLink(link)
   if (!app.isReady()) return
   void openWindow() // creates the window when the app is hidden in the tray
+  if (link) deliverTetherLink()
+}
+
+// ---------- tether:// links (app/shared/tether-url.ts) ----------
+// The OS hands a followed tether:// link to the app as an argument: to this process when it starts with one (the app was
+// closed), or to the running instance through `second-instance` (bringToFront). Main only carries the text to the
+// renderer, which parses it and reveals the place; nothing here acts on it. The renderer takes a link queued before it
+// was ready (`tether-link:pending`) and from then on gets each one as it comes (`tether:link`).
+
+let pendingTetherLink: string | undefined = tetherUrlInArgv(process.argv)
+let tetherLinkListening = false
+
+function queueTetherLink(url: string): void {
+  pendingTetherLink = url
+}
+
+function deliverTetherLink(): void {
+  if (!tetherLinkListening || !win || pendingTetherLink === undefined) return
+  win.webContents.send('tether:link', pendingTetherLink)
+  pendingTetherLink = undefined
+}
+
+ipcMain.handle('tether-link:pending', () => {
+  tetherLinkListening = true
+  const url = pendingTetherLink
+  pendingTetherLink = undefined
+  return url
+})
+
+/** What the OS runs to give this app a link: the electron binary plus this bundle while not packaged. */
+const schemeArgs = (): string[] => (process.defaultApp ? [__filename] : [])
+
+async function tetherAssociation(): Promise<Association> {
+  const mine = commandLineFor(process.execPath, schemeArgs())
+  if (process.platform !== 'win32') {
+    const isMine = app.isDefaultProtocolClient(TETHER_SCHEME, process.execPath, schemeArgs())
+    return { current: isMine ? mine : undefined, mine, isMine }
+  }
+  const current = await readAssociatedCommand()
+  return { current, mine, isMine: sameCommand(current, mine) }
+}
+
+/** "Associar links tether:// a este tether": whatever answered before is removed, this app is written, and the result read back. */
+async function associateTetherScheme(): Promise<Association> {
+  await removeAssociation()
+  const ok = app.setAsDefaultProtocolClient(TETHER_SCHEME, process.execPath, schemeArgs())
+  const state = await tetherAssociation()
+  appLog(`tether:// links: associated to this app ${ok && state.isMine ? 'ok' : `FAILED (now: ${state.current ?? 'nothing'})`}`)
+  return state
+}
+
+/** The state for the renderer, with the command lines as the person reads them (the executable and its script). */
+const shown = (s: Association): LinkAssociation => ({ isMine: s.isMine, current: s.current ? describeCommand(s.current) : undefined, mine: describeCommand(s.mine) })
+ipcMain.handle('tether-link:association', async () => shown(await tetherAssociation()))
+ipcMain.handle('tether-link:associate', async () => shown(await associateTetherScheme()))
+
+/**
+ * At start: this app takes tether:// links only when no program answers them yet (the first run). When another one does
+ * (another checkout, an older build), it stays: moving the links is the person's call, "Associar links tether:// a este
+ * tether…". Never from a test or second instance (its own TETHER_PIPE).
+ */
+async function registerTetherScheme(): Promise<void> {
+  if (process.env.TETHER_PIPE || process.env.TETHER_E2E_HIDDEN) return
+  const state = await tetherAssociation()
+  if (state.isMine) return
+  if (state.current) { appLog(`tether:// links answered by another program (${state.current}); left as is`); return }
+  await associateTetherScheme()
 }
 
 // ---------- standalone dialog window ----------
@@ -1089,6 +1171,7 @@ async function start(): Promise<void> {
   if (outcome === 'focused-other') { app.quit(); return }
   app.on('second-instance', bringToFront)
   await app.whenReady()
+  void registerTetherScheme()
   if (process.platform === 'darwin') app.dock?.setIcon(join(__dirname, 'tether.png'))
   createMenu()
   extensionHost.activate()

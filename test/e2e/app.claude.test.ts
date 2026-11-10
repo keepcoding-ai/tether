@@ -221,6 +221,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     await page.waitForSelector('#dlg-new[open]')
     await page.fill('#dlg-new .ch-path-input', work)
     await page.click('#dlg-new .ch-item[data-id=\"claude\"]')
+    await page.click('#dlg-new .btn.primary.go') // two steps: the click selects, the button opens
     await page.waitForFunction(() => document.querySelectorAll('#dlg-new[open]').length === 0)
     await tabCount(page, 1)
     const [id1] = await hooks.ids(page)
