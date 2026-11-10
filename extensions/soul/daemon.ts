@@ -2,6 +2,7 @@
 // The adapter's code stays in src/agents/soul.ts (the CLI and tests use its command resolution from there).
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { withMcpConfigFlag } from '../../src/agents/mcp.ts'
+import { soulSkills } from '../../src/agents/skills.ts'
 import { soulAdapter } from '../../src/agents/soul.ts'
 import type { AgentContribution, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { probeSoul } from '../../src/doctor.ts'
@@ -25,6 +26,8 @@ export const soulAgent: AgentContribution = {
   envArgsVar: 'TETHER_SOUL_ARGS',
   // `soul --mcp-config <file|json>` (repeatable; the servers run in-process, so a remote session over -H has none).
   mcp: { inject: withMcpConfigFlag },
+  // The tether's skills as a shared folder (SOUL_CLI_SHARED_FOLDERS, like `-S`): `<dir>/skills/<skill>/SKILL.md`.
+  skills: soulSkills,
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {

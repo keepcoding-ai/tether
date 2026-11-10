@@ -9,6 +9,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { AgentName } from '../core/event.ts'
 import type { Profile } from '../core/profile.ts'
 import type { AttentionOptions } from '../daemon/attention.ts'
+import type { AgentSkills } from './skills.ts'
 import type { AgentAdapter, LaunchPlan } from './types.ts'
 
 /** How this agent's CLI loads an MCP config file (`{ "mcpServers": {...} }`); absent = the agent takes no MCP servers. */
@@ -35,6 +36,11 @@ export interface AgentContribution {
   envArgsVar?: string
   /** MCP servers a daemon extension offers to every AI agent (F7 C3: the Tether Bridge) reach this agent through here. */
   mcp?: AgentMcp
+  /**
+   * How this agent takes the tether's skills (src/agents/skills.ts): its native format when it has one, else
+   * `systemPromptSkills(<its system prompt flag>)`. Absent = the agent gets no skills.
+   */
+  skills?: AgentSkills
 }
 
 export const AGENT_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/
