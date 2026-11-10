@@ -370,6 +370,7 @@ export class NotePanel implements IContentRenderer {
     if (!this.loaded || this.disposed) return Promise.resolve()
     const text = this.text
     if (text === this.savedText) return Promise.resolve()
+    if (!this.bufferIsMine()) return Promise.resolve()
     this.saving = this.host.io.write(this.path, text).then(r => {
       this.saving = undefined
       if (r.ok) {
@@ -393,7 +394,7 @@ export class NotePanel implements IContentRenderer {
     if (!this.loaded || this.disposed) return
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined }
     const text = this.text
-    if (text !== this.savedText) { this.host.io.flush(this.path, text); this.savedText = text; this.rememberOwn(text) }
+    if (text !== this.savedText && this.bufferIsMine()) { this.host.io.flush(this.path, text); this.savedText = text; this.rememberOwn(text) }
   }
 
   private rememberOwn(text: string): void {
@@ -448,10 +449,39 @@ export class NotePanel implements IContentRenderer {
     this.unwatch()
     const from = this.path
     this.path = path
+    this.rebindModel()
     this.api?.setTitle(noteTitle(path))
     this.watch()
     this.flushView()
     this.host.onPathChange(this, from)
+  }
+
+  /**
+   * The buffer is Monaco's model, shared by uri between the tabs on one file: after the path changes, the model must be
+   * the new file's. Kept under the old uri, a note opened later on the old name would pick this very buffer and the two
+   * tabs would autosave each other's text into two files (the data loss of 09/11). Another tab already on the new file
+   * shares its model (same file); else a fresh model takes this text. The old model goes when no editor shows it.
+   */
+  private rebindModel(): void {
+    if (!this.editor || !this.model) return
+    const uri = monaco.Uri.file(this.path)
+    if (this.model.uri.toString() === uri.toString()) return
+    const old = this.model
+    const text = old.getValue()
+    const view = this.editor.saveViewState()
+    const existing = monaco.editor.getModel(uri)
+    if (existing && existing.getValue() !== text) existing.setValue(text)
+    this.model = existing ?? monaco.editor.createModel(text, undefined, uri)
+    this.editor.setModel(this.model)
+    if (view) this.editor.restoreViewState(view)
+    if (!monaco.editor.getEditors().some(e => e.getModel() === old)) old.dispose()
+  }
+
+  /** The buffer is this note's file's (never write one file's text into another). */
+  private bufferIsMine(): boolean {
+    const mine = !!this.model && this.model.uri.toString() === monaco.Uri.file(this.path).toString()
+    if (!mine) console.error(`nota ${this.path}: o texto em memória não é deste arquivo (${this.model?.uri.toString() ?? 'sem modelo'}); não gravado`)
+    return mine
   }
 
   /** "Salvar como…": the text goes to `path`, which becomes the note's file. */
@@ -612,7 +642,7 @@ export class NotePanel implements IContentRenderer {
     if (this.viewTimer) { clearTimeout(this.viewTimer); this.viewTimer = undefined }
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = undefined }
     // What is still pending goes to disk; the params get the last view state before the pane is serialized elsewhere (a move).
-    if (this.loaded && this.text !== this.savedText) { this.host.io.flush(this.path, this.text); this.savedText = this.text }
+    if (this.loaded && this.text !== this.savedText && this.bufferIsMine()) { this.host.io.flush(this.path, this.text); this.savedText = this.text }
     if (this.loaded) this.host.onViewChange(this)
     this.disposed = true
     this.unwatch()
