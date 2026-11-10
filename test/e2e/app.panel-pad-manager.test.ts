@@ -1,14 +1,13 @@
-// E2E of the manager of the panel pad's frames (extension panel-pad-manager), the pad's second state: real tetherd on a
-// private home/pipe, hidden window, CLAUDE* stripped. The manager never opens on the desk: it shows inside the pad.
-//   1. a note in panel A's pad frame; a panel C whose frame stayed empty;
-//   2. closing C leaves nothing behind (its empty frame is cleaned on its own, no toast);
-//   3. closing A: the toast "O quadro da prancheta ficou solto · Ver"; Ver switches the panel pad to the manager on Todos,
-//      with A's frame selected (under Soltos) and the note's text in the read-only preview;
-//   4. Mover… to B's frame: the note's tab lands in B's frame, nothing is loose any more;
-//   5. Fechar (asked inline) → toast "Quadro fechado · Desfazer" → Desfazer: the note is back in B's frame, same pane;
-//   6. layout.json keeps the frame's record (panel label, desk, when);
-//   7–8. the keyboard and the switch in the pad's header; 8b. a shell in B's frame: the row lists it, the preview says
-//      terminal and folder, and Fechar warns nothing (a shell is not an agent) — the frame of a panel holds any pane.
+// E2E of the manager of the panel pad (extension panel-pad-manager): the pad's second state, where the panels of the
+// current desk that have a frame are managed. Real tetherd on a private home/pipe, hidden window, CLAUDE* stripped.
+//   1. a note in panel A's frame; B with an empty frame (no row); C's empty frame goes away with C, no toast;
+//   2. closing A (keeping the process): toast "Ver" → the manager, A's row loose, with "Trazer de volta";
+//   3. Trazer de volta: A's pane is back and its frame (with the note) is its again;
+//   4. a live row: click brings the panel up; right-click opens the tab's own menu;
+//   5. dragging a row onto the desk's edge moves the panel like dragging its tab;
+//   6. another desk lists none of this desk's panels;
+//   7. a loose row's "Fechar quadro" discards the frame and its record;
+//   8. the keyboard and the switch; 9. affinity of desk-only screens.
 // Screenshots in <atrium>/.tmp/panel-pad-manager.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -22,27 +21,30 @@ import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
-type Row = { key: string; title: string; owner: string; loose: boolean; empty: boolean; panes: string[] }
-type Manager = { filter: string; rows: Row[]; selected?: string; preview: string; facts: string[]; confirming: boolean; confirmText: string }
+type Row = { key: string; panel: string; title: string; kind: string; sub: string; loose: boolean; empty: boolean; revivable: boolean; panes: string[] }
+type Manager = { filter: string; rows: Row[]; selected?: string }
 type Tree = { loose: { key: string; empty: boolean }[] }
 type LayoutJSON = { sidebars?: { pads: Record<string, unknown>; meta?: Record<string, { ownerLabel: string; deskId?: string; updatedAt: number }> } }
 type Hooks = {
   slots(): SlotState[]
   connection(): { connected: boolean; pid?: number } | undefined
   openSlot(id: string): void
-  openSlotInPad(slotId: string, padId: string): void
   padFrames(): { pad: string; desk?: string; panes: string[]; shown: boolean }[]
   focusablePanel(): string | undefined
   activatePanel(id: string): void
   panelIds(): string[]
   openNote(path: string): Promise<void>
   panelPadManager(): Manager[]
-  panelPadManagerSelect(key: string): void
   panelFramesTree(): Tree
   panelFramesToast(): { text: string; action?: string } | undefined
   openPanelPadManager(filter?: string, key?: string): void
   panelPadManagerOn(): boolean
   layout(): LayoutJSON
+  activeDesk(): string
+  switchDesk(id: string): void
+  createDesk(side: string, relativeTo: string): string
+  frameLayout(frameId?: string): unknown
+  frameIds(): string[]
 }
 declare const window: { __tether: Hooks; tether: { request(body: unknown): Promise<{ t: string; slot?: SlotState }> } }
 
@@ -61,6 +63,7 @@ const key = (panelId: string): string => `${PANEL}@${panelId}`
 const shown = `#pads .pad.shown[data-pad="${PANEL}"]`
 /** The manager as the e2e sees it: inside the pad on screen, never a tab on the desk. */
 const inPad = `${shown} .pad-manager.pf-pane:not([hidden])`
+const row = (k: string): string => `${inPad} .pf-row[data-key="${k}"]`
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' } }
@@ -101,18 +104,26 @@ async function closePane(page: Page, slotId: string): Promise<void> {
 }
 
 const manager = async (page: Page): Promise<Manager | undefined> => (await page.evaluate(() => window.__tether.panelPadManager()))[0]
+const managerOn = async (page: Page): Promise<boolean> => page.evaluate(() => window.__tether.panelPadManagerOn())
+/** The pad to the manager (on Todos) unless it is there already. */
+async function ensureManager(page: Page): Promise<void> {
+  if (!(await managerOn(page))) await page.evaluate(() => window.__tether.openPanelPadManager('all'))
+  await page.waitForSelector(inPad)
+}
 /** The panes saved in a panel's pad (layout.json's state of `frame-pads.panel@<panel>`). */
 const padHas = async (page: Page, panelId: string, paneId: string): Promise<boolean> =>
   page.evaluate(([k, id]) => JSON.stringify(window.__tether.layout().sidebars?.pads[k!] ?? null).includes(`"${id}"`), [key(panelId), paneId])
+/** How many groups the desk's frame has. */
+const groups = async (page: Page): Promise<number> => page.evaluate(() => window.__tether.frameIds().reduce((n, id) => n + (JSON.stringify(window.__tether.frameLayout(id)).match(/"type":"leaf"/g) ?? []).length, 0))
 
-test('panel pad manager: a frame left loose by a closed panel is found, moved, closed and brought back; any pane counts', { timeout: 300_000 }, async () => {
+test('panel pad manager: the panels of the desk with a frame; a loose one comes back or its frame is closed', { timeout: 300_000 }, async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(tmpBase, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'home-'))
   writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer'] } }))
   const notePath = join(home, 'lembrete.md')
-  writeFileSync(notePath, 'lembrar do bug do cwd\nsegunda linha da nota\n')
+  writeFileSync(notePath, 'lembrar do bug do cwd\n')
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -120,174 +131,133 @@ test('panel pad manager: a frame left loose by a closed panel is found, moved, c
     ;({ app, page } = await launch(home))
     daemons.push(await claim((await page.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
 
-    // ---- 1. a note in A's panel pad; C's pad shown once, left empty ----
+    // ---- 1. a note in A's frame; B's frame empty; C's empty frame leaves with C ----
     const a = await shell(page)
     await page.click(`.sb-icon[data-pad="${PANEL}"]`)
     await page.waitForSelector(`${shown}[data-panel="${a}"] .empty-panel`)
-    await page.click(`${shown} .frame-dock`) // the keyboard into the pad: the note opens there
+    await page.click(`${shown} .frame-dock`)
     await page.evaluate(p => window.__tether.openNote(p), notePath)
     await page.waitForFunction(() => window.__tether.padFrames().some(f => f.pad === 'frame-pads.panel' && f.shown && f.panes.some(p => p.startsWith('note:'))))
     const noteId = (await page.evaluate(() => window.__tether.padFrames())).filter(f => f.pad === 'frame-pads.panel' && f.shown).flatMap(f => f.panes).find(p => p.startsWith('note:'))!
-    assert.ok(await padHas(page, a, noteId), "the note is in A's pad")
+    assert.ok(await padHas(page, a, noteId), "the note is in A's frame")
     const b = await shell(page)
     const c = await shell(page)
     await page.waitForSelector(`${shown}[data-panel="${c}"] .empty-panel`)
     await page.waitForFunction(k => k in (window.__tether.layout().sidebars?.pads ?? {}), key(c))
-
-    // ---- 2. closing C: its empty note goes on its own, without a toast ----
     await closePane(page, c)
     await page.waitForFunction(k => !(k in (window.__tether.layout().sidebars?.pads ?? {})), key(c), { timeout: 5_000 })
     assert.equal(await page.evaluate(() => window.__tether.panelFramesToast()), undefined, 'an empty frame leaves no toast')
 
-    // ---- 3. closing A: the toast, then Ver opens the manager on the loose note ----
+    // ---- 2. closing A: toast, Ver → the manager with A loose and revivable ----
     await page.evaluate(id => window.__tether.activatePanel(id), a)
     await closePane(page, a)
     await page.waitForFunction(() => window.__tether.panelFramesToast()?.text === 'O quadro da prancheta ficou solto', undefined, { timeout: 5_000 })
-    assert.equal((await page.evaluate(() => window.__tether.panelFramesToast()))!.action, 'Ver')
-    await page.screenshot({ path: join(shots, '1-toast-solta.png') })
-    assert.deepEqual((await page.evaluate(() => window.__tether.panelFramesTree())).loose.map(r => r.key), [key(a)])
+    await page.screenshot({ path: join(shots, '1-toast-solto.png') })
     await page.click('.pf-toast .pf-toast-action')
-    await page.waitForSelector(`${inPad} .pf-row`)
-    assert.ok(await page.evaluate(() => window.__tether.panelPadManagerOn()), 'the pad is in its manager state')
+    await page.waitForSelector(row(key(a)))
+    assert.ok(await managerOn(page), 'the pad is in its manager state')
     assert.equal(await page.locator('#dock .tether-tab.frames-manager').count(), 0, 'nothing opened on the desk')
     let m = (await manager(page))!
-    assert.equal(m.filter, 'all', 'Ver opens on Todos: the live frames are never hidden')
     assert.equal(m.selected, key(a))
-    assert.equal(m.rows.length, 1, 'only the loose frame has content so far')
-    assert.ok(m.rows[0]!.owner.startsWith('solto · antes em '), `owner says where it was: ${m.rows[0]!.owner}`)
-    await page.waitForFunction(() => window.__tether.panelPadManager()[0]?.preview.includes('lembrar do bug do cwd'))
+    assert.deepEqual(m.rows.map(r => r.key), [key(a)], 'B has an empty frame: nothing to manage there')
+    const ra = m.rows[0]!
+    assert.ok(ra.loose && ra.revivable, `A is loose and can come back: ${JSON.stringify(ra)}`)
+    assert.ok(ra.sub.startsWith('solto · sessão rodando sem guia'), ra.sub)
+    assert.ok(ra.panes.includes(noteId), 'the row shows what the frame keeps')
+    assert.equal(await page.locator(`${inPad} .pf-preview`).count(), 0, 'no preview')
     await page.screenshot({ path: join(shots, '2-gestor-solto.png') })
-    // The frame's tab bar stays above the manager, its switch lit (with the warning dot: a loose frame has content); it
-    // takes the pad back to the frame. Then the panel pad's "⋯" offers the manager.
-    await page.evaluate(id => window.__tether.activatePanel(id), b)
-    await page.waitForSelector(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"][aria-pressed="true"]`, { state: 'visible' })
-    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"]`)
-    await page.waitForFunction(() => !window.__tether.panelPadManagerOn())
-    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="pane-menu"]`)
-    await page.waitForSelector('#ctx-menu')
-    await page.screenshot({ path: join(shots, '3-menu-com-solta.png') })
-    await page.locator('#ctx-menu li[role="menuitem"]', { hasText: 'Quadros dos painéis' }).first().click()
-    await page.waitForSelector(`${inPad} .pf-bar button[data-action="move"]`, { state: 'visible' })
-    assert.equal((await manager(page))!.filter, 'all')
-    await page.evaluate(k => window.__tether.panelPadManagerSelect(k), key(a))
+    // A click on a loose row does nothing.
+    await page.click(`${row(key(a))} .pf-r-head`)
+    await sleep(200)
+    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(a), 'a click on a loose row brings nothing')
 
-    // ---- 4. Mover… to B's panel pad ----
-    await page.click(`${inPad} .pf-bar button[data-action="move"]`)
-    await page.waitForSelector('#ctx-menu')
-    const bTitle = await page.locator(`#dock .tether-tab[data-slot="${b}"] .text`).first().innerText()
-    await page.locator('#ctx-menu li[role="menuitem"]', { hasText: bTitle }).first().click()
-    await page.waitForFunction(id => window.__tether.padFrames().some(f => f.pad === 'frame-pads.panel' && f.panes.includes(id)), noteId)
+    // ---- 3. Trazer de volta: A's pane comes back, its frame with it ----
+    await page.click(`${row(key(a))} [data-action="revive"]`)
+    await page.waitForFunction(id => window.__tether.panelIds().includes(id), a, { timeout: 10_000 })
     await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0)
-    assert.ok(await padHas(page, b, noteId), "the note's tab is in B's frame")
-    await page.waitForFunction(k => { const m = window.__tether.panelPadManager()[0]; return !!m && m.rows.length === 1 && m.rows[0]!.key === k && !m.rows[0]!.loose }, key(b), { timeout: 5_000 }) // B's frame, alive, is the one row
-    await page.screenshot({ path: join(shots, '4-movida-para-b.png') })
+    assert.ok(await padHas(page, a, noteId), "A's frame, with the note, is A's again")
+    await page.screenshot({ path: join(shots, '3-trazido-de-volta.png') })
 
-    // ---- 5. Fechar with Desfazer ----
-    await page.evaluate(k => window.__tether.openPanelPadManager('all', k), key(b))
-    await page.waitForFunction(k => window.__tether.panelPadManager()[0]?.selected === k, key(b))
-    await page.click(`${inPad} .pf-bar button[data-action="close"]`)
-    await page.waitForSelector(`${inPad} .pf-bar button[data-action="confirm-close"]`)
-    await page.screenshot({ path: join(shots, '5-confirmar-fechar.png') })
-    await page.click(`${inPad} .pf-bar button[data-action="confirm-close"]`)
-    await page.waitForFunction(() => window.__tether.panelFramesToast()?.text === 'Quadro fechado')
-    await page.waitForFunction(id => !window.__tether.padFrames().some(f => f.panes.includes(id)), noteId)
-    await page.screenshot({ path: join(shots, '6-toast-desfazer.png') })
-    await page.click('.pf-toast .pf-toast-action')
-    await page.waitForFunction(id => window.__tether.padFrames().some(f => f.pad === 'frame-pads.panel' && f.panes.includes(id)), noteId)
-    assert.ok(await padHas(page, b, noteId), 'Desfazer brought the same note back to B')
-    // B's pad on screen, with the note back in it.
+    // ---- 4. live row: click brings the panel up; right-click is the tab's menu ----
     await page.evaluate(id => window.__tether.activatePanel(id), b)
-    await page.waitForSelector(`${shown}[data-panel="${b}"]`)
-    await page.screenshot({ path: join(shots, '7-desfeito.png') })
+    await ensureManager(page)
+    await page.waitForSelector(row(key(a)))
+    m = (await manager(page))!
+    assert.ok(!m.rows[0]!.loose && !m.rows[0]!.revivable, 'a live row has no buttons')
+    await page.click(`${row(key(a))} .pf-r-head`)
+    await page.waitForFunction(id => window.__tether.focusablePanel() === id, a, { timeout: 5_000 })
+    await ensureManager(page)
+    await page.locator(row(key(a))).click({ button: 'right' })
+    await page.waitForSelector('#ctx-menu')
+    const items = await page.locator('#ctx-menu li[role="menuitem"]').allInnerTexts()
+    assert.ok(items.some(t => t.includes('Fechar painel')), `the tab's menu: ${JSON.stringify(items)}`)
+    await page.screenshot({ path: join(shots, '4-menu-da-guia.png') })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#ctx-menu', { state: 'detached', timeout: 2_000 }).catch(() => {})
 
-    // ---- 6. the record in layout.json ----
+    // ---- 5. dragging the row to the desk's right edge splits the desk, like the tab ----
+    await ensureManager(page)
+    const before = await groups(page)
+    const target = page.locator('#dock .dv-dockview').first()
+    const box = (await target.boundingBox())!
+    await page.locator(row(key(a))).dragTo(target, { targetPosition: { x: box.width - 12, y: box.height / 2 } })
+    for (let i = 0; i < 50 && (await groups(page)) <= before; i++) await sleep(100)
+    await page.screenshot({ path: join(shots, '5-arrastado.png') })
+    assert.ok((await groups(page)) > before, `the desk got a new group from the row (${before} → ${await groups(page)})`)
+    assert.ok((await page.evaluate(() => window.__tether.panelIds())).includes(a), 'A moved, not closed')
+    await page.screenshot({ path: join(shots, '5-arrastado.png') })
+
+    // ---- 6. another desk lists none of this one's panels ----
+    const d1 = await page.evaluate(() => window.__tether.activeDesk())
+    const d2 = await page.evaluate(d => window.__tether.createDesk('after', d), d1)
+    await page.evaluate(d => window.__tether.switchDesk(d), d2)
+    await page.evaluate(() => window.__tether.openPanelPadManager('all'))
+    await page.waitForFunction(() => (window.__tether.panelPadManager()[0]?.rows.length ?? -1) === 0, undefined, { timeout: 5_000 })
+    await page.screenshot({ path: join(shots, '6-outra-mesa.png') })
+    await page.evaluate(d => window.__tether.switchDesk(d), d1)
+
+    // ---- 7. a loose row's Fechar quadro: frame and record gone ----
+    await page.evaluate(id => window.__tether.activatePanel(id), a)
+    await closePane(page, a)
+    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 1)
+    await page.evaluate(k => window.__tether.openPanelPadManager('all', k), key(a))
+    await page.click(`${row(key(a))} [data-action="close"]`)
+    await page.waitForFunction(() => window.__tether.panelFramesToast()?.text === 'Quadro fechado')
+    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0)
     let saved: LayoutJSON | undefined
     for (let i = 0; i < 40; i++) {
       saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutJSON
-      if (saved.sidebars?.meta?.[key(b)]) break
+      if (!saved.sidebars?.meta?.[key(a)]) break
       await sleep(100)
     }
-    const rec = saved?.sidebars?.meta?.[key(b)]
-    assert.ok(rec, "B's frame has its record")
-    assert.equal(rec.ownerLabel, bTitle)
-    assert.ok(rec.deskId && rec.updatedAt > 0)
-    assert.equal(saved!.sidebars!.meta![key(a)], undefined, "A's record went with its frame")
+    assert.equal(saved!.sidebars?.meta?.[key(a)], undefined, "A's record went with its frame")
+    await page.screenshot({ path: join(shots, '7-quadro-fechado.png') })
 
-    // ---- 7. the keyboard: Ctrl+Shift+M switches the pad from inside a terminal (Ctrl+K chords pass to the shell there)
-    //         and back; Ctrl+K N outside; Escape in the manager goes back to the frame ----
-    await page.click(`${shown} .tab-act[data-action="frames-manager"]`)
-    await page.waitForFunction(() => !window.__tether.panelPadManagerOn())
-    assert.equal((await page.evaluate(() => window.__tether.panelPadManager())).length, 0, 'no manager on screen in the frame state')
+    // ---- 8. the keyboard and the switch ----
     await page.evaluate(id => window.__tether.activatePanel(id), b)
+    if (await managerOn(page)) await page.click(`${shown} .tab-act[data-action="frames-manager"]`)
+    await page.waitForFunction(() => !window.__tether.panelPadManagerOn())
     await page.locator(`.panel[data-slot-id="${b}"] .xterm-screen`).click()
     await page.waitForFunction(() => !!document.activeElement?.closest('.xterm'))
     await page.keyboard.press('Control+Shift+M')
-    await page.waitForFunction(() => window.__tether.panelPadManagerOn() && window.__tether.panelPadManager().length === 1, undefined, { timeout: 5_000 })
-    await page.waitForFunction(() => !!document.activeElement?.closest('.pf-pane'), undefined, { timeout: 5_000 }) // the keyboard followed
-    await page.keyboard.press('Control+Shift+M')
-    await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-    await page.keyboard.press('Control+K')
-    await page.keyboard.press('N')
     await page.waitForFunction(() => window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
     await page.locator(`${inPad} .pf-list`).focus()
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
-
-    // ---- 8. the pinned switch in the panel pad's header: the manager shows in the pad, in place of the frame; nothing on the desk ----
-    await page.evaluate(id => window.__tether.activatePanel(id), b)
-    await page.click(`${shown}[data-panel="${b}"] .frame-dock`) // the keyboard into the pad
     await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"]`)
     await page.waitForSelector(`${shown}[data-panel="${b}"] .pad-manager.pf-pane:not([hidden])`, { state: 'visible' })
-    assert.ok(await page.evaluate(() => window.__tether.panelPadManagerOn()))
-    assert.equal(await page.locator('#dock .tether-tab.frames-manager').count(), 0, 'the manager is not a tab on the desk')
-    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).some(id => id.startsWith('frames-manager:')), 'no manager pane exists')
-    await page.screenshot({ path: join(shots, '8-botao-fixo.png') })
-    // The manager starts under the tab bar, which is still on screen with the switch lit; a tab clicked goes back to the frame.
-    const barBox = (await page.locator(`${shown}[data-panel="${b}"] .dv-tabs-and-actions-container`).first().boundingBox())!
+    const barBox = (await page.locator(`${shown}[data-panel="${b}"] .dv-tabs-and-actions-container:visible`).first().boundingBox())!
     const mgrBox = (await page.locator(inPad).boundingBox())!
-    assert.ok(barBox.height > 0 && Math.abs(mgrBox.y - (barBox.y + barBox.height)) <= 1, `the manager starts where the tab bar ends (${mgrBox.y} vs ${barBox.y + barBox.height})`)
-    await page.click(`${shown}[data-panel="${b}"] .dv-tabs-container .dv-tab`)
-    await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
+    await page.screenshot({ path: join(shots, '8-botao-fixo.png') })
+    assert.ok(Math.abs(mgrBox.y - (barBox.y + barBox.height)) <= 1, `the manager starts where the tab bar ends (${mgrBox.y} vs ${barBox.y}+${barBox.height})`)
     await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"]`)
-    await page.waitForFunction(() => window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
-    // Enter on a live note takes the pad back to that note's frame.
-    await page.evaluate(k => window.__tether.panelPadManagerSelect(k), key(b))
-    await page.locator(`${inPad} .pf-list`).focus()
-    await page.keyboard.press('Enter')
-    await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
-    assert.ok(await padHas(page, b, noteId), "B's frame is what the pad shows again")
-
-    // ---- 8b. any pane counts: a shell opened in B's frame shows in the row and the preview; Fechar asks, without an agent warning ----
-    await page.click(`${shown}[data-panel="${b}"] .frame-dock`) // the keyboard into the pad
-    const made = await page.evaluate(cwd => window.tether.request({ t: 'create', kind: 'shell', cwd, start: true }), root)
-    const shellId = made.slot!.slotId
-    await page.waitForFunction(id => typeof window.__tether.slots().find(s => s.slotId === id)?.pid === 'number', shellId, { timeout: 20_000 })
-    await page.evaluate(([id, pad]) => window.__tether.openSlotInPad(id!, pad!), [shellId, PANEL])
-    await page.waitForFunction(id => window.__tether.padFrames().some(f => f.pad === 'frame-pads.panel' && f.panes.includes(id)), shellId, { timeout: 10_000 })
-    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"]`)
-    await page.waitForFunction(() => window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
-    await page.evaluate(k => window.__tether.panelPadManagerSelect(k), key(b))
-    await page.waitForFunction((args: [string, string]) => { const m = window.__tether.panelPadManager()[0]; const r = m?.rows.find(x => x.key === args[0]); return !!r && r.panes.includes(args[1]) }, [key(b), shellId] as [string, string], { timeout: 5_000 })
-    m = (await manager(page))!
-    assert.ok(m.facts.some(f => /terminal|\\/.test(f)) || m.facts.length >= 1, `the preview says what the shell is: ${JSON.stringify(m.facts)}`)
-    await page.screenshot({ path: join(shots, '8d-shell-no-quadro.png') })
-    await page.click(`${inPad} .pf-bar button[data-action="close"]`)
-    await page.waitForSelector(`${inPad} .pf-bar button[data-action="confirm-close"]`)
-    m = (await manager(page))!
-    assert.ok(m.confirmText.startsWith('Fechar este quadro?'), `a shell is not an agent: ${m.confirmText}`)
-    await page.locator(`${inPad} .pf-bar button`, { hasText: 'Cancelar' }).click()
-    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"]`) // back to the frame
     await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
 
-    // ---- 9. affinity: the settings (a desk-only screen) opened with the pad in focus land on the desk, never in the pad ----
-    await page.evaluate(id => window.__tether.activatePanel(id), b)
-    await page.click(`${shown}[data-panel="${b}"] .frame-dock`) // the keyboard into the pad again
+    // ---- 9. affinity: the settings opened with the pad in focus land on the desk ----
+    await page.click(`${shown}[data-panel="${b}"] .frame-dock`)
     await page.keyboard.press('Control+,')
     await page.waitForFunction(() => window.__tether.panelIds().some(id => id.startsWith('settings:')), undefined, { timeout: 5_000 })
-    const pads9 = await page.evaluate(() => window.__tether.padFrames())
-    assert.ok(!pads9.some(f => f.panes.some(p => p.startsWith('settings:'))), 'the settings are not inside a pad')
-    await page.screenshot({ path: join(shots, '9-afinidade-config.png') })
+    assert.ok(!(await page.evaluate(() => window.__tether.padFrames())).some(f => f.panes.some(p => p.startsWith('settings:'))), 'the settings are not inside a pad')
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const p of daemons) await killOwned(p, { tree: true })

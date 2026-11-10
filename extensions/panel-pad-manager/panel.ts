@@ -1,37 +1,41 @@
-// The manager of the panel pad's frames ("Quadros dos painéis"): the pad's second state (frame-pads/manager-slot.ts), with
-// the map of every panel's frame (the loose ones first, then each desk with its panels, then panels outside every desk),
-// the filter Todos / Soltos, a read-only preview of the selected frame by the kind of its panes (a note's text; an
-// agent's name, state and folder; a terminal's title and folder; a browser tab's address), and its actions: Mover… (to
-// another panel's frame; the tabs add up), Fechar (asked inline, and told when a live agent is in the frame: its session
-// goes on without a tab; the toast offers Desfazer) and Limpar vazios. The frame's tab bar stays above it; its switch,
-// Esc and Enter on a live frame take the pad back to the frame. The model is app/renderer/panel-frames.ts; the frames
-// live in the core (TetherUi.pads.panelFrames).
+// The manager of the panel pad ("Painéis da mesa"): the pad's second state (frame-pads/manager-slot.ts). Its item is the
+// PANEL: one row per panel of the desk on screen that has a frame in the pad, plus the loose frames (panel closed) that
+// belonged to this desk. What the frame holds is on the row only to tell which panel it is (chips: the panes' names).
+// A row does what the panel's tab does, nothing more: click brings the panel up; drag starts the tab's own drag (any
+// place that takes a tab takes the row); right-click opens the tab's own menu (Mover…, Copiar link, Fechar painel…, the
+// agent's rows). A loose row offers "Trazer de volta" when the panel can come back (its session still exists) and
+// "Fechar quadro" always; when it cannot, the row says why. No preview: the list is the whole manager. Esc and the
+// header's switch take the pad back to the frame; Enter on a live row brings the panel up and goes back too.
+// The model is app/renderer/panel-frames.ts; the frames live in the core (TetherUi.pads.panelFrames).
 import { icon, type IconName } from '../../app/renderer/icons.ts'
-import type { AgentPane, ContextMenuEntry, FrameFilter, FramePane, PanelFrameRow, PanelFrameTree } from '../../app/renderer/ext-api.ts'
+import type { AgentPane, FrameFilter, FramePane, PaneInfo, PanelFrameRow, PanelFrameTree } from '../../app/renderer/ext-api.ts'
 import { visibleRows, whenLabel } from '../../app/renderer/panel-frames.ts'
 import type { ManagerView } from '../frame-pads/manager-slot.ts'
 
-export const MANAGER_TITLE = 'Quadros dos painéis'
+export const MANAGER_TITLE = 'Painéis da mesa'
 
 export interface ManagerHost {
   tree(): PanelFrameTree
-  targets(): { key: string; label: string; group: string }[]
-  /** A note file's text (undefined when it cannot be read). */
-  read(path: string): Promise<string | undefined>
   /** The agent a pane shows, when the pane is an agent's and lives somewhere in the window. */
   agent(paneId: string): AgentPane | undefined
-  /** A live pane's folder. */
-  cwdOf(paneId: string): string | undefined
-  move(from: string, to: string): boolean
-  /** Closes the frames (the toast with Desfazer is the host's). */
+  /** A live pane as the core describes it (type, folder, file, agent kind, place). */
+  describe(paneId: string): PaneInfo | undefined
+  /** Brings the panel up (its tab active and focused, its pad shown). */
+  reveal(panelId: string): void
+  /** The panel's own tab menu, at page coordinates. */
+  tabMenu(panelId: string, x: number, y: number): void
+  /** Starts the panel's tab drag from the row's dragstart. */
+  beginDrag(panelId: string, ev: DragEvent): boolean
+  revivable(key: string): { ok: boolean; reason: string }
+  revive(key: string): boolean
+  /** Closes loose frames (the host tells the person). */
   close(keys: readonly string[], what: 'one' | 'empty'): void
-  show(key: string): void
-  menu(x: number, y: number, entries: ContextMenuEntry[]): void
   /** The pad back to the panel's frame. */
   exit(): void
 }
 
-const PANE_ICON: Record<string, IconName> = { note: 'note-pencil', empty: 'square-half', terminal: 'terminal-window', 'md-preview': 'file-md', 'browser-web': 'globe-simple' }
+const PANE_ICON: Record<string, IconName> = { note: 'note-pencil', empty: 'square-half', terminal: 'terminal-window', 'md-preview': 'file-md', 'html-preview': 'file-html', 'browser-web': 'globe-simple' }
+const AGENT_ICON: Record<string, IconName> = { claude: 'brand', soul: 'brand' }
 /** How many of a frame's panes a row shows before "+n". */
 const ROW_PANES = 3
 
@@ -42,31 +46,23 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e
 }
 
-/** A desk's group heading: its name, with "Mesa" in front unless the name already says it ("Mesa 1"). */
-export function deskHeading(name: string): string {
-  return /^mesa\b/i.test(name) ? name : `Mesa ${name}`
-}
-
-/** Whose frame it is, in a few words. */
-export function ownerText(r: PanelFrameRow): string {
-  if (r.loose) return r.label ? `solto · antes em ${r.label}` : 'solto · painel fechado'
-  return r.focused ? 'painel em foco' : 'painel'
-}
-
-/** The row's name: the panel's, else what the frame holds. */
-export function rowTitle(r: PanelFrameRow): string {
-  return r.label || r.title || '(sem nome)'
-}
-
-/** What a pane is, for the preview: "Claude", "terminal", "nota", "navegador". */
-export function paneKind(p: FramePane, agent: AgentPane | undefined): string {
+/** The panel's kind in a word: "Claude", "soul", "terminal", "nota", "navegador". */
+export function panelKind(r: PanelFrameRow, agent: AgentPane | undefined, info: PaneInfo | undefined): string {
   if (agent) return agent.kind === 'claude' ? 'Claude' : agent.kind
-  if (p.component === 'note') return 'nota'
-  if (p.component === 'terminal') return 'terminal'
-  if (p.component === 'browser-web') return 'navegador'
-  if (p.component === 'md-preview' || p.component === 'html-preview') return 'prévia'
-  if (p.component === 'empty') return 'vazio'
-  return p.component
+  if (info?.agent) return info.agent === 'claude' ? 'Claude' : info.agent
+  const t = info?.type ?? (r.panelId.startsWith('note:') ? 'note' : r.panelId.startsWith('web:') ? 'browser-web' : 'terminal')
+  return t === 'note' ? 'nota' : t === 'browser-web' ? 'navegador' : t === 'terminal' ? 'terminal' : t
+}
+
+/** The panel's state in a word or two, or '' when it has none (a note, a shell). */
+export function panelState(agent: AgentPane | undefined): string {
+  if (!agent) return ''
+  return agent.alive ? 'rodando' : 'encerrado'
+}
+
+/** A pane of the frame as the row shows it: its name (an agent's name when it is one). */
+export function paneLabel(p: FramePane, agent: AgentPane | undefined): string {
+  return agent?.name ?? p.title
 }
 
 export class PanelPadManager implements ManagerView {
@@ -74,13 +70,8 @@ export class PanelPadManager implements ManagerView {
   private readonly host: ManagerHost
   private filter: FrameFilter = 'all'
   private selected: string | undefined
-  private confirming = false
   private rows: PanelFrameRow[] = []
-  private previewKey = ''
-  private previewText: string | undefined
   private readonly list: HTMLElement
-  private readonly preview: HTMLElement
-  private readonly bar: HTMLElement
   private readonly chips: Record<FrameFilter, HTMLButtonElement>
   private readonly clean: HTMLButtonElement
 
@@ -104,85 +95,70 @@ export class PanelPadManager implements ManagerView {
     this.chips = { all: chip('all', 'Todos'), loose: chip('loose', 'Soltos') }
     this.clean = el('button', 'pf-btn pf-clean', 'Limpar vazios')
     this.clean.type = 'button'
-    this.clean.title = 'Fecha os quadros soltos que não têm nada'
+    this.clean.title = 'Fecha os quadros soltos desta mesa que não têm nada'
     this.clean.addEventListener('click', () => {
-      const keys = this.host.tree().loose.filter(r => r.empty).map(r => r.key)
+      const keys = visibleRows(this.host.tree(), 'loose').filter(r => r.empty).map(r => r.key)
       if (keys.length) this.host.close(keys, 'empty')
     })
     head.append(title, group, el('span', 'sp'), this.clean)
-    const body = el('div', 'pf-body')
     this.list = el('div', 'pf-list')
     this.list.tabIndex = 0
     this.list.setAttribute('role', 'listbox')
-    this.list.setAttribute('aria-label', 'Quadros dos painéis')
+    this.list.setAttribute('aria-label', MANAGER_TITLE)
     this.list.addEventListener('keydown', ev => this.onKey(ev))
-    this.element.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !this.confirming) { ev.preventDefault(); this.host.exit() } })
-    this.preview = el('div', 'pf-preview')
-    body.append(this.list, this.preview)
-    this.bar = el('div', 'pf-bar')
-    this.element.append(head, body, this.bar)
+    this.element.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); this.host.exit() } })
+    this.element.append(head, this.list)
   }
 
   focus(): void { this.list.focus() }
 
-  /** Opens on a filter, with a frame selected when given. */
+  /** Opens on a filter, with a row selected when given. */
   open(filter: FrameFilter, key?: string): void {
     this.filter = filter
     if (key) this.selected = key
-    this.confirming = false
     this.refresh()
   }
 
   setFilter(f: FrameFilter): void {
     if (f === this.filter) return
     this.filter = f
-    this.confirming = false
     this.refresh()
   }
 
   select(key: string | undefined): void {
     if (key === this.selected) return
     this.selected = key
-    this.confirming = false
     this.refresh()
   }
 
-  /** Redraws from the core's frames (they may have changed anywhere in the window). */
+  /** Redraws from the core's frames (they may have changed anywhere in the window) for the desk on screen. */
   refresh(): void {
     const tree = this.host.tree()
     this.rows = visibleRows(tree, this.filter)
     if (!this.rows.some(r => r.key === this.selected)) this.selected = this.rows[0]?.key
-    const loose = tree.loose.filter(r => !r.empty).length
+    const loose = visibleRows(tree, 'loose')
+    const withContent = loose.filter(r => !r.empty).length
     for (const [f, b] of Object.entries(this.chips) as [FrameFilter, HTMLButtonElement][]) b.setAttribute('aria-pressed', String(f === this.filter))
-    this.chips.loose.textContent = loose ? `Soltos (${loose})` : 'Soltos'
-    const empties = tree.loose.filter(r => r.empty).length
+    this.chips.loose.textContent = withContent ? `Soltos (${withContent})` : 'Soltos'
+    const empties = loose.filter(r => r.empty).length
     this.clean.disabled = empties === 0
-    this.clean.textContent = empties ? `Limpar vazios (${empties})` : 'Limpar vazios'
-    this.renderList(tree)
-    this.renderPreview()
-    this.renderBar()
+    this.clean.hidden = empties === 0
+    this.clean.textContent = `Limpar vazios (${empties})`
+    this.renderList()
   }
 
-  private renderList(tree: PanelFrameTree): void {
+  private renderList(): void {
     const hadFocus = this.list.contains(document.activeElement)
     const out: HTMLElement[] = []
     if (this.rows.length === 0) {
       out.push(el('p', 'pf-empty', this.filter === 'loose'
-        ? 'Nenhum quadro solto. Quando você fechar um painel que tinha algo na prancheta, o quadro dele aparece aqui.'
-        : 'Nenhum quadro com conteúdo ainda. O que você abrir na prancheta de um painel aparece aqui.'))
-    } else if (this.filter === 'loose') {
-      for (const r of tree.loose) out.push(this.rowEl(r))
+        ? 'Nenhum quadro solto nesta mesa. Quando você fechar um painel que tinha algo na prancheta, o quadro dele fica aqui.'
+        : 'Nenhum painel desta mesa tem algo na prancheta ainda.'))
     } else {
-      if (tree.loose.length) { out.push(el('div', 'pf-group', `Soltos (${tree.loose.length})`)); for (const r of tree.loose) out.push(this.rowEl(r)) }
-      const shown = new Set(this.rows.map(r => r.key))
-      for (const d of tree.desks) {
-        const rows = d.panels.filter(r => shown.has(r.key))
-        if (!rows.length) continue
-        out.push(el('div', 'pf-group', deskHeading(d.name)))
-        for (const r of rows) out.push(this.rowEl(r))
-      }
-      const elsewhere = tree.elsewhere.filter(r => shown.has(r.key))
-      if (elsewhere.length) { out.push(el('div', 'pf-group', 'Fora das mesas')); for (const r of elsewhere) out.push(this.rowEl(r)) }
+      const loose = this.rows.filter(r => r.loose)
+      const live = this.rows.filter(r => !r.loose)
+      if (loose.length) { out.push(el('div', 'pf-group', `Soltos (${loose.length})`)); for (const r of loose) out.push(this.rowEl(r)) }
+      if (live.length) { if (loose.length) out.push(el('div', 'pf-group', 'Painéis')); for (const r of live) out.push(this.rowEl(r)) }
     }
     this.list.replaceChildren(...out)
     if (hadFocus) this.list.focus()
@@ -190,139 +166,86 @@ export class PanelPadManager implements ManagerView {
   }
 
   private rowEl(r: PanelFrameRow): HTMLElement {
+    const agent = this.host.agent(r.panelId)
+    const info = r.loose ? undefined : this.host.describe(r.panelId)
     const b = el('div', 'pf-row')
     b.dataset.key = r.key
+    b.dataset.panel = r.panelId
     b.setAttribute('role', 'option')
     b.setAttribute('aria-selected', String(r.key === this.selected))
     b.classList.toggle('loose', r.loose)
-    b.classList.toggle('empty', r.empty)
-    const title = el('span', 'pf-r-title', rowTitle(r))
-    const owner = el('span', 'pf-r-owner', ownerText(r))
-    const when = whenLabel(r.updatedAt, Date.now())
-    const right = el('span', 'pf-r-meta', when)
-    const panes = el('span', 'pf-r-panes')
+    b.classList.toggle('focused', r.focused)
+    // Line 1: kind icon, the panel's name, its kind and state, when the frame last changed.
+    const kind = panelKind(r, agent, info)
+    const head = el('div', 'pf-r-head')
+    const ic = el('span', 'pf-r-icon')
+    ic.append(icon(agent || info?.agent ? AGENT_ICON[agent?.kind ?? info?.agent ?? ''] ?? 'brand' : PANE_ICON[info?.type ?? (r.panelId.startsWith('note:') ? 'note' : 'terminal')] ?? 'app-window'))
+    const name = el('span', 'pf-r-title', r.label || r.title || '(sem nome)')
+    const state = panelState(agent)
+    const meta = el('span', 'pf-r-kind', state ? `${kind} · ${state}` : kind)
+    if (agent?.alive) meta.classList.add('live')
+    const when = el('span', 'pf-r-meta', whenLabel(r.updatedAt, Date.now()))
+    head.append(ic, name, meta, when)
+    // Line 2: where (folder) for a live panel; origin and viability for a loose one.
+    const sub = el('div', 'pf-r-sub')
+    if (r.loose) {
+      const v = this.host.revivable(r.key)
+      sub.textContent = `solto · ${v.reason}`
+      sub.classList.toggle('ok', v.ok)
+    } else {
+      sub.textContent = [r.focused ? 'em foco' : '', info?.cwd ?? info?.file ?? ''].filter(Boolean).join(' · ')
+    }
+    // Line 3: what the frame holds, to recognise the panel.
+    const panes = el('div', 'pf-r-panes')
     const real = r.panes.filter(p => p.component !== 'empty')
-    if (!real.length) panes.append(el('span', 'pf-r-pane dim', '(vazio)'))
+    if (!real.length) panes.append(el('span', 'pf-r-pane dim', 'quadro vazio'))
     for (const p of real.slice(0, ROW_PANES)) {
-      const agent = this.host.agent(p.id)
+      const pa = this.host.agent(p.id)
       const chip = el('span', 'pf-r-pane')
-      chip.classList.toggle('live', !!agent?.alive)
-      chip.append(icon(PANE_ICON[p.component] ?? 'app-window'), el('span', undefined, agent?.name ?? p.title))
-      chip.title = paneKind(p, agent)
+      chip.classList.toggle('live', !!pa?.alive)
+      chip.append(icon(pa ? AGENT_ICON[pa.kind] ?? 'brand' : PANE_ICON[p.component] ?? 'app-window'), el('span', undefined, paneLabel(p, pa)))
+      chip.title = p.url ?? p.file ?? paneLabel(p, pa)
       panes.append(chip)
     }
     if (real.length > ROW_PANES) panes.append(el('span', 'pf-r-pane dim', `+${real.length - ROW_PANES}`))
-    b.append(title, right, owner, panes)
-    b.addEventListener('click', () => { this.select(r.key); this.list.focus() })
-    b.addEventListener('dblclick', () => { if (!r.loose) this.host.show(r.key) })
+    b.append(head, sub, panes)
+    // A loose row's two actions, in place.
+    if (r.loose) {
+      const acts = el('div', 'pf-r-acts')
+      const v = this.host.revivable(r.key)
+      if (v.ok) {
+        const back = el('button', 'pf-btn primary', 'Trazer de volta')
+        back.type = 'button'
+        back.dataset.action = 'revive'
+        back.title = 'Reabre o painel; o quadro volta com ele'
+        back.addEventListener('click', ev => { ev.stopPropagation(); this.host.revive(r.key) })
+        acts.append(back)
+      }
+      const close = el('button', 'pf-btn', 'Fechar quadro')
+      close.type = 'button'
+      close.dataset.action = 'close'
+      close.title = 'Descarta o que ficou na prancheta deste painel'
+      close.addEventListener('click', ev => { ev.stopPropagation(); this.host.close([r.key], 'one') })
+      acts.append(close)
+      b.append(acts)
+    }
+    // What the tab does, the row does.
+    b.addEventListener('click', () => { this.select(r.key); if (!r.loose) this.host.reveal(r.panelId); this.list.focus() })
+    b.addEventListener('dblclick', () => { if (!r.loose) { this.host.reveal(r.panelId); this.host.exit() } })
+    b.addEventListener('contextmenu', ev => { if (r.loose) return; ev.preventDefault(); ev.stopPropagation(); this.select(r.key); this.host.tabMenu(r.panelId, ev.clientX, ev.clientY) })
+    if (!r.loose) {
+      b.draggable = true
+      b.addEventListener('dragstart', ev => {
+        if (!this.host.beginDrag(r.panelId, ev)) { ev.preventDefault(); return }
+        this.select(r.key)
+        b.classList.add('dragging')
+      })
+      b.addEventListener('dragend', () => b.classList.remove('dragging'))
+    }
     return b
   }
 
   private current(): PanelFrameRow | undefined { return this.rows.find(r => r.key === this.selected) }
-
-  /** The live agents among a frame's panes. */
-  private liveAgents(r: PanelFrameRow): AgentPane[] {
-    return r.panes.map(p => this.host.agent(p.id)).filter((a): a is AgentPane => !!a?.alive)
-  }
-
-  private renderPreview(): void {
-    const r = this.current()
-    if (!r) { this.preview.replaceChildren(el('p', 'pf-empty', 'Selecione um quadro para ver.')); this.previewKey = ''; return }
-    const head = el('div', 'pf-p-head')
-    head.append(el('span', 'pf-p-title', rowTitle(r)), el('span', 'pf-p-owner', ownerText(r)))
-    if (!r.loose) {
-      const go = el('button', 'pf-link', 'Ir para o quadro')
-      go.type = 'button'
-      go.addEventListener('click', () => this.host.show(r.key))
-      head.append(go)
-    }
-    const real = r.panes.filter(p => p.component !== 'empty')
-    const list = el('ul', 'pf-p-panes')
-    for (const p of real) {
-      const agent = this.host.agent(p.id)
-      const li = el('li')
-      li.classList.toggle('live', !!agent?.alive)
-      const kind = el('span', 'pf-p-kind')
-      kind.append(icon(PANE_ICON[p.component] ?? 'app-window'), el('span', undefined, paneKind(p, agent)))
-      const name = el('span', 'pf-p-name', agent?.name ?? p.title)
-      li.append(kind, name)
-      const facts: string[] = []
-      if (agent) facts.push(agent.alive ? 'rodando' : 'encerrado')
-      if (agent?.profile?.name) facts.push(agent.profile.name)
-      const cwd = r.loose ? undefined : this.host.cwdOf(p.id)
-      if (cwd) facts.push(cwd)
-      if (p.url) facts.push(p.url)
-      if (facts.length) li.append(el('span', 'pf-p-facts', facts.join(' · ')))
-      list.append(li)
-    }
-    const file = real.find(p => p.file)?.file
-    const text = el('pre', 'pf-p-text')
-    text.setAttribute('aria-label', 'Prévia da nota (só leitura)')
-    const key = `${r.key}|${file ?? ''}`
-    if (!real.length) text.textContent = 'Nada neste quadro.'
-    else if (!file) text.hidden = true
-    else if (key === this.previewKey && this.previewText !== undefined) text.textContent = this.previewText || '(nota em branco)'
-    else {
-      text.textContent = 'Carregando…'
-      this.previewKey = key
-      this.previewText = undefined
-      void this.host.read(file).then(t => {
-        if (this.previewKey !== key) return
-        this.previewText = t ?? ''
-        const live = this.preview.querySelector('.pf-p-text')
-        if (live) live.textContent = t === undefined ? 'Não foi possível ler o arquivo.' : t || '(nota em branco)'
-      })
-    }
-    this.preview.replaceChildren(head, list, text)
-  }
-
-  private renderBar(): void {
-    const r = this.current()
-    if (!r) { this.bar.replaceChildren(); this.bar.hidden = true; return }
-    this.bar.hidden = false
-    if (this.confirming) {
-      const live = this.liveAgents(r)
-      const what = live.length === 0 ? (r.tabs > 0 ? 'Fechar este quadro? As abas dele fecham junto.' : 'Fechar este quadro?')
-        : live.length === 1 ? `Este quadro tem ${live[0]!.name} rodando: a sessão continua viva, sem guia, na gestão de sessões. Fechar mesmo assim?`
-        : `Este quadro tem ${live.length} agentes rodando: as sessões continuam vivas, sem guia, na gestão de sessões. Fechar mesmo assim?`
-      const msg = el('span', 'pf-confirm', what)
-      msg.classList.toggle('warn', live.length > 0)
-      const yes = el('button', 'pf-btn danger', 'Fechar')
-      yes.type = 'button'
-      yes.dataset.action = 'confirm-close'
-      yes.addEventListener('click', () => { this.confirming = false; this.host.close([r.key], 'one') })
-      const no = el('button', 'pf-btn', 'Cancelar')
-      no.type = 'button'
-      no.addEventListener('click', () => { this.confirming = false; this.renderBar(); this.list.focus() })
-      this.bar.replaceChildren(msg, el('span', 'sp'), yes, no)
-      requestAnimationFrame(() => yes.focus())
-      return
-    }
-    const move = el('button', 'pf-btn', 'Mover…')
-    move.type = 'button'
-    move.dataset.action = 'move'
-    move.disabled = r.empty
-    move.title = r.empty ? 'Nada para mover' : 'Levar as abas deste quadro para o quadro de outro painel'
-    move.addEventListener('click', () => { const b = move.getBoundingClientRect(); this.openMove(r, b.left, b.top) })
-    const close = el('button', 'pf-btn', 'Fechar')
-    close.type = 'button'
-    close.dataset.action = 'close'
-    close.addEventListener('click', () => { this.confirming = true; this.renderBar() })
-    this.bar.replaceChildren(el('span', 'pf-sel', rowTitle(r)), el('span', 'sp'), move, close)
-  }
-
-  private openMove(r: PanelFrameRow, x: number, y: number): void {
-    const targets = this.host.targets().filter(t => t.key !== r.key)
-    const entries: ContextMenuEntry[] = []
-    let group = ''
-    for (const t of targets) {
-      if (t.group !== group && entries.length) entries.push('sep')
-      group = t.group
-      entries.push({ icon: 'push-pin', label: `${t.group} · ${t.label}`, run: () => { this.host.move(r.key, t.key) } })
-    }
-    if (!entries.length) entries.push({ icon: 'x', label: 'Nenhum painel aberto', run: () => {}, disabled: true })
-    this.host.menu(x, y, entries)
-  }
 
   private onKey(ev: KeyboardEvent): void {
     const i = this.rows.findIndex(r => r.key === this.selected)
@@ -332,21 +255,30 @@ export class PanelPadManager implements ManagerView {
       if (next) this.select(next.key)
     } else if (ev.key === 'Enter') {
       const r = this.current()
-      if (r && !r.loose) { ev.preventDefault(); this.host.show(r.key) }
+      if (!r) return
+      ev.preventDefault()
+      if (r.loose) { if (this.host.revivable(r.key).ok) this.host.revive(r.key) } else { this.host.reveal(r.panelId); this.host.exit() }
     } else if (ev.key === 'Delete') {
-      if (this.current()) { ev.preventDefault(); this.confirming = true; this.renderBar() }
+      const r = this.current()
+      if (r?.loose) { ev.preventDefault(); this.host.close([r.key], 'one') }
+    } else if (ev.key === 'ContextMenu' || (ev.shiftKey && ev.key === 'F10')) {
+      const r = this.current()
+      if (r && !r.loose) { ev.preventDefault(); const box = this.list.querySelector<HTMLElement>(`.pf-row[data-key="${CSS.escape(r.key)}"]`)?.getBoundingClientRect(); this.host.tabMenu(r.panelId, box?.left ?? 0, box?.bottom ?? 0) }
     }
   }
 
   /** What the e2e reads. */
-  snapshot(): { filter: FrameFilter; rows: { key: string; title: string; owner: string; loose: boolean; empty: boolean; panes: string[] }[]; selected?: string; preview: string; facts: string[]; confirming: boolean; confirmText: string } {
+  snapshot(): { filter: FrameFilter; rows: { key: string; panel: string; title: string; kind: string; sub: string; loose: boolean; empty: boolean; revivable: boolean; panes: string[] }[]; selected?: string } {
     return {
-      filter: this.filter, confirming: this.confirming,
-      rows: this.rows.map(r => ({ key: r.key, title: rowTitle(r), owner: ownerText(r), loose: r.loose, empty: r.empty, panes: r.panes.filter(p => p.component !== 'empty').map(p => p.id) })),
+      filter: this.filter,
+      rows: this.rows.map(r => {
+        const e = this.list.querySelector<HTMLElement>(`.pf-row[data-key="${CSS.escape(r.key)}"]`)
+        return {
+          key: r.key, panel: r.panelId, title: r.label || r.title, kind: e?.querySelector('.pf-r-kind')?.textContent ?? '', sub: e?.querySelector('.pf-r-sub')?.textContent ?? '',
+          loose: r.loose, empty: r.empty, revivable: !!e?.querySelector('[data-action="revive"]'), panes: r.panes.filter(p => p.component !== 'empty').map(p => p.id),
+        }
+      }),
       ...(this.selected ? { selected: this.selected } : {}),
-      preview: this.preview.querySelector('.pf-p-text')?.textContent ?? '',
-      facts: [...this.preview.querySelectorAll('.pf-p-facts')].map(e => e.textContent ?? ''),
-      confirmText: this.bar.querySelector('.pf-confirm')?.textContent ?? '',
     }
   }
 

@@ -24,7 +24,7 @@ import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } fr
 import { CommandPalette, type PaletteModeProvider } from './palette.ts'
 import { fileOpenFailedSituation, openFile, type OpenFileOptions } from './file-open.ts'
 import type { PaletteMode } from './palette-rules.ts'
-import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
+import { beginPaneDrag, type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
 import { SurfaceHosts, type FreezeTiming } from './surface-host.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
@@ -1366,7 +1366,7 @@ function frameTree(): PanelFrameTree {
   const focused = focusablePanelId()
   return buildFrameTree({
     sources: frameSourcesOf(layout), meta: readFrameMeta(layout.sidebars?.meta), desks: desks.desks.map(d => ({ id: d.id, name: d.name })),
-    livePanels: livePanelMap(), ...(focused ? { focusedPanel: focused } : {}),
+    livePanels: livePanelMap(), ...(focused ? { focusedPanel: focused } : {}), activeDeskId: desks.activeDeskId,
   })
 }
 
@@ -1448,43 +1448,30 @@ function padOfFrameKey(key: string): FramesPad | undefined {
 }
 
 /**
- * "Mover…": the frame's panes become tabs of the target panel's frame (the tabs add up; the target's empty panes give
- * way), then the source frame closes. Panes are re-created from their options (a terminal re-attaches; no process is touched).
+ * Whether a loose frame's panel can come back: its slot still exists in the tetherd (running without a pane, or exited:
+ * reopening resumes it, as the closed-slots menu does). A panel that is open is not loose; anything else is gone for good.
  */
-function moveFrameLive(from: string, to: string): boolean {
-  if (from === to) return false
-  const src = padOfFrameKey(from)
-  const dst = padOfFrameKey(to)
-  if (!src || !dst || src === dst) return false
-  const moving = src.desk.panels.filter(p => !empties.has(p.id))
-  if (!moving.length) return false
-  for (const p of moving) transferPanel(src.desk, dst.desk, p.id, paneTypes.optionsOf(p))
-  for (const p of [...dst.desk.panels]) if (empties.has(p.id)) dst.desk.removePanel(p)
-  dst.desk.getPanel(moving[0]!.id)?.api.setActive()
-  dropFrames([from])
-  toldLoose?.delete(from)
-  afterFrames()
-  return true
+function frameRevivable(key: string): { ok: boolean; reason: string } {
+  const o = frameOwnerOf(key)
+  if (!o) return { ok: false, reason: 'quadro desconhecido' }
+  if (findPanel(o.panelId)) return { ok: true, reason: 'painel aberto' }
+  const slot = slots.get(o.panelId)
+  if (slot && liveTypeOf(paneTypes, o.panelId)?.closedEntry?.(o.panelId)) {
+    return { ok: true, reason: effectiveStatus(slot) === 'exited' ? 'sessão encerrada, dá para reabrir' : 'sessão rodando sem guia, dá para trazer de volta' }
+  }
+  return { ok: false, reason: o.panelId.startsWith('note:') ? 'era uma nota; abra o arquivo de novo' : 'o painel não existe mais' }
 }
 
-/** Where a frame's content can go: the frame of every live panel, by desk (panels outside every desk last). */
-function frameTargets(): { key: string; label: string; group: string }[] {
-  const out: { key: string; label: string; group: string }[] = []
-  const pads = padRegistry.all().filter(p => p.frames && p.scope === 'panel')
-  const seen = new Set<string>()
-  for (const d of desks.desks) {
-    const group = /^mesa\b/i.test(d.name) ? d.name : `Mesa ${d.name}`
-    for (const p of desks.desk(d.id)?.panels ?? []) {
-      if (empties.has(p.id)) continue
-      seen.add(p.id)
-      for (const pad of pads) out.push({ key: frameKeyOf(pad.id, p.id), label: p.api.title ?? p.id, group })
-    }
-  }
-  for (const p of allPanels()) {
-    if (seen.has(p.id) || empties.has(p.id) || framePadOf(p.id) || inDrawer(p.id)) continue
-    for (const pad of pads) out.push({ key: frameKeyOf(pad.id, p.id), label: p.api.title ?? p.id, group: 'Outros' })
-  }
-  return out
+/** Brings a loose frame's panel back: the pane reopens (the slot resumes) and the frame, keyed by the panel, is its again. */
+function reviveFrame(key: string): boolean {
+  const o = frameOwnerOf(key)
+  if (!o || findPanel(o.panelId)) return false
+  const entry = liveTypeOf(paneTypes, o.panelId)?.closedEntry?.(o.panelId)
+  if (!entry?.reopen()) return false
+  toldLoose?.delete(key)
+  afterFrames()
+  requestAnimationFrame(() => { sidebars?.render(); sidebars?.open(o.padId) })
+  return true
 }
 
 /** Brings a live frame forward: its panel comes to the front and its pad opens. A loose frame has nowhere to go. */
@@ -3782,6 +3769,7 @@ function activateRendererExtensions(): void {
         newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
         newPanelLabel: NEW_PANEL_LABEL,
         move: paneId => { void openMove(paneId) },
+        beginDrag: (paneId, ev) => beginPaneDrag(paneId, ev),
         all: () => allPanels().map(p => describePane(p.id)).filter((x): x is PaneInfo => x !== undefined),
         describe: paneId => describePane(paneId),
         onDidChangeActive: listener => { activePaneListeners.add(listener); return add(toDisposable(() => { activePaneListeners.delete(listener) })) },
@@ -3960,8 +3948,8 @@ function activateRendererExtensions(): void {
           tree: () => frameTree(),
           onDidChange: listener => { framesListeners.add(listener); return add(toDisposable(() => { framesListeners.delete(listener) })) },
           onDidLoose: listener => { looseListeners.add(listener); return add(toDisposable(() => { looseListeners.delete(listener) })) },
-          targets: () => frameTargets(),
-          move: (from, to) => moveFrameLive(from, to),
+          revivable: key => frameRevivable(key),
+          revive: key => reviveFrame(key),
           close: keys => closeFramesLive(keys),
           restore: snap => restoreFramesLive(snap),
           show: key => showFrame(key),

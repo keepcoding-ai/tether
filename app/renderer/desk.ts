@@ -52,6 +52,25 @@ export interface DeskHost {
  */
 const liveDesks = new Set<Desk>()
 
+/**
+ * Starts, from any element (a row of the panel pad's manager), the drag a pane's own tab would start: the same transfer
+ * (dockview's PanelTransfer of the pane's frame and group), so every place that takes a dragged tab (a frame's groups
+ * and edges, a desk's outer edge, an empty frame, a pad, the drawer) takes this one. False when the pane is not in a frame.
+ */
+export function beginPaneDrag(panelId: string, ev: DragEvent): boolean {
+  for (const desk of liveDesks) {
+    const frame = desk.frameOf(panelId)
+    const panel = frame?.dock.getPanel(panelId)
+    if (!frame || !panel) continue
+    LocalSelectionTransfer.getInstance<PanelTransfer>().setData([new PanelTransfer(frame.dock.id, panel.group.id, panelId)], PanelTransfer.prototype)
+    if (ev.dataTransfer) { ev.dataTransfer.setData('text/plain', panelId); ev.dataTransfer.effectAllowed = 'move' }
+    const clear = (): void => { document.removeEventListener('dragend', clear, true); setTimeout(() => LocalSelectionTransfer.getInstance<PanelTransfer>().clearData(PanelTransfer.prototype), 150) }
+    document.addEventListener('dragend', clear, true)
+    return true
+  }
+  return false
+}
+
 function frameOfView(viewId: string): { desk: Desk; frame: Frame } | undefined {
   for (const desk of liveDesks) {
     for (const frame of desk.frames.values()) if ((frame.dock as DockviewApi | undefined)?.id === viewId) return { desk, frame }
