@@ -182,6 +182,11 @@ export interface TetherUi {
     readonly newPanelLabel: string
     /** "Mover…" for a pane. */
     move(id: string): void
+    /**
+     * From a `dragstart` on any element: the drag the pane's own tab would start, so wherever a tab can be dropped (a
+     * frame, its edges, a pad, the drawer) this drag can too. False when the pane is not in a frame.
+     */
+    beginDrag(id: string, ev: DragEvent): boolean
     /** Every pane in the window (each desk, the drawer, the frames pads). */
     all(): readonly PaneInfo[]
     describe(id: string): PaneInfo | undefined
@@ -402,10 +407,13 @@ export interface TetherUi {
       onDidChange(listener: () => void): IDisposable
       /** A frame with content just became loose (its panel closed). */
       onDidLoose(listener: (key: string) => void): IDisposable
-      /** Where a frame's content can go ("Mover…"): the frame of every live panel, by desk. */
-      targets(): { key: string; label: string; group: string }[]
-      /** The frame's panes become tabs of the target's frame (they add up), and the source closes. */
-      move(from: string, to: string): boolean
+      /**
+       * Whether a loose frame's panel can be brought back (its slot still exists in the tetherd: reopening resumes it),
+       * with the words the manager shows either way.
+       */
+      revivable(key: string): { ok: boolean; reason: string }
+      /** Brings a loose frame's panel back (the frame follows it, being its own). False when it cannot. */
+      revive(key: string): boolean
       /** Closes frames; the snapshot brings them back (`restore`). */
       close(keys: readonly string[]): FrameSnapshot
       restore(snapshot: FrameSnapshot): void

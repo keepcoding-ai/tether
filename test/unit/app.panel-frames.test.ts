@@ -1,10 +1,10 @@
 // The frames of the panel pad (app/renderer/panel-frames.ts): the map the manager shows (loose / desks / elsewhere), what
-// counts as content (a pane of any kind: note, terminal, agent, browser), and the operations on the stored frames (close,
-// clean the empty loose ones, move adding tabs), each with a snapshot that undoes it.
+// counts as content (a pane of any kind: note, terminal, agent, browser), one desk's share of it, and the operations on
+// the stored frames (close, clean the empty loose ones), each with a snapshot that undoes it.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  allRows, buildFrameTree, cleanEmptyFrames, closeFrames, emptyLooseKeys, frameCounts, hasContent, moveFrame, panesOf, pruneMeta, readFrameMeta, restoreFrames,
+  allRows, buildFrameTree, cleanEmptyFrames, closeFrames, emptyLooseKeys, forDesk, frameCounts, hasContent, panesOf, pruneMeta, readFrameMeta, restoreFrames,
   visibleRows, whenLabel, type FrameSource, type FrameStore, type PanelFrameTreeInput,
 } from '../../app/renderer/panel-frames.ts'
 
@@ -35,6 +35,7 @@ function input(over: Partial<PanelFrameTreeInput> = {}): PanelFrameTreeInput {
     desks: [{ id: 'd1', name: 'tether' }, { id: 'd2', name: 'atrium' }],
     livePanels: new Map([['a', { label: 'claude·tether', deskId: 'd1' }], ['b', { label: 'tether', deskId: 'd2' }], ['drawer', { label: 'gaveta' }]]),
     focusedPanel: 'a',
+    activeDeskId: 'd1',
     ...over,
   }
 }
@@ -66,10 +67,14 @@ describe('panel frames: the tree', () => {
     assert.equal(allRows(tree).length, 5)
   })
 
-  test('filters, counts and the empty loose keys', () => {
+  test('one desk at a time: its loose frames (and the never-recorded ones) and its panels; filters, counts, empty loose keys', () => {
     const tree = buildFrameTree(input())
+    assert.deepEqual(forDesk(tree, 'd1').loose.map(r => r.key), [pk('gone'), pk('gone2')], "gone lived in d1; gone2 has no desk recorded, so it shows in every desk")
+    assert.deepEqual(forDesk(tree, 'd2').loose.map(r => r.key), [pk('gone2')])
+    assert.deepEqual(forDesk(tree, 'd2').panels.map(r => r.key), [pk('b')])
     assert.deepEqual(visibleRows(tree, 'loose').map(r => r.key), [pk('gone'), pk('gone2')])
-    assert.deepEqual(visibleRows(tree, 'all').map(r => r.key), [pk('gone'), pk('gone2'), pk('a'), pk('b'), pk('drawer')], 'a loose empty frame is listed; a live empty one would not be')
+    assert.deepEqual(visibleRows(tree, 'all').map(r => r.key), [pk('gone'), pk('gone2'), pk('a')], 'the active desk (d1): a loose empty frame is listed; a live empty one would not be')
+    assert.deepEqual(visibleRows(tree, 'all', 'd2').map(r => r.key), [pk('gone2'), pk('b')])
     const withBlank = buildFrameTree(input({ sources: [...input().sources, { key: pk('c'), padId: PANEL, panelId: 'c', state: frame(blank('empty:c')) }], livePanels: new Map([...input().livePanels, ['c', { label: 'c', deskId: 'd1' }]]) }))
     assert.ok(!visibleRows(withBlank, 'all').some(r => r.key === pk('c')), 'a live panel with a blank frame has nothing to look after')
     assert.deepEqual(frameCounts(tree), { loose: 1, looseEmpty: 1, withContent: 4 })
@@ -112,27 +117,6 @@ describe('panel frames: operations', () => {
     assert.deepEqual(restoreFrames(after, undo), s)
   })
 
-  test('move adds the tabs to the target (its empty panes give way) and closes the source; any pane kind travels', () => {
-    const s: FrameStore = { pads: { ...store().pads, [pk('x')]: frame(blank('empty:x')) }, meta: store().meta }
-    const { store: after, undo } = moveFrame(s, pk('gone'), pk('x'), 5000)
-    assert.equal(pk('gone') in after.pads, false)
-    assert.deepEqual(panesOf(after.pads[pk('x')]).map(p => p.id), ['note:2'])
-    assert.equal(after.meta[pk('x')]!.updatedAt, 5000)
-    assert.deepEqual(restoreFrames(after, undo), s)
-    // Onto a frame with content: the tabs add up.
-    const sum = moveFrame(s, pk('gone'), pk('a'), 6000).store
-    assert.deepEqual(panesOf(sum.pads[pk('a')]).map(p => p.id), ['note:1', 'note:2'])
-    // A Claude and a shell move the same way.
-    assert.deepEqual(panesOf(moveFrame(s, pk('b'), pk('a'), 7000).store.pads[pk('a')]).map(p => p.id), ['note:1', 'claude-1', 'sh-1'])
-    // Onto a key with no state: the source's frame as it is.
-    assert.deepEqual(panesOf(moveFrame(s, pk('gone'), pk('new'), 1).store.pads[pk('new')]).map(p => p.id), ['note:2'])
-  })
-
-  test('nothing to move: unchanged', () => {
-    const s = store()
-    assert.equal(moveFrame(s, pk('gone2'), pk('a'), 1).store, s)
-    assert.equal(moveFrame(s, pk('a'), pk('a'), 1).store, s)
-  })
 })
 
 describe('panel frames: records', () => {
