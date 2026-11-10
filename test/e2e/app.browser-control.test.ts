@@ -369,6 +369,15 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     assert.equal(await B(() => 1 + 1), 2, 'the app is alive')
     assert.ok(((await B((t, a) => t.registry.list().find(x => x.tabId === a)?.popupsRefused ?? 0, tabId)) as number) > 0)
     await until('the tab carries the seal', async () => (await pane()).noticeKind === 'popups')
+
+    // ---- 9. V2b: with no tab left the local-network question is still asked (here the setting answers: allow), never refused unasked ----
+    for (const id of (await B((t, a) => t.registry.list().filter(x => x.ownerSlotId === a).map(x => x.tabId), slot)) as string[]) await B((t, a) => t.registry.close(a), id)
+    await until('the agent has no tab', async () => (await ownerTabs()) === 0)
+    const noTab = await spy.call('Tether.requestLocalNetwork', { url: `${origin}/login.html` }, bs)
+    assert.deepEqual(noTab.result, { allowed: true }, `no tab: the request is judged, not refused unasked: ${JSON.stringify(noTab).slice(0, 200)}`)
+    const reborn = await spy.call('Target.createTarget', { url: `${origin}/login.html` }, bs)
+    assert.ok(reborn.result?.targetId, `the tab opens right after the yes: ${JSON.stringify(reborn).slice(0, 200)}`)
+    assert.equal(await ownerTabs(), 1)
     spy.close()
   } finally {
     if (server) {
