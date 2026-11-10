@@ -478,6 +478,9 @@ test('browser accounts and help requests: logout of all accounts, tray, pill and
     await sleep(30)
     await ask(a, 'segundo')
     await until('both seals', async () => (await win.evaluate(() => window.__tether.browserSeals())).length === 2)
+    // V2b: two requests, two on the Browser pill (the panes' seals and the extension's badge added up to four for two requests).
+    const pillCount = '#desk-switch .seg.sys[data-system="browser.desk"] .sys-badge'
+    await until('the Browser pill counts requests, not seals', async () => (await win.locator(pillCount).first().textContent().catch(() => null)) === '2')
 
     let m = await until('the tray carries both', async () => { const x = await tray(); return x.items.filter(i => i.kind === 'notice').length === 2 ? x : undefined })
     assert.deepEqual(m.items.filter(i => i.kind === 'notice').map(i => [i.label, i.slotId]), [
@@ -514,6 +517,7 @@ test('browser accounts and help requests: logout of all accounts, tray, pill and
     await B((t, x) => t.control.giveBack(x), a)
     m = await until('no notice left', async () => { const x = await tray(); return x.items.every(i => i.kind !== 'notice') ? x : undefined })
     assert.equal(m.attention, 0)
+    await until('the pill is clear', async () => (await win.locator(pillCount).count()) === 0)
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })
