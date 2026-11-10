@@ -10,6 +10,7 @@ import type { FileTarget } from './file-open.ts'
 import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 import type { ExtTransport } from './ext-ipc.ts'
+import type { PlaceMessage, ReleaseMessage, SurfaceEvent } from './surface-panel-rules.ts'
 import type { ExtensionsSettings, SettingSchema, SettingValue } from './vscode-configuration-registry.ts'
 import type { SettingsError } from './settings-file.ts'
 import type { ExtensionSummary } from '../../extensions/types.ts'
@@ -74,7 +75,7 @@ export interface TetherApi {
   loadLayout(): Promise<unknown | null>
   saveLayout(layout: unknown): Promise<void>
   /** Copies layout.json to layout.v<version>.bak (1 by default): the renderer asks when it read an older file (v1 or v2), before the first write in the current version. */
-  backupLayout(version?: 1 | 2): Promise<void>
+  backupLayout(version?: 1 | 2 | 3): Promise<void>
   recentFolders(): Promise<string[]>
   rememberFolder(folder: string): Promise<void>
   /** The OS folder browser (the one native UI kept: it is the file system's); null when cancelled. */
@@ -155,6 +156,13 @@ export interface TetherApi {
   onKeybindingsChanged(listener: (state: KeybindingsFileState) => void): () => void
   /** The extensions' IPC bus (app/shared/ext-ipc.ts): channels `ext:<id>:<channel>`; extensions use it through TetherUi.ipc. */
   ext: ExtTransport
+  /** Native surfaces (app/main/surface-bridge.ts): where a pane's host element is and whether it is on screen, the surface let go, and what main tells back. */
+  surfacePlace(msg: PlaceMessage): void
+  surfaceRelease(msg: ReleaseMessage): void
+  onSurfaceEvent(listener: (event: SurfaceEvent) => void): () => void
+  /** The freeze (app/main/surface-bridge.ts): the page as JPEG bytes (null when it cannot be had); park (true) or back and painted (false). */
+  surfaceCapture(msg: ReleaseMessage): Promise<Uint8Array | null>
+  surfaceFreeze(msg: ReleaseMessage & { frozen: boolean }): Promise<boolean>
   /** settings.json's `extensions` object, read synchronously once before the renderer's extensions activate. */
   extSettingsSync(): ExtensionsSettings
   setExtSetting(id: string, key: string, value: SettingValue): void

@@ -1101,6 +1101,22 @@ Os "+" de borda passaram a existir só nesse modo.
 - `Ctrl+K Shift+←/→` para mover a mesa ativa.
 - Toque: segurar 300 ms antes de arrastar (um toque que se move antes disso não arrasta).
 
+## Tether Browser: a extensão `browser` (branch `feat/tether-browser`, 2026-11-09)
+
+**Estado.** Código das fatias E1 a E16 no worktree `.tmp/wt/tether-browser`, sem push nem merge. Entregue: mesa de sistema Browser e prancheta Guias, guia como `WebContentsView` (barra, aba, atividade do agente, voltar/avançar/recarregar), porteiro CDP (conformidade 35/36, só o redimensionar recusa de propósito; bateria de fuga sem vazamento), controle por guia (assumir, devolver, pedido de ajuda na bandeja e na pílula), rede (filtro, proxy, WebRTC, pergunta de rede local), downloads por agente e consentimento de upload, encerramento pela vida do slot, "Sair de todas as contas", partição persistente só com a trava de cookies e endereços/chaves fora do log. Desligado por padrão (`serveToAgents`).
+
+**Fechamento (E16).**
+- Bundle `tether-browser` revendorizado (`contentSha256 d207c961fb7a…`); `ext.browser-vendor` verde e os bytes sobrevivem a apagar e restaurar pelo git (`.gitattributes` com `-text`).
+- O porteiro emite `Browser.downloadWillBegin`/`downloadProgress` também em cada sessão de browser (`Target.attachToBrowserTarget`) da conexão do dono: o `WebDownload` do servidor vendorizado mostra `saved` com `bytes: 10` (provado no `app.browser-files`).
+- **Cache HTTP das guias desligado** com `session.fromPartition(..., { cache: false })` (o Electron 45 aceita por sessão): a E15 achou corpos de página em texto puro no disco. O novo `app.browser-cache` força a partição persistente num build de teste (`TETHER_TEST_PERSIST_PARTITION=1`), carrega página e script com isca cacheáveis e varre o userData: nenhum arquivo tem a isca. Com o cache ligado o teste falha (controle feito).
+- Documentação: README (seção "Tether Browser"), MANIFEST (§2.1).
+
+**Pendências.**
+- Prova na **tela real** (escudo com mouse físico, escala a 125%, foco, nitidez da página reduzida): scripts `bancada/b2|b3/rodar-visivel.cmd`.
+- **Bancada B6** (runtime do dia a dia com a trava de cookies, instalador, Menu Iniciar) e o login do Google com a conta do Guga.
+- **Proof** (experiência real) e **parecer final** antes de integrar.
+- Limites registrados: a trava cifra só o valor do cookie; um agente enganado pode usar as contas logadas na partição; o build empacotado ainda não sobe o tetherd (caminho dentro do `app.asar`).
+
 ## Pausa gentil — B8: prova com Claude real e docs (2026-11-09)
 
 **O que entrou.**

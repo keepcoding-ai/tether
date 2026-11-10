@@ -22,8 +22,11 @@ import type { PaneType } from './pane-registry.ts'
 import type { OpenFileOptions } from './file-open.ts'
 import type { ProjectFolder } from './workspace.ts'
 import type { AgentUi } from './agent-ui.ts'
+import type { AttentionHandle, AttentionRaise, Badge } from './seal-rules.ts'
 import type { Brand } from '../shared/brand.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
+import type { SurfaceBinding } from './surface-host.ts'
+import type { AgentPane } from './agent-panes.ts'
 import type { NoteSnapshot, NoteTree } from './pad-notes.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
@@ -31,7 +34,10 @@ export type { PaneType } from './pane-registry.ts'
 export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
 export type { ProjectFolder } from './workspace.ts'
 export type { AgentUi } from './agent-ui.ts'
+export type { AgentPane, PanePlace } from './agent-panes.ts'
+export type { Badge, AttentionHandle, AttentionRaise } from './seal-rules.ts'
 export type { Brand } from '../shared/brand.ts'
+export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
 export type { NoteDeskGroup, NoteFilter, NotePane, NoteRow, NoteSnapshot, NoteTree } from './pad-notes.ts'
 
@@ -280,9 +286,30 @@ export interface TetherUi {
     /** Opens the box in that mode (empty field), as the mode's chord does. */
     showMode(): void
   }
-  /** How the app names and draws an agent the daemon side of this extension registers (F9 §4.8). */
+  /**
+   * The AI agents (F9 §4.8). `register` tells how the app names and draws an agent the daemon side of this extension registers;
+   * the rest is a read-only view of the agents' panes (never plain shells), keyed by `slotId`, the daemon's id of the slot,
+   * the same one `TetherMain.agents` and the daemon use and the one that survives a restart. `name` is what the pane's tab
+   * shows; `alive` is false once the process ended; the place is where the pane is now. The interface gives an agent no colour
+   * of its own, so there is none here.
+   */
   agents: {
     register(ui: AgentUi): IDisposable
+    /** Every agent pane in the window (desks, system desks, the drawer, the pads), in no particular order. */
+    list(): readonly AgentPane[]
+    get(slotId: string): AgentPane | undefined
+    /** A pane appeared, was renamed, moved (desk, drawer, pad), changed profile, exited or went away (then with `alive: false`). */
+    onDidChange(listener: (pane: AgentPane) => void): IDisposable
+    /**
+     * Brings the agent's pane to the front: its desk (a system desk too) comes forward, the drawer or its pad opens, its tab is
+     * activated and focused. An agent that exited is not restarted. False when no pane shows that slot.
+     */
+    focus(slotId: string): boolean
+    /**
+     * Rows an extension adds to the tab menu of an agent's pane, before "Fechar painel…". The provider gets the pane's slot id
+     * and returns its rows (none: an empty list); it runs each time the menu opens.
+     */
+    tabMenu(provider: (slotId: string) => ContextMenuEntry[]): IDisposable
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */
@@ -298,12 +325,62 @@ export interface TetherUi {
   status: {
     register(item: StatusItem): StatusHandle
   }
+  /**
+   * The extension's own system desks (`contributes.systemDesks`; a desk of another extension, or an undeclared id, throws).
+   * The core mounts and shows the desk; what goes in it is the extension's: open a pane there with `panes.open` while it is
+   * the visible desk (a `reference` pane of the desk also works), since `open` without a reference adds to the visible desk.
+   */
+  /**
+   * Attention seals on panes (the same seal the terminals have: on the pane's tab and on its desk's pill, with the message in
+   * their tooltips). Any pane may be warned, an agent's too; the extension owns only the seals it raised, and they go with it.
+   * Normal: the seal goes out when the pane is seen. `sticky`: seeing it does not clear it, only `resolve()` (or dispose) does.
+   * Clicking the seal tells `onDidActivate` of the seal's handle; with no listener, the core brings the pane forward.
+   */
+  attention: {
+    raise(opts: AttentionRaise): AttentionHandle
+  }
+  systemDesks: {
+    /** The badge on this system desk's pill (count, attention flag, tooltip); an empty badge or a zero count clears it. */
+    setBadge(id: string, badge: Badge | undefined): void
+    /** Enters the desk, or, when it is the visible one, goes back to the queue desk the person came from. */
+    toggle(id: string): void
+    /**
+     * Adds a pane to this system desk without showing it: the desk is not entered, the pane does not become the active tab
+     * (the first pane of an empty frame is its only tab). `reference` (a pane of the desk) puts it in that pane's group, at
+     * `index` among its tabs; without one, in the desk's active frame, last.
+     */
+    addPane(id: string, options: AddPanelOptions, where?: { reference?: string; index?: number }): IDockviewPanel
+    /** Is it the visible desk now. */
+    isActive(id: string): boolean
+    /** A system desk was entered (`active: true`) or left (`false`); the listener is released with the extension. */
+    onDidChangeActive(listener: (e: { id: string; active: boolean }) => void): IDisposable
+  }
+  /**
+   * Native surfaces (the extension's main side creates them, TetherMain.surfaces; the id reaches the pane over the
+   * extension's own channel). attach ties the surface to a pane's element: the core keeps the view on the element's
+   * rectangle while the element is on screen (its desk is the visible one, its tab the active one, its drawer or pad open,
+   * the window not minimized) and hides it otherwise, also on its own when the element is removed. Only the extension's
+   * own surfaces can be attached. Dispose when the pane goes; the surface is never destroyed by it (a pane moved between
+   * desks attaches the same surface to its new element). The binding reports the effective rectangle and scale (draw the
+   * bands around it) and, with the shield on (Surface.setInputShield, main side), where the person tried to click.
+   */
+  surfaces: {
+    attach(surfaceId: string, element: HTMLElement): SurfaceBinding
+    /**
+     * Freezes every shown surface (each swapped for a picture of itself, the page alive behind) until disposed: for an
+     * overlay of the extension's own that is modal or that the person opened. Never for a passing notice or a tooltip (the
+     * person may be typing in the page). Holds nest with the core's (palette, menus, dialogs, drawer, drags).
+     */
+    freezeWhile(reason: string): IDisposable
+  }
   /** The side bars' pads (F10). */
   pads: {
     /** What a pad of the manifest shows. */
     register(type: PadType): IDisposable
     /** Opens a pad on its side bar (a no-op when it is shown). */
     open(id: string): void
+    /** The badge on this pad's icon in the side bar (count, attention flag, tooltip); an empty badge or a zero count clears it. */
+    setBadge(id: string, badge: Badge | undefined): void
     /**
      * The view of a pad declared `frames: true`: a full Desk of frames (tabs, empty panes, "+", splits, any pane type)
      * that the core knows as a place panes live (found, moved, pruned, listed, focused like a desk's).

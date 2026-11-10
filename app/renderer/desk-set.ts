@@ -10,13 +10,15 @@ import type { AddPanelOptions, DockviewTheme, IDockviewPanel } from 'dockview-co
 import type { Target } from './create.ts'
 import { Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { closeDesk, type DeskHue, type DeskInfo, insertDesk, moveDesk, readDeskColor, recolorDesk, renameDesk, touchMru } from './desks.ts'
-import { emptyDesk, type DeskLayout, type Layout } from './layout.ts'
+import { emptyDesk, isSystemDeskId, queueDesks, resolveActiveDesk, type DeskLayout, type Layout, type SystemDeskLayout } from './layout.ts'
 
 export interface DeskSetHost {
   /** The host of one desk's frames (each desk gets its own, so a "+" knows its desk). */
   deskHost(deskId: () => string): DeskHost
   /** The row changed (order, names, colours, active desk): repaint the strip and save. */
   onDesksChange(): void
+  /** A desk is about to be shown (before anything repaints): what a native view over the old one must do first. */
+  onBeforeSwitch?(): void
   /** A desk became the visible one. */
   onSwitch(deskId: string): void
   /** The options to re-create a pane elsewhere (component, tab, title, params). */
@@ -24,6 +26,12 @@ export interface DeskSetHost {
 }
 
 interface Mounted { desk: Desk; layer: HTMLElement }
+
+/** What an owner declares for a system desk (a desk outside the queue); the colour only tints the desk's own chrome. */
+export interface SystemDeskInfo { id: string; name: string; color?: DeskHue }
+
+/** The layout fields the set reads and writes: the queue, the active desk (a queue id or a declared system id) and the system desks. */
+export type DeskSetLayout = Pick<Layout, 'desks' | 'activeDesk'> & Partial<Pick<Layout, 'systemDesks'>>
 
 export class DeskSet {
   private readonly container: HTMLElement
@@ -33,7 +41,14 @@ export class DeskSet {
   /** Order, names and colours: the source of truth (each Desk's `meta` mirrors its entry). */
   private row: DeskInfo[] = []
   private activeId = ''
+  /** Queue desks only: the way back from a system desk is its first entry. */
   private mru: string[] = []
+  /** System desks declared in this run (declaration order), mounted next to the queue and never in `row`. */
+  private readonly system = new Map<string, DeskInfo>()
+  /** The system desks of the last loaded layout: what a desk declared later mounts with. */
+  private saved: Record<string, SystemDeskLayout> = {}
+  /** A system desk the file left active that nobody declared yet: it opens as soon as it is declared (until the person switches). */
+  private pendingActive: string | undefined
 
   constructor(container: HTMLElement, host: DeskSetHost, theme: DockviewTheme) {
     this.container = container
@@ -51,6 +66,14 @@ export class DeskSet {
   private get activeOrNone(): Desk | undefined { return (this.mounted.get(this.activeId) ?? this.mounted.values().next().value)?.desk }
 
   desk(id: string): Desk | undefined { return this.mounted.get(id)?.desk }
+
+  /** The declared system desks, in declaration order. */
+  get systemDesks(): readonly DeskInfo[] { return [...this.system.values()] }
+  isSystem(id: string): boolean { return this.system.has(id) }
+  /** Queue desks first, then system desks: every desk with something mounted. */
+  get allDeskIds(): string[] { return [...this.row.map(d => d.id), ...this.system.keys()] }
+  /** The queue desk the person was on last (where leaving a system desk goes). */
+  get returnDeskId(): string { return this.mru.find(id => this.row.some(d => d.id === id)) ?? this.row[0]?.id ?? '' }
 
   private mount(info: DeskInfo): Mounted {
     const layer = document.createElement('div')
@@ -80,11 +103,64 @@ export class DeskSet {
   /** Shows desk `id`. Nothing in the other desks changes. */
   switchTo(id: string): void {
     if (!this.mounted.has(id)) return
+    this.host.onBeforeSwitch?.()
     this.activeId = id
-    this.mru = touchMru(this.mru, id)
+    this.pendingActive = undefined
+    if (!this.system.has(id)) this.mru = touchMru(this.mru, id)
     this.paint()
     this.host.onDesksChange()
     this.host.onSwitch(id) // also when it already was the active desk: the focus goes back to its pane
+  }
+
+  /** Enters system desk `id`, or leaves it for the queue desk the person came from. */
+  toggleSystem(id: string): void {
+    if (!this.system.has(id)) return
+    this.switchTo(this.activeId === id ? this.returnDeskId : id)
+  }
+
+  /**
+   * Declares a system desk for this run: a complete desk (frames, panes) outside the queue, mounted from what the
+   * layout file holds under its id. Declaring again only updates its info. If the file left it active, it opens now.
+   */
+  declareSystem(info: SystemDeskInfo): void {
+    if (this.row.some(d => d.id === info.id)) throw new Error(`system desk id ${info.id} is a queue desk's id`)
+    const full: DeskInfo = { id: info.id, name: info.name, color: readDeskColor(info.color) }
+    const had = this.system.has(info.id)
+    this.system.set(info.id, full)
+    const m = this.mounted.get(info.id)
+    if (m) m.desk.meta = { ...full }
+    else this.mountSystem(full)
+    if (!had && this.pendingActive === info.id) this.switchTo(info.id)
+    else this.host.onDesksChange()
+  }
+
+  /**
+   * Takes a declared system desk back (its owner is off): if it is the visible desk the person goes back to the queue
+   * desk they came from; its panels stop being shown (the desk is disposed; slots stay in the daemon). What it held is
+   * returned and kept for a later declaration; the caller keeps it in the layout file. Not declared: undefined.
+   */
+  undeclareSystem(id: string): SystemDeskLayout | undefined {
+    const m = this.mounted.get(id)
+    if (!this.system.has(id) || !m) return undefined
+    const { frames, activeFrame } = m.desk.toJSON()
+    const content: SystemDeskLayout = { frames, ...(activeFrame ? { activeFrame } : {}) }
+    if (this.activeId === id) this.switchTo(this.returnDeskId)
+    this.system.delete(id)
+    this.mounted.delete(id)
+    m.desk.dispose()
+    m.layer.remove()
+    this.saved = { ...this.saved, [id]: content }
+    if (this.pendingActive === id) this.pendingActive = undefined
+    this.host.onDesksChange()
+    return content
+  }
+
+  private mountSystem(info: DeskInfo): void {
+    const m = this.mount(info)
+    const saved = this.saved[info.id]
+    if (saved) m.desk.fromJSON({ ...saved, ...info })
+    else m.desk.fromEmpty()
+    this.paint()
   }
 
   /** A new desk (one empty frame) before or after `relativeTo` (the active desk by default); it becomes active. */
@@ -97,23 +173,29 @@ export class DeskSet {
     return desk.id
   }
 
-  rename(id: string, name: string): void { this.row = renameDesk(this.row, id, name); this.syncMeta(); this.host.onDesksChange() }
-  recolor(id: string, color: DeskHue): void { this.row = recolorDesk(this.row, id, color); this.syncMeta(); this.host.onDesksChange() }
-  move(id: string, to: number): void { this.row = moveDesk(this.row, id, to); this.host.onDesksChange() }
+  // Queue-only: a system desk is never renamed, recoloured or reordered (its id is not in the row).
+  rename(id: string, name: string): void { if (!this.inQueue(id)) return; this.row = renameDesk(this.row, id, name); this.syncMeta(); this.host.onDesksChange() }
+  recolor(id: string, color: DeskHue): void { if (!this.inQueue(id)) return; this.row = recolorDesk(this.row, id, color); this.syncMeta(); this.host.onDesksChange() }
+  move(id: string, to: number): void { if (!this.inQueue(id)) return; this.row = moveDesk(this.row, id, to); this.host.onDesksChange() }
+  private inQueue(id: string): boolean { return this.row.some(d => d.id === id) }
 
   /**
    * Removes desk `id` and everything mounted in it. The caller moves or closes its panes first: a pane still
    * in it is closed with it (its slot stays in the daemon, under "Slots fechados"). The last desk never goes.
    */
   remove(id: string): boolean {
-    const next = closeDesk(this.row, id, this.activeId, this.mru)
+    if (!this.inQueue(id)) return false
+    // Closing a queue desk while a system desk is showing leaves the system desk showing.
+    const inSystem = this.system.has(this.activeId)
+    const next = closeDesk(this.row, id, inSystem ? this.returnDeskId : this.activeId, this.mru)
     if (!next) return false
     const m = this.mounted.get(id)
     this.row = next.desks
     this.mru = next.mru
     this.mounted.delete(id)
     m?.desk.dispose()
-    this.switchTo(next.active)
+    if (inSystem) { this.paint(); this.host.onDesksChange() }
+    else this.switchTo(next.active)
     return true
   }
 
@@ -121,7 +203,7 @@ export class DeskSet {
 
   get panels(): IDockviewPanel[] {
     const out: IDockviewPanel[] = []
-    for (const info of this.row) out.push(...(this.mounted.get(info.id)?.desk.panels ?? []))
+    for (const id of this.allDeskIds) out.push(...(this.mounted.get(id)?.desk.panels ?? []))
     return out
   }
 
@@ -192,10 +274,18 @@ export class DeskSet {
 
   // ---------- persistence ----------
 
-  toJSON(): Pick<Layout, 'desks' | 'activeDesk'> {
+  /** The queue and the active desk; `systemDesks` holds the declared system desks only (the file's other entries are the caller's to keep). */
+  toJSON(): Pick<Layout, 'desks' | 'activeDesk' | 'systemDesks'> {
     const desks: DeskLayout[] = []
     for (const info of this.row) { const m = this.mounted.get(info.id); if (m) desks.push({ ...m.desk.toJSON(), ...info }) }
-    return { desks, activeDesk: this.activeId }
+    const systemDesks: Layout['systemDesks'] = {}
+    for (const id of this.system.keys()) {
+      const m = this.mounted.get(id)
+      if (!m) continue
+      const { frames, activeFrame } = m.desk.toJSON()
+      systemDesks[id] = { frames, ...(activeFrame ? { activeFrame } : {}) }
+    }
+    return { desks, activeDesk: this.activeId, systemDesks }
   }
 
   private disposeAll(): void {
@@ -206,10 +296,13 @@ export class DeskSet {
   }
 
   /** Mounts every desk of the layout (already pruned); each desk restores loss-proof (Desk.fromJSON). */
-  load(layout: Pick<Layout, 'desks' | 'activeDesk'>): void {
+  load(layout: DeskSetLayout): void {
     this.disposeAll()
+    const systemDesks = layout.systemDesks ?? {}
+    this.saved = systemDesks
+    const file = { desks: layout.desks, activeDesk: layout.activeDesk, systemDesks }
     const seen = new Set<string>()
-    for (const d of layout.desks) {
+    for (const d of queueDesks(file)) {
       if (seen.has(d.id)) continue // a duplicated id would make two desks share one name: keep the first
       seen.add(d.id)
       const info: DeskInfo = { id: d.id, name: d.name || d.id, color: readDeskColor(d.color) }
@@ -217,9 +310,11 @@ export class DeskSet {
       this.mount(info).desk.fromJSON(d)
     }
     if (this.row.length === 0) { this.fromEmpty(); return }
-    const active = this.mounted.has(layout.activeDesk) ? layout.activeDesk : this.row[0]!.id
-    this.mru = [active]
-    this.activeId = active
+    for (const info of this.system.values()) this.mountSystem(info)
+    const active = resolveActiveDesk({ ...file, desks: queueDesks(file) }, new Set(this.system.keys()))
+    this.pendingActive = isSystemDeskId(file, layout.activeDesk) && !this.system.has(layout.activeDesk) ? layout.activeDesk : undefined
+    this.mru = [this.system.has(active) ? this.row[0]!.id : active]
+    this.activeId = this.mounted.has(active) ? active : this.row[0]!.id
     this.paint()
     this.host.onDesksChange()
   }
@@ -231,6 +326,7 @@ export class DeskSet {
     const info: DeskInfo = { id: d.id, name: d.name, color: d.color }
     this.row = [info]
     this.mount(info).desk.fromEmpty()
+    for (const sys of this.system.values()) this.mountSystem(sys)
     this.activeId = info.id
     this.mru = [info.id]
     this.paint()

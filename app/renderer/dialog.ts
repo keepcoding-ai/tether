@@ -108,6 +108,10 @@ export function askDialog(spec: DialogSpec, host: HTMLElement = document.body): 
       }
       desc.append(ctx)
     }
+    if (spec.image && spec.image.src.startsWith('data:image/')) {
+      const img = document.createElement('img'); img.className = 'ask-image'; img.src = spec.image.src; img.alt = spec.image.alt
+      desc.append(img)
+    }
 
     const remembers: { box: HTMLInputElement; choice: string }[] = []
     let picked = spec.options?.selected

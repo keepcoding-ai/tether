@@ -169,6 +169,23 @@ export interface StatusContribution {
   order?: number
 }
 
+/**
+ * A system desk ("mesa de sistema"): a complete desk outside the person's queue (no number, no rename, no reorder, not in
+ * the cycle) with its own pill in the capsule, owned by the extension. The core knows nothing of what it holds. What the
+ * desk holds is saved in layout.json `systemDesks` under `id` (so `id` is never renamed once released) and stays there,
+ * unshown, while the extension is off; it comes back with the extension.
+ */
+export interface SystemDeskContribution {
+  /** Lowercase, dotted, prefixed by the extension id: 'my-ext.main'. It is the key in layout.json, so it is unique across extensions by construction. */
+  id: string
+  /** The pill's label and the "Ir para <title>" command. */
+  title: string
+  /** An icon name of app/renderer/icons.ts; an unknown one draws the default. */
+  icon?: string
+  /** A hue name of the desk palette (app/shared/palette.ts); it tints the workbench line while the desk is shown. An unknown one draws the default hue. */
+  color?: string
+}
+
 export interface ExtensionManifest {
   /** Stable, lowercase, no dot: `note`, `quick-open`, `claude`. Prefixes IPC channels, settings and test hooks. */
   id: string
@@ -197,6 +214,8 @@ export interface ExtensionManifest {
     pads?: readonly PadContribution[]
     /** Icons of the top bar's status area. */
     status?: readonly StatusContribution[]
+    /** System desks: complete desks outside the queue, with a pill in the capsule. */
+    systemDesks?: readonly SystemDeskContribution[]
   }
 }
 

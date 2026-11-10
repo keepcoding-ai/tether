@@ -915,13 +915,16 @@ test('app chrome: aria, keyboard in the new menus, focus return, FLIP, drawer fr
     const stops: string[] = []
     // Then the extensions' status icons, left to right, then the connection icon.
     const statusIcons = await page.locator('#status-area button.status-btn').count()
-    for (let i = 0; i < 5 + statusIcons; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
+    // The system desks' pills (the browser extension's "Browser") sit right after the Drawer's, each a Tab stop.
+    const sysPills = await page.locator('#desk-switch .seg.sys').count()
+    for (let i = 0; i < 5 + sysPills + statusIcons; i++) { await press(page, 'Tab'); stops.push(await focusId(page)) }
     assert.equal(stops[0], '#btn-extensions')
     assert.equal(stops[1], '#btn-drawer')
-    assert.match(stops[2]!, /^div\.seg\.on$/, `the active capsule tab is a Tab stop: ${JSON.stringify(stops)}`)
-    assert.equal(stops[3], 'button.seg.desk-add', 'the capsule plus button (new desk) is the next stop')
-    for (let i = 0; i < statusIcons; i++) assert.equal(stops[4 + i], 'button.ib.status-btn', `status icon ${i + 1} is a Tab stop: ${JSON.stringify(stops)}`)
-    assert.equal(stops[4 + statusIcons], '#conn')
+    for (let i = 0; i < sysPills; i++) assert.equal(stops[2 + i], 'button.seg.gav.sys', `system pill ${i + 1} is a Tab stop: ${JSON.stringify(stops)}`)
+    assert.match(stops[2 + sysPills]!, /^div\.seg\.on$/, `the active capsule tab is a Tab stop: ${JSON.stringify(stops)}`)
+    assert.equal(stops[3 + sysPills], 'button.seg.desk-add', 'the capsule plus button (new desk) is the next stop')
+    for (let i = 0; i < statusIcons; i++) assert.equal(stops[4 + sysPills + i], 'button.ib.status-btn', `status icon ${i + 1} is a Tab stop: ${JSON.stringify(stops)}`)
+    assert.equal(stops[4 + sysPills + statusIcons], '#conn')
 
     // ---- Theme menu: keys and focus return ----
     await page.locator('#btn-theme').focus()

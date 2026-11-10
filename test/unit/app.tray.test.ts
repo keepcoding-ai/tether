@@ -78,3 +78,14 @@ test('trayWanted: tests (private home/pipe, hidden window) get no tray unless th
   assert.equal(trayWanted({ TETHER_HOME: 'C://x', TETHER_E2E_HIDDEN: '1', TETHER_TRAY: '1' }), true, 'the tray suite opts back in')
   assert.equal(trayWanted({ TETHER_NO_TRAY: '1', TETHER_TRAY: '1' }), false, 'the explicit off wins')
 })
+
+test('an extension notice: a line right after the commands, the attention badge and the count, even with no terminal waiting', () => {
+  const m = trayModel([slot('a', 'running')], [{ id: '1', slotId: 'a', message: 'Sonda pede ajuda em github.com: fazer login' }, { id: '2', message: 'outra' }])
+  assert.deepEqual(m.items.slice(0, 5).map(i => (i.kind === 'separator' ? '---' : i.label)), ['Abrir tether', 'Abrir gaveta', '---', 'Sonda pede ajuda em github.com: fazer login', 'outra'])
+  const first = m.items[3]!
+  assert.equal(first.kind === 'notice' && first.slotId, 'a')
+  assert.equal(m.attention, 2)
+  assert.equal(m.badge, 'attention')
+  assert.match(m.tooltip, /2 esperando você/)
+  assert.equal(trayModel([slot('a', 'running')], []).badge, 'active')
+})

@@ -3,6 +3,7 @@
 // The copy is consequence-first and differs by what is actually there (an agent running, nothing
 // running, a shell with no session to resume).
 import { agentTable } from './agent-ui.ts'
+import { folderNameOf, slotIsLive } from '../shared/agent-info.ts'
 import type { Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import type { LinkAssociation } from '../shared/api.ts'
@@ -13,14 +14,11 @@ import { pauseFirstConsequence } from './sessions-rules.ts'
 const SUBJECT: Record<SlotKind, string> = agentTable('o shell', ui => `o ${ui.label}`, n => `o ${n}`)
 const SUBJECT_CAP: Record<SlotKind, string> = agentTable('O shell', ui => `O ${ui.label}`, n => `O ${n}`)
 
-export function folderName(cwd: string): string {
-  const parts = cwd.replace(/[\\/]+$/, '').split(/[\\/]/)
-  return parts[parts.length - 1] || cwd
-}
+export const folderName = folderNameOf
 
 /** The slot has a process (or is about to get one). */
 export function isLive(s: SlotState): boolean {
-  return s.status === 'running' || s.status === 'starting' || s.status === 'queued'
+  return slotIsLive(s)
 }
 
 function panelContext(s: SlotState): DialogContext {

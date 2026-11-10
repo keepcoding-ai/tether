@@ -12,6 +12,7 @@ import type { KeybindingsFileState } from '../shared/keybindings.ts'
 import type { ExtSettingChange } from '../shared/api.ts'
 import type { SettingsError } from '../shared/settings-file.ts'
 import { extChannel } from '../shared/ext-ipc.ts'
+import type { SurfaceEvent } from '../shared/surface-panel-rules.ts'
 
 function on<T>(channel: string, listener: (value: T) => void): () => void {
   const handler = (_e: unknown, value: T): void => listener(value)
@@ -27,7 +28,7 @@ const api: TetherApi = {
   reconnect: () => ipcRenderer.send('tether:reconnect'),
   loadLayout: () => ipcRenderer.invoke('layout:load'),
   saveLayout: layout => ipcRenderer.invoke('layout:save', layout),
-  backupLayout: (version?: 1 | 2) => ipcRenderer.invoke('layout:backup', version ?? 1),
+  backupLayout: (version?: 1 | 2 | 3) => ipcRenderer.invoke('layout:backup', version ?? 1),
   recentFolders: () => ipcRenderer.invoke('recent:list'),
   rememberFolder: folder => ipcRenderer.invoke('recent:remember', folder),
   pickFolder: initial => ipcRenderer.invoke('folder:pick', initial),
@@ -82,6 +83,11 @@ const api: TetherApi = {
       return () => ipcRenderer.removeListener(name, handler)
     },
   },
+  surfacePlace: msg => ipcRenderer.send('surface:place', msg),
+  surfaceRelease: msg => ipcRenderer.send('surface:release', msg),
+  onSurfaceEvent: listener => on<SurfaceEvent>('tether:surface-event', listener),
+  surfaceCapture: msg => ipcRenderer.invoke('surface:capture', msg),
+  surfaceFreeze: msg => ipcRenderer.invoke('surface:freeze', msg),
   extSettingsSync: () => ipcRenderer.sendSync('extsettings:get-sync'),
   setExtSetting: (id, key, value) => ipcRenderer.send('extsettings:set', id, key, value),
   onExtSetting: listener => on<ExtSettingChange>('tether:ext-setting', listener),

@@ -12,7 +12,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -106,6 +106,8 @@ test('explorer 1a: the left pad lists the project roots; empty state; open folde
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(shots, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-explorer-'))
+  // The browser extension adds a system desk and a left pad of its own (its own E2E); this one counts without them.
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['browser'] } }))
   const A = join(home, 'proj', 'alpha')
   const B = join(home, 'proj', 'beta')
   const C = join(home, 'proj', 'gamma')

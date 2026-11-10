@@ -19,6 +19,7 @@
     "daemon": "node src/daemon/main.ts",
     "brand:derive": "node app/brand-derive.mjs",
     "bridge:build": "node extensions/web-bridge/build.mjs",
+    "browser:vendor": "node extensions/browser/vendor.mjs",
     "app:build": "node app/build.mjs",
     "app:install": "node app/install.mjs install",
     "app:uninstall": "node app/install.mjs uninstall",

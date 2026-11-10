@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SerializedDockview } from 'dockview-core'
 import { emptySideBars } from '../../app/renderer/sidebar-rules.ts'
-import { allPanelIds, drawerOf, emptyDrawer, emptyLayout, frameIdsOf, frameInsertion, isLayoutV1, isDrawerLayout, isLayoutV2, isLayoutV3, isPersonChange, migrateLayout, nextFrameId, orphanedPanels, planRestore, pruneDesk, pruneDrawer, pruneLayout, pruneLayoutV2, readDeskColors, singleFrameGrid, type DeskLayout, type DrawerLayout, type FrameGrid, type LayoutV2 } from '../../app/renderer/layout.ts'
+import { allPanelIds, drawerOf, emptyDrawer, emptyLayout, frameIdsOf, frameInsertion, isLayoutV1, isDrawerLayout, isLayoutV2, isLayoutV3, isLayoutV4, isPersonChange, migrateLayout, nextFrameId, orphanedPanels, planRestore, pruneDesk, pruneDrawer, pruneLayout, pruneLayoutV2, readDeskColors, singleFrameGrid, type DeskLayout, type DrawerLayout, type FrameGrid, type LayoutV2 } from '../../app/renderer/layout.ts'
 
 type Node = SerializedDockview['grid']['root']
 const leaf = (id: string, views: string[], size = 100): Node => ({ type: 'leaf', data: { views, activeView: views[0]!, id }, size })
@@ -65,7 +65,7 @@ describe('migrateLayout', () => {
     const out = migrateLayout(JSON.parse(before))!
     assert.equal(out.migrated, true)
     assert.equal(out.from, 1)
-    assert.equal(out.layout.v, 3)
+    assert.equal(out.layout.v, 4)
     assert.deepEqual(out.layout.sidebars, emptySideBars(), 'a v1 file has closed side bars')
     assert.equal(out.layout.desks.length, 1)
     const desk = out.layout.desks[0]!
@@ -96,33 +96,38 @@ describe('migrateLayout', () => {
     assert.deepEqual(frameIdsOf(pruned.layout.desks[0]!.frames.grid), ['frame-1'])
   })
 
-  test('a v2 file reads as v3 with closed side bars, its desks and drawer untouched; a v3 file as is; nothing else is a layout', () => {
+  test('a v2 file reads as v4 with closed side bars, its desks and drawer untouched; a v3 file as is; nothing else is a layout', () => {
     const desk = emptyLayout().desks[0]!
     const drawer = emptyDrawer()
     const v2: LayoutV2 = { v: 2, desks: [desk], activeDesk: desk.id, drawer }
     const fromV2 = migrateLayout(v2)!
     assert.equal(fromV2.from, 2)
     assert.equal(fromV2.migrated, false)
-    assert.equal(fromV2.layout.v, 3)
+    assert.equal(fromV2.layout.v, 4)
     assert.equal(fromV2.layout.desks, v2.desks, 'the very same desks')
     assert.equal(fromV2.layout.drawer, drawer, 'the very same drawer')
     assert.equal(fromV2.layout.activeDesk, desk.id)
     assert.deepEqual(fromV2.layout.sidebars, emptySideBars())
-    const v3 = emptyLayout()
-    const fromV3 = migrateLayout(v3)!
-    assert.equal(fromV3.from, 3)
-    assert.deepEqual(fromV3.layout, v3)
-    assert.equal(fromV3.layout.desks, v3.desks)
+    const v4 = emptyLayout()
+    const fromV4 = migrateLayout(v4)!
+    assert.equal(fromV4.from, 4)
+    assert.deepEqual(fromV4.layout, v4)
+    assert.equal(fromV4.layout.desks, v4.desks)
+    const v3 = { ...v4, v: 3 as const, systemDesks: undefined }
+    delete v3.systemDesks
+    assert.equal(migrateLayout(v3)!.from, 3)
     assert.equal(migrateLayout(null), null)
     assert.equal(migrateLayout({}), null)
     assert.equal(migrateLayout({ grid: {}, panels: {} }), null, 'a grid without a root is not v1')
-    assert.equal(migrateLayout({ v: 4, desks: [], activeDesk: 'x' }), null, 'a version from the future is not read')
+    assert.equal(migrateLayout({ v: 5, desks: [], activeDesk: 'x' }), null, 'a version from the future is not read')
     assert.equal(migrateLayout('{"grid":1}'), null)
     assert.ok(isLayoutV1(real))
     assert.ok(!isLayoutV2(real))
     assert.ok(isLayoutV2(v2))
     assert.ok(!isLayoutV2(v3))
     assert.ok(isLayoutV3(v3))
+    assert.ok(!isLayoutV3(v4))
+    assert.ok(isLayoutV4(v4))
   })
 
   test('a v1 file without sizes still gets a usable grid', () => {

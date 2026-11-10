@@ -115,7 +115,7 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-sidebars-'))
   // Part 2 is the window with no pad at all: the frame pads extension is off.
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads', 'explorer'] } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads', 'explorer', 'browser'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -136,7 +136,7 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
     await page.waitForFunction(ids => ids.every(id => typeof window.__tether.slots().find(s => s.slotId === id)?.pid === 'number'), [a, b, c, d], { timeout: 20_000 })
     const pids = { a: await pidOf(page, a), b: await pidOf(page, b), c: await pidOf(page, c), d: await pidOf(page, d) }
     const live = await page.evaluate(() => window.__tether.layout())
-    assert.equal(live.v, 3, 'the app writes v3')
+    assert.equal(live.v, 4, 'the app writes v4')
     const v2: LayoutJSON = { v: 2, desks: live.desks.map(({ pads: _p, ...rest }) => rest), activeDesk: live.activeDesk, drawer: live.drawer }
     await killElectron(app, root)
     app = undefined
@@ -146,7 +146,7 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
     ;({ app, page } = await launch(home))
     await page.waitForFunction(n => window.__tether.panelIds().length >= n, 3, { timeout: 20_000 })
     const back = await page.evaluate(() => window.__tether.layout())
-    assert.equal(back.v, 3)
+    assert.equal(back.v, 4)
     assert.deepEqual(shape(back), shape(v2), 'desks, frames, panes and the drawer as the v2 file had them')
     assert.deepEqual(back.sidebars, { left: { width: 380 }, right: { width: 380 }, placement: {}, pads: {} }, 'closed side bars')
     assert.deepEqual((await page.evaluate(() => window.__tether.drawer())).panes, [d])
@@ -159,11 +159,11 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
     assert.deepEqual(JSON.parse(readFileSync(bak, 'utf8')), JSON.parse(JSON.stringify(v2)), 'layout.v2.bak keeps the v2 file')
     assert.equal(JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')).v, 2, 'the file stays v2 until the person changes something')
 
-    // ---- the first change writes v3, desks untouched ----
+    // ---- the first change writes v4, desks untouched ----
     await page.evaluate(id => window.__tether.renameDesk(id, 'Revisão 2'), desk2)
     let saved: LayoutJSON | undefined
-    for (let i = 0; i < 40; i++) { saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutJSON; if (saved.v === 3) break; await sleep(100) }
-    assert.equal(saved!.v, 3)
+    for (let i = 0; i < 40; i++) { saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutJSON; if (saved.v === 4) break; await sleep(100) }
+    assert.equal(saved!.v, 4)
     const expected = shape(v2) as { desks: { name: string }[] }
     expected.desks[1]!.name = 'Revisão 2'
     assert.deepEqual(shape(saved!), expected)
@@ -208,7 +208,7 @@ test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relau
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-pads-'))
   // The explorer (left strip) has its own e2e; this one is about the frame pads' sides.
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer'] } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer', 'browser'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   const bars = (page: Page) => page.evaluate(() => window.__tether.sidebars()!)
@@ -334,7 +334,7 @@ test('frame pads in the focus (F10b-2): one focused frame, new panes, Ctrl+K, Mo
   const home = mkdtempSync(join(tmpBase, 'tether-padfocus-'))
   // A folder of its own: the note the test creates lands in <cwd>/.tether/notes, never in the repo.
   const work = mkdtempSync(join(tmpBase, 'tether-padfocus-work-'))
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ theme: 'light', ui: { deskLine: true, tabBorder: true, dimUnfocused: true, dimLevel: 'medium' } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['browser'] }, theme: 'light', ui: { deskLine: true, tabBorder: true, dimUnfocused: true, dimLevel: 'medium' } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   const frames = (page: Page) => page.evaluate(() => window.__tether.padFrames())

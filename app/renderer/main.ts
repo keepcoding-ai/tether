@@ -8,7 +8,7 @@ import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
-import { appCommands, type CommandHost } from './app-commands.ts'
+import { appCommands, GROUP, type CommandHost } from './app-commands.ts'
 import { installBuilderGuard, isBuilder, onBuilderChange, setBuilder } from './builder-mode.ts'
 import { commandFromContribution, CommandRegistry, type CommandContext } from './commands.ts'
 import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
@@ -26,9 +26,11 @@ import { fileOpenFailedSituation, openFile, type OpenFileOptions } from './file-
 import type { PaletteMode } from './palette-rules.ts'
 import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
+import { SurfaceHosts, type FreezeTiming } from './surface-host.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
-import { deskMark, markAttention } from './desk-mark.ts'
-import { deskTokens, readDeskColor } from './desks.ts'
+import { attentionLines, BadgeBoard, effectiveAttention, SealBoard, type AttentionHandle } from './seal-rules.ts'
+import { deskMark, type DeskMark } from './desk-mark.ts'
+import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
 import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
@@ -45,7 +47,8 @@ import { StatusBar } from './status-bar.ts'
 import { openMoveDialog } from './move-dialog.ts'
 import { openSessionsDialog, refreshSessionsDialog } from './sessions-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
-import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore } from './layout.ts'
+import { drawerOf, emptyLayout, isPersonChange, type Layout, migrateLayout, orphanedPanels, planRestore, withSystemDesk } from './layout.ts'
+import { SystemDeskRegistry, type SystemDeskDescriptor } from './system-desk-rules.ts'
 import { SideBars } from './sidebars.ts'
 import { otherSide, PadRegistry, panelIdsOfPad, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
 import { planPadLink } from './pad-link-rules.ts'
@@ -78,6 +81,7 @@ import type { PaneInfo } from './ext-api.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
+import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
@@ -89,6 +93,7 @@ import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituatio
 import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
+import { watchOverlays } from './overlay-freeze.ts'
 
 const COMPONENT = TERMINAL_COMPONENT
 const TAB = TERMINAL_TAB
@@ -97,6 +102,11 @@ const SAVE_DEBOUNCE_MS = 300
 const slots = new Map<string, SlotState>()
 const panels = new Map<string, TerminalPanel>()
 const tabs = new Map<string, SlotTab>()
+/** Badges the extensions put on their pads' icons and system desks' pills (seal-rules.ts). */
+const badges = new BadgeBoard()
+/** Attention seals the extensions raised on panes. */
+const seals = new SealBoard(() => refreshSeals())
+const sealActivations = new Map<number, Set<() => void>>()
 /** The empty panes (F5): a reserved place with the chooser inside (app/renderer/empty-panel.ts). */
 const empties = new Map<string, EmptyPanel>()
 /** The "Atalhos de teclado" screens (F5, delivery 5; one is the rule, the map keeps the layout honest). */
@@ -126,6 +136,8 @@ let drawer: Drawer
 const padRegistry = new PadRegistry()
 /** The top bar's status icons the extensions declare and register (TetherUi.status), and the bar that draws them. */
 const statusRegistry = new StatusRegistry()
+/** The system desks the extensions declare (`contributes.systemDesks`), mirrored into the DeskSet by setupDock. */
+const systemDeskRegistry = new SystemDeskRegistry()
 let statusBar: StatusBar | undefined
 const padTypes = new Map<string, PadType>()
 let sidebars: SideBars | undefined
@@ -141,7 +153,7 @@ function setFocusedPad(pad: FramesPad | undefined): void {
   if (pad === focusedPad) return
   focusedPad = pad
   scheduleKeyboardTab()
-  for (const d of desks.desks) desks.desk(d.id)?.paintFocus()
+  for (const id of desks.allDeskIds) desks.desk(id)?.paintFocus()
   for (const p of framePads) p.desk.paintFocus()
 }
 
@@ -259,6 +271,8 @@ const $ =<T extends HTMLElement>(id: string): T => {
 
 const host: PanelHost = {
   getSlot: id => slots.get(id),
+  attentionOf: id => ({ level: paneAttention(id), lines: attentionLines(slots.get(id)?.attention, seals.messages(id)) }),
+  onSealClick: id => activateSeals(id),
   getStartError: id => startErrors.get(id),
   isStartPending: id => pendingStarts.has(id),
   onAction: (id, action) => { void onPanelAction(id, action) },
@@ -392,7 +406,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
       createRightHeaderActionComponent: () => new TabStripActions({
         describe: id => {
           const s = slots.get(id)
-          return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!s?.attention, busy: s?.turn === 'busy' }
+          return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!paneAttention(id), busy: s?.turn === 'busy' }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         paneMenu: (id, x, y, opener) => {
@@ -456,18 +470,29 @@ function setupDock(): void {
     overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
     hint: position => shortcutHint(`desk.go.${position}`),
     move: (id, to) => desks.move(id, to),
+    toggleSystem: id => desks.toggleSystem(id),
   })
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
-    onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.desks.map(d => d.id)); scheduleSave() },
-    onSwitch: () => { focusActivePane(); notifyActivePane(); scheduleKeyboardTab() },
+    onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.allDeskIds); scheduleSave() },
+    onBeforeSwitch: () => { surfaceHosts.suspendAll() },
+    onSwitch: () => { focusActivePane(); notifyActivePane(); notifySystemDeskActive(); scheduleKeyboardTab() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
+  // The extensions activated before the dock existed declared their system desks in the registry: mount them, then follow it.
+  const live = new Map<string, () => void>()
+  const mirror = (c: { type: 'add' | 'remove'; desk: SystemDeskDescriptor }): void => {
+    if (c.type === 'add') live.set(c.desk.id, declareSystemDesk({ id: c.desk.id, title: c.desk.title, ...(c.desk.icon ? { icon: c.desk.icon as IconName } : {}), ...(c.desk.color ? { color: c.desk.color as DeskHue } : {}) }))
+    else { live.get(c.desk.id)?.(); live.delete(c.desk.id) }
+  }
+  for (const desk of systemDeskRegistry.all()) mirror({ type: 'add', desk })
+  systemDeskRegistry.onDidChange(mirror)
   drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onMargin: () => setDrawerOpen(false) }, DOCK_THEME)
   sidebars = new SideBars($('workbench'), {
     pads: () => padRegistry.all(),
     padType: id => padTypes.get(id),
+    badgeOf: id => badges.get(id),
     activeDeskId: () => desks.activeDeskId,
     deskName: id => deskName(id),
     activePanelId: () => focusablePanelId(),
@@ -598,7 +623,10 @@ function notifyActivePane(): void {
 function layoutJSON(): Layout {
   const live = desks.toJSON()
   const deskList = live.desks.map(d => { const pads = sidebars?.deskPads(d.id); return pads ? { ...d, pads } : d })
-  const out: Layout = { ...layoutFile, v: 3, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
+  let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
+  for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
+  const out: Layout = { ...file, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
   if (!sidebars) return out
   // The notes' records follow what is live now (owner label, desk, last change): written into the side bars before saving.
   const { meta: _stale, ...bars } = out.sidebars
@@ -606,7 +634,13 @@ function layoutJSON(): Layout {
   return { ...out, sidebars: Object.keys(meta).length ? { ...bars, meta } : bars }
 }
 
+/** The desks whose per-desk pad states the side bars restore: the queue and the system desks. */
+function deskPadsOf(layout: Layout): { id: string; pads?: Record<string, unknown> }[] {
+  return [...layout.desks, ...Object.entries(layout.systemDesks ?? {}).map(([id, sd]) => ({ id, ...(sd.pads ? { pads: sd.pads } : {}) }))]
+}
+
 function scheduleSave(): void {
+  notifyAgentPanes() // every move, rename or pane added or removed saves the layout
   if (!layoutRestored) return
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(layoutJSON()) }, SAVE_DEBOUNCE_MS)
@@ -750,23 +784,113 @@ function renderSlot(slotId: string): void {
 
 // ---------- desks ----------
 
-/** The slots of a desk: its panes and those of the frame pads that belong to it. */
-function deskSlots(deskId: string): (SlotState | undefined)[] {
+/** The panes of a desk: its own and those of the frame pads that belong to it (a desk pad's, and its panels' pads). */
+function deskPanes(deskId: string): { id: string }[] {
   // A desk pad's panes are the desk's: its mark counts them too.
-  return [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId || (x.panelId !== undefined && desks.deskOf(x.panelId) === deskId)).flatMap(x => x.desk.panels)].map(p => slots.get(p.id))
+  return [...(desks.desk(deskId)?.panels ?? []), ...[...framePads].filter(x => x.deskId === deskId || (x.panelId !== undefined && desks.deskOf(x.panelId) === deskId)).flatMap(x => x.desk.panels)]
 }
 
 /** How many panes of a desk finished their turn / wait for the user. */
 function deskAttention(deskId: string): DeskAttention {
-  return markAttention(deskMark(deskSlots(deskId)))
+  const out: DeskAttention = { done: 0, waiting: 0 }
+  const lines: string[] = []
+  for (const p of deskPanes(deskId)) {
+    const a = paneAttention(p.id)
+    if (a === 'done') out.done++
+    else if (a === 'waiting') out.waiting++
+    lines.push(...seals.messages(p.id))
+  }
+  if (lines.length) out.lines = lines
+  return out
+}
+
+/**
+ * A desk's (or the drawer's) mark with the extensions' seals: attention (the terminal's or a seal) beats a busy pane
+ * (quiet green dot) beats nothing (desk-mark.ts).
+ */
+function markWith(att: DeskAttention, panes: readonly { id: string }[]): DeskMark {
+  if (att.done + att.waiting > 0) return { attention: att }
+  return deskMark(panes.map(p => slots.get(p.id))) === 'busy' ? 'busy' : ''
+}
+
+function deskMarkOf(deskId: string): DeskMark {
+  return markWith(deskAttention(deskId), deskPanes(deskId))
+}
+
+/** The seal a pane shows: the terminal's own merged with the extensions' (seal-rules.ts). */
+function paneAttention(id: string): 'done' | 'waiting' | undefined {
+  return effectiveAttention(slots.get(id)?.attention, seals.onPane(id).length)
+}
+
+/** Seals or badges changed: tabs, pills, pad icons and the drawer button are drawn again. */
+function refreshSeals(): void {
+  for (const t of tabs.values()) t.render()
+  for (const p of panels.values()) p.render()
+  renderStrip()
+  sidebars?.render()
+}
+
+/** The person clicked a pane's seal: the extensions that raised one hear it; with none listening, the core brings the pane forward. */
+function activateSeals(paneId: string): void {
+  let heard = false
+  for (const s of seals.onPane(paneId)) {
+    for (const l of [...(sealActivations.get(s.id) ?? [])]) { heard = true; try { l() } catch (err) { console.error('attention.onDidActivate', err) } }
+  }
+  if (!heard) revealPane(paneId)
+}
+
+/** Icons of the declared system desks (the set keeps id, name and colour; the pill also wants an icon). */
+const systemIcons = new Map<string, IconName>()
+/** Which system desks were the visible one at the last switch (what `onDidChangeActive` compares with). */
+let activeSystemDesk: string | undefined
+const systemDeskListeners = new Set<(e: { id: string; active: boolean }) => void>()
+
+function notifySystemDeskActive(): void {
+  const now = desks.isSystem(desks.activeDeskId) ? desks.activeDeskId : undefined
+  if (now === activeSystemDesk) return
+  const before = activeSystemDesk
+  activeSystemDesk = now
+  for (const [id, active] of [[before, false], [now, true]] as const) {
+    if (!id) continue
+    for (const l of [...systemDeskListeners]) { try { l({ id, active }) } catch (err) { console.error('systemDesks.onDidChangeActive', err) } }
+  }
+}
+
+/**
+ * Declares a system desk for this run: a complete desk outside the queue (no number, no rename, no reorder, not in the
+ * next/previous cycle) with a pill in the capsule beside the Gaveta's and a "Ir para <title>" command. The pill, or the
+ * command, enters it and, again, goes back to the desk the person was on. What it holds is saved in `systemDesks` of
+ * layout.json under `id`, and reopens there the next time it is declared. Returns the function that takes it back
+ * (undeclares it): the pill and the command go, the person leaves it for the desk they came from, its panels stop being
+ * shown, and what it held stays in layout.json untouched.
+ */
+function declareSystemDesk(decl: { id: string; title: string; icon?: IconName; color?: DeskHue }): () => void {
+  if (decl.icon) systemIcons.set(decl.id, decl.icon)
+  desks.declareSystem({ id: decl.id, name: decl.title, ...(decl.color ? { color: decl.color } : {}) })
+  const unregister = commands.register({
+    id: `desk.system.${decl.id}`, title: `Ir para ${decl.title}`, group: GROUP.desk, icon: decl.icon ?? 'cards',
+    run: () => desks.toggleSystem(decl.id),
+  })
+  return () => {
+    unregister()
+    systemIcons.delete(decl.id)
+    // Its content (and its desk pads' state) stays in the file: the file's entry is refreshed before the desk goes.
+    const pads = sidebars?.deskPads(decl.id)
+    const content = desks.undeclareSystem(decl.id)
+    if (content) layoutFile = withSystemDesk(layoutFile, decl.id, pads ? { ...content, pads } : content)
+    scheduleSave()
+  }
 }
 
 function renderStrip(): void {
   if (!strip || !desks) return
-  strip.render(desks.desks, desks.activeDeskId, id => deskMark(deskSlots(id)))
+  strip.render(desks.desks, desks.activeDeskId, deskMarkOf)
+  strip.renderSystem(desks.systemDesks.map(d => ({ id: d.id, title: d.name, ...(systemIcons.has(d.id) ? { icon: systemIcons.get(d.id)! } : {}), active: d.id === desks.activeDeskId, attention: deskAttention(d.id), ...(badges.get(d.id) ? { badge: badges.get(d.id)! } : {}) })))
   const active = desks.desks.find(d => d.id === desks.activeDeskId)
   // On the workbench: the line spans the window (over the side bars) and the pads' frames take the colour for the F6 outline.
-  if (active) $('workbench').style.setProperty('--desk-line-color', deskTokens(active.color).fill)
+  // A system desk showing tints the line with its own colour, not with the last queue desk's.
+  const tinted = active ?? desks.systemDesks.find(d => d.id === desks.activeDeskId)
+  if (tinted) $('workbench').style.setProperty('--desk-line-color', deskTokens(tinted.color).fill)
   renderDrawerButton()
 }
 
@@ -780,6 +904,7 @@ function watchedPane(): string | undefined {
 function markSeenIfWatched(): void {
   const id = watchedPane()
   if (id && slots.get(id)?.attention) void window.tether.request({ t: 'seen', slotId: id })
+  if (id) seals.seen(id)
 }
 
 /** The keyboard to a pane, whatever it is: a terminal or a note. */
@@ -799,7 +924,7 @@ function focusActivePane(): void {
 }
 
 function deskName(id: string): string {
-  return desks.desks.find(d => d.id === id)?.name ?? id
+  return desks.desks.find(d => d.id === id)?.name ?? desks.systemDesks.find(d => d.id === id)?.name ?? id
 }
 
 function isLiveSlot(s: SlotState): boolean {
@@ -811,7 +936,7 @@ function isLiveSlot(s: SlotState): boolean {
  * desk (safe, default), or stop what runs and close the panes (their slots stay under "Slots fechados").
  */
 async function closeDesk(id: string): Promise<void> {
-  if (desks.desks.length <= 1) return
+  if (desks.desks.length <= 1 || desks.isSystem(id)) return
   // The desk's pads go with it: their panes are the desk's panes for this question (same dialog, same answers).
   const deskPads = [...framePads].filter(p => p.deskId === id)
   // The pads of the desk's panels stay with their panels (which move with the desk, or close with it): they only join the question.
@@ -956,7 +1081,7 @@ function removeAnyPanel(panel: IDockviewPanel): void {
 const BEHIND_DRAWER = ['toolbar', 'dock', 'sidebar-left', 'sidebar-right', 'pads']
 
 function drawerAttention(): DeskAttention {
-  return countAttention(drawer.desk.panels.map(p => slots.get(p.id)?.attention))
+  return countAttention(drawer.desk.panels.map(p => paneAttention(p.id)))
 }
 
 /** The toolbar button: expanded state, the number of panes, and the attention badge of the drawer's panes. */
@@ -964,8 +1089,8 @@ function renderDrawerButton(): void {
   if (!drawer) return
   const btn = $('btn-drawer')
   const badge = $('drawer-badge')
-  const mark = deskMark(drawer.desk.panels.map(p => slots.get(p.id)))
-  const att = markAttention(mark)
+  const att = drawerAttention()
+  const mark = markWith(att, drawer.desk.panels)
   const total = att.done + att.waiting
   badge.hidden = total === 0
   badge.className = `cnt desk-badge drawer-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
@@ -993,6 +1118,8 @@ function setDrawerOpen(open: boolean): void {
   if (open === drawer.isOpen || (open && !layoutRestored)) return
   lastEsc = undefined
   scheduleKeyboardTab()
+  // A surface in the drawer goes before the drawer does, not a frame after.
+  if (!open) surfaceHosts.suspendAll($('drawer'))
   if (open) {
     drawerReturnEl = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     drawerState = openDrawer(drawerState, focusedDeskPane())
@@ -1004,7 +1131,12 @@ function setDrawerOpen(open: boolean): void {
   } else {
     drawerState = closeDrawer(drawerState)
   }
-  for (const id of BEHIND_DRAWER) $(id).toggleAttribute('inert', open)
+  for (const id of BEHIND_DRAWER) {
+    $(id).toggleAttribute('inert', open)
+    // Inert only to keep the keyboard out: still on screen behind the drawer, so its surfaces freeze to a picture
+    // (surface-host.ts) instead of disappearing.
+    $(id).toggleAttribute('data-inert-onscreen', open)
+  }
   document.body.classList.toggle('drawer-open', open)
   drawer.setOpen(open)
   renderStrip()
@@ -1396,7 +1528,7 @@ function moveTree(paneId?: string): ScopeModel[] {
   return buildTree({
     drawer: { frames: framesOf(drawer.desk) },
     pads: (paneId && deskOnly(paneId) ? [] : movePads()).map(p => ({ id: p.id, name: p.name, icon: p.icon, frames: framesOf(p.desk) })),
-    desks: desks.desks.map(d => ({ id: d.id, name: d.name, color: d.color, frames: framesOf(desks.desk(d.id)) })),
+    desks: [...desks.desks, ...desks.systemDesks].map(d => ({ id: d.id, name: d.name, color: d.color, frames: framesOf(desks.desk(d.id)) })),
     currentDesk: desks.activeDeskId,
     titleOf: id => findPanel(id)?.api.title,
   })
@@ -1598,6 +1730,7 @@ function applyState(slot: SlotState): void {
   renderStrip()
   if (slot.attention && slot.slotId === watchedPane()) void window.tether.request({ t: 'seen', slotId: slot.slotId })
   recomputeProjects() // the slot's kind or folder may have changed
+  notifyAgentPanes()
 }
 
 function onDaemonEvent(ev: DaemonEvent): void {
@@ -1613,6 +1746,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
       if (panel) removeAnyPanel(panel)
       refreshSessions()
       renderStrip()
+      notifyAgentPanes()
       break
     }
   }
@@ -1672,11 +1806,12 @@ async function restoreLayout(): Promise<void> {
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
-    if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)); sidebars?.load(layout.sidebars, layout.desks) }
+    if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)); sidebars?.load(layout.sidebars, deskPadsOf(layout)) }
     // A v1 file is copied to layout.v1.bak now; layout.json itself stays v1 until the person changes something.
-    // A v2 file is copied to layout.v2.bak the same way: an older build reads only v2.
+    // A v2 or v3 file is copied to layout.v<n>.bak the same way: an older build reads only its own version.
     if (result?.migrated) await window.tether.backupLayout()
     else if (result?.from === 2) await window.tether.backupLayout(2)
+    else if (result?.from === 3) await window.tether.backupLayout(3)
   } else {
     layoutFile = emptyLayout()
   }
@@ -1702,7 +1837,7 @@ async function restoreLayout(): Promise<void> {
 function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
   geometry ??= window.tether.loadLayout().then(raw => {
     const result = migrateLayout(raw)
-    if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, result.layout.desks) }
+    if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, deskPadsOf(result.layout)) }
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
   return geometry!
@@ -1800,14 +1935,14 @@ function openPauseDialog(): void {
 }
 
 /** Opens a panel for a slot the daemon knows; an exited slot is started (an unconfirmed one shows the choice). */
-function openSlot(slotId: string): void {
+function openSlot(slotId: string, start = true): void {
   const s = slots.get(slotId)
   if (!s) return
   // A pane of the drawer opens the drawer; any other brings the user back to the desks (and to the pane's desk).
   const inside = drawer.desk.getPanel(slotId)
   if (inside) {
     setDrawerOpen(true)
-    if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+    if (start && effectiveStatus(s) === 'exited') void startSlot(s.slotId)
     inside.api.setActive()
     return
   }
@@ -1824,7 +1959,7 @@ function openSlot(slotId: string): void {
       sidebars?.render()
     }
     sidebars?.open(pad.padId, false)
-    if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+    if (start && effectiveStatus(s) === 'exited') void startSlot(s.slotId)
     pad.desk.getPanel(slotId)?.api.setActive()
     setFocusedPad(pad)
     requestAnimationFrame(() => focusPane(slotId))
@@ -1834,7 +1969,7 @@ function openSlot(slotId: string): void {
   const deskId = desks.deskOf(slotId)
   if (deskId && deskId !== desks.activeDeskId) desks.switchTo(deskId)
   const panel = desks.getPanel(slotId) ?? addPanel(s)
-  if (effectiveStatus(s) === 'exited') void startSlot(s.slotId)
+  if (start && effectiveStatus(s) === 'exited') void startSlot(s.slotId)
   panel.api.setActive()
 }
 
@@ -1863,6 +1998,55 @@ function revealPane(id: string): void {
   }
   panel.api.setActive()
   requestAnimationFrame(() => focusPane(id))
+}
+
+// ---------- the agents' panes for extensions (TetherUi.agents) ----------
+
+const agentPaneListeners = new Set<(pane: AgentPane) => void>()
+/** The rows extensions add to an agent pane's tab menu (TetherUi.agents.tabMenu). */
+const agentTabMenuProviders = new Set<(slotId: string) => ContextMenuEntry[]>()
+let agentPaneSnapshot: AgentPane[] = []
+let agentPaneQueued = false
+
+/** Every pane that shows an agent's slot, with where it lives now. */
+function agentPanes(): AgentPane[] {
+  const out: AgentPane[] = []
+  for (const slot of slots.values()) {
+    if (slot.kind === 'shell' || !findPanel(slot.slotId)) continue
+    const pad = framePadOf(slot.slotId)
+    const drawerPane = inDrawer(slot.slotId)
+    const deskId = drawerPane ? undefined : pad ? pad.deskId : desks.deskOf(slot.slotId)
+    const pane = agentPaneOf(slot, {
+      paneId: slot.slotId,
+      ...(deskId !== undefined ? { deskId, deskTitle: deskName(deskId) } : {}),
+      isSystemDesk: deskId !== undefined && desks.isSystem(deskId),
+      inDrawer: drawerPane,
+      ...(pad ? { padId: pad.padId } : {}),
+    })
+    if (pane) out.push(pane)
+  }
+  return out
+}
+
+/** Tells the listeners what changed since the last call; coalesced to the end of the current task, after a move has settled. */
+function notifyAgentPanes(): void {
+  if (agentPaneQueued) return
+  agentPaneQueued = true
+  queueMicrotask(() => {
+    agentPaneQueued = false
+    const next = agentPanes()
+    const changes = agentPaneChanges(agentPaneSnapshot, next)
+    agentPaneSnapshot = next
+    for (const pane of changes) for (const l of [...agentPaneListeners]) { try { l(pane) } catch (err) { console.error('agents.onDidChange', err) } }
+  })
+}
+
+/** Brings an agent's pane forward without restarting an exited agent. */
+function focusAgentPane(slotId: string): boolean {
+  if (!slots.has(slotId) || !findPanel(slotId)) return false
+  openSlot(slotId, false)
+  requestAnimationFrame(() => focusPane(slotId))
+  return true
 }
 
 // ---------- the tab marks (app/renderer/tab-marks.ts) ----------
@@ -2124,6 +2308,13 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     return
   }
   panel?.api.setActive()
+  const fromExtensions: MenuEntry[] = []
+  if (slot.kind !== 'shell') {
+    for (const provider of [...agentTabMenuProviders]) {
+      try { fromExtensions.push(...provider(slotId).map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName })) } catch (err) { console.error('agents.tabMenu', err) }
+    }
+    if (fromExtensions.length > 0) fromExtensions.push(SEP)
+  }
   showContextMenu(x, y, [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'right' }) } },
@@ -2141,6 +2332,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     SEP,
     { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
     SEP,
+    ...fromExtensions,
     { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
   ])
 }
@@ -2535,7 +2727,7 @@ function leaveBuilder(): void {
 
 /** A double click on a frame in the builder mode: leaves it with that frame in focus (its active pane takes the keyboard). */
 function leaveBuilderInto(frame: HTMLElement): void {
-  const places = [...desks.desks.map(d => desks.desk(d.id)), drawer.desk, ...[...framePads].map(p => p.desk)]
+  const places = [...desks.allDeskIds.map(id => desks.desk(id)), drawer.desk, ...[...framePads].map(p => p.desk)]
   for (const desk of places) {
     const frameId = desk?.frameIdAt(frame)
     if (!desk || !frameId) continue
@@ -2603,7 +2795,7 @@ const commandHost: CommandHost = {
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
   createDesk: side => { createBlankDesk(side) },
-  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.activeDeskId, step)),
+  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.isSystem(desks.activeDeskId) ? desks.returnDeskId : desks.activeDeskId, step)),
   moveActiveDesk: where => {
     const last = desks.desks.length - 1
     const at = desks.desks.findIndex(d => d.id === desks.activeDeskId)
@@ -2613,8 +2805,8 @@ const commandHost: CommandHost = {
   },
   goToDesk: position => { const id = deskAt(desks.desks, position); if (id) desks.switchTo(id) },
   toggleBuilder: () => { if (isBuilder()) leaveBuilder(); else setBuilder(true) },
-  deskActions: () => { const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },
-  closeDesk: () => { void closeDesk(desks.activeDeskId) },
+  deskActions: () => { if (desks.isSystem(desks.activeDeskId)) return; const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },
+  closeDesk: () => { if (!desks.isSystem(desks.activeDeskId)) void closeDesk(desks.activeDeskId) },
   toggleDrawer: () => setDrawerOpen(!drawer.isOpen),
   quickShell: () => { void quickShell() },
   setTheme: setting => window.tether.setTheme(normalizeTheme(setting)),
@@ -3174,6 +3366,12 @@ declare global {
       /** The row of desks with each desk's panes and attention counts, and the active desk. */
       desks(): { id: string; name: string; color: string; panes: string[]; attention: DeskAttention }[]
       activeDesk(): string
+      /** Declares a system desk (a desk outside the queue, with a pill in the capsule); returns the function that removes its command. */
+      declareSystemDesk(decl: { id: string; title: string; icon?: IconName }): () => void
+      toggleSystemDesk(id: string): void
+      /** Takes back everything an extension registered (what a failed activation does): its badges and seals go with it. */
+      disposeExtension(id: string): void
+      systemDesks(): { id: string; name: string; panes: string[]; active: boolean }[]
       deskOf(slotId: string): string | undefined
       switchDesk(id: string): void
       createDesk(side: 'before' | 'after', relativeTo?: string): string
@@ -3190,6 +3388,8 @@ declare global {
       moveFrameToDesk(slotId: string, deskId: string): void
       /** The drawer: open or not, its panes, the attention counts of its panes. */
       drawer(): { open: boolean; panes: string[]; frames: string[]; attention: DeskAttention }
+      /** The surface freeze: what holds the signal, the pictures on screen, the last freeze/thaw times. */
+      freeze(): { reasons: string[]; pictures: number; timings: FreezeTiming[] }
       toggleDrawer(): void
       openDrawer(): void
       closeDrawer(): void
@@ -3227,6 +3427,7 @@ declare global {
 function setupTestHooks(): void {
   window.__tether = {
     ext: extTestHooks,
+    freeze: () => ({ reasons: surfaceHosts.freezes.reasons(), pictures: surfaceHosts.pictures(), timings: surfaceHosts.freezeTimings() }),
     status: statusRegistry,
     layout: () => layoutJSON(),
     sidebars: () => sidebars?.snapshot(),
@@ -3366,6 +3567,10 @@ function setupTestHooks(): void {
     inject: (slotId, data) => panels.get(slotId)?.term.write(data),
     desks: () => desks.desks.map(d => ({ ...d, panes: (desks.desk(d.id)?.panels ?? []).map(p => p.id), attention: deskAttention(d.id) })),
     activeDesk: () => desks.activeDeskId,
+    declareSystemDesk,
+    disposeExtension: id => { contributionStores.get(id)?.dispose() },
+    toggleSystemDesk: id => desks.toggleSystem(id),
+    systemDesks: () => desks.systemDesks.map(d => ({ id: d.id, name: d.name, panes: (desks.desk(d.id)?.panels ?? []).map(p => p.id), active: d.id === desks.activeDeskId })),
     deskOf: slotId => desks.deskOf(slotId),
     switchDesk: id => desks.switchTo(id),
     createDesk: (side, relativeTo) => desks.create(side, relativeTo),
@@ -3477,6 +3682,16 @@ function onExtSetting(change: { id: string; key: string; value: SettingValue }):
 const contributionStores = new Map<string, DisposableStore>()
 /** What extensions expose for the e2e (TetherUi.test.expose), merged into window.__tether by setupTestHooks. */
 const extTestHooks: Record<string, Record<string, unknown>> = {}
+/** Panes' host elements tied to their native surfaces (TetherUi.surfaces). */
+const surfaceHosts = new SurfaceHosts({
+  place: msg => window.tether.surfacePlace(msg),
+  release: msg => window.tether.surfaceRelease(msg),
+  onEvent: listener => window.tether.onSurfaceEvent(listener),
+  capture: msg => window.tether.surfaceCapture(msg),
+  freeze: msg => window.tether.surfaceFreeze(msg),
+})
+// The core's overlays hold the freeze signal (the list and its rule live in overlay-freeze.ts).
+watchOverlays(surfaceHosts.freezes, $('drawer'))
 
 /** The manifest's data the core needs before `activate`: default keys, ≡ items, chooser items. */
 function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore): void {
@@ -3492,6 +3707,8 @@ function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore)
   if (c.chooser) store.add(toDisposable(contributeChooser(c.chooser)))
   // Pads: the strip draws them from the manifest; each gets its own toggle command (VS Code registers an "open" command per view container).
   for (const s of c.status ?? []) store.add(statusRegistry.declare({ ...s, extension: manifest.id }))
+  // System desks: declared in the registry; the dock mirrors them into the DeskSet (and takes them back with the store).
+  for (const d of c.systemDesks ?? []) store.add(systemDeskRegistry.declare({ ...d, extension: manifest.id }))
   for (const p of c.pads ?? []) {
     store.add(padRegistry.register({ ...p, extension: manifest.id }))
     store.add(toDisposable(commands.register({
@@ -3547,6 +3764,11 @@ function activateRendererExtensions(): void {
     contributionStores.set(id, own)
     contributeDeclared(manifest, own)
     const add = <T extends IDisposable>(d: T): T => own.add(d)
+    // What the extension put on the UI goes with it.
+    add(toDisposable(() => { const a = badges.removeOwner(id); const b = seals.removeOwner(id); if (a && !b) refreshSeals() }))
+    const ownSystemDesk = (deskId: string): void => {
+      if (!manifest.contributes?.systemDesks?.some(d => d.id === deskId)) throw new Error(`mesa de sistema não declarada no manifesto de ${id}: ${deskId}`)
+    }
     return {
       id,
       brand: BRAND,
@@ -3653,6 +3875,11 @@ function activateRendererExtensions(): void {
       },
       agents: {
         register: ui => add(registerAgentUi(ui)),
+        list: () => agentPanes(),
+        get: slotId => agentPanes().find(p => p.slotId === slotId),
+        onDidChange: listener => { agentPaneListeners.add(listener); return add(toDisposable(() => { agentPaneListeners.delete(listener) })) },
+        focus: slotId => focusAgentPane(slotId),
+        tabMenu: provider => { agentTabMenuProviders.add(provider); return add(toDisposable(() => { agentTabMenuProviders.delete(provider) })) },
       },
       chooser: {
         resolve: (itemId, fn) => {
@@ -3674,6 +3901,48 @@ function activateRendererExtensions(): void {
           return handle
         },
       },
+      attention: {
+        raise: opts => {
+          const paneId = opts.paneId ?? opts.slotId
+          if (!paneId || !(findPanel(paneId) || slots.has(paneId))) throw new Error(`painel desconhecido: ${String(paneId)}`)
+          const seal = seals.raise(id, paneId, opts.message, opts.sticky === true)
+          markSeenIfWatched()
+          const gone = (): void => { sealActivations.delete(seal.id) }
+          const handle: AttentionHandle = {
+            id: seal.id,
+            update: patch => { if (patch.message !== undefined) seals.update(seal.id, patch.message) },
+            resolve: () => { seals.resolve(seal.id); gone() },
+            dispose: () => { seals.resolve(seal.id); gone() },
+            onDidActivate: listener => {
+              const set = sealActivations.get(seal.id) ?? new Set<() => void>()
+              set.add(listener); sealActivations.set(seal.id, set)
+              return toDisposable(() => { set.delete(listener) })
+            },
+          }
+          return add(handle)
+        },
+      },
+      systemDesks: {
+        setBadge: (deskId, badge) => { ownSystemDesk(deskId); if (badges.set(id, deskId, badge)) renderStrip() },
+        toggle: deskId => { ownSystemDesk(deskId); desks.toggleSystem(deskId) },
+        isActive: deskId => { ownSystemDesk(deskId); return desks.activeDeskId === deskId },
+        addPane: (deskId, options, where) => {
+          ownSystemDesk(deskId)
+          const desk = desks.desk(deskId)
+          if (!desk) throw new Error(`mesa de sistema não montada: ${deskId}`)
+          const ref = where?.reference && desk.getPanel(where.reference) ? where.reference : undefined
+          const position = ref ? { referencePanel: ref, direction: 'within', ...(where?.index !== undefined ? { index: where.index } : {}) } : undefined
+          return desk.addPanel({ ...options, inactive: true, ...(position ? { position } : {}) } as AddPanelOptions, undefined, ref)
+        },
+        onDidChangeActive: listener => { systemDeskListeners.add(listener); return add(toDisposable(() => { systemDeskListeners.delete(listener) })) },
+      },
+      surfaces: {
+        attach: (surfaceId, element) => add(surfaceHosts.attach(id, surfaceId, element)),
+        freezeWhile: reason => {
+          const release = surfaceHosts.freezes.hold(`${id}:${String(reason).slice(0, 64)}`)
+          return add(toDisposable(release))
+        },
+      },
       pads: {
         register: type => {
           if (!manifest.contributes?.pads?.some(p => p.id === type.id)) throw new Error(`prancheta não declarada no manifesto de ${id}: ${type.id}`)
@@ -3682,6 +3951,10 @@ function activateRendererExtensions(): void {
           return add(toDisposable(() => { if (padTypes.get(type.id) === type) padTypes.delete(type.id) }))
         },
         open: padId => sidebars?.open(padId),
+        setBadge: (padId, badge) => {
+          if (!manifest.contributes?.pads?.some(p => p.id === padId)) throw new Error(`prancheta nao declarada no manifesto de ${id}: ${padId}`)
+          if (badges.set(id, padId, badge)) sidebars?.render()
+        },
         frames: host => {
           if (!manifest.contributes?.pads?.some(p => p.id === host.padId && p.frames)) throw new Error(`prancheta sem quadros no manifesto de ${id}: ${host.padId}`)
           return newFramesPad(host)

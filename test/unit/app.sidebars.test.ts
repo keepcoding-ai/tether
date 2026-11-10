@@ -14,7 +14,7 @@ import {
   clampWidth, DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, MAX_SIDEBAR_WIDTH, MIN_DOCK_WIDTH, MIN_SIDEBAR_WIDTH, movePad, openPad, openPadOn,
   PadRegistry, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, readSideBars, restorePad, setWidth, sideOf, togglePad, toggleSideBar, type PadDescriptor, type SideBarsLayout,
 } from '../../app/renderer/sidebar-rules.ts'
-import { allPanelIds, isLayoutV3, migrateLayout, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
+import { allPanelIds, isLayoutV4, migrateLayout, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
 
 const desk: PadDescriptor = { id: 'frame-pads.desk', title: 'Prancheta da mesa', icon: 'clipboard-text', defaultSide: 'right', scope: 'desk', frames: true, order: 10 }
 const panel: PadDescriptor = { id: 'frame-pads.panel', title: 'Prancheta do painel', icon: 'push-pin', defaultSide: 'right', scope: 'panel', frames: true, order: 5 }
@@ -134,7 +134,7 @@ describe('layout.json v3: a v2 file migrates intact', () => {
     const out = migrateLayout(JSON.parse(text))!
     assert.equal(out.from, 2)
     assert.equal(out.migrated, false, 'no v1 backup: the v2 one is the caller\'s (from === 2)')
-    assert.equal(out.layout.v, 3)
+    assert.equal(out.layout.v, 4)
     assert.deepEqual(out.layout.desks, v2.desks, 'desks, frames and panes byte for byte')
     assert.deepEqual(out.layout.drawer, v2.drawer)
     assert.equal(out.layout.activeDesk, 'desk-2')
@@ -160,9 +160,9 @@ describe('layout.json v3: a v2 file migrates intact', () => {
     v3.sidebars = { ...setWidth(v3.sidebars, 'left', 420), pads: { [global.id]: { frames: 'G' } } }
     v3.desks[1] = { ...v3.desks[1]!, pads: { [desk.id]: { frames: 'D2' } } }
     const written = JSON.parse(JSON.stringify(v3))
-    assert.ok(isLayoutV3(written))
+    assert.ok(isLayoutV4(written))
     const back = migrateLayout(written)!
-    assert.equal(back.from, 3)
+    assert.equal(back.from, 4)
     assert.deepEqual(back.layout, v3)
     assert.deepEqual(back.layout.sidebars.placement, { [global.id]: 'left' })
     assert.equal(back.layout.sidebars.right.open, desk.id)

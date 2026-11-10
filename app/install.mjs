@@ -5,16 +5,21 @@
 // Nothing else is installed; the app runs from this repo. Both launchers start Electron's own binary with
 // app/dist/main.cjs (no npm, no console window), so a build happens here first and must be redone by hand
 // (`npm run app:build` or `npm run app:install`) after code changes: the launcher never builds.
-//   node app/install.mjs install | uninstall | read [--prefix <dir>]
+// Windows, Tether Browser E15: install also keeps a copy of Electron's runtime with the cookie-encryption fuse on under
+// <TETHER_HOME>/runtime/ (app/shared/cookie-runtime.ts), and the shortcut passes --cookie-fuse-runtime so main hands the
+// launch to that copy while it is valid. `runtime` makes only that copy (no build, no shortcut).
+//   node app/install.mjs install | uninstall | read | runtime [--prefix <dir>]
 //   (--prefix: macOS only; without it install picks /Applications or ~/Applications, uninstall/read look in both)
 import { spawnSync } from 'node:child_process'
-import { accessSync, chmodSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { accessSync, chmodSync, constants, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { BRAND } from './shared/brand.ts'
+import { COOKIE_RUNTIME_FLAG, cookieRuntimeDir, parseManifest, RUNTIME_FUSE, RUNTIME_MANIFEST, runtimeExe, runtimeReusable, sha256File } from './shared/cookie-runtime.ts'
+import { tetherHome } from '../src/core/paths.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
@@ -209,6 +214,65 @@ export function readMacBundle({ prefix }) {
   return { installed: identifier === AUMID, bundleDir, identifier, launcher }
 }
 
+// ---------- Windows: the runtime copy with the cookie fuse ----------
+
+/** @electron/fuses' FuseState.ENABLE ('1'); the index does not export FuseState. */
+const FUSE_ENABLE = 0x31
+
+/** Flips the cookie-encryption fuse on an Electron executable and confirms it reads back on (@electron/fuses, devDependency). */
+export async function flipCookieFuse(exe) {
+  const { flipFuses, getCurrentFuseWire, FuseVersion, FuseV1Options } = require('@electron/fuses')
+  await flipFuses(exe, { version: FuseVersion.V1, [FuseV1Options.EnableCookieEncryption]: true })
+  const wire = await getCurrentFuseWire(exe)
+  if (wire[FuseV1Options.EnableCookieEncryption] !== FUSE_ENABLE) throw new Error(`o fuse ${RUNTIME_FUSE} não ficou ligado em ${exe}`)
+}
+
+/**
+ * Makes (or keeps) <home>/runtime/electron-<version>-cookiefuse/: a copy of `sourceDist` (node_modules/electron/dist, only
+ * read) with the fuse flipped on the copy's executable, and its manifest. Kept as is when the manifest matches the source
+ * binary and the copy's executable still hashes to it. Assembled in a sibling temp folder and swapped in; copies for other
+ * Electron versions are removed (best effort: one in use stays). Returns { dir, exe, reused, manifest }.
+ */
+export async function prepareCookieRuntime({ home, sourceDist, electronVersion, flip = flipCookieFuse }) {
+  const dir = cookieRuntimeDir(home, electronVersion)
+  const sourceSha256 = sha256File(runtimeExe(sourceDist))
+  let current
+  try { current = parseManifest(readFileSync(join(dir, RUNTIME_MANIFEST), 'utf8')) } catch { /* none */ }
+  let exeSha256
+  try { exeSha256 = sha256File(runtimeExe(dir)) } catch { /* none */ }
+  if (runtimeReusable(current, { electronVersion, sourceSha256, exeSha256 })) return { dir, exe: runtimeExe(dir), reused: true, manifest: current }
+  const parent = dirname(dir)
+  mkdirSync(parent, { recursive: true })
+  const tmp = `${dir}.tmp-${process.pid}`
+  rmSync(tmp, { recursive: true, force: true })
+  try {
+    cpSync(sourceDist, tmp, { recursive: true })
+    await flip(runtimeExe(tmp))
+    const manifest = { v: 1, electronVersion, fuse: RUNTIME_FUSE, sourceSha256, exeSha256: sha256File(runtimeExe(tmp)) }
+    writeFileSync(join(tmp, RUNTIME_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`)
+    try { rmSync(dir, { recursive: true, force: true }) } catch (e) {
+      throw new Error(`não consegui substituir ${dir} (o tether está aberto por ele? feche-o e rode de novo): ${e instanceof Error ? e.message : String(e)}`)
+    }
+    renameSync(tmp, dir)
+    for (const name of readdirSync(parent)) {
+      if (join(parent, name) === dir || !/^electron-.+-cookiefuse$/.test(name)) continue
+      try { rmSync(join(parent, name), { recursive: true, force: true }) } catch { /* in use: left for the next install */ }
+    }
+    return { dir, exe: runtimeExe(dir), reused: false, manifest }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+/** The runtime copy for this repo's Electron, under TETHER_HOME (or its default). */
+async function cliRuntime() {
+  const electronExe = require('electron') // the package's main export is the path to electron.exe
+  const electronVersion = JSON.parse(readFileSync(join(root, 'node_modules', 'electron', 'package.json'), 'utf8')).version
+  const r = await prepareCookieRuntime({ home: tetherHome(), sourceDist: dirname(electronExe), electronVersion })
+  process.stdout.write(`runtime com o fuse de cookies ${r.reused ? 'já estava em dia' : 'pronto'}: ${r.dir}\n`)
+  return r
+}
+
 // ---------- CLI ----------
 
 function run(cmd, args, what) {
@@ -217,13 +281,16 @@ function run(cmd, args, what) {
   if (r.status !== 0) { process.stderr.write(`${what}: código ${r.status}\n`); process.exit(r.status ?? 1) }
 }
 
-function cliWindows(action) {
+async function cliWindows(action) {
+  if (action === 'runtime') { await cliRuntime(); return }
   const ps = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(here, 'shortcut.ps1'), '-Action', action]
   if (action === 'install') {
     run(process.execPath, [join(here, 'build.mjs')], 'build do app')
+    await cliRuntime()
     ps.push(
+      // The target stays node_modules' electron.exe: main hands the launch to the copy while it is valid, else runs here.
       '-Target', require('electron'), // the package's main export is the path to electron.exe
-      '-Arguments', '"app\\dist\\main.cjs"',
+      '-Arguments', `"app\\dist\\main.cjs" ${COOKIE_RUNTIME_FLAG}`,
       '-WorkingDirectory', root,
       '-Icon', join(root, 'app', 'dist', 'tether.ico'),
       '-Aumid', AUMID,
@@ -280,11 +347,12 @@ function cli(argv) {
   const action = argv[0]
   const flag = argv.indexOf('--prefix')
   const prefix = flag >= 0 ? resolve(argv[flag + 1] ?? '') : undefined
-  if (!['install', 'uninstall', 'read'].includes(action) || (flag >= 0 && !argv[flag + 1])) {
-    process.stderr.write('uso: node app/install.mjs install | uninstall | read [--prefix <dir>]\n')
+  if (!['install', 'uninstall', 'read', 'runtime'].includes(action) || (flag >= 0 && !argv[flag + 1])) {
+    process.stderr.write('uso: node app/install.mjs install | uninstall | read | runtime [--prefix <dir>]\n')
     process.exit(2)
   }
-  if (process.platform === 'win32') cliWindows(action)
+  if (process.platform === 'win32') cliWindows(action).catch(e => { process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`); process.exit(1) })
+  else if (action === 'runtime') { process.stderr.write('o runtime com o fuse de cookies só existe no Windows por enquanto\n'); process.exit(1) }
   else if (process.platform === 'darwin') cliMac(action, prefix)
   else { process.stderr.write('o atalho só existe no Windows (Menu Iniciar) e no macOS (Tether.app em /Applications ou ~/Applications)\n'); process.exit(1) }
 }

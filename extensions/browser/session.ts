@@ -1,0 +1,120 @@
+// The tabs' session (Tether Browser E2, design §4.1–§4.2 and §12b rules 17–19): one partition for every agent's tab, made
+// once. Every site permission is refused without asking (camera, microphone, location, notifications…), downloads go to the
+// handler main sets (E13: the owner agent's folder, downloads.ts) and are cancelled while none is set, and the cookies are forced to disk on a short interval, after
+// each finished navigation and at quit, so a login survives an abrupt end.
+//
+// Rule 19: the cookies may live on disk only when the running executable has the `EnableCookieEncryption` fuse on (cookies
+// written without it stay in plain text forever, and turning it on later does not encrypt them). The fuse is read from the
+// executable's fuse wire (the same bytes @electron/fuses flips); unreadable counts as off. Off: the partition is in memory
+// (`tether-browser`, no `persist:`), logged once, and `persistentLogins` is false so the interface can say logins are not kept.
+//
+// E3: the network filter (net-filter.ts) is installed here, on the partition, before any tab loads.
+// E4: so is the egress proxy (egress-session.ts): the session is ready only once the proxy listens and the partition points
+// at it; a proxy that fails to start fails the session (no tab ever goes out direct).
+import { app, type DownloadItem, session as electronSession, type Session, type WebContents } from 'electron'
+import { open } from 'node:fs/promises'
+import { startTabEgress, type TabEgress } from './egress-session.ts'
+import { type BlockedRequest, createNetFilter, type NetFilter } from './net-filter.ts'
+import { cookieEncryptionOn, FUSE_SENTINEL, fuseWireAt } from './tab-rules.ts'
+
+export { PERSIST_PARTITION } from './disk-partition.ts'
+import { PERSIST_PARTITION } from './disk-partition.ts'
+export const MEMORY_PARTITION = 'tether-browser'
+const FLUSH_MS = 5_000
+
+export interface TabSession {
+  readonly partition: string
+  readonly session: Session
+  /** False when the partition is in memory (the fuse is off): logins end with the app. */
+  readonly persistentLogins: boolean
+  /** What every tab's webContents gets once (WebRTC without UDP outside the proxy). */
+  prepare(wc: WebContents): void
+  /** The network filter (E3): local network only from a local origin or with a ticket; schemes limited. */
+  readonly net: NetFilter
+  /** The egress proxy every tab connection goes through (E4). */
+  readonly egress: TabEgress
+  /** E13: who takes each download (one handler: main); without one, downloads are cancelled. */
+  onDownload(handler: (item: DownloadItem, page: WebContents) => void): void
+  /** Follows the filter's refusals (one listener: the tab registry). */
+  onBlocked(listener: (b: BlockedRequest) => void): void
+  /** Forces the cookies to disk now (a no-op in memory). */
+  flush(): void
+  dispose(): void
+}
+
+/** The fuse wire of an executable, read in chunks (the sentinel sits somewhere in a ~200 MB file); undefined when not found. */
+export async function readFuseWire(exe: string): Promise<number[] | undefined> {
+  const sentinel = Buffer.from(FUSE_SENTINEL, 'latin1')
+  const chunk = 8 * 1024 * 1024
+  const keep = sentinel.length + 2 + 255
+  const fh = await open(exe, 'r')
+  try {
+    let carry = Buffer.alloc(0)
+    let offset = 0
+    for (;;) {
+      const buf = Buffer.alloc(chunk)
+      const { bytesRead } = await fh.read(buf, 0, chunk, offset)
+      if (bytesRead === 0) return undefined
+      offset += bytesRead
+      const data = Buffer.concat([carry, buf.subarray(0, bytesRead)])
+      const at = data.indexOf(sentinel)
+      if (at >= 0) {
+        if (at + keep > data.length && bytesRead === chunk) { carry = data.subarray(at); continue }
+        return fuseWireAt(data, at)
+      }
+      carry = data.subarray(Math.max(0, data.length - keep))
+    }
+  } finally { await fh.close() }
+}
+
+/** Whether the running executable has cookie encryption on; any failure counts as off. */
+export async function cookieEncryptionInForce(): Promise<boolean> {
+  try { return cookieEncryptionOn(await readFuseWire(process.execPath)) } catch { return false }
+}
+
+export async function createTabSession(persistentLogins: boolean, log: (msg: string) => void): Promise<TabSession> {
+  const partition = persistentLogins ? PERSIST_PARTITION : MEMORY_PARTITION
+  // The HTTP cache would keep page bodies on disk in clear text (the fuse only encrypts cookies): the tabs run without one.
+  const ses = electronSession.fromPartition(partition, { cache: false })
+  if (!persistentLogins) log('fuse EnableCookieEncryption desligado neste executável: guias numa partição em memória, logins não são guardados')
+  ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+  ses.setPermissionCheckHandler(() => false)
+  ses.setDevicePermissionHandler(() => false)
+  ses.setDisplayMediaRequestHandler((_req, callback) => callback({}))
+  // The proxy and the filter are in place before any tab exists: the first request of the first tab already goes through them.
+  const egress = await startTabEgress(ses)
+  let blockedListener: ((b: BlockedRequest) => void) | undefined
+  const net = createNetFilter(ses, egress, log, b => blockedListener?.(b))
+  let downloadHandler: ((item: DownloadItem, page: WebContents) => void) | undefined
+  const onDownload = (_e: unknown, item: DownloadItem, page: WebContents): void => {
+    if (downloadHandler) downloadHandler(item, page)
+    else { item.cancel(); log('download recusado (ninguém recebe downloads)') }
+  }
+  ses.on('will-download', onDownload)
+  const flush = (): void => { if (persistentLogins) ses.cookies.flushStore().catch(() => {}) }
+  const timer = persistentLogins ? setInterval(flush, FLUSH_MS) : undefined
+  timer?.unref?.()
+  const onQuit = (): void => flush()
+  app.on('before-quit', onQuit)
+  let disposed = false
+  return {
+    partition, session: ses, persistentLogins, net, egress,
+    onBlocked: listener => { blockedListener = listener },
+    onDownload: handler => { downloadHandler = handler },
+    prepare: wc => { wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp') },
+    flush,
+    dispose: () => {
+      if (disposed) return
+      disposed = true
+      flush()
+      net.dispose()
+      egress.close().catch(() => {})
+      blockedListener = undefined
+      downloadHandler = undefined
+      if (timer) clearInterval(timer)
+      app.removeListener('before-quit', onQuit)
+      ses.removeListener('will-download', onDownload as never)
+      // The permission handlers stay: a refusal never turns into Electron's default (grant) while views may still exist.
+    },
+  }
+}

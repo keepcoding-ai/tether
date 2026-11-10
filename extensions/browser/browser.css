@@ -1,0 +1,99 @@
+/* The browser extension: the pad "Guias" empty state and the `web` frame (bar with the real title and address, the page area). */
+.br-pad { height: 100%; overflow: auto; }
+.br-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 36px 20px 20px; text-align: center; }
+.br-empty-art { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 14px; background: var(--bg-2); color: var(--fg-dim); border: 1px solid var(--border); }
+.br-empty-art .ph { width: 26px; height: 26px; }
+.br-empty-title { margin: 6px 0 0; font-size: 14px; font-weight: 600; }
+.br-empty-help, .br-empty-off { margin: 0; max-width: 240px; font-size: 12.5px; line-height: 1.5; color: var(--fg-dim); }
+.br-empty-go { margin-top: 4px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg); font: inherit; font-size: 12.5px; cursor: pointer; }
+.br-empty-go:hover { background: var(--bg-3, var(--bg-2)); }
+.br-empty-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.br-web { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.br-web-bar { flex: none; display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 3px 8px; border-bottom: 1px solid var(--border); background: var(--bg-2); font-size: 12px; overflow: hidden; }
+.br-web-owner:empty, .br-web-state:empty { display: none; }
+.br-web-title { flex: none; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.br-web-url { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; }
+.br-web-state { flex: none; color: var(--fg-dim); font-size: 11.5px; }
+.br-web-page { position: relative; flex: 1 1 auto; min-height: 0; background: var(--desk-bg, var(--bg)); }
+.br-web[data-state="not-loaded"] .br-web-page, .br-web[data-state="no-address"] .br-web-page { display: grid; place-items: center; }
+/* E7: who has the tab, its action, and the strip under the bar (help request, ignored click, scripts warning). */
+.br-web-control { flex: none; color: var(--fg-dim); font-size: 11.5px; }
+.br-web-control:empty { display: none; }
+.br-web[data-control="user"] .br-web-control { color: var(--fg); font-weight: 600; }
+.br-web-act, .br-web-notice-act { flex: none; padding: 1px 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--fg); font: inherit; font-size: 11.5px; cursor: pointer; }
+.br-web-act:hover, .br-web-notice-act:hover { background: var(--bg-3, var(--bg-2)); }
+.br-web-act[hidden], .br-web-notice[hidden] { display: none; }
+.br-web-notice { flex: none; display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); font-size: 12px; }
+.br-web-notice-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; white-space: pre-line; }
+.br-web-notice[data-kind="ask"], .br-web-notice[data-kind="expired"] { font-weight: 600; }
+.br-web-notice[data-kind="ask"] .br-web-notice-act { border-color: currentColor; }
+
+/* E9: the owner's colour is only a hue (--br-hue, derived from the slot id); the theme gives saturation and lightness. */
+:root { --br-chip-bg: 38% 26%; --br-chip-fg: 70% 82%; --br-chip-line: 40% 40%; }
+:root[data-theme="light"] { --br-chip-bg: 70% 88%; --br-chip-fg: 70% 26%; --br-chip-line: 45% 68%; }
+@media (prefers-color-scheme: light) { :root:not([data-theme]) { --br-chip-bg: 70% 88%; --br-chip-fg: 70% 26%; --br-chip-line: 45% 68%; } }
+.br-web-owner, .br-web-tab-owner {
+  flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 8px; border-radius: 999px;
+  font: inherit; font-size: 11px; line-height: 16px; cursor: default;
+  background: hsl(var(--br-hue, 0) var(--br-chip-bg)); color: hsl(var(--br-hue, 0) var(--br-chip-fg)); border: 1px solid hsl(var(--br-hue, 0) var(--br-chip-line));
+}
+.br-web-owner { cursor: pointer; }
+.br-web-owner:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.br-web-owner:empty, .br-web-tab-owner:empty { display: none; }
+.br-web-owner[data-ended="true"], .br-web-tab-owner[data-ended="true"] { opacity: .55; background: transparent; color: var(--fg-dim); border-style: dashed; }
+.br-web-nav { flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--fg); cursor: pointer; }
+.br-web-nav .ph, .br-web-nav svg { width: 14px; height: 14px; }
+.br-web-nav:hover:not(:disabled) { background: var(--bg-hover); }
+.br-web-nav:disabled { color: var(--fg-dim); opacity: .45; cursor: default; }
+.br-web-nav:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.br-web-url { padding: 2px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); user-select: text; }
+.br-web-spin { flex: none; width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent); animation: br-spin .8s linear infinite; }
+.br-web-spin[hidden], .br-web-cookies[hidden], .br-web-memory[hidden] { display: none; }
+@keyframes br-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .br-web-spin { animation: none; } }
+.br-web-cookies, .br-web-memory { flex: none; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; line-height: 16px; color: var(--fg-dim); }
+.br-web-memory { color: var(--warn); border-color: currentColor; }
+/* The tab: icon, title, owner chip, activity dot. */
+.br-web-tab { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.br-web-tab-icon, .br-web-tab-globe { flex: none; width: 14px; height: 14px; }
+.br-web-tab-icon[hidden] { display: none; }
+.br-web-tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.br-web-tab-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.br-web-tab-dot[hidden] { display: none; }
+.br-web-tab[data-activity="agent"] .br-web-tab-dot { background: var(--ok); }
+.br-web-tab[data-activity="loading"] .br-web-tab-dot { animation: br-pulse 1s ease-in-out infinite; }
+@keyframes br-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .br-web-tab[data-activity="loading"] .br-web-tab-dot { animation: none; } }
+
+/* E11: the pad "Guias": the controls, the tabs with the person on top, then each agent's. */
+.br-pad-list { display: flex; flex-direction: column; gap: 10px; padding: 8px; font-size: 12px; }
+.br-pad-bar, .br-pad-acts, .br-pad-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.br-pad-btn { padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--fg); font: inherit; font-size: 11.5px; cursor: pointer; }
+.br-pad-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.br-pad-btn:disabled { color: var(--fg-dim); opacity: .5; cursor: default; }
+.br-pad-btn:focus-visible, .br-pad-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.br-pad-filter { justify-content: space-between; padding: 4px 8px; border-radius: 6px; background: var(--bg-2); }
+.br-pad-filter-text { font-weight: 600; }
+.br-pad-section { display: flex; flex-direction: column; gap: 4px; }
+.br-pad-section[data-section="user"] .br-pad-row { border-left: 3px solid var(--accent); }
+.br-pad-head { margin: 0; font-size: 11.5px; font-weight: 600; text-transform: none; color: var(--fg-dim); }
+.br-pad-ghead { display: flex; align-items: center; gap: 8px; }
+.br-pad-agent { cursor: pointer; }
+.br-pad-count { color: var(--fg-dim); font-size: 11px; }
+.br-pad-section[data-ended="true"] .br-pad-row { opacity: .75; }
+.br-pad-row { border-radius: 6px; background: var(--bg-2); }
+.br-pad-open { display: flex; flex-direction: column; align-items: stretch; gap: 1px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.br-pad-open:hover { background: var(--bg-hover); }
+.br-pad-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.br-pad-addr, .br-pad-meta, .br-pad-place { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: 11.5px; }
+.br-pad-addr { font-family: var(--mono, ui-monospace, monospace); }
+.br-pad-meta { display: flex; gap: 6px; }
+.br-pad-row[data-control="user"] .br-pad-meta [data-role="control"] { color: var(--fg); font-weight: 600; }
+
+/* E13: "Baixados" in the pad */
+.br-pad-downloads { margin-top: 8px; }
+.br-pad-dgroup { display: flex; flex-direction: column; gap: 4px; }
+.br-pad-dagent { font-size: 11.5px; color: var(--fg-dim); margin-top: 4px; }
+.br-pad-drow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+.br-pad-dtext { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.br-pad-dtext .br-pad-title, .br-pad-dtext .br-pad-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

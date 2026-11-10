@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { createAppLog } from './app-log.ts'
+import { handOffToCookieRuntime } from './cookie-runtime-main.ts'
 import { ackFromLiveInstance, relaunchArgs, relaunchedFrom } from './relaunch.ts'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -32,10 +33,14 @@ import { EXTENSION_STATE_KEY } from '../shared/ext-migrations.ts'
 import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { extensions as mainExtensions } from '../../extensions/index.main.ts'
 import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
+import { SurfaceManager } from './surfaces.ts'
+import { SurfaceBridge } from './surface-bridge.ts'
+import { AgentTracker } from './agents.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
 import type { TrayCommand } from '../shared/tray.ts'
 import { createTray, type TrayController } from './tray.ts'
+import { TrayNotices } from './tray-notices.ts'
 import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
@@ -71,6 +76,9 @@ const replacedPid = relaunchedFrom(process.argv)
 /** What this launch decides, on disk (<home>/tether-app.log) and on stderr: a Start Menu launch has no console. */
 const appLog = createAppLog(join(home, 'tether-app.log'))
 appLog(`start: ppid ${process.ppid}, exec ${process.execPath}, cwd ${process.cwd()}, args ${JSON.stringify(process.argv.slice(1))}${replacedPid ? `, replaces pid ${replacedPid} (Reiniciar o app)` : ''}`)
+// The Start Menu launch prefers the runtime copy with the cookie fuse on (app/shared/cookie-runtime.ts): handed over, this
+// process leaves before taking the single-instance lock or touching any state.
+if (handOffToCookieRuntime({ home, argv: process.argv, execPath: process.execPath, electronVersion: process.versions.electron, log: appLog })) process.exit(0)
 
 let daemon: DaemonClient | undefined
 let connecting: Promise<void> | undefined
@@ -85,6 +93,10 @@ let restartingDaemon = false
 let tray: TrayController | undefined
 /** What the tray shows: the daemon's slots, kept up to date from the list at connect time and the state events. */
 const slotStates = new Map<string, SlotState>()
+/** The agents extensions see (TetherMain.agents), fed by the same daemon events. */
+const agentTracker = new AgentTracker()
+/** The extensions' notices the tray shows next to the terminals' attention (TetherMain.notices). */
+const trayNotices = new TrayNotices(() => updateTray())
 
 function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
@@ -166,15 +178,16 @@ function connectDaemon(): Promise<void> {
     try {
       const client = await connectOnce()
       daemon = client
-      client.on('state', slot => { slotStates.set(slot.slotId, slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
+      client.on('state', slot => { slotStates.set(slot.slotId, slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
-      client.on('removed', slotId => { slotStates.delete(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('removed', slotId => { slotStates.delete(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('close', () => {
         if (daemon !== client) return
         daemon = undefined
         slotStates.clear()
+        agentTracker.lost()
         updateTray()
         if (quittingAll || quitting) return
         // "Reiniciar serviço" (tray) brings its panels back through the renderer's reconnect path; any other
@@ -206,6 +219,7 @@ async function syncSlots(client: DaemonClient): Promise<void> {
   if (daemon !== client || list.t !== 'ok') return
   slotStates.clear()
   for (const s of list.slots ?? []) slotStates.set(s.slotId, s)
+  agentTracker.reset(list.slots ?? [])
   updateTray()
 }
 
@@ -216,7 +230,7 @@ async function syncPause(client: DaemonClient): Promise<void> {
   win?.webContents.send('tether:event', { t: 'pause', batch: r.pause })
 }
 
-function updateTray(): void { tray?.update(slotStates.values()) }
+function updateTray(): void { tray?.update(slotStates.values(), trayNotices.list()) }
 
 async function request(body: RequestBody): Promise<Reply> {
   if (!daemon) return { t: 'error', id: -1, code: 'bad-request', message: 'sem conexão com o tetherd' }
@@ -404,6 +418,9 @@ type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; 
 // ---------- extensions (F9) ----------
 // The main side of the extensions (extensions/index.main.ts) and the core channels of their settings and listing
 // (app/main/ext-host.ts). The handlers exist from the start; activation runs when the app is ready, before the window.
+// Native views over the interface, owned by the extension that creates them (app/main/surfaces.ts).
+const surfaces = new SurfaceManager({ dist: __dirname, window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
+new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
 const extensionHost = new MainExtensionHost(mainExtensions, {
   home,
   userDir: userHome,
@@ -417,6 +434,9 @@ const extensionHost = new MainExtensionHost(mainExtensions, {
   writeFile: file => { const r = settingsStore.assign([], file); if (!r.ok) appLog('configurações: o settings.json tem erros, nada foi gravado') },
   log: msg => appLog(msg),
   trash: path => shell.trashItem(path),
+  surfaces: owner => surfaces.forOwner(owner),
+  agents: agentTracker,
+  notices: trayNotices,
 })
 
 // ---------- settings registry (the settings page's channels) ----------
@@ -737,6 +757,7 @@ async function restartDaemon(): Promise<void> {
       old.close()
     }
     slotStates.clear()
+    agentTracker.lost()
     updateTray()
     sendConnection({ connected: false, pipe, error: 'reiniciando o tetherd…' })
     // The old daemon answers until its server is closed: wait for the pipe to go quiet before spawning.
@@ -785,7 +806,7 @@ function setupTray(): void {
 Object.defineProperty(globalThis, '__tetherTray', {
   value: {
     windowOpen: () => !!win && !win.isDestroyed(),
-    model: () => (tray ? tray.model() : trayModel([])),
+    model: () => (tray ? tray.model() : trayModel([], trayNotices.list())),
     hasTray: () => !!tray,
     open: (slotId?: string) => openWindow(slotId),
     toggle: () => toggleWindow(),
@@ -834,11 +855,11 @@ ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 // layout.json keeps its previous content in layout.json.bak on every save and falls back to it (layout-file.ts).
 ipcMain.handle('layout:load', () => loadLayoutFile(layoutPath))
 ipcMain.handle('layout:save', (_e, layout: unknown) => { saveLayoutFile(layoutPath, layout) })
-// The renderer asks for this when it reads an older file (v1, v2): layout.json.bak rotates on every save, layout.v<n>.bak
+// The renderer asks for this when it reads an older file (v1, v2, v3): layout.json.bak rotates on every save, layout.v<n>.bak
 // keeps the last content of that version for good (a copy: layout.json itself is not touched until the person changes
 // something), so an older build can be given its file back by hand.
 ipcMain.handle('layout:backup', (_e, version: unknown) => {
-  const n = version === 2 ? 2 : 1
+  const n = version === 2 || version === 3 ? version : 1
   if (existsSync(layoutPath)) copyFileSync(layoutPath, join(home, `layout.v${n}.bak`))
 })
 

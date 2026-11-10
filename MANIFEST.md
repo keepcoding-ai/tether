@@ -35,6 +35,18 @@ Público: um desenvolvedor que abre vários agentes ao mesmo tempo e precisa vol
 
 **Nome oficial: tether** (decidido em 2026-10-29; "agentic-terminal" era o nome da ideia e foi aposentado). O repositório mora em `D:\atrium\workspace\tether` (branch `develop`, modo do Atrium) com `origin` = `git@github.com:keepcoding-ai/tether.git`. O repositório remoto precisa ser criado no GitHub (privado, vazio) antes do primeiro push de `main` e `develop`.
 
+### 2.1 Extensão `browser` (Tether Browser, branch `feat/tether-browser`)
+
+Extensão opcional em `extensions/browser/` (hosts main, renderer e daemon). Guias são `WebContentsView` numa sessão de partição única (`persist:tether-browser` com a trava `EnableCookieEncryption`; `tether-browser` em memória sem ela; sem cache HTTP). O agente chega por um **porteiro** CDP em 127.0.0.1 (lista estrita de métodos, chave por agente em arquivo por painel, eventos filtrados, máquina de controle por guia: agente, pessoa, pausada, órfã) que serve o servidor MCP `tether-browser` vendorizado em `extensions/browser/vendor/` (`npm run browser:vendor`, conferido por manifesto; `.gitattributes` mantém os bytes). Rede: filtro na sessão, proxy de saída, WebRTC sem UDP fora do proxy, pergunta de rede local. Arquivos: downloads por agente e consentimento de upload. Chaves: `serveToAgents`, `evaluate`, `localNetwork`. Desenho: `mind/effort/on/tether/tether-browser-desenho.md` (a §12b vence). E2E: `app.browser-{skeleton,tabs,panel,net,gate,escape,control,pad,files,cache,sw}`.
+
+Pontos novos do **núcleo**, genéricos para qualquer extensão:
+
+- **Mesa de sistema** (`contributes.systemDesks`, `ui.systemDesks.addPane`): mesa fora da fila de mesas, com pílula própria na cápsula; `layout.json` v4.
+- **Superfícies** (`WebContentsView` em painel): criar, posicionar, esconder em 1 px e congelar sob sobreposição (`surface.whileDrawing`).
+- **Agentes para extensões** (`main.agents`): estado dos painéis de agente (vivo, saiu, nome, cor, mesa) no main e na interface.
+- **Selos** no ícone da prancheta e na pílula (contador de guias, pedido de ajuda) e **avisos na bandeja**.
+- **Vários MCP por agente**: `--mcp-config` repetido (bridge e browser juntos); a chave do agente é um arquivo por painel, criado no lançamento e apagado na saída. Sem mudança no protocolo do tetherd.
+
 ## 3. Onde está cada coisa
 
 | O quê | Onde |

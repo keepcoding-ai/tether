@@ -19,6 +19,7 @@ import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
 import { detailsOpen } from './pane-details.ts'
 import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
+import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
 
@@ -58,7 +59,7 @@ export function effectiveStatus(s: SlotState): SlotStatus {
  * else the session title (set by the agent), else the folder name.
  */
 export function panelTitle(s: SlotState): string {
-  return s.name ?? s.title ?? folderName(s.cwd)
+  return slotTitle(s)
 }
 
 /** The unsafe marker (tab and header): the launch carries --dangerously-skip-permissions. */
@@ -180,6 +181,10 @@ const UNKNOWN: OverlaySpec = {
 
 export interface PanelHost {
   getSlot(slotId: string): SlotState | undefined
+  /** The seal a pane shows: the terminal's own merged with the extensions' (seal-rules.ts), and its tooltip lines. Without it, the slot's own. */
+  attentionOf?(slotId: string): { level: 'done' | 'waiting' | undefined; lines: string[] }
+  /** The person clicked the pane's seal: the extensions that raised one hear it (the core focuses the pane when none listens). */
+  onSealClick?(slotId: string): void
   /** The error of the last refused `start` (cleared when the slot comes up). */
   getStartError(slotId: string): SlotError | undefined
   /** A `start` was sent and not answered yet: show "iniciando…" instead of "encerrado". */
@@ -442,9 +447,10 @@ export class TerminalPanel implements IContentRenderer {
     this.head.unsafe.hidden = !s.unsafe
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
-    const bellTip = s.attention === 'waiting' ? 'Esperando você' : s.attention === 'done' ? 'Terminou' : ''
-    this.head.bell.hidden = !s.attention
-    this.head.bell.className = `bell${s.attention ? ` ${s.attention}` : ''}`
+    const att = this.host.attentionOf?.(this.slotId) ?? { level: s.attention, lines: s.attention === 'waiting' ? ['Esperando você'] : s.attention === 'done' ? ['Terminou'] : [] }
+    const bellTip = att.lines.join('\n')
+    this.head.bell.hidden = !att.level
+    this.head.bell.className = `bell${att.level ? ` ${att.level}` : ''}`
     this.head.bell.title = bellTip
     this.head.bell.setAttribute('aria-label', bellTip)
     if (s.restarting) this.setStatus('starting', 'reiniciando…')
@@ -715,6 +721,7 @@ export class SlotTab implements ITabRenderer {
     this.text = document.createElement('span'); this.text.className = 'text'
     this.unsafe = unsafeBadge(false)
     this.attn = document.createElement('span'); this.attn.className = 'attn'
+    this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
     const close = document.createElement('button')
     close.className = 'close'; close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
     close.append(icon('x'))
@@ -751,12 +758,14 @@ export class SlotTab implements ITabRenderer {
     this.text.textContent = this.api.title ?? this.api.id
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.unsafe.hidden = !s?.unsafe
-    const mark = tabMark(s)
-    this.attn.className = `attn${mark ? ` ${mark}` : ''}`
+    const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
+    // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
+    const mark = att.level ? 'attention' : tabMark(s)
+    this.attn.className = `attn${att.level ? ` ${att.level}` : mark ? ` ${mark}` : ''}`
     this.attn.dataset.mark = mark
-    this.attn.title = tabMarkTip(s)
-    this.element.dataset.attention = s?.attention ?? ''
-    this.element.title = s ? panelTooltip(s) + (s.attention === 'waiting' ? '\nEsperando você' : s.attention === 'done' ? '\nTerminou' : '') : `Slot ${this.api.id} (desconhecido)`
+    this.attn.title = att.level ? att.lines.join('\n') : tabMarkTip(s)
+    this.element.dataset.attention = att.level ?? ''
+    this.element.title = s ? panelTooltip(s) + att.lines.map(l => `\n${l}`).join('') : `Slot ${this.api.id} (desconhecido)`
   }
 
   /**

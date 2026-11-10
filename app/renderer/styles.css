@@ -147,7 +147,7 @@ body { display: flex; flex-direction: column; }
 .seg .busy-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--ok); opacity: .7; box-shadow: 0 0 0 1.5px color-mix(in srgb, #fff 75%, transparent); }
 .seg.gav { color: var(--fg); padding: 0 11px; }
 .seg.gav .ph { width: 14px; height: 14px; }
-#btn-drawer[aria-expanded="true"] { background: var(--bg-hover); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .25); }
+#btn-drawer[aria-expanded="true"], .seg.sys[aria-pressed="true"] { background: var(--bg-hover); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .25); }
 #desk-switch .sw-div { width: 1px; height: 16px; margin: 0 3px; background: var(--border); flex: none; }
 .seg.desk-more { position: relative; color: var(--fg-dim); font-weight: 600; padding: 0 10px; }
 .seg.desk-more:hover { color: var(--fg); }
@@ -757,6 +757,7 @@ dialog.ask .ctx-icon .ph { width: 20px; height: 20px; }
 dialog.ask .ctx-text { flex: 1; min-width: 0; }
 dialog.ask .ctx-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 dialog.ask .ctx-line { font: 11.5px var(--mono); color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+dialog.ask .ask-image { display: block; max-width: 100%; max-height: 220px; margin: 0 auto 14px; border: 1px solid var(--border); border-radius: 6px; object-fit: contain; }
 dialog.ask .ctx-status { flex: none; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
 dialog.ask .ctx-status.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
 dialog.ask .ctx-status.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, transparent); }
@@ -1119,6 +1120,18 @@ dialog.term-theme footer .spacer { flex: 1; }
 #dock.desk-set { position: relative; }
 .desk-set > .desk-layer { position: absolute; inset: 0; }
 .desk-set > .desk-layer.inactive { visibility: hidden; pointer-events: none; }
+/* Attention on a tab: the agent finished its turn (green ring) or waits for the user (amber, pulsing once). */
+.sb-badge { position: absolute; top: 5px; right: 5px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; pointer-events: none; }
+.sb-badge.plain { background: var(--accent); color: #fff; }
+.sb-badge.waiting { background: var(--warn); color: #1a1a1a; }
+.sb-badge.pip { min-width: 0; width: 9px; height: 9px; padding: 0; top: 8px; right: 8px; border-radius: 50%; box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 30%, transparent); }
+.sb-badge.pip.plain { box-shadow: none; }
+.cnt.sys-badge { margin-left: 6px; box-shadow: none; }
+.cnt.sys-badge.plain { background: var(--accent); color: #fff; }
+.cnt.sys-badge.done { background: var(--ok); color: #1a1a1a; }
+.cnt.sys-badge.waiting { background: var(--warn); color: #1a1a1a; }
+.cnt.sys-badge.pip { min-width: 0; width: 8px; height: 8px; padding: 0; }
+
 /* The tab dot: attention = solid orange (same --x-alert as the desks' badge); busy = quiet green, smaller, no animation. */
 .tether-tab .attn { display: none; width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .tether-tab .attn:is(.attention, .done, .waiting) { display: inline-block; background: var(--x-alert); }

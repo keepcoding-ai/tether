@@ -13,6 +13,8 @@ export interface LaunchPlan {
   cwd: string
   /** The COMPLETE environment for the child (the adapter starts from process.env and cleans what it must). */
   env: Record<string, string>
+  /** MCP server names already injected into this plan, name -> config file (bookkeeping for collision checks; absent until a declared injection). */
+  mcpServers?: Record<string, string>
 }
 
 export interface PlanInput {

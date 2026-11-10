@@ -15,7 +15,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -144,6 +144,8 @@ test('drawer: toggle, quick shell, output while closed, Esc rule, backdrop, move
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpdir(), 'tether-drawer-'))
+  // The browser extension adds a system desk and a left pad of its own (its own E2E); this one counts without them.
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['browser'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
