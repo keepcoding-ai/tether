@@ -36,7 +36,7 @@ import type { DialogSpec } from '../../app/shared/dialog.ts'
 import {
   ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, buildPad, endedTabIds, hostOf, isEnded, type LastAction, lastActionText,
   PAD_NONE_OF_AGENT, PAD_SHOW_ALL, PAD_WITH_YOU, type PadAgentInfo, padBadge, padCloseAgent, padCloseEnded, padFiltered, type PadModel, padResumeAgent,
-  logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, type PadTab, padWhere, resolveAgent, shortAddress,
+  logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, pillBadgeCount, type PadTab, padWhere, resolveAgent, shortAddress,
 } from './pad-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
 import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, serveModeOf, shortName, type ServeMode } from './rules.ts'
@@ -666,7 +666,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       }
     }
     const waiting = [...controls.values()].filter(c => c.holder === 'user' && (c.ask || c.askExpired))
-    const badge = waiting.length ? { count: waiting.length, attention: true, tooltip: sealText(waiting[0]!, panels.get(paneIdOf(waiting[0]!.tabId))?.saved?.ownerSlotId) } : undefined
+    const inDesk = (c: ControlView): boolean => !!ui.panes.find(paneIdOf(c.tabId)) && ui.panes.describe(paneIdOf(c.tabId))?.place === 'Browser'
+    const badge = waiting.length ? { count: pillBadgeCount(waiting.map(c => ({ paneInBrowserDesk: inDesk(c) }))), attention: true, tooltip: sealText(waiting[0]!, panels.get(paneIdOf(waiting[0]!.tabId))?.saved?.ownerSlotId) } : undefined
     ui.systemDesks.setBadge(DESK_ID, badge)
     refreshPad()
   }

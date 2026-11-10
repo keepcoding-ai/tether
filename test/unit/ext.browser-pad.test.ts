@@ -1,9 +1,10 @@
 // The pad "Guias" rules (extensions/browser/pad-rules.ts, design §5.3, §12a): the tabs with the person on top, the groups by agent,
 // the counts, the sentence for the agent's last action, and the number on the icon.
+import { pillMark } from '../../app/renderer/seal-rules.ts'
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ACTION_FRESH_MS, actionKindOf, buildPad, endedTabIds, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, padCloseEnded, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
+  ACTION_FRESH_MS, actionKindOf, buildPad, endedTabIds, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, pillBadgeCount, padCloseEnded, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
 } from '../../extensions/browser/pad-rules.ts'
 
 const tab = (tabId: string, ownerSlotId: string, over: Partial<PadTab> = {}): PadTab =>
@@ -134,5 +135,28 @@ describe('browser pad: logout of every account (E14)', () => {
     assert.equal(d.title, 'Sair de todas as contas')
     assert.equal(d.defaultChoice, 'cancel')
     assert.equal(d.choices.find(c => c.id === 'logout')?.tone, 'destructive')
+  })
+})
+
+// V2b: one help request showed 2 on the Browser pill and 1 on the Mesa pill and the pad icon. The core adds the desk's pane seals
+// and the extension's badge (pillMark); the request's tab pane is sealed in the Browser desk, so the badge must not count it again.
+describe('browser: the Browser pill counts requests, not seals', () => {
+  const one = [{ paneInBrowserDesk: true }]
+  test('a request whose tab pane is in the Browser desk adds nothing to the badge; the pill says 1', () => {
+    assert.equal(pillBadgeCount(one), 0)
+    const mark = pillMark({ done: 0, waiting: 1 }, { count: pillBadgeCount(one), attention: true, tooltip: 't' })
+    assert.equal(mark?.text, '1')
+    assert.equal(mark?.tone, 'waiting')
+  })
+  test('with several requests the pill counts each once; one whose pane left the desk is counted by the badge, not twice', () => {
+    const three = [{ paneInBrowserDesk: true }, { paneInBrowserDesk: true }, { paneInBrowserDesk: false }]
+    assert.equal(pillBadgeCount(three), 1)
+    // The desk seals two panes; the third request sits on another desk, so only the badge counts it here.
+    assert.equal(pillMark({ done: 0, waiting: 2 }, { count: pillBadgeCount(three), attention: true })?.text, '3')
+    assert.equal(pillBadgeCount([]), 0)
+  })
+  test('nothing in the desk but a request pending: the pill stays lit as a pip', () => {
+    const mark = pillMark({ done: 0, waiting: 0 }, { count: pillBadgeCount([]), attention: true, tooltip: 't' })
+    assert.deepEqual(mark, { text: '', tone: 'waiting', lines: ['t'] })
   })
 })
