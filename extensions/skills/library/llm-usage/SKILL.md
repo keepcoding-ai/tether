@@ -1,5 +1,6 @@
 ---
 name: llm-usage
+argument-hint: "[--json] [--fresh]"
 description: Obter e interpretar os parâmetros de uso de LLM da plataforma do agente (limites, janelas, renovação, créditos). Use quando precisar saber quanto resta do que a plataforma deixa usar, ou quando o assunto for limite, consumo ou custo de LLM.
 ---
 
