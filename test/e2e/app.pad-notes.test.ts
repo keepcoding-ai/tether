@@ -154,10 +154,12 @@ test('notes manager: a note left loose by a closed panel is found, moved, closed
     assert.ok(m.rows[0]!.owner.startsWith('antes em '), `owner says where it was: ${m.rows[0]!.owner}`)
     await page.waitForFunction(() => window.__tether.notesManager()[0]?.preview.includes('lembrar do bug do cwd'))
     await page.screenshot({ path: join(shots, '2-gerenciador-soltas.png') })
-    // Back to the frame by the manager's own button; the panel pad's "⋯" offers the manager, on Soltas while a note is loose.
-    await page.click(`${inPad} .pn-back`)
-    await page.waitForFunction(() => !window.__tether.notesManagerOn())
+    // The frame's tab bar stays above the manager, its switch lit; it takes the pad back to the frame. Then the panel pad's
+    // "⋯" offers the manager, on Soltas while a note is loose.
     await page.evaluate(id => window.__tether.activatePanel(id), b)
+    await page.waitForSelector(`${shown}[data-panel="${b}"] .tab-act[data-action="notes-manager"][aria-pressed="true"]`, { state: 'visible' })
+    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="notes-manager"]`)
+    await page.waitForFunction(() => !window.__tether.notesManagerOn())
     await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="pane-menu"]`)
     await page.waitForSelector('#ctx-menu')
     await page.screenshot({ path: join(shots, '3-menu-com-solta.png') })
@@ -209,7 +211,7 @@ test('notes manager: a note left loose by a closed panel is found, moved, closed
 
     // ---- 7. the keyboard: Ctrl+Shift+M switches the pad from inside a terminal (Ctrl+K chords pass to the shell there)
     //         and back; Ctrl+K N outside; Escape in the manager goes back to the frame ----
-    await page.click(`${inPad} .pn-back`)
+    await page.click(`${shown} .tab-act[data-action="notes-manager"]`)
     await page.waitForFunction(() => !window.__tether.notesManagerOn())
     assert.equal((await page.evaluate(() => window.__tether.notesManager())).length, 0, 'no manager on screen in the frame state')
     await page.evaluate(id => window.__tether.activatePanel(id), b)
@@ -237,6 +239,14 @@ test('notes manager: a note left loose by a closed panel is found, moved, closed
     assert.equal(await page.locator('#dock .tether-tab.notes-manager').count(), 0, 'the manager is not a tab on the desk')
     assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).some(id => id.startsWith('notes-manager:')), 'no manager pane exists')
     await page.screenshot({ path: join(shots, '8-botao-fixo.png') })
+    // The manager starts under the tab bar, which is still on screen with the switch lit; a tab clicked goes back to the frame.
+    const barBox = (await page.locator(`${shown}[data-panel="${b}"] .dv-tabs-and-actions-container`).first().boundingBox())!
+    const mgrBox = (await page.locator(inPad).boundingBox())!
+    assert.ok(barBox.height > 0 && Math.abs(mgrBox.y - (barBox.y + barBox.height)) <= 1, `the manager starts where the tab bar ends (${mgrBox.y} vs ${barBox.y + barBox.height})`)
+    await page.click(`${shown}[data-panel="${b}"] .dv-tabs-container .dv-tab`)
+    await page.waitForFunction(() => !window.__tether.notesManagerOn(), undefined, { timeout: 5_000 })
+    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="notes-manager"]`)
+    await page.waitForFunction(() => window.__tether.notesManagerOn(), undefined, { timeout: 5_000 })
     // Enter on a live note takes the pad back to that note's frame.
     await page.evaluate(k => window.__tether.notesManagerSelect(k), key(b))
     await page.locator(`${inPad} .pn-list`).focus()
