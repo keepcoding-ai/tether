@@ -1474,6 +1474,36 @@ function reviveFrame(key: string): boolean {
   return true
 }
 
+/**
+ * A loose frame's menu (the tab menu of a panel that has no tab): bring it back, close the frame. The actions come from
+ * the caller, which tells the person what happened.
+ */
+function showLooseFrameMenu(key: string, x: number, y: number, act: { revive(): void; close(): void }, opener?: HTMLElement): void {
+  const v = frameRevivable(key)
+  showContextMenu(x, y, [
+    { icon: 'arrow-counter-clockwise', label: 'Trazer de volta', disabled: !v.ok, run: () => act.revive() },
+    SEP,
+    { icon: 'x', label: 'Fechar quadro', run: () => act.close() },
+  ], opener)
+}
+
+/**
+ * The drag of a loose frame's panel, as its tab's would be: the panel comes back (without opening its pad, so nothing
+ * moves under the pointer) and the drag carries it, so dropping it anywhere a tab goes places it there.
+ */
+function beginLooseFrameDrag(key: string, ev: DragEvent): boolean {
+  const o = frameOwnerOf(key)
+  if (!o) return false
+  if (!findPanel(o.panelId)) {
+    const entry = liveTypeOf(paneTypes, o.panelId)?.closedEntry?.(o.panelId)
+    if (!entry?.reopen()) return false
+    toldLoose?.delete(key)
+  }
+  const ok = beginPaneDrag(o.panelId, ev)
+  queueMicrotask(afterFrames)
+  return ok
+}
+
 /** Brings a live frame forward: its panel comes to the front and its pad opens. A loose frame has nowhere to go. */
 function showFrame(key: string): void {
   const o = frameOwnerOf(key)
@@ -3953,6 +3983,8 @@ function activateRendererExtensions(): void {
           close: keys => closeFramesLive(keys),
           restore: snap => restoreFramesLive(snap),
           show: key => showFrame(key),
+          menu: (key, x, y, act, opener) => showLooseFrameMenu(key, x, y, act, opener),
+          beginDrag: (key, ev) => beginLooseFrameDrag(key, ev),
         },
       },
       keybindings: {

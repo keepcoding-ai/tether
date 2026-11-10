@@ -419,6 +419,10 @@ export interface TetherUi {
       restore(snapshot: FrameSnapshot): void
       /** A live frame to the front: its panel comes forward and its pad opens. */
       show(key: string): void
+      /** A loose frame's menu (its panel has no tab to right-click): "Trazer de volta" and "Fechar quadro" run `act`. */
+      menu(key: string, x: number, y: number, act: { revive(): void; close(): void }, opener?: HTMLElement): void
+      /** From a `dragstart`: the loose frame's panel comes back and the drag carries it like its tab's. False when it cannot. */
+      beginDrag(key: string, ev: DragEvent): boolean
     }
   }
   /**

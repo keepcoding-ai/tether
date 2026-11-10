@@ -1,9 +1,11 @@
 // The manager of the panel pad ("Painéis da mesa"): the pad's second state (frame-pads/manager-slot.ts). Its item is the
 // PANEL: one row per panel of the desk on screen that has a frame in the pad, plus the loose frames (panel closed) that
 // belonged to this desk. What the frame holds is on the row only to tell which panel it is (chips: the panes' names).
-// A row does what the panel's tab does, nothing more: click brings the panel up; drag starts the tab's own drag (any
-// place that takes a tab takes the row); right-click opens the tab's own menu (Mover…, Copiar link, Fechar painel…, the
-// agent's rows). A loose row offers "Trazer de volta" when the panel can come back (its session still exists) and
+// A loose frame is a panel too (one whose tab is closed), not another kind of thing: every row does what the panel's tab
+// does. Click selects it (and brings a live panel up); drag starts the tab's own drag (any place that takes a tab takes
+// the row; a loose panel comes back where it is dropped); right-click, the "⋯" at the row's corner (always visible, so
+// the menu is found without knowing the right button) and the menu key open the tab's menu (a live panel's own; a loose
+// one's: Trazer de volta, Fechar quadro). A loose row also offers "Trazer de volta" when the panel can come back (its session still exists) and
 // "Fechar quadro" always; when it cannot, the row says why. No preview: the list is the whole manager. Esc and the
 // header's switch take the pad back to the frame; Enter on a live row brings the panel up and goes back too.
 // The model is app/renderer/panel-frames.ts; the frames live in the core (TetherUi.pads.panelFrames).
@@ -26,6 +28,10 @@ export interface ManagerHost {
   tabMenu(panelId: string, x: number, y: number): void
   /** Starts the panel's tab drag from the row's dragstart. */
   beginDrag(panelId: string, ev: DragEvent): boolean
+  /** A loose frame's menu (Trazer de volta, Fechar quadro), at page coordinates. */
+  looseMenu(key: string, x: number, y: number, opener?: HTMLElement): void
+  /** A loose frame's drag: its panel comes back and the drag carries it like its tab's. */
+  beginLooseDrag(key: string, ev: DragEvent): boolean
   revivable(key: string): { ok: boolean; reason: string }
   revive(key: string): boolean
   /** Closes loose frames (the host tells the person). */
@@ -71,6 +77,8 @@ export class PanelPadManager implements ManagerView {
   private filter: FrameFilter = 'all'
   private selected: string | undefined
   private rows: PanelFrameRow[] = []
+  /** A row is being dragged: redraws wait for its dragend (removing the source would cancel the drag). */
+  private dragging = false
   private readonly list: HTMLElement
   private readonly chips: Record<FrameFilter, HTMLButtonElement>
   private readonly clean: HTMLButtonElement
@@ -148,6 +156,7 @@ export class PanelPadManager implements ManagerView {
   }
 
   private renderList(): void {
+    if (this.dragging) return
     const hadFocus = this.list.contains(document.activeElement)
     const out: HTMLElement[] = []
     if (this.rows.length === 0) {
@@ -191,7 +200,21 @@ export class PanelPadManager implements ManagerView {
     const meta = el('span', 'pf-r-kind', state ? `${kind} · ${state}` : kind)
     if (agent?.alive) meta.classList.add('live')
     const when = el('span', 'pf-r-meta', whenLabel(r.updatedAt, Date.now()))
-    head.append(ic, name, meta, when)
+    const more = el('button', 'pf-r-more')
+    more.type = 'button'
+    more.dataset.action = 'menu'
+    more.title = 'Menu do painel'
+    more.setAttribute('aria-label', 'Menu do painel')
+    more.setAttribute('aria-haspopup', 'menu')
+    more.draggable = false
+    more.append(icon('dots-three'))
+    more.addEventListener('click', ev => {
+      ev.stopPropagation()
+      this.select(r.key)
+      const box = more.getBoundingClientRect()
+      this.menu(r, box.left, box.bottom, more)
+    })
+    head.append(ic, name, meta, when, more)
     // Line 2: where (folder) for a live panel; origin and viability for a loose one.
     const sub = el('div', 'pf-r-sub')
     if (r.loose) {
@@ -238,17 +261,25 @@ export class PanelPadManager implements ManagerView {
     // What the tab does, the row does.
     b.addEventListener('click', () => { this.select(r.key); if (!r.loose) this.host.reveal(r.panelId); this.list.focus({ preventScroll: true }) })
     b.addEventListener('dblclick', () => { if (!r.loose) { this.host.reveal(r.panelId); this.host.exit() } })
-    b.addEventListener('contextmenu', ev => { if (r.loose) return; ev.preventDefault(); ev.stopPropagation(); this.select(r.key); this.host.tabMenu(r.panelId, ev.clientX, ev.clientY) })
-    if (!r.loose) {
-      b.draggable = true
-      b.addEventListener('dragstart', ev => {
-        if (!this.host.beginDrag(r.panelId, ev)) { ev.preventDefault(); return }
-        this.select(r.key)
-        b.classList.add('dragging')
-      })
-      b.addEventListener('dragend', () => b.classList.remove('dragging'))
-    }
+    b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.select(r.key); this.menu(r, ev.clientX, ev.clientY) })
+    b.draggable = true
+    b.addEventListener('dragstart', ev => {
+      if ((ev.target as HTMLElement | null)?.closest('button')) { ev.preventDefault(); return }
+      // A loose panel comes back on dragstart: hold the redraw so the row being dragged stays in the page.
+      this.dragging = true
+      const ok = r.loose ? this.host.beginLooseDrag(r.key, ev) : this.host.beginDrag(r.panelId, ev)
+      if (!ok) { this.dragging = false; ev.preventDefault(); return }
+      this.selected = r.key
+      b.classList.add('dragging')
+    })
+    b.addEventListener('dragend', () => { b.classList.remove('dragging'); this.dragging = false; this.refresh() })
     return b
+  }
+
+  /** The row's menu: the panel's tab menu, whether its tab is open or not. */
+  private menu(r: PanelFrameRow, x: number, y: number, opener?: HTMLElement): void {
+    if (r.loose) this.host.looseMenu(r.key, x, y, opener)
+    else this.host.tabMenu(r.panelId, x, y)
   }
 
   private current(): PanelFrameRow | undefined { return this.rows.find(r => r.key === this.selected) }
@@ -269,7 +300,7 @@ export class PanelPadManager implements ManagerView {
       if (r?.loose) { ev.preventDefault(); this.host.close([r.key], 'one') }
     } else if (ev.key === 'ContextMenu' || (ev.shiftKey && ev.key === 'F10')) {
       const r = this.current()
-      if (r && !r.loose) { ev.preventDefault(); const box = this.list.querySelector<HTMLElement>(`.pf-row[data-key="${CSS.escape(r.key)}"]`)?.getBoundingClientRect(); this.host.tabMenu(r.panelId, box?.left ?? 0, box?.bottom ?? 0) }
+      if (r) { ev.preventDefault(); const box = this.list.querySelector<HTMLElement>(`.pf-row[data-key="${CSS.escape(r.key)}"]`)?.getBoundingClientRect(); this.menu(r, box?.left ?? 0, box?.bottom ?? 0) }
     }
   }
 

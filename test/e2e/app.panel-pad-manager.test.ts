@@ -170,6 +170,19 @@ test('panel pad manager: the panels of the desk with a frame; a loose one comes 
     await page.click(`${row(key(a))} .pf-r-head`)
     await sleep(200)
     assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(a), 'a click on a loose row brings nothing')
+    // A loose row is a panel too: an always-visible ⋯ and a right-click menu with its two actions.
+    assert.ok(await page.locator(`${row(key(a))} .pf-r-more[data-action="menu"]`).isVisible(), 'the loose row shows its ⋯')
+    const looseMenu = async (open: () => Promise<void>, how: string): Promise<void> => {
+      await open()
+      await page.waitForSelector('#ctx-menu')
+      const its = await page.locator('#ctx-menu li[role="menuitem"]').allInnerTexts()
+      assert.ok(its.some(t => t.includes('Trazer de volta')) && its.some(t => t.includes('Fechar quadro')), `the loose row's menu (${how}): ${JSON.stringify(its)}`)
+      await page.keyboard.press('Escape')
+      await page.waitForSelector('#ctx-menu', { state: 'detached', timeout: 2_000 })
+    }
+    await looseMenu(() => page.locator(row(key(a))).click({ button: 'right' }), 'right-click')
+    await looseMenu(() => page.click(`${row(key(a))} .pf-r-more[data-action="menu"]`), '⋯')
+    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(a), 'opening the menu brings nothing back')
 
     // ---- 3. Trazer de volta: A's pane comes back, its frame with it ----
     await page.click(`${row(key(a))} [data-action="revive"]`)
@@ -194,6 +207,14 @@ test('panel pad manager: the panels of the desk with a frame; a loose one comes 
     await page.screenshot({ path: join(shots, '4-menu-da-guia.png') })
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu', { state: 'detached', timeout: 2_000 }).catch(() => {})
+    // The ⋯ of a live row opens the same tab menu.
+    await ensureManager(page)
+    await page.click(`${row(key(a))} .pf-r-more[data-action="menu"]`)
+    await page.waitForSelector('#ctx-menu')
+    const moreItems = await page.locator('#ctx-menu li[role="menuitem"]').allInnerTexts()
+    assert.ok(moreItems.some(t => t.includes('Fechar painel')), `the ⋯ of a live row: ${JSON.stringify(moreItems)}`)
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#ctx-menu', { state: 'detached', timeout: 2_000 })
 
     // ---- 5. dragging the row to the desk's right edge splits the desk, like the tab ----
     await ensureManager(page)
@@ -215,6 +236,20 @@ test('panel pad manager: the panels of the desk with a frame; a loose one comes 
     await page.waitForFunction(() => (window.__tether.panelPadManager()[0]?.rows.length ?? -1) === 0, undefined, { timeout: 5_000 })
     await page.screenshot({ path: join(shots, '6-outra-mesa.png') })
     await page.evaluate(d => window.__tether.switchDesk(d), d1)
+
+    // ---- 6b. dragging a loose row onto the desk's edge brings the panel back there ----
+    await page.evaluate(id => window.__tether.activatePanel(id), a)
+    await closePane(page, a)
+    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 1)
+    await page.evaluate(k => window.__tether.openPanelPadManager('all', k), key(a))
+    await page.waitForSelector(row(key(a)))
+    assert.equal(await page.locator(row(key(a))).getAttribute('draggable'), 'true', 'a loose row is draggable')
+    const target2 = page.locator('#dock .dv-dockview').first()
+    const box2 = (await target2.boundingBox())!
+    await page.locator(row(key(a))).dragTo(target2, { targetPosition: { x: box2.width - 12, y: box2.height / 2 } })
+    await page.waitForFunction(id => window.__tether.panelIds().includes(id), a, { timeout: 5_000 })
+    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0, undefined, { timeout: 5_000 })
+    await page.screenshot({ path: join(shots, '6b-solto-arrastado.png') })
 
     // ---- 7. a loose row's Fechar quadro: frame and record gone ----
     await page.evaluate(id => window.__tether.activatePanel(id), a)

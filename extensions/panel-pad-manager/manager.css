@@ -30,7 +30,7 @@
 .pf-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
 .pf-row.focused .pf-r-title { color: var(--accent); }
 .pf-row.dragging { opacity: .45; }
-.pf-row.loose { cursor: default; background: color-mix(in srgb, var(--warn) 7%, transparent); }
+.pf-row.loose { background: color-mix(in srgb, var(--warn) 7%, transparent); }
 .pf-row.loose:hover { background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .pf-r-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .pf-r-icon { display: inline-flex; flex: none; color: var(--fg-dim); }
@@ -39,6 +39,9 @@
 .pf-r-kind { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
 .pf-r-kind.live { color: var(--ok); }
 .pf-r-meta { flex: none; font-size: 12px; color: var(--fg-dim); white-space: nowrap; }
+.pf-r-more { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; margin: -2px -4px -2px 0; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--fg-dim); cursor: pointer; }
+.pf-r-more svg { width: 16px; height: 16px; }
+.pf-r-more:hover, .pf-r-more[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
 .pf-r-sub { padding-left: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
 .pf-r-sub:empty { display: none; }
 .pf-row.loose .pf-r-sub { color: var(--warn); }

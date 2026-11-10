@@ -19,7 +19,7 @@ const TOAST_MS = 8000
 export function activate(ui: TetherUi): IDisposable[] {
   const panels = new Set<PanelPadManager>()
 
-  const host: Omit<ManagerHost, 'exit'> = {
+  const host = {
     tree: () => ui.pads.panelFrames.tree(),
     agent: paneId => ui.agents.get(paneId) ?? ui.agents.list().find(a => a.paneId === paneId),
     describe: paneId => ui.panes.describe(paneId),
@@ -37,7 +37,9 @@ export function activate(ui: TetherUi): IDisposable[] {
       const n = snap.entries.length
       if (n) showToast({ text: what === 'one' ? 'Quadro fechado' : n === 1 ? '1 quadro vazio limpo' : `${n} quadros vazios limpos`, ms: TOAST_MS })
     },
-  }
+  } as Omit<ManagerHost, 'exit'>
+  host.looseMenu = (key, x, y, opener) => ui.pads.panelFrames.menu(key, x, y, { revive: () => { host.revive(key) }, close: () => host.close([key], 'one') }, opener)
+  host.beginLooseDrag = (key, ev) => ui.pads.panelFrames.beginDrag(key, ev)
 
   /** The pad to the manager, on a filter, with a row selected when given. */
   function show(filter: FrameFilter, key?: string): void {
