@@ -22,6 +22,7 @@ import type { PaneType } from './pane-registry.ts'
 import type { OpenFileOptions } from './file-open.ts'
 import type { ProjectFolder } from './workspace.ts'
 import type { AgentUi } from './agent-ui.ts'
+import type { ProfileOption } from './profile-options.ts'
 import type { AttentionHandle, AttentionRaise, Badge } from './seal-rules.ts'
 import type { Brand } from '../shared/brand.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
@@ -310,6 +311,11 @@ export interface TetherUi {
      * and returns its rows (none: an empty list); it runs each time the menu opens.
      */
     tabMenu(provider: (slotId: string) => ContextMenuEntry[]): IDisposable
+  }
+  /** The profile editor. */
+  profiles: {
+    /** Adds a checkbox to the editor for AI-agent profiles; the value lives in `profile.extensions.<this id>.<key>`. */
+    registerOption(option: ProfileOption): IDisposable
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */

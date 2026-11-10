@@ -5,6 +5,7 @@ import type { Brand } from '../../app/shared/brand.ts'
 import type { AgentContribution, AgentMcp } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
+import type { Profile } from '../core/profile.ts'
 import type { SlotState } from './protocol.ts'
 
 export type { AgentContribution, AgentMcp }
@@ -44,6 +45,8 @@ export interface TetherDaemon {
   doctor: { register(check: () => Promise<DaemonCheck>): IDisposable }
   /** Reads a key of <home>/settings.json (undefined when absent or unreadable). */
   settings: { get<T>(key: string): T | undefined }
+  /** The launch profiles (<home>/profiles.json, re-read when it changes on disk). */
+  profiles: { get(id: string): Profile | undefined }
   /** tetherd.log, prefixed with the extension's id. */
   log(msg: string): void
   onSlot(listener: (ev: { kind: SlotEventKind; slot: SlotState }) => void): IDisposable

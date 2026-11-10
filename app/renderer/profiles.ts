@@ -10,6 +10,7 @@ import type { ProfileDeleted, ProfileSaved } from '../shared/api.ts'
 import { formatArgs, parseArgs } from './args.ts'
 import { askDialog } from './dialog.ts'
 import { icon, KIND_ICON } from './icons.ts'
+import { profileOptions } from './profile-options.ts'
 import { UNSAFE_LABEL, UNSAFE_TOOLTIP } from './panel.ts'
 import { deleteProfileSituation } from './situations.ts'
 
@@ -133,6 +134,8 @@ export class ProfileManager {
   private readonly host: ManagerHost
   /** The profile being edited (id), or undefined for a new one. */
   private editing: string | undefined
+  /** The edited profile's `extensions` as stored: what the editor has no checkbox for (an extension that is off) is saved back as it was. */
+  private extensions: NonNullable<Profile['extensions']> = {}
   private savedTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(host: ManagerHost) {
@@ -188,20 +191,21 @@ export class ProfileManager {
     this.editing = p.id
     this.fill({
       id: p.id, name: p.name, agent: p.agent, args: displayArgs(p), env: p.env ?? {}, cwd: p.cwd ?? '',
-      shell: p.agent === 'shell' && p.shell ? p.shell.command : '', default: !!p.default,
+      shell: p.agent === 'shell' && p.shell ? p.shell.command : '', default: !!p.default, extensions: p.extensions ?? {},
     })
     this.refresh()
   }
 
   private startNew(agent: ProfileAgent = agentOrder()[0]!): void {
     this.editing = undefined
-    this.fill({ id: '', name: '', agent, args: [], env: {}, cwd: '', shell: '', default: false })
+    this.fill({ id: '', name: '', agent, args: [], env: {}, cwd: '', shell: '', default: false, extensions: {} })
     this.refresh()
     this.field<HTMLInputElement>('name').focus()
   }
 
-  private fill(v: { id: string; name: string; agent: ProfileAgent; args: string[]; env: Record<string, string>; cwd: string; shell: string; default: boolean }): void {
+  private fill(v: { id: string; name: string; agent: ProfileAgent; args: string[]; env: Record<string, string>; cwd: string; shell: string; default: boolean; extensions: NonNullable<Profile['extensions']> }): void {
     this.clearErrors()
+    this.extensions = structuredClone(v.extensions)
     this.field<HTMLInputElement>('id').value = v.id
     this.field<HTMLInputElement>('name').value = v.name
     this.renderAgentRadios(v.agent)
@@ -210,6 +214,7 @@ export class ProfileManager {
     this.field<HTMLInputElement>('args').value = formatArgs(v.args)
     this.field<HTMLInputElement>('cwd').value = v.cwd
     this.field<HTMLInputElement>('default').checked = v.default
+    this.renderOptions()
     const env = document.getElementById('profile-env')!
     env.replaceChildren()
     for (const [k, val] of Object.entries(v.env)) this.addEnvRow(k, val)
@@ -244,6 +249,7 @@ export class ProfileManager {
     const agent = this.agent()
     for (const el of this.form.querySelectorAll<HTMLElement>('[data-only]')) el.hidden = el.dataset.only !== agent
     document.getElementById('profile-default-label')!.textContent = `Perfil padrão de ${AGENT_LABEL[agent]} (pré-selecionado em Novo painel)`
+    document.getElementById('profile-ext-options')!.hidden = agent === 'shell'
     this.field<HTMLInputElement>('args').placeholder = agent === 'shell' ? '--login -i' : agentUi(agent)?.argsPlaceholder ?? ''
   }
 
@@ -308,7 +314,42 @@ export class ProfileManager {
       if (command) { input.shell = { command, args }; input.args = [] }
     }
     if (this.field<HTMLInputElement>('default').checked) input.default = true
+    const extensions = this.readOptions()
+    if (Object.keys(extensions).length) input.extensions = extensions
     return input
+  }
+
+  /** One checkbox per option the extensions that are on declared (AI-agent profiles only). */
+  private renderOptions(): void {
+    const box = document.getElementById('profile-ext-options')!
+    box.replaceChildren()
+    for (const o of profileOptions()) {
+      const label = document.createElement('label')
+      label.className = 'field check'
+      const input = document.createElement('input')
+      input.type = 'checkbox'
+      input.name = `ext:${o.extensionId}.${o.key}`
+      input.checked = this.extensions[o.extensionId]?.[o.key] === true
+      label.append(input, document.createTextNode(' '), Object.assign(document.createElement('span'), { textContent: o.label }))
+      if (o.hint) label.append(Object.assign(document.createElement('span'), { className: 'hint', textContent: o.hint }))
+      box.append(label)
+    }
+  }
+
+  /** The stored `extensions` with the checkboxes' values laid over it; an option turned off is removed, not stored as false. */
+  private readOptions(): NonNullable<Profile['extensions']> {
+    const out = structuredClone(this.extensions)
+    if (this.agent() !== 'shell') {
+      for (const o of profileOptions()) {
+        const on = this.form.querySelector<HTMLInputElement>(`input[name="ext:${o.extensionId}.${o.key}"]`)?.checked === true
+        const own = { ...out[o.extensionId] }
+        if (on) own[o.key] = true
+        else delete own[o.key]
+        if (Object.keys(own).length) out[o.extensionId] = own
+        else delete out[o.extensionId]
+      }
+    }
+    return out
   }
 
   private clearErrors(): void {
@@ -358,7 +399,7 @@ export class ProfileManager {
     this.editing = undefined
     this.fill({
       id: '', name: `${src.name.trim()} (cópia)`, agent: src.agent, args: src.shell ? src.shell.args : src.args, env: src.env ?? {},
-      cwd: src.cwd ?? '', shell: src.shell?.command ?? '', default: false,
+      cwd: src.cwd ?? '', shell: src.shell?.command ?? '', default: false, extensions: src.extensions ?? {},
     })
     this.refresh()
     this.field<HTMLInputElement>('name').focus()

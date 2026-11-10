@@ -1,8 +1,34 @@
 // The browser extension's texts (design §5.3 and §12a), pure so the unit test and the views share them.
 export const EMPTY_TITLE = 'Nenhuma guia aberta'
 export const EMPTY_HELP = 'Nenhuma guia aberta. Quando um agente abrir uma, ela aparece aqui.'
-export const OFF_HELP = 'O navegador está desligado neste perfil: os agentes não recebem as ferramentas dele.'
-export const OFF_ACTION = 'Ligar em Configurações (browser.serveToAgents)'
+export const OFF_ACTION = 'Abrir as configurações do navegador'
+export const PROFILE_ACTION = 'Abrir os perfis'
+
+/** `extensions.browser.serveToAgents`: who gets the browser's tools. */
+export type ServeMode = 'perProfile' | 'all' | 'off'
+export const SERVE_MODES: readonly ServeMode[] = ['perProfile', 'all', 'off']
+/** The profile option (`profile.extensions.browser.serve`) that marks a profile under `perProfile`. */
+export const PROFILE_OPTION = 'serve'
+export const PROFILE_OPTION_LABEL = 'Navegador para os agentes'
+export const PROFILE_OPTION_HINT = 'Os agentes do tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias. Os logins são os mesmos para todos os perfis: ligar aqui não separa contas.'
+
+/** A stored value as a mode: the old boolean `true` is `all`; `false`, absent or anything else is `perProfile`. */
+export function serveModeOf(raw: unknown): ServeMode {
+  if (raw === true) return 'all'
+  return SERVE_MODES.includes(raw as ServeMode) ? (raw as ServeMode) : 'perProfile'
+}
+
+/** The rule: `all` serves every agent, `off` none, `perProfile` only the ones launched with a marked profile (no profile: no browser). */
+export function servesAgent(mode: ServeMode, profileMarked: boolean): boolean {
+  return mode === 'all' || (mode === 'perProfile' && profileMarked)
+}
+
+/** The pad's empty-state line for the current mode (Portuguese, for the person). */
+export function offHelpFor(mode: ServeMode): string | undefined {
+  if (mode === 'all') return undefined
+  if (mode === 'off') return 'O navegador está desligado: nenhum agente recebe as ferramentas dele.'
+  return 'Só os agentes lançados com um perfil marcado recebem o navegador. Agentes sem perfil não recebem.'
+}
 export const WEB_EMPTY = 'Esta guia ainda não tem página.'
 export const NOT_LOADED = 'Não carregada desde que o tether reabriu'
 export const CRED_NOT_KEPT = 'Endereço não guardado: ele levava uma credencial'

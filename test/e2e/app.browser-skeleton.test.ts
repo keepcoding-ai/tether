@@ -68,12 +68,13 @@ test('browser skeleton: pill, empty desk and the pad Guias with its empty state'
     await page.click(`#desk-switch .seg.sys[data-system="${DESK}"]`)
     assert.equal(await page.evaluate(() => window.__tether.activeDesk()), d1)
 
-    // The pad Guias on the left bar: opens with the empty state, and the line to the setting (serveToAgents is off by default).
+    // The pad Guias on the left bar: opens with the empty state, and the line to the setting (serveToAgents is perProfile by default).
     await page.click(`#sidebar-left .sb-icon[data-pad="${PAD}"]`)
     await page.waitForSelector('.br-pad [data-state="empty"]', { state: 'visible' })
     const text = await page.evaluate(() => document.querySelector('.br-pad [data-state="empty"]')!.textContent)
     assert.match(text ?? '', /Nenhuma guia aberta\. Quando um agente abrir uma, ela aparece aqui\./)
-    assert.match(text ?? '', /desligado neste perfil/)
+    assert.match(text ?? '', /perfil marcado/)
+    await page.waitForSelector('.br-pad button[data-action="open-profiles"]', { state: 'visible' })
     await page.waitForSelector('.br-pad button[data-action="open-settings"]', { state: 'visible' })
   } finally {
     if (app) await killElectron(app, root).catch(() => {})

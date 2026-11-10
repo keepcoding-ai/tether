@@ -8,7 +8,7 @@
 //     no command line, no env, no log (so nothing depends on the CLI passing env to the MCP server);
 //   - the agent's own `mcp.inject` adds that file as one more repeated `--mcp-config` (the bridge's stays; a repeated
 //     server name is refused, never overwritten).
-// Off (`extensions.browser.serveToAgents`, default off), a missing agent MCP support, a missing server or node, a name
+// Not served (`extensions.browser.serveToAgents`, per profile by default), a missing agent MCP support, a missing server or node, a name
 // collision or a failed write: the plan is returned untouched (the same object) and nothing is left on disk.
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -90,8 +90,8 @@ export interface BrowserInjectDeps {
   home: string
   /** The agent contribution of a launch (TetherDaemon.agents.get); undefined = unknown agent, plan untouched. */
   agent(name: string): AgentContribution | undefined
-  /** `extensions.browser.serveToAgents`, read at every launch (a change applies to the next start of an agent). */
-  serve(): boolean
+  /** Whether this launch gets the browser (`extensions.browser.serveToAgents` and the slot's profile), read at every launch (a change applies to the next start of an agent). */
+  serve(slot: SlotMeta): boolean
   /** `extensions.browser.evaluate`. */
   evaluate(): boolean
   /** The vendored `server.mjs`. */
@@ -110,7 +110,7 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
   const warned = new Set<string>()
   const warnOnce = (id: string, msg: string): void => { if (!warned.has(id)) { warned.add(id); deps.log(msg) } }
   return (plan, slot) => {
-    if (slot.agent === 'shell' || !deps.serve()) return plan
+    if (slot.agent === 'shell' || !deps.serve(slot)) return plan
     const agent = deps.agent(slot.agent)
     if (!agent?.mcp) return plan
     if (!SLOT_ID_RE.test(slot.slotId)) return plan

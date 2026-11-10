@@ -43,10 +43,14 @@ describe('browser extension manifest', () => {
     assert.deepEqual([o.id, o.component, o.tabComponent, o.title, o.params], ['web:1', t!.component, t!.tabComponent, 'Github', { a: 1 }])
   })
 
-  test('settings follow design §10: serve off, evaluate off, local network asks', () => {
+  test('settings follow design §10: serve per profile, evaluate off, local network asks', () => {
     const s = manifest.contributes!.settings!
     assert.deepEqual(Object.keys(s).sort(), ['evaluate', 'localNetwork', 'serveToAgents'])
-    assert.equal(normalizeSetting(s.serveToAgents!, undefined), false)
+    assert.equal(normalizeSetting(s.serveToAgents!, undefined), 'perProfile')
+    assert.equal(normalizeSetting(s.serveToAgents!, true), 'all', 'the old boolean on')
+    assert.equal(normalizeSetting(s.serveToAgents!, false), 'perProfile', 'the old boolean off')
+    assert.equal(normalizeSetting(s.serveToAgents!, 'off'), 'off')
+    assert.equal(normalizeSetting(s.serveToAgents!, 'nope'), 'perProfile')
     assert.equal(normalizeSetting(s.evaluate!, undefined), false)
     assert.equal(normalizeSetting(s.localNetwork!, undefined), 'ask')
     assert.equal(normalizeSetting(s.localNetwork!, 'nope'), 'ask')

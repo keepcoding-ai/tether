@@ -10,6 +10,7 @@ import type { ExtensionEntry } from '../../extensions/types.ts'
 import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
+import { ProfileStore } from '../core/profile.ts'
 import { readUserSettings } from '../core/user-settings.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
 import type { SlotState } from './protocol.ts'
@@ -114,6 +115,9 @@ export class DaemonExtensionHost implements IDisposable {
     this.store.dispose()
   }
 
+  private profileStoreCache: ProfileStore | undefined
+  private get profileStore(): ProfileStore { return (this.profileStoreCache ??= new ProfileStore(this.opts.home)) }
+
   private apiFor(id: string, own: DisposableStore): TetherDaemon {
     const { home, log } = this.opts
     const agents = this.opts.agents ?? agentRegistry
@@ -134,6 +138,7 @@ export class DaemonExtensionHost implements IDisposable {
       launch: { use: (mw) => { this.middlewares.push(mw); return own.add(removing(this.middlewares, mw)) } },
       doctor: { register: (check) => { this.checks.push(check); return own.add(removing(this.checks, check)) } },
       settings: { get: <T>(key: string): T | undefined => readSetting<T>(home, key) },
+      profiles: { get: (pid) => this.profileStore.profiles().find((p) => p.id === pid) },
       log: (msg) => log(`[${id}] ${msg}`),
       onSlot: (l) => {
         this.slotListeners.add(l)

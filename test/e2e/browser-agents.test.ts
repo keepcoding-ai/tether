@@ -3,7 +3,9 @@
 //   - `extensions.browser.serveToAgents` on (and `evaluate` on): the launch carries the bridge's --mcp-config and the
 //     browser's, the key exists while the agent lives, its text is in no command line or log, the MCP file holds paths only,
 //     and key and MCP file are gone when the agent exits;
-//   - off (the default): no --mcp-config of the browser, no key, no file, no `browser` folder at all.
+//   - the old boolean `true` reads as `all`; absent / `perProfile` (the default): only a soul launched with a profile that
+//     marks `extensions.browser.serve` gets it, an unmarked profile and a slot without profile do not; `all`: even without a profile;
+//   - `off`: nobody, not even a marked profile. Nothing served: no --mcp-config of the browser, no key, no file, no `browser` folder.
 // Run: node --test test/e2e/browser-agents.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -25,7 +27,7 @@ async function waitFor(cond: () => boolean, ms: number, what: string, diag?: () 
 }
 
 /** One tetherd, one soul slot launched with the stand-in; returns what the agent saw and what was on disk while it lived and after. */
-async function run(settings: object | undefined) {
+async function run(settings: object | undefined, profile?: { marked: boolean } | 'none') {
   const base = mkdtempSync(join(tmpdir(), 'tether-bragent-'))
   const home = join(base, 'home'); mkdirSync(home)
   const work = join(base, 'work'); mkdirSync(work)
@@ -37,6 +39,10 @@ async function run(settings: object | undefined) {
     'setInterval(() => {}, 1000)',
   ].join('\n'))
   if (settings) writeFileSync(join(home, 'settings.json'), JSON.stringify(settings))
+  if (profile && profile !== 'none') {
+    const p = { id: 'p1', name: 'P1', agent: 'soul', args: [], ...(profile.marked ? { extensions: { browser: { serve: true } } } : {}) }
+    writeFileSync(join(home, 'profiles.json'), JSON.stringify({ v: 1, profiles: [p] }))
+  }
   const previous = process.env.TETHER_SOUL_CMD
   process.env.TETHER_SOUL_CMD = `"${process.execPath}" "${stub}"`
   // The bridge's file is planted: the web-bridge setup rewrites it with the same content shape (or leaves it when its vendor is not whole), and either way the launch carries it.
@@ -47,7 +53,7 @@ async function run(settings: object | undefined) {
   let agent: Owned | undefined
   try {
     await suite.connect()
-    const { slot } = await suite.client.request({ t: 'create', kind: 'soul', cwd: work, args: [] })
+    const { slot } = await suite.client.request({ t: 'create', kind: 'soul', cwd: work, args: [], ...(profile && profile !== 'none' ? { profileId: 'p1' } : {}) })
     const slotId = slot!.slotId
     await suite.client.request({ t: 'attach', slotId, cols: 100, rows: 30 })
     const started = await suite.client.request({ t: 'start', slotId })
@@ -73,7 +79,7 @@ async function run(settings: object | undefined) {
   }
 }
 
-test('serveToAgents on: the launch carries the bridge and the browser, the key lives with the agent and goes with it', { timeout: 180_000 }, async () => {
+test('serveToAgents true (the old boolean, now all): the launch carries the bridge and the browser, the key lives with the agent and goes with it', { timeout: 180_000 }, async () => {
   const r = await run({ extensions: { browser: { serveToAgents: true, evaluate: true } } })
   assert.deepEqual(r.flags, [r.bridgeFile, mcpFileOf(r.home, r.slotId)], 'two --mcp-config: the bridge, then the browser')
   assert.ok(r.during.key && /^[A-Za-z0-9_-]{32}$/.test(r.during.key), 'a 192-bit base64url key exists while the agent lives')
@@ -87,10 +93,42 @@ test('serveToAgents on: the launch carries the bridge and the browser, the key l
   assert.equal(r.after.mcp, false, 'the MCP file is gone when the agent exits')
 })
 
-test('serveToAgents off (the default): no browser flag, no key, no file, no folder', { timeout: 180_000 }, async () => {
+test('serveToAgents absent (perProfile): a slot without profile gets no browser flag, no key, no file, no folder', { timeout: 180_000 }, async () => {
   const r = await run(undefined)
   assert.deepEqual(r.flags, [r.bridgeFile], 'only the bridge')
   assert.equal(r.during.key, undefined)
   assert.equal(r.during.mcp, undefined)
   assert.equal(r.during.browserDir, false, 'nothing of the browser on disk (the gate is Electron main\'s, not running here)')
+})
+
+const NOTHING = (r: Awaited<ReturnType<typeof run>>): void => {
+  assert.deepEqual(r.flags, [r.bridgeFile], 'only the bridge')
+  assert.equal(r.during.key, undefined)
+  assert.equal(r.during.mcp, undefined)
+  assert.equal(r.during.browserDir, false)
+}
+const SERVED = (r: Awaited<ReturnType<typeof run>>): void => {
+  assert.deepEqual(r.flags, [r.bridgeFile, mcpFileOf(r.home, r.slotId)], 'the bridge, then the browser')
+  assert.ok(r.during.key)
+  assert.equal(r.after.key, false)
+}
+
+test('perProfile: a soul with a marked profile gets the browser', { timeout: 180_000 }, async () => {
+  SERVED(await run({ extensions: { browser: { serveToAgents: 'perProfile' } } }, { marked: true }))
+})
+
+test('perProfile: a soul with an unmarked profile does not', { timeout: 180_000 }, async () => {
+  NOTHING(await run({ extensions: { browser: { serveToAgents: 'perProfile' } } }, { marked: false }))
+})
+
+test('perProfile: a soul without profile does not', { timeout: 180_000 }, async () => {
+  NOTHING(await run({ extensions: { browser: { serveToAgents: 'perProfile' } } }, 'none'))
+})
+
+test('all: a soul without profile gets the browser', { timeout: 180_000 }, async () => {
+  SERVED(await run({ extensions: { browser: { serveToAgents: 'all' } } }, 'none'))
+})
+
+test('off: not even a marked profile', { timeout: 180_000 }, async () => {
+  NOTHING(await run({ extensions: { browser: { serveToAgents: 'off' } } }, { marked: true }))
 })
