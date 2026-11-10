@@ -1,12 +1,14 @@
-// The notes manager ("Notas"): a TAB with the map of every prancheta's note, by owner (the loose ones, each desk with its
-// desk pad and its panels, the global pad), the filter Soltas / Todas, a read-only preview of the selected note, and its
-// actions: Mover… (to another owner; the tabs add up), Fechar (asked inline; the toast offers Desfazer) and Limpar vazias.
-// The model is app/renderer/pad-notes.ts; the notes live in the core (TetherUi.pads.notes).
-import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
+// The notes manager ("Notas"): the panel pad's second state (frame-pads/manager-slot.ts), with the map of every
+// prancheta's note, by owner (the loose ones, each desk with its desk pad and its panels, the global pad), the filter
+// Soltas / Todas, a read-only preview of the selected note, and its actions: Mover… (to another owner; the tabs add up),
+// Fechar (asked inline; the toast offers Desfazer) and Limpar vazias. Its header's first button takes the pad back to the
+// panel's frame. The model is app/renderer/pad-notes.ts; the notes live in the core (TetherUi.pads.notes).
 import { icon, type IconName } from '../../app/renderer/icons.ts'
 import type { ContextMenuEntry, NoteFilter, NoteRow, NoteTree } from '../../app/renderer/ext-api.ts'
 import { panelNotesOnly, visibleRows, whenLabel } from '../../app/renderer/pad-notes.ts'
-import { NOTES_MANAGER_TITLE } from './layouts.ts'
+import type { ManagerView } from '../frame-pads/manager-slot.ts'
+
+export const NOTES_MANAGER_TITLE = 'Notas'
 
 export interface ManagerHost {
   tree(): NoteTree
@@ -18,8 +20,8 @@ export interface ManagerHost {
   close(keys: readonly string[], what: 'one' | 'empty'): void
   show(key: string): void
   menu(x: number, y: number, entries: ContextMenuEntry[]): void
-  onTabMenu(id: string, ev: MouseEvent): void
-  onClose(id: string): void
+  /** The pad back to the panel's frame. */
+  exit(): void
 }
 
 const PANE_ICON: Record<string, IconName> = { note: 'note-pencil', empty: 'square-half', terminal: 'terminal-window', 'md-preview': 'eye' }
@@ -44,9 +46,8 @@ export function ownerText(r: NoteRow): string {
   return r.label
 }
 
-export class NotesManagerPanel implements IContentRenderer {
+export class NotesManagerPanel implements ManagerView {
   readonly element: HTMLElement
-  id = ''
   private readonly host: ManagerHost
   private filter: NoteFilter = 'loose'
   private selected: string | undefined
@@ -65,6 +66,12 @@ export class NotesManagerPanel implements IContentRenderer {
     this.element = el('div', 'pn-pane')
     this.element.dataset.notesManager = 'pane'
     const head = el('div', 'pn-head')
+    const back = el('button', 'pn-back')
+    back.type = 'button'
+    back.dataset.action = 'back'
+    back.title = 'Voltar ao quadro do painel'; back.setAttribute('aria-label', back.title)
+    back.append(icon('arrow-left'))
+    back.addEventListener('click', () => this.host.exit())
     const title = el('span', 'pn-title', NOTES_MANAGER_TITLE)
     const group = el('div', 'pn-filter')
     group.setAttribute('role', 'group')
@@ -85,22 +92,18 @@ export class NotesManagerPanel implements IContentRenderer {
       const keys = panelNotesOnly(this.host.tree()).loose.filter(r => r.empty).map(r => r.key)
       if (keys.length) this.host.close(keys, 'empty')
     })
-    head.append(title, group, el('span', 'sp'), this.clean)
+    head.append(back, title, group, el('span', 'sp'), this.clean)
     const body = el('div', 'pn-body')
     this.list = el('div', 'pn-list')
     this.list.tabIndex = 0
     this.list.setAttribute('role', 'listbox')
     this.list.setAttribute('aria-label', 'Notas')
     this.list.addEventListener('keydown', ev => this.onKey(ev))
+    this.element.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !this.confirming) { ev.preventDefault(); this.host.exit() } })
     this.preview = el('div', 'pn-preview')
     body.append(this.list, this.preview)
     this.bar = el('div', 'pn-bar')
     this.element.append(head, body, this.bar)
-  }
-
-  init(params: GroupPanelPartInitParameters): void {
-    this.id = params.api.id
-    this.refresh()
   }
 
   focus(): void { this.list.focus() }
@@ -288,41 +291,13 @@ export class NotesManagerPanel implements IContentRenderer {
   }
 
   /** What the e2e reads. */
-  snapshot(): { id: string; filter: NoteFilter; rows: { key: string; title: string; owner: string; loose: boolean; empty: boolean }[]; selected?: string; preview: string; confirming: boolean } {
+  snapshot(): { filter: NoteFilter; rows: { key: string; title: string; owner: string; loose: boolean; empty: boolean }[]; selected?: string; preview: string; confirming: boolean } {
     return {
-      id: this.id, filter: this.filter, confirming: this.confirming,
+      filter: this.filter, confirming: this.confirming,
       rows: this.rows.map(r => ({ key: r.key, title: r.title, owner: ownerText(r), loose: r.loose, empty: r.empty })),
       ...(this.selected ? { selected: this.selected } : {}),
       preview: this.preview.querySelector('.pn-p-text')?.textContent ?? '',
     }
-  }
-
-  dispose(): void {}
-}
-
-export class NotesManagerTab implements ITabRenderer {
-  readonly element: HTMLElement
-  private api: DockviewPanelApi | undefined
-  private readonly host: ManagerHost
-
-  constructor(host: ManagerHost) {
-    this.host = host
-    this.element = el('div', 'tether-tab notes-manager')
-    const kind = el('span', 'kind'); kind.append(icon('clipboard-text'))
-    const text = el('span', 'text', NOTES_MANAGER_TITLE)
-    const close = el('button', 'close')
-    close.title = 'Fechar'; close.setAttribute('aria-label', 'Fechar o gerenciador de notas')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onClose(this.api.id) })
-    this.element.append(kind, text, close)
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
-    this.element.title = `${NOTES_MANAGER_TITLE}\nAs notas de todas as pranchetas, inclusive as soltas`
-  }
-
-  init(params: TabPartInitParameters): void {
-    this.api = params.api
-    this.element.dataset.slot = params.api.id
   }
 
   dispose(): void {}
