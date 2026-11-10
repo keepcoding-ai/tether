@@ -5,7 +5,7 @@ import * as claude from './claude/renderer.ts'
 import * as soul from './soul/renderer.ts'
 import * as note from './note/renderer.ts'
 import * as framePads from './frame-pads/renderer.ts'
-import * as padNotes from './pad-notes/renderer.ts'
+import * as panelPadManager from './panel-pad-manager/renderer.ts'
 import * as quickOpen from './quick-open/renderer.ts'
 import * as explorer from './explorer/renderer.ts'
 import * as keybindingsScreen from './keybindings-screen/renderer.ts'
@@ -25,7 +25,7 @@ export const extensions: readonly ExtensionEntry<TetherUi>[] = [
   { manifest: note.manifest, activate: note.activate },
   { manifest: quickOpen.manifest, activate: quickOpen.activate },
   { manifest: framePads.manifest, activate: framePads.activate },
-  { manifest: padNotes.manifest, activate: padNotes.activate },
+  { manifest: panelPadManager.manifest, activate: panelPadManager.activate },
   { manifest: explorer.manifest, activate: explorer.activate },
   { manifest: keybindingsScreen.manifest, activate: keybindingsScreen.activate },
   { manifest: settingsScreen.manifest, activate: settingsScreen.activate },

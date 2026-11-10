@@ -175,10 +175,10 @@ export class SideBars {
   }
 
   /**
-   * Takes a frames pad note away (app/renderer/pad-notes.ts): its view goes without saving anything and so does its saved
+   * Takes a frames pad's frame away (app/renderer/panel-frames.ts): its view goes without saving anything and so does its saved
    * state. A pad shown for that owner right now gets a fresh view on the next render (seeded like a new one).
    */
-  dropNote(padId: string, owner: { deskId?: string; panelId?: string }, redraw = true): void {
+  dropFrame(padId: string, owner: { deskId?: string; panelId?: string }, redraw = true): void {
     const key = this.viewKey(padId, owner.deskId, owner.panelId)
     const m = this.views.get(key)
     if (m) {
@@ -197,9 +197,9 @@ export class SideBars {
     if (redraw) this.render()
   }
 
-  /** Puts a note's saved state back (undo of `dropNote`): whatever view stands there now is replaced by one built from it. */
-  putNote(padId: string, owner: { deskId?: string; panelId?: string }, state: unknown): void {
-    this.dropNote(padId, owner, false)
+  /** Puts a frame's saved state back (undo of `dropFrame`): whatever view stands there now is replaced by one built from it. */
+  putFrame(padId: string, owner: { deskId?: string; panelId?: string }, state: unknown): void {
+    this.dropFrame(padId, owner, false)
     if (owner.deskId !== undefined) this.deskStates.set(owner.deskId, { ...this.deskStates.get(owner.deskId), [padId]: state })
     else this.state = { ...this.state, pads: { ...this.state.pads, [owner.panelId === undefined ? padId : panelPadKey(padId, owner.panelId)]: state } }
     const pad = this.pad(padId)
@@ -207,7 +207,7 @@ export class SideBars {
     this.render()
   }
 
-  /** The notes' records (SideBarsLayout.meta), saved with the side bars. */
+  /** The panel frames' records (SideBarsLayout.meta), saved with the side bars. */
   get meta(): Record<string, unknown> { return this.state.meta ?? {} }
   setMeta(meta: Record<string, unknown>): void {
     const { meta: _old, ...rest } = this.state

@@ -28,7 +28,7 @@ import type { Brand } from '../shared/brand.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
 import type { AgentPane } from './agent-panes.ts'
-import type { NoteSnapshot, NoteTree } from './pad-notes.ts'
+import type { FrameSnapshot, PanelFrameTree } from './panel-frames.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
@@ -40,7 +40,7 @@ export type { Badge, AttentionHandle, AttentionRaise } from './seal-rules.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
-export type { NoteDeskGroup, NoteFilter, NotePane, NoteRow, NoteSnapshot, NoteTree } from './pad-notes.ts'
+export type { FrameDeskGroup, FrameFilter, FramePane, FrameSnapshot, PanelFrameRow, PanelFrameTree } from './panel-frames.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
 export interface PaneInfo {
@@ -393,23 +393,23 @@ export interface TetherUi {
      */
     frames(host: PadHost): PadView
     /**
-     * The frames pads' notes (one frame per panel, per desk, the global one), alive or loose (app/renderer/pad-notes.ts). The
-     * core keeps them; the pad-notes extension manages them. Keys: `<pad id>@<owner>`, or the pad id for a global pad.
+     * The panel pad's frames (one per focusable panel, holding panes of any kind), alive or loose (app/renderer/panel-frames.ts).
+     * The core keeps them; the panel-pad-manager extension manages them. Keys: `<pad id>@<panel id>`.
      */
-    notes: {
-      tree(): NoteTree
-      /** The notes may have changed (a pane opened or closed somewhere, an operation ran). */
+    panelFrames: {
+      tree(): PanelFrameTree
+      /** The frames may have changed (a pane opened or closed somewhere, an operation ran). */
       onDidChange(listener: () => void): IDisposable
-      /** A note with content just became loose (its panel closed). */
+      /** A frame with content just became loose (its panel closed). */
       onDidLoose(listener: (key: string) => void): IDisposable
-      /** Where a note can go ("Mover…"): each desk's pad and its panels' pads, then the global pad. */
+      /** Where a frame's content can go ("Mover…"): the frame of every live panel, by desk. */
       targets(): { key: string; label: string; group: string }[]
-      /** The note's panes become tabs of the target's frame (they add up), and the source closes. */
+      /** The frame's panes become tabs of the target's frame (they add up), and the source closes. */
       move(from: string, to: string): boolean
-      /** Closes notes; the snapshot brings them back (`restore`). */
-      close(keys: readonly string[]): NoteSnapshot
-      restore(snapshot: NoteSnapshot): void
-      /** A live note to the front: its owner comes forward and its pad opens. */
+      /** Closes frames; the snapshot brings them back (`restore`). */
+      close(keys: readonly string[]): FrameSnapshot
+      restore(snapshot: FrameSnapshot): void
+      /** A live frame to the front: its panel comes forward and its pad opens. */
       show(key: string): void
     }
   }

@@ -1,9 +1,9 @@
 // The frame pads' renderer entry: each pad's view is the core's frames view (a Desk hosted like the drawer's). The panel
-// pad has a second state, the notes manager (manager-slot.ts; the pad-notes extension provides the view): its header
-// carries the switch, pinned before the frame's own buttons, and its "⋯" menu carries "Notas das pranchetas…". In the
+// pad has a second state, the manager of its frames (manager-slot.ts; the panel-pad-manager extension provides the view):
+// its header carries the switch, pinned before the frame's own buttons, and its "⋯" menu carries "Quadros dos painéis…". In the
 // manager state the pad shows the manager under the frame's tab bar, in place of the frame's content: the tab bar stays
 // (the same tabs, the same buttons; the switch lit), the content stays mounted underneath (its terminals never resize).
-// Without the pad-notes extension the pad has one state and offers neither.
+// Without the panel-pad-manager extension the pad has one state and offers neither.
 import type { PadView, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
@@ -13,8 +13,8 @@ import { manifest } from './manifest.ts'
 export { manifest }
 
 const PANEL_PAD = 'frame-pads.panel'
-const MANAGER_COMMAND = 'notes.manager.loose'
-const MANAGER_LABEL = 'Notas das pranchetas…'
+const MANAGER_COMMAND = 'panel-pad.manager'
+const MANAGER_LABEL = 'Quadros dos painéis…'
 const BACK_LABEL = 'Voltar ao quadro do painel'
 
 /** The panel pad's two states: the frame (the view the core gave) and the manager, switched by the header's button. */
@@ -26,18 +26,18 @@ function withManager(ui: TetherUi, view: PadView): PadView {
     if (!padManager.provider()) return base
     return [...base, padManager.isOn()
       ? { icon: 'push-pin', label: BACK_LABEL, run: () => padManager.hide() }
-      : { icon: 'clipboard-text', label: MANAGER_LABEL, run: () => { void ui.commands.run(MANAGER_COMMAND) } }]
+      : { icon: 'squares-four', label: MANAGER_LABEL, run: () => { void ui.commands.run(MANAGER_COMMAND) } }]
   }
   // The pinned switch: one per tab strip of the pad's frames (a split adds a strip; the observer catches it).
   const pin = (): void => {
     const has = !!padManager.provider()
     const on = padManager.isOn()
     for (const bar of view.element.querySelectorAll<HTMLElement>('.tab-actions')) {
-      let b = bar.querySelector<HTMLButtonElement>(':scope > [data-action="notes-manager"]')
+      let b = bar.querySelector<HTMLButtonElement>(':scope > [data-action="frames-manager"]')
       if (!b) {
         b = document.createElement('button')
-        b.type = 'button'; b.className = 'tab-act'; b.dataset.action = 'notes-manager'
-        b.append(icon('clipboard-text'))
+        b.type = 'button'; b.className = 'tab-act'; b.dataset.action = 'frames-manager'
+        b.append(icon('squares-four'))
         b.addEventListener('mousedown', ev => ev.preventDefault())
         b.addEventListener('click', ev => { ev.stopPropagation(); if (padManager.isOn()) padManager.hide(); else void ui.commands.run(MANAGER_COMMAND) })
         bar.prepend(b)
@@ -46,6 +46,7 @@ function withManager(ui: TetherUi, view: PadView): PadView {
       b.title = on ? BACK_LABEL : MANAGER_LABEL.replace('…', '')
       b.setAttribute('aria-label', b.title)
       b.setAttribute('aria-pressed', String(on))
+      b.classList.toggle('attention', has && ui.pads.panelFrames.tree().loose.some(r => !r.empty))
     }
   }
   /** The manager sits under the frame's first tab bar: its top follows the bar's height. */
@@ -82,6 +83,7 @@ function withManager(ui: TetherUi, view: PadView): PadView {
     const t = ev.target as HTMLElement | null
     if (t?.closest('.dv-tabs-container .dv-tab') && !t.closest('.close')) padManager.hide()
   }, true)
+  const dot = ui.pads.panelFrames.onDidChange(pin)
   const sub = padManager.onDidChange(() => {
     const was = view.element.classList.contains('manager-on')
     sync()
@@ -91,7 +93,7 @@ function withManager(ui: TetherUi, view: PadView): PadView {
   })
   sync()
   const dispose = view.dispose.bind(view)
-  view.dispose = () => { mo.disconnect(); ro.disconnect(); sub.dispose(); manager?.dispose(); dispose() }
+  view.dispose = () => { mo.disconnect(); ro.disconnect(); sub.dispose(); dot.dispose(); manager?.dispose(); dispose() }
   return view
 }
 

@@ -1,0 +1,78 @@
+/* The manager of the panel pad's frames (extensions/panel-pad-manager/panel.ts), the pad's second state, and its toast. Tokens from
+   app/renderer/styles.css. In the pad it sits under the frame's tab bar (top set by frame-pads/renderer.ts), over the
+   frame's content, which stays mounted underneath (never resized). */
+.pad-frames > .pad-manager { position: absolute; inset: 0; z-index: 3; }
+.pad-frames > .pad-manager[hidden] { display: none; }
+.pad-frames.manager-on .frame-dock :is(.dv-content-container, .dv-watermark-container) { visibility: hidden; }
+.pad-frames .tab-act[data-action="frames-manager"][aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.pf-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; background: var(--frame-bg); color: var(--fg); font: 13px var(--ui); }
+.pf-pane .sp { flex: 1; }
+.pf-pane button:focus-visible, .pf-list:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pf-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.pf-title { font-weight: 600; font-size: 14px; }
+.pf-filter { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.pf-chip { height: 28px; padding: 0 12px; border: 0; background: var(--bg); color: var(--fg); font: 12.5px var(--ui); cursor: pointer; white-space: nowrap; }
+.pf-chip + .pf-chip { border-left: 1px solid var(--border); }
+.pf-chip:hover { background: var(--bg-hover); }
+.pf-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+.pf-btn { height: 28px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: 12.5px var(--ui); cursor: pointer; white-space: nowrap; }
+.pf-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.pf-btn:disabled { opacity: .5; cursor: default; }
+.pf-btn.danger { border-color: color-mix(in srgb, var(--err) 55%, var(--border)); color: var(--err); }
+.pf-btn.danger:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
+.pf-link { background: none; border: 0; padding: 0; color: var(--accent); font: 12px var(--ui); cursor: pointer; }
+.pf-link:hover { text-decoration: underline; }
+.pf-body { flex: 1; min-height: 0; display: flex; }
+.pf-list { flex: 0 0 52%; min-width: 220px; overflow: auto; padding: 6px; border-right: 1px solid var(--border); scrollbar-width: thin; }
+.pf-group { padding: 10px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-dim); }
+.pf-group:first-child { padding-top: 4px; }
+.pf-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title meta" "owner owner" "panes panes"; column-gap: 8px; row-gap: 2px; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.pf-row:hover { background: var(--bg-hover); }
+.pf-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.pf-r-title { grid-area: title; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-row.empty .pf-r-title { color: var(--fg-dim); font-style: italic; }
+.pf-r-owner { grid-area: owner; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
+.pf-row.loose .pf-r-owner { color: var(--warn); }
+.pf-row.empty .pf-r-title { color: var(--fg-dim); }
+.pf-r-meta { grid-area: meta; font-size: 12px; color: var(--fg-dim); white-space: nowrap; text-align: right; }
+.pf-r-panes { grid-area: panes; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.pf-r-pane { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 11.5px; color: var(--fg-dim); }
+.pf-r-pane svg { width: 12px; height: 12px; flex: none; }
+.pf-r-pane > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-r-pane.live { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--fg); }
+.pf-r-pane.dim { border-style: dashed; }
+.pf-confirm.warn { color: var(--warn); }
+/* The switch's warning dot: a loose frame has content. */
+.pad-frames .tab-act[data-action="frames-manager"].attention::after { content: ''; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.pad-frames .tab-act[data-action="frames-manager"] { position: relative; }
+.pf-empty { margin: 16px 12px; color: var(--fg-dim); line-height: 1.5; }
+.pf-preview { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: hidden; }
+.pf-p-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.pf-p-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.pf-p-owner { font-size: 12px; color: var(--fg-dim); }
+.pf-p-panes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pf-p-panes li { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; row-gap: 1px; align-items: baseline; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12.5px; }
+.pf-p-panes li.live { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+.pf-p-kind { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-dim); white-space: nowrap; }
+.pf-p-kind svg { width: 13px; height: 13px; flex: none; }
+.pf-p-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.pf-p-facts { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
+.pf-p-text[hidden] { display: none; }
+.pf-p-text { flex: 1; min-height: 0; margin: 0; padding: 10px 12px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 12.5px/1.5 var(--mono, ui-monospace, monospace); white-space: pre-wrap; word-break: break-word; scrollbar-width: thin; }
+.pf-bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg-2); }
+.pf-bar[hidden] { display: none; }
+.pf-sel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: 12px; min-width: 0; }
+.pf-confirm { font-size: 12.5px; }
+
+/* A narrow manager (the pad): the preview goes under the list. */
+@container (max-width: 520px) { .pf-body { flex-direction: column; } .pf-list { flex: 0 0 50%; border-right: 0; border-bottom: 1px solid var(--border); } }
+.pf-pane { container-type: inline-size; }
+
+/* The toast. */
+.pf-toast { position: fixed; z-index: 1000; left: 50%; bottom: 36px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: min(560px, calc(100vw - 32px)); padding: 8px 8px 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); color: var(--fg); font: 13px var(--ui); box-shadow: var(--shadow); }
+.pf-toast > span { min-width: 0; }
+.pf-toast-action { border: 0; background: none; color: var(--accent); font: 600 13px var(--ui); cursor: pointer; padding: 4px 6px; border-radius: 4px; }
+.pf-toast-action:hover { background: var(--bg-hover); }
+.pf-toast-close { border: 0; background: none; color: var(--fg-dim); font: 16px var(--ui); cursor: pointer; width: 24px; height: 24px; border-radius: 4px; }
+.pf-toast-close:hover { background: var(--bg-hover); color: var(--fg); }
+
