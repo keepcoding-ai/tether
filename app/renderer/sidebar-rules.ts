@@ -108,7 +108,7 @@ export interface SideBarsLayout {
   pads: Record<string, unknown>
   /**
    * A small record per frames pad note (`<pad id>@<owner>`, or the pad id for a global pad), written while its owner lives:
-   * the owner's label and desk and when its content last changed (app/renderer/pad-notes.ts PadNoteMeta). Absent = none.
+   * the owner's label and desk and when its content last changed (app/renderer/panel-frames.ts PanelFrameMeta). Absent = none.
    */
   meta?: Record<string, unknown>
 }

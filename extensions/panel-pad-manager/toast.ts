@@ -19,7 +19,7 @@ export function dismissToast(): void {
 export function showToast(spec: ToastSpec): void {
   dismissToast()
   const el = document.createElement('div')
-  el.className = 'pn-toast'
+  el.className = 'pf-toast'
   el.setAttribute('role', 'status')
   el.setAttribute('aria-live', 'polite')
   const text = document.createElement('span')
@@ -29,14 +29,14 @@ export function showToast(spec: ToastSpec): void {
     const { label, run } = spec.action
     const b = document.createElement('button')
     b.type = 'button'
-    b.className = 'pn-toast-action'
+    b.className = 'pf-toast-action'
     b.textContent = label
     b.addEventListener('click', () => { dismissToast(); run() })
     el.append(b)
   }
   const close = document.createElement('button')
   close.type = 'button'
-  close.className = 'pn-toast-close'
+  close.className = 'pf-toast-close'
   close.title = 'Dispensar'
   close.setAttribute('aria-label', 'Dispensar')
   close.textContent = '×'
@@ -49,6 +49,6 @@ export function showToast(spec: ToastSpec): void {
 /** What the e2e reads: the message on screen and its action's label. */
 export function toastSnapshot(): { text: string; action?: string } | undefined {
   if (!current) return undefined
-  const action = current.el.querySelector<HTMLElement>('.pn-toast-action')?.textContent ?? undefined
+  const action = current.el.querySelector<HTMLElement>('.pf-toast-action')?.textContent ?? undefined
   return { text: current.el.querySelector('span')?.textContent ?? '', ...(action ? { action } : {}) }
 }

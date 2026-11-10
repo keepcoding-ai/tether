@@ -4,6 +4,7 @@
 import { agentTable } from './agent-ui.ts'
 import { BRAND } from '../shared/brand.ts'
 import arrowsClockwise from '@phosphor-icons/core/assets/regular/arrows-clockwise.svg'
+import squaresFour from '@phosphor-icons/core/assets/regular/squares-four.svg'
 import arrowsInLineVertical from '@phosphor-icons/core/assets/regular/arrows-in-line-vertical.svg'
 import arrowsOutSimple from '@phosphor-icons/core/assets/regular/arrows-out-simple.svg'
 import bug from '@phosphor-icons/core/assets/regular/bug.svg'
@@ -23,10 +24,12 @@ import sidebarSimple from '@phosphor-icons/core/assets/regular/sidebar-simple.sv
 import arrowsLeftRight from '@phosphor-icons/core/assets/regular/arrows-left-right.svg'
 import clipboardText from '@phosphor-icons/core/assets/regular/clipboard-text.svg'
 import globeSimple from '@phosphor-icons/core/assets/regular/globe-simple.svg'
+import chalkboardSimple from '@phosphor-icons/core/assets/regular/chalkboard-simple.svg'
 // The side bars' open pads wear the fill weight of their icon (sidebars.ts): `<name>-fill` next to each pad icon.
 import clipboardTextFill from '@phosphor-icons/core/assets/fill/clipboard-text-fill.svg'
 import appWindowFill from '@phosphor-icons/core/assets/fill/app-window-fill.svg'
 import globeSimpleFill from '@phosphor-icons/core/assets/fill/globe-simple-fill.svg'
+import chalkboardSimpleFill from '@phosphor-icons/core/assets/fill/chalkboard-simple-fill.svg'
 import filesFill from '@phosphor-icons/core/assets/fill/files-fill.svg'
 import folderOpen from '@phosphor-icons/core/assets/regular/folder-open.svg'
 import target from '@phosphor-icons/core/assets/regular/target.svg'
@@ -128,6 +131,7 @@ import type { SlotKind } from '../../src/daemon/protocol.ts'
 const SVG = {
   'app-window': appWindow,
   'arrows-clockwise': arrowsClockwise,
+  'squares-four': squaresFour,
   'arrows-in-line-vertical': arrowsInLineVertical,
   'arrows-out-simple': arrowsOutSimple,
   bug,
@@ -214,9 +218,11 @@ const SVG = {
   'arrows-left-right': arrowsLeftRight,
   'clipboard-text': clipboardText,
   'globe-simple': globeSimple,
+  'chalkboard-simple': chalkboardSimple,
   'clipboard-text-fill': clipboardTextFill,
   'app-window-fill': appWindowFill,
   'globe-simple-fill': globeSimpleFill,
+  'chalkboard-simple-fill': chalkboardSimpleFill,
   'files-fill': filesFill,
   'floppy-disk': floppyDisk,
   'file-text': fileText,
