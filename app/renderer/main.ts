@@ -61,7 +61,7 @@ import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMI
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
 import { registerProfileOption } from './profile-options.ts'
-import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -718,6 +718,17 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   const slot = slots.get(slotId)
   rememberClosed(slotId)
   if (!slot) { removeAnyPanel(panel); return }
+  if (!await settleClose(slot, opts)) return
+  const still = findPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
+  if (still) removeAnyPanel(still)
+}
+
+/**
+ * The close dialog's answer for a slot (or the remembered one), carried out on the daemon: 'stop' stops it, 'forget'
+ * forgets it, 'detach' leaves it running. False when the person cancelled.
+ */
+async function settleClose(slot: SlotState, opts: { ask?: boolean } = {}): Promise<boolean> {
+  const { slotId } = slot
   const spec = closePanelSituation(slot)
   // Only an answer the dialog offers to remember is honoured ('stop' only where the person ticked it); 'forget' always asks.
   let choice: string | undefined = opts.ask === false ? 'detach' : rememberedClose(spec, confirmations[spec.situation])
@@ -730,11 +741,21 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
       window.tether.rememberConfirmation(spec.situation, remembered)
     }
   }
-  if (choice === 'cancel') return
+  if (choice === 'cancel') return false
   if (choice === 'stop') await window.tether.request({ t: 'stop', slotId })
   if (choice === 'forget') await window.tether.request({ t: 'forget', slotId })
-  const still = findPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
-  if (still) removeAnyPanel(still)
+  return true
+}
+
+/**
+ * "Fechar painel…" for a panel whose tab is already closed (a loose frame's): what closing its tab would do to its slot
+ * (the same dialog), and its frames go too, since nothing will bring them back.
+ */
+async function closeLoosePanel(panelId: string): Promise<void> {
+  const slot = slots.get(panelId)
+  if (slot && !await settleClose(slot)) return
+  const keys = frameTree().loose.filter(r => r.panelId === panelId).map(r => r.key)
+  if (keys.length) closeFramesLive(keys)
 }
 
 /** Main asks for a situation to be put to the user (menu items live in main; the dialog lives here). */
@@ -1472,19 +1493,6 @@ function reviveFrame(key: string): boolean {
   afterFrames()
   requestAnimationFrame(() => { sidebars?.render(); sidebars?.open(o.padId) })
   return true
-}
-
-/**
- * A loose frame's menu (the tab menu of a panel that has no tab): bring it back, close the frame. The actions come from
- * the caller, which tells the person what happened.
- */
-function showLooseFrameMenu(key: string, x: number, y: number, act: { revive(): void; close(): void }, opener?: HTMLElement): void {
-  const v = frameRevivable(key)
-  showContextMenu(x, y, [
-    { icon: 'arrow-counter-clockwise', label: 'Trazer de volta', disabled: !v.ok, run: () => act.revive() },
-    SEP,
-    { icon: 'x', label: 'Fechar quadro', run: () => act.close() },
-  ], opener)
 }
 
 /**
@@ -2251,7 +2259,8 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 
 // ---------- tab context menu ----------
 
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean }
+/** `pin`: how the item also shows outside the menu (ext-api MenuPin). `standalone`: it acts without the pane on screen (a closed tab's menu runs it as is). */
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
 /** A line naming what the items under it act on (a pad's title over its items); not an item. */
@@ -2267,12 +2276,16 @@ let padSection: string | undefined
 /** The button that opens the next context menu when the opener cannot be passed (the "⋯" goes through showTabMenu). */
 let menuOpener: HTMLElement | undefined
 
+/** While set, showContextMenu collects its items here instead of showing them (a pane type's menu read as data). */
+let menuCapture: MenuEntry[] | undefined
+
 /**
  * A floating menu at (x, y), closed by a click anywhere else, Esc, or picking an item. `opener` is the button that
  * opened it: it reads aria-expanded while the menu is up, and Esc (or a pick that leaves nothing focused) gives the
  * focus back to it. Keys: Up/Down (wrapping), Home/End, Enter/Space, Esc, Tab (closes).
  */
 function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpener?: HTMLElement): void {
+  if (menuCapture) { menuCapture.push(...items); return }
   const opener = explicitOpener ?? menuOpener
   menuOpener = undefined
   const active = document.activeElement
@@ -2332,19 +2345,92 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
  * The pane menu: right-click on a tab and the "⋯" at the tab strip's right end (one source). Grouped: open
  * next to it, name and profile, the status bar and its folder entries, where it lives, close.
  */
-function showTabMenu(slotId: string, x: number, y: number): void {
+function showTabMenu(slotId: string, x: number, y: number, opener?: HTMLElement): void {
   const slot = slots.get(slotId)
   const panel = findPanel(slotId)
   if (!slot) {
-    if (empties.has(slotId)) { panel?.api.setActive(); showEmptyMenu(slotId, x, y); return }
+    if (empties.has(slotId)) { panel?.api.setActive(); showContextMenu(x, y, emptyMenuEntries(slotId), opener); return }
     // Any other kind of pane shows its type's own menu (an extension's: the note, the previews, a placeholder).
     const type = liveTypeOf(paneTypes, slotId)
     if (!type?.tabMenu) return
     panel?.api.setActive()
+    if (opener) menuOpener = opener
     type.tabMenu(slotId, x, y)
     return
   }
   panel?.api.setActive()
+  showContextMenu(x, y, slotMenuEntries(slot), opener)
+}
+
+/** Labels shared by the core's menus and the pins read off menus drawn by pane types (which declare no pins). */
+const MOVE_LABEL = 'Mover…'
+const LINK_LABEL = 'Copiar link do painel'
+const CLOSE_PANEL_LABEL = 'Fechar painel…'
+/** The pins of the actions every pane menu has, for the menus pane types draw themselves. */
+const COMMON_PINS: Readonly<Record<string, MenuPin>> = { [MOVE_LABEL]: 'icon', [LINK_LABEL]: 'icon' }
+
+/** A pane type's own menu (the note's, the previews', a placeholder's) as data, read through showContextMenu. */
+function typeMenuEntries(id: string): MenuEntry[] {
+  const type = liveTypeOf(paneTypes, id)
+  if (!type?.tabMenu || !findPanel(id)) return []
+  const out: MenuEntry[] = []
+  const section = padSection
+  padSection = undefined
+  menuCapture = out
+  try { type.tabMenu(id, 0, 0) } catch (err) { console.error('tabMenu', err) } finally { menuCapture = undefined; padSection = section }
+  return out.map(e => e === SEP || 'heading' in e || e.pin || !COMMON_PINS[e.label] ? e : { ...e, pin: COMMON_PINS[e.label] })
+}
+
+/**
+ * The menu of a panel as a view that lists panels apart from their tabs shows it (TabMenuOptions 'manager'), or as the tab
+ * shows it. A panel on screen: its tab's menu, after "Focar guia" for the manager. A panel whose tab is closed (a loose
+ * frame's) has the same menu with "Trazer de volta" first: the items that need the pane on screen bring it back and then
+ * act, and "Fechar painel…" settles its slot as closing the tab would and drops its frames. When it cannot come back
+ * (its slot is gone), those items are disabled.
+ */
+function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
+  if (findPanel(id)) {
+    const slot = slots.get(id)
+    const base = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
+    if (opts.from !== 'manager') return base
+    return [{ icon: 'arrow-right', label: 'Focar guia', pin: 'primary', run: () => revealPane(id) }, SEP, ...base]
+  }
+  const key = frameTree().loose.find(r => r.panelId === id)?.key
+  const can = !!liveTypeOf(paneTypes, id)?.closedEntry?.(id)
+  const back = (): boolean => {
+    if (findPanel(id)) return true
+    if (key) return reviveFrame(key)
+    return !!liveTypeOf(paneTypes, id)?.closedEntry?.(id)?.reopen()
+  }
+  const closeLoose: MenuItem = { icon: 'x', label: CLOSE_PANEL_LABEL, run: () => { void closeLoosePanel(id) } }
+  const slot = slots.get(id)
+  // Without a slot the type's menu cannot be read (it draws it from the live pane): the actions every pane has stand in.
+  const base: MenuEntry[] = slot ? slotMenuEntries(slot) : [
+    { icon: 'link', label: LINK_LABEL, pin: 'icon', run: () => copyPaneLink(id) },
+    SEP,
+    { icon: 'arrow-square-out', label: MOVE_LABEL, pin: 'icon', run: () => { void openMove(id) } },
+    SEP,
+    closeLoose,
+  ]
+  const items = base.map((e): MenuEntry => {
+    if (e === SEP || 'heading' in e) return e
+    if (e.label === CLOSE_PANEL_LABEL) return { ...closeLoose, icon: e.icon }
+    if (e.standalone) return e
+    return { ...e, disabled: e.disabled || !can, run: () => { if (back()) requestAnimationFrame(() => e.run()) } }
+  })
+  return [{ icon: 'arrow-counter-clockwise', label: 'Trazer de volta', pin: 'highlight', disabled: !can, run: () => { back() } }, SEP, ...items]
+}
+
+/** The menu of `paneMenuEntries` at page coordinates; it does not activate the pane (the view that asked keeps its state). */
+function showPaneMenu(id: string, x: number, y: number, opener?: HTMLElement, opts?: TabMenuOptions): void {
+  const items = paneMenuEntries(id, opts)
+  if (items.length) showContextMenu(x, y, items, opener)
+}
+
+/** A slot pane's tab menu (agent, terminal), whether its tab is open or closed. */
+function slotMenuEntries(slot: SlotState): MenuEntry[] {
+  const { slotId } = slot
+  const panel = findPanel(slotId)
   const fromExtensions: MenuEntry[] = []
   if (slot.kind !== 'shell') {
     for (const provider of [...agentTabMenuProviders]) {
@@ -2352,7 +2438,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     }
     if (fromExtensions.length > 0) fromExtensions.push(SEP)
   }
-  showContextMenu(x, y, [
+  return [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'right' }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.below}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'below' }) } },
@@ -2360,31 +2446,31 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'columns', label: `${NEW_FRAME_LABEL}…`, run: () => { void openNewDialog({ reference: slotId, target: { level: 'desk', placement: 'right' } }) } },
     SEP,
     { icon: 'pencil-simple', label: 'Renomear…', run: () => tabs.get(slotId)?.startRename() },
-    { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
+    { icon: 'sliders-horizontal', label: 'Trocar perfil…', standalone: true, run: () => { void switchProfile(slotId) } },
     SEP,
     { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
-    { icon: 'link', label: 'Copiar link do painel', run: () => copyPaneLink(slotId) },
-    { icon: 'copy', label: 'Copiar pasta', run: () => copyFolder(slotId) },
-    { icon: 'folder-open', label: 'Abrir pasta no Explorer', run: () => openFolder(slotId) },
+    { icon: 'link', label: LINK_LABEL, pin: 'icon', standalone: true, run: () => copyPaneLink(slotId) },
+    { icon: 'copy', label: 'Copiar pasta', standalone: true, run: () => copyFolder(slotId) },
+    { icon: 'folder-open', label: 'Abrir pasta no Explorer', standalone: true, run: () => openFolder(slotId) },
     SEP,
-    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
+    { icon: 'arrow-square-out', label: MOVE_LABEL, pin: 'icon', run: () => { void openMove(slotId) } },
     SEP,
     ...fromExtensions,
-    { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
-  ])
+    { icon: 'x', label: CLOSE_PANEL_LABEL, run: () => { void closePanel(slotId) } },
+  ]
 }
 
 /** The empty pane's tab menu: new things next to it, where it lives, close. */
-function showEmptyMenu(id: string, x: number, y: number): void {
-  showContextMenu(x, y, [
+function emptyMenuEntries(id: string): MenuEntry[] {
+  return [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: id }) } },
     { icon: 'plus', label: `${SPLIT_EMPTY_LABEL} ${PLACEMENT_LABEL.right} ${EMPTY_SUFFIX}`, run: () => { void splitEmpty({ level: 'pane', placement: 'right' }, 'layout', id) } },
     { icon: 'plus', label: `${SPLIT_EMPTY_LABEL} ${PLACEMENT_LABEL.below} ${EMPTY_SUFFIX}`, run: () => { void splitEmpty({ level: 'pane', placement: 'below' }, 'layout', id) } },
     SEP,
-    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
+    { icon: 'arrow-square-out', label: MOVE_LABEL, pin: 'icon', run: () => { void openMove(id) } },
     SEP,
     { icon: 'x', label: 'Fechar', run: () => { const p = findPanel(id); if (p) removeAnyPanel(p) } },
-  ])
+  ]
 }
 
 // ---------- empty panes (F5) ----------
@@ -3821,7 +3907,8 @@ function activateRendererExtensions(): void {
         copyLink: paneId => copyPaneLink(paneId),
         attention: paneId => drawAttention(paneId),
         close: paneId => closeSlotless(paneId),
-        showTabMenu: (paneId, x, y) => showTabMenu(paneId, x, y),
+        showTabMenu: (paneId, x, y, opener, opts) => { if (opts?.from) showPaneMenu(paneId, x, y, opener, opts); else showTabMenu(paneId, x, y, opener) },
+        tabMenuEntries: (paneId, opts) => paneMenuEntries(paneId, opts).flatMap((e): ContextMenuEntry[] => e === SEP ? ['sep'] : 'heading' in e ? [] : [e]),
         newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
         newPanelLabel: NEW_PANEL_LABEL,
         move: paneId => { void openMove(paneId) },
@@ -4009,7 +4096,6 @@ function activateRendererExtensions(): void {
           close: keys => closeFramesLive(keys),
           restore: snap => restoreFramesLive(snap),
           show: key => showFrame(key),
-          menu: (key, x, y, act, opener) => showLooseFrameMenu(key, x, y, act, opener),
           beginDrag: (key, ev) => beginLooseFrameDrag(key, ev),
         },
       },

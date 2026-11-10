@@ -57,7 +57,19 @@ export interface PaneInfo {
 }
 
 /** A row of a context menu (the tab menu): an item, or 'sep' for a thin line between groups. */
-export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean; disabled?: boolean; checked?: boolean } | 'sep'
+/**
+ * How a menu item sits outside the menu, where a view shows the menu's items as a bar of actions (the panel-pad-manager's
+ * rows): 'icon' = the icon alone, 'primary' = icon and label, 'highlight' = icon and label in the accent color. Unset =
+ * only in the menu.
+ */
+export type MenuPin = 'icon' | 'primary' | 'highlight'
+export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin } | 'sep'
+/**
+ * Whose eyes a tab menu is for. 'manager': a view that lists panels (open or with their tab closed) apart from their tabs;
+ * the menu then starts with how to reach the tab ("Focar guia"; for a closed one "Trazer de volta") and does not activate
+ * the pane.
+ */
+export interface TabMenuOptions { from?: 'manager' }
 
 /**
  * Who opens a file (VS Code's EditorResolverService: editors register for the resources they take). Ctrl+P, a
@@ -175,8 +187,13 @@ export interface TetherUi {
     attention(id: string): void
     /** Closes a pane without a slot behind it (remembered for "reabrir o último painel fechado"). */
     close(id: string): void
-    /** The pane's tab menu at page coordinates (the type's own `tabMenu`). */
-    showTabMenu(id: string, x: number, y: number): void
+    /**
+     * The pane's tab menu at page coordinates, by the `opener` button when given (it reads aria-expanded and gets the focus
+     * back). `id` may be a panel whose tab is closed (a loose frame's): its menu is the same, with "Trazer de volta" first.
+     */
+    showTabMenu(id: string, x: number, y: number, opener?: HTMLElement, opts?: TabMenuOptions): void
+    /** The items `showTabMenu` shows, as data (one source for the menu and any bar of actions built from it). */
+    tabMenuEntries(id: string, opts?: TabMenuOptions): ContextMenuEntry[]
     /** "Novo painel…" next to a pane (in `cwd` when given), and its label. */
     newPanelDialog(reference: string, opts?: { cwd?: string }): void
     readonly newPanelLabel: string
@@ -419,8 +436,6 @@ export interface TetherUi {
       restore(snapshot: FrameSnapshot): void
       /** A live frame to the front: its panel comes forward and its pad opens. */
       show(key: string): void
-      /** A loose frame's menu (its panel has no tab to right-click): "Trazer de volta" and "Fechar quadro" run `act`. */
-      menu(key: string, x: number, y: number, act: { revive(): void; close(): void }, opener?: HTMLElement): void
       /** From a `dragstart`: the loose frame's panel comes back and the drag carries it like its tab's. False when it cannot. */
       beginDrag(key: string, ev: DragEvent): boolean
     }
