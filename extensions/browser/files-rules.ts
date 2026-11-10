@@ -12,18 +12,70 @@ export const MAX_AGENT_DOWNLOAD_BYTES = 200 * 1024 * 1024
 export const UPLOAD_GRANT_MS = 15_000
 
 /**
- * A download's file name: no folder (the last part of a path, either slash), no character Windows refuses, no trailing dot or
- * space, at most 200 characters, never empty nor dots only, never a reserved device name (`con`, `nul`, `com1`...: prefixed).
- * The same rule as the package's `safeFilename`.
+ * Invisible format characters (Unicode Cf: the bidi controls U+202A-U+202E and U+2066-U+2069, the marks U+200E/F and U+061C,
+ * the zero widths U+200B-U+200D, U+2060-U+2064, U+FEFF, the tags...) and the fillers and selectors Cf leaves out: a name
+ * written with them reads otherwise than it is (`fatura‮fdp.exe` reads `faturaexe.pdf`), so they are taken out.
+ */
+const INVISIBLE = /[\p{Cf}͏ᅟᅠ឴឵ㅤﾠ︀-️\u{e0100}-\u{e01ef}]/gu
+
+/**
+ * Extensions Windows runs when the file is opened, or that the Explorer reads by merely listing the folder (a shortcut or a
+ * connector whose icon points to a UNC path makes it try SMB and send the NTLM hash): such a name gets `.download` at the end,
+ * so the Explorer treats it as an inert file (`x.url` becomes `x.url.download`).
+ */
+const DANGEROUS_EXT = new Set([
+  'exe', 'com', 'bat', 'cmd', 'ps1', 'psm1', 'psd1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'hta', 'msi', 'msp', 'mst', 'scr',
+  'cpl', 'reg', 'jar', 'pif', 'msc', 'inf', 'chm', 'lnk', 'url', 'scf', 'library-ms', 'searchconnector-ms', 'appref-ms',
+  'settingcontent-ms', 'website', 'application', 'gadget', 'diagcab', 'theme', 'themepack', 'desktop',
+])
+/** Whole names the Explorer reads from a folder it lists. */
+const DANGEROUS_NAME = new Set(['desktop.ini', 'autorun.inf'])
+export const INERT_SUFFIX = '.download'
+
+/**
+ * A download's file name: NFC, no invisible format character, no folder (the last part of a path, either slash), no character
+ * Windows refuses, no trailing dot or space, at most 200 characters (before the inert suffix), never empty nor dots only, never
+ * a reserved device name (`con`, `nul`, `com1`, `com¹`, `conin$`..., also with spaces before the extension: prefixed), and a
+ * dangerous type made inert with `.download` at the end. Idempotent: a name it gave comes back unchanged (pathOf relies on it).
  */
 export function safeDownloadName(suggested: string): string {
-  let name = (suggested.replace(/\\/g, '/').split('/').pop() ?? '')
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+  let name = (suggested.normalize('NFC').replace(INVISIBLE, '').replace(/\\/g, '/').split('/').pop() ?? '')
+    .replace(/[<>:"/\\|?*\u0000-\u001f\u007f-\u009f]/g, '_')
     .replace(/[. ]+$/, '')
-    .slice(0, 200)
   if (name === '' || /^\.+$/.test(name)) name = 'download'
-  if (/^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i.test(name)) name = `_${name}`
-  return name
+  if (/^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$) *(\..*)?$/i.test(name)) name = `_${name}`
+  const lower = name.toLowerCase()
+  const dot = lower.lastIndexOf('.')
+  const dangerous = DANGEROUS_NAME.has(lower) || (dot >= 0 && DANGEROUS_EXT.has(lower.slice(dot + 1)))
+  return dangerous ? fitName(name, MAX_NAME - INERT_SUFFIX.length) + INERT_SUFFIX : fitName(name, MAX_NAME)
+}
+
+const MAX_NAME = 200
+/** Room left under MAX_NAME when a name is cut, for uniqueName's `-N` (so a name it gives stays under the cap: idempotent). */
+const UNIQUE_ROOM = 10
+
+/**
+ * `name` when it fits in `max`; otherwise cut to `max - UNIQUE_ROOM`, keeping a short extension (so the type the suffix
+ * depends on is never cut away).
+ */
+function fitName(name: string, max: number): string {
+  if (name.length <= max) return name
+  max -= UNIQUE_ROOM
+  const dot = name.lastIndexOf('.')
+  const ext = dot > 0 && name.length - dot <= 32 ? name.slice(dot) : ''
+  return (name.slice(0, max - ext.length).replace(/[. ]+$/, '') || 'download') + ext
+}
+
+/** The Mark of the Web for a file downloaded from `url`: the Internet zone, with the origin only (never the path or query). */
+export function zoneIdentifier(url: string): string {
+  let origin = ''
+  try {
+    const u = new URL(url)
+    if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'blob:') origin = u.origin
+  } catch { /* not a URL: no origin */ }
+  const lines = ['[ZoneTransfer]', 'ZoneId=3']
+  if (origin && origin !== 'null') lines.push(`ReferrerUrl=${origin}`, `HostUrl=${origin}`)
+  return lines.join('\r\n') + '\r\n'
 }
 
 /** `name`, or `name-1.ext`, `name-2.ext`... the first one `taken` says is free (never overwrites). */

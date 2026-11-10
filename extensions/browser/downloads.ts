@@ -4,10 +4,10 @@
 // "Baixados" is read from the folders (so it survives a restart); "Mostrar na pasta" opens the system's file browser on the
 // file, never the file itself. Listeners hear every download's progress (the gate tells the owner's agent connections).
 import { randomUUID } from 'node:crypto'
-import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DownloadItem } from 'electron'
-import { type DownloadEntry, downloadOver, safeDownloadName, uniqueName } from './files-rules.ts'
+import { type DownloadEntry, downloadOver, safeDownloadName, uniqueName, zoneIdentifier } from './files-rules.ts'
 import { ensurePrivateDir } from './private-dir.ts'
 import { isId } from './tab-rules.ts'
 
@@ -130,7 +130,7 @@ export class DownloadStore {
       this.active.delete(guid)
       const received = item.getReceivedBytes()
       if (state === 'completed' && !cancelled) {
-        this.log('download concluído')
+        this.log(`download concluído${markOfTheWeb(path, url)}`)
         this.emit({ ...base, state: 'completed', received, total: received })
       } else {
         rmSync(path, { force: true })
@@ -142,4 +142,18 @@ export class DownloadStore {
   }
 
   dispose(): void { this.listeners.clear() }
+}
+
+/**
+ * Gives the finished file the Mark of the Web (`<file>:Zone.Identifier`, the Internet zone, the origin only), so Windows warns
+ * before running it and Office opens it protected. Chromium writes it itself when its quarantine service runs; when it is
+ * missing the tether writes it. Returns the log's note (which of the two, or that it could not).
+ */
+function markOfTheWeb(path: string, url: string): string {
+  if (process.platform !== 'win32') return ''
+  const ads = `${path}:Zone.Identifier`
+  if (existsSync(ads)) return ' (marca da web do Chromium)'
+  try { writeFileSync(ads, zoneIdentifier(url)); return ' (marca da web gravada pelo tether)' } catch (e) {
+    return ` (marca da web não gravada: ${(e as NodeJS.ErrnoException).code ?? 'erro'})`
+  }
 }
