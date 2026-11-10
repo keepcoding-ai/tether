@@ -29,9 +29,11 @@ export interface CredentialDeps {
   security: SecurityRunner
 }
 
+export const SECURITY_BIN = '/usr/bin/security'
+
 const runSecurity: SecurityRunner = (args) =>
   new Promise((resolve, reject) => {
-    execFile('security', args, { timeout: 5_000, windowsHide: true, maxBuffer: 1 << 20 }, (error, stdout) => {
+    execFile(SECURITY_BIN, args, { timeout: 5_000, windowsHide: true, maxBuffer: 1 << 20 }, (error, stdout) => {
       // Never forward `error`: its message repeats the command line. Callers only learn that it failed.
       if (error) reject(new Error('security failed'))
       else resolve(stdout)

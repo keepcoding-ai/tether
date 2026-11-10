@@ -1,12 +1,12 @@
 // `tether usage`: Claude plan usage (src/usage, src/cli/usage.ts). Fetch, clock and macOS `security` are simulated.
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
 import { cmdUsage } from '../../src/cli/usage.ts'
-import { KEYCHAIN_SERVICE, readClaudeToken, type CredentialDeps } from '../../src/usage/claude-credential.ts'
-import { normalize, readClaudeUsage, type UsageDeps, type UsageFailure, type UsageReport } from '../../src/usage/claude.ts'
+import { KEYCHAIN_SERVICE, SECURITY_BIN, readClaudeToken, type CredentialDeps } from '../../src/usage/claude-credential.ts'
+import { defaultCacheFile, normalize, readClaudeUsage, type UsageDeps, type UsageFailure, type UsageReport } from '../../src/usage/claude.ts'
 
 const SECRET = 'sk-ant-oat01-SECRET-TOKEN-VALUE-1234567890'
 const NOW = Date.parse('2026-11-10T12:00:00Z')
@@ -188,5 +188,45 @@ describe('usage: CLI', () => {
     assert.equal((await run(deps(reply(500, {})))).code, 4)
     assert.equal((await run(deps(reply(200, { x: 1 })))).code, 5)
     await assert.rejects(run(deps(reply(200, BODY)), ['--bogus']), /desconhecida|--bogus/)
+  })
+})
+
+describe('usage: security hardening', () => {
+  test('cache path is per user on each platform', () => {
+    const sep = (p: string): string => p.split(String.fromCharCode(92)).join('/')
+    assert.equal(sep(defaultCacheFile('linux', {}, '/home/u')), '/home/u/.cache/tether/usage/claude-official.json')
+    assert.equal(sep(defaultCacheFile('linux', { XDG_CACHE_HOME: '/x/c' }, '/home/u')), '/x/c/tether/usage/claude-official.json')
+    assert.equal(sep(defaultCacheFile('darwin', {}, '/Users/u')), '/Users/u/Library/Caches/tether/usage/claude-official.json')
+    assert.equal(sep(defaultCacheFile('win32', { LOCALAPPDATA: 'C:/L' }, 'C:/Users/u')), 'C:/L/tether/usage/claude-official.json')
+  })
+
+  test('cache that is a symlink is refused', async (t) => {
+    const d = tmp()
+    const real = join(d, 'real.json')
+    const link = join(d, 'link.json')
+    let calls = 0
+    const f = (async () => { calls++; return new Response(JSON.stringify(BODY)) }) as typeof fetch
+    ok(await readClaudeUsage(deps(f, real)))
+    try { symlinkSync(real, link) } catch { t.skip('symlinks not permitted here'); return }
+    assert.equal(ok(await readClaudeUsage(deps(f, link))).source, 'official')
+    assert.equal(calls, 2)
+  })
+
+  test('cache directory is created and the temp file does not linger', async () => {
+    const file = join(tmp(), 'a', 'b', 'c.json')
+    ok(await readClaudeUsage(deps(reply(200, BODY), file)))
+    assert.deepEqual(readdirSync(join(file, '..')), ['c.json'])
+  })
+
+  test('security is called by absolute path', () => {
+    assert.equal(SECURITY_BIN, '/usr/bin/security')
+  })
+
+  test('vendor labels and keys are sanitized but keep accents', () => {
+    const m = normalize({ 'chave<x>': { utilization: 1, resets_at: null }, limits: [{ kind: 'semana_útil\u001b[31m<b>', utilization: 5 }] })
+    assert.ok(m)
+    const all = JSON.stringify([m.limits, m.keys])
+    assert.ok(!/[<>\u001b]/.test(all), all)
+    assert.ok(all.includes('útil'), all)
   })
 })

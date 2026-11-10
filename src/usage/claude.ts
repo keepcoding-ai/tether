@@ -4,8 +4,9 @@
 // SECURITY: the token exists only inside readClaudeToken() and the single fetch call. It is never printed, logged,
 // cached, put in an error message or passed as a process argument. Errors carry fixed text, the HTTP status and a
 // short network error code, never an exception message.
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
+import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { CredentialError, readClaudeToken } from './claude-credential.ts'
 
@@ -19,7 +20,7 @@ type Json = Record<string, unknown>
 const isObj = (v: unknown): v is Json => v != null && typeof v === 'object' && !Array.isArray(v)
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 /** External text -> printable and short: never trust vendor strings in the terminal. */
-const clean = (v: unknown, max = 60): string | null => (typeof v === 'string' && v ? v.replace(/[^\x20-\x7E -￿]/g, '?').slice(0, max) : null)
+const clean = (v: unknown, max = 60): string | null => (typeof v === 'string' && v ? v.replace(/[^\p{L}\p{N}_ .·()-]/gu, '?').slice(0, max) : null)
 const pct = (v: number | null): string => (v == null ? NA : `${Number(v.toFixed(1))}%`)
 const p2 = (n: number): string => String(n).padStart(2, '0')
 const norm = (s: unknown): string => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -202,11 +203,28 @@ export function normalize(j: Json): UsageModel {
 }
 
 // ---------- cache (the normalized result only: never the token, never raw headers) ----------
-export function defaultCacheFile(): string {
-  return join(tmpdir(), 'tether-usage', 'claude-official.json')
+/** Per-user cache directory (never the shared temp dir): XDG on Linux, LOCALAPPDATA on Windows, Library/Caches on macOS. */
+export function defaultCacheFile(
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): string {
+  const base =
+    platform === 'win32' ? env.LOCALAPPDATA || join(home, 'AppData', 'Local')
+    : platform === 'darwin' ? join(home, 'Library', 'Caches')
+    : env.XDG_CACHE_HOME || join(home, '.cache')
+  return join(base, 'tether', 'usage', 'claude-official.json')
+}
+/** Refuses a symlink and, outside Windows, a file owned by someone else. */
+function trustedCacheFile(file: string): boolean {
+  const st = lstatSync(file)
+  if (st.isSymbolicLink() || !st.isFile()) return false
+  if (process.platform !== 'win32' && typeof process.getuid === 'function' && st.uid !== process.getuid()) return false
+  return true
 }
 function readCache(file: string): { at: string; data: UsageModel } | null {
   try {
+    if (!trustedCacheFile(file)) return null
     const c = JSON.parse(readFileSync(file, 'utf8')) as Json
     if (isObj(c) && typeof c.at === 'string' && Number.isFinite(Date.parse(c.at)) && isObj(c.data) && Array.isArray(c.data.limits) && c.data.limits.length) {
       return { at: c.at, data: c.data as unknown as UsageModel }
@@ -215,10 +233,10 @@ function readCache(file: string): { at: string; data: UsageModel } | null {
   return null
 }
 function writeCache(file: string, data: UsageModel, at: string): void {
-  const tmp = `${file}.${process.pid}.tmp`
+  const tmp = `${file}.${randomUUID()}.tmp`
   try {
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(tmp, JSON.stringify({ at, data }), { encoding: 'utf8', mode: 0o600 })
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
+    writeFileSync(tmp, JSON.stringify({ at, data }), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
     renameSync(tmp, file)
   } catch {
     try { unlinkSync(tmp) } catch { /* a cache failure never fails the tool */ }
