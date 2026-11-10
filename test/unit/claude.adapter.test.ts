@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { claudeAdapter, cleanEnv, encodeProjectDir, findTranscript, lastCustomTitle } from '../../src/agents/claude.ts'
+import { claudeAdapter, cleanEnv, encodeProjectDir, findTranscript, lastCustomTitle, resolveClaudeCommand, withCommandDirOnPath } from '../../src/agents/claude.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
@@ -296,3 +296,40 @@ async function waitFor(cond: () => boolean, timeoutMs = 3_000): Promise<void> {
     await new Promise((r) => setTimeout(r, 10))
   }
 }
+
+describe('resolveClaudeCommand', () => {
+  const launchd = '/opt/homebrew/Cellar/node/25.9.0_1/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
+  const fake = (...present: string[]) => (p: string) => present.includes(p)
+
+  test('PATH hit returns the absolute path found there', () => {
+    const r = resolveClaudeCommand({ PATH: '/x/bin:/y/bin' }, { platform: 'darwin', home: '/h', exists: fake('/y/bin/claude'), loginShell: () => assert.fail('no shell') })
+    assert.equal(r, '/y/bin/claude')
+  })
+
+  test('launchd PATH without ~/.local/bin still finds the native install', () => {
+    const r = resolveClaudeCommand({ PATH: launchd }, { platform: 'darwin', home: '/Users/u', exists: fake('/Users/u/.local/bin/claude'), loginShell: () => assert.fail('no shell') })
+    assert.equal(r, '/Users/u/.local/bin/claude')
+  })
+
+  test('falls back to the login shell, then to the bare name', () => {
+    const env = { PATH: launchd, SHELL: '/bin/zsh' }
+    assert.equal(resolveClaudeCommand(env, { platform: 'darwin', home: '/h', exists: fake(), loginShell: () => '/z/claude' }), '/z/claude')
+    assert.equal(resolveClaudeCommand(env, { platform: 'darwin', home: '/h', exists: fake(), loginShell: () => undefined }), 'claude')
+  })
+
+  test('Windows keeps searching PATH only, never the unix dirs', () => {
+    const env = { PATH: 'C:\\a;C:\\b' }
+    assert.equal(resolveClaudeCommand(env, { platform: 'win32', home: 'C:\\h', exists: (p) => p.endsWith('claude.cmd') && p.includes('b'), loginShell: () => assert.fail('no shell') }).endsWith('claude.cmd'), true)
+    assert.equal(resolveClaudeCommand(env, { platform: 'win32', home: '/h', exists: fake('/h/.local/bin/claude'), loginShell: () => assert.fail('no shell') }), 'claude')
+  })
+
+  test('withCommandDirOnPath prepends the binary dir without dropping entries', () => {
+    const env = { PATH: '/usr/bin:/bin' }
+    withCommandDirOnPath(env, '/h/.local/bin/claude', 'darwin')
+    assert.equal(env.PATH, '/h/.local/bin:/usr/bin:/bin')
+    withCommandDirOnPath(env, '/h/.local/bin/claude', 'darwin')
+    assert.equal(env.PATH, '/h/.local/bin:/usr/bin:/bin')
+    withCommandDirOnPath(env, 'claude', 'darwin')
+    assert.equal(env.PATH, '/h/.local/bin:/usr/bin:/bin')
+  })
+})
