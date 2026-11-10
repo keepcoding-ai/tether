@@ -1117,6 +1117,11 @@ Os "+" de borda passaram a existir só nesse modo.
 - **Proof** (experiência real) e **parecer final** antes de integrar.
 - Limites registrados: a trava cifra só o valor do cookie; um agente enganado pode usar as contas logadas na partição; o build empacotado ainda não sobe o tetherd (caminho dentro do `app.asar`).
 
+**Condições do parecer final (N-M1, N-M2, N-M3).**
+- **N-M1:** `safeDownloadName` normaliza (NFC), tira os caracteres invisíveis e de direção (Unicode Cf e afins), pega `con .txt`, `COM¹`, `CONIN$`, e acrescenta `.download` às extensões perigosas (executáveis, scripts, `.url`, `.lnk`, `.scf`, `.library-ms`, `.searchConnector-ms`, `desktop.ini`). O Electron já grava o `Zone.Identifier` (`ZoneId=3`, `HostUrl=about:internet`); o tether confere ao concluir e grava o seu (só a origem) se faltar. O Chromium já troca o RLO por `_` e `.url` por `.download` antes de o tether ver o nome: a regra do tether é a segunda trava.
+- **N-M2:** a frase "nenhum corpo de página fica em disco" valia só para o cache HTTP. Agora a partição persistente guarda só `Network` (cookies), `Cookies` e `Preferences` entre aberturas: o resto é apagado do disco antes de o Electron abrir a partição, limpo por `clearStorageData` ao abrir e no `before-quit` (teto de 4 s). Com o app aberto IndexedDB, localStorage e CacheStorage seguem em texto puro (ACL do perfil). Custo aceito: localStorage não sobrevive entre aberturas. `app.browser-cache` prova com iscas.
+- **N-M3:** manifesto v2 do runtime com o sha256 de cada arquivo; `app:install` torna `<home>/runtime` privada; a partida só troca para a cópia com a pasta privada e a árvore idêntica ao manifesto. O manifesto v1 da cópia atual conta como inválido: rodar `npm run app:install` de novo.
+
 ## Pausa gentil — B8: prova com Claude real e docs (2026-11-09)
 
 **O que entrou.**
