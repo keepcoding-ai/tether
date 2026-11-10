@@ -874,7 +874,7 @@ class DaemonImpl implements Daemon {
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
       if (slot && typeof msg.data === 'string') {
         slot.pty?.write(msg.data)
-        if (!msg.data.startsWith('\x1b')) slot.lastInputAt = Date.now()
+        if (msg.data && !msg.data.startsWith('\x1b')) slot.lastInputAt = Date.now()
         if (slot.attention.input(msg.data)) this.broadcastState(slot)
       }
       return
@@ -1174,6 +1174,9 @@ class DaemonImpl implements Daemon {
     if (slot.meta.agent === 'shell') return 'shell'
     if (!isAlive(slot) || slot.status !== 'running') return 'not-running'
     if (slot.restarting || slot.stopping) return 'restarting'
+    // 'running' may come from the ready fallback while the agent still shows a menu (profile picker, trust prompt): text
+    // typed there would pick an option. Only an agent that opened the session of this run (its start report) gets a nudge.
+    if (!this.reportedThisRun(slot)) return 'not-ready'
     // Claude: a permission prompt keeps the turn busy; the idle prompt (Notification after a finished turn) does not.
     if (slot.attention.turn === 'busy') return 'busy'
     if (slot.lastInputAt !== undefined && now - slot.lastInputAt < this.rondaInputQuietMs) return 'typing'

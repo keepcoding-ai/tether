@@ -1,10 +1,10 @@
 // The ronda: the pure model (interval parsing, assembly, nudge text, stimulus) and tetherd's clock (one per slot, typed
 // only into an idle agent, persisted across the agent's restart and the daemon's, `off` with a criterion asks first).
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { after, describe, test } from 'node:test'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
-import { slotAttentionPath, slotRondaPath } from '../../src/core/paths.ts'
+import { slotAttentionPath, slotEventsPath, slotRondaPath } from '../../src/core/paths.ts'
 import { DaemonError } from '../../src/daemon/client.ts'
 import { applyChange, buildNudgeText, criterionStimulus, formatInterval, parseInterval, RONDA_DEFAULT_NUDGE, RondaError } from '../../src/daemon/ronda.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
@@ -88,6 +88,8 @@ describe('ronda: daemon clock', () => {
     daemons.push(daemon)
     return { home, daemon, rec: await Recorder.connect(daemon.pipe) }
   }
+  /** The agent's start report (what Claude's SessionStart hook writes): the run opened its session. */
+  const started = (home: string, id: string): void => appendFileSync(slotEventsPath(home, id), JSON.stringify({ v: 1, ts: new Date().toISOString(), slotId: id, agent: 'claude', kind: 'start', source: 'startup', sessionId: 'sess-ronda', cwd: home, resume: { cwd: home, args: ['--resume', 'sess-ronda'] } }) + '\n')
   const nudges = (rec: Recorder, id: string): number => rec.text(id).split('[ronda] Ronda de rotina').length - 1
 
   test('one per slot; nudges an idle agent on time; waits while busy; survives a restart of the agent and of the daemon', async () => {
@@ -96,6 +98,14 @@ describe('ronda: daemon clock', () => {
     const id = slot!.slotId
     await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
     await rec.state(id, (s) => s.status === 'running', 5_000, 'running')
+
+    // running by the fallback but no start report (still in a menu): the due ronda waits
+    await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s' })
+    await rec.state(id, (s) => s.ronda?.due === true, 5_000, 'due before the start report')
+    assert.equal(nudges(rec, id), 0, 'nothing typed before the agent opened its session')
+    await rec.client.request({ t: 'ronda-off', slotId: id })
+    started(home, id)
+    await rec.state(id, (s) => !!s.binding, 5_000, 'bound')
 
     await assert.rejects(rec.client.request({ t: 'ronda-set', slotId: id, interval: '5x' }), isErr('bad-request'))
     const on = await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s', nudge: 'Extra do teste.' })
@@ -125,6 +135,8 @@ describe('ronda: daemon clock', () => {
     assert.ok((await rec.client.request({ t: 'ronda-get', slotId: id })).ronda, 'kept while the agent is down')
     await rec.client.request({ t: 'start', slotId: id, choice: 'new' })
     await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
+    await sleep(500)
+    started(home, id)
     const n1 = nudges(rec, id)
     await waitUntil(() => nudges(rec, id) > n1, 10_000, 'nudge after the agent restarted')
 
