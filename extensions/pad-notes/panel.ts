@@ -1,8 +1,8 @@
 // The notes manager ("Notas"): the panel pad's second state (frame-pads/manager-slot.ts), with the map of every
 // prancheta's note, by owner (the loose ones, each desk with its desk pad and its panels, the global pad), the filter
 // Soltas / Todas, a read-only preview of the selected note, and its actions: Mover… (to another owner; the tabs add up),
-// Fechar (asked inline; the toast offers Desfazer) and Limpar vazias. Its header's first button takes the pad back to the
-// panel's frame. The model is app/renderer/pad-notes.ts; the notes live in the core (TetherUi.pads.notes).
+// Fechar (asked inline; the toast offers Desfazer) and Limpar vazias. The frame's tab bar stays above it; its switch, Esc
+// and Enter on a live note take the pad back to the frame. The model is app/renderer/pad-notes.ts; the notes live in the core (TetherUi.pads.notes).
 import { icon, type IconName } from '../../app/renderer/icons.ts'
 import type { ContextMenuEntry, NoteFilter, NoteRow, NoteTree } from '../../app/renderer/ext-api.ts'
 import { panelNotesOnly, visibleRows, whenLabel } from '../../app/renderer/pad-notes.ts'
@@ -66,12 +66,6 @@ export class NotesManagerPanel implements ManagerView {
     this.element = el('div', 'pn-pane')
     this.element.dataset.notesManager = 'pane'
     const head = el('div', 'pn-head')
-    const back = el('button', 'pn-back')
-    back.type = 'button'
-    back.dataset.action = 'back'
-    back.title = 'Voltar ao quadro do painel'; back.setAttribute('aria-label', back.title)
-    back.append(icon('arrow-left'))
-    back.addEventListener('click', () => this.host.exit())
     const title = el('span', 'pn-title', NOTES_MANAGER_TITLE)
     const group = el('div', 'pn-filter')
     group.setAttribute('role', 'group')
@@ -92,7 +86,7 @@ export class NotesManagerPanel implements ManagerView {
       const keys = panelNotesOnly(this.host.tree()).loose.filter(r => r.empty).map(r => r.key)
       if (keys.length) this.host.close(keys, 'empty')
     })
-    head.append(back, title, group, el('span', 'sp'), this.clean)
+    head.append(title, group, el('span', 'sp'), this.clean)
     const body = el('div', 'pn-body')
     this.list = el('div', 'pn-list')
     this.list.tabIndex = 0
@@ -270,7 +264,7 @@ export class NotesManagerPanel implements ManagerView {
     for (const t of targets) {
       if (t.group !== group && entries.length) entries.push('sep')
       group = t.group
-      entries.push({ icon: t.key.startsWith('frame-pads.panel@') ? 'push-pin' : t.group === 'Global' ? 'globe-simple' : 'clipboard-text', label: t.group === 'Global' ? t.label : `${t.group} · ${t.label}`, run: () => { this.host.move(r.key, t.key) } })
+      entries.push({ icon: t.key.startsWith('frame-pads.panel@') ? 'push-pin' : t.group === 'Global' ? 'chalkboard-simple' : 'clipboard-text', label: t.group === 'Global' ? t.label : `${t.group} · ${t.label}`, run: () => { this.host.move(r.key, t.key) } })
     }
     if (!entries.length) entries.push({ icon: 'x', label: 'Nenhum destino aberto', run: () => {}, disabled: true })
     this.host.menu(x, y, entries)

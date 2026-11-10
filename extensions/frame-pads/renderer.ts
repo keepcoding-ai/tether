@@ -1,7 +1,8 @@
 // The frame pads' renderer entry: each pad's view is the core's frames view (a Desk hosted like the drawer's). The panel
 // pad has a second state, the notes manager (manager-slot.ts; the pad-notes extension provides the view): its header
 // carries the switch, pinned before the frame's own buttons, and its "⋯" menu carries "Notas das pranchetas…". In the
-// manager state the pad shows the manager in place of the frame; the frame stays mounted (its terminals never resize).
+// manager state the pad shows the manager under the frame's tab bar, in place of the frame's content: the tab bar stays
+// (the same tabs, the same buttons; the switch lit), the content stays mounted underneath (its terminals never resize).
 // Without the pad-notes extension the pad has one state and offers neither.
 import type { PadView, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
@@ -47,7 +48,17 @@ function withManager(ui: TetherUi, view: PadView): PadView {
       b.setAttribute('aria-pressed', String(on))
     }
   }
-  /** The state onto the pad: the manager mounted (once, on first need) and shown, or the frame. */
+  /** The manager sits under the frame's first tab bar: its top follows the bar's height. */
+  const ro = new ResizeObserver(() => place())
+  let bar: HTMLElement | undefined
+  const place = (): void => {
+    if (!manager) return
+    const first = view.element.querySelector<HTMLElement>('.dv-tabs-and-actions-container') ?? undefined
+    if (first !== bar) { if (bar) ro.unobserve(bar); bar = first; if (bar) ro.observe(bar) }
+    const top = bar ? bar.getBoundingClientRect().bottom - view.element.getBoundingClientRect().top : 0
+    manager.element.style.top = `${Math.max(0, Math.round(top))}px`
+  }
+  /** The state onto the pad: the manager mounted (once, on first need) and shown under the tab bar, or the frame. */
   const sync = (): void => {
     const on = padManager.isOn()
     if (on && !manager) {
@@ -59,11 +70,18 @@ function withManager(ui: TetherUi, view: PadView): PadView {
     if (manager) manager.element.hidden = !on
     if (on) { const r = padManager.request(); manager?.open(r.filter, r.key) }
     pin()
+    place()
   }
   const focus = view.focus.bind(view)
   view.focus = () => { if (padManager.isOn() && manager) manager.focus(); else focus() }
-  const mo = new MutationObserver(pin)
+  const mo = new MutationObserver(() => { pin(); place() })
   mo.observe(view.element, { childList: true, subtree: true })
+  // A tab of the frame clicked in the manager state: the person asked for that tab, the pad goes back to the frame.
+  view.element.addEventListener('click', ev => {
+    if (!padManager.isOn()) return
+    const t = ev.target as HTMLElement | null
+    if (t?.closest('.dv-tabs-container .dv-tab') && !t.closest('.close')) padManager.hide()
+  }, true)
   const sub = padManager.onDidChange(() => {
     const was = view.element.classList.contains('manager-on')
     sync()
@@ -73,7 +91,7 @@ function withManager(ui: TetherUi, view: PadView): PadView {
   })
   sync()
   const dispose = view.dispose.bind(view)
-  view.dispose = () => { mo.disconnect(); sub.dispose(); manager?.dispose(); dispose() }
+  view.dispose = () => { mo.disconnect(); ro.disconnect(); sub.dispose(); manager?.dispose(); dispose() }
   return view
 }
 
