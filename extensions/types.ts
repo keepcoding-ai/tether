@@ -90,6 +90,11 @@ export interface PaneTypeContribution {
   owns?(pane: SavedPaneShape): boolean
   /** The dockview options of a pane from its saved state (moving a pane between desks rebuilds it from these). */
   optionsOf(pane: SavedPaneShape): PaneOptionsShape
+  /**
+   * Where a pane of this type may live. 'desk': always the general area (a desk or the drawer), never a pad: opening it
+   * from a pad lands on the Foco de Mesa, and "Mover…" offers no pad. Screens like the settings have it. Default: anywhere.
+   */
+  affinity?: 'desk'
 }
 
 /** A group of the chooser (the "Novo painel" list and the empty pane): a heading with its items. */

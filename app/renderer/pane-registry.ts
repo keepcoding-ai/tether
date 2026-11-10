@@ -33,6 +33,11 @@ export interface PaneLayout {
   tabComponent: string
   /** A slot in tetherd sits behind it: false ⇒ never an orphan for the restore, never pruned. */
   hasSlot: boolean
+  /**
+   * Where a pane of this type may live. 'desk': always the general area (a desk or the drawer), never a pad: opening it
+   * from a pad lands on the Foco de Mesa, and "Mover…" offers no pad. Screens like the settings have it. Default: anywhere.
+   */
+  affinity?: 'desk'
   /** Among types sharing a prefix, whether this one owns the saved pane (the previews tell md from html by their params). */
   owns?(pane: SavedPane): boolean
   /** The dockview options of a pane from its saved state (moving a pane between desks rebuilds it from these). */

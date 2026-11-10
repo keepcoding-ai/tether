@@ -231,6 +231,15 @@ test('notes manager: a note left loose by a closed panel is found, moved, closed
     assert.ok(!(await page.evaluate(() => window.__tether.padFrames())).some(f => f.panes.includes(mid)), 'the manager is not inside a pad')
     await page.waitForSelector(`#dock .tether-tab[data-slot="${mid}"]`, { state: 'visible' })
     await page.screenshot({ path: join(shots, '8-botao-fixo.png') })
+
+    // ---- 9. affinity: the settings (a desk-only screen) opened with the pad in focus land on the desk, never in the pad ----
+    await page.evaluate(id => window.__tether.activatePanel(id), b)
+    await page.click(`${shown}[data-panel="${b}"] .frame-dock`) // the keyboard into the pad again
+    await page.keyboard.press('Control+,')
+    await page.waitForFunction(() => window.__tether.panelIds().some(id => id.startsWith('settings:')), undefined, { timeout: 5_000 })
+    const pads9 = await page.evaluate(() => window.__tether.padFrames())
+    assert.ok(!pads9.some(f => f.panes.some(p => p.startsWith('settings:'))), 'the settings are not inside a pad')
+    await page.screenshot({ path: join(shots, '9-afinidade-config.png') })
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const p of daemons) await killOwned(p, { tree: true })

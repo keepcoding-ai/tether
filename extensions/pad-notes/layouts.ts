@@ -12,6 +12,6 @@ export function newNotesManagerId(now: number = Date.now()): string {
 }
 
 export const NOTES_MANAGER_LAYOUT: PaneTypeContribution = {
-  id: 'notes-manager', idPrefix: NOTES_MANAGER_PREFIX, component: NOTES_MANAGER_COMPONENT, tabComponent: NOTES_MANAGER_TAB,
+  id: 'notes-manager', affinity: 'desk', idPrefix: NOTES_MANAGER_PREFIX, component: NOTES_MANAGER_COMPONENT, tabComponent: NOTES_MANAGER_TAB,
   optionsOf: p => ({ id: p.id, component: NOTES_MANAGER_COMPONENT, tabComponent: NOTES_MANAGER_TAB, title: NOTES_MANAGER_TITLE, params: {} }),
 }
