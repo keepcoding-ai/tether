@@ -46,3 +46,5 @@ export interface AgentAdapter {
 /** Env vars the launcher sets for every slot (adapters add their own). */
 export const ENV_SLOT = 'TETHER_SLOT_ID'
 export const ENV_HOME = 'TETHER_HOME'
+/** The kind of agent in the pane (`claude`, `soul`…): each adapter sets its own name, so skills can tell their platform. */
+export const ENV_AGENT = 'TETHER_AGENT'

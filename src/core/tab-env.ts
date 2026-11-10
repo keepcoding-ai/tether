@@ -1,5 +1,6 @@
 // What every terminal of tether knows about its own pane, through its environment (all agents and the shell):
 //   TETHER_SLOT_ID    the pane's slot id
+//   TETHER_AGENT      the agent's kind (claude, soul…), set by its adapter (src/agents/types.ts)
 //   TETHER_TAB_URL    the pane's tether:// link (app/shared/tether-url.ts): following it brings this pane to the front
 //   TETHER_OPEN_CWD   the folder the pane was OPENED in — fixed, it never follows a `cd` (an agent keeps its notes there)
 //   TETHER_CLI        this tether's CLI script (`node "$TETHER_CLI" focus <file>`), for an agent with no `tether` on its PATH

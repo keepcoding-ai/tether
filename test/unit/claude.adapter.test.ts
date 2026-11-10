@@ -48,6 +48,11 @@ describe('claudeAdapter.plan', () => {
     }
   })
 
+  test('the pane knows its agent kind (TETHER_AGENT), over any profile env', () => {
+    const plan = claudeAdapter.plan({ slot, home: homes.make(), extraArgs: [], profile: { env: { TETHER_AGENT: 'forged' } } as never })
+    assert.equal(plan.env.TETHER_AGENT, 'claude')
+  })
+
   test('new session: --settings file, --session-id uuid, then slot args, then extra args', () => {
     const home = homes.make()
     const plan = claudeAdapter.plan({ slot, home, extraArgs: ['-p', 'oi'] })
