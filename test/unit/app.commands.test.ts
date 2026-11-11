@@ -15,7 +15,7 @@ function stubHost(calls: string[]): CommandHost {
   const log = (name: string) => (...args: unknown[]): void => { calls.push([name, ...args.map(a => JSON.stringify(a))].join(' ')) }
   return {
     newPanel: log('newPanel'), newTab: log('newTab'), duplicateActive: log('duplicateActive'), activePane: () => 'slot-1',
-    renamePane: log('renamePane'), switchProfile: log('switchProfile'), toggleDetails: log('toggleDetails'),
+    renamePane: log('renamePane'), switchProfile: log('switchProfile'), restartAgent: log('restartAgent'), toggleDetails: log('toggleDetails'),
     copyLink: log('copyLink'), copyFolder: log('copyFolder'), openFolder: log('openFolder'), movePane: log('movePane'), closePane: log('closePane'),
     createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), moveActiveDesk: log('moveActiveDesk'), deskActions: log('deskActions'), toggleBuilder: log('toggleBuilder'), closeDesk: log('closeDesk'),
     toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'),

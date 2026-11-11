@@ -233,4 +233,4 @@ function watchTitle(binding: Binding, onTitle: (title: string) => void, interval
   return () => clearInterval(timer)
 }
 
-export const claudeAdapter: AgentAdapter = { name: 'claude', plan, sessionExists, title, watchTitle }
+export const claudeAdapter: AgentAdapter = { name: 'claude', resumes: true, plan, sessionExists, title, watchTitle }

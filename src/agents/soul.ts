@@ -250,4 +250,4 @@ async function title(binding: Binding): Promise<string | undefined> {
   return binding.title
 }
 
-export const soulAdapter: AgentAdapter = { name: 'soul', plan, sessionExists, title }
+export const soulAdapter: AgentAdapter = { name: 'soul', resumes: true, plan, sessionExists, title }
