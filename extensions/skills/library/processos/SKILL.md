@@ -33,6 +33,16 @@ Nada vem do seu shell: o processo nasce com o ambiente do tether mais o que a re
 
 Porta declarada que já ouve: o start é recusado dizendo quem ocupa. Escolha outra porta com `proc ports`, ou combine com quem ocupa.
 
+## Adotar um processo que já roda fora
+
+Adote só quando o processo já está rodando (subido por você ou por outra pessoa, fora do tether) e você quer que o tether passe a geri-lo. A receita completa é obrigatória: comando, pasta e variáveis, porque é com ela que o tether reinicia o processo.
+
+```
+tether proc adopt <nome> --pid N --port 3000 --cwd <pasta> --env K=V -- <comando…>
+```
+
+O processo segue rodando, intocado, até alguém pedir `proc restart`: aí o tether encerra aquele pid (nunca por nome, e só se ainda for o mesmo processo) e sobe o próprio com a receita, que daí em diante tem log e histórico como qualquer outro. `proc stop` encerra o adotado pelo pid; `proc rm` o tira do quadro sem tocar nele. Se ele morrer por fora, o tether marca "pede atenção" e não o sobe sozinho. O tether recusa o pid do tetherd, de um painel ou de algo que ele já gere.
+
 ## Uso declarado: avise que você depende
 
 Ao depender de um processo (rodar testes contra ele, uma carga, uma demonstração), declare o uso com prazo e propósito. Enquanto o uso vale, quem tentar parar ou reiniciar o processo recebe um quadro com o seu nome, o prazo e o propósito, e você recebe um recado. Libere ao terminar.

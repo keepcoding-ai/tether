@@ -69,6 +69,7 @@ const hhmm = (iso: string): string => clockTime(iso).slice(0, 5)
 /** The right side of the row's first line: "rodando há 2 h", "encerrou sozinho 13:41 (1)", "parado 13:41". */
 export function whenText(p: ProcState, now = Date.now()): string {
   if (p.status === 'running') {
+    if (p.external) return 'externo (adotado)'
     const rel = p.startedAt ? relativeTime(p.startedAt, now) : ''
     return rel && rel !== '-' ? `rodando ${rel}` : 'rodando'
   }

@@ -3,7 +3,7 @@
 // and the Portuguese texts. tether never restarts anything by itself and never kills by name: see proc-manager.ts.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
-import { procCardPath, procEventsPath, procRunPath, procsDir, procUsesPath } from '../core/paths.ts'
+import { procAdoptPath, procCardPath, procEventsPath, procRunPath, procsDir, procUsesPath } from '../core/paths.ts'
 import { writeJsonAtomic, type RunFile } from '../procd/protocol.ts'
 import { actionText, useText } from './proc-texts.ts'
 
@@ -15,7 +15,7 @@ export const SECRET_MASK = '•••'
 /** How many events `proc-info` returns. */
 export const INFO_EVENTS = 20
 
-export type ProcErrorCode = 'unknown-proc' | 'proc-running' | 'proc-not-stopped' | 'proc-host' | 'proc-in-use' | 'port-busy' | 'bad-request'
+export type ProcErrorCode = 'bad-adopt' | 'unknown-proc' | 'proc-running' | 'proc-not-stopped' | 'proc-host' | 'proc-in-use' | 'port-busy' | 'bad-request'
 
 export class ProcError extends Error {
   readonly code: ProcErrorCode
@@ -77,9 +77,10 @@ export interface ProcCard {
 export type RecipeFields = Pick<ProcCard, 'command' | 'args' | 'cwd' | 'env' | 'ports' | 'stopGraceMs' | 'description' | 'info'>
 
 export type ProcEventKind =
-  | 'registered' | 'recipe-changed' | 'started' | 'start-failed' | 'stop-requested' | 'restart-requested' | 'ended' | 'forgotten'
+  | 'registered' | 'recipe-changed' | 'started' | 'adopted' | 'start-failed' | 'stop-requested' | 'restart-requested' | 'ended' | 'forgotten'
   | 'use-declared' | 'use-released' | 'use-expired' | 'refused-in-use' | 'forced'
-export type EndCause = 'requested' | 'own' | 'host'
+/** `external`: an adopted process vanished (or is no longer the recorded one): its exit code is unknown. */
+export type EndCause = 'requested' | 'own' | 'host' | 'external'
 /** Why a use ended before its time: its author released it, or the author's panel left (exited or was forgotten). */
 export type UseEndCause = 'released' | 'panel-gone'
 /** The acts a declared use protects against. */
@@ -150,6 +151,8 @@ export interface ProcState {
   memoryMB?: number
   /** Uses in force. */
   uses?: UseView[]
+  /** Runs outside tether and was adopted (`pid` is the adopted one; no run, no log, no exit code). */
+  external?: boolean
 }
 
 // ---- validation ---------------------------------------------------------------------------------
@@ -234,7 +237,7 @@ export interface Replay {
 export function replay(events: ProcEvent[]): Replay {
   const r: Replay = { lastRun: 0 }
   for (const e of events) {
-    if (e.kind === 'started' && typeof e.run === 'number') {
+    if ((e.kind === 'started' || e.kind === 'adopted') && typeof e.run === 'number') {
       r.lastRun = Math.max(r.lastRun, e.run)
       r.started = e
       r.ended = undefined
@@ -260,7 +263,7 @@ export function pendingRequest(events: ProcEvent[], run: number): ProcEvent | un
   return r.started?.run === run && !r.ended ? r.request : undefined
 }
 
-export function deriveState(card: ProcCard, events: ProcEvent[], live: { runFile?: RunFile; stopping?: boolean; seenRun?: number }): ProcState {
+export function deriveState(card: ProcCard, events: ProcEvent[], live: { runFile?: RunFile; stopping?: boolean; seenRun?: number; adoptedStartedAt?: string }): ProcState {
   const r = replay(events)
   const s: ProcState = { name: card.name, card: maskCard(card), status: 'stopped' }
   if (r.failed) {
@@ -270,12 +273,16 @@ export function deriveState(card: ProcCard, events: ProcEvent[], live: { runFile
   }
   if (!r.started) return s
   const run = r.started.run!
-  s.run = run
+  const adopted = r.started.kind === 'adopted'
+  if (!adopted) s.run = run
   if (r.started.by) s.startedBy = r.started.by
   if (!r.ended) {
     s.status = live.stopping ? 'stopping' : 'running'
     if (typeof r.started.pid === 'number') s.pid = r.started.pid
-    if (live.runFile?.run === run) s.startedAt = live.runFile.startedAt
+    if (adopted) {
+      s.external = true
+      if (live.adoptedStartedAt) s.startedAt = live.adoptedStartedAt
+    } else if (live.runFile?.run === run) s.startedAt = live.runFile.startedAt
     return s
   }
   const end = r.ended
@@ -408,9 +415,34 @@ export function appendProcEvent(home: string, name: string, e: ProcEvent): void 
   appendFileSync(path, JSON.stringify(e) + '\n')
 }
 
-/** Card, history, run file, uses and logs. */
+/** The identity of an adopted process, written when it was adopted: pid + creation time. */
+export interface AdoptFile {
+  v: 1
+  pid: number
+  startedAt: string
+  adoptedAt: string
+}
+
+export function readAdopt(home: string, name: string): AdoptFile | undefined {
+  try {
+    const a = JSON.parse(readFileSync(procAdoptPath(home, name), 'utf8')) as AdoptFile
+    return a && a.v === 1 && Number.isInteger(a.pid) && typeof a.startedAt === 'string' ? a : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function writeAdopt(home: string, name: string, a: AdoptFile): void {
+  writeJsonAtomic(procAdoptPath(home, name), a)
+}
+
+export function removeAdopt(home: string, name: string): void {
+  rmSync(procAdoptPath(home, name), { force: true })
+}
+
+/** Card, history, run file, uses, adoption and logs. */
 export function removeProcFiles(home: string, name: string): void {
-  for (const p of [procCardPath(home, name), procEventsPath(home, name), procRunPath(home, name), procUsesPath(home, name)]) rmSync(p, { force: true })
+  for (const p of [procCardPath(home, name), procEventsPath(home, name), procRunPath(home, name), procUsesPath(home, name), procAdoptPath(home, name)]) rmSync(p, { force: true })
   const dir = join(procsDir(home), name)
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
 }

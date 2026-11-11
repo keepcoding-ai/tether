@@ -6,7 +6,7 @@ import { userInfo } from 'node:os'
 import { procEventsPath, procLogPath, procLogsDir } from '../core/paths.ts'
 import { DaemonError, type DaemonClient } from '../daemon/client.ts'
 import { checkText, ownerText, type PortRow } from '../daemon/ports.ts'
-import { authorText, historyLine, readProcEvents, statusText, useText, WAIT_DEFAULT_MS, WAIT_MAX_MS, type ProcBy, type ProcEvent, type ProcRecipe, type ProcState } from '../daemon/procs.ts'
+import { authorText, historyLine, readProcEvents, replay, statusText, useText, WAIT_DEFAULT_MS, WAIT_MAX_MS, type ProcBy, type ProcEvent, type ProcRecipe, type ProcState } from '../daemon/procs.ts'
 import { formatInterval, parseInterval, RondaError } from '../daemon/ronda.ts'
 import { parseArgs, UsageError } from './args.ts'
 import { localTime, relativeTime, table, truncate } from './format.ts'
@@ -30,11 +30,18 @@ export const PROC_USAGE = `uso: tether proc <comando>
                                       registra e inicia; sem comando, inicia a receita guardada
                                       (--cwd padrão: a pasta atual). Porta declarada já ocupada:
                                       recusa dizendo quem ocupa; --force inicia mesmo assim
+  adopt <nome> --pid N [--port N]... [--desc "…"] [--env K=V]... [--cwd p] [--info k=v]...
+        [--grace 5s] [--as rótulo] -- <comando…>
+                                      traz para o quadro um processo que já roda fora do tether, SÓ com a
+                                      receita completa (comando, pasta, variáveis): é ela que o tether usa
+                                      para reiniciá-lo. O processo segue rodando até alguém pedir restart;
+                                      aí o tether encerra aquele pid (nunca por nome) e sobe o próprio
   wait <nome> [--timeout 60s]         espera as portas declaradas ouvirem (sem portas: rodando);
                                       se o processo sair antes, mostra o fim do log
   stop <nome> [--reason "…"]          para (Ctrl+C, espera, depois a árvore)
   restart <nome> [--reason "…"]       para e inicia de novo com a receita guardada
-  rm <nome>                           esquece um processo parado (ficha, histórico e logs)
+  rm <nome>                           esquece um processo parado (ficha, histórico e logs); um adotado
+                                      sai do quadro e segue rodando, intocado
         stop, restart e rm de processo em uso por outros: recusa (saída 3) com o quadro;
         --wait [tempo] espera a liberação (padrão 60s, até 5m); --force "motivo" faz mesmo assim
   use <nome> [tempo] "para quê"       declara que você depende do processo (padrão 15m, até 60m);
@@ -95,6 +102,7 @@ export function usesText(s: ProcState): string {
 
 export function describeState(s: ProcState): string {
   const head = `${s.name}: ${statusText(s)}`
+  if (s.external && (s.status === 'running' || s.status === 'stopping')) return `${head}, pid ${s.pid ?? '?'}\n`
   if (s.status === 'running' || s.status === 'stopping') return `${head} (pid ${s.pid ?? '?'}, execução ${s.run})\n`
   if (s.status === 'failed') return `${head}: ${s.error ?? '?'}\n`
   return `${head}\n`
@@ -104,8 +112,9 @@ export function describeInfo(s: ProcState, events: ProcEvent[]): string {
   const c = s.card
   const lines = [
     `${c.name}: ${statusText(s)}${s.attention ? ' (pede atenção)' : ''}`,
-    s.pid ? `  pid:         ${s.pid} (execução ${s.run}${s.startedAt ? `, desde ${localTime(s.startedAt)}` : ''})` : '',
-    s.startedBy ? `  iniciado por ${authorText(s.startedBy)}` : '',
+    s.pid && s.external ? `  pid:         ${s.pid} (externo, adotado${s.startedAt ? `; o processo existe desde ${localTime(s.startedAt)}` : ''})` : '',
+    s.pid && !s.external ? `  pid:         ${s.pid} (execução ${s.run}${s.startedAt ? `, desde ${localTime(s.startedAt)}` : ''})` : '',
+    s.startedBy ? `  ${s.external ? 'adotado' : 'iniciado'} por ${authorText(s.startedBy)}` : '',
     s.exit ? `  fim:         ${localTime(s.exit.at)}${typeof s.exit.code === 'number' ? `, código ${s.exit.code}` : ''}` : '',
     s.stoppedBy ? `  parado por:  ${authorText(s.stoppedBy)}${s.reason ? `, motivo: ${s.reason}` : ''}` : '',
     s.error ? `  erro:        ${s.error}` : '',
@@ -150,6 +159,11 @@ export function logRuns(home: string, name: string): number[] {
 function cmdLogs(a: ReturnType<typeof parseArgs>, io: ProcIo): number {
   const name = requireName(a.positional, 'uso: tether proc logs <nome> [--tail N] [--since HH:MM|ISO] [--run k]')
   const runs = logRuns(io.home, name)
+  const began = replay(readProcEvents(io.home, name))
+  if (began.started?.kind === 'adopted' && !began.ended) {
+    io.err('tether: processo adotado: o tether não tem a saída dele; ao reiniciar pelo tether a saída passa a ser guardada\n')
+    return 1
+  }
   if (!runs.length) { io.err(`tether: ${name} não tem log (veja: tether proc ls)\n`); return 1 }
   const run = a.options.run !== undefined ? Number(a.options.run) : runs[runs.length - 1]!
   if (!Number.isInteger(run) || !existsSync(procLogPath(io.home, name, run))) throw new UsageError(`execução sem log: ${a.options.run}; há: ${runs.join(', ')}`)
@@ -208,7 +222,7 @@ export async function cmdProc(argv: string[], io: ProcIo): Promise<number> {
   // --force is a reason on stop/restart/rm ("motivo", it reaches whoever uses the process) and a switch elsewhere.
   const guarded = GUARDED.has(argv[0] ?? '')
   const a = parseArgs(guarded ? defaultWait(argv) : argv, {
-    valued: ['desc', 'cwd', 'grace', 'as', 'reason', 'tail', 'since', 'run', 'check', 'timeout', ...(guarded ? ['force', 'wait'] : [])],
+    valued: ['pid', 'desc', 'cwd', 'grace', 'as', 'reason', 'tail', 'since', 'run', 'check', 'timeout', ...(guarded ? ['force', 'wait'] : [])],
     flags: ['json', ...(guarded ? [] : ['force'])],
     multi: ['port', 'env', 'info'],
   })
@@ -216,9 +230,10 @@ export async function cmdProc(argv: string[], io: ProcIo): Promise<number> {
   if (!sub || sub === 'help') { io.out(PROC_USAGE); return sub ? 0 : 2 }
   if (sub === 'logs') return cmdLogs(a, io)
   if (sub === 'history') return cmdHistory(a, io)
-  if (!['ls', 'info', 'start', 'stop', 'restart', 'rm', 'host', 'use', 'release', 'ports', 'wait'].includes(sub)) throw new UsageError(`subcomando desconhecido: proc ${sub}\n\n${PROC_USAGE}`)
+  if (!['ls', 'info', 'start', 'adopt', 'stop', 'restart', 'rm', 'host', 'use', 'release', 'ports', 'wait'].includes(sub)) throw new UsageError(`subcomando desconhecido: proc ${sub}\n\n${PROC_USAGE}`)
   const recipeOpts = a.options.desc !== undefined || a.options.cwd !== undefined || a.options.grace !== undefined || a.multi.port || a.multi.env || a.multi.info
-  if (sub !== 'start' && (recipeOpts || a.rest.length)) throw new UsageError(`--port/--desc/--env/--cwd/--info/--grace e o comando só valem em proc start`)
+  if (sub !== 'start' && sub !== 'adopt' && (recipeOpts || a.rest.length)) throw new UsageError(`--port/--desc/--env/--cwd/--info/--grace e o comando só valem em proc start e proc adopt`)
+  if (a.options.pid !== undefined && sub !== 'adopt') throw new UsageError('--pid só vale em proc adopt')
   if (a.options.check !== undefined && sub !== 'ports') throw new UsageError('--check só vale em proc ports')
   if (a.options.timeout !== undefined && sub !== 'wait') throw new UsageError('--timeout só vale em proc wait')
   if (a.flags.has('force') && sub !== 'start' && sub !== 'host') throw new UsageError('--force só vale em start, host stop, e com motivo em stop/restart/rm')
@@ -247,8 +262,16 @@ export async function cmdProc(argv: string[], io: ProcIo): Promise<number> {
   // Built before connecting: a usage error never needs tetherd.
   let recipe: ProcRecipe | undefined
   let name = ''
-  if (sub === 'start') {
-    name = requireName(a.positional, 'uso: tether proc start <nome> [opções] -- <comando…>')
+  let adoptPid = 0
+  if (sub === 'adopt') {
+    const usage = 'uso: tether proc adopt <nome> --pid N [opções] -- <comando…>'
+    name = requireName(a.positional, usage)
+    adoptPid = Number(a.options.pid)
+    if (a.options.pid === undefined || !Number.isInteger(adoptPid) || adoptPid <= 0) throw new UsageError(`informe o pid do processo que roda: --pid N. ${usage}`)
+    if (!a.rest.length) throw new UsageError(`a adoção exige a receita completa depois de --: o comando que o tether vai usar para reiniciar o processo (a pasta é a atual, ou --cwd; as variáveis, --env). ${usage}`)
+  }
+  if (sub === 'start' || sub === 'adopt') {
+    if (sub === 'start') name = requireName(a.positional, 'uso: tether proc start <nome> [opções] -- <comando…>')
     if (!a.rest.length && recipeOpts) throw new UsageError('as opções da receita vêm com o comando: tether proc start <nome> [opções] -- <comando…>')
     if (a.rest.length) {
       let stopGraceMs: number | undefined
@@ -304,6 +327,11 @@ export async function cmdProc(argv: string[], io: ProcIo): Promise<number> {
         else io.out(describeState(s))
         return s.status === 'failed' ? 1 : 0
       }
+      case 'adopt': {
+        const s = (await client.request({ t: 'proc-adopt', name, pid: adoptPid, recipe: recipe!, by: who })).proc!
+        io.out(a.flags.has('json') ? JSON.stringify(s, null, 2) + '\n' : `${name} adotado (pid ${s.pid}). Segue rodando fora do tether; para o tether assumir: tether proc restart ${name}\n`)
+        return 0
+      }
       case 'stop':
       case 'restart': {
         const reason = a.options.reason
@@ -312,8 +340,8 @@ export async function cmdProc(argv: string[], io: ProcIo): Promise<number> {
         return s.status === 'failed' ? 1 : 0
       }
       case 'rm':
-        await client.request({ t: 'proc-forget', name, by: who, ...guard })
-        io.out(`${name} esquecido (ficha, histórico e logs apagados)\n`)
+        const note = (await client.request({ t: 'proc-forget', name, by: who, ...guard })).note
+        io.out(note ? `${note}\n` : `${name} esquecido (ficha, histórico e logs apagados)\n`)
         return 0
       case 'use': {
         const s = (await client.request({ t: 'proc-use', name, ...useArgs!, by: who })).proc!

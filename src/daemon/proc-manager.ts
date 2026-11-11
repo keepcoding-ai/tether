@@ -4,7 +4,7 @@
 // writer of the history. It never restarts anything by itself, and kills only by pid + creation time (a process
 // that the host lost but somehow survived), never by name.
 import { userInfo } from 'node:os'
-import { isSameProcess } from '../core/liveness.ts'
+import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { HostClient, HostRequestError } from '../procd/client.ts'
 import { readRunFile, type HostRun, type RunExit } from '../procd/protocol.ts'
 import { relativeTime } from '../cli/format.ts'
@@ -29,10 +29,12 @@ import {
   pendingRequest,
   ProcError,
   PURPOSE_MAX,
+  readAdopt,
   readProcEvents,
   readUses,
   recipeDiff,
   recipeOf,
+  removeAdopt,
   removeProcFiles,
   replay,
   statusText,
@@ -40,8 +42,10 @@ import {
   USE_MAX_MS,
   useKey,
   useView,
+  writeAdopt,
   writeCard,
   writeUses,
+  type AdoptFile,
   type GuardedAction,
   type ProcAuthor,
   type ProcBy,
@@ -62,6 +66,8 @@ const PLAN_COLS = 120
 const PLAN_ROWS = 30
 /** A refused panel hears "free again" only within this window. */
 const REFUSED_KEEP_MS = 30 * 60_000
+/** After killing an adopted process: how long its death and its ports' release are awaited. */
+const EXTERNAL_GONE_MS = 8_000
 const NOTICE_PREFIX = '[tether] processos: '
 
 /** How an act meets the uses of others: refuse (default), wait up to `waitMs`, or go ahead with a reason. */
@@ -74,6 +80,8 @@ export interface ProcManagerOptions {
   home: string
   log: (msg: string) => void
   broadcast: (msg: DaemonMessage) => void
+  /** Pids tetherd must never adopt: every panel's agent or shell (its own pid and the host's are known here). */
+  protectedPids?: () => number[]
   /** The portrait of whoever asks (tetherd knows its slots). */
   author: (by: ProcBy | undefined, client: string | undefined) => ProcAuthor
   /** Connects to the host; `launch` = start one when nothing answers (only a start does). */
@@ -93,6 +101,8 @@ export interface ProcManagerOptions {
 
 interface Entry {
   card: ProcCard
+  /** Identity of the adopted outside process while it lives (pid + creation time). */
+  adopt?: AdoptFile
   events: ProcEvent[]
   stopping?: boolean
   /** The run someone looked at (clears attention). */
@@ -125,6 +135,7 @@ export class ProcManager {
   private readonly slotExists: ((slotId: string) => boolean) | undefined
   private readonly sampleSoon: (() => void) | undefined
   private readonly onData: ((name: string, data: string) => void) | undefined
+  private readonly protectedPids: (() => number[]) | undefined
   /** Names whose output tetherd is attached to in the host (a new host connection attaches them again). */
   private readonly watched = new Set<string>()
   private readonly entries = new Map<string, Entry>()
@@ -147,6 +158,7 @@ export class ProcManager {
     this.slotExists = opts.slotExists
     this.sampleSoon = opts.sampleSoon
     this.onData = opts.onData
+    this.protectedPids = opts.protectedPids
   }
 
   /** Loads the cards; with any, only TRIES the host (never launches it) and reconciles. */
@@ -160,6 +172,11 @@ export class ProcManager {
       for (const u of gone) this.append(e, { kind: 'use-released', by: u.by, cause: 'panel-gone' })
       if (gone.length) e.uses = e.uses.filter((u) => !gone.includes(u))
       this.expireUses(e)
+    }
+    for (const e of this.entries.values()) {
+      if (!isExternalLive(e)) continue
+      e.adopt = readAdopt(this.home, e.card.name)
+      await this.checkExternal(e, true)
     }
     if (!this.entries.size) return
     const host = await this.retryConnect(1_000)
@@ -178,6 +195,7 @@ export class ProcManager {
 
   async list(): Promise<ProcState[]> {
     const all = [...this.entries.values()].sort((a, b) => a.card.name.localeCompare(b.card.name))
+    await Promise.all(all.map((e) => this.checkExternal(e)))
     await Promise.all(all.map((e) => this.probe(e)))
     return all.map((e) => this.state(e))
   }
@@ -189,6 +207,7 @@ export class ProcManager {
 
   async info(name: string): Promise<{ proc: ProcState; events: ProcEvent[] }> {
     const e = this.require(name)
+    await this.checkExternal(e)
     await this.probe(e)
     return { proc: this.state(e), events: e.events.slice(-INFO_EVENTS) }
   }
@@ -225,6 +244,11 @@ export class ProcManager {
       if (typeof pid === 'number') out.push({ pid, name: e.card.name })
     }
     return out
+  }
+
+  /** The periodic sample's chance to notice that an adopted process vanished. */
+  async observeExternals(): Promise<void> {
+    await Promise.all([...this.entries.values()].map((e) => this.checkExternal(e)))
   }
 
   /** The memory sample's sums (bytes per root pid); a process whose reading moved enough is broadcast. */
@@ -307,7 +331,8 @@ export class ProcManager {
       const run = replay(e.events).started!.run!
       const why = reason ?? guard.force
       this.append(e, { kind: 'stop-requested', by: author, run, ...(why ? { reason: why } : {}) })
-      await this.stopRun(e, run)
+      if (e.adopt) await this.stopExternal(e, run)
+      else await this.stopRun(e, run)
       this.tellUsers(e, author, `${e.card.name} foi parado por ${authorText(author)}${over ? ', à força sobre o seu uso' : ''}${why ? `, motivo: ${quoted(why)}` : ''}. O tether não o sobe de novo sozinho`)
       return this.state(e)
     })
@@ -322,7 +347,10 @@ export class ProcManager {
       if (isLive(e)) {
         const run = replay(e.events).started!.run!
         this.append(e, { kind: 'restart-requested', by: author, run, ...(why ? { reason: why } : {}) })
-        await this.stopRun(e, run)
+        if (e.adopt) {
+          await this.stopExternal(e, run)
+          await this.waitPortsFree(e.card.ports)
+        } else await this.stopRun(e, run)
       }
       await this.launch(e, author)
       const s = this.state(e)
@@ -331,10 +359,12 @@ export class ProcManager {
     })
   }
 
-  forget(name: string, by?: ProcBy, client?: string, guard: GuardOptions = {}): Promise<void> {
+  /** Returns a note when something is worth telling (an adopted process keeps running). */
+  forget(name: string, by?: ProcBy, client?: string, guard: GuardOptions = {}): Promise<string | undefined> {
     return this.locked(name, async () => {
       const e = this.require(name)
-      if (isLive(e)) throw new ProcError('proc-not-stopped', `${name} está rodando; pare antes: tether proc stop ${name}`)
+      const left = isExternalLive(e) ? replay(e.events).started?.pid : undefined
+      if (isLive(e) && left === undefined) throw new ProcError('proc-not-stopped', `${name} está rodando; pare antes: tether proc stop ${name}`)
       const author = this.author(by, client)
       await this.guard(e, 'forget', author, guard)
       this.tellUsers(e, author, `${name} foi esquecido por ${authorText(author)}${guard.force ? `, motivo: ${quoted(guard.force)}` : ''}; seu uso acabou com ele`)
@@ -344,6 +374,7 @@ export class ProcManager {
       this.entries.delete(name)
       this.log(`proc ${name}: forgotten`)
       this.broadcast({ t: 'proc-removed', name })
+      return left === undefined ? undefined : `${name} saiu do quadro; o processo externo (pid ${left}) segue rodando, intocado`
     })
   }
 
@@ -438,7 +469,7 @@ export class ProcManager {
   }
 
   private state(e: Entry): ProcState {
-    const s = deriveState(e.card, e.events, { runFile: readRunFile(this.home, e.card.name), ...(e.stopping ? { stopping: true } : {}), ...(e.seenRun !== undefined ? { seenRun: e.seenRun } : {}) })
+    const s = deriveState(e.card, e.events, { runFile: readRunFile(this.home, e.card.name), ...(e.stopping ? { stopping: true } : {}), ...(e.adopt ? { adoptedStartedAt: e.adopt.startedAt } : {}), ...(e.seenRun !== undefined ? { seenRun: e.seenRun } : {}) })
     if (e.card.ports.length) s.ports = e.card.ports.map((port) => ({ port, listening: e.listening?.get(port) ?? false }))
     if (e.memoryMB !== undefined && (s.status === 'running' || s.status === 'stopping')) s.memoryMB = e.memoryMB
     const uses = liveUses(e.uses)
@@ -468,6 +499,8 @@ export class ProcManager {
     this.emit(e)
     if (full.kind === 'ended' && full.cause === 'own') {
       this.tellUsers(e, undefined, `${e.card.name} encerrou sozinho às ${clockTime(full.at ?? full.ts)}${typeof full.code === 'number' ? ` com código ${full.code}` : ''}; o tether não o sobe de novo sozinho. Veja: tether proc logs ${e.card.name}`)
+    } else if (full.kind === 'ended' && full.cause === 'external') {
+      this.tellUsers(e, undefined, `${e.card.name}: o processo externo adotado (pid ${full.pid}) não existe mais; código de saída desconhecido; o tether não o sobe de novo sozinho (tether proc restart ${e.card.name} sobe a receita)`)
     } else if (full.kind === 'ended' && full.cause === 'host') {
       this.tellUsers(e, undefined, `${e.card.name} caiu com o anfitrião de processos às ${clockTime(full.at ?? full.ts)}; o tether não o sobe de novo sozinho. Veja: tether proc logs ${e.card.name}`)
     }
@@ -599,6 +632,7 @@ export class ProcManager {
 
   private runningMessage(e: Entry): string {
     const s = this.state(e)
+    if (s.external) return `${e.card.name} roda fora do tether (pid ${s.pid ?? '?'}, adotado por ${authorText(s.startedBy)}); use restart para o tether assumir: tether proc restart ${e.card.name}`
     const cmd = [e.card.command, ...e.card.args].join(' ')
     return `${e.card.name} já está rodando: pid ${s.pid ?? '?'}, iniciado por ${authorText(s.startedBy)} ${relativeTime(s.startedAt)} (${cmd}, em ${e.card.cwd}). ` +
       `Para usar outro comando, pare antes (tether proc stop ${e.card.name}) ou escolha outro nome; para recomeçar com a mesma receita: tether proc restart ${e.card.name}`
@@ -649,6 +683,125 @@ export class ProcManager {
     if (early?.run === run) {
       e.earlyExit = undefined
       this.recordEnd(e, run, early.exit)
+    }
+  }
+
+  /**
+   * Brings a process that already runs outside tether into the board. Only with the complete recipe (so tether can
+   * restart it). The process is identified by pid + creation time and left running; nothing here looks it up by name.
+   */
+  adoptExternal(name: string, pid: number, recipe: ProcRecipe | undefined, by: ProcBy | undefined, client: string | undefined): Promise<ProcState> {
+    checkName(name)
+    return this.locked(name, async () => {
+      const author = this.author(by, client)
+      if (this.entries.has(name)) throw new ProcError('bad-adopt', `já existe um processo ${name} no quadro; escolha outro nome`)
+      if (!recipe || typeof recipe.command !== 'string' || !recipe.command.trim()) {
+        throw new ProcError('bad-adopt', 'a adoção exige a receita completa (comando, pasta e variáveis) para o tether poder reiniciar o processo: tether proc adopt <nome> --pid N [opções] -- <comando…>')
+      }
+      const fields = normalizeRecipe(recipe)
+      if (!Number.isInteger(pid) || pid <= 0 || !pidExists(pid)) throw new ProcError('bad-adopt', `o pid ${pid} não existe; confira o processo e tente de novo`)
+      await this.refuseUnsafe(pid)
+      const clash = [...this.entries.values()].find((x) => isLive(x) && x.card.ports.some((p) => fields.ports.includes(p)))
+      if (clash) throw new ProcError('bad-adopt', `a porta ${fields.ports.find((p) => clash.card.ports.includes(p))} já é declarada por ${clash.card.name}, que está rodando; use outra porta ou pare ${clash.card.name} antes`)
+      const startedAt = await processStartTime(pid)
+      if (startedAt === undefined) throw new ProcError('bad-adopt', `não consegui ler a identidade do pid ${pid} (hora de criação); sem ela não adoto`)
+      const card: ProcCard = { v: 1, name, ...fields, registeredBy: author, createdAt: new Date().toISOString() }
+      const adopt: AdoptFile = { v: 1, pid, startedAt, adoptedAt: new Date().toISOString() }
+      writeCard(this.home, card)
+      writeAdopt(this.home, name, adopt)
+      const e = newEntry(card, [])
+      e.adopt = adopt
+      this.entries.set(name, e)
+      this.append(e, { kind: 'registered', by: author })
+      this.append(e, { kind: 'adopted', by: author, run: 1, pid })
+      this.log(`proc ${name}: adopted external pid ${pid} by ${authorText(author)}`)
+      this.sampleSoon?.()
+      return this.state(e)
+    })
+  }
+
+  /** The reasons not to adopt `pid`, with what to do; nothing is touched. */
+  private async refuseUnsafe(pid: number): Promise<void> {
+    const table = await sampleProcessTable().catch((err) => { throw new ProcError('bad-adopt', `não consegui ler a tabela de processos (${(err as Error).message}); tente de novo`) })
+    const guarded = new Map<number, string>([[process.pid, 'o tetherd']])
+    if (this.host && !this.host.isClosed) guarded.set(this.host.hello.pid, 'o anfitrião de processos')
+    for (const p of this.protectedPids?.() ?? []) guarded.set(p, 'o agente ou shell de um painel deste tether')
+    const tree = (rootPid: number): Set<number> => {
+      const seen = new Set<number>()
+      const stack = [rootPid]
+      while (stack.length) {
+        const x = stack.pop()!
+        if (seen.has(x)) continue
+        seen.add(x)
+        for (const r of table) if (r.ppid === x && r.pid !== x) stack.push(r.pid)
+      }
+      return seen
+    }
+    const mine = tree(pid)
+    for (const [p, what] of guarded) {
+      if (!mine.has(p)) continue
+      throw new ProcError('bad-adopt', p === pid
+        ? `o pid ${pid} é ${what}; adote o processo de fundo que você quer gerir, não ele`
+        : `a árvore do pid ${pid} contém ${what} (pid ${p}); parar o adotado mataria o tether. Adote o processo filho que você quer, não o pai`)
+    }
+    for (const r of this.liveRoots()) {
+      if (tree(r.pid).has(pid)) throw new ProcError('bad-adopt', `o pid ${pid} já está na árvore de ${r.name} (pid ${r.pid}), que o tether gere; não precisa adotar`)
+      if (mine.has(r.pid)) throw new ProcError('bad-adopt', `a árvore do pid ${pid} contém ${r.name} (pid ${r.pid}), que já está no quadro; parar o adotado mataria os dois`)
+    }
+  }
+
+  /**
+   * An adopted process that is not the recorded one anymore (gone, or its pid was reused) ends as `external`: tether
+   * never kills it then. A name with an act in progress is skipped (its own act decides), except at boot.
+   */
+  private async checkExternal(e: Entry, boot = false): Promise<void> {
+    const ad = e.adopt
+    if (!ad && !(boot && isExternalLive(e))) return
+    if (!boot && this.locks.has(e.card.name)) return
+    if (ad && await isSameProcess(ad.pid, ad.startedAt)) return
+    if (!boot && (this.locks.has(e.card.name) || e.adopt !== ad)) return
+    this.endExternal(e)
+  }
+
+  private endExternal(e: Entry): void {
+    const r = replay(e.events)
+    if (!r.started || r.ended) return
+    const pid = e.adopt?.pid ?? r.started.pid
+    e.adopt = undefined
+    removeAdopt(this.home, e.card.name)
+    this.append(e, { kind: 'ended', run: r.started.run!, ...(pid !== undefined ? { pid } : {}), at: new Date().toISOString(), cause: 'external' })
+    this.log(`proc ${e.card.name}: adopted pid ${pid} is gone; ended (external)`)
+  }
+
+  /** Stops the adopted process by pid, only while it is still the recorded one; no Ctrl+C (there is no terminal). */
+  private async stopExternal(e: Entry, run: number): Promise<void> {
+    const ad = e.adopt!
+    e.stopping = true
+    this.emit(e)
+    try {
+      if (await isSameProcess(ad.pid, ad.startedAt)) {
+        await killTree(ad.pid)
+        const deadline = Date.now() + EXTERNAL_GONE_MS
+        while (pidExists(ad.pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100))
+        e.adopt = undefined
+        removeAdopt(this.home, e.card.name)
+        this.append(e, { kind: 'ended', run, pid: ad.pid, at: new Date().toISOString(), cause: 'requested' })
+      } else {
+        this.endExternal(e)
+      }
+    } finally {
+      e.stopping = false
+      this.emit(e)
+    }
+  }
+
+  /** Waits (with a ceiling) for the declared ports to be released after an adopted process was killed. */
+  private async waitPortsFree(ports: number[]): Promise<void> {
+    const deadline = Date.now() + EXTERNAL_GONE_MS
+    while (Date.now() < deadline) {
+      const busy = await Promise.all(ports.map((p) => probePort(p)))
+      if (!busy.some(Boolean)) return
+      await new Promise((r) => setTimeout(r, 150))
     }
   }
 
@@ -761,6 +914,7 @@ export class ProcManager {
     for (const e of this.entries.values()) {
       const r = replay(e.events)
       if (!r.started || r.ended) continue
+      if (r.started.kind === 'adopted') continue
       const run = r.started.run!
       const name = e.card.name
       const file = readRunFile(this.home, name)
@@ -785,6 +939,12 @@ export class ProcManager {
 
 function newEntry(card: ProcCard, events: ProcEvent[]): Entry {
   return { card, events, uses: [], waiters: new Set(), refused: new Map(), emitSeq: 0 }
+}
+
+/** Live and adopted from outside (no host run behind it). */
+function isExternalLive(e: Entry): boolean {
+  const r = replay(e.events)
+  return r.started?.kind === 'adopted' && r.ended === undefined
 }
 
 function isLive(e: Entry): boolean {

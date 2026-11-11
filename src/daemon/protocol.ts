@@ -121,6 +121,7 @@ export type ErrorCode =
   | 'proc-running'      // proc-start of a name that runs (the message says who started it)
   | 'proc-not-stopped'  // proc-forget of a live process
   | 'proc-host'         // the process host is unavailable or speaks another protocol version (message: what to do)
+  | 'bad-adopt'        // proc-adopt refused: nothing was touched (message: why and what to do)
   | 'proc-in-use'       // stop/restart/forget refused: others declared a use (message = the board: who, until when, what for, options)
   | 'port-busy'         // proc-start refused: a declared port listens already, or another live process declares it (message: who)
 
@@ -203,6 +204,8 @@ export type Request =
   /** Stop and start again with the stored recipe; answers once the new run is up. */
   | { t: 'proc-restart'; id: number; name: string; reason?: string; by?: ProcBy; waitMs?: number; force?: string }
   /** Stopped only: card, history, run file, uses and logs go. */
+  /** Bring a process that already runs outside tether into the board, with the COMPLETE recipe to restart it. Reply: `proc`. */
+  | { t: 'proc-adopt'; id: number; name: string; pid: number; recipe: ProcRecipe; by?: ProcBy }
   | { t: 'proc-forget'; id: number; name: string; by?: ProcBy; waitMs?: number; force?: string }
   /** Declare (or renew) the caller's use: `duration` like '15m' (default 15m, at most 60m), `purpose` required. Reply: `proc`. */
   | { t: 'proc-use'; id: number; name: string; duration?: string; purpose: string; by?: ProcBy }
@@ -258,6 +261,8 @@ export type Reply =
       events?: ProcEvent[]
       /** proc-ports. */
       ports?: PortRow[]
+      /** proc-forget: something worth telling the caller (an adopted process was left running). */
+      note?: string
       /** proc-release: whether the caller had a use. */
       released?: boolean
       /** proc-host: null when no host answers. */

@@ -6,9 +6,9 @@ import type { PortRow } from './ports.ts'
 import type { GuardedAction, ProcAuthor, ProcEvent, ProcState, UseView } from './procs.ts'
 
 
-export function statusText(s: Pick<ProcState, 'status' | 'exit'>): string {
+export function statusText(s: Pick<ProcState, 'status' | 'exit'> & { external?: boolean }): string {
   switch (s.status) {
-    case 'running': return 'rodando'
+    case 'running': return s.external ? 'externo (adotado)' : 'rodando'
     case 'stopping': return 'parando'
     case 'stopped': return 'parado'
     case 'exited': return typeof s.exit?.code === 'number' ? `encerrou sozinho (${s.exit.code})` : 'encerrou sozinho'
@@ -49,6 +49,7 @@ export function eventText(e: ProcEvent): string {
     case 'forced': return `forçou ${actionText(e.action ?? 'restart')} sobre o uso de ${(e.over ?? []).map((u) => authorText(u.by)).join(', ')}`
     case 'registered': return 'registrou o processo'
     case 'recipe-changed': return `alterou a receita: ${Object.keys(e.after ?? {}).join(', ')}`
+    case 'adopted': return `adotou o processo externo (pid ${e.pid})`
     case 'started': return `iniciou (execução ${e.run}, pid ${e.pid})`
     case 'start-failed': return `não subiu: ${e.message ?? '?'}`
     case 'stop-requested': return `pediu a parada (execução ${e.run})`
@@ -58,6 +59,7 @@ export function eventText(e: ProcEvent): string {
       const at = e.at ? ` às ${clockTime(e.at)}` : ''
       const code = typeof e.code === 'number' ? `, código ${e.code}` : ''
       if (e.cause === 'requested') return `execução ${e.run} parou a pedido${at}${code}`
+      if (e.cause === 'external') return `o processo externo adotado (pid ${e.pid}) não existe mais${at}; código de saída desconhecido`
       if (e.cause === 'host') return `execução ${e.run} caiu com o anfitrião${at}`
       return `execução ${e.run} encerrou sozinha${at}${code}`
     }

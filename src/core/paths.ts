@@ -86,6 +86,7 @@ export function slotPauseReportPath(home: string, slotId: string): string {
 //   <home>/procs/<name>.run.json        the current run (pid, start time, exit; only tether-procd writes it)
 //   <home>/procs/<name>/logs/run-<n>.log clean text, one line per output line (only tether-procd writes it)
 //   <home>/procs/<name>.uses.json       declared uses in force (who, until when, what for; tetherd writes it)
+//   <home>/procs/<name>.adopt.json      identity of an adopted outside process: pid + creation time (tetherd writes it)
 
 export function procsDir(home: string): string {
   return join(home, 'procs')
@@ -105,6 +106,10 @@ export function procRunPath(home: string, name: string): string {
 
 export function procUsesPath(home: string, name: string): string {
   return join(procsDir(home), `${name}.uses.json`)
+}
+
+export function procAdoptPath(home: string, name: string): string {
+  return join(procsDir(home), `${name}.adopt.json`)
 }
 
 export function procLogsDir(home: string, name: string): string {

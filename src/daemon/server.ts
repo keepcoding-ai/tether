@@ -281,6 +281,7 @@ class DaemonImpl implements Daemon {
       ...(opts.procHostReconnectMs !== undefined ? { reconnectMs: opts.procHostReconnectMs } : {}),
       allowSeconds: this.rondaAllowSeconds,
       slotExists: (slotId) => this.slotMap.has(slotId),
+      protectedPids: () => [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit).map((s) => s.pty!.pid),
       sampleSoon: () => this.kickMemory(),
       onData: (name, data) => { for (const c of this.procWatchers.get(name) ?? []) this.send(c, { t: 'proc-data', name, data }) },
     })
@@ -419,6 +420,7 @@ class DaemonImpl implements Daemon {
     if (!live.length && !procRoots.length) return
     this.memorySampling = true
     try {
+      await this.procs.observeExternals()
       const sums = treeBytes(await sampleProcessTable(), [...live.map((s) => s.pty!.pid), ...procRoots.map((r) => r.pid)])
       this.procs.setMemory(sums, memoryChanged)
       for (const slot of live) {
@@ -1218,9 +1220,12 @@ class DaemonImpl implements Daemon {
       }
       case 'proc-ports':
         return { t: 'ok', id, ports: await this.procAct(() => this.procs.ports(req.check)) }
-      case 'proc-forget':
-        await this.procAct(() => this.procs.forget(req.name, req.by, client.kind, guardOf(req)))
-        return { t: 'ok', id }
+      case 'proc-adopt':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.adoptExternal(String(req.name), Number(req.pid), req.recipe, req.by, client.kind)) }
+      case 'proc-forget': {
+        const note = await this.procAct(() => this.procs.forget(req.name, req.by, client.kind, guardOf(req)))
+        return { t: 'ok', id, ...(note ? { note } : {}) }
+      }
       case 'proc-seen':
         await this.procAct(() => this.procs.seen(req.name))
         return { t: 'ok', id }
