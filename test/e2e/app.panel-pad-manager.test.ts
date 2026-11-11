@@ -277,6 +277,17 @@ test("panel pad manager: the pad's guides grouped by owner; focus, close, move b
     assert.equal(await page.locator(`${inPad} .pf-chip[data-filter="loose"]`).innerText(), 'De painéis fechados (1)')
     assert.equal(await page.locator(`${inPad} .pf-chip[data-filter="all"]`).innerText(), 'Todas')
     await barShape(page, n3)
+    // Same card, unselected, read as a closed owner's and as an open owner's: the backgrounds differ.
+    const [closedBg, openBg, selectedBg] = await page.evaluate(sel => {
+      const r = document.querySelector<HTMLElement>(sel)!, was = r.getAttribute('aria-selected')!
+      r.setAttribute('aria-selected', 'false')
+      const c = getComputedStyle(r).backgroundColor
+      r.classList.remove('closed-owner'); const o = getComputedStyle(r).backgroundColor
+      r.classList.add('closed-owner'); r.setAttribute('aria-selected', was)
+      return [c, o, was === 'true' ? getComputedStyle(r).backgroundColor : c]
+    }, card(n3))
+    assert.notEqual(closedBg, openBg, `a closed owner's card has its own background: ${closedBg} vs ${openBg}`)
+    assert.equal(selectedBg, closedBg, 'a selected closed-owner card keeps the beige background')
     await page.screenshot({ path: join(shots, '6a-dono-fechado.png') })
     await page.click(`${inPad} .pf-chip[data-filter="loose"]`)
     await page.waitForFunction(() => window.__tether.panelPadManager()[0]?.filter === 'loose')

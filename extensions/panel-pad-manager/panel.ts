@@ -231,6 +231,7 @@ export class PanelPadManager implements ManagerView {
     const agent = this.host.agent(p.id)
     const info = this.host.describe(p.id)
     const b = el('div', 'pf-row')
+    if (g.row.loose) b.classList.add('closed-owner')
     b.dataset.pane = p.id
     b.dataset.key = g.row.key
     b.setAttribute('role', 'option')

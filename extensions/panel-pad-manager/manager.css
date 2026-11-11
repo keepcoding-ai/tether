@@ -35,6 +35,8 @@
 .pf-row { display: flex; flex-direction: column; gap: 3px; margin-left: 12px; padding: 6px 10px; border-radius: 6px; cursor: pointer; user-select: none; }
 .pf-row:hover { background: var(--bg-hover); }
 .pf-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.pf-row.closed-owner { background: color-mix(in srgb, var(--warn) 7%, transparent); }
+.pf-row.closed-owner:hover { background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .pf-row.dragging { opacity: .45; }
 .pf-r-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .pf-r-icon { display: inline-flex; flex: none; color: var(--fg-dim); }
