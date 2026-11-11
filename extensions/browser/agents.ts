@@ -25,7 +25,7 @@ import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { slotMetaPath } from '../../src/core/paths.ts'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
-import type { McpBackendSpec } from '../../src/daemon/mcp-http.ts'
+import type { McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 import { slotOfKeyFile, validKeyShape } from './gate-rules.ts'
 import { McpRewriter } from './mcp-texts.ts'
 import { ensurePrivateDir } from './private-dir.ts'
@@ -37,12 +37,7 @@ export const ENV_BROWSER_MCP_KEY = 'TETHER_BROWSER_MCP_KEY'
 export const BROWSER_RESTART_NOTICE = 'The browser tool of the tether was restarted after being idle. Tab ids and element refs from before may be stale: list the tabs and take a new snapshot. Upload authorizations given before are gone.'
 
 /** The daemon's HTTP host of the browser server (src/daemon/mcp-http.ts McpHttpHost), as the middleware uses it. */
-export interface BrowserHttpHost {
-  /** The slot's route, or undefined while the host is not listening (then the stdio path applies). */
-  urlOf(slotId: string): string | undefined
-  grant(slotId: string, key: string, spec: McpBackendSpec): void
-  revoke(slotId: string): void
-}
+export type BrowserHttpHost = McpSlotRoutes
 
 /** The MCP server's name, the prefix of the agents' tools (`mcp__tether-browser__*`). Unique among the extensions' servers. */
 export const MCP_SERVER_NAME = 'tether-browser'

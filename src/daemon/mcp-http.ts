@@ -34,6 +34,14 @@ export interface McpBackendSpec {
   rewriter?: () => LineRewriter
 }
 
+/** The host as a launch middleware uses it (McpHttpHost; a fake in tests). */
+export interface McpSlotRoutes {
+  /** The slot's route, or undefined while the host is not listening (then the stdio path applies). */
+  urlOf(slotId: string): string | undefined
+  grant(slotId: string, key: string, spec: McpBackendSpec): void
+  revoke(slotId: string): void
+}
+
 /** What the host needs of a child process (node's ChildProcess; a fake in tests). */
 export type McpChild = Pick<ChildProcess, 'stdin' | 'stdout' | 'kill' | 'on' | 'pid'>
 
