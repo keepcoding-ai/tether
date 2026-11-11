@@ -13,7 +13,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ENV_CLIENT_ID, ENV_CLIENT_NAME } from '../../extensions/web-bridge/agents.ts'
-import { bridgeHomeOf, mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
+import { bridgeHomeOf, httpMcpConfigPathOf, mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { openSlot, pidAlive } from './daemon-driver.ts'
@@ -79,7 +79,11 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
     trees.push(await term.tree())
     const self = (await term.tree()).find(p => p.pid === term!.pid)
     assert.ok(self?.cmd, `the claude process has a command line (tree: ${JSON.stringify(trees[0])})`)
-    assert.ok(self!.cmd!.includes(`--mcp-config ${mcpPath}`) || self!.cmd!.includes(`--mcp-config "${mcpPath}"`), `--mcp-config <mcp file> on the command line: ${self!.cmd}`)
+    // Claude takes the bridge over HTTP from the daemon: its own per-slot file (the route and a ${VAR} bearer), no MCP process of its own.
+    const slotMcp = httpMcpConfigPathOf(home, slotId)
+    assert.ok(self!.cmd!.includes(`--mcp-config ${slotMcp}`) || self!.cmd!.includes(`--mcp-config "${slotMcp}"`), `--mcp-config <the slot's http file> on the command line: ${self!.cmd}`)
+    assert.equal(JSON.parse(readFileSync(slotMcp, 'utf8')).mcpServers['tether-bridge'].type, 'http')
+    assert.deepEqual(trees[0]!.filter(p => p.pid !== term!.pid && /atrium-bridge\.mjs/.test(p.cmd ?? '')), [], 'the agent spawned no bridge shell')
     assert.ok(/--session-id [0-9a-f-]{36}/.test(self!.cmd!), 'the tether\'s own args are still there')
 
     // 3. The agent calls the bridge tool. No browser is paired in this home: the daemon answers NO_BROWSER_CONNECTED (or an
