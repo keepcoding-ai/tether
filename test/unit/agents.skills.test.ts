@@ -65,3 +65,15 @@ test('middleware: shells and agents without skills are untouched', () => {
   assert.equal(mw(p, { agent: 'other', slotId: 'x' } as SlotMeta), p)
   assert.equal(mw(p, { agent: 'claude', slotId: 'x' } as SlotMeta).args[0], '--plugin-dir')
 })
+
+test('the library ships processos (tether:processos for claude): when to use it, the CLI, exit 3, no domain words', () => {
+  const skills = loadSkills(libraryDir())
+  const proc = skills.find(s => s.name === 'processos')
+  assert.ok(proc)
+  assert.match(proc.description, /antes de subir/i)
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const dir = claudeSkills.inject(plan(), bundleOf(home)).args[1]!
+  const text = readFileSync(join(dir, 'skills', 'processos', 'SKILL.md'), 'utf8')
+  for (const must of [/node "\$TETHER_CLI" proc/, /código 3/, /--wait/, /--force "motivo"/, /proc use <nome>/, /nunca reinicia nada sozinho/, /dotenvx run --/]) assert.match(text, must)
+  for (const never of [/atrium/i, /supervisor/i, /\bcasa\b/i]) assert.doesNotMatch(text, never)
+})
