@@ -9,15 +9,47 @@
 //   - the release: when an agent slot exits, POST /clients/<id>/release on the bridge daemon (bearer = the home's api.key,
 //     read at that moment and never logged), so the extension lets the agent's tabs go and folds its group (§1.4). Best
 //     effort: a daemon that is down, slow or older than A6 (404) is a log line, never an error and never a wait of the slot.
-import { readFileSync } from 'node:fs'
+//   - HTTP (an agent whose contribution says `mcp.http`, while the daemon's host listens): the agent gets a per-slot file
+//     <TETHER_HOME>/mcp/tether-bridge/<slotId>.json, `{ type: "http", url: /mcp/<slotId>, Bearer ${TETHER_BRIDGE_MCP_KEY} }`,
+//     and a fresh key in its env under that name (the CLI expands it; the key exists only in memory and in that env). The
+//     host runs the slot's MCP shell INSIDE the daemon (the vendored bundle as a library, with the env of the stdio file and
+//     the slot's identity) for as long as the agent's run lives: no process for the bridge, in the agent or in the daemon.
+//     The upload authorizations are kept with the slot (grant-store.ts), not in the shell's memory.
+import { randomBytes } from 'node:crypto'
+import { readFileSync, rmSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { httpMcpConfigOf } from '../../src/agents/mcp.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import { SLOT_ID_RE } from '../../src/core/store.ts'
+import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
+import { writeFileAtomic } from './bridge-home.ts'
 import { MCP_SERVER_NAME } from './paths.ts'
 
 export const ENV_CLIENT_ID = 'ATRIUM_BRIDGE_CLIENT_ID'
 export const ENV_CLIENT_NAME = 'ATRIUM_BRIDGE_CLIENT_NAME'
+/** The env var of the agent's CLI that carries the slot's bearer for the bridge over HTTP. */
+export const ENV_BRIDGE_MCP_KEY = 'TETHER_BRIDGE_MCP_KEY'
+/** What a slot's bridge shell inside the daemon is made of (the vendored bundle's `createBridgeMcp`). */
+export interface BridgeBackendInput {
+  slotId: string
+  /** The environment the shell reads instead of the daemon's own: the stdio file's env, the agent's launch env and the slot's identity. */
+  env: Record<string, string>
+  /** The node that starts the bridge daemon when it does not answer. */
+  node: string
+}
+
+/** The stdio entry of the bridge's --mcp-config (bridge-home.ts mcpConfigOf): its server name, args and env. */
+export function readStdioEntry(configFile: string): { name: string; args: string[]; env: Record<string, string> } | undefined {
+  try {
+    const cfg = JSON.parse(readFileSync(configFile, 'utf8')) as { mcpServers?: Record<string, { args?: unknown; env?: unknown }> }
+    const [name, e] = Object.entries(cfg.mcpServers ?? {})[0] ?? []
+    if (!name || !e || !Array.isArray(e.args) || !e.args.every(a => typeof a === 'string')) return undefined
+    const env = typeof e.env === 'object' && e.env !== null ? Object.fromEntries(Object.entries(e.env).filter(([, v]) => typeof v === 'string')) as Record<string, string> : {}
+    return { name, args: e.args as string[], env }
+  } catch { return undefined }
+}
 
 /** The bridge's own rules for a client (chrome-extensions/bridge/shared/protocol.ts: CLIENT_ID_PATTERN, CLIENT_NAME_MAX). */
 export const CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$/
@@ -44,6 +76,22 @@ export interface InjectDeps {
   /** Whether that file is there now (the setup writes it at start; a failed setup leaves none). */
   exists(path: string): boolean
   log(msg: string): void
+  /** The daemon's HTTP host, for agents with `mcp.http`; with it, `httpConfigFile` and `node`. */
+  http?: McpSlotRoutes
+  /** <TETHER_HOME>/mcp/tether-bridge/<slotId>.json (paths.ts httpMcpConfigPathOf). */
+  httpConfigFile?(slotId: string): string
+  /** The node that starts the bridge daemon (an absolute path), or undefined: then the stdio path. */
+  node?(): string | undefined
+  /** Makes the slot's shell inside the daemon (daemon.ts: the vendored bundle, imported once). Absent: the stdio path. */
+  backend?(input: BridgeBackendInput): McpBackend | Promise<McpBackend>
+  /** Injected in the unit test. */
+  key?(): string
+}
+
+/** The slot's bridge over HTTP ends: the key stops working, the slot's shell is closed, the per-slot file goes. Never throws. */
+export function releaseHttp(deps: Pick<InjectDeps, 'http' | 'httpConfigFile'>, slotId: string): void {
+  deps.http?.revoke(slotId)
+  if (deps.httpConfigFile && SLOT_ID_RE.test(slotId)) rmSync(deps.httpConfigFile(slotId), { force: true })
 }
 
 /**
@@ -64,9 +112,35 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
     warnedMissing = false
     const id = clientIdOf(slot.slotId)
     if (!CLIENT_ID_PATTERN.test(id)) { deps.log(`slot ${slot.slotId}: id de cliente inválido para o bridge; lançado sem identidade`); return agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME]) }
+    const identity = { [ENV_CLIENT_ID]: id, [ENV_CLIENT_NAME]: clientNameOf(slot.agent, slot) }
+    const viaHttp = agent.mcp.http ? injectHttp(deps, agent, plan, slot, identity) : undefined
+    if (viaHttp) return viaHttp
     const out = agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME])
-    return { ...out, env: { ...out.env, [ENV_CLIENT_ID]: id, [ENV_CLIENT_NAME]: clientNameOf(slot.agent, slot) } }
+    return { ...out, env: { ...out.env, ...identity } }
   }
+}
+
+/** The HTTP injection, or undefined when it does not apply (no host listening, no node, an unreadable stdio file, a failed write). */
+function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan, slot: SlotMeta, identity: Record<string, string>): LaunchPlan | undefined {
+  const url = deps.http?.urlOf(slot.slotId)
+  const backend = deps.backend
+  if (!url || !deps.http || !backend || !deps.httpConfigFile || !SLOT_ID_RE.test(slot.slotId)) return undefined
+  const node = deps.node?.()
+  const entry = readStdioEntry(deps.configFile)
+  if (!node || !entry) return undefined
+  const file = deps.httpConfigFile(slot.slotId)
+  // A name collision throws here, before anything is written or granted (the launch host logs it, as for the stdio file).
+  const out = agent.mcp!.inject(plan, file, [MCP_SERVER_NAME])
+  const key = (deps.key ?? (() => randomBytes(24).toString('base64url')))()
+  try {
+    writeFileAtomic(file, JSON.stringify(httpMcpConfigOf(entry.name, url, ENV_BRIDGE_MCP_KEY), null, 2) + '\n')
+  } catch (e) {
+    deps.log(`slot ${slot.slotId}: não consegui gravar o MCP HTTP do bridge (${e instanceof Error ? e.message : String(e)}); vai por stdio`)
+    return undefined
+  }
+  const { [ENV_BRIDGE_MCP_KEY]: _, ...env } = { ...out.env, ...entry.env, ...identity }
+  deps.http.grant(slot.slotId, key, { create: () => backend({ slotId: slot.slotId, env, node }) })
+  return { ...out, env: { ...out.env, ...identity, [ENV_BRIDGE_MCP_KEY]: key } }
 }
 
 export interface ReleaseDeps {

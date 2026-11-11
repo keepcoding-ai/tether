@@ -159,8 +159,8 @@ function isStored(v) {
   const names = (c.apiKeys ?? []).map((k) => k.name);
   return typeof c.port === "number" && typeof c.pairingToken === "string" && c.pairingToken.length >= 16 && keysOk && new Set(names).size === names.length && (c.apiToken === void 0 || typeof c.apiToken === "string" && c.apiToken.length >= 16) && (c.apiKeys !== void 0 || c.apiToken !== void 0) && (c.brand === void 0 || isBrand(c.brand)) && (c.capabilities === void 0 || isCapabilities(c.capabilities)) && (c.extensionIds === void 0 || isExtensionIdList(c.extensionIds)) && (c.embedded === void 0 || typeof c.embedded === "boolean") && (c.supervisorEnvFile === void 0 || typeof c.supervisorEnvFile === "string" && c.supervisorEnvFile.length > 0) && (c.downloadsDir === void 0 || typeof c.downloadsDir === "string" && c.downloadsDir.length > 0) && (c.extensionVersion === void 0 || isExtensionVersion(c.extensionVersion));
 }
-function readStored(home3) {
-  const p = configPath(home3);
+function readStored(home2) {
+  const p = configPath(home2);
   if (!existsSync2(p)) return null;
   let parsed;
   try {
@@ -197,18 +197,18 @@ function normalize(stored, legacyCreatedAt) {
     ...extensionVersion !== void 0 ? { extensionVersion } : {}
   };
 }
-function readConfig(home3) {
-  const stored = readStored(home3);
-  return stored ? normalize(stored, mtimeIso(configPath(home3))) : null;
+function readConfig(home2) {
+  const stored = readStored(home2);
+  return stored ? normalize(stored, mtimeIso(configPath(home2))) : null;
 }
-function readLocalKey(home3) {
+function readLocalKey(home2) {
   try {
-    const value = readFileSync2(localKeyPath(home3), "utf8").trim();
+    const value = readFileSync2(localKeyPath(home2), "utf8").trim();
     if (value) return value;
   } catch {
   }
   try {
-    return readStored(home3)?.apiToken ?? null;
+    return readStored(home2)?.apiToken ?? null;
   } catch {
     return null;
   }
@@ -235,9 +235,9 @@ function writeFileAtomic(p, text) {
     rmSync(staged, { force: true });
   }
 }
-function withConfigLock(home3, fn) {
-  mkdirSync(home3, { recursive: true });
-  const lock = lockPath(home3);
+function withConfigLock(home2, fn) {
+  mkdirSync(home2, { recursive: true });
+  const lock = lockPath(home2);
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (; ; ) {
     try {
@@ -260,7 +260,7 @@ function withConfigLock(home3, fn) {
     rmSync(lock, { force: true });
   }
 }
-function writeStored(home3, config2, extra = {}) {
+function writeStored(home2, config2, extra = {}) {
   const { apiToken: _legacy, ...unknownFields } = extra;
   void _legacy;
   const out = { ...unknownFields, ...config2 };
@@ -268,66 +268,66 @@ function writeStored(home3, config2, extra = {}) {
   if (config2.capabilities === void 0) delete out.capabilities;
   if (config2.extensionIds === void 0) delete out.extensionIds;
   if (config2.extensionVersion === void 0) delete out.extensionVersion;
-  writeFileAtomic(configPath(home3), JSON.stringify(out, null, 2));
+  writeFileAtomic(configPath(home2), JSON.stringify(out, null, 2));
 }
-function ensureLocked(home3, port) {
-  const stored = readStored(home3);
+function ensureLocked(home2, port) {
+  const stored = readStored(home2);
   if (!stored) {
     const value = newSecret();
-    writeFileAtomic(localKeyPath(home3), `${value}
+    writeFileAtomic(localKeyPath(home2), `${value}
 `);
     const config3 = {
       port: port ?? DEFAULT_PORT,
       pairingToken: newSecret(),
       apiKeys: [{ name: DEFAULT_KEY_NAME, hash: hashSecret(value), createdAt: (/* @__PURE__ */ new Date()).toISOString() }]
     };
-    writeStored(home3, config3);
+    writeStored(home2, config3);
     return { config: config3, stored: config3 };
   }
-  const config2 = normalize(stored, mtimeIso(configPath(home3)));
+  const config2 = normalize(stored, mtimeIso(configPath(home2)));
   if (stored.apiToken !== void 0) {
-    writeFileAtomic(localKeyPath(home3), `${stored.apiToken}
+    writeFileAtomic(localKeyPath(home2), `${stored.apiToken}
 `);
-    writeStored(home3, config2, stored);
+    writeStored(home2, config2, stored);
   }
   return { config: config2, stored };
 }
-function ensureConfig(home3, port) {
-  const stored = readStored(home3);
+function ensureConfig(home2, port) {
+  const stored = readStored(home2);
   if (stored && stored.apiToken === void 0) return withPort(normalize(stored, ""), port);
-  return withPort(withConfigLock(home3, () => ensureLocked(home3, port).config), port);
+  return withPort(withConfigLock(home2, () => ensureLocked(home2, port).config), port);
 }
-function updateConfig(home3, mutate) {
-  return withConfigLock(home3, () => {
-    const { config: config2, stored } = ensureLocked(home3, void 0);
+function updateConfig(home2, mutate) {
+  return withConfigLock(home2, () => {
+    const { config: config2, stored } = ensureLocked(home2, void 0);
     const result = mutate(config2);
-    writeStored(home3, config2, stored);
+    writeStored(home2, config2, stored);
     return result;
   });
 }
-function writeDaemonPid(home3, pid) {
-  mkdirSync(home3, { recursive: true });
-  writeFileSync(daemonPidPath(home3), `${pid}
+function writeDaemonPid(home2, pid) {
+  mkdirSync(home2, { recursive: true });
+  writeFileSync(daemonPidPath(home2), `${pid}
 `);
 }
-function readDaemonPid(home3) {
+function readDaemonPid(home2) {
   try {
-    const n = Number(readFileSync2(daemonPidPath(home3), "utf8").trim());
+    const n = Number(readFileSync2(daemonPidPath(home2), "utf8").trim());
     return Number.isInteger(n) && n > 0 ? n : null;
   } catch {
     return null;
   }
 }
-function daemonPidWrittenAt(home3) {
+function daemonPidWrittenAt(home2) {
   try {
-    return statSync(daemonPidPath(home3)).mtimeMs;
+    return statSync(daemonPidPath(home2)).mtimeMs;
   } catch {
     return null;
   }
 }
-function removeDaemonPid(home3, pid) {
+function removeDaemonPid(home2, pid) {
   try {
-    if (readDaemonPid(home3) === pid) rmSync(daemonPidPath(home3), { force: true });
+    if (readDaemonPid(home2) === pid) rmSync(daemonPidPath(home2), { force: true });
   } catch {
   }
 }
@@ -344,14 +344,14 @@ var init_config = __esm({
     DEFAULT_KEY_NAME = "default";
     LEGACY_KEY_NAME = "legacy";
     KEY_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-    supervisorHome = (home3) => join2(home3, "supervisor");
-    daemonPidPath = (home3) => join2(home3, "daemon.pid");
-    daemonLogPath = (home3) => join2(home3, "daemon.log");
-    mcpLogPath = (home3) => join2(home3, "mcp.log");
-    localKeyPath = (home3) => join2(home3, "api.key");
-    uploadKeyPath = (home3) => join2(home3, "upload.key");
-    configPath = (home3) => join2(home3, "config.json");
-    lockPath = (home3) => join2(home3, "config.lock");
+    supervisorHome = (home2) => join2(home2, "supervisor");
+    daemonPidPath = (home2) => join2(home2, "daemon.pid");
+    daemonLogPath = (home2) => join2(home2, "daemon.log");
+    mcpLogPath = (home2) => join2(home2, "mcp.log");
+    localKeyPath = (home2) => join2(home2, "api.key");
+    uploadKeyPath = (home2) => join2(home2, "upload.key");
+    configPath = (home2) => join2(home2, "config.json");
+    lockPath = (home2) => join2(home2, "config.lock");
     isKey = (v) => {
       const k = v;
       return !!k && typeof k.name === "string" && KEY_NAME_PATTERN.test(k.name) && isSecretHash(k.hash) && typeof k.createdAt === "string" && (k.scope === void 0 || KEY_SCOPES.includes(k.scope));
@@ -378,7 +378,7 @@ var init_config = __esm({
 
 // daemon/src/keys.ts
 import { readFileSync as readFileSync3, rmSync as rmSync2 } from "node:fs";
-function addKey(home3, name, opts = {}) {
+function addKey(home2, name, opts = {}) {
   if (!KEY_NAME_PATTERN.test(name)) {
     throw keyError("KEY_INVALID_NAME", `invalid key name "${name}": use 1-64 letters, digits, ".", "_" or "-", starting with a letter or digit`);
   }
@@ -392,7 +392,7 @@ function addKey(home3, name, opts = {}) {
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     ...opts.scope ? { scope: opts.scope } : {}
   };
-  updateConfig(home3, (config2) => {
+  updateConfig(home2, (config2) => {
     const i = config2.apiKeys.findIndex((k) => k.name === name);
     if (i >= 0 && !opts.replace) throw keyError("KEY_EXISTS", `a key named "${name}" already exists (revoke it first, or replace it)`);
     if (i >= 0) config2.apiKeys[i] = key;
@@ -400,36 +400,36 @@ function addKey(home3, name, opts = {}) {
   });
   return { ...info(key), value };
 }
-function listKeys(home3) {
-  return ensureConfig(home3).apiKeys.map(info);
+function listKeys(home2) {
+  return ensureConfig(home2).apiKeys.map(info);
 }
-function revokeKey(home3, name) {
-  return updateConfig(home3, (config2) => {
+function revokeKey(home2, name) {
+  return updateConfig(home2, (config2) => {
     const revoked = config2.apiKeys.find((k) => k.name === name);
     if (!revoked) return false;
     config2.apiKeys = config2.apiKeys.filter((k) => k !== revoked);
-    const local = readLocalKey(home3);
-    if (local !== null && hashSecret(local) === revoked.hash) rmSync2(localKeyPath(home3), { force: true });
-    const upload = readUploadKey(home3);
-    if (upload !== null && hashSecret(upload) === revoked.hash) rmSync2(uploadKeyPath(home3), { force: true });
+    const local = readLocalKey(home2);
+    if (local !== null && hashSecret(local) === revoked.hash) rmSync2(localKeyPath(home2), { force: true });
+    const upload = readUploadKey(home2);
+    if (upload !== null && hashSecret(upload) === revoked.hash) rmSync2(uploadKeyPath(home2), { force: true });
     return true;
   });
 }
-function ensureUploadKey(home3) {
+function ensureUploadKey(home2) {
   const ready = (() => {
     try {
-      return validUploadKey(home3, ensureConfig(home3).apiKeys);
+      return validUploadKey(home2, ensureConfig(home2).apiKeys);
     } catch {
       return null;
     }
   })();
   if (ready !== null) return ready;
-  return updateConfig(home3, (config2) => {
-    const again = validUploadKey(home3, config2.apiKeys);
+  return updateConfig(home2, (config2) => {
+    const again = validUploadKey(home2, config2.apiKeys);
     if (again !== null) return again;
     const value = newSecret();
     const key = { name: UPLOAD_KEY_NAME, hash: hashSecret(value), createdAt: (/* @__PURE__ */ new Date()).toISOString(), scope: "upload" };
-    writeFileAtomic(uploadKeyPath(home3), `${value}
+    writeFileAtomic(uploadKeyPath(home2), `${value}
 `);
     const i = config2.apiKeys.findIndex((k) => k.name === UPLOAD_KEY_NAME);
     if (i >= 0) config2.apiKeys[i] = key;
@@ -437,11 +437,11 @@ function ensureUploadKey(home3) {
     return value;
   });
 }
-function setBrand(home3, brand) {
+function setBrand(home2, brand) {
   if (brand !== null && !isBrand(brand)) {
     throw keyError("BRAND_INVALID", 'invalid brand: { name: 1-64 chars, color?: "#rrggbb", hostId?: 1-100 chars }');
   }
-  updateConfig(home3, (config2) => {
+  updateConfig(home2, (config2) => {
     if (brand === null) delete config2.brand;
     else
       config2.brand = {
@@ -451,49 +451,49 @@ function setBrand(home3, brand) {
       };
   });
 }
-function setCapabilities(home3, capabilities) {
+function setCapabilities(home2, capabilities) {
   if (capabilities !== null && !isCapabilities(capabilities)) throw capabilitiesError();
-  updateConfig(home3, (config2) => {
+  updateConfig(home2, (config2) => {
     if (capabilities === null) delete config2.capabilities;
     else config2.capabilities = { ...capabilities };
   });
 }
-function setExtensionVersion(home3, version3) {
+function setExtensionVersion(home2, version3) {
   if (version3 !== null && !isExtensionVersion(version3)) {
     throw Object.assign(new Error("extensionVersion must be 1 to 4 integers separated by dots (a Chrome manifest version)"), { code: "INVALID_ARGUMENT" });
   }
-  updateConfig(home3, (config2) => {
+  updateConfig(home2, (config2) => {
     if (version3 === null) delete config2.extensionVersion;
     else config2.extensionVersion = version3;
   });
 }
-function seedCapabilities(home3, defaults) {
+function seedCapabilities(home2, defaults) {
   if (!isCapabilities(defaults)) throw capabilitiesError();
-  return updateConfig(home3, (config2) => {
+  return updateConfig(home2, (config2) => {
     if (config2.capabilities !== void 0) return [];
     config2.capabilities = { ...defaults };
     return Object.keys(defaults);
   });
 }
-function setExtensionIds(home3, ids) {
+function setExtensionIds(home2, ids) {
   if (!isExtensionIdList(ids)) throw keyError("EXTENSION_ID_INVALID", "invalid extension id: expected 32 letters a-p");
-  updateConfig(home3, (config2) => {
+  updateConfig(home2, (config2) => {
     if (ids.length === 0) delete config2.extensionIds;
     else config2.extensionIds = [...new Set(ids)];
   });
 }
-function pinExtensionId(home3, id) {
+function pinExtensionId(home2, id) {
   if (!EXTENSION_ID_PATTERN.test(id)) throw keyError("EXTENSION_ID_INVALID", `invalid extension id "${id}": expected 32 letters a-p`);
-  return updateConfig(home3, (config2) => {
+  return updateConfig(home2, (config2) => {
     const ids = new Set(config2.extensionIds ?? []);
     ids.add(id);
     config2.extensionIds = [...ids];
     return config2.extensionIds;
   });
 }
-function rotatePairingToken(home3) {
+function rotatePairingToken(home2) {
   const value = newSecret();
-  updateConfig(home3, (config2) => {
+  updateConfig(home2, (config2) => {
     config2.pairingToken = value;
   });
   return value;
@@ -507,15 +507,15 @@ var init_keys = __esm({
     init_protocol();
     keyError = (code, message) => Object.assign(new Error(message), { code });
     info = (k) => ({ name: k.name, createdAt: k.createdAt, ...k.scope ? { scope: k.scope } : {} });
-    readUploadKey = (home3) => {
+    readUploadKey = (home2) => {
       try {
-        return readFileSync3(uploadKeyPath(home3), "utf8").trim() || null;
+        return readFileSync3(uploadKeyPath(home2), "utf8").trim() || null;
       } catch {
         return null;
       }
     };
-    validUploadKey = (home3, keys) => {
-      const value = readUploadKey(home3);
+    validUploadKey = (home2, keys) => {
+      const value = readUploadKey(home2);
       if (value === null) return null;
       const hash = hashSecret(value);
       return keys.some((k) => k.hash === hash && k.scope === "upload") ? value : null;
@@ -553,13 +553,13 @@ function brandFromPackage(packaged) {
     ...packaged.host.id !== void 0 ? { hostId: packaged.host.id } : {}
   };
 }
-function seedFromPackage(home3, packaged, hadBrand) {
+function seedFromPackage(home2, packaged, hadBrand) {
   const seeded = { capabilities: [], brand: false };
   if (!packaged) return seeded;
-  if (packaged.capabilities) seeded.capabilities = seedCapabilities(home3, packaged.capabilities);
+  if (packaged.capabilities) seeded.capabilities = seedCapabilities(home2, packaged.capabilities);
   const brand = brandFromPackage(packaged);
   if (brand && !hadBrand) {
-    setBrand(home3, brand);
+    setBrand(home2, brand);
     seeded.brand = true;
   }
   return seeded;
@@ -626,7 +626,1082 @@ var init_install = __esm({
   }
 });
 
-// node_modules/zod/v4/core/util.js
+// src/errors.ts
+function toWireError(e) {
+  if (e && typeof e === "object" && typeof e.code === "string") {
+    const err = e;
+    const data = err.data ?? (err.occluder !== void 0 ? { occluder: err.occluder } : void 0);
+    return { code: err.code, message: err.message ?? err.code, ...data !== void 0 ? { data } : {} };
+  }
+  return { code: "INTERNAL", message: e instanceof Error ? e.message : String(e) };
+}
+var BridgeError, RemoteError;
+var init_errors = __esm({
+  "src/errors.ts"() {
+    "use strict";
+    BridgeError = class extends Error {
+      code;
+      data;
+      constructor(code, message, data) {
+        super(message);
+        this.name = "BridgeError";
+        this.code = code;
+        if (data !== void 0) this.data = data;
+      }
+    };
+    RemoteError = class extends Error {
+      code;
+      data;
+      constructor(wire) {
+        super(wire.message);
+        this.name = "RemoteError";
+        this.code = wire.code;
+        if (wire.data !== void 0) this.data = wire.data;
+      }
+    };
+  }
+});
+
+// daemon/src/client.ts
+import { readFileSync as readFileSync5 } from "node:fs";
+function clientFromEnv(env = process.env) {
+  const id = env.ATRIUM_BRIDGE_CLIENT_ID?.trim();
+  if (!id) return void 0;
+  if (!isClientId(id)) {
+    throw new BridgeError("CLIENT_INVALID", `ATRIUM_BRIDGE_CLIENT_ID must match ${CLIENT_ID_PATTERN.source} (1 to 64 of letters, digits, . _ : @ -)`);
+  }
+  const name = cleanClientName(env.ATRIUM_BRIDGE_CLIENT_NAME);
+  return name ? { id, name } : { id };
+}
+function resolvePort(env = process.env) {
+  const fromEnv = envPort(env);
+  if (fromEnv !== void 0) return fromEnv;
+  try {
+    return readConfig(bridgeHome(env))?.port ?? DEFAULT_PORT;
+  } catch {
+    return DEFAULT_PORT;
+  }
+}
+function apiKeyFromEnv(env = process.env) {
+  const file = env.ATRIUM_BRIDGE_KEY_FILE;
+  if (file) {
+    let value = "";
+    try {
+      value = readFileSync5(file, "utf8").trim();
+    } catch (e) {
+      throw new BridgeError("KEY_UNAVAILABLE", `cannot read the API key file ATRIUM_BRIDGE_KEY_FILE=${file} (${e.code ?? "error"})`);
+    }
+    if (!value) throw new BridgeError("KEY_UNAVAILABLE", `the API key file ATRIUM_BRIDGE_KEY_FILE=${file} is empty`);
+    return value;
+  }
+  const direct = env.ATRIUM_BRIDGE_KEY?.trim();
+  if (direct) return direct;
+  return readLocalKey(bridgeHome(env));
+}
+function targetFromEnv(env = process.env) {
+  const home2 = bridgeHome(env);
+  const config2 = readConfig(home2);
+  if (!config2) {
+    throw new BridgeError(
+      "DAEMON_NOT_CONFIGURED",
+      `no Atrium Bridge config in ${home2} yet: the daemon creates it the first time it starts (node daemon/src/cli.ts start)`,
+      { phase: "before-send" }
+    );
+  }
+  const apiKey = apiKeyFromEnv(env);
+  if (!apiKey) {
+    throw new BridgeError(
+      "KEY_UNAVAILABLE",
+      `no API key for the Atrium Bridge in ${home2}: create one with \`key create <name>\` and give it to this process by ATRIUM_BRIDGE_KEY_FILE`
+    );
+  }
+  const client = clientFromEnv(env);
+  return { port: envPort(env) ?? config2.port, apiKey, ...client ? { client } : {} };
+}
+function uploadKeyOf(get) {
+  try {
+    return get();
+  } catch (e) {
+    throw new BridgeError("KEY_UNAVAILABLE", `cannot prepare the upload key of the MCP server (upload.key): ${e.message}`);
+  }
+}
+function causeCodes(e) {
+  const codes = [];
+  const visit = (x, depth) => {
+    if (!x || typeof x !== "object" || depth > 3) return;
+    const o = x;
+    if (typeof o.code === "string") codes.push(o.code);
+    visit(o.cause, depth + 1);
+    if (Array.isArray(o.errors)) for (const sub of o.errors) visit(sub, depth + 1);
+  };
+  visit(e, 0);
+  return codes;
+}
+function classifyFetchFailure(e) {
+  return causeCodes(e).some((code) => BEFORE_SEND_CODES.has(code)) ? "before-send" : "in-flight";
+}
+function downPhase(e) {
+  const err = e;
+  if (err?.code === "DAEMON_NOT_CONFIGURED") return "before-send";
+  if (err?.code === "DAEMON_UNREACHABLE") return err.data?.phase === "in-flight" ? "in-flight" : "before-send";
+  return void 0;
+}
+function unreachable(port, e) {
+  const timedOut = e?.name === "TimeoutError";
+  const why = timedOut ? "no answer in time" : [e.message, ...causeCodes(e)].join(": ");
+  return new BridgeError("DAEMON_UNREACHABLE", `cannot reach the Atrium Bridge daemon on 127.0.0.1:${port} (${why}). Is it running?`, {
+    phase: classifyFetchFailure(e)
+  });
+}
+var CONTROL_TIMEOUT_MS, DAEMON_CALL_TIMEOUT_MS, CALL_MARGIN_MS, envPort, BEFORE_SEND_CODES, BridgeClient;
+var init_client = __esm({
+  "daemon/src/client.ts"() {
+    "use strict";
+    init_errors();
+    init_protocol();
+    init_config();
+    CONTROL_TIMEOUT_MS = 5e3;
+    DAEMON_CALL_TIMEOUT_MS = 6e4;
+    CALL_MARGIN_MS = 15e3;
+    envPort = (env) => {
+      const n = Number(env.ATRIUM_BRIDGE_PORT);
+      return env.ATRIUM_BRIDGE_PORT && Number.isInteger(n) && n > 0 && n < 65536 ? n : void 0;
+    };
+    BEFORE_SEND_CODES = /* @__PURE__ */ new Set([
+      "ECONNREFUSED",
+      "EHOSTUNREACH",
+      "ENETUNREACH",
+      "EADDRNOTAVAIL",
+      "ENOTFOUND",
+      "EAI_AGAIN",
+      "UND_ERR_CONNECT_TIMEOUT"
+    ]);
+    BridgeClient = class {
+      target;
+      controlTimeoutMs;
+      callMarginMs;
+      constructor(target, opts = {}) {
+        this.target = target;
+        this.controlTimeoutMs = opts.controlTimeoutMs ?? CONTROL_TIMEOUT_MS;
+        this.callMarginMs = opts.callMarginMs ?? CALL_MARGIN_MS;
+      }
+      async request(method, path, timeoutMs, body, upload = false) {
+        const target = typeof this.target === "function" ? this.target() : this.target;
+        const bearer = upload && target.uploadKey ? uploadKeyOf(target.uploadKey) : target.apiKey;
+        let res;
+        let text;
+        try {
+          res = await fetch(`http://127.0.0.1:${target.port}${path}`, {
+            method,
+            headers: {
+              authorization: `Bearer ${bearer}`,
+              // Uma conexão nova por pedido. Com o keep-alive do pool, o 1º pedido depois da morte do daemon reaproveita o
+              // socket morto e falha como ECONNRESET ("em voo"), mesmo sem ter saído nada. Assim, ECONNREFUSED prova que o
+              // pedido não saiu, e a classificação de classifyFetchFailure vale. Em loopback a conexão nova custa microssegundos.
+              connection: "close",
+              // Quem chama, quando a casca se identificou: o daemon loga o id e o repassa à extensão em cada `call`.
+              ...target.client ? { [CLIENT_ID_HEADER]: target.client.id } : {},
+              ...target.client?.name ? { [CLIENT_NAME_HEADER]: target.client.name } : {},
+              ...body !== void 0 ? { "content-type": "application/json" } : {}
+            },
+            ...body !== void 0 ? { body: JSON.stringify(body) } : {},
+            signal: AbortSignal.timeout(timeoutMs)
+          });
+          text = await res.text();
+        } catch (e) {
+          throw unreachable(target.port, e);
+        }
+        let payload = null;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+        }
+        if (!res.ok || !payload || payload.ok === false) {
+          throw new RemoteError(payload?.error ?? { code: "INTERNAL", message: `daemon answered HTTP ${res.status}` });
+        }
+        return payload;
+      }
+      async browsers() {
+        return (await this.request("GET", "/browsers", this.controlTimeoutMs)).browsers;
+      }
+      /** GET /status: browsers com abas sob controle e último foco, clientes vistos, pausa. O que um hospedeiro mostra. */
+      async status() {
+        return await this.request("GET", "/status", this.controlTimeoutMs);
+      }
+      /** POST /clients/:id/release: o agente `clientId` encerrou; cada browser solta as abas dele e recolhe o grupo dele. */
+      async releaseClient(clientId) {
+        const deadline = DAEMON_CALL_TIMEOUT_MS + this.callMarginMs;
+        return (await this.request("POST", `/clients/${encodeURIComponent(clientId)}/release`, deadline)).browsers;
+      }
+      /** POST /pause: nenhuma tool roda e toda extensão solta as abas sob controle, até `resume`. Devolve o que cada browser soltou. */
+      async pause() {
+        const r = await this.request("POST", "/pause", DAEMON_CALL_TIMEOUT_MS + this.callMarginMs);
+        return { paused: true, browsers: r.browsers };
+      }
+      /** POST /resume: as tools voltam a rodar (o escopo começa vazio: abas novas, ou a pessoa entrega de novo). */
+      async resume() {
+        await this.request("POST", "/resume", this.controlTimeoutMs);
+        return { paused: false };
+      }
+      async call(browserId, tool, args, timeoutMs) {
+        const body = { tool, args, ...timeoutMs ? { timeoutMs } : {} };
+        const deadline = Math.min(timeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5) + this.callMarginMs;
+        return (await this.request("POST", `/browsers/${encodeURIComponent(browserId)}/call`, deadline, body, UPLOAD_TOOLS.has(tool))).result;
+      }
+    };
+  }
+});
+
+// src/texts.ts
+var SERVER_NAME, REF, REF_OR_POINT, X, Y, COMMON_PARAMS, BRIDGE_TOOL_TEXTS, BROWSER_TEXTS, DAEMON_TEXTS;
+var init_texts = __esm({
+  "src/texts.ts"() {
+    "use strict";
+    SERVER_NAME = "atrium-bridge";
+    REF = 'Element ref from the latest snapshot of this tab (for example "e12").';
+    REF_OR_POINT = `${REF} Alternatively give x and y instead of ref.`;
+    X = "Horizontal pixel coordinate in the viewport (use together with y, instead of ref).";
+    Y = "Vertical pixel coordinate in the viewport (use together with x, instead of ref).";
+    COMMON_PARAMS = {
+      browser: "Which connected browser to act in: its id or its name, as listed by list_browsers. Optional when exactly one browser is connected. With several connected and this omitted, the call goes to the browser the user focused most recently and the result starts with a Notice saying which one; pass browser to choose. If no browser has reported focus yet the call fails with BROWSER_AMBIGUOUS: ask the user which one, unless they already said.",
+      tab: "Tab id from the tabs tool. Optional: defaults to the current tab of that browser."
+    };
+    BRIDGE_TOOL_TEXTS = {
+      list_browsers: {
+        description: 'List the user browsers connected to the Atrium Bridge: { id, name, userAgent, connectedAt, lastFocusedAt? }. Call it first when you do not know which browser to use. With one browser you can use it directly; with several, the other tools default to the one the user focused most recently (lastFocusedAt) and say so in a Notice; pass browser when the user said which one ("in Brave").',
+        params: {}
+      },
+      navigate: {
+        description: 'Open a URL in a tab you control and wait for the page to load, or move in the tab history with action "back", "forward" or "reload". Give url or action, not both. Returns the final URL and the page title. Only http(s) and about:blank are accepted. Refs from before the navigation go stale: take a new snapshot afterwards.',
+        params: {
+          url: 'Absolute URL, for example "https://example.com/".',
+          action: '"back", "forward" or "reload" (instead of url). back/forward fail with NAVIGATION_FAILED at the ends of the history.'
+        }
+      },
+      wait: {
+        description: 'Wait for something to happen in the tab: for "load" (the page finished loading), "networkidle" (no network requests for 500 ms), "text" (value appears in the visible text of the page, case sensitive), "selector" (an element matching the CSS selector in value is visible), "url" (the page URL contains value) or "time" (value milliseconds pass). The condition is checked right away: if it already holds the call returns at once. Fails with WAIT_TIMEOUT when it does not happen in time. Returns { matched, elapsedMs, url }.',
+        params: {
+          for: '"load", "networkidle", "text", "selector", "url" or "time".',
+          value: "The text, CSS selector, URL fragment or number of milliseconds, depending on for. Not used with load and networkidle.",
+          timeoutMs: "How long to wait, in milliseconds, up to 120000. Default 15000."
+        }
+      },
+      find: {
+        description: "Search the page for elements by role, accessible name or text, without reading the whole tree. Takes a fresh snapshot, so the returned refs work right away in click, type and the other tools (and older refs go stale). Give at least one of role, name or text; matches are case-insensitive. Returns { url, title, found: [{ ref, role, name, box }] }.",
+        params: {
+          role: "Exact ARIA role, for example button, link or textbox.",
+          name: "Part of the accessible name.",
+          text: "Part of the visible text of the element (its name or its own text).",
+          limit: "Maximum results. Default 20."
+        }
+      },
+      read: {
+        description: "Read the text of the page in reading order (the main content when the page has one), with the URL of each link after its text. Cheaper than snapshot when you only need to read. Returns { url, title, text, truncated, source } and says when the text was cut.",
+        params: { maxChars: "Character limit before the text is cut. Default 50000." }
+      },
+      links: {
+        description: "List the visible links of the page: { ref, text, href } with absolute URLs, without repeating the same href and text. Takes a fresh snapshot, so the refs work in click. Links with neither text nor accessible name are left out (pass includeUnnamed to see them).",
+        params: {
+          limit: "Maximum links. Default 100.",
+          includeUnnamed: "Also list links with no text and no accessible name (icons without a label, empty anchors). Default false."
+        }
+      },
+      snapshot: {
+        description: "Read the page as an accessibility tree. Interactive elements carry a ref like [ref=e12] and a box [box=x,y,width,height]. Use it before acting: every ref you pass to the other tools must come from the latest snapshot of the same tab, and a navigation makes older refs stale.",
+        params: { depth: "Limit the depth of the tree on very large pages." }
+      },
+      screenshot: {
+        description: "Capture the visible part of the tab (or the whole page, or one element) as an image. The tab must be the active tab of its window.",
+        params: {
+          fullPage: "Capture the whole scrollable page instead of the viewport.",
+          ref: "Capture only this element.",
+          format: '"png" (default) or "jpeg".',
+          quality: "JPEG quality, 1 to 100."
+        }
+      },
+      click: {
+        description: "Click like a person: the pointer travels along a curved path to the element, then presses and releases the button (trusted events). If something covers the target the error names what covers it.",
+        params: {
+          ref: REF_OR_POINT,
+          x: X,
+          y: Y,
+          button: '"left" (default), "right" or "middle".',
+          count: "1 (default), 2 (double click) or 3 (triple click)."
+        }
+      },
+      hover: {
+        description: "Move the pointer to the element or point along a human path and leave it there (real :hover, tooltips and menus open).",
+        params: { ref: REF_OR_POINT, x: X, y: Y }
+      },
+      drag: {
+        description: "Press at the source, move along a human path with the button held, release at the destination. Mouse-driven drag only: native HTML5 drag-and-drop is not synthesized.",
+        params: {
+          ref: "Source element ref.",
+          x: "Source x (instead of ref).",
+          y: "Source y (instead of ref).",
+          toRef: "Destination element ref.",
+          toX: "Destination x (instead of toRef).",
+          toY: "Destination y (instead of toRef)."
+        }
+      },
+      scroll: {
+        description: 'Scroll with the mouse wheel. Give byX/byY for a relative scroll, or to "top"/"bottom" for the ends of the page; with ref the element is scrolled into view. Returns the resulting scroll position.',
+        params: {
+          ref: "Element to scroll into view.",
+          x: "Wheel x position (default: viewport center).",
+          y: "Wheel y position (default: viewport center).",
+          byX: "Horizontal pixels to scroll (positive = right).",
+          byY: "Vertical pixels to scroll (positive = down).",
+          to: '"top" or "bottom": scroll until the page stops moving.'
+        }
+      },
+      type: {
+        description: "Type text into the focused element, key by key (trusted keyboard events), or into the element given by ref (it is clicked first to focus it). Fails with NO_FOCUS when nothing editable has focus.",
+        params: {
+          text: "The text. A newline presses Enter.",
+          ref: "Element to click and type into.",
+          mode: '"keys" (default): one key at a time. "paste": insert all at once.'
+        }
+      },
+      pressKey: {
+        description: 'Press a key or a combination, for example "Enter", "Tab", "ArrowDown", "Control+a", "Shift+Tab", "Control+Shift+ArrowRight". Goes to the focused element of the page.',
+        params: {
+          key: 'Key name or combination joined by "+".',
+          hold: "Modifier names to hold while pressing (Control, Shift, Alt, Meta); same effect as writing them in the combination."
+        }
+      },
+      tabs: {
+        description: `Manage the tabs the agent controls. The agent only sees and controls tabs it opened itself and tabs the user handed over with the "Hand this tab to Atrium" button; they live in a tab group named "Atrium". Actions: list, new (opens a tab and makes it current), close, activate. When several agents share the browser, each one owns the tabs it opened (its own tab group and its own current tab); tabs the user handed over without choosing an agent are shared. "list" also shows other agents' tabs, marked ownedByOther: acting on one of those fails with TAB_OWNED_BY_OTHER. Open your own tab instead. An identified agent gets a browser window of its own: "new" opens there (created behind the user's window, never stealing focus, reused afterwards) unless where is "user-window". Tabs a page opens from one of your tabs (popups, target=_blank, OAuth) join your tabs automatically.`,
+        params: {
+          action: '"list", "new", "close" or "activate".',
+          url: 'URL for "new" (default about:blank).',
+          where: 'For "new": "agent-window" (default: the window of this agent, created unfocused if needed) or "user-window" (the window the user is in, as a tab next to theirs).'
+        }
+      },
+      dialog: {
+        description: 'Answer a native dialog (alert, confirm, prompt or beforeunload) that the page opened. While a dialog is open the page is blocked and every other tool on that tab fails with DIALOG_OPEN, telling you the dialog type and message; nothing is accepted or dismissed for you. "accept" presses OK (with text as the answer of a prompt; default: the prompt default), "dismiss" presses Cancel. Returns { type, message, action }.',
+        params: {
+          action: '"accept" (OK) or "dismiss" (Cancel).',
+          text: "The answer to type into a prompt (only with accept on a prompt)."
+        }
+      },
+      select: {
+        description: "Choose an option of a native <select> (dropdown) by its value or its visible label; give exactly one. Sets the selection and fires input and change, but these events are not isTrusted (no real click on the list). Reports the option that ended up selected and whether it changed; fails with OPTION_NOT_FOUND (listing the options), OPTION_AMBIGUOUS or OPTION_DISABLED. For a custom dropdown, click it and click its option instead.",
+        params: {
+          ref: `The select. ${REF}`,
+          value: "The option value attribute.",
+          label: "Visible text of the option."
+        }
+      },
+      setChecked: {
+        description: "Leave a checkbox, radio button or switch checked or unchecked. It clicks like a person (trusted click) only if the current state differs, then confirms the result. Fails with NOT_CHECKABLE when the element has no checked state and STATE_NOT_CHANGED when the click did not flip it (a radio cannot be unchecked).",
+        params: { ref: REF, checked: "The state you want." }
+      },
+      readConsole: {
+        description: "Read the console of the tab (console.* calls, uncaught errors and browser log entries) collected since the tab came under control. Each entry has a seq number; pass the last one as afterSeq to read only what is new.",
+        params: {
+          level: "Minimum level: debug, log, info, warning or error.",
+          afterSeq: "Only entries with seq greater than this.",
+          limit: "Maximum entries (default 100, at most 500).",
+          clear: "Drop the buffer after reading."
+        }
+      },
+      upload: {
+        description: 'Attach files from the disk of this computer to a file input (<input type="file">) of the page, like the user picking them in the file dialog: the input gets the files and fires input/change. Give the ref of the file input (find it with snapshot or find) and absolute paths of files on this machine. This sends the file contents to the website, so the operator must authorize it: unless an authorization already covers it, the operator is asked for each file (the MCP client shows the file, its folder and the destination site) and answers "decline", "only this file" or "this folder to this site until the end of the session". An authorization is always a PAIR of one folder (and its subfolders) and one exact site (scheme, host and port of the page that owns the field); any other folder or site asks again. A folder that is too broad (a drive root, the home folder, an allowed upload folder itself, a folder that contains one of those, a .ssh, .git or .gnupg folder, or a folder with .env, .git or .ssh in it) never becomes a pair: its files go only one at a time. If the page that owns the field changes site before or while the files are attached, the field is emptied and the upload is refused. If the operator declines, or nobody can answer (a client without elicitation, or an agent running in the background), nothing is sent and the error says how to get it authorized: the operator calls allowUploads with that folder and that site, from a session where the question can be shown. Files in a folder the operator pre-authorized (ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED) go without asking. A field inside an embedded frame from another site than the tab is never covered by an authorization or a pre-authorized folder: it is asked every time, or refused. Only files inside the allowed upload folders are accepted (by default the Downloads folder of the user; the operator can list others in the ATRIUM_BRIDGE_UPLOAD_DIRS environment variable of this MCP server, absolute paths separated by ";" on Windows and ":" elsewhere); a path outside them is refused with an explanation. Fails with NOT_A_FILE_INPUT when the ref is not a file input and UPLOAD_NOT_ALLOWED when it is not authorized. Returns { files: [{ name, size, type }] }.',
+        params: {
+          ref: `The file input. ${REF}`,
+          paths: "Absolute paths of the files to attach (several only if the input has the multiple attribute)."
+        }
+      },
+      allowUploads: {
+        description: "Ask the operator, ahead of time, to allow upload to send files from one folder (and its subfolders) to one exact site until this MCP session ends, without asking again for each file. Use it before uploads that will run where the question cannot be shown (for example a background agent), or when many files from the same folder go to the same site. The operator sees the folder and the site and answers yes or no; if this MCP client cannot ask (no elicitation), the request is refused. The folder must be inside the allowed upload folders (ATRIUM_BRIDGE_UPLOAD_DIRS; by default Downloads) and must not be too broad: a drive root, the home folder, an allowed upload folder itself, a folder that contains one of those, a .ssh, .git or .gnupg folder, or a folder with .env, .git or .ssh directly in it is refused without asking; use a subfolder that holds only the files to send. The authorization lives only in the memory of this MCP server (not in the Bridge daemon, not on disk) and ends when this MCP server stops. It never covers a field embedded from another site. See the current authorizations with uploadPermissions; remove them with revokeUploads.",
+        params: {
+          folder: 'Absolute path of the folder whose files may be sent, for example "C:/Users/me/Downloads/invoices". Links are resolved: the real folder is what is authorized.',
+          origin: 'The exact site that may receive them: scheme, host and port, for example "https://portal.example.com" or "http://localhost:3000". A path after it is ignored.'
+        }
+      },
+      uploadPermissions: {
+        description: "List the upload authorizations of this MCP session: each pair of folder and site that upload may use without asking, with when and how it was granted. They live only in memory and end with the session. Folders pre-authorized by the operator in ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED are listed apart.",
+        params: {}
+      },
+      revokeUploads: {
+        description: "Remove upload authorizations of this MCP session for one site: all of them for that site, or only the one for a given folder. Uploads from then on ask the operator again. Returns what was removed and what is left. It does not touch ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED.",
+        params: {
+          folder: "Absolute path of the folder to remove. Omit it to remove every authorization for the site.",
+          origin: 'The site whose authorizations are removed: scheme, host and port, for example "https://portal.example.com".'
+        }
+      },
+      download: {
+        description: "Download a file into the user's Downloads folder and wait for it to finish. Either click a ref (a link or button that starts a download, with a real click) or give a url to fetch directly (http(s), with the cookies of the browser). Returns { id, path, bytes, mime, url, state } once the file is complete; fails with DOWNLOAD_FAILED (reason from the browser) or DOWNLOAD_TIMEOUT (the id still works in downloads list). Use pdf to save the page itself.",
+        params: {
+          ref: "Element whose click starts the download (instead of url).",
+          url: "URL to download directly (instead of ref).",
+          timeoutMs: "How long to wait for the file to complete, in milliseconds, up to 600000. Default 60000."
+        }
+      },
+      downloads: {
+        description: "List the downloads this bridge started in the browser (through download or pdf), newest first: { downloads: [{ id, path, bytes, mime, url, state, startedAt }] }. Downloads the user made by themselves are not listed.",
+        params: {
+          action: '"list".',
+          limit: "Maximum entries (default 50, at most 200)."
+        }
+      },
+      pdf: {
+        description: "Save the page as a PDF file in the user's Downloads folder (like Print to PDF). Returns { path, bytes, title, url }. Optional landscape, scale, pageRanges and filename. Fails with PDF_FAILED when the page cannot be printed.",
+        params: {
+          filename: 'File name (without folder; ".pdf" is added if missing). Default: the page title. An existing name gets a numeric suffix.',
+          landscape: "Landscape orientation (default false).",
+          scale: "Zoom of the rendering, 0.1 to 2 (default 1).",
+          pageRanges: 'Pages to include, like "1-3, 5" (default all).',
+          printBackground: "Print background colors and images (default true)."
+        }
+      },
+      readNetwork: {
+        description: "Read the network requests of the tab seen since it came under control (page loads, fetch/XHR, scripts, images...), oldest first: { requests: [{ seq, id, url, method, type, status, mimeType, durationMs, bytes, error? }], lastSeq }. Pass afterSeq to read only what is new and urlContains to filter. To read one response, give its id (from the list) with body true: returns { request, body: { text, base64Encoded, truncated } }; BODY_UNAVAILABLE when the browser no longer has it (after a navigation, for example). WebSocket and EventSource traffic is not listed.",
+        params: {
+          afterSeq: "Only requests with seq greater than this.",
+          limit: "Maximum requests in the list (default 100, at most 500).",
+          urlContains: "Only requests whose URL contains this text.",
+          id: "Request id from the list, to read a single request (with body for its response body).",
+          body: "With id: also return the response body (text, or base64 for binary), cut at maxChars.",
+          maxChars: "Character limit of the body (default 100000, at most 1000000)."
+        }
+      },
+      resize: {
+        description: "Set the size of the viewport of the tab in CSS pixels (the page sees the new innerWidth/innerHeight, media queries react, screenshot captures that size). Emulated per tab, independent of the window; stays until the tab leaves the agent's control or reset is passed. Returns { width, height, innerWidth, innerHeight }.",
+        params: {
+          width: "Viewport width in CSS pixels (1 to 10000).",
+          height: "Viewport height in CSS pixels (1 to 10000).",
+          reset: "Remove the emulation and go back to the real window size (width and height are then ignored)."
+        }
+      },
+      evaluate: {
+        description: 'Run a JavaScript expression in the page and return its JSON-serializable value. Use it for reading page state that the snapshot does not show; use click/type for actions so the events are real. Promises are awaited. Allowed in the tabs the agent opened; in a tab the user handed over it fails with EVALUATE_DISABLED until the user enables "C\xF3digo na p\xE1gina" in the extension (the installation can also turn evaluate fully on or off).',
+        params: {
+          expression: 'JavaScript expression, for example "document.title".',
+          awaitPromise: "Await the value when it is a promise (default true)."
+        }
+      }
+    };
+    BROWSER_TEXTS = {
+      /** Primeiro bloco de texto do resultado quando a casca escolheu o browser pelo foco. */
+      focusedNotice: (name) => `Notice: usei "${name}", o navegador em que voc\xEA mexeu por \xFAltimo; passe browser= para escolher.`
+    };
+    DAEMON_TEXTS = {
+      /** Sucesso de uma chamada que precisou reiniciar o daemon. Vai como primeiro bloco de texto do resultado. */
+      restartedNotice: "Notice: the Atrium Bridge daemon had stopped and was restarted before this call. The browser reconnected by itself; tabs handed over to Atrium were kept. Refs from an earlier snapshot may be stale: take a new snapshot before clicking.",
+      /** DAEMON_RESTARTED: o daemon caiu com a chamada em voo e a chamada não é uma leitura pura (não se repete). */
+      restarted: (tool) => `the Atrium Bridge daemon went down while ${tool} was in flight and was restarted. The action may or may not have happened. Nothing else was done. Take a snapshot to see the current state before repeating it.`,
+      /** Acrescentado à falha do reinício quando uma chamada não repetível estava em voo: o agente precisa saber das duas coisas. */
+      lostSuffix: (tool) => `Also, ${tool} was in flight when the daemon went down: the action may or may not have happened.`,
+      /** DAEMON_CRASH_LOOP: o disjuntor está aberto; nenhuma tentativa de subir o daemon enquanto a pausa durar. */
+      crashLoop: (o) => `the Atrium Bridge daemon was restarted ${o.restarts} times in the last ${o.minutes} minutes and keeps dying; automatic restarts are paused for the next ${o.pauseSeconds} s.` + (o.tail ? ` Last lines of ${o.logFile}:
+${o.tail}
+` : " ") + "Tell the user.",
+      /** DAEMON_START_FAILED: o spawn falhou, o processo caiu, ou o /health não respondeu. `reason` vem de `startReasons`. */
+      startFailed: (o) => `the Atrium Bridge daemon could not be started: ${o.reason}.` + (o.tail ? ` Last lines of ${o.logFile}:
+${o.tail}` : ""),
+      /** Motivos de DAEMON_START_FAILED, na ordem em que a casca os observa. */
+      startReasons: {
+        spawnFailed: (message) => `the daemon process could not be launched (${message})`,
+        exited: (code) => code === null ? "the daemon process was killed before it was listening" : `the daemon process exited with code ${code} before it was listening`,
+        notReady: (seconds) => `the daemon did not answer /health within ${seconds} s`,
+        portMute: (port, owner) => `port ${port} is held by a process that does not answer /health${owner ? ` (pid ${owner})` : ""}; stop it or free the port`,
+        portForeign: (port, owner) => `port ${port} is in use by another program${owner ? ` (pid ${owner})` : ""} that is not the Atrium Bridge daemon; free the port or set ATRIUM_BRIDGE_PORT`
+      },
+      /** Acrescentado a NO_BROWSER_CONNECTED / BROWSER_NOT_FOUND quando a casca esperou a extensão reaparecer e ela não veio. */
+      waitedSuffix: (o) => `The daemon was restarted ${o.ageSeconds} s ago and the extension reconnects by itself (usually within 30 s); I waited ${o.waitedSeconds} s for it. Try again in a moment.`
+    };
+  }
+});
+
+// daemon/src/embedded.ts
+import { execFile, spawn } from "node:child_process";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3 } from "node:fs";
+import { createServer } from "node:net";
+import { resolve as resolve3 } from "node:path";
+function childEnv(extra) {
+  const env = {};
+  for (const key of ENV_ALLOWLIST) if (process.env[key] !== void 0) env[key] = process.env[key];
+  return { ...env, ...extra };
+}
+function scrub(text) {
+  return text.replace(/sup_[A-Za-z0-9_-]+/g, "sup_[redacted]").replace(/device_code["'=:\s]+[A-Za-z0-9_-]{8,}/gi, "device_code=[redacted]").replace(/\u001b\[[0-9;]*m/g, "");
+}
+async function assertPortFree(port) {
+  await new Promise((resolveFree, reject) => {
+    const probe = createServer();
+    probe.once(
+      "error",
+      (e) => reject(
+        e.code === "EADDRINUSE" ? new Error(`port ${port} (Bridge port + 1) is already in use; the embedded supervisor needs it`) : e
+      )
+    );
+    probe.listen(port, "127.0.0.1", () => probe.close(() => resolveFree()));
+  });
+}
+function startEmbeddedSupervisor(opts) {
+  const dataDir = supervisorHome(opts.home);
+  const baseEnv = {
+    SUPERVISOR_DATA_DIR: dataDir,
+    SUPERVISOR_DEVICE_VERIFICATION_ORIGIN: opts.verificationOrigin
+  };
+  let status = "starting";
+  let detail;
+  let child = null;
+  let exited = Promise.resolve();
+  const tail = [];
+  const fail = (message) => {
+    if (status === "stopped") return;
+    status = "failed";
+    detail = scrub(message).slice(0, 500);
+    opts.log("supervisor_failed", { detail });
+  };
+  const cli = (args, timeout) => new Promise((resolveCli, reject) => {
+    execFile(
+      process.execPath,
+      ["scripts/supervisor.mjs", ...args],
+      { cwd: SUPERVISOR_SERVICE_DIR, env: childEnv({ ...baseEnv, LOG_LEVEL: "warn" }), timeout, windowsHide: true },
+      (error2, _stdout, stderr) => {
+        if (!error2) return resolveCli({ code: 0, stderr });
+        const code = error2.code;
+        if (typeof code === "number") return resolveCli({ code, stderr });
+        reject(error2);
+      }
+    );
+  });
+  const ready = (async () => {
+    if (!existsSync4(SUPERVISOR_SERVICE_DIR)) throw new Error(`supervisor service not found at ${SUPERVISOR_SERVICE_DIR}`);
+    if (opts.envFile !== void 0 && !existsSync4(opts.envFile)) throw new Error(`supervisor env file not found: ${opts.envFile}`);
+    await assertPortFree(opts.port);
+    mkdirSync3(dataDir, { recursive: true });
+    const args = [
+      "scripts/supervisor.mjs",
+      "serve",
+      "--port",
+      String(opts.port),
+      "--hostname",
+      "127.0.0.1",
+      "--data-dir",
+      dataDir,
+      ...opts.envFile !== void 0 ? ["--env-file", opts.envFile] : []
+    ];
+    opts.log("supervisor_starting", { port: opts.port, envFile: opts.envFile !== void 0 });
+    const proc = spawn(process.execPath, args, {
+      cwd: SUPERVISOR_SERVICE_DIR,
+      env: childEnv(baseEnv),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    });
+    child = proc;
+    opts.log("supervisor_spawned", { pid: proc.pid });
+    const keep = (chunk) => {
+      tail.push(chunk.toString());
+      if (tail.length > 60) tail.shift();
+    };
+    proc.stdout?.on("data", keep);
+    proc.stderr?.on("data", keep);
+    let exitCode;
+    exited = new Promise((resolveExit) => {
+      proc.once("exit", (code) => {
+        exitCode = code;
+        if (status === "running" || status === "starting") fail(`supervisor exited unexpectedly (code ${code})`);
+        else opts.log("supervisor_exited", { code });
+        resolveExit();
+      });
+    });
+    process.once("exit", () => proc.kill());
+    const deadline = Date.now() + (opts.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS);
+    for (; ; ) {
+      if (exitCode !== void 0) throw new Error(`supervisor exited during startup (code ${exitCode}):
+${scrub(tail.join("")).slice(-1200)}`);
+      if (status === "stopped") throw new Error("stopped during startup");
+      try {
+        if ((await fetch(`http://127.0.0.1:${opts.port}/healthz`)).ok) break;
+      } catch {
+      }
+      if (Date.now() > deadline) {
+        proc.kill();
+        throw new Error(`supervisor did not become healthy within ${opts.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS} ms`);
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    const added = await cli(["operators", "add", EMBEDDED_OWNER], APPROVE_TIMEOUT_MS);
+    if (added.code !== 0) throw new Error(`could not register the local owner (exit ${added.code}): ${scrub(added.stderr).slice(0, 300)}`);
+    if (status === "starting") status = "running";
+    opts.log("supervisor_ready", { port: opts.port });
+  })();
+  ready.catch((e) => fail(e instanceof Error ? e.message : String(e)));
+  let queue = Promise.resolve();
+  const approve = (userCode) => {
+    const run = async () => {
+      if (status !== "running") throw new BridgeError("EMBEDDED_UNAVAILABLE", `the embedded supervisor is ${status}`);
+      const code = normalizeUserCode(userCode);
+      if (!code) throw Object.assign(new Error("user_code is malformed"), { code: "INVALID_ARGUMENT" });
+      const result = await cli(["device", "approve", code, "--sub", EMBEDDED_OWNER], APPROVE_TIMEOUT_MS);
+      if (result.code === 2) throw new BridgeError("DEVICE_REQUEST_NOT_FOUND", "no live device request with that code (expired or never started)");
+      if (result.code !== 0) throw new BridgeError("EMBEDDED_UNAVAILABLE", `the supervisor refused the approval: ${scrub(result.stderr).slice(0, 200)}`);
+    };
+    const next = queue.then(run, run);
+    queue = next.catch(() => void 0);
+    return next;
+  };
+  return {
+    port: opts.port,
+    state: () => ({ status, port: opts.port, ...detail !== void 0 ? { detail } : {} }),
+    ready,
+    approve,
+    async stop() {
+      const wasStopped = status === "stopped";
+      status = "stopped";
+      if (wasStopped) return;
+      const proc = child;
+      if (proc && proc.exitCode === null) proc.kill();
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 3e4))]);
+    }
+  };
+}
+var EMBEDDED_OWNER, SUPERVISOR_SERVICE_DIR, DEFAULT_START_TIMEOUT_MS, APPROVE_TIMEOUT_MS, USER_CODE, ENV_ALLOWLIST, normalizeUserCode;
+var init_embedded = __esm({
+  "daemon/src/embedded.ts"() {
+    "use strict";
+    init_errors();
+    init_config();
+    EMBEDDED_OWNER = "owner@atrium-bridge.local";
+    SUPERVISOR_SERVICE_DIR = resolve3(import.meta.dirname, "../../../../services/supervisor");
+    DEFAULT_START_TIMEOUT_MS = 24e4;
+    APPROVE_TIMEOUT_MS = 12e4;
+    USER_CODE = /^[A-Z0-9]{4,12}(?:-[A-Z0-9]{4,12})?$/;
+    ENV_ALLOWLIST = [
+      "PATH",
+      "Path",
+      "PATHEXT",
+      "SystemRoot",
+      "SYSTEMROOT",
+      "windir",
+      "COMSPEC",
+      "OS",
+      "TEMP",
+      "TMP",
+      "TMPDIR",
+      "USERPROFILE",
+      "HOME",
+      "HOMEDRIVE",
+      "HOMEPATH",
+      "USERNAME",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "ProgramData",
+      "ProgramFiles",
+      "ProgramFiles(x86)",
+      "PROCESSOR_ARCHITECTURE",
+      "NUMBER_OF_PROCESSORS",
+      "LANG",
+      "LC_ALL",
+      "TERM"
+    ];
+    normalizeUserCode = (raw) => {
+      const code = raw.trim().toUpperCase();
+      return USER_CODE.test(code) ? code : null;
+    };
+  }
+});
+
+// daemon/src/ensure.ts
+import { execFile as execFile2, spawn as spawn2 } from "node:child_process";
+import { appendFileSync, closeSync, fstatSync, mkdirSync as mkdirSync4, openSync, readFileSync as readFileSync6, readSync, renameSync as renameSync2, statSync as statSync3 } from "node:fs";
+import { request } from "node:http";
+import { dirname as dirname3, resolve as resolve4 } from "node:path";
+function createEnsure(ops, opts) {
+  const breaker2 = new Breaker(opts.breaker, ops.now);
+  const reasons = DAEMON_TEXTS.startReasons;
+  let opening;
+  let startedAt = null;
+  const startFailed = (reason) => new BridgeError("DAEMON_START_FAILED", DAEMON_TEXTS.startFailed({ reason, logFile: opts.logFile, tail: ops.logTail() }));
+  const crashLoop = (restarts, retryInMs) => new BridgeError(
+    "DAEMON_CRASH_LOOP",
+    DAEMON_TEXTS.crashLoop({
+      restarts,
+      minutes: Math.round(opts.breaker.windowMs / 6e4),
+      pauseSeconds: Math.ceil(retryInMs / 1e3),
+      logFile: opts.logFile,
+      tail: ops.logTail()
+    })
+  );
+  async function killHung(port, owner) {
+    const pid = ops.readPid();
+    if (pid === null || !ops.isAlive(pid)) {
+      ops.log("daemon_kill_skipped", { why: pid === null ? "no-pid-file" : "pid-not-alive" });
+      return false;
+    }
+    if (owner !== pid) {
+      ops.log("daemon_kill_skipped", { why: "pid-is-not-the-port-owner", pid, owner });
+      return false;
+    }
+    try {
+      await ops.killTree(pid);
+    } catch (e) {
+      ops.log("daemon_kill_failed", { pid, reason: e instanceof Error ? e.message : String(e) });
+      return false;
+    }
+    ops.log("daemon_killed", { pid });
+    const until = ops.now() + opts.killWaitMs;
+    while (ops.now() < until && await ops.probe(port, opts.quickProbeMs) !== "refused") await ops.sleep(opts.pollMs);
+    return true;
+  }
+  async function run(source) {
+    const port = opts.port();
+    if (await ops.probe(port, opts.quickProbeMs) === "ok") return { restarted: false, source };
+    let busyKnown = false;
+    let killed = false;
+    let skipDelay = false;
+    let attempts = 0;
+    let reason = "";
+    const startOnce = async () => {
+      const began = ops.now();
+      ops.log("daemon_spawning", { port });
+      const child = ops.spawn(port);
+      ops.log("daemon_spawned", { pid: child.pid ?? null });
+      const state = {};
+      void child.exited.then((e) => {
+        state.exit = e;
+      });
+      const ready = (by) => {
+        startedAt = ops.now();
+        ops.log("daemon_ready", { ms: startedAt - began, pid: child.pid ?? null, by });
+        return { kind: "ready" };
+      };
+      for (; ; ) {
+        await ops.sleep(opts.pollMs);
+        const exit = state.exit;
+        if (!exit && await ops.probe(port, opts.quickProbeMs) === "ok") return ready("child");
+        if (exit) {
+          const confirm = await ops.probe(port, busyKnown ? opts.quickProbeMs : opts.hungAfterMs);
+          if (confirm === "ok") return ready("other");
+          if (confirm === "refused") {
+            return { kind: "failed", reason: exit.error !== void 0 ? reasons.spawnFailed(exit.error) : reasons.exited(exit.code) };
+          }
+          busyKnown = true;
+          const owner = await ops.portOwner(port);
+          return {
+            kind: "busy",
+            verdict: confirm,
+            owner,
+            reason: confirm === "mute" ? reasons.portMute(port, owner) : reasons.portForeign(port, owner)
+          };
+        }
+        if (ops.now() - began > opts.readyTimeoutMs) {
+          if (child.pid !== void 0) await ops.killTree(child.pid).catch(noop);
+          return { kind: "failed", reason: reasons.notReady(Math.round(opts.readyTimeoutMs / 1e3)) };
+        }
+      }
+    };
+    for (; ; ) {
+      const admission = breaker2.admit();
+      if (!admission.allowed) {
+        ops.log("breaker_open", { restarts: admission.restarts, retryInMs: admission.retryInMs });
+        if (attempts === 0) throw crashLoop(admission.restarts, admission.retryInMs);
+        break;
+      }
+      attempts++;
+      const wait = admission.halfOpen || skipDelay ? 0 : opts.backoffMs[Math.min(admission.index, opts.backoffMs.length - 1)] ?? 0;
+      skipDelay = false;
+      if (wait > 0) await ops.sleep(wait);
+      const result = await startOnce();
+      if (result.kind === "ready") {
+        breaker2.succeeded();
+        return { restarted: true, source };
+      }
+      reason = result.reason;
+      if (result.kind === "busy") {
+        if (result.verdict === "foreign") {
+          breaker2.failed();
+          break;
+        }
+        if (!killed && await killHung(port, result.owner)) {
+          killed = true;
+          skipDelay = true;
+          continue;
+        }
+      }
+      breaker2.failed();
+      if (admission.halfOpen || attempts >= opts.maxAttempts) break;
+    }
+    ops.log("daemon_start_failed", { reason, attempts });
+    throw startFailed(reason);
+  }
+  const ensure = (source = "call") => opening ??= run(source).finally(() => {
+    opening = void 0;
+  });
+  return {
+    ensure,
+    async warmup() {
+      if (opening) {
+        await opening.then(noop, noop);
+        return;
+      }
+      if (await ops.probe(opts.port(), opts.quickProbeMs) !== "refused") return;
+      await ensure("warmup").then(noop, noop);
+    },
+    youngAgeMs() {
+      const stamps = [startedAt, ops.pidWrittenAt()].filter((t) => t !== null);
+      if (stamps.length === 0) return null;
+      const age = Math.max(0, ops.now() - Math.max(...stamps));
+      return age < opts.youngMs ? age : null;
+    }
+  };
+}
+function daemonEnv(home2) {
+  return childEnv({ ATRIUM_BRIDGE_HOME: resolve4(home2) });
+}
+function probeHealth(port, timeoutMs) {
+  return new Promise((resolve9) => {
+    let settled = false;
+    let timer;
+    const finish = (result, req2) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      req2?.destroy();
+      resolve9(result);
+    };
+    const req = request(
+      { host: "127.0.0.1", port, path: "/health", method: "GET", agent: false, headers: { connection: "close" } },
+      (res) => {
+        const chunks = [];
+        let size = 0;
+        res.on("data", (c) => {
+          size += c.length;
+          if (size > 64 * 1024) return finish("foreign", req);
+          chunks.push(c);
+        });
+        res.on("error", () => finish("mute", req));
+        res.on("end", () => {
+          let ok = false;
+          try {
+            ok = res.statusCode === 200 && JSON.parse(Buffer.concat(chunks).toString("utf8")).ok === true;
+          } catch {
+          }
+          finish(ok ? "ok" : "foreign", req);
+        });
+      }
+    );
+    timer = setTimeout(() => finish("mute", req), timeoutMs);
+    req.on("error", (e) => finish(e.code === "ECONNREFUSED" ? "refused" : "mute", req));
+    req.end();
+  });
+}
+function parseListenOwner(output, port) {
+  for (const line of output.split(/\r?\n/)) {
+    const m = /^\s*TCP\s+\S+:(\d+)\s+(?:0\.0\.0\.0:0|\[::\]:0)\s+\S+\s+(\d+)\s*$/i.exec(line);
+    if (m && Number(m[1]) === port) return Number(m[2]);
+  }
+  return null;
+}
+function exec(cmd, args) {
+  return new Promise((resolve9) => {
+    execFile2(cmd, args, { windowsHide: true, timeout: 1e4, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve9(String(stdout ?? "")));
+  });
+}
+async function portOwner(port) {
+  if (process.platform === "win32") return parseListenOwner(await exec("netstat", ["-ano", "-p", "TCP"]), port);
+  const n = Number((await exec("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"])).trim().split(/\s+/)[0]);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+async function killTree(pid) {
+  if (process.platform === "win32") {
+    await exec("taskkill", ["/PID", String(pid), "/T", "/F"]);
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+  }
+}
+function rotateLog(file, maxBytes = LOG_MAX_BYTES) {
+  try {
+    if (statSync3(file).size > maxBytes) renameSync2(file, `${file}.1`);
+  } catch {
+  }
+}
+function readTail(file, maxBytes = 4096, maxLines = 12) {
+  let fd;
+  try {
+    fd = openSync(file, "r");
+    const size = fstatSync(fd).size;
+    const len = Math.min(size, maxBytes);
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, size - len);
+    const lines = buf.toString("utf8").split(/\r?\n/).filter((l) => l.trim() !== "");
+    if (size > maxBytes) lines.shift();
+    return scrub(lines.slice(-maxLines).map((l) => l.slice(0, 300)).join("\n"));
+  } catch {
+    return "";
+  } finally {
+    if (fd !== void 0) closeSync(fd);
+  }
+}
+function redactTokens(text, home2, env = process.env) {
+  try {
+    const config2 = readConfig(home2);
+    if (!config2) return text;
+    const secrets = [config2.pairingToken, readLocalKey(home2), env.ATRIUM_BRIDGE_KEY?.trim()];
+    try {
+      secrets.push(apiKeyFromEnv(env) ?? void 0);
+    } catch {
+    }
+    try {
+      secrets.push(readFileSync6(uploadKeyPath(home2), "utf8").trim() || void 0);
+    } catch {
+    }
+    return secrets.filter((x) => !!x).reduce((t, secret) => t.split(secret).join("[redacted]"), text);
+  } catch {
+    return text;
+  }
+}
+function createShellLog(file, opts = {}) {
+  const mirror = opts.stderr ?? true;
+  let prepared = false;
+  let writes = 0;
+  return (event, fields = {}) => {
+    const line = `${JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, mcp: process.pid, ...fields })}
+`;
+    try {
+      if (!prepared) {
+        mkdirSync4(dirname3(file), { recursive: true });
+        rotateLog(file);
+        prepared = true;
+      } else if (++writes % 200 === 0) {
+        rotateLog(file);
+      }
+      appendFileSync(file, line);
+    } catch {
+    }
+    if (!mirror) return;
+    try {
+      process.stderr.write(line);
+    } catch {
+    }
+  };
+}
+function spawnDaemon(home2, launch, port) {
+  const logFile = daemonLogPath(home2);
+  let fd;
+  try {
+    mkdirSync4(home2, { recursive: true });
+    rotateLog(logFile);
+    fd = openSync(logFile, "a");
+    const child = spawn2(launch.node ?? process.execPath, [...launch.execArgv, launch.entry, ...launch.args, "--port", String(port)], {
+      cwd: resolve4(home2),
+      env: daemonEnv(home2),
+      detached: true,
+      windowsHide: true,
+      stdio: ["ignore", fd, fd]
+    });
+    const exited = new Promise((resolve9) => {
+      child.once("error", (e) => resolve9({ code: null, error: e.message }));
+      child.once("exit", (code) => resolve9({ code }));
+    });
+    child.unref();
+    return { pid: child.pid, exited };
+  } catch (e) {
+    return { pid: void 0, exited: Promise.resolve({ code: null, error: e instanceof Error ? e.message : String(e) }) };
+  } finally {
+    if (fd !== void 0) closeSync(fd);
+  }
+}
+function nodeEnsureOps(cfg) {
+  const { home: home2, launch, log } = cfg;
+  const env = cfg.env ?? process.env;
+  return {
+    probe: probeHealth,
+    spawn: (port) => spawnDaemon(home2, launch, port),
+    readPid: () => readDaemonPid(home2),
+    pidWrittenAt: () => daemonPidWrittenAt(home2),
+    isAlive,
+    portOwner,
+    killTree,
+    logTail: () => redactTokens(readTail(daemonLogPath(home2)), home2, env),
+    sleep: (ms) => new Promise((resolve9) => setTimeout(resolve9, ms)),
+    now: () => Date.now(),
+    log
+  };
+}
+var ENSURE_DEFAULTS, Breaker, noop, LOG_MAX_BYTES;
+var init_ensure = __esm({
+  "daemon/src/ensure.ts"() {
+    "use strict";
+    init_errors();
+    init_texts();
+    init_config();
+    init_client();
+    init_embedded();
+    ENSURE_DEFAULTS = {
+      readyTimeoutMs: 15e3,
+      pollMs: 200,
+      quickProbeMs: 1e3,
+      hungAfterMs: 5e3,
+      killWaitMs: 5e3,
+      maxAttempts: 3,
+      backoffMs: [0, 2e3, 5e3],
+      breaker: { threshold: 3, windowMs: 5 * 6e4, pauseMs: 6e4 },
+      youngMs: 6e4
+    };
+    Breaker = class {
+      events = [];
+      openUntil = 0;
+      tripped = false;
+      opts;
+      now;
+      constructor(opts, now) {
+        this.opts = opts;
+        this.now = now;
+      }
+      prune(t) {
+        this.events = this.events.filter((e) => t - e < this.opts.windowMs);
+      }
+      admit() {
+        const t = this.now();
+        this.prune(t);
+        if (this.tripped) {
+          if (t < this.openUntil) return { allowed: false, restarts: this.events.length, retryInMs: this.openUntil - t };
+          this.events.push(t);
+          return { allowed: true, halfOpen: true, index: 0 };
+        }
+        if (this.events.length >= this.opts.threshold) {
+          this.tripped = true;
+          this.openUntil = t + this.opts.pauseMs;
+          return { allowed: false, restarts: this.events.length, retryInMs: this.opts.pauseMs };
+        }
+        const index = this.events.length;
+        this.events.push(t);
+        return { allowed: true, halfOpen: false, index };
+      }
+      /** A tentativa deu certo: se era a do meio-aberto, o disjuntor fecha e o histórico some. */
+      succeeded() {
+        if (!this.tripped) return;
+        this.tripped = false;
+        this.events = [];
+      }
+      /** A tentativa falhou: se era a do meio-aberto, reabre por mais uma pausa. */
+      failed() {
+        if (this.tripped) this.openUntil = this.now() + this.opts.pauseMs;
+      }
+    };
+    noop = () => void 0;
+    LOG_MAX_BYTES = 5 * 1024 * 1024;
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -697,7 +1772,6 @@ __export(util_exports, {
   required: () => required,
   safeExtend: () => safeExtend,
   shallowClone: () => shallowClone,
-  sizeCaps: () => sizeCaps,
   slugify: () => slugify,
   stringifyPrimitive: () => stringifyPrimitive,
   toZod: () => toZod,
@@ -1121,18 +2195,6 @@ function prefixIssues(path, issues) {
 function unwrapMessage(message) {
   return typeof message === "string" ? message : message?.message;
 }
-function sizeCaps(defChecks) {
-  const caps = [];
-  for (const ch of defChecks ?? []) {
-    const d = ch._zod.def;
-    if (!/_(length|size)$|_equals$/.test(d.check))
-      break;
-    const max = d.maximum ?? d.length ?? d.size;
-    if (max >= 0)
-      caps.push([max, ch]);
-  }
-  return caps;
-}
 function attachSchema(issues, start, inst) {
   var _a3;
   for (let i = start; i < issues.length; i++) {
@@ -1372,7 +2434,7 @@ function constantCatch(value) {
 }
 var Cached, EVALUATING, captureStackTrace, allowsEval, getParsedType, propertyKeyTypes, primitiveTypes, NUMBER_FORMAT_RANGES, BIGINT_FORMAT_RANGES, highSurrogate, Class, installing, broke, breaker, CONSTANT_CATCH;
 var init_util = __esm({
-  "node_modules/zod/v4/core/util.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/util.js"() {
     init_core();
     Cached = class {
       constructor(getter) {
@@ -1487,7 +2549,7 @@ var init_util = __esm({
   }
 });
 
-// node_modules/zod/v4/core/core.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/core.js
 function newError(Definition) {
   const E = _E;
   if (E) {
@@ -1590,7 +2652,7 @@ function config(newConfig) {
 }
 var _a, _zodDesc, _E, $ZodAsyncError, $ZodEncodeError, globalConfig;
 var init_core = __esm({
-  "node_modules/zod/v4/core/core.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/core.js"() {
     init_util();
     _zodDesc = { value: void 0, enumerable: false };
     _E = "captureStackTrace" in Error ? Error : null;
@@ -1610,7 +2672,7 @@ var init_core = __esm({
   }
 });
 
-// node_modules/zod/v4/core/errors.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/errors.js
 function _getMessage() {
   const internals = this._zod;
   internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -1690,8 +2752,8 @@ function formatError(error2, mapper = (issue2) => issue2.message) {
   return fieldErrors;
 }
 var _messageDesc, _issuesDesc, _installedToString, initializer, $ZodError, $ZodRealError;
-var init_errors = __esm({
-  "node_modules/zod/v4/core/errors.js"() {
+var init_errors2 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/errors.js"() {
     init_core();
     init_util();
     _messageDesc = {
@@ -1732,7 +2794,7 @@ var init_errors = __esm({
   }
 });
 
-// node_modules/zod/v4/core/parse.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
   return { callee: params?.callee ?? callee, Err: params?.Err };
 }
@@ -1772,9 +2834,9 @@ function validateFallback(schema, value, _ctx) {
 }
 var _parse, _parseAsync, _safeParse, safeParse, _safeParseAsync, COMPILE_INVALID, COMPILE_FALLBACK, validate, validateAsync, _encode, _decode, _encodeAsync, _decodeAsync, _safeEncode, _safeDecode, _safeEncodeAsync, _safeDecodeAsync;
 var init_parse = __esm({
-  "node_modules/zod/v4/core/parse.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/parse.js"() {
     init_core();
-    init_errors();
+    init_errors2();
     init_util();
     _parse = (_Err) => {
       const fn = (schema, value, _ctx, _params) => {
@@ -1889,7 +2951,7 @@ var init_parse = __esm({
   }
 });
 
-// node_modules/zod/v4/core/regexes.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/regexes.js
 function nanoidOfLength(length) {
   return new RegExp(`^[a-zA-Z0-9_-]{${length}}$`);
 }
@@ -1917,7 +2979,7 @@ function datetime(args) {
 }
 var cuid, cuid2, ulid, xid, ksuid, nanoid, duration, guid, uuid, email, _emoji, ipv4, ipv6, cidrv4, cidrv6, base64, base64url, httpProtocol, e164, dateSource, date, anyString, integer, number, boolean, _null, lowercase, uppercase;
 var init_regexes = __esm({
-  "node_modules/zod/v4/core/regexes.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/regexes.js"() {
     cuid = /^[cC][0-9a-z]{6,}$/;
     cuid2 = /^[0-9a-z]+$/;
     ulid = /^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$/;
@@ -1953,10 +3015,10 @@ var init_regexes = __esm({
   }
 });
 
-// node_modules/zod/v4/core/checks.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/checks.js
 var $ZodCheck, _whenHasLength, numericOriginMap, $ZodCheckLessThan, $ZodCheckGreaterThan, $ZodCheckMultipleOf, $ZodCheckNumberFormat, $ZodCheckMaxLength, $ZodCheckMinLength, $ZodCheckLengthEquals, $ZodCheckStringFormat, $ZodCheckRegex, $ZodCheckLowerCase, $ZodCheckUpperCase, $ZodCheckIncludes, $ZodCheckStartsWith, $ZodCheckEndsWith, $ZodCheckOverwrite;
 var init_checks = __esm({
-  "node_modules/zod/v4/core/checks.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/checks.js"() {
     init_core();
     init_regexes();
     init_util();
@@ -2281,10 +3343,10 @@ var init_checks = __esm({
   }
 });
 
-// node_modules/zod/v4/core/doc.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/doc.js
 var Doc;
 var init_doc = __esm({
-  "node_modules/zod/v4/core/doc.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/doc.js"() {
     Doc = class {
       constructor(args = [], closed = {}) {
         this.content = [];
@@ -2327,19 +3389,19 @@ ${content.join("\n")}
   }
 });
 
-// node_modules/zod/v4/core/versions.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/versions.js
 var version;
 var init_versions = __esm({
-  "node_modules/zod/v4/core/versions.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/versions.js"() {
     version = {
       major: 4,
       minor: 6,
-      patch: 7
+      patch: 5
     };
   }
 });
 
-// node_modules/zod/v4/core/schemas.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/schemas.js
 async function validateAsync2(inst, value) {
   const ctx = { async: true };
   return toStandardResult(await inst._zod.run({ value, issues: [] }, ctx), ctx);
@@ -2461,28 +3523,6 @@ function isValidJWT(token, algorithm = null) {
   } catch {
     return false;
   }
-}
-function capSize(inst, size) {
-  const caps = sizeCaps(inst._zod.def.checks);
-  if (!caps.length)
-    return;
-  const cap = Math.min(...caps.map((c) => c[0]));
-  const parse4 = inst._zod.parse;
-  inst._zod.parse = (payload, ctx) => {
-    const n = size(payload.value);
-    if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
-      for (const [max, ch] of sizeCaps(inst._zod.def.checks)) {
-        if (n > max && ch._zod.def.when(payload)) {
-          const start = payload.issues.length;
-          ch._zod.check(payload);
-          payload.issues[start].continue = false;
-          attachSchema(payload.issues, start, inst);
-          return payload;
-        }
-      }
-    }
-    return parse4(payload, ctx);
-  };
 }
 function handleArrayResult(result, final, index) {
   if (result.issues.length) {
@@ -2794,9 +3834,9 @@ function handleRefineResult(result, payload, input, inst) {
     payload.issues.push(issue(_iss));
   }
 }
-var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, arraySize, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
+var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
 var init_schemas = __esm({
-  "node_modules/zod/v4/core/schemas.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/schemas.js"() {
     init_checks();
     init_core();
     init_doc();
@@ -3252,7 +4292,6 @@ var init_schemas = __esm({
         return payload;
       };
     });
-    arraySize = (input) => Array.isArray(input) ? input.length : -1;
     $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def3) => {
       $ZodType.init(inst, def3);
       const memo2 = globalConfig.memoizer;
@@ -3290,7 +4329,6 @@ var init_schemas = __esm({
         }
         return payload;
       };
-      capSize(inst, arraySize);
     });
     NO_SYMBOL_KEYS = [];
     $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def3) => {
@@ -4018,7 +5056,7 @@ var init_schemas = __esm({
   }
 });
 
-// node_modules/zod/v4/core/memoizer.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/memoizer.js
 function isRef(value) {
   return value !== null && typeof value === "object";
 }
@@ -4179,7 +5217,7 @@ function isBackEdge(ctx, value) {
 }
 var $ZodCyclicError, STATE, NO_ISSUES, recursive, NONE, ASSUMED, PROVEN, handoff, open, memo;
 var init_memoizer = __esm({
-  "node_modules/zod/v4/core/memoizer.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/memoizer.js"() {
     init_util();
     $ZodCyclicError = class extends Error {
       constructor() {
@@ -4297,7 +5335,7 @@ var init_memoizer = __esm({
   }
 });
 
-// node_modules/zod/v4/locales/en.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/locales/en.js
 function en_default() {
   return {
     localeError: error()
@@ -4305,7 +5343,7 @@ function en_default() {
 }
 var error;
 var init_en = __esm({
-  "node_modules/zod/v4/locales/en.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/locales/en.js"() {
     init_util();
     error = () => {
       const Sizable = {
@@ -4428,19 +5466,19 @@ var init_en = __esm({
   }
 });
 
-// node_modules/zod/v4/locales/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/locales/index.js
 var init_locales = __esm({
-  "node_modules/zod/v4/locales/index.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/locales/index.js"() {
   }
 });
 
-// node_modules/zod/v4/core/registries.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/registries.js
 function registry() {
   return new $ZodRegistry();
 }
 var _a2, $ZodRegistry, globalRegistry;
 var init_registries = __esm({
-  "node_modules/zod/v4/core/registries.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/registries.js"() {
     $ZodRegistry = class {
       constructor() {
         this._map = /* @__PURE__ */ new WeakMap();
@@ -4486,16 +5524,16 @@ var init_registries = __esm({
   }
 });
 
-// node_modules/zod/v4/core/compile.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/compile.js
 var INVALID, FALLBACK_FLAG;
 var init_compile = __esm({
-  "node_modules/zod/v4/core/compile.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/compile.js"() {
     INVALID = Symbol.for("zod.compile.invalid");
     FALLBACK_FLAG = Symbol.for("zod.compile.fallback");
   }
 });
 
-// node_modules/zod/v4/core/api.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/api.js
 function snapshotChecks(def3) {
   if (def3.checks)
     def3.checks = [...def3.checks];
@@ -5022,13 +6060,13 @@ function _check(fn, params) {
   return ch;
 }
 var init_api = __esm({
-  "node_modules/zod/v4/core/api.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/api.js"() {
     init_checks();
     init_util();
   }
 });
 
-// node_modules/zod/v4/core/to-json-schema.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
   for (const source of sources) {
     for (const key of Reflect.ownKeys(source)) {
@@ -5544,7 +6582,7 @@ function isTransforming(_schema, _ctx) {
 }
 var FOLDABLE_KEYS, UNION_KEYS, createToJSONSchemaMethod, createStandardJSONSchemaMethod;
 var init_to_json_schema = __esm({
-  "node_modules/zod/v4/core/to-json-schema.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/to-json-schema.js"() {
     init_registries();
     init_util();
     FOLDABLE_KEYS = /* @__PURE__ */ new Set(["type", "properties", "required", "additionalProperties"]);
@@ -5565,7 +6603,7 @@ var init_to_json_schema = __esm({
   }
 });
 
-// node_modules/zod/v4/core/json-schema-processors.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/json-schema-processors.js
 function aggregateChecks(schema) {
   const agg = {};
   const def3 = schema._zod.def;
@@ -5681,7 +6719,7 @@ function serializeDefaultValue(value, schema, ctx, json, params) {
 }
 var narrowMin, narrowMax, narrowBoth, addDivisor, addPattern, intersectMime, setFormat, minContributor, maxContributor, formatContributor, contributors, formatMap, exactPatterns, exactPattern, stringProcessor, numberProcessor, booleanProcessor, nullProcessor, neverProcessor, unknownProcessor, enumProcessor, literalProcessor, customProcessor, transformProcessor, arrayProcessor, objectProcessor, unionProcessor, intersectionProcessor, pendingRecords, recordProcessor, nullableProcessor, nonoptionalProcessor, UNREPRESENTABLE_DEFAULT, defaultProcessor, prefaultProcessor, catchProcessor, pipeProcessor, readonlyProcessor, optionalProcessor;
 var init_json_schema_processors = __esm({
-  "node_modules/zod/v4/core/json-schema-processors.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/json-schema-processors.js"() {
     init_regexes();
     init_schemas();
     init_to_json_schema();
@@ -6112,18 +7150,18 @@ var init_json_schema_processors = __esm({
   }
 });
 
-// node_modules/zod/v4/core/json-schema.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/json-schema.js
 var init_json_schema = __esm({
-  "node_modules/zod/v4/core/json-schema.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/json-schema.js"() {
   }
 });
 
-// node_modules/zod/v4/core/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/index.js
 var init_core2 = __esm({
-  "node_modules/zod/v4/core/index.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/index.js"() {
     init_core();
     init_parse();
-    init_errors();
+    init_errors2();
     init_schemas();
     init_memoizer();
     init_checks();
@@ -6140,14 +7178,133 @@ var init_core2 = __esm({
   }
 });
 
-// node_modules/zod/v4/classic/checks.js
-var init_checks2 = __esm({
-  "node_modules/zod/v4/classic/checks.js"() {
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/parse.js
+var init_parse2 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/parse.js"() {
     init_core2();
   }
 });
 
-// node_modules/zod/v4/classic/errors.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/schemas.js
+var init_schemas2 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/schemas.js"() {
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/checks.js
+var init_checks2 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/checks.js"() {
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/iso.js
+var init_iso = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/iso.js"() {
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/coerce.js
+var init_coerce = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/coerce.js"() {
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/external.js
+var init_external = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/external.js"() {
+    init_core2();
+    init_parse2();
+    init_schemas2();
+    init_checks2();
+    init_locales();
+    init_iso();
+    init_coerce();
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4-mini/index.js
+var init_v4_mini = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4-mini/index.js"() {
+    init_external();
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+function isZ4Schema(s) {
+  const schema = s;
+  return !!schema._zod;
+}
+function safeParse2(schema, data) {
+  if (isZ4Schema(schema)) {
+    const result2 = safeParse(schema, data);
+    return result2;
+  }
+  const v3Schema = schema;
+  const result = v3Schema.safeParse(data);
+  return result;
+}
+function getObjectShape(schema) {
+  if (!schema)
+    return void 0;
+  let rawShape2;
+  if (isZ4Schema(schema)) {
+    const v4Schema = schema;
+    rawShape2 = v4Schema._zod?.def?.shape;
+  } else {
+    const v3Schema = schema;
+    rawShape2 = v3Schema.shape;
+  }
+  if (!rawShape2)
+    return void 0;
+  if (typeof rawShape2 === "function") {
+    try {
+      return rawShape2();
+    } catch {
+      return void 0;
+    }
+  }
+  return rawShape2;
+}
+function getLiteralValue(schema) {
+  if (isZ4Schema(schema)) {
+    const v4Schema = schema;
+    const def4 = v4Schema._zod?.def;
+    if (def4) {
+      if (def4.value !== void 0)
+        return def4.value;
+      if (Array.isArray(def4.values) && def4.values.length > 0) {
+        return def4.values[0];
+      }
+    }
+  }
+  const v3Schema = schema;
+  const def3 = v3Schema._def;
+  if (def3) {
+    if (def3.value !== void 0)
+      return def3.value;
+    if (Array.isArray(def3.values) && def3.values.length > 0) {
+      return def3.values[0];
+    }
+  }
+  const directValue = schema.value;
+  if (directValue !== void 0)
+    return directValue;
+  return void 0;
+}
+var init_zod_compat = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js"() {
+    init_v4_mini();
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/checks.js
+var init_checks3 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/checks.js"() {
+    init_core2();
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/errors.js
 function _lazyMethod(proto, key, make) {
   Object.defineProperty(proto, key, {
     configurable: true,
@@ -6163,8 +7320,8 @@ function _lazyMethod(proto, key, make) {
   });
 }
 var _installedErrorProtos, initializer2, ZodRealError;
-var init_errors2 = __esm({
-  "node_modules/zod/v4/classic/errors.js"() {
+var init_errors3 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/errors.js"() {
     init_core2();
     init_core2();
     init_util();
@@ -6200,29 +7357,29 @@ var init_errors2 = __esm({
   }
 });
 
-// node_modules/zod/v4/classic/parse.js
-var parse, parseAsync, safeParse2, safeParseAsync, encode, decode, encodeAsync, decodeAsync, safeEncode, safeDecode, safeEncodeAsync, safeDecodeAsync;
-var init_parse2 = __esm({
-  "node_modules/zod/v4/classic/parse.js"() {
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/parse.js
+var parse2, parseAsync2, safeParse3, safeParseAsync2, encode2, decode2, encodeAsync2, decodeAsync2, safeEncode2, safeDecode2, safeEncodeAsync2, safeDecodeAsync2;
+var init_parse3 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/parse.js"() {
     init_core2();
-    init_errors2();
+    init_errors3();
     init_core2();
-    parse = /* @__PURE__ */ _parse(ZodRealError);
-    parseAsync = /* @__PURE__ */ _parseAsync(ZodRealError);
-    safeParse2 = /* @__PURE__ */ _safeParse(ZodRealError);
-    safeParseAsync = /* @__PURE__ */ _safeParseAsync(ZodRealError);
-    encode = /* @__PURE__ */ _encode(ZodRealError);
-    decode = /* @__PURE__ */ _decode(ZodRealError);
-    encodeAsync = /* @__PURE__ */ _encodeAsync(ZodRealError);
-    decodeAsync = /* @__PURE__ */ _decodeAsync(ZodRealError);
-    safeEncode = /* @__PURE__ */ _safeEncode(ZodRealError);
-    safeDecode = /* @__PURE__ */ _safeDecode(ZodRealError);
-    safeEncodeAsync = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
-    safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
+    parse2 = /* @__PURE__ */ _parse(ZodRealError);
+    parseAsync2 = /* @__PURE__ */ _parseAsync(ZodRealError);
+    safeParse3 = /* @__PURE__ */ _safeParse(ZodRealError);
+    safeParseAsync2 = /* @__PURE__ */ _safeParseAsync(ZodRealError);
+    encode2 = /* @__PURE__ */ _encode(ZodRealError);
+    decode2 = /* @__PURE__ */ _decode(ZodRealError);
+    encodeAsync2 = /* @__PURE__ */ _encodeAsync(ZodRealError);
+    decodeAsync2 = /* @__PURE__ */ _decodeAsync(ZodRealError);
+    safeEncode2 = /* @__PURE__ */ _safeEncode(ZodRealError);
+    safeDecode2 = /* @__PURE__ */ _safeDecode(ZodRealError);
+    safeEncodeAsync2 = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
+    safeDecodeAsync2 = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
   }
 });
 
-// node_modules/zod/v4/classic/schemas.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
   if (!globalConfig.localeError)
     config(en_default());
@@ -6255,7 +7412,7 @@ function never(params) {
 function array(element, params) {
   return _array(ZodArray, element, params);
 }
-function object(shape, params) {
+function object2(shape, params) {
   const def3 = {
     type: "object",
     shape: shape ?? {},
@@ -6411,15 +7568,15 @@ function preprocess(fn, schema) {
   });
 }
 var ZodType, _ZodString, ZodString, ZodStringFormat, ZodISODateTime, ZodISODate, ZodISOTime, ZodISODuration, ZodEmail, ZodGUID, ZodUUID, ZodURL, ZodEmoji, ZodNanoID, ZodCUID, ZodCUID2, ZodULID, ZodXID, ZodKSUID, ZodIPv4, ZodIPv6, ZodCIDRv4, ZodCIDRv6, ZodBase64, ZodBase64URL, ZodE164, ZodJWT, ZodNumber, ZodNumberFormat, ZodBoolean, ZodNull, ZodUnknown, ZodNever, ZodArray, ZodObject, ZodUnion, ZodDiscriminatedUnion, ZodIntersection, ZodRecord, ZodEnum, ZodLiteral, ZodTransform, ZodOptional, ZodExactOptional, ZodNullable, ZodDefault, ZodPrefault, ZodNonOptional, ZodCatch, ZodPipe, ZodPreprocess, ZodReadonly, ZodCustom;
-var init_schemas2 = __esm({
-  "node_modules/zod/v4/classic/schemas.js"() {
+var init_schemas3 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/schemas.js"() {
     init_core2();
     init_core2();
     init_json_schema_processors();
     init_to_json_schema();
     init_en();
-    init_checks2();
-    init_parse2();
+    init_checks3();
+    init_parse3();
     ZodType = /* @__PURE__ */ $constructor("ZodType", (inst, def3) => {
       _ensureDefaultLocale();
       $ZodType.init(inst, def3);
@@ -6535,16 +7692,16 @@ var init_schemas2 = __esm({
         util_exports.own(this, "~standard", value);
       },
       parse: function _parse2(data, params) {
-        return parse(this, data, params, { callee: _parse2 });
+        return parse2(this, data, params, { callee: _parse2 });
       },
       parseAsync: async function _parseAsync2(data, params) {
-        return await parseAsync(this, data, params, { callee: _parseAsync2 });
+        return await parseAsync2(this, data, params, { callee: _parseAsync2 });
       },
       safeParse(data, params) {
-        return safeParse2(this, data, params);
+        return safeParse3(this, data, params);
       },
       async safeParseAsync(data, params) {
-        return safeParseAsync(this, data, params);
+        return safeParseAsync2(this, data, params);
       },
       // `spa` is an alias: same function object as `safeParseAsync`, as before.
       get spa() {
@@ -6560,28 +7717,28 @@ var init_schemas2 = __esm({
         return validateAsync(this, data, params);
       },
       encode: function _encode2(data, params) {
-        return encode(this, data, params, { callee: _encode2 });
+        return encode2(this, data, params, { callee: _encode2 });
       },
       decode: function _decode2(data, params) {
-        return decode(this, data, params, { callee: _decode2 });
+        return decode2(this, data, params, { callee: _decode2 });
       },
       encodeAsync: async function _encodeAsync2(data, params) {
-        return await encodeAsync(this, data, params, { callee: _encodeAsync2 });
+        return await encodeAsync2(this, data, params, { callee: _encodeAsync2 });
       },
       decodeAsync: async function _decodeAsync2(data, params) {
-        return await decodeAsync(this, data, params, { callee: _decodeAsync2 });
+        return await decodeAsync2(this, data, params, { callee: _decodeAsync2 });
       },
       safeEncode(data, params) {
-        return safeEncode(this, data, params);
+        return safeEncode2(this, data, params);
       },
       safeDecode(data, params) {
-        return safeDecode(this, data, params);
+        return safeDecode2(this, data, params);
       },
       async safeEncodeAsync(data, params) {
-        return safeEncodeAsync(this, data, params);
+        return safeEncodeAsync2(this, data, params);
       },
       async safeDecodeAsync(data, params) {
-        return safeDecodeAsync(this, data, params);
+        return safeDecodeAsync2(this, data, params);
       },
       toJSONSchema(params) {
         return createToJSONSchemaMethod(this, {})(params);
@@ -7178,18 +8335,18 @@ var init_schemas2 = __esm({
   }
 });
 
-// node_modules/zod/v4/classic/compat.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/compat.js
 var ZodFirstPartyTypeKind;
 var init_compat = __esm({
-  "node_modules/zod/v4/classic/compat.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/compat.js"() {
     /* @__PURE__ */ (function(ZodFirstPartyTypeKind2) {
     })(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
   }
 });
 
-// node_modules/zod/v4/classic/iso.js
-var iso_exports = {};
-__export(iso_exports, {
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/iso.js
+var iso_exports2 = {};
+__export(iso_exports2, {
   ZodISODate: () => ZodISODate,
   ZodISODateTime: () => ZodISODateTime,
   ZodISODuration: () => ZodISODuration,
@@ -7211,53 +8368,53 @@ function time2(params) {
 function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
-var init_iso = __esm({
-  "node_modules/zod/v4/classic/iso.js"() {
+var init_iso2 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/iso.js"() {
     init_core2();
-    init_schemas2();
-    init_schemas2();
+    init_schemas3();
+    init_schemas3();
   }
 });
 
-// node_modules/zod/v4/classic/coerce.js
-var init_coerce = __esm({
-  "node_modules/zod/v4/classic/coerce.js"() {
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/coerce.js
+var init_coerce2 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/coerce.js"() {
   }
 });
 
-// node_modules/zod/v4/classic/external.js
-var init_external = __esm({
-  "node_modules/zod/v4/classic/external.js"() {
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/external.js
+var init_external2 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/external.js"() {
     init_core2();
-    init_schemas2();
-    init_checks2();
-    init_errors2();
-    init_parse2();
+    init_schemas3();
+    init_checks3();
+    init_errors3();
+    init_parse3();
     init_compat();
     init_locales();
-    init_iso();
-    init_coerce();
+    init_iso2();
+    init_coerce2();
   }
 });
 
-// node_modules/zod/v4/classic/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/index.js
 var init_classic = __esm({
-  "node_modules/zod/v4/classic/index.js"() {
-    init_external();
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/index.js"() {
+    init_external2();
   }
 });
 
-// node_modules/zod/v4/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/index.js
 var init_v4 = __esm({
-  "node_modules/zod/v4/index.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/index.js"() {
     init_classic();
   }
 });
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, RELATED_TASK_META_KEY, JSONRPC_VERSION, AssertObjectSchema, ProgressTokenSchema, CursorSchema, TaskCreationParamsSchema, TaskMetadataSchema, RelatedTaskMetadataSchema, RequestMetaSchema, BaseRequestParamsSchema, TaskAugmentedRequestParamsSchema, isTaskAugmentedRequestParams, RequestSchema, NotificationsParamsSchema, NotificationSchema, ResultSchema, RequestIdSchema, JSONRPCRequestSchema, isJSONRPCRequest, JSONRPCNotificationSchema, isJSONRPCNotification, JSONRPCResultResponseSchema, isJSONRPCResultResponse, ErrorCode, JSONRPCErrorResponseSchema, isJSONRPCErrorResponse, JSONRPCMessageSchema, JSONRPCResponseSchema, EmptyResultSchema, CancelledNotificationParamsSchema, CancelledNotificationSchema, IconSchema, IconsSchema, BaseMetadataSchema, ImplementationSchema, FormElicitationCapabilitySchema, ElicitationCapabilitySchema, ClientTasksCapabilitySchema, ServerTasksCapabilitySchema, ClientCapabilitiesSchema, InitializeRequestParamsSchema, InitializeRequestSchema, ServerCapabilitiesSchema, InitializeResultSchema, InitializedNotificationSchema, PingRequestSchema, ProgressSchema, ProgressNotificationParamsSchema, ProgressNotificationSchema, PaginatedRequestParamsSchema, PaginatedRequestSchema, PaginatedResultSchema, TaskStatusSchema, TaskSchema, CreateTaskResultSchema, TaskStatusNotificationParamsSchema, TaskStatusNotificationSchema, GetTaskRequestSchema, GetTaskResultSchema, GetTaskPayloadRequestSchema, GetTaskPayloadResultSchema, ListTasksRequestSchema, ListTasksResultSchema, CancelTaskRequestSchema, CancelTaskResultSchema, ResourceContentsSchema, TextResourceContentsSchema, Base64Schema, BlobResourceContentsSchema, RoleSchema, AnnotationsSchema, ResourceSchema, ResourceTemplateSchema, ListResourcesRequestSchema, ListResourcesResultSchema, ListResourceTemplatesRequestSchema, ListResourceTemplatesResultSchema, ResourceRequestParamsSchema, ReadResourceRequestParamsSchema, ReadResourceRequestSchema, ReadResourceResultSchema, ResourceListChangedNotificationSchema, SubscribeRequestParamsSchema, SubscribeRequestSchema, UnsubscribeRequestParamsSchema, UnsubscribeRequestSchema, ResourceUpdatedNotificationParamsSchema, ResourceUpdatedNotificationSchema, PromptArgumentSchema, PromptSchema, ListPromptsRequestSchema, ListPromptsResultSchema, GetPromptRequestParamsSchema, GetPromptRequestSchema, TextContentSchema, ImageContentSchema, AudioContentSchema, ToolUseContentSchema, EmbeddedResourceSchema, ResourceLinkSchema, ContentBlockSchema, PromptMessageSchema, GetPromptResultSchema, PromptListChangedNotificationSchema, ToolAnnotationsSchema, ToolExecutionSchema, ToolSchema, ListToolsRequestSchema, ListToolsResultSchema, CallToolResultSchema, CompatibilityCallToolResultSchema, CallToolRequestParamsSchema, CallToolRequestSchema, ToolListChangedNotificationSchema, ListChangedOptionsBaseSchema, LoggingLevelSchema, SetLevelRequestParamsSchema, SetLevelRequestSchema, LoggingMessageNotificationParamsSchema, LoggingMessageNotificationSchema, ModelHintSchema, ModelPreferencesSchema, ToolChoiceSchema, ToolResultContentSchema, SamplingContentSchema, SamplingMessageContentBlockSchema, SamplingMessageSchema, CreateMessageRequestParamsSchema, CreateMessageRequestSchema, CreateMessageResultSchema, CreateMessageResultWithToolsSchema, BooleanSchemaSchema, StringSchemaSchema, NumberSchemaSchema, UntitledSingleSelectEnumSchemaSchema, TitledSingleSelectEnumSchemaSchema, LegacyTitledEnumSchemaSchema, SingleSelectEnumSchemaSchema, UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema, MultiSelectEnumSchemaSchema, EnumSchemaSchema, PrimitiveSchemaDefinitionSchema, ElicitRequestFormParamsSchema, ElicitRequestURLParamsSchema, ElicitRequestParamsSchema, ElicitRequestSchema, ElicitationCompleteNotificationParamsSchema, ElicitationCompleteNotificationSchema, ElicitResultSchema, ResourceTemplateReferenceSchema, PromptReferenceSchema, CompleteRequestParamsSchema, CompleteRequestSchema, CompleteResultSchema, RootSchema, ListRootsRequestSchema, ListRootsResultSchema, RootsListChangedNotificationSchema, ClientRequestSchema, ClientNotificationSchema, ClientResultSchema, ServerRequestSchema, ServerNotificationSchema, ServerResultSchema, McpError, UrlElicitationRequiredError;
 var init_types = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/types.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js"() {
     init_v4();
     LATEST_PROTOCOL_VERSION = "2025-11-25";
     SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
@@ -7276,10 +8433,10 @@ var init_types = __esm({
        */
       pollInterval: number2().optional()
     });
-    TaskMetadataSchema = object({
+    TaskMetadataSchema = object2({
       ttl: number2().optional()
     });
-    RelatedTaskMetadataSchema = object({
+    RelatedTaskMetadataSchema = object2({
       taskId: string2()
     });
     RequestMetaSchema = looseObject({
@@ -7292,7 +8449,7 @@ var init_types = __esm({
        */
       [RELATED_TASK_META_KEY]: RelatedTaskMetadataSchema.optional()
     });
-    BaseRequestParamsSchema = object({
+    BaseRequestParamsSchema = object2({
       /**
        * See [General fields: `_meta`](/specification/draft/basic/index#meta) for notes on `_meta` usage.
        */
@@ -7310,18 +8467,18 @@ var init_types = __esm({
       task: TaskMetadataSchema.optional()
     });
     isTaskAugmentedRequestParams = (value) => TaskAugmentedRequestParamsSchema.safeParse(value).success;
-    RequestSchema = object({
+    RequestSchema = object2({
       method: string2(),
       params: BaseRequestParamsSchema.loose().optional()
     });
-    NotificationsParamsSchema = object({
+    NotificationsParamsSchema = object2({
       /**
        * See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
        * for notes on _meta usage.
        */
       _meta: RequestMetaSchema.optional()
     });
-    NotificationSchema = object({
+    NotificationSchema = object2({
       method: string2(),
       params: NotificationsParamsSchema.loose().optional()
     });
@@ -7333,18 +8490,18 @@ var init_types = __esm({
       _meta: RequestMetaSchema.optional()
     });
     RequestIdSchema = union([string2(), number2().int()]);
-    JSONRPCRequestSchema = object({
+    JSONRPCRequestSchema = object2({
       jsonrpc: literal(JSONRPC_VERSION),
       id: RequestIdSchema,
       ...RequestSchema.shape
     }).strict();
     isJSONRPCRequest = (value) => JSONRPCRequestSchema.safeParse(value).success;
-    JSONRPCNotificationSchema = object({
+    JSONRPCNotificationSchema = object2({
       jsonrpc: literal(JSONRPC_VERSION),
       ...NotificationSchema.shape
     }).strict();
     isJSONRPCNotification = (value) => JSONRPCNotificationSchema.safeParse(value).success;
-    JSONRPCResultResponseSchema = object({
+    JSONRPCResultResponseSchema = object2({
       jsonrpc: literal(JSONRPC_VERSION),
       id: RequestIdSchema,
       result: ResultSchema
@@ -7360,10 +8517,10 @@ var init_types = __esm({
       ErrorCode2[ErrorCode2["InternalError"] = -32603] = "InternalError";
       ErrorCode2[ErrorCode2["UrlElicitationRequired"] = -32042] = "UrlElicitationRequired";
     })(ErrorCode || (ErrorCode = {}));
-    JSONRPCErrorResponseSchema = object({
+    JSONRPCErrorResponseSchema = object2({
       jsonrpc: literal(JSONRPC_VERSION),
       id: RequestIdSchema.optional(),
-      error: object({
+      error: object2({
         /**
          * The error type that occurred.
          */
@@ -7403,7 +8560,7 @@ var init_types = __esm({
       method: literal("notifications/cancelled"),
       params: CancelledNotificationParamsSchema
     });
-    IconSchema = object({
+    IconSchema = object2({
       /**
        * URL or data URI for the icon.
        */
@@ -7428,7 +8585,7 @@ var init_types = __esm({
        */
       theme: _enum(["light", "dark"]).optional()
     });
-    IconsSchema = object({
+    IconsSchema = object2({
       /**
        * Optional set of sized icons that the client can display in a user interface.
        *
@@ -7442,7 +8599,7 @@ var init_types = __esm({
        */
       icons: array(IconSchema).optional()
     });
-    BaseMetadataSchema = object({
+    BaseMetadataSchema = object2({
       /** Intended for programmatic or logical use, but used as a display name in past specs or fallback */
       name: string2(),
       /**
@@ -7472,7 +8629,7 @@ var init_types = __esm({
        */
       description: string2().optional()
     });
-    FormElicitationCapabilitySchema = intersection(object({
+    FormElicitationCapabilitySchema = intersection(object2({
       applyDefaults: boolean2().optional()
     }), record(string2(), unknown()));
     ElicitationCapabilitySchema = preprocess((value) => {
@@ -7482,7 +8639,7 @@ var init_types = __esm({
         }
       }
       return value;
-    }, intersection(object({
+    }, intersection(object2({
       form: FormElicitationCapabilitySchema.optional(),
       url: AssertObjectSchema.optional()
     }), record(string2(), unknown()).optional()));
@@ -7534,7 +8691,7 @@ var init_types = __esm({
         }).optional()
       }).optional()
     });
-    ClientCapabilitiesSchema = object({
+    ClientCapabilitiesSchema = object2({
       /**
        * Experimental, non-standard capabilities that the client supports.
        */
@@ -7542,7 +8699,7 @@ var init_types = __esm({
       /**
        * Present if the client supports sampling from an LLM.
        */
-      sampling: object({
+      sampling: object2({
         /**
          * Present if the client supports context inclusion via includeContext parameter.
          * If not declared, servers SHOULD only use `includeContext: "none"` (or omit it).
@@ -7560,7 +8717,7 @@ var init_types = __esm({
       /**
        * Present if the client supports listing roots.
        */
-      roots: object({
+      roots: object2({
         /**
          * Whether the client supports issuing notifications for changes to the roots list.
          */
@@ -7587,7 +8744,7 @@ var init_types = __esm({
       method: literal("initialize"),
       params: InitializeRequestParamsSchema
     });
-    ServerCapabilitiesSchema = object({
+    ServerCapabilitiesSchema = object2({
       /**
        * Experimental, non-standard capabilities that the server supports.
        */
@@ -7603,7 +8760,7 @@ var init_types = __esm({
       /**
        * Present if the server offers any prompt templates.
        */
-      prompts: object({
+      prompts: object2({
         /**
          * Whether this server supports issuing notifications for changes to the prompt list.
          */
@@ -7612,7 +8769,7 @@ var init_types = __esm({
       /**
        * Present if the server offers any resources to read.
        */
-      resources: object({
+      resources: object2({
         /**
          * Whether this server supports clients subscribing to resource updates.
          */
@@ -7625,7 +8782,7 @@ var init_types = __esm({
       /**
        * Present if the server offers any tools to call.
        */
-      tools: object({
+      tools: object2({
         /**
          * Whether this server supports issuing notifications for changes to the tool list.
          */
@@ -7662,7 +8819,7 @@ var init_types = __esm({
       method: literal("ping"),
       params: BaseRequestParamsSchema.optional()
     });
-    ProgressSchema = object({
+    ProgressSchema = object2({
       /**
        * The progress thus far. This should increase every time progress is made, even if the total is unknown.
        */
@@ -7676,7 +8833,7 @@ var init_types = __esm({
        */
       message: optional(string2())
     });
-    ProgressNotificationParamsSchema = object({
+    ProgressNotificationParamsSchema = object2({
       ...NotificationsParamsSchema.shape,
       ...ProgressSchema.shape,
       /**
@@ -7706,7 +8863,7 @@ var init_types = __esm({
       nextCursor: CursorSchema.optional()
     });
     TaskStatusSchema = _enum(["working", "input_required", "completed", "failed", "cancelled"]);
-    TaskSchema = object({
+    TaskSchema = object2({
       taskId: string2(),
       status: TaskStatusSchema,
       /**
@@ -7763,7 +8920,7 @@ var init_types = __esm({
       })
     });
     CancelTaskResultSchema = ResultSchema.merge(TaskSchema);
-    ResourceContentsSchema = object({
+    ResourceContentsSchema = object2({
       /**
        * The URI of this resource.
        */
@@ -7799,7 +8956,7 @@ var init_types = __esm({
       blob: Base64Schema
     });
     RoleSchema = _enum(["user", "assistant"]);
-    AnnotationsSchema = object({
+    AnnotationsSchema = object2({
       /**
        * Intended audience(s) for the resource.
        */
@@ -7811,9 +8968,9 @@ var init_types = __esm({
       /**
        * ISO 8601 timestamp for the most recent modification.
        */
-      lastModified: iso_exports.datetime({ offset: true }).optional()
+      lastModified: iso_exports2.datetime({ offset: true }).optional()
     });
-    ResourceSchema = object({
+    ResourceSchema = object2({
       ...BaseMetadataSchema.shape,
       ...IconsSchema.shape,
       /**
@@ -7846,7 +9003,7 @@ var init_types = __esm({
        */
       _meta: optional(looseObject({}))
     });
-    ResourceTemplateSchema = object({
+    ResourceTemplateSchema = object2({
       ...BaseMetadataSchema.shape,
       ...IconsSchema.shape,
       /**
@@ -7925,7 +9082,7 @@ var init_types = __esm({
       method: literal("notifications/resources/updated"),
       params: ResourceUpdatedNotificationParamsSchema
     });
-    PromptArgumentSchema = object({
+    PromptArgumentSchema = object2({
       /**
        * The name of the argument.
        */
@@ -7939,7 +9096,7 @@ var init_types = __esm({
        */
       required: optional(boolean2())
     });
-    PromptSchema = object({
+    PromptSchema = object2({
       ...BaseMetadataSchema.shape,
       ...IconsSchema.shape,
       /**
@@ -7976,7 +9133,7 @@ var init_types = __esm({
       method: literal("prompts/get"),
       params: GetPromptRequestParamsSchema
     });
-    TextContentSchema = object({
+    TextContentSchema = object2({
       type: literal("text"),
       /**
        * The text content of the message.
@@ -7992,7 +9149,7 @@ var init_types = __esm({
        */
       _meta: record(string2(), unknown()).optional()
     });
-    ImageContentSchema = object({
+    ImageContentSchema = object2({
       type: literal("image"),
       /**
        * The base64-encoded image data.
@@ -8012,7 +9169,7 @@ var init_types = __esm({
        */
       _meta: record(string2(), unknown()).optional()
     });
-    AudioContentSchema = object({
+    AudioContentSchema = object2({
       type: literal("audio"),
       /**
        * The base64-encoded audio data.
@@ -8032,7 +9189,7 @@ var init_types = __esm({
        */
       _meta: record(string2(), unknown()).optional()
     });
-    ToolUseContentSchema = object({
+    ToolUseContentSchema = object2({
       type: literal("tool_use"),
       /**
        * The name of the tool to invoke.
@@ -8055,7 +9212,7 @@ var init_types = __esm({
        */
       _meta: record(string2(), unknown()).optional()
     });
-    EmbeddedResourceSchema = object({
+    EmbeddedResourceSchema = object2({
       type: literal("resource"),
       resource: union([TextResourceContentsSchema, BlobResourceContentsSchema]),
       /**
@@ -8078,7 +9235,7 @@ var init_types = __esm({
       ResourceLinkSchema,
       EmbeddedResourceSchema
     ]);
-    PromptMessageSchema = object({
+    PromptMessageSchema = object2({
       role: RoleSchema,
       content: ContentBlockSchema
     });
@@ -8093,7 +9250,7 @@ var init_types = __esm({
       method: literal("notifications/prompts/list_changed"),
       params: NotificationsParamsSchema.optional()
     });
-    ToolAnnotationsSchema = object({
+    ToolAnnotationsSchema = object2({
       /**
        * A human-readable title for the tool.
        */
@@ -8132,7 +9289,7 @@ var init_types = __esm({
        */
       openWorldHint: boolean2().optional()
     });
-    ToolExecutionSchema = object({
+    ToolExecutionSchema = object2({
       /**
        * Indicates the tool's preference for task-augmented execution.
        * - "required": Clients MUST invoke the tool as a task
@@ -8143,7 +9300,7 @@ var init_types = __esm({
        */
       taskSupport: _enum(["required", "optional", "forbidden"]).optional()
     });
-    ToolSchema = object({
+    ToolSchema = object2({
       ...BaseMetadataSchema.shape,
       ...IconsSchema.shape,
       /**
@@ -8154,7 +9311,7 @@ var init_types = __esm({
        * A JSON Schema 2020-12 object defining the expected parameters for the tool.
        * Must have type: 'object' at the root level per MCP spec.
        */
-      inputSchema: object({
+      inputSchema: object2({
         type: literal("object"),
         properties: record(string2(), AssertObjectSchema).optional(),
         required: array(string2()).optional()
@@ -8164,7 +9321,7 @@ var init_types = __esm({
        * returned in the structuredContent field of a CallToolResult.
        * Must have type: 'object' at the root level per MCP spec.
        */
-      outputSchema: object({
+      outputSchema: object2({
         type: literal("object"),
         properties: record(string2(), AssertObjectSchema).optional(),
         required: array(string2()).optional()
@@ -8240,7 +9397,7 @@ var init_types = __esm({
       method: literal("notifications/tools/list_changed"),
       params: NotificationsParamsSchema.optional()
     });
-    ListChangedOptionsBaseSchema = object({
+    ListChangedOptionsBaseSchema = object2({
       /**
        * If true, the list will be refreshed automatically when a list changed notification is received.
        * The callback will be called with the updated list.
@@ -8289,13 +9446,13 @@ var init_types = __esm({
       method: literal("notifications/message"),
       params: LoggingMessageNotificationParamsSchema
     });
-    ModelHintSchema = object({
+    ModelHintSchema = object2({
       /**
        * A hint for a model name.
        */
       name: string2().optional()
     });
-    ModelPreferencesSchema = object({
+    ModelPreferencesSchema = object2({
       /**
        * Optional hints to use for model selection.
        */
@@ -8313,7 +9470,7 @@ var init_types = __esm({
        */
       intelligencePriority: number2().min(0).max(1).optional()
     });
-    ToolChoiceSchema = object({
+    ToolChoiceSchema = object2({
       /**
        * Controls when tools are used:
        * - "auto": Model decides whether to use tools (default)
@@ -8322,11 +9479,11 @@ var init_types = __esm({
        */
       mode: _enum(["auto", "required", "none"]).optional()
     });
-    ToolResultContentSchema = object({
+    ToolResultContentSchema = object2({
       type: literal("tool_result"),
       toolUseId: string2().describe("The unique identifier for the corresponding tool call."),
       content: array(ContentBlockSchema).default([]),
-      structuredContent: object({}).loose().optional(),
+      structuredContent: object2({}).loose().optional(),
       isError: boolean2().optional(),
       /**
        * See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
@@ -8342,7 +9499,7 @@ var init_types = __esm({
       ToolUseContentSchema,
       ToolResultContentSchema
     ]);
-    SamplingMessageSchema = object({
+    SamplingMessageSchema = object2({
       role: RoleSchema,
       content: union([SamplingMessageContentBlockSchema, array(SamplingMessageContentBlockSchema)]),
       /**
@@ -8442,13 +9599,13 @@ var init_types = __esm({
        */
       content: union([SamplingMessageContentBlockSchema, array(SamplingMessageContentBlockSchema)])
     });
-    BooleanSchemaSchema = object({
+    BooleanSchemaSchema = object2({
       type: literal("boolean"),
       title: string2().optional(),
       description: string2().optional(),
       default: boolean2().optional()
     });
-    StringSchemaSchema = object({
+    StringSchemaSchema = object2({
       type: literal("string"),
       title: string2().optional(),
       description: string2().optional(),
@@ -8457,7 +9614,7 @@ var init_types = __esm({
       format: _enum(["email", "uri", "date", "date-time"]).optional(),
       default: string2().optional()
     });
-    NumberSchemaSchema = object({
+    NumberSchemaSchema = object2({
       type: _enum(["number", "integer"]),
       title: string2().optional(),
       description: string2().optional(),
@@ -8465,24 +9622,24 @@ var init_types = __esm({
       maximum: number2().optional(),
       default: number2().optional()
     });
-    UntitledSingleSelectEnumSchemaSchema = object({
+    UntitledSingleSelectEnumSchemaSchema = object2({
       type: literal("string"),
       title: string2().optional(),
       description: string2().optional(),
       enum: array(string2()),
       default: string2().optional()
     });
-    TitledSingleSelectEnumSchemaSchema = object({
+    TitledSingleSelectEnumSchemaSchema = object2({
       type: literal("string"),
       title: string2().optional(),
       description: string2().optional(),
-      oneOf: array(object({
+      oneOf: array(object2({
         const: string2(),
         title: string2()
       })),
       default: string2().optional()
     });
-    LegacyTitledEnumSchemaSchema = object({
+    LegacyTitledEnumSchemaSchema = object2({
       type: literal("string"),
       title: string2().optional(),
       description: string2().optional(),
@@ -8491,26 +9648,26 @@ var init_types = __esm({
       default: string2().optional()
     });
     SingleSelectEnumSchemaSchema = union([UntitledSingleSelectEnumSchemaSchema, TitledSingleSelectEnumSchemaSchema]);
-    UntitledMultiSelectEnumSchemaSchema = object({
+    UntitledMultiSelectEnumSchemaSchema = object2({
       type: literal("array"),
       title: string2().optional(),
       description: string2().optional(),
       minItems: number2().optional(),
       maxItems: number2().optional(),
-      items: object({
+      items: object2({
         type: literal("string"),
         enum: array(string2())
       }),
       default: array(string2()).optional()
     });
-    TitledMultiSelectEnumSchemaSchema = object({
+    TitledMultiSelectEnumSchemaSchema = object2({
       type: literal("array"),
       title: string2().optional(),
       description: string2().optional(),
       minItems: number2().optional(),
       maxItems: number2().optional(),
-      items: object({
-        anyOf: array(object({
+      items: object2({
+        anyOf: array(object2({
           const: string2(),
           title: string2()
         }))
@@ -8535,7 +9692,7 @@ var init_types = __esm({
        * A restricted subset of JSON Schema.
        * Only top-level properties are allowed, without nesting.
        */
-      requestedSchema: object({
+      requestedSchema: object2({
         type: literal("object"),
         properties: record(string2(), PrimitiveSchemaDefinitionSchema),
         required: array(string2()).optional()
@@ -8591,14 +9748,14 @@ var init_types = __esm({
        */
       content: preprocess((val) => val === null ? void 0 : val, record(string2(), union([string2(), number2(), boolean2(), array(string2())])).optional())
     });
-    ResourceTemplateReferenceSchema = object({
+    ResourceTemplateReferenceSchema = object2({
       type: literal("ref/resource"),
       /**
        * The URI or URI template of the resource.
        */
       uri: string2()
     });
-    PromptReferenceSchema = object({
+    PromptReferenceSchema = object2({
       type: literal("ref/prompt"),
       /**
        * The name of the prompt or prompt template
@@ -8610,7 +9767,7 @@ var init_types = __esm({
       /**
        * The argument's information
        */
-      argument: object({
+      argument: object2({
         /**
          * The name of the argument
          */
@@ -8620,7 +9777,7 @@ var init_types = __esm({
          */
         value: string2()
       }),
-      context: object({
+      context: object2({
         /**
          * Previously-resolved variables in a URI template or prompt.
          */
@@ -8647,7 +9804,7 @@ var init_types = __esm({
         hasMore: optional(boolean2())
       })
     });
-    RootSchema = object({
+    RootSchema = object2({
       /**
        * The URI identifying the root. This *must* start with file:// for now.
        */
@@ -8778,1445 +9935,137 @@ var init_types = __esm({
   }
 });
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
-function deserializeMessage(line) {
-  return JSONRPCMessageSchema.parse(JSON.parse(line));
-}
-function serializeMessage(message) {
-  return JSON.stringify(message) + "\n";
-}
-var STDIO_DEFAULT_MAX_BUFFER_SIZE, ReadBuffer;
-var init_stdio = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js"() {
-    init_types();
-    STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
-    ReadBuffer = class {
-      constructor(options) {
-        this._maxBufferSize = options?.maxBufferSize ?? STDIO_DEFAULT_MAX_BUFFER_SIZE;
-      }
-      append(chunk) {
-        const newSize = (this._buffer?.length ?? 0) + chunk.length;
-        if (newSize > this._maxBufferSize) {
-          this.clear();
-          throw new Error(`ReadBuffer exceeded maximum size of ${this._maxBufferSize} bytes`);
-        }
-        this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
-      }
-      readMessage() {
-        if (!this._buffer) {
-          return null;
-        }
-        const index = this._buffer.indexOf("\n");
-        if (index === -1) {
-          return null;
-        }
-        const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
-        this._buffer = this._buffer.subarray(index + 1);
-        return deserializeMessage(line);
-      }
-      clear() {
-        this._buffer = void 0;
-      }
-    };
-  }
-});
-
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process2 from "node:process";
-var StdioServerTransport;
-var init_stdio2 = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js"() {
-    init_stdio();
-    StdioServerTransport = class {
-      constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
-        this._stdin = _stdin;
-        this._stdout = _stdout;
-        this._started = false;
-        this._ondata = (chunk) => {
-          try {
-            this._readBuffer.append(chunk);
-            this.processReadBuffer();
-          } catch (error2) {
-            this.onerror?.(error2);
-            this.close().catch(() => {
-            });
-          }
-        };
-        this._onerror = (error2) => {
-          this.onerror?.(error2);
-        };
-        this._readBuffer = new ReadBuffer({ maxBufferSize: options?.maxBufferSize });
-      }
-      /**
-       * Starts listening for messages on stdin.
-       */
-      async start() {
-        if (this._started) {
-          throw new Error("StdioServerTransport already started! If using Server class, note that connect() calls start() automatically.");
-        }
-        this._started = true;
-        this._stdin.on("data", this._ondata);
-        this._stdin.on("error", this._onerror);
-      }
-      processReadBuffer() {
-        while (true) {
-          try {
-            const message = this._readBuffer.readMessage();
-            if (message === null) {
-              break;
-            }
-            this.onmessage?.(message);
-          } catch (error2) {
-            this.onerror?.(error2);
-          }
-        }
-      }
-      async close() {
-        this._stdin.off("data", this._ondata);
-        this._stdin.off("error", this._onerror);
-        const remainingDataListeners = this._stdin.listenerCount("data");
-        if (remainingDataListeners === 0) {
-          this._stdin.pause();
-        }
-        this._readBuffer.clear();
-        this.onclose?.();
-      }
-      send(message) {
-        return new Promise((resolve9) => {
-          const json = serializeMessage(message);
-          if (this._stdout.write(json)) {
-            resolve9();
-          } else {
-            this._stdout.once("drain", resolve9);
-          }
-        });
-      }
-    };
-  }
-});
-
-// src/errors.ts
-function toWireError(e) {
-  if (e && typeof e === "object" && typeof e.code === "string") {
-    const err = e;
-    const data = err.data ?? (err.occluder !== void 0 ? { occluder: err.occluder } : void 0);
-    return { code: err.code, message: err.message ?? err.code, ...data !== void 0 ? { data } : {} };
-  }
-  return { code: "INTERNAL", message: e instanceof Error ? e.message : String(e) };
-}
-var BridgeError, RemoteError;
-var init_errors3 = __esm({
-  "src/errors.ts"() {
-    "use strict";
-    BridgeError = class extends Error {
-      code;
-      data;
-      constructor(code, message, data) {
-        super(message);
-        this.name = "BridgeError";
-        this.code = code;
-        if (data !== void 0) this.data = data;
-      }
-    };
-    RemoteError = class extends Error {
-      code;
-      data;
-      constructor(wire) {
-        super(wire.message);
-        this.name = "RemoteError";
-        this.code = wire.code;
-        if (wire.data !== void 0) this.data = wire.data;
-      }
-    };
-  }
-});
-
-// daemon/src/client.ts
-import { readFileSync as readFileSync5 } from "node:fs";
-function clientFromEnv(env = process.env) {
-  const id = env.ATRIUM_BRIDGE_CLIENT_ID?.trim();
-  if (!id) return void 0;
-  if (!isClientId(id)) {
-    throw new BridgeError("CLIENT_INVALID", `ATRIUM_BRIDGE_CLIENT_ID must match ${CLIENT_ID_PATTERN.source} (1 to 64 of letters, digits, . _ : @ -)`);
-  }
-  const name = cleanClientName(env.ATRIUM_BRIDGE_CLIENT_NAME);
-  return name ? { id, name } : { id };
-}
-function resolvePort(env = process.env) {
-  const fromEnv = envPort(env);
-  if (fromEnv !== void 0) return fromEnv;
-  try {
-    return readConfig(bridgeHome(env))?.port ?? DEFAULT_PORT;
-  } catch {
-    return DEFAULT_PORT;
-  }
-}
-function apiKeyFromEnv(env = process.env) {
-  const file = env.ATRIUM_BRIDGE_KEY_FILE;
-  if (file) {
-    let value = "";
-    try {
-      value = readFileSync5(file, "utf8").trim();
-    } catch (e) {
-      throw new BridgeError("KEY_UNAVAILABLE", `cannot read the API key file ATRIUM_BRIDGE_KEY_FILE=${file} (${e.code ?? "error"})`);
-    }
-    if (!value) throw new BridgeError("KEY_UNAVAILABLE", `the API key file ATRIUM_BRIDGE_KEY_FILE=${file} is empty`);
-    return value;
-  }
-  const direct = env.ATRIUM_BRIDGE_KEY?.trim();
-  if (direct) return direct;
-  return readLocalKey(bridgeHome(env));
-}
-function targetFromEnv(env = process.env) {
-  const home3 = bridgeHome(env);
-  const config2 = readConfig(home3);
-  if (!config2) {
-    throw new BridgeError(
-      "DAEMON_NOT_CONFIGURED",
-      `no Atrium Bridge config in ${home3} yet: the daemon creates it the first time it starts (node daemon/src/cli.ts start)`,
-      { phase: "before-send" }
-    );
-  }
-  const apiKey = apiKeyFromEnv(env);
-  if (!apiKey) {
-    throw new BridgeError(
-      "KEY_UNAVAILABLE",
-      `no API key for the Atrium Bridge in ${home3}: create one with \`key create <name>\` and give it to this process by ATRIUM_BRIDGE_KEY_FILE`
-    );
-  }
-  const client = clientFromEnv(env);
-  return { port: envPort(env) ?? config2.port, apiKey, ...client ? { client } : {} };
-}
-function uploadKeyOf(get) {
-  try {
-    return get();
-  } catch (e) {
-    throw new BridgeError("KEY_UNAVAILABLE", `cannot prepare the upload key of the MCP server (upload.key): ${e.message}`);
-  }
-}
-function causeCodes(e) {
-  const codes = [];
-  const visit = (x, depth) => {
-    if (!x || typeof x !== "object" || depth > 3) return;
-    const o = x;
-    if (typeof o.code === "string") codes.push(o.code);
-    visit(o.cause, depth + 1);
-    if (Array.isArray(o.errors)) for (const sub of o.errors) visit(sub, depth + 1);
-  };
-  visit(e, 0);
-  return codes;
-}
-function classifyFetchFailure(e) {
-  return causeCodes(e).some((code) => BEFORE_SEND_CODES.has(code)) ? "before-send" : "in-flight";
-}
-function downPhase(e) {
-  const err = e;
-  if (err?.code === "DAEMON_NOT_CONFIGURED") return "before-send";
-  if (err?.code === "DAEMON_UNREACHABLE") return err.data?.phase === "in-flight" ? "in-flight" : "before-send";
-  return void 0;
-}
-function unreachable(port, e) {
-  const timedOut = e?.name === "TimeoutError";
-  const why = timedOut ? "no answer in time" : [e.message, ...causeCodes(e)].join(": ");
-  return new BridgeError("DAEMON_UNREACHABLE", `cannot reach the Atrium Bridge daemon on 127.0.0.1:${port} (${why}). Is it running?`, {
-    phase: classifyFetchFailure(e)
-  });
-}
-var CONTROL_TIMEOUT_MS, DAEMON_CALL_TIMEOUT_MS, CALL_MARGIN_MS, envPort, BEFORE_SEND_CODES, BridgeClient;
-var init_client = __esm({
-  "daemon/src/client.ts"() {
-    "use strict";
-    init_errors3();
-    init_protocol();
-    init_config();
-    CONTROL_TIMEOUT_MS = 5e3;
-    DAEMON_CALL_TIMEOUT_MS = 6e4;
-    CALL_MARGIN_MS = 15e3;
-    envPort = (env) => {
-      const n = Number(env.ATRIUM_BRIDGE_PORT);
-      return env.ATRIUM_BRIDGE_PORT && Number.isInteger(n) && n > 0 && n < 65536 ? n : void 0;
-    };
-    BEFORE_SEND_CODES = /* @__PURE__ */ new Set([
-      "ECONNREFUSED",
-      "EHOSTUNREACH",
-      "ENETUNREACH",
-      "EADDRNOTAVAIL",
-      "ENOTFOUND",
-      "EAI_AGAIN",
-      "UND_ERR_CONNECT_TIMEOUT"
-    ]);
-    BridgeClient = class {
-      target;
-      controlTimeoutMs;
-      callMarginMs;
-      constructor(target, opts = {}) {
-        this.target = target;
-        this.controlTimeoutMs = opts.controlTimeoutMs ?? CONTROL_TIMEOUT_MS;
-        this.callMarginMs = opts.callMarginMs ?? CALL_MARGIN_MS;
-      }
-      async request(method, path, timeoutMs, body, upload = false) {
-        const target = typeof this.target === "function" ? this.target() : this.target;
-        const bearer = upload && target.uploadKey ? uploadKeyOf(target.uploadKey) : target.apiKey;
-        let res;
-        let text;
-        try {
-          res = await fetch(`http://127.0.0.1:${target.port}${path}`, {
-            method,
-            headers: {
-              authorization: `Bearer ${bearer}`,
-              // Uma conexão nova por pedido. Com o keep-alive do pool, o 1º pedido depois da morte do daemon reaproveita o
-              // socket morto e falha como ECONNRESET ("em voo"), mesmo sem ter saído nada. Assim, ECONNREFUSED prova que o
-              // pedido não saiu, e a classificação de classifyFetchFailure vale. Em loopback a conexão nova custa microssegundos.
-              connection: "close",
-              // Quem chama, quando a casca se identificou: o daemon loga o id e o repassa à extensão em cada `call`.
-              ...target.client ? { [CLIENT_ID_HEADER]: target.client.id } : {},
-              ...target.client?.name ? { [CLIENT_NAME_HEADER]: target.client.name } : {},
-              ...body !== void 0 ? { "content-type": "application/json" } : {}
-            },
-            ...body !== void 0 ? { body: JSON.stringify(body) } : {},
-            signal: AbortSignal.timeout(timeoutMs)
-          });
-          text = await res.text();
-        } catch (e) {
-          throw unreachable(target.port, e);
-        }
-        let payload = null;
-        try {
-          payload = JSON.parse(text);
-        } catch {
-        }
-        if (!res.ok || !payload || payload.ok === false) {
-          throw new RemoteError(payload?.error ?? { code: "INTERNAL", message: `daemon answered HTTP ${res.status}` });
-        }
-        return payload;
-      }
-      async browsers() {
-        return (await this.request("GET", "/browsers", this.controlTimeoutMs)).browsers;
-      }
-      /** GET /status: browsers com abas sob controle e último foco, clientes vistos, pausa. O que um hospedeiro mostra. */
-      async status() {
-        return await this.request("GET", "/status", this.controlTimeoutMs);
-      }
-      /** POST /clients/:id/release: o agente `clientId` encerrou; cada browser solta as abas dele e recolhe o grupo dele. */
-      async releaseClient(clientId) {
-        const deadline = DAEMON_CALL_TIMEOUT_MS + this.callMarginMs;
-        return (await this.request("POST", `/clients/${encodeURIComponent(clientId)}/release`, deadline)).browsers;
-      }
-      /** POST /pause: nenhuma tool roda e toda extensão solta as abas sob controle, até `resume`. Devolve o que cada browser soltou. */
-      async pause() {
-        const r = await this.request("POST", "/pause", DAEMON_CALL_TIMEOUT_MS + this.callMarginMs);
-        return { paused: true, browsers: r.browsers };
-      }
-      /** POST /resume: as tools voltam a rodar (o escopo começa vazio: abas novas, ou a pessoa entrega de novo). */
-      async resume() {
-        await this.request("POST", "/resume", this.controlTimeoutMs);
-        return { paused: false };
-      }
-      async call(browserId, tool, args, timeoutMs) {
-        const body = { tool, args, ...timeoutMs ? { timeoutMs } : {} };
-        const deadline = Math.min(timeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5) + this.callMarginMs;
-        return (await this.request("POST", `/browsers/${encodeURIComponent(browserId)}/call`, deadline, body, UPLOAD_TOOLS.has(tool))).result;
-      }
-    };
-  }
-});
-
-// src/texts.ts
-var SERVER_NAME, REF, REF_OR_POINT, X, Y, COMMON_PARAMS, BRIDGE_TOOL_TEXTS, BROWSER_TEXTS, DAEMON_TEXTS;
-var init_texts = __esm({
-  "src/texts.ts"() {
-    "use strict";
-    SERVER_NAME = "atrium-bridge";
-    REF = 'Element ref from the latest snapshot of this tab (for example "e12").';
-    REF_OR_POINT = `${REF} Alternatively give x and y instead of ref.`;
-    X = "Horizontal pixel coordinate in the viewport (use together with y, instead of ref).";
-    Y = "Vertical pixel coordinate in the viewport (use together with x, instead of ref).";
-    COMMON_PARAMS = {
-      browser: "Which connected browser to act in: its id or its name, as listed by list_browsers. Optional when exactly one browser is connected. With several connected and this omitted, the call goes to the browser the user focused most recently and the result starts with a Notice saying which one; pass browser to choose. If no browser has reported focus yet the call fails with BROWSER_AMBIGUOUS: ask the user which one, unless they already said.",
-      tab: "Tab id from the tabs tool. Optional: defaults to the current tab of that browser."
-    };
-    BRIDGE_TOOL_TEXTS = {
-      list_browsers: {
-        description: 'List the user browsers connected to the Atrium Bridge: { id, name, userAgent, connectedAt, lastFocusedAt? }. Call it first when you do not know which browser to use. With one browser you can use it directly; with several, the other tools default to the one the user focused most recently (lastFocusedAt) and say so in a Notice; pass browser when the user said which one ("in Brave").',
-        params: {}
-      },
-      navigate: {
-        description: 'Open a URL in a tab you control and wait for the page to load, or move in the tab history with action "back", "forward" or "reload". Give url or action, not both. Returns the final URL and the page title. Only http(s) and about:blank are accepted. Refs from before the navigation go stale: take a new snapshot afterwards.',
-        params: {
-          url: 'Absolute URL, for example "https://example.com/".',
-          action: '"back", "forward" or "reload" (instead of url). back/forward fail with NAVIGATION_FAILED at the ends of the history.'
-        }
-      },
-      wait: {
-        description: 'Wait for something to happen in the tab: for "load" (the page finished loading), "networkidle" (no network requests for 500 ms), "text" (value appears in the visible text of the page, case sensitive), "selector" (an element matching the CSS selector in value is visible), "url" (the page URL contains value) or "time" (value milliseconds pass). The condition is checked right away: if it already holds the call returns at once. Fails with WAIT_TIMEOUT when it does not happen in time. Returns { matched, elapsedMs, url }.',
-        params: {
-          for: '"load", "networkidle", "text", "selector", "url" or "time".',
-          value: "The text, CSS selector, URL fragment or number of milliseconds, depending on for. Not used with load and networkidle.",
-          timeoutMs: "How long to wait, in milliseconds, up to 120000. Default 15000."
-        }
-      },
-      find: {
-        description: "Search the page for elements by role, accessible name or text, without reading the whole tree. Takes a fresh snapshot, so the returned refs work right away in click, type and the other tools (and older refs go stale). Give at least one of role, name or text; matches are case-insensitive. Returns { url, title, found: [{ ref, role, name, box }] }.",
-        params: {
-          role: "Exact ARIA role, for example button, link or textbox.",
-          name: "Part of the accessible name.",
-          text: "Part of the visible text of the element (its name or its own text).",
-          limit: "Maximum results. Default 20."
-        }
-      },
-      read: {
-        description: "Read the text of the page in reading order (the main content when the page has one), with the URL of each link after its text. Cheaper than snapshot when you only need to read. Returns { url, title, text, truncated, source } and says when the text was cut.",
-        params: { maxChars: "Character limit before the text is cut. Default 50000." }
-      },
-      links: {
-        description: "List the visible links of the page: { ref, text, href } with absolute URLs, without repeating the same href and text. Takes a fresh snapshot, so the refs work in click. Links with neither text nor accessible name are left out (pass includeUnnamed to see them).",
-        params: {
-          limit: "Maximum links. Default 100.",
-          includeUnnamed: "Also list links with no text and no accessible name (icons without a label, empty anchors). Default false."
-        }
-      },
-      snapshot: {
-        description: "Read the page as an accessibility tree. Interactive elements carry a ref like [ref=e12] and a box [box=x,y,width,height]. Use it before acting: every ref you pass to the other tools must come from the latest snapshot of the same tab, and a navigation makes older refs stale.",
-        params: { depth: "Limit the depth of the tree on very large pages." }
-      },
-      screenshot: {
-        description: "Capture the visible part of the tab (or the whole page, or one element) as an image. The tab must be the active tab of its window.",
-        params: {
-          fullPage: "Capture the whole scrollable page instead of the viewport.",
-          ref: "Capture only this element.",
-          format: '"png" (default) or "jpeg".',
-          quality: "JPEG quality, 1 to 100."
-        }
-      },
-      click: {
-        description: "Click like a person: the pointer travels along a curved path to the element, then presses and releases the button (trusted events). If something covers the target the error names what covers it.",
-        params: {
-          ref: REF_OR_POINT,
-          x: X,
-          y: Y,
-          button: '"left" (default), "right" or "middle".',
-          count: "1 (default), 2 (double click) or 3 (triple click)."
-        }
-      },
-      hover: {
-        description: "Move the pointer to the element or point along a human path and leave it there (real :hover, tooltips and menus open).",
-        params: { ref: REF_OR_POINT, x: X, y: Y }
-      },
-      drag: {
-        description: "Press at the source, move along a human path with the button held, release at the destination. Mouse-driven drag only: native HTML5 drag-and-drop is not synthesized.",
-        params: {
-          ref: "Source element ref.",
-          x: "Source x (instead of ref).",
-          y: "Source y (instead of ref).",
-          toRef: "Destination element ref.",
-          toX: "Destination x (instead of toRef).",
-          toY: "Destination y (instead of toRef)."
-        }
-      },
-      scroll: {
-        description: 'Scroll with the mouse wheel. Give byX/byY for a relative scroll, or to "top"/"bottom" for the ends of the page; with ref the element is scrolled into view. Returns the resulting scroll position.',
-        params: {
-          ref: "Element to scroll into view.",
-          x: "Wheel x position (default: viewport center).",
-          y: "Wheel y position (default: viewport center).",
-          byX: "Horizontal pixels to scroll (positive = right).",
-          byY: "Vertical pixels to scroll (positive = down).",
-          to: '"top" or "bottom": scroll until the page stops moving.'
-        }
-      },
-      type: {
-        description: "Type text into the focused element, key by key (trusted keyboard events), or into the element given by ref (it is clicked first to focus it). Fails with NO_FOCUS when nothing editable has focus.",
-        params: {
-          text: "The text. A newline presses Enter.",
-          ref: "Element to click and type into.",
-          mode: '"keys" (default): one key at a time. "paste": insert all at once.'
-        }
-      },
-      pressKey: {
-        description: 'Press a key or a combination, for example "Enter", "Tab", "ArrowDown", "Control+a", "Shift+Tab", "Control+Shift+ArrowRight". Goes to the focused element of the page.',
-        params: {
-          key: 'Key name or combination joined by "+".',
-          hold: "Modifier names to hold while pressing (Control, Shift, Alt, Meta); same effect as writing them in the combination."
-        }
-      },
-      tabs: {
-        description: `Manage the tabs the agent controls. The agent only sees and controls tabs it opened itself and tabs the user handed over with the "Hand this tab to Atrium" button; they live in a tab group named "Atrium". Actions: list, new (opens a tab and makes it current), close, activate. When several agents share the browser, each one owns the tabs it opened (its own tab group and its own current tab); tabs the user handed over without choosing an agent are shared. "list" also shows other agents' tabs, marked ownedByOther: acting on one of those fails with TAB_OWNED_BY_OTHER. Open your own tab instead. An identified agent gets a browser window of its own: "new" opens there (created behind the user's window, never stealing focus, reused afterwards) unless where is "user-window". Tabs a page opens from one of your tabs (popups, target=_blank, OAuth) join your tabs automatically.`,
-        params: {
-          action: '"list", "new", "close" or "activate".',
-          url: 'URL for "new" (default about:blank).',
-          where: 'For "new": "agent-window" (default: the window of this agent, created unfocused if needed) or "user-window" (the window the user is in, as a tab next to theirs).'
-        }
-      },
-      dialog: {
-        description: 'Answer a native dialog (alert, confirm, prompt or beforeunload) that the page opened. While a dialog is open the page is blocked and every other tool on that tab fails with DIALOG_OPEN, telling you the dialog type and message; nothing is accepted or dismissed for you. "accept" presses OK (with text as the answer of a prompt; default: the prompt default), "dismiss" presses Cancel. Returns { type, message, action }.',
-        params: {
-          action: '"accept" (OK) or "dismiss" (Cancel).',
-          text: "The answer to type into a prompt (only with accept on a prompt)."
-        }
-      },
-      select: {
-        description: "Choose an option of a native <select> (dropdown) by its value or its visible label; give exactly one. Sets the selection and fires input and change, but these events are not isTrusted (no real click on the list). Reports the option that ended up selected and whether it changed; fails with OPTION_NOT_FOUND (listing the options), OPTION_AMBIGUOUS or OPTION_DISABLED. For a custom dropdown, click it and click its option instead.",
-        params: {
-          ref: `The select. ${REF}`,
-          value: "The option value attribute.",
-          label: "Visible text of the option."
-        }
-      },
-      setChecked: {
-        description: "Leave a checkbox, radio button or switch checked or unchecked. It clicks like a person (trusted click) only if the current state differs, then confirms the result. Fails with NOT_CHECKABLE when the element has no checked state and STATE_NOT_CHANGED when the click did not flip it (a radio cannot be unchecked).",
-        params: { ref: REF, checked: "The state you want." }
-      },
-      readConsole: {
-        description: "Read the console of the tab (console.* calls, uncaught errors and browser log entries) collected since the tab came under control. Each entry has a seq number; pass the last one as afterSeq to read only what is new.",
-        params: {
-          level: "Minimum level: debug, log, info, warning or error.",
-          afterSeq: "Only entries with seq greater than this.",
-          limit: "Maximum entries (default 100, at most 500).",
-          clear: "Drop the buffer after reading."
-        }
-      },
-      upload: {
-        description: 'Attach files from the disk of this computer to a file input (<input type="file">) of the page, like the user picking them in the file dialog: the input gets the files and fires input/change. Give the ref of the file input (find it with snapshot or find) and absolute paths of files on this machine. This sends the file contents to the website, so the operator must authorize it: unless an authorization already covers it, the operator is asked for each file (the MCP client shows the file, its folder and the destination site) and answers "decline", "only this file" or "this folder to this site until the end of the session". An authorization is always a PAIR of one folder (and its subfolders) and one exact site (scheme, host and port of the page that owns the field); any other folder or site asks again. A folder that is too broad (a drive root, the home folder, an allowed upload folder itself, a folder that contains one of those, a .ssh, .git or .gnupg folder, or a folder with .env, .git or .ssh in it) never becomes a pair: its files go only one at a time. If the page that owns the field changes site before or while the files are attached, the field is emptied and the upload is refused. If the operator declines, or nobody can answer (a client without elicitation, or an agent running in the background), nothing is sent and the error says how to get it authorized: the operator calls allowUploads with that folder and that site, from a session where the question can be shown. Files in a folder the operator pre-authorized (ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED) go without asking. A field inside an embedded frame from another site than the tab is never covered by an authorization or a pre-authorized folder: it is asked every time, or refused. Only files inside the allowed upload folders are accepted (by default the Downloads folder of the user; the operator can list others in the ATRIUM_BRIDGE_UPLOAD_DIRS environment variable of this MCP server, absolute paths separated by ";" on Windows and ":" elsewhere); a path outside them is refused with an explanation. Fails with NOT_A_FILE_INPUT when the ref is not a file input and UPLOAD_NOT_ALLOWED when it is not authorized. Returns { files: [{ name, size, type }] }.',
-        params: {
-          ref: `The file input. ${REF}`,
-          paths: "Absolute paths of the files to attach (several only if the input has the multiple attribute)."
-        }
-      },
-      allowUploads: {
-        description: "Ask the operator, ahead of time, to allow upload to send files from one folder (and its subfolders) to one exact site until this MCP session ends, without asking again for each file. Use it before uploads that will run where the question cannot be shown (for example a background agent), or when many files from the same folder go to the same site. The operator sees the folder and the site and answers yes or no; if this MCP client cannot ask (no elicitation), the request is refused. The folder must be inside the allowed upload folders (ATRIUM_BRIDGE_UPLOAD_DIRS; by default Downloads) and must not be too broad: a drive root, the home folder, an allowed upload folder itself, a folder that contains one of those, a .ssh, .git or .gnupg folder, or a folder with .env, .git or .ssh directly in it is refused without asking; use a subfolder that holds only the files to send. The authorization lives only in the memory of this MCP server (not in the Bridge daemon, not on disk) and ends when this MCP server stops. It never covers a field embedded from another site. See the current authorizations with uploadPermissions; remove them with revokeUploads.",
-        params: {
-          folder: 'Absolute path of the folder whose files may be sent, for example "C:/Users/me/Downloads/invoices". Links are resolved: the real folder is what is authorized.',
-          origin: 'The exact site that may receive them: scheme, host and port, for example "https://portal.example.com" or "http://localhost:3000". A path after it is ignored.'
-        }
-      },
-      uploadPermissions: {
-        description: "List the upload authorizations of this MCP session: each pair of folder and site that upload may use without asking, with when and how it was granted. They live only in memory and end with the session. Folders pre-authorized by the operator in ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED are listed apart.",
-        params: {}
-      },
-      revokeUploads: {
-        description: "Remove upload authorizations of this MCP session for one site: all of them for that site, or only the one for a given folder. Uploads from then on ask the operator again. Returns what was removed and what is left. It does not touch ATRIUM_BRIDGE_UPLOAD_DIRS_TRUSTED.",
-        params: {
-          folder: "Absolute path of the folder to remove. Omit it to remove every authorization for the site.",
-          origin: 'The site whose authorizations are removed: scheme, host and port, for example "https://portal.example.com".'
-        }
-      },
-      download: {
-        description: "Download a file into the user's Downloads folder and wait for it to finish. Either click a ref (a link or button that starts a download, with a real click) or give a url to fetch directly (http(s), with the cookies of the browser). Returns { id, path, bytes, mime, url, state } once the file is complete; fails with DOWNLOAD_FAILED (reason from the browser) or DOWNLOAD_TIMEOUT (the id still works in downloads list). Use pdf to save the page itself.",
-        params: {
-          ref: "Element whose click starts the download (instead of url).",
-          url: "URL to download directly (instead of ref).",
-          timeoutMs: "How long to wait for the file to complete, in milliseconds, up to 600000. Default 60000."
-        }
-      },
-      downloads: {
-        description: "List the downloads this bridge started in the browser (through download or pdf), newest first: { downloads: [{ id, path, bytes, mime, url, state, startedAt }] }. Downloads the user made by themselves are not listed.",
-        params: {
-          action: '"list".',
-          limit: "Maximum entries (default 50, at most 200)."
-        }
-      },
-      pdf: {
-        description: "Save the page as a PDF file in the user's Downloads folder (like Print to PDF). Returns { path, bytes, title, url }. Optional landscape, scale, pageRanges and filename. Fails with PDF_FAILED when the page cannot be printed.",
-        params: {
-          filename: 'File name (without folder; ".pdf" is added if missing). Default: the page title. An existing name gets a numeric suffix.',
-          landscape: "Landscape orientation (default false).",
-          scale: "Zoom of the rendering, 0.1 to 2 (default 1).",
-          pageRanges: 'Pages to include, like "1-3, 5" (default all).',
-          printBackground: "Print background colors and images (default true)."
-        }
-      },
-      readNetwork: {
-        description: "Read the network requests of the tab seen since it came under control (page loads, fetch/XHR, scripts, images...), oldest first: { requests: [{ seq, id, url, method, type, status, mimeType, durationMs, bytes, error? }], lastSeq }. Pass afterSeq to read only what is new and urlContains to filter. To read one response, give its id (from the list) with body true: returns { request, body: { text, base64Encoded, truncated } }; BODY_UNAVAILABLE when the browser no longer has it (after a navigation, for example). WebSocket and EventSource traffic is not listed.",
-        params: {
-          afterSeq: "Only requests with seq greater than this.",
-          limit: "Maximum requests in the list (default 100, at most 500).",
-          urlContains: "Only requests whose URL contains this text.",
-          id: "Request id from the list, to read a single request (with body for its response body).",
-          body: "With id: also return the response body (text, or base64 for binary), cut at maxChars.",
-          maxChars: "Character limit of the body (default 100000, at most 1000000)."
-        }
-      },
-      resize: {
-        description: "Set the size of the viewport of the tab in CSS pixels (the page sees the new innerWidth/innerHeight, media queries react, screenshot captures that size). Emulated per tab, independent of the window; stays until the tab leaves the agent's control or reset is passed. Returns { width, height, innerWidth, innerHeight }.",
-        params: {
-          width: "Viewport width in CSS pixels (1 to 10000).",
-          height: "Viewport height in CSS pixels (1 to 10000).",
-          reset: "Remove the emulation and go back to the real window size (width and height are then ignored)."
-        }
-      },
-      evaluate: {
-        description: 'Run a JavaScript expression in the page and return its JSON-serializable value. Use it for reading page state that the snapshot does not show; use click/type for actions so the events are real. Promises are awaited. Allowed in the tabs the agent opened; in a tab the user handed over it fails with EVALUATE_DISABLED until the user enables "C\xF3digo na p\xE1gina" in the extension (the installation can also turn evaluate fully on or off).',
-        params: {
-          expression: 'JavaScript expression, for example "document.title".',
-          awaitPromise: "Await the value when it is a promise (default true)."
-        }
-      }
-    };
-    BROWSER_TEXTS = {
-      /** Primeiro bloco de texto do resultado quando a casca escolheu o browser pelo foco. */
-      focusedNotice: (name) => `Notice: usei "${name}", o navegador em que voc\xEA mexeu por \xFAltimo; passe browser= para escolher.`
-    };
-    DAEMON_TEXTS = {
-      /** Sucesso de uma chamada que precisou reiniciar o daemon. Vai como primeiro bloco de texto do resultado. */
-      restartedNotice: "Notice: the Atrium Bridge daemon had stopped and was restarted before this call. The browser reconnected by itself; tabs handed over to Atrium were kept. Refs from an earlier snapshot may be stale: take a new snapshot before clicking.",
-      /** DAEMON_RESTARTED: o daemon caiu com a chamada em voo e a chamada não é uma leitura pura (não se repete). */
-      restarted: (tool) => `the Atrium Bridge daemon went down while ${tool} was in flight and was restarted. The action may or may not have happened. Nothing else was done. Take a snapshot to see the current state before repeating it.`,
-      /** Acrescentado à falha do reinício quando uma chamada não repetível estava em voo: o agente precisa saber das duas coisas. */
-      lostSuffix: (tool) => `Also, ${tool} was in flight when the daemon went down: the action may or may not have happened.`,
-      /** DAEMON_CRASH_LOOP: o disjuntor está aberto; nenhuma tentativa de subir o daemon enquanto a pausa durar. */
-      crashLoop: (o) => `the Atrium Bridge daemon was restarted ${o.restarts} times in the last ${o.minutes} minutes and keeps dying; automatic restarts are paused for the next ${o.pauseSeconds} s.` + (o.tail ? ` Last lines of ${o.logFile}:
-${o.tail}
-` : " ") + "Tell the user.",
-      /** DAEMON_START_FAILED: o spawn falhou, o processo caiu, ou o /health não respondeu. `reason` vem de `startReasons`. */
-      startFailed: (o) => `the Atrium Bridge daemon could not be started: ${o.reason}.` + (o.tail ? ` Last lines of ${o.logFile}:
-${o.tail}` : ""),
-      /** Motivos de DAEMON_START_FAILED, na ordem em que a casca os observa. */
-      startReasons: {
-        spawnFailed: (message) => `the daemon process could not be launched (${message})`,
-        exited: (code) => code === null ? "the daemon process was killed before it was listening" : `the daemon process exited with code ${code} before it was listening`,
-        notReady: (seconds) => `the daemon did not answer /health within ${seconds} s`,
-        portMute: (port, owner) => `port ${port} is held by a process that does not answer /health${owner ? ` (pid ${owner})` : ""}; stop it or free the port`,
-        portForeign: (port, owner) => `port ${port} is in use by another program${owner ? ` (pid ${owner})` : ""} that is not the Atrium Bridge daemon; free the port or set ATRIUM_BRIDGE_PORT`
-      },
-      /** Acrescentado a NO_BROWSER_CONNECTED / BROWSER_NOT_FOUND quando a casca esperou a extensão reaparecer e ela não veio. */
-      waitedSuffix: (o) => `The daemon was restarted ${o.ageSeconds} s ago and the extension reconnects by itself (usually within 30 s); I waited ${o.waitedSeconds} s for it. Try again in a moment.`
-    };
-  }
-});
-
-// daemon/src/embedded.ts
-import { execFile, spawn } from "node:child_process";
-import { existsSync as existsSync4, mkdirSync as mkdirSync3 } from "node:fs";
-import { createServer } from "node:net";
-import { resolve as resolve3 } from "node:path";
-function childEnv(extra) {
-  const env = {};
-  for (const key of ENV_ALLOWLIST) if (process.env[key] !== void 0) env[key] = process.env[key];
-  return { ...env, ...extra };
-}
-function scrub(text) {
-  return text.replace(/sup_[A-Za-z0-9_-]+/g, "sup_[redacted]").replace(/device_code["'=:\s]+[A-Za-z0-9_-]{8,}/gi, "device_code=[redacted]").replace(/\u001b\[[0-9;]*m/g, "");
-}
-async function assertPortFree(port) {
-  await new Promise((resolveFree, reject) => {
-    const probe = createServer();
-    probe.once(
-      "error",
-      (e) => reject(
-        e.code === "EADDRINUSE" ? new Error(`port ${port} (Bridge port + 1) is already in use; the embedded supervisor needs it`) : e
-      )
-    );
-    probe.listen(port, "127.0.0.1", () => probe.close(() => resolveFree()));
-  });
-}
-function startEmbeddedSupervisor(opts) {
-  const dataDir = supervisorHome(opts.home);
-  const baseEnv = {
-    SUPERVISOR_DATA_DIR: dataDir,
-    SUPERVISOR_DEVICE_VERIFICATION_ORIGIN: opts.verificationOrigin
-  };
-  let status = "starting";
-  let detail;
-  let child = null;
-  let exited = Promise.resolve();
-  const tail = [];
-  const fail = (message) => {
-    if (status === "stopped") return;
-    status = "failed";
-    detail = scrub(message).slice(0, 500);
-    opts.log("supervisor_failed", { detail });
-  };
-  const cli = (args, timeout) => new Promise((resolveCli, reject) => {
-    execFile(
-      process.execPath,
-      ["scripts/supervisor.mjs", ...args],
-      { cwd: SUPERVISOR_SERVICE_DIR, env: childEnv({ ...baseEnv, LOG_LEVEL: "warn" }), timeout, windowsHide: true },
-      (error2, _stdout, stderr) => {
-        if (!error2) return resolveCli({ code: 0, stderr });
-        const code = error2.code;
-        if (typeof code === "number") return resolveCli({ code, stderr });
-        reject(error2);
-      }
-    );
-  });
-  const ready = (async () => {
-    if (!existsSync4(SUPERVISOR_SERVICE_DIR)) throw new Error(`supervisor service not found at ${SUPERVISOR_SERVICE_DIR}`);
-    if (opts.envFile !== void 0 && !existsSync4(opts.envFile)) throw new Error(`supervisor env file not found: ${opts.envFile}`);
-    await assertPortFree(opts.port);
-    mkdirSync3(dataDir, { recursive: true });
-    const args = [
-      "scripts/supervisor.mjs",
-      "serve",
-      "--port",
-      String(opts.port),
-      "--hostname",
-      "127.0.0.1",
-      "--data-dir",
-      dataDir,
-      ...opts.envFile !== void 0 ? ["--env-file", opts.envFile] : []
-    ];
-    opts.log("supervisor_starting", { port: opts.port, envFile: opts.envFile !== void 0 });
-    const proc = spawn(process.execPath, args, {
-      cwd: SUPERVISOR_SERVICE_DIR,
-      env: childEnv(baseEnv),
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true
-    });
-    child = proc;
-    opts.log("supervisor_spawned", { pid: proc.pid });
-    const keep = (chunk) => {
-      tail.push(chunk.toString());
-      if (tail.length > 60) tail.shift();
-    };
-    proc.stdout?.on("data", keep);
-    proc.stderr?.on("data", keep);
-    let exitCode;
-    exited = new Promise((resolveExit) => {
-      proc.once("exit", (code) => {
-        exitCode = code;
-        if (status === "running" || status === "starting") fail(`supervisor exited unexpectedly (code ${code})`);
-        else opts.log("supervisor_exited", { code });
-        resolveExit();
-      });
-    });
-    process.once("exit", () => proc.kill());
-    const deadline = Date.now() + (opts.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS);
-    for (; ; ) {
-      if (exitCode !== void 0) throw new Error(`supervisor exited during startup (code ${exitCode}):
-${scrub(tail.join("")).slice(-1200)}`);
-      if (status === "stopped") throw new Error("stopped during startup");
-      try {
-        if ((await fetch(`http://127.0.0.1:${opts.port}/healthz`)).ok) break;
-      } catch {
-      }
-      if (Date.now() > deadline) {
-        proc.kill();
-        throw new Error(`supervisor did not become healthy within ${opts.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS} ms`);
-      }
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    const added = await cli(["operators", "add", EMBEDDED_OWNER], APPROVE_TIMEOUT_MS);
-    if (added.code !== 0) throw new Error(`could not register the local owner (exit ${added.code}): ${scrub(added.stderr).slice(0, 300)}`);
-    if (status === "starting") status = "running";
-    opts.log("supervisor_ready", { port: opts.port });
-  })();
-  ready.catch((e) => fail(e instanceof Error ? e.message : String(e)));
-  let queue = Promise.resolve();
-  const approve = (userCode) => {
-    const run = async () => {
-      if (status !== "running") throw new BridgeError("EMBEDDED_UNAVAILABLE", `the embedded supervisor is ${status}`);
-      const code = normalizeUserCode(userCode);
-      if (!code) throw Object.assign(new Error("user_code is malformed"), { code: "INVALID_ARGUMENT" });
-      const result = await cli(["device", "approve", code, "--sub", EMBEDDED_OWNER], APPROVE_TIMEOUT_MS);
-      if (result.code === 2) throw new BridgeError("DEVICE_REQUEST_NOT_FOUND", "no live device request with that code (expired or never started)");
-      if (result.code !== 0) throw new BridgeError("EMBEDDED_UNAVAILABLE", `the supervisor refused the approval: ${scrub(result.stderr).slice(0, 200)}`);
-    };
-    const next = queue.then(run, run);
-    queue = next.catch(() => void 0);
-    return next;
-  };
-  return {
-    port: opts.port,
-    state: () => ({ status, port: opts.port, ...detail !== void 0 ? { detail } : {} }),
-    ready,
-    approve,
-    async stop() {
-      const wasStopped = status === "stopped";
-      status = "stopped";
-      if (wasStopped) return;
-      const proc = child;
-      if (proc && proc.exitCode === null) proc.kill();
-      await Promise.race([exited, new Promise((r) => setTimeout(r, 3e4))]);
-    }
-  };
-}
-var EMBEDDED_OWNER, SUPERVISOR_SERVICE_DIR, DEFAULT_START_TIMEOUT_MS, APPROVE_TIMEOUT_MS, USER_CODE, ENV_ALLOWLIST, normalizeUserCode;
-var init_embedded = __esm({
-  "daemon/src/embedded.ts"() {
-    "use strict";
-    init_errors3();
-    init_config();
-    EMBEDDED_OWNER = "owner@atrium-bridge.local";
-    SUPERVISOR_SERVICE_DIR = resolve3(import.meta.dirname, "../../../../services/supervisor");
-    DEFAULT_START_TIMEOUT_MS = 24e4;
-    APPROVE_TIMEOUT_MS = 12e4;
-    USER_CODE = /^[A-Z0-9]{4,12}(?:-[A-Z0-9]{4,12})?$/;
-    ENV_ALLOWLIST = [
-      "PATH",
-      "Path",
-      "PATHEXT",
-      "SystemRoot",
-      "SYSTEMROOT",
-      "windir",
-      "COMSPEC",
-      "OS",
-      "TEMP",
-      "TMP",
-      "TMPDIR",
-      "USERPROFILE",
-      "HOME",
-      "HOMEDRIVE",
-      "HOMEPATH",
-      "USERNAME",
-      "APPDATA",
-      "LOCALAPPDATA",
-      "ProgramData",
-      "ProgramFiles",
-      "ProgramFiles(x86)",
-      "PROCESSOR_ARCHITECTURE",
-      "NUMBER_OF_PROCESSORS",
-      "LANG",
-      "LC_ALL",
-      "TERM"
-    ];
-    normalizeUserCode = (raw) => {
-      const code = raw.trim().toUpperCase();
-      return USER_CODE.test(code) ? code : null;
-    };
-  }
-});
-
-// daemon/src/ensure.ts
-import { execFile as execFile2, spawn as spawn2 } from "node:child_process";
-import { appendFileSync, closeSync, fstatSync, mkdirSync as mkdirSync4, openSync, readFileSync as readFileSync6, readSync, renameSync as renameSync2, statSync as statSync3 } from "node:fs";
-import { request } from "node:http";
-import { dirname as dirname3, resolve as resolve4 } from "node:path";
-function createEnsure(ops, opts) {
-  const breaker2 = new Breaker(opts.breaker, ops.now);
-  const reasons = DAEMON_TEXTS.startReasons;
-  let opening;
-  let startedAt = null;
-  const startFailed = (reason) => new BridgeError("DAEMON_START_FAILED", DAEMON_TEXTS.startFailed({ reason, logFile: opts.logFile, tail: ops.logTail() }));
-  const crashLoop = (restarts, retryInMs) => new BridgeError(
-    "DAEMON_CRASH_LOOP",
-    DAEMON_TEXTS.crashLoop({
-      restarts,
-      minutes: Math.round(opts.breaker.windowMs / 6e4),
-      pauseSeconds: Math.ceil(retryInMs / 1e3),
-      logFile: opts.logFile,
-      tail: ops.logTail()
-    })
-  );
-  async function killHung(port, owner) {
-    const pid = ops.readPid();
-    if (pid === null || !ops.isAlive(pid)) {
-      ops.log("daemon_kill_skipped", { why: pid === null ? "no-pid-file" : "pid-not-alive" });
-      return false;
-    }
-    if (owner !== pid) {
-      ops.log("daemon_kill_skipped", { why: "pid-is-not-the-port-owner", pid, owner });
-      return false;
-    }
-    try {
-      await ops.killTree(pid);
-    } catch (e) {
-      ops.log("daemon_kill_failed", { pid, reason: e instanceof Error ? e.message : String(e) });
-      return false;
-    }
-    ops.log("daemon_killed", { pid });
-    const until = ops.now() + opts.killWaitMs;
-    while (ops.now() < until && await ops.probe(port, opts.quickProbeMs) !== "refused") await ops.sleep(opts.pollMs);
-    return true;
-  }
-  async function run(source) {
-    const port = opts.port();
-    if (await ops.probe(port, opts.quickProbeMs) === "ok") return { restarted: false, source };
-    let busyKnown = false;
-    let killed = false;
-    let skipDelay = false;
-    let attempts = 0;
-    let reason = "";
-    const startOnce = async () => {
-      const began = ops.now();
-      ops.log("daemon_spawning", { port });
-      const child = ops.spawn(port);
-      ops.log("daemon_spawned", { pid: child.pid ?? null });
-      const state = {};
-      void child.exited.then((e) => {
-        state.exit = e;
-      });
-      const ready = (by) => {
-        startedAt = ops.now();
-        ops.log("daemon_ready", { ms: startedAt - began, pid: child.pid ?? null, by });
-        return { kind: "ready" };
-      };
-      for (; ; ) {
-        await ops.sleep(opts.pollMs);
-        const exit = state.exit;
-        if (!exit && await ops.probe(port, opts.quickProbeMs) === "ok") return ready("child");
-        if (exit) {
-          const confirm = await ops.probe(port, busyKnown ? opts.quickProbeMs : opts.hungAfterMs);
-          if (confirm === "ok") return ready("other");
-          if (confirm === "refused") {
-            return { kind: "failed", reason: exit.error !== void 0 ? reasons.spawnFailed(exit.error) : reasons.exited(exit.code) };
-          }
-          busyKnown = true;
-          const owner = await ops.portOwner(port);
-          return {
-            kind: "busy",
-            verdict: confirm,
-            owner,
-            reason: confirm === "mute" ? reasons.portMute(port, owner) : reasons.portForeign(port, owner)
-          };
-        }
-        if (ops.now() - began > opts.readyTimeoutMs) {
-          if (child.pid !== void 0) await ops.killTree(child.pid).catch(noop);
-          return { kind: "failed", reason: reasons.notReady(Math.round(opts.readyTimeoutMs / 1e3)) };
-        }
-      }
-    };
-    for (; ; ) {
-      const admission = breaker2.admit();
-      if (!admission.allowed) {
-        ops.log("breaker_open", { restarts: admission.restarts, retryInMs: admission.retryInMs });
-        if (attempts === 0) throw crashLoop(admission.restarts, admission.retryInMs);
-        break;
-      }
-      attempts++;
-      const wait = admission.halfOpen || skipDelay ? 0 : opts.backoffMs[Math.min(admission.index, opts.backoffMs.length - 1)] ?? 0;
-      skipDelay = false;
-      if (wait > 0) await ops.sleep(wait);
-      const result = await startOnce();
-      if (result.kind === "ready") {
-        breaker2.succeeded();
-        return { restarted: true, source };
-      }
-      reason = result.reason;
-      if (result.kind === "busy") {
-        if (result.verdict === "foreign") {
-          breaker2.failed();
-          break;
-        }
-        if (!killed && await killHung(port, result.owner)) {
-          killed = true;
-          skipDelay = true;
-          continue;
-        }
-      }
-      breaker2.failed();
-      if (admission.halfOpen || attempts >= opts.maxAttempts) break;
-    }
-    ops.log("daemon_start_failed", { reason, attempts });
-    throw startFailed(reason);
-  }
-  const ensure2 = (source = "call") => opening ??= run(source).finally(() => {
-    opening = void 0;
-  });
-  return {
-    ensure: ensure2,
-    async warmup() {
-      if (opening) {
-        await opening.then(noop, noop);
-        return;
-      }
-      if (await ops.probe(opts.port(), opts.quickProbeMs) !== "refused") return;
-      await ensure2("warmup").then(noop, noop);
-    },
-    youngAgeMs() {
-      const stamps = [startedAt, ops.pidWrittenAt()].filter((t) => t !== null);
-      if (stamps.length === 0) return null;
-      const age = Math.max(0, ops.now() - Math.max(...stamps));
-      return age < opts.youngMs ? age : null;
-    }
-  };
-}
-function daemonEnv(home3) {
-  return childEnv({ ATRIUM_BRIDGE_HOME: resolve4(home3) });
-}
-function probeHealth(port, timeoutMs) {
-  return new Promise((resolve9) => {
-    let settled = false;
-    let timer;
-    const finish = (result, req2) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      req2?.destroy();
-      resolve9(result);
-    };
-    const req = request(
-      { host: "127.0.0.1", port, path: "/health", method: "GET", agent: false, headers: { connection: "close" } },
-      (res) => {
-        const chunks = [];
-        let size = 0;
-        res.on("data", (c) => {
-          size += c.length;
-          if (size > 64 * 1024) return finish("foreign", req);
-          chunks.push(c);
-        });
-        res.on("error", () => finish("mute", req));
-        res.on("end", () => {
-          let ok = false;
-          try {
-            ok = res.statusCode === 200 && JSON.parse(Buffer.concat(chunks).toString("utf8")).ok === true;
-          } catch {
-          }
-          finish(ok ? "ok" : "foreign", req);
-        });
-      }
-    );
-    timer = setTimeout(() => finish("mute", req), timeoutMs);
-    req.on("error", (e) => finish(e.code === "ECONNREFUSED" ? "refused" : "mute", req));
-    req.end();
-  });
-}
-function parseListenOwner(output, port) {
-  for (const line of output.split(/\r?\n/)) {
-    const m = /^\s*TCP\s+\S+:(\d+)\s+(?:0\.0\.0\.0:0|\[::\]:0)\s+\S+\s+(\d+)\s*$/i.exec(line);
-    if (m && Number(m[1]) === port) return Number(m[2]);
-  }
-  return null;
-}
-function exec(cmd, args) {
-  return new Promise((resolve9) => {
-    execFile2(cmd, args, { windowsHide: true, timeout: 1e4, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve9(String(stdout ?? "")));
-  });
-}
-async function portOwner(port) {
-  if (process.platform === "win32") return parseListenOwner(await exec("netstat", ["-ano", "-p", "TCP"]), port);
-  const n = Number((await exec("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"])).trim().split(/\s+/)[0]);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
-  }
-}
-async function killTree(pid) {
-  if (process.platform === "win32") {
-    await exec("taskkill", ["/PID", String(pid), "/T", "/F"]);
-    return;
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-  }
-}
-function rotateLog(file, maxBytes = LOG_MAX_BYTES) {
-  try {
-    if (statSync3(file).size > maxBytes) renameSync2(file, `${file}.1`);
-  } catch {
-  }
-}
-function readTail(file, maxBytes = 4096, maxLines = 12) {
-  let fd;
-  try {
-    fd = openSync(file, "r");
-    const size = fstatSync(fd).size;
-    const len = Math.min(size, maxBytes);
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    const lines = buf.toString("utf8").split(/\r?\n/).filter((l) => l.trim() !== "");
-    if (size > maxBytes) lines.shift();
-    return scrub(lines.slice(-maxLines).map((l) => l.slice(0, 300)).join("\n"));
-  } catch {
-    return "";
-  } finally {
-    if (fd !== void 0) closeSync(fd);
-  }
-}
-function redactTokens(text, home3) {
-  try {
-    const config2 = readConfig(home3);
-    if (!config2) return text;
-    const secrets = [config2.pairingToken, readLocalKey(home3), process.env.ATRIUM_BRIDGE_KEY?.trim()];
-    try {
-      secrets.push(apiKeyFromEnv() ?? void 0);
-    } catch {
-    }
-    try {
-      secrets.push(readFileSync6(uploadKeyPath(home3), "utf8").trim() || void 0);
-    } catch {
-    }
-    return secrets.filter((x) => !!x).reduce((t, secret) => t.split(secret).join("[redacted]"), text);
-  } catch {
-    return text;
-  }
-}
-function createShellLog(file) {
-  let prepared = false;
-  let writes = 0;
-  return (event, fields = {}) => {
-    const line = `${JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, mcp: process.pid, ...fields })}
-`;
-    try {
-      if (!prepared) {
-        mkdirSync4(dirname3(file), { recursive: true });
-        rotateLog(file);
-        prepared = true;
-      } else if (++writes % 200 === 0) {
-        rotateLog(file);
-      }
-      appendFileSync(file, line);
-    } catch {
-    }
-    try {
-      process.stderr.write(line);
-    } catch {
-    }
-  };
-}
-function spawnDaemon(home3, launch2, port) {
-  const logFile = daemonLogPath(home3);
-  let fd;
-  try {
-    mkdirSync4(home3, { recursive: true });
-    rotateLog(logFile);
-    fd = openSync(logFile, "a");
-    const child = spawn2(process.execPath, [...launch2.execArgv, launch2.entry, ...launch2.args, "--port", String(port)], {
-      cwd: resolve4(home3),
-      env: daemonEnv(home3),
-      detached: true,
-      windowsHide: true,
-      stdio: ["ignore", fd, fd]
-    });
-    const exited = new Promise((resolve9) => {
-      child.once("error", (e) => resolve9({ code: null, error: e.message }));
-      child.once("exit", (code) => resolve9({ code }));
-    });
-    child.unref();
-    return { pid: child.pid, exited };
-  } catch (e) {
-    return { pid: void 0, exited: Promise.resolve({ code: null, error: e instanceof Error ? e.message : String(e) }) };
-  } finally {
-    if (fd !== void 0) closeSync(fd);
-  }
-}
-function nodeEnsureOps(cfg) {
-  const { home: home3, launch: launch2, log: log2 } = cfg;
-  return {
-    probe: probeHealth,
-    spawn: (port) => spawnDaemon(home3, launch2, port),
-    readPid: () => readDaemonPid(home3),
-    pidWrittenAt: () => daemonPidWrittenAt(home3),
-    isAlive,
-    portOwner,
-    killTree,
-    logTail: () => redactTokens(readTail(daemonLogPath(home3)), home3),
-    sleep: (ms) => new Promise((resolve9) => setTimeout(resolve9, ms)),
-    now: () => Date.now(),
-    log: log2
-  };
-}
-var ENSURE_DEFAULTS, Breaker, noop, LOG_MAX_BYTES;
-var init_ensure = __esm({
-  "daemon/src/ensure.ts"() {
-    "use strict";
-    init_errors3();
-    init_texts();
-    init_config();
-    init_client();
-    init_embedded();
-    ENSURE_DEFAULTS = {
-      readyTimeoutMs: 15e3,
-      pollMs: 200,
-      quickProbeMs: 1e3,
-      hungAfterMs: 5e3,
-      killWaitMs: 5e3,
-      maxAttempts: 3,
-      backoffMs: [0, 2e3, 5e3],
-      breaker: { threshold: 3, windowMs: 5 * 6e4, pauseMs: 6e4 },
-      youngMs: 6e4
-    };
-    Breaker = class {
-      events = [];
-      openUntil = 0;
-      tripped = false;
-      opts;
-      now;
-      constructor(opts, now) {
-        this.opts = opts;
-        this.now = now;
-      }
-      prune(t) {
-        this.events = this.events.filter((e) => t - e < this.opts.windowMs);
-      }
-      admit() {
-        const t = this.now();
-        this.prune(t);
-        if (this.tripped) {
-          if (t < this.openUntil) return { allowed: false, restarts: this.events.length, retryInMs: this.openUntil - t };
-          this.events.push(t);
-          return { allowed: true, halfOpen: true, index: 0 };
-        }
-        if (this.events.length >= this.opts.threshold) {
-          this.tripped = true;
-          this.openUntil = t + this.opts.pauseMs;
-          return { allowed: false, restarts: this.events.length, retryInMs: this.opts.pauseMs };
-        }
-        const index = this.events.length;
-        this.events.push(t);
-        return { allowed: true, halfOpen: false, index };
-      }
-      /** A tentativa deu certo: se era a do meio-aberto, o disjuntor fecha e o histórico some. */
-      succeeded() {
-        if (!this.tripped) return;
-        this.tripped = false;
-        this.events = [];
-      }
-      /** A tentativa falhou: se era a do meio-aberto, reabre por mais uma pausa. */
-      failed() {
-        if (this.tripped) this.openUntil = this.now() + this.opts.pauseMs;
-      }
-    };
-    noop = () => void 0;
-    LOG_MAX_BYTES = 5 * 1024 * 1024;
-  }
-});
-
-// node_modules/zod/v4/mini/parse.js
-var init_parse3 = __esm({
-  "node_modules/zod/v4/mini/parse.js"() {
-    init_core2();
-  }
-});
-
-// node_modules/zod/v4/mini/schemas.js
-var init_schemas3 = __esm({
-  "node_modules/zod/v4/mini/schemas.js"() {
-  }
-});
-
-// node_modules/zod/v4/mini/checks.js
-var init_checks3 = __esm({
-  "node_modules/zod/v4/mini/checks.js"() {
-  }
-});
-
-// node_modules/zod/v4/mini/iso.js
-var init_iso2 = __esm({
-  "node_modules/zod/v4/mini/iso.js"() {
-  }
-});
-
-// node_modules/zod/v4/mini/coerce.js
-var init_coerce2 = __esm({
-  "node_modules/zod/v4/mini/coerce.js"() {
-  }
-});
-
-// node_modules/zod/v4/mini/external.js
-var init_external2 = __esm({
-  "node_modules/zod/v4/mini/external.js"() {
-    init_core2();
-    init_parse3();
-    init_schemas3();
-    init_checks3();
-    init_locales();
-    init_iso2();
-    init_coerce2();
-  }
-});
-
-// node_modules/zod/v4-mini/index.js
-var init_v4_mini = __esm({
-  "node_modules/zod/v4-mini/index.js"() {
-    init_external2();
-  }
-});
-
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
-function isZ4Schema(s) {
-  const schema = s;
-  return !!schema._zod;
-}
-function safeParse3(schema, data) {
-  if (isZ4Schema(schema)) {
-    const result2 = safeParse(schema, data);
-    return result2;
-  }
-  const v3Schema = schema;
-  const result = v3Schema.safeParse(data);
-  return result;
-}
-function getObjectShape(schema) {
-  if (!schema)
-    return void 0;
-  let rawShape2;
-  if (isZ4Schema(schema)) {
-    const v4Schema = schema;
-    rawShape2 = v4Schema._zod?.def?.shape;
-  } else {
-    const v3Schema = schema;
-    rawShape2 = v3Schema.shape;
-  }
-  if (!rawShape2)
-    return void 0;
-  if (typeof rawShape2 === "function") {
-    try {
-      return rawShape2();
-    } catch {
-      return void 0;
-    }
-  }
-  return rawShape2;
-}
-function getLiteralValue(schema) {
-  if (isZ4Schema(schema)) {
-    const v4Schema = schema;
-    const def4 = v4Schema._zod?.def;
-    if (def4) {
-      if (def4.value !== void 0)
-        return def4.value;
-      if (Array.isArray(def4.values) && def4.values.length > 0) {
-        return def4.values[0];
-      }
-    }
-  }
-  const v3Schema = schema;
-  const def3 = v3Schema._def;
-  if (def3) {
-    if (def3.value !== void 0)
-      return def3.value;
-    if (Array.isArray(def3.values) && def3.values.length > 0) {
-      return def3.values[0];
-    }
-  }
-  const directValue = schema.value;
-  if (directValue !== void 0)
-    return directValue;
-  return void 0;
-}
-var init_zod_compat = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js"() {
-    init_v4_mini();
-  }
-});
-
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 var init_interfaces = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/Options.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/Options.js
 var ignoreOverride;
 var init_Options = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/Options.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/Options.js"() {
     ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/Refs.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/Refs.js
 var init_Refs = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/Refs.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/Refs.js"() {
     init_Options();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/errorMessages.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/errorMessages.js
 var init_errorMessages = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/errorMessages.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/errorMessages.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
 var init_getRelativePath = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/getRelativePath.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/any.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/any.js
 var init_any = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/any.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/any.js"() {
     init_getRelativePath();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/array.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/array.js
 var init_array = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/array.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/array.js"() {
     init_errorMessages();
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
 var init_bigint = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js"() {
     init_errorMessages();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
 var init_boolean = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
 var init_branded = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/branded.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
 var init_catch = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/catch.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/date.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/date.js
 var init_date = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/date.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/date.js"() {
     init_errorMessages();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/default.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/default.js
 var init_default = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/default.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/default.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
 var init_effects = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/effects.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js"() {
     init_parseDef();
     init_any();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
 var init_enum = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/enum.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
 var init_intersection = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
 var init_literal = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/literal.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC;
 var init_string = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/string.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/string.js"() {
     init_errorMessages();
     ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/record.js
 var init_record = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/record.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/record.js"() {
     init_parseDef();
     init_string();
     init_branded();
@@ -10224,124 +10073,124 @@ var init_record = __esm({
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/map.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/map.js
 var init_map = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/map.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/map.js"() {
     init_parseDef();
     init_record();
     init_any();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
 var init_nativeEnum = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/never.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/never.js
 var init_never = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/never.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/never.js"() {
     init_any();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/null.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/null.js
 var init_null = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/null.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/null.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/union.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/union.js
 var init_union = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/union.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/union.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
 var init_nullable = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js"() {
     init_parseDef();
     init_union();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/number.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/number.js
 var init_number = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/number.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/number.js"() {
     init_errorMessages();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/object.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/object.js
 var init_object = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/object.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/object.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
 var init_optional = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/optional.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js"() {
     init_parseDef();
     init_any();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
 var init_pipeline = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
 var init_promise = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/promise.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/set.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/set.js
 var init_set = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/set.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/set.js"() {
     init_errorMessages();
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
 var init_tuple = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
 var init_undefined = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js"() {
     init_any();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
 var init_unknown = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js"() {
     init_any();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
 var init_readonly = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js"() {
     init_parseDef();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/selectParser.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/selectParser.js
 var init_selectParser = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/selectParser.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/selectParser.js"() {
     init_any();
     init_array();
     init_bigint();
@@ -10375,9 +10224,9 @@ var init_selectParser = __esm({
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parseDef.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parseDef.js
 var init_parseDef = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parseDef.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parseDef.js"() {
     init_Options();
     init_selectParser();
     init_getRelativePath();
@@ -10385,24 +10234,24 @@ var init_parseDef = __esm({
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/parseTypes.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parseTypes.js
 var init_parseTypes = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/parseTypes.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parseTypes.js"() {
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
 var init_zodToJsonSchema = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js"() {
     init_parseDef();
     init_Refs();
     init_any();
   }
 });
 
-// node_modules/zod-to-json-schema/dist/esm/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/index.js
 var init_esm = __esm({
-  "node_modules/zod-to-json-schema/dist/esm/index.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/index.js"() {
     init_Options();
     init_Refs();
     init_errorMessages();
@@ -10445,7 +10294,7 @@ var init_esm = __esm({
   }
 });
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function getMethodLiteral(schema) {
   const shape = getObjectShape(schema);
   const methodSchema = shape?.method;
@@ -10459,20 +10308,20 @@ function getMethodLiteral(schema) {
   return value;
 }
 function parseWithCompat(schema, data) {
-  const result = safeParse3(schema, data);
+  const result = safeParse2(schema, data);
   if (!result.success) {
     throw result.error;
   }
   return result.data;
 }
 var init_zod_json_schema_compat = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js"() {
     init_zod_compat();
     init_esm();
   }
 });
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 function isPlainObject2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -10494,7 +10343,7 @@ function mergeCapabilities(base, additional) {
 }
 var DEFAULT_REQUEST_TIMEOUT_MSEC, Protocol;
 var init_protocol2 = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js"() {
     init_zod_compat();
     init_types();
     init_interfaces();
@@ -11089,7 +10938,7 @@ var init_protocol2 = __esm({
               return reject(response);
             }
             try {
-              const parseResult = safeParse3(resultSchema, response.result);
+              const parseResult = safeParse2(resultSchema, response.result);
               if (!parseResult.success) {
                 reject(parseResult.error);
               } else {
@@ -11435,9 +11284,9 @@ var init_protocol2 = __esm({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/code.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/code.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.regexpCode = exports.getEsmExportName = exports.getProperty = exports.safeStringify = exports.stringify = exports.strConcat = exports.addCodeArg = exports.str = exports._ = exports.nil = exports._Code = exports.Name = exports.IDENTIFIER = exports._CodeOrName = void 0;
@@ -11589,9 +11438,9 @@ var require_code = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/scope.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/scope.js
 var require_scope = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ValueScope = exports.ValueScopeName = exports.Scope = exports.varKinds = exports.UsedValueState = void 0;
@@ -11734,9 +11583,9 @@ var require_scope = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/index.js
 var require_codegen = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/index.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.or = exports.and = exports.not = exports.CodeGen = exports.operators = exports.varKinds = exports.ValueScopeName = exports.ValueScope = exports.Scope = exports.Name = exports.regexpCode = exports.stringify = exports.getProperty = exports.nil = exports.strConcat = exports.str = exports._ = void 0;
@@ -12454,9 +12303,9 @@ var require_codegen = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/util.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/util.js
 var require_util = __commonJS({
-  "node_modules/ajv/dist/compile/util.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/util.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.checkStrictMode = exports.getErrorPath = exports.Type = exports.useFunc = exports.setEvaluated = exports.evaluatedPropsToName = exports.mergeEvaluated = exports.eachItem = exports.unescapeJsonPointer = exports.escapeJsonPointer = exports.escapeFragment = exports.unescapeFragment = exports.schemaRefOrVal = exports.schemaHasRulesButRef = exports.schemaHasRules = exports.checkUnknownRules = exports.alwaysValidSchema = exports.toHash = void 0;
@@ -12621,9 +12470,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/names.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/names.js
 var require_names = __commonJS({
-  "node_modules/ajv/dist/compile/names.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/names.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -12660,9 +12509,9 @@ var require_names = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/errors.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/errors.js
 var require_errors = __commonJS({
-  "node_modules/ajv/dist/compile/errors.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/errors.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendErrors = exports.resetErrorsCount = exports.reportExtraError = exports.reportError = exports.keyword$DataError = exports.keywordError = void 0;
@@ -12782,9 +12631,9 @@ var require_errors = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/boolSchema.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/boolSchema.js
 var require_boolSchema = __commonJS({
-  "node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.boolOrEmptySchema = exports.topBoolOrEmptySchema = void 0;
@@ -12833,9 +12682,9 @@ var require_boolSchema = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/rules.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/rules.js
 var require_rules = __commonJS({
-  "node_modules/ajv/dist/compile/rules.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/rules.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getRules = exports.isJSONType = void 0;
@@ -12864,9 +12713,9 @@ var require_rules = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/applicability.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/applicability.js
 var require_applicability = __commonJS({
-  "node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.shouldUseRule = exports.shouldUseGroup = exports.schemaHasRulesForType = void 0;
@@ -12887,9 +12736,9 @@ var require_applicability = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/dataType.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/dataType.js
 var require_dataType = __commonJS({
-  "node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.reportTypeError = exports.checkDataTypes = exports.checkDataType = exports.coerceAndCheckDataType = exports.getJSONTypes = exports.getSchemaTypes = exports.DataType = void 0;
@@ -13071,9 +12920,9 @@ var require_dataType = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/defaults.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/defaults.js
 var require_defaults = __commonJS({
-  "node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.assignDefaults = void 0;
@@ -13108,9 +12957,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/code.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/code.js
 var require_code2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/code.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateUnion = exports.validateArray = exports.usePattern = exports.callValidateCode = exports.schemaProperties = exports.allSchemaProperties = exports.noPropertyInData = exports.propertyInData = exports.isOwnProperty = exports.hasPropFunc = exports.reportMissingProp = exports.checkMissingProp = exports.checkReportMissingProp = void 0;
@@ -13241,9 +13090,9 @@ var require_code2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/keyword.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/keyword.js
 var require_keyword = __commonJS({
-  "node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateKeywordUsage = exports.validSchemaType = exports.funcKeywordCode = exports.macroKeywordCode = void 0;
@@ -13359,9 +13208,9 @@ var require_keyword = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/subschema.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/subschema.js
 var require_subschema = __commonJS({
-  "node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendSubschemaMode = exports.extendSubschemaData = exports.getSubschema = void 0;
@@ -13442,9 +13291,9 @@ var require_subschema = __commonJS({
   }
 });
 
-// node_modules/fast-deep-equal/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-deep-equal/index.js
 var require_fast_deep_equal = __commonJS({
-  "node_modules/fast-deep-equal/index.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-deep-equal/index.js"(exports, module) {
     "use strict";
     module.exports = function equal(a, b) {
       if (a === b) return true;
@@ -13477,9 +13326,9 @@ var require_fast_deep_equal = __commonJS({
   }
 });
 
-// node_modules/json-schema-traverse/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/json-schema-traverse/index.js
 var require_json_schema_traverse = __commonJS({
-  "node_modules/json-schema-traverse/index.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/json-schema-traverse/index.js"(exports, module) {
     "use strict";
     var traverse = module.exports = function(schema, opts, cb) {
       if (typeof opts == "function") {
@@ -13565,9 +13414,9 @@ var require_json_schema_traverse = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/resolve.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/resolve.js
 var require_resolve = __commonJS({
-  "node_modules/ajv/dist/compile/resolve.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/resolve.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getSchemaRefs = exports.resolveUrl = exports.normalizeId = exports._getFullPath = exports.getFullPath = exports.inlineRef = void 0;
@@ -13721,9 +13570,9 @@ var require_resolve = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/index.js
 var require_validate = __commonJS({
-  "node_modules/ajv/dist/compile/validate/index.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getData = exports.KeywordCxt = exports.validateFunctionCode = void 0;
@@ -14229,9 +14078,9 @@ var require_validate = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/validation_error.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/validation_error.js
 var require_validation_error = __commonJS({
-  "node_modules/ajv/dist/runtime/validation_error.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/validation_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var ValidationError = class extends Error {
@@ -14245,9 +14094,9 @@ var require_validation_error = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/ref_error.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/ref_error.js
 var require_ref_error = __commonJS({
-  "node_modules/ajv/dist/compile/ref_error.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/ref_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var resolve_1 = require_resolve();
@@ -14262,9 +14111,9 @@ var require_ref_error = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/index.js
 var require_compile = __commonJS({
-  "node_modules/ajv/dist/compile/index.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.resolveSchema = exports.getCompilingSchema = exports.resolveRef = exports.compileSchema = exports.SchemaEnv = void 0;
@@ -14486,9 +14335,9 @@ var require_compile = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/refs/data.json
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/refs/data.json
 var require_data = __commonJS({
-  "node_modules/ajv/dist/refs/data.json"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/refs/data.json"(exports, module) {
     module.exports = {
       $id: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#",
       description: "Meta-schema for $data reference (JSON AnySchema extension proposal)",
@@ -14505,9 +14354,9 @@ var require_data = __commonJS({
   }
 });
 
-// node_modules/fast-uri/lib/utils.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
-  "node_modules/fast-uri/lib/utils.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/lib/utils.js"(exports, module) {
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
@@ -15007,9 +14856,9 @@ var require_utils = __commonJS({
   }
 });
 
-// node_modules/fast-uri/lib/schemes.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/lib/schemes.js
 var require_schemes = __commonJS({
-  "node_modules/fast-uri/lib/schemes.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
     var { isUUID } = require_utils();
     var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
@@ -15218,9 +15067,9 @@ var require_schemes = __commonJS({
   }
 });
 
-// node_modules/fast-uri/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/index.js
 var require_fast_uri = __commonJS({
-  "node_modules/fast-uri/index.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
@@ -15624,9 +15473,9 @@ var require_fast_uri = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/uri.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/uri.js
 var require_uri = __commonJS({
-  "node_modules/ajv/dist/runtime/uri.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/uri.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var uri = require_fast_uri();
@@ -15635,9 +15484,9 @@ var require_uri = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/core.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/core.js
 var require_core = __commonJS({
-  "node_modules/ajv/dist/core.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/core.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = void 0;
@@ -16116,11 +15965,11 @@ var require_core = __commonJS({
     Ajv2.ValidationError = validation_error_1.default;
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
-    function checkOptions(checkOpts, options, msg, log2 = "error") {
+    function checkOptions(checkOpts, options, msg, log = "error") {
       for (const key in checkOpts) {
         const opt = key;
         if (opt in options)
-          this.logger[log2](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log](`${msg}: option ${key}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -16246,9 +16095,9 @@ var require_core = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/id.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/id.js
 var require_id = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var def3 = {
@@ -16261,9 +16110,9 @@ var require_id = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/ref.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/ref.js
 var require_ref = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.callRef = exports.getValidate = void 0;
@@ -16383,9 +16232,9 @@ var require_ref = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/index.js
 var require_core2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var id_1 = require_id();
@@ -16404,9 +16253,9 @@ var require_core2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitNumber.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitNumber.js
 var require_limitNumber = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16436,9 +16285,9 @@ var require_limitNumber = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/multipleOf.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/multipleOf.js
 var require_multipleOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16464,9 +16313,9 @@ var require_multipleOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/ucs2length.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/ucs2length.js
 var require_ucs2length = __commonJS({
-  "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function ucs2length(str3) {
@@ -16490,9 +16339,9 @@ var require_ucs2length = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitLength.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitLength.js
 var require_limitLength = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16522,9 +16371,9 @@ var require_limitLength = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/pattern.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/pattern.js
 var require_pattern = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -16559,9 +16408,9 @@ var require_pattern = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitProperties.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitProperties.js
 var require_limitProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16588,9 +16437,9 @@ var require_limitProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/required.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/required.js
 var require_required = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -16670,9 +16519,9 @@ var require_required = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitItems.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitItems.js
 var require_limitItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16699,9 +16548,9 @@ var require_limitItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/equal.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/equal.js
 var require_equal = __commonJS({
-  "node_modules/ajv/dist/runtime/equal.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/equal.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var equal = require_fast_deep_equal();
@@ -16710,9 +16559,9 @@ var require_equal = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
 var require_uniqueItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var dataType_1 = require_dataType();
@@ -16777,9 +16626,9 @@ var require_uniqueItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/const.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/const.js
 var require_const = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16806,9 +16655,9 @@ var require_const = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/enum.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/enum.js
 var require_enum = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16855,9 +16704,9 @@ var require_enum = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/index.js
 var require_validation = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var limitNumber_1 = require_limitNumber();
@@ -16893,9 +16742,9 @@ var require_validation = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
 var require_additionalItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateAdditionalItems = void 0;
@@ -16946,9 +16795,9 @@ var require_additionalItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/items.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/items.js
 var require_items = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateTuple = void 0;
@@ -17003,9 +16852,9 @@ var require_items = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
 var require_prefixItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var items_1 = require_items();
@@ -17020,9 +16869,9 @@ var require_prefixItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/items2020.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/items2020.js
 var require_items2020 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17055,9 +16904,9 @@ var require_items2020 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/contains.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/contains.js
 var require_contains = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17149,9 +16998,9 @@ var require_contains = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/dependencies.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/dependencies.js
 var require_dependencies = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateSchemaDeps = exports.validatePropertyDeps = exports.error = void 0;
@@ -17243,9 +17092,9 @@ var require_dependencies = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
 var require_propertyNames = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17286,9 +17135,9 @@ var require_propertyNames = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
 var require_additionalProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -17392,9 +17241,9 @@ var require_additionalProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/properties.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/properties.js
 var require_properties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var validate_1 = require_validate();
@@ -17450,9 +17299,9 @@ var require_properties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
 var require_patternProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -17524,9 +17373,9 @@ var require_patternProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/not.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/not.js
 var require_not = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -17555,9 +17404,9 @@ var require_not = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/anyOf.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/anyOf.js
 var require_anyOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -17572,9 +17421,9 @@ var require_anyOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/oneOf.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/oneOf.js
 var require_oneOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17630,9 +17479,9 @@ var require_oneOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/allOf.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/allOf.js
 var require_allOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -17657,9 +17506,9 @@ var require_allOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/if.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/if.js
 var require_if = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17726,9 +17575,9 @@ var require_if = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/thenElse.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/thenElse.js
 var require_thenElse = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -17744,9 +17593,9 @@ var require_thenElse = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/index.js
 var require_applicator = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var additionalItems_1 = require_additionalItems();
@@ -17792,9 +17641,9 @@ var require_applicator = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/format/format.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/format/format.js
 var require_format = __commonJS({
-  "node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17882,9 +17731,9 @@ var require_format = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/format/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/format/index.js
 var require_format2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var format_1 = require_format();
@@ -17893,9 +17742,9 @@ var require_format2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/metadata.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/metadata.js
 var require_metadata = __commonJS({
-  "node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.contentVocabulary = exports.metadataVocabulary = void 0;
@@ -17916,9 +17765,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/draft7.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/draft7.js
 var require_draft7 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var core_1 = require_core2();
@@ -17938,9 +17787,9 @@ var require_draft7 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/discriminator/types.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/discriminator/types.js
 var require_types = __commonJS({
-  "node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DiscrError = void 0;
@@ -17952,9 +17801,9 @@ var require_types = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/discriminator/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/discriminator/index.js
 var require_discriminator = __commonJS({
-  "node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -18057,9 +17906,9 @@ var require_discriminator = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/refs/json-schema-draft-07.json
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/refs/json-schema-draft-07.json
 var require_json_schema_draft_07 = __commonJS({
-  "node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
     module.exports = {
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: "http://json-schema.org/draft-07/schema#",
@@ -18214,9 +18063,9 @@ var require_json_schema_draft_07 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/ajv.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/ajv.js
 var require_ajv = __commonJS({
-  "node_modules/ajv/dist/ajv.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/ajv.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.MissingRefError = exports.ValidationError = exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = exports.Ajv = void 0;
@@ -18284,9 +18133,9 @@ var require_ajv = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/formats.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/formats.js
 var require_formats = __commonJS({
-  "node_modules/ajv-formats/dist/formats.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/formats.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
@@ -18487,9 +18336,9 @@ var require_formats = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/limit.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/limit.js
 var require_limit = __commonJS({
-  "node_modules/ajv-formats/dist/limit.js"(exports) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/limit.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatLimitDefinition = void 0;
@@ -18559,9 +18408,9 @@ var require_limit = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/index.js
 var require_dist = __commonJS({
-  "node_modules/ajv-formats/dist/index.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/index.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var formats_1 = require_formats();
@@ -18601,7 +18450,7 @@ var require_dist = __commonJS({
   }
 });
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 function createDefaultAjvInstance() {
   const ajv = new import_ajv.default({
     strict: false,
@@ -18615,7 +18464,7 @@ function createDefaultAjvInstance() {
 }
 var import_ajv, import_ajv_formats, AjvJsonSchemaValidator;
 var init_ajv_provider = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js"() {
     import_ajv = __toESM(require_ajv(), 1);
     import_ajv_formats = __toESM(require_dist(), 1);
     AjvJsonSchemaValidator = class {
@@ -18674,10 +18523,10 @@ var init_ajv_provider = __esm({
   }
 });
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks;
 var init_server = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js"() {
     init_types();
     ExperimentalServerTasks = class {
       constructor(_server) {
@@ -18893,7 +18742,7 @@ var init_server = __esm({
   }
 });
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -18928,14 +18777,14 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 var init_helpers = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js"() {
   }
 });
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server;
 var init_server2 = __esm({
-  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js"() {
     init_protocol2();
     init_types();
     init_ajv_provider();
@@ -19014,7 +18863,7 @@ var init_server2 = __esm({
         const method = methodValue;
         if (method === "tools/call") {
           const wrappedHandler = async (request2, extra) => {
-            const validatedRequest = safeParse3(CallToolRequestSchema, request2);
+            const validatedRequest = safeParse2(CallToolRequestSchema, request2);
             if (!validatedRequest.success) {
               const errorMessage = validatedRequest.error instanceof Error ? validatedRequest.error.message : String(validatedRequest.error);
               throw new McpError(ErrorCode.InvalidParams, `Invalid tools/call request: ${errorMessage}`);
@@ -19022,14 +18871,14 @@ var init_server2 = __esm({
             const { params } = validatedRequest.data;
             const result = await Promise.resolve(handler(request2, extra));
             if (params.task) {
-              const taskValidationResult = safeParse3(CreateTaskResultSchema, result);
+              const taskValidationResult = safeParse2(CreateTaskResultSchema, result);
               if (!taskValidationResult.success) {
                 const errorMessage = taskValidationResult.error instanceof Error ? taskValidationResult.error.message : String(taskValidationResult.error);
                 throw new McpError(ErrorCode.InvalidParams, `Invalid task creation result: ${errorMessage}`);
               }
               return taskValidationResult.data;
             }
-            const validationResult = safeParse3(CallToolResultSchema, result);
+            const validationResult = safeParse2(CallToolResultSchema, result);
             if (!validationResult.success) {
               const errorMessage = validationResult.error instanceof Error ? validationResult.error.message : String(validationResult.error);
               throw new McpError(ErrorCode.InvalidParams, `Invalid tools/call result: ${errorMessage}`);
@@ -19372,7 +19221,7 @@ var init_input = __esm({
 });
 
 // ../../packages/browser/src/core/tool-texts.ts
-var REF2, REF_OR_POINT2, X2, Y2, TOOL_TEXTS, LOCAL_TOOL_TEXTS;
+var REF2, REF_OR_POINT2, X2, Y2, TOOL_TEXTS, LOCAL_TOOL_TEXTS, ADOPT_TOOL_TEXTS, ASK_USER_TIMEOUT_MS;
 var init_tool_texts = __esm({
   "../../packages/browser/src/core/tool-texts.ts"() {
     "use strict";
@@ -19639,6 +19488,17 @@ var init_tool_texts = __esm({
         }
       }
     };
+    ADOPT_TOOL_TEXTS = {
+      ask_user: {
+        name: "WebAskUser",
+        description: 'Ask the person to do something in the active tab that only they can do, and wait until they hand the tab back. Use it when you are blocked by a login (a password, a two-factor code, a passkey), a captcha or a check that says you are a robot, or when the next step is a decision that belongs to the person (a purchase, sending a message in their name, accepting terms). Do not use it for things you can do yourself, and do not ask twice for the same thing. The tab goes to the person at once and this call WAITS for them, possibly many minutes: you cannot use the tab meanwhile, and the call ends when the person hands the tab back, dismisses the request, or when the wait runs out. Write the message as a short plain sentence that says what you need and why ("Log in to github.com so I can open the repository"); it is shown to the person as plain text and is cut at 500 characters. The answer says how it ended. After the tab comes back the page may have changed: take a new WebSnapshot before acting. Never ask the person to type a secret in the chat; this tool is how they enter it, in the page itself.',
+        params: {
+          message: "What you need from the person, in one or two plain sentences (text only, cut at 500 characters).",
+          kind: '"login" when you need the person to sign in (the host hands the tab over clean of scripts), "other" for anything else. Default "other".'
+        }
+      }
+    };
+    ASK_USER_TIMEOUT_MS = 30 * 6e4;
   }
 });
 
@@ -19666,6 +19526,9 @@ function def(op, params, required2 = []) {
 }
 function defLocal(op, params, required2, destructive) {
   return { op, scope: "local", tier: "advanced", destructive, ...build(LOCAL_TOOL_TEXTS[op], op, params, required2) };
+}
+function defAdopt(op, params, required2) {
+  return { op, scope: "local", tier: "advanced", ...build(ADOPT_TOOL_TEXTS[op], op, params, required2) };
 }
 function validateArgs(tool, args) {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return ["arguments must be an object"];
@@ -19695,7 +19558,7 @@ function validateArgs(tool, args) {
   }
   return problems;
 }
-var TOOL_TIERS, str, num, int2, bool, PDF_FORMATS, BROWSER_CATALOG, LOCAL_CATALOG, STANDARD_TOOLS;
+var TOOL_TIERS, str, num, int2, bool, PDF_FORMATS, BROWSER_CATALOG, LOCAL_CATALOG, ADOPT_CATALOG, STANDARD_TOOLS;
 var init_catalog = __esm({
   "../../packages/browser/src/core/catalog.ts"() {
     "use strict";
@@ -19792,6 +19655,7 @@ var init_catalog = __esm({
       defLocal("revoke_uploads", { folder: str, origin: str }, ["origin"], false),
       defLocal("set_gpu", { gpu: { ...str, enum: ["on", "off"] }, confirm: bool }, ["gpu"], false)
     ]);
+    ADOPT_CATALOG = Object.freeze([defAdopt("ask_user", { message: str, kind: { ...str, enum: ["login", "other"] } }, ["message"])]);
     STANDARD_TOOLS = Object.freeze(BROWSER_CATALOG.filter((t) => t.tier === "standard"));
   }
 });
@@ -19944,7 +19808,7 @@ var init_catalog2 = __esm({
   "src/catalog.ts"() {
     "use strict";
     init_core4();
-    init_errors3();
+    init_errors();
     init_texts();
     str2 = { type: "string" };
     num2 = { type: "number" };
@@ -20058,9 +19922,9 @@ function dirsFrom(env, name) {
   }
   return listed.map((d) => resolve5(d));
 }
-function uploadDirs(env = process.env, home3 = homedir2(), name = UPLOAD_DIRS_ENV) {
+function uploadDirs(env = process.env, home2 = homedir2(), name = UPLOAD_DIRS_ENV) {
   const listed = dirsFrom(env, name);
-  return listed.length ? listed : [join4(home3, "Downloads")];
+  return listed.length ? listed : [join4(home2, "Downloads")];
 }
 function uploadDirsTrusted(env = process.env, name = UPLOAD_DIRS_TRUSTED_ENV) {
   return dirsFrom(env, name);
@@ -20094,7 +19958,7 @@ function uploadElicitSchema(options) {
     required: ["decision"]
   };
 }
-function elicitUploadConfirm(server, log2 = () => {
+function elicitUploadConfirm(server, log = () => {
 }) {
   return async (message, options) => {
     const e = server.getClientCapabilities()?.elicitation;
@@ -20105,7 +19969,7 @@ function elicitUploadConfirm(server, log2 = () => {
       const chosen = options.find((o) => o.value === decision);
       return chosen ? chosen.value : "decline";
     } catch (err) {
-      log2(`upload confirmation failed: ${err.message}`);
+      log(`upload confirmation failed: ${err.message}`);
       return "decline";
     }
   };
@@ -20136,22 +20000,22 @@ function insideOrSame(dir, path) {
 function uploadPolicy(dirs, opts = {}) {
   const trusted = (opts.trusted ?? []).map((d) => resolve5(d));
   const listed = [...dirs.map((d) => resolve5(d)), ...trusted];
-  const log2 = opts.log ?? (() => {
+  const log = opts.log ?? (() => {
   });
   const now = opts.now ?? (() => /* @__PURE__ */ new Date());
   const grants = [];
-  const home3 = resolve5(opts.home ?? homedir2());
+  const home2 = resolve5(opts.home ?? homedir2());
   const names = { ...BROWSER_UPLOAD_NAMES, ...opts.names };
   const broadReason = (target) => {
     const f = resolve5(target);
     if (parse3(f).root === f || dirname4(f) === f) return `${f} is the root of a drive`;
     const refs = (list) => list.flatMap((d) => [d, real(d)].filter((x) => x !== null));
     const same = (list) => refs(list).some((d) => sameFolder(d, f));
-    if (same([home3])) return `${f} is the user's home folder`;
+    if (same([home2])) return `${f} is the user's home folder`;
     if (same(listed)) return `${f} is itself one of the folders allowed for upload (${names.dirsEnv}), so it would cover everything allowed`;
     const fr = real(f);
     const contains = (list) => refs(list).some((d) => [f, fr].some((x) => x !== null && !sameFolder(d, x) && inside(x, d)));
-    if (contains([home3])) return `${f} contains the user's home folder, so it would cover everything in it (keys, secrets)`;
+    if (contains([home2])) return `${f} contains the user's home folder, so it would cover everything in it (keys, secrets)`;
     if (contains(listed)) return `${f} contains a folder allowed for upload (${names.dirsEnv}), so it would cover everything allowed`;
     for (const x of [f, fr]) {
       if (x === null) continue;
@@ -20170,6 +20034,40 @@ function uploadPolicy(dirs, opts = {}) {
     "UPLOAD_NOT_ALLOWED",
     `${folder} is too broad to authorize for a whole session: ${reason}. Nothing was authorized. Authorize a subfolder that holds only the files to send (for example ${join4(folder, "to-send")}), or send files one at a time with ${names.upload}.`
   );
+  const persist = () => {
+    if (!opts.store) return;
+    try {
+      opts.store.save(grants.map((g) => ({ ...g })));
+    } catch (err) {
+      log(`upload authorizations could not be saved by the host: ${String(err?.message ?? err)}`);
+    }
+  };
+  if (opts.store) {
+    let stored;
+    try {
+      stored = opts.store.load();
+    } catch (err) {
+      log(`stored upload authorizations could not be read: ${String(err?.message ?? err)}`);
+    }
+    const allowed = listed.map((d) => real(d)).filter((d) => d !== null);
+    for (const raw of Array.isArray(stored) ? stored : []) {
+      const g = raw && typeof raw === "object" ? raw : {};
+      if (typeof g.folder !== "string" || typeof g.origin !== "string" || typeof g.grantedAt !== "string") continue;
+      if (g.via !== "upload" && g.via !== "WebAllowUploads") continue;
+      let origin;
+      try {
+        origin = uploadOrigin(g.origin);
+      } catch {
+        continue;
+      }
+      const folder = isAbsolute(g.folder) ? real(g.folder) : null;
+      if (origin !== g.origin || folder === null || !sameFolder(folder, g.folder)) continue;
+      if (!allowed.some((d) => insideOrSame(d, folder)) || broadReason(folder) !== null) continue;
+      if (grants.some((x) => x.origin === origin && sameFolder(x.folder, folder))) continue;
+      grants.push({ folder: g.folder, origin, grantedAt: g.grantedAt, via: g.via });
+    }
+    if (grants.length) log(`upload authorizations restored from the host: ${grants.length}`);
+  }
   const grantFor = (file, site) => grants.find((g) => g.origin === site && inside(g.folder, file));
   const addGrant = (folder, origin, via) => {
     const broad = broadReason(folder);
@@ -20178,7 +20076,8 @@ function uploadPolicy(dirs, opts = {}) {
     if (existing) return existing;
     const grant = { folder, origin, grantedAt: now().toISOString(), via };
     grants.push(grant);
-    log2(`upload authorization granted for this session (${via}): folder=${folder} origin=${origin} at=${grant.grantedAt}`);
+    persist();
+    log(`upload authorization granted for this session (${via}): folder=${folder} origin=${origin} at=${grant.grantedAt}`);
     return grant;
   };
   const howToAllow = (folder, site, reason) => {
@@ -20210,7 +20109,7 @@ function uploadPolicy(dirs, opts = {}) {
         if (trustedReal.some((d) => inside(d, file))) return;
         const grant = broadReason(file) || broadReason(folder) ? void 0 : grantFor(file, site);
         if (grant) {
-          log2(`upload sent under session authorization: file=${file} origin=${site} at=${now().toISOString()} (granted for folder=${grant.folder})`);
+          log(`upload sent under session authorization: file=${file} origin=${site} at=${now().toISOString()} (granted for folder=${grant.folder})`);
           return;
         }
       }
@@ -20263,7 +20162,7 @@ Send it?` + (offerSession ? ` "${SESSION.title}" lets every file in ${show(folde
 Folder: ${show(folder)} (and its subfolders)
 Site: ${show(origin)}
 
-Allow uploads from this folder to this site until this ${names.server} stops? Nothing is saved to disk; it can be revoked with ${names.revoke}.`,
+` + (opts.store ? `Allow uploads from this folder to this site until ${opts.store.lifetime}? It can be revoked with ${names.revoke}.` : `Allow uploads from this folder to this site until this ${names.server} stops? Nothing is saved to disk; it can be revoked with ${names.revoke}.`),
         [DECLINE, ALLOW]
       ) : "unsupported";
       if (answer === "session") return { grant: { ...addGrant(folder, origin, "WebAllowUploads") }, already: false };
@@ -20287,7 +20186,8 @@ Allow uploads from this folder to this site until this ${names.server} stops? No
         if (g.origin !== origin || input !== void 0 && !keys.some((k) => sameFolder(k, g.folder))) continue;
         removed.unshift(...grants.splice(i, 1));
       }
-      for (const g of removed) log2(`upload authorization revoked: folder=${g.folder} origin=${g.origin} at=${now().toISOString()}`);
+      if (removed.length) persist();
+      for (const g of removed) log(`upload authorization revoked: folder=${g.folder} origin=${g.origin} at=${now().toISOString()}`);
       return { removed, grants: grants.map((g) => ({ ...g })) };
     }
   };
@@ -20436,7 +20336,7 @@ function createResilientBridge(client, shell2) {
       }
     };
   }
-  const { ensure: ensure2, log: log2 } = shell2;
+  const { ensure, log } = shell2;
   let sawDaemon = false;
   const waitCallMs = shell2.waitCallMs ?? REAPPEAR_DEFAULTS.waitCallMs;
   const waitListMs = shell2.waitListMs ?? REAPPEAR_DEFAULTS.waitListMs;
@@ -20455,7 +20355,7 @@ function createResilientBridge(client, shell2) {
   }
   async function browsersWhen(isReady, maxWaitMs) {
     let list = await alive(client.browsers());
-    const ageMs = isReady(list) ? null : ensure2.youngAgeMs();
+    const ageMs = isReady(list) ? null : ensure.youngAgeMs();
     if (ageMs === null) return { list, waitedMs: 0, ageMs: 0 };
     const began = now();
     while (!isReady(list) && now() - began < maxWaitMs) {
@@ -20463,7 +20363,7 @@ function createResilientBridge(client, shell2) {
       list = await alive(client.browsers());
     }
     const waitedMs = now() - began;
-    log2("browsers_waited", { ms: waitedMs, found: isReady(list) });
+    log("browsers_waited", { ms: waitedMs, found: isReady(list) });
     return { list, waitedMs, ageMs };
   }
   function resolveAfterWait(waited, requested) {
@@ -20479,7 +20379,7 @@ function createResilientBridge(client, shell2) {
   }
   async function ensureAfterLoss(tool) {
     try {
-      await ensure2.ensure("call");
+      await ensure.ensure("call");
     } catch (e) {
       if (e instanceof BridgeError) throw new BridgeError(e.code, `${e.message} ${DAEMON_TEXTS.lostSuffix(tool)}`, e.data);
       throw e;
@@ -20495,19 +20395,19 @@ function createResilientBridge(client, shell2) {
       } catch (e) {
         const phase = downPhase(e);
         if (phase === void 0) {
-          if (progress.stage === "call" && round < MAX_ROUNDS && isRemote(e, "BROWSER_NOT_FOUND") && ensure2.youngAgeMs() !== null) continue;
+          if (progress.stage === "call" && round < MAX_ROUNDS && isRemote(e, "BROWSER_NOT_FOUND") && ensure.youngAgeMs() !== null) continue;
           throw e;
         }
         if (round >= MAX_ROUNDS) throw e;
-        log2("daemon_unreachable", { phase, tool });
+        log("daemon_unreachable", { phase, tool });
         if (phase === "in-flight" && progress.stage === "call" && !pureRead) {
           await ensureAfterLoss(tool);
-          log2("call_lost", { tool });
+          log("call_lost", { tool });
           throw new BridgeError("DAEMON_RESTARTED", DAEMON_TEXTS.restarted(tool), { tool });
         }
-        const outcome = await ensure2.ensure("call");
+        const outcome = await ensure.ensure("call");
         restarted ||= outcome.restarted && (outcome.source === "call" || sawDaemon);
-        if (phase === "in-flight") log2("call_retried", { tool });
+        if (phase === "in-flight") log("call_retried", { tool });
       }
     }
   }
@@ -20533,6 +20433,16 @@ function uploadSetupFromEnv(env = process.env) {
     trusted: uploadDirsTrusted(env, BRIDGE_UPLOAD_NAMES.trustedEnv)
   };
 }
+function describeWithStore(name, description, lifetime) {
+  const swaps = name === "allowUploads" ? [
+    ["to one exact site until this MCP session ends,", `to one exact site until ${lifetime},`],
+    [
+      "The authorization lives only in the memory of this MCP server (not in the Bridge daemon, not on disk) and ends when this MCP server stops.",
+      `The authorization is kept by the host (not by the Bridge daemon) until ${lifetime}, or until it is revoked.`
+    ]
+  ] : name === "uploadPermissions" ? [["They live only in memory and end with the session.", `They are kept by the host until ${lifetime}, or until they are revoked.`]] : [];
+  return swaps.reduce((text, [from, to]) => text.replace(from, to), description);
+}
 function buildMcpServer(client, shell2, info2 = {}) {
   const server = new Server({ name: info2.name ?? SERVER_NAME, version: "0.1.0" }, { capabilities: { tools: {} } });
   const bridge = createResilientBridge(client, shell2);
@@ -20546,17 +20456,19 @@ function buildMcpServer(client, shell2, info2 = {}) {
       confirm: elicitUploadConfirm(server, policyLog),
       log: policyLog,
       names: BRIDGE_UPLOAD_NAMES,
+      ...info2.grantStore ? { store: info2.grantStore } : {},
       ...setup.home ? { home: setup.home } : {}
     });
     return policy;
   };
   async function grantTool(tool, a) {
     const p = uploads();
+    const store = info2.grantStore;
     if (tool === "allowUploads") {
       const { grant, already } = await p.allowUploads({ folder: a.folder, origin: a.origin });
       return {
         authorized: showGrant(grant),
-        note: already ? "This folder was already authorized for this site in this session; nothing changed." : "The operator allowed it. upload now sends files from this folder (and its subfolders) to this exact site without asking, until this MCP server stops."
+        note: already ? "This folder was already authorized for this site in this session; nothing changed." : store ? `The operator allowed it. upload now sends files from this folder (and its subfolders) to this exact site without asking; the host keeps this authorization until ${store.lifetime}, or until it is revoked.` : "The operator allowed it. upload now sends files from this folder (and its subfolders) to this exact site without asking, until this MCP server stops."
       };
     }
     if (tool === "uploadPermissions") {
@@ -20564,7 +20476,7 @@ function buildMcpServer(client, shell2, info2 = {}) {
       return {
         grants: view.grants.map(showGrant),
         trusted: view.trusted,
-        note: view.grants.length ? "Session authorizations live only in the memory of this MCP server and end when it stops. A field embedded from another site is never covered." : "No session authorizations: every upload outside the pre-authorized folders asks the operator."
+        note: view.grants.length ? store ? `Session authorizations are kept by the host until ${store.lifetime}, or until they are revoked. A field embedded from another site is never covered.` : "Session authorizations live only in the memory of this MCP server and end when it stops. A field embedded from another site is never covered." : "No session authorizations: every upload outside the pre-authorized folders asks the operator."
       };
     }
     const r = p.revokeUploads({ origin: a.origin, ...a.folder !== void 0 ? { folder: a.folder } : {} });
@@ -20586,7 +20498,11 @@ function buildMcpServer(client, shell2, info2 = {}) {
     return { ...done, restarted: target.restarted || done.restarted, ...target.notice ? { notice: target.notice } : {} };
   }
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: BRIDGE_CATALOG.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
+    tools: BRIDGE_CATALOG.map((t) => ({
+      name: t.name,
+      description: info2.grantStore ? describeWithStore(t.name, t.description, info2.grantStore.lifetime) : t.description,
+      inputSchema: t.inputSchema
+    }))
   }));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const tool = req.params.name;
@@ -20621,7 +20537,7 @@ var init_mcp_server = __esm({
     init_server2();
     init_types();
     init_catalog2();
-    init_errors3();
+    init_errors();
     init_texts();
     init_client();
     init_upload_policy();
@@ -20647,48 +20563,212 @@ var init_mcp_server = __esm({
   }
 });
 
-// daemon/src/mcp.ts
-var mcp_exports = {};
-import { existsSync as existsSync5 } from "node:fs";
-import { join as join5 } from "node:path";
-var home, log, sourceCli, launch, ensure, serverName, uploadKey;
-var init_mcp = __esm({
-  async "daemon/src/mcp.ts"() {
+// daemon/src/mcp-lib.ts
+function createBridgeMcp(opts) {
+  const env = opts.env;
+  const home2 = bridgeHome(env);
+  const log = createShellLog(mcpLogPath(home2), { stderr: opts.stderr ?? false });
+  const launch = {
+    entry: opts.daemonEntry,
+    args: ["start"],
+    execArgv: opts.execArgv ?? [],
+    ...opts.node ? { node: opts.node } : {}
+  };
+  const ensure = createEnsure(nodeEnsureOps({ home: home2, launch, log, env }), {
+    ...ENSURE_DEFAULTS,
+    port: () => resolvePort(env),
+    logFile: daemonLogPath(home2)
+  });
+  const name = serverNameFromEnv(env, opts.serverName ?? SERVER_NAME);
+  const uploadKey = () => ensureUploadKey(home2);
+  const client = new BridgeClient(() => ({ ...targetFromEnv(env), uploadKey }));
+  let current = null;
+  async function close() {
+    const server = current;
+    current = null;
+    if (!server) return;
+    try {
+      await server.close();
+    } catch {
+    }
+  }
+  return {
+    name,
+    async connect(transport) {
+      await close();
+      const server = buildMcpServer(client, { ensure, log }, {
+        name,
+        upload: () => uploadSetupFromEnv(env),
+        ...opts.grantStore ? { grantStore: opts.grantStore } : {}
+      });
+      current = server;
+      await server.connect(transport);
+    },
+    warmup() {
+      void ensure.warmup().catch(() => {
+      });
+    },
+    close
+  };
+}
+var init_mcp_lib = __esm({
+  "daemon/src/mcp-lib.ts"() {
     "use strict";
-    init_stdio2();
     init_client();
     init_config();
     init_keys();
     init_ensure();
     init_mcp_server();
+    init_texts();
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+function deserializeMessage(line) {
+  return JSONRPCMessageSchema.parse(JSON.parse(line));
+}
+function serializeMessage(message) {
+  return JSON.stringify(message) + "\n";
+}
+var STDIO_DEFAULT_MAX_BUFFER_SIZE, ReadBuffer;
+var init_stdio = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js"() {
+    init_types();
+    STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
+    ReadBuffer = class {
+      constructor(options) {
+        this._maxBufferSize = options?.maxBufferSize ?? STDIO_DEFAULT_MAX_BUFFER_SIZE;
+      }
+      append(chunk) {
+        const newSize = (this._buffer?.length ?? 0) + chunk.length;
+        if (newSize > this._maxBufferSize) {
+          this.clear();
+          throw new Error(`ReadBuffer exceeded maximum size of ${this._maxBufferSize} bytes`);
+        }
+        this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
+      }
+      readMessage() {
+        if (!this._buffer) {
+          return null;
+        }
+        const index = this._buffer.indexOf("\n");
+        if (index === -1) {
+          return null;
+        }
+        const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
+        this._buffer = this._buffer.subarray(index + 1);
+        return deserializeMessage(line);
+      }
+      clear() {
+        this._buffer = void 0;
+      }
+    };
+  }
+});
+
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+import process2 from "node:process";
+var StdioServerTransport;
+var init_stdio2 = __esm({
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js"() {
+    init_stdio();
+    StdioServerTransport = class {
+      constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
+        this._stdin = _stdin;
+        this._stdout = _stdout;
+        this._started = false;
+        this._ondata = (chunk) => {
+          try {
+            this._readBuffer.append(chunk);
+            this.processReadBuffer();
+          } catch (error2) {
+            this.onerror?.(error2);
+            this.close().catch(() => {
+            });
+          }
+        };
+        this._onerror = (error2) => {
+          this.onerror?.(error2);
+        };
+        this._readBuffer = new ReadBuffer({ maxBufferSize: options?.maxBufferSize });
+      }
+      /**
+       * Starts listening for messages on stdin.
+       */
+      async start() {
+        if (this._started) {
+          throw new Error("StdioServerTransport already started! If using Server class, note that connect() calls start() automatically.");
+        }
+        this._started = true;
+        this._stdin.on("data", this._ondata);
+        this._stdin.on("error", this._onerror);
+      }
+      processReadBuffer() {
+        while (true) {
+          try {
+            const message = this._readBuffer.readMessage();
+            if (message === null) {
+              break;
+            }
+            this.onmessage?.(message);
+          } catch (error2) {
+            this.onerror?.(error2);
+          }
+        }
+      }
+      async close() {
+        this._stdin.off("data", this._ondata);
+        this._stdin.off("error", this._onerror);
+        const remainingDataListeners = this._stdin.listenerCount("data");
+        if (remainingDataListeners === 0) {
+          this._stdin.pause();
+        }
+        this._readBuffer.clear();
+        this.onclose?.();
+      }
+      send(message) {
+        return new Promise((resolve9) => {
+          const json = serializeMessage(message);
+          if (this._stdout.write(json)) {
+            resolve9();
+          } else {
+            this._stdout.once("drain", resolve9);
+          }
+        });
+      }
+    };
+  }
+});
+
+// daemon/src/mcp.ts
+var mcp_exports = {};
+import { existsSync as existsSync5 } from "node:fs";
+import { join as join5 } from "node:path";
+var sourceCli, mcp;
+var init_mcp = __esm({
+  async "daemon/src/mcp.ts"() {
+    "use strict";
+    init_stdio2();
+    init_mcp_lib();
     init_package_info();
     init_texts();
-    home = bridgeHome();
-    log = createShellLog(mcpLogPath(home));
     sourceCli = join5(import.meta.dirname, "cli.ts");
-    launch = {
-      entry: existsSync5(sourceCli) ? sourceCli : process.argv[1],
-      args: ["start"],
-      execArgv: process.execArgv.filter((arg) => !arg.startsWith("--inspect"))
-    };
-    ensure = createEnsure(nodeEnsureOps({ home, launch, log }), {
-      ...ENSURE_DEFAULTS,
-      port: () => resolvePort(),
-      logFile: daemonLogPath(home)
+    mcp = createBridgeMcp({
+      env: process.env,
+      daemonEntry: existsSync5(sourceCli) ? sourceCli : process.argv[1],
+      execArgv: process.execArgv.filter((arg) => !arg.startsWith("--inspect")),
+      serverName: packagedServerName(buildInfoOfScript()) ?? SERVER_NAME,
+      stderr: true
     });
-    serverName = serverNameFromEnv(process.env, packagedServerName(buildInfoOfScript()) ?? SERVER_NAME);
-    uploadKey = () => ensureUploadKey(home);
-    await buildMcpServer(new BridgeClient(() => ({ ...targetFromEnv(), uploadKey })), { ensure, log }, { name: serverName }).connect(
-      new StdioServerTransport()
-    );
-    void ensure.warmup();
+    await mcp.connect(new StdioServerTransport());
+    mcp.warmup();
     process.stdin.once("close", () => process.exit(0));
   }
 });
 
-// node_modules/ws/lib/constants.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/constants.js
 var require_constants = __commonJS({
-  "node_modules/ws/lib/constants.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/constants.js"(exports, module) {
     "use strict";
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
     var hasBlob = typeof Blob !== "undefined";
@@ -20709,9 +20789,9 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/ws/lib/buffer-util.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/buffer-util.js
 var require_buffer_util = __commonJS({
-  "node_modules/ws/lib/buffer-util.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/buffer-util.js"(exports, module) {
     "use strict";
     var { EMPTY_BUFFER } = require_constants();
     var FastBuffer = Buffer[Symbol.species];
@@ -20784,9 +20864,9 @@ var require_buffer_util = __commonJS({
   }
 });
 
-// node_modules/ws/lib/limiter.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/limiter.js
 var require_limiter = __commonJS({
-  "node_modules/ws/lib/limiter.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/limiter.js"(exports, module) {
     "use strict";
     var kDone = Symbol("kDone");
     var kRun = Symbol("kRun");
@@ -20834,9 +20914,9 @@ var require_limiter = __commonJS({
   }
 });
 
-// node_modules/ws/lib/permessage-deflate.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/permessage-deflate.js
 var require_permessage_deflate = __commonJS({
-  "node_modules/ws/lib/permessage-deflate.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/permessage-deflate.js"(exports, module) {
     "use strict";
     var zlib = __require("zlib");
     var bufferUtil = require_buffer_util();
@@ -21217,9 +21297,9 @@ var require_permessage_deflate = __commonJS({
   }
 });
 
-// node_modules/ws/lib/validation.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/validation.js
 var require_validation2 = __commonJS({
-  "node_modules/ws/lib/validation.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/validation.js"(exports, module) {
     "use strict";
     var { isUtf8 } = __require("buffer");
     var { hasBlob } = require_constants();
@@ -21418,9 +21498,9 @@ var require_validation2 = __commonJS({
   }
 });
 
-// node_modules/ws/lib/receiver.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/receiver.js
 var require_receiver = __commonJS({
-  "node_modules/ws/lib/receiver.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/receiver.js"(exports, module) {
     "use strict";
     var { Writable } = __require("stream");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -22041,9 +22121,9 @@ var require_receiver = __commonJS({
   }
 });
 
-// node_modules/ws/lib/sender.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/sender.js
 var require_sender = __commonJS({
-  "node_modules/ws/lib/sender.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/sender.js"(exports, module) {
     "use strict";
     var { Duplex } = __require("stream");
     var { randomFillSync } = __require("crypto");
@@ -22534,9 +22614,9 @@ var require_sender = __commonJS({
   }
 });
 
-// node_modules/ws/lib/event-target.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/event-target.js
 var require_event_target = __commonJS({
-  "node_modules/ws/lib/event-target.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/event-target.js"(exports, module) {
     "use strict";
     var { kForOnEventAttribute, kListener } = require_constants();
     var kCode = Symbol("kCode");
@@ -22763,9 +22843,9 @@ var require_event_target = __commonJS({
   }
 });
 
-// node_modules/ws/lib/extension.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/extension.js
 var require_extension = __commonJS({
-  "node_modules/ws/lib/extension.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/extension.js"(exports, module) {
     "use strict";
     var { tokenChars } = require_validation2();
     function push(dest, name, elem) {
@@ -22916,9 +22996,9 @@ var require_extension = __commonJS({
   }
 });
 
-// node_modules/ws/lib/websocket.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/websocket.js
 var require_websocket = __commonJS({
-  "node_modules/ws/lib/websocket.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/websocket.js"(exports, module) {
     "use strict";
     var EventEmitter = __require("events");
     var https = __require("https");
@@ -23825,9 +23905,9 @@ var require_websocket = __commonJS({
   }
 });
 
-// node_modules/ws/lib/stream.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/stream.js
 var require_stream = __commonJS({
-  "node_modules/ws/lib/stream.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/stream.js"(exports, module) {
     "use strict";
     var WebSocket2 = require_websocket();
     var { Duplex } = __require("stream");
@@ -23923,9 +24003,9 @@ var require_stream = __commonJS({
   }
 });
 
-// node_modules/ws/lib/subprotocol.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/subprotocol.js
 var require_subprotocol = __commonJS({
-  "node_modules/ws/lib/subprotocol.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/subprotocol.js"(exports, module) {
     "use strict";
     var { tokenChars } = require_validation2();
     function parse4(header) {
@@ -23968,9 +24048,9 @@ var require_subprotocol = __commonJS({
   }
 });
 
-// node_modules/ws/lib/websocket-server.js
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/websocket-server.js
 var require_websocket_server = __commonJS({
-  "node_modules/ws/lib/websocket-server.js"(exports, module) {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/websocket-server.js"(exports, module) {
     "use strict";
     var EventEmitter = __require("events");
     var http = __require("http");
@@ -24369,10 +24449,10 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// node_modules/ws/wrapper.mjs
+// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/wrapper.mjs
 var import_stream, import_extension, import_permessage_deflate, import_receiver, import_sender, import_subprotocol, import_websocket, import_websocket_server;
 var init_wrapper = __esm({
-  "node_modules/ws/wrapper.mjs"() {
+  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/wrapper.mjs"() {
     import_stream = __toESM(require_stream(), 1);
     import_extension = __toESM(require_extension(), 1);
     import_permessage_deflate = __toESM(require_permessage_deflate(), 1);
@@ -24518,7 +24598,7 @@ var defaultDownloadsDir;
 var init_files = __esm({
   "daemon/src/files.ts"() {
     "use strict";
-    init_errors3();
+    init_errors();
     defaultDownloadsDir = () => join6(homedir4(), "Downloads");
   }
 });
@@ -24529,7 +24609,7 @@ var CLIENTS_MAX, RELEASE_TOOL, BrowserConnection, Registry;
 var init_registry = __esm({
   "daemon/src/registry.ts"() {
     "use strict";
-    init_errors3();
+    init_errors();
     CLIENTS_MAX = 200;
     RELEASE_TOOL = "release";
     BrowserConnection = class {
@@ -24729,7 +24809,7 @@ function statusFor(code) {
   }
 }
 async function startDaemon(opts) {
-  const log2 = opts.log ?? defaultLog;
+  const log = opts.log ?? defaultLog;
   const callTimeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   let config2 = ensureConfig(opts.home, opts.port);
   const registry2 = new Registry();
@@ -24747,11 +24827,11 @@ async function startDaemon(opts) {
       if (!next) throw new Error("config.json disappeared");
       config2 = { ...next, port: config2.port };
     } catch (e) {
-      log2("config_reload_failed", { reason: e.code ?? (e instanceof SyntaxError ? "invalid JSON" : "invalid") });
+      log("config_reload_failed", { reason: e.code ?? (e instanceof SyntaxError ? "invalid JSON" : "invalid") });
       throw new BridgeError("CONFIG_INVALID", "the Atrium Bridge config.json could not be read; fix it and retry");
     }
     seen = now;
-    log2("config_reloaded", { keys: config2.apiKeys.length });
+    log("config_reloaded", { keys: config2.apiKeys.length });
     registry2.broadcast({ t: "config", ...config2.brand ? { brand: config2.brand } : {}, ...config2.capabilities ? { capabilities: config2.capabilities } : {} });
     return config2;
   };
@@ -24764,14 +24844,14 @@ async function startDaemon(opts) {
     pushStatus();
     const started = Date.now();
     const browsers = await registry2.releaseAll(callTimeoutMs);
-    log2("paused", { ...who, browsers: browsers.length, ok: browsers.every((b) => b.ok), ms: Date.now() - started });
+    log("paused", { ...who, browsers: browsers.length, ok: browsers.every((b) => b.ok), ms: Date.now() - started });
     return browsers;
   };
   const resume = (who) => {
     const was = paused;
     paused = false;
     if (was) {
-      log2("resumed", who);
+      log("resumed", who);
       pushStatus();
     }
   };
@@ -24861,10 +24941,10 @@ async function startDaemon(opts) {
       }
       try {
         await embedded.approve(code);
-        log2("device_approved", { via: "page" });
+        log("device_approved", { via: "page" });
         page(res, 200, messagePage(APPROVAL_TEXTS.approvedHeading, APPROVAL_TEXTS.approvedBody, "approval-done"));
       } catch (e) {
-        log2("device_approval_failed", { via: "page", code: toWireError(e).code });
+        log("device_approval_failed", { via: "page", code: toWireError(e).code });
         failurePage(res, e);
       }
       return true;
@@ -24911,7 +24991,7 @@ async function startDaemon(opts) {
         const code = typeof body.user_code === "string" ? normalizeUserCode(body.user_code) : null;
         if (!code) throw Object.assign(new Error('"user_code" is required (as shown in the Assistant panel)'), { code: "INVALID_ARGUMENT" });
         await embedded.approve(code);
-        log2("device_approved", { via: "api", key: key.name });
+        log("device_approved", { via: "api", key: key.name });
         return json(res, 200, { ok: true });
       }
       const rel = /^\/clients\/([^/]+)\/release$/.exec(url.pathname);
@@ -24923,7 +25003,7 @@ async function startDaemon(opts) {
         const started = Date.now();
         const browsers = await registry2.releaseClient(id, callTimeoutMs);
         registry2.noteClient({ id }, "release");
-        log2("release", { key: key.name, client: id, browsers: browsers.length, ok: browsers.every((b) => b.ok), ms: Date.now() - started });
+        log("release", { key: key.name, client: id, browsers: browsers.length, ok: browsers.every((b) => b.ok), ms: Date.now() - started });
         return json(res, 200, { ok: true, client: id, browsers });
       }
       const m = /^\/browsers\/([^/]+)\/call$/.exec(url.pathname);
@@ -24943,7 +25023,7 @@ async function startDaemon(opts) {
           throw Object.assign(new Error(`${body.tool} runs only in the MCP server of the Bridge (the upload authorizations live in its memory), not in the daemon API`), { code: "INVALID_ARGUMENT" });
         }
         if (UPLOAD_TOOLS.has(body.tool) && key.scope !== "upload") {
-          log2("upload_refused", { key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool });
+          log("upload_refused", { key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool });
           throw new BridgeError(
             "FORBIDDEN",
             `upload only through the MCP server of the Bridge, with the operator's consent: key "${key.name}" has no "upload" scope`
@@ -24961,10 +25041,10 @@ async function startDaemon(opts) {
           if (body.tool === "upload") args.paths = assertUploadPaths(args.paths);
           let result = await registry2.call(id, body.tool, args, timeout, client);
           if (body.tool === "pdf") result = persistPdf(downloadsDir(), result);
-          log2("call", { ...who, ok: true, ms: Date.now() - started });
+          log("call", { ...who, ok: true, ms: Date.now() - started });
           return json(res, 200, { ok: true, result });
         } catch (e) {
-          log2("call", { ...who, ok: false, code: toWireError(e).code, ms: Date.now() - started });
+          log("call", { ...who, ok: false, code: toWireError(e).code, ms: Date.now() - started });
           throw e;
         }
       }
@@ -24978,7 +25058,7 @@ async function startDaemon(opts) {
   const refuseUpgrade = (socket, reason, origin) => {
     socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     socket.destroy();
-    log2("upgrade_refused", { reason, origin: origin.slice(0, 120) });
+    log("upgrade_refused", { reason, origin: origin.slice(0, 120) });
   };
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -25002,7 +25082,7 @@ async function startDaemon(opts) {
       } catch {
       }
       ws.close(CLOSE_DENIED, reason);
-      log2("pairing_denied", { reason, remote: req.socket.remoteAddress });
+      log("pairing_denied", { reason, remote: req.socket.remoteAddress });
     };
     ws.on("message", (raw) => {
       let msg;
@@ -25041,7 +25121,7 @@ async function startDaemon(opts) {
           ...extensionVersion ? { extensionVersion } : {}
         });
         pushStatus(mine);
-        log2("browser_connected", { browser: info2.id, name: info2.name });
+        log("browser_connected", { browser: info2.id, name: info2.name });
         return;
       }
       if (msg.t === "pause") {
@@ -25067,7 +25147,7 @@ async function startDaemon(opts) {
       clearTimeout(helloTimer);
       if (!conn) return;
       conn.failAll(new BridgeError("BROWSER_DISCONNECTED", `browser "${conn.info.name}" disconnected during the call`));
-      if (registry2.remove(conn)) log2("browser_disconnected", { browser: conn.info.id, name: conn.info.name });
+      if (registry2.remove(conn)) log("browser_disconnected", { browser: conn.info.id, name: conn.info.name });
     });
     ws.on("error", () => ws.terminate());
   };
@@ -25086,7 +25166,7 @@ async function startDaemon(opts) {
     });
   }
   config2 = { ...config2, port: boundPort };
-  log2("listening", { host: "127.0.0.1", port: boundPort });
+  log("listening", { host: "127.0.0.1", port: boundPort });
   if (opts.embedded ?? config2.embedded === true) {
     const envFile = opts.supervisorEnvFile !== void 0 ? resolve7(opts.supervisorEnvFile) : config2.supervisorEnvFile !== void 0 ? resolve7(opts.home, config2.supervisorEnvFile) : void 0;
     embedded = startEmbeddedSupervisor({
@@ -25095,7 +25175,7 @@ async function startDaemon(opts) {
       verificationOrigin: `http://127.0.0.1:${boundPort}`,
       ...envFile !== void 0 ? { envFile } : {},
       ...opts.supervisorStartTimeoutMs !== void 0 ? { startTimeoutMs: opts.supervisorStartTimeoutMs } : {},
-      log: log2
+      log
     });
   }
   return {
@@ -25119,7 +25199,7 @@ var init_server3 = __esm({
     "use strict";
     init_wrapper();
     init_catalog2();
-    init_errors3();
+    init_errors();
     init_protocol();
     init_approval_page();
     init_config();
@@ -25145,7 +25225,7 @@ function flag(args, name) {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : void 0;
 }
-var USAGE, command, rest, home2;
+var USAGE, command, rest, home;
 var init_cli = __esm({
   async "daemon/src/cli.ts"() {
     "use strict";
@@ -25175,7 +25255,7 @@ var init_cli = __esm({
 Environment: ATRIUM_BRIDGE_HOME (config folder, default ~/.atrium-bridge)
 Files in that folder: daemon.pid (pid of the process that listens; written once it listens, removed on a clean exit)`;
     [command, ...rest] = process.argv.slice(2);
-    home2 = bridgeHome();
+    home = bridgeHome();
     if (command === "start") {
       const portArg = flag(rest, "--port");
       const port = portArg === void 0 ? void 0 : Number(portArg);
@@ -25190,7 +25270,7 @@ Files in that folder: daemon.pid (pid of the process that listens; written once 
         process.exit(2);
       }
       const daemon = await startDaemon({
-        home: home2,
+        home,
         port,
         ...embedded ? { embedded } : {},
         ...supervisorEnvFile !== void 0 ? { supervisorEnvFile } : {}
@@ -25200,12 +25280,12 @@ Files in that folder: daemon.pid (pid of the process that listens; written once 
         return process.exit(1);
       });
       try {
-        writeDaemonPid(home2, process.pid);
+        writeDaemonPid(home, process.pid);
       } catch (e) {
         process.stderr.write(`atrium-bridge daemon: could not write daemon.pid (${e instanceof Error ? e.message : String(e)})
 `);
       }
-      process.once("exit", () => removeDaemonPid(home2, process.pid));
+      process.once("exit", () => removeDaemonPid(home, process.pid));
       const stop = () => void daemon.close().then(() => process.exit(0));
       process.on("SIGINT", stop);
       process.on("SIGTERM", stop);
@@ -25221,8 +25301,8 @@ Files in that folder: daemon.pid (pid of the process that listens; written once 
 `);
         process.exit(2);
       }
-      const config2 = ensureConfig(home2);
-      const value = which === "pairing" ? config2.pairingToken : readLocalKey(home2);
+      const config2 = ensureConfig(home);
+      const value = which === "pairing" ? config2.pairingToken : readLocalKey(home);
       if (value === null) {
         process.stderr.write("no local API key (api.key was revoked or removed): create one with `key create <name>`\n");
         process.exit(1);
@@ -25250,7 +25330,7 @@ ${USAGE}`, 2);
           const keyName = named(name);
           const scopeArg = flag(rest, "--scope");
           if (rest.includes("--scope") && !KEY_SCOPES.includes(scopeArg)) fail(`--scope must be ${KEY_SCOPES.join(" or ")}`, 2);
-          const created = addKey(home2, keyName, {
+          const created = addKey(home, keyName, {
             ...scopeArg ? { scope: scopeArg } : {},
             ...rest.includes("--replace") ? { replace: true } : {}
           });
@@ -25268,7 +25348,7 @@ ${USAGE}`, 2);
             );
           }
         } else if (sub === "list") {
-          const keys = listKeys(home2);
+          const keys = listKeys(home);
           if (json) process.stdout.write(`${JSON.stringify(keys)}
 `);
           else if (keys.length === 0) process.stdout.write("no API keys\n");
@@ -25276,7 +25356,7 @@ ${USAGE}`, 2);
 `);
         } else if (sub === "revoke") {
           const keyName = named(name);
-          if (!revokeKey(home2, keyName)) fail(`no key named "${keyName}"`);
+          if (!revokeKey(home, keyName)) fail(`no key named "${keyName}"`);
           process.stderr.write(`key "${keyName}" revoked
 `);
         } else {
@@ -25296,7 +25376,7 @@ ${USAGE}
       const from = flag(rest, "--from");
       try {
         const result = installExtension({
-          home: home2,
+          home,
           dir,
           ...from && !from.startsWith("--") ? { source: from } : {},
           ...rest.includes("--no-pin") ? { pin: false } : {}
@@ -25331,7 +25411,7 @@ import { fileURLToPath as fileURLToPath2 } from "node:url";
 // package.json
 var package_default = {
   name: "@atrium/bridge",
-  version: "0.1.0",
+  version: "0.2.0",
   private: true,
   type: "module",
   description: "Atrium Bridge: deixa os sistemas Atrium controlarem o browser Chromium do usuario (extensao MV3 + daemon local com API HTTP e servidor MCP).",
@@ -25365,6 +25445,7 @@ init_keys();
 init_install();
 init_config();
 init_package_info();
+init_mcp_lib();
 var version2 = package_default.version;
 var USAGE2 = `Atrium Bridge ${package_default.version}
   start [--port N]            start the daemon (WebSocket + HTTP on 127.0.0.1)
@@ -25414,6 +25495,7 @@ export {
   brandFromPackage,
   bridgeHome,
   buildInfoNextTo,
+  createBridgeMcp,
   ensureConfig,
   extensionIdOf,
   installExtension,

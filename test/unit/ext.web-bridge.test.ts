@@ -400,7 +400,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
       onSlot: () => toDisposable(() => {}),
     }
     const disposables = activateDaemon(api)
-    assert.equal(disposables.length, 6, 'onStarted + launch middleware + slot listener (C3) + 3 checks')
+    assert.equal(disposables.length, 7, 'onStarted + launch middleware + the HTTP host + slot listener (C3) + 3 checks')
     assert.equal(checks.length, 3)
     assert.equal(started.length, 1, 'the setup waits for the start')
     await new Promise(r => setTimeout(r, 50))

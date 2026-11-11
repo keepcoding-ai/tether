@@ -31,7 +31,8 @@ export const claudeAgent: AgentContribution = {
   },
   envArgsVar: 'TETHER_CLAUDE_ARGS',
   // `claude --mcp-config <file>`: added to the project's own .mcp.json servers (the default; --strict-mcp-config would drop them).
-  mcp: { inject: withMcpConfigFlag },
+  // `type: "http"` servers with `${VAR}` in their headers: the browser and the bridge come from the daemon, no process per pane.
+  mcp: { inject: withMcpConfigFlag, http: true },
   // The tether's skills as a plugin named `tether` (`--plugin-dir`, this session only): `/tether:<skill>`.
   skills: claudeSkills,
 }

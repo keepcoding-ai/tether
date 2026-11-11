@@ -18,6 +18,8 @@ export const extensionDirOf = (home: string): string => join(home, 'web-bridge',
 /** The MCP server's name, the prefix of the agents' tools (`mcp__tether-bridge__*`): ATRIUM_BRIDGE_SERVER_NAME of the shell. */
 export const MCP_SERVER_NAME = `${BRAND.slug}-bridge`
 export const mcpConfigPathOf = (home: string): string => join(home, 'mcp', `${MCP_SERVER_NAME}.json`)
+/** The per-slot --mcp-config of an agent that takes the bridge over HTTP (agents.ts): the route and a `${VAR}` bearer, no secret. */
+export const httpMcpConfigPathOf = (home: string, slotId: string): string => join(home, 'mcp', MCP_SERVER_NAME, `${slotId}.json`)
 
 /** The port in force: `TETHER_BRIDGE_PORT` (a development or test knob, never a setting) or the fixed one. */
 export function bridgePortOf(env: NodeJS.ProcessEnv = process.env): number {

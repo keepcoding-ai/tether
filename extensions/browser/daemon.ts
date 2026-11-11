@@ -5,13 +5,16 @@
 // this entry for the doctor checks, never get there).
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { normalizeSetting, readExtensionsSettings } from '../../app/shared/vscode-configuration-registry.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { profileOption } from '../../src/core/profile.ts'
 import { findNode } from '../web-bridge/warmup.ts'
-import { createBrowserLaunchMiddleware, releaseSlot, sweepStale } from './agents.ts'
+import { McpHttpHost, type McpBackend } from '../../src/daemon/mcp-http.ts'
+import { type BrowserBackendInput, createBrowserLaunchMiddleware, MCP_SERVER_NAME, releaseSlot, sweepStale } from './agents.ts'
+import { auditVendor } from './vendor-rules.ts'
 import { manifest } from './manifest.ts'
 import { scrubLogLine } from './log-scrub.ts'
 import { PROFILE_OPTION, serveModeOf, servesAgent, type ServeMode } from './rules.ts'
@@ -40,8 +43,55 @@ export function serveFor(api: Pick<TetherDaemon, 'settings' | 'profiles'>, slot:
   return servesAgent(serveMode(api), profileMarked(api, slot))
 }
 
+/** What the daemon uses of the vendored bundle as a module (packages/browser src/tether-server.ts). */
+interface BrowserBundle {
+  createTetherBrowserServer(opts: {
+    endpointFile: string; keyFile: string; allowEvaluate?: boolean; env?: Record<string, string | undefined>
+    log?: (line: string) => void; sessionIdleMs?: number
+  }): McpBackend
+}
+
+/**
+ * The slots' servers inside the daemon: the vendored bundle is checked against its manifests and imported ONCE, at the first
+ * agent that initializes (never at startup: a daemon whose agents do not use the browser never loads it); each slot then gets
+ * its own server object. A bundle that is not whole is never loaded into the daemon: the error reaches the agent's CLI.
+ */
+export function createBrowserBackends(vendorDir: string, server: string, log: (msg: string) => void, importBundle: (path: string) => Promise<unknown> = p => import(pathToFileURL(p).href)): (input: BrowserBackendInput) => Promise<McpBackend> {
+  let bundle: Promise<BrowserBundle> | undefined
+  const load = async (): Promise<BrowserBundle> => {
+    const problems = auditVendor(vendorDir)
+    if (problems.length) throw new Error(`servidor do navegador não confere com o manifesto (${problems[0]}${problems.length > 1 ? `, +${problems.length - 1}` : ''})`)
+    const m = await importBundle(server) as Partial<BrowserBundle>
+    if (typeof m.createTetherBrowserServer !== 'function') throw new Error('o servidor vendorizado do navegador não tem a entrada de biblioteca (createTetherBrowserServer): revendorize')
+    return m as BrowserBundle
+  }
+  return async input => {
+    bundle ??= load()
+    // A failed load is tried again by the next agent (the folder may have been repaired).
+    bundle.catch(() => { bundle = undefined })
+    const lib = await bundle
+    return lib.createTetherBrowserServer({
+      endpointFile: input.endpointFile,
+      keyFile: input.keyFile,
+      ...(input.evaluate ? { allowEvaluate: true } : {}),
+      env: input.env,
+      // The server lives as long as the agent's run: its session is not released for being idle.
+      sessionIdleMs: Infinity,
+      // Only the connection's own line; tool failures name addresses and stay out of the log.
+      log: line => { if (line.startsWith('connected')) log(line) },
+    })
+  }
+}
+
 export function activate(api: TetherDaemon): IDisposable[] {
+  // The server over HTTP for agents with `mcp.http` (agents.ts). It listens only in the tetherd that owns the pipe (onStarted):
+  // elsewhere urlOf is undefined and the stdio path applies.
+  const log = (msg: string): void => api.log(scrubLogLine(msg))
+  const http = new McpHttpHost({ name: MCP_SERVER_NAME, log })
+  const vendorDir = resolve(import.meta.dirname ?? '.', 'vendor')
   const middleware = createBrowserLaunchMiddleware({
+    http,
+    backend: createBrowserBackends(vendorDir, resolve(vendorDir, 'tether-browser', 'server.mjs'), log),
     home: api.home,
     agent: name => api.agents.get(name),
     serve: slot => serveFor(api, slot),
@@ -54,8 +104,16 @@ export function activate(api: TetherDaemon): IDisposable[] {
     log: msg => api.log(scrubLogLine(msg)),
   })
   return [
-    api.onStarted(() => { const n = sweepStale(api.home); if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`) }),
+    api.onStarted(() => {
+      const n = sweepStale(api.home)
+      if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`)
+      http.listen().then(
+        port => api.log(`navegador servido aos agentes por HTTP em 127.0.0.1:${port}`),
+        e => api.log(`servidor HTTP do navegador não subiu (${e instanceof Error ? e.message : String(e)}); agentes recebem o navegador por stdio`),
+      )
+    }),
     api.launch.use(middleware),
-    api.onSlot(ev => { if (ev.kind === 'exited' && ev.slot.kind !== 'shell') releaseSlot(api.home, ev.slot.slotId) }),
+    api.onSlot(ev => { if (ev.kind === 'exited' && ev.slot.kind !== 'shell') { http.revoke(ev.slot.slotId); releaseSlot(api.home, ev.slot.slotId) } }),
+    { dispose: () => { void http.close() } },
   ]
 }

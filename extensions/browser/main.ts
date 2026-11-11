@@ -17,6 +17,7 @@ import { helpLine } from './control-rules.ts'
 import { type Gate, startGate } from './gate.ts'
 import { DownloadStore } from './downloads.ts'
 import { UploadConsent } from './upload-consent.ts'
+import { AGENT_TABS_FILE, AgentTabs } from './agent-tabs.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LocalNetworkGate } from './local-network.ts'
 import { type ActionKind, hostOf } from './pad-rules.ts'
@@ -186,8 +187,10 @@ export function activate(main: TetherMain): IDisposable[] {
     lastPulse.set(tabId, { at: now, kind })
     ipc.send('activity', tabId, kind)
   }
+  // What each agent's tool calls its tabs, kept with the tabs (the gate creates `<home>/browser` owner-only before serving).
+  const agentTabs = new AgentTabs(join(main.home, 'browser', AGENT_TABS_FILE), log)
   const tabIdsOf = (ids: unknown): string[] => (Array.isArray(ids) ? ids.filter(isId).slice(0, 512) : [])
-  const gateReady = startGate({ home: main.home, tabs: registry, control, confirmUpload, activity: pulse, log, ...(trace ? { trace } : {}) }).then(g => {
+  const gateReady = startGate({ home: main.home, tabs: registry, control, confirmUpload, agentTabs, activity: pulse, log, ...(trace ? { trace } : {}) }).then(g => {
     if (gateDisposed) g.dispose()
     else gate = g
     return g
@@ -200,7 +203,8 @@ export function activate(main: TetherMain): IDisposable[] {
       const saved = savedTabOf(raw)
       return saved ? (await registry.restore(saved)) ?? null : null
     }),
-    ipc.handle('close', tabId => { if (typeof tabId === 'string') { registry.close(tabId); control.closed(tabId) } }),
+    // The person closed the tab: what the agent's tool knew it by goes with it (a tab that merely went away with the window keeps it).
+    ipc.handle('close', tabId => { if (typeof tabId === 'string') { agentTabs.forget(tabId); registry.close(tabId); control.closed(tabId) } }),
     ipc.handle('agents', () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive }))),
     ipc.handle('logoutAll', async () => {
       const ses = await session
