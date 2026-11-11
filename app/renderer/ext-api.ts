@@ -30,6 +30,9 @@ import type { SurfaceBinding } from './surface-host.ts'
 import type { AgentPane } from './agent-panes.ts'
 import type { FrameSnapshot, PanelFrameTree } from './panel-frames.ts'
 
+/** Why a panel frame became loose: the person closed its panel, or the panel went by itself. */
+export type LooseCause = 'closed' | 'lost'
+
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
 export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
@@ -423,8 +426,11 @@ export interface TetherUi {
       tree(): PanelFrameTree
       /** The frames may have changed (a pane opened or closed somewhere, an operation ran). */
       onDidChange(listener: () => void): IDisposable
-      /** A frame with content just became loose (its panel closed). */
-      onDidLoose(listener: (key: string) => void): IDisposable
+      /**
+       * A frame with content just became loose: its panel closed. `cause` is 'closed' when the person closed the panel
+       * (its tab's ×, "Fechar painel…"), 'lost' when it went by itself (the slot was removed, the daemon forgot it).
+       */
+      onDidLoose(listener: (key: string, cause: LooseCause) => void): IDisposable
       /**
        * Whether a loose frame's panel can be brought back (its slot still exists in the tetherd: reopening resumes it),
        * with the words the manager shows either way.

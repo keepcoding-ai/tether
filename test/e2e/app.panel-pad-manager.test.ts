@@ -7,6 +7,8 @@
 //   4. dragging a card to the desk's edge MOVES the guide: on the desk, out of the pad, the card and group gone;
 //   5. another desk lists nothing of this one;
 //   6. a closed owner is a "fechado" group with its guides, the filter counts them; Focar guia brings the owner back;
+//      closing a panel by its × closes its frame too ("N guias da prancheta fechadas", Desfazer brings the frame back
+//      under the closed owner); a panel that goes by itself leaves its frame loose ("ficou solto");
 //      Fechar guia on the last guide of a closed owner removes its frame;
 //   7. the keyboard and the switch; 8. affinity of desk-only screens.
 // Screenshots in <atrium>/.tmp/panel-pad-manager.
@@ -264,8 +266,20 @@ test("panel pad manager: the pad's guides grouped by owner; focus, close, move b
     if (await managerOn(page)) await page.click(`${shown} .tab-act[data-action="frames-manager"]`)
     await page.waitForFunction(() => !window.__tether.panelPadManagerOn())
     const n3 = await noteInPad(page, note3)
+    // The person closes B by its ×: its frame goes along, with "Desfazer".
     await closePane(page, b)
+    await page.waitForFunction(() => window.__tether.panelFramesToast()?.text === '1 guia da prancheta fechada', undefined, { timeout: 5_000 })
+    assert.equal((await page.evaluate(() => window.__tether.panelFramesToast()))?.action, 'Desfazer')
+    assert.equal((await page.evaluate(() => window.__tether.panelFramesTree())).loose.length, 0, "B's frame closed with it")
+    assert.ok(!(await page.evaluate(k => k in (window.__tether.layout().sidebars?.pads ?? {}), key(b))), "B's frame left the layout")
+    await page.screenshot({ path: join(shots, '6-guias-fechadas-toast.png') })
+    // Desfazer: only the frame comes back, under the closed owner; B stays closed and nothing new is told.
+    await page.click('.pf-toast .pf-toast-action')
     await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 1, undefined, { timeout: 5_000 })
+    await sleep(400)
+    assert.equal(await page.evaluate(() => window.__tether.panelFramesToast()), undefined, 'the undo tells nothing new')
+    assert.equal((await page.evaluate(() => window.__tether.panelFramesTree())).loose.length, 1, 'the undo is not closed again')
+    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(b), 'B stays closed')
     await page.evaluate(id => window.__tether.activatePanel(id), a)
     await page.evaluate(() => window.__tether.openPanelPadManager('all'))
     await page.waitForSelector(card(n3))
@@ -300,9 +314,14 @@ test("panel pad manager: the pad's guides grouped by owner; focus, close, move b
     await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0)
     assert.ok(await padHas(page, b, n3), "the guide is in B's frame, B is back")
     await page.screenshot({ path: join(shots, '6c-focar-guia-dono-fechado.png') })
-    // Fechar guia on the last guide of a closed owner: its frame goes.
-    await closePane(page, b)
+    // Fechar guia on the last guide of a closed owner: its frame goes. B goes by itself this time (the daemon drops
+    // it, nobody closes it): its frame stays loose and the old toast is shown.
+    await page.evaluate(id => window.tether.request({ t: 'forget', slotId: id }), b)
+    await page.waitForFunction(id => !window.__tether.panelIds().includes(id), b)
     await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 1, undefined, { timeout: 5_000 })
+    await page.waitForFunction(() => window.__tether.panelFramesToast()?.text === 'O quadro da prancheta ficou solto', undefined, { timeout: 5_000 })
+    assert.equal((await page.evaluate(() => window.__tether.panelFramesToast()))?.action, 'Ver')
+    await page.screenshot({ path: join(shots, '6-queda-sozinha-solto.png') })
     await page.evaluate(() => window.__tether.openPanelPadManager('loose'))
     await page.waitForSelector(card(n3))
     await page.click(`${card(n3)} .pf-act.pin-primary[data-label="Fechar guia"]`)

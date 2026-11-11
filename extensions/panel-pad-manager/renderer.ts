@@ -1,6 +1,7 @@
 // The panel-pad-manager extension's renderer entry: the manager as the panel pad's second state (frame-pads/manager-slot.ts:
 // this extension provides the view, the frame-pads extension hosts it), its two commands (switch the pad to the manager
-// and back; show the loose frames), the toasts (a frame became loose: "Ver"; a loose frame closed), and the test hooks.
+// and back; show the loose frames), the toasts (a panel the person closed takes its frame along: "Desfazer"; a panel that
+// went by itself leaves its frame loose: "Ver"; a loose frame closed), and the test hooks.
 // The frames are the core's (TetherUi.pads.panelFrames); what a card does is what the guide's tab does (TetherUi.panes).
 import type { FrameFilter, TetherUi } from '../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
@@ -64,6 +65,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.pads.panelFrames.onDidChange(refresh),
     ui.agents.onDidChange(refresh),
     ui.panes.onDidChangeActive(refresh),
-    ui.pads.panelFrames.onDidLoose(key => showToast({ text: 'O quadro da prancheta ficou solto', ms: TOAST_MS, action: { label: 'Ver', run: () => show('all', key) } })),
+    ui.pads.panelFrames.onDidLoose((key, cause) => {
+      if (cause === 'lost') { showToast({ text: 'O quadro da prancheta ficou solto', ms: TOAST_MS, action: { label: 'Ver', run: () => show('all', key) } }); return }
+      // The person closed the panel: its guides go with it; "Desfazer" brings back only the frame, under the closed owner.
+      const n = ui.pads.panelFrames.tree().loose.find(r => r.key === key)?.tabs ?? 0
+      const snap = ui.pads.panelFrames.close([key])
+      if (!snap.entries.length) return
+      showToast({ text: n === 1 ? '1 guia da prancheta fechada' : `${n} guias da prancheta fechadas`, ms: TOAST_MS, action: { label: 'Desfazer', run: () => ui.pads.panelFrames.restore(snap) } })
+    }),
   ]
 }

@@ -61,7 +61,7 @@ import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMI
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
 import { registerProfileOption } from './profile-options.ts'
-import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, LooseCause, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -717,8 +717,9 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   if (!panel) return
   const slot = slots.get(slotId)
   rememberClosed(slotId)
-  if (!slot) { removeAnyPanel(panel); return }
-  if (!await settleClose(slot, opts)) return
+  if (!slot) { closedByPerson.add(slotId); removeAnyPanel(panel); return }
+  closedByPerson.add(slotId) // before the daemon's answer: 'forget' may take the panel before settleClose returns
+  if (!await settleClose(slot, opts)) { closedByPerson.delete(slotId); return }
   const still = findPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
   if (still) removeAnyPanel(still)
 }
@@ -1381,7 +1382,12 @@ function frameTree(): PanelFrameTree {
 }
 
 const framesListeners = new Set<() => void>()
-const looseListeners = new Set<(key: string) => void>()
+const looseListeners = new Set<(key: string, cause: LooseCause) => void>()
+/**
+ * Panels the person closed (closePanel, closeSlotless), until the next frames check reads them: their frame becomes
+ * loose with cause 'closed' (the extension closes it, with an undo); any other way a panel goes is 'lost'.
+ */
+const closedByPerson = new Set<string>()
 /** The loose frames with content already told (undefined until the first check after the restore, which tells nothing). */
 let toldLoose: Set<string> | undefined
 let framesTimer: ReturnType<typeof setTimeout> | undefined
@@ -1403,7 +1409,10 @@ function checkFrames(): void {
   toldLoose = new Set(tree.loose.filter(r => !r.empty).map(r => r.key))
   const empty = tree.loose.filter(r => r.empty).map(r => r.key)
   if (empty.length) { dropFrames(empty); scheduleSave() }
-  if (!first) for (const r of fresh) for (const l of [...looseListeners]) { try { l(r.key) } catch (err) { console.error('onDidLoose', err) } }
+  const cause = (key: string): LooseCause => closedByPerson.has(frameOwnerOf(key)?.panelId ?? '') ? 'closed' : 'lost'
+  const told = first ? [] : fresh.map(r => ({ key: r.key, cause: cause(r.key) }))
+  closedByPerson.clear()
+  for (const t of told) for (const l of [...looseListeners]) { try { l(t.key, t.cause) } catch (err) { console.error('onDidLoose', err) } }
   for (const l of [...framesListeners]) { try { l() } catch (err) { console.error('panelFrames.onDidChange', err) } }
 }
 
@@ -2689,7 +2698,7 @@ let paletteMode: PaletteModeProvider | undefined
 function closeSlotless(id: string): void {
   const panel = findPanel(id)
   rememberClosed(id)
-  if (panel) removeAnyPanel(panel)
+  if (panel) { closedByPerson.add(id); removeAnyPanel(panel) }
 }
 
 
