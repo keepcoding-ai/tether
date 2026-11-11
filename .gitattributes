@@ -3,3 +3,9 @@ extensions/browser/vendor/** -text
 # Vendored extension text files were hashed over CRLF bytes (vendored on Windows); keep them CRLF so manifest.json hashes match on every OS.
 extensions/web-bridge/vendor/extension/*.html text eol=crlf
 extensions/web-bridge/vendor/extension/*.css text eol=crlf
+# The bridge bundle, its build-info, both manifests and the extension's scripts were hashed over LF bytes: never converted.
+extensions/web-bridge/vendor/atrium-bridge.mjs -text
+extensions/web-bridge/vendor/*.json -text
+extensions/web-bridge/vendor/extension/manifest.json -text
+extensions/web-bridge/vendor/extension/dist/** -text
+extensions/web-bridge/vendor/extension/brand/** -text
