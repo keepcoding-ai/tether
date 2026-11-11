@@ -80,6 +80,36 @@ export function slotPauseReportPath(home: string, slotId: string): string {
   return join(slotsDir(home), `${slotId}.pause.jsonl`)
 }
 
+// Background processes managed by tether (tether proc):
+//   <home>/procs/<name>.json            ProcCard (the recipe; tetherd writes it)
+//   <home>/procs/<name>.jsonl           history (append-only; tetherd is its only writer)
+//   <home>/procs/<name>.run.json        the current run (pid, start time, exit; only tether-procd writes it)
+//   <home>/procs/<name>/logs/run-<n>.log clean text, one line per output line (only tether-procd writes it)
+
+export function procsDir(home: string): string {
+  return join(home, 'procs')
+}
+
+export function procCardPath(home: string, name: string): string {
+  return join(procsDir(home), `${name}.json`)
+}
+
+export function procEventsPath(home: string, name: string): string {
+  return join(procsDir(home), `${name}.jsonl`)
+}
+
+export function procRunPath(home: string, name: string): string {
+  return join(procsDir(home), `${name}.run.json`)
+}
+
+export function procLogsDir(home: string, name: string): string {
+  return join(procsDir(home), name, 'logs')
+}
+
+export function procLogPath(home: string, name: string, run: number): string {
+  return join(procLogsDir(home, name), `run-${run}.log`)
+}
+
 /** The slot's ronda (tether's nudge clock): interval, extra nudge, stop criterion, next due time. */
 export function slotRondaPath(home: string, slotId: string): string {
   return join(slotsDir(home), `${slotId}.ronda.json`)

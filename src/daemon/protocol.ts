@@ -6,8 +6,9 @@ import type { AgentName, Binding } from '../core/event.ts'
 import type { Profile, ProfileInput } from '../core/profile.ts'
 import type { PauseBatch } from './pause.ts'
 import type { Ronda } from './ronda.ts'
+import type { ProcBy, ProcEvent, ProcRecipe, ProcState } from './procs.ts'
 
-export type { Profile, ProfileInput, PauseBatch, Ronda }
+export type { Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState }
 
 export const PROTOCOL_VERSION = 1
 
@@ -115,6 +116,10 @@ export type ErrorCode =
   | 'no-pause'          // the request needs an active batch and there is none
   | 'ronda-criterion'   // ronda-off refused: the ronda has a stop criterion (message = the stimulus); resend with force
   | 'agent-unavailable' // the slot's agent is not registered (its extension is off or gone); the slot is kept
+  | 'unknown-proc'      // no background process by that name
+  | 'proc-running'      // proc-start of a name that runs (the message says who started it)
+  | 'proc-not-stopped'  // proc-forget of a live process
+  | 'proc-host'         // the process host is unavailable or speaks another protocol version (message: what to do)
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
@@ -179,6 +184,24 @@ export type Request =
   | { t: 'ronda-get'; id: number; slotId: string }
   /** Switch the ronda off; with a criterion and no `force` → `ronda-criterion` (the stimulus). The UI always forces. */
   | { t: 'ronda-off'; id: number; slotId: string; force?: boolean }
+  /** Background processes (tether proc). `by`: who asks (CLI); the app sends none and is "você (pelo app)". */
+  | { t: 'proc-list'; id: number }
+  /** The process and its last events. */
+  | { t: 'proc-info'; id: number; name: string }
+  /** Register (or change the recipe of a stopped one) and start; no recipe = the stored one. Reply: `proc` (status failed when it did not start). */
+  | { t: 'proc-start'; id: number; name: string; recipe?: ProcRecipe; by?: ProcBy }
+  /** Ctrl+C, the card's grace, then the tree. Answers once it stopped. */
+  | { t: 'proc-stop'; id: number; name: string; reason?: string; by?: ProcBy }
+  /** Stop and start again with the stored recipe; answers once the new run is up. */
+  | { t: 'proc-restart'; id: number; name: string; reason?: string; by?: ProcBy }
+  /** Stopped only: card, history, run file and logs go. */
+  | { t: 'proc-forget'; id: number; name: string; by?: ProcBy }
+  /** Someone looked: clears `attention`. */
+  | { t: 'proc-seen'; id: number; name: string }
+  /** The host's state (`host: null` when none answers). */
+  | { t: 'proc-host'; id: number }
+  /** Ask the host to exit; refused with live processes unless `force` (they are stopped, recorded as asked by `by`). */
+  | { t: 'proc-host-stop'; id: number; force?: boolean; by?: ProcBy }
 
 /** Fire-and-forget (no reply): keystrokes. */
 export type Notice = { t: 'input'; slotId: string; data: string }
@@ -207,6 +230,14 @@ export type Reply =
       /** ronda-set / ronda-get / ronda-off: the slot's ronda (null = off). */
       ronda?: (Ronda & { due?: boolean }) | null
       rondaOutcome?: 'created' | 'updated' | 'unchanged' | 'off' | 'was-off'
+      /** proc-list. */
+      procs?: ProcState[]
+      /** proc-info / proc-start / proc-stop / proc-restart. */
+      proc?: ProcState
+      /** proc-info: the last events, oldest first. */
+      events?: ProcEvent[]
+      /** proc-host: null when no host answers. */
+      host?: { pid: number; version: string; startedAt: string; live: number } | null
     }
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 
@@ -220,5 +251,8 @@ export type Event =
   | { t: 'profiles'; profiles: Profile[] }
   /** The pause batch changed (any state or entry). Sent to every client. */
   | { t: 'pause'; batch: PauseBatch }
+  /** A background process changed (any client). */
+  | { t: 'proc'; proc: ProcState }
+  | { t: 'proc-removed'; name: string }
 
 export type DaemonMessage = Reply | Event

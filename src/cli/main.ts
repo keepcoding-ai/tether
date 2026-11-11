@@ -22,6 +22,7 @@ import { ownSlotOf, restartDaemon, selfShutdownMessage } from '../daemon/restart
 import { agentChoices, agentRegistry } from '../agents/registry.ts'
 import { cmdPause } from './pause.ts'
 import { cmdRonda } from './ronda.ts'
+import { cmdProc } from './proc.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { cmdUsage } from './usage.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
@@ -64,6 +65,9 @@ export const USAGE = `uso: tether <comando> [opções]
   ronda --status [--json]             mostra a ronda deste painel
   ronda --off [--force]               desliga (com critério de parada, pergunta antes; --force
                                       desliga mesmo assim)
+  proc <ls|info|start|stop|restart|logs|history|rm|host> …
+                                      processos de fundo geridos pelo tether (servidores, workers):
+                                      sobrevivem ao painel e ao tetherd (veja: tether proc help)
   link                                imprime o link tether:// deste painel (só dentro do tether)
   focus [arquivo|link] [--pad [panel|desk|global]] [--slot id]
                                       traz para a frente: o arquivo como nota (abre se não estiver
@@ -120,6 +124,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'daemon': return await cmdDaemon(rest)
       case 'pause': return await cmdPause(rest, { out, err, env: process.env })
       case 'ronda': return await cmdRonda(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
+      case 'proc': return await cmdProc(rest, { out, err, env: process.env, home: context().home, cwd: process.cwd(), connect: () => tryConnect(context()) })
       default:
         throw new UsageError(`comando desconhecido: ${command}`, true)
     }
@@ -783,9 +788,10 @@ async function cmdDaemon(args: string[]): Promise<number> {
     }
     case 'restart': {
       if (await refusesSelfShutdown(ctx, 'restart', p.flags.has('force'))) return 1
+      const procs = await liveProcs(ctx)
       const { previous, current } = await restartDaemon({ home: ctx.home, pipe: ctx.pipe })
       out(previous
-        ? `tetherd reiniciado: pid ${previous.pid} → ${current.pid}\n  os agentes foram encerrados; os apps abertos reconectam e retomam as sessões\n`
+        ? `tetherd reiniciado: pid ${previous.pid} → ${current.pid}\n  os agentes foram encerrados; os apps abertos reconectam e retomam as sessões\n${procsKeepRunning(procs)}`
         : `tetherd estava parado; subiu o pid ${current.pid}\n`)
       return 0
     }
@@ -793,14 +799,34 @@ async function cmdDaemon(args: string[]): Promise<number> {
       if (await refusesSelfShutdown(ctx, 'stop', p.flags.has('force'))) return 1
       const client = await tryConnect(ctx)
       if (!client) { out('tetherd já está parado\n'); return 0 }
+      const procs = await liveProcs(ctx)
       await client.request({ t: 'shutdown' })
       client.close()
-      out(`tetherd (pid ${client.hello.pid}) encerrando; os agentes dos slots foram parados\n`)
+      out(`tetherd (pid ${client.hello.pid}) encerrando; os agentes dos slots foram parados\n${procsKeepRunning(procs)}`)
       return 0
     }
     default:
       throw new UsageError('use: tether daemon status | restart | stop [--force]')
   }
+}
+
+/** How many background processes run (they live in tether-procd, not in tetherd); 0 when tetherd cannot tell. */
+async function liveProcs(ctx: Context): Promise<number> {
+  const client = await tryConnect(ctx)
+  if (!client) return 0
+  try {
+    const procs = (await client.request({ t: 'proc-list' })).procs ?? []
+    return procs.filter((p) => p.status === 'running' || p.status === 'stopping').length
+  } catch {
+    return 0 // an older tetherd without proc-list
+  } finally {
+    client.close()
+  }
+}
+
+function procsKeepRunning(n: number): string {
+  if (!n) return ''
+  return n === 1 ? '  1 processo de fundo segue rodando no anfitrião (tether proc ls)\n' : `  ${n} processos de fundo seguem rodando no anfitrião (tether proc ls)\n`
 }
 
 /**
