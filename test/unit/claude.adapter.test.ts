@@ -105,15 +105,15 @@ describe('claudeAdapter.plan', () => {
     assert.deepEqual(env, { XCLAUDE: 'keep', FOO: 'bar' })
   })
 
-  test('settings file: valid JSON, all five hooks call the reporter by absolute forward-slash path', () => {
+  test('settings file: valid JSON, every hook call the reporter by absolute forward-slash path', () => {
     const home = homes.make()
     claudeAdapter.plan({ slot, home, extraArgs: [] })
     const file = join(home, 'claude-settings.json')
     const settings = JSON.parse(readFileSync(file, 'utf8')) as {
       hooks: Record<string, { matcher?: string; hooks: { type: string; command: string }[] }[]>
     }
-    assert.deepEqual(Object.keys(settings.hooks).sort(), ['Notification', 'PostToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit'])
-    for (const event of ['SessionStart', 'SessionEnd', 'Stop', 'Notification', 'UserPromptSubmit'] as const) {
+    assert.deepEqual(Object.keys(settings.hooks).sort(), ['Notification', 'PostToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit'])
+    for (const event of ['SessionStart', 'SessionEnd', 'Stop', 'Notification', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop'] as const) {
       const group = settings.hooks[event]
       assert.equal(group?.length, 1)
       const hook = group![0]!.hooks[0]!

@@ -2,8 +2,9 @@
 // watches <home>/slots/*.jsonl so every client sees the current binding. Speaks protocol.ts over a named
 // pipe / unix socket (NDJSON). "Running" means: this process holds the PTY and it has not exited.
 import { withTabEnv } from '../core/tab-env.ts'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
+import { join } from 'node:path'
 import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports } from './attention.ts'
 import { memoryChanged, sampleProcessTable, treeBytes } from './memory.ts'
 import '../agents/load.ts'
@@ -53,6 +54,8 @@ export function defaultAgentArgs(agent: AgentName, env: NodeJS.ProcessEnv = proc
   return raw ? raw.split(/\s+/) : []
 }
 const WATCH_DEBOUNCE_MS = 100
+/** A subagent marker older than this no longer counts (its SubagentStop was lost: a crash, a kill). */
+const BG_MAX_AGE_MS = 6 * 60 * 60_000
 /** Pause resume: slots typed into at once, and the gap between the text and the Enter (else the TUI sees a paste). */
 const PAUSE_RESUME_PARALLEL = 3
 const PAUSE_RESUME_ENTER_DELAY_MS = 130
@@ -142,6 +145,8 @@ interface Slot {
   attentionTimer?: NodeJS.Timeout
   /** ts of the last hook report applied (the file is rewritten per report; older ones are ignored). */
   attentionReportTs?: string
+  /** The wake fallback after the last background subagent ended (see AttentionState.wakeDueAt). */
+  wakeTimer?: NodeJS.Timeout
   /** How many `turn` lines of the events file were already applied (the file is append-only and spans runs). */
   turnLinesSeen?: number
   /** The slot's ronda (persisted in <home>/slots/<id>.ronda.json); `rondaDue`: its time came and it waits for an idle agent. */
@@ -302,6 +307,7 @@ class DaemonImpl implements Daemon {
     if (slot.attention.turn === 'busy') {
       s.turn = 'busy'
       if (slot.attention.busySince) s.busySince = slot.attention.busySince
+      if (slot.attention.background > 0) s.background = slot.attention.background
     }
     else {
       const idleSince = slot.attention.idleSince ?? slot.spawnedAt ?? this.lastEventTs(slot)
@@ -672,6 +678,7 @@ class DaemonImpl implements Daemon {
     }
     slot.scrollback.clear()
     slot.attention.reset()
+    this.clearBackground(meta.slotId)
     slot.error = undefined
     slot.memoryMB = undefined
     if (meta.endedAt) {
@@ -698,6 +705,8 @@ class DaemonImpl implements Daemon {
           slot.status = 'exited'
           slot.memoryMB = undefined
           slot.attention.reset()
+          this.clearBackground(meta.slotId)
+          if (slot.wakeTimer) { clearTimeout(slot.wakeTimer); slot.wakeTimer = undefined }
           this.markEnded(slot)
           if (slot.attentionTimer) clearTimeout(slot.attentionTimer)
           this.unwatchTitle(slot)
@@ -1113,6 +1122,8 @@ class DaemonImpl implements Daemon {
         if (typeof filename !== 'string') return
         const pr = /^([^.]+)\.pause\.jsonl$/.exec(filename)
         if (pr && SLOT_ID_RE.test(pr[1]!)) { this.schedulePauseReport(pr[1]!); return }
+        const bg = /^([^.]+)\.bg\./.exec(filename)
+        if (bg && SLOT_ID_RE.test(bg[1]!)) { this.scheduleBackground(bg[1]!); return }
         const a = /^([^.]+)\.attention$/.exec(filename)
         if (a && SLOT_ID_RE.test(a[1]!)) { this.scheduleAttentionReport(a[1]!); return }
         const m = /^([^.]+)\.(jsonl|json)$/.exec(filename)
@@ -1123,6 +1134,60 @@ class DaemonImpl implements Daemon {
     } catch (e) {
       this.log(`cannot watch ${slotsDir(this.home)}: ${(e as Error).message}`)
     }
+  }
+
+  /** Debounces the subagent markers per slot (<slot>.bg.<agentId>, written and removed by Claude's Subagent hooks). */
+  private scheduleBackground(slotId: string): void {
+    const key = `${slotId}.bg`
+    const prev = this.pending.get(key)
+    if (prev) clearTimeout(prev)
+    const t = setTimeout(() => {
+      this.pending.delete(key)
+      const slot = this.slotMap.get(slotId)
+      if (slot) this.applyBackground(slot)
+    }, WATCH_DEBOUNCE_MS)
+    this.pending.set(key, t)
+  }
+
+  /** Counts the slot's live subagent markers: written in this run and younger than BG_MAX_AGE_MS (a lost Stop must not pin it). */
+  private applyBackground(slot: Slot): void {
+    if (!isAlive(slot)) return
+    const dir = slotsDir(this.home)
+    const prefix = `${slot.meta.slotId}.bg.`
+    const since = slot.spawnedAt ? Date.parse(slot.spawnedAt) : 0
+    const now = Date.now()
+    let n = 0
+    try {
+      for (const name of readdirSync(dir)) {
+        if (!name.startsWith(prefix)) continue
+        try {
+          const m = statSync(join(dir, name)).mtimeMs
+          if (m >= since - 1000 && now - m < BG_MAX_AGE_MS) n++
+        } catch { /* removed meanwhile */ }
+      }
+    } catch { return }
+    if (slot.attention.setBackground(n, now)) this.broadcastState(slot)
+    this.scheduleWake(slot)
+  }
+
+  /** Arms the wake fallback: the last subagent ended and the agent must finish its turn within WAKE_MS, or it counts as done. */
+  private scheduleWake(slot: Slot): void {
+    if (slot.wakeTimer) { clearTimeout(slot.wakeTimer); slot.wakeTimer = undefined }
+    const due = slot.attention.wakeDueAt()
+    if (due === undefined) return
+    slot.wakeTimer = setTimeout(() => {
+      slot.wakeTimer = undefined
+      if (slot.attention.wakeExpired(Date.now())) this.broadcastState(slot)
+    }, Math.max(50, due - Date.now()))
+    slot.wakeTimer.unref()
+  }
+
+  /** Removes the slot's subagent markers (a launch or exit: whatever ran belonged to the old process). */
+  private clearBackground(slotId: string): void {
+    const dir = slotsDir(this.home)
+    try {
+      for (const name of readdirSync(dir)) if (name.startsWith(`${slotId}.bg.`)) { try { unlinkSync(join(dir, name)) } catch { /* gone */ } }
+    } catch { /* no dir */ }
   }
 
   /** Debounces the hook's attention file per slot (the write may be seen as several change events). */
@@ -1147,6 +1212,7 @@ class DaemonImpl implements Daemon {
     slot.attentionReportTs = report.ts
     if (!isAlive(slot) || (slot.spawnedAt && report.ts < slot.spawnedAt)) return
     if (slot.attention.hook(report.kind)) this.broadcastState(slot)
+    this.scheduleWake(slot)
   }
 
   /**

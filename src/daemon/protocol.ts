@@ -83,6 +83,8 @@ export interface SlotState {
    * Absent on daemons older than 0.3.3.
    */
   idleSince?: string
+  /** Background subagents still running for this agent (Claude); present only when more than zero. They keep `turn` busy. */
+  background?: number
   /** Since when the current turn runs (ISO); present only while `turn` is 'busy'. Absent on daemons older than 0.3.4. */
   busySince?: string
   /**

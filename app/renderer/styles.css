@@ -1670,3 +1670,7 @@ body.dim-unfocused .desk-set .frame:not(.focused)::after { opacity: var(--dim-ve
 .tether-tab .ronda-mark { display: inline-flex; flex: none; color: var(--accent); }
 .tether-tab .ronda-mark[hidden] { display: none; }
 .tether-tab .ronda-mark .ph { width: 12px; height: 12px; }
+/* Ronda colour: blue (accent) while the agent is idle, green (ok) while its turn is running. */
+.tether-tab .ronda-mark.busy { color: var(--ok); }
+.status-bar .ronda.busy { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.status-bar .ronda.busy:hover { background: color-mix(in srgb, var(--ok) 24%, transparent); }

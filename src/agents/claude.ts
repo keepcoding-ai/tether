@@ -30,7 +30,7 @@ function defaultHookPath(): string {
  */
 export function hookSettings(hookPath: string = defaultHookPath()): object {
   const script = hookPath.replace(/\\/g, '/')
-  const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit') => [
+  const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit' | 'SubagentStart' | 'SubagentStop') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
   ]
   // PostToolUse fires per tool call: a shell guard keeps Node from spawning unless a polite-pause request is pending for this slot.
@@ -49,6 +49,9 @@ export function hookSettings(hookPath: string = defaultHookPath()): object {
       Notification: hook('Notification'),
       UserPromptSubmit: hook('UserPromptSubmit'),
       PostToolUse: postToolUse,
+      // A subagent's life (background ones keep the agent "working" after its Stop; see claude-hook.mjs backgroundStep).
+      SubagentStart: hook('SubagentStart'),
+      SubagentStop: hook('SubagentStop'),
     },
   }
 }

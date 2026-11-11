@@ -6,7 +6,7 @@
 // context), except the polite-pause delivery on PostToolUse/UserPromptSubmit, never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
 // Plain JS on purpose: Node's TypeScript loader added ~40% to the hook's run time.
 // It does not import the core: it appends one JSON line itself.
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -132,6 +132,27 @@ function pauseStep(home, slotId, hookName, payload, ts) {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: hookName, additionalContext: text } }))
 }
 
+/**
+ * Background work: SubagentStart leaves a marker <home>/slots/<slot>.bg.<agentId>, SubagentStop removes it, SessionStart
+ * removes them all (a new or resumed session owns none). tetherd counts the markers: while any is there, a Stop does not
+ * mean "stopped", the agent is waiting for its subagents. Foreground subagents pass through too; they end before the turn does.
+ * Returns true when the hook was one of these.
+ * @param {string} home @param {string} slotId @param {string} hookName @param {Payload} payload @returns {boolean} */
+export function backgroundStep(home, slotId, hookName, payload) {
+  if (hookName !== 'SubagentStart' && hookName !== 'SubagentStop' && hookName !== 'SessionStart') return false
+  const dir = join(home, 'slots')
+  if (hookName === 'SessionStart') {
+    try { for (const n of readdirSync(dir)) if (n.startsWith(`${slotId}.bg.`)) { try { unlinkSync(join(dir, n)) } catch { /* gone */ } } } catch { /* no dir */ }
+    return false // SessionStart still reports the session
+  }
+  const id = (str(payload.agent_id) ?? '').replace(/[^A-Za-z0-9_-]/g, '')
+  if (!id) return true
+  const path = join(dir, `${slotId}.bg.${id}`)
+  if (hookName === 'SubagentStart') { mkdirSync(dir, { recursive: true }); writeFileSync(path, '') }
+  else { try { unlinkSync(path) } catch { /* never started here */ } }
+  return true
+}
+
 /** @param {string} stdin */
 function record(stdin) {
   const home = tetherHome()
@@ -153,6 +174,7 @@ function record(stdin) {
     const ts = new Date().toISOString()
     try { pauseStep(home, slotId, hookName, payload, ts) } catch (e) { log(home, `pause: ${/** @type {Error} */ (e).message}`) }
     if (hookName === 'PostToolUse') return
+    try { if (backgroundStep(home, slotId, hookName, payload)) return } catch (e) { log(home, `background: ${/** @type {Error} */ (e).message}`) }
     const attention = toAttention(hookName, payload, ts)
     if (attention) {
       const dir = join(home, 'slots')

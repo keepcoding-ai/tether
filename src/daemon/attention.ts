@@ -33,6 +33,8 @@ export interface AttentionOptions {
 }
 
 export const IDLE_MS = 4_000
+/** After the last background subagent ends, how long the agent may take to wake before the turn counts as over anyway. */
+export const WAKE_MS = 120_000
 export const BURST_BYTES = 512
 
 /** Where the escape-sequence scanner stands between chunks. */
@@ -54,6 +56,12 @@ export class AttentionState {
   private armed = false
   private burst = 0
   private lastOutputAt = 0
+  /** Background subagents still running (Claude: marker files its Subagent hooks keep). The turn stays busy while any runs. */
+  background = 0
+  /** The main turn ended (Stop) while subagents ran: the turn is kept busy for them, and the agent wakes when they end. */
+  private delegating = false
+  /** ms epoch when the last subagent ended while delegating: the wake fallback runs from here. */
+  private wakeFrom: number | undefined = undefined
 
   constructor(opts: AttentionOptions) {
     this.opts = { idleMs: IDLE_MS, burstBytes: BURST_BYTES, ...opts }
@@ -63,7 +71,10 @@ export class AttentionState {
   hook(kind: HookKind): boolean {
     this.disarm()
     // A new turn voids the previous 'done' / 'waiting': the agent is working again.
+    if (kind === 'start' || kind === 'done') { this.delegating = false; this.wakeFrom = undefined }
     if (kind === 'start') { const t = this.setTurn('busy'); return this.set(undefined) || t }
+    // The turn ended but a background subagent still runs: the agent is waiting for it, not stopped.
+    if (kind === 'done' && this.background > 0) { this.delegating = true; return this.setTurn('busy') }
     const t = kind === 'done' ? this.setTurn('idle') : false // 'waiting' keeps the turn busy
     return this.set(kind) || t
   }
@@ -141,8 +152,42 @@ export class AttentionState {
     return this.set('done') || t
   }
 
+  /**
+   * How many background subagents run now (`now` in ms). More than zero keeps the turn busy; when the last one ends after the
+   * main turn did, the turn stays busy while the agent wakes to read the result, until its Stop or `wakeDueAt`.
+   */
+  setBackground(n: number, now: number): boolean {
+    if (n === this.background) return false
+    this.background = n
+    if (n > 0) {
+      this.wakeFrom = undefined
+      if (this.turn === 'idle') { this.delegating = true; return this.setTurn('busy') }
+      return true
+    }
+    if (this.delegating) this.wakeFrom = now
+    return true
+  }
+
+  /** When the daemon should call `wakeExpired` (ms epoch): the last subagent ended and the agent has not finished since. */
+  wakeDueAt(): number | undefined {
+    return this.delegating && this.background === 0 && this.wakeFrom !== undefined ? this.wakeFrom + WAKE_MS : undefined
+  }
+
+  /** The agent did not report a finished turn within WAKE_MS of its last subagent: the turn is over ('done'). */
+  wakeExpired(now: number): boolean {
+    const due = this.wakeDueAt()
+    if (due === undefined || now < due) return false
+    this.delegating = false
+    this.wakeFrom = undefined
+    const t = this.setTurn('idle')
+    return this.set('done') || t
+  }
+
   /** A new launch or the process exit: nothing is pending and nothing is shown. */
   reset(): boolean {
+    this.background = 0
+    this.delegating = false
+    this.wakeFrom = undefined
     this.disarm()
     this.signaled = false
     this.scan = 'text'

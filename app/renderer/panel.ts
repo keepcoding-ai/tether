@@ -457,6 +457,7 @@ export class TerminalPanel implements IContentRenderer {
       this.head.ronda.title = tip
       this.head.ronda.setAttribute('aria-label', tip)
       this.head.ronda.classList.toggle('due', !!s.ronda.due)
+      this.head.ronda.classList.toggle('busy', s.turn === 'busy')
     }
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
@@ -776,6 +777,7 @@ export class SlotTab implements ITabRenderer {
     this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
     this.unsafe.hidden = !s?.unsafe
     this.ronda.hidden = !s?.ronda
+    this.ronda.classList.toggle('busy', s?.turn === 'busy')
     if (s?.ronda) this.ronda.title = rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, '')
     const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
     // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
