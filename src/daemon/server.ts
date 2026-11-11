@@ -15,7 +15,7 @@ import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { canonicalDir, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
-import { applyChange, buildNudgeText, clearRonda, criterionStimulus, ENV_RONDA_TEST_SECONDS, readRonda, RondaError, writeRonda, type Ronda } from './ronda.ts'
+import { applyChange, buildNudgeText, clearRonda, criterionStimulus, ENV_RONDA_TEST_SECONDS, flatText, readRonda, RondaError, writeRonda, type Ronda } from './ronda.ts'
 import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
 import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
@@ -35,6 +35,10 @@ import {
 } from './protocol.ts'
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
+import { HostClient } from '../procd/client.ts'
+import { procdPipePath } from '../procd/protocol.ts'
+import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
+import { ProcError, WAIT_MAX_MS, type ProcAuthor, type ProcBy } from './procs.ts'
 
 export const DAEMON_VERSION = '0.3.6'
 
@@ -96,6 +100,12 @@ export interface DaemonOptions {
   rondaRetryMs?: number
   /** How long after the user typed into the slot a due ronda still waits (default RONDA_INPUT_QUIET_MS). */
   rondaInputQuietMs?: number
+  /** tether-procd's pipe (default: procdPipePath of this daemon's pipe). */
+  procdPipe?: string
+  /** Connects to the process host (tests: one running in process, never launched). Default: HostClient, launching tether-procd detached. */
+  connectProcHost?: (launch: boolean) => Promise<HostClient>
+  /** How long a lost host connection is retried before its processes count as lost (default HOST_RECONNECT_MS). */
+  procHostReconnectMs?: number
 }
 
 export interface Daemon {
@@ -107,6 +117,29 @@ export interface Daemon {
   listening(): boolean
   /** Kills every PTY tree, drops the clients and closes the server. */
   close(): Promise<void>
+}
+
+/** A reason as typed, flattened to one line; undefined when empty. */
+function optText(v: unknown): string | undefined {
+  const t = typeof v === 'string' ? flatText(v) : ''
+  return t || undefined
+}
+
+/** The guard part of a stop / restart / forget: `waitMs` within 0..5 min, `force` a reason that is not empty. */
+function guardOf(req: { waitMs?: unknown; force?: unknown }): GuardOptions {
+  const g: GuardOptions = {}
+  if (req.waitMs !== undefined) {
+    if (typeof req.waitMs !== 'number' || !Number.isFinite(req.waitMs) || req.waitMs < 0) throw new RequestError('bad-request', 'waitMs inválido')
+    if (req.waitMs > WAIT_MAX_MS) throw new RequestError('bad-request', 'espera longa demais: o máximo é 5m')
+    g.waitMs = req.waitMs
+  }
+  if (req.force !== undefined) {
+    const reason = optText(req.force)
+    if (!reason) throw new RequestError('bad-request', 'forçar pede um motivo: --force "motivo" (ele chega a quem usa)')
+    g.force = reason
+  }
+  if (g.force !== undefined && g.waitMs !== undefined) throw new RequestError('bad-request', 'escolha esperar (--wait) ou forçar (--force), não os dois')
+  return g
 }
 
 class RequestError extends Error {
@@ -166,6 +199,10 @@ interface Client {
   socket: Socket
   parser: LineParser
   attached: Set<string>
+  /** Background processes whose output this client watches (proc-attach). */
+  procsWatched: Set<string>
+  /** From the hello: 'app' | 'cli' | 'test'. */
+  kind?: string
 }
 
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
@@ -209,6 +246,10 @@ class DaemonImpl implements Daemon {
   private batch: PauseBatch | undefined
   /** This process' OS start time: goes into every run file so a later tetherd can tell this one is gone. */
   private startedAt = new Date().toISOString()
+  /** Background processes (tether proc): the model and the link to tether-procd. */
+  private readonly procs: ProcManager
+  /** Who watches each background process' output (one host attachment per name, shared). */
+  private readonly procWatchers = new Map<string, Set<Client>>()
 
   constructor(opts: DaemonOptions) {
     this.home = opts.home
@@ -228,6 +269,48 @@ class DaemonImpl implements Daemon {
     this.rondaInputQuietMs = opts.rondaInputQuietMs ?? RONDA_INPUT_QUIET_MS
     this.profileStore = new ProfileStore(opts.home)
     this.server = createServer((socket) => this.onConnection(socket))
+    const procdPipe = opts.procdPipe ?? procdPipePath(opts.pipe, opts.home)
+    this.procs = new ProcManager({
+      home: opts.home,
+      log: this.log,
+      broadcast: (msg) => this.broadcast(msg),
+      author: (by, client) => this.procAuthor(by, client),
+      connectHost: opts.connectProcHost ?? ((launch) => launch
+        ? HostClient.ensure({ home: opts.home, pipe: procdPipe, node: process.env.TETHER_NODE?.trim() || process.execPath, env: process.env, log: this.log })
+        : HostClient.open(procdPipe)),
+      ...(opts.procHostReconnectMs !== undefined ? { reconnectMs: opts.procHostReconnectMs } : {}),
+      allowSeconds: this.rondaAllowSeconds,
+      slotExists: (slotId) => this.slotMap.has(slotId),
+      protectedPids: () => [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit).map((s) => s.pty!.pid),
+      sampleSoon: () => this.kickMemory(),
+      onData: (name, data) => { for (const c of this.procWatchers.get(name) ?? []) this.send(c, { t: 'proc-data', name, data }) },
+    })
+  }
+
+  /** The portrait of whoever asks for a process act: their slot when it is one of ours, else external (or the app). */
+  private procAuthor(by: ProcBy | undefined, client: string | undefined): ProcAuthor {
+    const label = typeof by?.as === 'string' && by.as.trim() ? by.as.trim() : undefined
+    const user = typeof by?.user === 'string' && by.user ? by.user : osUser()
+    if (!by && client === 'app') return { kind: 'app', ...(user ? { user } : {}) }
+    const slotId = typeof by?.slotId === 'string' && by.slotId ? by.slotId : undefined
+    const slot = slotId ? this.slotMap.get(slotId) : undefined
+    const a: ProcAuthor = slot ? { kind: slot.meta.agent === 'shell' ? 'shell' : 'agent', slotId: slot.meta.slotId } : { kind: 'external', ...(slotId ? { slotId } : {}) }
+    if (slot?.meta.name) a.name = slot.meta.name
+    if (slot && slot.meta.agent !== 'shell') a.agent = slot.meta.agent
+    if (slot?.binding?.sessionId) a.sessionId = slot.binding.sessionId
+    if (user) a.user = user
+    if (label) a.label = label
+    return a
+  }
+
+  /** Runs a process act, turning the model's refusals into replies. */
+  private async procAct<T>(fn: () => Promise<T> | T): Promise<T> {
+    try {
+      return await fn()
+    } catch (e) {
+      if (e instanceof ProcError) throw new RequestError(e.code, e.message)
+      throw e
+    }
   }
 
   async listen(): Promise<void> {
@@ -238,6 +321,7 @@ class DaemonImpl implements Daemon {
     if (profiles.problem) this.log(`profiles: ${profiles.problem}`)
     for (const meta of listSlots(this.home)) this.load(meta)
     this.loadPause()
+    await this.procs.init()
     this.startWatching()
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
     await new Promise<void>((resolve, reject) => {
@@ -328,14 +412,17 @@ class DaemonImpl implements Daemon {
     this.memoryKick.unref()
   }
 
-  /** One process-table query for every live slot; broadcasts the slots whose memory moved enough. Never overlaps itself. */
+  /** One process-table query for every live slot and background process; broadcasts those whose memory moved enough. Never overlaps itself. */
   private async sampleMemory(): Promise<void> {
     if (this.memorySampling || this.closing) return
     const live = [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit)
-    if (!live.length) return
+    const procRoots = this.procs.liveRoots()
+    if (!live.length && !procRoots.length) return
     this.memorySampling = true
     try {
-      const sums = treeBytes(await sampleProcessTable(), live.map((s) => s.pty!.pid))
+      await this.procs.observeExternals()
+      const sums = treeBytes(await sampleProcessTable(), [...live.map((s) => s.pty!.pid), ...procRoots.map((r) => r.pid)])
+      this.procs.setMemory(sums, memoryChanged)
       for (const slot of live) {
         if (!slot.pty || slot.pty.exit) continue
         const bytes = sums.get(slot.pty.pid)
@@ -475,6 +562,8 @@ class DaemonImpl implements Daemon {
     if (this.memoryKick) clearTimeout(this.memoryKick)
     for (const s of this.slotMap.values()) if (s.rondaTimer) clearTimeout(s.rondaTimer)
     this.queue.length = 0
+    // Background processes live in tether-procd and outlive this daemon: only the connection to it closes.
+    this.procs.close()
     // Every slot is stopped in parallel (each waits for its own agent to be old enough) while the event files
     // are still watched: a young Claude's start report must be seen to let its kill go ahead.
     await Promise.all([...this.slotMap.values()].map((s) => this.stopSlot(s)))
@@ -719,6 +808,9 @@ class DaemonImpl implements Daemon {
           }
           this.broadcastState(slot)
           this.emitSlot('exited', slot)
+          // The panel's agent left: its process uses end. A restart in place (restartSlot, set-profile) and tetherd
+          // closing are not leaving.
+          if (!slot.restarting && !this.closing) this.procs.slotGone(meta.slotId)
           this.pump()
         },
       })
@@ -845,7 +937,7 @@ class DaemonImpl implements Daemon {
   // ---- connections ---------------------------------------------------------------------------
 
   private onConnection(socket: Socket): void {
-    const client: Client = { socket, parser: new LineParser(), attached: new Set() }
+    const client: Client = { socket, parser: new LineParser(), attached: new Set(), procsWatched: new Set() }
     this.clients.add(client)
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
@@ -855,7 +947,17 @@ class DaemonImpl implements Daemon {
     socket.on('close', () => {
       this.clients.delete(client)
       for (const id of client.attached) this.slotMap.get(id)?.attached.delete(client)
+      for (const name of client.procsWatched) this.unwatchProc(client, name)
     })
+  }
+
+  /** The client no longer watches the process' output; the host attachment goes with the last watcher. */
+  private unwatchProc(client: Client, name: string): void {
+    client.procsWatched.delete(name)
+    const set = this.procWatchers.get(name)
+    if (!set?.delete(client) || set.size) return
+    this.procWatchers.delete(name)
+    this.procs.detachOutput(name)
   }
 
   private send(client: Client, msg: DaemonMessage): void {
@@ -905,6 +1007,7 @@ class DaemonImpl implements Daemon {
     const { id } = req
     switch (req.t) {
       case 'hello':
+        if (typeof req.client === 'string') client.kind = req.client
         return { t: 'ok', id, hello: { v: PROTOCOL_VERSION, pid: this.pid, version: DAEMON_VERSION, exec: process.execPath } }
       case 'list':
         return { t: 'ok', id, slots: this.slots() }
@@ -975,6 +1078,7 @@ class DaemonImpl implements Daemon {
         removeSlot(this.home, slot.meta.slotId)
         // The slot is gone for good (its pane was closed): extensions drop what they kept with it.
         this.emitSlot('removed', slot)
+        this.procs.slotGone(slot.meta.slotId)
         this.broadcast({ t: 'removed', slotId: slot.meta.slotId })
         return { t: 'ok', id }
       }
@@ -1096,6 +1200,61 @@ class DaemonImpl implements Daemon {
         }
         return { t: 'ok', id, slot: this.stateOf(slot) }
       }
+      case 'proc-list':
+        return { t: 'ok', id, procs: await this.procs.list() }
+      case 'proc-info': {
+        const { proc, events } = await this.procAct(() => this.procs.info(req.name))
+        return { t: 'ok', id, proc, events }
+      }
+      case 'proc-start':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.start(req.name, req.recipe, req.by, client.kind, req.force === true)) }
+      case 'proc-stop':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.stop(req.name, optText(req.reason), req.by, client.kind, guardOf(req))) }
+      case 'proc-restart':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.restart(req.name, optText(req.reason), req.by, client.kind, guardOf(req))) }
+      case 'proc-use':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.use(req.name, typeof req.duration === 'string' ? req.duration : undefined, typeof req.purpose === 'string' ? req.purpose : undefined, req.by, client.kind)) }
+      case 'proc-release': {
+        const r = await this.procAct(() => this.procs.release(req.name, req.by, client.kind))
+        return { t: 'ok', id, proc: r.proc, released: r.released }
+      }
+      case 'proc-ports':
+        return { t: 'ok', id, ports: await this.procAct(() => this.procs.ports(req.check)) }
+      case 'proc-adopt':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.adoptExternal(String(req.name), Number(req.pid), req.recipe, req.by, client.kind)) }
+      case 'proc-forget': {
+        const note = await this.procAct(() => this.procs.forget(req.name, req.by, client.kind, guardOf(req)))
+        return { t: 'ok', id, ...(note ? { note } : {}) }
+      }
+      case 'proc-seen':
+        await this.procAct(() => this.procs.seen(req.name))
+        return { t: 'ok', id }
+      case 'proc-attach': {
+        // Watching before the host answers: output that follows the scrollback may arrive in the same read as the reply.
+        const name = String(req.name)
+        const known = client.procsWatched.has(name)
+        client.procsWatched.add(name)
+        let set = this.procWatchers.get(name)
+        if (!set) this.procWatchers.set(name, set = new Set())
+        set.add(client)
+        let scrollback: string | undefined
+        try {
+          scrollback = await this.procAct(() => this.procs.attachOutput(name))
+        } catch (e) {
+          if (!known) this.unwatchProc(client, name)
+          throw e
+        }
+        if (client.socket.destroyed) this.unwatchProc(client, name)
+        return { t: 'ok', id, ...(scrollback !== undefined ? { scrollback } : {}) }
+      }
+      case 'proc-detach':
+        this.unwatchProc(client, req.name)
+        return { t: 'ok', id }
+      case 'proc-host':
+        return { t: 'ok', id, host: await this.procAct(() => this.procs.hostStatus()) }
+      case 'proc-host-stop':
+        await this.procAct(() => this.procs.hostStop(req.force === true, req.by, client.kind))
+        return { t: 'ok', id }
       default:
         throw new RequestError('bad-request', `mensagem desconhecida: ${String((req as { t?: unknown }).t)}`)
     }

@@ -3,6 +3,7 @@
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import { slotLabel } from '../shared/tray.ts'
+import { backgroundLine } from './situations.ts'
 
 /** First time the window is closed to the tray: "nothing stopped; the app is in the tray". */
 export function trayFirstCloseSituation(): DialogSpec {
@@ -20,7 +21,7 @@ export function trayFirstCloseSituation(): DialogSpec {
 }
 
 /** "Reiniciar o tetherd" from the tray: it kills the agents' processes, so say so and what comes back. */
-export function restartDaemonSituation(slots: SlotState[]): DialogSpec {
+export function restartDaemonSituation(slots: SlotState[], background = 0): DialogSpec {
   const live = slots.filter(s => s.status === 'running' || s.status === 'starting' || s.status === 'queued')
   const shown = live.slice(0, 4).map(slotLabel)
   if (live.length > 4) shown.push(`e mais ${live.length - 4}`)
@@ -33,7 +34,7 @@ export function restartDaemonSituation(slots: SlotState[]): DialogSpec {
     icon: 'arrow-clockwise',
     title: 'Reiniciar o tetherd?',
     message: 'O tetherd é quem mantém os terminais e os agentes vivos. Reiniciá-lo interrompe o que está rodando.',
-    context,
+    context: { ...context, lines: [...context.lines, ...backgroundLine(background)] },
     choices: [
       { id: 'keep', icon: 'app-window', label: 'Manter como está', consequence: 'Nada é interrompido.', tone: 'safe' },
       { id: 'restart', icon: 'arrow-clockwise', label: 'Reiniciar o tetherd', consequence: 'Os agentes em execução são interrompidos agora. As conversas ficam salvas e os painéis são retomados assim que o serviço subir.', tone: 'destructive' },

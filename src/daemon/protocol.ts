@@ -6,8 +6,10 @@ import type { AgentName, Binding } from '../core/event.ts'
 import type { Profile, ProfileInput } from '../core/profile.ts'
 import type { PauseBatch } from './pause.ts'
 import type { Ronda } from './ronda.ts'
+import type { ProcBy, ProcEvent, ProcRecipe, ProcState } from './procs.ts'
+import type { PortRow } from './ports.ts'
 
-export type { Profile, ProfileInput, PauseBatch, Ronda }
+export type { Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
 
 export const PROTOCOL_VERSION = 1
 
@@ -115,6 +117,13 @@ export type ErrorCode =
   | 'no-pause'          // the request needs an active batch and there is none
   | 'ronda-criterion'   // ronda-off refused: the ronda has a stop criterion (message = the stimulus); resend with force
   | 'agent-unavailable' // the slot's agent is not registered (its extension is off or gone); the slot is kept
+  | 'unknown-proc'      // no background process by that name
+  | 'proc-running'      // proc-start of a name that runs (the message says who started it)
+  | 'proc-not-stopped'  // proc-forget of a live process
+  | 'proc-host'         // the process host is unavailable or speaks another protocol version (message: what to do)
+  | 'bad-adopt'        // proc-adopt refused: nothing was touched (message: why and what to do)
+  | 'proc-in-use'       // stop/restart/forget refused: others declared a use (message = the board: who, until when, what for, options)
+  | 'port-busy'         // proc-start refused: a declared port listens already, or another live process declares it (message: who)
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
@@ -179,6 +188,43 @@ export type Request =
   | { t: 'ronda-get'; id: number; slotId: string }
   /** Switch the ronda off; with a criterion and no `force` → `ronda-criterion` (the stimulus). The UI always forces. */
   | { t: 'ronda-off'; id: number; slotId: string; force?: boolean }
+  /** Background processes (tether proc). `by`: who asks (CLI); the app sends none and is "você (pelo app)". */
+  | { t: 'proc-list'; id: number }
+  /** The process and its last events. */
+  | { t: 'proc-info'; id: number; name: string }
+  /** Register (or change the recipe of a stopped one) and start; no recipe = the stored one. Reply: `proc` (status failed when it did not start). */
+  /** `force`: start even when a declared port is busy (else `port-busy`). */
+  | { t: 'proc-start'; id: number; name: string; recipe?: ProcRecipe; by?: ProcBy; force?: boolean }
+  /**
+   * Ctrl+C, the card's grace, then the tree. Answers once it stopped. stop / restart / forget meet the uses others
+   * declared: refused with `proc-in-use` by default; `waitMs` holds the act until they end (at most 5 min);
+   * `force` (the reason, not empty) goes ahead and records it.
+   */
+  | { t: 'proc-stop'; id: number; name: string; reason?: string; by?: ProcBy; waitMs?: number; force?: string }
+  /** Stop and start again with the stored recipe; answers once the new run is up. */
+  | { t: 'proc-restart'; id: number; name: string; reason?: string; by?: ProcBy; waitMs?: number; force?: string }
+  /** Stopped only: card, history, run file, uses and logs go. */
+  /** Bring a process that already runs outside tether into the board, with the COMPLETE recipe to restart it. Reply: `proc`. */
+  | { t: 'proc-adopt'; id: number; name: string; pid: number; recipe: ProcRecipe; by?: ProcBy }
+  | { t: 'proc-forget'; id: number; name: string; by?: ProcBy; waitMs?: number; force?: string }
+  /** Declare (or renew) the caller's use: `duration` like '15m' (default 15m, at most 60m), `purpose` required. Reply: `proc`. */
+  | { t: 'proc-use'; id: number; name: string; duration?: string; purpose: string; by?: ProcBy }
+  /** End the caller's use. Reply: `proc`, `released` (false: there was none). */
+  | { t: 'proc-release'; id: number; name: string; by?: ProcBy }
+  /** The ports view: listening ports (managed or outside tether) and declared ones; `check`: that port only. */
+  | { t: 'proc-ports'; id: number; check?: number }
+  /** Someone looked: clears `attention`. */
+  | { t: 'proc-seen'; id: number; name: string }
+  /**
+   * Watch a process' output (read only: no request writes to a process). Reply: `scrollback` of its current run, absent
+   * when the host holds no run of it; then `proc-data` events go to THIS client. Asking again gives a fresh scrollback.
+   */
+  | { t: 'proc-attach'; id: number; name: string }
+  | { t: 'proc-detach'; id: number; name: string }
+  /** The host's state (`host: null` when none answers). */
+  | { t: 'proc-host'; id: number }
+  /** Ask the host to exit; refused with live processes unless `force` (they are stopped, recorded as asked by `by`). */
+  | { t: 'proc-host-stop'; id: number; force?: boolean; by?: ProcBy }
 
 /** Fire-and-forget (no reply): keystrokes. */
 export type Notice = { t: 'input'; slotId: string; data: string }
@@ -207,6 +253,20 @@ export type Reply =
       /** ronda-set / ronda-get / ronda-off: the slot's ronda (null = off). */
       ronda?: (Ronda & { due?: boolean }) | null
       rondaOutcome?: 'created' | 'updated' | 'unchanged' | 'off' | 'was-off'
+      /** proc-list. */
+      procs?: ProcState[]
+      /** proc-info / proc-start / proc-stop / proc-restart. */
+      proc?: ProcState
+      /** proc-info: the last events, oldest first. */
+      events?: ProcEvent[]
+      /** proc-ports. */
+      ports?: PortRow[]
+      /** proc-forget: something worth telling the caller (an adopted process was left running). */
+      note?: string
+      /** proc-release: whether the caller had a use. */
+      released?: boolean
+      /** proc-host: null when no host answers. */
+      host?: { pid: number; version: string; startedAt: string; live: number } | null
     }
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 
@@ -220,5 +280,10 @@ export type Event =
   | { t: 'profiles'; profiles: Profile[] }
   /** The pause batch changed (any state or entry). Sent to every client. */
   | { t: 'pause'; batch: PauseBatch }
+  /** A background process changed (any client). */
+  | { t: 'proc'; proc: ProcState }
+  | { t: 'proc-removed'; name: string }
+  /** Output of a process this client attached to (proc-attach). */
+  | { t: 'proc-data'; name: string; data: string }
 
 export type DaemonMessage = Reply | Event

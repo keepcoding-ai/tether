@@ -87,10 +87,18 @@ export function closePanelSituation(s: SlotState): DialogSpec {
 }
 
 /**
+ * The line the quit and restart dialogs add when background processes run (tether proc): they live in their own host
+ * and stay up through either act, so it informs and offers nothing to do.
+ */
+export function backgroundLine(n: number): string[] {
+  return n > 0 ? [n === 1 ? '1 processo de fundo segue rodando' : `${n} processos de fundo seguem rodando`] : []
+}
+
+/**
  * "Sair e encerrar tudo…" from the menu. What it communicates: "this kills every agent and the daemon;
  * the thing you may actually want (keep them running) is just closing the window."
  */
-export function quitAllSituation(slots: SlotState[]): DialogSpec {
+export function quitAllSituation(slots: SlotState[], background = 0): DialogSpec {
   const live = slots.filter(isLive)
   const busy = live.filter(s => s.turn === 'busy').length
   const names = live.map(s => s.title ?? s.name ?? folderName(s.cwd))
@@ -104,7 +112,7 @@ export function quitAllSituation(slots: SlotState[]): DialogSpec {
     tone: 'danger',
     icon: 'power',
     title: 'Sair e encerrar tudo?',
-    context,
+    context: { ...context, lines: [...context.lines, ...backgroundLine(background)] },
     choices: [
       { id: 'close-window', icon: 'app-window', label: 'Só fechar a janela', consequence: 'Os agentes continuam rodando no tetherd. Ao abrir o tether de novo, tudo volta no lugar.', tone: 'safe' },
       ...(busy > 0 ? [{ id: 'pause-first', icon: 'pause', label: 'Pedir pausa gentil primeiro', consequence: pauseFirstConsequence(busy), tone: 'neutral' as const }] : []),
@@ -118,7 +126,7 @@ export function quitAllSituation(slots: SlotState[]): DialogSpec {
  * "Reiniciar tudo" from the menu. What it communicates: "this is not a page reload: every agent in every panel
  * is ended now, the tetherd restarts, and only then each panel resumes its session."
  */
-export function reloadAllSituation(slots: SlotState[]): DialogSpec {
+export function reloadAllSituation(slots: SlotState[], background = 0): DialogSpec {
   const live = slots.filter(isLive)
   const names = live.map(s => s.title ?? s.name ?? folderName(s.cwd))
   const shown = names.slice(0, 4)
@@ -132,7 +140,7 @@ export function reloadAllSituation(slots: SlotState[]): DialogSpec {
     icon: 'arrow-clockwise',
     title: 'Reiniciar tudo?',
     message: 'Isto reinicia o app e o tetherd: o tetherd é reiniciado e todos os agentes dos painéis são encerrados agora. Depois cada painel retoma a sessão de onde parou.',
-    context,
+    context: { ...context, lines: [...context.lines, ...backgroundLine(background)] },
     choices: [
       { id: 'reload', icon: 'arrow-clockwise', label: 'Encerrar os agentes e reiniciar tudo', consequence: 'Todos os agentes param, o tetherd sobe de novo e os painéis retomam as sessões. O que estava sendo feito agora é interrompido.', tone: 'destructive' },
     ],

@@ -125,7 +125,7 @@ describe('claudeAdapter.plan', () => {
     }
   })
 
-  test('settings file: PostToolUse is guarded by a shell test so Node only spawns when a pause request exists', () => {
+  test('settings file: PostToolUse is guarded by a shell test so Node only spawns when a pause request or a notice exists', () => {
     const home = homes.make()
     claudeAdapter.plan({ slot, home, extraArgs: [] })
     const settings = JSON.parse(readFileSync(join(home, 'claude-settings.json'), 'utf8')) as {
@@ -134,7 +134,7 @@ describe('claudeAdapter.plan', () => {
     const group = settings.hooks.PostToolUse![0]!
     assert.equal(group.matcher, '*')
     const command = group.hooks[0]!.command
-    assert.match(command, /^test -e "\$TETHER_HOME\/slots\/\$TETHER_SLOT_ID\.pause-request\.json" && node ".*claude-hook\.mjs" PostToolUse \|\| true$/)
+    assert.match(command, /^\{ test -e "\$TETHER_HOME\/slots\/\$TETHER_SLOT_ID\.pause-request\.json" \|\| test -e "\$TETHER_HOME\/slots\/\$TETHER_SLOT_ID\.notices\.jsonl"; \} && node ".*claude-hook\.mjs" PostToolUse \|\| true$/)
     assert.ok(!command.includes('\\'))
   })
 

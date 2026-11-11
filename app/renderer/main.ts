@@ -61,6 +61,7 @@ import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMI
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
 import { registerProfileOption } from './profile-options.ts'
+import { ProcsStore } from './procs-store.ts'
 import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, LooseCause, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
@@ -774,7 +775,7 @@ async function settleClose(slot: SlotState, opts: { ask?: boolean } = {}): Promi
 async function onAsk(req: AskRequest): Promise<void> {
   switch (req.situation) {
     case 'quit-all': {
-      const answer = await askDialog(quitAllSituation(req.slots ?? [...slots.values()]))
+      const answer = await askDialog(quitAllSituation(req.slots ?? [...slots.values()], procsStore.liveCount()))
       if (answer.choice === 'pause-first') {
         // Not leaving: start the batch and show it; main gets a cancel, so nothing quits.
         window.tether.answer(req.askId, { choice: 'cancel', remember: false })
@@ -787,7 +788,7 @@ async function onAsk(req: AskRequest): Promise<void> {
       return
     }
     case 'restart-daemon': {
-      const answer = await askDialog(restartDaemonSituation(req.slots ?? [...slots.values()]))
+      const answer = await askDialog(restartDaemonSituation(req.slots ?? [...slots.values()], procsStore.liveCount()))
       window.tether.answer(req.askId, answer)
       return
     }
@@ -799,7 +800,7 @@ async function onAsk(req: AskRequest): Promise<void> {
     case 'reload-all': {
       // What the person sees is what is at stake: the slots behind open panels, not every slot on disk.
       const open = [...slots.values()].filter(s => findPanel(s.slotId))
-      const answer = await askDialog(reloadAllSituation(open))
+      const answer = await askDialog(reloadAllSituation(open, procsStore.liveCount()))
       window.tether.answer(req.askId, answer)
       return
     }
@@ -1848,6 +1849,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
     case 'data': panels.get(ev.slotId)?.write(ev.data); break
     case 'profiles': setProfiles(ev.profiles, undefined); break
     case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshSessionsDialog(); break
+    case 'proc': case 'proc-removed': case 'proc-data': procsStore.onEvent(ev); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
@@ -1989,6 +1991,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
   conn.className = 'ib conn on'
   $('overlay').hidden = true
   startErrors.clear()
+  void procsStore.refresh(layoutRestored)
   await refreshSlots()
   if (!layoutRestored) {
     await restoreLayout()
@@ -2018,6 +2021,8 @@ async function onConnection(state: ConnectionState): Promise<void> {
 let asleepPanes = new Set<string>()
 
 let pauseBatch: PauseBatch | null = null
+/** The background processes (tether proc): the core keeps the list, the processes extension draws it (TetherUi.procs). */
+const procsStore = new ProcsStore(body => window.tether.request(body))
 let sessionsMenu: SessionsMenu | undefined
 
 /** Re-renders the Sessões menu and its icon (counter, tooltip, glyph). Safe before the menu exists. */
@@ -4150,6 +4155,21 @@ function activateRendererExtensions(): void {
         onDidChange: listener => { agentPaneListeners.add(listener); return add(toDisposable(() => { agentPaneListeners.delete(listener) })) },
         focus: slotId => focusAgentPane(slotId),
         tabMenu: provider => { agentTabMenuProviders.add(provider); return add(toDisposable(() => { agentTabMenuProviders.delete(provider) })) },
+      },
+      procs: {
+        list: () => procsStore.list(),
+        get: name => procsStore.get(name),
+        onDidChange: listener => add(procsStore.onDidChange(listener)),
+        start: name => procsStore.start(name),
+        stop: (name, opts) => procsStore.stop(name, opts),
+        restart: (name, opts) => procsStore.restart(name, opts),
+        forget: (name, opts) => procsStore.forget(name, opts),
+        use: (name, duration, purpose) => procsStore.use(name, duration, purpose),
+        release: name => procsStore.release(name),
+        seen: name => procsStore.seen(name),
+        info: name => procsStore.info(name),
+        ports: () => procsStore.ports(),
+        attach: (name, onData) => procsStore.attach(name, onData),
       },
       profiles: {
         registerOption: option => add(registerProfileOption(id, option)),

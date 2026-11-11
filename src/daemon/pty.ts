@@ -20,6 +20,12 @@ export interface PtyHandle {
   kill(timeoutMs?: number): Promise<void>
 }
 
+/**
+ * What spawnPty runs: a LaunchPlan whose args may also be ONE raw string. On Windows node-pty passes a string
+ * through without re-quoting it, which is the only way to hand `cmd.exe /d /s /c "<line>"` a line with inner quotes.
+ */
+export type PtyPlan = Omit<LaunchPlan, 'args'> & { args: string[] | string }
+
 export interface SpawnOptions {
   cols: number
   rows: number
@@ -63,7 +69,7 @@ function dispose(p: pty.IPty): void {
   for (const s of steps) { try { s() } catch { /* best effort, in order */ } }
 }
 
-export function spawnPty(plan: LaunchPlan, opts: SpawnOptions): PtyHandle {
+export function spawnPty(plan: PtyPlan, opts: SpawnOptions): PtyHandle {
   const p = pty.spawn(plan.command, plan.args, {
     cols: opts.cols,
     rows: opts.rows,

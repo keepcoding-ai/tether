@@ -43,12 +43,12 @@ export function truncateStart(text: string, max: number): string {
   return max <= 1 ? text.slice(-max) : `…${text.slice(text.length - max + 1)}`
 }
 
-/** Local date/time, compact: "2026-10-29 14:05". */
-export function localTime(iso: string): string {
+/** Local date/time, compact: "2026-10-29 14:05" (with `seconds`: "2026-10-29 14:05:07"). */
+export function localTime(iso: string, seconds = false): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   const p = (n: number): string => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}${seconds ? `:${p(d.getSeconds())}` : ''}`
 }
 
 /** Column widths follow the content; two spaces between columns; no trailing spaces. */

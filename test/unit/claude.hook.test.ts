@@ -259,3 +259,49 @@ describe('claude-hook: polite pause delivery', () => {
     assert.deepEqual(lines(home), [])
   })
 })
+
+describe('claude-hook: notices from tetherd', () => {
+  const run = (home: string, event: string, extra: Record<string, unknown> = {}) =>
+    runHook([event], JSON.stringify({ session_id: 'sid', cwd: 'C:/x', ...extra }), { TETHER_HOME: home, TETHER_SLOT_ID: 's1' })
+  const file = (home: string) => join(home, 'slots', 's1.notices.jsonl')
+  const leave = (home: string, ...texts: string[]) => {
+    mkdirSync(join(home, 'slots'), { recursive: true })
+    for (const text of texts) writeFileSync(file(home), JSON.stringify({ ts: '2026-01-01T00:00:00Z', text }) + '\n', { flag: 'a' })
+  }
+  const context = (stdout: string) => (JSON.parse(stdout) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext
+
+  test('PostToolUse takes every notice once (the file is consumed), one per line', () => {
+    const home = tmpHome()
+    leave(home, '[tether] processos: um', '[tether] processos: dois')
+    const r = run(home, 'PostToolUse')
+    assert.equal(r.status, 0)
+    assert.equal(context(r.stdout), '[tether] processos: um\n[tether] processos: dois')
+    assert.equal(existsSync(file(home)), false, 'consumed')
+    assert.equal(run(home, 'PostToolUse').stdout, '', 'never delivered twice')
+  })
+
+  test('UserPromptSubmit delivers too and still writes the turn start', () => {
+    const home = tmpHome()
+    leave(home, 'recado')
+    assert.equal(context(run(home, 'UserPromptSubmit').stdout), 'recado')
+    assert.ok(existsSync(join(home, 'slots', 's1.attention')))
+  })
+
+  test('notices and a pause request go out as ONE JSON, the pause last', () => {
+    const home = tmpHome()
+    leave(home, 'recado')
+    writeFileSync(join(home, 'slots', 's1.pause-request.json'), JSON.stringify({ v: 1, batchId: 'b1', slotId: 's1', createdAt: '2026-01-01T00:00:00Z', text: 'pare com calma' }))
+    const r = run(home, 'PostToolUse')
+    assert.equal(r.stdout.trim().split('\n').length, 1)
+    assert.equal(context(r.stdout), 'recado\n\npare com calma')
+  })
+
+  test('subagents, Stop and other hooks leave the notices waiting', () => {
+    const home = tmpHome()
+    leave(home, 'recado')
+    assert.equal(run(home, 'PostToolUse', { agent_id: 'a1' }).stdout, '')
+    assert.equal(run(home, 'Stop').stdout, '')
+    assert.equal(run(home, 'Notification', { notification_type: 'idle_prompt' }).stdout, '')
+    assert.ok(existsSync(file(home)), 'still waiting for the main agent\'s next step')
+  })
+})
