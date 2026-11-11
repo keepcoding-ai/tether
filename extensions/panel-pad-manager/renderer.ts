@@ -24,22 +24,17 @@ export function activate(ui: TetherUi): IDisposable[] {
     agent: paneId => ui.agents.get(paneId) ?? ui.agents.list().find(a => a.paneId === paneId),
     describe: paneId => ui.panes.describe(paneId),
     reveal: panelId => ui.panes.reveal(panelId),
-    tabMenu: (panelId, x, y) => ui.panes.showTabMenu(panelId, x, y),
+    menuEntries: panelId => ui.panes.tabMenuEntries(panelId, { from: 'manager' }),
+    tabMenu: (panelId, x, y, opener) => ui.panes.showTabMenu(panelId, x, y, opener, { from: 'manager' }),
     beginDrag: (panelId, ev) => ui.panes.beginDrag(panelId, ev),
+    beginLooseDrag: (key, ev) => ui.pads.panelFrames.beginDrag(key, ev),
     revivable: key => ui.pads.panelFrames.revivable(key),
-    revive: key => {
-      const ok = ui.pads.panelFrames.revive(key)
-      if (!ok) showToast({ text: 'Não deu para trazer o painel de volta', ms: TOAST_MS })
-      return ok
-    },
     close: (keys, what) => {
       const snap = ui.pads.panelFrames.close(keys)
       const n = snap.entries.length
       if (n) showToast({ text: what === 'one' ? 'Quadro fechado' : n === 1 ? '1 quadro vazio limpo' : `${n} quadros vazios limpos`, ms: TOAST_MS })
     },
-  } as Omit<ManagerHost, 'exit'>
-  host.looseMenu = (key, x, y, opener) => ui.pads.panelFrames.menu(key, x, y, { revive: () => { host.revive(key) }, close: () => host.close([key], 'one') }, opener)
-  host.beginLooseDrag = (key, ev) => ui.pads.panelFrames.beginDrag(key, ev)
+  } satisfies Omit<ManagerHost, 'exit'>
 
   /** The pad to the manager, on a filter, with a row selected when given. */
   function show(filter: FrameFilter, key?: string): void {

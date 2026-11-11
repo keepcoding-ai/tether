@@ -2,15 +2,16 @@
 // PANEL: one row per panel of the desk on screen that has a frame in the pad, plus the loose frames (panel closed) that
 // belonged to this desk. What the frame holds is on the row only to tell which panel it is (chips: the panes' names).
 // A loose frame is a panel too (one whose tab is closed), not another kind of thing: every row does what the panel's tab
-// does. Click selects it (and brings a live panel up); drag starts the tab's own drag (any place that takes a tab takes
-// the row; a loose panel comes back where it is dropped); right-click, the "⋯" at the row's corner (always visible, so
-// the menu is found without knowing the right button) and the menu key open the tab's menu (a live panel's own; a loose
-// one's: Trazer de volta, Fechar quadro). A loose row also offers "Trazer de volta" when the panel can come back (its session still exists) and
-// "Fechar quadro" always; when it cannot, the row says why. No preview: the list is the whole manager. Esc and the
-// header's switch take the pad back to the frame; Enter on a live row brings the panel up and goes back too.
+// does, through one menu (TetherUi.panes.tabMenuEntries with from 'manager': the tab's menu, after "Focar guia" for a
+// panel on screen, after "Trazer de volta" for a loose one). Click only selects; double-click and Enter go to the tab
+// (a loose panel comes back). Drag starts the tab's own drag (a loose panel comes back where it is dropped).
+// Right-click, the menu key and the "⋯" at the end of the row's action bar open that menu. The bar, at the row's foot,
+// shows the menu items that declare a pin (MenuPin): the highlight and the primaries on the left with their labels, the
+// icons on the right; the icons that do not fit leave the bar (right to left), never the menu. No preview: the list is
+// the whole manager. Esc and the header's switch take the pad back to the frame.
 // The model is app/renderer/panel-frames.ts; the frames live in the core (TetherUi.pads.panelFrames).
 import { icon, type IconName } from '../../app/renderer/icons.ts'
-import type { AgentPane, FrameFilter, FramePane, PaneInfo, PanelFrameRow, PanelFrameTree } from '../../app/renderer/ext-api.ts'
+import type { AgentPane, ContextMenuEntry, FrameFilter, FramePane, PaneInfo, PanelFrameRow, PanelFrameTree } from '../../app/renderer/ext-api.ts'
 import { visibleRows, whenLabel } from '../../app/renderer/panel-frames.ts'
 import type { ManagerView } from '../frame-pads/manager-slot.ts'
 
@@ -24,16 +25,15 @@ export interface ManagerHost {
   describe(paneId: string): PaneInfo | undefined
   /** Brings the panel up (its tab active and focused, its pad shown). */
   reveal(panelId: string): void
-  /** The panel's own tab menu, at page coordinates. */
-  tabMenu(panelId: string, x: number, y: number): void
+  /** The panel's menu (open or loose: one menu) as data. */
+  menuEntries(panelId: string): ContextMenuEntry[]
+  /** That menu at page coordinates, by its opener. */
+  tabMenu(panelId: string, x: number, y: number, opener?: HTMLElement): void
   /** Starts the panel's tab drag from the row's dragstart. */
   beginDrag(panelId: string, ev: DragEvent): boolean
-  /** A loose frame's menu (Trazer de volta, Fechar quadro), at page coordinates. */
-  looseMenu(key: string, x: number, y: number, opener?: HTMLElement): void
   /** A loose frame's drag: its panel comes back and the drag carries it like its tab's. */
   beginLooseDrag(key: string, ev: DragEvent): boolean
   revivable(key: string): { ok: boolean; reason: string }
-  revive(key: string): boolean
   /** Closes loose frames (the host tells the person). */
   close(keys: readonly string[], what: 'one' | 'empty'): void
   /** The pad back to the panel's frame. */
@@ -44,6 +44,16 @@ const PANE_ICON: Record<string, IconName> = { note: 'note-pencil', empty: 'squar
 const AGENT_ICON: Record<string, IconName> = { claude: 'brand', soul: 'brand' }
 /** How many of a frame's panes a row shows before "+n". */
 const ROW_PANES = 3
+/** The bar's limits: one highlighted action, two primaries. */
+const MAX_PRIMARY = 2
+
+type MenuItem = Exclude<ContextMenuEntry, 'sep'>
+const items = (entries: readonly ContextMenuEntry[]): MenuItem[] => entries.filter((e): e is MenuItem => e !== 'sep')
+/** The item a key or gesture runs, found by what it says (the menu is the only definition). */
+const itemOf = (entries: readonly ContextMenuEntry[], label: string): MenuItem | undefined => items(entries).find(e => e.label === label)
+const BACK_LABEL = 'Trazer de volta'
+const FOCUS_LABEL = 'Focar guia'
+const CLOSE_LABEL = 'Fechar painel…'
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag)
@@ -82,6 +92,7 @@ export class PanelPadManager implements ManagerView {
   private readonly list: HTMLElement
   private readonly chips: Record<FrameFilter, HTMLButtonElement>
   private readonly clean: HTMLButtonElement
+  private readonly fit = new ResizeObserver(() => this.fitBars())
 
   constructor(host: ManagerHost) {
     this.host = host
@@ -116,6 +127,7 @@ export class PanelPadManager implements ManagerView {
     this.list.addEventListener('keydown', ev => this.onKey(ev))
     this.element.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); this.host.exit() } })
     this.element.append(head, this.list)
+    this.fit.observe(this.list)
   }
 
   focus(): void { this.list.focus({ preventScroll: true }) }
@@ -170,6 +182,7 @@ export class PanelPadManager implements ManagerView {
       if (live.length) { if (loose.length) out.push(el('div', 'pf-group', 'Painéis')); for (const r of live) out.push(this.rowEl(r)) }
     }
     this.list.replaceChildren(...out)
+    this.fitBars()
     if (hadFocus) this.list.focus({ preventScroll: true })
     // Scroll only the list: scrollIntoView would also scroll the window's own containers and push the top bar away.
     const sel = this.list.querySelector<HTMLElement>('.pf-row[aria-selected="true"]')
@@ -200,21 +213,7 @@ export class PanelPadManager implements ManagerView {
     const meta = el('span', 'pf-r-kind', state ? `${kind} · ${state}` : kind)
     if (agent?.alive) meta.classList.add('live')
     const when = el('span', 'pf-r-meta', whenLabel(r.updatedAt, Date.now()))
-    const more = el('button', 'pf-r-more')
-    more.type = 'button'
-    more.dataset.action = 'menu'
-    more.title = 'Menu do painel'
-    more.setAttribute('aria-label', 'Menu do painel')
-    more.setAttribute('aria-haspopup', 'menu')
-    more.draggable = false
-    more.append(icon('dots-three'))
-    more.addEventListener('click', ev => {
-      ev.stopPropagation()
-      this.select(r.key)
-      const box = more.getBoundingClientRect()
-      this.menu(r, box.left, box.bottom, more)
-    })
-    head.append(ic, name, meta, when, more)
+    head.append(ic, name, meta, when)
     // Line 2: where (folder) for a live panel; origin and viability for a loose one.
     const sub = el('div', 'pf-r-sub')
     if (r.loose) {
@@ -237,30 +236,10 @@ export class PanelPadManager implements ManagerView {
       panes.append(chip)
     }
     if (real.length > ROW_PANES) panes.append(el('span', 'pf-r-pane dim', `+${real.length - ROW_PANES}`))
-    b.append(head, sub, panes)
-    // A loose row's two actions, in place.
-    if (r.loose) {
-      const acts = el('div', 'pf-r-acts')
-      const v = this.host.revivable(r.key)
-      if (v.ok) {
-        const back = el('button', 'pf-btn primary', 'Trazer de volta')
-        back.type = 'button'
-        back.dataset.action = 'revive'
-        back.title = 'Reabre o painel; o quadro volta com ele'
-        back.addEventListener('click', ev => { ev.stopPropagation(); this.host.revive(r.key) })
-        acts.append(back)
-      }
-      const close = el('button', 'pf-btn', 'Fechar quadro')
-      close.type = 'button'
-      close.dataset.action = 'close'
-      close.title = 'Descarta o que ficou na prancheta deste painel'
-      close.addEventListener('click', ev => { ev.stopPropagation(); this.host.close([r.key], 'one') })
-      acts.append(close)
-      b.append(acts)
-    }
-    // What the tab does, the row does.
-    b.addEventListener('click', () => { this.select(r.key); if (!r.loose) this.host.reveal(r.panelId); this.list.focus({ preventScroll: true }) })
-    b.addEventListener('dblclick', () => { if (!r.loose) { this.host.reveal(r.panelId); this.host.exit() } })
+    b.append(head, sub, panes, this.barEl(r))
+    // What the tab does, the row does. A click only selects: going to the tab is a gesture of its own.
+    b.addEventListener('click', () => { this.select(r.key); this.list.focus({ preventScroll: true }) })
+    b.addEventListener('dblclick', ev => { if ((ev.target as HTMLElement | null)?.closest('button')) return; this.go(r) })
     b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.select(r.key); this.menu(r, ev.clientX, ev.clientY) })
     b.draggable = true
     b.addEventListener('dragstart', ev => {
@@ -276,10 +255,78 @@ export class PanelPadManager implements ManagerView {
     return b
   }
 
+  /**
+   * The row's action bar: the menu's pinned items (highlight, primaries with labels on the left; icons on the right) and
+   * the "⋯" last. Every button runs the menu's own item.
+   */
+  private barEl(r: PanelFrameRow): HTMLElement {
+    const bar = el('div', 'pf-r-bar')
+    bar.setAttribute('role', 'toolbar')
+    bar.setAttribute('aria-label', 'Ações do painel')
+    const all = items(this.host.menuEntries(r.panelId))
+    const highlight = all.find(e => e.pin === 'highlight')
+    const primary = all.filter(e => e.pin === 'primary').slice(0, MAX_PRIMARY)
+    const icons = all.filter(e => e.pin === 'icon')
+    const button = (e: MenuItem, level: 'highlight' | 'primary' | 'icon'): HTMLButtonElement => {
+      const btn = el('button', `pf-act pin-${level}`)
+      btn.type = 'button'
+      btn.draggable = false
+      btn.dataset.pin = level
+      btn.dataset.label = e.label
+      btn.title = e.label
+      btn.setAttribute('aria-label', e.label)
+      btn.disabled = !!e.disabled
+      if (e.danger) btn.classList.add('danger')
+      btn.append(icon(e.icon as IconName))
+      if (level !== 'icon') btn.append(el('span', undefined, e.label))
+      btn.addEventListener('click', ev => { ev.stopPropagation(); this.select(r.key); e.run() })
+      return btn
+    }
+    if (highlight) bar.append(button(highlight, 'highlight'))
+    for (const e of primary) bar.append(button(e, 'primary'))
+    bar.append(el('span', 'sp'))
+    for (const e of icons) bar.append(button(e, 'icon'))
+    const more = el('button', 'pf-act more')
+    more.type = 'button'
+    more.dataset.action = 'menu'
+    more.title = 'Menu do painel'
+    more.setAttribute('aria-label', 'Menu do painel')
+    more.setAttribute('aria-haspopup', 'menu')
+    more.draggable = false
+    more.append(icon('dots-three'))
+    more.addEventListener('click', ev => {
+      ev.stopPropagation()
+      // Measure before selecting: selecting redraws the list, and a detached button measures as the window's corner.
+      const box = more.getBoundingClientRect()
+      this.select(r.key)
+      this.menu(r, box.left, box.bottom, this.rowOf(r.key)?.querySelector<HTMLElement>('.pf-act.more') ?? undefined)
+    })
+    bar.append(more)
+    return bar
+  }
+
+  /** The icons that do not fit leave each bar, right to left; the highlight, the primaries and the "⋯" stay. */
+  private fitBars(): void {
+    for (const bar of this.list.querySelectorAll<HTMLElement>('.pf-r-bar')) {
+      const icons = [...bar.querySelectorAll<HTMLElement>('.pf-act.pin-icon')]
+      for (const b of icons) b.hidden = false
+      for (let i = icons.length - 1; i >= 0 && bar.scrollWidth > bar.clientWidth; i--) icons[i]!.hidden = true
+    }
+  }
+
+  private rowOf(key: string): HTMLElement | null { return this.list.querySelector<HTMLElement>(`.pf-row[data-key="${CSS.escape(key)}"]`) }
+
   /** The row's menu: the panel's tab menu, whether its tab is open or not. */
   private menu(r: PanelFrameRow, x: number, y: number, opener?: HTMLElement): void {
-    if (r.loose) this.host.looseMenu(r.key, x, y, opener)
-    else this.host.tabMenu(r.panelId, x, y)
+    this.host.tabMenu(r.panelId, x, y, opener)
+  }
+
+  /** To the panel's tab: a panel on screen comes up and the pad goes back to its frame; a loose one comes back. */
+  private go(r: PanelFrameRow): void {
+    if (r.loose) { const back = itemOf(this.host.menuEntries(r.panelId), BACK_LABEL); if (back && !back.disabled) back.run(); return }
+    const focus = itemOf(this.host.menuEntries(r.panelId), FOCUS_LABEL)
+    if (focus) focus.run(); else this.host.reveal(r.panelId)
+    this.host.exit()
   }
 
   private current(): PanelFrameRow | undefined { return this.rows.find(r => r.key === this.selected) }
@@ -294,13 +341,19 @@ export class PanelPadManager implements ManagerView {
       const r = this.current()
       if (!r) return
       ev.preventDefault()
-      if (r.loose) { if (this.host.revivable(r.key).ok) this.host.revive(r.key) } else { this.host.reveal(r.panelId); this.host.exit() }
+      this.go(r)
     } else if (ev.key === 'Delete') {
       const r = this.current()
-      if (r?.loose) { ev.preventDefault(); this.host.close([r.key], 'one') }
+      const close = r?.loose ? itemOf(this.host.menuEntries(r.panelId), CLOSE_LABEL) : undefined
+      if (close) { ev.preventDefault(); close.run() }
     } else if (ev.key === 'ContextMenu' || (ev.shiftKey && ev.key === 'F10')) {
       const r = this.current()
-      if (r) { ev.preventDefault(); const box = this.list.querySelector<HTMLElement>(`.pf-row[data-key="${CSS.escape(r.key)}"]`)?.getBoundingClientRect(); this.menu(r, box?.left ?? 0, box?.bottom ?? 0) }
+      if (r) {
+        ev.preventDefault()
+        const more = this.rowOf(r.key)?.querySelector<HTMLElement>('.pf-act.more')
+        const box = more?.getBoundingClientRect()
+        this.menu(r, box?.left ?? 0, box?.bottom ?? 0, more ?? undefined)
+      }
     }
   }
 
@@ -309,15 +362,15 @@ export class PanelPadManager implements ManagerView {
     return {
       filter: this.filter,
       rows: this.rows.map(r => {
-        const e = this.list.querySelector<HTMLElement>(`.pf-row[data-key="${CSS.escape(r.key)}"]`)
+        const e = this.rowOf(r.key)
         return {
           key: r.key, panel: r.panelId, title: r.label || r.title, kind: e?.querySelector('.pf-r-kind')?.textContent ?? '', sub: e?.querySelector('.pf-r-sub')?.textContent ?? '',
-          loose: r.loose, empty: r.empty, revivable: !!e?.querySelector('[data-action="revive"]'), panes: r.panes.filter(p => p.component !== 'empty').map(p => p.id),
+          loose: r.loose, empty: r.empty, revivable: this.host.revivable(r.key).ok, panes: r.panes.filter(p => p.component !== 'empty').map(p => p.id),
         }
       }),
       ...(this.selected ? { selected: this.selected } : {}),
     }
   }
 
-  dispose(): void {}
+  dispose(): void { this.fit.disconnect() }
 }
