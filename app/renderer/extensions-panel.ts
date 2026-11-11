@@ -6,6 +6,7 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import { icon } from './icons.ts'
 import { STATE_LABEL, type ExtensionRow } from './extensions-list.ts'
 import { EXTENSIONS_TITLE } from '../shared/extensions-screen.ts'
+import { mountTabEmblem } from './tab-emblems.ts'
 
 export interface ExtensionsHost {
   /** The rows, gathered from every host (main answers over IPC). */
@@ -76,6 +77,7 @@ export class ExtensionsPanel implements IContentRenderer {
 
 export class ExtensionsTab implements ITabRenderer {
   readonly element: HTMLElement
+  private unmountEmblem: (() => void) | undefined
   private api: DockviewPanelApi | undefined
 
   constructor(host: ExtensionsHost) {
@@ -95,8 +97,13 @@ export class ExtensionsTab implements ITabRenderer {
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
+    this.unmountEmblem?.()
+    this.unmountEmblem = mountTabEmblem(this.element.querySelector<HTMLElement>('.kind')!, params.api, params.params)
     this.element.dataset.slot = params.api.id
   }
 
-  dispose(): void { }
+  dispose(): void {
+    this.unmountEmblem?.()
+    this.unmountEmblem = undefined
+  }
 }

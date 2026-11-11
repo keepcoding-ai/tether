@@ -18,6 +18,7 @@
     "check": "npm run typecheck && npm test",
     "daemon": "node src/daemon/main.ts",
     "brand:derive": "node app/brand-derive.mjs",
+    "emblems:derive": "node app/emblem-icons-derive.mjs",
     "bridge:build": "node extensions/web-bridge/build.mjs",
     "browser:vendor": "node extensions/browser/vendor.mjs",
     "app:build": "node app/build.mjs",

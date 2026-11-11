@@ -17,6 +17,7 @@ import { terminalFontOptions, type TerminalAppearance } from '../shared/terminal
 import type { ColorScheme } from '../shared/theme.ts'
 import type { NoteRead, NoteWritten } from '../shared/api.ts'
 import { externalChangeAction, noteParams, noteTitle, type NoteView } from '../shared/notes.ts'
+import { mountTabEmblem } from './tab-emblems.ts'
 
 /** How long after the last keystroke the text is written. */
 export const NOTE_SAVE_DEBOUNCE_MS = 300
@@ -662,6 +663,7 @@ export class NotePanel implements IContentRenderer {
 /** The note's tab: icon, file name, the dirty mark, the ×; double-click renames the file, right-click opens the menu. */
 export class NoteTab implements ITabRenderer {
   readonly element: HTMLElement
+  private unmountEmblem: (() => void) | undefined
   private api: DockviewPanelApi | undefined
   private readonly text: HTMLElement
   private readonly dirtyMark: HTMLElement
@@ -690,6 +692,8 @@ export class NoteTab implements ITabRenderer {
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
+    this.unmountEmblem?.()
+    this.unmountEmblem = mountTabEmblem(this.element.querySelector<HTMLElement>('.kind')!, params.api, params.params)
     this.element.dataset.slot = params.api.id
     this.disposers.push(params.api.onDidTitleChange(() => this.render()))
     this.render()
@@ -736,6 +740,8 @@ export class NoteTab implements ITabRenderer {
   }
 
   dispose(): void {
+    this.unmountEmblem?.()
+    this.unmountEmblem = undefined
     for (const d of this.disposers) d.dispose()
     this.disposers = []
   }

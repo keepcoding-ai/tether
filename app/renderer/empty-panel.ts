@@ -15,6 +15,7 @@ import { createBlankView } from './blank-view.ts'
 import { icon } from './icons.ts'
 import type { ChooserDestination } from './ext-api.ts'
 import { EMPTY_TITLE, emptyOrigin, emptyParams, type EmptyOrigin } from '../shared/empty.ts'
+import { mountTabEmblem } from './tab-emblems.ts'
 
 export interface EmptyHost extends ChooserHost {
   /** The person picked: the host opens it in this pane's place. Resolves with an error message to show, or nothing. */
@@ -144,6 +145,7 @@ export class EmptyPanel implements IContentRenderer {
 /** The empty pane's tab: a plus, "Vazio", the ×; right-click opens the menu. */
 export class EmptyTab implements ITabRenderer {
   readonly element: HTMLElement
+  private unmountEmblem: (() => void) | undefined
   private api: DockviewPanelApi | undefined
   private readonly text: HTMLElement
   private readonly host: EmptyHost
@@ -165,6 +167,8 @@ export class EmptyTab implements ITabRenderer {
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
+    this.unmountEmblem?.()
+    this.unmountEmblem = mountTabEmblem(this.element.querySelector<HTMLElement>('.kind')!, params.api, params.params)
     this.element.dataset.slot = params.api.id
     this.render()
   }
@@ -175,5 +179,8 @@ export class EmptyTab implements ITabRenderer {
     this.element.title = `${EMPTY_TITLE}\nUm lugar reservado: escolha dentro dele o que abrir`
   }
 
-  dispose(): void {}
+  dispose(): void {
+    this.unmountEmblem?.()
+    this.unmountEmblem = undefined
+  }
 }

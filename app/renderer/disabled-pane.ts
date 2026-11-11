@@ -4,6 +4,7 @@
 // `contributes.paneTypes` (extensions/types.ts), registered by main.ts for every extension that is not active.
 import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters, DockviewPanelApi } from 'dockview-core'
 import { icon } from './icons.ts'
+import { mountTabEmblem } from './tab-emblems.ts'
 
 export interface DisabledPaneHost {
   /** The extension's name ("Nota") and whether it is off or failed. */
@@ -51,6 +52,7 @@ export class DisabledPane implements IContentRenderer {
 
 export class DisabledTab implements ITabRenderer {
   readonly element: HTMLElement
+  private unmountEmblem: (() => void) | undefined
   private api: DockviewPanelApi | undefined
   private readonly text: HTMLElement
 
@@ -70,10 +72,15 @@ export class DisabledTab implements ITabRenderer {
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
+    this.unmountEmblem?.()
+    this.unmountEmblem = mountTabEmblem(this.element.querySelector<HTMLElement>('.kind')!, params.api, params.params)
     this.element.dataset.slot = params.api.id
     this.text.textContent = params.title
     this.element.title = `${params.title} (extensão desligada)`
   }
 
-  dispose(): void { }
+  dispose(): void {
+    this.unmountEmblem?.()
+    this.unmountEmblem = undefined
+  }
 }

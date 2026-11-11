@@ -34,6 +34,10 @@ A semana de uso real (PRD §8) é do usuário.
 
 ## Decisões para validar
 
+- 11/11, emblemas nas guias (F14 simplificado; prévia `docs/tab-emblems-preview.html`, aprovada pelo Guga com "pode ir, prefiro ver e pedir melhoria"):
+  - Decididos pelo Guga: um emblema por guia; preso à guia (fechar perde); emblemas padrão + editor (nome, 12 cores, ícone Phosphor); seletor por categorias com busca pt/en.
+  - Decididos pela coordenação: os 6 padrão (Cliente, Pessoal, Estudo, Revisar, Deploy, Bug); padrão se edita, restaura e oculta, nunca apaga; a biblioteca mora no `layout.json` (`emblems`, campo aditivo); aplicar é "Emblema…" no menu de toda guia (o menu não tem submenu); o chip fica logo após o ícone da guia; 219 ícones em 9 categorias (`app/emblem-icons-derive.mjs`, `npm run emblems:derive`).
+
 - 05–06/11, F6–F10 (frente mind/effort/on/tether, seção "Objetivo em curso"):
   - **F9:** as 13 decisões do estudo (`mind/effort/on/tether/f9-estudo.md` §7.2) foram aprovadas pela coordenação, porque são de engenharia. Pasta `extensions/`, ativação ao abrir, desligar só depois de "Reiniciar o app", nota e prévias numa extensão só, terminal no núcleo, configurações em `extensions.<id>`, barramento `ext:<id>:<canal>`, menu ≡ gerado pelo registro, layout v3 e versão semver no manifesto.
   - **F6 → F11:** o esmaecer usa a cor do fundo (`--desk-bg`) e nunca escurece para o preto. Tem três níveis (0,20 / 0,32 / 0,45), com o médio como padrão, porque o contraste depende do monitor.
