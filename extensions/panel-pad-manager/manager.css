@@ -56,9 +56,7 @@
 .pf-act svg { width: 15px; height: 15px; flex: none; }
 .pf-act:hover:not(:disabled), .pf-act[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
 .pf-act:disabled { opacity: .45; cursor: default; }
-.pf-act.pin-primary, .pf-act.pin-highlight { padding: 0 8px 0 6px; color: var(--fg); }
-.pf-act.pin-highlight { background: var(--accent); color: var(--accent-fg, #fff); }
-.pf-act.pin-highlight:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, #000); color: var(--accent-fg, #fff); }
+.pf-act.pin-primary, .pf-act.pin-highlight { padding: 0 8px 0 6px; }
 /* The switch's warning dot: a loose frame has content. */
 .pad-frames .tab-act[data-action="frames-manager"].attention::after { content: ''; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .pad-frames .tab-act[data-action="frames-manager"] { position: relative; }

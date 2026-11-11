@@ -2396,7 +2396,7 @@ const MOVE_LABEL = 'Mover…'
 const LINK_LABEL = 'Copiar link do painel'
 const CLOSE_PANEL_LABEL = 'Fechar painel…'
 /** The pins of the actions every pane menu has, for the menus pane types draw themselves. */
-const COMMON_PINS: Readonly<Record<string, MenuPin>> = { [MOVE_LABEL]: 'icon', [LINK_LABEL]: 'icon', [CLOSE_PANEL_LABEL]: 'icon' }
+const COMMON_PINS: Readonly<Record<string, MenuPin>> = { [MOVE_LABEL]: 'icon', [LINK_LABEL]: 'icon', [CLOSE_PANEL_LABEL]: 'primary' }
 
 /** A pane type's own menu (the note's, the previews', a placeholder's) as data, read through showContextMenu. */
 function typeMenuEntries(id: string): MenuEntry[] {
@@ -2431,7 +2431,7 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
     if (key) return reviveFrame(key)
     return !!liveTypeOf(paneTypes, id)?.closedEntry?.(id)?.reopen()
   }
-  const closeLoose: MenuItem = { icon: 'x', label: CLOSE_PANEL_LABEL, pin: 'icon', run: () => { void closeLoosePanel(id) } }
+  const closeLoose: MenuItem = { icon: 'x', label: CLOSE_PANEL_LABEL, pin: 'primary', run: () => { void closeLoosePanel(id) } }
   const slot = slots.get(id)
   // Without a slot the type's menu cannot be read (it draws it from the live pane): the actions every pane has stand in.
   const base: MenuEntry[] = slot ? slotMenuEntries(slot) : [
@@ -2447,7 +2447,7 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
     if (e.standalone) return e
     return { ...e, disabled: e.disabled || !can, run: () => { if (back()) requestAnimationFrame(() => e.run()) } }
   })
-  return [{ icon: 'arrow-counter-clockwise', label: 'Trazer de volta', pin: 'icon', disabled: !can, run: () => { back() } }, SEP, ...items]
+  return [{ icon: 'arrow-counter-clockwise', label: 'Trazer de volta', pin: 'primary', disabled: !can, run: () => { back() } }, SEP, ...items]
 }
 
 /** The menu of `paneMenuEntries` at page coordinates; it does not activate the pane (the view that asked keeps its state). */
@@ -2486,7 +2486,7 @@ function slotMenuEntries(slot: SlotState): MenuEntry[] {
     { icon: 'arrow-square-out', label: MOVE_LABEL, pin: 'icon', run: () => { void openMove(slotId) } },
     SEP,
     ...fromExtensions,
-    { icon: 'x', label: CLOSE_PANEL_LABEL, pin: 'icon', run: () => { void closePanel(slotId) } },
+    { icon: 'x', label: CLOSE_PANEL_LABEL, pin: 'primary', run: () => { void closePanel(slotId) } },
   ]
 }
 

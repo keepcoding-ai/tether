@@ -116,13 +116,20 @@ const padHas = async (page: Page, panelId: string, paneId: string): Promise<bool
 /** How many groups the desk's frame has. */
 const groups = async (page: Page): Promise<number> => page.evaluate(() => window.__tether.frameIds().reduce((n, id) => n + (JSON.stringify(window.__tether.frameLayout(id)).match(/"type":"leaf"/g) ?? []).length, 0))
 
-/** The row's foot bar: the given pinned action first, "Copiar link"/"Mover" as icons, the ⋯ last. */
-async function barShape(page: Page, k: string, level: 'icon' | 'primary', label: string): Promise<void> {
+/** The row's foot bar, exactly: [first] [Fechar painel] as primaries, then 🔗 ↗ as icons, the ⋯ last; no highlight. */
+async function barShape(page: Page, k: string, first: 'Trazer de volta' | 'Focar guia'): Promise<void> {
   const acts = await page.locator(`${row(k)} .pf-r-bar > button`).evaluateAll(bs => bs.map(b => ({ pin: (b as HTMLElement).dataset.pin ?? (b.classList.contains('more') ? 'more' : ''), label: (b as HTMLElement).dataset.label ?? '' })))
-  assert.deepEqual(acts[0], { pin: level, label }, `the ${level} action: ${JSON.stringify(acts)}`)
-  assert.equal(acts.filter(x => x.pin === 'highlight').length <= 1 && acts.filter(x => x.pin === 'primary').length <= 2, true)
-  assert.ok(acts.some(x => x.pin === 'icon' && x.label === 'Mover…') && acts.some(x => x.pin === 'icon' && x.label === 'Copiar link do painel'), JSON.stringify(acts))
-  assert.equal(acts.at(-1)?.pin, 'more', 'the ⋯ is last')
+  assert.deepEqual(acts, [
+    { pin: 'primary', label: first },
+    { pin: 'primary', label: 'Fechar painel…' },
+    { pin: 'icon', label: 'Copiar link do painel' },
+    { pin: 'icon', label: 'Mover…' },
+    { pin: 'more', label: '' },
+  ], `the bar's shape: ${JSON.stringify(acts)}`)
+  assert.deepEqual(await page.locator(`${row(k)} .pf-act.pin-primary span`).allInnerTexts(), [first, 'Fechar painel'])
+  const bg = await page.locator(`${row(k)} .pf-act.pin-primary`).evaluateAll(bs => bs.map(b => getComputedStyle(b).backgroundColor))
+  const iconBg = await page.locator(`${row(k)} .pf-act.pin-icon`).first().evaluate(b => getComputedStyle(b).backgroundColor)
+  assert.ok(bg.every(c => c === iconBg), `primaries drawn like the other buttons: ${JSON.stringify(bg)} vs ${iconBg}`)
   const bar = (await page.locator(`${row(k)} .pf-r-bar`).boundingBox())!, head = (await page.locator(`${row(k)} .pf-r-head`).boundingBox())!
   assert.ok(bar.y > head.y, 'the bar is at the row\'s foot')
   assert.equal(await page.locator(`${row(k)} .pf-btn`).count(), 0, 'no big buttons')
@@ -198,14 +205,8 @@ test('panel pad manager: the panels of the desk with a frame; a loose one comes 
     await sleep(200)
     assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(a), 'a click on a loose row brings nothing')
     // A loose row is a panel too: the tab's own menu with "Trazer de volta" first, and the bar at the row's foot.
-    await barShape(page, key(a), 'icon', 'Trazer de volta')
-    {
-      const acts = await page.locator(`${row(key(a))} .pf-r-bar > button`).evaluateAll(bs => bs.map(b => ({ pin: (b as HTMLElement).dataset.pin ?? '', label: (b as HTMLElement).dataset.label ?? '' })))
-      assert.equal(acts.filter(x => x.pin === 'highlight').length, 0, `no highlight on a loose row: ${JSON.stringify(acts)}`)
-      assert.deepEqual(acts.at(-2), { pin: 'icon', label: 'Fechar painel…' }, `"Fechar painel…" right before the ⋯: ${JSON.stringify(acts)}`)
-      const box = (await page.locator(`${row(key(a))}`).boundingBox())!
-      await page.screenshot({ path: join(shots, '2a-barra-solto.png'), clip: box })
-    }
+    await barShape(page, key(a), 'Trazer de volta')
+    await page.screenshot({ path: join(shots, '2a-barra-solto.png'), clip: (await page.locator(`${row(key(a))} .pf-r-bar`).boundingBox())! })
     const looseMenu = async (open: () => Promise<void>, how: string): Promise<void> => {
       await open()
       await page.waitForSelector('#ctx-menu')
@@ -222,7 +223,7 @@ test('panel pad manager: the panels of the desk with a frame; a loose one comes 
     assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(a), 'opening the menu brings nothing back')
 
     // ---- 3. Trazer de volta: A's pane comes back, its frame with it ----
-    await page.click(`${row(key(a))} .pf-act.pin-icon[data-label="Trazer de volta"]`)
+    await page.click(`${row(key(a))} .pf-act.pin-primary[data-label="Trazer de volta"]`)
     await page.waitForFunction(id => window.__tether.panelIds().includes(id), a, { timeout: 10_000 })
     await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0)
     assert.ok(await padHas(page, a, noteId), "A's frame, with the note, is A's again")
@@ -234,7 +235,8 @@ test('panel pad manager: the panels of the desk with a frame; a loose one comes 
     await page.waitForSelector(row(key(a)))
     m = (await manager(page))!
     assert.ok(!m.rows[0]!.loose, 'a live row')
-    await barShape(page, key(a), 'primary', 'Focar guia')
+    await barShape(page, key(a), 'Focar guia')
+    await page.screenshot({ path: join(shots, '4a-barra-aberto.png'), clip: (await page.locator(`${row(key(a))} .pf-r-bar`).boundingBox())! })
     // A click only selects; a double click goes to the tab.
     await page.click(`${row(key(a))} .pf-r-head`)
     await sleep(300)

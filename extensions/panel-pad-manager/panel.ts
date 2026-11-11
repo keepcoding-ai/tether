@@ -266,13 +266,9 @@ export class PanelPadManager implements ManagerView {
     const all = items(this.host.menuEntries(r.panelId))
     const highlight = all.find(e => e.pin === 'highlight')
     const primary = all.filter(e => e.pin === 'primary').slice(0, MAX_PRIMARY)
-    // Icons follow the menu's order, except "Trazer de volta" leads and "Fechar painel…" sits right before the "⋯".
-    const pinned = all.filter(e => e.pin === 'icon')
-    const icons = [
-      ...pinned.filter(e => e.label === BACK_LABEL),
-      ...pinned.filter(e => e.label !== BACK_LABEL && e.label !== CLOSE_LABEL),
-      ...pinned.filter(e => e.label === CLOSE_LABEL),
-    ]
+    // Primaries: "Trazer de volta"/"Focar guia" first, "Fechar painel…" after. Icons follow the menu's order.
+    primary.sort((x, y) => Number(x.label === CLOSE_LABEL) - Number(y.label === CLOSE_LABEL))
+    const icons = all.filter(e => e.pin === 'icon')
     const button = (e: MenuItem, level: 'highlight' | 'primary' | 'icon'): HTMLButtonElement => {
       const btn = el('button', `pf-act pin-${level}`)
       btn.type = 'button'
@@ -284,8 +280,7 @@ export class PanelPadManager implements ManagerView {
       btn.disabled = !!e.disabled
       if (e.danger) btn.classList.add('danger')
       btn.append(icon(e.icon as IconName))
-      if (level !== 'icon') btn.append(el('span', undefined, e.label))
-      if (e.label === BACK_LABEL || e.label === CLOSE_LABEL) btn.dataset.keep = ''
+      if (level !== 'icon') btn.append(el('span', undefined, e.label.replace(/…$/, '')))
       btn.addEventListener('click', ev => { ev.stopPropagation(); this.select(r.key); e.run() })
       return btn
     }
@@ -313,15 +308,13 @@ export class PanelPadManager implements ManagerView {
   }
 
   /**
-   * The icons that do not fit leave each bar, right to left: the ordinary ones first, then "Fechar painel…" and
-   * "Trazer de volta" (data-keep); the highlight, the primaries and the "⋯" stay.
+   * The icons that do not fit leave each bar, right to left; the highlight, the primaries and the "⋯" stay.
    */
   private fitBars(): void {
     for (const bar of this.list.querySelectorAll<HTMLElement>('.pf-r-bar')) {
       const all = [...bar.querySelectorAll<HTMLElement>('.pf-act.pin-icon')]
       for (const b of all) b.hidden = false
-      const order = [...all.filter(b => !('keep' in b.dataset)).reverse(), ...all.filter(b => 'keep' in b.dataset).reverse()]
-      for (const b of order) { if (bar.scrollWidth <= bar.clientWidth) break; b.hidden = true }
+      for (const b of all.reverse()) { if (bar.scrollWidth <= bar.clientWidth) break; b.hidden = true }
     }
   }
 
