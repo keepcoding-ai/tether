@@ -189,7 +189,8 @@ export interface TetherUi {
     close(id: string): void
     /**
      * The pane's tab menu at page coordinates, by the `opener` button when given (it reads aria-expanded and gets the focus
-     * back). `id` may be a panel whose tab is closed (a loose frame's): its menu is the same, with "Trazer de volta" first.
+     * back). With `from: 'manager'` the same menu comes after "Focar guia" and "Fechar guia" (its only primaries). A pane
+     * that is not live has no menu: a closed owner's frame is mounted first (`pads.panelFrames.mount`).
      */
     showTabMenu(id: string, x: number, y: number, opener?: HTMLElement, opts?: TabMenuOptions): void
     /** The items `showTabMenu` shows, as data (one source for the menu and any bar of actions built from it). */
@@ -436,8 +437,11 @@ export interface TetherUi {
       restore(snapshot: FrameSnapshot): void
       /** A live frame to the front: its panel comes forward and its pad opens. */
       show(key: string): void
-      /** From a `dragstart`: the loose frame's panel comes back and the drag carries it like its tab's. False when it cannot. */
-      beginDrag(key: string, ev: DragEvent): boolean
+      /**
+       * Mounts a frame's view (built from its saved state when it never showed) so its panes are live panes: their menu,
+       * drag (`panes.beginDrag`) and close work. A loose frame's owner stays closed. False when the key names no frame.
+       */
+      mount(key: string): boolean
     }
   }
   /**

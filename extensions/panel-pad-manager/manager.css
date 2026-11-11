@@ -23,32 +23,25 @@
 .pf-link { background: none; border: 0; padding: 0; color: var(--accent); font: 12px var(--ui); cursor: pointer; }
 .pf-link:hover { text-decoration: underline; }
 .pf-list { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 6px; scrollbar-width: thin; }
-.pf-group { padding: 10px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-dim); }
-.pf-group:first-child { padding-top: 4px; }
-.pf-row { display: flex; flex-direction: column; gap: 3px; padding: 7px 10px; border-radius: 6px; cursor: pointer; user-select: none; }
+.pf-owner { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 10px 8px 4px; font-size: 12px; color: var(--fg-dim); user-select: none; }
+.pf-owner:first-child { padding-top: 4px; }
+.pf-o-icon { display: inline-flex; flex: none; }
+.pf-o-icon svg { width: 13px; height: 13px; }
+.pf-o-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--fg); }
+.pf-owner.focused .pf-o-name { color: var(--accent); }
+.pf-owner.loose .pf-o-name { color: var(--fg-dim); }
+.pf-o-state { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-o-state.live { color: var(--ok); }
+.pf-row { display: flex; flex-direction: column; gap: 3px; margin-left: 12px; padding: 6px 10px; border-radius: 6px; cursor: pointer; user-select: none; }
 .pf-row:hover { background: var(--bg-hover); }
 .pf-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
-.pf-row.focused .pf-r-title { color: var(--accent); }
 .pf-row.dragging { opacity: .45; }
-.pf-row.loose { background: color-mix(in srgb, var(--warn) 7%, transparent); }
-.pf-row.loose:hover { background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .pf-r-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .pf-r-icon { display: inline-flex; flex: none; color: var(--fg-dim); }
 .pf-r-icon svg { width: 14px; height: 14px; }
+.pf-r-title.live { color: var(--ok); }
 .pf-r-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.pf-r-kind { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
-.pf-r-kind.live { color: var(--ok); }
-.pf-r-meta { flex: none; font-size: 12px; color: var(--fg-dim); white-space: nowrap; }
-.pf-r-sub { padding-left: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
-.pf-r-sub:empty { display: none; }
-.pf-row.loose .pf-r-sub { color: var(--warn); }
-.pf-row.loose .pf-r-sub.ok { color: var(--fg); }
-.pf-r-panes { padding-left: 20px; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
-.pf-r-pane { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 11.5px; color: var(--fg-dim); }
-.pf-r-pane svg { width: 12px; height: 12px; flex: none; }
-.pf-r-pane > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pf-r-pane.live { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--fg); }
-.pf-r-pane.dim { border-style: dashed; }
+.pf-r-kind { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-dim); }
 /* The row's action bar (the menu's pinned items), drawn like the frame header's .tab-act: compact, the "⋯" last. */
 .pf-r-bar { display: flex; align-items: center; gap: 2px; min-width: 0; padding: 2px 0 0 20px; overflow: hidden; }
 .pf-act { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 24px; min-width: 26px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); font: 12px var(--ui); white-space: nowrap; cursor: pointer; }

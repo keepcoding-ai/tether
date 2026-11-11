@@ -5,8 +5,8 @@
 // Vocabulary: the panel pad has one frame ("quadro") per focusable panel, and a frame holds panes of any kind (a note, a
 // terminal, an agent, a browser tab). A frame is "loose" ("solto") when its panel is gone (closed); it is "empty" when
 // every pane it holds is an empty pane (the blank view the pad is seeded with). The desk pad and the global pad are other
-// pads and not looked after here. The manager's item is the PANEL (the frame's content only tells which panel it is), and
-// it works one desk at a time: `forDesk`.
+// pads and not looked after here. The manager's item is the PANE of a frame (a guide), grouped by the frame's owner
+// (`guideGroups`), and it works one desk at a time: `forDesk`.
 //
 // Each frame may carry a small record (`PanelFrameMeta`) written while its panel lives: the panel's label and desk, and
 // when its content last changed. A loose frame keeps it, so the manager can still say "antes em <painel>".
@@ -160,6 +160,26 @@ export function visibleRows(tree: PanelFrameTree, filter: FrameFilter, deskId: s
   const d = forDesk(tree, deskId)
   if (filter === 'loose') return d.loose
   return [...d.loose, ...d.panels.filter(r => !r.empty)]
+}
+
+/** One owner of the manager's list: the owner's frame (the group's header) and the panes it keeps (the cards). */
+export interface FrameGuideGroup {
+  row: PanelFrameRow
+  /** The frame's real panes (an empty pane is not a guide), in view order. */
+  guides: FramePane[]
+}
+
+/**
+ * What the manager lists for a desk: the panes of the pad grouped by their owner, the owner in focus first, then the
+ * other open owners (desk order), then the closed ones (most recent first). An owner without real panes has no group,
+ * open or closed: a frame left with nothing in it leaves the list. 'loose' keeps only the closed owners.
+ */
+export function guideGroups(tree: PanelFrameTree, filter: FrameFilter, deskId: string = tree.activeDeskId): FrameGuideGroup[] {
+  const d = forDesk(tree, deskId)
+  const open = filter === 'loose' ? [] : [...d.panels].sort((a, b) => Number(b.focused) - Number(a.focused))
+  return [...open, ...d.loose]
+    .map(row => ({ row, guides: row.panes.filter(p => p.component !== EMPTY_COMPONENT) }))
+    .filter(g => g.guides.length > 0)
 }
 
 /** How many loose frames have content (the warning dot) and how many frames have content at all. */

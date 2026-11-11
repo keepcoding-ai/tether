@@ -747,17 +747,6 @@ async function settleClose(slot: SlotState, opts: { ask?: boolean } = {}): Promi
   return true
 }
 
-/**
- * "Fechar painel…" for a panel whose tab is already closed (a loose frame's): what closing its tab would do to its slot
- * (the same dialog), and its frames go too, since nothing will bring them back.
- */
-async function closeLoosePanel(panelId: string): Promise<void> {
-  const slot = slots.get(panelId)
-  if (slot && !await settleClose(slot)) return
-  const keys = frameTree().loose.filter(r => r.panelId === panelId).map(r => r.key)
-  if (keys.length) closeFramesLive(keys)
-}
-
 /** Main asks for a situation to be put to the user (menu items live in main; the dialog lives here). */
 async function onAsk(req: AskRequest): Promise<void> {
   switch (req.situation) {
@@ -1496,20 +1485,35 @@ function reviveFrame(key: string): boolean {
 }
 
 /**
- * The drag of a loose frame's panel, as its tab's would be: the panel comes back (without opening its pad, so nothing
- * moves under the pointer) and the drag carries it, so dropping it anywhere a tab goes places it there.
+ * A frame's view mounted (built from its saved state when it never showed), so the panes it keeps are live panes like
+ * any other: found, described, dragged, closed and given their tab's menu. A closed owner's frame stays closed: only
+ * its view exists, hidden (the panel pad shows the focused panel's frame). False when the key names no frame.
  */
-function beginLooseFrameDrag(key: string, ev: DragEvent): boolean {
-  const o = frameOwnerOf(key)
-  if (!o) return false
-  if (!findPanel(o.panelId)) {
-    const entry = liveTypeOf(paneTypes, o.panelId)?.closedEntry?.(o.panelId)
-    if (!entry?.reopen()) return false
-    toldLoose?.delete(key)
-  }
-  const ok = beginPaneDrag(o.panelId, ev)
-  queueMicrotask(afterFrames)
-  return ok
+function mountFrame(key: string): boolean {
+  return !!padOfFrameKey(key)
+}
+
+/**
+ * "Focar guia": a pane of a frame to the front, active and focused. Its owner comes forward with it (a panel pad shows
+ * its owner's frame); a closed owner is reopened first (its slot resumes), since only a live panel's frame can be shown.
+ */
+function focusGuide(id: string): void {
+  const pad = framePadOf(id)
+  const owner = pad?.panelId
+  if (!pad || !owner || findPanel(owner)) { revealPane(id); return }
+  if (!liveTypeOf(paneTypes, owner)?.closedEntry?.(owner)?.reopen()) return
+  toldLoose?.delete(frameKeyOf(pad.padId, owner))
+  afterFrames()
+  // The reopened panel may take a few frames to be placed; the pane goes to the front once its owner is there.
+  let tries = 60
+  const wait = (): void => { if (findPanel(owner) || --tries <= 0) revealPane(id); else requestAnimationFrame(wait) }
+  requestAnimationFrame(wait)
+}
+
+/** "Fechar guia": the pane closes the way its tab's × closes it (a slot's pane asks what to do with the process). */
+function closeGuide(id: string): void {
+  if (slots.has(id)) void closePanel(id)
+  else closeSlotless(id)
 }
 
 /** Brings a live frame forward: its panel comes to the front and its pad opens. A loose frame has nowhere to go. */
@@ -2007,6 +2011,13 @@ function revealPane(id: string): void {
     const pad = framePadOf(id)
     if (pad) {
       if (pad.deskId && pad.deskId !== desks.activeDeskId) desks.switchTo(pad.deskId)
+      // A panel pad shows its own panel's pane: that panel takes the Foco de Mesa first.
+      if (pad.panelId && pad.panelId !== focusablePanelId() && desks.getPanel(pad.panelId)) {
+        const ownerDesk = desks.deskOf(pad.panelId)
+        if (ownerDesk && ownerDesk !== desks.activeDeskId) desks.switchTo(ownerDesk)
+        desks.getPanel(pad.panelId)?.api.setActive()
+        sidebars?.render()
+      }
       sidebars?.open(pad.padId, false)
       setFocusedPad(pad)
     } else {
@@ -2410,44 +2421,31 @@ function typeMenuEntries(id: string): MenuEntry[] {
   return out.map(e => e === SEP || 'heading' in e || e.pin || !COMMON_PINS[e.label] ? e : { ...e, pin: COMMON_PINS[e.label] })
 }
 
+/** The manager's primaries on a pane's menu. */
+const FOCUS_GUIDE_LABEL = 'Focar guia'
+const CLOSE_GUIDE_LABEL = 'Fechar guia'
+
 /**
- * The menu of a panel as a view that lists panels apart from their tabs shows it (TabMenuOptions 'manager'), or as the tab
- * shows it. A panel on screen: its tab's menu, after "Focar guia" for the manager. A panel whose tab is closed (a loose
- * frame's) has the same menu with "Trazer de volta" first: the items that need the pane on screen bring it back and then
- * act, and "Fechar painel…" settles its slot as closing the tab would and drops its frames. When it cannot come back
- * (its slot is gone), those items are disabled.
+ * The menu of a pane as its tab shows it, or as a view that lists panes apart from their tabs shows it (TabMenuOptions
+ * 'manager'): the same menu after "Focar guia" and "Fechar guia", which are then its only primaries ("Fechar painel…"
+ * stays in the menu without a pin). A pane that is not live has no menu (a closed owner's frame is mounted first:
+ * TetherUi.pads.panelFrames.mount).
  */
 function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
-  if (findPanel(id)) {
-    const slot = slots.get(id)
-    const base = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
-    if (opts.from !== 'manager') return base
-    return [{ icon: 'arrow-right', label: 'Focar guia', pin: 'primary', run: () => revealPane(id) }, SEP, ...base]
-  }
-  const key = frameTree().loose.find(r => r.panelId === id)?.key
-  const can = !!liveTypeOf(paneTypes, id)?.closedEntry?.(id)
-  const back = (): boolean => {
-    if (findPanel(id)) return true
-    if (key) return reviveFrame(key)
-    return !!liveTypeOf(paneTypes, id)?.closedEntry?.(id)?.reopen()
-  }
-  const closeLoose: MenuItem = { icon: 'x', label: CLOSE_PANEL_LABEL, pin: 'primary', run: () => { void closeLoosePanel(id) } }
+  if (!findPanel(id)) return []
   const slot = slots.get(id)
-  // Without a slot the type's menu cannot be read (it draws it from the live pane): the actions every pane has stand in.
-  const base: MenuEntry[] = slot ? slotMenuEntries(slot) : [
-    { icon: 'link', label: LINK_LABEL, pin: 'icon', run: () => copyPaneLink(id) },
-    SEP,
-    { icon: 'arrow-square-out', label: MOVE_LABEL, pin: 'icon', run: () => { void openMove(id) } },
-    SEP,
-    closeLoose,
-  ]
-  const items = base.map((e): MenuEntry => {
-    if (e === SEP || 'heading' in e) return e
-    if (e.label === CLOSE_PANEL_LABEL) return { ...closeLoose, icon: e.icon }
-    if (e.standalone) return e
-    return { ...e, disabled: e.disabled || !can, run: () => { if (back()) requestAnimationFrame(() => e.run()) } }
+  const base = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
+  if (opts.from !== 'manager') return base
+  const owner = framePadOf(id)?.panelId
+  const canFocus = !owner || !!findPanel(owner) || !!liveTypeOf(paneTypes, owner)?.closedEntry?.(owner)
+  const focus: MenuItem = { icon: 'arrow-right', label: FOCUS_GUIDE_LABEL, pin: 'primary', run: () => focusGuide(id), ...(canFocus ? {} : { disabled: true, tip: 'O painel dono desta guia não existe mais: mova a guia para outro lugar' }) }
+  const close: MenuItem = { icon: 'x', label: CLOSE_GUIDE_LABEL, pin: 'primary', run: () => closeGuide(id) }
+  const rest = base.map((e): MenuEntry => {
+    if (e === SEP || 'heading' in e || e.pin !== 'primary') return e
+    const { pin: _pin, ...unpinned } = e
+    return unpinned
   })
-  return [{ icon: 'arrow-counter-clockwise', label: 'Trazer de volta', pin: 'primary', disabled: !can, run: () => { back() } }, SEP, ...items]
+  return [focus, close, SEP, ...rest]
 }
 
 /** The menu of `paneMenuEntries` at page coordinates; it does not activate the pane (the view that asked keeps its state). */
@@ -4127,7 +4125,7 @@ function activateRendererExtensions(): void {
           close: keys => closeFramesLive(keys),
           restore: snap => restoreFramesLive(snap),
           show: key => showFrame(key),
-          beginDrag: (key, ev) => beginLooseFrameDrag(key, ev),
+          mount: key => mountFrame(key),
         },
       },
       keybindings: {

@@ -1,7 +1,7 @@
 // The panel-pad-manager extension's renderer entry: the manager as the panel pad's second state (frame-pads/manager-slot.ts:
 // this extension provides the view, the frame-pads extension hosts it), its two commands (switch the pad to the manager
 // and back; show the loose frames), the toasts (a frame became loose: "Ver"; a loose frame closed), and the test hooks.
-// The frames are the core's (TetherUi.pads.panelFrames); what a row does is what the panel's tab does (TetherUi.panes).
+// The frames are the core's (TetherUi.pads.panelFrames); what a card does is what the guide's tab does (TetherUi.panes).
 import type { FrameFilter, TetherUi } from '../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { padManager } from '../frame-pads/manager-slot.ts'
@@ -23,11 +23,10 @@ export function activate(ui: TetherUi): IDisposable[] {
     tree: () => ui.pads.panelFrames.tree(),
     agent: paneId => ui.agents.get(paneId) ?? ui.agents.list().find(a => a.paneId === paneId),
     describe: paneId => ui.panes.describe(paneId),
-    reveal: panelId => ui.panes.reveal(panelId),
-    menuEntries: panelId => ui.panes.tabMenuEntries(panelId, { from: 'manager' }),
-    tabMenu: (panelId, x, y, opener) => ui.panes.showTabMenu(panelId, x, y, opener, { from: 'manager' }),
-    beginDrag: (panelId, ev) => ui.panes.beginDrag(panelId, ev),
-    beginLooseDrag: (key, ev) => ui.pads.panelFrames.beginDrag(key, ev),
+    mount: key => ui.pads.panelFrames.mount(key),
+    menuEntries: paneId => ui.panes.tabMenuEntries(paneId, { from: 'manager' }),
+    tabMenu: (paneId, x, y, opener) => ui.panes.showTabMenu(paneId, x, y, opener, { from: 'manager' }),
+    beginDrag: (paneId, ev) => ui.panes.beginDrag(paneId, ev),
     revivable: key => ui.pads.panelFrames.revivable(key),
     close: (keys, what) => {
       const snap = ui.pads.panelFrames.close(keys)
@@ -42,7 +41,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     padManager.show(filter, key)
   }
 
-  ui.test.expose('panelPadManager', () => [...panels].filter(p => !p.element.hidden && p.element.isConnected).map(p => p.snapshot()))
+  ui.test.expose('panelPadManager', () => [...panels].filter(p => !p.element.hidden && p.element.isConnected && !!p.element.closest('.pad.shown')).map(p => p.snapshot()))
   ui.test.expose('openPanelPadManager', (filter: FrameFilter = 'all', key?: string) => show(filter, key))
   ui.test.expose('panelPadManagerOn', () => padManager.isOn())
   ui.test.expose('panelPadManagerSelect', (key: string) => { for (const p of panels) p.select(key) })

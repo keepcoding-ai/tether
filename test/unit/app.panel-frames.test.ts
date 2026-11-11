@@ -4,7 +4,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  allRows, buildFrameTree, cleanEmptyFrames, closeFrames, emptyLooseKeys, forDesk, frameCounts, hasContent, panesOf, pruneMeta, readFrameMeta, restoreFrames,
+  allRows, buildFrameTree, cleanEmptyFrames, closeFrames, emptyLooseKeys, forDesk, frameCounts, guideGroups, hasContent, panesOf, pruneMeta, readFrameMeta, restoreFrames,
   visibleRows, whenLabel, type FrameSource, type FrameStore, type PanelFrameTreeInput,
 } from '../../app/renderer/panel-frames.ts'
 
@@ -79,6 +79,15 @@ describe('panel frames: the tree', () => {
     assert.ok(!visibleRows(withBlank, 'all').some(r => r.key === pk('c')), 'a live panel with a blank frame has nothing to look after')
     assert.deepEqual(frameCounts(tree), { loose: 1, looseEmpty: 1, withContent: 4 })
     assert.deepEqual(emptyLooseKeys(tree), [pk('gone2')])
+  })
+
+  test('the manager lists guides grouped by owner: focused owner first, then open, then closed; no group without real panes', () => {
+    const tree = buildFrameTree(input())
+    const all = guideGroups(tree, 'all')
+    assert.deepEqual(all.map(g => g.row.key), [pk('a'), pk('gone')], 'd1: a (in focus) then gone (closed); gone2 has only an empty pane')
+    assert.ok(all.every(g => g.guides.every(p => p.component !== 'empty')), 'an empty pane is never a guide')
+    assert.deepEqual(guideGroups(tree, 'loose').map(g => g.row.key), [pk('gone')])
+    assert.deepEqual(guideGroups(tree, 'all', 'd2').map(g => [g.row.key, g.guides.length]), [[pk('b'), 2]], 'two panes in one frame: two guides in one group')
   })
 
   test('a panel that comes back takes its frame back (alive again, not loose)', () => {

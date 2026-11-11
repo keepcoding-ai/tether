@@ -1,18 +1,19 @@
-// E2E of the manager of the panel pad (extension panel-pad-manager): the pad's second state, where the panels of the
-// current desk that have a frame are managed. Real tetherd on a private home/pipe, hidden window, CLAUDE* stripped.
-//   1. a note in panel A's frame; B with an empty frame (no row); C's empty frame goes away with C, no toast;
-//   2. closing A (keeping the process): toast "Ver" → the manager, A's row loose, with "Trazer de volta";
-//   3. Trazer de volta: A's pane is back and its frame (with the note) is its again;
-//   4. a live row: click brings the panel up; right-click opens the tab's own menu;
-//   5. dragging a row onto the desk's edge moves the panel like dragging its tab;
-//   6. another desk lists none of this desk's panels;
-//   7. a loose row's "Fechar painel…" (the tab's menu item) discards the frame and its record;
-//   8. the keyboard and the switch; 9. affinity of desk-only screens.
+// E2E of the manager of the panel pad (extension panel-pad-manager): the pad's second state, where the GUIDES the pad
+// keeps are managed, grouped by their owner (the panel whose frame it is). Real tetherd on a private home/pipe, hidden
+// window, CLAUDE* stripped.
+//   1. two notes in A's frame, B with an empty frame: one group (A) with two cards, B not listed;
+//   2. the card's bar and menu are the guide's (⋯ opens it by the button); a click only selects;
+//   3. Focar guia (double click) brings A forward with the note active; Fechar guia closes that pane;
+//   4. dragging a card to the desk's edge MOVES the guide: on the desk, out of the pad, the card and group gone;
+//   5. another desk lists nothing of this one;
+//   6. a closed owner is a "fechado" group with its guides, the filter counts them; Focar guia brings the owner back;
+//      Fechar guia on the last guide of a closed owner removes its frame;
+//   7. the keyboard and the switch; 8. affinity of desk-only screens.
 // Screenshots in <atrium>/.tmp/panel-pad-manager.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -21,8 +22,8 @@ import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
-type Row = { key: string; panel: string; title: string; kind: string; sub: string; loose: boolean; empty: boolean; revivable: boolean; panes: string[] }
-type Manager = { filter: string; rows: Row[]; selected?: string }
+type Group = { key: string; panel: string; name: string; state: string; loose: boolean; guides: { id: string; title: string; detail: string }[] }
+type Manager = { filter: string; groups: Group[]; looseGuides: number; selected?: string }
 type Tree = { loose: { key: string; empty: boolean }[] }
 type LayoutJSON = { sidebars?: { pads: Record<string, unknown>; meta?: Record<string, { ownerLabel: string; deskId?: string; updatedAt: number }> } }
 type Hooks = {
@@ -63,7 +64,8 @@ const key = (panelId: string): string => `${PANEL}@${panelId}`
 const shown = `#pads .pad.shown[data-pad="${PANEL}"]`
 /** The manager as the e2e sees it: inside the pad on screen, never a tab on the desk. */
 const inPad = `${shown} .pad-manager.pf-pane:not([hidden])`
-const row = (k: string): string => `${inPad} .pf-row[data-key="${k}"]`
+const card = (paneId: string): string => `${inPad} .pf-row[data-pane="${paneId}"]`
+const owner = (k: string): string => `${inPad} .pf-owner[data-key="${k}"]`
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' } }
@@ -116,48 +118,61 @@ const padHas = async (page: Page, panelId: string, paneId: string): Promise<bool
 /** How many groups the desk's frame has. */
 const groups = async (page: Page): Promise<number> => page.evaluate(() => window.__tether.frameIds().reduce((n, id) => n + (JSON.stringify(window.__tether.frameLayout(id)).match(/"type":"leaf"/g) ?? []).length, 0))
 
-/** The row's foot bar, exactly: [first] [Fechar painel] as primaries, then 🔗 ↗ as icons, the ⋯ last; no highlight. */
-async function barShape(page: Page, k: string, first: 'Trazer de volta' | 'Focar guia'): Promise<void> {
-  const acts = await page.locator(`${row(k)} .pf-r-bar > button`).evaluateAll(bs => bs.map(b => ({ pin: (b as HTMLElement).dataset.pin ?? (b.classList.contains('more') ? 'more' : ''), label: (b as HTMLElement).dataset.label ?? '' })))
+/** The card's foot bar, exactly: [Focar guia] [Fechar guia] as primaries, then 🔗 ↗ as icons, the ⋯ last. */
+async function barShape(page: Page, paneId: string): Promise<void> {
+  const acts = await page.locator(`${card(paneId)} .pf-r-bar > button`).evaluateAll(bs => bs.map(b => ({ pin: (b as HTMLElement).dataset.pin ?? (b.classList.contains('more') ? 'more' : ''), label: (b as HTMLElement).dataset.label ?? '' })))
   assert.deepEqual(acts, [
-    { pin: 'primary', label: first },
-    { pin: 'primary', label: 'Fechar painel…' },
+    { pin: 'primary', label: 'Focar guia' },
+    { pin: 'primary', label: 'Fechar guia' },
     { pin: 'icon', label: 'Copiar link do painel' },
     { pin: 'icon', label: 'Mover…' },
     { pin: 'more', label: '' },
   ], `the bar's shape: ${JSON.stringify(acts)}`)
-  assert.deepEqual(await page.locator(`${row(k)} .pf-act.pin-primary span`).allInnerTexts(), [first, 'Fechar painel'])
-  const bg = await page.locator(`${row(k)} .pf-act.pin-primary`).evaluateAll(bs => bs.map(b => getComputedStyle(b).backgroundColor))
-  const iconBg = await page.locator(`${row(k)} .pf-act.pin-icon`).first().evaluate(b => getComputedStyle(b).backgroundColor)
+  assert.deepEqual(await page.locator(`${card(paneId)} .pf-act.pin-primary span`).allInnerTexts(), ['Focar guia', 'Fechar guia'])
+  const bg = await page.locator(`${card(paneId)} .pf-act.pin-primary`).evaluateAll(bs => bs.map(b => getComputedStyle(b).backgroundColor))
+  const iconBg = await page.locator(`${card(paneId)} .pf-act.pin-icon`).first().evaluate(b => getComputedStyle(b).backgroundColor)
   assert.ok(bg.every(c => c === iconBg), `primaries drawn like the other buttons: ${JSON.stringify(bg)} vs ${iconBg}`)
-  const bar = (await page.locator(`${row(k)} .pf-r-bar`).boundingBox())!, head = (await page.locator(`${row(k)} .pf-r-head`).boundingBox())!
-  assert.ok(bar.y > head.y, 'the bar is at the row\'s foot')
-  assert.equal(await page.locator(`${row(k)} .pf-btn`).count(), 0, 'no big buttons')
+  const bar = (await page.locator(`${card(paneId)} .pf-r-bar`).boundingBox())!, head = (await page.locator(`${card(paneId)} .pf-r-head`).boundingBox())!
+  assert.ok(bar.y > head.y, "the bar is at the card's foot")
+  assert.equal(await page.locator(`${inPad} .pf-owner .pf-act`).count(), 0, 'a group header has no actions')
 }
 
-/** The ⋯ opens the menu by the button (not at the window's corner). */
-async function menuNearButton(page: Page, k: string, shot: string): Promise<void> {
+/** The ⋯ opens the guide's menu by the button (not at the window's corner); returns its items. */
+async function menuNearButton(page: Page, paneId: string, shot: string): Promise<string[]> {
   await ensureManager(page)
-  const more = page.locator(`${row(k)} .pf-act.more`)
+  const more = page.locator(`${card(paneId)} .pf-act.more`)
   const b = (await more.boundingBox())!
   await more.click()
   await page.waitForSelector('#ctx-menu')
   const mb = (await page.locator('#ctx-menu').boundingBox())!
+  const its = await page.locator('#ctx-menu li[role="menuitem"]').allInnerTexts()
   await page.screenshot({ path: join(shots, shot) })
   const dx = Math.max(0, mb.x - (b.x + b.width), b.x - (mb.x + mb.width)), dy = Math.max(0, mb.y - (b.y + b.height), b.y - (mb.y + mb.height))
   assert.ok(dx < 40 && dy < 40, `menu by the ⋯: button ${JSON.stringify(b)} menu ${JSON.stringify(mb)}`)
   await page.keyboard.press('Escape')
   await page.waitForSelector('#ctx-menu', { state: 'detached', timeout: 2_000 })
+  return its
 }
 
-test('panel pad manager: the panels of the desk with a frame; a loose one comes back or its frame is closed', { timeout: 300_000 }, async () => {
+/** A note opened into the panel pad on screen (its frame clicked first); returns its pane id. */
+async function noteInPad(page: Page, path: string): Promise<string> {
+  const before = (await page.evaluate(() => window.__tether.padFrames())).flatMap(f => f.panes)
+  await page.click(`${shown} .frame-dock`)
+  await page.evaluate(p => window.__tether.openNote(p), path)
+  await page.waitForFunction(b => window.__tether.padFrames().some(f => f.pad === 'frame-pads.panel' && f.shown && f.panes.some(p => p.startsWith('note:') && !b.includes(p))), before)
+  return (await page.evaluate(() => window.__tether.padFrames())).filter(f => f.pad === 'frame-pads.panel' && f.shown).flatMap(f => f.panes).find(p => p.startsWith('note:') && !before.includes(p))!
+}
+
+test("panel pad manager: the pad's guides grouped by owner; focus, close, move by drag, closed owners", { timeout: 300_000 }, async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(tmpBase, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'home-'))
   writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer'] } }))
-  const notePath = join(home, 'lembrete.md')
-  writeFileSync(notePath, 'lembrar do bug do cwd\n')
+  const note1 = join(home, 'lembrete.md'), note2 = join(home, 'outra.md'), note3 = join(home, 'de-b.md')
+  writeFileSync(note1, 'lembrar do bug do cwd\n')
+  writeFileSync(note2, 'segunda nota\n')
+  writeFileSync(note3, 'nota de B\n')
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -165,182 +180,152 @@ test('panel pad manager: the panels of the desk with a frame; a loose one comes 
     ;({ app, page } = await launch(home))
     daemons.push(await claim((await page.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
 
-    // ---- 1. a note in A's frame; B's frame empty; C's empty frame leaves with C ----
+    // ---- 1. two notes in A's frame; B's frame empty ----
     const a = await shell(page)
     await page.click(`.sb-icon[data-pad="${PANEL}"]`)
     await page.waitForSelector(`${shown}[data-panel="${a}"] .empty-panel`)
-    await page.click(`${shown} .frame-dock`)
-    await page.evaluate(p => window.__tether.openNote(p), notePath)
-    await page.waitForFunction(() => window.__tether.padFrames().some(f => f.pad === 'frame-pads.panel' && f.shown && f.panes.some(p => p.startsWith('note:'))))
-    const noteId = (await page.evaluate(() => window.__tether.padFrames())).filter(f => f.pad === 'frame-pads.panel' && f.shown).flatMap(f => f.panes).find(p => p.startsWith('note:'))!
-    assert.ok(await padHas(page, a, noteId), "the note is in A's frame")
+    const n1 = await noteInPad(page, note1)
+    const n2 = await noteInPad(page, note2)
+    assert.ok(await padHas(page, a, n1) && await padHas(page, a, n2), "both notes are in A's frame")
     const b = await shell(page)
-    const c = await shell(page)
-    await page.waitForSelector(`${shown}[data-panel="${c}"] .empty-panel`)
-    await page.waitForFunction(k => k in (window.__tether.layout().sidebars?.pads ?? {}), key(c))
-    await closePane(page, c)
-    await page.waitForFunction(k => !(k in (window.__tether.layout().sidebars?.pads ?? {})), key(c), { timeout: 5_000 })
-    assert.equal(await page.evaluate(() => window.__tether.panelFramesToast()), undefined, 'an empty frame leaves no toast')
-
-    // ---- 2. closing A: toast, Ver → the manager with A loose and revivable ----
-    await page.evaluate(id => window.__tether.activatePanel(id), a)
-    await closePane(page, a)
-    await page.waitForFunction(() => window.__tether.panelFramesToast()?.text === 'O quadro da prancheta ficou solto', undefined, { timeout: 5_000 })
-    await page.screenshot({ path: join(shots, '1-toast-solto.png') })
-    await page.click('.pf-toast .pf-toast-action')
-    await page.waitForSelector(row(key(a)))
-    assert.ok(await managerOn(page), 'the pad is in its manager state')
-    assert.equal(await page.locator('#dock .tether-tab.frames-manager').count(), 0, 'nothing opened on the desk')
+    await page.waitForSelector(`${shown}[data-panel="${b}"] .empty-panel`)
+    await ensureManager(page)
+    await page.waitForSelector(card(n2))
     let m = (await manager(page))!
-    assert.equal(m.selected, key(a))
-    assert.deepEqual(m.rows.map(r => r.key), [key(a)], 'B has an empty frame: nothing to manage there')
-    const ra = m.rows[0]!
-    assert.ok(ra.loose && ra.revivable, `A is loose and can come back: ${JSON.stringify(ra)}`)
-    assert.ok(ra.sub.startsWith('solto · sessão rodando sem guia'), ra.sub)
-    assert.ok(ra.panes.includes(noteId), 'the row shows what the frame keeps')
-    assert.equal(await page.locator(`${inPad} .pf-preview`).count(), 0, 'no preview')
-    await page.screenshot({ path: join(shots, '2-gestor-solto.png') })
-    // A click on a loose row does nothing.
-    await page.click(`${row(key(a))} .pf-r-head`)
-    await sleep(200)
-    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(a), 'a click on a loose row brings nothing')
-    // A loose row is a panel too: the tab's own menu with "Trazer de volta" first, and the bar at the row's foot.
-    await barShape(page, key(a), 'Trazer de volta')
-    await page.screenshot({ path: join(shots, '2a-barra-solto.png'), clip: (await page.locator(`${row(key(a))} .pf-r-bar`).boundingBox())! })
-    const looseMenu = async (open: () => Promise<void>, how: string): Promise<void> => {
-      await open()
-      await page.waitForSelector('#ctx-menu')
-      const its = await page.locator('#ctx-menu li[role="menuitem"]').allInnerTexts()
-      assert.ok(its[0]?.includes('Trazer de volta'), `"Trazer de volta" first (${how}): ${JSON.stringify(its)}`)
-      for (const t of ['Renomear', 'Mover', 'Fechar painel', 'Copiar link do painel']) assert.ok(its.some(i => i.includes(t)), `the loose menu has "${t}" (${how}): ${JSON.stringify(its)}`)
-      assert.ok(!its.some(i => i.includes('Fechar quadro')), 'no "Fechar quadro"')
-      await page.keyboard.press('Escape')
-      await page.waitForSelector('#ctx-menu', { state: 'detached', timeout: 2_000 })
-    }
-    await looseMenu(() => page.locator(row(key(a))).click({ button: 'right' }), 'right-click')
-    await looseMenu(() => page.click(`${row(key(a))} .pf-act.more`), '⋯')
-    await menuNearButton(page, key(a), '2b-menu-solto.png')
-    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(a), 'opening the menu brings nothing back')
+    assert.deepEqual(m.groups.map(g => [g.key, g.guides.map(x => x.id)]), [[key(a), [n1, n2]]], `one group (A) with two cards; B's empty frame is not listed: ${JSON.stringify(m.groups)}`)
+    assert.ok(m.groups[0]!.state.startsWith('terminal') && !m.groups[0]!.loose, m.groups[0]!.state)
+    assert.ok(m.groups[0]!.guides[0]!.detail.endsWith('lembrete.md'), `the card's detail is the file: ${m.groups[0]!.guides[0]!.detail}`)
+    assert.equal(await page.locator(`${inPad} .pf-owner[role="option"]`).count(), 0, 'a group header is not selectable')
+    await page.screenshot({ path: join(shots, '1-gestor-por-guia.png') })
 
-    // ---- 3. Trazer de volta: A's pane comes back, its frame with it ----
-    await page.click(`${row(key(a))} .pf-act.pin-primary[data-label="Trazer de volta"]`)
-    await page.waitForFunction(id => window.__tether.panelIds().includes(id), a, { timeout: 10_000 })
-    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0)
-    assert.ok(await padHas(page, a, noteId), "A's frame, with the note, is A's again")
-    await page.screenshot({ path: join(shots, '3-trazido-de-volta.png') })
-
-    // ---- 4. live row: click brings the panel up; right-click is the tab's menu ----
-    await page.evaluate(id => window.__tether.activatePanel(id), b)
-    await ensureManager(page)
-    await page.waitForSelector(row(key(a)))
-    m = (await manager(page))!
-    assert.ok(!m.rows[0]!.loose, 'a live row')
-    await barShape(page, key(a), 'Focar guia')
-    await page.screenshot({ path: join(shots, '4a-barra-aberto.png'), clip: (await page.locator(`${row(key(a))} .pf-r-bar`).boundingBox())! })
-    // A click only selects; a double click goes to the tab.
-    await page.click(`${row(key(a))} .pf-r-head`)
-    await sleep(300)
-    assert.equal(await page.evaluate(() => window.__tether.focusablePanel()), b, 'a click does not change the focused panel')
-    assert.equal((await manager(page))!.selected, key(a), 'a click selects')
-    await page.dblclick(`${row(key(a))} .pf-r-head`)
-    await page.waitForFunction(id => window.__tether.focusablePanel() === id, a, { timeout: 5_000 })
-    await ensureManager(page)
-    await page.evaluate(id => window.__tether.activatePanel(id), b)
-    await menuNearButton(page, key(a), '4b-menu-aberto.png')
-    await page.locator(row(key(a))).click({ button: 'right' })
+    // ---- 2. the guide's bar and menu; a click only selects ----
+    await barShape(page, n1)
+    await page.screenshot({ path: join(shots, '2a-barra-guia.png'), clip: (await page.locator(`${card(n1)} .pf-r-bar`).boundingBox())! })
+    const its = await menuNearButton(page, n1, '2b-menu-guia.png')
+    assert.ok(its[0]?.includes('Focar guia') && its[1]?.includes('Fechar guia'), `the guide's menu, Focar/Fechar guia first: ${JSON.stringify(its)}`)
+    for (const t of ['Mover', 'Copiar link do painel']) assert.ok(its.some(i => i.includes(t)), `the note's menu has "${t}": ${JSON.stringify(its)}`)
+    assert.ok(!its.some(i => i.includes('Trazer de volta')), "nothing of the owner's menu")
+    await page.locator(card(n1)).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu')
-    const items = await page.locator('#ctx-menu li[role="menuitem"]').allInnerTexts()
-    assert.ok(items.some(t => t.includes('Fechar painel')), `the tab's menu: ${JSON.stringify(items)}`)
-    await page.screenshot({ path: join(shots, '4-menu-da-guia.png') })
-    await page.keyboard.press('Escape')
-    await page.waitForSelector('#ctx-menu', { state: 'detached', timeout: 2_000 }).catch(() => {})
-    // The ⋯ of a live row opens the same tab menu.
-    await ensureManager(page)
-    await page.click(`${row(key(a))} .pf-act.more`)
-    await page.waitForSelector('#ctx-menu')
-    const moreItems = await page.locator('#ctx-menu li[role="menuitem"]').allInnerTexts()
-    assert.ok(moreItems.some(t => t.includes('Fechar painel')), `the ⋯ of a live row: ${JSON.stringify(moreItems)}`)
+    assert.ok((await page.locator('#ctx-menu li[role="menuitem"]').allInnerTexts())[0]?.includes('Focar guia'), 'right-click: the same menu')
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu', { state: 'detached', timeout: 2_000 })
+    await page.click(`${card(n2)} .pf-r-head`)
+    await sleep(300)
+    assert.equal(await page.evaluate(() => window.__tether.focusablePanel()), b, 'a click does not change the focused panel')
+    assert.equal((await manager(page))!.selected, n2, 'a click selects the card')
+    await page.keyboard.press('ArrowUp')
+    await page.waitForFunction(id => window.__tether.panelPadManager()[0]?.selected === id, n1)
 
-    // ---- 5. dragging the row to the desk's right edge splits the desk, like the tab ----
+    // ---- 3. Focar guia brings A with the note; Fechar guia closes the pane ----
+    await page.dblclick(`${card(n1)} .pf-r-head`)
+    await page.waitForFunction(id => window.__tether.focusablePanel() === id, a, { timeout: 5_000 })
+    await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
+    await page.waitForFunction(() => !!document.querySelector('#pads .pad.shown .dv-tab.dv-active-tab')?.textContent?.includes('lembrete'), undefined, { timeout: 5_000 })
+    await page.screenshot({ path: join(shots, '3a-focar-guia.png') })
+    await page.evaluate(id => window.__tether.activatePanel(id), b)
+    await ensureManager(page)
+    await page.click(`${card(n2)} .pf-act.pin-primary[data-label="Fechar guia"]`)
+    await page.waitForSelector(card(n2), { state: 'detached', timeout: 5_000 })
+    for (let i = 0; i < 30 && await padHas(page, a, n2); i++) await sleep(100)
+    assert.ok(!(await padHas(page, a, n2)), 'the closed guide left the pad')
+    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(n2), 'and is nowhere')
+    await page.screenshot({ path: join(shots, '3b-fechar-guia.png') })
+
+    // ---- 4. dragging the card to the desk's right edge MOVES the guide ----
     await ensureManager(page)
     const before = await groups(page)
     const target = page.locator('#dock .dv-dockview').first()
     const box = (await target.boundingBox())!
-    await page.locator(row(key(a))).dragTo(target, { targetPosition: { x: box.width - 12, y: box.height / 2 } })
+    await page.locator(card(n1)).dragTo(target, { targetPosition: { x: box.width - 12, y: box.height / 2 } })
     for (let i = 0; i < 50 && (await groups(page)) <= before; i++) await sleep(100)
-    await page.screenshot({ path: join(shots, '5-arrastado.png') })
-    assert.ok((await groups(page)) > before, `the desk got a new group from the row (${before} → ${await groups(page)})`)
-    assert.ok((await page.evaluate(() => window.__tether.panelIds())).includes(a), 'A moved, not closed')
-    await page.screenshot({ path: join(shots, '5-arrastado.png') })
+    await page.screenshot({ path: join(shots, '4-arrastado.png') })
+    assert.ok((await groups(page)) > before, `the desk got a new group from the card (${before} → ${await groups(page)})`)
+    assert.ok((await page.evaluate(() => window.__tether.panelIds())).includes(n1), 'the note is on the desk')
+    assert.ok(!(await page.evaluate(() => window.__tether.padFrames())).some(f => f.panes.includes(n1)), 'the note is in no pad')
+    for (let i = 0; i < 30 && await padHas(page, a, n1); i++) await sleep(100)
+    assert.ok(!(await padHas(page, a, n1)), "the note left A's saved frame")
+    await ensureManager(page)
+    await page.waitForFunction(() => (window.__tether.panelPadManager()[0]?.groups.length ?? -1) === 0, undefined, { timeout: 5_000 })
+    await page.screenshot({ path: join(shots, '4b-gestor-vazio.png') })
 
-    // ---- 6. another desk lists none of this one's panels ----
+    // ---- 5. another desk lists nothing of this one ----
     const d1 = await page.evaluate(() => window.__tether.activeDesk())
     const d2 = await page.evaluate(d => window.__tether.createDesk('after', d), d1)
     await page.evaluate(d => window.__tether.switchDesk(d), d2)
     await page.evaluate(() => window.__tether.openPanelPadManager('all'))
-    await page.waitForFunction(() => (window.__tether.panelPadManager()[0]?.rows.length ?? -1) === 0, undefined, { timeout: 5_000 })
-    await page.screenshot({ path: join(shots, '6-outra-mesa.png') })
+    await page.waitForFunction(() => (window.__tether.panelPadManager()[0]?.groups.length ?? 0) === 0, undefined, { timeout: 5_000 })
     await page.evaluate(d => window.__tether.switchDesk(d), d1)
 
-    // ---- 6b. dragging a loose row onto the desk's edge brings the panel back there ----
-    await page.evaluate(id => window.__tether.activatePanel(id), a)
-    await closePane(page, a)
-    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 1)
-    await page.evaluate(k => window.__tether.openPanelPadManager('all', k), key(a))
-    await page.waitForSelector(row(key(a)))
-    assert.equal(await page.locator(row(key(a))).getAttribute('draggable'), 'true', 'a loose row is draggable')
-    const target2 = page.locator('#dock .dv-dockview').first()
-    const box2 = (await target2.boundingBox())!
-    await page.locator(row(key(a))).dragTo(target2, { targetPosition: { x: box2.width - 12, y: box2.height / 2 } })
-    await page.waitForFunction(id => window.__tether.panelIds().includes(id), a, { timeout: 5_000 })
-    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0, undefined, { timeout: 5_000 })
-    await page.screenshot({ path: join(shots, '6b-solto-arrastado.png') })
-
-    // ---- 7. a loose row's "Fechar painel…": the close dialog, then frame and record gone ----
-    await page.evaluate(id => window.__tether.activatePanel(id), a)
-    await closePane(page, a)
-    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 1)
-    await page.evaluate(k => window.__tether.openPanelPadManager('all', k), key(a))
-    await page.click(`${row(key(a))} .pf-act.more`)
-    await page.locator('#ctx-menu li[role="menuitem"]', { hasText: 'Fechar painel' }).click()
-    await page.locator('dialog[open] button.choice[data-choice="detach"]').click()
-    await page.waitForSelector(row(key(a)), { state: 'detached', timeout: 5_000 })
-    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0)
-    let saved: LayoutJSON | undefined
-    for (let i = 0; i < 40; i++) {
-      saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as LayoutJSON
-      if (!saved.sidebars?.meta?.[key(a)]) break
-      await sleep(100)
-    }
-    assert.equal(saved!.sidebars?.meta?.[key(a)], undefined, "A's record went with its frame")
-    await page.screenshot({ path: join(shots, '7-quadro-fechado.png') })
-
-    // ---- 8. the keyboard and the switch ----
-    await page.evaluate(id => window.__tether.activatePanel(id), b)
+    // ---- 6. a closed owner: a "fechado" group with its guides ----
+    await page.click(`#dock .tether-tab[data-slot="${b}"]`)
+    await page.waitForFunction(id => window.__tether.focusablePanel() === id, b)
+    await page.waitForSelector(`${shown}[data-panel="${b}"]`)
     if (await managerOn(page)) await page.click(`${shown} .tab-act[data-action="frames-manager"]`)
     await page.waitForFunction(() => !window.__tether.panelPadManagerOn())
-    await page.locator(`.panel[data-slot-id="${b}"] .xterm-screen`).click()
+    const n3 = await noteInPad(page, note3)
+    await closePane(page, b)
+    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 1, undefined, { timeout: 5_000 })
+    await page.evaluate(id => window.__tether.activatePanel(id), a)
+    await page.evaluate(() => window.__tether.openPanelPadManager('all'))
+    await page.waitForSelector(card(n3))
+    m = (await manager(page))!
+    const gb = m.groups.find(g => g.key === key(b))!
+    assert.ok(gb && gb.loose && gb.state === 'terminal · fechado', `B is a closed group: ${JSON.stringify(m.groups)}`)
+    assert.deepEqual(gb.guides.map(x => x.id), [n3])
+    assert.equal(m.looseGuides, 1, "the filter counts the closed owners' guides")
+    assert.equal(await page.locator(`${inPad} .pf-chip[data-filter="loose"]`).innerText(), 'De painéis fechados (1)')
+    assert.equal(await page.locator(`${inPad} .pf-chip[data-filter="all"]`).innerText(), 'Todas')
+    await barShape(page, n3)
+    await page.screenshot({ path: join(shots, '6a-dono-fechado.png') })
+    await page.click(`${inPad} .pf-chip[data-filter="loose"]`)
+    await page.waitForFunction(() => window.__tether.panelPadManager()[0]?.filter === 'loose')
+    const its3 = await menuNearButton(page, n3, '6b-menu-guia-dono-fechado.png')
+    assert.ok(its3[0]?.includes('Focar guia'), `a closed owner's guide has its own menu: ${JSON.stringify(its3)}`)
+    assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(b), 'the menu brings nothing back')
+    // Focar guia: the owner comes back (only a live panel's frame can be shown) with the guide active.
+    await page.click(`${card(n3)} .pf-act.pin-primary[data-label="Focar guia"]`)
+    await page.waitForFunction(id => window.__tether.focusablePanel() === id, b, { timeout: 10_000 })
+    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0)
+    assert.ok(await padHas(page, b, n3), "the guide is in B's frame, B is back")
+    await page.screenshot({ path: join(shots, '6c-focar-guia-dono-fechado.png') })
+    // Fechar guia on the last guide of a closed owner: its frame goes.
+    await closePane(page, b)
+    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 1, undefined, { timeout: 5_000 })
+    await page.evaluate(() => window.__tether.openPanelPadManager('loose'))
+    await page.waitForSelector(card(n3))
+    await page.click(`${card(n3)} .pf-act.pin-primary[data-label="Fechar guia"]`)
+    await page.waitForSelector(owner(key(b)), { state: 'detached', timeout: 5_000 })
+    await page.waitForFunction(() => window.__tether.panelFramesTree().loose.length === 0, undefined, { timeout: 5_000 })
+    assert.ok(!(await page.evaluate(k => k in (window.__tether.layout().sidebars?.pads ?? {}), key(b))), "B's frame is gone")
+    await page.screenshot({ path: join(shots, '6d-ultima-guia-fechada.png') })
+
+    // B is closed: a new shell for the keyboard part.
+    const c = await shell(page)
+    // ---- 7. the keyboard and the switch ----
+    await page.evaluate(id => window.__tether.activatePanel(id), c)
+    if (await managerOn(page)) await page.click(`${shown} .tab-act[data-action="frames-manager"]`)
+    await page.waitForFunction(() => !window.__tether.panelPadManagerOn())
+    await page.locator(`.panel[data-slot-id="${c}"] .xterm-screen`).click()
     await page.waitForFunction(() => !!document.activeElement?.closest('.xterm'))
     await page.keyboard.press('Control+Shift+M')
     await page.waitForFunction(() => window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
     await page.locator(`${inPad} .pf-list`).focus()
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
-    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"]`)
-    await page.waitForSelector(`${shown}[data-panel="${b}"] .pad-manager.pf-pane:not([hidden])`, { state: 'visible' })
-    const barBox = (await page.locator(`${shown}[data-panel="${b}"] .dv-tabs-and-actions-container:visible`).first().boundingBox())!
+    await page.click(`${shown}[data-panel="${c}"] .tab-act[data-action="frames-manager"]`)
+    await page.waitForSelector(`${shown}[data-panel="${c}"] .pad-manager.pf-pane:not([hidden])`, { state: 'visible' })
+    const barBox = (await page.locator(`${shown}[data-panel="${c}"] .dv-tabs-and-actions-container:visible`).first().boundingBox())!
     const mgrBox = (await page.locator(inPad).boundingBox())!
     await page.screenshot({ path: join(shots, '8-botao-fixo.png') })
     assert.ok(await page.locator('.toolbar, #toolbar, #topbar, header').first().isVisible().catch(() => true), 'the top bar stays')
     assert.equal(await page.evaluate(() => [...document.querySelectorAll('*')].filter(e => e.scrollTop > 0 && !e.closest('.pf-list, .xterm')).map(e => e.id || e.className).join(',')), '', 'nothing outside the list was scrolled')
     assert.ok(Math.abs(mgrBox.y - (barBox.y + barBox.height)) <= 1, `the manager starts where the tab bar ends (${mgrBox.y} vs ${barBox.y}+${barBox.height})`)
-    await page.click(`${shown}[data-panel="${b}"] .tab-act[data-action="frames-manager"]`)
+    await page.click(`${shown}[data-panel="${c}"] .tab-act[data-action="frames-manager"]`)
     await page.waitForFunction(() => !window.__tether.panelPadManagerOn(), undefined, { timeout: 5_000 })
 
-    // ---- 9. affinity: the settings opened with the pad in focus land on the desk ----
-    await page.click(`${shown}[data-panel="${b}"] .frame-dock`)
+    // ---- 8. affinity: the settings opened with the pad in focus land on the desk ----
+    await page.click(`${shown}[data-panel="${c}"] .frame-dock`)
     await page.keyboard.press('Control+,')
     await page.waitForFunction(() => window.__tether.panelIds().some(id => id.startsWith('settings:')), undefined, { timeout: 5_000 })
     assert.ok(!(await page.evaluate(() => window.__tether.padFrames())).some(f => f.panes.some(p => p.startsWith('settings:'))), 'the settings are not inside a pad')
