@@ -17,6 +17,9 @@ import arrowSquareOut from '@phosphor-icons/core/assets/regular/arrow-square-out
 import caretDown from '@phosphor-icons/core/assets/regular/caret-down.svg'
 import caretUp from '@phosphor-icons/core/assets/regular/caret-up.svg'
 import circleFill from '@phosphor-icons/core/assets/fill/circle-fill.svg'
+import circle from '@phosphor-icons/core/assets/regular/circle.svg'
+import radioButtonFill from '@phosphor-icons/core/assets/fill/radio-button-fill.svg'
+import eyeClosed from '@phosphor-icons/core/assets/regular/eye-closed.svg'
 import circleHalf from '@phosphor-icons/core/assets/regular/circle-half.svg'
 import timerIcon from '@phosphor-icons/core/assets/regular/timer.svg'
 import clockCounterClockwise from '@phosphor-icons/core/assets/regular/clock-counter-clockwise.svg'
@@ -43,6 +46,7 @@ import info from '@phosphor-icons/core/assets/regular/info.svg'
 import play from '@phosphor-icons/core/assets/regular/play.svg'
 import plugs from '@phosphor-icons/core/assets/regular/plugs.svg'
 import puzzlePiece from '@phosphor-icons/core/assets/regular/puzzle-piece.svg'
+import tagIcon from '@phosphor-icons/core/assets/regular/tag.svg'
 import plugsConnected from '@phosphor-icons/core/assets/regular/plugs-connected.svg'
 import plus from '@phosphor-icons/core/assets/regular/plus.svg'
 import power from '@phosphor-icons/core/assets/regular/power.svg'
@@ -147,6 +151,9 @@ const SVG = {
   'caret-down': caretDown,
   'caret-up': caretUp,
   'circle-fill': circleFill,
+  'circle': circle,
+  'radio-button-fill': radioButtonFill,
+  'eye-closed': eyeClosed,
   'circle-half': circleHalf,
   'clock-counter-clockwise': clockCounterClockwise,
   timer: timerIcon,
@@ -163,6 +170,7 @@ const SVG = {
   play,
   plugs,
   'puzzle-piece': puzzlePiece,
+  tag: tagIcon,
   'plugs-connected': plugsConnected,
   pause,
   plus,

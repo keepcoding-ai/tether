@@ -80,6 +80,7 @@ import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
 import type { PaneInfo } from './ext-api.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
+import { type EmblemHost, initEmblems, openEmblemMenu } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
@@ -90,7 +91,7 @@ import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable
 import { associateLinksFailedSituation, associateLinksSituation, closedTabSituation, linksAssociatedSituation, missingTabSituation } from './situations.ts'
 import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
 import { markKeyboardTab, pulseTab, tabCell } from './tab-marks.ts'
-import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, restartFailedSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { closeDeskSituation, closePanelSituation, hibernateSituation, folderName, moveFailedSituation, NO_PROFILE, restartFailedSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -272,6 +273,7 @@ const $ =<T extends HTMLElement>(id: string): T => {
 
 const host: PanelHost = {
   getSlot: id => slots.get(id),
+  isAsleep: id => asleepPanes.has(id),
   attentionOf: id => ({ level: paneAttention(id), lines: attentionLines(slots.get(id)?.attention, seals.messages(id)) }),
   onSealClick: id => activateSeals(id),
   getStartError: id => startErrors.get(id),
@@ -355,6 +357,10 @@ function applyUi(next: UiSettings): void {
   ui = next
   document.body.classList.toggle('desk-line', ui.deskLine)
   document.body.classList.toggle('tab-border', ui.tabBorder)
+  const iconOnly = document.body.classList.contains('fixed-icon-only')
+  document.body.classList.toggle('fixed-icon-only', ui.fixedDeskLabel === 'icon')
+  // The capsule's chrome changed width: fit the desks again.
+  if (iconOnly !== (ui.fixedDeskLabel === 'icon') && strip && desks) renderStrip()
   document.body.classList.toggle('dim-unfocused', ui.dimUnfocused)
   for (const level of DIM_LEVELS) document.body.classList.toggle(`dim-${level}`, ui.dimLevel === level)
   // The radios show the level only while the dim is on.
@@ -468,16 +474,31 @@ function setupDock(): void {
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
+    sleepMenu: (entries, x, y, wake, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'sun' as const, label: `Acordar ${e.name}`, run: () => wake(e.id) })), opener),
     overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
     hint: position => shortcutHint(`desk.go.${position}`),
     move: (id, to) => desks.move(id, to),
     toggleSystem: id => desks.toggleSystem(id),
+    optionsMenu: (x, y, opener) => {
+      // A radio pair: the leading icon is the mark (filled = chosen). A ui from before the setting reads as the default.
+      const label = ui.fixedDeskLabel ?? DEFAULT_UI.fixedDeskLabel
+      const radio = (value: typeof label, text: string): MenuItem => ({ icon: label === value ? 'radio-button-fill' : 'circle', label: text, run: () => window.tether.setUi({ ...ui, fixedDeskLabel: value }) })
+      showContextMenu(x, y, [
+      { heading: 'Mesas fixas' },
+      radio('icon', 'Exibir ícone'),
+      radio('iconName', 'Exibir ícone e nome'),
+      SEP,
+      { heading: 'Aparência' },
+      { icon: 'minus', label: 'Exibir linha colorida', checked: ui.deskLine, run: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }) },
+      { icon: 'square-half', label: 'Exibir cor ao redor da guia ativa', checked: ui.tabBorder, run: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }) },
+    ], opener)
+    },
   })
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.allDeskIds); scheduleSave() },
     onBeforeSwitch: () => { surfaceHosts.suspendAll() },
-    onSwitch: () => { focusActivePane(); notifyActivePane(); notifySystemDeskActive(); scheduleKeyboardTab() },
+    onSwitch: id => { if (desks.desks.find(d => d.id === id)?.asleep) wakeDesk(id); focusActivePane(); notifyActivePane(); notifySystemDeskActive(); scheduleKeyboardTab() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
@@ -627,7 +648,8 @@ function layoutJSON(): Layout {
   // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
   let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
   for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
-  const out: Layout = { ...file, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  const { asleepPanes: _asleep, ...rest } = file
+  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}) }
   if (!sidebars) return out
   // The panel frames' records follow what is live now (panel label, desk, last change): written into the side bars before saving.
   const { meta: _stale, ...bars } = out.sidebars
@@ -978,6 +1000,54 @@ async function closeDesk(id: string): Promise<void> {
   refreshSessions()
 }
 
+/**
+ * Hibernating a desk: its agents are stopped (the daemon's `stop`, the same as closing a pane: the slot stays, the
+ * session is saved), the desk leaves the capsule for the moon menu, and the app does not start its panes on launch.
+ * Agents mid-turn are only stopped after the person confirms. The last awake desk never sleeps.
+ */
+async function hibernateDesk(id: string): Promise<void> {
+  if (desks.isSystem(id)) return
+  const awake = desks.desks.filter(d => !d.asleep)
+  if (awake.length <= 1 || !awake.some(d => d.id === id)) return
+  await hibernatePanes(deskPanes(id).map(p => p.id), `da mesa "${deskName(id)}"`, () => {
+    if (desks.activeDeskId === id) {
+      const i = awake.findIndex(d => d.id === id)
+      desks.switchTo((awake[i + 1] ?? awake[i - 1])!.id)
+    }
+    desks.setAsleep(id, true)
+  })
+}
+
+/**
+ * Hibernating panes (one, or a desk's): each process is stopped (the daemon's `stop`: the slot stays, the session is
+ * saved) and the pane is marked asleep (layout `asleepPanes`), so the app does not start it on launch. A `start` from
+ * anywhere wakes it. Agents mid-turn are only stopped after the person confirms; `before` runs once confirmed.
+ */
+async function hibernatePanes(ids: string[], where: string, before?: () => void): Promise<void> {
+  const states = ids.map(id => slots.get(id)).filter((s): s is SlotState => s !== undefined)
+  const busy = states.filter(s => isLiveSlot(s) && s.turn === 'busy')
+  if (busy.length > 0 && (await askDialog(hibernateSituation(where, busy))).choice !== 'hibernate') return
+  before?.()
+  for (const s of states) asleepPanes.add(s.slotId)
+  scheduleSave()
+  await Promise.all(states.filter(isLiveSlot).map(s => window.tether.request({ t: 'stop', slotId: s.slotId })))
+  for (const s of states) { panels.get(s.slotId)?.render(); tabs.get(s.slotId)?.render() }
+  refreshSessions()
+}
+
+/** Waking a desk: back in the capsule, its hibernated panes resume through `start` (the daemon queues agents beyond 3 at once). */
+function wakeDesk(id: string): void {
+  desks.setAsleep(id, false)
+  for (const p of deskPanes(id)) if (asleepPanes.has(p.id)) void startSlot(p.id)
+}
+
+/** "Hibernar guia": a live pane that is not restarting or stopping. */
+function hibernateMenuEntry(slotId: string): MenuEntry[] {
+  const slot = slots.get(slotId)
+  if (!slot || !isLiveSlot(slot) || slot.restarting || slot.stopping) return []
+  return [{ icon: 'moon', label: 'Hibernar guia', run: () => { void hibernatePanes([slotId], `da guia "${panelTitle(slot)}"`) } }]
+}
+
 /** Right-click on a desk chip. */
 function showDeskMenu(id: string, x: number, y: number): void {
   const index = desks.desks.findIndex(d => d.id === id)
@@ -991,6 +1061,7 @@ function showDeskMenu(id: string, x: number, y: number): void {
   if (index < desks.desks.length - 1) items.push({ icon: 'arrow-line-right', label: 'Mover para a direita', run: () => desks.move(id, index + 1) })
   if (index > 1) items.push({ icon: 'arrow-line-left', label: 'Mover para o início', run: () => desks.move(id, 0) })
   if (index < desks.desks.length - 2) items.push({ icon: 'arrow-line-right', label: 'Mover para o fim', run: () => desks.move(id, desks.desks.length - 1) })
+  if (!desks.desks[index]?.asleep && desks.desks.filter(d => !d.asleep).length > 1) items.push({ icon: 'moon', label: 'Hibernar mesa', run: () => { void hibernateDesk(id) } })
   if (desks.desks.length > 1) items.push({ icon: 'x', label: 'Fechar mesa…', danger: true, run: () => { void closeDesk(id) } })
   showContextMenu(x, y, items)
 }
@@ -1708,6 +1779,7 @@ async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<voi
 /** Starts every open panel whose slot is exited (the daemon queues agents beyond 3 at once). Unconfirmed ones wait for the user. */
 function autoStartPanels(): void {
   for (const panel of allPanels()) {
+    if (asleepPanes.has(panel.id)) continue // a hibernated pane stays asleep until it is woken
     const slot = slots.get(panel.id)
     if (slot && effectiveStatus(slot) === 'exited') void startSlot(slot.slotId)
   }
@@ -1745,9 +1817,15 @@ async function moveToFolder(slotId: string): Promise<void> {
 // ---------- daemon events / state ----------
 
 function applyState(slot: SlotState): void {
+  const before = slots.get(slot.slotId)
   slots.set(slot.slotId, slot)
   queue.update(slot.slotId, slot.status === 'queued')
-  if (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued') startErrors.delete(slot.slotId)
+  if (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued') {
+    startErrors.delete(slot.slotId)
+    // A pane that comes back up is awake, whoever started it. Only a stopped → live change counts: while a hibernation's
+    // stop is under way the daemon still reports the slot running (stopping), and that must not wake it.
+    if (before && !isLiveSlot(before) && asleepPanes.delete(slot.slotId)) scheduleSave()
+  }
   const panel = findPanel(slot.slotId)
   if (panel) {
     const title = panelTitle(slot)
@@ -1828,6 +1906,13 @@ function updateHint(slot: SlotState): void {
  * frame's view) and backed up as layout.v1.bak before the first v2 write. Panes the daemon no longer knows are
  * pruned frame by frame; a frame whose JSON is refused still reopens every pane it named (Desk.loadView).
  */
+/** What the tab emblems (tab-emblems.ts) need: the panels, a tab's `emblem` param, the library in layout.json. */
+const emblemHost: EmblemHost = {
+  panels: () => allPanels().map(p => ({ id: p.id, params: p.params })),
+  setParam: (id, emblem) => { findPanel(id)?.api.updateParameters({ emblem }); scheduleSave() },
+  saveLibrary: lib => { layoutFile = { ...layoutFile, emblems: lib }; scheduleSave() },
+}
+
 async function restoreLayout(): Promise<void> {
   const result = await (geometry ?? paintGeometry())
   // Pruning is for display only (planRestore): a pane whose slot the daemon does not list right now is not a
@@ -1835,6 +1920,7 @@ async function restoreLayout(): Promise<void> {
   const { layout, orphaned } = planRestore(result?.layout ?? null, new Set(slots.keys()), id => paneTypes.isSlotless(id))
   if (layout) {
     layoutFile = layout
+    asleepPanes = new Set((layout.asleepPanes ?? []).filter(id => slots.has(id)))
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
@@ -1851,6 +1937,7 @@ async function restoreLayout(): Promise<void> {
   if (orphaned.length) console.warn('painéis sem slot no tetherd, fora da tela até a próxima ação:', orphaned)
   await discardPendingSave()
   workspaceState = readWorkspace(layoutFile.workspace)
+  initEmblems(layoutFile.emblems, emblemHost)
   layoutRestored = true
   scheduleKeyboardTab()
   recomputeProjects()
@@ -1869,6 +1956,7 @@ async function restoreLayout(): Promise<void> {
 function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
   geometry ??= window.tether.loadLayout().then(raw => {
     const result = migrateLayout(raw)
+    if (result && !layoutRestored) asleepPanes = new Set(result.layout.asleepPanes ?? [])
     if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, deskPadsOf(result.layout)) }
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
@@ -1925,6 +2013,9 @@ async function onConnection(state: ConnectionState): Promise<void> {
 }
 
 // ---------- sessions menu (one icon, one menu: sessions without a tab, the polite pause, the ended ones) ----------
+
+/** Hibernated panes (slot ids), saved in the layout: not started on launch until a `start` wakes them. */
+let asleepPanes = new Set<string>()
 
 let pauseBatch: PauseBatch | null = null
 let sessionsMenu: SessionsMenu | undefined
@@ -2321,6 +2412,9 @@ type MenuEntry = MenuItem | MenuHeading | typeof SEP
  */
 let padSection: string | undefined
 
+/** The pane whose tab menu the next context menu is: it gets "Emblema…" (tab-emblems.ts), whichever pane type draws the menu. */
+let emblemSection: string | undefined
+
 /** The button that opens the next context menu when the opener cannot be passed (the "⋯" goes through showTabMenu). */
 let menuOpener: HTMLElement | undefined
 
@@ -2359,6 +2453,12 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     else if (ev.key === 'End') { ev.preventDefault(); lis[lis.length - 1]?.focus() }
     else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); lis[i]!.click() }
   }
+  if (emblemSection) {
+    const id = emblemSection; emblemSection = undefined
+    const entry: MenuItem = { icon: 'tag', label: 'Emblema…', run: () => openEmblemMenu(id, x, y) }
+    const last = items.lastIndexOf(SEP)
+    items = last < 0 ? [...items, SEP, entry] : [...items.slice(0, last), entry, ...items.slice(last)]
+  }
   if (padSection) { const id = padSection; padSection = undefined; items = [...items, SEP, ...padMenuEntries(id)] }
   for (const item of items) {
     if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
@@ -2395,6 +2495,11 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
  * next to it, name and profile, the status bar and its folder entries, where it lives, close.
  */
 function showTabMenu(slotId: string, x: number, y: number, opener?: HTMLElement): void {
+  emblemSection = slotId
+  try { showTabMenuOf(slotId, x, y, opener) } finally { emblemSection = undefined }
+}
+
+function showTabMenuOf(slotId: string, x: number, y: number, opener?: HTMLElement): void {
   const slot = slots.get(slotId)
   const panel = findPanel(slotId)
   if (!slot) {
@@ -2484,6 +2589,7 @@ function slotMenuEntries(slot: SlotState): MenuEntry[] {
     { icon: 'pencil-simple', label: 'Renomear…', run: () => tabs.get(slotId)?.startRename() },
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', standalone: true, run: () => { void switchProfile(slotId) } },
     ...restartMenuEntry(slotId),
+    ...hibernateMenuEntry(slotId),
     SEP,
     { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
     { icon: 'link', label: LINK_LABEL, pin: 'icon', standalone: true, run: () => copyPaneLink(slotId) },
@@ -2949,6 +3055,7 @@ const commandHost: CommandHost = {
   renamePane: id => { const type = liveTypeOf(paneTypes, id); if (type?.rename) type.rename(id); else tabs.get(id)?.startRename() },
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   restartAgent: id => { if (slots.has(id)) void restartAgent(id) },
+  hibernatePane: id => { const s = slots.get(id); if (s && isLiveSlot(s)) void hibernatePanes([id], `da guia "${panelTitle(s)}"`) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
   copyLink: id => copyPaneLink(id),
   copyFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) window.tether.writeClipboard(f); else if (slots.has(id)) copyFolder(id) },
@@ -2956,7 +3063,7 @@ const commandHost: CommandHost = {
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
   createDesk: side => { createBlankDesk(side) },
-  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.isSystem(desks.activeDeskId) ? desks.returnDeskId : desks.activeDeskId, step)),
+  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks.filter(d => !d.asleep || d.id === desks.activeDeskId), desks.isSystem(desks.activeDeskId) ? desks.returnDeskId : desks.activeDeskId, step)),
   moveActiveDesk: where => {
     const last = desks.desks.length - 1
     const at = desks.desks.findIndex(d => d.id === desks.activeDeskId)

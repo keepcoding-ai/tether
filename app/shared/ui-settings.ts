@@ -10,12 +10,17 @@ export interface UiSettings {
   dimUnfocused: boolean
   /** How strong the veil of the dim is; only matters while `dimUnfocused` is on. */
   dimLevel: DimLevel
+  /** How the fixed desks (the Gaveta and the system desks' pills) show in the capsule: icon only, or icon and name. */
+  fixedDeskLabel: FixedDeskLabel
 }
+
+export const FIXED_DESK_LABELS = ['icon', 'iconName'] as const
+export type FixedDeskLabel = typeof FIXED_DESK_LABELS[number]
 
 export const DIM_LEVELS = ['weak', 'medium', 'strong'] as const
 export type DimLevel = typeof DIM_LEVELS[number]
 
-export const DEFAULT_UI: UiSettings = { deskLine: true, tabBorder: false, dimUnfocused: false, dimLevel: 'medium' }
+export const DEFAULT_UI: UiSettings = { deskLine: true, tabBorder: false, dimUnfocused: false, dimLevel: 'medium', fixedDeskLabel: 'iconName' }
 
 export function normalizeUi(raw: unknown): UiSettings {
   const o = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
@@ -25,5 +30,6 @@ export function normalizeUi(raw: unknown): UiSettings {
     dimUnfocused: typeof o.dimUnfocused === 'boolean' ? o.dimUnfocused : DEFAULT_UI.dimUnfocused,
     // A settings file from before the levels has no dimLevel: a dim that was on reads as the medium level.
     dimLevel: DIM_LEVELS.find(l => l === o.dimLevel) ?? DEFAULT_UI.dimLevel,
+    fixedDeskLabel: FIXED_DESK_LABELS.find(l => l === o.fixedDeskLabel) ?? DEFAULT_UI.fixedDeskLabel,
   }
 }

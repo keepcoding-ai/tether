@@ -23,6 +23,7 @@ import { folderName } from './situations.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
+import { mountTabEmblem } from './tab-emblems.ts'
 
 // The palette and the font come from the terminal appearance (app/shared/terminal-theme.ts: preset per
 // scheme over the window background, bundled font, weight, size, line height, contrast 4.5). The host owns
@@ -175,6 +176,17 @@ function exitedOverlay(s: SlotState): OverlaySpec {
   }
 }
 
+function asleepOverlay(s: SlotState): OverlaySpec {
+  return {
+    icon: 'eye-closed', title: 'Guia hibernada', tone: 'info',
+    text: s.kind === 'shell' ? 'O shell foi parado para poupar a máquina.' : `O ${KIND_LABEL[s.kind]} foi parado para poupar a máquina. A conversa está salva e volta de onde parou.`,
+    choices: [
+      { id: 'start', icon: 'sun', label: 'Acordar', consequence: s.kind === 'shell' ? 'Abre um shell novo na mesma pasta.' : 'Retoma a conversa de onde parou.', tone: 'safe' },
+      CLOSE,
+    ],
+  }
+}
+
 const UNKNOWN: OverlaySpec = {
   icon: 'x-circle', title: 'Slot desconhecido', tone: 'error', text: 'O tetherd não conhece mais este painel.',
   choices: [{ id: 'close', icon: 'x', label: 'Fechar painel', consequence: 'Só remove o painel: não há slot por trás dele.', tone: 'safe' }],
@@ -190,6 +202,8 @@ export interface PanelHost {
   getStartError(slotId: string): SlotError | undefined
   /** A `start` was sent and not answered yet: show "iniciando…" instead of "encerrado". */
   isStartPending(slotId: string): boolean
+  /** The pane was hibernated on purpose: it shows "hibernada" and offers to wake it. */
+  isAsleep?(slotId: string): boolean
   onAction(slotId: string, action: PanelAction): void
   /** The user renamed the tab; an empty name removes the custom name (the session title shows again). */
   onRename(slotId: string, name: string): void
@@ -468,6 +482,7 @@ export class TerminalPanel implements IContentRenderer {
     this.head.bell.title = bellTip
     this.head.bell.setAttribute('aria-label', bellTip)
     if (s.restarting) this.setStatus('starting', 'reiniciando…')
+    else if (status === 'exited' && this.host.isAsleep?.(this.slotId)) this.setStatus(status, 'hibernada')
     else this.setStatus(status, STATUS_LABEL[status])
     this.element.dataset.status = status
 
@@ -476,7 +491,7 @@ export class TerminalPanel implements IContentRenderer {
     if (isAgentUnavailable(s.kind)) this.showOverlay(errorOverlay(s, { code: 'agent-unavailable', message: `O agente ${s.kind} não está disponível neste app (extensão desligada ou ausente); o painel continua guardado.` }))
     else if (status === 'unconfirmed') this.showOverlay(unconfirmedOverlay(s))
     else if (status === 'error' && err) this.showOverlay(errorOverlay(s, err))
-    else if (status === 'exited') this.showOverlay(exitedOverlay(s))
+    else if (status === 'exited') this.showOverlay(this.host.isAsleep?.(this.slotId) ? asleepOverlay(s) : exitedOverlay(s))
     else this.overlay.hidden = true
     this.renderLoading()
   }
@@ -714,6 +729,7 @@ export class TerminalPanel implements IContentRenderer {
  */
 export class SlotTab implements ITabRenderer {
   readonly element: HTMLElement
+  private unmountEmblem: (() => void) | undefined
   private api: DockviewPanelApi | undefined
   private readonly kind: HTMLElement
   private readonly text: HTMLElement
@@ -751,6 +767,8 @@ export class SlotTab implements ITabRenderer {
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
+    this.unmountEmblem?.()
+    this.unmountEmblem = mountTabEmblem(this.element.querySelector<HTMLElement>('.kind')!, params.api, params.params)
     this.hint = hintParam(params.params)
     // The tab strip's actions (tab-strip.ts) find the panel id of each tab through this attribute.
     this.element.dataset.slot = params.api.id
@@ -774,10 +792,16 @@ export class SlotTab implements ITabRenderer {
     }
     setIcon(this.kind, s ? KIND_ICON[s.kind] ?? 'terminal-window' : 'question')
     this.text.textContent = this.api.title ?? this.api.id
-    this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
+    // A hibernated pane: a closed eye instead of the "ended" dot.
+    const asleep = !!s && effectiveStatus(s) === 'exited' && !!this.host.isAsleep?.(this.api.id)
+    if (asleep !== (this.dot.dataset.glyph === 'eye-closed')) {
+      this.dot.dataset.glyph = asleep ? 'eye-closed' : ''
+      this.dot.replaceChildren(icon(asleep ? 'eye-closed' : 'circle-fill'))
+    }
+    this.dot.className = `dot ${asleep ? 'asleep' : s ? effectiveStatus(s) : 'error'}`
+    this.dot.title = asleep ? 'Guia hibernada' : ''
     this.unsafe.hidden = !s?.unsafe
     this.ronda.hidden = !s?.ronda
-    this.ronda.classList.toggle('busy', s?.turn === 'busy')
     if (s?.ronda) this.ronda.title = rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, '')
     const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
     // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
@@ -828,6 +852,8 @@ export class SlotTab implements ITabRenderer {
   }
 
   dispose(): void {
+    this.unmountEmblem?.()
+    this.unmountEmblem = undefined
     for (const d of this.disposers) d()
     this.disposers = []
   }

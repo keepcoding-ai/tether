@@ -364,6 +364,27 @@ export function closeDeskSituation(deskName: string, slots: SlotState[], neighbo
   }
 }
 
+/**
+ * Hibernating panes (one, or a whole desk) whose agents are mid-turn: stopping them now cuts the turn. Asked only then; an idle desk sleeps at once.
+ * The conversations stay saved and resume when the desk wakes.
+ */
+export function hibernateSituation(where: string, busy: SlotState[]): DialogSpec {
+  const names = busy.map(s => s.title ?? s.name ?? folderName(s.cwd))
+  const shown = names.slice(0, 4)
+  if (names.length > 4) shown.push(`e mais ${names.length - 4}`)
+  return {
+    situation: 'hibernate',
+    tone: 'warn',
+    icon: 'warning',
+    title: busy.length === 1 ? `Um agente ${where} está trabalhando` : `${busy.length} agentes ${where} estão trabalhando`,
+    context: { icon: 'moon', name: where.replace(/^d[aeo] /, ''), lines: shown, status: { label: 'em andamento', tone: 'ok' } },
+    choices: [
+      { id: 'hibernate', icon: 'moon', label: 'Hibernar mesmo assim', consequence: 'Os processos param agora, no meio do turno. As conversas ficam salvas e retomam ao acordar.', tone: 'destructive' },
+    ],
+    cancelLabel: 'Cancelar',
+  }
+}
+
 /** A tether:// link named a pane that is closed but still known (its slot is in "Slots fechados"). */
 export function closedTabSituation(name: string): DialogSpec {
   return {
