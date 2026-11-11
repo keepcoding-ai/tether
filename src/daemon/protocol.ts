@@ -212,6 +212,12 @@ export type Request =
   | { t: 'proc-ports'; id: number; check?: number }
   /** Someone looked: clears `attention`. */
   | { t: 'proc-seen'; id: number; name: string }
+  /**
+   * Watch a process' output (read only: no request writes to a process). Reply: `scrollback` of its current run, absent
+   * when the host holds no run of it; then `proc-data` events go to THIS client. Asking again gives a fresh scrollback.
+   */
+  | { t: 'proc-attach'; id: number; name: string }
+  | { t: 'proc-detach'; id: number; name: string }
   /** The host's state (`host: null` when none answers). */
   | { t: 'proc-host'; id: number }
   /** Ask the host to exit; refused with live processes unless `force` (they are stopped, recorded as asked by `by`). */
@@ -272,5 +278,7 @@ export type Event =
   /** A background process changed (any client). */
   | { t: 'proc'; proc: ProcState }
   | { t: 'proc-removed'; name: string }
+  /** Output of a process this client attached to (proc-attach). */
+  | { t: 'proc-data'; name: string; data: string }
 
 export type DaemonMessage = Reply | Event

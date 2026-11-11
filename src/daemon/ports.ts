@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process'
 import { connect } from 'node:net'
 import type { ProcRow } from './memory.ts'
 import type { ProcStatus } from './procs.ts'
+import { ownerText } from './proc-texts.ts'
 
 export interface Listener {
   port: number
@@ -152,11 +153,7 @@ export function buildPortRows(listeners: Listener[], rows: ProcRow[], owners: Ma
 }
 
 /** "web (pid 123)" / "fora do tether: node.exe, pid 123". */
-export function ownerText(row: PortRow): string {
-  const o = row.owner
-  if (!o) return '?'
-  return o.proc ? `${o.proc} (pid ${o.pid})` : `fora do tether: ${o.exe ?? 'executável desconhecido'}, pid ${o.pid}`
-}
+export { ownerText }
 
 /** The answer of `proc ports --check N`: "livre", "ocupada por ‹quem›" or "declarada por ‹processo› (estado)". */
 export function checkText(row: PortRow | undefined, port: number, statusText: (s: ProcStatus) => string): string {

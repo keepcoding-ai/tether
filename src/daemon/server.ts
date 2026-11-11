@@ -199,6 +199,8 @@ interface Client {
   socket: Socket
   parser: LineParser
   attached: Set<string>
+  /** Background processes whose output this client watches (proc-attach). */
+  procsWatched: Set<string>
   /** From the hello: 'app' | 'cli' | 'test'. */
   kind?: string
 }
@@ -246,6 +248,8 @@ class DaemonImpl implements Daemon {
   private startedAt = new Date().toISOString()
   /** Background processes (tether proc): the model and the link to tether-procd. */
   private readonly procs: ProcManager
+  /** Who watches each background process' output (one host attachment per name, shared). */
+  private readonly procWatchers = new Map<string, Set<Client>>()
 
   constructor(opts: DaemonOptions) {
     this.home = opts.home
@@ -278,6 +282,7 @@ class DaemonImpl implements Daemon {
       allowSeconds: this.rondaAllowSeconds,
       slotExists: (slotId) => this.slotMap.has(slotId),
       sampleSoon: () => this.kickMemory(),
+      onData: (name, data) => { for (const c of this.procWatchers.get(name) ?? []) this.send(c, { t: 'proc-data', name, data }) },
     })
   }
 
@@ -930,7 +935,7 @@ class DaemonImpl implements Daemon {
   // ---- connections ---------------------------------------------------------------------------
 
   private onConnection(socket: Socket): void {
-    const client: Client = { socket, parser: new LineParser(), attached: new Set() }
+    const client: Client = { socket, parser: new LineParser(), attached: new Set(), procsWatched: new Set() }
     this.clients.add(client)
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
@@ -940,7 +945,17 @@ class DaemonImpl implements Daemon {
     socket.on('close', () => {
       this.clients.delete(client)
       for (const id of client.attached) this.slotMap.get(id)?.attached.delete(client)
+      for (const name of client.procsWatched) this.unwatchProc(client, name)
     })
+  }
+
+  /** The client no longer watches the process' output; the host attachment goes with the last watcher. */
+  private unwatchProc(client: Client, name: string): void {
+    client.procsWatched.delete(name)
+    const set = this.procWatchers.get(name)
+    if (!set?.delete(client) || set.size) return
+    this.procWatchers.delete(name)
+    this.procs.detachOutput(name)
   }
 
   private send(client: Client, msg: DaemonMessage): void {
@@ -1208,6 +1223,27 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id }
       case 'proc-seen':
         await this.procAct(() => this.procs.seen(req.name))
+        return { t: 'ok', id }
+      case 'proc-attach': {
+        // Watching before the host answers: output that follows the scrollback may arrive in the same read as the reply.
+        const name = String(req.name)
+        const known = client.procsWatched.has(name)
+        client.procsWatched.add(name)
+        let set = this.procWatchers.get(name)
+        if (!set) this.procWatchers.set(name, set = new Set())
+        set.add(client)
+        let scrollback: string | undefined
+        try {
+          scrollback = await this.procAct(() => this.procs.attachOutput(name))
+        } catch (e) {
+          if (!known) this.unwatchProc(client, name)
+          throw e
+        }
+        if (client.socket.destroyed) this.unwatchProc(client, name)
+        return { t: 'ok', id, ...(scrollback !== undefined ? { scrollback } : {}) }
+      }
+      case 'proc-detach':
+        this.unwatchProc(client, req.name)
         return { t: 'ok', id }
       case 'proc-host':
         return { t: 'ok', id, host: await this.procAct(() => this.procs.hostStatus()) }

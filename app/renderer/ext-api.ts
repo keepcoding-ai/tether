@@ -29,6 +29,9 @@ import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
 import type { AgentPane } from './agent-panes.ts'
 import type { FrameSnapshot, PanelFrameTree } from './panel-frames.ts'
+import type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
+import type { Reply } from '../../src/daemon/protocol.ts'
+import type { ProcState } from '../../src/daemon/procs.ts'
 
 /** Why a panel frame became loose: the person closed its panel, or the panel went by itself. */
 export type LooseCause = 'closed' | 'lost'
@@ -43,6 +46,7 @@ export type { Badge, AttentionHandle, AttentionRaise } from './seal-rules.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
+export type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
 export type { FrameDeskGroup, FrameFilter, FramePane, FrameSnapshot, PanelFrameRow, PanelFrameTree } from './panel-frames.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
@@ -337,6 +341,31 @@ export interface TetherUi {
      * and returns its rows (none: an empty list); it runs each time the menu opens.
      */
     tabMenu(provider: (slotId: string) => ContextMenuEntry[]): IDisposable
+  }
+  /**
+   * The background processes tetherd keeps (tether proc): the core holds the live list, the extension draws it. Each act
+   * is a request answered with tetherd's reply (a refusal is an `error` reply whose message is the text to show, never
+   * thrown); the app sends no author, so tetherd records "você (pelo app)". `attach` watches a process' output, read only.
+   */
+  procs: {
+    list(): readonly ProcState[]
+    get(name: string): ProcState | undefined
+    /** A process changed or went (`proc`, `proc-removed`), or the list was read again (a new connection to tetherd). */
+    onDidChange(listener: (e: ProcsChange) => void): IDisposable
+    start(name: string): Promise<Reply>
+    stop(name: string, opts?: ProcActOptions): Promise<Reply>
+    restart(name: string, opts?: ProcActOptions): Promise<Reply>
+    forget(name: string, opts?: ProcActOptions): Promise<Reply>
+    /** Declares (or renews) the person's use: `duration` like '15m', `purpose` required. */
+    use(name: string, duration: string, purpose: string): Promise<Reply>
+    release(name: string): Promise<Reply>
+    /** Someone looked: clears its attention. */
+    seen(name: string): Promise<Reply>
+    /** The process and its last events. */
+    info(name: string): Promise<Reply>
+    /** Who listens on each port (tether's processes or outside it) and the ports stopped processes declare. */
+    ports(): Promise<Reply>
+    attach(name: string, onData: (data: string) => void): Promise<ProcAttachment>
   }
   /** The profile editor. */
   profiles: {

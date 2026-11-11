@@ -56,6 +56,7 @@ type Events = {
   pause: [batch: PauseBatch]
   proc: [proc: ProcState]
   'proc-removed': [name: string]
+  'proc-data': [name: string, data: string]
   close: []
 }
 
@@ -201,6 +202,9 @@ export class DaemonClient extends EventEmitter<Events> {
         return
       case 'proc-removed':
         this.emit('proc-removed', msg.name)
+        return
+      case 'proc-data':
+        this.emit('proc-data', msg.name, msg.data)
         return
     }
   }

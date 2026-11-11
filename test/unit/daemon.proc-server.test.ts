@@ -67,6 +67,33 @@ describe('daemon: background processes through an in-process host', () => {
     assert.deepEqual(info.events!.map((e) => e.kind), ['registered', 'started'])
   })
 
+  test('proc-attach: the scrollback, then proc-data to the attached client only; proc-detach stops it; no way to write', async () => {
+    const other = await Recorder.connect(daemon.pipe)
+    try {
+      const mine: string[] = []
+      const theirs: string[] = []
+      rec.client.on('proc-data', (name, data) => { if (name === 'web') mine.push(data) })
+      other.client.on('proc-data', (_name, data) => theirs.push(data))
+      const r = await rec.client.request({ t: 'proc-attach', name: 'web' })
+      assert.equal(typeof r.scrollback, 'string', 'the host holds this run')
+      await waitUntil(() => mine.join('').includes('tick'), 5_000, 'live output')
+      assert.deepEqual(theirs, [], 'only the attached client hears the output')
+      await assert.rejects(rec.client.request({ t: 'proc-attach', name: 'nada' }), (e: Error) => e instanceof DaemonError && e.code === 'unknown-proc')
+      await rec.client.request({ t: 'proc-detach', name: 'web' })
+      await new Promise((res) => setTimeout(res, 150))
+      const n = mine.length
+      await new Promise((res) => setTimeout(res, 400))
+      assert.equal(mine.length, n, 'no output after detach')
+      // A client that goes away is let go of: attaching it and closing it leaves the next attach working.
+      await other.client.request({ t: 'proc-attach', name: 'web' })
+    } finally {
+      other.close()
+    }
+    const again = await rec.client.request({ t: 'proc-attach', name: 'web' })
+    assert.match(again.scrollback ?? '', /tick/)
+    await rec.client.request({ t: 'proc-detach', name: 'web' })
+  })
+
   test('stop: Ctrl+C ends it; stopped, by whom and why; a requested stop asks no attention', async () => {
     const s = (await rec.client.request({ t: 'proc-stop', name: 'web', reason: 'fim do teste', by: { user: 'guga' } })).proc!
     assert.equal(s.status, 'stopped')

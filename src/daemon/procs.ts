@@ -5,7 +5,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSyn
 import { dirname, isAbsolute, join } from 'node:path'
 import { procCardPath, procEventsPath, procRunPath, procsDir, procUsesPath } from '../core/paths.ts'
 import { writeJsonAtomic, type RunFile } from '../procd/protocol.ts'
-import { localTime } from '../cli/format.ts'
+import { actionText, useText } from './proc-texts.ts'
 
 /** Lower case only: the name is a file name, and Windows would fold `Web` and `web` into one card. */
 export const PROC_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
@@ -291,76 +291,9 @@ export function deriveState(card: ProcCard, events: ProcEvent[], live: { runFile
   return s
 }
 
-// ---- texts (Portuguese) -------------------------------------------------------------------------
+// ---- texts (Portuguese): in proc-texts.ts, free of node imports so the app's renderer shows the same phrases ----------
 
-export function statusText(s: Pick<ProcState, 'status' | 'exit'>): string {
-  switch (s.status) {
-    case 'running': return 'rodando'
-    case 'stopping': return 'parando'
-    case 'stopped': return 'parado'
-    case 'exited': return typeof s.exit?.code === 'number' ? `encerrou sozinho (${s.exit.code})` : 'encerrou sozinho'
-    case 'host-lost': return 'caiu com o anfitrião'
-    case 'failed': return 'não subiu'
-  }
-}
-
-export function authorText(by: ProcAuthor | undefined): string {
-  if (!by) return '?'
-  let who: string
-  switch (by.kind) {
-    case 'app': who = 'você (pelo app)'; break
-    case 'agent': who = `${by.name ?? by.slotId ?? 'painel'} (${by.agent ?? 'agente'})`; break
-    case 'shell': who = `${by.name ?? by.slotId ?? 'painel'} (shell)`; break
-    default: who = by.user ?? 'externo'
-  }
-  if (by.label) who = by.kind === 'external' ? `${by.label} (${who})` : `${who}, como ${by.label}`
-  return who
-}
-
-const ACTION_TEXT: Record<GuardedAction, string> = { stop: 'parar', restart: 'reiniciar', forget: 'esquecer' }
-export function actionText(a: GuardedAction): string {
-  return ACTION_TEXT[a] ?? a
-}
-
-/** "kai (claude) até 14:20:00: e2e do checkout". */
-export function useText(u: UseView): string {
-  return `${authorText(u.by)} até ${clockTime(u.until)}: ${u.purpose}`
-}
-
-export function eventText(e: ProcEvent): string {
-  switch (e.kind) {
-    case 'use-declared': return `declarou uso até ${clockTime(e.until ?? e.ts)}: ${e.purpose ?? ''}`
-    case 'use-released': return e.cause === 'panel-gone' ? 'uso encerrado: o painel saiu' : 'liberou o uso'
-    case 'use-expired': return `uso venceu às ${clockTime(e.until ?? e.ts)}`
-    case 'refused-in-use': return `quis ${actionText(e.action ?? 'restart')}, recusado: em uso por ${(e.uses ?? []).map((u) => authorText(u.by)).join(', ')}`
-    case 'forced': return `forçou ${actionText(e.action ?? 'restart')} sobre o uso de ${(e.over ?? []).map((u) => authorText(u.by)).join(', ')}`
-    case 'registered': return 'registrou o processo'
-    case 'recipe-changed': return `alterou a receita: ${Object.keys(e.after ?? {}).join(', ')}`
-    case 'started': return `iniciou (execução ${e.run}, pid ${e.pid})`
-    case 'start-failed': return `não subiu: ${e.message ?? '?'}`
-    case 'stop-requested': return `pediu a parada (execução ${e.run})`
-    case 'restart-requested': return `pediu o reinício (execução ${e.run})`
-    case 'forgotten': return 'esqueceu o processo'
-    case 'ended': {
-      const at = e.at ? ` às ${clockTime(e.at)}` : ''
-      const code = typeof e.code === 'number' ? `, código ${e.code}` : ''
-      if (e.cause === 'requested') return `execução ${e.run} parou a pedido${at}${code}`
-      if (e.cause === 'host') return `execução ${e.run} caiu com o anfitrião${at}`
-      return `execução ${e.run} encerrou sozinha${at}${code}`
-    }
-  }
-}
-
-/** One history line: local time with seconds (to cross with the log), who, what, why. `ended` is the system's: no author. */
-export function historyLine(e: ProcEvent): string {
-  const who = e.by ? authorText(e.by) : 'tether'
-  return `${localTime(e.ts, true)}  ${who}  ${eventText(e)}${e.reason ? `  motivo: ${e.reason}` : ''}`
-}
-
-/** Local HH:MM:SS. */
-export function clockTime(iso: string): string {
-  return localTime(iso, true).slice(-8)
-}
+export { actionText, authorText, clockTime, eventText, historyLine, statusText, useText } from './proc-texts.ts'
 
 // ---- uses ---------------------------------------------------------------------------------------
 

@@ -87,6 +87,8 @@ export interface ProcManagerOptions {
   slotExists?: (slotId: string) => boolean
   /** A process started: a memory sample soon would show it. */
   sampleSoon?: () => void
+  /** Output of a process whose output someone watches (attachOutput). */
+  onData?: (name: string, data: string) => void
 }
 
 interface Entry {
@@ -122,6 +124,9 @@ export class ProcManager {
   private readonly allowSeconds: boolean
   private readonly slotExists: ((slotId: string) => boolean) | undefined
   private readonly sampleSoon: (() => void) | undefined
+  private readonly onData: ((name: string, data: string) => void) | undefined
+  /** Names whose output tetherd is attached to in the host (a new host connection attaches them again). */
+  private readonly watched = new Set<string>()
   private readonly entries = new Map<string, Entry>()
   private readonly locks = new Map<string, Promise<void>>()
   private host: HostClient | undefined
@@ -141,6 +146,7 @@ export class ProcManager {
     this.allowSeconds = opts.allowSeconds ?? false
     this.slotExists = opts.slotExists
     this.sampleSoon = opts.sampleSoon
+    this.onData = opts.onData
   }
 
   /** Loads the cards; with any, only TRIES the host (never launches it) and reconciles. */
@@ -185,6 +191,30 @@ export class ProcManager {
     const e = this.require(name)
     await this.probe(e)
     return { proc: this.state(e), events: e.events.slice(-INFO_EVENTS) }
+  }
+
+  /**
+   * Starts relaying the process' output (onData) and returns what the host holds of its current run, or undefined when
+   * the host has no run of it in memory (stopped before this host, or no host). Asking again gives a fresh scrollback.
+   * Read only: there is no way to write to a process.
+   */
+  async attachOutput(name: string): Promise<string | undefined> {
+    this.require(name)
+    this.watched.add(name)
+    const host = await this.connect(false)
+    if (!host) return undefined
+    try {
+      return (await host.request({ t: 'attach', name })).scrollback ?? ''
+    } catch (err) {
+      if (err instanceof HostRequestError && err.code === 'unknown-run') return undefined
+      throw err
+    }
+  }
+
+  /** Stops relaying the process' output (the last watcher left). */
+  detachOutput(name: string): void {
+    this.watched.delete(name)
+    this.host?.request({ t: 'detach', name }).catch(() => { /* the run may be gone */ })
   }
 
   /** pid and name of every live process (the memory sample's roots, the ports' owners). */
@@ -686,7 +716,9 @@ export class ProcManager {
     this.host = c
     this.hostStopping = false
     c.on('exit', (name, run, exit) => this.onExit(name, run, exit))
+    c.on('data', (name, data) => { if (this.watched.has(name)) this.onData?.(name, data) })
     c.on('close', () => void this.onHostClose(c))
+    for (const name of this.watched) c.request({ t: 'attach', name }).catch(() => { /* no run of it in this host */ })
     this.log(`proc host: connected to pid ${c.hello.pid} (${c.hello.version})`)
   }
 
