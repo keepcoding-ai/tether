@@ -65,11 +65,14 @@ describe('ronda: model', () => {
   })
 })
 
+/** Printed by the fake agent once it reads stdin in raw mode: node's startup time varies with machine load, so the test waits for this, not for a fixed delay. */
+const AGENT_LISTENING = 'AGENT-LISTENING'
+
 /** An "agent" that echoes what is typed, bracketed, so the test sees the nudge arrive. */
 function echoPlan(cwd: string): LaunchPlan {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
-  const script = "process.stdin.setRawMode&&process.stdin.setRawMode(true);process.stdin.on('data',d=>process.stdout.write('<'+String(d).replace(/\\r/g,'#CR#')+'>'))"
+  const script = "process.stdin.setRawMode&&process.stdin.setRawMode(true);process.stdin.on('data',d=>process.stdout.write('<'+String(d).replace(/\\r/g,'#CR#')+'>'));process.stdout.write('"+AGENT_LISTENING+"')"
   return { command: process.execPath, args: ['-e', script], cwd, env }
 }
 const fakeClaude: AgentAdapter = { name: 'claude', plan: (input) => echoPlan(input.resume?.cwd ?? input.slot.cwd), sessionExists: async () => 'unknown', title: async (b) => b.title }
@@ -78,19 +81,23 @@ const isErr = (code: string) => (e: unknown): boolean => e instanceof DaemonErro
 describe('ronda: daemon clock', () => {
   const homes: string[] = []
   const daemons: Daemon[] = []
+  const logs: string[] = []
   after(async () => {
     for (const d of daemons) await d.close()
     for (const h of homes) await removeHome(h)
   })
   async function boot(home = tempHome()): Promise<{ home: string; daemon: Daemon; rec: Recorder }> {
     if (!homes.includes(home)) homes.push(home)
-    const daemon = await startDaemon({ home, pipe: uniquePipe(home), readyFallbackMs: 300, minAgentAgeMs: 0, memoryIntervalMs: 0, rondaAllowSeconds: true, rondaRetryMs: 200, rondaInputQuietMs: 300, adapters: { claude: fakeClaude } })
+    const daemon = await startDaemon({ home, pipe: uniquePipe(home), readyFallbackMs: 300, minAgentAgeMs: 0, memoryIntervalMs: 0, rondaAllowSeconds: true, rondaRetryMs: 200, rondaInputQuietMs: 300, adapters: { claude: fakeClaude }, log: (m) => logs.push(m) })
     daemons.push(daemon)
     return { home, daemon, rec: await Recorder.connect(daemon.pipe) }
   }
   /** The agent's start report (what Claude's SessionStart hook writes): the run opened its session. */
   const started = (home: string, id: string): void => appendFileSync(slotEventsPath(home, id), JSON.stringify({ v: 1, ts: new Date().toISOString(), slotId: id, agent: 'claude', kind: 'start', source: 'startup', sessionId: 'sess-ronda', cwd: home, resume: { cwd: home, args: ['--resume', 'sess-ronda'] } }) + '\n')
-  const nudges = (rec: Recorder, id: string): number => rec.text(id).split('[ronda] Ronda de rotina').length - 1
+  const listening = (rec: Recorder, id: string): number => rec.text(id).split(AGENT_LISTENING).length - 1
+  /** Nudges the daemon itself typed into the slot (its own log line). Exact and immune to how late ConPTY hands the echo back under load. */
+  const typed = (id: string): number => logs.filter((m) => m === `slot ${id}: ronda nudge typed`).length
+  const heard = (rec: Recorder, id: string): string => rec.text(id).replace(/[<>]/g, '')
 
   test('one per slot; nudges an idle agent on time; waits while busy; survives a restart of the agent and of the daemon', async () => {
     const { home, daemon, rec } = await boot()
@@ -98,11 +105,12 @@ describe('ronda: daemon clock', () => {
     const id = slot!.slotId
     await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
     await rec.state(id, (s) => s.status === 'running', 5_000, 'running')
+    await waitUntil(() => listening(rec, id) >= 1, 30_000, 'the agent reading its input')
 
     // running by the fallback but no start report (still in a menu): the due ronda waits
     await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s' })
     await rec.state(id, (s) => s.ronda?.due === true, 5_000, 'due before the start report')
-    assert.equal(nudges(rec, id), 0, 'nothing typed before the agent opened its session')
+    assert.equal(typed(id), 0, 'nothing typed before the agent opened its session')
     await rec.client.request({ t: 'ronda-off', slotId: id })
     started(home, id)
     await rec.state(id, (s) => !!s.binding, 5_000, 'bound')
@@ -114,19 +122,21 @@ describe('ronda: daemon clock', () => {
     assert.ok(existsSync(slotRondaPath(home, id)))
     await rec.state(id, (s) => !!s.ronda, 3_000, 'ronda in the state')
 
-    await rec.see(id, /\[ronda\] Ronda de rotina[^<>]*Extra do teste\.>/, 5_000)
-    await rec.see(id, /<#CR#>/, 3_000) // Enter in its own chunk
+    // What the agent heard, its own <> brackets dropped: a loaded ConPTY hands the input (and so the echo) over late and in
+    // arbitrary pieces, so the wait is on the condition, with a generous deadline. Text first, then Enter.
+    await waitUntil(() => /\[ronda\] Ronda de rotina[^#]*Extra do teste\.[^#]*#CR#/.test(heard(rec, id)), 30_000, 'the nudge text and its Enter typed into the agent')
 
     // busy: the hook says a turn started → no nudge, the ronda becomes due
     writeFileSync(slotAttentionPath(home, id), JSON.stringify({ ts: new Date().toISOString(), kind: 'start' }))
     await rec.state(id, (s) => s.turn === 'busy', 5_000, 'busy')
-    const before = nudges(rec, id)
-    await rec.state(id, (s) => s.ronda?.due === true, 5_000, 'due while busy')
+    // the daemon's own word that its tick met the busy agent and waits: no nudge can still be in flight after this
+    await waitUntil(() => logs.includes(`slot ${id}: ronda due, waiting (busy)`), 10_000, 'due while busy')
+    const before = typed(id)
     await sleep(1500)
-    assert.equal(nudges(rec, id), before, 'nothing typed into a busy agent')
+    assert.equal(typed(id), before, 'nothing typed into a busy agent')
     // idle again → the due nudge goes at once
     writeFileSync(slotAttentionPath(home, id), JSON.stringify({ ts: new Date(Date.now() + 1).toISOString(), kind: 'done' }))
-    await waitUntil(() => nudges(rec, id) > before, 5_000, 'nudge after idle')
+    await waitUntil(() => typed(id) > before, 30_000, 'nudge after idle')
 
     // agent restart: the ronda is kept while it is down and nudges the new run
     await rec.client.request({ t: 'ronda-set', slotId: id, interval: '2s' })
@@ -135,10 +145,10 @@ describe('ronda: daemon clock', () => {
     assert.ok((await rec.client.request({ t: 'ronda-get', slotId: id })).ronda, 'kept while the agent is down')
     await rec.client.request({ t: 'start', slotId: id, choice: 'new' })
     await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
-    await sleep(500)
+    await waitUntil(() => listening(rec, id) >= 2, 30_000, 'the restarted agent reading its input')
     started(home, id)
-    const n1 = nudges(rec, id)
-    await waitUntil(() => nudges(rec, id) > n1, 10_000, 'nudge after the agent restarted')
+    const n1 = typed(id)
+    await waitUntil(() => typed(id) > n1, 30_000, 'nudge after the agent restarted')
 
     // daemon restart: the ronda comes back from disk
     rec.close()
