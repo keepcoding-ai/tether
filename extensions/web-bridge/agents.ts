@@ -12,8 +12,9 @@
 //   - HTTP (an agent whose contribution says `mcp.http`, while the daemon's host listens): the agent gets a per-slot file
 //     <TETHER_HOME>/mcp/tether-bridge/<slotId>.json, `{ type: "http", url: /mcp/<slotId>, Bearer ${TETHER_BRIDGE_MCP_KEY} }`,
 //     and a fresh key in its env under that name (the CLI expands it; the key exists only in memory and in that env). The
-//     host runs the very command of the stdio file (`node atrium-bridge.mjs mcp` with its env and the slot's identity) as
-//     its child, only while the agent uses it. The agent spawns no process for the bridge.
+//     host runs the slot's MCP shell INSIDE the daemon (the vendored bundle as a library, with the env of the stdio file and
+//     the slot's identity) for as long as the agent's run lives: no process for the bridge, in the agent or in the daemon.
+//     The upload authorizations are kept with the slot (grant-store.ts), not in the shell's memory.
 import { randomBytes } from 'node:crypto'
 import { readFileSync, rmSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -22,7 +23,7 @@ import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
-import type { McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
+import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 import { writeFileAtomic } from './bridge-home.ts'
 import { MCP_SERVER_NAME } from './paths.ts'
 
@@ -30,8 +31,14 @@ export const ENV_CLIENT_ID = 'ATRIUM_BRIDGE_CLIENT_ID'
 export const ENV_CLIENT_NAME = 'ATRIUM_BRIDGE_CLIENT_NAME'
 /** The env var of the agent's CLI that carries the slot's bearer for the bridge over HTTP. */
 export const ENV_BRIDGE_MCP_KEY = 'TETHER_BRIDGE_MCP_KEY'
-/** What the first tool answer says after the daemon restarted an idle bridge shell. */
-export const BRIDGE_RESTART_NOTICE = 'The bridge tool of the tether was restarted after being idle. Upload authorizations given before are gone.'
+/** What a slot's bridge shell inside the daemon is made of (the vendored bundle's `createBridgeMcp`). */
+export interface BridgeBackendInput {
+  slotId: string
+  /** The environment the shell reads instead of the daemon's own: the stdio file's env, the agent's launch env and the slot's identity. */
+  env: Record<string, string>
+  /** The node that starts the bridge daemon when it does not answer. */
+  node: string
+}
 
 /** The stdio entry of the bridge's --mcp-config (bridge-home.ts mcpConfigOf): its server name, args and env. */
 export function readStdioEntry(configFile: string): { name: string; args: string[]; env: Record<string, string> } | undefined {
@@ -73,13 +80,15 @@ export interface InjectDeps {
   http?: McpSlotRoutes
   /** <TETHER_HOME>/mcp/tether-bridge/<slotId>.json (paths.ts httpMcpConfigPathOf). */
   httpConfigFile?(slotId: string): string
-  /** The node that runs the bridge's shell (an absolute path), or undefined: then the stdio path. */
+  /** The node that starts the bridge daemon (an absolute path), or undefined: then the stdio path. */
   node?(): string | undefined
+  /** Makes the slot's shell inside the daemon (daemon.ts: the vendored bundle, imported once). Absent: the stdio path. */
+  backend?(input: BridgeBackendInput): McpBackend | Promise<McpBackend>
   /** Injected in the unit test. */
   key?(): string
 }
 
-/** The slot's bridge over HTTP ends: the key stops working, the child stops, the per-slot file goes. Never throws. */
+/** The slot's bridge over HTTP ends: the key stops working, the slot's shell is closed, the per-slot file goes. Never throws. */
 export function releaseHttp(deps: Pick<InjectDeps, 'http' | 'httpConfigFile'>, slotId: string): void {
   deps.http?.revoke(slotId)
   if (deps.httpConfigFile && SLOT_ID_RE.test(slotId)) rmSync(deps.httpConfigFile(slotId), { force: true })
@@ -114,7 +123,8 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
 /** The HTTP injection, or undefined when it does not apply (no host listening, no node, an unreadable stdio file, a failed write). */
 function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan, slot: SlotMeta, identity: Record<string, string>): LaunchPlan | undefined {
   const url = deps.http?.urlOf(slot.slotId)
-  if (!url || !deps.http || !deps.httpConfigFile || !SLOT_ID_RE.test(slot.slotId)) return undefined
+  const backend = deps.backend
+  if (!url || !deps.http || !backend || !deps.httpConfigFile || !SLOT_ID_RE.test(slot.slotId)) return undefined
   const node = deps.node?.()
   const entry = readStdioEntry(deps.configFile)
   if (!node || !entry) return undefined
@@ -129,7 +139,7 @@ function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan
     return undefined
   }
   const { [ENV_BRIDGE_MCP_KEY]: _, ...env } = { ...out.env, ...entry.env, ...identity }
-  deps.http.grant(slot.slotId, key, { command: node, args: entry.args, env })
+  deps.http.grant(slot.slotId, key, { create: () => backend({ slotId: slot.slotId, env, node }) })
   return { ...out, env: { ...out.env, ...identity, [ENV_BRIDGE_MCP_KEY]: key } }
 }
 

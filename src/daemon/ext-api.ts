@@ -18,7 +18,8 @@ export interface DaemonCheck {
   hint?: string
 }
 
-export type SlotEventKind = 'spawned' | 'exited' | 'bound'
+/** `removed`: the slot was forgotten (its pane closed for good); after it no event of that slot comes. */
+export type SlotEventKind = 'spawned' | 'exited' | 'bound' | 'removed'
 
 export interface TetherDaemon {
   /** The extension's id (manifest.id). */

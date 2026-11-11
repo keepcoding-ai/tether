@@ -14,8 +14,9 @@
 // HTTP (an agent whose contribution says `mcp.http`, while the daemon's host listens): the MCP file declares
 // `{ type: "http", url: http://127.0.0.1:<port>/mcp/<slotId>, headers: { Authorization: "Bearer ${TETHER_BROWSER_MCP_KEY}" } }`
 // and the key goes in the plan's env under that name (the CLI expands it): the MCP file still holds no key. The same key is
-// granted to the host for that slot, and the host runs the same server (with the same rewriting, mcp-texts.ts) as its child
-// only while the agent uses it. The agent spawns no process for the browser.
+// granted to the host for that slot, and the host runs the slot's server INSIDE the daemon (the vendored bundle as a library,
+// with the same rewriting, mcp-texts.ts) for as long as the agent's run lives: no process for the browser, in the agent or in
+// the daemon, and nothing is stopped for being idle. What the tool knows the tabs by is kept with the tabs (agent-tabs.ts).
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -25,7 +26,7 @@ import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { slotMetaPath } from '../../src/core/paths.ts'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
-import type { McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
+import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 import { slotOfKeyFile, validKeyShape } from './gate-rules.ts'
 import { McpRewriter } from './mcp-texts.ts'
 import { ensurePrivateDir } from './private-dir.ts'
@@ -33,8 +34,14 @@ import { ensurePrivateDir } from './private-dir.ts'
 /** The env var of the agent's CLI that carries the slot's key to the HTTP server's bearer (never in a file but the key file). */
 export const ENV_BROWSER_MCP_KEY = 'TETHER_BROWSER_MCP_KEY'
 
-/** What the first tool answer says after the daemon restarted an idle server. */
-export const BROWSER_RESTART_NOTICE = 'The browser tool of the tether was restarted after being idle. Tab ids and element refs from before may be stale: list the tabs and take a new snapshot. Upload authorizations given before are gone.'
+/** What a slot's server inside the daemon is made of (the vendored bundle's `createTetherBrowserServer`). */
+export interface BrowserBackendInput {
+  endpointFile: string
+  keyFile: string
+  evaluate: boolean
+  /** The environment the server reads instead of the daemon's own (the agent's launch env, without the bearer). */
+  env: Record<string, string>
+}
 
 /** The daemon's HTTP host of the browser server (src/daemon/mcp-http.ts McpHttpHost), as the middleware uses it. */
 export type BrowserHttpHost = McpSlotRoutes
@@ -119,8 +126,10 @@ export interface BrowserInjectDeps {
   /** The node that runs it (an absolute path), or undefined when there is none. */
   node(): string | undefined
   log(msg: string): void
-  /** The daemon's HTTP host, for agents with `mcp.http`. */
+  /** The daemon's HTTP host, for agents with `mcp.http`; with it, `backend`. */
   http?: BrowserHttpHost
+  /** Makes the slot's server inside the daemon (daemon.ts: the vendored bundle, imported once). Absent: the stdio path. */
+  backend?(input: BrowserBackendInput): McpBackend | Promise<McpBackend>
   /** Injected in the unit test. */
   exists?(path: string): boolean
   key?(): string
@@ -147,7 +156,8 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
       if (e instanceof McpNameCollisionError) { deps.log(`slot ${slot.slotId}: ${e.message}; lançado sem o navegador`); return plan }
       throw e
     }
-    const url = agent.mcp.http ? deps.http?.urlOf(slot.slotId) : undefined
+    const backend = deps.backend
+    const url = agent.mcp.http && backend ? deps.http?.urlOf(slot.slotId) : undefined
     try {
       const key = (deps.key ?? newKey)()
       if (!validKeyShape(key)) throw new Error('chave gerada com formato inválido')
@@ -155,14 +165,12 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
       // M4: the folders are the owner's alone before a key lands in them (a home outside the profile inherits an open ACL).
       ensurePrivateDir(browserDirOf(deps.home))
       ensurePrivateDir(keysDirOf(deps.home))
-      if (url && deps.http) {
+      if (url && deps.http && backend) {
         writeFileAtomic(mcpFile, JSON.stringify(httpMcpConfigOf(MCP_SERVER_NAME, url, ENV_BROWSER_MCP_KEY), null, 2) + '\n')
         writeFileAtomic(keyFile, `${key}\n`)
         const { [ENV_BROWSER_MCP_KEY]: _, ...childEnv } = out.env
         deps.http.grant(slot.slotId, key, {
-          command: node,
-          args: [deps.server, '--adopt-endpoint-file', endpointFileOf(deps.home), '--adopt-key-file', keyFile, ...(evaluate ? ['--allow-evaluate'] : [])],
-          env: childEnv,
+          create: () => backend({ endpointFile: endpointFileOf(deps.home), keyFile, evaluate, env: childEnv }),
           rewriter: () => new McpRewriter({ evaluate }),
         })
         return { ...out, env: { ...out.env, [ENV_BROWSER_MCP_KEY]: key } }

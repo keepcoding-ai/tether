@@ -76,7 +76,7 @@ export interface DaemonOptions {
   /** Daemon extensions' launch middlewares (TetherDaemon.launch.use), applied in order to every agent/shell plan. */
   transformPlan?: (plan: LaunchPlan, meta: SlotMeta) => LaunchPlan
   /** Slot lifecycle for daemon extensions (TetherDaemon.onSlot). */
-  onSlot?: (kind: 'spawned' | 'exited' | 'bound', slot: SlotState) => void
+  onSlot?: (kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: SlotState) => void
   /** Overrides READY_FALLBACK_MS (tests). */
   readyFallbackMs?: number
   /** How often a running Claude slot's title is polled from its transcript (tests shorten it). */
@@ -183,7 +183,7 @@ class DaemonImpl implements Daemon {
   /** Test overrides; everything else comes from the agent registry at the time of use. */
   private readonly adapterOverrides: Partial<Record<AgentName, AgentAdapter>>
   private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta) => LaunchPlan) | undefined
-  private readonly onSlot: ((kind: 'spawned' | 'exited' | 'bound', slot: SlotState) => void) | undefined
+  private readonly onSlot: ((kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: SlotState) => void) | undefined
   private readonly readyFallbackMs: number
   private readonly minAgentAgeMs: number
   private readonly killWaitCapMs: number
@@ -491,7 +491,7 @@ class DaemonImpl implements Daemon {
     return { code: 'agent-unavailable', message: `o agente ${meta.agent} não está disponível (extensão desativada ou ausente); o slot continua guardado` }
   }
 
-  private emitSlot(kind: 'spawned' | 'exited' | 'bound', slot: Slot): void {
+  private emitSlot(kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: Slot): void {
     if (!this.onSlot) return
     try { this.onSlot(kind, this.stateOf(slot)) } catch (e) { this.log(`onSlot listener failed: ${(e as Error).message}`) }
   }
@@ -964,6 +964,8 @@ class DaemonImpl implements Daemon {
         slot.ronda = undefined
         for (const c of slot.attached) c.attached.delete(slot.meta.slotId)
         removeSlot(this.home, slot.meta.slotId)
+        // The slot is gone for good (its pane was closed): extensions drop what they kept with it.
+        this.emitSlot('removed', slot)
         this.broadcast({ t: 'removed', slotId: slot.meta.slotId })
         return { t: 'ok', id }
       }

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { extensions as daemonIndex } from '../../extensions/index.daemon.ts'
 import {
-  ENV_BROWSER_MCP_KEY, MCP_SERVER_NAME, createBrowserLaunchMiddleware, type BrowserHttpHost, endpointFileOf, keyFileOf, keysDirOf, mcpConfigOf, mcpDirOf, mcpFileOf, newKey, releaseSlot, sweepStale,
+  ENV_BROWSER_MCP_KEY, MCP_SERVER_NAME, createBrowserLaunchMiddleware, type BrowserBackendInput, type BrowserHttpHost, endpointFileOf, keyFileOf, keysDirOf, mcpConfigOf, mcpDirOf, mcpFileOf, newKey, releaseSlot, sweepStale,
 } from '../../extensions/browser/agents.ts'
 import { KeyStore } from '../../extensions/browser/gate-keys.ts'
 import { validKeyShape } from '../../extensions/browser/gate-rules.ts'
@@ -30,9 +30,10 @@ const slotOf = (agent: SlotMeta['agent'], slotId = 'abc123'): SlotMeta => ({ slo
 
 const PROXY = 'C:/app/extensions/browser/mcp-proxy.mjs'
 
-function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | undefined; exists?: boolean; proxy?: string; existing?: string[]; http?: BrowserHttpHost } = {}) {
+function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | undefined; exists?: boolean; proxy?: string; existing?: string[]; http?: BrowserHttpHost; noBackend?: boolean } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'tether-bragents-'))
   const logs: string[] = []
+  const made: BrowserBackendInput[] = []
   const mw = createBrowserLaunchMiddleware({
     home,
     agent: n => registry.get(n),
@@ -41,11 +42,12 @@ function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | unde
     server: SERVER,
     ...(over.proxy ? { proxy: over.proxy } : {}),
     ...(over.http ? { http: over.http } : {}),
+    ...(over.http && !over.noBackend ? { backend: (input: BrowserBackendInput) => { made.push(input); return { connect: async () => undefined, close: async () => undefined } } } : {}),
     node: () => ('node' in over ? over.node : NODE),
     log: m => logs.push(m),
     exists: p => (over.existing ? over.existing.includes(p) : over.exists ?? true),
   })
-  return { home, logs, mw, done: () => rmSync(home, { recursive: true, force: true }) }
+  return { home, logs, mw, made, done: () => rmSync(home, { recursive: true, force: true }) }
 }
 
 for (const agent of ['claude', 'soul'] as const) {
@@ -262,17 +264,24 @@ describe('the browser over HTTP (agents with mcp.http)', () => {
       assert.equal(readFileSync(keyFileOf(t.home, 'abc123'), 'utf8').trim(), key, 'the gate reads the same key')
       const g = h.grants.get('abc123')!
       assert.equal(g.key, key)
-      assert.deepEqual(g.spec.args, [SERVER, '--adopt-endpoint-file', endpointFileOf(t.home), '--adopt-key-file', keyFileOf(t.home, 'abc123'), '--allow-evaluate'])
-      assert.equal(g.spec.command, NODE)
-      assert.equal(g.spec.env[ENV_BROWSER_MCP_KEY], undefined, 'the child does not get the bearer')
+      assert.equal(t.made.length, 0, 'no server is made before the agent initializes')
+      void g.spec.create()
+      assert.equal(t.made.length, 1)
+      const input = t.made[0]!
+      assert.equal(input.endpointFile, endpointFileOf(t.home))
+      assert.equal(input.keyFile, keyFileOf(t.home, 'abc123'), 'the server reads the slot\'s key file, as the stdio server did')
+      assert.equal(input.evaluate, true)
+      assert.equal(input.env.PATH, base().env.PATH, 'the server reads the agent\'s launch env')
+      assert.equal(input.env[ENV_BROWSER_MCP_KEY], undefined, 'the server does not get the bearer')
+      assert.equal('command' in g.spec, false, 'no process is described: the server runs inside the daemon')
       assert.ok(g.spec.rewriter, 'the texts are corrected in the HTTP path')
     } finally { t.done() }
   })
 
-  test('fallback: soul (no mcp.http) and claude while the host is not listening keep the stdio file; nothing is granted', () => {
-    for (const [agent, listening] of [['soul', true], ['claude', false]] as const) {
+  test('fallback: soul (no mcp.http), claude while the host is not listening, and claude without the library keep the stdio file; nothing is granted', () => {
+    for (const [agent, listening, noBackend] of [['soul', true, false], ['claude', false, false], ['claude', true, true]] as const) {
       const h = fakeHost(listening)
-      const t = setup({ http: h.http })
+      const t = setup({ http: h.http, noBackend })
       try {
         const out = t.mw(base(), slotOf(agent))
         const cfg = JSON.parse(readFileSync(mcpFileOf(t.home, 'abc123'), 'utf8'))

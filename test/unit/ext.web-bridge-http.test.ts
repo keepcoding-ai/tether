@@ -7,7 +7,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { extensions as daemonIndex } from '../../extensions/index.daemon.ts'
-import { createLaunchMiddleware, ENV_BRIDGE_MCP_KEY, ENV_CLIENT_ID, releaseHttp } from '../../extensions/web-bridge/agents.ts'
+import { type BridgeBackendInput, createLaunchMiddleware, ENV_BRIDGE_MCP_KEY, ENV_CLIENT_ID, releaseHttp } from '../../extensions/web-bridge/agents.ts'
+import { createBridgeBackends } from '../../extensions/web-bridge/daemon.ts'
+import { dropGrants, grantsFileOf, grantStoreOf } from '../../extensions/web-bridge/grant-store.ts'
 import { httpMcpConfigPathOf, mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
 import { MCP_CONFIG_FLAG } from '../../src/agents/mcp.ts'
 import { AgentRegistry } from '../../src/agents/registry.ts'
@@ -25,7 +27,7 @@ const slotOf = (agent: SlotMeta['agent']): SlotMeta => ({ v: 1, slotId: 's1', ag
 const base = (): LaunchPlan => ({ command: 'agent.exe', args: ['--model', 'haiku'], cwd: 'D:/w/proj', env: { PATH: 'p' } })
 const STDIO = { mcpServers: { 'tether-bridge': { command: 'node', args: ['C:/v/atrium-bridge.mjs', 'mcp'], env: { ATRIUM_BRIDGE_HOME: 'C:/h/bridge', ATRIUM_BRIDGE_PORT: '47831', ATRIUM_BRIDGE_SERVER_NAME: 'tether-bridge' } } } }
 
-function setup(listening = true) {
+function setup(listening = true, withBackend = true) {
   const home = mkdtempSync(join(tmpdir(), 'tether-brhttp-'))
   mkdirSync(join(home, 'mcp'), { recursive: true })
   writeFileSync(mcpConfigPathOf(home), JSON.stringify(STDIO))
@@ -37,8 +39,10 @@ function setup(listening = true) {
     revoke: id => { revoked.push(id); grants.delete(id) },
   }
   const httpConfigFile = (id: string) => httpMcpConfigPathOf(home, id)
-  const mw = createLaunchMiddleware({ agent: n => registry.get(n), serve: () => true, configFile: mcpConfigPathOf(home), exists: existsSync, log: () => {}, http, httpConfigFile, node: () => NODE, key: () => KEY })
-  return { home, mw, grants, revoked, http, httpConfigFile, done: () => rmSync(home, { recursive: true, force: true }) }
+  const made: BridgeBackendInput[] = []
+  const backend = (input: BridgeBackendInput) => { made.push(input); return { connect: async () => undefined, close: async () => undefined } }
+  const mw = createLaunchMiddleware({ agent: n => registry.get(n), serve: () => true, configFile: mcpConfigPathOf(home), exists: existsSync, log: () => {}, http, httpConfigFile, node: () => NODE, key: () => KEY, ...(withBackend ? { backend } : {}) })
+  return { home, mw, grants, revoked, made, http, httpConfigFile, done: () => rmSync(home, { recursive: true, force: true }) }
 }
 
 describe('web-bridge over HTTP', () => {
@@ -55,11 +59,18 @@ describe('web-bridge over HTTP', () => {
       assert.equal(out.env[ENV_CLIENT_ID], 'tether:s1')
       const g = t.grants.get('s1')!
       assert.equal(g.key, KEY)
-      assert.equal(g.spec.command, NODE)
-      assert.deepEqual(g.spec.args, ['C:/v/atrium-bridge.mjs', 'mcp'])
-      assert.equal(g.spec.env.ATRIUM_BRIDGE_HOME, 'C:/h/bridge')
-      assert.equal(g.spec.env[ENV_CLIENT_ID], 'tether:s1')
-      assert.equal(g.spec.env[ENV_BRIDGE_MCP_KEY], undefined)
+      assert.equal(t.made.length, 0, 'no shell is made before the agent initializes')
+      void g.spec.create()
+      const input = t.made[0]!
+      assert.equal(input.slotId, 's1')
+      assert.equal(input.node, NODE)
+      assert.equal(input.env.ATRIUM_BRIDGE_HOME, 'C:/h/bridge', 'the stdio file\'s env')
+      assert.equal(input.env.ATRIUM_BRIDGE_PORT, '47831')
+      assert.equal(input.env.ATRIUM_BRIDGE_SERVER_NAME, 'tether-bridge')
+      assert.equal(input.env[ENV_CLIENT_ID], 'tether:s1', 'the slot\'s identity')
+      assert.equal(input.env.PATH, 'p', 'the agent\'s launch env')
+      assert.equal(input.env[ENV_BRIDGE_MCP_KEY], undefined)
+      assert.equal('command' in g.spec, false, 'no process is described: the shell runs inside the daemon')
       releaseHttp(t, 's1')
       assert.deepEqual(t.revoked, ['s1'])
       assert.equal(existsSync(file), false)
@@ -67,8 +78,8 @@ describe('web-bridge over HTTP', () => {
   })
 
   test('fallback: soul, and claude while the host is not listening, get the shared stdio file; nothing granted', () => {
-    for (const [agent, listening] of [['soul', true], ['claude', false]] as const) {
-      const t = setup(listening)
+    for (const [agent, listening, withBackend] of [['soul', true, true], ['claude', false, true], ['claude', true, false]] as const) {
+      const t = setup(listening, withBackend)
       try {
         const out = t.mw(base(), slotOf(agent))
         assert.deepEqual(out.args, [...base().args, MCP_CONFIG_FLAG, mcpConfigPathOf(t.home)], agent)
@@ -77,5 +88,50 @@ describe('web-bridge over HTTP', () => {
         assert.equal(t.grants.size, 0)
       } finally { t.done() }
     }
+  })
+
+  test('the upload authorizations are kept with the slot: saved, read back by a new store, dropped with the slot', () => {
+    const home = mkdtempSync(join(tmpdir(), 'tether-brgrants-'))
+    try {
+      const store = grantStoreOf(home, 's1')
+      assert.deepEqual(store.load(), [], 'no file: nothing authorized')
+      const grant = { folder: 'C:/Users/x/Downloads/send', origin: 'https://portal.example', grantedAt: '2026-11-11T00:00:00.000Z', via: 'WebAllowUploads' }
+      store.save([grant])
+      assert.deepEqual(JSON.parse(readFileSync(grantsFileOf(home, 's1'), 'utf8')), { v: 1, grants: [grant] })
+      assert.deepEqual(grantStoreOf(home, 's1').load(), [grant], 'a new server of the same slot gets them back')
+      assert.deepEqual(grantStoreOf(home, 's2').load(), [], 'another slot does not')
+      writeFileSync(grantsFileOf(home, 's2'), 'not json')
+      assert.deepEqual(grantStoreOf(home, 's2').load(), [], 'a broken file is nothing authorized')
+      store.save([])
+      assert.equal(existsSync(grantsFileOf(home, 's1')), false, 'the last one revoked: no file')
+      store.save([grant])
+      dropGrants(home, 's1')
+      assert.equal(existsSync(grantsFileOf(home, 's1')), false, 'the slot was forgotten')
+      assert.throws(() => grantStoreOf(home, '../x'))
+      assert.match(store.lifetime, /panel/)
+    } finally { rmSync(home, { recursive: true, force: true }) }
+  })
+
+  test('the shells inside the daemon: one import of the bundle, a shell per slot with its own env and store, a bundle that is not whole is never loaded', async () => {
+    const vendorDir = join(import.meta.dirname, '..', '..', 'extensions', 'web-bridge', 'vendor')
+    const created: Array<{ env: Record<string, string | undefined>; daemonEntry: string; node?: string; grantStore?: unknown; stderr?: boolean }> = []
+    let imports = 0
+    let warmups = 0
+    const make = createBridgeBackends({
+      vendorDir,
+      grants: slotId => ({ lifetime: slotId, load: () => [], save: () => undefined }),
+      importBundle: async () => { imports++; return { createBridgeMcp: (o: typeof created[number]) => { created.push(o); return { connect: async () => undefined, warmup: () => { warmups++ }, close: async () => undefined } } } },
+    })
+    await make({ slotId: 'a', env: { ATRIUM_BRIDGE_CLIENT_ID: 'tether:a' }, node: NODE })
+    await make({ slotId: 'b', env: { ATRIUM_BRIDGE_CLIENT_ID: 'tether:b' }, node: NODE })
+    assert.equal(imports, 1)
+    assert.equal(warmups, 2)
+    assert.deepEqual(created.map(c => c.env.ATRIUM_BRIDGE_CLIENT_ID), ['tether:a', 'tether:b'])
+    assert.deepEqual(created.map(c => (c.grantStore as { lifetime: string }).lifetime), ['a', 'b'])
+    assert.equal(created[0]!.daemonEntry, join(vendorDir, 'atrium-bridge.mjs'))
+    assert.equal(created[0]!.node, NODE)
+    assert.equal(created[0]!.stderr, false)
+    const broken = createBridgeBackends({ vendorDir: join(tmpdir(), 'no-such-vendor'), grants: () => ({ lifetime: '', load: () => [], save: () => undefined }), importBundle: async () => { throw new Error('must not import') } })
+    await assert.rejects(broken({ slotId: 'a', env: {}, node: NODE }), /manifesto/)
   })
 })
