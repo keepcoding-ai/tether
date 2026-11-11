@@ -2,20 +2,19 @@
 // whose CLI loads `{ "type": "http" }` servers (AgentMcp.http) spawns NO process of its own for them. One host per extension,
 // bound to 127.0.0.1 on a port of the system's choosing, one route per slot: `/mcp/<slotId>`.
 //
-// The servers themselves are vendored stdio bundles (sealed by their manifests, no library entry), so behind each route the
-// host runs the UNCHANGED stdio server as its own child, and only while it is needed:
-//   - started on the session's `initialize` (or on the first request after it was stopped, replaying the client's handshake);
-//   - stopped after `idleMs` with no request in flight (the open GET stream does not count). The next request starts a fresh
-//     one, and the first `tools/call` answer after such a restart carries `restartNotice` (state the old process kept, such as
-//     tab ids or upload grants, is gone);
-//   - stopped at once when the slot's key is revoked (the agent exited) or the session is deleted.
-// So an idle agent costs no process; an agent using the tool costs one (the stdio path costs two for the browser: proxy + server).
+// The servers run INSIDE the daemon: behind each route there is one server instance of the slot (a library object the
+// extension creates, McpBackend), bound to an in-memory transport. No child process, whether the agent uses the tool or not:
+//   - the instance is created at the slot's first `initialize` and lives until the slot's key is revoked (the agent exited)
+//     or the host closes. It is never stopped for being idle: what it holds (a connection, the tabs it follows) is there when
+//     the agent comes back from a pause;
+//   - a client that initializes again (a reconnect) gets a new MCP session on the SAME instance (McpBackend.connect again);
+//   - messages the server sends on its own (progress, a request to the client such as an elicitation, a notification) go to
+//     the stream of the request they belong to, else to the client's GET stream, else they wait (bounded) for that stream.
 //
 // Security: 127.0.0.1 only; every request carries `Authorization: Bearer <key>` and the key is the slot's own (granted by the
 // launch middleware, compared in constant time over sha256 digests, revoked when the agent exits). A request with an Origin
 // header is refused (no browser page may drive it, whatever it guesses). The host keeps only the digest; no log line carries
 // a key or a message body.
-import { spawn as spawnChild, type ChildProcess } from 'node:child_process'
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
@@ -25,12 +24,33 @@ export interface LineRewriter {
   fromServer(line: string): string
 }
 
-/** How to run the stdio server of one slot. */
+/**
+ * The transport a server instance is bound to: the MCP SDK's `Transport`, by shape (the daemon does not depend on the SDK;
+ * the vendored servers carry their own). The server sets the three callbacks in `connect` and calls `send` with its messages.
+ */
+export interface McpTransport {
+  start(): Promise<void>
+  send(message: unknown, options?: { relatedRequestId?: string | number }): Promise<void>
+  close(): Promise<void>
+  onmessage?: (message: unknown, extra?: unknown) => void
+  onclose?: () => void
+  onerror?: (error: Error) => void
+  sessionId?: string
+}
+
+/** One slot's server, inside this process (the vendored bundles' `createTetherBrowserServer` / `createBridgeMcp`). */
+export interface McpBackend {
+  /** Binds a new MCP server to `transport`; called again when the client initializes again (the previous one is closed first). */
+  connect(transport: McpTransport): Promise<void>
+  /** The slot is over. Never throws. */
+  close(): Promise<void>
+}
+
+/** How to make the server of one slot. */
 export interface McpBackendSpec {
-  command: string
-  args: string[]
-  env: Record<string, string>
-  /** A new rewriter for each child (it follows one connection). */
+  /** Called once per grant, at the slot's first `initialize`. */
+  create(): McpBackend | Promise<McpBackend>
+  /** A new rewriter for each MCP session (it follows one connection). */
   rewriter?: () => LineRewriter
 }
 
@@ -42,19 +62,14 @@ export interface McpSlotRoutes {
   revoke(slotId: string): void
 }
 
-/** What the host needs of a child process (node's ChildProcess; a fake in tests). */
-export type McpChild = Pick<ChildProcess, 'stdin' | 'stdout' | 'kill' | 'on' | 'pid'>
-
 export interface McpHttpHostOptions {
   /** For log lines ("tether-browser"). */
   name: string
   log(msg: string): void
-  /** A child with no request in flight for this long is stopped. Default 15 minutes. */
-  idleMs?: number
-  /** Text put before the content of the first `tools/call` answer after a child was restarted. */
-  restartNotice?: string
-  /** Injected in tests. */
-  spawn?(spec: McpBackendSpec): McpChild
+  /** How often an open stream gets a comment line, so no client or proxy drops it for silence. Default 20 s. */
+  keepAliveMs?: number
+  /** Server messages kept while the client has no stream to take them. Default 64 (the oldest goes first). */
+  maxQueued?: number
   maxBodyBytes?: number
 }
 
@@ -63,37 +78,33 @@ type Id = string | number
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isId = (v: unknown): v is Id => typeof v === 'string' || typeof v === 'number'
 const digest = (key: string): Buffer => createHash('sha256').update(key, 'utf8').digest()
-const REPLAY_ID = 'tether-mcp-http-replay'
 
-interface Pending { res: ServerResponse; sse: boolean; method: string; sessionId: string }
+interface Pending { res: ServerResponse; sse: boolean; sessionId: string }
+
+/** One MCP session of a slot: the in-memory transport its server is bound to and the HTTP answers waiting on it. */
+interface Session {
+  id: string
+  transport: McpTransport
+  rewriter: LineRewriter | undefined
+  pending: Map<Id, Pending>
+  /** The client's GET stream. */
+  stream: ServerResponse | undefined
+  /** Server messages waiting for a stream. */
+  queued: string[]
+  closed: boolean
+}
 
 interface Slot {
   keyHash: Buffer
   spec: McpBackendSpec
-  sessionId?: string
-  /** The client's `initialize` request and whether it sent `notifications/initialized` (replayed into a restarted child). */
-  init?: Json
-  initialized: boolean
-  child?: McpChild
-  rewriter?: LineRewriter
-  /** Resolves when the child answered the replayed handshake. */
-  ready?: Promise<void>
-  /** Settles `ready` when the replayed initialize is answered. */
-  replay?: { resolve(): void; reject(e: Error): void }
-  pending: Map<Id, Pending>
-  stream?: ServerResponse
-  idle?: NodeJS.Timeout
-  /** The child was stopped since the session began: the next tools/call answer carries the notice. */
-  notice: boolean
-  starts: number
-}
-
-export function defaultSpawn(spec: McpBackendSpec): McpChild {
-  return spawnChild(spec.command, spec.args, { env: spec.env, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
+  /** The slot's server, once asked for. */
+  backend: Promise<McpBackend> | undefined
+  session: Session | undefined
+  creates: number
 }
 
 function sseWrite(res: ServerResponse, msg: string): void {
-  res.write(`event: message\ndata: ${msg}\n\n`)
+  if (!res.writableEnded && !res.destroyed) res.write(`event: message\ndata: ${msg}\n\n`)
 }
 
 export class McpHttpHost {
@@ -101,6 +112,7 @@ export class McpHttpHost {
   private readonly opts: McpHttpHostOptions
   private server: Server | undefined
   private portNo: number | undefined
+  private beat: NodeJS.Timeout | undefined
 
   constructor(opts: McpHttpHostOptions) { this.opts = opts }
 
@@ -120,12 +132,15 @@ export class McpHttpHost {
         const addr = server.address()
         this.server = server
         this.portNo = typeof addr === 'object' && addr ? addr.port : port
+        this.beat = setInterval(() => this.keepAlive(), this.opts.keepAliveMs ?? 20_000)
+        this.beat.unref()
         resolve(this.portNo)
       })
     })
   }
 
   async close(): Promise<void> {
+    if (this.beat) { clearInterval(this.beat); this.beat = undefined }
     for (const id of [...this.slots.keys()]) this.revoke(id)
     const s = this.server
     this.server = undefined
@@ -133,29 +148,32 @@ export class McpHttpHost {
     if (s) await new Promise<void>(r => { s.closeAllConnections?.(); s.close(() => r()) })
   }
 
-  /** The slot's key from now on (a previous grant, its session and its child are dropped). */
+  /** The slot's key from now on (a previous grant, its session and its server are dropped). */
   grant(slotId: string, key: string, spec: McpBackendSpec): void {
     this.revoke(slotId)
-    this.slots.set(slotId, { keyHash: digest(key), spec, initialized: false, pending: new Map(), notice: false, starts: 0 })
+    this.slots.set(slotId, { keyHash: digest(key), spec, backend: undefined, session: undefined, creates: 0 })
   }
 
-  /** The key stops working, the session ends and the child is stopped. Never throws. */
+  /** The key stops working, the session ends and the slot's server is closed. Never throws. */
   revoke(slotId: string): void {
     const s = this.slots.get(slotId)
     if (!s) return
     this.slots.delete(slotId)
     this.endSession(s)
+    const backend = s.backend
+    s.backend = undefined
+    void backend?.then(b => b.close()).catch(() => undefined)
   }
 
-  /** How many children run now (doctor, tests). */
+  /** How many slots have a live server instance now (doctor, tests). */
   running(): number {
     let n = 0
-    for (const s of this.slots.values()) if (s.child) n++
+    for (const s of this.slots.values()) if (s.backend) n++
     return n
   }
 
-  /** Child starts of a slot so far (tests). */
-  startsOf(slotId: string): number { return this.slots.get(slotId)?.starts ?? 0 }
+  /** How many times a slot's server was created under the current grant (tests): 1 however many sessions it served. */
+  createsOf(slotId: string): number { return this.slots.get(slotId)?.creates ?? 0 }
 
   // ---- HTTP --------------------------------------------------------------------------------------------------------
 
@@ -179,55 +197,68 @@ export class McpHttpHost {
     // One answer for "no such slot" and "wrong key": a caller learns nothing about which slots exist.
     if (!slot) { res.writeHead(401, { 'www-authenticate': 'Bearer' }).end(); return }
     const sid = req.headers['mcp-session-id']
+    const live = slot.session
     if (req.method === 'GET') {
       if (!String(req.headers.accept ?? '').includes('text/event-stream')) { res.writeHead(405).end(); return }
-      if (!slot.sessionId || sid !== slot.sessionId) { res.writeHead(slot.sessionId && sid ? 404 : 400).end(); return }
-      slot.stream?.end()
-      slot.stream = res
-      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'mcp-session-id': slot.sessionId })
-      res.on('close', () => { if (slot.stream === res) slot.stream = undefined })
+      if (!live || sid !== live.id) { res.writeHead(live && sid ? 404 : 400).end(); return }
+      live.stream?.end()
+      live.stream = res
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'mcp-session-id': live.id })
+      res.flushHeaders()
+      res.on('close', () => { if (live.stream === res) live.stream = undefined })
+      // What the server said while the client had no stream.
+      for (const line of live.queued.splice(0)) sseWrite(res, line)
       return
     }
     if (req.method === 'DELETE') {
-      if (!slot.sessionId || sid !== slot.sessionId) { res.writeHead(404).end(); return }
+      if (!live || sid !== live.id) { res.writeHead(404).end(); return }
+      // The session ends; the slot's server stays (it lives as long as the slot).
       this.endSession(slot)
       res.writeHead(200).end()
       return
     }
     if (req.method !== 'POST') { res.writeHead(405, { allow: 'GET, POST, DELETE' }).end(); return }
 
+    let text: string
     let msg: unknown
-    try { msg = JSON.parse(await this.body(req)) } catch { res.writeHead(400).end(); return }
+    try { text = await this.body(req); msg = JSON.parse(text) } catch { res.writeHead(400).end(); return }
     if (!isObject(msg)) { res.writeHead(400).end(); return } // batches left the protocol in 2025-06-18
     const isRequest = typeof msg.method === 'string' && isId(msg.id)
-    const accept = String(req.headers.accept ?? '')
-    const sse = accept.includes('text/event-stream')
+    const sse = String(req.headers.accept ?? '').includes('text/event-stream')
 
     if (isRequest && msg.method === 'initialize') {
       this.endSession(slot)
-      slot.sessionId = randomUUID()
-      slot.init = msg
-      slot.initialized = false
-      slot.notice = false
-      this.answerLater(slot, msg.id as Id, 'initialize', res, sse)
-      this.startChild(slot, true)
-      this.toChild(slot, JSON.stringify(msg))
+      const session: Session = { id: randomUUID(), transport: undefined as unknown as McpTransport, rewriter: slot.spec.rewriter?.(), pending: new Map(), stream: undefined, queued: [], closed: false }
+      session.transport = this.transportOf(slot, session)
+      slot.session = session
+      this.answerLater(session, msg.id as Id, res, sse)
+      try {
+        if (!slot.backend) { slot.creates++; slot.backend = Promise.resolve().then(() => slot.spec.create()) }
+        const backend = await slot.backend
+        if (slot.session !== session) return // revoked or initialized again meanwhile
+        await backend.connect(session.transport)
+      } catch (e) {
+        this.opts.log(`${this.opts.name}: servidor MCP não iniciou (${e instanceof Error ? e.message : String(e)})`)
+        // A server that could not be made is asked for again at the next initialize.
+        if (slot.session === session) { slot.backend = undefined; slot.session = undefined }
+        this.failSession(session, 'o servidor MCP não iniciou')
+        return
+      }
+      if (slot.session !== session) return
+      this.toServer(session, text, msg)
       return
     }
     // A session id that is not the live one (ended, or never ours) is 404: the client starts a new session.
-    if (!slot.sessionId || sid !== slot.sessionId) { res.writeHead(sid ? 404 : 400).end(); return }
+    if (!live || sid !== live.id) { res.writeHead(sid ? 404 : 400).end(); return }
 
     if (!isRequest) {
-      // A notification or the client's answer to a server request: to the child when it runs, else nothing to tell.
-      if (msg.method === 'notifications/initialized') slot.initialized = true
-      if (slot.child) { await slot.ready?.catch(() => undefined); this.toChild(slot, JSON.stringify(msg)) }
-      res.writeHead(202, { 'mcp-session-id': slot.sessionId }).end()
+      // A notification, or the client's answer to a request of the server (an elicitation's result).
+      this.toServer(live, text, msg)
+      res.writeHead(202, { 'mcp-session-id': live.id }).end()
       return
     }
-    this.answerLater(slot, msg.id as Id, msg.method as string, res, sse)
-    if (!slot.child) this.startChild(slot, false)
-    try { await slot.ready } catch { return } // the child died during the replay: the pending answer was already failed
-    this.toChild(slot, JSON.stringify(msg))
+    this.answerLater(live, msg.id as Id, res, sse)
+    this.toServer(live, text, msg)
   }
 
   private body(req: IncomingMessage): Promise<string> {
@@ -241,129 +272,94 @@ export class McpHttpHost {
     })
   }
 
-  private answerLater(slot: Slot, id: Id, method: string, res: ServerResponse, sse: boolean): void {
-    this.clearIdle(slot)
-    slot.pending.set(id, { res, sse, method, sessionId: slot.sessionId! })
-    if (sse) res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'mcp-session-id': slot.sessionId! })
-    res.on('close', () => {
-      if (slot.pending.get(id)?.res === res) { slot.pending.delete(id); this.armIdle(slot) }
-    })
-  }
-
-  // ---- the child ---------------------------------------------------------------------------------------------------
-
-  private startChild(slot: Slot, fresh: boolean): void {
-    const child = (this.opts.spawn ?? defaultSpawn)(slot.spec)
-    slot.child = child
-    slot.rewriter = slot.spec.rewriter?.()
-    slot.starts++
-    let buf = ''
-    child.stdout?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk: string) => {
-      buf += chunk
-      let i
-      while ((i = buf.indexOf('\n')) !== -1) {
-        const line = buf.slice(0, i).replace(/\r$/, '')
-        buf = buf.slice(i + 1)
-        if (line !== '' && slot.child === child) this.fromChild(slot, line)
-      }
-    })
-    child.stdin?.on('error', () => {})
-    child.on('error', e => { this.opts.log(`${this.opts.name}: servidor MCP não iniciou (${e.message})`); this.childGone(slot, child) })
-    child.on('exit', () => this.childGone(slot, child))
-    slot.replay = undefined
-    if (fresh) { slot.ready = undefined; return }
-    // A restart inside a live session: the client's handshake again, its answer swallowed.
-    slot.notice = true
-    const init = slot.init
-    if (!init) return
-    slot.ready = new Promise<void>((resolve, reject) => { slot.replay = { resolve, reject } })
-    slot.ready.catch(() => undefined)
-    this.toChild(slot, JSON.stringify({ ...init, id: REPLAY_ID }))
-  }
-
-  private childGone(slot: Slot, child: McpChild): void {
-    if (slot.child !== child) return
-    slot.child = undefined
-    slot.replay?.reject(new Error('exited'))
-    slot.replay = undefined
-    slot.ready = undefined
-    for (const [id, p] of slot.pending) this.deliver(p, JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message: `${this.opts.name}: o servidor MCP encerrou` } }), true)
-    slot.pending.clear()
-  }
-
-  private stopChild(slot: Slot): void {
-    const child = slot.child
-    if (!child) return
-    this.childGone(slot, child)
-    try { child.stdin?.end() } catch { /* gone */ }
-    // stdin closed is the server's own cue to leave; a kill if it lingers.
-    setTimeout(() => { try { child.kill() } catch { /* gone */ } }, 3000).unref()
-  }
-
-  private endSession(slot: Slot): void {
-    this.clearIdle(slot)
-    this.stopChild(slot)
-    slot.stream?.end()
-    slot.stream = undefined
-    slot.sessionId = undefined
-    slot.init = undefined
-    slot.initialized = false
-  }
-
-  private toChild(slot: Slot, line: string): void {
-    const out = slot.rewriter ? slot.rewriter.fromClient(line) : line
-    slot.child?.stdin?.write(`${out}\n`)
-  }
-
-  private fromChild(slot: Slot, raw: string): void {
-    const line = slot.rewriter ? slot.rewriter.fromServer(raw) : raw
-    let m: unknown
-    try { m = JSON.parse(line) } catch { return }
-    if (!isObject(m)) return
-    if (m.id === REPLAY_ID && typeof m.method !== 'string') {
-      const replay = slot.replay
-      slot.replay = undefined
-      if (slot.initialized) this.toChild(slot, JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }))
-      replay?.resolve()
-      return
+  private answerLater(session: Session, id: Id, res: ServerResponse, sse: boolean): void {
+    session.pending.set(id, { res, sse, sessionId: session.id })
+    if (sse) {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'mcp-session-id': session.id })
+      res.flushHeaders()
     }
-    if (isId(m.id) && typeof m.method !== 'string' && ('result' in m || 'error' in m)) {
-      const p = slot.pending.get(m.id)
+    res.on('close', () => { if (session.pending.get(id)?.res === res) session.pending.delete(id) })
+  }
+
+  // ---- the session's transport -------------------------------------------------------------------------------------
+
+  /** The in-memory transport of one session: `send` is the server talking, `onmessage` (set by the server) is the client. */
+  private transportOf(slot: Slot, session: Session): McpTransport {
+    const transport: McpTransport = {
+      sessionId: session.id,
+      start: async () => undefined,
+      send: async (message, options) => { if (!session.closed) this.fromServer(session, message, options?.relatedRequestId) },
+      // The server closed its side (McpBackend.connect again, or its own shutdown): the session is over.
+      close: async () => { if (slot.session === session) slot.session = undefined; this.failSession(session, 'o servidor MCP encerrou') },
+    }
+    return transport
+  }
+
+  private toServer(session: Session, text: string, msg: Json): void {
+    if (session.closed) return
+    // The rewriter only notes what was asked (it never changes a client line).
+    session.rewriter?.fromClient(text)
+    try { session.transport.onmessage?.(msg) } catch (e) {
+      this.opts.log(`${this.opts.name}: o servidor MCP recusou uma mensagem (${e instanceof Error ? e.message : String(e)})`)
+    }
+  }
+
+  private fromServer(session: Session, message: unknown, related: Id | undefined): void {
+    if (!isObject(message)) return
+    let line: string
+    try {
+      const raw = JSON.stringify(message)
+      line = session.rewriter ? session.rewriter.fromServer(raw) : raw
+    } catch { return }
+    if (isId(message.id) && typeof message.method !== 'string' && ('result' in message || 'error' in message)) {
+      const p = session.pending.get(message.id)
       if (!p) return
-      slot.pending.delete(m.id)
-      let text = line
-      if (p.method === 'tools/call' && slot.notice && this.opts.restartNotice && isObject(m.result) && Array.isArray(m.result.content)) {
-        slot.notice = false
-        text = JSON.stringify({ ...m, result: { ...m.result, content: [{ type: 'text', text: this.opts.restartNotice }, ...m.result.content] } })
-      }
-      this.deliver(p, text, true)
-      this.armIdle(slot)
+      session.pending.delete(message.id)
+      this.deliver(p, line)
       return
     }
-    // A notification or a server request (progress, elicitation): on the stream of a request in flight, else the GET stream.
-    const target = [...slot.pending.values()].reverse().find(p => p.sse)
-    if (target) sseWrite(target.res, line)
-    else if (slot.stream) sseWrite(slot.stream, line)
+    // A notification or a request of the server (progress, an elicitation): on the stream of the request it belongs to, else
+    // the client's GET stream, else any request's stream still open; with none, it waits for the GET stream.
+    const own = related !== undefined ? session.pending.get(related) : undefined
+    const target = own?.sse ? own.res : session.stream ?? [...session.pending.values()].reverse().find(p => p.sse)?.res
+    if (target) { sseWrite(target, line); return }
+    session.queued.push(line)
+    const max = this.opts.maxQueued ?? 64
+    if (session.queued.length > max) session.queued.splice(0, session.queued.length - max)
   }
 
-  private deliver(p: Pending, text: string, last: boolean): void {
-    if (p.res.writableEnded) return
-    if (p.sse) { sseWrite(p.res, text); if (last) p.res.end(); return }
+  private deliver(p: Pending, text: string): void {
+    if (p.res.writableEnded || p.res.destroyed) return
+    if (p.sse) { sseWrite(p.res, text); p.res.end(); return }
     p.res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': p.sessionId }).end(text)
   }
 
-  private clearIdle(slot: Slot): void {
-    if (slot.idle) { clearTimeout(slot.idle); slot.idle = undefined }
+  /** Every answer still waited for gets an error, the streams end, and the server learns its transport is closed. Once. */
+  private failSession(session: Session, why: string): void {
+    if (session.closed) return
+    session.closed = true
+    for (const [id, p] of session.pending) this.deliver(p, JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message: `${this.opts.name}: ${why}` } }))
+    session.pending.clear()
+    session.stream?.end()
+    session.stream = undefined
+    session.queued.length = 0
+    try { session.transport.onclose?.() } catch { /* the server's own cleanup */ }
   }
 
-  private armIdle(slot: Slot): void {
-    this.clearIdle(slot)
-    if (!slot.child || slot.pending.size > 0) return
-    slot.idle = setTimeout(() => {
-      slot.idle = undefined
-      if (slot.child && slot.pending.size === 0) this.stopChild(slot)
-    }, this.opts.idleMs ?? 15 * 60_000)
-    slot.idle.unref()
+  private endSession(slot: Slot): void {
+    const session = slot.session
+    slot.session = undefined
+    if (session) this.failSession(session, 'a sessão MCP terminou')
+  }
+
+  /** A comment line on every open stream (an SSE comment is ignored by the client; it only keeps the connection used). */
+  private keepAlive(): void {
+    for (const slot of this.slots.values()) {
+      const s = slot.session
+      if (!s) continue
+      for (const res of [s.stream, ...[...s.pending.values()].filter(p => p.sse).map(p => p.res)]) {
+        if (res && !res.writableEnded && !res.destroyed) res.write(': keepalive\n\n')
+      }
+    }
   }
 }
