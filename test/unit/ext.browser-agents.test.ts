@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { extensions as daemonIndex } from '../../extensions/index.daemon.ts'
 import {
-  MCP_SERVER_NAME, createBrowserLaunchMiddleware, endpointFileOf, keyFileOf, keysDirOf, mcpConfigOf, mcpDirOf, mcpFileOf, newKey, releaseSlot, sweepStale,
+  ENV_BROWSER_MCP_KEY, MCP_SERVER_NAME, createBrowserLaunchMiddleware, type BrowserHttpHost, endpointFileOf, keyFileOf, keysDirOf, mcpConfigOf, mcpDirOf, mcpFileOf, newKey, releaseSlot, sweepStale,
 } from '../../extensions/browser/agents.ts'
 import { KeyStore } from '../../extensions/browser/gate-keys.ts'
 import { validKeyShape } from '../../extensions/browser/gate-rules.ts'
@@ -17,6 +17,7 @@ import { AgentRegistry } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
+import type { McpBackendSpec } from '../../src/daemon/mcp-http.ts'
 
 const registry = new AgentRegistry()
 new DaemonExtensionHost({ home: 'C:/unused', log: () => {}, agents: registry, extensions: daemonIndex.filter(e => e.manifest.id === 'claude' || e.manifest.id === 'soul') }).activate()
@@ -29,7 +30,7 @@ const slotOf = (agent: SlotMeta['agent'], slotId = 'abc123'): SlotMeta => ({ slo
 
 const PROXY = 'C:/app/extensions/browser/mcp-proxy.mjs'
 
-function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | undefined; exists?: boolean; proxy?: string; existing?: string[] } = {}) {
+function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | undefined; exists?: boolean; proxy?: string; existing?: string[]; http?: BrowserHttpHost } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'tether-bragents-'))
   const logs: string[] = []
   const mw = createBrowserLaunchMiddleware({
@@ -39,6 +40,7 @@ function setup(over: { serve?: boolean; evaluate?: boolean; node?: string | unde
     evaluate: () => over.evaluate ?? false,
     server: SERVER,
     ...(over.proxy ? { proxy: over.proxy } : {}),
+    ...(over.http ? { http: over.http } : {}),
     node: () => ('node' in over ? over.node : NODE),
     log: m => logs.push(m),
     exists: p => (over.existing ? over.existing.includes(p) : over.exists ?? true),
@@ -230,6 +232,67 @@ describe('the key: born at launch, new at every launch, gone at exit', () => {
       assert.deepEqual(readdirSync(mcpDirOf(t.home)), ['stranger.json'])
       assert.ok(existsSync(join(t.home, 'browser', 'endpoint.json')))
       assert.equal(sweepStale(join(t.home, 'nowhere')), 0)
+    } finally { t.done() }
+  })
+})
+
+describe('the browser over HTTP (agents with mcp.http)', () => {
+  const fakeHost = (listening = true) => {
+    const grants = new Map<string, { key: string; spec: McpBackendSpec }>()
+    const revoked: string[] = []
+    const http: BrowserHttpHost = {
+      urlOf: id => (listening ? `http://127.0.0.1:4321/mcp/${id}` : undefined),
+      grant: (id, key, spec) => { grants.set(id, { key, spec }) },
+      revoke: id => { revoked.push(id); grants.delete(id) },
+    }
+    return { http, grants, revoked }
+  }
+
+  test('claude: the MCP file is { type: http, url, ${VAR} bearer }, the key is in the plan env and granted, never in the file', () => {
+    const h = fakeHost()
+    const t = setup({ http: h.http, evaluate: true })
+    try {
+      const out = t.mw(base(), slotOf('claude'))
+      assert.deepEqual(out.args, [...base().args, MCP_CONFIG_FLAG, mcpFileOf(t.home, 'abc123')])
+      const text = readFileSync(mcpFileOf(t.home, 'abc123'), 'utf8')
+      assert.deepEqual(JSON.parse(text), { mcpServers: { [MCP_SERVER_NAME]: { type: 'http', url: 'http://127.0.0.1:4321/mcp/abc123', headers: { Authorization: `Bearer \${${ENV_BROWSER_MCP_KEY}}` } } } })
+      const key = out.env[ENV_BROWSER_MCP_KEY]!
+      assert.ok(validKeyShape(key))
+      assert.equal(text.includes(key), false, 'the key is not in the MCP file')
+      assert.equal(readFileSync(keyFileOf(t.home, 'abc123'), 'utf8').trim(), key, 'the gate reads the same key')
+      const g = h.grants.get('abc123')!
+      assert.equal(g.key, key)
+      assert.deepEqual(g.spec.args, [SERVER, '--adopt-endpoint-file', endpointFileOf(t.home), '--adopt-key-file', keyFileOf(t.home, 'abc123'), '--allow-evaluate'])
+      assert.equal(g.spec.command, NODE)
+      assert.equal(g.spec.env[ENV_BROWSER_MCP_KEY], undefined, 'the child does not get the bearer')
+      assert.ok(g.spec.rewriter, 'the texts are corrected in the HTTP path')
+    } finally { t.done() }
+  })
+
+  test('fallback: soul (no mcp.http) and claude while the host is not listening keep the stdio file; nothing is granted', () => {
+    for (const [agent, listening] of [['soul', true], ['claude', false]] as const) {
+      const h = fakeHost(listening)
+      const t = setup({ http: h.http })
+      try {
+        const out = t.mw(base(), slotOf(agent))
+        const cfg = JSON.parse(readFileSync(mcpFileOf(t.home, 'abc123'), 'utf8'))
+        assert.equal(cfg.mcpServers[MCP_SERVER_NAME].command, NODE, `${agent}: stdio`)
+        assert.equal(out.env[ENV_BROWSER_MCP_KEY], undefined)
+        assert.equal(h.grants.size, 0)
+      } finally { t.done() }
+    }
+  })
+
+  test('a failed write revokes the grant and leaves the plan untouched', () => {
+    const h = fakeHost()
+    const t = setup({ http: h.http })
+    try {
+      mkdirSync(join(t.home, 'browser'), { recursive: true })
+      writeFileSync(join(t.home, 'browser', 'keys'), 'a file where the folder should be')
+      const p = base()
+      assert.equal(t.mw(p, slotOf('claude')), p)
+      assert.equal(h.grants.size, 0)
+      assert.deepEqual(h.revoked, ['abc123'])
     } finally { t.done() }
   })
 })

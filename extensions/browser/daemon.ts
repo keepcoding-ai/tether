@@ -11,7 +11,8 @@ import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { profileOption } from '../../src/core/profile.ts'
 import { findNode } from '../web-bridge/warmup.ts'
-import { createBrowserLaunchMiddleware, releaseSlot, sweepStale } from './agents.ts'
+import { McpHttpHost } from '../../src/daemon/mcp-http.ts'
+import { BROWSER_RESTART_NOTICE, createBrowserLaunchMiddleware, MCP_SERVER_NAME, releaseSlot, sweepStale } from './agents.ts'
 import { manifest } from './manifest.ts'
 import { scrubLogLine } from './log-scrub.ts'
 import { PROFILE_OPTION, serveModeOf, servesAgent, type ServeMode } from './rules.ts'
@@ -41,7 +42,11 @@ export function serveFor(api: Pick<TetherDaemon, 'settings' | 'profiles'>, slot:
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {
+  // The server over HTTP for agents with `mcp.http` (agents.ts). It listens only in the tetherd that owns the pipe (onStarted):
+  // elsewhere urlOf is undefined and the stdio path applies.
+  const http = new McpHttpHost({ name: MCP_SERVER_NAME, log: msg => api.log(scrubLogLine(msg)), restartNotice: BROWSER_RESTART_NOTICE })
   const middleware = createBrowserLaunchMiddleware({
+    http,
     home: api.home,
     agent: name => api.agents.get(name),
     serve: slot => serveFor(api, slot),
@@ -54,8 +59,16 @@ export function activate(api: TetherDaemon): IDisposable[] {
     log: msg => api.log(scrubLogLine(msg)),
   })
   return [
-    api.onStarted(() => { const n = sweepStale(api.home); if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`) }),
+    api.onStarted(() => {
+      const n = sweepStale(api.home)
+      if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`)
+      http.listen().then(
+        port => api.log(`navegador servido aos agentes por HTTP em 127.0.0.1:${port}`),
+        e => api.log(`servidor HTTP do navegador não subiu (${e instanceof Error ? e.message : String(e)}); agentes recebem o navegador por stdio`),
+      )
+    }),
     api.launch.use(middleware),
-    api.onSlot(ev => { if (ev.kind === 'exited' && ev.slot.kind !== 'shell') releaseSlot(api.home, ev.slot.slotId) }),
+    api.onSlot(ev => { if (ev.kind === 'exited' && ev.slot.kind !== 'shell') { http.revoke(ev.slot.slotId); releaseSlot(api.home, ev.slot.slotId) } }),
+    { dispose: () => { void http.close() } },
   ]
 }
