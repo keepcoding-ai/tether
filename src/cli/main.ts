@@ -65,7 +65,7 @@ export const USAGE = `uso: tether <comando> [opções]
   ronda --status [--json]             mostra a ronda deste painel
   ronda --off [--force]               desliga (com critério de parada, pergunta antes; --force
                                       desliga mesmo assim)
-  proc <ls|info|start|stop|restart|logs|history|rm|host> …
+  proc <ls|info|start|wait|stop|restart|rm|use|release|ports|logs|history|host> …
                                       processos de fundo geridos pelo tether (servidores, workers):
                                       sobrevivem ao painel e ao tetherd (veja: tether proc help)
   link                                imprime o link tether:// deste painel (só dentro do tether)

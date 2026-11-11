@@ -6,6 +6,7 @@ import { describe, test } from 'node:test'
 import { procLogPath, procLogsDir } from '../../src/core/paths.ts'
 import { UsageError } from '../../src/cli/args.ts'
 import { cmdProc, type ProcIo } from '../../src/cli/proc.ts'
+import { DaemonError, type DaemonClient } from '../../src/daemon/client.ts'
 import { appendProcEvent } from '../../src/daemon/procs.ts'
 import { removeHome, tempHome } from './daemon.helpers.ts'
 
@@ -34,6 +35,14 @@ describe('cli: tether proc', () => {
       await assert.rejects(cmdProc(['start', 'web', '--grace', 'logo', '--', 'node'], io(home)), /--grace/)
       await assert.rejects(cmdProc(['stop', 'web', '--', 'node'], io(home)), /só valem em proc start/)
       await assert.rejects(cmdProc(['voa'], io(home)), /subcomando desconhecido/)
+      await assert.rejects(cmdProc(['restart', 'web', '--force'], io(home)), /--force precisa de um valor/)
+      await assert.rejects(cmdProc(['restart', 'web', '--force', ' '], io(home)), /pede um motivo/)
+      await assert.rejects(cmdProc(['stop', 'web', '--wait', '--force', 'x'], io(home)), /--wait ou --force/)
+      await assert.rejects(cmdProc(['stop', 'web', '--wait', '10m'], io(home)), /o máximo é 5m/)
+      await assert.rejects(cmdProc(['use', 'web'], io(home)), /uso: tether proc use/)
+      await assert.rejects(cmdProc(['use', 'web', '15m'], io(home)), /diga para quê/)
+      await assert.rejects(cmdProc(['ls', '--check', '80'], io(home)), /só vale em proc ports/)
+      await assert.rejects(cmdProc(['ports', '--check', 'x'], io(home)), /--check inválido/)
     } finally { await removeHome(home) }
   })
 
@@ -80,6 +89,40 @@ describe('cli: tether proc', () => {
       const lines = r.stdout.trimEnd().split('\n')
       assert.match(lines[0]!, /kai \(guga\)  pediu o reinício \(execução 1\)  motivo: corrigi o parser/)
       assert.match(lines[1]!, /tether  execução 1 encerrou sozinha .*código 7/)
+    } finally { await removeHome(home) }
+  })
+
+  test('what goes to tetherd: --wait (bare = 60s) and --force "motivo" on stop/restart/rm; use with or without a time', async () => {
+    const home = tempHome()
+    try {
+      const sent: Record<string, unknown>[] = []
+      const r = io(home)
+      r.env = { TETHER_SLOT_ID: 'painel-b' }
+      r.connect = async () => ({ request: async (req: Record<string, unknown>) => { sent.push(req); return { proc: { name: 'web', status: 'running', card: {} }, released: true } }, close: () => {} }) as unknown as DaemonClient
+      await cmdProc(['restart', 'web', '--wait'], r)
+      await cmdProc(['stop', 'web', '--wait', '30s'], r)
+      await cmdProc(['rm', 'web', '--force', 'limpeza'], r)
+      await cmdProc(['use', 'web', 'e2e do checkout'], r)
+      await cmdProc(['use', 'web', '30m', 'carga'], r)
+      assert.deepEqual(sent.map((q) => [q.t, q.waitMs, q.force, q.duration, q.purpose]), [
+        ['proc-restart', 60_000, undefined, undefined, undefined],
+        ['proc-stop', 30_000, undefined, undefined, undefined],
+        ['proc-forget', undefined, 'limpeza', undefined, undefined],
+        ['proc-use', undefined, undefined, undefined, 'e2e do checkout'],
+        ['proc-use', undefined, undefined, '30m', 'carga'],
+      ])
+      assert.equal((sent[0]!.by as { slotId: string }).slotId, 'painel-b')
+    } finally { await removeHome(home) }
+  })
+
+  test('a refusal by uses: the board on stdout and exit 3 (not an error on stderr)', async () => {
+    const home = tempHome()
+    try {
+      const r = io(home)
+      r.connect = async () => ({ request: async () => { throw new DaemonError('proc-in-use', 'web está em uso; não vou reiniciar agora.') }, close: () => {} }) as unknown as DaemonClient
+      assert.equal(await cmdProc(['restart', 'web'], r), 3)
+      assert.match(r.stdout, /web está em uso/)
+      assert.equal(r.stderr, '')
     } finally { await removeHome(home) }
   })
 })

@@ -37,8 +37,8 @@ import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 import { HostClient } from '../procd/client.ts'
 import { procdPipePath } from '../procd/protocol.ts'
-import { osUser, ProcManager } from './proc-manager.ts'
-import { ProcError, type ProcAuthor, type ProcBy } from './procs.ts'
+import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
+import { ProcError, WAIT_MAX_MS, type ProcAuthor, type ProcBy } from './procs.ts'
 
 export const DAEMON_VERSION = '0.3.6'
 
@@ -123,6 +123,23 @@ export interface Daemon {
 function optText(v: unknown): string | undefined {
   const t = typeof v === 'string' ? flatText(v) : ''
   return t || undefined
+}
+
+/** The guard part of a stop / restart / forget: `waitMs` within 0..5 min, `force` a reason that is not empty. */
+function guardOf(req: { waitMs?: unknown; force?: unknown }): GuardOptions {
+  const g: GuardOptions = {}
+  if (req.waitMs !== undefined) {
+    if (typeof req.waitMs !== 'number' || !Number.isFinite(req.waitMs) || req.waitMs < 0) throw new RequestError('bad-request', 'waitMs inválido')
+    if (req.waitMs > WAIT_MAX_MS) throw new RequestError('bad-request', 'espera longa demais: o máximo é 5m')
+    g.waitMs = req.waitMs
+  }
+  if (req.force !== undefined) {
+    const reason = optText(req.force)
+    if (!reason) throw new RequestError('bad-request', 'forçar pede um motivo: --force "motivo" (ele chega a quem usa)')
+    g.force = reason
+  }
+  if (g.force !== undefined && g.waitMs !== undefined) throw new RequestError('bad-request', 'escolha esperar (--wait) ou forçar (--force), não os dois')
+  return g
 }
 
 class RequestError extends Error {
@@ -258,6 +275,9 @@ class DaemonImpl implements Daemon {
         ? HostClient.ensure({ home: opts.home, pipe: procdPipe, node: process.env.TETHER_NODE?.trim() || process.execPath, env: process.env, log: this.log })
         : HostClient.open(procdPipe)),
       ...(opts.procHostReconnectMs !== undefined ? { reconnectMs: opts.procHostReconnectMs } : {}),
+      allowSeconds: this.rondaAllowSeconds,
+      slotExists: (slotId) => this.slotMap.has(slotId),
+      sampleSoon: () => this.kickMemory(),
     })
   }
 
@@ -386,14 +406,16 @@ class DaemonImpl implements Daemon {
     this.memoryKick.unref()
   }
 
-  /** One process-table query for every live slot; broadcasts the slots whose memory moved enough. Never overlaps itself. */
+  /** One process-table query for every live slot and background process; broadcasts those whose memory moved enough. Never overlaps itself. */
   private async sampleMemory(): Promise<void> {
     if (this.memorySampling || this.closing) return
     const live = [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit)
-    if (!live.length) return
+    const procRoots = this.procs.liveRoots()
+    if (!live.length && !procRoots.length) return
     this.memorySampling = true
     try {
-      const sums = treeBytes(await sampleProcessTable(), live.map((s) => s.pty!.pid))
+      const sums = treeBytes(await sampleProcessTable(), [...live.map((s) => s.pty!.pid), ...procRoots.map((r) => r.pid)])
+      this.procs.setMemory(sums, memoryChanged)
       for (const slot of live) {
         if (!slot.pty || slot.pty.exit) continue
         const bytes = sums.get(slot.pty.pid)
@@ -779,6 +801,9 @@ class DaemonImpl implements Daemon {
           }
           this.broadcastState(slot)
           this.emitSlot('exited', slot)
+          // The panel's agent left: its process uses end. A restart in place (restartSlot, set-profile) and tetherd
+          // closing are not leaving.
+          if (!slot.restarting && !this.closing) this.procs.slotGone(meta.slotId)
           this.pump()
         },
       })
@@ -1036,6 +1061,7 @@ class DaemonImpl implements Daemon {
         removeSlot(this.home, slot.meta.slotId)
         // The slot is gone for good (its pane was closed): extensions drop what they kept with it.
         this.emitSlot('removed', slot)
+        this.procs.slotGone(slot.meta.slotId)
         this.broadcast({ t: 'removed', slotId: slot.meta.slotId })
         return { t: 'ok', id }
       }
@@ -1158,19 +1184,27 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'proc-list':
-        return { t: 'ok', id, procs: this.procs.list() }
+        return { t: 'ok', id, procs: await this.procs.list() }
       case 'proc-info': {
         const { proc, events } = await this.procAct(() => this.procs.info(req.name))
         return { t: 'ok', id, proc, events }
       }
       case 'proc-start':
-        return { t: 'ok', id, proc: await this.procAct(() => this.procs.start(req.name, req.recipe, req.by, client.kind)) }
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.start(req.name, req.recipe, req.by, client.kind, req.force === true)) }
       case 'proc-stop':
-        return { t: 'ok', id, proc: await this.procAct(() => this.procs.stop(req.name, optText(req.reason), req.by, client.kind)) }
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.stop(req.name, optText(req.reason), req.by, client.kind, guardOf(req))) }
       case 'proc-restart':
-        return { t: 'ok', id, proc: await this.procAct(() => this.procs.restart(req.name, optText(req.reason), req.by, client.kind)) }
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.restart(req.name, optText(req.reason), req.by, client.kind, guardOf(req))) }
+      case 'proc-use':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.use(req.name, typeof req.duration === 'string' ? req.duration : undefined, typeof req.purpose === 'string' ? req.purpose : undefined, req.by, client.kind)) }
+      case 'proc-release': {
+        const r = await this.procAct(() => this.procs.release(req.name, req.by, client.kind))
+        return { t: 'ok', id, proc: r.proc, released: r.released }
+      }
+      case 'proc-ports':
+        return { t: 'ok', id, ports: await this.procAct(() => this.procs.ports(req.check)) }
       case 'proc-forget':
-        await this.procAct(() => this.procs.forget(req.name))
+        await this.procAct(() => this.procs.forget(req.name, req.by, client.kind, guardOf(req)))
         return { t: 'ok', id }
       case 'proc-seen':
         await this.procAct(() => this.procs.seen(req.name))

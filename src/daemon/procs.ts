@@ -3,7 +3,7 @@
 // and the Portuguese texts. tether never restarts anything by itself and never kills by name: see proc-manager.ts.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
-import { procCardPath, procEventsPath, procRunPath, procsDir } from '../core/paths.ts'
+import { procCardPath, procEventsPath, procRunPath, procsDir, procUsesPath } from '../core/paths.ts'
 import { writeJsonAtomic, type RunFile } from '../procd/protocol.ts'
 import { localTime } from '../cli/format.ts'
 
@@ -15,7 +15,7 @@ export const SECRET_MASK = '•••'
 /** How many events `proc-info` returns. */
 export const INFO_EVENTS = 20
 
-export type ProcErrorCode = 'unknown-proc' | 'proc-running' | 'proc-not-stopped' | 'proc-host' | 'bad-request'
+export type ProcErrorCode = 'unknown-proc' | 'proc-running' | 'proc-not-stopped' | 'proc-host' | 'proc-in-use' | 'port-busy' | 'bad-request'
 
 export class ProcError extends Error {
   readonly code: ProcErrorCode
@@ -76,8 +76,27 @@ export interface ProcCard {
 /** The recipe part of a card: what `recipe-changed` compares and records. */
 export type RecipeFields = Pick<ProcCard, 'command' | 'args' | 'cwd' | 'env' | 'ports' | 'stopGraceMs' | 'description' | 'info'>
 
-export type ProcEventKind = 'registered' | 'recipe-changed' | 'started' | 'start-failed' | 'stop-requested' | 'restart-requested' | 'ended' | 'forgotten'
+export type ProcEventKind =
+  | 'registered' | 'recipe-changed' | 'started' | 'start-failed' | 'stop-requested' | 'restart-requested' | 'ended' | 'forgotten'
+  | 'use-declared' | 'use-released' | 'use-expired' | 'refused-in-use' | 'forced'
 export type EndCause = 'requested' | 'own' | 'host'
+/** Why a use ended before its time: its author released it, or the author's panel left (exited or was forgotten). */
+export type UseEndCause = 'released' | 'panel-gone'
+/** The acts a declared use protects against. */
+export type GuardedAction = 'stop' | 'restart' | 'forget'
+
+/** A declared use: someone depends on the process until `until`, for `purpose`. */
+export interface ProcUse {
+  /** `slot:<slotId>` (a panel), `ext:<label|user>` (outside tether), `app` (the person). */
+  key: string
+  by: ProcAuthor
+  until: string
+  purpose: string
+  declaredAt: string
+}
+
+/** What a use looks like outside tetherd (ProcState, events). */
+export type UseView = Pick<ProcUse, 'by' | 'until' | 'purpose'>
 
 export interface ProcEvent {
   v: 1
@@ -91,8 +110,18 @@ export interface ProcEvent {
   code?: number
   /** ended: the real time of the exit (run.json); `ts` is when tetherd recorded it. */
   at?: string
-  cause?: EndCause
+  /** ended: why the run ended; use-released: why the use ended. */
+  cause?: EndCause | UseEndCause
   message?: string
+  /** use-declared / use-expired. */
+  until?: string
+  purpose?: string
+  /** refused-in-use / forced. */
+  action?: GuardedAction
+  /** refused-in-use: the uses that refused it. */
+  uses?: UseView[]
+  /** forced: the uses it went over. */
+  over?: UseView[]
   before?: Partial<RecipeFields>
   after?: Partial<RecipeFields>
 }
@@ -115,6 +144,12 @@ export interface ProcState {
   attention?: boolean
   /** failed: why it did not start. */
   error?: string
+  /** The declared ports, probed now. */
+  ports?: { port: number; listening: boolean }[]
+  /** Working set of the process tree, from the last memory sample (live processes only). */
+  memoryMB?: number
+  /** Uses in force. */
+  uses?: UseView[]
 }
 
 // ---- validation ---------------------------------------------------------------------------------
@@ -244,7 +279,7 @@ export function deriveState(card: ProcCard, events: ProcEvent[], live: { runFile
     return s
   }
   const end = r.ended
-  s.exit = { ...(typeof end.code === 'number' ? { code: end.code } : {}), at: end.at ?? end.ts, cause: end.cause ?? 'own' }
+  s.exit = { ...(typeof end.code === 'number' ? { code: end.code } : {}), at: end.at ?? end.ts, cause: (end.cause as EndCause | undefined) ?? 'own' }
   if (end.cause === 'requested') {
     s.status = 'stopped'
     if (r.request?.by) s.stoppedBy = r.request.by
@@ -282,8 +317,23 @@ export function authorText(by: ProcAuthor | undefined): string {
   return who
 }
 
+const ACTION_TEXT: Record<GuardedAction, string> = { stop: 'parar', restart: 'reiniciar', forget: 'esquecer' }
+export function actionText(a: GuardedAction): string {
+  return ACTION_TEXT[a] ?? a
+}
+
+/** "kai (claude) até 14:20:00: e2e do checkout". */
+export function useText(u: UseView): string {
+  return `${authorText(u.by)} até ${clockTime(u.until)}: ${u.purpose}`
+}
+
 export function eventText(e: ProcEvent): string {
   switch (e.kind) {
+    case 'use-declared': return `declarou uso até ${clockTime(e.until ?? e.ts)}: ${e.purpose ?? ''}`
+    case 'use-released': return e.cause === 'panel-gone' ? 'uso encerrado: o painel saiu' : 'liberou o uso'
+    case 'use-expired': return `uso venceu às ${clockTime(e.until ?? e.ts)}`
+    case 'refused-in-use': return `quis ${actionText(e.action ?? 'restart')}, recusado: em uso por ${(e.uses ?? []).map((u) => authorText(u.by)).join(', ')}`
+    case 'forced': return `forçou ${actionText(e.action ?? 'restart')} sobre o uso de ${(e.over ?? []).map((u) => authorText(u.by)).join(', ')}`
     case 'registered': return 'registrou o processo'
     case 'recipe-changed': return `alterou a receita: ${Object.keys(e.after ?? {}).join(', ')}`
     case 'started': return `iniciou (execução ${e.run}, pid ${e.pid})`
@@ -292,7 +342,7 @@ export function eventText(e: ProcEvent): string {
     case 'restart-requested': return `pediu o reinício (execução ${e.run})`
     case 'forgotten': return 'esqueceu o processo'
     case 'ended': {
-      const at = e.at ? ` às ${localTime(e.at)}` : ''
+      const at = e.at ? ` às ${clockTime(e.at)}` : ''
       const code = typeof e.code === 'number' ? `, código ${e.code}` : ''
       if (e.cause === 'requested') return `execução ${e.run} parou a pedido${at}${code}`
       if (e.cause === 'host') return `execução ${e.run} caiu com o anfitrião${at}`
@@ -301,10 +351,79 @@ export function eventText(e: ProcEvent): string {
   }
 }
 
-/** One history line: local time, who, what, why. `ended` is the system's: no author. */
+/** One history line: local time with seconds (to cross with the log), who, what, why. `ended` is the system's: no author. */
 export function historyLine(e: ProcEvent): string {
   const who = e.by ? authorText(e.by) : 'tether'
-  return `${localTime(e.ts)}  ${who}  ${eventText(e)}${e.reason ? `  motivo: ${e.reason}` : ''}`
+  return `${localTime(e.ts, true)}  ${who}  ${eventText(e)}${e.reason ? `  motivo: ${e.reason}` : ''}`
+}
+
+/** Local HH:MM:SS. */
+export function clockTime(iso: string): string {
+  return localTime(iso, true).slice(-8)
+}
+
+// ---- uses ---------------------------------------------------------------------------------------
+
+export const USE_DEFAULT = '15m'
+export const USE_MAX_MS = 60 * 60_000
+export const PURPOSE_MAX = 200
+/** --wait: default and ceiling. */
+export const WAIT_DEFAULT_MS = 60_000
+export const WAIT_MAX_MS = 5 * 60_000
+
+/** Whose a use is: the panel, the outside label/user, or the person in the app. */
+export function useKey(by: ProcAuthor): string {
+  if (by.kind === 'app') return 'app'
+  if ((by.kind === 'agent' || by.kind === 'shell') && by.slotId) return `slot:${by.slotId}`
+  return `ext:${by.label ?? by.user ?? 'externo'}`
+}
+
+export function useView(u: ProcUse): UseView {
+  return { by: u.by, until: u.until, purpose: u.purpose }
+}
+
+/** Uses in force at `now`. */
+export function liveUses(uses: ProcUse[], now = Date.now()): ProcUse[] {
+  return uses.filter((u) => Date.parse(u.until) > now)
+}
+
+/** Uses in force that are not `key`'s. */
+export function othersUses(uses: ProcUse[], key: string, now = Date.now()): ProcUse[] {
+  return liveUses(uses, now).filter((u) => u.key !== key)
+}
+
+/**
+ * The board an act refused by uses answers with (stdout of the CLI, exit 3): who uses it, until when, what for,
+ * and what can be done.
+ */
+export function inUseBoard(name: string, action: GuardedAction, uses: UseView[], waitedMs?: number): string {
+  const verb = actionText(action)
+  const cmd = action === 'forget' ? 'rm' : action
+  const lines = [
+    waitedMs !== undefined
+      ? `${name} continua em uso depois de ${Math.round(waitedMs / 1000)} s de espera; nada foi feito.`
+      : `${name} está em uso; não vou ${verb} agora.`,
+    ...uses.map((u) => `  - ${useText(u)}`),
+    'Opções:',
+    `  - esperar a liberação: tether proc ${cmd} ${name} --wait [tempo] (padrão 60s, até 5m)`,
+    `  - ${verb} mesmo assim: tether proc ${cmd} ${name} --force "motivo" (o motivo chega a quem usa)`,
+    '  - ou combinar com quem usa e tentar depois.',
+  ]
+  return lines.join('\n')
+}
+
+export function readUses(home: string, name: string): ProcUse[] {
+  try {
+    const list = JSON.parse(readFileSync(procUsesPath(home, name), 'utf8')) as ProcUse[]
+    return Array.isArray(list) ? list.filter((u) => u && typeof u.key === 'string' && typeof u.until === 'string' && u.by && typeof u.purpose === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export function writeUses(home: string, name: string, uses: ProcUse[]): void {
+  if (!uses.length) { rmSync(procUsesPath(home, name), { force: true }); return }
+  writeJsonAtomic(procUsesPath(home, name), uses)
 }
 
 // ---- files --------------------------------------------------------------------------------------
@@ -356,9 +475,9 @@ export function appendProcEvent(home: string, name: string, e: ProcEvent): void 
   appendFileSync(path, JSON.stringify(e) + '\n')
 }
 
-/** Card, history, run file and logs. */
+/** Card, history, run file, uses and logs. */
 export function removeProcFiles(home: string, name: string): void {
-  for (const p of [procCardPath(home, name), procEventsPath(home, name), procRunPath(home, name)]) rmSync(p, { force: true })
+  for (const p of [procCardPath(home, name), procEventsPath(home, name), procRunPath(home, name), procUsesPath(home, name)]) rmSync(p, { force: true })
   const dir = join(procsDir(home), name)
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
 }

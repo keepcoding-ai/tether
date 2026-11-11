@@ -1,37 +1,58 @@
 // tetherd's side of background processes: the cards in memory, the connection to tether-procd, reconciliation
-// with what the host and the run files say, and the acts (start, stop, restart, forget). tetherd is the only writer
-// of the history. It never restarts anything by itself, and kills only by pid + creation time (a process that the
-// host lost but somehow survived), never by name.
+// with what the host and the run files say, the acts (start, stop, restart, forget), the declared uses that guard
+// stop/restart/forget, the ports view, and the notices left to the panels that use a process. tetherd is the only
+// writer of the history. It never restarts anything by itself, and kills only by pid + creation time (a process
+// that the host lost but somehow survived), never by name.
 import { userInfo } from 'node:os'
 import { isSameProcess } from '../core/liveness.ts'
 import { HostClient, HostRequestError } from '../procd/client.ts'
 import { readRunFile, type HostRun, type RunExit } from '../procd/protocol.ts'
 import { relativeTime } from '../cli/format.ts'
+import { sampleProcessTable } from './memory.ts'
+import { leaveNotice, quoted } from './notices.ts'
+import { buildPortRows, listListeners, ownerText, probePort, treeOwners, type PortRow } from './ports.ts'
 import { LaunchError, planFor } from './proc-launch.ts'
 import {
+  actionText,
   appendProcEvent,
   authorText,
   checkName,
+  clockTime,
   deriveState,
   hasEnded,
   INFO_EVENTS,
+  inUseBoard,
   listCards,
+  liveUses,
   normalizeRecipe,
+  othersUses,
   pendingRequest,
   ProcError,
+  PURPOSE_MAX,
   readProcEvents,
+  readUses,
   recipeDiff,
   recipeOf,
   removeProcFiles,
   replay,
+  statusText,
+  USE_DEFAULT,
+  USE_MAX_MS,
+  useKey,
+  useView,
   writeCard,
+  writeUses,
+  type GuardedAction,
   type ProcAuthor,
   type ProcBy,
   type ProcCard,
   type ProcEvent,
   type ProcRecipe,
   type ProcState,
+  type ProcUse,
+  type UseView,
 } from './procs.ts'
+import { flatText, formatInterval, parseInterval, RondaError } from './ronda.ts'
 import type { DaemonMessage } from './protocol.ts'
 import { killTree } from './pty.ts'
 
@@ -39,6 +60,15 @@ import { killTree } from './pty.ts'
 export const HOST_RECONNECT_MS = 3_000
 const PLAN_COLS = 120
 const PLAN_ROWS = 30
+/** A refused panel hears "free again" only within this window. */
+const REFUSED_KEEP_MS = 30 * 60_000
+const NOTICE_PREFIX = '[tether] processos: '
+
+/** How an act meets the uses of others: refuse (default), wait up to `waitMs`, or go ahead with a reason. */
+export interface GuardOptions {
+  waitMs?: number
+  force?: string
+}
 
 export interface ProcManagerOptions {
   home: string
@@ -51,6 +81,12 @@ export interface ProcManagerOptions {
   /** Base environment of the processes (default: tetherd's). */
   env?: NodeJS.ProcessEnv
   reconnectMs?: number
+  /** Use durations in seconds are accepted (tests; the same switch as the ronda's). */
+  allowSeconds?: boolean
+  /** Is this one of tetherd's slots? (a use of a panel forgotten while tetherd was down ends at boot). */
+  slotExists?: (slotId: string) => boolean
+  /** A process started: a memory sample soon would show it. */
+  sampleSoon?: () => void
 }
 
 interface Entry {
@@ -61,6 +97,18 @@ interface Entry {
   seenRun?: number
   /** An exit the host announced before the spawn reply came back (a process that ends at once). */
   earlyExit?: { run: number; exit: RunExit }
+  /** Declared uses (persisted in <name>.uses.json); expired ones are removed by the timer. */
+  uses: ProcUse[]
+  useTimer?: NodeJS.Timeout
+  /** Acts waiting for the uses of others to end. */
+  waiters: Set<() => void>
+  /** Panels refused by uses: they hear when the process is free (slotId → when). */
+  refused: Map<string, number>
+  /** Declared ports probed for the last state. */
+  listening?: Map<number, boolean>
+  memoryMB?: number
+  /** Guards out-of-order broadcasts (each emit probes the ports first). */
+  emitSeq: number
 }
 
 export class ProcManager {
@@ -71,6 +119,9 @@ export class ProcManager {
   private readonly connectHost: ProcManagerOptions['connectHost']
   private readonly env: NodeJS.ProcessEnv
   private readonly reconnectMs: number
+  private readonly allowSeconds: boolean
+  private readonly slotExists: ((slotId: string) => boolean) | undefined
+  private readonly sampleSoon: (() => void) | undefined
   private readonly entries = new Map<string, Entry>()
   private readonly locks = new Map<string, Promise<void>>()
   private host: HostClient | undefined
@@ -87,11 +138,23 @@ export class ProcManager {
     this.connectHost = opts.connectHost
     this.env = opts.env ?? process.env
     this.reconnectMs = opts.reconnectMs ?? HOST_RECONNECT_MS
+    this.allowSeconds = opts.allowSeconds ?? false
+    this.slotExists = opts.slotExists
+    this.sampleSoon = opts.sampleSoon
   }
 
   /** Loads the cards; with any, only TRIES the host (never launches it) and reconciles. */
   async init(): Promise<void> {
-    for (const card of listCards(this.home)) this.entries.set(card.name, { card, events: readProcEvents(this.home, card.name) })
+    for (const card of listCards(this.home)) {
+      const e = newEntry(card, readProcEvents(this.home, card.name))
+      e.uses = readUses(this.home, card.name)
+      this.entries.set(card.name, e)
+      // Uses of panels that no longer exist end now; the ones that ran out while tetherd was down expire at their time.
+      const gone = e.uses.filter((u) => u.by.slotId && u.key.startsWith('slot:') && this.slotExists && !this.slotExists(u.by.slotId))
+      for (const u of gone) this.append(e, { kind: 'use-released', by: u.by, cause: 'panel-gone' })
+      if (gone.length) e.uses = e.uses.filter((u) => !gone.includes(u))
+      this.expireUses(e)
+    }
     if (!this.entries.size) return
     const host = await this.retryConnect(1_000)
     await this.reconcile(host ? (await host.request({ t: 'list' })).runs ?? [] : [], host !== undefined)
@@ -99,12 +162,18 @@ export class ProcManager {
 
   close(): void {
     this.closing = true
+    for (const e of this.entries.values()) {
+      if (e.useTimer) clearTimeout(e.useTimer)
+      for (const w of e.waiters) w()
+    }
     this.host?.close()
     this.host = undefined
   }
 
-  list(): ProcState[] {
-    return [...this.entries.values()].sort((a, b) => a.card.name.localeCompare(b.card.name)).map((e) => this.state(e))
+  async list(): Promise<ProcState[]> {
+    const all = [...this.entries.values()].sort((a, b) => a.card.name.localeCompare(b.card.name))
+    await Promise.all(all.map((e) => this.probe(e)))
+    return all.map((e) => this.state(e))
   }
 
   /** Live processes (the CLI says how many keep running when tetherd restarts). */
@@ -112,9 +181,47 @@ export class ProcManager {
     return [...this.entries.values()].filter(isLive).length
   }
 
-  info(name: string): { proc: ProcState; events: ProcEvent[] } {
+  async info(name: string): Promise<{ proc: ProcState; events: ProcEvent[] }> {
     const e = this.require(name)
+    await this.probe(e)
     return { proc: this.state(e), events: e.events.slice(-INFO_EVENTS) }
+  }
+
+  /** pid and name of every live process (the memory sample's roots, the ports' owners). */
+  liveRoots(): { pid: number; name: string }[] {
+    const out: { pid: number; name: string }[] = []
+    for (const e of this.entries.values()) {
+      const pid = isLive(e) ? replay(e.events).started?.pid : undefined
+      if (typeof pid === 'number') out.push({ pid, name: e.card.name })
+    }
+    return out
+  }
+
+  /** The memory sample's sums (bytes per root pid); a process whose reading moved enough is broadcast. */
+  setMemory(sums: Map<number, number>, changed: (prev: number | undefined, next: number) => boolean): void {
+    for (const e of this.entries.values()) {
+      const pid = isLive(e) ? replay(e.events).started?.pid : undefined
+      const bytes = typeof pid === 'number' ? sums.get(pid) : undefined
+      if (bytes === undefined) continue
+      const mb = Math.round(bytes / 1048576)
+      if (changed(e.memoryMB, mb)) { e.memoryMB = mb; this.emit(e) }
+    }
+  }
+
+  /** The ports view (`check`: that port only). */
+  async ports(check?: number): Promise<PortRow[]> {
+    if (check !== undefined && (!Number.isInteger(check) || check <= 0 || check > 65535)) throw new ProcError('bad-request', `porta inválida: ${check}`)
+    const declared = [...this.entries.values()].map((e) => ({ name: e.card.name, status: this.state(e).status, ports: e.card.ports }))
+    if (check !== undefined) {
+      const listening = await probePort(check)
+      const own = declared.filter((d) => d.ports.includes(check)).map((d) => ({ ...d, ports: [check] }))
+      const rows = listening ? await this.portRows(own) : buildPortRows([], [], new Map(), own)
+      const row = rows.find((r) => r.port === check)
+      // The probe is the authority: a listener the table missed (another user's, a race) is still "busy".
+      if (listening && !row?.listening) return [{ port: check, listening: true, ...(row?.declaredBy ? { declaredBy: row.declaredBy } : {}) }]
+      return row ? [row] : []
+    }
+    return this.portRows(declared)
   }
 
   seen(name: string): void {
@@ -126,19 +233,23 @@ export class ProcManager {
     }
   }
 
-  start(name: string, recipe: ProcRecipe | undefined, by: ProcBy | undefined, client: string | undefined): Promise<ProcState> {
+  start(name: string, recipe: ProcRecipe | undefined, by: ProcBy | undefined, client: string | undefined, force = false): Promise<ProcState> {
     checkName(name)
     return this.locked(name, async () => {
       const author = this.author(by, client)
       let e = this.entries.get(name)
       if (e && isLive(e)) throw new ProcError('proc-running', this.runningMessage(e))
       if (!e && !recipe) throw new ProcError('unknown-proc', `não há processo ${name}; para registrar, passe o comando: tether proc start ${name} -- <comando…>`)
-      if (recipe) {
-        const fields = normalizeRecipe(recipe)
+      const fields = recipe ? normalizeRecipe(recipe) : undefined
+      if (!force) {
+        const busy = await this.portConflict(name, fields?.ports ?? e!.card.ports)
+        if (busy) throw new ProcError('port-busy', `não iniciei ${name}: ${busy}. Escolha outra porta (tether proc ports mostra quem ouve onde), pare quem ocupa, ou inicie mesmo assim com --force`)
+      }
+      if (fields) {
         if (!e) {
           const card: ProcCard = { v: 1, name, ...fields, registeredBy: author, createdAt: new Date().toISOString() }
           writeCard(this.home, card)
-          e = { card, events: [] }
+          e = newEntry(card, [])
           this.entries.set(name, e)
           this.append(e, { kind: 'registered', by: author })
         } else {
@@ -157,41 +268,104 @@ export class ProcManager {
     })
   }
 
-  stop(name: string, reason: string | undefined, by: ProcBy | undefined, client: string | undefined): Promise<ProcState> {
+  stop(name: string, reason: string | undefined, by: ProcBy | undefined, client: string | undefined, guard: GuardOptions = {}): Promise<ProcState> {
     return this.locked(name, async () => {
       const e = this.require(name)
       if (!isLive(e)) return this.state(e)
+      const author = this.author(by, client)
+      const over = await this.guard(e, 'stop', author, guard)
       const run = replay(e.events).started!.run!
-      this.append(e, { kind: 'stop-requested', by: this.author(by, client), run, ...(reason ? { reason } : {}) })
+      const why = reason ?? guard.force
+      this.append(e, { kind: 'stop-requested', by: author, run, ...(why ? { reason: why } : {}) })
       await this.stopRun(e, run)
+      this.tellUsers(e, author, `${e.card.name} foi parado por ${authorText(author)}${over ? ', à força sobre o seu uso' : ''}${why ? `, motivo: ${quoted(why)}` : ''}. O tether não o sobe de novo sozinho`)
       return this.state(e)
     })
   }
 
-  restart(name: string, reason: string | undefined, by: ProcBy | undefined, client: string | undefined): Promise<ProcState> {
+  restart(name: string, reason: string | undefined, by: ProcBy | undefined, client: string | undefined, guard: GuardOptions = {}): Promise<ProcState> {
     return this.locked(name, async () => {
       const e = this.require(name)
       const author = this.author(by, client)
+      const over = await this.guard(e, 'restart', author, guard)
+      const why = reason ?? guard.force
       if (isLive(e)) {
         const run = replay(e.events).started!.run!
-        this.append(e, { kind: 'restart-requested', by: author, run, ...(reason ? { reason } : {}) })
+        this.append(e, { kind: 'restart-requested', by: author, run, ...(why ? { reason: why } : {}) })
         await this.stopRun(e, run)
       }
       await this.launch(e, author)
-      return this.state(e)
+      const s = this.state(e)
+      this.tellUsers(e, author, `${e.card.name} foi reiniciado por ${authorText(author)}${over ? ', à força sobre o seu uso' : ''}${why ? `, motivo: ${quoted(why)}` : ''}; ${s.status === 'running' ? `execução nova: pid ${s.pid}` : `não subiu: ${s.error ?? statusText(s)}`}. Seu uso continua valendo`)
+      return s
     })
   }
 
-  forget(name: string): Promise<void> {
+  forget(name: string, by?: ProcBy, client?: string, guard: GuardOptions = {}): Promise<void> {
     return this.locked(name, async () => {
       const e = this.require(name)
       if (isLive(e)) throw new ProcError('proc-not-stopped', `${name} está rodando; pare antes: tether proc stop ${name}`)
+      const author = this.author(by, client)
+      await this.guard(e, 'forget', author, guard)
+      this.tellUsers(e, author, `${name} foi esquecido por ${authorText(author)}${guard.force ? `, motivo: ${quoted(guard.force)}` : ''}; seu uso acabou com ele`)
       try { await this.host?.request({ t: 'forget', name }) } catch { /* the host may not know it */ }
+      if (e.useTimer) clearTimeout(e.useTimer)
       removeProcFiles(this.home, name)
       this.entries.delete(name)
       this.log(`proc ${name}: forgotten`)
       this.broadcast({ t: 'proc-removed', name })
     })
+  }
+
+  /** Declares (or renews) the caller's use: default 15m, at most 60m, a purpose is required. */
+  use(name: string, duration: string | undefined, purpose: string | undefined, by: ProcBy | undefined, client: string | undefined): ProcState {
+    const e = this.require(name)
+    let ms: number
+    try { ms = parseInterval(duration ?? USE_DEFAULT, this.allowSeconds) } catch (err) {
+      if (err instanceof RondaError) throw new ProcError('bad-request', `prazo inválido: ${err.message.replace(/^intervalo inválido: /, '')}`)
+      throw err
+    }
+    if (ms > USE_MAX_MS) throw new ProcError('bad-request', `prazo longo demais: o máximo é ${formatInterval(USE_MAX_MS)}; declare de novo antes de vencer para renovar`)
+    let text = flatText(purpose)
+    if (!text) throw new ProcError('bad-request', `diga para quê: tether proc use ${name} [tempo] "para quê"`)
+    if (text.length > PURPOSE_MAX) text = text.slice(0, PURPOSE_MAX).trimEnd() + '…'
+    const author = this.author(by, client)
+    const key = useKey(author)
+    const now = new Date()
+    const use: ProcUse = { key, by: author, until: new Date(now.getTime() + ms).toISOString(), purpose: text, declaredAt: now.toISOString() }
+    e.uses = [...e.uses.filter((u) => u.key !== key), use]
+    this.append(e, { kind: 'use-declared', by: author, until: use.until, purpose: text })
+    this.usesChanged(e)
+    return this.state(e)
+  }
+
+  /** Ends the caller's use (no use: nothing changes). */
+  release(name: string, by: ProcBy | undefined, client: string | undefined): { proc: ProcState; released: boolean } {
+    const e = this.require(name)
+    const author = this.author(by, client)
+    const key = useKey(author)
+    const mine = e.uses.find((u) => u.key === key)
+    if (!mine) return { proc: this.state(e), released: false }
+    e.uses = e.uses.filter((u) => u !== mine)
+    this.append(e, { kind: 'use-released', by: author, cause: 'released' })
+    this.usesChanged(e)
+    return { proc: this.state(e), released: true }
+  }
+
+  /**
+   * A panel left for good (its agent exited, or it was forgotten): its uses end. Not called when the agent restarts
+   * in place, nor when tetherd itself closes.
+   */
+  slotGone(slotId: string): void {
+    const key = `slot:${slotId}`
+    for (const e of this.entries.values()) {
+      e.refused.delete(slotId)
+      const mine = e.uses.filter((u) => u.key === key)
+      if (!mine.length) continue
+      e.uses = e.uses.filter((u) => u.key !== key)
+      for (const u of mine) this.append(e, { kind: 'use-released', by: u.by, cause: 'panel-gone' })
+      this.usesChanged(e)
+    }
   }
 
   async hostStatus(): Promise<{ pid: number; version: string; startedAt: string; live: number } | null> {
@@ -234,11 +408,27 @@ export class ProcManager {
   }
 
   private state(e: Entry): ProcState {
-    return deriveState(e.card, e.events, { runFile: readRunFile(this.home, e.card.name), ...(e.stopping ? { stopping: true } : {}), ...(e.seenRun !== undefined ? { seenRun: e.seenRun } : {}) })
+    const s = deriveState(e.card, e.events, { runFile: readRunFile(this.home, e.card.name), ...(e.stopping ? { stopping: true } : {}), ...(e.seenRun !== undefined ? { seenRun: e.seenRun } : {}) })
+    if (e.card.ports.length) s.ports = e.card.ports.map((port) => ({ port, listening: e.listening?.get(port) ?? false }))
+    if (e.memoryMB !== undefined && (s.status === 'running' || s.status === 'stopping')) s.memoryMB = e.memoryMB
+    const uses = liveUses(e.uses)
+    if (uses.length) s.uses = uses.map(useView)
+    return s
   }
 
+  /** Probes the declared ports (cheap: a refused localhost connect takes ~1 ms). */
+  private async probe(e: Entry): Promise<void> {
+    if (!e.card.ports.length) { e.listening = undefined; return }
+    const results = await Promise.all(e.card.ports.map(async (p) => [p, await probePort(p)] as const))
+    e.listening = new Map(results)
+  }
+
+  /** Broadcasts the state with freshly probed ports; a newer emit that finishes first wins. */
   private emit(e: Entry): void {
-    this.broadcast({ t: 'proc', proc: this.state(e) })
+    const seq = ++e.emitSeq
+    void this.probe(e).catch(() => undefined).then(() => {
+      if (seq === e.emitSeq && this.entries.get(e.card.name) === e) this.broadcast({ t: 'proc', proc: this.state(e) })
+    })
   }
 
   private append(e: Entry, ev: Omit<ProcEvent, 'v' | 'ts'>): void {
@@ -246,6 +436,135 @@ export class ProcManager {
     try { appendProcEvent(this.home, e.card.name, full) } catch (err) { this.log(`proc ${e.card.name}: cannot append history: ${(err as Error).message}`) }
     e.events.push(full)
     this.emit(e)
+    if (full.kind === 'ended' && full.cause === 'own') {
+      this.tellUsers(e, undefined, `${e.card.name} encerrou sozinho às ${clockTime(full.at ?? full.ts)}${typeof full.code === 'number' ? ` com código ${full.code}` : ''}; o tether não o sobe de novo sozinho. Veja: tether proc logs ${e.card.name}`)
+    } else if (full.kind === 'ended' && full.cause === 'host') {
+      this.tellUsers(e, undefined, `${e.card.name} caiu com o anfitrião de processos às ${clockTime(full.at ?? full.ts)}; o tether não o sobe de novo sozinho. Veja: tether proc logs ${e.card.name}`)
+    }
+  }
+
+  // ---- uses and notices ----------------------------------------------------------------------
+
+  /**
+   * Leaves a notice to every panel with a use in force on the process, except `except`'s own. Panels of soul get the
+   * line in the file too, but nobody reads it yet: soul's client lives in another repository (soul-cli).
+   */
+  private tellUsers(e: Entry, except: ProcAuthor | undefined, text: string): void {
+    const skip = except ? useKey(except) : undefined
+    for (const u of liveUses(e.uses)) {
+      if (u.key === skip || !u.key.startsWith('slot:') || !u.by.slotId) continue
+      this.notice(u.by.slotId, text)
+    }
+  }
+
+  private notice(slotId: string, text: string): void {
+    try { leaveNotice(this.home, slotId, NOTICE_PREFIX + text) } catch (err) { this.log(`notice to ${slotId} failed: ${(err as Error).message}`) }
+  }
+
+  /**
+   * The uses of others decide an act: none → go; `force` → go and record over whose use; `waitMs` → hold the act
+   * until they end (one notice at the start of the wait); else refuse with the board. Returns the uses forced over.
+   */
+  private async guard(e: Entry, action: GuardedAction, author: ProcAuthor, opts: GuardOptions): Promise<UseView[] | undefined> {
+    const key = useKey(author)
+    const others = othersUses(e.uses, key)
+    if (!others.length) return undefined
+    const views = others.map(useView)
+    if (author.slotId) e.refused.delete(author.slotId)
+    if (opts.force !== undefined) {
+      this.append(e, { kind: 'forced', by: author, action, reason: opts.force, over: views })
+      return views
+    }
+    const wanted = (u: ProcUse): string => `${authorText(author)} quer ${actionText(action)} ${e.card.name}; seu uso vai até ${clockTime(u.until)}; libere antes se puder (tether proc release ${e.card.name})`
+    for (const u of others) if (u.key.startsWith('slot:') && u.by.slotId) this.notice(u.by.slotId, wanted(u))
+    if (opts.waitMs !== undefined) {
+      const t0 = Date.now()
+      if (await this.waitFree(e, key, opts.waitMs)) return undefined
+      return this.refuse(e, action, author, othersUses(e.uses, key).map(useView), Date.now() - t0)
+    }
+    return this.refuse(e, action, author, views)
+  }
+
+  private refuse(e: Entry, action: GuardedAction, author: ProcAuthor, uses: UseView[], waitedMs?: number): never {
+    this.append(e, { kind: 'refused-in-use', by: author, action, uses })
+    if ((author.kind === 'agent' || author.kind === 'shell') && author.slotId) e.refused.set(author.slotId, Date.now())
+    throw new ProcError('proc-in-use', inUseBoard(e.card.name, action, uses, waitedMs))
+  }
+
+  /** Resolves true once no use of others is in force, false when `ms` runs out first. */
+  private async waitFree(e: Entry, key: string, ms: number): Promise<boolean> {
+    const deadline = Date.now() + ms
+    for (;;) {
+      if (!othersUses(e.uses, key).length) return true
+      const left = deadline - Date.now()
+      if (left <= 0 || this.closing) return false
+      await new Promise<void>((resolve) => {
+        const done = (): void => { clearTimeout(timer); e.waiters.delete(done); resolve() }
+        const timer = setTimeout(done, left)
+        e.waiters.add(done)
+      })
+    }
+  }
+
+  /** After any change of the uses: persist, re-arm the expiry timer, wake the waiting acts, tell refused panels. */
+  private usesChanged(e: Entry): void {
+    try { writeUses(this.home, e.card.name, e.uses) } catch (err) { this.log(`proc ${e.card.name}: cannot write uses: ${(err as Error).message}`) }
+    if (e.useTimer) clearTimeout(e.useTimer)
+    e.useTimer = undefined
+    if (e.uses.length && !this.closing) {
+      const next = Math.min(...e.uses.map((u) => Date.parse(u.until)))
+      e.useTimer = setTimeout(() => this.expireUses(e), Math.max(0, next - Date.now()) + 50)
+      e.useTimer.unref()
+    }
+    for (const w of [...e.waiters]) w()
+    const now = Date.now()
+    for (const [slotId, at] of e.refused) {
+      if (now - at > REFUSED_KEEP_MS) { e.refused.delete(slotId); continue }
+      if (othersUses(e.uses, `slot:${slotId}`, now).length) continue
+      e.refused.delete(slotId)
+      this.notice(slotId, `${e.card.name} ficou livre: ninguém mais declara uso dele`)
+    }
+    this.emit(e)
+  }
+
+  /** Uses past their time end as `use-expired` at that time; their panels hear it. */
+  private expireUses(e: Entry): void {
+    if (this.entries.get(e.card.name) !== e) return
+    const now = Date.now()
+    const over = e.uses.filter((u) => Date.parse(u.until) <= now)
+    e.uses = e.uses.filter((u) => !over.includes(u))
+    for (const u of over) {
+      this.append(e, { kind: 'use-expired', by: u.by, until: u.until })
+      if (u.key.startsWith('slot:') && u.by.slotId) {
+        this.notice(u.by.slotId, `seu uso de ${e.card.name} venceu às ${clockTime(u.until)} (para quê: ${quoted(u.purpose)}); se ainda precisa, declare de novo: tether proc use ${e.card.name} 15m "para quê"`)
+      }
+    }
+    if (over.length || e.uses.length) this.usesChanged(e)
+  }
+
+  // ---- ports ---------------------------------------------------------------------------------
+
+  /** Why the declared ports cannot be taken now: another live managed process declares one, or something listens. */
+  private async portConflict(name: string, ports: number[]): Promise<string | undefined> {
+    for (const port of ports) {
+      const other = [...this.entries.values()].find((x) => x.card.name !== name && isLive(x) && x.card.ports.includes(port))
+      if (other) return `a porta ${port} é declarada por ${other.card.name}, que está rodando (iniciado por ${authorText(replay(other.events).started?.by)})`
+    }
+    for (const port of ports) {
+      if (!(await probePort(port))) continue
+      const row = (await this.portRows([])).find((r) => r.port === port)
+      return `a porta ${port} já está ocupada${row?.listening ? ` por ${ownerText(row)}` : ''}`
+    }
+    return undefined
+  }
+
+  /** Listeners + process table + managed trees → the rows (owner lookup fails soft: the row says "?"). */
+  private async portRows(declared: { name: string; status: ProcState['status']; ports: number[] }[]): Promise<PortRow[]> {
+    const [listeners, table] = await Promise.all([
+      listListeners().catch((err) => { this.log(`ports: listener table failed: ${(err as Error).message}`); return [] }),
+      sampleProcessTable().catch((err) => { this.log(`ports: process table failed: ${(err as Error).message}`); return [] }),
+    ])
+    return buildPortRows(listeners, table, treeOwners(table, this.liveRoots()), declared)
   }
 
   private runningMessage(e: Entry): string {
@@ -292,8 +611,10 @@ export class ProcManager {
       if (err instanceof HostRequestError && err.code === 'already-running') throw new ProcError('proc-running', err.message)
       throw new ProcError('proc-host', `o anfitrião falhou ao iniciar: ${(err as Error).message}`)
     }
+    e.memoryMB = undefined
     this.append(e, { kind: 'started', by: author, run, pid: reply.pid! })
     this.log(`proc ${name}: run ${run} started pid ${reply.pid} by ${authorText(author)}`)
+    this.sampleSoon?.()
     const early = e.earlyExit
     if (early?.run === run) {
       e.earlyExit = undefined
@@ -428,6 +749,10 @@ export class ProcManager {
       this.log(`proc ${name}: run ${run} lost with its host`)
     }
   }
+}
+
+function newEntry(card: ProcCard, events: ProcEvent[]): Entry {
+  return { card, events, uses: [], waiters: new Set(), refused: new Map(), emitSeq: 0 }
 }
 
 function isLive(e: Entry): boolean {

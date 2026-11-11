@@ -33,11 +33,11 @@ export function hookSettings(hookPath: string = defaultHookPath()): object {
   const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit' | 'SubagentStart' | 'SubagentStop') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
   ]
-  // PostToolUse fires per tool call: a shell guard keeps Node from spawning unless a polite-pause request is pending for this slot.
+  // PostToolUse fires per tool call: a shell guard keeps Node from spawning unless a polite-pause request or a notice is pending for this slot.
   const postToolUse = [
     {
       matcher: '*',
-      hooks: [{ type: 'command', command: `test -e "$TETHER_HOME/slots/$TETHER_SLOT_ID.pause-request.json" && node "${script}" PostToolUse || true` }],
+      hooks: [{ type: 'command', command: `{ test -e "$TETHER_HOME/slots/$TETHER_SLOT_ID.pause-request.json" || test -e "$TETHER_HOME/slots/$TETHER_SLOT_ID.notices.jsonl"; } && node "${script}" PostToolUse || true` }],
     },
   ]
   // Stop / Notification feed the attention badge (turn finished / waiting for the user); UserPromptSubmit marks the turn start.

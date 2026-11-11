@@ -7,8 +7,9 @@ import type { Profile, ProfileInput } from '../core/profile.ts'
 import type { PauseBatch } from './pause.ts'
 import type { Ronda } from './ronda.ts'
 import type { ProcBy, ProcEvent, ProcRecipe, ProcState } from './procs.ts'
+import type { PortRow } from './ports.ts'
 
-export type { Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState }
+export type { Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
 
 export const PROTOCOL_VERSION = 1
 
@@ -120,6 +121,8 @@ export type ErrorCode =
   | 'proc-running'      // proc-start of a name that runs (the message says who started it)
   | 'proc-not-stopped'  // proc-forget of a live process
   | 'proc-host'         // the process host is unavailable or speaks another protocol version (message: what to do)
+  | 'proc-in-use'       // stop/restart/forget refused: others declared a use (message = the board: who, until when, what for, options)
+  | 'port-busy'         // proc-start refused: a declared port listens already, or another live process declares it (message: who)
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
@@ -189,13 +192,24 @@ export type Request =
   /** The process and its last events. */
   | { t: 'proc-info'; id: number; name: string }
   /** Register (or change the recipe of a stopped one) and start; no recipe = the stored one. Reply: `proc` (status failed when it did not start). */
-  | { t: 'proc-start'; id: number; name: string; recipe?: ProcRecipe; by?: ProcBy }
-  /** Ctrl+C, the card's grace, then the tree. Answers once it stopped. */
-  | { t: 'proc-stop'; id: number; name: string; reason?: string; by?: ProcBy }
+  /** `force`: start even when a declared port is busy (else `port-busy`). */
+  | { t: 'proc-start'; id: number; name: string; recipe?: ProcRecipe; by?: ProcBy; force?: boolean }
+  /**
+   * Ctrl+C, the card's grace, then the tree. Answers once it stopped. stop / restart / forget meet the uses others
+   * declared: refused with `proc-in-use` by default; `waitMs` holds the act until they end (at most 5 min);
+   * `force` (the reason, not empty) goes ahead and records it.
+   */
+  | { t: 'proc-stop'; id: number; name: string; reason?: string; by?: ProcBy; waitMs?: number; force?: string }
   /** Stop and start again with the stored recipe; answers once the new run is up. */
-  | { t: 'proc-restart'; id: number; name: string; reason?: string; by?: ProcBy }
-  /** Stopped only: card, history, run file and logs go. */
-  | { t: 'proc-forget'; id: number; name: string; by?: ProcBy }
+  | { t: 'proc-restart'; id: number; name: string; reason?: string; by?: ProcBy; waitMs?: number; force?: string }
+  /** Stopped only: card, history, run file, uses and logs go. */
+  | { t: 'proc-forget'; id: number; name: string; by?: ProcBy; waitMs?: number; force?: string }
+  /** Declare (or renew) the caller's use: `duration` like '15m' (default 15m, at most 60m), `purpose` required. Reply: `proc`. */
+  | { t: 'proc-use'; id: number; name: string; duration?: string; purpose: string; by?: ProcBy }
+  /** End the caller's use. Reply: `proc`, `released` (false: there was none). */
+  | { t: 'proc-release'; id: number; name: string; by?: ProcBy }
+  /** The ports view: listening ports (managed or outside tether) and declared ones; `check`: that port only. */
+  | { t: 'proc-ports'; id: number; check?: number }
   /** Someone looked: clears `attention`. */
   | { t: 'proc-seen'; id: number; name: string }
   /** The host's state (`host: null` when none answers). */
@@ -236,6 +250,10 @@ export type Reply =
       proc?: ProcState
       /** proc-info: the last events, oldest first. */
       events?: ProcEvent[]
+      /** proc-ports. */
+      ports?: PortRow[]
+      /** proc-release: whether the caller had a use. */
+      released?: boolean
       /** proc-host: null when no host answers. */
       host?: { pid: number; version: string; startedAt: string; live: number } | null
     }
