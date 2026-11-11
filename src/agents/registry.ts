@@ -20,6 +20,12 @@ export interface AgentMcp {
    * the server names the file holds: a name already injected from another file throws McpNameCollisionError.
    */
   inject(plan: LaunchPlan, configFile: string, servers?: readonly string[]): LaunchPlan
+  /**
+   * The CLI loads `{ "type": "http", "url", "headers" }` servers and expands `${VAR}` in their headers from its env
+   * (httpMcpConfigOf). Then the extensions serve it from the daemon (src/daemon/mcp-http.ts) and the agent spawns no MCP
+   * process; absent = the stdio files, as always.
+   */
+  http?: boolean
 }
 
 export interface AgentContribution {
