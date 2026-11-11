@@ -40,5 +40,9 @@ export const CORE_SETTINGS: ConfigurationNode = {
       type: 'string', default: DEFAULT_UI.fixedDeskLabel, enum: FIXED_DESK_LABELS, enumLabels: ['Ícone', 'Ícone e nome'],
       title: 'Mesas fixas', description: 'Como a Gaveta e as mesas do sistema aparecem na barra de mesas.', section: 'Janela', order: 14,
     },
+    'ui.tabClose': {
+      type: 'boolean', default: DEFAULT_UI.tabClose, title: 'Botão de fechar nas guias',
+      description: 'O × em cada guia. Desligado, a guia fecha pelo menu do botão direito.', section: 'Janela', order: 15,
+    },
   },
 }

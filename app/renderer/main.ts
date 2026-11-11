@@ -353,11 +353,12 @@ function trackDpr(): void {
 }
 trackDpr()
 
-/** Applies the chrome preferences: the desk colour line and its check in the ≡ menu. */
+/** Applies the chrome preferences: the desk colour line, the tab × and the checks in the ≡ menu. */
 function applyUi(next: UiSettings): void {
   ui = next
   document.body.classList.toggle('desk-line', ui.deskLine)
   document.body.classList.toggle('tab-border', ui.tabBorder)
+  document.body.classList.toggle('no-tab-close', !ui.tabClose)
   const iconOnly = document.body.classList.contains('fixed-icon-only')
   document.body.classList.toggle('fixed-icon-only', ui.fixedDeskLabel === 'icon')
   // The capsule's chrome changed width: fit the desks again.

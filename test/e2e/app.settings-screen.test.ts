@@ -32,8 +32,8 @@ type Hooks = {
   panelIds(): string[]
   runCommand(id: string): Promise<string>
 }
-declare const window: { __tether: Hooks; tether: { settingsSet(k: string, v: unknown): Promise<{ ok: boolean }>; settingsReset(k: string): Promise<{ ok: boolean }> } }
-declare const document: { body: { classList: { contains(c: string): boolean } }; documentElement: { dataset: Record<string, string> }; querySelectorAll(s: string): { length: number } }
+declare const window: { getComputedStyle(el: unknown): { display: string }; __tether: Hooks; tether: { settingsSet(k: string, v: unknown): Promise<{ ok: boolean }>; settingsReset(k: string): Promise<{ ok: boolean }> } }
+declare const document: { querySelector(s: string): unknown; body: { classList: { contains(c: string): boolean } }; documentElement: { dataset: Record<string, string> }; querySelectorAll(s: string): { length: number } }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -179,6 +179,16 @@ test('app settings screen: Ctrl+, and ≡ open it; a switch writes one key with 
     writeFileSync(settingsFile, '{\n  "theme": "dark"\n}\n')
     await until('the banner goes', async () => (await snap(page))?.banner === undefined)
     await until('tabBorder back to default', async () => (await row(page, 'ui.tabBorder'))?.configured === false)
+
+    // 7b. ui.tabClose off takes the × off every tab (display:none); on again brings it back.
+    const closeDisplay = (): Promise<string> => page.evaluate(() => window.getComputedStyle(document.querySelector('.tether-tab .close')).display)
+    assert.notEqual(await closeDisplay(), 'none', 'the × shows by default')
+    writeFileSync(settingsFile, '{\n  "theme": "dark",\n  "ui": { "tabClose": false }\n}\n')
+    await until('no-tab-close in the page', () => page.evaluate(() => document.body.classList.contains('no-tab-close')))
+    assert.equal(await closeDisplay(), 'none', 'the × is gone')
+    writeFileSync(settingsFile, '{\n  "theme": "dark",\n  "ui": { "tabClose": true }\n}\n')
+    await until('the × is back', async () => (await closeDisplay()) !== 'none')
+    writeFileSync(settingsFile, '{\n  "theme": "dark"\n}\n')
 
     // 8. Screenshots: the page in front, light and dark.
     await page.evaluate(() => window.__tether.runCommand('settings.show'))
