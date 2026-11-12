@@ -190,6 +190,15 @@ test('app settings screen: Ctrl+, and ≡ open it; a switch writes one key with 
     await until('the × is back', async () => (await closeDisplay()) !== 'none')
     writeFileSync(settingsFile, '{\n  "theme": "dark"\n}\n')
 
+    // 7c. the palette command ui.tab-close flips the setting, and the flip is written to settings.json.
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('ui.tab-close')), 'ran')
+    await until('the palette command hides the ×', () => page.evaluate(() => document.body.classList.contains('no-tab-close')))
+    assert.equal(await closeDisplay(), 'none', 'the palette command takes the × off')
+    await until('settings.json gets tabClose false', async () => /"ui\.tabClose":\s*false/.test(readFileSync(settingsFile, 'utf8')))
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('ui.tab-close')), 'ran')
+    await until('the palette command brings the × back', async () => (await closeDisplay()) !== 'none')
+    writeFileSync(settingsFile, '{\n  "theme": "dark"\n}\n')
+
     // 8. Screenshots: the page in front, light and dark.
     await page.evaluate(() => window.__tether.runCommand('settings.show'))
     await page.click('.tether-tab.settings')

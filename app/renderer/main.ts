@@ -3087,6 +3087,7 @@ const commandHost: CommandHost = {
   toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
   toggleTabBorder: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }),
   toggleDimUnfocused: () => window.tether.setUi({ ...ui, dimUnfocused: !ui.dimUnfocused }),
+  toggleTabClose: () => window.tether.setUi({ ...ui, tabClose: !ui.tabClose }),
   setDimLevel: level => window.tether.setUi({ ...ui, dimUnfocused: true, dimLevel: level }),
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),

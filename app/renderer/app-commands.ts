@@ -55,6 +55,8 @@ export interface CommandHost {
   toggleDeskLine(): void
   toggleTabBorder(): void
   toggleDimUnfocused(): void
+  /** The × on the tabs: shown or hidden (ui.tabClose). */
+  toggleTabClose(): void
   /** Picks the strength of the dim and turns the dim on. */
   setDimLevel(level: DimLevel): void
   openTerminalTheme(): void
@@ -188,6 +190,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'ui.desk-line', title: 'Ligar ou desligar a linha da cor da mesa', group: GROUP.look, icon: 'minus', run: () => host.toggleDeskLine() },
     { id: 'ui.tab-border', title: 'Ligar ou desligar a borda na guia do painel com foco', group: GROUP.look, icon: 'folder-open', run: () => host.toggleTabBorder() },
     { id: 'ui.dim-unfocused', title: 'Ligar ou desligar o esmaecer dos quadros sem foco', group: GROUP.look, icon: 'square-half', run: () => host.toggleDimUnfocused() },
+    { id: 'ui.tab-close', title: 'Ligar ou desligar o × das guias', group: GROUP.look, icon: 'x', run: () => host.toggleTabClose() },
     { id: 'ui.dim-weak', title: 'Esmaecer: fraco', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('weak') },
     { id: 'ui.dim-medium', title: 'Esmaecer: médio', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('medium') },
     { id: 'ui.dim-strong', title: 'Esmaecer: forte', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('strong') },
