@@ -47,6 +47,23 @@ export interface AgentContribution {
    * `systemPromptSkills(<its system prompt flag>)`. Absent = the agent gets no skills.
    */
   skills?: AgentSkills
+  /**
+   * The CLI takes channel messages from an MCP server (Claude Code: `notifications/claude/channel`): the args that turn them
+   * on for the server named `server`. Only with `mcp.http`: the daemon's ronda channel (src/daemon/ronda-channel.ts) is an
+   * HTTP server. Absent = the agent has no channel and the ronda is unavailable to it.
+   */
+  channel?: (server: string) => string[]
+  /** The confirmation the CLI shows at start for those args, which the daemon answers only when it sees it exactly. */
+  channelConfirm?: ChannelConfirm
+}
+
+/**
+ * A start dialog the daemon may answer: only before the run's start report, only when every fragment is on screen (compared
+ * without escape sequences and whitespace), and then it types `keys` once. A screen that does not match gets nothing.
+ */
+export interface ChannelConfirm {
+  screen: string[]
+  keys: string
 }
 
 export const AGENT_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/

@@ -35,6 +35,19 @@ export const claudeAgent: AgentContribution = {
   mcp: { inject: withMcpConfigFlag, http: true },
   // The tether's skills as a plugin named `tether` (`--plugin-dir`, this session only): `/tether:<skill>`.
   skills: claudeSkills,
+  // The ronda's channel (src/daemon/ronda-channel.ts): a server of the daemon's own, not on the approved channels list, so the
+  // development flag; it asks for a confirmation at every start (Claude Code 2.1.322), option 1 already selected.
+  channel: server => ['--dangerously-load-development-channels', `server:${server}`],
+  channelConfirm: {
+    screen: [
+      'WARNING: Loading development channels',
+      '--dangerously-load-development-channels is for local channel development only.',
+      '❯ 1. I am using this for local development',
+      '2. Exit',
+      'Enter to confirm',
+    ],
+    keys: '\r',
+  },
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {
