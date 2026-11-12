@@ -823,6 +823,21 @@ function createMenu(): void {
         { id: 'quit-all', label: 'Sair e encerrar tudo…', accelerator: 'CmdOrCtrl+Shift+Q', click: () => { void quitAll() } },
       ],
     },
+    // macOS routes Cmd+C/V/X/A/Z to the Edit menu roles; without them the shortcuts do nothing in web tabs.
+    {
+      label: 'Editar',
+      submenu: [
+        { role: 'undo', label: 'Desfazer' },
+        { role: 'redo', label: 'Refazer' },
+        { type: 'separator' },
+        { role: 'cut', label: 'Recortar' },
+        { role: 'copy', label: 'Copiar' },
+        { role: 'paste', label: 'Colar' },
+        { role: 'pasteAndMatchStyle', label: 'Colar sem formatação' },
+        { role: 'delete', label: 'Apagar' },
+        { role: 'selectAll', label: 'Selecionar tudo' },
+      ],
+    },
     {
       label: 'Exibir',
       submenu: [

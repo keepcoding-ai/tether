@@ -13,6 +13,8 @@ import listNumbers from '@phosphor-icons/core/assets/regular/list-numbers.svg'
 import arrowElbowDownLeft from '@phosphor-icons/core/assets/regular/arrow-elbow-down-left.svg'
 import mapTrifold from '@phosphor-icons/core/assets/regular/map-trifold.svg'
 import arrowClockwise from '@phosphor-icons/core/assets/regular/arrow-clockwise.svg'
+import arrowUUpLeft from '@phosphor-icons/core/assets/regular/arrow-u-up-left.svg'
+import handGrabbing from '@phosphor-icons/core/assets/regular/hand-grabbing.svg'
 import arrowSquareOut from '@phosphor-icons/core/assets/regular/arrow-square-out.svg'
 import caretDown from '@phosphor-icons/core/assets/regular/caret-down.svg'
 import caretUp from '@phosphor-icons/core/assets/regular/caret-up.svg'
@@ -136,6 +138,8 @@ const SVG = {
   'arrows-out-simple': arrowsOutSimple,
   bug,
   'arrow-clockwise': arrowClockwise,
+  'arrow-u-up-left': arrowUUpLeft,
+  'hand-grabbing': handGrabbing,
   'map-trifold': mapTrifold,
   'list-numbers': listNumbers,
   'arrow-elbow-down-left': arrowElbowDownLeft,

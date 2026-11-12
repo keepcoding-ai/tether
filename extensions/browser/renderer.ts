@@ -19,6 +19,8 @@
 // E11: the pad "Guias" (pad-rules.ts): every tab by agent, the ones with the person on top, a click goes to where the tab is (its
 // desk), the controls (pause / resume / close, all or one agent's, the ended agents'), the number on the icon, and "Ver guias do
 // ‹agente›" in the agent pane's tab menu.
+// The tab is the core's standard tab (`tether-tab`: kind, title, ×, right-click for the menu) with the owner's chip and the
+// activity dot inside; its menu and each row of the pad offer the same per-tab actions (tab-actions.ts), run by `runTabAction`.
 import type { GroupPanelPartInitParameters, IContentRenderer, IDockviewPanel, ITabRenderer } from 'dockview-core'
 import type { AttentionHandle, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
@@ -41,6 +43,8 @@ import {
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
 import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, serveModeOf, shortName, type ServeMode } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
+import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, padRowActions, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
+import type { IconName } from '../../app/renderer/icons.ts'
 
 export { manifest }
 
@@ -137,6 +141,55 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
   }
 
+  /** What a tab's actions depend on (tab-actions.ts), from main's control view, the pane and the agent's life. */
+  const actionState = (tabId: string): TabActionState => {
+    const p = panels.get(paneIdOf(tabId))
+    const v = controls.get(tabId)
+    const owner = p?.saved?.ownerSlotId
+    return { holder: v?.holder ?? 'agent', paused: v?.paused ?? false, loaded: !!p?.loaded(), agentAlive: owner ? agentOf(owner)?.alive ?? false : false }
+  }
+  const ownerName = (tabId: string): string => agentName(panels.get(paneIdOf(tabId))?.saved?.ownerSlotId)
+  /** Runs one action on one tab: the tab menu, the tab's ×, the pad's rows and the bar all come here. */
+  const runTabAction = async (id: TabActionId, tabId: string): Promise<void> => {
+    if (id === 'take') void ipc.invoke('take', tabId)
+    else if (id === 'give-back') void ipc.invoke('giveBack', tabId)
+    else if (id === 'pause') void ipc.invoke('pause', tabId)
+    else if (id === 'resume') void ipc.invoke('resume', tabId)
+    else if (id === 'clean-reload') void ipc.invoke('cleanReload', tabId)
+    else {
+      if (closeNeedsConfirm(actionState(tabId))) {
+        const p = panels.get(paneIdOf(tabId))
+        const a = await ui.dialogs.ask(closeTabDialog(ownerName(tabId), p?.padTab()?.title || shortAddress(p?.padTab()?.url ?? ''))).catch(() => undefined)
+        if (a?.choice !== 'close') return
+      }
+      closeTabs([tabId])
+    }
+  }
+  /** The tab's menu: who has it, the brake, the clean reload; the link and the address; where it lives; close (the core's order). */
+  const showWebMenu = (paneId: string, x: number, y: number): void => {
+    const p = panels.get(paneId)
+    const tabId = p?.saved?.tabId
+    if (!p || !tabId) {
+      ui.menus.context(x, y, [{ icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(paneId) }, 'sep', { icon: 'x', label: CLOSE_TAB, run: () => ui.panes.close(paneId) }])
+      return
+    }
+    const acts = tabActions(actionState(tabId), ownerName(tabId))
+    const entry = (a: TabAction) => ({ icon: a.icon, label: a.label, ...(a.danger ? { danger: true } : {}), run: () => { void runTabAction(a.id, tabId) } })
+    const url = p.padTab()?.url ?? ''
+    const owner = p.saved?.ownerSlotId
+    ui.menus.context(x, y, [
+      ...acts.filter(a => a.id !== 'close').map(entry),
+      'sep',
+      ...(owner && agentOf(owner) ? [{ icon: 'globe-simple', label: padSeeAgent(agentName(owner)), run: () => seeAgent(owner) }] : []),
+      { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(paneId) },
+      ...(url ? [{ icon: 'copy', label: 'Copiar endereço', run: () => ui.shell.writeClipboard(url) }] : []),
+      'sep',
+      { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(paneId) },
+      'sep',
+      ...acts.filter(a => a.id === 'close').map(entry),
+    ])
+  }
+
   const btn = (text: string, action: string, onClick: () => void, disabled = false): HTMLButtonElement => {
     const b = el('button', 'br-pad-btn', text)
     b.type = 'button'
@@ -203,7 +256,21 @@ export function activate(ui: TetherUi): IDisposable[] {
         open.append(where)
       }
       open.addEventListener('click', () => ui.panes.reveal(paneIdOf(tab.tabId)))
-      r.append(open)
+      // One click per action, the same names and icons as the tab menu.
+      const acts = el('div', 'br-pad-row-acts')
+      acts.dataset.role = 'row-actions'
+      for (const a of padRowActions(actionState(tab.tabId), name)) {
+        const b = el('button', 'br-pad-icon')
+        b.type = 'button'
+        b.dataset.action = a.id
+        b.title = a.label
+        b.setAttribute('aria-label', a.label)
+        if (a.danger) b.dataset.danger = 'true'
+        b.append(icon(a.icon as IconName))
+        b.addEventListener('click', () => { void runTabAction(a.id, tab.tabId) })
+        acts.append(b)
+      }
+      r.append(open, acts)
       return r
     }
 
@@ -282,7 +349,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const tabs = padTabs()
     return JSON.stringify([
       padFilter, serveMode(), persistentLogins, downloadsList.map(d => [d.slotId, d.name, d.bytes, whenText(d.at, now)]),
-      tabs.map(t => [t.tabId, t.ownerSlotId, t.title, shortAddress(t.url), t.control, t.asking, t.expired, t.place, agentInfo(t.ownerSlotId), (() => { const a = actions.get(t.tabId); return a && now - a.at <= PAD_ACTION_FRESH_MS ? [a.kind, hostOf(t.url)] : 0 })()]),
+      tabs.map(t => [t.tabId, actionState(t.tabId), t.ownerSlotId, t.title, shortAddress(t.url), t.control, t.asking, t.expired, t.place, agentInfo(t.ownerSlotId), (() => { const a = actions.get(t.tabId); return a && now - a.at <= PAD_ACTION_FRESH_MS ? [a.kind, hostOf(t.url)] : 0 })()]),
     ])
   }
   let lastBadge: ReturnType<typeof padBadge>
@@ -306,6 +373,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   let drawnSignature = ''
   /** Set while the extension itself opens the pad ("Ver guias do ‹agente›"): that opening is not a click on the icon. */
   let ownOpen = false
+  /** "Ver guias do ‹agente›": the pad opens with that agent's tabs alone. */
+  function seeAgent(slotId: string): void { padFilter = slotId; ownOpen = true; setTimeout(() => { ownOpen = false }, 300); ui.pads.open(PAD_ID); refreshPad() }
 
   class Pad implements PadView {
     readonly element = el('div', 'br-pad')
@@ -395,11 +464,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.element.append(this.bar, this.notice, this.page)
       const run = (action: string | undefined): void => {
         const tabId = this.info?.tabId ?? this.saved?.tabId
-        if (!tabId || !action) return
-        if (action === 'take') void ipc.invoke('take', tabId)
-        else if (action === 'give-back') void ipc.invoke('giveBack', tabId)
-        else if (action === 'resume') void ipc.invoke('resume', tabId)
-        else if (action === 'clean-reload') void ipc.invoke('cleanReload', tabId)
+        if (tabId && (action === 'take' || action === 'give-back' || action === 'resume' || action === 'clean-reload')) void runTabAction(action, tabId)
       }
       this.actBtn.addEventListener('click', () => run(this.actBtn.dataset.action))
       this.noticeBtn.addEventListener('click', () => run(this.noticeBtn.dataset.action))
@@ -532,6 +597,9 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     favicon(): string | undefined { return this.info?.favicon }
 
+    /** Main has the tab (a pane back from layout.json has none until it is shown). */
+    loaded(): boolean { return !!this.info }
+
     /** What the tab's dot says: the page loads, the agent just acted, or nothing. */
     activity(): 'loading' | 'agent' | 'idle' {
       if (this.info?.loading) return 'loading'
@@ -579,26 +647,45 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
   }
 
-  /** The tab of a pane: icon, title, the owner's chip and a dot while the page loads or the agent acts. */
+  /**
+   * The tab of a pane: the core's standard tab (`tether-tab`: kind, title, ×, right-click for the menu), its kind the site's icon
+   * (the globe until there is one), with the owner's chip and a dot while the page loads or the agent acts before the ×.
+   */
   const tabs = new Set<Tab>()
   class Tab implements ITabRenderer {
-    readonly element = el('div', 'br-web-tab')
+    readonly element = el('div', 'tether-tab web br-web-tab')
+    private readonly kind = el('span', 'kind')
     private readonly iconEl = el('img', 'br-web-tab-icon')
     private readonly globe = icon('globe-simple', 'br-web-tab-globe')
-    private readonly titleEl = el('span', 'br-web-tab-title')
+    private readonly titleEl = el('span', 'text br-web-tab-title')
     private readonly chip = el('span', 'br-web-tab-owner')
     private readonly dot = el('span', 'br-web-tab-dot')
+    private readonly close = el('button', 'close')
     private sub: IDisposable | undefined
     paneId = ''
     init(p: GroupPanelPartInitParameters & { api: { title?: string } }): void {
       this.paneId = p.api.id
+      this.element.dataset.slot = p.api.id
       this.iconEl.alt = ''
       this.iconEl.hidden = true
       this.dot.hidden = true
       this.dot.dataset.role = 'activity'
       this.chip.dataset.role = 'tab-owner'
       this.titleEl.textContent = p.api.title ?? 'Guia'
-      this.element.append(this.iconEl, this.globe, this.titleEl, this.chip, this.dot)
+      this.kind.append(this.iconEl, this.globe)
+      this.close.type = 'button'
+      this.close.title = CLOSE_TAB
+      this.close.setAttribute('aria-label', CLOSE_TAB)
+      this.close.append(icon('x'))
+      this.close.addEventListener('pointerdown', ev => ev.stopPropagation())
+      this.close.addEventListener('click', ev => {
+        ev.stopPropagation()
+        const tabId = panels.get(this.paneId)?.saved?.tabId
+        if (tabId) void runTabAction('close', tabId)
+        else ui.panes.close(this.paneId)
+      })
+      this.element.append(this.kind, this.titleEl, this.chip, this.dot, this.close)
+      this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.panes.showTabMenu(this.paneId, ev.clientX, ev.clientY) })
       const owner = (p.params as { ownerSlotId?: string } | undefined)?.ownerSlotId
       if (owner) this.element.dataset.owner = owner
       this.sub = p.api.onDidTitleChange(e => { this.titleEl.textContent = e.title })
@@ -618,6 +705,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.dot.hidden = a === 'idle'
       this.element.dataset.activity = a
       this.dot.title = a === 'loading' ? LOADING : a === 'agent' ? 'O agente está agindo' : ''
+      const title = panel?.padTab()?.title || this.titleEl.textContent || 'Guia'
+      this.element.title = [title, panel?.padTab()?.url ?? '', owner ? `Agente: ${agentName(owner)}` : ''].filter(Boolean).join('\n')
     }
     dispose(): void { this.sub?.dispose(); tabs.delete(this) }
   }
@@ -794,6 +883,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const rowOf = (r: Element) => ({
       tabId: (r as HTMLElement).dataset.tab ?? '', title: text(r.querySelector('.br-pad-title')), address: text(r.querySelector('.br-pad-addr')),
       control: text(r.querySelector('[data-role="control"]')), action: text(r.querySelector('[data-role="action"]')), place: text(r.querySelector('[data-role="place"]')),
+      actions: [...r.querySelectorAll<HTMLButtonElement>('[data-role="row-actions"] button')].map(b => ({ action: b.dataset.action ?? '', label: b.getAttribute('aria-label') ?? '' })),
     })
     const buttons = (root: Element) => [...root.querySelectorAll<HTMLButtonElement>('.br-pad-btn')].map(b => ({ action: b.dataset.action ?? '', text: b.textContent ?? '', disabled: b.disabled }))
     return {
@@ -832,6 +922,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       id: 'web', idPrefix: WEB_PANE_PREFIX, component: WEB_COMPONENT, tabComponent: WEB_TAB, hasSlot: false, icon: 'globe-simple',
       optionsOf: p => ({ id: p.id, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: p.title ?? 'Guia', params: p.params ?? {} }),
       create: () => new Panel(), createTab: () => new Tab() as unknown as ITabRenderer, has: id => panels.has(id),
+      tabMenu: showWebMenu,
     }),
     ipc.on('tab', info => {
       const p = panels.get(paneIdOf(info.tabId))
@@ -851,7 +942,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.systemDesks.onDidChangeActive(e => { if (e.id === DESK_ID && e.active) goToOldestAsk(); refreshPad() }),
     ui.agents.tabMenu(slotId => {
       if (!padTabs().some(t => t.ownerSlotId === slotId)) return []
-      return [{ icon: 'globe-simple', label: padSeeAgent(agentName(slotId)), run: () => { padFilter = slotId; ownOpen = true; setTimeout(() => { ownOpen = false }, 300); ui.pads.open(PAD_ID); refreshPad() } }]
+      return [{ icon: 'globe-simple', label: padSeeAgent(agentName(slotId)), run: () => seeAgent(slotId) }]
     }),
     // The agent's name or life changed (it exited): every chip is dressed again.
     ipc.on('agent', a => { slots.set(a.slotId, a); for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
