@@ -61,7 +61,7 @@ export const USAGE = `uso: tether <comando> [opções]
   pause status [--json]               mostra a pausa em andamento, slot a slot
   ronda [intervalo] [--nudge "<texto>"] [--criterion "<critério>"]
                                       liga a ronda deste painel (padrão 20m) ou a remonta: o
-                                      tether digita um cutucão no agente quando ele está ocioso
+                                      tether cutuca o agente pelo canal da ronda quando ele está ocioso
   ronda --status [--json]             mostra a ronda deste painel
   ronda --off [--force]               desliga (com critério de parada, pergunta antes; --force
                                       desliga mesmo assim)
