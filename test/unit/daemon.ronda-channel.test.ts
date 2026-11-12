@@ -115,7 +115,7 @@ describe('ronda channel', () => {
     let seen = ''
     while (!seen.includes('notifications/claude/channel')) seen += new TextDecoder().decode((await reader.read()).value)
     const note = JSON.parse(seen.split('\n').find(l => l.includes('notifications/claude/channel'))!.slice(6))
-    assert.deepEqual(note, { jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content: '[ronda] olá', meta: { source: 'ronda' } } })
+    assert.deepEqual(note, { jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content: '[ronda] olá', meta: { kind: 'ronda' } } })
 
     ch.revoke(SLOT)
     assert.equal(ch.connected(SLOT), false)

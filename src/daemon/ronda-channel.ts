@@ -82,11 +82,11 @@ class RondaBackend implements McpBackend {
     await t.start()
   }
 
-  /** Sends one channel message; false when no session is bound. */
+  /** Sends one channel message; false when no session is bound. The meta never says `source`: Claude Code already sets that attribute to the server's name. */
   notify(content: string): boolean {
     const t = this.transport
     if (!t) return false
-    void t.send({ jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content, meta: { source: 'ronda' } } })
+    void t.send({ jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content, meta: { kind: 'ronda' } } })
     return true
   }
 
