@@ -71,6 +71,12 @@ export interface McpHttpHostOptions {
   /** Server messages kept while the client has no stream to take them. Default 64 (the oldest goes first). */
   maxQueued?: number
   maxBodyBytes?: number
+  /**
+   * The client's GET stream of a slot opened (`true`) or closed (`false`: the client dropped it, the session ended, the slot
+   * was revoked). Edges only: a reconnect that replaces an open stream says nothing. What reaches the agent unasked (the
+   * ronda's channel) is only delivered at once while this stream is open. A throwing listener never breaks the host.
+   */
+  onStream?: (slotId: string, open: boolean) => void
 }
 
 type Json = Record<string, unknown>
@@ -95,6 +101,7 @@ interface Session {
 }
 
 interface Slot {
+  id: string
   keyHash: Buffer
   spec: McpBackendSpec
   /** The slot's server, once asked for. */
@@ -151,7 +158,7 @@ export class McpHttpHost {
   /** The slot's key from now on (a previous grant, its session and its server are dropped). */
   grant(slotId: string, key: string, spec: McpBackendSpec): void {
     this.revoke(slotId)
-    this.slots.set(slotId, { keyHash: digest(key), spec, backend: undefined, session: undefined, creates: 0 })
+    this.slots.set(slotId, { id: slotId, keyHash: digest(key), spec, backend: undefined, session: undefined, creates: 0 })
   }
 
   /** The key stops working, the session ends and the slot's server is closed. Never throws. */
@@ -170,6 +177,12 @@ export class McpHttpHost {
     let n = 0
     for (const s of this.slots.values()) if (s.backend) n++
     return n
+  }
+
+  /** The slot's client has its GET stream open now (what the server says unasked reaches it at once). */
+  streamOpen(slotId: string): boolean {
+    const s = this.slots.get(slotId)?.session
+    return !!s && !s.closed && !!s.stream && !s.stream.writableEnded && !s.stream.destroyed
   }
 
   /** How many times a slot's server was created under the current grant (tests): 1 however many sessions it served. */
@@ -201,11 +214,13 @@ export class McpHttpHost {
     if (req.method === 'GET') {
       if (!String(req.headers.accept ?? '').includes('text/event-stream')) { res.writeHead(405).end(); return }
       if (!live || sid !== live.id) { res.writeHead(live && sid ? 404 : 400).end(); return }
+      const had = !!live.stream
       live.stream?.end()
       live.stream = res
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'mcp-session-id': live.id })
       res.flushHeaders()
-      res.on('close', () => { if (live.stream === res) live.stream = undefined })
+      res.on('close', () => { if (live.stream === res) { live.stream = undefined; this.streamEdge(slot, false) } })
+      if (!had) this.streamEdge(slot, true)
       // What the server said while the client had no stream.
       for (const line of live.queued.splice(0)) sseWrite(res, line)
       return
@@ -241,7 +256,7 @@ export class McpHttpHost {
         this.opts.log(`${this.opts.name}: servidor MCP não iniciou (${e instanceof Error ? e.message : String(e)})`)
         // A server that could not be made is asked for again at the next initialize.
         if (slot.session === session) { slot.backend = undefined; slot.session = undefined }
-        this.failSession(session, 'o servidor MCP não iniciou')
+        this.failSession(session, 'o servidor MCP não iniciou', slot)
         return
       }
       if (slot.session !== session) return
@@ -290,7 +305,7 @@ export class McpHttpHost {
       start: async () => undefined,
       send: async (message, options) => { if (!session.closed) this.fromServer(session, message, options?.relatedRequestId) },
       // The server closed its side (McpBackend.connect again, or its own shutdown): the session is over.
-      close: async () => { if (slot.session === session) slot.session = undefined; this.failSession(session, 'o servidor MCP encerrou') },
+      close: async () => { if (slot.session === session) slot.session = undefined; this.failSession(session, 'o servidor MCP encerrou', slot) },
     }
     return transport
   }
@@ -335,21 +350,27 @@ export class McpHttpHost {
   }
 
   /** Every answer still waited for gets an error, the streams end, and the server learns its transport is closed. Once. */
-  private failSession(session: Session, why: string): void {
+  private failSession(session: Session, why: string, slot?: Slot): void {
     if (session.closed) return
     session.closed = true
+    const hadStream = !!session.stream
     for (const [id, p] of session.pending) this.deliver(p, JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message: `${this.opts.name}: ${why}` } }))
     session.pending.clear()
     session.stream?.end()
     session.stream = undefined
     session.queued.length = 0
+    if (hadStream && slot) this.streamEdge(slot, false)
     try { session.transport.onclose?.() } catch { /* the server's own cleanup */ }
+  }
+
+  private streamEdge(slot: Slot, open: boolean): void {
+    try { this.opts.onStream?.(slot.id, open) } catch { /* the listener's own problem */ }
   }
 
   private endSession(slot: Slot): void {
     const session = slot.session
     slot.session = undefined
-    if (session) this.failSession(session, 'a sessão MCP terminou')
+    if (session) this.failSession(session, 'a sessão MCP terminou', slot)
   }
 
   /** A comment line on every open stream (an SSE comment is ignored by the client; it only keeps the connection used). */
