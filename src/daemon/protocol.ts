@@ -98,9 +98,11 @@ export interface SlotState {
   memoryMB?: number
   /**
    * The slot's ronda (tether's nudge clock), when on. `due`: the time has come and tether waits for the agent to be idle.
-   * Absent on daemons older than 0.3.5.
+   * `channel`: whether the agent's CLI is listening on the ronda's channel now ('listening') or not ('none': not running,
+   * still starting, or launched without it); the ronda only reaches the agent through it. Absent on daemons older than 0.3.5
+   * (`channel`: older than 0.3.7, which typed the nudge into the terminal).
    */
-  ronda?: Ronda & { due?: boolean }
+  ronda?: Ronda & { due?: boolean; channel?: 'listening' | 'none' }
 }
 
 export type ErrorCode =
@@ -116,6 +118,7 @@ export type ErrorCode =
   | 'pause-active'      // pause-start refused: a batch is already pausing/paused/resuming
   | 'no-pause'          // the request needs an active batch and there is none
   | 'ronda-criterion'   // ronda-off refused: the ronda has a stop criterion (message = the stimulus); resend with force
+  | 'ronda-unavailable' // ronda-set refused: the slot's agent takes no channel (a shell, an agent without one); message = why
   | 'agent-unavailable' // the slot's agent is not registered (its extension is off or gone); the slot is kept
   | 'unknown-proc'      // no background process by that name
   | 'proc-running'      // proc-start of a name that runs (the message says who started it)
@@ -251,7 +254,7 @@ export type Reply =
       /** pause-start / pause-get: the batch (null = none). */
       pause?: PauseBatch | null
       /** ronda-set / ronda-get / ronda-off: the slot's ronda (null = off). */
-      ronda?: (Ronda & { due?: boolean }) | null
+      ronda?: (Ronda & { due?: boolean; channel?: 'listening' | 'none' }) | null
       rondaOutcome?: 'created' | 'updated' | 'unchanged' | 'off' | 'was-off'
       /** proc-list. */
       procs?: ProcState[]

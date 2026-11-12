@@ -1,7 +1,8 @@
 // The ronda: tether's own clock that nudges an idle agent, one per slot. The agent assembles it (interval, an extra
 // nudge, a stop criterion) through `tether ronda`; tetherd keeps it in <home>/slots/<id>.ronda.json (so it survives the
-// agent's restart and the daemon's) and, when it is due and the agent is idle, types the nudge into the slot's PTY, the
-// same way the pause's "Retomar" does. Pure model and persistence here; the timer and the PTY live in server.ts.
+// agent's restart and the daemon's) and, when it is due and the agent is idle, sends the nudge through the ronda's channel
+// (ronda-channel.ts): a message the agent's CLI takes as a turn of its own, never keys typed into the terminal, so the user's
+// draft is never touched. Pure model and persistence here; the timer lives in server.ts.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { slotRondaPath } from '../core/paths.ts'
@@ -56,10 +57,16 @@ export function flatText(text: string | undefined): string {
   return flat.length > TEXT_MAX ? flat.slice(0, TEXT_MAX).trimEnd() + '…' : flat
 }
 
-/** What is typed into the agent: the default nudge plus the assembled extra. */
+/** The nudge: the default plus the assembled extra. */
 export function buildNudgeText(r: Pick<Ronda, 'nudge'>): string {
   const extra = flatText(r.nudge)
   return extra ? `${RONDA_DEFAULT_NUDGE} ${extra}` : RONDA_DEFAULT_NUDGE
+}
+
+/** What goes through the channel: the nudge, then the stop criterion when there is one. */
+export function buildChannelText(r: Pick<Ronda, 'nudge' | 'criterion'>): string {
+  const criterion = flatText(r.criterion)
+  return criterion ? `${buildNudgeText(r)} Critério de parada: ${criterion}` : buildNudgeText(r)
 }
 
 /** The stimulus `off` answers when the ronda has a criterion and the call was not forced. */

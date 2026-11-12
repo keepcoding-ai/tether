@@ -1,12 +1,18 @@
-// The ronda: the pure model (interval parsing, assembly, nudge text, stimulus) and tetherd's clock (one per slot, typed
-// only into an idle agent, persisted across the agent's restart and the daemon's, `off` with a criterion asks first).
+// The ronda: the pure model (interval parsing, assembly, nudge text, stimulus) and tetherd's clock (one per slot, sent
+// through the ronda's channel only to an idle agent that listens, never typed into its terminal; persisted across the
+// agent's restart and the daemon's; `off` with a criterion asks first; unavailable to an agent with no channel).
 import assert from 'node:assert/strict'
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { after, describe, test } from 'node:test'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
-import { slotAttentionPath, slotEventsPath, slotRondaPath } from '../../src/core/paths.ts'
+import { withMcpConfigFlag } from '../../src/agents/mcp.ts'
+import { agentRegistry } from '../../src/agents/registry.ts'
+import { slotAttentionPath, slotRondaPath } from '../../src/core/paths.ts'
 import { DaemonError } from '../../src/daemon/client.ts'
-import { applyChange, buildNudgeText, criterionStimulus, formatInterval, parseInterval, RONDA_DEFAULT_NUDGE, RondaError } from '../../src/daemon/ronda.ts'
+import type { RondaChannelAgent } from '../../src/daemon/ronda-channel.ts'
+import { applyChange, buildChannelText, buildNudgeText, criterionStimulus, formatInterval, parseInterval, RONDA_DEFAULT_NUDGE, RondaError } from '../../src/daemon/ronda.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { describeRonda } from '../../src/cli/ronda.ts'
 import { rondaLabel, rondaTooltip } from '../../app/renderer/ronda-rules.ts'
@@ -52,6 +58,8 @@ describe('ronda: model', () => {
     assert.equal(RONDA_DEFAULT_NUDGE, '[ronda] Ronda de rotina. Olhe para o seu trabalho e para os seus subagentes, e siga. Se o trabalho já acabou, diga isso e desligue esta ronda.')
     assert.equal(buildNudgeText({}), RONDA_DEFAULT_NUDGE)
     assert.equal(buildNudgeText({ nudge: 'Registre decisões.' }), `${RONDA_DEFAULT_NUDGE} Registre decisões.`)
+    assert.equal(buildChannelText({ nudge: 'Registre decisões.', criterion: 'merge  feito' }), `${RONDA_DEFAULT_NUDGE} Registre decisões. Critério de parada: merge feito`)
+    assert.equal(buildChannelText({}), RONDA_DEFAULT_NUDGE)
     assert.equal(criterionStimulus('merge feito no develop'), 'Esta ronda tem um critério de parada: merge feito no develop. Você cumpriu? Se não cumpriu, não deveria cumprir antes de parar? Para parar mesmo assim, use --off --force.')
     assert.equal(describeRonda(null), 'Ronda desligada neste painel.\n')
     const r = { v: 1 as const, intervalMs: 600_000, createdAt: '2026-11-10T10:00:00.000Z', nextAt: '2026-11-10T10:10:00.000Z', criterion: 'x' }
@@ -60,25 +68,34 @@ describe('ronda: model', () => {
     assert.match(txt, /Cutucão extra: \(nenhum\)/)
     assert.match(txt, /Critério de parada: x/)
     assert.match(describeRonda({ ...r, due: true }), /esperando o agente ficar ocioso/)
+    assert.match(describeRonda({ ...r, channel: 'listening' }), /Canal: ouvindo/)
+    assert.match(describeRonda({ ...r, channel: 'none' }), /Canal: sem canal agora/)
     assert.equal(rondaLabel(r), 'Ronda 10m')
+    assert.equal(rondaLabel({ ...r, channel: 'listening' }), 'Ronda 10m')
+    assert.equal(rondaLabel({ ...r, channel: 'none' }), 'Ronda 10m · sem canal')
+    assert.match(rondaTooltip({ ...r, channel: 'listening' }), /Canal: ouvindo/)
+    assert.match(rondaTooltip({ ...r, channel: 'none' }), /Sem canal/)
     assert.match(rondaTooltip(r, Date.parse('2026-11-10T10:05:00.000Z')), /a cada 10 min[\s\S]*em 5 min[\s\S]*Critério de parada: x[\s\S]*Clique para desligar/)
   })
 })
 
-/** Printed by the fake agent once it reads stdin in raw mode: node's startup time varies with machine load, so the test waits for this, not for a fixed delay. */
+/** The fake agent (an MCP client of the ronda's channel, test/unit/ronda-channel-agent.ts) prints this once its GET stream is open. */
 const AGENT_LISTENING = 'AGENT-LISTENING'
+const AGENT_SCRIPT = fileURLToPath(new URL('./ronda-channel-agent.ts', import.meta.url))
 
-/** An "agent" that echoes what is typed, bracketed, so the test sees the nudge arrive. */
-function echoPlan(cwd: string): LaunchPlan {
+function agentPlan(cwd: string, dialog?: 'exact' | 'other'): LaunchPlan {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
-  const script = "process.stdin.setRawMode&&process.stdin.setRawMode(true);process.stdin.on('data',d=>process.stdout.write('<'+String(d).replace(/\\r/g,'#CR#')+'>'));process.stdout.write('"+AGENT_LISTENING+"')"
-  return { command: process.execPath, args: ['-e', script], cwd, env }
+  if (dialog) env.FAKE_DIALOG = dialog
+  else delete env.FAKE_DIALOG
+  return { command: process.execPath, args: [AGENT_SCRIPT], cwd, env }
 }
-const fakeClaude: AgentAdapter = { name: 'claude', plan: (input) => echoPlan(input.resume?.cwd ?? input.slot.cwd), sessionExists: async () => 'unknown', title: async (b) => b.title }
+const fakeAgent = (name: string, dialog?: 'exact' | 'other'): AgentAdapter => ({ name, plan: (input) => agentPlan(input.resume?.cwd ?? input.slot.cwd, dialog), sessionExists: async () => 'unknown', title: async (b) => b.title })
+/** The channel as Claude's contribution offers it (its real dialog), but with no leading args (the fake is `node <script>`). */
+const channelOf = (): RondaChannelAgent => ({ args: [], inject: withMcpConfigFlag, confirm: agentRegistry.get('claude')!.channelConfirm! })
 const isErr = (code: string) => (e: unknown): boolean => e instanceof DaemonError && e.code === code
 
-describe('ronda: daemon clock', () => {
+describe('ronda: daemon clock, through the channel', () => {
   const homes: string[] = []
   const daemons: Daemon[] = []
   const logs: string[] = []
@@ -86,69 +103,70 @@ describe('ronda: daemon clock', () => {
     for (const d of daemons) await d.close()
     for (const h of homes) await removeHome(h)
   })
-  async function boot(home = tempHome()): Promise<{ home: string; daemon: Daemon; rec: Recorder }> {
+  async function boot(home = tempHome(), adapters: Record<string, AgentAdapter> = { claude: fakeAgent('claude') }): Promise<{ home: string; daemon: Daemon; rec: Recorder }> {
     if (!homes.includes(home)) homes.push(home)
-    const daemon = await startDaemon({ home, pipe: uniquePipe(home), readyFallbackMs: 300, minAgentAgeMs: 0, memoryIntervalMs: 0, rondaAllowSeconds: true, rondaRetryMs: 200, rondaInputQuietMs: 300, adapters: { claude: fakeClaude }, log: (m) => logs.push(m) })
+    const daemon = await startDaemon({
+      home, pipe: uniquePipe(home), readyFallbackMs: 300, minAgentAgeMs: 0, memoryIntervalMs: 0, rondaAllowSeconds: true, rondaRetryMs: 200,
+      adapters, channelOf: (agent) => (agent === 'claude' ? channelOf() : undefined), log: (m) => logs.push(m),
+    })
     daemons.push(daemon)
     return { home, daemon, rec: await Recorder.connect(daemon.pipe) }
   }
-  /** The agent's start report (what Claude's SessionStart hook writes): the run opened its session. */
-  const started = (home: string, id: string): void => appendFileSync(slotEventsPath(home, id), JSON.stringify({ v: 1, ts: new Date().toISOString(), slotId: id, agent: 'claude', kind: 'start', source: 'startup', sessionId: 'sess-ronda', cwd: home, resume: { cwd: home, args: ['--resume', 'sess-ronda'] } }) + '\n')
   const listening = (rec: Recorder, id: string): number => rec.text(id).split(AGENT_LISTENING).length - 1
-  /** Nudges the daemon itself typed into the slot (its own log line). Exact and immune to how late ConPTY hands the echo back under load. */
-  const typed = (id: string): number => logs.filter((m) => m === `slot ${id}: ronda nudge typed`).length
-  const heard = (rec: Recorder, id: string): string => rec.text(id).replace(/[<>]/g, '')
+  /** Rondas the daemon sent (its own log line) and the ones the agent received (its stdout). */
+  const sent = (id: string): number => logs.filter((m) => m === `slot ${id}: ronda sent through the channel`).length
+  const received = (rec: Recorder, id: string): string[] => [...rec.text(id).matchAll(/CHANNEL\{\{([\s\S]*?)\}\}/g)].map((m) => m[1]!)
+  /** What was typed into the agent's terminal (its `<...>` echo). */
+  const typed = (rec: Recorder, id: string): string => [...rec.text(id).replace(/\x1b\[[0-9;?<>=]*[ -/]*[@-~]/g, '').matchAll(/<([^<>]*)>/g)].map((m) => m[1]).join('')
 
-  test('one per slot; nudges an idle agent on time; waits while busy; survives a restart of the agent and of the daemon', async () => {
+  test('the nudge goes through the channel, never the terminal: the draft stays, busy waits, the agent\'s restart reconnects, the daemon\'s restart keeps it', async () => {
     const { home, daemon, rec } = await boot()
     const { slot } = await rec.client.request({ t: 'create', kind: 'claude', cwd: home, start: true })
     const id = slot!.slotId
     await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
-    await rec.state(id, (s) => s.status === 'running', 5_000, 'running')
-    await waitUntil(() => listening(rec, id) >= 1, 30_000, 'the agent reading its input')
+    await waitUntil(() => listening(rec, id) >= 1, 30_000, 'the agent listening on its channel')
+    assert.match(rec.text(id), /CAP-CHANNEL/, 'the server declares claude/channel')
+    assert.ok(logs.some((m) => m.startsWith(`slot ${id}: ronda channel session (era legacy, protocol 2025-11-25`)), 'the session\'s era and protocol are logged')
 
-    // running by the fallback but no start report (still in a menu): the due ronda waits
-    await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s' })
-    await rec.state(id, (s) => s.ronda?.due === true, 5_000, 'due before the start report')
-    assert.equal(typed(id), 0, 'nothing typed before the agent opened its session')
-    await rec.client.request({ t: 'ronda-off', slotId: id })
-    started(home, id)
-    await rec.state(id, (s) => !!s.binding, 5_000, 'bound')
+    // the user has a draft in the box: the ronda must not touch it
+    rec.client.input(id, 'rascunho do usuário')
+    await waitUntil(() => typed(rec, id).includes('rascunho do usuário'), 30_000, 'the draft reaching the agent')
 
     await assert.rejects(rec.client.request({ t: 'ronda-set', slotId: id, interval: '5x' }), isErr('bad-request'))
-    const on = await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s', nudge: 'Extra do teste.' })
+    const on = await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s', nudge: 'Extra do teste.', criterion: 'merge feito' })
     assert.equal(on.rondaOutcome, 'created')
+    assert.equal(on.ronda?.channel, 'listening')
     assert.equal((await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s' })).rondaOutcome, 'unchanged', 'no duplicate')
     assert.ok(existsSync(slotRondaPath(home, id)))
-    await rec.state(id, (s) => !!s.ronda, 3_000, 'ronda in the state')
 
-    // What the agent heard, its own <> brackets dropped: a loaded ConPTY hands the input (and so the echo) over late and in
-    // arbitrary pieces, so the wait is on the condition, with a generous deadline. Text first, then Enter.
-    await waitUntil(() => /\[ronda\] Ronda de rotina[^#]*Extra do teste\.[^#]*#CR#/.test(heard(rec, id)), 30_000, 'the nudge text and its Enter typed into the agent')
+    await waitUntil(() => received(rec, id).length >= 1, 30_000, 'the ronda through the channel')
+    assert.equal(received(rec, id)[0], `${RONDA_DEFAULT_NUDGE} Extra do teste. Critério de parada: merge feito`)
+    assert.equal(typed(rec, id), 'rascunho do usuário', 'nothing typed into the terminal: the draft is all there is')
+    assert.ok(sent(id) >= 1)
 
-    // busy: the hook says a turn started → no nudge, the ronda becomes due
+    // busy: the hook says a turn started → no ronda, it becomes due
     writeFileSync(slotAttentionPath(home, id), JSON.stringify({ ts: new Date().toISOString(), kind: 'start' }))
     await rec.state(id, (s) => s.turn === 'busy', 5_000, 'busy')
-    // the daemon's own word that its tick met the busy agent and waits: no nudge can still be in flight after this
     await waitUntil(() => logs.includes(`slot ${id}: ronda due, waiting (busy)`), 10_000, 'due while busy')
-    const before = typed(id)
+    const before = sent(id)
     await sleep(1500)
-    assert.equal(typed(id), before, 'nothing typed into a busy agent')
-    // idle again → the due nudge goes at once
+    assert.equal(sent(id), before, 'nothing sent to a busy agent')
     writeFileSync(slotAttentionPath(home, id), JSON.stringify({ ts: new Date(Date.now() + 1).toISOString(), kind: 'done' }))
-    await waitUntil(() => typed(id) > before, 30_000, 'nudge after idle')
+    await waitUntil(() => sent(id) > before, 30_000, 'ronda after idle')
 
-    // agent restart: the ronda is kept while it is down and nudges the new run
+    // agent restart: the channel drops (state says so), the ronda is kept, the new run gets a new key and reconnects
     await rec.client.request({ t: 'ronda-set', slotId: id, interval: '2s' })
     await rec.client.request({ t: 'stop', slotId: id })
     await rec.state(id, (s) => s.status === 'exited', 10_000, 'exited')
-    assert.ok((await rec.client.request({ t: 'ronda-get', slotId: id })).ronda, 'kept while the agent is down')
+    const down = (await rec.client.request({ t: 'ronda-get', slotId: id })).ronda
+    assert.ok(down, 'kept while the agent is down')
+    assert.equal(down!.channel, 'none')
+    assert.ok(!existsSync(join(home, 'ronda', 'mcp', `${id}.json`)), 'the run\'s MCP file goes with it')
     await rec.client.request({ t: 'start', slotId: id, choice: 'new' })
     await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
-    await waitUntil(() => listening(rec, id) >= 2, 30_000, 'the restarted agent reading its input')
-    started(home, id)
-    const n1 = typed(id)
-    await waitUntil(() => typed(id) > n1, 30_000, 'nudge after the agent restarted')
+    await waitUntil(() => listening(rec, id) >= 2, 30_000, 'the restarted agent listening')
+    const n1 = sent(id)
+    await waitUntil(() => sent(id) > n1, 30_000, 'ronda after the agent restarted')
 
     // daemon restart: the ronda comes back from disk
     rec.close()
@@ -157,7 +175,39 @@ describe('ronda: daemon clock', () => {
     const got = (await second.rec.client.request({ t: 'ronda-get', slotId: id })).ronda
     assert.equal(got?.intervalMs, 2000)
     assert.equal(got?.nudge, 'Extra do teste.')
+    assert.equal(got?.channel, 'none', 'not running in this daemon yet')
     second.rec.close()
+  })
+
+  test('no channel, no ronda: a shell and an agent without one are refused with the reason', async () => {
+    const { home, rec } = await boot(undefined, { claude: fakeAgent('claude'), soul: fakeAgent('soul') })
+    const shell = (await rec.client.request({ t: 'create', kind: 'shell', cwd: home })).slot!.slotId
+    await assert.rejects(rec.client.request({ t: 'ronda-set', slotId: shell }), (e: unknown) => isErr('ronda-unavailable')(e) && /terminal sem agente/.test((e as Error).message))
+    const soul = (await rec.client.request({ t: 'create', kind: 'soul', cwd: home })).slot!.slotId
+    await assert.rejects(rec.client.request({ t: 'ronda-set', slotId: soul }), (e: unknown) => isErr('ronda-unavailable')(e) && /não recebe mensagens por canal/.test((e as Error).message))
+    rec.close()
+  })
+
+  test('the channel\'s start dialog: answered once when it is exactly Claude\'s; any other screen gets no key', async () => {
+    // The captured dialog was drawn for 140x40: the terminal gets that size before the agent starts.
+    const { home, rec } = await boot(undefined, { claude: fakeAgent('claude', 'exact') })
+    const id = (await rec.client.request({ t: 'create', kind: 'claude', cwd: home })).slot!.slotId
+    await rec.client.request({ t: 'attach', slotId: id, cols: 140, rows: 40 })
+    await rec.client.request({ t: 'start', slotId: id, choice: 'new' })
+    await waitUntil(() => listening(rec, id) >= 1, 30_000, 'the agent connecting after the dialog was answered')
+    assert.ok(logs.includes(`slot ${id}: channel confirmation recognized; answering`))
+    assert.equal(typed(rec, id), '#CR#', 'one Enter, nothing else')
+    rec.close()
+
+    const other = await boot(undefined, { claude: fakeAgent('claude', 'other') })
+    const id2 = (await other.rec.client.request({ t: 'create', kind: 'claude', cwd: other.home })).slot!.slotId
+    await other.rec.client.request({ t: 'attach', slotId: id2, cols: 140, rows: 40 })
+    await other.rec.client.request({ t: 'start', slotId: id2, choice: 'new' })
+    await other.rec.see(id2, /Enter[\s\S]*cancel/)
+    await sleep(1500)
+    assert.equal(typed(other.rec, id2), '', 'a dialog with "Exit" selected gets no key')
+    assert.ok(!logs.includes(`slot ${id2}: channel confirmation recognized; answering`))
+    other.rec.close()
   })
 
   test('off: with a criterion it answers the stimulus and keeps running; --force switches off; without one it switches off', async () => {
