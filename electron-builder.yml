@@ -39,6 +39,8 @@ files:
 asarUnpack:
   - node_modules/@vscode/ripgrep-*/**
   - node_modules/node-pty/**
+  # koffi (user32 for the browser process's embedded windows) is a native module: it loads from outside the asar.
+  - node_modules/koffi/**
   - src/**
   - extensions/**
 win:

@@ -1,6 +1,7 @@
 // One-shot esbuild build of the Electron app into app/dist (no watch mode):
 //   main.cjs      Electron main process (CommonJS, node platform, electron external)
 //   preload.cjs   sandboxed preload (CommonJS)
+//   browser-child.cjs  the browser process (extensions/browser/process-child.ts); koffi (user32, native) stays external
 //   file-index-worker.cjs  Quick Open's file index (worker thread of main). It runs rg from node_modules/@vscode/ripgrep-<platform>-<arch>
 //                 (resolved from the repo root at run time, never bundled: the app runs from this repo, no asar)
 //   renderer.js   browser bundle (ESM) with xterm + dockview-core
@@ -30,6 +31,9 @@ const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..')
 const out = join(here, 'dist')
 
+// A packaged app always starts main.cjs whatever the arguments: the browser process (extensions/browser/process-host.ts sets
+// TETHER_BROWSER_PIPE for it) turns into browser-child.cjs before anything of the app runs.
+const CHILD_SWITCH = "if (process.env.TETHER_BROWSER_PIPE) { require(require('node:path').join(__dirname, 'browser-child.cjs')); return; }"
 const common = { bundle: true, sourcemap: true, logLevel: 'warning', target: 'es2024' }
 // src/daemon/client.ts reads import.meta.url only as spawnDaemon's default mainPath (the app always passes one); CJS has none.
 const browser = { platform: 'browser', format: 'esm', loader: { '.svg': 'text', '.ttf': 'file' }, assetNames: '[name]' }
@@ -50,9 +54,11 @@ writeFileSync(join(out, 'palette.css'), paletteCss())
 copyIconAssets(root, out)
 await Promise.all([
   // TETHER_TEST_EXTENSIONS=1 (E2E only) builds in the probes of extensions/index.main.ts and index.renderer.ts; every other build drops them.
-  build({ ...common, ...node, define: { __TETHER_TEST_EXTENSIONS__: String(process.env.TETHER_TEST_EXTENSIONS === '1') }, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs') }),
+  build({ ...common, ...node, external: [...node.external, 'koffi'], define: { __TETHER_TEST_EXTENSIONS__: String(process.env.TETHER_TEST_EXTENSIONS === '1') }, entryPoints: [join(here, 'main', 'main.ts')], outfile: join(out, 'main.cjs'), banner: { js: CHILD_SWITCH } }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'preload.ts')], outfile: join(out, 'preload.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'preload', 'surface-shield.ts')], outfile: join(out, 'surface-shield.cjs') }),
+  // The browser process (extensions/browser/process-child.ts): the browser extension's main side, away from the app's process.
+  build({ ...common, ...node, external: [...node.external, 'koffi'], define: { __TETHER_TEST_EXTENSIONS__: String(process.env.TETHER_TEST_EXTENSIONS === '1') }, entryPoints: [join(root, 'extensions', 'browser', 'process-child.ts')], outfile: join(out, 'browser-child.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-worker.ts')], outfile: join(out, 'file-index-worker.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-shard-worker.ts')], outfile: join(out, 'file-index-shard-worker.cjs') }),
   // TETHER_TEST_EXTENSIONS=1 (E2E only) builds in the probes of extensions/index.renderer.ts; every other build drops them.

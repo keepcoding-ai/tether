@@ -491,7 +491,7 @@ type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; 
 // (app/main/ext-host.ts). The handlers exist from the start; activation runs when the app is ready, before the window.
 // Native views over the interface, owned by the extension that creates them (app/main/surfaces.ts).
 const surfaces = new SurfaceManager({ dist: __dirname, window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
-new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
+new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg), remote: owner => surfaces.remoteFor(owner) })
 const extensionHost = new MainExtensionHost(mainExtensions, {
   home,
   userDir: userHome,

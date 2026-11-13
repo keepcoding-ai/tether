@@ -52,9 +52,9 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   return { app, page }
 }
 
-/** Runs `body` (the source of a function of the test registry `t` and the argument `a`) in Electron main. */
+/** Runs `body` (the source of a function of the test hooks `t` and the argument `a`) where the browser lives (its process, or main). */
 const inMain = (app: ElectronApplication, body: string, a: Record<string, unknown> = {}): Promise<unknown> =>
-  app.evaluate((_e, x) => (new Function('t', 'a', `return (async () => { ${x.body} })()`))((globalThis as Record<string, unknown>).__browserTabs, x.a), { body, a })
+  app.evaluate((_e, x) => ((globalThis as Record<string, unknown>).__browserRun as (src: string, a: unknown) => Promise<unknown>)(`async (t, a) => { ${x.body} }`, x.a), { body, a })
 const panes = (page: Page): Promise<Pane[]> => page.evaluate(() => window.__tether.browserPanes())
 const stateOf = async (page: Page, tabId: string): Promise<string | undefined> => (await panes(page)).find(p => p.tabId === tabId)?.state
 const titleOf = (app: ElectronApplication, id: string): Promise<unknown> => inMain(app, 'return t.eval(a.id, "document.title")', { id })

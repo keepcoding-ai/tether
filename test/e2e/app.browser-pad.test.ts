@@ -23,7 +23,7 @@ import type { ElectronApplication, Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { daemonMain, launchHidden, pidAlive, rawCdp, root, sleep } from './browser-kit.ts'
+import { daemonMain, launchHidden, pidAlive, rawCdp, root, sleep, inBrowser } from './browser-kit.ts'
 
 type Row = { tabId: string; title: string; address: string; control: string; action: string; place: string }
 type Btn = { action: string; text: string; disabled: boolean }
@@ -100,7 +100,7 @@ test('browser pad: list by agent, filter, taken on top, moved tab, pause, reopen
     win.on('pageerror', e => console.error(`renderer error: ${e.message}`))
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const B = <R>(fn: (t: Tabs, a: any) => R | Promise<R>, a?: unknown): Promise<R> =>
-      app!.evaluate(new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
+      inBrowser(app!, new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
     const pad = async (): Promise<PadView> => (await win.evaluate(() => window.__tether.browserPad()))!
     const panes = (): Promise<Pane[]> => win.evaluate(() => window.__tether.browserPanes())
     const click = async (sel: string): Promise<void> => { await win.locator(`${PAD} ${sel}`).first().click() }

@@ -31,7 +31,8 @@ export interface TabInfo extends Tab {
   crashed?: TabCrash
 }
 
-export type TabCrash = 'gone' | 'unresponsive' | 'browser'
+/** 'suspect': the browser process went down twice in a row with this tab on screen or loading; it waits paused, not loaded. */
+export type TabCrash = 'gone' | 'unresponsive' | 'browser' | 'suspect'
 
 // ---- H3: popups and tabs have a ceiling (a page's `window.open` in a loop would exhaust the main process) ----
 

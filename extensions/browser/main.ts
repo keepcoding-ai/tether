@@ -27,6 +27,8 @@ import { scrubLogLine } from './log-scrub.ts'
 import { isId, isWebUrl, savedTabOf } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 
+import { activateRemote, wantsBrowserProcess } from './process-host.ts'
+
 export { manifest } from './manifest.ts'
 
 /**
@@ -55,7 +57,15 @@ function reloadAndWait(wc: WebContents, ticket: (url: string) => Promise<unknown
 // Defined by app/build.mjs: true only in a build made with TETHER_TEST_EXTENSIONS=1 (the E2E).
 declare const __TETHER_TEST_EXTENSIONS__: boolean | undefined
 
+/**
+ * On Windows the browser runs in a process of its own (process-host.ts starts it; process-child.ts runs `activateLocal` there),
+ * so nothing a page or the debugger does can take the app. Elsewhere it runs here, in the app's process, as before.
+ */
 export function activate(main: TetherMain): IDisposable[] {
+  return wantsBrowserProcess(main) ? activateRemote(main) : activateLocal(main)
+}
+
+export function activateLocal(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<BrowserChannels>()
   // E15: no page address, key or endpoint content reaches the log (log-scrub.ts).
   const log = (msg: string): void => main.log(scrubLogLine(msg))
@@ -298,7 +308,14 @@ export function activate(main: TetherMain): IDisposable[] {
         for (const ch of text) wc.sendInputEvent({ type: 'char', keyCode: ch })
       },
     }
-    subs.push({ dispose: () => { delete g.__browserTabs } })
+    // The E2E runs its functions against these hooks through `__browserRun` wherever the browser lives (here, or its process).
+    const run = globalThis as { __browserRun?: unknown }
+    const evalHook = globalThis as { __browserEval?: unknown }
+    if (!process.env.TETHER_BROWSER_PIPE) {
+      run.__browserRun = async (src: string, arg: unknown) => (new Function('t', 'a', `return (${src})(t, a)`))(g.__browserTabs, arg)
+      evalHook.__browserEval = async (src: string, arg: unknown) => (new Function('a', `return (${src})(undefined, a)`))(arg)
+    }
+    subs.push({ dispose: () => { delete g.__browserTabs; if (!process.env.TETHER_BROWSER_PIPE) { delete run.__browserRun; delete evalHook.__browserEval } } })
   }
   return subs
 }

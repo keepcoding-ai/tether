@@ -28,6 +28,7 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { inBrowser } from './browser-kit.ts'
 
 declare const window: { __tether: { connection(): { connected: boolean; pid?: number } | undefined } }
 type Blocked = { tabId: string; reason: string; resourceType: string; destination: string }
@@ -89,24 +90,24 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 
 const T = (app: ElectronApplication) => ({
   create: (owner: string, url: string, ticket = true): Promise<string> =>
-    app.evaluate(async (_e, a) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create(a.owner, a.url, a.ticket)).tabId, { owner, url, ticket }),
+    inBrowser(app, async (_e, a) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create(a.owner, a.url, a.ticket)).tabId, { owner, url, ticket }),
   eval: (tabId: string, code: string): Promise<unknown> =>
-    app.evaluate((_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tabId, a.code), { tabId, code }),
+    inBrowser(app, (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tabId, a.code), { tabId, code }),
   allowOnce: (tabId: string, url: string): Promise<boolean> =>
-    app.evaluate((_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.allowOnce(a.tabId, a.url), { tabId, url }),
+    inBrowser(app, (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.allowOnce(a.tabId, a.url), { tabId, url }),
   load: (tabId: string, url: string): Promise<string> =>
-    app.evaluate((_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.load(a.tabId, a.url), { tabId, url }),
+    inBrowser(app, (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.load(a.tabId, a.url), { tabId, url }),
   cdpNavigate: (tabId: string, url: string): Promise<string> =>
-    app.evaluate((_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.cdpNavigate(a.tabId, a.url), { tabId, url }),
-  blocked: (): Promise<Blocked[]> => app.evaluate(() => [...(globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.blocked]),
-  tabs: () => app.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => ({ tabId: t.tabId, url: t.url }))),
-  standIns: (hosts: string[]): Promise<void> => app.evaluate((_e, h) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setPublicStandIns(h), hosts),
-  hosts: (hosts: Record<string, string[]>): Promise<void> => app.evaluate((_e, h) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setTestHosts(h), hosts),
-  egressBlocked: (): Promise<number> => app.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.egressBlocked()),
-  setLocalNetwork: (value: string): Promise<void> => app.evaluate((_e, v) => { (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setLocalNetwork(v) }, value),
+    inBrowser(app, (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.cdpNavigate(a.tabId, a.url), { tabId, url }),
+  blocked: (): Promise<Blocked[]> => inBrowser(app, () => [...(globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.blocked]),
+  tabs: () => inBrowser(app, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => ({ tabId: t.tabId, url: t.url }))),
+  standIns: (hosts: string[]): Promise<void> => inBrowser(app, (_e, h) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setPublicStandIns(h), hosts),
+  hosts: (hosts: Record<string, string[]>): Promise<void> => inBrowser(app, (_e, h) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setTestHosts(h), hosts),
+  egressBlocked: (): Promise<number> => inBrowser(app, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.egressBlocked()),
+  setLocalNetwork: (value: string): Promise<void> => inBrowser(app, (_e, v) => { (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.setLocalNetwork(v) }, value),
   requestLocalNetwork: (tabId: string, owner: string, url: string): Promise<boolean> =>
-    app.evaluate((_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.requestLocalNetwork(a.tabId, a.owner, a.url), { tabId, owner, url }),
-  close: (tabId: string): Promise<void> => app.evaluate((_e, id) => { (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.close(id) }, tabId),
+    inBrowser(app, (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.requestLocalNetwork(a.tabId, a.owner, a.url), { tabId, owner, url }),
+  close: (tabId: string): Promise<void> => inBrowser(app, (_e, id) => { (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.close(id) }, tabId),
 })
 
 async function until<T>(what: string, fn: () => Promise<T>, ok: (v: T) => boolean, ms = 15_000): Promise<T> {
