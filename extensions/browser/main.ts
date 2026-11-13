@@ -205,6 +205,7 @@ export function activate(main: TetherMain): IDisposable[] {
     }),
     // The person closed the tab: what the agent's tool knew it by goes with it (a tab that merely went away with the window keeps it).
     ipc.handle('close', tabId => { if (typeof tabId === 'string') { agentTabs.forget(tabId); registry.close(tabId); control.closed(tabId) } }),
+    ipc.handle('reopen', async tabId => (isId(tabId) ? (await registry.reopen(tabId).catch(e => { log(`guia ${tabId}: não reabriu (${(e as Error).message})`); return undefined })) ?? null : null)),
     ipc.handle('agents', () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive }))),
     ipc.handle('logoutAll', async () => {
       const ses = await session
@@ -260,6 +261,9 @@ export function activate(main: TetherMain): IDisposable[] {
       create: (owner: string, url: string, ticket = true) => registry.create(owner, url, { ticket }),
       allowOnce: (tabId: string, url: string) => registry.allowOnce(tabId, url),
       requestLocalNetwork: (tabId: string, owner: string, url: string) => registry.requestLocalNetwork(tabId, owner, url),
+      /** Crash probes: the tab's renderer killed, or its main thread hung for `ms`. */
+      crashRenderer: (tabId: string) => { registry.webContents(tabId)?.forcefullyCrashRenderer() },
+      hangRenderer: (tabId: string, ms: number) => { void registry.webContents(tabId)?.executeJavaScript(`{ const t = Date.now() + ${Number(ms) || 0}; while (Date.now() < t) {} }`).catch(() => {}) },
       /** Names the proxy resolves from this map instead of the system (no lookup leaves the machine); unknown names fail. */
       setTestHosts: async (hosts: Record<string, string[]>) => (await session).egress.setTestResolver(async host => {
         if (Object.hasOwn(hosts, host)) return hosts[host]!

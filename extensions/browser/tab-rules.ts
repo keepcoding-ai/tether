@@ -24,7 +24,14 @@ export interface TabInfo extends Tab {
   cookies?: number
   /** E7c (H3): popups of this page refused by the limits (the tab's seal). */
   popupsRefused?: number
+  /**
+   * The page cannot be shown: its renderer process went away ('gone'), it stopped answering ('unresponsive'), or the whole
+   * browser process stopped ('browser'). The pane shows the crash state with "Reabrir" (invoke `reopen`).
+   */
+  crashed?: TabCrash
 }
+
+export type TabCrash = 'gone' | 'unresponsive' | 'browser'
 
 // ---- H3: popups and tabs have a ceiling (a page's `window.open` in a loop would exhaust the main process) ----
 

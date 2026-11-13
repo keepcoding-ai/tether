@@ -33,6 +33,12 @@ export const WEB_EMPTY = 'Esta guia ainda não tem página.'
 export const NOT_LOADED = 'Não carregada desde que o tether reabriu'
 export const CRED_NOT_KEPT = 'Endereço não guardado: ele levava uma credencial'
 export const LOADING = 'Carregando…'
+/** The crash state of a tab (its pane shows one of these with REOPEN). */
+export const CRASH_GONE = 'A página parou'
+export const CRASH_HUNG = 'A página não responde'
+export const CRASH_BROWSER = 'O navegador parou'
+export const CRASH_PAUSED = 'Pausada: o navegador caiu duas vezes com esta guia aberta'
+export const REOPEN = 'Reabrir'
 /** E7c (H3): the tab's seal when its page tried to open too many windows. */
 export const POPUPS_REFUSED = 'Esta página tentou abrir janelas demais; as que passaram do limite foram recusadas.'
 export const LOGINS_NOT_KEPT = 'Logins não são guardados: as guias usam uma sessão em memória, que acaba quando o tether fecha.'

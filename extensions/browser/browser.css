@@ -102,3 +102,8 @@
 .br-pad-drow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
 .br-pad-dtext { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .br-pad-dtext .br-pad-title, .br-pad-dtext .br-pad-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The crash state: the page area shows what stopped and "Reabrir" (the surface is let go meanwhile). */
+.br-web-crash { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--fg-dim); font-size: 13px; }
+.br-web-crash[hidden] { display: none; }
+.br-web-crash-act { padding: 4px 14px; border-radius: 6px; border: 1px solid var(--border, currentColor); background: transparent; color: var(--fg); cursor: pointer; }

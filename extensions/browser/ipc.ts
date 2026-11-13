@@ -18,6 +18,8 @@ export interface BrowserChannels {
     /** Brings back a tab saved in layout.json (the person showed it): created again with its id and owner, its address loaded. */
     restore: (saved: SavedTab) => TabInfo | null
     close: (tabId: string) => void
+    /** "Reabrir" of a tab in the crash state: created again with its id, owner and address. */
+    reopen: (tabId: string) => TabInfo | null
     status: () => BrowserStatus
     /** The local-network questions still waiting for the person (the renderer asks when it starts). */
     localNetworkOpen: () => LocalNetworkAsk[]

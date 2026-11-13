@@ -40,7 +40,7 @@ import {
   logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, pillBadgeCount, type PadTab, padWhere, resolveAgent, shortAddress,
 } from './pad-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, serveModeOf, shortName, type ServeMode } from './rules.ts'
+import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 
 export { manifest }
@@ -376,6 +376,11 @@ export function activate(ui: TetherUi): IDisposable[] {
     saved: SavedTab | undefined
     private info: TabInfo | undefined
     private binding: SurfaceBinding | undefined
+    private boundSurface = ''
+    private readonly crashEl = el('div', 'br-web-crash')
+    private readonly crashText = el('span', 'br-web-crash-text')
+    private readonly crashBtn = el('button', 'br-web-crash-act', REOPEN)
+    private reopening = false
     private restoring = false
     private readonly subs: IDisposable[] = []
     private ro: ResizeObserver | undefined
@@ -410,6 +415,20 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.memoryEl.hidden = true
       this.bar.append(this.backBtn, this.fwdBtn, this.reloadBtn, this.ownerEl, this.titleEl, this.urlEl, this.spinner, this.cookiesEl, this.memoryEl, this.stateEl, this.ctlEl, this.actBtn)
       this.element.append(this.bar, this.notice, this.page)
+      this.crashEl.dataset.role = 'crash'
+      this.crashEl.hidden = true
+      this.crashBtn.type = 'button'
+      this.crashBtn.dataset.action = 'reopen'
+      this.crashEl.append(this.crashText, this.crashBtn)
+      this.page.append(this.crashEl)
+      this.crashBtn.addEventListener('click', () => {
+        const tabId = this.info?.tabId
+        if (!tabId || this.reopening) return
+        this.reopening = true
+        this.crashBtn.disabled = true
+        void ipc.invoke('reopen', tabId).then(info => { if (info && panels.get(this.paneId) === this) this.bind(info) })
+          .finally(() => { this.reopening = false; this.crashBtn.disabled = false })
+      })
       const run = (action: string | undefined): void => {
         const tabId = this.info?.tabId ?? this.saved?.tabId
         if (!tabId || !action) return
@@ -445,7 +464,10 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     /** The tab's surface is tied to the page area; the frame shows main's title and address. */
     bind(info: TabInfo): void {
-      if (!this.binding) {
+      // A crashed tab lets its surface go (nothing to draw); "Reabrir" brings the tab back with a new surface.
+      if (this.binding && (info.crashed || this.boundSurface !== info.surfaceId)) { this.binding.dispose(); this.binding = undefined }
+      if (!this.binding && !info.crashed) {
+        this.boundSurface = info.surfaceId
         this.binding = ui.surfaces.attach(info.surfaceId, this.page)
         // The person's click or key on the shield (the agent has the tab): the bar answers, with the way to take it.
         this.subs.push(this.binding.onShieldInput(i => { if (i.kind === 'down' || i.kind === 'key' || i.kind === 'wheel') this.ignored() }))
@@ -509,7 +531,10 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.urlEl.textContent = displayUrl(url)
       this.urlEl.title = url.length <= 2048 && !/^data:/i.test(url) ? url : ''
       dressChip(this.ownerEl, s?.ownerSlotId, s ? agentOf(s.ownerSlotId) : undefined)
-      const state = this.info ? (this.info.loading ? 'loading' : 'live') : s?.url ? 'not-loaded' : 'no-address'
+      const crash = this.info?.crashed
+      this.crashEl.hidden = !crash
+      this.crashText.textContent = crash === 'browser' ? CRASH_BROWSER : crash === 'unresponsive' ? CRASH_HUNG : crash ? CRASH_GONE : ''
+      const state = crash ? 'crashed' : this.info ? (this.info.loading ? 'loading' : 'live') : s?.url ? 'not-loaded' : 'no-address'
       this.element.dataset.state = state
       this.stateEl.textContent = state === 'loading' ? LOADING : state === 'not-loaded' ? NOT_LOADED : state === 'no-address' ? CRED_NOT_KEPT : ''
       this.spinner.hidden = state !== 'loading'
