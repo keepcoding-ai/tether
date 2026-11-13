@@ -236,7 +236,7 @@ test('pads chrome: activity-bar icons, one --gap to the desks, content that abso
     await page.click(`#sidebar-left ${icon(EXPLORER)}`)
     await page.waitForFunction(() => window.__tether.sidebars()?.left.open === 'explorer.files')
     await page.click(`.pad.shown[data-pad="${EXPLORER}"] .xp-topbar .xp-more`)
-    await menuHas(page, 'Seguir o agente ativo')
+    await menuHas(page, 'Revelar no explorador')
     await menuHas(page, 'Mover para a barra direita')
     await page.screenshot({ path: join(shots, 'explorer-menu-light.png') })
     await page.locator('#ctx-menu li', { hasText: 'Fechar Explorador' }).click()

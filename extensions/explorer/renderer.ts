@@ -42,6 +42,7 @@ export function activate(ui: TetherUi): IDisposable[] {
         isOn: on,
         toggle,
         set: (key, value) => ui.settings.set(key, value),
+        onChange: (key, listener) => ui.settings.onChange(key, listener),
         reveal: () => { void reveal() },
       })),
     }),

@@ -57,6 +57,8 @@ export interface ExplorerControls {
   isOn(key: 'follow' | 'autoReveal' | 'confirmDelete'): boolean
   toggle(key: 'follow' | 'autoReveal'): void
   set(key: 'confirmDelete', value: boolean): void
+  /** Fires when a toggle changes from anywhere (header button, palette, settings page, settings.json). */
+  onChange(key: 'follow' | 'autoReveal', listener: () => void): IDisposable
   reveal(): void
 }
 
@@ -152,11 +154,9 @@ export class ExplorerView implements PadView {
     target?.focus()
   }
 
-  /** The pad's "⋯" menu: the two toggles, the command, and the two actions on the tree. */
+  /** The pad's "⋯" menu: the command and the two actions on the tree (the two toggles live in the header). */
   menu(): ContextMenuEntry[] {
     return [
-      { icon: 'target', label: 'Seguir o agente ativo', checked: this.controls.isOn('follow'), run: () => this.controls.toggle('follow') },
-      { icon: 'eye', label: 'Revelar o arquivo ativo', checked: this.controls.isOn('autoReveal'), run: () => this.controls.toggle('autoReveal') },
       { icon: 'target', label: 'Revelar no explorador', run: () => this.controls.reveal() },
       'sep',
       { icon: 'arrows-clockwise', label: 'Atualizar', run: () => this.refresh() },
@@ -945,12 +945,26 @@ export class ExplorerView implements PadView {
     const more = el('button', 'ib xp-more')
     more.type = 'button'; more.title = 'Mais ações da prancheta'; more.setAttribute('aria-label', 'Mais ações da prancheta')
     more.append(icon('dots-three'))
+    const follow = this.toggleButton('follow', 'target', 'Seguir o agente ativo')
+    const autoReveal = this.toggleButton('autoReveal', 'eye', 'Revelar o arquivo ativo')
     more.addEventListener('click', ev => {
       ev.stopPropagation()
       const r = more.getBoundingClientRect()
       this.ui.menus.context(r.left, r.bottom + 4, [...this.host.menuItems(), 'sep', ...this.menu()])
     })
-    this.topbar.append(el('span', 'xp-topbar-title', 'Explorador de Projeto'), el('span', 'xp-sp'), open, more)
+    this.topbar.append(el('span', 'xp-topbar-title', 'Explorador de Projeto'), el('span', 'xp-sp'), follow, autoReveal, open, more)
+  }
+
+  /** A header toggle: `aria-pressed` mirrors the setting, kept in sync when it changes elsewhere. */
+  private toggleButton(key: 'follow' | 'autoReveal', ic: IconName, label: string): HTMLButtonElement {
+    const b = el('button', 'ib xp-toggle')
+    b.type = 'button'; b.title = label; b.setAttribute('aria-label', label)
+    b.append(icon(ic))
+    const paint = (): void => b.setAttribute('aria-pressed', String(this.controls.isOn(key)))
+    paint()
+    b.addEventListener('click', () => { this.controls.toggle(key); paint() })
+    this.subs.push(this.controls.onChange(key, paint))
+    return b
   }
 
   private button(className: string, label: string, ic: IconName, onClick: () => void): HTMLButtonElement {

@@ -2,7 +2,7 @@
 // real agent: claude slots created with `start: false` are agent panes (kind 'claude', a folder) with no process behind them.
 //   1. follow is on by default: focusing the agent pane of B makes B the current project, then A's agent makes A; focusing a
 //      plain terminal (in B) or a note (in B) changes nothing;
-//   2. the pad's "⋯" menu has "Seguir o agente ativo" (checked) and "Revelar o arquivo ativo" (unchecked); unchecking follow
+//   2. the pad's header toggles "Seguir o agente ativo" (pressed) and "Revelar o arquivo ativo" (not pressed); unpressing follow
 //      freezes the current project when an agent is focused;
 //   3. "Revelar no explorador" (palette command and the note's tab menu) expands the folders down to the note's file and
 //      selects it;
@@ -105,10 +105,16 @@ async function padMenu(page: Page): Promise<{ label: string; checked: string | n
   return page.evaluate(() => [...document.querySelectorAll('#ctx-menu li[role^=menuitem]')].map(li => ({ label: li.textContent ?? '', checked: li.getAttribute('aria-checked') })))
 }
 
-async function toggleFromMenu(page: Page, label: string): Promise<void> {
-  await padMenu(page)
-  await page.click(`#ctx-menu li:has-text("${label}")`)
-  await page.waitForSelector('#ctx-menu', { state: 'detached' })
+/** The two header toggles' `aria-pressed`, in order: [follow, auto-reveal]. */
+async function headerToggles(page: Page): Promise<(string | null)[]> {
+  return page.evaluate(() => ['Seguir o agente ativo', 'Revelar o arquivo ativo'].map(l =>
+    document.querySelectorAll(`.pad.shown .xp-topbar .xp-toggle[aria-label="${l}"]`)[0]?.getAttribute('aria-pressed') ?? null))
+}
+
+async function toggleFromHeader(page: Page, label: string): Promise<void> {
+  const before = (await headerToggles(page))[label === 'Seguir o agente ativo' ? 0 : 1]
+  await page.click(`.pad.shown .xp-topbar .xp-toggle[aria-label="${label}"]`)
+  await page.waitForFunction(([l, b]) => document.querySelectorAll(`.pad.shown .xp-topbar .xp-toggle[aria-label="${l}"]`)[0]?.getAttribute('aria-pressed') !== b, [label, before] as const)
 }
 
 const settingsOf = (home: string): { follow?: unknown; autoReveal?: unknown } => {
@@ -156,13 +162,12 @@ test('explorer 2: seguir o agente ativo; revelar no explorador; revelar automát
     await page.waitForFunction(() => window.__tether.explorer()?.roots.length === 2, undefined, { timeout: 10_000 })
 
     // ---- 1. follow (on by default): an agent moves the current project; a terminal and a note do not ----
-    assert.deepEqual((await padMenu(page)).slice(-5), [
-      { label: 'Seguir o agente ativo', checked: 'true' },
-      { label: 'Revelar o arquivo ativo', checked: 'false' },
+    assert.deepEqual(await headerToggles(page), ['true', 'false'], 'header toggles: follow on, auto-reveal off by default')
+    assert.deepEqual((await padMenu(page)).slice(-3), [
       { label: 'Revelar no explorador', checked: null },
       { label: 'Atualizar', checked: null },
       { label: 'Recolher tudo', checked: null },
-    ], 'the pad menu: follow on, auto-reveal off by default; then the two actions on the tree (slice 3)')
+    ], 'the pad menu: the reveal command, then the two actions on the tree (the toggles moved to the header)')
     await page.keyboard.press('Escape')
     await page.evaluate(id => window.__tether.activate(id), agentB)
     await waitCurrent(page, 'beta', 'focusing the agent of B makes B current')
@@ -181,10 +186,10 @@ test('explorer 2: seguir o agente ativo; revelar no explorador; revelar automát
     assert.equal((await snap(page)).rows.some(r => r.selected), false, 'auto-reveal is off: opening a note selects nothing')
 
     // ---- 2. follow off freezes the current project ----
-    await toggleFromMenu(page, 'Seguir o agente ativo')
+    await toggleFromHeader(page, 'Seguir o agente ativo')
     await page.evaluate(id => window.__tether.activate(id), agentB)
     await stays(page, 'alpha', 'follow off: focusing the agent of B changes nothing')
-    await toggleFromMenu(page, 'Seguir o agente ativo') // back on
+    await toggleFromHeader(page, 'Seguir o agente ativo') // back on
     await page.evaluate(id => window.__tether.activate(id), agentA)
     await page.evaluate(id => window.__tether.activate(id), agentB)
     await waitCurrent(page, 'beta', 'follow on again')
@@ -210,17 +215,15 @@ test('explorer 2: seguir o agente ativo; revelar no explorador; revelar automát
     await noteOpen(page, topmd)
     await sleep(500)
     await waitRow(page, xmd, r => r.selected, 'auto-reveal off: the selection stays where it was')
-    await toggleFromMenu(page, 'Revelar o arquivo ativo')
-    const items = await padMenu(page)
-    await page.keyboard.press('Escape')
-    assert.equal(items.find(i => i.label === 'Revelar o arquivo ativo')?.checked, 'true')
+    await toggleFromHeader(page, 'Revelar o arquivo ativo')
+    assert.equal((await headerToggles(page))[1], 'true')
     await page.locator('.dv-tab:has-text("x.md")').first().click()
     await waitRow(page, xmd, r => r.selected, 'auto-reveal on: focusing x.md selects it')
     await page.locator('.dv-tab:has-text("top.md")').first().click()
     await waitRow(page, topmd, r => r.selected, 'auto-reveal on: focusing top.md selects it')
 
     // ---- 5. the settings are saved and survive a relaunch ----
-    await toggleFromMenu(page, 'Seguir o agente ativo') // follow off, auto-reveal on
+    await toggleFromHeader(page, 'Seguir o agente ativo') // follow off, auto-reveal on
     const deadline = Date.now() + 8_000
     while (Date.now() < deadline && !(settingsOf(home).follow === false && settingsOf(home).autoReveal === true)) await sleep(100)
     assert.deepEqual([settingsOf(home).follow, settingsOf(home).autoReveal], [false, true], 'both settings are in settings.json')
@@ -231,11 +234,7 @@ test('explorer 2: seguir o agente ativo; revelar no explorador; revelar automát
     ;({ app, page } = await launch(home))
     await page.waitForFunction(() => window.__tether.sidebars()?.left.open === 'explorer.files', undefined, { timeout: 15_000 })
     await page.waitForSelector('.pad.shown .xp-topbar .xp-more')
-    assert.deepEqual((await padMenu(page)).slice(-5, -3), [
-      { label: 'Seguir o agente ativo', checked: 'false' },
-      { label: 'Revelar o arquivo ativo', checked: 'true' },
-    ], 'the toggles come back as they were left')
-    await page.keyboard.press('Escape')
+    assert.deepEqual(await headerToggles(page), ['false', 'true'], 'the toggles come back as they were left')
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })

@@ -18,6 +18,10 @@
 }
 .xp-topbar-title { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .xp-topbar .ib { width: 24px; height: 24px; flex: none; }
+/* Header toggles (seguir, revelar): accent when on, dimmed when off. */
+.xp-topbar .xp-toggle[aria-pressed="false"] { opacity: .55; }
+.xp-topbar .xp-toggle[aria-pressed="false"]:hover { opacity: 1; }
+.xp-topbar .xp-toggle[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 /* The watcher notice: the pad cannot follow the disk by itself; "Atualizar" reads again. */
 .xp-notice {
