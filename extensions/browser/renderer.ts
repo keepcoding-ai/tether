@@ -598,7 +598,13 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.dot.dataset.role = 'activity'
       this.chip.dataset.role = 'tab-owner'
       this.titleEl.textContent = p.api.title ?? 'Guia'
-      this.element.append(this.iconEl, this.globe, this.titleEl, this.chip, this.dot)
+      const close = el('button', 'close')
+      close.title = 'Fechar guia'; close.setAttribute('aria-label', 'Fechar guia')
+      close.append(icon('x'))
+      close.addEventListener('pointerdown', ev => ev.stopPropagation())
+      close.addEventListener('click', ev => { ev.stopPropagation(); ui.panes.close(this.paneId) })
+      this.element.append(this.iconEl, this.globe, this.titleEl, this.chip, this.dot, close)
+      this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.panes.showTabMenu(this.paneId, ev.clientX, ev.clientY) })
       const owner = (p.params as { ownerSlotId?: string } | undefined)?.ownerSlotId
       if (owner) this.element.dataset.owner = owner
       this.sub = p.api.onDidTitleChange(e => { this.titleEl.textContent = e.title })
@@ -832,6 +838,13 @@ export function activate(ui: TetherUi): IDisposable[] {
       id: 'web', idPrefix: WEB_PANE_PREFIX, component: WEB_COMPONENT, tabComponent: WEB_TAB, hasSlot: false, icon: 'globe-simple',
       optionsOf: p => ({ id: p.id, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: p.title ?? 'Guia', params: p.params ?? {} }),
       create: () => new Panel(), createTab: () => new Tab() as unknown as ITabRenderer, has: id => panels.has(id),
+      // The minimum every tab has, so hiding the tabs' × never leaves a tab without a way to close it.
+      tabMenu: (id, x, y) => ui.menus.context(x, y, [
+        { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
+        { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(id) },
+        'sep',
+        { icon: 'x', label: 'Fechar guia', run: () => ui.panes.close(id) },
+      ]),
     }),
     ipc.on('tab', info => {
       const p = panels.get(paneIdOf(info.tabId))

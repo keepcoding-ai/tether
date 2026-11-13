@@ -689,14 +689,14 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 .tether-tab .dot.asleep .ph { width: 13px; height: 13px; }
 .tether-tab .dot.starting, .tether-tab .dot.queued, .tether-tab .dot.unconfirmed { color: var(--warn); }
 .tether-tab .dot.error { color: var(--err); }
-.tether-tab .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
-.tether-tab .close .ph { width: 13px; height: 13px; }
-.tether-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close .ph { width: 13px; height: 13px; }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close:hover { background: var(--bg-hover-2); color: var(--fg); }
 /* `inherit`, not `visible`: a visible child of a visibility:hidden ancestor still paints, so the active tab of an
    inactive desk layer (or of the closed drawer) would draw its × over the tab strip of the desk on screen. */
-.dv-active-tab .tether-tab .close, .tether-tab:hover .close, .tether-tab .close:focus-visible { visibility: inherit; }
+.dv-active-tab :is(.tether-tab, .br-web-tab, .pr-tab) .close, :is(.tether-tab, .br-web-tab, .pr-tab):hover .close, :is(.tether-tab, .br-web-tab, .pr-tab) .close:focus-visible { visibility: inherit; }
 /* Setting ui.tabClose off: no × on any tab (display:none also drops the click target and the keyboard focus, and gives the width back to the title); the tab still closes through its context menu. */
-body.no-tab-close .tether-tab .close { display: none; }
+body.no-tab-close :is(.tether-tab, .br-web-tab, .pr-tab) .close { display: none; }
 
 /* --- the fixed right end of the tab strip: "+N", status-bar toggle, "⋯" (tab-strip.ts; the preview's .tr) --- */
 .dv-theme-tether .dv-right-actions-container { flex: none; height: 100%; }
