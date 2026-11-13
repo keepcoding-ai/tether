@@ -65,3 +65,58 @@ export function toastFor(batch: readonly PendingToast[]): { title: string; body:
   if (done.length) parts.push(done.length === 1 ? '1 terminou' : `${done.length} terminaram`)
   return { title: `${all.length} agentes pedem atenção`, body: `${parts.join(', ')}: ${all.map(t => t.label).join(', ')}`, slotId: first.slotId }
 }
+
+// ---------- the bell (top bar): recent attention, muting ----------
+
+/** How many recent notices the bell keeps. */
+export const ATTENTION_HISTORY_MAX = 20
+
+export interface AttentionEntry { slotId: string; label: string; kind: 'done' | 'waiting'; at: number; seen: boolean }
+export interface AttentionState { items: AttentionEntry[]; unseen: number; mutedUntil?: number }
+
+/**
+ * The bell's short history, fed by the same transitions that queue a toast. Newest first; a slot appears once (a new
+ * notice for it replaces the old one and comes to the top). `unseen` counts the notices not yet looked at in the menu.
+ */
+export class AttentionHistory {
+  private items: AttentionEntry[] = []
+  private readonly max: number
+  constructor(max = ATTENTION_HISTORY_MAX) { this.max = max }
+
+  add(t: PendingToast, at: number): void {
+    this.items = [{ slotId: t.slotId, label: t.label, kind: t.kind, at, seen: false }, ...this.items.filter(e => e.slotId !== t.slotId)].slice(0, this.max)
+  }
+
+  markSeen(): void { this.items = this.items.map(e => e.seen ? e : { ...e, seen: true }) }
+  remove(slotId: string): void { this.items = this.items.filter(e => e.slotId !== slotId) }
+  get unseen(): number { return this.items.filter(e => !e.seen).length }
+  list(): AttentionEntry[] { return this.items.map(e => ({ ...e })) }
+}
+
+export const MUTE_CHOICES = ['30m', '1h', 'tomorrow'] as const
+export type MuteChoice = (typeof MUTE_CHOICES)[number]
+/** The hour "até amanhã" ends at: tomorrow morning, local time. */
+export const MUTE_TOMORROW_HOUR = 8
+
+export function isMuteChoice(v: unknown): v is MuteChoice { return (MUTE_CHOICES as readonly unknown[]).includes(v) }
+
+/** When a mute picked at `now` ends (epoch ms). Muting is temporary and never touches `notifications.os`. */
+export function muteUntil(choice: MuteChoice, now: number): number {
+  if (choice === '30m') return now + 30 * 60_000
+  if (choice === '1h') return now + 60 * 60_000
+  const d = new Date(now)
+  d.setDate(d.getDate() + 1)
+  d.setHours(MUTE_TOMORROW_HOUR, 0, 0, 0)
+  return d.getTime()
+}
+
+/** Whether a mute ending at `until` still holds at `now`; an expired mute is simply gone (the level comes back by itself). */
+export function isMuted(until: number | undefined, now: number): boolean {
+  return until !== undefined && now < until
+}
+
+/** The bell's icon state: the level, or muted while a mute holds. */
+export type BellState = OsNotifyLevel | 'muted'
+export function bellState(level: OsNotifyLevel, mutedUntil: number | undefined, now: number): BellState {
+  return isMuted(mutedUntil, now) ? 'muted' : level
+}

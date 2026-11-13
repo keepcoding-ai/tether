@@ -1,5 +1,6 @@
 // The narrow API the preload exposes to the renderer as `window.tether` (contextBridge).
 // Shared by the preload (implements it) and the renderer (consumes it).
+import type { AttentionState, MuteChoice } from './os-notify.ts'
 import type { Event as DaemonEvent, Notice, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
 import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
 import type { FontSizeCommand } from './font.ts'
@@ -176,6 +177,12 @@ export interface TetherApi {
   settingsReset(key: string): Promise<SettingWriteResult>
   settingsFile(): Promise<SettingsFileState>
   settingsOpen(): Promise<{ ok: true; path: string } | { ok: false; message: string }>
+  /** The bell (top bar): recent attention notices and the temporary mute of the system toasts (app/shared/os-notify.ts). */
+  attentionGet(): Promise<AttentionState>
+  attentionSeen(): void
+  /** Mutes the toasts for a while; null lifts the mute. `notifications.os` is never touched. */
+  attentionMute(choice: MuteChoice | null): void
+  onAttention(listener: (state: AttentionState) => void): () => void
   /** The dotted keys that changed in settings.json (a write of ours or an edit on disk). */
   onSettingsChanged(listener: (keys: string[]) => void): () => void
   /** The file's parse errors changed (empty once it parses again). */

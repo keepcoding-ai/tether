@@ -1,0 +1,29 @@
+/* The bell (app/renderer/bell.ts): the toolbar icon, its badge and its popover. Theme tokens only. */
+#btn-bell .bell-dot { position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 1.5px var(--desk-bg); pointer-events: none; }
+#btn-bell .bell-clock { position: absolute; right: 3px; bottom: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--desk-bg); pointer-events: none; }
+#btn-bell .bell-count { position: absolute; top: -3px; right: -6px; min-width: 14px; height: 14px; padding: 0 4px; border-radius: 7px; font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; background: var(--x-alert); color: var(--bg); box-shadow: 0 0 0 2px var(--bg-2); pointer-events: none; }
+.bell-pop {
+  position: absolute; top: 100%; right: 0; z-index: 60; width: 320px; margin-top: 4px; padding: 8px;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow); color: var(--fg);
+}
+.bell-pop .bell-label { color: var(--fg-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 8px 4px 4px; }
+.bell-pop .bell-head { display: flex; align-items: baseline; justify-content: space-between; }
+.bell-pop .bell-head .bell-label { padding-top: 2px; }
+.bell-pop .bell-link { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
+.bell-pop .bell-link:hover { text-decoration: underline; }
+.bell-pop .bell-list { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; }
+.bell-pop .bell-empty { color: var(--fg-dim); padding: 6px 4px; }
+.bell-pop .bell-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.bell-pop .bell-item:hover, .bell-pop .bell-item:focus-visible { background: var(--bg-hover-2); outline: none; }
+.bell-pop .bell-item.unseen .bell-name { font-weight: 600; }
+.bell-pop .bell-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bell-pop .bell-kind { font-size: 11px; padding: 1px 7px; border-radius: 999px; }
+.bell-pop .bell-kind.waiting { color: var(--x-alert); background: color-mix(in srgb, var(--x-alert) 16%, transparent); }
+.bell-pop .bell-kind.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.bell-pop .bell-at { font-size: 11px; color: var(--fg-dim); }
+.bell-pop .bell-radios { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
+.bell-pop .bell-radios label { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+.bell-pop .bell-radios input { margin: 0; accent-color: var(--accent); }
+.bell-pop .bell-mute { padding: 2px 4px 6px; color: var(--fg-dim); }
+.bell-pop .bell-more { display: block; width: 100%; margin-top: 4px; padding: 6px; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.bell-pop .bell-more:hover { background: var(--bg-hover-2); }

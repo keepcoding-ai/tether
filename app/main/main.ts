@@ -38,7 +38,7 @@ import { SurfaceBridge } from './surface-bridge.ts'
 import { AgentTracker } from './agents.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { slotLabel, trayModel, trayWanted } from '../shared/tray.ts'
-import { normalizeOsNotify, OS_NOTIFY_COALESCE_MS, OsNotifyRules, toastFor, type PendingToast } from '../shared/os-notify.ts'
+import { AttentionHistory, isMuted, isMuteChoice, muteUntil, normalizeOsNotify, OS_NOTIFY_COALESCE_MS, OsNotifyRules, toastFor, type AttentionState, type PendingToast } from '../shared/os-notify.ts'
 import type { TrayCommand } from '../shared/tray.ts'
 import { createTray, type TrayController } from './tray.ts'
 import { TrayNotices } from './tray-notices.ts'
@@ -100,6 +100,10 @@ let osNotifyBatch: PendingToast[] = []
 let osNotifyTimer: ReturnType<typeof setTimeout> | undefined
 /** Live toasts: a Notification collected by the GC loses its click handler. */
 const liveToasts = new Set<Notification>()
+/** The bell's recent notices (fed by the same transitions as the toasts) and its temporary mute (never written to settings). */
+const attentionHistory = new AttentionHistory()
+let mutedUntil: number | undefined
+let muteTimer: ReturnType<typeof setTimeout> | undefined
 /** The agents extensions see (TetherMain.agents), fed by the same daemon events. */
 const agentTracker = new AgentTracker()
 /** The extensions' notices the tray shows next to the terminals' attention (TetherMain.notices). */
@@ -187,7 +191,7 @@ function connectDaemon(): Promise<void> {
       daemon = client
       client.on('state', slot => { slotStates.set(slot.slotId, slot); noteAttention(slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
-      client.on('removed', slotId => { slotStates.delete(slotId); osNotifyRules.remove(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('removed', slotId => { slotStates.delete(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('proc', proc => win?.webContents.send('tether:event', { t: 'proc', proc }))
@@ -233,9 +237,31 @@ function windowInFront(): boolean {
 function noteAttention(slot: SlotState): void {
   const toast = osNotifyRules.apply(slot, slotLabel(slot), normalizeOsNotify(settings().notifications?.os), windowInFront())
   if (!toast) return
+  attentionHistory.add(toast, Date.now())
+  sendAttention()
+  if (isMuted(mutedUntil, Date.now())) return
   osNotifyBatch.push(toast)
   osNotifyTimer ??= setTimeout(showOsToast, OS_NOTIFY_COALESCE_MS)
 }
+
+function attentionState(): AttentionState {
+  return { items: attentionHistory.list(), unseen: attentionHistory.unseen, ...(isMuted(mutedUntil, Date.now()) ? { mutedUntil } : {}) }
+}
+
+function sendAttention(): void { win?.webContents.send('tether:attention', attentionState()) }
+
+/** Mutes the toasts until a deadline (null lifts it); one timer brings the bell back when the mute expires. */
+function setMute(until: number | undefined): void {
+  if (muteTimer) clearTimeout(muteTimer)
+  muteTimer = undefined
+  mutedUntil = until
+  if (until !== undefined) muteTimer = setTimeout(() => setMute(undefined), Math.max(0, until - Date.now()))
+  sendAttention()
+}
+
+ipcMain.handle('attention:get', () => attentionState())
+ipcMain.on('attention:seen', () => { attentionHistory.markSeen(); sendAttention() })
+ipcMain.on('attention:mute', (_e, choice: unknown) => setMute(isMuteChoice(choice) ? muteUntil(choice, Date.now()) : undefined))
 
 function dropOsToasts(): void {
   if (osNotifyTimer) clearTimeout(osNotifyTimer)
@@ -247,7 +273,7 @@ function showOsToast(): void {
   const t = toastFor(osNotifyBatch)
   dropOsToasts()
   // E2E windows never reach the user's screen; focus may also have come back while coalescing (the tab seal is enough).
-  if (!t || hidden || windowInFront() || !Notification.isSupported()) return
+  if (!t || hidden || windowInFront() || isMuted(mutedUntil, Date.now()) || !Notification.isSupported()) return
   const n = new Notification({ title: t.title, body: t.body, icon: join(__dirname, 'tether.ico') })
   liveToasts.add(n)
   n.on('click', () => { liveToasts.delete(n); void openWindow(t.slotId) })

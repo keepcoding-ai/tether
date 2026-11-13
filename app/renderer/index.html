@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="../../extensions/settings-screen/settings.css">
   <link rel="stylesheet" href="../../extensions/panel-pad-manager/manager.css">
   <link rel="stylesheet" href="extensions.css">
+  <link rel="stylesheet" href="bell.css">
   <link rel="stylesheet" href="../../extensions/explorer/renderer/explorer.css">
   <link rel="stylesheet" href="../../extensions/web-bridge/web-bridge.css">
   <link rel="stylesheet" href="../../extensions/browser/browser.css">
@@ -37,6 +38,11 @@
       <span class="sw-div" aria-hidden="true"></span>
     </div>
     <div class="tb-right">
+      <!-- The bell (app/renderer/bell.ts): recent attention, the system toasts' level and a temporary mute. -->
+      <div class="dropdown" id="bell-wrap">
+        <button id="btn-bell" class="ib" aria-label="Notificações" aria-haspopup="dialog" aria-expanded="false"><span class="i" data-icon="bell"></span></button>
+        <div id="bell-pop" class="bell-pop" role="dialog" aria-label="Notificações" hidden></div>
+      </div>
       <!-- The extensions' status icons (app/renderer/status-bar.ts), left of the connection icon. -->
       <div id="status-area" class="status-area"></div>
       <div class="dropdown" id="conn-wrap">

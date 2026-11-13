@@ -44,6 +44,7 @@ import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
+import { setupBell } from './bell.ts'
 import { openMoveDialog } from './move-dialog.ts'
 import { openSessionsDialog, refreshSessionsDialog } from './sessions-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
@@ -3393,8 +3394,11 @@ function setupConnectionPopover(): void {
   $('conn-restart').addEventListener('click', ev => { ev.stopPropagation(); closeToolbarPopups(); window.tether.command('restart-daemon') })
 }
 
+let bell: { close(): void } | undefined
+
 function closeToolbarPopups(): void {
   statusBar?.close()
+  bell?.close()
   $('conn-wrap').classList.remove('pinned')
   $('conn').setAttribute('aria-expanded', 'false')
   $('theme-menu').hidden = true
@@ -3421,6 +3425,11 @@ function renderConnection(): void {
 function setupUi(): void {
   // Static icons: <span data-icon="name"> in index.html becomes the inline SVG.
   for (const el of document.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
+  bell = setupBell({
+    openSlot: slotId => openSlot(slotId),
+    showSettings: key => { if (settingsRevealer) settingsRevealer(key); else void commands.run('settings.show', 'menu') },
+    closeOthers: () => { statusBar?.close(); $('conn-wrap').classList.remove('pinned'); $('theme-menu').hidden = true; $('btn-theme').setAttribute('aria-expanded', 'false') },
+  })
   $('btn-new').addEventListener('click', () => { void openNewDialog() })
   $('btn-drawer').addEventListener('click', () => setDrawerOpen(!drawer.isOpen))
   $('drawer-new').addEventListener('click', () => { void openNewDialog() })
