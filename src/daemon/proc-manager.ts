@@ -68,7 +68,7 @@ const PLAN_ROWS = 30
 const REFUSED_KEEP_MS = 30 * 60_000
 /** After killing an adopted process: how long its death and its ports' release are awaited. */
 const EXTERNAL_GONE_MS = 8_000
-const NOTICE_PREFIX = '[tether] processos: '
+const NOTICE_PREFIX = '[tether] processes: '
 
 /** How an act meets the uses of others: refuse (default), wait up to `waitMs`, or go ahead with a reason. */
 export interface GuardOptions {
