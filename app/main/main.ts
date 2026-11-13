@@ -4,7 +4,7 @@
 // renderer's memory is freed; the process stays, still connected to the daemon, to feed the tray). The daemon
 // keeps every slot running whatever the app does.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, screen, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
@@ -37,7 +37,8 @@ import { SurfaceManager } from './surfaces.ts'
 import { SurfaceBridge } from './surface-bridge.ts'
 import { AgentTracker } from './agents.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
-import { trayModel, trayWanted } from '../shared/tray.ts'
+import { slotLabel, trayModel, trayWanted } from '../shared/tray.ts'
+import { normalizeOsNotify, OS_NOTIFY_COALESCE_MS, OsNotifyRules, toastFor, type PendingToast } from '../shared/os-notify.ts'
 import type { TrayCommand } from '../shared/tray.ts'
 import { createTray, type TrayController } from './tray.ts'
 import { TrayNotices } from './tray-notices.ts'
@@ -93,6 +94,12 @@ let restartingDaemon = false
 let tray: TrayController | undefined
 /** What the tray shows: the daemon's slots, kept up to date from the list at connect time and the state events. */
 const slotStates = new Map<string, SlotState>()
+// System toasts for attention while tether is not in front (app/shared/os-notify.ts holds the rules).
+const osNotifyRules = new OsNotifyRules()
+let osNotifyBatch: PendingToast[] = []
+let osNotifyTimer: ReturnType<typeof setTimeout> | undefined
+/** Live toasts: a Notification collected by the GC loses its click handler. */
+const liveToasts = new Set<Notification>()
 /** The agents extensions see (TetherMain.agents), fed by the same daemon events. */
 const agentTracker = new AgentTracker()
 /** The extensions' notices the tray shows next to the terminals' attention (TetherMain.notices). */
@@ -178,9 +185,9 @@ function connectDaemon(): Promise<void> {
     try {
       const client = await connectOnce()
       daemon = client
-      client.on('state', slot => { slotStates.set(slot.slotId, slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
+      client.on('state', slot => { slotStates.set(slot.slotId, slot); noteAttention(slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
-      client.on('removed', slotId => { slotStates.delete(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('removed', slotId => { slotStates.delete(slotId); osNotifyRules.remove(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('proc', proc => win?.webContents.send('tether:event', { t: 'proc', proc }))
@@ -190,6 +197,8 @@ function connectDaemon(): Promise<void> {
         if (daemon !== client) return
         daemon = undefined
         slotStates.clear()
+        osNotifyRules.clear()
+        dropOsToasts()
         agentTracker.lost()
         updateTray()
         if (quittingAll || quitting) return
@@ -216,12 +225,43 @@ function connectDaemon(): Promise<void> {
   return connecting
 }
 
+function windowInFront(): boolean {
+  return !!win && !win.isDestroyed() && win.isFocused() && !win.isMinimized()
+}
+
+/** Feeds a slot state to the toast rules; a due toast waits a moment for others (one toast per burst). */
+function noteAttention(slot: SlotState): void {
+  const toast = osNotifyRules.apply(slot, slotLabel(slot), normalizeOsNotify(settings().notifications?.os), windowInFront())
+  if (!toast) return
+  osNotifyBatch.push(toast)
+  osNotifyTimer ??= setTimeout(showOsToast, OS_NOTIFY_COALESCE_MS)
+}
+
+function dropOsToasts(): void {
+  if (osNotifyTimer) clearTimeout(osNotifyTimer)
+  osNotifyTimer = undefined
+  osNotifyBatch = []
+}
+
+function showOsToast(): void {
+  const t = toastFor(osNotifyBatch)
+  dropOsToasts()
+  // E2E windows never reach the user's screen; focus may also have come back while coalescing (the tab seal is enough).
+  if (!t || hidden || windowInFront() || !Notification.isSupported()) return
+  const n = new Notification({ title: t.title, body: t.body, icon: join(__dirname, 'tether.ico') })
+  liveToasts.add(n)
+  n.on('click', () => { liveToasts.delete(n); void openWindow(t.slotId) })
+  n.on('close', () => liveToasts.delete(n))
+  n.show()
+  if (win && !win.isDestroyed()) win.flashFrame(true)
+}
+
 /** Loads the slot list for the tray (the renderer asks for its own copy). */
 async function syncSlots(client: DaemonClient): Promise<void> {
   const list = await request({ t: 'list' })
   if (daemon !== client || list.t !== 'ok') return
   slotStates.clear()
-  for (const s of list.slots ?? []) slotStates.set(s.slotId, s)
+  for (const s of list.slots ?? []) { slotStates.set(s.slotId, s); osNotifyRules.seed(s) }
   agentTracker.reset(list.slots ?? [])
   updateTray()
 }
@@ -416,7 +456,7 @@ function replaySettings(keys: readonly string[]): void {
   if (roots.has('confirmations')) win?.webContents.send('tether:confirmations', readConfirmations())
   if (roots.has('extensions')) extensionHost.settingsChangedOnDisk(keys)
 }
-type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown }
+type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown; notifications?: { os?: unknown } }
 
 // ---------- extensions (F9) ----------
 // The main side of the extensions (extensions/index.main.ts) and the core channels of their settings and listing
@@ -656,6 +696,7 @@ function createWindow(): void {
   if (start.fullscreen) created.setFullScreen(true)
   if (!hidden) created.once('ready-to-show', () => created.show())
   trackWindowState(created)
+  created.on('focus', () => created.flashFrame(false))
   // A <webview> is only ever an extension's isolated page (the note's HTML preview): with no extension guarding, none attaches.
   extensionHost.guardWebviews(created.webContents, () => created.webContents.on('will-attach-webview', event => event.preventDefault()))
   created.on('close', e => {
