@@ -175,6 +175,7 @@ export const controlTexts = (agent: string) => ({
   pauseAll: 'Pausar todas as guias',
   resumeAll: 'Retomar todas',
   pauseAgent: `Pausar as guias do ${agent}`,
+  pause: 'Pausar',
   resume: 'Retomar',
 })
 

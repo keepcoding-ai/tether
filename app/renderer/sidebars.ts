@@ -71,6 +71,8 @@ export class SideBars {
   /** The saved state of each desk's per-desk pads (desk id → pad id → state), as read; live views overwrite at save time. */
   private readonly deskStates = new Map<string, Record<string, unknown>>()
   private readonly views = new Map<string, Mounted>()
+  /** The view keys whose view is being created right now (see ensureView). */
+  private readonly creating = new Set<string>()
   /** A per-panel pad shown while no panel has the focus: just the blank view saying so (one per pad, no state). */
   private readonly noTarget = new Map<string, HTMLElement>()
   /** Pads by how recently they were opened or focused (the palette's "Mover prancheta…" acts on the first one still open). */
@@ -388,8 +390,18 @@ export class SideBars {
     const key = this.viewKey(pad.id, deskId, panelId)
     const existing = this.views.get(key)
     if (existing) return existing
+    // Creating a view re-enters: a frames pad's Desk adds its panes, the host hears its active panel change and calls
+    // render() (main.ts notifyActivePane), which asks for this same key before it is in `views`. A second view built
+    // there would be overwritten below and its wrapper left in #pads, `.shown`, out of every later render: painted on
+    // top of the pads and over the desks even with the side bar closed. The outer call registers the view; the inner one waits.
+    if (this.creating.has(key)) return undefined
     const type = this.host.padType(pad.id)
     if (!type) return undefined
+    this.creating.add(key)
+    try { return this.createView(pad, type, key, deskId, panelId) } finally { this.creating.delete(key) }
+  }
+
+  private createView(pad: PadDescriptor, type: PadType, key: string, deskId: string | undefined, panelId: string | undefined): Mounted | undefined {
     const { wrapper, body } = this.buildWrapper(pad, deskId, panelId)
     const state = panelId !== undefined ? this.state.pads[panelPadKey(pad.id, panelId)] : deskId === undefined ? this.state.pads[pad.id] : this.deskStates.get(deskId)?.[pad.id]
     let view: PadView
