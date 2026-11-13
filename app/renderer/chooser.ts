@@ -4,9 +4,9 @@
 // "Onde" row. Three fixed bands: the search on top (palette style), the list in the middle (the only part that
 // scrolls), the folder + actions at the bottom, so "Abrir" never leaves the screen. Rules in chooser-rules.ts.
 // Two steps, always (Guga, 09/11): an item has parameters to check (the folder, a note's destination), so a click or
-// a digit only selects it; the footer button (or Enter) opens it.
+// a digit only selects it; the footer button (or Enter) opens it, and a double click on an item opens it too.
 // Keys: type to filter; ↑/↓ wrap; 1–9 select the item with that number as shown; Enter opens the highlighted item;
-// a click on an item selects it; Esc clears the text, then closes the folder list, then cancels (the host
+// a click on an item selects it, a double click opens it; Esc clears the text, then closes the folder list, then cancels (the host
 // decides what cancelling means from the pane's origin). Nothing here talks to tetherd: the host resolves the pick.
 import type { Profile } from '../../src/daemon/protocol.ts'
 import type { EmptyOrigin } from '../shared/empty.ts'
@@ -164,6 +164,16 @@ export class Chooser {
       if (!row) return
       this.state.highlight = row.dataset.id
       this.paintHighlight()
+    })
+    // A double click opens the item, same as select + Enter (the destination and folder as they stand); never on the manage links.
+    this.list.addEventListener('dblclick', ev => {
+      const t = ev.target as HTMLElement
+      if (t.closest('.ch-manage, button')) return
+      const row = t.closest<HTMLElement>('.ch-item')
+      if (!row || this.busy) return
+      this.state.highlight = row.dataset.id
+      this.paintHighlight()
+      void this.open(this.highlighted())
     })
     // The selection moves only by a click, the arrows, a digit or the search; the mouse over a row is only a hover (CSS).
 

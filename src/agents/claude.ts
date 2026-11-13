@@ -2,7 +2,8 @@
 // tether (hooks injected via --settings, never the user's global settings), and how to read
 // what Claude keeps on disk (transcript exists? current title?).
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, delimiter } from 'node:path'
+import { dirname, join, resolve, delimiter, isAbsolute } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -71,18 +72,75 @@ export function ensureSettingsFile(home: string): string {
   return path
 }
 
-/** Finds the `claude` executable on PATH so it can be spawned without a shell. Falls back to the bare name. */
-export function resolveClaudeCommand(env: Record<string, string | undefined> = process.env): string {
-  if (process.platform !== 'win32') return 'claude'
+/** Seams of the resolver, so tests can fake the platform, the home, the file system and the login shell. */
+export interface ClaudeResolveDeps {
+  platform?: NodeJS.Platform
+  home?: string
+  exists?: (path: string) => boolean
+  /** Absolute path of `claude` as the user's login shell sees it, or undefined. */
+  loginShell?: (env: Record<string, string | undefined>) => string | undefined
+}
+
+/** macOS/Linux: asks the user's interactive login shell where `claude` is (rc files add dirs launchd never sees). */
+function claudeFromLoginShell(env: Record<string, string | undefined>): string | undefined {
+  const shell = env.SHELL
+  if (!shell) return undefined
+  try {
+    const out = execFileSync(shell, ['-lic', 'command -v claude'], { env: env as NodeJS.ProcessEnv, encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] })
+    const line = out.trim().split('\n').pop()?.trim()
+    return line && isAbsolute(line) && existsSync(line) ? line : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const loginShellCache = new Map<string, string>() // keyed by $SHELL; a miss is not cached (claude may get installed meanwhile)
+
+/**
+ * Finds the `claude` executable so it can be spawned without a shell. Returns an absolute path whenever it can:
+ * a daemon started from the Dock inherits launchd's minimal PATH, which lacks ~/.local/bin (the native install).
+ * Order: env PATH, known install dirs, the user's login shell. Falls back to the bare name.
+ */
+export function resolveClaudeCommand(env: Record<string, string | undefined> = process.env, deps: ClaudeResolveDeps = {}): string {
+  const platform = deps.platform ?? process.platform
+  const exists = deps.exists ?? existsSync
   const pathVar = env.PATH ?? env.Path ?? ''
-  for (const dir of pathVar.split(delimiter)) {
-    if (!dir) continue
-    for (const name of ['claude.exe', 'claude.cmd', 'claude']) {
-      const candidate = join(dir, name)
-      if (existsSync(candidate)) return candidate
+  if (platform === 'win32') {
+    for (const dir of pathVar.split(delimiter)) {
+      if (!dir) continue
+      for (const name of ['claude.exe', 'claude.cmd', 'claude']) {
+        const candidate = join(dir, name)
+        if (exists(candidate)) return candidate
+      }
     }
+    return 'claude'
+  }
+  for (const dir of pathVar.split(delimiter)) {
+    if (dir && isAbsolute(dir) && exists(join(dir, 'claude'))) return join(dir, 'claude')
+  }
+  const home = deps.home ?? homedir()
+  for (const dir of [join(home, '.local', 'bin'), join(home, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']) {
+    if (exists(join(dir, 'claude'))) return join(dir, 'claude')
+  }
+  const shell = env.SHELL ?? ''
+  const cached = loginShellCache.get(shell)
+  if (cached && exists(cached)) return cached
+  const found = (deps.loginShell ?? claudeFromLoginShell)(env)
+  if (found) {
+    if (!deps.loginShell) loginShellCache.set(shell, found)
+    return found
   }
   return 'claude'
+}
+
+/** `env` with the directory of an absolute `command` prepended to PATH (when missing), keeping every other entry. */
+export function withCommandDirOnPath(env: Record<string, string>, command: string, platform: NodeJS.Platform = process.platform): void {
+  if (!isAbsolute(command)) return
+  const dir = dirname(command)
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
+  const entries = (env[key] ?? '').split(delimiter).filter(Boolean)
+  if (entries.includes(dir)) return
+  env[key] = [dir, ...entries].join(platform === 'win32' ? ';' : delimiter)
 }
 
 /** process.env without any CLAUDE* variable (E0 finding 1: inherited ones make Claude skip the transcript). */
@@ -114,8 +172,10 @@ function plan(input: PlanInput): LaunchPlan {
   env[ENV_SLOT] = slot.slotId
   env[ENV_AGENT] = 'claude'
   env[ENV_HOME] = home
+  const command = resolveClaudeCommand(env)
+  withCommandDirOnPath(env, command)
   return {
-    command: resolveClaudeCommand(env),
+    command,
     args,
     // Canonical even for slots/bindings recorded before the fix (a lower-case drive letter would hide
     // the project's sessions from Claude's /resume picker).

@@ -8,7 +8,9 @@
 .br-empty-go { margin-top: 4px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg); font: inherit; font-size: 12.5px; cursor: pointer; }
 .br-empty-go:hover { background: var(--bg-3, var(--bg-2)); }
 .br-empty-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.br-web { position: absolute; inset: 0; display: flex; flex-direction: column; }
+/* The pane fills dockview's content container in the flow, as the core's panes do: an absolute box would take the nearest
+   positioned ancestor, the group's view (dockview gives it a transform), and cover the tab strip with the bar and the page. */
+.br-web { position: relative; height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .br-web-bar { flex: none; display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 3px 8px; border-bottom: 1px solid var(--border); background: var(--bg-2); font-size: 12px; overflow: hidden; }
 .br-web-owner:empty, .br-web-state:empty { display: none; }
 .br-web-title { flex: none; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
@@ -53,11 +55,9 @@
 @media (prefers-reduced-motion: reduce) { .br-web-spin { animation: none; } }
 .br-web-cookies, .br-web-memory { flex: none; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; line-height: 16px; color: var(--fg-dim); }
 .br-web-memory { color: var(--warn); border-color: currentColor; }
-/* The tab: icon, title, owner chip, activity dot. */
-.br-web-tab { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* The tab's own marks (the tab itself is the core's `tether-tab`): the site's icon, the activity dot. */
 .br-web-tab-icon, .br-web-tab-globe { flex: none; width: 14px; height: 14px; }
 .br-web-tab-icon[hidden] { display: none; }
-.br-web-tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .br-web-tab-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .br-web-tab-dot[hidden] { display: none; }
 .br-web-tab[data-activity="agent"] .br-web-tab-dot { background: var(--ok); }
@@ -97,3 +97,13 @@
 .br-pad-drow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
 .br-pad-dtext { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .br-pad-dtext .br-pad-title, .br-pad-dtext .br-pad-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Each row of the pad: the tab's own actions at one click (tab-actions.ts), the same icons and names as its tab menu. */
+.br-pad-row { display: flex; align-items: center; }
+.br-pad-row > .br-pad-open { flex: 1 1 auto; min-width: 0; }
+.br-pad-row-acts { flex: none; display: flex; align-items: center; gap: 2px; padding-right: 4px; }
+.br-pad-icon { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--fg-dim); cursor: pointer; }
+.br-pad-icon .ph, .br-pad-icon svg { width: 14px; height: 14px; }
+.br-pad-icon:hover { background: var(--bg-hover); color: var(--fg); }
+.br-pad-icon[data-danger="true"]:hover { color: var(--err); }
+.br-pad-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
