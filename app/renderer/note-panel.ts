@@ -10,7 +10,8 @@
 //     returns), so the palette lists them with their chords.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import type { Command } from './commands.ts'
-import { icon, setIcon } from './icons.ts'
+import { createTabHeader } from './tab-header.ts'
+import { setIcon } from './icons.ts'
 import { defineTheme, type Editor, monaco, THEME_NAME, type ViewState } from './monaco.ts'
 import { chordFromLabel, EDITOR_GROUP, editorCommandId } from './note-rules.ts'
 import { terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -674,20 +675,15 @@ export class NoteTab implements ITabRenderer {
   constructor(host: NoteHost, isDirty: (id: string) => boolean) {
     this.host = host
     this.isDirty = isDirty
-    this.element = document.createElement('div')
-    this.element.className = 'tether-tab note'
-    const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon('note-pencil'))
-    this.text = document.createElement('span'); this.text.className = 'text'
     this.dirtyMark = document.createElement('span'); this.dirtyMark.className = 'dirty'; this.dirtyMark.hidden = true
     this.dirtyMark.title = 'Gravando…'
-    const close = document.createElement('button')
-    close.className = 'close'; close.title = 'Fechar nota'; close.setAttribute('aria-label', 'Fechar nota')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onClose(this.api.id) })
-    this.element.append(kind, this.text, this.dirtyMark, close)
-    this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
+    const h = createTabHeader({
+      className: 'note', glyph: 'note-pencil', emblems: [this.dirtyMark],
+      close: { label: 'Fechar nota', onClose: () => { if (this.api) this.host.onClose(this.api.id) } },
+      onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
+      onDblClick: () => this.startRename(),
+    })
+    this.element = h.element; this.text = h.text
   }
 
   init(params: TabPartInitParameters): void {

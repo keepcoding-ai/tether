@@ -3,6 +3,7 @@
 // The params are never touched: when the extension is back on, the pane opens as it was. Built from the manifest's
 // `contributes.paneTypes` (extensions/types.ts), registered by main.ts for every extension that is not active.
 import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters, DockviewPanelApi } from 'dockview-core'
+import { createTabHeader } from './tab-header.ts'
 import { icon } from './icons.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
 
@@ -57,17 +58,12 @@ export class DisabledTab implements ITabRenderer {
   private readonly text: HTMLElement
 
   constructor(host: DisabledPaneHost) {
-    this.element = document.createElement('div')
-    this.element.className = 'tether-tab ext-off'
-    const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon('puzzle-piece'))
-    this.text = document.createElement('span'); this.text.className = 'text'
-    const close = document.createElement('button')
-    close.className = 'close'; close.title = 'Fechar'; close.setAttribute('aria-label', 'Fechar painel')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) host.onClose(this.api.id) })
-    this.element.append(kind, this.text, close)
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) host.onTabMenu(this.api.id, ev.clientX, ev.clientY) })
+    const h = createTabHeader({
+      className: 'ext-off', glyph: 'puzzle-piece',
+      close: { label: 'Fechar', aria: 'Fechar painel', onClose: () => { if (this.api) host.onClose(this.api.id) } },
+      onMenu: ev => { if (this.api) host.onTabMenu(this.api.id, ev.clientX, ev.clientY) },
+    })
+    this.element = h.element; this.text = h.text
   }
 
   init(params: TabPartInitParameters): void {

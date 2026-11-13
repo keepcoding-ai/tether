@@ -53,11 +53,16 @@
 @media (prefers-reduced-motion: reduce) { .br-web-spin { animation: none; } }
 .br-web-cookies, .br-web-memory { flex: none; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; line-height: 16px; color: var(--fg-dim); }
 .br-web-memory { color: var(--warn); border-color: currentColor; }
-/* The tab: icon, title, owner chip, activity dot. */
-.br-web-tab { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* The tab: the shared tab header (.tether-tab: kind, text, emblems, dot, close) with the favicon in .kind, the owner as a
+   compact emblem the size of the terminal tabs' emblems (its full text in the tooltip), and the activity dot. */
+.br-web-tab .kind { width: 14px; height: 14px; align-items: center; justify-content: center; }
 .br-web-tab-icon, .br-web-tab-globe { flex: none; width: 14px; height: 14px; }
 .br-web-tab-icon[hidden] { display: none; }
-.br-web-tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.br-web-tab .br-web-tab-owner {
+  display: inline-grid; place-items: center; flex: none; width: 16px; height: 16px; box-sizing: border-box; padding: 0; border-radius: 4px;
+  font-size: 10px; font-weight: 600; line-height: 1; max-width: none;
+}
+.br-web-tab .br-web-tab-owner[hidden] { display: none; }
 .br-web-tab-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .br-web-tab-dot[hidden] { display: none; }
 .br-web-tab[data-activity="agent"] .br-web-tab-dot { background: var(--ok); }

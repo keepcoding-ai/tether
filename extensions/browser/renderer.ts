@@ -22,6 +22,7 @@
 import type { GroupPanelPartInitParameters, IContentRenderer, IDockviewPanel, ITabRenderer } from 'dockview-core'
 import type { AttentionHandle, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
+import { createTabHeader } from '../../app/renderer/tab-header.ts'
 import { factsOf } from '../../app/renderer/surface-host.ts'
 import { hostVisible } from '../../app/shared/surface-panel-rules.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
@@ -59,6 +60,22 @@ function dressChip(chip: HTMLElement, slotId: string | undefined, agent: { name:
   chip.dataset.ended = c.ended ? 'true' : 'false'
   chip.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
   chip.title = agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : ''
+}
+/**
+ * The owner on the tab strip: a compact emblem (the owner's initial on its hue, the size of the terminal tabs' emblems), with
+ * the full text ("‹agente›", "‹agente› encerrado") in data-label, the tooltip and aria-label instead of inline.
+ */
+function dressTabOwner(badge: HTMLElement, slotId: string | undefined, agent: { name: string; alive: boolean } | undefined): void {
+  const c = ownerChip(agent)
+  const label = slotId ? c.text : ''
+  badge.dataset.label = label
+  badge.dataset.ended = c.ended ? 'true' : 'false'
+  badge.hidden = !label
+  badge.textContent = label ? (agent ? shortName(agent.name) : label).trim().charAt(0).toUpperCase() : ''
+  badge.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
+  const tip = agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : label
+  badge.title = tip
+  if (tip) badge.setAttribute('aria-label', tip); else badge.removeAttribute('aria-label')
 }
 /** How long the tab's dot stays lit after the agent's last command. */
 const ACTIVE_MS = 1500
@@ -579,15 +596,21 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
   }
 
-  /** The tab of a pane: icon, title, the owner's chip and a dot while the page loads or the agent acts. */
+  /** The tab of a pane (the shared tab header): favicon, title, the owner's emblem and a dot while the page loads or the agent acts. */
   const tabs = new Set<Tab>()
   class Tab implements ITabRenderer {
-    readonly element = el('div', 'br-web-tab')
     private readonly iconEl = el('img', 'br-web-tab-icon')
     private readonly globe = icon('globe-simple', 'br-web-tab-globe')
-    private readonly titleEl = el('span', 'br-web-tab-title')
     private readonly chip = el('span', 'br-web-tab-owner')
     private readonly dot = el('span', 'br-web-tab-dot')
+    private readonly header = createTabHeader({
+      className: 'br-web-tab', kindChildren: [this.iconEl, this.globe], textClass: 'br-web-tab-title',
+      emblems: [this.chip], dot: this.dot,
+      close: { label: 'Fechar guia', onClose: () => ui.panes.close(this.paneId) },
+      onMenu: ev => ui.panes.showTabMenu(this.paneId, ev.clientX, ev.clientY),
+    })
+    readonly element = this.header.element
+    private readonly titleEl = this.header.text
     private sub: IDisposable | undefined
     paneId = ''
     init(p: GroupPanelPartInitParameters & { api: { title?: string } }): void {
@@ -598,13 +621,6 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.dot.dataset.role = 'activity'
       this.chip.dataset.role = 'tab-owner'
       this.titleEl.textContent = p.api.title ?? 'Guia'
-      const close = el('button', 'close')
-      close.title = 'Fechar guia'; close.setAttribute('aria-label', 'Fechar guia')
-      close.append(icon('x'))
-      close.addEventListener('pointerdown', ev => ev.stopPropagation())
-      close.addEventListener('click', ev => { ev.stopPropagation(); ui.panes.close(this.paneId) })
-      this.element.append(this.iconEl, this.globe, this.titleEl, this.chip, this.dot, close)
-      this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.panes.showTabMenu(this.paneId, ev.clientX, ev.clientY) })
       const owner = (p.params as { ownerSlotId?: string } | undefined)?.ownerSlotId
       if (owner) this.element.dataset.owner = owner
       this.sub = p.api.onDidTitleChange(e => { this.titleEl.textContent = e.title })
@@ -615,7 +631,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     paint(): void {
       const panel = panels.get(this.paneId)
       const owner = panel?.saved?.ownerSlotId ?? this.element.dataset.owner
-      dressChip(this.chip, owner, owner ? agentOf(owner) : undefined)
+      dressTabOwner(this.chip, owner, owner ? agentOf(owner) : undefined)
       const favicon = panel?.favicon()
       if (favicon) { if (this.iconEl.src !== favicon) this.iconEl.src = favicon } else this.iconEl.removeAttribute('src')
       this.iconEl.hidden = !favicon
@@ -781,7 +797,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     if (!t) return undefined
     const chip = t.element.querySelector('.br-web-tab-owner') as HTMLElement
     return {
-      title: t.element.querySelector('.br-web-tab-title')?.textContent ?? '', owner: chip.textContent ?? '', ownerHue: chip.style.getPropertyValue('--br-hue'),
+      title: t.element.querySelector('.br-web-tab-title')?.textContent ?? '', owner: chip.dataset.label ?? '', ownerHue: chip.style.getPropertyValue('--br-hue'),
       ownerEnded: chip.dataset.ended === 'true', icon: (t.element.querySelector('.br-web-tab-icon') as HTMLElement | null)?.hidden === false,
       activity: t.element.dataset.activity ?? '',
     }
