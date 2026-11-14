@@ -41,10 +41,10 @@ var __toESM = (mod, isNodeMode, target2) => (target2 = mod != null ? __create(__
   mod
 ));
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/helpers/util.js
+// node_modules/zod/v3/helpers/util.js
 var util, objectUtil, ZodParsedType, getParsedType;
 var init_util = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/helpers/util.js"() {
+  "node_modules/zod/v3/helpers/util.js"() {
     (function(util2) {
       util2.assertEqual = (_) => {
       };
@@ -178,10 +178,10 @@ var init_util = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/ZodError.js
+// node_modules/zod/v3/ZodError.js
 var ZodIssueCode, ZodError;
 var init_ZodError = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/ZodError.js"() {
+  "node_modules/zod/v3/ZodError.js"() {
     init_util();
     ZodIssueCode = util.arrayToEnum([
       "invalid_type",
@@ -313,10 +313,10 @@ var init_ZodError = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/locales/en.js
+// node_modules/zod/v3/locales/en.js
 var errorMap, en_default;
 var init_en = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/locales/en.js"() {
+  "node_modules/zod/v3/locales/en.js"() {
     init_ZodError();
     init_util();
     errorMap = (issue2, _ctx) => {
@@ -423,19 +423,19 @@ var init_en = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/errors.js
+// node_modules/zod/v3/errors.js
 function getErrorMap() {
   return overrideErrorMap;
 }
 var overrideErrorMap;
 var init_errors = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/errors.js"() {
+  "node_modules/zod/v3/errors.js"() {
     init_en();
     overrideErrorMap = en_default;
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/helpers/parseUtil.js
+// node_modules/zod/v3/helpers/parseUtil.js
 function addIssueToContext(ctx, issueData) {
   const overrideMap = getErrorMap();
   const issue2 = makeIssue({
@@ -457,7 +457,7 @@ function addIssueToContext(ctx, issueData) {
 }
 var makeIssue, ParseStatus, INVALID, DIRTY, OK, isAborted, isDirty, isValid, isAsync;
 var init_parseUtil = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/helpers/parseUtil.js"() {
+  "node_modules/zod/v3/helpers/parseUtil.js"() {
     init_errors();
     init_en();
     makeIssue = (params) => {
@@ -551,16 +551,16 @@ var init_parseUtil = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/helpers/typeAliases.js
+// node_modules/zod/v3/helpers/typeAliases.js
 var init_typeAliases = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/helpers/typeAliases.js"() {
+  "node_modules/zod/v3/helpers/typeAliases.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/helpers/errorUtil.js
+// node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 var init_errorUtil = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/helpers/errorUtil.js"() {
+  "node_modules/zod/v3/helpers/errorUtil.js"() {
     (function(errorUtil2) {
       errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
       errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
@@ -568,7 +568,7 @@ var init_errorUtil = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/types.js
+// node_modules/zod/v3/types.js
 function processCreateParams(params) {
   if (!params)
     return {};
@@ -739,7 +739,7 @@ function createZodEnum(values, params) {
 }
 var ParseInputLazyPath, handleResult, ZodType, cuidRegex, cuid2Regex, ulidRegex, uuidRegex, nanoidRegex, jwtRegex, durationRegex, emailRegex, _emojiRegex, emojiRegex, ipv4Regex, ipv4CidrRegex, ipv6Regex, ipv6CidrRegex, base64Regex, base64urlRegex, dateRegexSource, dateRegex, ZodString, ZodNumber, ZodBigInt, ZodBoolean, ZodDate, ZodSymbol, ZodUndefined, ZodNull, ZodAny, ZodUnknown, ZodNever, ZodVoid, ZodArray, ZodObject, ZodUnion, getDiscriminator, ZodDiscriminatedUnion, ZodIntersection, ZodTuple, ZodRecord, ZodMap, ZodSet, ZodFunction, ZodLazy, ZodLiteral, ZodEnum, ZodNativeEnum, ZodPromise, ZodEffects, ZodOptional, ZodNullable, ZodDefault, ZodCatch, ZodNaN, ZodBranded, ZodPipeline, ZodReadonly, late, ZodFirstPartyTypeKind, stringType, numberType, nanType, bigIntType, booleanType, dateType, symbolType, undefinedType, nullType, anyType, unknownType, neverType, voidType, arrayType, objectType, strictObjectType, unionType, discriminatedUnionType, intersectionType, tupleType, recordType, mapType, setType, functionType, lazyType, literalType, enumType, nativeEnumType, promiseType, effectsType, optionalType, nullableType, preprocessType, pipelineType;
 var init_types = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/types.js"() {
+  "node_modules/zod/v3/types.js"() {
     init_ZodError();
     init_errors();
     init_errorUtil();
@@ -3983,9 +3983,9 @@ var init_types = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/external.js
+// node_modules/zod/v3/external.js
 var init_external = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/external.js"() {
+  "node_modules/zod/v3/external.js"() {
     init_errors();
     init_parseUtil();
     init_typeAliases();
@@ -3995,14 +3995,14 @@ var init_external = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/index.js
+// node_modules/zod/v3/index.js
 var init_v3 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v3/index.js"() {
+  "node_modules/zod/v3/index.js"() {
     init_external();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/util.js
+// node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -4735,7 +4735,7 @@ function constantCatch(value) {
 }
 var Cached, EVALUATING, captureStackTrace, allowsEval, getParsedType2, propertyKeyTypes, primitiveTypes, NUMBER_FORMAT_RANGES, BIGINT_FORMAT_RANGES, highSurrogate, Class, installing, broke, breaker, CONSTANT_CATCH;
 var init_util2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/util.js"() {
+  "node_modules/zod/v4/core/util.js"() {
     init_core();
     Cached = class {
       constructor(getter) {
@@ -4850,7 +4850,7 @@ var init_util2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/core.js
+// node_modules/zod/v4/core/core.js
 function newError(Definition) {
   const E = _E;
   if (E) {
@@ -4953,7 +4953,7 @@ function config(newConfig) {
 }
 var _a, NEVER, _zodDesc, _E, $brand, $ZodAsyncError, $ZodEncodeError, globalConfig;
 var init_core = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/core.js"() {
+  "node_modules/zod/v4/core/core.js"() {
     init_util2();
     NEVER = /* @__PURE__ */ Object.freeze({
       status: "aborted"
@@ -4977,7 +4977,7 @@ var init_core = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/errors.js
+// node_modules/zod/v4/core/errors.js
 function _getMessage() {
   const internals = this._zod;
   internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -5135,7 +5135,7 @@ function prettifyError(error62) {
 }
 var _messageDesc, _issuesDesc, _installedToString, initializer, $ZodError, $ZodRealError;
 var init_errors2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/errors.js"() {
+  "node_modules/zod/v4/core/errors.js"() {
     init_core();
     init_util2();
     _messageDesc = {
@@ -5176,7 +5176,7 @@ var init_errors2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/parse.js
+// node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
   return { callee: params?.callee ?? callee, Err: params?.Err };
 }
@@ -5216,7 +5216,7 @@ function validateFallback(schema, value, _ctx) {
 }
 var _parse, parse, _parseAsync, parseAsync, _safeParse, safeParse, _safeParseAsync, safeParseAsync, COMPILE_INVALID, COMPILE_FALLBACK, validate, validateAsync, _encode, encode, _decode, decode, _encodeAsync, encodeAsync, _decodeAsync, decodeAsync, _safeEncode, safeEncode, _safeDecode, safeDecode, _safeEncodeAsync, safeEncodeAsync, _safeDecodeAsync, safeDecodeAsync;
 var init_parse = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/parse.js"() {
+  "node_modules/zod/v4/core/parse.js"() {
     init_core();
     init_errors2();
     init_util2();
@@ -5344,7 +5344,7 @@ var init_parse = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/regexes.js
+// node_modules/zod/v4/core/regexes.js
 var regexes_exports = {};
 __export(regexes_exports, {
   anyString: () => anyString,
@@ -5445,7 +5445,7 @@ function fixedBase64url(length) {
 }
 var cuid, cuid2, ulid, xid, ksuid, nanoid, duration, extendedDuration, guid, uuid, uuid4, uuid6, uuid7, email, html5Email, rfc5322Email, unicodeEmail, idnEmail, browserEmail, _emoji, ipv4, ipv6, mac, cidrv4, cidrv6, base64, base64url, hostname, domain, httpProtocol, e164, creditCard, currencyCode, iban, dateSource, date, anyString, string, bigint, integer, number, boolean, _null, _undefined, lowercase, uppercase, hex, md5_hex, md5_base64, md5_base64url, sha1_hex, sha1_base64, sha1_base64url, sha256_hex, sha256_base64, sha256_base64url, sha384_hex, sha384_base64, sha384_base64url, sha512_hex, sha512_base64, sha512_base64url;
 var init_regexes = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/regexes.js"() {
+  "node_modules/zod/v4/core/regexes.js"() {
     init_util2();
     cuid = /^[cC][0-9a-z]{6,}$/;
     cuid2 = /^[0-9a-z]+$/;
@@ -5522,7 +5522,7 @@ var init_regexes = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/checks.js
+// node_modules/zod/v4/core/checks.js
 function handleCheckPropertyResult(result, payload, property) {
   if (result.issues.length) {
     payload.issues.push(...prefixIssues(property, result.issues));
@@ -5530,7 +5530,7 @@ function handleCheckPropertyResult(result, payload, property) {
 }
 var $ZodCheck, _whenHasSize, _whenHasLength, numericOriginMap, $ZodCheckLessThan, $ZodCheckGreaterThan, $ZodCheckMultipleOf, $ZodCheckNumberFormat, $ZodCheckBigIntFormat, $ZodCheckMaxSize, $ZodCheckMinSize, $ZodCheckSizeEquals, $ZodCheckMaxLength, $ZodCheckMinLength, $ZodCheckLengthEquals, $ZodCheckStringFormat, $ZodCheckRegex, $ZodCheckLowerCase, $ZodCheckUpperCase, $ZodCheckIncludes, $ZodCheckStartsWith, $ZodCheckEndsWith, $ZodCheckProperty, $ZodCheckProperties, $ZodCheckMimeType, $ZodCheckOverwrite;
 var init_checks = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/checks.js"() {
+  "node_modules/zod/v4/core/checks.js"() {
     init_core();
     init_regexes();
     init_util2();
@@ -6006,10 +6006,10 @@ var init_checks = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/doc.js
+// node_modules/zod/v4/core/doc.js
 var Doc;
 var init_doc = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/doc.js"() {
+  "node_modules/zod/v4/core/doc.js"() {
     Doc = class {
       constructor(args = [], closed = {}) {
         this.content = [];
@@ -6052,10 +6052,10 @@ ${content.join("\n")}
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/versions.js
+// node_modules/zod/v4/core/versions.js
 var version;
 var init_versions = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/versions.js"() {
+  "node_modules/zod/v4/core/versions.js"() {
     version = {
       major: 4,
       minor: 6,
@@ -6064,7 +6064,7 @@ var init_versions = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/schemas.js
+// node_modules/zod/v4/core/schemas.js
 async function validateAsync2(inst, value) {
   const ctx = { async: true };
   return toStandardResult(await inst._zod.run({ value, issues: [] }, ctx), ctx);
@@ -6458,7 +6458,7 @@ function handleIntersectionResults(result, left, right) {
   const unrecKeys = /* @__PURE__ */ new Map();
   let unrecIssue;
   const keyIssues = /* @__PURE__ */ new Map();
-  const collect = (iss, side) => {
+  const collect2 = (iss, side) => {
     let keys;
     if (iss.code === "unrecognized_keys" && !iss.path?.length) {
       unrecIssue ?? (unrecIssue = iss);
@@ -6479,11 +6479,11 @@ function handleIntersectionResults(result, left, right) {
     return true;
   };
   for (const iss of left.issues) {
-    if (!collect(iss, "l"))
+    if (!collect2(iss, "l"))
       result.issues.push(iss);
   }
   for (const iss of right.issues) {
-    if (!collect(iss, "r"))
+    if (!collect2(iss, "r"))
       result.issues.push(iss);
   }
   const bothKeys = [...unrecKeys].filter(([, f]) => f.l && f.r).map(([k]) => k);
@@ -6723,7 +6723,7 @@ function handleRefineResult(result, payload, input3, inst) {
 }
 var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodMAC, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, CC_SANITIZE, $ZodCreditCard, $ZodIBAN, $ZodJWT, $ZodCustomStringFormat, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodBigInt, $ZodBigIntFormat, $ZodSymbol, $ZodUndefined, $ZodNull, $ZodAny, $ZodUnknown, $ZodNever, $ZodVoid, $ZodDate, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodXor, $ZodDiscriminatedUnion, $ZodIntersection, $ZodTuple, $ZodRecord, $ZodMap, $ZodSet, $ZodEnum, $ZodLiteral, $ZodFile, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodSuccess, $ZodCatch, $ZodNaN, $ZodPipe, $ZodCodec, $ZodPreprocess, $ZodReadonly, $ZodTemplateLiteral, $ZodFunction, $ZodPromise, $ZodLazy, $ZodCustom;
 var init_schemas = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/schemas.js"() {
+  "node_modules/zod/v4/core/schemas.js"() {
     init_checks();
     init_core();
     init_doc();
@@ -8491,7 +8491,7 @@ var init_schemas = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/memoizer.js
+// node_modules/zod/v4/core/memoizer.js
 function isRef(value) {
   return value !== null && typeof value === "object";
 }
@@ -8655,7 +8655,7 @@ function isBackEdge(ctx, value) {
 }
 var $ZodCyclicError, STATE, NO_ISSUES, recursive, NONE, ASSUMED, PROVEN, handoff, open, memo;
 var init_memoizer = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/memoizer.js"() {
+  "node_modules/zod/v4/core/memoizer.js"() {
     init_util2();
     $ZodCyclicError = class extends Error {
       constructor() {
@@ -8773,7 +8773,7 @@ var init_memoizer = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ar.js
+// node_modules/zod/v4/locales/ar.js
 function ar_default() {
   return {
     localeError: error()
@@ -8781,7 +8781,7 @@ function ar_default() {
 }
 var error;
 var init_ar = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ar.js"() {
+  "node_modules/zod/v4/locales/ar.js"() {
     init_util2();
     error = () => {
       const Sizable = {
@@ -8891,7 +8891,7 @@ var init_ar = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/az.js
+// node_modules/zod/v4/locales/az.js
 function az_default() {
   return {
     localeError: error2()
@@ -8899,7 +8899,7 @@ function az_default() {
 }
 var error2;
 var init_az = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/az.js"() {
+  "node_modules/zod/v4/locales/az.js"() {
     init_util2();
     error2 = () => {
       const Sizable = {
@@ -9008,7 +9008,7 @@ var init_az = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/be.js
+// node_modules/zod/v4/locales/be.js
 function getBelarusianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -9031,7 +9031,7 @@ function be_default() {
 }
 var error3;
 var init_be = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/be.js"() {
+  "node_modules/zod/v4/locales/be.js"() {
     init_util2();
     error3 = () => {
       const Sizable = {
@@ -9183,7 +9183,7 @@ var init_be = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/bg.js
+// node_modules/zod/v4/locales/bg.js
 function bg_default() {
   return {
     localeError: error4()
@@ -9191,7 +9191,7 @@ function bg_default() {
 }
 var error4;
 var init_bg = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/bg.js"() {
+  "node_modules/zod/v4/locales/bg.js"() {
     init_util2();
     error4 = () => {
       const Sizable = {
@@ -9315,7 +9315,7 @@ var init_bg = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/bn.js
+// node_modules/zod/v4/locales/bn.js
 function bn_default() {
   return {
     localeError: error5()
@@ -9323,7 +9323,7 @@ function bn_default() {
 }
 var error5;
 var init_bn = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/bn.js"() {
+  "node_modules/zod/v4/locales/bn.js"() {
     init_util2();
     error5 = () => {
       const Sizable = {
@@ -9435,7 +9435,7 @@ var init_bn = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ca.js
+// node_modules/zod/v4/locales/ca.js
 function ca_default() {
   return {
     localeError: error6()
@@ -9443,7 +9443,7 @@ function ca_default() {
 }
 var error6;
 var init_ca = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ca.js"() {
+  "node_modules/zod/v4/locales/ca.js"() {
     init_util2();
     error6 = () => {
       const Sizable = {
@@ -9555,7 +9555,7 @@ var init_ca = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ckb.js
+// node_modules/zod/v4/locales/ckb.js
 function ckb_default() {
   return {
     localeError: error7()
@@ -9563,7 +9563,7 @@ function ckb_default() {
 }
 var error7;
 var init_ckb = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ckb.js"() {
+  "node_modules/zod/v4/locales/ckb.js"() {
     init_util2();
     error7 = () => {
       const Sizable = {
@@ -9694,7 +9694,7 @@ var init_ckb = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/cs.js
+// node_modules/zod/v4/locales/cs.js
 function cs_default() {
   return {
     localeError: error8()
@@ -9702,7 +9702,7 @@ function cs_default() {
 }
 var error8;
 var init_cs = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/cs.js"() {
+  "node_modules/zod/v4/locales/cs.js"() {
     init_util2();
     error8 = () => {
       const Sizable = {
@@ -9817,7 +9817,7 @@ var init_cs = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/da.js
+// node_modules/zod/v4/locales/da.js
 function da_default() {
   return {
     localeError: error9()
@@ -9825,7 +9825,7 @@ function da_default() {
 }
 var error9;
 var init_da = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/da.js"() {
+  "node_modules/zod/v4/locales/da.js"() {
     init_util2();
     error9 = () => {
       const Sizable = {
@@ -9944,7 +9944,7 @@ var init_da = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/de.js
+// node_modules/zod/v4/locales/de.js
 function de_default() {
   return {
     localeError: error10()
@@ -9952,7 +9952,7 @@ function de_default() {
 }
 var error10;
 var init_de = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/de.js"() {
+  "node_modules/zod/v4/locales/de.js"() {
     init_util2();
     error10 = () => {
       const Sizable = {
@@ -10064,7 +10064,7 @@ var init_de = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/el.js
+// node_modules/zod/v4/locales/el.js
 function el_default() {
   return {
     localeError: error11()
@@ -10072,7 +10072,7 @@ function el_default() {
 }
 var error11;
 var init_el = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/el.js"() {
+  "node_modules/zod/v4/locales/el.js"() {
     init_util2();
     error11 = () => {
       const Sizable = {
@@ -10183,7 +10183,7 @@ var init_el = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/en.js
+// node_modules/zod/v4/locales/en.js
 function en_default2() {
   return {
     localeError: error12()
@@ -10191,7 +10191,7 @@ function en_default2() {
 }
 var error12;
 var init_en2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/en.js"() {
+  "node_modules/zod/v4/locales/en.js"() {
     init_util2();
     error12 = () => {
       const Sizable = {
@@ -10314,7 +10314,7 @@ var init_en2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/eo.js
+// node_modules/zod/v4/locales/eo.js
 function eo_default() {
   return {
     localeError: error13()
@@ -10322,7 +10322,7 @@ function eo_default() {
 }
 var error13;
 var init_eo = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/eo.js"() {
+  "node_modules/zod/v4/locales/eo.js"() {
     init_util2();
     error13 = () => {
       const Sizable = {
@@ -10435,7 +10435,7 @@ var init_eo = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/es.js
+// node_modules/zod/v4/locales/es.js
 function es_default() {
   return {
     localeError: error14()
@@ -10443,7 +10443,7 @@ function es_default() {
 }
 var error14;
 var init_es = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/es.js"() {
+  "node_modules/zod/v4/locales/es.js"() {
     init_util2();
     error14 = () => {
       const Sizable = {
@@ -10578,7 +10578,7 @@ var init_es = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/fa.js
+// node_modules/zod/v4/locales/fa.js
 function fa_default() {
   return {
     localeError: error15()
@@ -10586,7 +10586,7 @@ function fa_default() {
 }
 var error15;
 var init_fa = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/fa.js"() {
+  "node_modules/zod/v4/locales/fa.js"() {
     init_util2();
     error15 = () => {
       const Sizable = {
@@ -10704,7 +10704,7 @@ var init_fa = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/fi.js
+// node_modules/zod/v4/locales/fi.js
 function fi_default() {
   return {
     localeError: error16()
@@ -10712,7 +10712,7 @@ function fi_default() {
 }
 var error16;
 var init_fi = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/fi.js"() {
+  "node_modules/zod/v4/locales/fi.js"() {
     init_util2();
     error16 = () => {
       const Sizable = {
@@ -10828,7 +10828,7 @@ var init_fi = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/fr.js
+// node_modules/zod/v4/locales/fr.js
 function fr_default() {
   return {
     localeError: error17()
@@ -10836,7 +10836,7 @@ function fr_default() {
 }
 var error17;
 var init_fr = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/fr.js"() {
+  "node_modules/zod/v4/locales/fr.js"() {
     init_util2();
     error17 = () => {
       const Sizable = {
@@ -10964,7 +10964,7 @@ var init_fr = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/fr-CA.js
+// node_modules/zod/v4/locales/fr-CA.js
 function fr_CA_default() {
   return {
     localeError: error18()
@@ -10972,7 +10972,7 @@ function fr_CA_default() {
 }
 var error18;
 var init_fr_CA = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/fr-CA.js"() {
+  "node_modules/zod/v4/locales/fr-CA.js"() {
     init_util2();
     error18 = () => {
       const Sizable = {
@@ -11083,7 +11083,7 @@ var init_fr_CA = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/gu.js
+// node_modules/zod/v4/locales/gu.js
 function gu_default() {
   return {
     localeError: error19()
@@ -11091,7 +11091,7 @@ function gu_default() {
 }
 var error19;
 var init_gu = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/gu.js"() {
+  "node_modules/zod/v4/locales/gu.js"() {
     init_util2();
     error19 = () => {
       const Sizable = {
@@ -11203,7 +11203,7 @@ var init_gu = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/he.js
+// node_modules/zod/v4/locales/he.js
 function he_default() {
   return {
     localeError: error20()
@@ -11211,7 +11211,7 @@ function he_default() {
 }
 var error20;
 var init_he = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/he.js"() {
+  "node_modules/zod/v4/locales/he.js"() {
     init_util2();
     error20 = () => {
       const TypeNames = {
@@ -11411,7 +11411,7 @@ var init_he = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/hi.js
+// node_modules/zod/v4/locales/hi.js
 function hi_default() {
   return {
     localeError: error21()
@@ -11419,7 +11419,7 @@ function hi_default() {
 }
 var error21;
 var init_hi = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/hi.js"() {
+  "node_modules/zod/v4/locales/hi.js"() {
     init_util2();
     error21 = () => {
       const Sizable = {
@@ -11529,7 +11529,7 @@ var init_hi = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/hr.js
+// node_modules/zod/v4/locales/hr.js
 function hr_default() {
   return {
     localeError: error22()
@@ -11537,7 +11537,7 @@ function hr_default() {
 }
 var error22;
 var init_hr = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/hr.js"() {
+  "node_modules/zod/v4/locales/hr.js"() {
     init_util2();
     error22 = () => {
       const Sizable = {
@@ -11662,7 +11662,7 @@ var init_hr = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/hu.js
+// node_modules/zod/v4/locales/hu.js
 function hu_default() {
   return {
     localeError: error23()
@@ -11670,7 +11670,7 @@ function hu_default() {
 }
 var error23;
 var init_hu = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/hu.js"() {
+  "node_modules/zod/v4/locales/hu.js"() {
     init_util2();
     error23 = () => {
       const Sizable = {
@@ -11782,7 +11782,7 @@ var init_hu = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/hy.js
+// node_modules/zod/v4/locales/hy.js
 function getArmenianPlural(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
@@ -11800,7 +11800,7 @@ function hy_default() {
 }
 var error24;
 var init_hy = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/hy.js"() {
+  "node_modules/zod/v4/locales/hy.js"() {
     init_util2();
     error24 = () => {
       const Sizable = {
@@ -11947,7 +11947,7 @@ var init_hy = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/id.js
+// node_modules/zod/v4/locales/id.js
 function id_default() {
   return {
     localeError: error25()
@@ -11955,7 +11955,7 @@ function id_default() {
 }
 var error25;
 var init_id = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/id.js"() {
+  "node_modules/zod/v4/locales/id.js"() {
     init_util2();
     error25 = () => {
       const Sizable = {
@@ -12065,7 +12065,7 @@ var init_id = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/is.js
+// node_modules/zod/v4/locales/is.js
 function is_default() {
   return {
     localeError: error26()
@@ -12073,7 +12073,7 @@ function is_default() {
 }
 var error26;
 var init_is = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/is.js"() {
+  "node_modules/zod/v4/locales/is.js"() {
     init_util2();
     error26 = () => {
       const Sizable = {
@@ -12186,7 +12186,7 @@ var init_is = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/it.js
+// node_modules/zod/v4/locales/it.js
 function it_default() {
   return {
     localeError: error27()
@@ -12194,7 +12194,7 @@ function it_default() {
 }
 var error27;
 var init_it = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/it.js"() {
+  "node_modules/zod/v4/locales/it.js"() {
     init_util2();
     error27 = () => {
       const Sizable = {
@@ -12306,7 +12306,7 @@ var init_it = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ja.js
+// node_modules/zod/v4/locales/ja.js
 function ja_default() {
   return {
     localeError: error28()
@@ -12314,7 +12314,7 @@ function ja_default() {
 }
 var error28;
 var init_ja = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ja.js"() {
+  "node_modules/zod/v4/locales/ja.js"() {
     init_util2();
     error28 = () => {
       const Sizable = {
@@ -12425,7 +12425,7 @@ var init_ja = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ka.js
+// node_modules/zod/v4/locales/ka.js
 function ka_default() {
   return {
     localeError: error29()
@@ -12433,7 +12433,7 @@ function ka_default() {
 }
 var error29;
 var init_ka = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ka.js"() {
+  "node_modules/zod/v4/locales/ka.js"() {
     init_util2();
     error29 = () => {
       const Sizable = {
@@ -12549,7 +12549,7 @@ var init_ka = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/km.js
+// node_modules/zod/v4/locales/km.js
 function km_default() {
   return {
     localeError: error30()
@@ -12557,7 +12557,7 @@ function km_default() {
 }
 var error30;
 var init_km = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/km.js"() {
+  "node_modules/zod/v4/locales/km.js"() {
     init_util2();
     error30 = () => {
       const Sizable = {
@@ -12671,17 +12671,17 @@ var init_km = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/kh.js
+// node_modules/zod/v4/locales/kh.js
 function kh_default() {
   return km_default();
 }
 var init_kh = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/kh.js"() {
+  "node_modules/zod/v4/locales/kh.js"() {
     init_km();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/kn.js
+// node_modules/zod/v4/locales/kn.js
 function kn_default() {
   return {
     localeError: error31()
@@ -12689,7 +12689,7 @@ function kn_default() {
 }
 var error31;
 var init_kn = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/kn.js"() {
+  "node_modules/zod/v4/locales/kn.js"() {
     init_util2();
     error31 = () => {
       const Sizable = {
@@ -12803,7 +12803,7 @@ var init_kn = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ko.js
+// node_modules/zod/v4/locales/ko.js
 function ko_default() {
   return {
     localeError: error32()
@@ -12811,7 +12811,7 @@ function ko_default() {
 }
 var error32;
 var init_ko = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ko.js"() {
+  "node_modules/zod/v4/locales/ko.js"() {
     init_util2();
     error32 = () => {
       const Sizable = {
@@ -12926,7 +12926,7 @@ var init_ko = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/lt.js
+// node_modules/zod/v4/locales/lt.js
 function getUnitTypeFromNumber(number4) {
   const abs = Math.abs(number4);
   const last = abs % 10;
@@ -12944,7 +12944,7 @@ function lt_default() {
 }
 var capitalizeFirstCharacter, error33;
 var init_lt = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/lt.js"() {
+  "node_modules/zod/v4/locales/lt.js"() {
     init_util2();
     capitalizeFirstCharacter = (text) => {
       return text.charAt(0).toUpperCase() + text.slice(1);
@@ -13140,7 +13140,7 @@ var init_lt = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/mk.js
+// node_modules/zod/v4/locales/mk.js
 function mk_default() {
   return {
     localeError: error34()
@@ -13148,7 +13148,7 @@ function mk_default() {
 }
 var error34;
 var init_mk = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/mk.js"() {
+  "node_modules/zod/v4/locales/mk.js"() {
     init_util2();
     error34 = () => {
       const Sizable = {
@@ -13261,7 +13261,7 @@ var init_mk = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ms.js
+// node_modules/zod/v4/locales/ms.js
 function ms_default() {
   return {
     localeError: error35()
@@ -13269,7 +13269,7 @@ function ms_default() {
 }
 var error35;
 var init_ms = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ms.js"() {
+  "node_modules/zod/v4/locales/ms.js"() {
     init_util2();
     error35 = () => {
       const Sizable = {
@@ -13380,7 +13380,7 @@ var init_ms = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ne.js
+// node_modules/zod/v4/locales/ne.js
 function ne_default() {
   return {
     localeError: error36()
@@ -13388,7 +13388,7 @@ function ne_default() {
 }
 var error36;
 var init_ne = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ne.js"() {
+  "node_modules/zod/v4/locales/ne.js"() {
     init_util2();
     error36 = () => {
       const Sizable = {
@@ -13498,7 +13498,7 @@ var init_ne = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/nl.js
+// node_modules/zod/v4/locales/nl.js
 function nl_default() {
   return {
     localeError: error37()
@@ -13506,7 +13506,7 @@ function nl_default() {
 }
 var error37;
 var init_nl = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/nl.js"() {
+  "node_modules/zod/v4/locales/nl.js"() {
     init_util2();
     error37 = () => {
       const Sizable = {
@@ -13620,7 +13620,7 @@ var init_nl = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/nn.js
+// node_modules/zod/v4/locales/nn.js
 function nn_default() {
   return {
     localeError: error38()
@@ -13628,7 +13628,7 @@ function nn_default() {
 }
 var error38;
 var init_nn = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/nn.js"() {
+  "node_modules/zod/v4/locales/nn.js"() {
     init_util2();
     error38 = () => {
       const Sizable = {
@@ -13740,7 +13740,7 @@ var init_nn = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/no.js
+// node_modules/zod/v4/locales/no.js
 function no_default() {
   return {
     localeError: error39()
@@ -13748,7 +13748,7 @@ function no_default() {
 }
 var error39;
 var init_no = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/no.js"() {
+  "node_modules/zod/v4/locales/no.js"() {
     init_util2();
     error39 = () => {
       const Sizable = {
@@ -13860,7 +13860,7 @@ var init_no = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ota.js
+// node_modules/zod/v4/locales/ota.js
 function ota_default() {
   return {
     localeError: error40()
@@ -13868,7 +13868,7 @@ function ota_default() {
 }
 var error40;
 var init_ota = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ota.js"() {
+  "node_modules/zod/v4/locales/ota.js"() {
     init_util2();
     error40 = () => {
       const Sizable = {
@@ -13981,7 +13981,7 @@ var init_ota = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ps.js
+// node_modules/zod/v4/locales/ps.js
 function ps_default() {
   return {
     localeError: error41()
@@ -13989,7 +13989,7 @@ function ps_default() {
 }
 var error41;
 var init_ps = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ps.js"() {
+  "node_modules/zod/v4/locales/ps.js"() {
     init_util2();
     error41 = () => {
       const Sizable = {
@@ -14107,7 +14107,7 @@ var init_ps = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/pl.js
+// node_modules/zod/v4/locales/pl.js
 function pl_default() {
   return {
     localeError: error42()
@@ -14115,7 +14115,7 @@ function pl_default() {
 }
 var error42;
 var init_pl = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/pl.js"() {
+  "node_modules/zod/v4/locales/pl.js"() {
     init_util2();
     error42 = () => {
       const Sizable = {
@@ -14228,7 +14228,7 @@ var init_pl = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/pt.js
+// node_modules/zod/v4/locales/pt.js
 function pt_default() {
   return {
     localeError: error43()
@@ -14236,7 +14236,7 @@ function pt_default() {
 }
 var error43;
 var init_pt = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/pt.js"() {
+  "node_modules/zod/v4/locales/pt.js"() {
     init_util2();
     error43 = () => {
       const Sizable = {
@@ -14378,7 +14378,7 @@ var init_pt = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/pt-BR.js
+// node_modules/zod/v4/locales/pt-BR.js
 function pt_BR_default() {
   return {
     localeError: error44()
@@ -14386,7 +14386,7 @@ function pt_BR_default() {
 }
 var error44;
 var init_pt_BR = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/pt-BR.js"() {
+  "node_modules/zod/v4/locales/pt-BR.js"() {
     init_util2();
     error44 = () => {
       const Sizable = {
@@ -14529,7 +14529,7 @@ var init_pt_BR = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ro.js
+// node_modules/zod/v4/locales/ro.js
 function ro_default() {
   return {
     localeError: error45()
@@ -14537,7 +14537,7 @@ function ro_default() {
 }
 var error45;
 var init_ro = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ro.js"() {
+  "node_modules/zod/v4/locales/ro.js"() {
     init_util2();
     error45 = () => {
       const Sizable = {
@@ -14658,7 +14658,7 @@ var init_ro = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ru.js
+// node_modules/zod/v4/locales/ru.js
 function getRussianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -14681,7 +14681,7 @@ function ru_default() {
 }
 var error46;
 var init_ru = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ru.js"() {
+  "node_modules/zod/v4/locales/ru.js"() {
     init_util2();
     error46 = () => {
       const Sizable = {
@@ -14833,7 +14833,7 @@ var init_ru = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/sk.js
+// node_modules/zod/v4/locales/sk.js
 function sk_default() {
   return {
     localeError: error47()
@@ -14841,7 +14841,7 @@ function sk_default() {
 }
 var error47;
 var init_sk = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/sk.js"() {
+  "node_modules/zod/v4/locales/sk.js"() {
     init_util2();
     error47 = () => {
       const Sizable = {
@@ -14956,7 +14956,7 @@ var init_sk = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/sl.js
+// node_modules/zod/v4/locales/sl.js
 function sl_default() {
   return {
     localeError: error48()
@@ -14964,7 +14964,7 @@ function sl_default() {
 }
 var error48;
 var init_sl = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/sl.js"() {
+  "node_modules/zod/v4/locales/sl.js"() {
     init_util2();
     error48 = () => {
       const Sizable = {
@@ -15077,7 +15077,7 @@ var init_sl = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/sv.js
+// node_modules/zod/v4/locales/sv.js
 function sv_default() {
   return {
     localeError: error49()
@@ -15085,7 +15085,7 @@ function sv_default() {
 }
 var error49;
 var init_sv = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/sv.js"() {
+  "node_modules/zod/v4/locales/sv.js"() {
     init_util2();
     error49 = () => {
       const Sizable = {
@@ -15199,7 +15199,7 @@ var init_sv = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ta.js
+// node_modules/zod/v4/locales/ta.js
 function ta_default() {
   return {
     localeError: error50()
@@ -15207,7 +15207,7 @@ function ta_default() {
 }
 var error50;
 var init_ta = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ta.js"() {
+  "node_modules/zod/v4/locales/ta.js"() {
     init_util2();
     error50 = () => {
       const Sizable = {
@@ -15321,7 +15321,7 @@ var init_ta = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/tg.js
+// node_modules/zod/v4/locales/tg.js
 function tg_default() {
   return {
     localeError: error51()
@@ -15329,7 +15329,7 @@ function tg_default() {
 }
 var error51;
 var init_tg = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/tg.js"() {
+  "node_modules/zod/v4/locales/tg.js"() {
     init_util2();
     error51 = () => {
       const Sizable = {
@@ -15444,7 +15444,7 @@ var init_tg = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/th.js
+// node_modules/zod/v4/locales/th.js
 function th_default() {
   return {
     localeError: error52()
@@ -15452,7 +15452,7 @@ function th_default() {
 }
 var error52;
 var init_th = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/th.js"() {
+  "node_modules/zod/v4/locales/th.js"() {
     init_util2();
     error52 = () => {
       const Sizable = {
@@ -15566,7 +15566,7 @@ var init_th = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/tk.js
+// node_modules/zod/v4/locales/tk.js
 function tk_default() {
   return {
     localeError: error53()
@@ -15574,7 +15574,7 @@ function tk_default() {
 }
 var error53;
 var init_tk = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/tk.js"() {
+  "node_modules/zod/v4/locales/tk.js"() {
     init_util2();
     error53 = () => {
       const Sizable = {
@@ -15680,7 +15680,7 @@ var init_tk = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/tr.js
+// node_modules/zod/v4/locales/tr.js
 function tr_default() {
   return {
     localeError: error54()
@@ -15688,7 +15688,7 @@ function tr_default() {
 }
 var error54;
 var init_tr = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/tr.js"() {
+  "node_modules/zod/v4/locales/tr.js"() {
     init_util2();
     error54 = () => {
       const Sizable = {
@@ -15797,7 +15797,7 @@ var init_tr = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/uk.js
+// node_modules/zod/v4/locales/uk.js
 function uk_default() {
   return {
     localeError: error55()
@@ -15805,7 +15805,7 @@ function uk_default() {
 }
 var error55;
 var init_uk = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/uk.js"() {
+  "node_modules/zod/v4/locales/uk.js"() {
     init_util2();
     error55 = () => {
       const Sizable = {
@@ -15917,17 +15917,17 @@ var init_uk = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ua.js
+// node_modules/zod/v4/locales/ua.js
 function ua_default() {
   return uk_default();
 }
 var init_ua = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ua.js"() {
+  "node_modules/zod/v4/locales/ua.js"() {
     init_uk();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ur.js
+// node_modules/zod/v4/locales/ur.js
 function ur_default() {
   return {
     localeError: error56()
@@ -15935,7 +15935,7 @@ function ur_default() {
 }
 var error56;
 var init_ur = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/ur.js"() {
+  "node_modules/zod/v4/locales/ur.js"() {
     init_util2();
     error56 = () => {
       const Sizable = {
@@ -16049,7 +16049,7 @@ var init_ur = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/uz.js
+// node_modules/zod/v4/locales/uz.js
 function uz_default() {
   return {
     localeError: error57()
@@ -16057,7 +16057,7 @@ function uz_default() {
 }
 var error57;
 var init_uz = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/uz.js"() {
+  "node_modules/zod/v4/locales/uz.js"() {
     init_util2();
     error57 = () => {
       const Sizable = {
@@ -16169,7 +16169,7 @@ var init_uz = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/vi.js
+// node_modules/zod/v4/locales/vi.js
 function vi_default() {
   return {
     localeError: error58()
@@ -16177,7 +16177,7 @@ function vi_default() {
 }
 var error58;
 var init_vi = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/vi.js"() {
+  "node_modules/zod/v4/locales/vi.js"() {
     init_util2();
     error58 = () => {
       const Sizable = {
@@ -16289,7 +16289,7 @@ var init_vi = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/zh-CN.js
+// node_modules/zod/v4/locales/zh-CN.js
 function zh_CN_default() {
   return {
     localeError: error59()
@@ -16297,7 +16297,7 @@ function zh_CN_default() {
 }
 var error59;
 var init_zh_CN = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/zh-CN.js"() {
+  "node_modules/zod/v4/locales/zh-CN.js"() {
     init_util2();
     error59 = () => {
       const Sizable = {
@@ -16410,7 +16410,7 @@ var init_zh_CN = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/zh-TW.js
+// node_modules/zod/v4/locales/zh-TW.js
 function zh_TW_default() {
   return {
     localeError: error60()
@@ -16418,7 +16418,7 @@ function zh_TW_default() {
 }
 var error60;
 var init_zh_TW = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/zh-TW.js"() {
+  "node_modules/zod/v4/locales/zh-TW.js"() {
     init_util2();
     error60 = () => {
       const Sizable = {
@@ -16529,7 +16529,7 @@ var init_zh_TW = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/yo.js
+// node_modules/zod/v4/locales/yo.js
 function yo_default() {
   return {
     localeError: error61()
@@ -16537,7 +16537,7 @@ function yo_default() {
 }
 var error61;
 var init_yo = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/yo.js"() {
+  "node_modules/zod/v4/locales/yo.js"() {
     init_util2();
     error61 = () => {
       const Sizable = {
@@ -16648,7 +16648,7 @@ var init_yo = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/index.js
+// node_modules/zod/v4/locales/index.js
 var locales_exports = {};
 __export(locales_exports, {
   ar: () => ar_default,
@@ -16716,7 +16716,7 @@ __export(locales_exports, {
   zhTW: () => zh_TW_default
 });
 var init_locales = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/locales/index.js"() {
+  "node_modules/zod/v4/locales/index.js"() {
     init_ar();
     init_az();
     init_be();
@@ -16783,13 +16783,13 @@ var init_locales = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/registries.js
+// node_modules/zod/v4/core/registries.js
 function registry() {
   return new $ZodRegistry();
 }
 var _a2, $output, $input, $ZodRegistry, globalRegistry;
 var init_registries = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/registries.js"() {
+  "node_modules/zod/v4/core/registries.js"() {
     $output = /* @__PURE__ */ Symbol("ZodOutput");
     $input = /* @__PURE__ */ Symbol("ZodInput");
     $ZodRegistry = class {
@@ -16837,7 +16837,7 @@ var init_registries = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/compile.js
+// node_modules/zod/v4/core/compile.js
 function compileValidator(schema, parser) {
   try {
     return compileFn(schema, { assertOnly: true });
@@ -18391,7 +18391,7 @@ function generateTransformCheck(doc, ctx, schema, accessor) {
 }
 var INVALID2, FALLBACK_FLAG, ZodCompileAsyncError, ZodCompileUnsupportedError, WHEN_DEFAULTED_CHECKS, PATTERN_IS_COMPLETE;
 var init_compile = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/compile.js"() {
+  "node_modules/zod/v4/core/compile.js"() {
     init_core();
     init_doc();
     init_memoizer();
@@ -18450,7 +18450,7 @@ var init_compile = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/api.js
+// node_modules/zod/v4/core/api.js
 function snapshotChecks(def2) {
   if (def2.checks)
     def2.checks = [...def2.checks];
@@ -19503,7 +19503,7 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
 }
 var TimePrecision;
 var init_api = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/api.js"() {
+  "node_modules/zod/v4/core/api.js"() {
     init_checks();
     init_registries();
     init_schemas();
@@ -19518,7 +19518,7 @@ var init_api = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/to-json-schema.js
+// node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target2, ...sources) {
   for (const source of sources) {
     for (const key2 of Reflect.ownKeys(source)) {
@@ -20034,7 +20034,7 @@ function isTransforming(_schema, _ctx) {
 }
 var FOLDABLE_KEYS, UNION_KEYS, createToJSONSchemaMethod, createStandardJSONSchemaMethod;
 var init_to_json_schema = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/to-json-schema.js"() {
+  "node_modules/zod/v4/core/to-json-schema.js"() {
     init_registries();
     init_util2();
     FOLDABLE_KEYS = /* @__PURE__ */ new Set(["type", "properties", "required", "additionalProperties"]);
@@ -20055,7 +20055,7 @@ var init_to_json_schema = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/json-schema-processors.js
+// node_modules/zod/v4/core/json-schema-processors.js
 function aggregateChecks(schema) {
   const agg = {};
   const def2 = schema._zod.def;
@@ -20205,7 +20205,7 @@ function toJSONSchema(input3, params) {
 }
 var narrowMin, narrowMax, narrowBoth, addDivisor, addPattern, intersectMime, setFormat, minContributor, maxContributor, formatContributor, contributors, formatMap, exactPatterns, exactPattern, stringProcessor, numberProcessor, booleanProcessor, bigintProcessor, symbolProcessor, nullProcessor, undefinedProcessor, voidProcessor, neverProcessor, anyProcessor, unknownProcessor, dateProcessor, enumProcessor, literalProcessor, nanProcessor, templateLiteralProcessor, fileProcessor, successProcessor, customProcessor, functionProcessor, transformProcessor, mapProcessor, setProcessor, arrayProcessor, objectProcessor, unionProcessor, intersectionProcessor, tupleProcessor, pendingRecords, recordProcessor, nullableProcessor, nonoptionalProcessor, UNREPRESENTABLE_DEFAULT, defaultProcessor, prefaultProcessor, catchProcessor, pipeProcessor, readonlyProcessor, promiseProcessor, optionalProcessor, lazyProcessor, allProcessors;
 var init_json_schema_processors = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/json-schema-processors.js"() {
+  "node_modules/zod/v4/core/json-schema-processors.js"() {
     init_regexes();
     init_schemas();
     init_to_json_schema();
@@ -20812,10 +20812,10 @@ var init_json_schema_processors = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/json-schema-generator.js
+// node_modules/zod/v4/core/json-schema-generator.js
 var JSONSchemaGenerator;
 var init_json_schema_generator = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/json-schema-generator.js"() {
+  "node_modules/zod/v4/core/json-schema-generator.js"() {
     init_json_schema_processors();
     init_to_json_schema();
     JSONSchemaGenerator = class {
@@ -20897,14 +20897,14 @@ var init_json_schema_generator = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/json-schema.js
+// node_modules/zod/v4/core/json-schema.js
 var json_schema_exports = {};
 var init_json_schema = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/json-schema.js"() {
+  "node_modules/zod/v4/core/json-schema.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/index.js
+// node_modules/zod/v4/core/index.js
 var core_exports2 = {};
 __export(core_exports2, {
   $ZodAny: () => $ZodAny,
@@ -21221,7 +21221,7 @@ __export(core_exports2, {
   withParser: () => withParser
 });
 var init_core2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/index.js"() {
+  "node_modules/zod/v4/core/index.js"() {
     init_core();
     init_parse();
     init_errors2();
@@ -21244,14 +21244,14 @@ var init_core2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/parse.js
+// node_modules/zod/v4/mini/parse.js
 var init_parse2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/parse.js"() {
+  "node_modules/zod/v4/mini/parse.js"() {
     init_core2();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/schemas.js
+// node_modules/zod/v4/mini/schemas.js
 // @__NO_SIDE_EFFECTS__
 function object(shape, params) {
   const def2 = {
@@ -21263,7 +21263,7 @@ function object(shape, params) {
 }
 var ZodMiniType, ZodMiniObject;
 var init_schemas2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/schemas.js"() {
+  "node_modules/zod/v4/mini/schemas.js"() {
     init_core2();
     init_util2();
     init_parse2();
@@ -21325,13 +21325,13 @@ var init_schemas2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/checks.js
+// node_modules/zod/v4/mini/checks.js
 var init_checks2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/checks.js"() {
+  "node_modules/zod/v4/mini/checks.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/visit.js
+// node_modules/zod/v4/core/visit.js
 function visit(schema, fnOrHandlers) {
   const fn = typeof fnOrHandlers === "function" ? fnOrHandlers : (node2, rewritten) => {
     const h = fnOrHandlers[node2._zod.def.type];
@@ -21486,28 +21486,28 @@ function visit(schema, fnOrHandlers) {
 }
 var RESOLVING;
 var init_visit = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/core/visit.js"() {
+  "node_modules/zod/v4/core/visit.js"() {
     init_schemas();
     init_util2();
     RESOLVING = /* @__PURE__ */ Symbol("z.visit/resolving");
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/iso.js
+// node_modules/zod/v4/mini/iso.js
 var init_iso = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/iso.js"() {
+  "node_modules/zod/v4/mini/iso.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/coerce.js
+// node_modules/zod/v4/mini/coerce.js
 var init_coerce = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/coerce.js"() {
+  "node_modules/zod/v4/mini/coerce.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/external.js
+// node_modules/zod/v4/mini/external.js
 var init_external2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/mini/external.js"() {
+  "node_modules/zod/v4/mini/external.js"() {
     init_core2();
     init_parse2();
     init_schemas2();
@@ -21519,14 +21519,14 @@ var init_external2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4-mini/index.js
+// node_modules/zod/v4-mini/index.js
 var init_v4_mini = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4-mini/index.js"() {
+  "node_modules/zod/v4-mini/index.js"() {
     init_external2();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
   const schema = s;
   return !!schema._zod;
@@ -21686,13 +21686,13 @@ function getLiteralValue(schema) {
   return void 0;
 }
 var init_zod_compat = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js"() {
     init_v3();
     init_v4_mini();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/checks.js
+// node_modules/zod/v4/classic/checks.js
 var checks_exports2 = {};
 __export(checks_exports2, {
   endsWith: () => _endsWith,
@@ -21727,12 +21727,12 @@ __export(checks_exports2, {
   uppercase: () => _uppercase
 });
 var init_checks3 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/checks.js"() {
+  "node_modules/zod/v4/classic/checks.js"() {
     init_core2();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/errors.js
+// node_modules/zod/v4/classic/errors.js
 function _lazyMethod(proto, key2, make) {
   Object.defineProperty(proto, key2, {
     configurable: true,
@@ -21749,7 +21749,7 @@ function _lazyMethod(proto, key2, make) {
 }
 var _installedErrorProtos, initializer2, ZodError2, ZodRealError;
 var init_errors3 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/errors.js"() {
+  "node_modules/zod/v4/classic/errors.js"() {
     init_core2();
     init_core2();
     init_util2();
@@ -21786,10 +21786,10 @@ var init_errors3 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/parse.js
+// node_modules/zod/v4/classic/parse.js
 var parse2, parseAsync2, safeParse3, safeParseAsync3, encode2, decode2, encodeAsync2, decodeAsync2, safeEncode2, safeDecode2, safeEncodeAsync2, safeDecodeAsync2;
 var init_parse3 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/parse.js"() {
+  "node_modules/zod/v4/classic/parse.js"() {
     init_core2();
     init_errors3();
     init_core2();
@@ -21808,7 +21808,7 @@ var init_parse3 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/schemas.js
+// node_modules/zod/v4/classic/schemas.js
 var schemas_exports2 = {};
 __export(schemas_exports2, {
   ZodAny: () => ZodAny2,
@@ -22482,7 +22482,7 @@ function preprocess(fn, schema) {
 }
 var ZodType2, _ZodString, ZodString2, ZodStringFormat, ZodISODateTime, ZodISODate, ZodISOTime, ZodISODuration, ZodEmail, ZodGUID, ZodUUID, ZodURL, ZodEmoji, ZodNanoID, ZodCUID, ZodCUID2, ZodULID, ZodXID, ZodKSUID, ZodIPv4, ZodMAC, ZodIPv6, ZodCIDRv4, ZodCIDRv6, ZodBase64, ZodBase64URL, ZodE164, ZodCreditCard, ZodIBAN, ZodJWT, ZodCustomStringFormat, ZodNumber2, ZodNumberFormat, ZodBoolean2, ZodBigInt2, ZodBigIntFormat, ZodSymbol2, ZodUndefined2, ZodNull2, ZodAny2, ZodUnknown2, ZodNever2, ZodVoid2, ZodDate2, ZodArray2, ZodObject2, ZodUnion2, ZodXor, ZodDiscriminatedUnion2, ZodIntersection2, ZodTuple2, ZodRecord2, ZodMap2, ZodSet2, ZodEnum2, ZodLiteral2, ZodFile, ZodTransform, ZodOptional2, ZodExactOptional, ZodNullable2, ZodDefault2, ZodPrefault, ZodNonOptional, ZodSuccess, ZodCatch2, ZodNaN2, ZodPipe, ZodCodec, ZodPreprocess, ZodReadonly2, ZodTemplateLiteral, ZodLazy2, ZodPromise2, ZodFunction2, ZodCustom, describe2, meta2, ZodInstanceOf, stringbool;
 var init_schemas3 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/schemas.js"() {
+  "node_modules/zod/v4/classic/schemas.js"() {
     init_core2();
     init_core2();
     init_json_schema_processors();
@@ -23465,7 +23465,7 @@ var init_schemas3 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/compat.js
+// node_modules/zod/v4/classic/compat.js
 function setErrorMap(map2) {
   config({
     customError: map2
@@ -23476,7 +23476,7 @@ function getErrorMap2() {
 }
 var ZodIssueCode2, ZodFirstPartyTypeKind2;
 var init_compat = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/compat.js"() {
+  "node_modules/zod/v4/classic/compat.js"() {
     init_core2();
     ZodIssueCode2 = {
       invalid_type: "invalid_type",
@@ -23496,7 +23496,7 @@ var init_compat = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/iso.js
+// node_modules/zod/v4/classic/iso.js
 var iso_exports2 = {};
 __export(iso_exports2, {
   ZodISODate: () => ZodISODate,
@@ -23521,14 +23521,14 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 var init_iso2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/iso.js"() {
+  "node_modules/zod/v4/classic/iso.js"() {
     init_core2();
     init_schemas3();
     init_schemas3();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/from-json-schema.js
+// node_modules/zod/v4/classic/from-json-schema.js
 function detectVersion(schema, defaultTarget) {
   const $schema = schema.$schema;
   if ($schema === "https://json-schema.org/draft/2020-12/schema") {
@@ -24159,7 +24159,7 @@ function fromJSONSchema(schema, params) {
 }
 var z, RECOGNIZED_KEYS, SCHEMA_KEYWORDS, SCHEMA_MAP_KEYWORDS, fullTime;
 var init_from_json_schema = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/from-json-schema.js"() {
+  "node_modules/zod/v4/classic/from-json-schema.js"() {
     init_registries();
     init_util2();
     init_checks3();
@@ -24271,7 +24271,7 @@ var init_from_json_schema = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/deep-partial.js
+// node_modules/zod/v4/classic/deep-partial.js
 function deepPartial(schema) {
   return visit(schema, {
     object: (s) => s.partial(),
@@ -24283,13 +24283,13 @@ function deepPartial(schema) {
   });
 }
 var init_deep_partial = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/deep-partial.js"() {
+  "node_modules/zod/v4/classic/deep-partial.js"() {
     init_visit();
     init_schemas3();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/in-out.js
+// node_modules/zod/v4/classic/in-out.js
 function withChecks(side, checks) {
   if (!checks?.length)
     return side;
@@ -24319,14 +24319,14 @@ function output(schema) {
   });
 }
 var init_in_out = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/in-out.js"() {
+  "node_modules/zod/v4/classic/in-out.js"() {
     init_util2();
     init_visit();
     init_schemas3();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/coerce.js
+// node_modules/zod/v4/classic/coerce.js
 var coerce_exports2 = {};
 __export(coerce_exports2, {
   bigint: () => bigint3,
@@ -24351,13 +24351,13 @@ function date4(params) {
   return _coercedDate(ZodDate2, params);
 }
 var init_coerce2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/coerce.js"() {
+  "node_modules/zod/v4/classic/coerce.js"() {
     init_core2();
     init_schemas3();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/external.js
+// node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
   $brand: () => $brand,
@@ -24620,7 +24620,7 @@ __export(external_exports, {
   xor: () => xor
 });
 var init_external3 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/external.js"() {
+  "node_modules/zod/v4/classic/external.js"() {
     init_core2();
     init_schemas3();
     init_checks3();
@@ -24639,21 +24639,21 @@ var init_external3 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/index.js
+// node_modules/zod/v4/classic/index.js
 var init_classic = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/classic/index.js"() {
+  "node_modules/zod/v4/classic/index.js"() {
     init_external3();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/index.js
+// node_modules/zod/v4/index.js
 var init_v4 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/v4/index.js"() {
+  "node_modules/zod/v4/index.js"() {
     init_classic();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 function assertCompleteRequestPrompt(request) {
   if (request.params.ref.type !== "ref/prompt") {
     throw new TypeError(`Expected CompleteRequestPrompt, but got ${request.params.ref.type}`);
@@ -24668,7 +24668,7 @@ function assertCompleteRequestResourceTemplate(request) {
 }
 var LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, RELATED_TASK_META_KEY, JSONRPC_VERSION, AssertObjectSchema, ProgressTokenSchema, CursorSchema, TaskCreationParamsSchema, TaskMetadataSchema, RelatedTaskMetadataSchema, RequestMetaSchema, BaseRequestParamsSchema, TaskAugmentedRequestParamsSchema, isTaskAugmentedRequestParams, RequestSchema, NotificationsParamsSchema, NotificationSchema, ResultSchema, RequestIdSchema, JSONRPCRequestSchema, isJSONRPCRequest, JSONRPCNotificationSchema, isJSONRPCNotification, JSONRPCResultResponseSchema, isJSONRPCResultResponse, ErrorCode, JSONRPCErrorResponseSchema, isJSONRPCErrorResponse, JSONRPCMessageSchema, JSONRPCResponseSchema, EmptyResultSchema, CancelledNotificationParamsSchema, CancelledNotificationSchema, IconSchema, IconsSchema, BaseMetadataSchema, ImplementationSchema, FormElicitationCapabilitySchema, ElicitationCapabilitySchema, ClientTasksCapabilitySchema, ServerTasksCapabilitySchema, ClientCapabilitiesSchema, InitializeRequestParamsSchema, InitializeRequestSchema, ServerCapabilitiesSchema, InitializeResultSchema, InitializedNotificationSchema, PingRequestSchema, ProgressSchema, ProgressNotificationParamsSchema, ProgressNotificationSchema, PaginatedRequestParamsSchema, PaginatedRequestSchema, PaginatedResultSchema, TaskStatusSchema, TaskSchema, CreateTaskResultSchema, TaskStatusNotificationParamsSchema, TaskStatusNotificationSchema, GetTaskRequestSchema, GetTaskResultSchema, GetTaskPayloadRequestSchema, GetTaskPayloadResultSchema, ListTasksRequestSchema, ListTasksResultSchema, CancelTaskRequestSchema, CancelTaskResultSchema, ResourceContentsSchema, TextResourceContentsSchema, Base64Schema, BlobResourceContentsSchema, RoleSchema, AnnotationsSchema, ResourceSchema, ResourceTemplateSchema, ListResourcesRequestSchema, ListResourcesResultSchema, ListResourceTemplatesRequestSchema, ListResourceTemplatesResultSchema, ResourceRequestParamsSchema, ReadResourceRequestParamsSchema, ReadResourceRequestSchema, ReadResourceResultSchema, ResourceListChangedNotificationSchema, SubscribeRequestParamsSchema, SubscribeRequestSchema, UnsubscribeRequestParamsSchema, UnsubscribeRequestSchema, ResourceUpdatedNotificationParamsSchema, ResourceUpdatedNotificationSchema, PromptArgumentSchema, PromptSchema, ListPromptsRequestSchema, ListPromptsResultSchema, GetPromptRequestParamsSchema, GetPromptRequestSchema, TextContentSchema, ImageContentSchema, AudioContentSchema, ToolUseContentSchema, EmbeddedResourceSchema, ResourceLinkSchema, ContentBlockSchema, PromptMessageSchema, GetPromptResultSchema, PromptListChangedNotificationSchema, ToolAnnotationsSchema, ToolExecutionSchema, ToolSchema, ListToolsRequestSchema, ListToolsResultSchema, CallToolResultSchema, CompatibilityCallToolResultSchema, CallToolRequestParamsSchema, CallToolRequestSchema, ToolListChangedNotificationSchema, ListChangedOptionsBaseSchema, LoggingLevelSchema, SetLevelRequestParamsSchema, SetLevelRequestSchema, LoggingMessageNotificationParamsSchema, LoggingMessageNotificationSchema, ModelHintSchema, ModelPreferencesSchema, ToolChoiceSchema, ToolResultContentSchema, SamplingContentSchema, SamplingMessageContentBlockSchema, SamplingMessageSchema, CreateMessageRequestParamsSchema, CreateMessageRequestSchema, CreateMessageResultSchema, CreateMessageResultWithToolsSchema, BooleanSchemaSchema, StringSchemaSchema, NumberSchemaSchema, UntitledSingleSelectEnumSchemaSchema, TitledSingleSelectEnumSchemaSchema, LegacyTitledEnumSchemaSchema, SingleSelectEnumSchemaSchema, UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema, MultiSelectEnumSchemaSchema, EnumSchemaSchema, PrimitiveSchemaDefinitionSchema, ElicitRequestFormParamsSchema, ElicitRequestURLParamsSchema, ElicitRequestParamsSchema, ElicitRequestSchema, ElicitationCompleteNotificationParamsSchema, ElicitationCompleteNotificationSchema, ElicitResultSchema, ResourceTemplateReferenceSchema, PromptReferenceSchema, CompleteRequestParamsSchema, CompleteRequestSchema, CompleteResultSchema, RootSchema, ListRootsRequestSchema, ListRootsResultSchema, RootsListChangedNotificationSchema, ClientRequestSchema, ClientNotificationSchema, ClientResultSchema, ServerRequestSchema, ServerNotificationSchema, ServerResultSchema, McpError, UrlElicitationRequiredError;
 var init_types2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/types.js"() {
     init_v4();
     LATEST_PROTOCOL_VERSION = "2025-11-25";
     SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
@@ -26189,19 +26189,19 @@ var init_types2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 var init_interfaces = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/Options.js
+// node_modules/zod-to-json-schema/dist/esm/Options.js
 var ignoreOverride, defaultOptions, getDefaultOptions;
 var init_Options = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/Options.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/Options.js"() {
     ignoreOverride = /* @__PURE__ */ Symbol("Let zodToJsonSchema decide on which parser to use");
     defaultOptions = {
       name: void 0,
@@ -26237,10 +26237,10 @@ var init_Options = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/Refs.js
+// node_modules/zod-to-json-schema/dist/esm/Refs.js
 var getRefs;
 var init_Refs = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/Refs.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/Refs.js"() {
     init_Options();
     getRefs = (options) => {
       const _options = getDefaultOptions(options);
@@ -26264,7 +26264,7 @@ var init_Refs = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/errorMessages.js
+// node_modules/zod-to-json-schema/dist/esm/errorMessages.js
 function addErrorMessage(res, key2, errorMessage, refs) {
   if (!refs?.errorMessages)
     return;
@@ -26280,14 +26280,14 @@ function setResponseValueAndErrors(res, key2, value, errorMessage, refs) {
   addErrorMessage(res, key2, errorMessage, refs);
 }
 var init_errorMessages = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/errorMessages.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/errorMessages.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
+// node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
 var getRelativePath;
 var init_getRelativePath = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/getRelativePath.js"() {
     getRelativePath = (pathA, pathB) => {
       let i = 0;
       for (; i < pathA.length && i < pathB.length; i++) {
@@ -26299,7 +26299,7 @@ var init_getRelativePath = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/any.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/any.js
 function parseAnyDef(refs) {
   if (refs.target !== "openAi") {
     return {};
@@ -26315,12 +26315,12 @@ function parseAnyDef(refs) {
   };
 }
 var init_any = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/any.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/any.js"() {
     init_getRelativePath();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/array.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/array.js
 function parseArrayDef(def2, refs) {
   const res = {
     type: "array"
@@ -26344,14 +26344,14 @@ function parseArrayDef(def2, refs) {
   return res;
 }
 var init_array = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/array.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/array.js"() {
     init_v3();
     init_errorMessages();
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
 function parseBigintDef(def2, refs) {
   const res = {
     type: "integer",
@@ -26397,36 +26397,36 @@ function parseBigintDef(def2, refs) {
   return res;
 }
 var init_bigint = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js"() {
     init_errorMessages();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
 function parseBooleanDef() {
   return {
     type: "boolean"
   };
 }
 var init_boolean = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
 function parseBrandedDef(_def, refs) {
   return parseDef(_def.type._def, refs);
 }
 var init_branded = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/branded.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
 var parseCatchDef;
 var init_catch = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/catch.js"() {
     init_parseDef();
     parseCatchDef = (def2, refs) => {
       return parseDef(def2.innerType._def, refs);
@@ -26434,7 +26434,7 @@ var init_catch = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/date.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/date.js
 function parseDateDef(def2, refs, overrideDateStrategy) {
   const strategy = overrideDateStrategy ?? refs.dateStrategy;
   if (Array.isArray(strategy)) {
@@ -26460,7 +26460,7 @@ function parseDateDef(def2, refs, overrideDateStrategy) {
 }
 var integerDateParser;
 var init_date = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/date.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/date.js"() {
     init_errorMessages();
     integerDateParser = (def2, refs) => {
       const res = {
@@ -26499,7 +26499,7 @@ var init_date = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/default.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/default.js
 function parseDefaultDef(_def, refs) {
   return {
     ...parseDef(_def.innerType._def, refs),
@@ -26507,23 +26507,23 @@ function parseDefaultDef(_def, refs) {
   };
 }
 var init_default = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/default.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/default.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
 function parseEffectsDef(_def, refs) {
   return refs.effectStrategy === "input" ? parseDef(_def.schema._def, refs) : parseAnyDef(refs);
 }
 var init_effects = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/effects.js"() {
     init_parseDef();
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
 function parseEnumDef(def2) {
   return {
     type: "string",
@@ -26531,11 +26531,11 @@ function parseEnumDef(def2) {
   };
 }
 var init_enum = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/enum.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
 function parseIntersectionDef(def2, refs) {
   const allOf = [
     parseDef(def2.left._def, {
@@ -26573,7 +26573,7 @@ function parseIntersectionDef(def2, refs) {
 }
 var isJsonSchema7AllOfType;
 var init_intersection = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js"() {
     init_parseDef();
     isJsonSchema7AllOfType = (type2) => {
       if ("type" in type2 && type2.type === "string")
@@ -26583,7 +26583,7 @@ var init_intersection = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
 function parseLiteralDef(def2, refs) {
   const parsedType2 = typeof def2.value;
   if (parsedType2 !== "bigint" && parsedType2 !== "number" && parsedType2 !== "boolean" && parsedType2 !== "string") {
@@ -26603,11 +26603,11 @@ function parseLiteralDef(def2, refs) {
   };
 }
 var init_literal = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/literal.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 function parseStringDef(def2, refs) {
   const res = {
     type: "string"
@@ -26884,7 +26884,7 @@ function stringifyRegExpWithFlags(regex, refs) {
 }
 var emojiRegex2, zodPatterns, ALPHA_NUMERIC;
 var init_string = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/string.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/string.js"() {
     init_errorMessages();
     emojiRegex2 = void 0;
     zodPatterns = {
@@ -26938,7 +26938,7 @@ var init_string = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/record.js
 function parseRecordDef(def2, refs) {
   if (refs.target === "openAi") {
     console.warn("Warning: OpenAI may not support records in schemas! Try an array of key-value pairs instead.");
@@ -26990,7 +26990,7 @@ function parseRecordDef(def2, refs) {
   return schema;
 }
 var init_record = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/record.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/record.js"() {
     init_v3();
     init_parseDef();
     init_string();
@@ -26999,7 +26999,7 @@ var init_record = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/map.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/map.js
 function parseMapDef(def2, refs) {
   if (refs.mapStrategy === "record") {
     return parseRecordDef(def2, refs);
@@ -27024,14 +27024,14 @@ function parseMapDef(def2, refs) {
   };
 }
 var init_map = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/map.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/map.js"() {
     init_parseDef();
     init_record();
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
 function parseNativeEnumDef(def2) {
   const object3 = def2.values;
   const actualKeys = Object.keys(def2.values).filter((key2) => {
@@ -27045,11 +27045,11 @@ function parseNativeEnumDef(def2) {
   };
 }
 var init_nativeEnum = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/never.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/never.js
 function parseNeverDef(refs) {
   return refs.target === "openAi" ? void 0 : {
     not: parseAnyDef({
@@ -27059,12 +27059,12 @@ function parseNeverDef(refs) {
   };
 }
 var init_never = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/never.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/never.js"() {
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/null.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/null.js
 function parseNullDef(refs) {
   return refs.target === "openApi3" ? {
     enum: ["null"],
@@ -27074,11 +27074,11 @@ function parseNullDef(refs) {
   };
 }
 var init_null = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/null.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/null.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/union.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/union.js
 function parseUnionDef(def2, refs) {
   if (refs.target === "openApi3")
     return asAnyOf(def2, refs);
@@ -27133,7 +27133,7 @@ function parseUnionDef(def2, refs) {
 }
 var primitiveMappings, asAnyOf;
 var init_union = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/union.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/union.js"() {
     init_parseDef();
     primitiveMappings = {
       ZodString: "string",
@@ -27152,7 +27152,7 @@ var init_union = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
 function parseNullableDef(def2, refs) {
   if (["ZodString", "ZodNumber", "ZodBigInt", "ZodBoolean", "ZodNull"].includes(def2.innerType._def.typeName) && (!def2.innerType._def.checks || !def2.innerType._def.checks.length)) {
     if (refs.target === "openApi3") {
@@ -27184,13 +27184,13 @@ function parseNullableDef(def2, refs) {
   return base && { anyOf: [base, { type: "null" }] };
 }
 var init_nullable = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js"() {
     init_parseDef();
     init_union();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/number.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/number.js
 function parseNumberDef(def2, refs) {
   const res = {
     type: "number"
@@ -27239,12 +27239,12 @@ function parseNumberDef(def2, refs) {
   return res;
 }
 var init_number = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/number.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/number.js"() {
     init_errorMessages();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/object.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/object.js
 function parseObjectDef(def2, refs) {
   const forceOptionalIntoNullable = refs.target === "openAi";
   const result = {
@@ -27314,15 +27314,15 @@ function safeIsOptional(schema) {
   }
 }
 var init_object = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/object.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/object.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
 var parseOptionalDef;
 var init_optional = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/optional.js"() {
     init_parseDef();
     init_any();
     parseOptionalDef = (def2, refs) => {
@@ -27345,10 +27345,10 @@ var init_optional = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
 var parsePipelineDef;
 var init_pipeline = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js"() {
     init_parseDef();
     parsePipelineDef = (def2, refs) => {
       if (refs.pipeStrategy === "input") {
@@ -27371,17 +27371,17 @@ var init_pipeline = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
 function parsePromiseDef(def2, refs) {
   return parseDef(def2.type._def, refs);
 }
 var init_promise = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/promise.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/set.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/set.js
 function parseSetDef(def2, refs) {
   const items = parseDef(def2.valueType._def, {
     ...refs,
@@ -27401,13 +27401,13 @@ function parseSetDef(def2, refs) {
   return schema;
 }
 var init_set = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/set.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/set.js"() {
     init_errorMessages();
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
 function parseTupleDef(def2, refs) {
   if (def2.rest) {
     return {
@@ -27435,37 +27435,37 @@ function parseTupleDef(def2, refs) {
   }
 }
 var init_tuple = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
 function parseUndefinedDef(refs) {
   return {
     not: parseAnyDef(refs)
   };
 }
 var init_undefined = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js"() {
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
 function parseUnknownDef(refs) {
   return parseAnyDef(refs);
 }
 var init_unknown = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js"() {
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
 var parseReadonlyDef;
 var init_readonly = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js"() {
     init_parseDef();
     parseReadonlyDef = (def2, refs) => {
       return parseDef(def2.innerType._def, refs);
@@ -27473,10 +27473,10 @@ var init_readonly = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/selectParser.js
+// node_modules/zod-to-json-schema/dist/esm/selectParser.js
 var selectParser;
 var init_selectParser = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/selectParser.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/selectParser.js"() {
     init_v3();
     init_any();
     init_array();
@@ -27585,7 +27585,7 @@ var init_selectParser = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parseDef.js
+// node_modules/zod-to-json-schema/dist/esm/parseDef.js
 function parseDef(def2, refs, forceResolution = false) {
   const seenItem = refs.seen.get(def2);
   if (refs.override) {
@@ -27617,7 +27617,7 @@ function parseDef(def2, refs, forceResolution = false) {
 }
 var get$ref, addMeta;
 var init_parseDef = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parseDef.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parseDef.js"() {
     init_Options();
     init_selectParser();
     init_getRelativePath();
@@ -27650,16 +27650,16 @@ var init_parseDef = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parseTypes.js
+// node_modules/zod-to-json-schema/dist/esm/parseTypes.js
 var init_parseTypes = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/parseTypes.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parseTypes.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
+// node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
 var zodToJsonSchema;
 var init_zodToJsonSchema = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js"() {
     init_parseDef();
     init_Refs();
     init_any();
@@ -27726,9 +27726,9 @@ var init_zodToJsonSchema = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/index.js
+// node_modules/zod-to-json-schema/dist/esm/index.js
 var init_esm = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod-to-json-schema/dist/esm/index.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/index.js"() {
     init_Options();
     init_Refs();
     init_errorMessages();
@@ -27771,7 +27771,7 @@ var init_esm = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function mapMiniTarget(t) {
   if (!t)
     return "draft-7";
@@ -27813,14 +27813,14 @@ function parseWithCompat(schema, data) {
   return result.data;
 }
 var init_zod_json_schema_compat = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js"() {
     init_v4_mini();
     init_zod_compat();
     init_esm();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 function isPlainObject2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -27842,7 +27842,7 @@ function mergeCapabilities(base, additional) {
 }
 var DEFAULT_REQUEST_TIMEOUT_MSEC, Protocol;
 var init_protocol = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js"() {
     init_zod_compat();
     init_types2();
     init_interfaces();
@@ -28091,13 +28091,13 @@ var init_protocol = __esm({
         const capturedTransport = this._transport;
         const relatedTaskId = request.params?._meta?.[RELATED_TASK_META_KEY]?.taskId;
         const sessionId = capturedTransport?.sessionId;
-        const store = this._taskStore;
+        const store2 = this._taskStore;
         let relatedTaskFound = true;
         let relatedTaskLookup;
-        if (relatedTaskId && store && this._taskMessageQueue && sessionId !== void 0) {
+        if (relatedTaskId && store2 && this._taskMessageQueue && sessionId !== void 0) {
           relatedTaskFound = false;
           relatedTaskLookup = (async () => {
-            if (!await store.getTask(relatedTaskId, sessionId)) {
+            if (!await store2.getTask(relatedTaskId, sessionId)) {
               throw new McpError(ErrorCode.InvalidParams, `Task not found: ${relatedTaskId}`);
             }
             relatedTaskFound = true;
@@ -28806,9 +28806,9 @@ var init_protocol = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/codegen/code.js
+// node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/codegen/code.js"(exports) {
+  "node_modules/ajv/dist/compile/codegen/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.regexpCode = exports.getEsmExportName = exports.getProperty = exports.safeStringify = exports.stringify = exports.strConcat = exports.addCodeArg = exports.str = exports._ = exports.nil = exports._Code = exports.Name = exports.IDENTIFIER = exports._CodeOrName = void 0;
@@ -28960,9 +28960,9 @@ var require_code = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/codegen/scope.js
+// node_modules/ajv/dist/compile/codegen/scope.js
 var require_scope = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
+  "node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ValueScope = exports.ValueScopeName = exports.Scope = exports.varKinds = exports.UsedValueState = void 0;
@@ -29105,9 +29105,9 @@ var require_scope = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/codegen/index.js
+// node_modules/ajv/dist/compile/codegen/index.js
 var require_codegen = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/codegen/index.js"(exports) {
+  "node_modules/ajv/dist/compile/codegen/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.or = exports.and = exports.not = exports.CodeGen = exports.operators = exports.varKinds = exports.ValueScopeName = exports.ValueScope = exports.Scope = exports.Name = exports.regexpCode = exports.stringify = exports.getProperty = exports.nil = exports.strConcat = exports.str = exports._ = void 0;
@@ -29163,7 +29163,7 @@ var require_codegen = __commonJS({
       AND: new code_1._Code("&&"),
       ADD: new code_1._Code("+")
     };
-    var Node = class {
+    var Node2 = class {
       optimizeNodes() {
         return this;
       }
@@ -29171,7 +29171,7 @@ var require_codegen = __commonJS({
         return this;
       }
     };
-    var Def = class extends Node {
+    var Def = class extends Node2 {
       constructor(varKind, name, rhs) {
         super();
         this.varKind = varKind;
@@ -29194,7 +29194,7 @@ var require_codegen = __commonJS({
         return this.rhs instanceof code_1._CodeOrName ? this.rhs.names : {};
       }
     };
-    var Assign = class extends Node {
+    var Assign = class extends Node2 {
       constructor(lhs, rhs, sideEffects) {
         super();
         this.lhs = lhs;
@@ -29224,7 +29224,7 @@ var require_codegen = __commonJS({
         return `${this.lhs} ${this.op}= ${this.rhs};` + _n;
       }
     };
-    var Label = class extends Node {
+    var Label = class extends Node2 {
       constructor(label) {
         super();
         this.label = label;
@@ -29234,7 +29234,7 @@ var require_codegen = __commonJS({
         return `${this.label}:` + _n;
       }
     };
-    var Break = class extends Node {
+    var Break = class extends Node2 {
       constructor(label) {
         super();
         this.label = label;
@@ -29245,7 +29245,7 @@ var require_codegen = __commonJS({
         return `break${label};` + _n;
       }
     };
-    var Throw = class extends Node {
+    var Throw = class extends Node2 {
       constructor(error62) {
         super();
         this.error = error62;
@@ -29257,7 +29257,7 @@ var require_codegen = __commonJS({
         return this.error.names;
       }
     };
-    var AnyCode = class extends Node {
+    var AnyCode = class extends Node2 {
       constructor(code) {
         super();
         this.code = code;
@@ -29276,7 +29276,7 @@ var require_codegen = __commonJS({
         return this.code instanceof code_1._CodeOrName ? this.code.names : {};
       }
     };
-    var ParentNode = class extends Node {
+    var ParentNode = class extends Node2 {
       constructor(nodes = []) {
         super();
         this.nodes = nodes;
@@ -29825,9 +29825,9 @@ var require_codegen = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/util.js
+// node_modules/ajv/dist/compile/util.js
 var require_util = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/util.js"(exports) {
+  "node_modules/ajv/dist/compile/util.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.checkStrictMode = exports.getErrorPath = exports.Type = exports.useFunc = exports.setEvaluated = exports.evaluatedPropsToName = exports.mergeEvaluated = exports.eachItem = exports.unescapeJsonPointer = exports.escapeJsonPointer = exports.escapeFragment = exports.unescapeFragment = exports.schemaRefOrVal = exports.schemaHasRulesButRef = exports.schemaHasRules = exports.checkUnknownRules = exports.alwaysValidSchema = exports.toHash = void 0;
@@ -29992,9 +29992,9 @@ var require_util = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/names.js
+// node_modules/ajv/dist/compile/names.js
 var require_names = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/names.js"(exports) {
+  "node_modules/ajv/dist/compile/names.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -30031,9 +30031,9 @@ var require_names = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/errors.js
+// node_modules/ajv/dist/compile/errors.js
 var require_errors = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/errors.js"(exports) {
+  "node_modules/ajv/dist/compile/errors.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendErrors = exports.resetErrorsCount = exports.reportExtraError = exports.reportError = exports.keyword$DataError = exports.keywordError = void 0;
@@ -30153,9 +30153,9 @@ var require_errors = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/boolSchema.js
+// node_modules/ajv/dist/compile/validate/boolSchema.js
 var require_boolSchema = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.boolOrEmptySchema = exports.topBoolOrEmptySchema = void 0;
@@ -30204,9 +30204,9 @@ var require_boolSchema = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/rules.js
+// node_modules/ajv/dist/compile/rules.js
 var require_rules = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/rules.js"(exports) {
+  "node_modules/ajv/dist/compile/rules.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getRules = exports.isJSONType = void 0;
@@ -30235,9 +30235,9 @@ var require_rules = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/applicability.js
+// node_modules/ajv/dist/compile/validate/applicability.js
 var require_applicability = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.shouldUseRule = exports.shouldUseGroup = exports.schemaHasRulesForType = void 0;
@@ -30258,9 +30258,9 @@ var require_applicability = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/dataType.js
+// node_modules/ajv/dist/compile/validate/dataType.js
 var require_dataType = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.reportTypeError = exports.checkDataTypes = exports.checkDataType = exports.coerceAndCheckDataType = exports.getJSONTypes = exports.getSchemaTypes = exports.DataType = void 0;
@@ -30442,9 +30442,9 @@ var require_dataType = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/defaults.js
+// node_modules/ajv/dist/compile/validate/defaults.js
 var require_defaults = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.assignDefaults = void 0;
@@ -30479,9 +30479,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/code.js
+// node_modules/ajv/dist/vocabularies/code.js
 var require_code2 = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/code.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateUnion = exports.validateArray = exports.usePattern = exports.callValidateCode = exports.schemaProperties = exports.allSchemaProperties = exports.noPropertyInData = exports.propertyInData = exports.isOwnProperty = exports.hasPropFunc = exports.reportMissingProp = exports.checkMissingProp = exports.checkReportMissingProp = void 0;
@@ -30612,9 +30612,9 @@ var require_code2 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/keyword.js
+// node_modules/ajv/dist/compile/validate/keyword.js
 var require_keyword = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateKeywordUsage = exports.validSchemaType = exports.funcKeywordCode = exports.macroKeywordCode = void 0;
@@ -30730,9 +30730,9 @@ var require_keyword = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/subschema.js
+// node_modules/ajv/dist/compile/validate/subschema.js
 var require_subschema = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendSubschemaMode = exports.extendSubschemaData = exports.getSubschema = void 0;
@@ -30813,9 +30813,9 @@ var require_subschema = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/fast-deep-equal/index.js
+// node_modules/fast-deep-equal/index.js
 var require_fast_deep_equal = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/fast-deep-equal/index.js"(exports, module) {
+  "node_modules/fast-deep-equal/index.js"(exports, module) {
     "use strict";
     module.exports = function equal(a, b) {
       if (a === b) return true;
@@ -30848,9 +30848,9 @@ var require_fast_deep_equal = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/json-schema-traverse/index.js
+// node_modules/json-schema-traverse/index.js
 var require_json_schema_traverse = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/json-schema-traverse/index.js"(exports, module) {
+  "node_modules/json-schema-traverse/index.js"(exports, module) {
     "use strict";
     var traverse = module.exports = function(schema, opts, cb) {
       if (typeof opts == "function") {
@@ -30936,9 +30936,9 @@ var require_json_schema_traverse = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/resolve.js
+// node_modules/ajv/dist/compile/resolve.js
 var require_resolve = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/resolve.js"(exports) {
+  "node_modules/ajv/dist/compile/resolve.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getSchemaRefs = exports.resolveUrl = exports.normalizeId = exports._getFullPath = exports.getFullPath = exports.inlineRef = void 0;
@@ -31092,9 +31092,9 @@ var require_resolve = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/index.js
+// node_modules/ajv/dist/compile/validate/index.js
 var require_validate = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/validate/index.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getData = exports.KeywordCxt = exports.validateFunctionCode = void 0;
@@ -31600,9 +31600,9 @@ var require_validate = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/runtime/validation_error.js
+// node_modules/ajv/dist/runtime/validation_error.js
 var require_validation_error = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/runtime/validation_error.js"(exports) {
+  "node_modules/ajv/dist/runtime/validation_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var ValidationError = class extends Error {
@@ -31616,9 +31616,9 @@ var require_validation_error = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/ref_error.js
+// node_modules/ajv/dist/compile/ref_error.js
 var require_ref_error = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/ref_error.js"(exports) {
+  "node_modules/ajv/dist/compile/ref_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var resolve_1 = require_resolve();
@@ -31633,9 +31633,9 @@ var require_ref_error = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/index.js
+// node_modules/ajv/dist/compile/index.js
 var require_compile = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/compile/index.js"(exports) {
+  "node_modules/ajv/dist/compile/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.resolveSchema = exports.getCompilingSchema = exports.resolveRef = exports.compileSchema = exports.SchemaEnv = void 0;
@@ -31857,9 +31857,9 @@ var require_compile = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/refs/data.json
+// node_modules/ajv/dist/refs/data.json
 var require_data = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/refs/data.json"(exports, module) {
+  "node_modules/ajv/dist/refs/data.json"(exports, module) {
     module.exports = {
       $id: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#",
       description: "Meta-schema for $data reference (JSON AnySchema extension proposal)",
@@ -31876,9 +31876,9 @@ var require_data = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/fast-uri/lib/utils.js
+// node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/fast-uri/lib/utils.js"(exports, module) {
+  "node_modules/fast-uri/lib/utils.js"(exports, module) {
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
@@ -32378,9 +32378,9 @@ var require_utils = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/fast-uri/lib/schemes.js
+// node_modules/fast-uri/lib/schemes.js
 var require_schemes = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/fast-uri/lib/schemes.js"(exports, module) {
+  "node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
     var { isUUID } = require_utils();
     var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
@@ -32589,9 +32589,9 @@ var require_schemes = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/fast-uri/index.js
+// node_modules/fast-uri/index.js
 var require_fast_uri = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/fast-uri/index.js"(exports, module) {
+  "node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
@@ -32995,9 +32995,9 @@ var require_fast_uri = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/runtime/uri.js
+// node_modules/ajv/dist/runtime/uri.js
 var require_uri = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/runtime/uri.js"(exports) {
+  "node_modules/ajv/dist/runtime/uri.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var uri = require_fast_uri();
@@ -33006,9 +33006,9 @@ var require_uri = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/core.js
+// node_modules/ajv/dist/core.js
 var require_core = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/core.js"(exports) {
+  "node_modules/ajv/dist/core.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = void 0;
@@ -33617,9 +33617,9 @@ var require_core = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/core/id.js
+// node_modules/ajv/dist/vocabularies/core/id.js
 var require_id = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var def2 = {
@@ -33632,9 +33632,9 @@ var require_id = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/core/ref.js
+// node_modules/ajv/dist/vocabularies/core/ref.js
 var require_ref = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.callRef = exports.getValidate = void 0;
@@ -33754,9 +33754,9 @@ var require_ref = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/core/index.js
+// node_modules/ajv/dist/vocabularies/core/index.js
 var require_core2 = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var id_1 = require_id();
@@ -33775,9 +33775,9 @@ var require_core2 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/limitNumber.js
+// node_modules/ajv/dist/vocabularies/validation/limitNumber.js
 var require_limitNumber = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -33807,9 +33807,9 @@ var require_limitNumber = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/multipleOf.js
+// node_modules/ajv/dist/vocabularies/validation/multipleOf.js
 var require_multipleOf = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -33835,9 +33835,9 @@ var require_multipleOf = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/runtime/ucs2length.js
+// node_modules/ajv/dist/runtime/ucs2length.js
 var require_ucs2length = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
+  "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function ucs2length(str2) {
@@ -33861,9 +33861,9 @@ var require_ucs2length = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/limitLength.js
+// node_modules/ajv/dist/vocabularies/validation/limitLength.js
 var require_limitLength = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -33893,9 +33893,9 @@ var require_limitLength = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/pattern.js
+// node_modules/ajv/dist/vocabularies/validation/pattern.js
 var require_pattern = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -33930,9 +33930,9 @@ var require_pattern = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/limitProperties.js
+// node_modules/ajv/dist/vocabularies/validation/limitProperties.js
 var require_limitProperties = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -33959,9 +33959,9 @@ var require_limitProperties = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/required.js
+// node_modules/ajv/dist/vocabularies/validation/required.js
 var require_required = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -34041,9 +34041,9 @@ var require_required = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/limitItems.js
+// node_modules/ajv/dist/vocabularies/validation/limitItems.js
 var require_limitItems = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -34070,9 +34070,9 @@ var require_limitItems = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/runtime/equal.js
+// node_modules/ajv/dist/runtime/equal.js
 var require_equal = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/runtime/equal.js"(exports) {
+  "node_modules/ajv/dist/runtime/equal.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var equal = require_fast_deep_equal();
@@ -34081,9 +34081,9 @@ var require_equal = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
+// node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
 var require_uniqueItems = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var dataType_1 = require_dataType();
@@ -34148,9 +34148,9 @@ var require_uniqueItems = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/const.js
+// node_modules/ajv/dist/vocabularies/validation/const.js
 var require_const = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -34177,9 +34177,9 @@ var require_const = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/enum.js
+// node_modules/ajv/dist/vocabularies/validation/enum.js
 var require_enum = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -34226,9 +34226,9 @@ var require_enum = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/index.js
+// node_modules/ajv/dist/vocabularies/validation/index.js
 var require_validation = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var limitNumber_1 = require_limitNumber();
@@ -34264,9 +34264,9 @@ var require_validation = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
+// node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
 var require_additionalItems = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateAdditionalItems = void 0;
@@ -34317,9 +34317,9 @@ var require_additionalItems = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/items.js
+// node_modules/ajv/dist/vocabularies/applicator/items.js
 var require_items = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateTuple = void 0;
@@ -34374,9 +34374,9 @@ var require_items = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
+// node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
 var require_prefixItems = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var items_1 = require_items();
@@ -34391,9 +34391,9 @@ var require_prefixItems = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/items2020.js
+// node_modules/ajv/dist/vocabularies/applicator/items2020.js
 var require_items2020 = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -34426,9 +34426,9 @@ var require_items2020 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/contains.js
+// node_modules/ajv/dist/vocabularies/applicator/contains.js
 var require_contains = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -34520,9 +34520,9 @@ var require_contains = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/dependencies.js
+// node_modules/ajv/dist/vocabularies/applicator/dependencies.js
 var require_dependencies = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateSchemaDeps = exports.validatePropertyDeps = exports.error = void 0;
@@ -34614,9 +34614,9 @@ var require_dependencies = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
+// node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
 var require_propertyNames = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -34657,9 +34657,9 @@ var require_propertyNames = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
+// node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
 var require_additionalProperties = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -34763,9 +34763,9 @@ var require_additionalProperties = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/properties.js
+// node_modules/ajv/dist/vocabularies/applicator/properties.js
 var require_properties = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var validate_1 = require_validate();
@@ -34821,9 +34821,9 @@ var require_properties = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
+// node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
 var require_patternProperties = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -34895,9 +34895,9 @@ var require_patternProperties = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/not.js
+// node_modules/ajv/dist/vocabularies/applicator/not.js
 var require_not = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -34926,9 +34926,9 @@ var require_not = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/anyOf.js
+// node_modules/ajv/dist/vocabularies/applicator/anyOf.js
 var require_anyOf = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -34943,9 +34943,9 @@ var require_anyOf = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/oneOf.js
+// node_modules/ajv/dist/vocabularies/applicator/oneOf.js
 var require_oneOf = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -35001,9 +35001,9 @@ var require_oneOf = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/allOf.js
+// node_modules/ajv/dist/vocabularies/applicator/allOf.js
 var require_allOf = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -35028,9 +35028,9 @@ var require_allOf = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/if.js
+// node_modules/ajv/dist/vocabularies/applicator/if.js
 var require_if = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -35097,9 +35097,9 @@ var require_if = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/thenElse.js
+// node_modules/ajv/dist/vocabularies/applicator/thenElse.js
 var require_thenElse = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -35115,9 +35115,9 @@ var require_thenElse = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/index.js
+// node_modules/ajv/dist/vocabularies/applicator/index.js
 var require_applicator = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var additionalItems_1 = require_additionalItems();
@@ -35163,9 +35163,9 @@ var require_applicator = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/format/format.js
+// node_modules/ajv/dist/vocabularies/format/format.js
 var require_format = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -35253,9 +35253,9 @@ var require_format = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/format/index.js
+// node_modules/ajv/dist/vocabularies/format/index.js
 var require_format2 = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var format_1 = require_format();
@@ -35264,9 +35264,9 @@ var require_format2 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/metadata.js
+// node_modules/ajv/dist/vocabularies/metadata.js
 var require_metadata = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.contentVocabulary = exports.metadataVocabulary = void 0;
@@ -35287,9 +35287,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/draft7.js
+// node_modules/ajv/dist/vocabularies/draft7.js
 var require_draft7 = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var core_1 = require_core2();
@@ -35309,9 +35309,9 @@ var require_draft7 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/discriminator/types.js
+// node_modules/ajv/dist/vocabularies/discriminator/types.js
 var require_types = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DiscrError = void 0;
@@ -35323,9 +35323,9 @@ var require_types = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/discriminator/index.js
+// node_modules/ajv/dist/vocabularies/discriminator/index.js
 var require_discriminator = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -35428,9 +35428,9 @@ var require_discriminator = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/refs/json-schema-draft-07.json
+// node_modules/ajv/dist/refs/json-schema-draft-07.json
 var require_json_schema_draft_07 = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
+  "node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
     module.exports = {
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: "http://json-schema.org/draft-07/schema#",
@@ -35585,9 +35585,9 @@ var require_json_schema_draft_07 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/ajv.js
+// node_modules/ajv/dist/ajv.js
 var require_ajv = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv/dist/ajv.js"(exports, module) {
+  "node_modules/ajv/dist/ajv.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.MissingRefError = exports.ValidationError = exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = exports.Ajv = void 0;
@@ -35655,9 +35655,9 @@ var require_ajv = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv-formats/dist/formats.js
+// node_modules/ajv-formats/dist/formats.js
 var require_formats = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv-formats/dist/formats.js"(exports) {
+  "node_modules/ajv-formats/dist/formats.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
@@ -35858,9 +35858,9 @@ var require_formats = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv-formats/dist/limit.js
+// node_modules/ajv-formats/dist/limit.js
 var require_limit = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv-formats/dist/limit.js"(exports) {
+  "node_modules/ajv-formats/dist/limit.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatLimitDefinition = void 0;
@@ -35930,9 +35930,9 @@ var require_limit = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/ajv-formats/dist/index.js
+// node_modules/ajv-formats/dist/index.js
 var require_dist = __commonJS({
-  "../../../../../workspace/atrium/packages/browser/node_modules/ajv-formats/dist/index.js"(exports, module) {
+  "node_modules/ajv-formats/dist/index.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var formats_1 = require_formats();
@@ -35972,7 +35972,7 @@ var require_dist = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 function createDefaultAjvInstance() {
   const ajv = new import_ajv.default({
     strict: false,
@@ -35986,7 +35986,7 @@ function createDefaultAjvInstance() {
 }
 var import_ajv, import_ajv_formats, AjvJsonSchemaValidator;
 var init_ajv_provider = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js"() {
     import_ajv = __toESM(require_ajv(), 1);
     import_ajv_formats = __toESM(require_dist(), 1);
     AjvJsonSchemaValidator = class {
@@ -36045,10 +36045,10 @@ var init_ajv_provider = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks;
 var init_server = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js"() {
     init_types2();
     ExperimentalServerTasks = class {
       constructor(_server) {
@@ -36264,7 +36264,7 @@ var init_server = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -36299,14 +36299,14 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 var init_helpers = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server;
 var init_server2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js"() {
     init_protocol();
     init_types2();
     init_ajv_provider();
@@ -36685,7 +36685,7 @@ var init_server2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
 function isCompletable(schema) {
   return !!schema && typeof schema === "object" && COMPLETABLE_SYMBOL in schema;
 }
@@ -36695,7 +36695,7 @@ function getCompleter(schema) {
 }
 var COMPLETABLE_SYMBOL, McpZodTypeKind;
 var init_completable = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js"() {
     COMPLETABLE_SYMBOL = /* @__PURE__ */ Symbol.for("mcp.completable");
     (function(McpZodTypeKind2) {
       McpZodTypeKind2["Completable"] = "McpCompletable";
@@ -36703,13 +36703,13 @@ var init_completable = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js
 var init_uriTemplate = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
 function validateToolName(name) {
   const warnings = [];
   if (name.length === 0) {
@@ -36767,15 +36767,15 @@ function validateAndWarnToolName(name) {
 }
 var TOOL_NAME_REGEX;
 var init_toolNameValidation = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js"() {
     TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
 var ExperimentalMcpServerTasks;
 var init_mcp_server = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js"() {
     ExperimentalMcpServerTasks = class {
       constructor(_mcpServer) {
         this._mcpServer = _mcpServer;
@@ -36792,15 +36792,15 @@ var init_mcp_server = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/zod/index.js
+// node_modules/zod/index.js
 var init_zod = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/zod/index.js"() {
+  "node_modules/zod/index.js"() {
     init_external3();
     init_external3();
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 function toolInputElementCount(value, max) {
   let count = 0;
   const stack = [value];
@@ -36904,7 +36904,7 @@ function createCompletionResult(suggestions) {
 }
 var McpServer, EMPTY_OBJECT_JSON_SCHEMA, EMPTY_COMPLETION_RESULT;
 var init_mcp = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js"() {
     init_server2();
     init_zod_compat();
     init_zod_json_schema_compat();
@@ -37646,7 +37646,7 @@ var init_mcp = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 function deserializeMessage(line) {
   return JSONRPCMessageSchema.parse(JSON.parse(line));
 }
@@ -37655,7 +37655,7 @@ function serializeMessage(message) {
 }
 var STDIO_DEFAULT_MAX_BUFFER_SIZE, ReadBuffer;
 var init_stdio = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js"() {
     init_types2();
     STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
     ReadBuffer = class {
@@ -37689,11 +37689,11 @@ var init_stdio = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 var StdioServerTransport;
 var init_stdio2 = __esm({
-  "../../../../../workspace/atrium/packages/browser/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js"() {
     init_stdio();
     StdioServerTransport = class {
       constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
@@ -37760,6 +37760,264 @@ var init_stdio2 = __esm({
         });
       }
     };
+  }
+});
+
+// src/call-trace.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
+import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { dirname } from "node:path";
+function actionTimeout(base) {
+  const v = store.getStore()?.debug?.actionTimeoutMs;
+  return v === void 0 ? base : deadlineOf(v);
+}
+function snapshotTimeout(base) {
+  const v = store.getStore()?.debug?.snapshotTimeoutMs;
+  return v === void 0 ? base : deadlineOf(v);
+}
+function debugActionTimeout() {
+  const v = store.getStore()?.debug?.actionTimeoutMs;
+  return v === void 0 ? void 0 : deadlineOf(v);
+}
+function noteTarget(target2) {
+  const c = store.getStore();
+  if (c?.debug) c.target = { ...c.target, ...target2 };
+}
+function noteSecret(secret) {
+  const c = store.getStore();
+  if (c && c.secret !== true) c.secret = secret;
+}
+function clip(value) {
+  if (value === void 0) return void 0;
+  let text;
+  try {
+    text = JSON.stringify(value, (_k, v) => {
+      if (v instanceof Uint8Array) return `<${v.byteLength} bytes>`;
+      if (v && typeof v === "object" && v.type === "Buffer" && Array.isArray(v.data)) return `<${v.data.length} bytes>`;
+      if (typeof v === "string" && v.length > 512 && /^[A-Za-z0-9+/=]+$/.test(v)) return `<${Math.floor(v.length * 3 / 4)} bytes base64>`;
+      return v;
+    }) ?? "undefined";
+  } catch {
+    return "<unserializable>";
+  }
+  return text.length > CLIP ? `${text.slice(0, CLIP)}\u2026(${text.length} chars)` : JSON.parse(text);
+}
+function redactParams(c, method, params) {
+  if (c.secret === false || !TEXT_METHODS.has(method) || !params || typeof params !== "object") return params;
+  return Object.fromEntries(Object.entries(params).map(([k, v]) => [k, typeof v === "string" ? REDACTED : v]));
+}
+function traceGate(gate, decision, detail = {}) {
+  const c = store.getStore();
+  if (!c?.debug || !c.emit) return;
+  c.emit({ ev: "gate", debug: true, call: c.id, tool: c.tool, gate, decision, ...detail });
+}
+function stage(name) {
+  const c = store.getStore();
+  if (c) c.stage = name;
+}
+function noteTab(tab) {
+  const c = store.getStore();
+  if (c) c.tab = tab;
+}
+function inFlight(method, op, params) {
+  const c = store.getStore();
+  if (!c) return op();
+  const mark = { method, startedAt: Date.now() };
+  c.cdp = mark;
+  const shown = c.debug && c.emit ? clip(redactParams(c, method, params)) : void 0;
+  const end2 = (outcome) => {
+    mark.endedAt = Date.now();
+    if (!c.debug || !c.emit) return;
+    c.emit({
+      ev: "cdp",
+      debug: true,
+      call: c.id,
+      method,
+      durationMs: mark.endedAt - mark.startedAt,
+      ...shown !== void 0 ? { params: shown } : {},
+      ..."error" in outcome ? { ok: false, error: errorText(c, method, outcome.error) } : { ok: true, ...outcome.result !== void 0 ? { result: clip(outcome.result) } : {} }
+    });
+  };
+  let p;
+  try {
+    p = op();
+  } catch (err) {
+    end2({ error: err });
+    throw err;
+  }
+  return p.then(
+    (result) => {
+      end2({ result });
+      return result;
+    },
+    (err) => {
+      end2({ error: err });
+      throw err;
+    }
+  );
+}
+function errorText(c, method, err) {
+  if (c.secret !== false && TEXT_METHODS.has(method)) return `${err?.name ?? "Error"} ${REDACTED}`;
+  return String(err?.message ?? err).slice(0, CLIP);
+}
+function whereText(c, now = Date.now()) {
+  const parts = [`call ${c.id}`, `stage ${c.stage}`];
+  if (c.tab) parts.push(`tab ${c.tab}`);
+  if (c.cdp) {
+    parts.push(c.cdp.endedAt === void 0 ? `cdp ${c.cdp.method} ${now - c.cdp.startedAt} ms` : `last cdp ${c.cdp.method} took ${c.cdp.endedAt - c.cdp.startedAt} ms`);
+  }
+  return `(${parts.join(", ")})`;
+}
+function snapshotOf(c, now = Date.now()) {
+  return {
+    call: c.id,
+    tool: c.tool,
+    ...c.tab ? { tab: c.tab } : {},
+    stage: c.stage,
+    ageMs: now - c.startedAt,
+    ...c.cdp ? { cdp: { method: c.cdp.method, inFlight: c.cdp.endedAt === void 0, ageMs: (c.cdp.endedAt ?? now) - c.cdp.startedAt } } : {}
+  };
+}
+function errorDetail(err, depth = 0, keepUrls = false) {
+  const text = (s, max) => keepUrls ? s.slice(0, max ?? 2e3) : scrubText(s, max);
+  if (!(err instanceof Error)) return { message: text(String(err)) };
+  const cause = err.cause;
+  return {
+    class: err.constructor?.name ?? err.name,
+    message: text(err.message),
+    ...err.stack ? { stack: text(err.stack, 4e3) } : {},
+    ...cause !== void 0 && depth < 3 ? { cause: errorDetail(cause, depth + 1, keepUrls) } : {}
+  };
+}
+function argsFor(c, args) {
+  if (!args || typeof args !== "object") return clip(args);
+  const a = args;
+  return clip("text" in a && c.secret !== false ? { ...a, text: REDACTED } : a);
+}
+function fileSink(file2) {
+  let write = writers.get(file2);
+  if (!write) {
+    let size = -1;
+    write = (line, debug) => {
+      try {
+        if (size < 0) {
+          mkdirSync(dirname(file2), { recursive: true });
+          try {
+            size = statSync(file2).size;
+          } catch {
+            size = 0;
+          }
+        }
+        const bytes = Buffer.byteLength(line);
+        if (size > 0 && size + bytes > LOG_MAX_BYTES) {
+          if (debug) {
+            for (let g = DEBUG_GENERATIONS - 1; g >= 1; g--) {
+              try {
+                renameSync(`${file2}.${g}`, `${file2}.${g + 1}`);
+              } catch {
+              }
+            }
+          }
+          renameSync(file2, `${file2}.1`);
+          size = 0;
+        }
+        appendFileSync(file2, line);
+        size += bytes;
+      } catch {
+        size = -1;
+      }
+    };
+    writers.set(file2, write);
+  }
+  const w = write;
+  return (event) => w(`${JSON.stringify({ ...event, pid: process.pid })}
+`, event.debug === true);
+}
+var NO_DEADLINE_MS, deadlineOf, outsideCall, CLIP, TEXT_METHODS, REDACTED, store, currentCall, URL_LIKE, scrubText, carriesText, CallTracer, LOG_MAX_BYTES, DEBUG_GENERATIONS, writers, lineSink;
+var init_call_trace = __esm({
+  "src/call-trace.ts"() {
+    "use strict";
+    NO_DEADLINE_MS = 2147483647;
+    deadlineOf = (ms) => ms === 0 ? NO_DEADLINE_MS : Math.min(ms, NO_DEADLINE_MS);
+    outsideCall = (fn) => store.exit(fn);
+    CLIP = 2048;
+    TEXT_METHODS = /* @__PURE__ */ new Set(["Input.insertText", "Input.dispatchKeyEvent", "Input.imeSetComposition"]);
+    REDACTED = "[redacted]";
+    store = new AsyncLocalStorage();
+    currentCall = () => store.getStore();
+    URL_LIKE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
+    scrubText = (s, max = 2e3) => {
+      const out = s.replace(URL_LIKE, "<url>");
+      return out.length > max ? `${out.slice(0, max)}\u2026` : out;
+    };
+    carriesText = (args) => !!args && typeof args === "object" && "text" in args;
+    CallTracer = class {
+      constructor(sink = () => {
+      }) {
+        this.sink = sink;
+      }
+      sink;
+      live = /* @__PURE__ */ new Map();
+      /** Emite um evento do rastro; nunca lança. */
+      emit(event) {
+        try {
+          this.sink({ t: (/* @__PURE__ */ new Date()).toISOString(), ...event });
+        } catch {
+        }
+      }
+      /**
+       * Roda uma chamada com um id novo: `call_started`, a chamada dentro do `AsyncLocalStorage`, e o registro sai da tabela no
+       * fim. `call_finished` é de quem chama (`finish`), porque só ele sabe se o resultado é erro. `track: false` não põe a
+       * chamada na tabela de voo (a própria `WebDiagnose`).
+       */
+      run(tool, fn, opts = {}) {
+        const call = { id: randomBytes(4).toString("hex"), tool, startedAt: Date.now(), stage: "prologue" };
+        if (opts.debug) {
+          call.debug = opts.debug;
+          call.emit = (event) => this.emit(event);
+        }
+        this.args.set(call, opts.args);
+        if (opts.track !== false) this.live.set(call.id, call);
+        this.emit({ ev: "call_started", call: call.id, tool, ...call.debug ? { debug: true, args: argsFor(call, opts.args) } : {} });
+        return store.run(call, () => fn(call)).finally(() => this.live.delete(call.id));
+      }
+      args = /* @__PURE__ */ new WeakMap();
+      /**
+       * `call_finished` com duração e resultado (`code` no erro; `error` com o detalhe quando o erro não tem código). Em debug,
+       * também os argumentos (agora com o texto, se o alvo se mostrou não-senha) e o resultado truncado.
+       */
+      finish(call, outcome) {
+        const now = Date.now();
+        const { result, ...rest } = outcome;
+        const where = rest.ok ? {} : { stage: call.stage, ...call.cdp ? { cdp: snapshotOf(call, now).cdp } : {} };
+        const args = this.args.get(call);
+        const debug = call.debug ? {
+          debug: true,
+          args: argsFor(call, args),
+          // O resultado de quem digita traz o valor do campo: redigido enquanto o alvo pode ser senha.
+          ...result !== void 0 ? { result: carriesText(args) && call.secret !== false ? REDACTED : clip(result) } : {}
+        } : {};
+        this.emit({
+          ev: "call_finished",
+          call: call.id,
+          tool: call.tool,
+          ...call.tab ? { tab: call.tab } : {},
+          durationMs: now - call.startedAt,
+          ...rest,
+          ...where,
+          ...debug
+        });
+      }
+      /** As chamadas em voo agora, da mais velha para a mais nova. */
+      inFlight(now = Date.now()) {
+        return [...this.live.values()].sort((a, b) => a.startedAt - b.startedAt).map((c) => snapshotOf(c, now));
+      }
+    };
+    LOG_MAX_BYTES = 1024 * 1024;
+    DEBUG_GENERATIONS = 3;
+    writers = /* @__PURE__ */ new Map();
+    lineSink = (log2) => (event) => log2(JSON.stringify(event));
   }
 });
 
@@ -37872,6 +38130,132 @@ var init_errors5 = __esm({
   }
 });
 
+// src/core/page-fn.ts
+function pageFn(fn) {
+  const src = `(()=>{${SHIM}return (${Function.prototype.toString.call(fn)})})()`;
+  const wrapped = ((...args) => fn(...args));
+  wrapped.toString = () => src;
+  return wrapped;
+}
+function pageScript(body2) {
+  return `(()=>{${SHIM}${body2}})()`;
+}
+var SHIM;
+var init_page_fn = __esm({
+  "src/core/page-fn.ts"() {
+    "use strict";
+    SHIM = "const __name=(f)=>f;";
+  }
+});
+
+// src/page-fn.ts
+var init_page_fn2 = __esm({
+  "src/page-fn.ts"() {
+    "use strict";
+    init_page_fn();
+  }
+});
+
+// src/page-events.ts
+function install({ types, max }) {
+  const K = /* @__PURE__ */ Symbol.for("atrium.debug.pageEvents");
+  const w = window;
+  w[K]?.stop();
+  const t0 = performance.now();
+  const log2 = [];
+  let dropped = 0;
+  const on = (ev) => {
+    if (log2.length < max) log2.push({ ev, t: performance.now() - t0 });
+    else dropped++;
+  };
+  for (const ty of types) window.addEventListener(ty, on, { capture: true, passive: true });
+  const state = {
+    target: document.activeElement,
+    log: log2,
+    dropped: () => dropped,
+    stop() {
+      for (const ty of types) window.removeEventListener(ty, on, { capture: true });
+      delete w[K];
+    }
+  };
+  Object.defineProperty(window, K, { value: state, configurable: true, enumerable: false, writable: true });
+}
+function setTarget(el) {
+  const st = window[/* @__PURE__ */ Symbol.for("atrium.debug.pageEvents")];
+  if (st) st.target = el;
+}
+function setTargetAt(p) {
+  const st = window[/* @__PURE__ */ Symbol.for("atrium.debug.pageEvents")];
+  if (st) st.target = document.elementFromPoint(p.x, p.y);
+}
+function collect() {
+  const st = window[/* @__PURE__ */ Symbol.for("atrium.debug.pageEvents")];
+  if (!st) return null;
+  st.stop();
+  const describe5 = (n) => {
+    if (n === window) return "window";
+    if (n === document) return "document";
+    if (!(n instanceof Element)) return null;
+    const tag = n.tagName.toLowerCase();
+    const role = n.getAttribute("role") ?? void 0;
+    const type2 = n instanceof HTMLInputElement ? n.type : void 0;
+    return { tag, ...role ? { role } : {}, ...type2 ? { type: type2 } : {} };
+  };
+  const target2 = st.target;
+  const events = st.log.map(({ ev, t }) => {
+    const node2 = ev.target;
+    const onTarget = target2 ? node2 === target2 || node2 instanceof Node && target2.contains(node2) : null;
+    return { type: ev.type, t: Math.round(t), onTarget, element: describe5(node2), defaultPrevented: ev.defaultPrevented };
+  });
+  return { events, dropped: st.dropped() };
+}
+var PAGE_EVENT_TYPES, MAX_EVENTS, PageEventsRecorder, firstLine, recorderOf;
+var init_page_events = __esm({
+  "src/page-events.ts"() {
+    "use strict";
+    init_call_trace();
+    init_page_fn2();
+    PAGE_EVENT_TYPES = ["pointerdown", "mousedown", "mouseup", "click", "focus", "blur", "keydown", "keyup", "beforeinput", "input", "change"];
+    MAX_EVENTS = 500;
+    PageEventsRecorder = class _PageEventsRecorder {
+      constructor(page) {
+        this.page = page;
+      }
+      page;
+      failed;
+      static async start(page) {
+        const r = new _PageEventsRecorder(page);
+        try {
+          await page.evaluate(pageFn(install), { types: [...PAGE_EVENT_TYPES], max: MAX_EVENTS });
+        } catch (err) {
+          r.failed = firstLine(err);
+        }
+        return r;
+      }
+      /** Marca o alvo da tool (o elemento resolvido pela mira, ou o do ponto). Falha calada. */
+      async target(t) {
+        if (this.failed) return;
+        try {
+          if ("x" in t) await this.page.evaluate(pageFn(setTargetAt), t);
+          else await t.evaluate(pageFn(setTarget));
+        } catch {
+        }
+      }
+      async collect() {
+        if (this.failed) return { unavailable: this.failed };
+        try {
+          const out = await this.page.evaluate(pageFn(collect));
+          return out ?? { unavailable: "the listeners were gone (the page navigated during the gesture)" };
+        } catch (err) {
+          return { unavailable: firstLine(err) };
+        }
+      }
+    };
+    firstLine = (err) => String(err?.message ?? err).split("\n")[0].slice(0, 300);
+    recorderOf = () => currentCall()?.pageEvents;
+  }
+});
+
 // src/core/aim.ts
 function topAt(p) {
   let el = document.elementsFromPoint(p.x, p.y)[0] ?? null;
@@ -37959,32 +38343,6 @@ var init_aim = __esm({
   }
 });
 
-// src/core/page-fn.ts
-function pageFn(fn) {
-  const src = `(()=>{${SHIM}return (${Function.prototype.toString.call(fn)})})()`;
-  const wrapped = ((...args) => fn(...args));
-  wrapped.toString = () => src;
-  return wrapped;
-}
-function pageScript(body2) {
-  return `(()=>{${SHIM}${body2}})()`;
-}
-var SHIM;
-var init_page_fn = __esm({
-  "src/core/page-fn.ts"() {
-    "use strict";
-    SHIM = "const __name=(f)=>f;";
-  }
-});
-
-// src/page-fn.ts
-var init_page_fn2 = __esm({
-  "src/page-fn.ts"() {
-    "use strict";
-    init_page_fn();
-  }
-});
-
 // src/viewport.ts
 function viewportOf(page) {
   return page.viewportSize() ?? measured.get(page) ?? null;
@@ -38044,28 +38402,39 @@ async function aim(ctx, target2) {
   const { page } = ctx;
   if (typeof target2 !== "string") {
     const hit = await hitTest(page, target2, null);
+    noteTarget({ point: { x: target2.x, y: target2.y }, hit: hit.top });
+    await recorderOf()?.target(target2);
     return { x: target2.x, y: target2.y, hit: hit.top };
   }
+  noteTarget({ ref: target2 });
   const handle = await resolveElement(ctx, target2);
   try {
-    return await aimHandle(ctx, target2, handle);
+    await recorderOf()?.target(handle);
+    const out = await aimHandle(ctx, target2, handle);
+    noteTarget({ point: { x: out.x, y: out.y }, box: out.box, hit: out.hit, visible: true });
+    return out;
+  } catch (err) {
+    if (err instanceof BrowserError && err.code === "TARGET_OBSCURED") noteTarget({ occluder: err.occluder ?? null });
+    if (err instanceof BrowserError && err.code === "TARGET_NOT_VISIBLE") noteTarget({ visible: false });
+    throw err;
   } finally {
     await handle.dispose();
   }
 }
-async function aimHandle({ page, timeout }, target2, handle) {
+async function aimHandle({ page, timeout, settleTimeout }, target2, handle) {
   let raw = null;
   try {
     await handle.evaluate(
       pageFn((el) => el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }))
     );
-    const deadline = Date.now() + timeout;
+    const settleMs = settleTimeout ?? timeout;
+    const deadline = Date.now() + settleMs;
     let prev = null;
     for (; ; ) {
       raw = await handle.boundingBox();
       if (raw && prev && raw.x === prev.x && raw.y === prev.y && raw.width === prev.width && raw.height === prev.height) break;
       if (Date.now() > deadline) {
-        throw new Error(`Box of "${target2}" did not settle within ${timeout}ms.`);
+        throw new Error(`Box of "${target2}" did not settle within ${settleMs}ms.`);
       }
       prev = raw;
       await new Promise((r) => setTimeout(r, 40));
@@ -38129,7 +38498,9 @@ async function reHit(ctx, target2, aimed) {
 var init_aim2 = __esm({
   "src/aim.ts"() {
     "use strict";
+    init_call_trace();
     init_errors5();
+    init_page_events();
     init_aim();
     init_page_fn2();
     init_viewport();
@@ -38192,13 +38563,77 @@ var init_input = __esm({
   }
 });
 
+// src/debug-probe.ts
+function describe3(el) {
+  const tag = el.tagName.toLowerCase();
+  const roles = { a: "link", button: "button", select: "combobox", textarea: "textbox", img: "img" };
+  let role = el.getAttribute("role") || roles[tag] || "generic";
+  const input3 = el instanceof HTMLInputElement ? el : null;
+  if (input3) role = input3.type === "checkbox" || input3.type === "radio" ? input3.type : input3.type === "button" || input3.type === "submit" ? "button" : "textbox";
+  const autocomplete = (el.getAttribute("autocomplete") ?? "").toLowerCase();
+  const secret = input3 !== null && input3.type === "password" || autocomplete.includes("password");
+  const label = el.getAttribute("aria-label") ?? (input3?.labels?.[0]?.textContent ?? "") ?? "";
+  const name = (label || (input3 || el instanceof HTMLTextAreaElement ? "" : el.textContent ?? "")).trim().replace(/\s+/g, " ").slice(0, 120);
+  const r = el.getBoundingClientRect();
+  const cs = getComputedStyle(el);
+  const visible = r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none";
+  const enabled = !el.disabled && el.getAttribute("aria-disabled") !== "true";
+  return {
+    tag,
+    role,
+    ...name ? { name } : {},
+    ...el.id ? { id: el.id } : {},
+    ...input3 ? { type: input3.type } : {},
+    secret,
+    rect: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
+    visible,
+    enabled,
+    connected: el.isConnected
+  };
+}
+function probeDocument() {
+  return { url: location.href, title: document.title, visibilityState: document.visibilityState, hasFocus: document.hasFocus() };
+}
+async function probe(page, refs, ref) {
+  const doc = await page.evaluate(pageFn(probeDocument));
+  const focusedHandle = await page.evaluateHandle(pageFn(() => {
+    let a = document.activeElement;
+    while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+    return a && a !== document.body && a !== document.documentElement ? a : null;
+  }));
+  const focusedEl = focusedHandle.asElement();
+  const focused = focusedEl ? await focusedEl.evaluate(pageFn(describe3)) : null;
+  await focusedHandle.dispose();
+  let target2;
+  if (ref) {
+    try {
+      const handle = await page.locator(await refs.resolve(ref)).elementHandle({ timeout: 1e3 });
+      if (!handle) target2 = { error: `ref ${ref} matches no element` };
+      else {
+        target2 = await handle.evaluate(pageFn(describe3));
+        await handle.dispose();
+      }
+    } catch (err) {
+      target2 = { error: String(err?.message ?? err).split("\n")[0].slice(0, 300) };
+    }
+  }
+  return { ...doc, focused, ...target2 ? { target: target2 } : {} };
+}
+var init_debug_probe = __esm({
+  "src/debug-probe.ts"() {
+    "use strict";
+    init_page_fn2();
+  }
+});
+
 // src/transport-playwright.ts
 function playwrightTransport(page) {
   let session = null;
   return {
     async send(method, params) {
       session ??= page.context().newCDPSession(page);
-      return (await session).send(method, params);
+      const s = session;
+      return inFlight(method, async () => (await s).send(method, params), params);
     },
     /** Solta a sessão CDP (modo adotar: a página é do hospedeiro e vive mais que a sessão do pacote). Sem sessão criada, não faz nada. */
     async detach() {
@@ -38212,6 +38647,7 @@ function playwrightTransport(page) {
 var init_transport_playwright = __esm({
   "src/transport-playwright.ts"() {
     "use strict";
+    init_call_trace();
   }
 });
 
@@ -38389,7 +38825,7 @@ async function elementBox(c, ref) {
   try {
     await handle.evaluate(pageFn((el) => el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" })));
     let prev = null;
-    const deadline = Date.now() + c.timeout;
+    const deadline = Date.now() + (c.settleTimeout ?? c.timeout);
     for (; ; ) {
       const box = await handle.boundingBox();
       const visible = !!box && box.width > 0 && box.height > 0;
@@ -38514,13 +38950,13 @@ var init_adopt_scope = __esm({
 });
 
 // src/dialog.ts
-var describe3, DialogTracker;
+var describe4, DialogTracker;
 var init_dialog = __esm({
   "src/dialog.ts"() {
     "use strict";
     init_adopt_scope();
     init_errors5();
-    describe3 = (d) => ({
+    describe4 = (d) => ({
       type: d.type(),
       message: d.message(),
       defaultValue: d.defaultValue()
@@ -38537,12 +38973,12 @@ var init_dialog = __esm({
         });
       }
       info() {
-        return this.current ? describe3(this.current) : null;
+        return this.current ? describe4(this.current) : null;
       }
       /** Erra DIALOG_PENDING se há diálogo aberto. Não toca a página. */
       assertNone() {
         if (!this.current) return;
-        const d = describe3(this.current);
+        const d = describe4(this.current);
         throw new BrowserError(
           "DIALOG_PENDING",
           `A ${d.type} dialog is open ("${d.message}"). Resolve it before the next action.`,
@@ -38552,7 +38988,7 @@ var init_dialog = __esm({
       async resolve(opts) {
         const d = this.current;
         if (!d) throw new BrowserError("NO_DIALOG", "There is no open dialog to resolve.");
-        const info = describe3(d);
+        const info = describe4(d);
         this.current = null;
         if (opts.accept) await d.accept(opts.promptText);
         else await d.dismiss();
@@ -39106,7 +39542,7 @@ import {
   createServer,
   request as httpRequest
 } from "node:http";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes as randomBytes2, timingSafeEqual } from "node:crypto";
 import { connect } from "node:net";
 function end(client, status, extra = "") {
   client.end(`HTTP/1.1 ${status}
@@ -39197,7 +39633,7 @@ var init_egress_proxy = __esm({
       server;
       /** Credencial da sessão (`proxy.username/password` do contexto): sem ela, toda requisição é 407. */
       username = "atrium";
-      password = randomBytes(24).toString("hex");
+      password = randomBytes2(24).toString("hex");
       expected = sha(`Basic ${Buffer.from(`${this.username}:${this.password}`).toString("base64")}`);
       sockets = /* @__PURE__ */ new Set();
       /** Conexões do browser ao proxy (as de saída, `dial`, não contam): o teto é conferido aqui, em JS. */
@@ -39393,10 +39829,10 @@ var init_egress_proxy = __esm({
         up.once("response", (pr) => {
           const out = {};
           for (const [k, v] of Object.entries(pr.headers)) if (!HOP_BY_HOP.has(k)) out[k] = v;
-          const location = pr.headers.location;
-          if (ticketed && typeof location === "string" && (pr.statusCode ?? 0) >= 300 && (pr.statusCode ?? 0) < 400) {
+          const location2 = pr.headers.location;
+          if (ticketed && typeof location2 === "string" && (pr.statusCode ?? 0) >= 300 && (pr.statusCode ?? 0) < 400) {
             try {
-              const next = new URL(location, url2);
+              const next = new URL(location2, url2);
               if (this.egress.isPrivateHost(next.hostname)) {
                 if (sameOrigin(next, url2) || this.egress.isOperatorHost(next.hostname)) this.grant(next.href);
                 else this.egress.logInternal(`redirect hop ${url2.host} -> ${next.host} denied: private to a different private host (not listed by the operator)`);
@@ -39736,7 +40172,7 @@ function redact(headers) {
 function isTextual(mime) {
   return mime !== void 0 && TEXT_MIME.test(mime);
 }
-function clip(text, max) {
+function clip2(text, max) {
   return text.length > max ? `${text.slice(0, max)}\u2026` : text;
 }
 function checkLimit(limit) {
@@ -39770,7 +40206,7 @@ var init_observe = __esm({
       seq = 0;
       dropped = 0;
       push(e) {
-        this.items.push({ ...e, text: clip(e.text, CONSOLE_TEXT_MAX), seq: ++this.seq, ts: Date.now() });
+        this.items.push({ ...e, text: clip2(e.text, CONSOLE_TEXT_MAX), seq: ++this.seq, ts: Date.now() });
         if (this.items.length > CONSOLE_RING_MAX) {
           this.items.shift();
           this.dropped++;
@@ -40269,6 +40705,7 @@ async function pause(ctx, rng) {
 }
 async function moveAlong(ctx, to, minSteps = 8) {
   const { cdp, state, rng } = ctx;
+  stage("trajectory");
   const path = planPath({ x: state.x, y: state.y }, to, rng, minSteps);
   const started = Date.now();
   for (const p of path) {
@@ -40283,25 +40720,33 @@ async function moveAlong(ctx, to, minSteps = 8) {
 async function press(ctx, button, clickCount = 1) {
   const { cdp, state } = ctx;
   const held = [...state.buttons];
+  stage("press");
   state.buttons.add(button);
   await input2(ctx, mouseDown(cdp, state.x, state.y, button, clickCount, held));
   ctx.cosmetics?.down();
 }
 async function release(ctx, button, clickCount = 1) {
   const { cdp, state } = ctx;
+  stage("release");
   await input2(ctx, mouseUp(cdp, state.x, state.y, button, clickCount, state.buttons));
   ctx.cosmetics?.up();
   ctx.state.buttons.delete(button);
 }
 async function approach(ctx, target2) {
+  stage("aim");
   const aimed = await aim(ctx, target2);
   const motion = await moveAlong(ctx, { x: aimed.x, y: aimed.y });
+  stage("re-hit");
   const hit = await reHit(ctx, target2, aimed);
   return { aimed, motion, hit };
 }
 async function gesture(ctx, body2, fallback) {
   const { page, state } = ctx;
+  stage("gesture:begin");
   const tabMark = await ctx.tabs.begin();
+  const call = currentCall();
+  const events = call?.debug ? await withinMs(PageEventsRecorder.start(page), PAGE_EVENTS_MS) : void 0;
+  if (call && events) call.pageEvents = events;
   let navigated = false;
   const nav = { pending: null };
   let wake = null;
@@ -40331,6 +40776,7 @@ async function gesture(ctx, body2, fallback) {
   try {
     try {
       value = await body2((m) => motion = m);
+      stage("settle");
       await ctx.dialogs.settle(SETTLE_MS);
     } catch (err) {
       if (!(err instanceof DialogInterrupt)) throw err;
@@ -40338,6 +40784,7 @@ async function gesture(ctx, body2, fallback) {
     }
     dialog = ctx.dialogs.info() ?? void 0;
     if (nav.pending && !dialog) {
+      stage("navigation-commit");
       const until = Date.now() + Math.min(NAV_COMMIT_MS, ctx.timeout);
       while (nav.pending && Date.now() < until) {
         await new Promise((resolve7) => {
@@ -40350,8 +40797,12 @@ async function gesture(ctx, body2, fallback) {
         wake = null;
       }
     }
-    if (navigated && !dialog) await page.waitForLoadState("load", { timeout: ctx.timeout });
+    if (navigated && !dialog) {
+      stage("navigation-wait");
+      await page.waitForLoadState("load", { timeout: ctx.timeout });
+    }
   } finally {
+    if (call && call.debug) await finishPageEvents(ctx, call, events);
     page.off("framenavigated", onNav);
     page.off("request", onRequest);
     page.off("requestfailed", onFailed);
@@ -40364,6 +40815,7 @@ async function gesture(ctx, body2, fallback) {
       }
     }
   }
+  stage("gesture:end");
   const { newTabs, blockedPopups } = await ctx.tabs.end(tabMark);
   return {
     ...value,
@@ -40377,6 +40829,28 @@ async function gesture(ctx, body2, fallback) {
     url: page.url(),
     ...dialog ? { dialog } : {}
   };
+}
+async function withinMs(p, ms) {
+  let timer;
+  const late2 = new Promise((r) => {
+    timer = setTimeout(() => r(void 0), ms);
+  });
+  try {
+    return await Promise.race([p, late2]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function finishPageEvents(ctx, call, rec) {
+  call.pageEvents = void 0;
+  let out;
+  if (!rec) out = { unavailable: `the page did not answer within ${PAGE_EVENTS_MS} ms when the listeners were installed` };
+  else if (ctx.dialogs.info()) out = { unavailable: "a dialog is open; the listeners are removed on the next debug gesture" };
+  else out = await withinMs(rec.collect(), PAGE_EVENTS_MS) ?? { unavailable: `the page did not answer within ${PAGE_EVENTS_MS} ms` };
+  call.events = out;
+  call.emit?.(
+    "unavailable" in out ? { ev: "page_events_unavailable", debug: true, call: call.id, tool: call.tool, reason: out.unavailable } : { ev: "page_events", debug: true, call: call.id, tool: call.tool, events: out.events, ...out.dropped ? { dropped: out.dropped } : {} }
+  );
 }
 function click(ctx, target2, opts = {}) {
   const button = opts.button ?? "left";
@@ -40435,10 +40909,12 @@ function centerPointer(page) {
     buttons: /* @__PURE__ */ new Set()
   };
 }
-var DialogInterrupt, sleep, SETTLE_MS, NAV_COMMIT_MS, BUTTON_CLICK_GAP, DRAG_MIN_STEPS;
+var DialogInterrupt, sleep, SETTLE_MS, NAV_COMMIT_MS, PAGE_EVENTS_MS, BUTTON_CLICK_GAP, DRAG_MIN_STEPS;
 var init_pointer = __esm({
   "src/pointer.ts"() {
     "use strict";
+    init_call_trace();
+    init_page_events();
     init_aim2();
     init_path();
     init_input();
@@ -40448,6 +40924,7 @@ var init_pointer = __esm({
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     SETTLE_MS = 50;
     NAV_COMMIT_MS = 3e3;
+    PAGE_EVENTS_MS = 3e3;
     BUTTON_CLICK_GAP = [60, 110];
     DRAG_MIN_STEPS = 16;
   }
@@ -40466,6 +40943,8 @@ function focusProbe(el) {
   const NON_TEXT = ["checkbox", "radio", "button", "submit", "reset", "image", "file", "range", "color", "hidden"];
   let editable = false;
   let value = "";
+  const autocomplete = (el.getAttribute("autocomplete") ?? "").toLowerCase();
+  const secret = el instanceof HTMLInputElement && el.type === "password" || autocomplete.includes("password");
   if (el instanceof HTMLTextAreaElement) {
     editable = !el.readOnly && !el.disabled;
     value = el.value;
@@ -40478,7 +40957,7 @@ function focusProbe(el) {
     editable = el.isContentEditable;
     value = el.textContent ?? "";
   }
-  return { isFrame, isRoot, editable, value };
+  return { isFrame, isRoot, editable, value, secret };
 }
 function probeSelect(el) {
   if (!(el instanceof HTMLSelectElement)) return null;
@@ -40568,16 +41047,16 @@ async function readFocus(page) {
       return null;
     }
     try {
-      const probe = await frame.evaluate(pageFn(focusProbe), el);
-      if (probe.isFrame) {
+      const probe2 = await frame.evaluate(pageFn(focusProbe), el);
+      if (probe2.isFrame) {
         const child = await el.contentFrame();
         if (!child) return null;
         frame = child;
         continue;
       }
-      if (probe.isRoot) return null;
+      if (probe2.isRoot) return null;
       const { desc } = await frame.evaluate(pageFn(inspect), { top: el, target: null });
-      return { editable: probe.editable, value: probe.value, desc };
+      return { editable: probe2.editable, value: probe2.value, secret: probe2.secret, desc };
     } finally {
       await el.dispose();
     }
@@ -40591,7 +41070,8 @@ async function quiesce(ctx) {
 async function key(ctx, combo) {
   const { keyboard } = ctx.page;
   const delay = Math.round(between(ctx.rng, 20, 60));
-  const op = keyboard.press(combo, { delay }).catch(async (err) => {
+  stage("key");
+  const op = inFlight("Input.dispatchKeyEvent", () => keyboard.press(combo, { delay }), { key: combo }).catch(async (err) => {
     for (const token of combo.split("+").slice(0, -1)) await keyboard.up(token).catch(() => {
     });
     throw /unknown key/i.test(String(err?.message)) ? keyError(combo, err) : err;
@@ -40607,12 +41087,13 @@ async function clickToFocus(ctx, target2, note) {
   return hit;
 }
 async function insert(ctx, text, mode) {
+  stage("typing");
   if (mode === "paste") {
     await input2(ctx, insertText(ctx.cdp, text));
     return;
   }
   for (const ch of Array.from(text.replace(/\r\n?/g, "\n"))) {
-    await input2(ctx, ch === "\n" ? ctx.page.keyboard.press("Enter") : ctx.page.keyboard.type(ch));
+    await input2(ctx, inFlight("Input.dispatchKeyEvent", () => ch === "\n" ? ctx.page.keyboard.press("Enter") : ctx.page.keyboard.type(ch), { text: ch }));
     await pause(ctx, KEY_DELAY);
   }
 }
@@ -40621,7 +41102,9 @@ function typeInto(ctx, target2, text, mode, clear) {
     ctx,
     async (note) => {
       if (target2 !== void 0) await clickToFocus(ctx, target2, note);
+      stage("focus");
       const focus = await readFocus(ctx.page);
+      if (focus) noteSecret(focus.secret);
       if (!focus) {
         throw new BrowserError(
           "NO_FOCUS",
@@ -40638,7 +41121,9 @@ function typeInto(ctx, target2, text, mode, clear) {
         await key(ctx, END_KEY);
       }
       await insert(ctx, text, mode);
+      stage("settle");
       await quiesce(ctx);
+      stage("focus");
       const after = await readFocus(ctx.page);
       return { value: after?.value ?? null, focused: after?.desc ?? null, mode };
     },
@@ -40677,8 +41162,8 @@ function pressKey(ctx, combo, opts = {}) {
     () => ({ pressed: combo, hold })
   );
 }
-function pickOption(probe, spec) {
-  const { options } = probe;
+function pickOption(probe2, spec) {
+  const { options } = probe2;
   const list = options.map((o) => `"${o.label}"`).join(", ");
   if ("index" in spec) {
     if (!Number.isInteger(spec.index) || spec.index < 0 || spec.index >= options.length) {
@@ -40706,31 +41191,31 @@ function selectOption(ctx, target2, spec, mode = "keys") {
     async (note) => {
       const handle = await resolveElement(ctx, target2);
       try {
-        const probe = await handle.evaluate(pageFn(probeSelect));
-        if (!probe) {
+        const probe2 = await handle.evaluate(pageFn(probeSelect));
+        if (!probe2) {
           throw new BrowserError(
             "NOT_A_SELECT",
             `Ref "${target2}" is not a native <select>. For a custom dropdown, click it and click its option.`
           );
         }
-        const t = pickOption(probe, spec);
-        const opt2 = probe.options[t];
+        const t = pickOption(probe2, spec);
+        const opt2 = probe2.options[t];
         if (opt2.disabled) throw new BrowserError("OPTION_DISABLED", `Option "${opt2.label}" is disabled.`);
         const selected = { index: t, value: opt2.value, label: opt2.label };
-        if (!probe.multiple && probe.selectedIndex === t) return { selected, changed: false, mode };
+        if (!probe2.multiple && probe2.selectedIndex === t) return { selected, changed: false, mode };
         if (mode === "programmatic") {
           await input2(ctx, handle.selectOption({ index: t }));
         } else {
-          if (probe.multiple) {
+          if (probe2.multiple) {
             throw new BrowserError(
               "OPTION_UNSUPPORTED",
               `Ref "${target2}" is a multiple <select>; keyboard selection is unsupported. Use mode "programmatic".`
             );
           }
           await clickToFocus(ctx, target2, note);
-          const enabled = probe.options.flatMap((o, i) => o.disabled ? [] : [i]);
+          const enabled = probe2.options.flatMap((o, i) => o.disabled ? [] : [i]);
           const to = enabled.indexOf(t);
-          const from = enabled.indexOf(probe.selectedIndex);
+          const from = enabled.indexOf(probe2.selectedIndex);
           if (to === 0 || from < 0) {
             await key(ctx, "Home");
             for (let i = 0; i < to; i++) await key(ctx, "ArrowDown");
@@ -40914,7 +41399,7 @@ async function measureAt(page, point) {
   return { kind: "document", name: "document", scrollLeft: 0, scrollTop: 0, maxLeft: 0, maxTop: 0 };
 }
 async function settled(ctx, point, from) {
-  const deadline = Date.now() + ctx.timeout;
+  const deadline = Date.now() + (ctx.settleTimeout ?? ctx.timeout);
   let prev = await measureAt(ctx.page, point);
   if (from) {
     const lag = Date.now() + WHEEL_LAG_MS;
@@ -41010,6 +41495,7 @@ var init_keyboard = __esm({
   "src/keyboard.ts"() {
     "use strict";
     init_aim2();
+    init_call_trace();
     init_errors5();
     init_pointer();
     init_page_fn2();
@@ -41032,7 +41518,7 @@ var init_keyboard = __esm({
 
 // src/runtime.ts
 import { chmod as chmod2, link, mkdir as mkdir3, open as open2, readFile as readFile2, rename, rm as rm3, stat as stat4, unlink, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname, isAbsolute as isAbsolute2, join as join3, resolve as resolve2, sep as sep2 } from "node:path";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3, resolve as resolve2, sep as sep2 } from "node:path";
 function browsersDir(dir) {
   return join3(dir, "browsers");
 }
@@ -41620,9 +42106,9 @@ var init_cosmetics = __esm({
 });
 
 // src/host/policy.ts
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, realpathSync, statSync as statSync2 } from "node:fs";
 import { homedir } from "node:os";
-import { basename as basename2, delimiter, dirname as dirname2, join as join5, parse as parse3, relative as relative2, resolve as resolve3, isAbsolute as isAbsolute3, sep as sep3 } from "node:path";
+import { basename as basename2, delimiter, dirname as dirname3, join as join5, parse as parse3, relative as relative2, resolve as resolve3, isAbsolute as isAbsolute3, sep as sep3 } from "node:path";
 function localEgress(env = process.env) {
   const names = (env[PRIVATE_HOSTS_ENV] ?? "").split(/[\s,;]+/).map((h) => h.trim().toLowerCase()).filter(Boolean);
   for (const n of names) {
@@ -41696,7 +42182,7 @@ function uploadPolicy(dirs, opts = {}) {
   const names = { ...BROWSER_UPLOAD_NAMES, ...opts.names };
   const broadReason = (target2) => {
     const f = resolve3(target2);
-    if (parse3(f).root === f || dirname2(f) === f) return `${f} is the root of a drive`;
+    if (parse3(f).root === f || dirname3(f) === f) return `${f} is the root of a drive`;
     const refs = (list) => list.flatMap((d) => [d, real(d)].filter((x) => x !== null));
     const same = (list) => refs(list).some((d) => sameFolder(d, f));
     if (same([home])) return `${f} is the user's home folder`;
@@ -41783,7 +42269,7 @@ function uploadPolicy(dirs, opts = {}) {
       }
       if (!listed.some((d) => inside(d, resolve3(path)))) throw refusal(path, listed, names);
       const file2 = real(path);
-      if (!file2 || !statSync(file2).isFile()) throw refusal(path, listed, names);
+      if (!file2 || !statSync2(file2).isFile()) throw refusal(path, listed, names);
       const allowed = listed.map((d) => real(d)).filter((d) => d !== null);
       if (!allowed.some((d) => inside(d, file2))) throw refusal(path, listed, names);
       return file2;
@@ -41791,7 +42277,7 @@ function uploadPolicy(dirs, opts = {}) {
     async authorizeUpload({ file: file2, site, top = site, ancestors = [] }) {
       const embedded = site !== top || ancestors.some((o) => o !== top);
       const owner = embedded ? `WARNING: the field belongs to ${site}, embedded in ${top}` + (ancestors.length > 1 ? ` (frame chain: ${[site, ...ancestors].join(" > ")})` : "") : null;
-      const folder = dirname2(file2);
+      const folder = dirname3(file2);
       if (!embedded) {
         const trustedReal = trusted.map((d) => real(d)).filter((d) => d !== null);
         if (trustedReal.some((d) => inside(d, file2))) return;
@@ -41837,7 +42323,7 @@ Send it?` + (offerSession ? ` "${SESSION.title}" lets every file in ${show(folde
       );
       if (!listed.some((d) => insideOrSame(d, resolve3(input3)))) throw notAllowed();
       const folder = real(input3);
-      if (!folder || !statSync(folder).isDirectory()) throw notAllowed();
+      if (!folder || !statSync2(folder).isDirectory()) throw notAllowed();
       const allowed = listed.map((d) => real(d)).filter((d) => d !== null);
       if (!allowed.some((d) => insideOrSame(d, folder))) throw notAllowed();
       const broad = broadReason(input3) ?? broadReason(folder);
@@ -41920,8 +42406,8 @@ var init_policy = __esm({
 });
 
 // src/profile.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
-import { mkdirSync, readdirSync, rmSync, statSync as statSync2, writeFileSync } from "node:fs";
+import { randomBytes as randomBytes3 } from "node:crypto";
+import { mkdirSync as mkdirSync2, readdirSync, rmSync, statSync as statSync3, writeFileSync } from "node:fs";
 import { rm as rm4 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join as join6 } from "node:path";
@@ -41938,9 +42424,9 @@ async function removeDirRetry(dir, budgetMs = 1e4) {
   }
 }
 function prepareProfileDir(workDir) {
-  mkdirSync(workDir, { recursive: true });
+  mkdirSync2(workDir, { recursive: true });
   const dir = join6(workDir, launchDirName("prof"));
-  mkdirSync(join6(dir, "Default"), { recursive: true, mode: 448 });
+  mkdirSync2(join6(dir, "Default"), { recursive: true, mode: 448 });
   try {
     writeFileSync(join6(dir, "Default", "Preferences"), JSON.stringify({ webrtc: { ip_handling_policy: WEBRTC_IP_POLICY } }), { flag: "wx" });
   } catch (err) {
@@ -41955,13 +42441,13 @@ var init_profile = __esm({
     "use strict";
     WEBRTC_IP_POLICY = "disable_non_proxied_udp";
     defaultWorkDir = () => join6(tmpdir(), "atrium-browser-run");
-    launchDirName = (kind) => `${kind}-${randomBytes2(12).toString("hex")}-${process.pid}`;
+    launchDirName = (kind) => `${kind}-${randomBytes3(12).toString("hex")}-${process.pid}`;
   }
 });
 
 // src/state.ts
 import { mkdir as mkdir4, readFile as readFile3, rename as rename2, rm as rm5, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname3, isAbsolute as isAbsolute4 } from "node:path";
+import { dirname as dirname4, isAbsolute as isAbsolute4 } from "node:path";
 function assertAbsolute(path, what) {
   if (typeof path !== "string" || !isAbsolute4(path)) {
     throw new BrowserError("INVALID_ARGUMENT", `${what} must be an absolute path, got ${JSON.stringify(path)}.`);
@@ -41995,7 +42481,7 @@ async function loadStorageState(path) {
 async function saveStorageState(path, state) {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
-    await mkdir4(dirname3(path), { recursive: true });
+    await mkdir4(dirname4(path), { recursive: true });
     await writeFile3(tmp, JSON.stringify(state), { encoding: "utf8", mode: 384 });
     await rename2(tmp, path);
   } catch (err) {
@@ -42014,7 +42500,7 @@ var init_state = __esm({
 });
 
 // src/laf.ts
-import { mkdirSync as mkdirSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { mkdirSync as mkdirSync3, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { readFile as readFile4, stat as stat5 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
 import { extname as extname3, isAbsolute as isAbsolute5, join as join7, normalize, sep as sep4 } from "node:path";
@@ -42119,15 +42605,15 @@ async function loadLaf(o) {
   };
 }
 function prepareThemeDir(laf) {
-  mkdirSync2(laf.workDir, { recursive: true });
+  mkdirSync3(laf.workDir, { recursive: true });
   const dir = join7(laf.workDir, launchDirName("laf"));
-  mkdirSync2(dir, { mode: 448 });
+  mkdirSync3(dir, { mode: 448 });
   const remove = () => removeDirRetry(dir);
   try {
     writeFileSync2(join7(dir, "manifest.json"), JSON.stringify(laf.theme.manifest), { flag: "wx" });
     for (const [rel, bytes] of Object.entries(laf.theme.files)) {
       const file2 = join7(dir, ...rel.split("/"));
-      mkdirSync2(join7(file2, ".."), { recursive: true });
+      mkdirSync3(join7(file2, ".."), { recursive: true });
       writeFileSync2(file2, bytes, { flag: "wx" });
     }
   } catch (err) {
@@ -42457,19 +42943,19 @@ async function waitFor(page, refs, dialogs, sessionTimeout, cond, opts = {}) {
   if (kinds.length !== 1) {
     throw new BrowserError("INVALID_ARGUMENT", "waitFor needs exactly one of: text, ref, url, urlChanged.");
   }
-  const timeoutMs = opts.timeoutMs ?? sessionTimeout;
+  const timeoutMs = opts.timeoutMs ?? Math.min(sessionTimeout, MAX_WAIT_MS);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_MS) {
     throw new BrowserError("INVALID_ARGUMENT", `timeoutMs must be an integer from 1 to ${MAX_WAIT_MS}.`);
   }
   const kind = kinds[0];
   let check2;
-  let describe4;
+  let describe5;
   if ("text" in cond) {
     const text = cond.text;
     if (typeof text !== "string" || text === "") {
       throw new BrowserError("INVALID_ARGUMENT", "waitFor text must be a non-empty string.");
     }
-    describe4 = `text ${JSON.stringify(text)}`;
+    describe5 = `text ${JSON.stringify(text)}`;
     check2 = () => page.evaluate(pageFn((t) => (document.body?.innerText ?? "").includes(t)), text);
   } else if ("ref" in cond) {
     const state = cond.state ?? "visible";
@@ -42477,21 +42963,21 @@ async function waitFor(page, refs, dialogs, sessionTimeout, cond, opts = {}) {
       throw new BrowserError("INVALID_ARGUMENT", 'waitFor ref state must be "visible" or "hidden".');
     }
     const locator = page.locator(await refs.resolve(cond.ref));
-    describe4 = `ref ${cond.ref} to be ${state}`;
+    describe5 = `ref ${cond.ref} to be ${state}`;
     check2 = async () => await locator.isVisible() === (state === "visible");
   } else if ("urlChanged" in cond) {
     if (cond.urlChanged !== true) {
       throw new BrowserError("INVALID_ARGUMENT", "waitFor urlChanged must be true (omit it to not use this condition).");
     }
     const initial = page.url();
-    describe4 = `the URL to change from ${JSON.stringify(initial)}`;
+    describe5 = `the URL to change from ${JSON.stringify(initial)}`;
     check2 = async () => page.url() !== initial;
   } else {
     const url2 = cond.url;
     if (typeof url2 !== "string" || url2 === "") {
       throw new BrowserError("INVALID_ARGUMENT", "waitFor url must be a non-empty string.");
     }
-    describe4 = `url containing ${JSON.stringify(url2)}`;
+    describe5 = `url containing ${JSON.stringify(url2)}`;
     check2 = async () => page.url().includes(url2);
   }
   const started = Date.now();
@@ -42516,7 +43002,7 @@ async function waitFor(page, refs, dialogs, sessionTimeout, cond, opts = {}) {
     }
     if (ok) return { matched: kind, elapsedMs: Date.now() - started, url: page.url() };
     if (Date.now() >= end2) {
-      throw new BrowserError("WAIT_TIMEOUT", `Timed out after ${timeoutMs} ms waiting for ${describe4}.`);
+      throw new BrowserError("WAIT_TIMEOUT", `Timed out after ${timeoutMs} ms waiting for ${describe5}.`);
     }
     await sleep2(Math.min(POLL_MS, Math.max(0, end2 - Date.now())));
   }
@@ -42671,6 +43157,7 @@ function wrapAll(ops, a) {
   const out = {};
   for (const [name, fn] of Object.entries(ops)) {
     out[name] = async (...args) => {
+      stage(`session.${name}`);
       a.enter();
       try {
         return await fn(...args);
@@ -42682,7 +43169,10 @@ function wrapAll(ops, a) {
   return out;
 }
 async function openSession(context, params) {
-  const { timeout, snapshotTimeout } = params;
+  const { timeout: baseTimeout, snapshotTimeout: baseSnapshot } = params;
+  const timeoutNow = () => actionTimeout(baseTimeout);
+  const snapshotNow = () => snapshotTimeout(baseSnapshot);
+  const settleNow = () => Math.min(timeoutNow(), baseTimeout);
   const rng = params.seed === void 0 ? Math.random : mulberry32(params.seed);
   const downloads = new DownloadLog(params.artifactsDir, params.adopted);
   const unsubs = params.adopted ? [] : void 0;
@@ -42775,7 +43265,7 @@ async function openSession(context, params) {
       },
       async end(token) {
         const fresh = [...await openedBy(await targetId)].filter((id) => !token.targets.has(id)).length;
-        const deadline = Date.now() + timeout;
+        const deadline = Date.now() + settleNow();
         let seen = tabLog.since(token.mark);
         while (seen.newTabs.length + seen.blockedPopups < fresh && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 20));
@@ -42831,7 +43321,11 @@ async function openSession(context, params) {
     const cosmetics = cosmeticsOn(params.cosmetics) ? new Cosmetics(page, unsubs) : void 0;
     const cdp = playwrightTransport(page);
     transports.set(id, cdp);
-    const ctx = { page, refs, cdp, timeout, dialogs, state, tabId: id, tabs: watchFor(page, claim2?.targetId), rng, cosmetics };
+    const ctx = { page, refs, cdp, get timeout() {
+      return timeoutNow();
+    }, get settleTimeout() {
+      return settleNow();
+    }, dialogs, state, tabId: id, tabs: watchFor(page, claim2?.targetId), rng, cosmetics };
     const ready = params.adopted ? Promise.resolve() : mouseMove(cdp, state.x, state.y);
     if (!params.adopted) cosmetics?.move(state.x, state.y);
     ready.catch(() => {
@@ -42898,9 +43392,11 @@ async function openSession(context, params) {
     open3();
     const t = activeTab();
     t.dialogs.assertNone();
+    noteTab(t.id);
     await t.ready;
     if (params.adopted) {
-      t.viewport = await t.page.evaluate(pageFn(() => ({ width: window.innerWidth, height: window.innerHeight })));
+      stage("viewport");
+      t.viewport = await inFlight("Runtime.callFunctionOn", () => t.page.evaluate(pageFn(() => ({ width: window.innerWidth, height: window.innerHeight }))));
       setMeasuredViewport(t.page, t.viewport);
       return t;
     }
@@ -42930,7 +43426,7 @@ async function openSession(context, params) {
     shutting = (async () => {
       let failure2;
       try {
-        await downloads.settle(timeout);
+        await downloads.settle(timeoutNow());
         if (params.statePath) await saveStorageState(params.statePath, await context.storageState());
       } catch (err) {
         failure2 = err;
@@ -42963,6 +43459,13 @@ async function openSession(context, params) {
     return shutting;
   };
   const ops = {
+    async debugProbe(ref) {
+      open3();
+      const t = activeTab();
+      const dialog = t.dialogs.info();
+      if (dialog) return { dialog };
+      return probe(t.page, t.refs, ref);
+    },
     async targetId() {
       open3();
       const id = tabTargets.get(activeTab().page);
@@ -42972,6 +43475,7 @@ async function openSession(context, params) {
     async navigate(url2) {
       const t = await active();
       const pre = await egress.check(url2);
+      traceGate("egress", pre ? "deny" : "allow", { url: url2, ...pre ? { reason: pre } : {} });
       if (pre) {
         egress.record(url2, pre);
         throw egressBlocked(url2, pre);
@@ -42979,7 +43483,8 @@ async function openSession(context, params) {
       const mark = egress.mark();
       const endLlmNavigation = llmNavigations.begin(url2);
       try {
-        await t.page.goto(url2, { waitUntil: "load" });
+        const navTimeout = debugActionTimeout();
+        await t.page.goto(url2, { waitUntil: "load", ...navTimeout !== void 0 ? { timeout: navTimeout } : {} });
       } catch (err) {
         const block = egress.blocksSince(mark)[0];
         if (block) throw egressBlocked(block.url, block.reason);
@@ -42992,7 +43497,7 @@ async function openSession(context, params) {
     async screenshot(opts) {
       const t = await active();
       const shoot = () => takeScreenshot(
-        { page: t.page, refs: t.refs, timeout, cdp: () => cdpFor(t), artifactsDir: params.artifactsDir, seq: ++captures, cssPixels: params.adopted },
+        { page: t.page, refs: t.refs, timeout: timeoutNow(), settleTimeout: settleNow(), cdp: () => cdpFor(t), artifactsDir: params.artifactsDir, seq: ++captures, cssPixels: params.adopted },
         opts
       );
       return t.cosmetics ? t.cosmetics.hidden(shoot) : shoot();
@@ -43005,25 +43510,25 @@ async function openSession(context, params) {
     },
     async snapshot(opts) {
       const t = await active();
-      return takeSnapshot(t.page, t.refs, snapshotTimeout, opts);
+      return takeSnapshot(t.page, t.refs, snapshotNow(), opts);
     },
     async find(opts) {
       const t = await active();
       findInTree("", opts);
-      return findInTree((await takeSnapshot(t.page, t.refs, snapshotTimeout)).tree, opts);
+      return findInTree((await takeSnapshot(t.page, t.refs, snapshotNow())).tree, opts);
     },
     async getLinks(opts) {
       const t = await active();
-      const snap = await takeSnapshot(t.page, t.refs, snapshotTimeout);
+      const snap = await takeSnapshot(t.page, t.refs, snapshotNow());
       return linksInTree(snap.tree, snap.url, opts);
     },
     async readPage(opts) {
       const t = await active();
-      return readPage(t.page, timeout, opts);
+      return readPage(t.page, timeoutNow(), opts);
     },
     async aim(target2) {
       const t = await active();
-      return aim({ page: t.page, refs: t.refs, timeout }, target2);
+      return aim({ page: t.page, refs: t.refs, timeout: timeoutNow(), settleTimeout: settleNow() }, target2);
     },
     async click(target2, opts) {
       return click((await active()).ctx, target2, opts);
@@ -43121,7 +43626,7 @@ async function openSession(context, params) {
     async evaluate(expression) {
       assertEnabled(params.capabilities, "evaluate");
       const t = await active();
-      return evaluate(context, t.page, expression, timeout);
+      return evaluate(context, t.page, expression, timeoutNow());
     },
     async cdp(method, cdpParams) {
       assertEnabled(params.capabilities, "cdp");
@@ -43130,11 +43635,11 @@ async function openSession(context, params) {
     },
     async waitFor(cond, opts) {
       const t = await active();
-      return waitFor(t.page, t.refs, t.dialogs, timeout, cond, opts);
+      return waitFor(t.page, t.refs, t.dialogs, timeoutNow(), cond, opts);
     },
     async waitForDownload(opts = {}) {
       open3();
-      return downloads.waitFor(opts.afterSeq ?? downloads.list().length, opts.timeoutMs ?? timeout);
+      return downloads.waitFor(opts.afterSeq ?? downloads.list().length, opts.timeoutMs ?? timeoutNow());
     },
     async exportState() {
       if (params.adopted) throw notInHost("exporting the login state");
@@ -43377,7 +43882,9 @@ var init_browser = __esm({
   "src/browser.ts"() {
     "use strict";
     init_aim2();
+    init_call_trace();
     init_input();
+    init_debug_probe();
     init_transport_playwright();
     init_capture();
     init_dialog();
@@ -43421,11 +43928,176 @@ var init_browser = __esm({
   }
 });
 
+// src/host/debug-dump.ts
+import { mkdirSync as mkdirSync4, readdirSync as readdirSync2, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join8 } from "node:path";
+async function piece(name, ms, missing, run) {
+  let timer;
+  const late2 = new Promise((r) => {
+    timer = setTimeout(() => r("late"), ms);
+  });
+  const work = run();
+  work.catch(() => {
+  });
+  try {
+    const out = await Promise.race([work, late2]);
+    if (out === "late") {
+      missing[name] = `did not answer within ${ms} ms`;
+      return void 0;
+    }
+    return out;
+  } catch (err) {
+    missing[name] = String(err?.message ?? err).split("\n")[0].slice(0, 300);
+    return void 0;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function createDumper(opts) {
+  const keep = opts.keep ?? DUMP_KEEP;
+  const pieceMs = opts.pieceMs ?? DUMP_PIECE_MS;
+  const folders = () => {
+    try {
+      return readdirSync2(opts.root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch {
+      return [];
+    }
+  };
+  const prune = () => {
+    const all = folders().map((name) => {
+      try {
+        return { name, at: statSync4(join8(opts.root, name)).mtimeMs };
+      } catch {
+        return { name, at: 0 };
+      }
+    }).sort((a, b) => b.at - a.at);
+    for (const old of all.slice(keep)) rmSync3(join8(opts.root, old.name), { recursive: true, force: true });
+  };
+  return {
+    root: opts.root,
+    count: () => folders().length,
+    dump: (ctx) => outsideCall(async () => {
+      const { call } = ctx;
+      const dir = join8(opts.root, call.id);
+      try {
+        mkdirSync4(dir, { recursive: true });
+      } catch {
+        return void 0;
+      }
+      const started = Date.now();
+      const missing = {};
+      const durations = {};
+      const timed = async (name, run) => {
+        const t0 = Date.now();
+        const out = await piece(name, pieceMs, missing, run);
+        durations[name] = Date.now() - t0;
+        return out;
+      };
+      const session = opts.session();
+      if (!session) {
+        for (const p of ["screenshot", "console", "target"]) missing[p] = "no browser session is open";
+      } else {
+        const ref = typeof call.target?.ref === "string" ? call.target.ref : typeof ctx.args?.ref === "string" ? ctx.args.ref : void 0;
+        await Promise.all([
+          timed("screenshot", async () => {
+            const shot = await session.screenshot({ format: "png" });
+            writeFileSync3(join8(dir, "screenshot.png"), shot.image);
+          }),
+          timed("console", async () => {
+            const c = await session.readConsole({ limit: 100 });
+            writeFileSync3(join8(dir, "console.json"), `${JSON.stringify(c, null, 2)}
+`);
+          }),
+          timed("target", async () => {
+            const now = await session.debugProbe(ref);
+            writeFileSync3(join8(dir, "target.json"), `${JSON.stringify({ aimed: call.target ?? null, now }, null, 2)}
+`);
+          })
+        ]);
+      }
+      const record2 = {
+        ...snapshotOf(call, started),
+        debug: call.debug,
+        args: clip(ctx.args),
+        error: { code: ctx.code, message: ctx.message, detail: errorDetail(ctx.error, 0, true) },
+        pageEvents: call.events ?? null,
+        dump: { durationsMs: durations, ...Object.keys(missing).length ? { missing } : {} }
+      };
+      try {
+        writeFileSync3(join8(dir, "call.json"), `${JSON.stringify(record2, null, 2)}
+`);
+      } catch {
+        return void 0;
+      }
+      try {
+        prune();
+      } catch {
+      }
+      return dir;
+    })
+  };
+}
+var DUMP_PIECE_MS, DUMP_KEEP;
+var init_debug_dump = __esm({
+  "src/host/debug-dump.ts"() {
+    "use strict";
+    init_call_trace();
+    DUMP_PIECE_MS = 3e3;
+    DUMP_KEEP = 50;
+  }
+});
+
+// src/host/debug-mode.ts
+import { readFileSync, statSync as statSync5 } from "node:fs";
+function parseDebug(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return void 0;
+  const r = raw;
+  if (r.enabled !== true) return void 0;
+  if (!isTimeout(r.actionTimeoutMs) || !isTimeout(r.snapshotTimeoutMs)) return void 0;
+  return {
+    enabled: true,
+    ...r.actionTimeoutMs !== void 0 ? { actionTimeoutMs: r.actionTimeoutMs } : {},
+    ...r.snapshotTimeoutMs !== void 0 ? { snapshotTimeoutMs: r.snapshotTimeoutMs } : {}
+  };
+}
+function debugReader(file2) {
+  let stamp = "";
+  let state;
+  return () => {
+    let now;
+    try {
+      const st = statSync5(file2);
+      now = `${st.mtimeMs}:${st.size}`;
+    } catch {
+      stamp = "";
+      state = void 0;
+      return void 0;
+    }
+    if (now !== stamp) {
+      stamp = now;
+      try {
+        state = parseDebug(JSON.parse(readFileSync(file2, "utf8")));
+      } catch {
+        state = void 0;
+      }
+    }
+    return state;
+  };
+}
+var DEBUG_FILE, isTimeout;
+var init_debug_mode = __esm({
+  "src/host/debug-mode.ts"() {
+    "use strict";
+    DEBUG_FILE = "debug.json";
+    isTimeout = (v) => v === void 0 || typeof v === "number" && Number.isInteger(v) && v >= 0;
+  }
+});
+
 // src/host/adopt-connect.ts
-import { readFileSync } from "node:fs";
+import { readFileSync as readFileSync2 } from "node:fs";
 function readText(file2, missing) {
   try {
-    return readFileSync(file2, "utf8");
+    return readFileSync2(file2, "utf8");
   } catch (err) {
     if (err.code === "ENOENT") return missing();
     return fail("HOST_ENDPOINT_INVALID", "A file of the host app could not be read; nothing was done.");
@@ -43464,7 +44136,7 @@ function readKey(file2) {
 }
 async function ask(url2, headers = {}) {
   try {
-    return await fetch(url2, { headers, redirect: "error", signal: AbortSignal.timeout(STEP_TIMEOUT_MS) });
+    return await inFlight(`HTTP GET ${new URL(url2).pathname}`, () => fetch(url2, { headers, redirect: "error", signal: AbortSignal.timeout(STEP_TIMEOUT_MS) }));
   } catch {
     return fail("HOST_APP_NOT_RUNNING", NOT_RUNNING);
   }
@@ -43507,6 +44179,7 @@ var KEY_HEADER, IDENTITY_PATH, KEY_SHAPE, STEP_TIMEOUT_MS, fail, NOT_RUNNING, ho
 var init_adopt_connect = __esm({
   "src/host/adopt-connect.ts"() {
     "use strict";
+    init_call_trace();
     init_errors5();
     KEY_HEADER = "x-tether-key";
     IDENTITY_PATH = "/tether/identity";
@@ -43521,8 +44194,8 @@ var init_adopt_connect = __esm({
 });
 
 // src/host/log.ts
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync as mkdirSync3, openSync, readSync, renameSync, statSync as statSync3 } from "node:fs";
-import { join as join8 } from "node:path";
+import { appendFileSync as appendFileSync2, closeSync, existsSync, fstatSync, mkdirSync as mkdirSync5, openSync, readSync, renameSync as renameSync2, statSync as statSync6 } from "node:fs";
+import { join as join9 } from "node:path";
 function hostLog(prefix) {
   let file2;
   const log2 = ((line) => {
@@ -43531,16 +44204,16 @@ function hostLog(prefix) {
     process.stderr.write(text);
     if (!file2) return;
     try {
-      appendFileSync(file2, `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${text}`);
+      appendFileSync2(file2, `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${text}`);
     } catch {
     }
   });
   log2.open = (root) => {
     try {
-      const dir = join8(root, "logs");
-      mkdirSync3(dir, { recursive: true });
-      const target2 = join8(dir, "mcp.log");
-      if (existsSync(target2) && statSync3(target2).size > LOG_MAX_BYTES) renameSync(target2, join8(dir, "mcp.prev.log"));
+      const dir = join9(root, "logs");
+      mkdirSync5(dir, { recursive: true });
+      const target2 = join9(dir, "mcp.log");
+      if (existsSync(target2) && statSync6(target2).size > LOG_MAX_BYTES2) renameSync2(target2, join9(dir, "mcp.prev.log"));
       file2 = target2;
     } catch {
       file2 = void 0;
@@ -43549,11 +44222,11 @@ function hostLog(prefix) {
   Object.defineProperty(log2, "file", { get: () => file2 });
   return log2;
 }
-var LOG_MAX_BYTES, describeError;
+var LOG_MAX_BYTES2, describeError;
 var init_log = __esm({
   "src/host/log.ts"() {
     "use strict";
-    LOG_MAX_BYTES = 5 * 1024 * 1024;
+    LOG_MAX_BYTES2 = 5 * 1024 * 1024;
     describeError = (err) => err instanceof Error ? err.stack ?? err.message : String(err);
   }
 });
@@ -44089,6 +44762,7 @@ function toolFor(binding, opts) {
     ...tool.destructive ? { destructive: true } : {},
     async handler(args) {
       let session;
+      stage("connect");
       try {
         session = await opts.reach();
       } catch (err) {
@@ -44101,6 +44775,7 @@ function toolFor(binding, opts) {
       const problems = validateArgs(tool, input3);
       if (problems.length) throw describeFailure(new BrowserError("INVALID_ARGUMENT", `${tool.name}: ${problems.join("; ")}.`));
       if (opts.guard) {
+        stage("gate");
         try {
           await opts.guard(binding.op, session, input3);
         } catch (err) {
@@ -44108,6 +44783,7 @@ function toolFor(binding, opts) {
         }
       }
       let content;
+      stage("run");
       try {
         content = render(binding.op, await binding.run(session, input3));
       } catch (err) {
@@ -44130,6 +44806,7 @@ var at, RUN;
 var init_mcp2 = __esm({
   "src/mcp.ts"() {
     "use strict";
+    init_call_trace();
     init_catalog2();
     init_errors5();
     at = (a, required2 = true) => target(a, { ref: "ref", x: "x", y: "y" }, "target", required2);
@@ -44219,13 +44896,20 @@ function createAdoptedMcp(opts) {
   const guard = async (op, session, args) => {
     const control = opts.control();
     if (ACTS_ON_TAB.has(op)) {
-      const state = await control.state(await session.targetId());
+      const target2 = await session.targetId();
+      stage("gate:tab-state");
+      const state = await control.state(target2);
+      traceGate("tab-state", state.control === "agent" ? "allow" : "deny", { control: state.control, ...state.reason ? { reason: state.reason } : {}, channel: control.has("getTabState") });
       if (state.control === "user") throw new BrowserError("TAB_WITH_USER", CONTROL_TEXTS.withUser(state.reason));
       if (state.control === "paused") throw new BrowserError("TAB_PAUSED", CONTROL_TEXTS.paused(state.reason));
     }
     const url2 = (op === "navigate" || op === "new_tab") && typeof args.url === "string" ? args.url : void 0;
-    if (url2 !== void 0 && control.has("requestLocalNetwork") && await isLocalNetwork(url2, opts.egress?.())) {
+    const local = url2 !== void 0 && control.has("requestLocalNetwork") && await isLocalNetwork(url2, opts.egress?.());
+    if (url2 !== void 0 && !local) traceGate("local-network", "allow", { url: url2, reason: control.has("requestLocalNetwork") ? "not a local address" : "no control channel" });
+    if (url2 !== void 0 && local) {
+      stage("gate:local-network");
       const allowed = await control.requestLocalNetwork(url2);
+      traceGate("local-network", allowed === false ? "deny" : "allow", { url: url2, reason: allowed === null ? "no control channel" : "the person answered" });
       if (allowed === false) throw new BrowserError("LOCAL_NETWORK_DENIED", CONTROL_TEXTS.localNetworkDenied(url2));
     }
   };
@@ -44243,12 +44927,14 @@ function createAdoptedMcp(opts) {
       const problems = validateArgs(askDef, input3);
       if (problems.length) throw describeFailure(new BrowserError("INVALID_ARGUMENT", `${askDef.name}: ${problems.join("; ")}.`));
       let session;
+      stage("connect");
       try {
         session = await opts.reach();
       } catch (err) {
         throw describeFailure(err);
       }
       if (!session) throw describeFailure(new BrowserError("NO_BROWSER_SESSION", "There is no browser session available right now; nothing was done."));
+      stage("gate");
       const control = opts.control();
       if (!control.has("askUser")) throw describeFailure(new BrowserError("NO_CONTROL_CHANNEL", CONTROL_TEXTS.noChannel));
       const message = String(input3.message).trim();
@@ -44266,6 +44952,7 @@ function createAdoptedMcp(opts) {
       const expired = new Promise((r) => {
         timer = setTimeout(() => r("timeout"), askTimeoutMs);
       });
+      stage("ask-user");
       try {
         const answer = await Promise.race([control.askUser({ targetId, message, kind, timeoutMs: askTimeoutMs }), expired]);
         control.invalidate(targetId);
@@ -44283,13 +44970,29 @@ function createAdoptedMcp(opts) {
   const localDef = (op) => LOCAL_CATALOG.find((d) => d.op === op);
   const uploadRun = async (s, a) => {
     const policy = opts.uploadPolicy();
-    const file2 = policy.resolveUploadPath(a.path);
+    let file2;
+    try {
+      file2 = policy.resolveUploadPath(a.path);
+    } catch (err) {
+      traceGate("upload-folder", "deny", { path: a.path, reason: err?.message });
+      throw err;
+    }
+    traceGate("upload-folder", "allow", { file: file2 });
     return s.uploadFile(a.ref, [file2], async ({ origins }) => {
       const control = opts.control();
-      const allowed = control.has("confirmUpload") ? await control.confirmUpload({ targetId: await s.targetId(), path: file2, frameUrl: origins[0] }) : null;
+      const targetId = control.has("confirmUpload") ? await s.targetId() : "";
+      stage("gate:upload-consent");
+      const allowed = control.has("confirmUpload") ? await control.confirmUpload({ targetId, path: file2, frameUrl: origins[0] }) : null;
+      if (allowed !== null) traceGate("upload-consent", allowed ? "allow" : "deny", { file: file2, site: origins[0], reason: "the person answered" });
       if (allowed === true) return;
       if (allowed === false) throw new BrowserError("UPLOAD_NOT_ALLOWED", CONTROL_TEXTS.uploadDeclined(file2));
-      await policy.authorizeUpload({ file: file2, site: origins[0], top: origins[origins.length - 1], ancestors: origins.slice(1) });
+      try {
+        await policy.authorizeUpload({ file: file2, site: origins[0], top: origins[origins.length - 1], ancestors: origins.slice(1) });
+      } catch (err) {
+        traceGate("upload-consent", "deny", { file: file2, site: origins[0], reason: `no control channel, local rule: ${err?.message}` });
+        throw err;
+      }
+      traceGate("upload-consent", "allow", { file: file2, site: origins[0], reason: "no control channel, local rule" });
     });
   };
   const upload = toolFor({ def: localDef("upload"), op: "upload", run: uploadRun, description: UPLOAD_DESCRIPTION }, bindings);
@@ -44301,6 +45004,7 @@ var ACTS_ON_TAB, UPLOAD_DESCRIPTION, EVALUATE_DESCRIPTION;
 var init_adopt_mcp = __esm({
   "src/host/adopt-mcp.ts"() {
     "use strict";
+    init_call_trace();
     init_catalog();
     init_tool_texts();
     init_errors5();
@@ -44344,6 +45048,7 @@ var GET_STATE, ASK_USER, CONFIRM_UPLOAD, LOCAL_NETWORK, STATE_CHANGED, TAB_HANDL
 var init_tab_control = __esm({
   "src/host/tab-control.ts"() {
     "use strict";
+    init_call_trace();
     init_tool_texts();
     init_errors5();
     GET_STATE = "Tether.getTabState";
@@ -44375,7 +45080,8 @@ var init_tab_control = __esm({
       async call(method, params) {
         if (!this.transport || this.missing.has(method)) return void 0;
         try {
-          return await this.transport.send(method, params) ?? {};
+          const transport = this.transport;
+          return await inFlight(method, () => transport.send(method, params), params) ?? {};
         } catch (err) {
           if (isUnknownMethod(err)) {
             this.missing.add(method);
@@ -44480,35 +45186,52 @@ var init_tool_defs = __esm({
 });
 
 // src/host/register-tools.ts
-function registerBrowserTools(server, tools, log2) {
+function registerBrowserTools(server, tools, log2, opts = {}) {
+  const { tracer } = opts;
   for (const tool of tools) {
-    server.registerTool(
-      tool.name,
-      toolConfig(tool),
-      // Screenshots já voltam como `image`; erros do handler viram resultado `isError` pelo próprio McpServer.
-      async (args, extra) => {
-        try {
-          const token = extra?._meta?.progressToken;
-          const progress = token === void 0 ? void 0 : (value, message) => {
-            void extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress: value, ...message ? { message } : {} } }).catch(() => {
-            });
-          };
-          const { content, _meta } = await tool.handler(args, { ...progress ? { progress } : {} });
-          return { content, ..._meta ? { _meta } : {} };
-        } catch (err) {
-          log2(`${tool.name} failed: ${describeError(err)}`);
-          const message = err instanceof Error ? err.message : String(err);
-          const named = /^\[([A-Z_]+)\]/.exec(message)?.[1];
-          if (named && BROWSER_ERROR_CODES.includes(named)) return { isError: true, content: [{ type: "text", text: message }] };
-          return { isError: true, content: [{ type: "text", text: `[INTERNAL] ${tool.name} failed: ${message}` }] };
+    const handle = async (args, extra, call) => {
+      try {
+        const token = extra?._meta?.progressToken;
+        const progress = token === void 0 ? void 0 : (value, message) => {
+          void extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress: value, ...message ? { message } : {} } }).catch(() => {
+          });
+        };
+        const { content, _meta } = await tool.handler(args, { ...progress ? { progress } : {} });
+        if (call) tracer?.finish(call, { ok: true, ...call.debug ? { result: content } : {} });
+        return { content, ..._meta ? { _meta } : {} };
+      } catch (err) {
+        log2(`${tool.name} failed: ${describeError(err)}`);
+        const message = err instanceof Error ? err.message : String(err);
+        const named = /^\[([A-Z_]+)\]/.exec(message)?.[1];
+        const code = named && BROWSER_ERROR_CODES.includes(named) ? named : void 0;
+        let where = call ? ` ${whereText(call)}` : "";
+        const shown = code ? message : `[INTERNAL] ${tool.name} failed: ${message}`;
+        const dump = call?.debug && opts.onFailure ? await opts.onFailure({ call, error: err, code: code ?? "INTERNAL", message: `${shown}${where}`, args }).catch(() => void 0) : void 0;
+        if (dump) where += ` (debug dump: ${dump})`;
+        if (call) {
+          tracer?.finish(call, {
+            ok: false,
+            code: code ?? "INTERNAL",
+            ...code ? {} : { error: errorDetail(err, 0, call.debug !== void 0) },
+            ...call.debug ? { result: message } : {},
+            ...dump ? { dump } : {}
+          });
         }
+        return { isError: true, content: [{ type: "text", text: `${shown}${where}` }] };
       }
-    );
+    };
+    const track = !opts.untracked?.has(tool.name);
+    server.registerTool(tool.name, toolConfig(tool), (args, extra) => {
+      if (!tracer) return handle(args, extra);
+      const debug = opts.debugMode?.();
+      return tracer.run(tool.name, (call) => handle(args, extra, call), { track, args, ...debug ? { debug } : {} });
+    });
   }
 }
 var init_register_tools = __esm({
   "src/host/register-tools.ts"() {
     "use strict";
+    init_call_trace();
     init_catalog();
     init_log();
     init_tool_defs();
@@ -44517,7 +45240,7 @@ var init_register_tools = __esm({
 
 // src/host/adopt-serve.ts
 import { existsSync as existsSync2 } from "node:fs";
-import { dirname as dirname4, join as join9, resolve as resolve4 } from "node:path";
+import { dirname as dirname5, join as join10, resolve as resolve4 } from "node:path";
 import { fileURLToPath } from "node:url";
 function createAdoptHost(opts) {
   const log2 = opts.log ?? (() => {
@@ -44530,6 +45253,8 @@ function createAdoptHost(opts) {
   let notice;
   let closing = false;
   let wasConnected = false;
+  let since;
+  let lastError;
   const drop = async () => {
     const s = session;
     const h = handle;
@@ -44547,11 +45272,14 @@ function createAdoptHost(opts) {
   const open3 = async () => {
     const had = wasConnected;
     await drop();
+    stage("handshake");
     const { adopt, instance, port } = await resolveAdopt(opts);
-    const h = await createBrowser({ dir: opts.dir, adopt });
+    stage("handshake:cdp");
+    const h = await inFlight("connectOverCDP", () => createBrowser({ dir: opts.dir, adopt }));
     try {
       const channel = new TabControl(await h.controlChannel().catch(() => null));
       control = channel;
+      stage("handshake:session");
       session = await h.newSession({
         egress: localEgress(opts.env),
         ...opts.allowEvaluate ? { capabilities: { evaluate: true } } : {},
@@ -44570,6 +45298,8 @@ function createAdoptHost(opts) {
     handle = h;
     wasConnected = true;
     connectedTo = `${instance}:${port}`;
+    since = (/* @__PURE__ */ new Date()).toISOString();
+    lastError = void 0;
     log2(`connected to the host app (port ${port})`);
     if (had) {
       notice = control.has("tabHandle") ? "The connection to the host app was re-established. The tabs keep the ids they had; element refs from before are stale: take a new snapshot." : "The connection to the host app was re-established. Tab ids and element refs from before may be stale: list the tabs and take a new snapshot.";
@@ -44584,16 +45314,32 @@ function createAdoptHost(opts) {
         try {
           const e = readEndpoint(opts.endpointFile);
           if (`${e.instance}:${e.port}` === connectedTo) {
+            stage("handshake:identity");
             await checkIdentity(e);
             return session;
           }
         } catch {
         }
       }
-      opening = open3().finally(() => {
+      opening = open3().catch((err) => {
+        lastError = { code: err instanceof BrowserError ? err.code : "INTERNAL", at: (/* @__PURE__ */ new Date()).toISOString() };
+        throw err;
+      }).finally(() => {
         opening = null;
       });
       return opening;
+    },
+    current: () => session && session.status() === "open" ? session : null,
+    status() {
+      const s = session?.status();
+      const state = closing ? "closing" : opening ? "connecting" : s === "open" ? "connected" : "disconnected";
+      return {
+        state,
+        ...state === "connected" && connectedTo ? { port: Number(connectedTo.slice(connectedTo.lastIndexOf(":") + 1)), ...since ? { since } : {} } : {},
+        controlChannel: control.has("getTabState"),
+        ...s ? { session: s } : {},
+        ...lastError ? { lastError } : {}
+      };
     },
     control: () => control,
     takeNotice() {
@@ -44610,8 +45356,8 @@ function createAdoptHost(opts) {
   };
 }
 function defaultModuleDir() {
-  const here = dirname4(fileURLToPath(import.meta.url));
-  return existsSync2(join9(here, "node_modules", "playwright-core", "package.json")) ? here : resolve4(here, "../..");
+  const here = dirname5(fileURLToPath(import.meta.url));
+  return existsSync2(join10(here, "node_modules", "playwright-core", "package.json")) ? here : resolve4(here, "../..");
 }
 function createAdoptServer(opts) {
   const say = opts.log ?? (() => {
@@ -44638,11 +45384,18 @@ function createAdoptServer(opts) {
     ...opts.askTimeoutMs !== void 0 ? { askTimeoutMs: opts.askTimeoutMs } : {},
     ...opts.progressEveryMs !== void 0 ? { progressEveryMs: opts.progressEveryMs } : {}
   });
+  const appDir = dirname5(resolve4(opts.endpointFile));
+  const traceFile = opts.traceFile ? resolve4(opts.traceFile) : opts.log ? void 0 : join10(appDir, "mcp.log");
+  const sink = traceFile ? fileSink(traceFile) : lineSink(opts.log);
+  const tracer = new CallTracer(sink);
+  const debugMode = debugReader(join10(appDir, DEBUG_FILE));
+  const dumper = createDumper({ root: join10(traceFile ? dirname5(traceFile) : appDir, "debug"), session: () => host.current() });
+  const tools = [...mcp.tools, diagnoseTool(tracer, host, { debugMode, traceFile, dumper })];
   let server;
   let closed = false;
   return {
     name: ADOPT_SERVER_NAME,
-    tools: mcp.tools.length,
+    tools: tools.length,
     async connect(transport) {
       if (closed) throw new Error("The browser tool is shut down.");
       const previous = server;
@@ -44650,7 +45403,7 @@ function createAdoptServer(opts) {
       await previous?.close().catch(() => {
       });
       const next = new McpServer({ name: ADOPT_SERVER_NAME, version: "0.1.0" });
-      registerBrowserTools(next, mcp.tools, say);
+      registerBrowserTools(next, tools, say, { tracer, untracked: /* @__PURE__ */ new Set([DIAGNOSE_TOOL]), debugMode, onFailure: (ctx) => dumper.dump(ctx) });
       server = next;
       await next.connect(transport);
     },
@@ -44665,8 +45418,32 @@ function createAdoptServer(opts) {
     }
   };
 }
+function diagnoseTool(tracer, host, mode) {
+  return {
+    name: DIAGNOSE_TOOL,
+    description: DIAGNOSE_DESCRIPTION,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async handler() {
+      const debug = mode.debugMode();
+      const report = {
+        server: ADOPT_SERVER_NAME,
+        pid: process.pid,
+        mode: {
+          debug: debug !== void 0,
+          actionTimeoutMs: shownTimeout(debug?.actionTimeoutMs, ACTION_TIMEOUT_MS),
+          snapshotTimeoutMs: shownTimeout(debug?.snapshotTimeoutMs, SNAPSHOT_TIMEOUT_MS),
+          log: mode.traceFile ?? "the host log",
+          dumps: { folder: mode.dumper.root, count: mode.dumper.count() }
+        },
+        connection: host.status(),
+        inFlight: tracer.inFlight()
+      };
+      return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] };
+    }
+  };
+}
 async function main(opts) {
-  const server = createAdoptServer({ ...opts, env: process.env, log });
+  const server = createAdoptServer({ ...opts, env: process.env, log, traceFile: join10(dirname5(resolve4(opts.endpointFile)), "mcp.log") });
   let leaving = false;
   const leave = (why) => {
     if (leaving) return;
@@ -44690,13 +45467,17 @@ function serveAdopted(opts) {
     process.exit(1);
   });
 }
-var ADOPT_SERVER_NAME, log;
+var ADOPT_SERVER_NAME, log, DIAGNOSE_TOOL, DIAGNOSE_DESCRIPTION, shownTimeout;
 var init_adopt_serve = __esm({
   "src/host/adopt-serve.ts"() {
     "use strict";
     init_mcp();
     init_stdio2();
     init_browser();
+    init_call_trace();
+    init_debug_dump();
+    init_debug_mode();
+    init_errors5();
     init_adopt_connect();
     init_log();
     init_adopt_mcp();
@@ -44705,12 +45486,15 @@ var init_adopt_serve = __esm({
     init_register_tools();
     ADOPT_SERVER_NAME = "tether-browser";
     log = hostLog("[atrium-browser adopt]");
+    DIAGNOSE_TOOL = "WebDiagnose";
+    DIAGNOSE_DESCRIPTION = "Show what this browser tool is doing right now: the calls still running (id, tool, tab, the step each one is in, and the last browser command it sent, with how long ago) and the state of the connection to the host app. It never touches the tabs, so it answers even while another call is stuck. It also says whether the debug mode is on, the time limits in force and where the log is. Use it when a call takes too long or failed, to see where it stopped.";
+    shownTimeout = (configured, base) => configured === void 0 ? base : configured === 0 || configured >= NO_DEADLINE_MS ? null : configured;
   }
 });
 
 // src/host/paths.ts
 import { homedir as homedir2 } from "node:os";
-import { join as join10, posix, resolve as resolve5, win32 } from "node:path";
+import { join as join11, posix, resolve as resolve5, win32 } from "node:path";
 function defaultDataDir(opts = {}) {
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
