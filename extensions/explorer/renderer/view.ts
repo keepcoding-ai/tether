@@ -332,10 +332,16 @@ export class ExplorerView implements PadView {
 
   // ---------- file operations (slice 5) ----------
 
-  /** A command on the selected row (else the one the keyboard is on, else the first project root). */
+  /** A command on the selected row, else the row the keyboard is on, else the current project's root, else the first root. */
   run(op: FileOp): void {
-    const row = this.rowByKey(this.selected) ?? this.rowByKey(this.focused) ?? this.tree?.querySelector<HTMLElement>('.xp-root') ?? null
+    const row = this.rowByKey(this.selected) ?? this.rowByKey(this.focused) ?? this.currentRoot() ?? this.tree?.querySelector<HTMLElement>('.xp-root') ?? null
     if (row) this.runOn(row, op)
+  }
+
+  /** The current project's root row: where a command lands when nothing is selected and the keyboard is nowhere. */
+  private currentRoot(): HTMLElement | null {
+    const current = this.ui.workspace.current()
+    return current ? this.rowByKey(rowKey(current, current)) : null
   }
 
   private runOn(row: HTMLElement, op: FileOp): void {
@@ -899,6 +905,7 @@ export class ExplorerView implements PadView {
       this.element.replaceChildren(this.topbar, this.noticeEl, this.roots(folders))
       this.probeRoots(folders)
     }
+    this.updateTopbar()
     this.element.scrollTop = scroll
     if (hadFocus) this.focus()
   }
@@ -956,7 +963,28 @@ export class ExplorerView implements PadView {
       const r = more.getBoundingClientRect()
       this.ui.menus.context(r.left, r.bottom + 4, [...this.host.menuItems(), 'sep', ...this.menu()])
     })
-    this.topbar.append(el('span', 'xp-topbar-title', 'Explorador de Projeto'), el('span', 'xp-sp'), follow, autoReveal, open, more)
+    this.topbar.append(
+      el('span', 'xp-topbar-title', 'Explorador de Projeto'), el('span', 'xp-sp'),
+      this.actionButton('xp-new-file', 'file-plus', 'Novo arquivo…', () => this.run('new-file')),
+      this.actionButton('xp-new-folder', 'folder-plus', 'Nova pasta…', () => this.run('new-folder')),
+      this.actionButton('xp-collapse', 'arrows-in-line-vertical', 'Recolher tudo', () => this.collapseAll()),
+      follow, autoReveal, open, more,
+    )
+    this.updateTopbar()
+  }
+
+  /** A top bar icon button that acts on the tree. */
+  private actionButton(className: string, ic: IconName, label: string, onClick: () => void): HTMLButtonElement {
+    const b = el('button', `ib ${className} xp-tree-action`)
+    b.type = 'button'; b.title = label; b.setAttribute('aria-label', label)
+    b.append(icon(ic))
+    b.addEventListener('click', onClick)
+    return b
+  }
+
+  /** The three tree actions need a tree: with no project open they are disabled. */
+  private updateTopbar(): void {
+    for (const b of this.topbar.querySelectorAll<HTMLButtonElement>('.xp-tree-action')) b.disabled = !this.tree
   }
 
   /** A header toggle: `aria-pressed` mirrors the setting, kept in sync when it changes elsewhere. */

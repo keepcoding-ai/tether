@@ -18,6 +18,8 @@
 }
 .xp-topbar-title { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .xp-topbar .ib { width: 24px; height: 24px; flex: none; }
+/* The tree actions are disabled while no project is open. */
+.xp-topbar .ib:disabled { opacity: .4; cursor: default; }
 /* Header toggles (seguir, revelar): accent when on, dimmed when off. */
 .xp-topbar .xp-toggle[aria-pressed="false"] { opacity: .55; }
 .xp-topbar .xp-toggle[aria-pressed="false"]:hover { opacity: 1; }

@@ -246,6 +246,18 @@ test('explorer 5: new file/folder, rename, trash, guard, copy path, new pane her
     await until('the chooser on docs', async () => (await page.inputValue('#dlg-new .ch-path-input')).replace(/[\\/]+$/, '') === join(F, 'docs'))
     await page.keyboard.press('Escape')
     await page.waitForSelector('#dlg-new[open]', { state: 'detached' })
+
+    // ---- 9. top bar: "Novo arquivo…" lands in the selected folder; "Recolher tudo" closes the folders ----
+    await pick(page, 'docs')
+    await page.click('.xp-topbar .xp-new-file')
+    await page.waitForSelector('.pad.shown .xp-edit .xp-input')
+    const docsLevel = (await page.evaluate(() => window.__tether.explorer()!.rows)).find(r => r.name === 'docs')!.level
+    assert.equal(Number(await page.locator('.pad.shown .xp-edit').first().getAttribute('data-level')), docsLevel + 1, 'the input row is inside docs')
+    await page.keyboard.press('Escape')
+    assert.equal(await edit(page), undefined)
+    await page.click('.xp-topbar .xp-collapse')
+    await until('folders collapsed', async () => (await page.evaluate(() => window.__tether.explorer()!.rows)).every(r => r.name !== 'sub'))
+    assert.equal(await page.locator(rowSel('docs')).getAttribute('aria-expanded'), 'false', 'docs closed')
   } finally {
     if (app && clipboardBefore !== undefined) await app.evaluate(({ clipboard }, t) => clipboard.writeText(t), clipboardBefore).catch(() => {})
     if (app) await killElectron(app, root).catch(() => {})
