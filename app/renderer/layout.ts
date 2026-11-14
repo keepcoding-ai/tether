@@ -81,6 +81,11 @@ export interface LayoutV4 extends Omit<LayoutV3, 'v'> {
   systemDesks: SystemDesks
   /** Hibernated panes (slot ids): stopped on purpose, not started when the app opens; a `start` wakes them. */
   asleepPanes?: string[]
+  /**
+   * The asleep panes a desk's hibernation put to sleep (slot ids); waking the desk starts only these. Always written,
+   * so its absence marks a file from before it (every asleep pane of a sleeping desk then counts).
+   */
+  deskSleptPanes?: string[]
 }
 
 export type Layout = LayoutV4

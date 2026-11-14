@@ -651,8 +651,8 @@ function layoutJSON(): Layout {
   // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
   let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
   for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
-  const { asleepPanes: _asleep, ...rest } = file
-  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}) }
+  const { asleepPanes: _asleep, deskSleptPanes: _deskSlept, ...rest } = file
+  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}), deskSleptPanes: [...deskSleptPanes] }
   if (!sidebars) return out
   // The panel frames' records follow what is live now (panel label, desk, last change): written into the side bars before saving.
   const { meta: _stale, ...bars } = out.sidebars
@@ -1017,6 +1017,8 @@ async function hibernateDesk(id: string): Promise<void> {
       const i = awake.findIndex(d => d.id === id)
       desks.switchTo((awake[i + 1] ?? awake[i - 1])!.id)
     }
+    // Only the panes awake now are the desk's to wake later; panes hibernated one by one stay asleep.
+    for (const p of deskPanes(id)) if (!asleepPanes.has(p.id)) deskSleptPanes.add(p.id)
     desks.setAsleep(id, true)
   })
 }
@@ -1038,10 +1040,28 @@ async function hibernatePanes(ids: string[], where: string, before?: () => void)
   refreshSessions()
 }
 
-/** Waking a desk: back in the capsule, its hibernated panes resume through `start` (the daemon queues agents beyond 3 at once). */
+/**
+ * Waking a desk: back in the capsule, the panes its hibernation put to sleep (`deskSleptPanes`) resume through `start`
+ * (the daemon queues agents beyond 3 at once); panes that were already hibernated before stay asleep.
+ */
 function wakeDesk(id: string): void {
   desks.setAsleep(id, false)
-  for (const p of deskPanes(id)) if (asleepPanes.has(p.id)) void startSlot(p.id)
+  for (const p of deskPanes(id)) {
+    if (!deskSleptPanes.delete(p.id)) continue
+    if (asleepPanes.has(p.id)) void startSlot(p.id)
+  }
+  scheduleSave()
+}
+
+/**
+ * The desk-slept set from a layout. A file without the field predates it: every hibernated pane of a sleeping desk
+ * counts as put to sleep by the desk, so those desks still wake whole.
+ */
+function loadDeskSlept(saved: string[] | undefined, keep: (id: string) => boolean): Set<string> {
+  if (saved) return new Set(saved.filter(keep))
+  const seeded = new Set<string>()
+  for (const d of desks.desks) if (d.asleep) for (const p of deskPanes(d.id)) if (asleepPanes.has(p.id) && keep(p.id)) seeded.add(p.id)
+  return seeded
 }
 
 /** "Hibernar guia": a live pane that is not restarting or stopping. */
@@ -1827,7 +1847,11 @@ function applyState(slot: SlotState): void {
     startErrors.delete(slot.slotId)
     // A pane that comes back up is awake, whoever started it. Only a stopped → live change counts: while a hibernation's
     // stop is under way the daemon still reports the slot running (stopping), and that must not wake it.
-    if (before && !isLiveSlot(before) && asleepPanes.delete(slot.slotId)) scheduleSave()
+    if (before && !isLiveSlot(before)) {
+      const woke = asleepPanes.delete(slot.slotId)
+      const wasDeskSlept = deskSleptPanes.delete(slot.slotId)
+      if (woke || wasDeskSlept) scheduleSave()
+    }
   }
   const panel = findPanel(slot.slotId)
   if (panel) {
@@ -1929,6 +1953,7 @@ async function restoreLayout(): Promise<void> {
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
     if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)); sidebars?.load(layout.sidebars, deskPadsOf(layout)) }
+    deskSleptPanes = loadDeskSlept(layout.deskSleptPanes, id => slots.has(id))
     // A v1 file is copied to layout.v1.bak now; layout.json itself stays v1 until the person changes something.
     // A v2 or v3 file is copied to layout.v<n>.bak the same way: an older build reads only its own version.
     if (result?.migrated) await window.tether.backupLayout()
@@ -1962,6 +1987,7 @@ function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
     const result = migrateLayout(raw)
     if (result && !layoutRestored) asleepPanes = new Set(result.layout.asleepPanes ?? [])
     if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, deskPadsOf(result.layout)) }
+    if (result && !layoutRestored) deskSleptPanes = loadDeskSlept(result.layout.deskSleptPanes, () => true)
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
   return geometry!
@@ -2021,6 +2047,8 @@ async function onConnection(state: ConnectionState): Promise<void> {
 
 /** Hibernated panes (slot ids), saved in the layout: not started on launch until a `start` wakes them. */
 let asleepPanes = new Set<string>()
+/** Panes put to sleep by their desk's hibernation (layout `deskSleptPanes`): the ones waking the desk resumes. */
+let deskSleptPanes = new Set<string>()
 
 let pauseBatch: PauseBatch | null = null
 /** The background processes (tether proc): the core keeps the list, the processes extension draws it (TetherUi.procs). */
