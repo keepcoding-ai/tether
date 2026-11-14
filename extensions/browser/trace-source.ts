@@ -2,7 +2,9 @@
 // the vendored server's call tracer (packages/browser call-trace.ts), one JSON line per event `{ t, ev, call, … , pid }`:
 //   call_started {call, tool}, and in debug {debug, args}
 //   call_finished {call, tool, tab?, durationMs, ok, code?, stage?, cdp?: {method, inFlight, ageMs}}, in debug {args, result}
-//   cdp {call, method, durationMs, ok, error?} and gate {call, tool, gate, decision} (debug only)
+//   cdp {call, method, durationMs, ok, error?}, gate {call, tool, gate, decision}, page_events {call, tool, events, dropped?}
+//   and page_events_unavailable {call, tool, reason} (debug only); a failed call in debug names its dump folder in
+//   call_finished `dump` (<home>/browser/debug/<callId>/: screenshot.png, console.json, target.json, call.json)
 // Rotation: `mcp.log.1` (and `.2`, `.3` when it rotated on a debug line).
 import { join } from 'node:path'
 import type { TraceEntry, TraceSource } from '../../src/trace/timeline.ts'
@@ -16,6 +18,13 @@ const obj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v 
 /** <home>/browser/mcp.log. */
 export const browserTraceFileOf = (home: string): string => join(browserDirOf(home), 'mcp.log')
 
+/** "3 eventos: pointerdown, mousedown, click" (the first types, in order, distinct), plus how many were dropped. */
+function pageEventsText(events: ReadonlyArray<Record<string, unknown>>, dropped: number | undefined): string {
+  const types = [...new Set(events.map(e => str(e.type)).filter((t): t is string => !!t))]
+  const shown = types.slice(0, 6).join(', ') + (types.length > 6 ? ', …' : '')
+  return `${events.length} evento${events.length === 1 ? '' : 's'}${shown ? `: ${shown}` : ''}${dropped ? ` (+${dropped} descartados)` : ''}`
+}
+
 /** One browser line → an entry. Exported for the unit test. */
 export function parseBrowserLine(raw: Record<string, unknown>): TraceEntry | undefined {
   const event = str(raw.ev)
@@ -24,7 +33,10 @@ export function parseBrowserLine(raw: Record<string, unknown>): TraceEntry | und
   const gate = str(raw.gate)
   const cdp = obj(raw.cdp)
   // A failed call says where it stopped: the stage, and the CDP command in flight then.
+  const events = Array.isArray(raw.events) ? raw.events as Array<Record<string, unknown>> : undefined
   const step = str(raw.method) ?? (gate ? `${gate}: ${str(raw.decision) ?? '?'}` : undefined)
+    ?? (events ? pageEventsText(events, num(raw.dropped)) : undefined)
+    ?? (event === 'page_events_unavailable' ? `indisponível: ${(str(raw.reason) ?? '?').slice(0, 80)}` : undefined)
     ?? (str(raw.stage) ? `${str(raw.stage)}${str(cdp?.method) ? ` · ${str(cdp?.method)}` : ''}` : undefined)
   const ok = typeof raw.ok === 'boolean' ? raw.ok : undefined
   return {
@@ -39,6 +51,7 @@ export function parseBrowserLine(raw: Record<string, unknown>): TraceEntry | und
     ...(ok !== undefined ? { ok } : {}),
     ...(str(raw.code) ? { code: str(raw.code) } : {}),
     ...(event === 'call_started' && 'args' in raw ? { args: raw.args } : {}),
+    ...(str(raw.dump) ? { dump: str(raw.dump) } : {}),
     raw,
   }
 }

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import '../../extensions/index.daemon.ts'
-import { browserChecks, callsOfTail } from '../../extensions/browser/doctor.ts'
+import { browserChecks, callsOfTail, dumpCount, dumpDirOf } from '../../extensions/browser/doctor.ts'
 import { bridgeInFlightCheck } from '../../extensions/web-bridge/status-poll.ts'
 import { pendingOf } from '../../extensions/web-bridge/status.ts'
 import { tempDirs } from './tmp.helpers.ts'
@@ -109,5 +109,17 @@ describe('tether doctor: the bridge\'s calls in flight', () => {
     assert.equal(idle.detail, 'nenhuma')
     const mute = await bridgeInFlightCheck({ port: 47999, bridgeHome: home, fetch: async () => { throw new Error('ECONNREFUSED') } })
     assert.equal(mute.level, 'OK')
+  })
+})
+
+describe('tether doctor: the browser\'s debug dumps', () => {
+  test('the trace line counts the dump folders, and says nothing without them', async () => {
+    const h = homeWith(EP, jl({ t: iso(1000), ev: 'call_finished', call: 'c1', tool: 'WebClick', ok: false, pid: 2 }))
+    assert.equal(dumpCount(h), 0)
+    assert.doesNotMatch((await run(h))[2]!.detail, /despejo/)
+    for (const id of ['c1', 'c2']) mkdirSync(join(dumpDirOf(h), id), { recursive: true })
+    writeFileSync(join(dumpDirOf(h), 'stray.txt'), 'x')
+    assert.equal(dumpCount(h), 2)
+    assert.match((await run(h))[2]!.detail, /; 2 despejos de falha em .*debug$/)
   })
 })

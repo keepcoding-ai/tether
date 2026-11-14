@@ -190,3 +190,30 @@ describe('the agents\' instructions', () => {
     assert.match(FAILED_CALL, /Modo de depuração/)
   })
 })
+
+describe('tether trace: the browser\'s debug lines (vendored server c0fc21d9c)', () => {
+  test('cdp, gate, page_events and page_events_unavailable are told; the dump folder closes the timeline', async () => {
+    const h = tmp.make()
+    mkdirSync(join(h, 'browser'), { recursive: true })
+    const dump = join(h, 'browser', 'debug', 'aa77')
+    writeFileSync(join(h, 'browser', 'mcp.log'), jl(
+      { t: T(0), ev: 'call_started', call: 'aa77', tool: 'WebClick', debug: true, args: { ref: 'e9' }, pid: 3 },
+      { t: T(0.1), ev: 'gate', debug: true, call: 'aa77', tool: 'WebClick', gate: 'egress', decision: 'allow' },
+      { t: T(0.2), ev: 'cdp', debug: true, call: 'aa77', method: 'DOM.getBoxModel', durationMs: 4, ok: true },
+      { t: T(0.3), ev: 'page_events', debug: true, call: 'aa77', tool: 'WebClick', events: [{ type: 'pointerdown' }, { type: 'mousedown' }, { type: 'pointerdown' }], dropped: 2 },
+      { t: T(0.4), ev: 'page_events_unavailable', debug: true, call: 'aa77', tool: 'WebClick', reason: 'a dialog is open; the listeners are removed on the next debug gesture' },
+      { t: T(1), ev: 'call_finished', call: 'aa77', tool: 'WebClick', durationMs: 1000, ok: false, code: 'TARGET_NOT_FOUND', stage: 'aim', debug: true, dump, pid: 3 },
+    ))
+    const e = await callTimeline([browserTraceSource(h)], 'aa77')
+    assert.deepEqual(e.map(x => `${x.event} ${x.step ?? ''}`.trim()), [
+      'call_started',
+      'gate egress: allow',
+      'cdp DOM.getBoxModel',
+      'page_events 3 eventos: pointerdown, mousedown (+2 descartados)',
+      'page_events_unavailable indisponível: a dialog is open; the listeners are removed on the next debug gesture',
+      'call_finished aim',
+    ])
+    assert.equal(e.at(-1)!.dump, dump)
+    assert.ok(renderTimeline('aa77', e).endsWith(`despejo da falha: ${dump}\n`))
+  })
+})

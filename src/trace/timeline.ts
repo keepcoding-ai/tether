@@ -28,6 +28,8 @@ export interface TraceEntry {
   code?: string
   /** The call's arguments, when the line recorded them (the debug trace's call_started). */
   args?: unknown
+  /** The folder of the failure's dump (debug mode), when the line names one. */
+  dump?: string
   raw: Record<string, unknown>
 }
 
@@ -200,7 +202,9 @@ export function renderTimeline(callId: string, entries: readonly TraceEntry[]): 
   const rows = entries.map(e => [clockOf(e.at), e.origin, e.event, e.step ?? '', msText(e.durationMs), e.ok === false ? (e.code ?? 'erro') : ''])
   const widths = rows[0]!.map((_, i) => Math.max(...rows.map(r => r[i]!.length)))
   const head = `chamada ${callId} · ${tool ?? 'tool ?'} · ${servers} · ${dayOf(entries[0]!.at)} · ${verdict}\n`
-  return head + rows.map(r => r.map((c, i) => (i === r.length - 1 ? c : c.padEnd(widths[i]!))).join('  ').trimEnd()).join('\n') + '\n'
+  const dumps = [...new Set(entries.flatMap(e => (e.dump ? [e.dump] : [])))]
+  const foot = dumps.map(d => `despejo da falha: ${d}\n`).join('')
+  return head + rows.map(r => r.map((c, i) => (i === r.length - 1 ? c : c.padEnd(widths[i]!))).join('  ').trimEnd()).join('\n') + '\n' + foot
 }
 
 /** `--last`: one row per failed call, newest first. */

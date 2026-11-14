@@ -3,12 +3,12 @@
 //   - the browser's process: <home>/browser/endpoint.json ({v, port, pid, instance}) present and its pid alive (the gate
 //     lives in the tether app's process; the file goes when that process stops cleanly, a stale one names a dead pid);
 //   - the gatekeeper: GET /tether/identity on 127.0.0.1:<port> answers with the file's instance (no key, by design);
-//   - the trace: <home>/browser/mcp.log writable, and the time of the last call it records;
+//   - the trace: <home>/browser/mcp.log writable, the time of the last call it records, and the debug dumps' count;
 //   - the calls in flight: derived from mcp.log, the `call_started` lines of the newest writer (pid) with no
 //     `call_finished`. The vendored server keeps the true table in memory only (WebDiagnose); this is the file's view.
 // Electron-free and injectable (the unit test drives it with temp files and a fake fetch). Never reads keys/.
-import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
 import { parseLine, tailLines, timeOf } from '../../src/trace/timeline.ts'
 import { endpointFileOf } from './agents.ts'
@@ -32,7 +32,15 @@ export function readEndpoint(home: string): Endpoint | undefined {
   } catch { return undefined }
 }
 
-const defaultAlive = (pid: number): boolean => {
+/** <home>/browser/debug: the vendored server's failure dumps in debug mode, one folder per call id (it keeps the latest 50). */
+export const dumpDirOf = (home: string): string => join(dirname(browserTraceFileOf(home)), 'debug')
+
+/** How many dump folders there are (0 without the folder). */
+export function dumpCount(home: string): number {
+  try { return readdirSync(dumpDirOf(home), { withFileTypes: true }).filter(d => d.isDirectory()).length } catch { return 0 }
+}
+
+const defaultAlive =(pid: number): boolean => {
   try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
 }
 
@@ -104,7 +112,9 @@ export function browserChecks(deps: BrowserDoctorDeps): Array<() => Promise<Daem
           : { level: 'OK', name, detail: 'nenhuma chamada registrada ainda (a pasta nasce com o primeiro agente)' }
       }
       const { last } = callsOfTail(tailLines(traceFile))
-      return { level: 'OK', name, detail: last === undefined ? `${traceFile} gravável; nenhuma chamada registrada` : `${traceFile} gravável; última chamada ${agoText(now() - last)}` }
+      const dumps = dumpCount(deps.home)
+      const dumpText = dumps ? `; ${dumps} despejo${dumps === 1 ? '' : 's'} de falha em ${dumpDirOf(deps.home)}` : ''
+      return { level: 'OK', name, detail: `${traceFile} gravável; ${last === undefined ? 'nenhuma chamada registrada' : `última chamada ${agoText(now() - last)}`}${dumpText}` }
     },
     async () => {
       const name = 'chamadas em voo no navegador'
