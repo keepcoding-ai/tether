@@ -13,6 +13,7 @@ import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { bridgeDebugOn, bridgeDebugSummary } from './capabilities.ts'
 import { bridgeTraceSource } from './trace-source.ts'
+import { folderCount } from '../../src/trace/timeline.ts'
 import { bridgeInFlightCheck } from './status-poll.ts'
 import { McpHttpHost, type McpBackend, type McpTransport } from '../../src/daemon/mcp-http.ts'
 import { type BridgeBackendInput, clientIdOf, createLaunchMiddleware, releaseClient, releaseHttp } from './agents.ts'
@@ -38,9 +39,11 @@ export function bridgeSettings(api: Pick<TetherDaemon, 'settings'>): SettingRead
 }
 
 /** The doctor's line of the debug mode: OK while off, AVISO while on (it should not stay on by accident). */
-export function bridgeDebugCheck(settings: SettingReader): DaemonCheck {
+export function bridgeDebugCheck(settings: SettingReader, dumpDir?: string): DaemonCheck {
   const name = `depuração do ${manifest.displayName}`
-  const detail = bridgeDebugSummary(settings)
+  // The failure dumps of debug mode: debug/<callId>/ next to trace.log in the bridge home (the bundle keeps the latest ones).
+  const dumps = dumpDir ? folderCount(dumpDir) : 0
+  const detail = `${bridgeDebugSummary(settings)}${dumps ? `; ${dumps} despejo${dumps === 1 ? '' : 's'} de falha em ${dumpDir}` : ''}`
   if (!bridgeDebugOn(settings)) return { level: 'OK', name, detail }
   return { level: 'AVISO', name, detail, hint: `desligue em Configurações > ${manifest.displayName} > Depuração quando terminar de investigar` }
 }
@@ -129,7 +132,7 @@ export function activate(api: TetherDaemon): IDisposable[] {
     }),
     ...host.checks().map(check => api.doctor.register(check)),
     api.doctor.register(() => bridgeInFlightCheck({ port, bridgeHome: bridgeHomeOf(api.home) })),
-    api.doctor.register(async () => bridgeDebugCheck(bridgeSettings(api))),
+    api.doctor.register(async () => bridgeDebugCheck(bridgeSettings(api), join(bridgeHomeOf(api.home), 'debug'))),
     api.traces.register(bridgeTraceSource(api.home)),
   ]
 }

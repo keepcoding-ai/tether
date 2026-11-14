@@ -8,13 +8,13 @@
 //   - `--last`: the latest calls that ended in error, one per call id (the outermost record wins: the shell over the daemon).
 //   - `--replay`: the call as it was asked (server, tool, arguments), from the debug trace's `call_started`; without recorded
 //     arguments, or with a `[redacted]` value, it says so and invents nothing.
-import { closeSync, createReadStream, existsSync, fstatSync, openSync, readSync } from 'node:fs'
+import { closeSync, createReadStream, existsSync, fstatSync, openSync, readdirSync, readSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 /** One log line, as the timeline shows it. `at` is epoch ms; `raw` is the line as written. */
 export interface TraceEntry {
   at: number
-  /** Who wrote it, in the person's words: "casca", "daemon", "extensão", "browser". */
+  /** Who wrote it, in the person's words: "casca", "daemon", "traço" (the bridge's debug trace), "extensão", "browser". */
   origin: string
   /** The MCP server of the tool: "tether-bridge" or "tether-browser". */
   server: string
@@ -92,6 +92,21 @@ export function tailLines(path: string, maxBytes = 256 * 1024): string[] {
   } catch { return [] } finally { if (fd !== undefined) closeSync(fd) }
 }
 
+/**
+ * The step of a `page_events` line (both bases write the same shape: `events: [{type, onTarget, …}]`, `dropped?`):
+ * "3 eventos: pointerdown, mousedown, click" (the distinct types in order, the first six), plus how many were dropped.
+ */
+export function pageEventsText(events: ReadonlyArray<Record<string, unknown>>, dropped: number | undefined): string {
+  const types = [...new Set(events.map(e => (typeof e.type === 'string' ? e.type : '')).filter(t => t.length > 0))]
+  const shown = types.slice(0, 6).join(', ') + (types.length > 6 ? ', …' : '')
+  return `${events.length} evento${events.length === 1 ? '' : 's'}${shown ? `: ${shown}` : ''}${dropped ? ` (+${dropped} descartados)` : ''}`
+}
+
+/** How many folders `dir` holds (0 without it): the debug dumps, one folder per call id, in both bases. */
+export function folderCount(dir: string): number {
+  try { return readdirSync(dir, { withFileTypes: true }).filter(d => d.isDirectory()).length } catch { return 0 }
+}
+
 /** Time of a line in epoch ms from an ISO string field, or NaN. */
 export const timeOf = (v: unknown): number => (typeof v === 'string' ? Date.parse(v) : NaN)
 
@@ -120,7 +135,7 @@ export async function callTimeline(sources: readonly TraceSource[], callId: stri
 export interface FailedCall { callId: string; server: string; tool?: string; code?: string; durationMs?: number; at: number; origin: string }
 
 /** The outermost record of a call wins (the agent saw that one): the shell / browser server over the daemon. */
-const RANK: Record<string, number> = { casca: 3, browser: 3, daemon: 2, 'extensão': 1 }
+const RANK: Record<string, number> = { casca: 3, browser: 3, daemon: 2, 'traço': 2, 'extensão': 1 }
 
 /** The latest `n` calls that ended in error (`call_finished` with ok false), newest first, one per call id. */
 export async function lastFailures(sources: readonly TraceSource[], n: number): Promise<FailedCall[]> {

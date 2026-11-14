@@ -8,7 +8,7 @@
 // Rotation: `mcp.log.1` (and `.2`, `.3` when it rotated on a debug line).
 import { join } from 'node:path'
 import type { TraceEntry, TraceSource } from '../../src/trace/timeline.ts'
-import { timeOf } from '../../src/trace/timeline.ts'
+import { pageEventsText, timeOf } from '../../src/trace/timeline.ts'
 import { browserDirOf, MCP_SERVER_NAME } from './agents.ts'
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.length ? v : undefined)
@@ -17,13 +17,6 @@ const obj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v 
 
 /** <home>/browser/mcp.log. */
 export const browserTraceFileOf = (home: string): string => join(browserDirOf(home), 'mcp.log')
-
-/** "3 eventos: pointerdown, mousedown, click" (the first types, in order, distinct), plus how many were dropped. */
-function pageEventsText(events: ReadonlyArray<Record<string, unknown>>, dropped: number | undefined): string {
-  const types = [...new Set(events.map(e => str(e.type)).filter((t): t is string => !!t))]
-  const shown = types.slice(0, 6).join(', ') + (types.length > 6 ? ', …' : '')
-  return `${events.length} evento${events.length === 1 ? '' : 's'}${shown ? `: ${shown}` : ''}${dropped ? ` (+${dropped} descartados)` : ''}`
-}
 
 /** One browser line → an entry. Exported for the unit test. */
 export function parseBrowserLine(raw: Record<string, unknown>): TraceEntry | undefined {

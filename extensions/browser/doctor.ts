@@ -7,10 +7,10 @@
 //   - the calls in flight: derived from mcp.log, the `call_started` lines of the newest writer (pid) with no
 //     `call_finished`. The vendored server keeps the true table in memory only (WebDiagnose); this is the file's view.
 // Electron-free and injectable (the unit test drives it with temp files and a fake fetch). Never reads keys/.
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
-import { parseLine, tailLines, timeOf } from '../../src/trace/timeline.ts'
+import { folderCount, parseLine, tailLines, timeOf } from '../../src/trace/timeline.ts'
 import { endpointFileOf } from './agents.ts'
 import { browserTraceFileOf } from './trace-source.ts'
 
@@ -36,9 +36,7 @@ export function readEndpoint(home: string): Endpoint | undefined {
 export const dumpDirOf = (home: string): string => join(dirname(browserTraceFileOf(home)), 'debug')
 
 /** How many dump folders there are (0 without the folder). */
-export function dumpCount(home: string): number {
-  try { return readdirSync(dumpDirOf(home), { withFileTypes: true }).filter(d => d.isDirectory()).length } catch { return 0 }
-}
+export const dumpCount = (home: string): number => folderCount(dumpDirOf(home))
 
 const defaultAlive =(pid: number): boolean => {
   try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }

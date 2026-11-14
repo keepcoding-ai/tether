@@ -62,10 +62,10 @@ describe('tether trace: the timeline', () => {
     assert.deepEqual(e.map(x => `${x.origin} ${x.event}${x.step ? ` ${x.step}` : ''}`), [
       'casca call_started',
       'daemon call_started',
-      'daemon call_started',
-      'daemon gate pause: allow',
+      'traço call_started',
+      'traço gate pause: allow',
       'extensão stage typing',
-      'extensão typing',
+      'extensão typing input',
       'extensão cdp Input.dispatchKeyEvent',
       'daemon call_finished',
       'casca call_finished',
@@ -215,5 +215,37 @@ describe('tether trace: the browser\'s debug lines (vendored server c0fc21d9c)',
     ])
     assert.equal(e.at(-1)!.dump, dump)
     assert.ok(renderTimeline('aa77', e).endsWith(`despejo da falha: ${dump}\n`))
+  })
+})
+
+describe('tether trace: the bridge\'s debug lines (bundle of atrium ae9ab9d45)', () => {
+  test('typing, page_events, page_events_unavailable, dropped and the dump line, as trace.log writes them', async () => {
+    const h = tmp.make()
+    const dir = join(h, 'bridge')
+    mkdirSync(dir, { recursive: true })
+    const dump = join(dir, 'debug', 'bb12')
+    writeFileSync(join(dir, 'trace.log'), jl(
+      { ts: T(0), event: 'call_started', callId: 'bb12', key: 'default', browser: 'b1', tool: 'type', timeoutMs: null, args: { ref: 'e4', text: '[redacted]' } },
+      { ts: T(3), event: 'typing', at: T(0.2), callId: 'bb12', into: 'input[type=password]', secret: true, text: '[redacted]', browser: 'b1' },
+      { ts: T(3), event: 'page_events', at: T(0.9), callId: 'bb12', tool: 'type', events: [{ type: 'focus' }, { type: 'keydown' }, { type: 'input' }], browser: 'b1' },
+      { ts: T(3), event: 'page_events_unavailable', at: T(1), callId: 'bb12', tool: 'type', reason: 'the listeners could not be installed', browser: 'b1' },
+      { ts: T(3), event: 'dropped', at: T(1.1), callId: 'bb12', count: 12, browser: 'b1' },
+      { ts: T(2), event: 'dump', callId: 'bb12', browser: 'b1', dir: dump },
+      { ts: T(2.1), event: 'call_finished', callId: 'bb12', tool: 'type', ok: false, durationMs: 2100, error: { code: 'CALL_TIMEOUT', message: 'm' } },
+    ))
+    const e = await callTimeline([bridgeTraceSource(h)], 'bb12')
+    assert.deepEqual(e.map(x => `${x.origin} ${x.event} ${x.step ?? ''}`.trim()), [
+      'traço call_started',
+      'extensão typing input[type=password] (senha)',
+      'extensão page_events 3 eventos: focus, keydown, input',
+      'extensão page_events_unavailable indisponível: the listeners could not be installed',
+      'extensão dropped 12 descartados',
+      'traço dump',
+      'traço call_finished',
+    ])
+    assert.equal(e.at(-1)!.code, 'CALL_TIMEOUT', 'the code from the trace\'s error object')
+    assert.ok(renderTimeline('bb12', e).endsWith(`despejo da falha: ${dump}\n`))
+    const r = replayOf(e)
+    assert.ok(r.ok && r.redacted.length === 1 && r.typedInTrace === false, 'a password field: the text is nowhere, said so')
   })
 })
