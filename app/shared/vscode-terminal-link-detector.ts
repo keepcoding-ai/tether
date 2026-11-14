@@ -20,7 +20,8 @@
 // opening folder is the only base, so a relative path that does not exist there is not a link.
 // Changes, only what this project's compiler needs (Node 24 erasable syntax, `noUncheckedIndexedAccess`): the xterm
 // types are the structural subset used here; indexed reads carry `!`; the resolution of the candidates of one line
-// runs side by side instead of one after the other (same order, same cap of 10).
+// runs side by side instead of one after the other (same order, same cap of 10); the trailing characters stripped
+// into extra candidates are wider than VS Code's ([ ] " ' .): also the prose punctuation , ; : ) ! ?.
 
 import type { LineColumn } from './file-open.ts'
 import { detectLinks, getLinkSuffix, type ILinkSuffix, type IParsedLink, type LinkOs } from './vscode-terminal-link-parsing.ts'
@@ -336,9 +337,10 @@ export async function detectLocalLinks(term: LinkTerminal, lines: LinkBufferLine
 		// The only candidate is the text itself: the resolver reads a relative path against the pane's opening folder.
 		const linkCandidates: string[] = [parsedLink.path.text];
 
-		// If any candidates end with special characters that are likely to not be part of the
-		// link, add a candidate excluding them.
-		const specialEndCharRegex = /[\[\]"'\.]$/;
+		// Trailing characters that prose puts after a path (closing quotes and brackets, and the punctuation
+		// . , ; : ) ! ?) are stripped one at a time; each stripped text is an extra candidate, which becomes a link
+		// only if it exists, and without a suffix the underline stops before the stripped characters.
+		const specialEndCharRegex = /[\[\]"'\.,;:)!?]$/;
 		const trimRangeMap: Map<string, number> = new Map();
 		const specialEndLinkCandidates: string[] = [];
 		for (const candidate of linkCandidates) {
