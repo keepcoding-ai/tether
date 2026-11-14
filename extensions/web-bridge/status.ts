@@ -113,6 +113,24 @@ export function reduceStatus(raw: unknown): Pick<StatusSnapshot, 'paused' | 'bro
   return { paused: body.paused === true, browsers, agents }
 }
 
+/** A call in flight at the daemon (GET /status `browsers[].pending`, bridge layer 0): never arguments. */
+export interface PendingCall { callId: string; tool: string; ageMs: number; browser: string }
+
+/** Every browser's `pending` of a /status body, oldest first; a daemon older than the trace has none (empty). */
+export function pendingOf(body: unknown): PendingCall[] {
+  const out: PendingCall[] = []
+  const browsers = (body as { browsers?: unknown } | undefined)?.browsers
+  for (const b of Array.isArray(browsers) ? browsers as Array<Record<string, unknown>> : []) {
+    const name = str(b?.name) ?? str(b?.id) ?? '?'
+    for (const p of Array.isArray(b?.pending) ? b.pending as Array<Record<string, unknown>> : []) {
+      const callId = str(p?.callId)
+      const ageMs = num(p?.ageMs)
+      if (callId) out.push({ callId, tool: str(p.tool) ?? '?', ageMs: ageMs ?? 0, browser: name })
+    }
+  }
+  return out.sort((a, b) => b.ageMs - a.ageMs)
+}
+
 // ---- what the icon shows -----------------------------------------------------------------------------------------
 
 /** The agents that called in the last BUSY_WINDOW_MS, most recent first. */

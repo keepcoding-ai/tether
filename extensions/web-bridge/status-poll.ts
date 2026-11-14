@@ -5,7 +5,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { releaseClient } from './agents.ts'
-import { EMPTY_SNAPSHOT, reduceStatus, type DaemonReach, type StatusSnapshot } from './status.ts'
+import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
+import { EMPTY_SNAPSHOT, pendingOf, reduceStatus, type DaemonReach, type StatusSnapshot } from './status.ts'
 
 export const POLL_IDLE_MS = 15_000
 export const POLL_OPEN_MS = 2_000
@@ -45,6 +46,31 @@ export interface StatusPoller {
   releaseAll(): Promise<ActionOutcome>
 }
 
+/** api.key of the bridge home (never logged, never returned past the request). */
+const readApiKey = (bridgeHome: string): string | undefined => {
+  try { return readFileSync(join(bridgeHome, 'api.key'), 'utf8').trim() || undefined } catch { return undefined }
+}
+
+/** `tether doctor`: the calls in flight at the bridge daemon now (GET /status `pending`), with their ids and ages. */
+export async function bridgeInFlightCheck(deps: { port: number; bridgeHome: string; fetch?: typeof fetch }): Promise<DaemonCheck> {
+  const name = 'chamadas em voo no bridge'
+  const key = readApiKey(deps.bridgeHome)
+  if (!key) return { level: 'OK', name, detail: 'instalação sem api.key: nada a perguntar' }
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
+  try {
+    const r = await (deps.fetch ?? fetch)(`http://127.0.0.1:${deps.port}/status`, { signal: ctl.signal, headers: { authorization: `Bearer ${key}`, connection: 'close' } })
+    if (!r.ok) return { level: 'AVISO', name, detail: `o daemon respondeu ${r.status} ao /status` }
+    const pending = pendingOf(await r.json())
+    if (!pending.length) return { level: 'OK', name, detail: 'nenhuma' }
+    const secs = (ms: number): string => `${Math.round(ms / 1000)} s`
+    const list = pending.slice(0, 5).map(p => `${p.callId} ${p.tool} há ${secs(p.ageMs)} (${p.browser})`).join('; ')
+    return { level: 'OK', name, detail: `${pending.length}: ${list}${pending.length > 5 ? '; …' : ''}`, hint: `veja tether trace ${pending[0]!.callId}` }
+  } catch {
+    return { level: 'OK', name, detail: 'daemon sem resposta: nada em voo nele' }
+  } finally { clearTimeout(t) }
+}
+
 export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   const doFetch = deps.fetch ?? fetch
   const now = deps.now ?? (() => Date.now())
@@ -58,9 +84,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   let timer: unknown
   let inflight: Promise<StatusSnapshot> | undefined
 
-  const readKey = (): string | undefined => {
-    try { return readFileSync(join(deps.bridgeHome, 'api.key'), 'utf8').trim() || undefined } catch { return undefined }
-  }
+  const readKey = (): string | undefined => readApiKey(deps.bridgeHome)
 
   const call = async (method: 'GET' | 'POST', path: string, key: string): Promise<Response> => {
     const ctl = new AbortController()

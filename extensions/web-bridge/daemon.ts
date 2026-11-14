@@ -12,6 +12,8 @@ import { normalizeSetting, readExtensionsSettings, type SettingReader, settingRe
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { bridgeDebugOn, bridgeDebugSummary } from './capabilities.ts'
+import { bridgeTraceSource } from './trace-source.ts'
+import { bridgeInFlightCheck } from './status-poll.ts'
 import { McpHttpHost, type McpBackend, type McpTransport } from '../../src/daemon/mcp-http.ts'
 import { type BridgeBackendInput, clientIdOf, createLaunchMiddleware, releaseClient, releaseHttp } from './agents.ts'
 import { dropGrants, type GrantStore, grantStoreOf } from './grant-store.ts'
@@ -126,6 +128,8 @@ export function activate(api: TetherDaemon): IDisposable[] {
       void releaseClient({ port, bridgeHome: bridgeHomeOf(api.home), log: msg => api.log(msg) }, clientIdOf(ev.slot.slotId))
     }),
     ...host.checks().map(check => api.doctor.register(check)),
+    api.doctor.register(() => bridgeInFlightCheck({ port, bridgeHome: bridgeHomeOf(api.home) })),
     api.doctor.register(async () => bridgeDebugCheck(bridgeSettings(api))),
+    api.traces.register(bridgeTraceSource(api.home)),
   ]
 }

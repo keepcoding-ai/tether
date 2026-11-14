@@ -395,6 +395,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
       agents: { register: () => toDisposable(() => {}), get: () => undefined },
       launch: { use: () => toDisposable(() => {}) },
       doctor: { register: c => { checks.push(c); return toDisposable(() => {}) } },
+      traces: { register: () => toDisposable(() => {}) },
       onStarted: l => { started.push(l); return toDisposable(() => {}) },
       settings: { get: () => undefined },
       profiles: { get: () => undefined },
@@ -402,9 +403,9 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
       onSlot: () => toDisposable(() => {}),
     }
     const disposables = activateDaemon(api)
-    assert.equal(disposables.length, 8, 'onStarted + launch middleware + the HTTP host + slot listener (C3) + 3 checks + the debug line')
-    assert.equal(checks.length, 4)
-    assert.deepEqual(await checks[3]!(), { level: 'OK', name: 'depuração do Tether Bridge', detail: 'desligada' })
+    assert.equal(disposables.length, 10, 'onStarted + launch middleware + the HTTP host + slot listener (C3) + 3 checks + calls in flight + the debug line + the trace source')
+    assert.equal(checks.length, 5)
+    assert.deepEqual(await checks[4]!(), { level: 'OK', name: 'depuração do Tether Bridge', detail: 'desligada' })
     assert.equal(started.length, 1, 'the setup waits for the start')
     await new Promise(r => setTimeout(r, 50))
     assert.ok(!existsSync(bridgeHomeOf(home)) && !existsSync(mcpConfigPathOf(home)), 'nothing written before the start')
