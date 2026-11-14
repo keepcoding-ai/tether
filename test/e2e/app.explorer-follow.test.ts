@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { parseSettings } from '../../app/shared/settings-file.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
@@ -118,7 +119,8 @@ async function toggleFromHeader(page: Page, label: string): Promise<void> {
 }
 
 const settingsOf = (home: string): { follow?: unknown; autoReveal?: unknown } => {
-  const file = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')) as { extensions?: Record<string, unknown> }
+  // The product writes flat keys and reads both forms; read the file the way the product does.
+  const file = parseSettings(readFileSync(join(home, 'settings.json'), 'utf8')).value as { extensions?: Record<string, unknown> }
   return (file.extensions?.explorer ?? {}) as { follow?: unknown; autoReveal?: unknown }
 }
 
