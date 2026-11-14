@@ -101,7 +101,7 @@ describe('watcherExclude', () => {
 
 interface FakeHandle extends WatchHandle { path: string; recursive: boolean; closed: boolean; fire(type: string, filename: string | null): void; fail(err: Error): void }
 
-function harness(opts: { recursive: boolean; present?: Set<string>; failOn?: (path: string) => Error | undefined; delay?: number; maxWait?: number; maxBuffered?: number; home?: string }) {
+function harness(opts: { recursive: boolean; active?: boolean; present?: Set<string>; failOn?: (path: string) => Error | undefined; delay?: number; maxWait?: number; maxBuffered?: number; home?: string }) {
   const handles: FakeHandle[] = []
   const log = { changed: [] as string[][], missing: [] as [string, boolean][], failed: [] as [string, string][] }
   const present = opts.present ?? new Set<string>()
@@ -125,7 +125,7 @@ function harness(opts: { recursive: boolean; present?: Set<string>; failOn?: (pa
     return h
   }
   const w = new ExplorerWatchers(sink, {
-    watch, recursive: opts.recursive, caseInsensitive: false, delay: opts.delay ?? 20, maxWait: opts.maxWait ?? 120, maxBuffered: opts.maxBuffered, home: opts.home ?? '/home/u',
+    watch, recursive: opts.recursive, caseInsensitive: false, delay: opts.delay ?? 20, maxWait: opts.maxWait ?? 120, maxBuffered: opts.maxBuffered, home: opts.home ?? '/home/u', active: opts.active ?? true,
     exists: async p => present.has(p),
   })
   const open = (): FakeHandle[] => handles.filter(h => !h.closed)
@@ -300,7 +300,7 @@ describe('ExplorerWatchers', () => {
     const handles: FakeHandle[] = []
     const log: [string, boolean][] = []
     const w = new ExplorerWatchers({ changed: () => {}, rootMissing: (r, m) => log.push([r, m]), failed: () => {} }, {
-      recursive: true, caseInsensitive: true, delay: 10,
+      recursive: true, caseInsensitive: true, delay: 10, active: true,
       watch: (path, options, listener) => { const h = { path, recursive: options.recursive, closed: false, close() { h.closed = true }, on() {}, fire: listener, fail() {} } as unknown as FakeHandle; handles.push(h); return h },
       exists: async p => { asked++; return present.has(p) },
     })
@@ -384,6 +384,69 @@ describe('ExplorerWatchers: broad and nested roots', () => {
     assert.deepEqual(open().map(h => [h.path, h.recursive]), [['/p/q', true]])
     w.setRoots([])
     assert.equal(open().length, 0)
+    w.dispose()
+  })
+})
+
+describe('ExplorerWatchers: only while a view is visible', () => {
+  test('inactive by default: roots and expanded folders open no handle', () => {
+    const w = new ExplorerWatchers({ changed() {}, rootMissing() {}, failed() {} }, { watch: () => { throw new Error('no handle expected') }, recursive: true, caseInsensitive: false, home: '/home/u' })
+    w.setRoots(['/a'])
+    w.setExpanded(['/a', '/a/x'])
+    assert.equal(w.stats().handles, 0)
+    assert.equal(w.stats().active, false)
+    w.dispose()
+  })
+
+  test('activating opens the handles and reports every expanded folder changed once', () => {
+    const { w, open, log } = harness({ recursive: true, active: false })
+    w.setRoots(['/a', '/b'])
+    w.setExpanded(['/a', '/a/x', '/b'])
+    assert.equal(open().length, 0)
+    assert.deepEqual(log.changed, [])
+    w.setActive(true)
+    assert.deepEqual(open().map(h => h.path).sort(), ['/a', '/b'])
+    assert.deepEqual(log.changed.map(d => [...d].sort()), [['/a', '/a/x', '/b']])
+    w.setActive(true)
+    assert.equal(log.changed.length, 1, 'already active: nothing new')
+    w.dispose()
+  })
+
+  test('Linux: activating opens one handle per expanded folder', () => {
+    const { w, open } = harness({ recursive: false, active: false })
+    w.setRoots(['/a'])
+    w.setExpanded(['/a', '/a/x'])
+    w.setActive(true)
+    assert.deepEqual(open().map(h => h.path).sort(), ['/a', '/a/x'])
+    w.dispose()
+  })
+
+  test('deactivating closes every handle; roots announced meanwhile open none', () => {
+    const { w, open } = harness({ recursive: true })
+    w.setRoots(['/a'])
+    w.setExpanded(['/a'])
+    assert.equal(open().length, 1)
+    w.setActive(false)
+    assert.equal(open().length, 0)
+    w.setRoots(['/a', '/b'])
+    w.rewatch()
+    assert.equal(open().length, 0)
+    assert.equal(w.stats().handles, 0)
+    w.dispose()
+  })
+
+  test('events of a handle that is still firing after deactivation are dropped, and a window being gathered is too', async () => {
+    const { w, handles, log } = harness({ recursive: true, present: new Set(['/a/x', '/a/y']) })
+    w.setRoots(['/a'])
+    w.setExpanded(['/a'])
+    const h = handles[0]!
+    h.fire('rename', 'x')
+    await sleep(5)
+    w.setActive(false)
+    h.closed = false // a late event from the native side after close
+    h.fire('rename', 'y')
+    await sleep(80)
+    assert.deepEqual(log.changed, [])
     w.dispose()
   })
 })

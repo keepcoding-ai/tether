@@ -34,6 +34,8 @@ export interface ExplorerChannels {
     setExpanded: (dirs: string[]) => void
     /** "Atualizar": watchers that failed or whose project folder was gone try again. */
     rewatch: () => void
+    /** Whether some view of the explorer is visible (and the window is not hidden): the disk is watched only then. */
+    setActive: (active: boolean) => void
   }
   events: {
     /** These expanded folders may list differently now (coalesced; at most one message per window). */

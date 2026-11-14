@@ -11,6 +11,9 @@
 // aggregates and throttles the same way), coalesced (watch-rules.ts) and reduced to the expanded folders they touched.
 // Only those folder names go to the renderer; it re-reads them. A burst past MAX_BUFFERED events is not kept one by one: the
 // window degrades to "every expanded folder of the project changed", still one message.
+// Handles are held only while some view of the explorer is visible (`setActive`): a recursive handle on Windows costs CPU on
+// every disk event of the project whatever the tree does with it, so a hidden explorer holds none. Shown again, the handles
+// reopen and every expanded folder is reported changed once, so what moved meanwhile is read again.
 // The shape follows VS Code's NodeJSFileWatcherLibrary (src/vs/platform/files/node/watcher/nodejs/nodejsWatcherLib.ts @7faf984):
 // delay + RunOnceWorker aggregation, ThrottledWorker bound, an 'error' that fails the watcher, a watched path that is gone.
 import { watch as fsWatch, type FSWatcher } from 'node:fs'
@@ -47,6 +50,8 @@ export interface WatchOptions {
   caseInsensitive?: boolean
   /** The user's home folder (a broad root); injected for the unit test. */
   home?: string
+  /** Whether a view of the explorer is visible at start (default false: no handle until `setActive(true)`). */
+  active?: boolean
   /** Quiet time that closes a window, and the longest a window stays open. */
   delay?: number
   maxWait?: number
@@ -64,6 +69,8 @@ export interface WatchStats {
   roots: number
   /** Roots watched per expanded folder because they are too broad for a recursive handle. */
   broadRoots: number
+  /** Whether a view of the explorer is visible: handles are held only then. */
+  active: boolean
   handles: number
   expanded: number
   windows: number
@@ -115,6 +122,7 @@ export class ExplorerWatchers implements IDisposable {
   private timer: ReturnType<typeof setTimeout> | undefined
   private firstAt = 0
   private disposed = false
+  private active: boolean
   private windows = 0
   private events = 0
   private sent = 0
@@ -129,6 +137,29 @@ export class ExplorerWatchers implements IDisposable {
     this.delay = options.delay ?? WATCH_DELAY
     this.maxWait = options.maxWait ?? WATCH_MAX_WAIT
     this.maxBuffered = options.maxBuffered ?? MAX_BUFFERED
+    this.active = options.active ?? false
+  }
+
+  /**
+   * Whether some view of the explorer is visible. Inactive: every handle is closed and a window being gathered is dropped.
+   * Active again: the handles reopen and every expanded folder is reported changed (the disk was not followed meanwhile).
+   */
+  setActive(active: boolean): void {
+    if (this.disposed || active === this.active) return
+    this.active = active
+    if (!active) {
+      if (this.timer) clearTimeout(this.timer)
+      this.timer = undefined
+      this.pending = []
+      this.overflow = new Set()
+      for (const l of this.live.values()) this.close(l)
+      this.live.clear()
+      return
+    }
+    this.sync()
+    if (this.expanded.size === 0) return
+    this.sent += this.expanded.size
+    this.sink.changed([...this.expanded.values()])
   }
 
   // ---------- what to watch ----------
@@ -167,7 +198,7 @@ export class ExplorerWatchers implements IDisposable {
   stats(): WatchStats {
     let broadRoots = 0
     for (const r of this.roots) if (this.isBroad(r)) broadRoots++
-    return { recursive: this.recursive, roots: this.roots.length, broadRoots, handles: this.live.size, expanded: this.expanded.size, windows: this.windows, events: this.events, sent: this.sent }
+    return { recursive: this.recursive, active: this.active, roots: this.roots.length, broadRoots, handles: this.live.size, expanded: this.expanded.size, windows: this.windows, events: this.events, sent: this.sent }
   }
 
   dispose(): void {
@@ -203,6 +234,7 @@ export class ExplorerWatchers implements IDisposable {
   /** Brings the open handles to what is wanted: one per recursive root, one per expanded folder of a per-folder root. */
   private sync(): void {
     this.computeModes()
+    if (!this.active) return
     const wanted = new Map<string, { root: string; dir: string; recursive: boolean }>()
     for (const r of this.roots) { const k = pathKey(r, this.ci); if (this.modes.get(k) === 'recursive') wanted.set('r:' + k, { root: r, dir: r, recursive: true }) }
     for (const [k, dir] of this.expanded) {
@@ -260,7 +292,7 @@ export class ExplorerWatchers implements IDisposable {
   // ---------- events ----------
 
   private onEvent(handleRoot: string, base: string, type: string, filename: string | Buffer | null): void {
-    if (this.disposed) return
+    if (this.disposed || !this.active) return
     const name = filename === null || filename === undefined ? '' : String(filename)
     // No name, or a name that is the whole (extended) path: the watched folder itself changed. On Windows a watched folder that
     // is deleted makes the handle repeat `rename` with the extended path (\?\ + the folder) without end until it is closed, so this must be cheap.
@@ -286,7 +318,7 @@ export class ExplorerWatchers implements IDisposable {
     this.inflight++
     void this.exists(path).then(there => {
       this.inflight--
-      if (this.disposed || this.overflow.has(rootKey)) return
+      if (this.disposed || !this.active || this.overflow.has(rootKey)) return
       this.pending.push({ root, change: { type: there ? 'added' : 'deleted', path } })
       this.arm()
     })

@@ -60,6 +60,8 @@ export interface ExplorerControls {
   /** Fires when a toggle changes from anywhere (header button, palette, settings page, settings.json). */
   onChange(key: 'follow' | 'autoReveal', listener: () => void): IDisposable
   reveal(): void
+  /** The view was shown or hidden (disposed counts as hidden): the disk is watched only while a view is shown. */
+  visible?(visible: boolean): void
 }
 
 /** What a tree row stands for (kept on the row's dataset). */
@@ -212,6 +214,7 @@ export class ExplorerView implements PadView {
   }
 
   setVisible(visible: boolean): void {
+    this.controls.visible?.(visible)
     if (!visible) return
     void this.loadRecent()
     // A project folder that came back (a drive plugged in again) or went away is noticed when the pad is shown.
@@ -231,6 +234,7 @@ export class ExplorerView implements PadView {
     clearTimeout(this.pressTimer)
     for (const type of ['pointerup', 'pointercancel', 'dragend', 'blur'] as const) window.removeEventListener(type, this.onRelease, true)
     this.disposed = true
+    this.controls.visible?.(false)
     for (const s of this.subs) s.dispose()
     this.element.remove()
   }

@@ -149,6 +149,7 @@ export function activate(main: TetherMain): IDisposable[] {
     }),
     ipc.on('setExpanded', dirs => { watchers.setExpanded(Array.isArray(dirs) ? dirs.filter((x): x is string => typeof x === 'string').slice(0, 20_000) : []) }),
     ipc.on('rewatch', () => watchers.rewatch()),
+    ipc.on('setActive', active => watchers.setActive(active === true)),
     ipc.handle('watchStats', () => watchers.stats()),
     ipc.handle('readDir', async dir => {
       const ok = await guardPath(roots, dir)
