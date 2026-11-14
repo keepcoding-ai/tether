@@ -25,6 +25,8 @@ import { cmdRonda } from './ronda.ts'
 import { cmdProc } from './proc.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { cmdUsage } from './usage.ts'
+import { cmdTrace } from './trace.ts'
+import { contributedTraceSources } from '../agents/load.ts'
 import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
 export const USAGE = `uso: tether <comando> [opções]
@@ -81,6 +83,9 @@ export const USAGE = `uso: tether <comando> [opções]
                                       (padrão: o deste terminal, TETHER_SLOT_ID)
   usage [--json] [--fresh]            uso de LLM do plano do Claude Code (limites e renovação)
   doctor                              confere o ambiente
+  trace <id> [--json|--replay]        a linha do tempo de uma chamada do tether-bridge ou do
+                                      tether-browser, pelo id que o erro mostra ("(call <id>…)")
+  trace --last [n] [--json]           as últimas n chamadas com erro, para achar o id
   help                                esta ajuda
 
 <slot> aceita o id, um prefixo único do id ou o nome; <perfil>, o id ou o nome.
@@ -112,6 +117,7 @@ export async function main(argv: string[]): Promise<number> {
 `); return 0
       case 'focus': await openTetherUrl(focusLink(parseFocusArgs(rest))); return 0
       case 'usage': return await cmdUsage(rest, { out, err })
+      case 'trace': return await cmdTrace(rest, { out, err, sources: contributedTraceSources })
       case 'show': return await cmdShow(rest)
       case 'new': return await cmdNew(rest)
       case 'open': return await cmdOpen(rest)

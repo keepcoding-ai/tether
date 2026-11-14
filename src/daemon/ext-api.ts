@@ -7,8 +7,9 @@ import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
 import type { Profile } from '../core/profile.ts'
 import type { SlotState } from './protocol.ts'
+import type { TraceSource } from '../trace/timeline.ts'
 
-export type { AgentContribution, AgentMcp }
+export type { AgentContribution, AgentMcp, TraceSource }
 
 /** A doctor check an extension contributes (same shape `tether doctor` prints). */
 export interface DaemonCheck {
@@ -44,6 +45,8 @@ export interface TetherDaemon {
   launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan): IDisposable }
   /** Checks `tether doctor` runs after the core's (src/doctor.ts, through src/agents/load.ts). */
   doctor: { register(check: () => Promise<DaemonCheck>): IDisposable }
+  /** The logs `tether trace` reads (src/trace/timeline.ts, through src/agents/load.ts): the agents' browser tools register theirs. */
+  traces: { register(source: TraceSource): IDisposable }
   /** Reads a key of <home>/settings.json (undefined when absent or unreadable). */
   settings: { get<T>(key: string): T | undefined }
   /** The launch profiles (<home>/profiles.json, re-read when it changes on disk). */

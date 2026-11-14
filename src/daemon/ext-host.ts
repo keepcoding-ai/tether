@@ -5,7 +5,7 @@
 // unsatisfiable extension is logged and skipped, never taking tetherd down.
 import { DisposableStore, toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts'
-import type { DaemonCheck, SlotEventKind, TetherDaemon } from './ext-api.ts'
+import type { DaemonCheck, SlotEventKind, TetherDaemon, TraceSource } from './ext-api.ts'
 import type { ExtensionEntry } from '../../extensions/types.ts'
 import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
@@ -37,6 +37,7 @@ export class DaemonExtensionHost implements IDisposable {
   private readonly startListeners = new Set<() => void>()
   private started = false
   readonly checks: Array<() => Promise<DaemonCheck>> = []
+  readonly traceSources: TraceSource[] = []
   readonly activated: string[] = []
   readonly failed: { id: string; error: string }[] = []
   private readonly opts: DaemonHostOptions
@@ -137,6 +138,7 @@ export class DaemonExtensionHost implements IDisposable {
       },
       launch: { use: (mw) => { this.middlewares.push(mw); return own.add(removing(this.middlewares, mw)) } },
       doctor: { register: (check) => { this.checks.push(check); return own.add(removing(this.checks, check)) } },
+      traces: { register: (source) => { this.traceSources.push(source); return own.add(removing(this.traceSources, source)) } },
       settings: { get: <T>(key: string): T | undefined => readSetting<T>(home, key) },
       profiles: { get: (pid) => this.profileStore.profiles().find((p) => p.id === pid) },
       log: (msg) => log(`[${id}] ${msg}`),
