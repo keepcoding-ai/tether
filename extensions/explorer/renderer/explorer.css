@@ -127,3 +127,18 @@
   color: var(--fg); background: color-mix(in srgb, var(--err) 14%, var(--bg)); border: 1px solid var(--err);
 }
 .xp-validate.warning { background: color-mix(in srgb, var(--warn) 14%, var(--bg)); border-color: var(--warn); }
+
+/* ---- sticky scroll (VS Code's .monaco-tree-sticky-container): the folders above the first row in view, drawn over the tree ---- */
+/* Its width is set to the scrolling element's content box, so the vertical scrollbar stays uncovered. Below the validation message (z-index 4). */
+.xp-sticky { position: absolute; top: 0; left: 0; z-index: 3; background: var(--frame-bg); }
+.xp-sticky.empty { display: none; }
+/* A discreet shadow under the last row. */
+.xp-sticky::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px; pointer-events: none;
+  background: linear-gradient(color-mix(in srgb, var(--fg) 12%, transparent), transparent);
+}
+/* Each row is opaque (a pushed-up row slides under the ones above it); hover and selection, which may be translucent, are layered over the card's colour. */
+.xp-sticky-row { position: absolute; left: 0; width: 100%; box-sizing: border-box; background: var(--frame-bg); }
+.xp-sticky-row:hover { background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--frame-bg); }
+.xp-sticky-row.selected, .xp-sticky-row.xp-root.current { background: linear-gradient(var(--bg-3), var(--bg-3)), var(--frame-bg); }
+.xp-sticky .xp-root[data-pinned="false"]:hover .xp-pin { opacity: 1; }

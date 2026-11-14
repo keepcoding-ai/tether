@@ -11,12 +11,15 @@
 // and a ListView keeps in the DOM only the rows around the viewport, recycling row elements as they scroll out. The
 // keyboard focus stays on the list's container (aria-activedescendant names the active row), so a recycled row never takes
 // the focus with it.
+// Sticky scroll (VS Code's tree sticky scroll): the folders above the first row in view stay drawn on top of the tree, by
+// the same row renderer; a click on one scrolls to its real row, a click on its twistie collapses it.
 // The model follows VS Code's explorer (explorerModel: children resolved lazily per expanded folder; explorerViewer: the
 // twistie, the indent, the multi-root folder rows; the list's keys). The empty state follows VS Code's empty view
 // ("You have not yet opened a folder" + "Open Folder"), made useful with the app's recent folders.
 import type { ContextMenuEntry, PadHost, PadView, ProjectFolder, TetherUi } from '../../../app/renderer/ext-api.ts'
 import { icon, setIcon, type IconName } from '../../../app/renderer/icons.ts'
 import { ListView } from '../../../app/renderer/vscode-list-view.ts'
+import { StickyScrollController } from '../../../app/renderer/vscode-tree-sticky-scroll.ts'
 import type { UiIpc } from '../../../app/shared/ext-ipc.ts'
 import { fileIcon } from '../../../app/shared/quick-open.ts'
 import { rebasePath } from '../../../app/shared/notes.ts'
@@ -158,6 +161,8 @@ export class ExplorerView implements PadView {
   private readonly scroll = el('div', 'xp-scroll')
   private readonly model = new IndexTreeModel<Row>('explorer', TOP)
   private readonly list: ListView<Node>
+  /** The folders stuck on top of the tree while it scrolls (a layer over the scrolling element). */
+  private readonly sticky: StickyScrollController<Row>
   /** Every node of the model by row key, and the tree rows by path however it is spelled. */
   private readonly nodes = new Map<string, Node>()
   private readonly byPath = new Map<string, Node>()
@@ -220,6 +225,12 @@ export class ExplorerView implements PadView {
     }, { paddingTop: LIST_PADDING, paddingBottom: LIST_PADDING, rowRole: 'treeitem' })
     this.subs.push(this.list)
     this.subs.push(this.model.onDidSpliceRenderedNodes(({ start, deleteCount, elements }) => { this.list.splice(start, deleteCount, elements) }))
+    // After the list's own splice listener: the sticky state is computed over a list that already matches the model.
+    this.sticky = new StickyScrollController<Row>(this.body, this.list, this.model, (node, dom) => this.drawRow(node, dom, true), {
+      paddingTop: LIST_PADDING, containerClassName: 'xp-sticky', rowClassName: 'xp-sticky-row',
+    })
+    this.subs.push(this.sticky)
+    this.buildSticky()
     this.subs.push(this.list.onDidScroll(() => { this.syncActive(); this.placeMessage() }))
     this.subs.push(ui.workspace.onDidChange(() => this.render()))
     this.element.addEventListener('pointerdown', () => this.press(), true)
@@ -942,11 +953,14 @@ export class ExplorerView implements PadView {
     this.revealNode(node)
   }
 
-  /** Scrolls only as much as needed for the row to show; the first and the last row bring the list's padding along. */
+  /**
+   * Scrolls only as much as needed for the row to show below the folders that would stick above it (AbstractTree.reveal);
+   * the first and the last row bring the list's padding along.
+   */
   private revealNode(node: Node): void {
     const index = this.indexOf(node)
     if (index < 0 || index >= this.list.length) return
-    this.list.reveal(index)
+    this.list.reveal(index, undefined, this.sticky.nodePositionTopBelowWidget(node))
     if (index === 0) this.list.scrollTop = 0
     else if (index === this.list.length - 1 && this.list.getRelativeTop(index) !== null) this.list.scrollTop = this.list.scrollHeight
   }
@@ -1036,8 +1050,10 @@ export class ExplorerView implements PadView {
   private page(node: Node, down: boolean): void {
     const nav = this.navRows()
     if (nav.rows.length === 0 || this.list.length === 0) return
-    const top = this.list.scrollTop
-    const height = this.list.renderHeight
+    // The rows under the sticky folders are not in view (AbstractTree.focusPreviousPage's getPaddingTop).
+    const covered = this.sticky.height
+    const top = this.list.scrollTop + covered
+    const height = this.list.renderHeight - covered
     const lastIndex = this.list.length - 1
     // The rows entirely in view.
     let first = Math.min(this.list.indexAt(top), lastIndex)
@@ -1086,6 +1102,51 @@ export class ExplorerView implements PadView {
     })
   }
 
+  /**
+   * The sticky layer's events (it lies over the scrolling element, not inside it). A click is VS Code's
+   * handleStickyScrollMouseEvent: the folder's real row scrolls to just under its own sticky ancestors and takes the
+   * selection and the keyboard; on the twistie it also collapses. The wheel scrolls the tree under it.
+   */
+  private buildSticky(): void {
+    const s = this.sticky.domNode
+    const stickyRow = (ev: Event): Node | undefined => {
+      const node = this.sticky.nodeOfElement(ev.target as HTMLElement)
+      return isTreeRow(node) ? node : undefined
+    }
+    s.addEventListener('click', ev => {
+      const node = stickyRow(ev)
+      if (!node) return
+      const index = this.indexOf(node)
+      if (index < 0 || index >= this.list.length) return
+      const onTwistie = !!(ev.target as HTMLElement).closest('.xp-twist')
+      this.list.scrollTop = this.list.getElementTop(index) - this.sticky.nodePositionTopBelowWidget(node)
+      this.select(node)
+      this.setFocused(node, true)
+      if (onTwistie && node.element.dir) this.toggle(node)
+    })
+    s.addEventListener('contextmenu', ev => {
+      const node = stickyRow(ev)
+      if (!node) return
+      ev.preventDefault()
+      if (node.element.kind === 'item') this.select(node)
+      this.menuFor(node, ev.clientX, ev.clientY)
+    })
+    s.addEventListener('wheel', ev => {
+      ev.preventDefault()
+      const unit = ev.deltaMode === 1 ? ROW_HEIGHT : ev.deltaMode === 2 ? this.list.renderHeight : 1
+      this.scroll.scrollBy(ev.deltaX * unit, ev.deltaY * unit)
+    }, { passive: false })
+    // The layer leaves the vertical scrollbar uncovered: it is as wide as the scrolling element's content box.
+    const fit = (): void => { s.style.width = `${this.scroll.clientWidth}px` }
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(fit)
+      ro.observe(this.scroll)
+      this.subs.push({ dispose: () => ro.disconnect() })
+    }
+    this.subs.push(this.list.onDidScroll(fit))
+    fit()
+  }
+
   private render(force = false): void {
     if (this.pressed) { this.renderWaits = { force: force || (this.renderWaits?.force ?? false) }; return }
     const folders = this.ui.workspace.folders()
@@ -1104,7 +1165,7 @@ export class ExplorerView implements PadView {
       this.body.replaceChildren(this.emptyState())
     } else {
       this.hasTree = true
-      if (this.scroll.parentElement !== this.body) this.body.replaceChildren(this.scroll)
+      if (this.scroll.parentElement !== this.body) this.body.replaceChildren(this.scroll, this.sticky.domNode)
       // A root met for the first time starts expanded (VS Code's roots are); a person's collapse is remembered.
       let changed = false
       for (const f of folders) if (!this.expanded.has(f.path)) { this.setOf(f.path).add(f.path); changed = true }
@@ -1241,6 +1302,7 @@ export class ExplorerView implements PadView {
   private redraw(node: Node): void {
     const index = this.indexOf(node)
     if (index >= 0 && index < this.list.length) this.list.updateElement(index)
+    if (this.sticky.state?.contains(node)) this.sticky.rerender()
     this.syncActive()
   }
 
@@ -1259,8 +1321,13 @@ export class ExplorerView implements PadView {
 
   /** The list's renderer: a row element (clean, positioned by the list) gets what the node shows. */
   private renderRow(node: Node, dom: HTMLElement): void {
-    const row = node.element
     this.rendered.set(dom, node)
+    this.drawRow(node, dom, false)
+  }
+
+  /** Draws a node into a row element: a row of the list, or a sticky copy of it (which never takes the in-place edit's input). */
+  private drawRow(node: Node, dom: HTMLElement, sticky: boolean): void {
+    const row = node.element
     const level = String(row.level)
     dom.dataset.level = level
     dom.style.setProperty('--lvl', level)
@@ -1290,7 +1357,7 @@ export class ExplorerView implements PadView {
       const ico = el('span', 'xp-ico')
       if (!row.dir) setIcon(ico, fileIcon(row.name) as IconName)
       dom.title = row.link ? `${row.path}\nAtalho` : row.path
-      dom.append(this.twistie(row.dir), ico, row.edit ? this.editBox(row.edit) : el('span', 'xp-name', row.name))
+      dom.append(this.twistie(row.dir), ico, row.edit && !sticky ? this.editBox(row.edit) : el('span', 'xp-name', row.name))
     }
     this.paintRow(dom, node)
   }
@@ -1353,6 +1420,7 @@ export class ExplorerView implements PadView {
   /** Paints every row in the DOM again (the selection, the keyboard or the current project moved). */
   private paint(): void {
     for (const [dom, node] of this.rendered) this.paintRow(dom, node)
+    for (const [dom, node] of this.sticky.rows()) this.paintRow(dom, node)
     this.syncActive()
   }
 
@@ -1375,6 +1443,8 @@ export class ExplorerView implements PadView {
     notice: string
     edit: { value: string; message: string; severity: string; selection: [number, number] } | undefined
     rendered: number
+    /** The paths of the sticky rows, top to bottom. */
+    sticky: string[]
   } {
     const current = this.ui.workspace.current()
     const hasKeyboard = document.activeElement === this.scroll
@@ -1408,6 +1478,7 @@ export class ExplorerView implements PadView {
         selection: [this.editing.input.selectionStart ?? 0, this.editing.input.selectionEnd ?? 0],
       } : undefined,
       rendered: this.rendered.size,
+      sticky: this.sticky.rows().map(([, node]) => node.element.path),
     }
   }
 }
