@@ -20,6 +20,8 @@ export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export interface ExtSettings {
   get<T extends SettingValue>(key: string): T | undefined
   set(key: string, value: SettingValue): void
+  /** Whether settings.json holds a valid value for the key (the person's choice), not the schema's default. */
+  isSet(key: string): boolean
   onChange(key: string, listener: (value: SettingValue) => void): IDisposable
 }
 
