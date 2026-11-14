@@ -137,6 +137,8 @@ var POPUP = {
   browserName: "Nome deste navegador",
   browserNameHelp: "Como os agentes veem este navegador. Enter ou sair do campo salva.",
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
+  /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
+  debugOn: "Modo de depura\xE7\xE3o ligado",
   reloadHint: (expected, running) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running}): clique em Recarregar em chrome://extensions.`
 };
 var EVALUATE = {

@@ -81,6 +81,9 @@ async function setAllowEvaluate(allow) {
 }
 var ALLOW_EVALUATE_STORAGE_KEY = ALLOW_EVALUATE_KEY;
 var STATUS_STORAGE_KEY = STATUS_KEY;
+async function loadHostCapabilities() {
+  return (await chrome.storage.local.get("hostCapabilities")).hostCapabilities ?? null;
+}
 var HOST_STATUS_KEY = "hostStatus";
 var HOST_STATUS_STORAGE_KEY = HOST_STATUS_KEY;
 
@@ -128,6 +131,8 @@ var POPUP = {
   browserName: "Nome deste navegador",
   browserNameHelp: "Como os agentes veem este navegador. Enter ou sair do campo salva.",
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
+  /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
+  debugOn: "Modo de depura\xE7\xE3o ligado",
   reloadHint: (expected, running) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running}): clique em Recarregar em chrome://extensions.`
 };
 var EVALUATE = {
@@ -219,6 +224,12 @@ async function renderReloadHint() {
   const hint = $("reload-hint");
   hint.hidden = !expected || expected === running;
   if (!hint.hidden) hint.textContent = POPUP.reloadHint(expected, running);
+}
+async function renderDebugNote() {
+  const on = (await loadHostCapabilities())?.debug === true;
+  const note2 = $("debug-note");
+  note2.hidden = !on;
+  note2.textContent = on ? POPUP.debugOn : "";
 }
 function renderThisTab() {
   if (!view) return;
@@ -422,9 +433,10 @@ async function init() {
     if (area === "session" && STATUS_STORAGE_KEY in changes) void renderStatus();
     if (area === "session" && EXPECTED_VERSION_STORAGE_KEY in changes) void renderReloadHint();
     if (area === "local" && ALLOW_EVALUATE_STORAGE_KEY in changes) void renderAlert();
+    if (area === "local" && "hostCapabilities" in changes) void renderDebugNote();
     if (area === "session" && ("scope" in changes || HOST_STATUS_STORAGE_KEY in changes)) void refresh();
   });
   tabId = await resolveTab();
-  await Promise.all([renderStatus(), renderAlert(), renderReloadHint(), refresh()]);
+  await Promise.all([renderStatus(), renderAlert(), renderReloadHint(), renderDebugNote(), refresh()]);
 }
 void init();
