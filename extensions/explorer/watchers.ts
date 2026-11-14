@@ -1,6 +1,11 @@
 // The explorer's disk watchers (F8 slice 3), Electron-main side: one recursive `fs.watch` per project root where the system
 // supports it (Windows ReadDirectoryChangesW, macOS FSEvents: a single handle per root), one non-recursive watcher per
 // expanded folder elsewhere (Linux: Node's recursive mode there is an inotify per folder, too dear for a big tree).
+// A broad root (a file system root, or the user's home folder) never gets a recursive handle on any system: on Windows the
+// delivery of a recursive watch's events costs CPU on a native thread of the main process whatever the listener drops, and
+// a whole disk or home is always busy (builds, git, package managers). It is watched like Linux, one handle per expanded
+// folder inside it. A root nested in another recursively watched root shares the outer handle; each event belongs to the
+// innermost root that contains its path.
 // Events are filtered at the door (`watcherExclude`, names the tree never lists, folders that are not expanded), typed with
 // one `lstat`, gathered over a short window (trailing 200 ms, at most 1 s from the first event: VS Code's nodejs watcher
 // aggregates and throttles the same way), coalesced (watch-rules.ts) and reduced to the expanded folders they touched.
@@ -9,6 +14,7 @@
 // The shape follows VS Code's NodeJSFileWatcherLibrary (src/vs/platform/files/node/watcher/nodejs/nodejsWatcherLib.ts @7faf984):
 // delay + RunOnceWorker aggregation, ThrottledWorker bound, an 'error' that fails the watcher, a watched path that is gone.
 import { watch as fsWatch, type FSWatcher } from 'node:fs'
+import { homedir } from 'node:os'
 import { lstat } from 'node:fs/promises'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { isInsideAny, joinPath, parentPath } from './tree-rules.ts'
@@ -39,6 +45,8 @@ export interface WatchOptions {
   /** Recursive watching (win32/darwin); Linux watches each expanded folder. */
   recursive?: boolean
   caseInsensitive?: boolean
+  /** The user's home folder (a broad root); injected for the unit test. */
+  home?: string
   /** Quiet time that closes a window, and the longest a window stays open. */
   delay?: number
   maxWait?: number
@@ -54,6 +62,8 @@ const MAX_ROOTS = 200
 export interface WatchStats {
   recursive: boolean
   roots: number
+  /** Roots watched per expanded folder because they are too broad for a recursive handle. */
+  broadRoots: number
   handles: number
   expanded: number
   windows: number
@@ -61,7 +71,10 @@ export interface WatchStats {
   sent: number
 }
 
-interface Live { handle: WatchHandle; root: string; dir: string }
+interface Live { handle: WatchHandle; root: string; dir: string; recursive: boolean }
+
+/** A file system root: `X:\`, `X:/`, `/`, or a UNC share root `\\server\share\`. */
+const isFsRoot = (p: string): boolean => /^[a-z]:[\\/]*$/i.test(p) || /^[\\/]+$/.test(p) || /^[\\/]{2}[^\\/]+[\\/]+[^\\/]+[\\/]*$/.test(p)
 
 const defaultExists = async (path: string): Promise<boolean> => { try { await lstat(path); return true } catch { return false } }
 
@@ -78,10 +91,13 @@ export class ExplorerWatchers implements IDisposable {
   private readonly exists: (path: string) => Promise<boolean>
   private readonly recursive: boolean
   private readonly ci: boolean
+  private readonly homeKey: string
   private readonly delay: number
   private readonly maxWait: number
   private readonly maxBuffered: number
   private roots: string[] = []
+  /** Roots by key: a recursive handle of its own, a share of an outer recursive one, or one handle per expanded folder. */
+  private modes = new Map<string, 'recursive' | 'covered' | 'folders'>()
   /** The expanded folders the window announced, by key → its own spelling. */
   private expanded = new Map<string, string>()
   private announced: readonly string[] = []
@@ -109,6 +125,7 @@ export class ExplorerWatchers implements IDisposable {
     this.exists = options.exists ?? defaultExists
     this.recursive = options.recursive ?? (process.platform === 'win32' || process.platform === 'darwin')
     this.ci = options.caseInsensitive ?? (process.platform === 'win32' || process.platform === 'darwin')
+    this.homeKey = pathKey(options.home ?? homedir(), this.ci)
     this.delay = options.delay ?? WATCH_DELAY
     this.maxWait = options.maxWait ?? WATCH_MAX_WAIT
     this.maxBuffered = options.maxBuffered ?? MAX_BUFFERED
@@ -148,7 +165,9 @@ export class ExplorerWatchers implements IDisposable {
   }
 
   stats(): WatchStats {
-    return { recursive: this.recursive, roots: this.roots.length, handles: this.live.size, expanded: this.expanded.size, windows: this.windows, events: this.events, sent: this.sent }
+    let broadRoots = 0
+    for (const r of this.roots) if (this.isBroad(r)) broadRoots++
+    return { recursive: this.recursive, roots: this.roots.length, broadRoots, handles: this.live.size, expanded: this.expanded.size, windows: this.windows, events: this.events, sent: this.sent }
   }
 
   dispose(): void {
@@ -161,49 +180,68 @@ export class ExplorerWatchers implements IDisposable {
     this.live.clear()
   }
 
-  private rootOf(path: string): string | undefined { return this.roots.find(r => isInsideAny([r], path, this.ci)) }
+  private isBroad(root: string): boolean { return isFsRoot(root) || pathKey(root, this.ci) === this.homeKey }
 
-  /** Brings the open handles to what is wanted: a root each (recursive), or each expanded folder (otherwise). */
+  /** The innermost root that contains the path. */
+  private rootOf(path: string): string | undefined {
+    let best: string | undefined
+    for (const r of this.roots) if (isInsideAny([r], path, this.ci) && (best === undefined || pathKey(r, this.ci).length > pathKey(best, this.ci).length)) best = r
+    return best
+  }
+
+  /** Broad roots (and every root where recursive watching is off) go per folder; a root inside a recursive one shares its handle. */
+  private computeModes(): void {
+    this.modes = new Map()
+    const recursive = this.recursive ? this.roots.filter(r => !this.isBroad(r)) : []
+    for (const r of this.roots) {
+      const k = pathKey(r, this.ci)
+      if (!recursive.includes(r)) this.modes.set(k, 'folders')
+      else this.modes.set(k, recursive.some(o => pathKey(o, this.ci) !== k && isInsideAny([o], r, this.ci)) ? 'covered' : 'recursive')
+    }
+  }
+
+  /** Brings the open handles to what is wanted: one per recursive root, one per expanded folder of a per-folder root. */
   private sync(): void {
-    const wanted = new Map<string, { root: string; dir: string }>()
-    if (this.recursive) {
-      for (const r of this.roots) wanted.set(pathKey(r, this.ci), { root: r, dir: r })
-    } else {
-      for (const [k, dir] of this.expanded) { const root = this.rootOf(dir); if (root) wanted.set(k, { root, dir }) }
+    this.computeModes()
+    const wanted = new Map<string, { root: string; dir: string; recursive: boolean }>()
+    for (const r of this.roots) { const k = pathKey(r, this.ci); if (this.modes.get(k) === 'recursive') wanted.set('r:' + k, { root: r, dir: r, recursive: true }) }
+    for (const [k, dir] of this.expanded) {
+      const root = this.rootOf(dir)
+      if (root && this.modes.get(pathKey(root, this.ci)) === 'folders') wanted.set('d:' + k, { root, dir, recursive: false })
     }
     for (const [k, l] of this.live) if (!wanted.has(k)) { this.close(l); this.live.delete(k) }
     for (const [k, w] of wanted) {
       const rootKey = pathKey(w.root, this.ci)
       if (this.live.has(k) || this.dead.has(rootKey) || this.missing.has(rootKey)) continue
-      this.start(k, w.root, w.dir)
+      this.start(k, w.root, w.dir, w.recursive)
     }
   }
 
   private close(l: Live): void { try { l.handle.close() } catch { /* already closed */ } }
 
-  private start(key: string, root: string, dir: string): void {
+  private start(key: string, root: string, dir: string, recursive: boolean): void {
     let handle: WatchHandle
     try {
-      handle = this.watchFn(dir, { recursive: this.recursive, persistent: false }, (type, filename) => this.onEvent(root, dir, type, filename))
+      handle = this.watchFn(dir, { recursive, persistent: false }, (type, filename) => this.onEvent(root, dir, type, filename))
     } catch (err) {
-      this.fail(root, dir, err)
+      this.fail(root, dir, recursive, err)
       return
     }
-    const live: Live = { handle, root, dir }
+    const live: Live = { handle, root, dir, recursive }
     this.live.set(key, live)
     handle.on('error', err => {
       if (this.live.get(key) === live) { this.close(live); this.live.delete(key) }
-      this.fail(root, dir, err)
+      this.fail(root, dir, recursive, err)
     })
   }
 
   /** A watcher that could not start or died: a root that is gone is "missing"; anything else is a failure the person is told of. */
-  private fail(root: string, dir: string, err: unknown): void {
+  private fail(root: string, dir: string, recursive: boolean, err: unknown): void {
     if (this.disposed) return
     const rootKey = pathKey(root, this.ci)
     const code = (err as NodeJS.ErrnoException | undefined)?.code
-    // A folder under the root that vanished (Linux, per-folder handles) is not a failure: its parent reports it.
-    if (!this.recursive && dir !== root && code === 'ENOENT') return
+    // A folder under the root that vanished (per-folder handles) is not a failure: its parent reports it.
+    if (!recursive && dir !== root && code === 'ENOENT') return
     // Not retried while the answer is awaited (every announcement of the folders would start it again).
     this.dead.add(rootKey)
     void this.exists(root).then(there => {
@@ -221,15 +259,17 @@ export class ExplorerWatchers implements IDisposable {
 
   // ---------- events ----------
 
-  private onEvent(root: string, base: string, type: string, filename: string | Buffer | null): void {
+  private onEvent(handleRoot: string, base: string, type: string, filename: string | Buffer | null): void {
     if (this.disposed) return
     const name = filename === null || filename === undefined ? '' : String(filename)
     // No name, or a name that is the whole (extended) path: the watched folder itself changed. On Windows a watched folder that
     // is deleted makes the handle repeat `rename` with the extended path (\?\ + the folder) without end until it is closed, so this must be cheap.
-    if (name === '' || /^[\\/]{2}[?.][\\/]/.test(name)) { void this.checkRoot(root); return }
+    if (name === '' || /^[\\/]{2}[?.][\\/]/.test(name)) { void this.checkRoot(handleRoot); return }
     // An entry shows up or goes away as a 'rename'; a plain 'change' only touches content or times, which the tree does not draw.
     if (type !== 'rename') return
     const path = joinPath(base, name)
+    // A shared recursive handle reports for the roots nested in its own: the event belongs to the innermost one.
+    const root = this.rootOf(path) ?? handleRoot
     const rootKey = pathKey(root, this.ci)
     if (pathKey(path, this.ci) === rootKey) { void this.checkRoot(root); return }
     this.events++
