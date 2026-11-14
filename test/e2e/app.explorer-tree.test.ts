@@ -5,6 +5,8 @@
 //   2. a click expands/collapses a folder (rows at the next level appear and go); a click on a .md opens it in the note editor;
 //   3. keyboard: → expands, ↓ moves, ← goes to the parent, Enter opens a file; "Abrir ao lado" opens the file in another group;
 //   4. a folder of 2000 files expands without freezing the window (rows complete, longest gap between timer ticks measured);
+//      a folder of 30 000 files is in the tree while only the rows around the viewport are in the DOM: End and Home reach the
+//      ends, and revealing a file in the middle selects it and brings it into view;
 //   5. the expanded folders survive a relaunch; a project folder deleted from the disk shows "pasta não encontrada".
 // Screenshots (light and dark) go to <atrium>/.tmp/f8: the tree expanded with a file open beside.
 import { test } from 'node:test'
@@ -18,13 +20,14 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
-type Row = { root: string; path: string; name: string; level: number; kind: string; expanded: boolean; selected: boolean; focused: boolean; icon: string }
+type Row = { root: string; path: string; name: string; level: number; kind: string; expanded: boolean; selected: boolean; focused: boolean }
 type Snapshot = {
   mode: 'empty' | 'roots'
   roots: { path: string; name: string; pinned: boolean; hint: string; current: boolean; missing: boolean }[]
   rows: Row[]
   messages: string[]
   recent: string[]
+  rendered: number
 }
 type Hooks = {
   connection(): { pid?: number } | undefined
@@ -32,10 +35,18 @@ type Hooks = {
   sidebars(): { left: { strip: string[]; open?: string; width: number } } | undefined
   notes(): { id: string; path: string }[]
   groupOf(id: string): string | undefined
+  openNote(path: string): Promise<void>
+  runCommand(id: string): Promise<string>
 }
+type Box = { top: number; bottom: number }
+type DomRow = { id: string; textContent: string | null; classList: { contains(c: string): boolean }; getBoundingClientRect(): Box; querySelector(s: string): { textContent: string | null } | null }
 declare const window: { __tether: Hooks; __hb: { max: number; last: number }; setInterval(f: () => void, ms: number): number }
 declare const performance: { now(): number }
-declare const document: { documentElement: { dataset: Record<string, string> }; querySelectorAll(s: string): ArrayLike<{ textContent: string | null; click(): void }> & Iterable<{ textContent: string | null; click(): void }> }
+declare const document: {
+  documentElement: { dataset: Record<string, string> }
+  querySelectorAll(s: string): ArrayLike<{ textContent: string | null; click(): void }> & Iterable<{ textContent: string | null; click(): void }>
+  querySelector(s: string): { scrollTop: number; getAttribute(n: string): string | null; getBoundingClientRect(): Box; querySelectorAll(s: string): ArrayLike<DomRow> & Iterable<DomRow> } | null
+}
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -48,6 +59,7 @@ const tmpBase = existsSync(atriumTmp) ? atriumTmp : tmpdir()
 const shots = join(atriumTmp, 'f8')
 const PAD = 'explorer.files'
 const BIG = 2000
+const HUGE = 30_000
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' } }
 const same = (a: string, b: string): boolean => a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase()
@@ -81,6 +93,19 @@ async function setTheme(page: Page, scheme: 'light' | 'dark'): Promise<void> {
 const snap = async (page: Page): Promise<Snapshot> => (await page.evaluate(() => window.__tether.explorer()))!
 const names = async (page: Page): Promise<string[]> => (await snap(page)).rows.map(r => `${r.level}:${r.name}`)
 const rowSel = (name: string): string => `.pad.shown .xp-row:has(> .xp-name:text-is("${name}"))`
+/** The icon a row draws (rows are drawn only near the viewport, so the icon is read from the DOM row, not the snapshot). */
+const iconOf = (page: Page, name: string): Promise<string | null> => page.locator(`${rowSel(name)} > .xp-ico`).getAttribute('data-icon')
+const focusedName = async (page: Page): Promise<string | undefined> => (await snap(page)).rows.find(r => r.focused)?.name
+
+/** Puts the keyboard in the tree (its container holds the focus) on the row named `name`, by typing the name (type to navigate). */
+async function focusRow(page: Page, name: string): Promise<void> {
+  await page.locator('.pad.shown .xp-scroll').focus()
+  if ((await focusedName(page)) !== name) {
+    await page.keyboard.type(name)
+    await sleep(900) // the typed prefix is forgotten, so the next keys are not taken as more of it
+  }
+  assert.equal(await focusedName(page), name, `the keyboard on ${name}`)
+}
 
 async function waitNames(page: Page, expected: string[], what: string): Promise<void> {
   const deadline = Date.now() + 8_000
@@ -131,14 +156,14 @@ test('explorer 1b: the file tree under a root; excludes; expand; open; keyboard;
     await waitNames(page, ['1:fixture', '2:big', '2:docs', '2:node_modules', '2:src', '2:a.md', '2:B.md', '2:file2.txt', '2:file10.txt'], 'root expanded: no .git, no Thumbs.db, node_modules there, folders first, natural order')
     const first = await snap(page)
     assert.equal(first.rows.find(r => r.name === 'node_modules')!.expanded, false, 'node_modules stays collapsed')
-    assert.equal(first.rows.find(r => r.name === 'docs')!.icon, 'folder')
-    assert.equal(first.rows.find(r => r.name === 'a.md')!.icon, 'file-md')
+    assert.equal(await iconOf(page, 'docs'), 'folder')
+    assert.equal(await iconOf(page, 'a.md'), 'file-md')
     assert.equal(first.rows.find(r => r.name === 'fixture')!.expanded, true)
 
     // ---- 2. expand and collapse by click; open a .md by click ----
     await page.click(rowSel('src'))
     await waitNames(page, ['1:fixture', '2:big', '2:docs', '2:node_modules', '2:src', '3:components', '3:deep', '3:util.ts', '2:a.md', '2:B.md', '2:file2.txt', '2:file10.txt'], 'src expanded in place')
-    assert.equal((await snap(page)).rows.find(r => r.name === 'src')!.icon, 'folder-open')
+    assert.equal(await iconOf(page, 'src'), 'folder-open')
     await page.click(rowSel('deep'))
     await page.click(rowSel('level'))
     await waitNames(page, ['1:fixture', '2:big', '2:docs', '2:node_modules', '2:src', '3:components', '3:deep', '4:level', '5:here.md', '3:util.ts', '2:a.md', '2:B.md', '2:file2.txt', '2:file10.txt'], 'nested folders expand')
@@ -153,7 +178,7 @@ test('explorer 1b: the file tree under a root; excludes; expand; open; keyboard;
     assert.equal((await snap(page)).rows.find(r => r.name === 'a.md')!.selected, true)
 
     // ---- 3. keyboard: → expands, ↓ moves, ← parent, Enter opens; "Abrir ao lado" ----
-    await page.locator(rowSel('docs')).focus()
+    await focusRow(page, 'docs')
     await page.keyboard.press('ArrowRight')
     await waitNames(page, ['1:fixture', '2:big', '2:docs', '3:notes.md', '3:readme.md', '2:node_modules', '2:src', '3:components', '3:deep', '3:util.ts', '2:a.md', '2:B.md', '2:file2.txt', '2:file10.txt'], '→ expands docs')
     await page.keyboard.press('ArrowRight') // on an expanded folder: the first child
@@ -212,6 +237,69 @@ test('explorer 1b: the file tree under a root; excludes; expand; open; keyboard;
     // Playwright's :has()/text-is selectors are slow over 2000 rows; click the folder's name by script.
     await page.evaluate(() => { for (const n of document.querySelectorAll('.xp-row.xp-item[data-level="2"] > .xp-name')) if (n.textContent === 'big') n.click() })
     await page.waitForFunction(() => window.__tether.explorer()!.rows.every(r => !/^f\d{4}\.txt$/.test(r.name)))
+
+    // ---- 4b. a folder of 30 000 files: all in the tree, only the rows in view in the DOM ----
+    const H = join(F, 'huge')
+    mkdirSync(H)
+    for (let i = 0; i < HUGE; i++) writeFileSync(join(H, `h${String(i).padStart(5, '0')}.md`), '')
+    await page.waitForSelector(rowSel('huge'), { timeout: 15_000 }) // the watcher redraws the root
+    const t1 = Date.now()
+    await page.click(rowSel('huge'))
+    await page.waitForFunction(n => window.__tether.explorer()!.rows.filter(r => /^h\d{5}\.md$/.test(r.name)).length === n, HUGE, { timeout: 30_000 })
+    console.log(`30000-file folder: ${Date.now() - t1} ms to complete`)
+    const domRows = (): Promise<number> => page.evaluate(() => document.querySelector('.pad.shown .xp-scroll')!.querySelectorAll('.xp-row').length)
+    let hs = await snap(page)
+    const total = hs.rows.length
+    assert.equal(hs.rows.filter(r => /^h\d{5}\.md$/.test(r.name)).length, HUGE, 'the snapshot covers every row of the tree')
+    assert.ok(hs.rendered < 200, `only the rows around the viewport are drawn (${hs.rendered} of ${total})`)
+    assert.ok((await domRows()) < 200, `the DOM holds as few rows (${await domRows()})`)
+    /** The focused row's element: drawn, marked focused, named by the tree's aria-activedescendant, inside the viewport. */
+    const focusedDom = (): Promise<{ name: string; active: boolean; inView: boolean } | undefined> => page.evaluate(() => {
+      const tree = document.querySelector('.pad.shown .xp-scroll')!
+      const box = tree.getBoundingClientRect()
+      for (const r of tree.querySelectorAll('.xp-row')) {
+        if (!r.classList.contains('focused')) continue
+        const b = r.getBoundingClientRect()
+        return { name: r.querySelector('.xp-name')?.textContent ?? '', active: tree.getAttribute('aria-activedescendant') === r.id, inView: b.top >= box.top - 1 && b.bottom <= box.bottom + 1 }
+      }
+      return undefined
+    })
+    await page.locator('.pad.shown .xp-scroll').focus()
+    await page.keyboard.press('End')
+    hs = await snap(page)
+    assert.equal(hs.rows.findIndex(r => r.focused), total - 1, 'End takes the keyboard to the last row')
+    assert.deepEqual(await focusedDom(), { name: hs.rows[total - 1]!.name, active: true, inView: true }, 'the last row is drawn, in view, and is the active descendant')
+    assert.ok(hs.rendered < 200, `still few rows drawn at the end (${hs.rendered})`)
+    await page.keyboard.press('Home')
+    assert.equal(await focusedName(page), 'fixture', 'Home goes back to the root')
+    assert.deepEqual(await focusedDom(), { name: 'fixture', active: true, inView: true })
+    assert.equal(await page.evaluate(() => document.querySelector('.pad.shown .xp-scroll')!.scrollTop), 0)
+    // "Revelar no explorador" on a file in the middle of the folder
+    const mid = join(H, 'h15000.md')
+    await page.evaluate(p => window.__tether.openNote(p), mid)
+    await page.waitForFunction(p => window.__tether.notes().some(n => n.path.toLowerCase() === p.toLowerCase()), mid)
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('explorer.reveal')), 'ran')
+    await page.waitForFunction(() => window.__tether.explorer()!.rows.find(r => r.selected)?.name === 'h15000.md', undefined, { timeout: 8_000 })
+    const shown = await page.evaluate(() => {
+      const tree = document.querySelector('.pad.shown .xp-scroll')!
+      const box = tree.getBoundingClientRect()
+      for (const r of tree.querySelectorAll('.xp-row')) {
+        if (r.querySelector('.xp-name')?.textContent !== 'h15000.md') continue
+        const b = r.getBoundingClientRect()
+        return { selected: r.classList.contains('selected'), inView: b.top >= box.top - 1 && b.bottom <= box.bottom + 1, top: tree.scrollTop }
+      }
+      return undefined
+    })
+    assert.ok(shown, 'the revealed row is drawn')
+    assert.equal(shown.selected, true, 'the revealed row is selected')
+    assert.equal(shown.inView, true, 'the revealed row is in view')
+    assert.ok(shown.top > 100_000, `the tree scrolled to the middle (${shown.top})`)
+    assert.ok((await snap(page)).rendered < 200)
+    // back to the top, the folder closes
+    await page.locator('.pad.shown .xp-scroll').focus()
+    await page.keyboard.press('Home')
+    await page.click(rowSel('huge'))
+    await page.waitForFunction(() => window.__tether.explorer()!.rows.every(r => !/^h\d{5}\.md$/.test(r.name)), undefined, { timeout: 10_000 })
 
     // ---- 5. relaunch keeps the expanded folders; a vanished project folder is flagged ----
     const expectedAfter = await names(page)

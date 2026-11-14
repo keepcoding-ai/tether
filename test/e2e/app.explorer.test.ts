@@ -121,7 +121,10 @@ test('explorer 1a: the left pad lists the project roots; empty state; open folde
 
     // ---- 1. the icon, the pad, the empty state, Ctrl+K E ----
     const bars = (): Promise<NonNullable<Awaited<ReturnType<Hooks['sidebars']>>>> => page.evaluate(() => window.__tether.sidebars()!)
-    assert.deepEqual((await bars()).left.strip, [PAD], 'the explorer is the left strip')
+    // Other extensions add pads of their own to the left strip (processes.list, …): only the explorer's are counted here.
+    const strip = (await bars()).left.strip
+    assert.deepEqual(strip.filter(id => id.startsWith('explorer.')), [PAD], `the explorer has one pad on the left strip (${strip.join(', ')})`)
+    assert.equal(strip[0], PAD, 'the explorer heads the left strip')
     assert.equal((await bars()).left.open, undefined)
     // recent folders to offer in the empty state (the app's "Novo painel" keeps them the same way)
     await page.evaluate(d => window.tether.rememberFolder(d), C)
