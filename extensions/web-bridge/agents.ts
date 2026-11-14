@@ -25,6 +25,7 @@ import type { SlotMeta } from '../../src/core/event.ts'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
 import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 import { writeFileAtomic } from './bridge-home.ts'
+import { BridgeMcpRewriter } from './mcp-texts.ts'
 import { MCP_SERVER_NAME } from './paths.ts'
 
 export const ENV_CLIENT_ID = 'ATRIUM_BRIDGE_CLIENT_ID'
@@ -139,7 +140,8 @@ function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan
     return undefined
   }
   const { [ENV_BRIDGE_MCP_KEY]: _, ...env } = { ...out.env, ...entry.env, ...identity }
-  deps.http.grant(slot.slotId, key, { create: () => backend({ slotId: slot.slotId, env, node }) })
+  // The server's instructions name the tether's screen by its real labels (mcp-texts.ts).
+  deps.http.grant(slot.slotId, key, { create: () => backend({ slotId: slot.slotId, env, node }), rewriter: () => new BridgeMcpRewriter() })
   return { ...out, env: { ...out.env, ...identity, [ENV_BRIDGE_MCP_KEY]: key } }
 }
 

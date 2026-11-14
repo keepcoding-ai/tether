@@ -4,7 +4,7 @@
 // icon's amber rule, the tooltip and the doctor's line.
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import '../../extensions/index.daemon.ts'
@@ -12,6 +12,7 @@ import { createBridgeHost, importBundleFromDisk, type BridgeBundle } from '../..
 import { applyCapabilities, bridgeDebugOn, type Capabilities, createCapabilitiesWriter, sameCapabilities, withTetherCapabilities } from '../../extensions/web-bridge/capabilities.ts'
 import { bridgeDebugCheck, bridgeSettings } from '../../extensions/web-bridge/daemon.ts'
 import { manifest } from '../../extensions/web-bridge/manifest.ts'
+import { BridgeMcpRewriter, patchBridgeInitialize, SETTINGS_NEW, SETTINGS_OLD } from '../../extensions/web-bridge/mcp-texts.ts'
 import { bridgeHomeOf } from '../../extensions/web-bridge/paths.ts'
 import { EMPTY_SNAPSHOT, stateOf, titleOf, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
 import { VENDOR_BUNDLE } from '../../extensions/web-bridge/vendor-rules.ts'
@@ -181,5 +182,35 @@ describe('web-bridge debug: the warning', () => {
     assert.equal(on.level, 'AVISO')
     assert.equal(on.detail, 'ligada (prazo de cada chamada: sem prazo)')
     assert.equal(bridgeDebugCheck(bridgeSettings(api({ debug: true }))).detail, 'ligada (prazo de cada chamada: o normal)')
+  })
+})
+
+describe('web-bridge debug: the agent\'s instructions and the dumps', () => {
+  test('initialize: the server\'s "Settings → Debugging" becomes the screen\'s labels; other answers pass untouched', () => {
+    const r = new BridgeMcpRewriter()
+    r.fromClient(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }))
+    r.fromClient(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }))
+    const init = JSON.parse(r.fromServer(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { instructions: 'ask the user to turn it on (in the tether: Settings → Debugging) and repeat', serverInfo: { name: 'tether-bridge' } } })))
+    assert.equal(init.result.instructions, `ask the user to turn it on (in the tether: ${SETTINGS_NEW}) and repeat`)
+    assert.match(SETTINGS_NEW, /"Configurações" → "Tether Bridge" → "Depuração"/)
+    const list = JSON.stringify({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'x', description: 'Settings → Debugging' }] } })
+    assert.equal(r.fromServer(list), list, 'only initialize is touched')
+    assert.equal(r.fromServer('not json'), 'not json')
+    assert.deepEqual(patchBridgeInitialize({ instructions: 'nothing to change' }), { instructions: 'nothing to change' })
+  })
+
+  test('the vendored server\'s instructions still carry the sentence the rewriter looks for', () => {
+    // The bundle writes the arrow as \u2192 in its source: the text the agent gets has the character.
+    const bundle = readFileSync(join(vendorDir, VENDOR_BUNDLE), 'utf8')
+    assert.ok(bundle.includes(String.raw`in the tether: Settings \u2192 Debugging`) || bundle.includes(`in the tether: ${SETTINGS_OLD}`))
+  })
+
+  test('the doctor\'s debug line counts the dump folders of the bridge home', () => {
+    const home = tmp.make()
+    const dir = join(home, 'debug')
+    const s = reader({ debug: true })
+    assert.doesNotMatch(bridgeDebugCheck(s, dir).detail, /despejo/)
+    for (const id of ['a1', 'b2', 'c3']) mkdirSync(join(dir, id), { recursive: true })
+    assert.equal(bridgeDebugCheck(s, dir).detail, `ligada (prazo de cada chamada: o normal); 3 despejos de falha em ${dir}`)
   })
 })
