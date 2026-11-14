@@ -8,9 +8,10 @@
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { normalizeSetting, readExtensionsSettings } from '../../app/shared/vscode-configuration-registry.ts'
+import { normalizeSetting, readExtensionsSettings, type SettingReader, settingReaderOf } from '../../app/shared/vscode-configuration-registry.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
-import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
+import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
+import { bridgeDebugOn, bridgeDebugSummary } from './capabilities.ts'
 import { McpHttpHost, type McpBackend, type McpTransport } from '../../src/daemon/mcp-http.ts'
 import { type BridgeBackendInput, clientIdOf, createLaunchMiddleware, releaseClient, releaseHttp } from './agents.ts'
 import { dropGrants, type GrantStore, grantStoreOf } from './grant-store.ts'
@@ -27,6 +28,19 @@ export function serveToAgents(api: Pick<TetherDaemon, 'settings'>): boolean {
   const schema = manifest.contributes!.settings!.serveToAgents!
   const values = readExtensionsSettings(api.settings.get<unknown>('extensions')).values[manifest.id]
   return normalizeSetting(schema, values?.serveToAgents) === true
+}
+
+/** This extension's settings as settings.json holds them, read now (the daemon has no change event). */
+export function bridgeSettings(api: Pick<TetherDaemon, 'settings'>): SettingReader {
+  return settingReaderOf(manifest.contributes!.settings!, readExtensionsSettings(api.settings.get<unknown>('extensions')).values[manifest.id])
+}
+
+/** The doctor's line of the debug mode: OK while off, AVISO while on (it should not stay on by accident). */
+export function bridgeDebugCheck(settings: SettingReader): DaemonCheck {
+  const name = `depuração do ${manifest.displayName}`
+  const detail = bridgeDebugSummary(settings)
+  if (!bridgeDebugOn(settings)) return { level: 'OK', name, detail }
+  return { level: 'AVISO', name, detail, hint: `desligue em Configurações > ${manifest.displayName} > Depuração quando terminar de investigar` }
 }
 
 /** What the daemon uses of the vendored bundle as a module (chrome-extensions/bridge daemon/src/mcp-lib.ts). */
@@ -77,6 +91,7 @@ export function activate(api: TetherDaemon): IDisposable[] {
     brand: { name: api.brand.name, color: api.brand.accent, hostId: api.brand.appId },
     nodeExe: () => findNode(),
     log: msg => api.log(msg),
+    settings: () => bridgeSettings(api),
     warm: warmupAllowed(),
   })
   // The bridge over HTTP for agents with `mcp.http` (agents.ts); it listens only in the tetherd that owns the pipe (onStarted).
@@ -111,5 +126,6 @@ export function activate(api: TetherDaemon): IDisposable[] {
       void releaseClient({ port, bridgeHome: bridgeHomeOf(api.home), log: msg => api.log(msg) }, clientIdOf(ev.slot.slotId))
     }),
     ...host.checks().map(check => api.doctor.register(check)),
+    api.doctor.register(async () => bridgeDebugCheck(bridgeSettings(api))),
   ]
 }

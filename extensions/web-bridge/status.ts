@@ -122,10 +122,13 @@ export function activeAgents(s: StatusSnapshot, now: number): AgentView[] {
 
 export type IconState = 'idle' | 'normal' | 'busy' | 'warn' | 'error'
 
-/** §5: grey without a browser, normal with N browsers, busy while an agent calls, amber paused, red when the daemon fell. */
-export function stateOf(s: StatusSnapshot, now: number): IconState {
+/**
+ * §5: grey without a browser, normal with N browsers, busy while an agent calls, amber paused, red when the daemon fell.
+ * The debug mode (`debug`, extensions.web-bridge.debug) is amber too while the daemon is up: it should not go unnoticed.
+ */
+export function stateOf(s: StatusSnapshot, now: number, debug = false): IconState {
   if (s.daemon !== 'up') return s.everUp ? 'error' : 'idle'
-  if (s.paused) return 'warn'
+  if (s.paused || debug) return 'warn'
   if (!s.browsers.length) return 'idle'
   if (activeAgents(s, now).length) return 'busy'
   return 'normal'
@@ -144,8 +147,17 @@ export function browserNames(s: StatusSnapshot): string[] {
   return [...new Set(s.browsers.map(b => b.name))]
 }
 
-/** The tooltip (§5), in Portuguese. `product` is the Bridge's name ("Tether Bridge"). */
-export function titleOf(s: StatusSnapshot, now: number, product: string): string {
+/** The popover's line and the tooltip's suffix while the debug mode is on. */
+export const DEBUG_LINE = 'Modo de depuração ligado: o registro guarda mais detalhes de cada chamada. Desligue em Configurações quando terminar.'
+export const DEBUG_SUFFIX = 'modo de depuração ligado'
+
+/** The tooltip (§5), in Portuguese. `product` is the Bridge's name ("Tether Bridge"); with `debug`, the mode is named last. */
+export function titleOf(s: StatusSnapshot, now: number, product: string, debug = false): string {
+  const t = baseTitleOf(s, now, product)
+  return debug ? `${t} · ${DEBUG_SUFFIX}` : t
+}
+
+function baseTitleOf(s: StatusSnapshot, now: number, product: string): string {
   const state = stateOf(s, now)
   if (state === 'error') return 'O daemon do bridge caiu; a próxima chamada o reinicia'
   if (s.daemon === 'no-key') return `${product}: instalação ainda não preparada (abra o tether de novo)`

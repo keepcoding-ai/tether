@@ -8,7 +8,8 @@ import { join, resolve } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
-import { readBuildInfo } from './bridge-home.ts'
+import { importBundleFromDisk, readBuildInfo } from './bridge-home.ts'
+import { CAPABILITY_SETTINGS, type CapabilitiesBundle, createCapabilitiesWriter } from './capabilities.ts'
 import { browsersFromOverride, detectBrowsers, type DetectedBrowser } from './browsers.ts'
 import { createInstaller } from './installer.ts'
 import type { WebBridgeChannels } from './ipc.ts'
@@ -16,6 +17,7 @@ import { bridgeHomeOf, bridgePortOf, extensionDirOf } from './paths.ts'
 import { createStatusPoller } from './status-poll.ts'
 import type { StatusSnapshot } from './status.ts'
 import { extensionVersionOf, readUpdateMarker } from './update.ts'
+import { VENDOR_BUNDLE } from './vendor-rules.ts'
 import { findNode } from './warmup.ts'
 
 export { manifest } from './manifest.ts'
@@ -71,6 +73,16 @@ export function activate(main: TetherMain): IDisposable[] {
     log: msg => main.log(msg),
   })
   let browsers: DetectedBrowser[] | undefined
+  // capabilities.ts: the settings that reach the bridge (evaluate, a window per agent, the debug mode) follow live into
+  // config.json, which the bridge daemon re-reads by mtime. The bundle (for its config lock) is imported at the first write.
+  let caps: Promise<CapabilitiesBundle> | undefined
+  const capabilities = createCapabilitiesWriter({
+    bridgeHome: bridgeHomeOf(main.home),
+    settings: main.settings,
+    load: () => (caps ??= importBundleFromDisk(join(vendorDir, VENDOR_BUNDLE)).catch(e => { caps = undefined; throw e })),
+    log: msg => main.log(msg),
+  })
+  void capabilities.sync()
   const detected = (): DetectedBrowser[] => browsers ?? (browsers = listBrowsers())
 
   // C4: the poll. The versions are the EXTENSION's (the manifest version, `<bridge>.<commits>` since bridge 782d3ea55, the
@@ -127,5 +139,6 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('openOptions', () => openOptions()),
     ipc.on('watch', open => poller.watch(open === true)),
     toDisposable(() => poller.stop()),
+    ...CAPABILITY_SETTINGS.map(k => main.settings.onChange(k, () => { void capabilities.sync([k]) })),
   ]
 }

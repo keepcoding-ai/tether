@@ -83,7 +83,9 @@ describe('web-bridge: vendored bridge', () => {
     assert.equal(manifest.id, 'web-bridge')
     assert.equal(manifest.displayName, 'Tether Bridge')
     assert.deepEqual(manifest.hosts, ['renderer', 'main', 'daemon'])
-    assert.deepEqual(Object.keys(manifest.contributes!.settings!), ['serveToAgents', 'agentWindows', 'evaluate'])
+    assert.deepEqual(Object.keys(manifest.contributes!.settings!), ['serveToAgents', 'agentWindows', 'evaluate', 'debug', 'debugCallTimeoutSec'])
+    assert.equal(manifest.contributes!.settings!.debug!.default, false, 'the debug mode is off by default')
+    assert.equal(manifest.contributes!.settings!.debugCallTimeoutSec!.type, 'number')
     assert.equal(manifest.contributes!.settings!.evaluate!.default, 'own-tabs')
     assert.equal(manifest.contributes!.commands![0]!.command, 'web-bridge.install')
     assert.equal(manifest.contributes!.menus!.app![0]!.group, 'tools')
@@ -342,9 +344,9 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
 
   test('defaultCapabilities and serverNameOf: the package defaults when the build carries them, else this extension\'s', () => {
     const base = { name: 'tether-bridge', version: '0.1.0', extensionId: buildId, bundle: { file: 'a', sha256: 'b', bytes: 1 }, extension: { dir: 'extension', sha256: 'c', files: 1 } }
-    assert.deepEqual(defaultCapabilities(base), { agentWindows: true, evaluate: 'own-tabs' })
+    assert.deepEqual(defaultCapabilities(base), { windowPerAgent: true, evaluate: 'own-tabs' })
     assert.deepEqual(defaultCapabilities({ ...base, brand: { slug: 't', name: 'T', capabilities: { evaluate: 'all', pdf: false } } }), { evaluate: 'all', pdf: false })
-    assert.deepEqual(defaultCapabilities(undefined), { agentWindows: true, evaluate: 'own-tabs' })
+    assert.deepEqual(defaultCapabilities(undefined), { windowPerAgent: true, evaluate: 'own-tabs' })
     assert.equal(serverNameOf(undefined), 'tether-bridge')
     assert.equal(serverNameOf(base), 'tether-bridge')
     assert.equal(serverNameOf({ ...base, brand: { slug: 't', name: 'T', mcp: { serverName: 'other-bridge' } } }), 'other-bridge')
@@ -383,7 +385,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     assert.equal(daemon!.level, 'AVISO')
   })
 
-  test('activate(): registers the two doctor checks and waits for onStarted; nothing is written before (a satellite never starts); an empty home reads as AVISO', async () => {
+  test('activate(): registers the doctor checks (installation, daemon, extension, debug mode) and waits for onStarted; nothing is written before (a satellite never starts); an empty home reads as AVISO', async () => {
     const home = tmp.make()
     const checks: Array<() => Promise<DaemonCheck>> = []
     const started: Array<() => void> = []
@@ -400,8 +402,9 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
       onSlot: () => toDisposable(() => {}),
     }
     const disposables = activateDaemon(api)
-    assert.equal(disposables.length, 7, 'onStarted + launch middleware + the HTTP host + slot listener (C3) + 3 checks')
-    assert.equal(checks.length, 3)
+    assert.equal(disposables.length, 8, 'onStarted + launch middleware + the HTTP host + slot listener (C3) + 3 checks + the debug line')
+    assert.equal(checks.length, 4)
+    assert.deepEqual(await checks[3]!(), { level: 'OK', name: 'depuração do Tether Bridge', detail: 'desligada' })
     assert.equal(started.length, 1, 'the setup waits for the start')
     await new Promise(r => setTimeout(r, 50))
     assert.ok(!existsSync(bridgeHomeOf(home)) && !existsSync(mcpConfigPathOf(home)), 'nothing written before the start')
