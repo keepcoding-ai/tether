@@ -15,6 +15,7 @@ import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { ControlHub, type ControlView } from './control.ts'
 import { helpLine } from './control-rules.ts'
 import { type Gate, startGate } from './gate.ts'
+import { createDebugWriter, DEBUG_KEYS } from './debug-file.ts'
 import { DownloadStore } from './downloads.ts'
 import { UploadConsent } from './upload-consent.ts'
 import { AGENT_TABS_FILE, AgentTabs } from './agent-tabs.ts'
@@ -195,6 +196,9 @@ export function activate(main: TetherMain): IDisposable[] {
     else gate = g
     return g
   }, e => { log(`porteiro não abriu (${(e as Error).message})`); return undefined })
+  // The debug mode (debug-file.ts): <home>/browser/debug.json follows the settings live, from this start on.
+  const debugWriter = createDebugWriter({ home: main.home, settings: main.settings, log })
+  void debugWriter.sync()
   // An agent that exits keeps its tabs: only its open help requests are dismissed; the interface marks them "encerrado".
   const subs: IDisposable[] = [
     ipc.handle('list', () => registry.list()),
@@ -247,6 +251,7 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('pauseTabs', ids => control.pauseMany(tabIdsOf(ids))),
     ipc.handle('resumeTabs', ids => control.resumeMany(tabIdsOf(ids))),
     ...controlSubs,
+    ...DEBUG_KEYS.map(k => main.settings.onChange(k, () => { void debugWriter.sync() })),
     { dispose: () => { gateDisposed = true; gate?.dispose(); uploads.dispose(); downloads.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
   ]
   if (typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__) {

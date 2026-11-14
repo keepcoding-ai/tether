@@ -41,7 +41,7 @@ import {
   logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, pillBadgeCount, type PadTab, padWhere, resolveAgent, shortAddress,
 } from './pad-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, serveModeOf, shortName, type ServeMode } from './rules.ts'
+import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, DEBUG_PILL, DEBUG_PILL_HINT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, serveModeOf, shortName, type ServeMode } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, padRowActions, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
 import type { IconName } from '../../app/renderer/icons.ts'
@@ -411,6 +411,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     private readonly spinner = el('span', 'br-web-spin')
     private readonly cookiesEl = el('span', 'br-web-cookies', COOKIES_HERE_SHORT)
     private readonly memoryEl = el('span', 'br-web-memory', BAR_LOGINS_NOT_KEPT)
+    private readonly debugEl = el('span', 'br-web-debug', DEBUG_PILL)
     private actedAt = 0
     /** Set when this pane was maximized by taking the tab (so handing back restores only what we did). */
     maximizedByTake = false
@@ -460,7 +461,10 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.memoryEl.dataset.role = 'memory'
       this.memoryEl.title = LOGINS_NOT_KEPT
       this.memoryEl.hidden = true
-      this.bar.append(this.backBtn, this.fwdBtn, this.reloadBtn, this.ownerEl, this.titleEl, this.urlEl, this.spinner, this.cookiesEl, this.memoryEl, this.stateEl, this.ctlEl, this.actBtn)
+      this.debugEl.dataset.role = 'debug'
+      this.debugEl.title = DEBUG_PILL_HINT
+      this.debugEl.hidden = !debugOn(ui.settings)
+      this.bar.append(this.backBtn, this.fwdBtn, this.reloadBtn, this.ownerEl, this.titleEl, this.urlEl, this.spinner, this.cookiesEl, this.memoryEl, this.debugEl, this.stateEl, this.ctlEl, this.actBtn)
       this.element.append(this.bar, this.notice, this.page)
       const run = (action: string | undefined): void => {
         const tabId = this.info?.tabId ?? this.saved?.tabId
@@ -563,6 +567,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.spinner.hidden = state !== 'loading'
       this.cookiesEl.hidden = !(this.info?.cookies && this.info.cookies > 0)
       this.memoryEl.hidden = persistentLogins
+      this.paintDebug()
       this.paintNav()
       paintTabs()
       refreshPad()
@@ -578,6 +583,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
 
     /** The owner's chip follows the agent (name, ended). */
+    /** The "Depuração" pill: on the bar of every tab while the debug mode is on (debug-file.ts). */
+    paintDebug(): void { this.debugEl.hidden = !debugOn(ui.settings) }
+
     repaintOwner(): void {
       dressChip(this.ownerEl, this.saved?.ownerSlotId, this.saved ? agentOf(this.saved.ownerSlotId) : undefined)
       this.paintControl()
@@ -947,6 +955,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     // The agent's name or life changed (it exited): every chip is dressed again.
     ipc.on('agent', a => { slots.set(a.slotId, a); for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
     ui.agents.onDidChange(() => { for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
+    ui.settings.onChange('debug', () => { for (const p of panels.values()) p.paintDebug() }),
     ipc.on('localNetworkCancelled', withdraw),
     ipc.on('uploadAsk', enqueueUpload),
     ipc.on('uploadCancelled', withdraw),

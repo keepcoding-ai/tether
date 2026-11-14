@@ -6,7 +6,8 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { normalizeSetting, readExtensionsSettings } from '../../app/shared/vscode-configuration-registry.ts'
+import { normalizeSetting, readExtensionsSettings, type SettingReader, settingReaderOf } from '../../app/shared/vscode-configuration-registry.ts'
+import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
@@ -14,6 +15,7 @@ import { profileOption } from '../../src/core/profile.ts'
 import { findNode } from '../web-bridge/warmup.ts'
 import { McpHttpHost, type McpBackend } from '../../src/daemon/mcp-http.ts'
 import { type BrowserBackendInput, createBrowserLaunchMiddleware, MCP_SERVER_NAME, releaseSlot, sweepStale } from './agents.ts'
+import { debugStateOf, debugSummary } from './debug-file.ts'
 import { auditVendor } from './vendor-rules.ts'
 import { manifest } from './manifest.ts'
 import { scrubLogLine } from './log-scrub.ts'
@@ -26,6 +28,19 @@ export function browserFlag(api: Pick<TetherDaemon, 'settings'>, key: 'evaluate'
   const schema = manifest.contributes!.settings![key]!
   const values = readExtensionsSettings(api.settings.get<unknown>('extensions')).values[manifest.id]
   return normalizeSetting(schema, values?.[key]) === true
+}
+
+/** This extension's settings as settings.json holds them, read now (the daemon has no change event). */
+export function browserSettings(api: Pick<TetherDaemon, 'settings'>): SettingReader {
+  return settingReaderOf(manifest.contributes!.settings!, readExtensionsSettings(api.settings.get<unknown>('extensions')).values[manifest.id])
+}
+
+/** The doctor's line of the debug mode: OK while off, AVISO while on (it should not stay on by accident). */
+export function debugCheck(settings: SettingReader): DaemonCheck {
+  const state = debugStateOf(settings)
+  const name = 'depuração do navegador do tether'
+  if (!state.enabled) return { level: 'OK', name, detail: debugSummary(state) }
+  return { level: 'AVISO', name, detail: debugSummary(state), hint: 'desligue em Configurações > Browser > Depuração quando terminar de investigar' }
 }
 
 /** `extensions.browser.serveToAgents` as the person set it (the old boolean included: see serveModeOf). */
@@ -115,5 +130,6 @@ export function activate(api: TetherDaemon): IDisposable[] {
     api.launch.use(middleware),
     api.onSlot(ev => { if (ev.kind === 'exited' && ev.slot.kind !== 'shell') { http.revoke(ev.slot.slotId); releaseSlot(api.home, ev.slot.slotId) } }),
     { dispose: () => { void http.close() } },
+    api.doctor.register(async () => debugCheck(browserSettings(api))),
   ]
 }

@@ -44,6 +44,11 @@ export const READ_ONLY_ADDRESS = 'Endereço da página (só leitura)'
 export const COOKIES_HERE = 'Esta partição guarda cookies deste site: pode haver uma conta logada'
 export const COOKIES_HERE_SHORT = 'Com cookies'
 export const BAR_LOGINS_NOT_KEPT = 'Logins não guardados'
+/** The bar's pill while the debug mode is on (`extensions.browser.debug`, debug-file.ts). */
+export const DEBUG_PILL = 'Depuração'
+export const DEBUG_PILL_HINT = 'Modo de depuração ligado: o registro guarda mais detalhes de cada ação do agente e valem os prazos de depuração. Desligue em Configurações > Browser > Depuração.'
+/** Whether the debug mode is on: the setting alone decides (the bar's pill, the doctor's line, debug.json). */
+export const debugOn = (s: { get(key: string): unknown }): boolean => s.get('debug') === true
 export const ADDRESS_MAX = 90
 export const SHORT_NAME_MAX = 16
 
