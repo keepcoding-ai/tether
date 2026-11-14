@@ -17,8 +17,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DetectedBrowser } from './browsers.ts'
 import type { ActionOutcome, InstallOutcome, StatusSnapshot, WebBridgeChannels } from './ipc.ts'
 import { BRIDGE_NAME, STATUS_ID } from './manifest.ts'
-import { bridgeDebugOn } from './capabilities.ts'
-import { activeAgents, ago, badgeOf, DEBUG_LINE, EMPTY_SNAPSHOT, stateOf, tabsLabel, titleOf, versionLine } from './status.ts'
+import { activeAgents, ago, badgeOf, bridgeDebugOn, DEBUG_LINE, EMPTY_SNAPSHOT, stateOf, tabsLabel, titleOf, versionLine } from './status.ts'
 
 export { manifest } from './manifest.ts'
 

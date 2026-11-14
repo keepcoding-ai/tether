@@ -17,7 +17,10 @@
 // `capabilities` is not touched: the first tetherd start seeds the package's defaults (seedCapabilities) and applies these
 // right after. Writes go through the bundle's setCapabilities (the bridge's own config lock). No secret is read or logged:
 // only `capabilities` of the config is looked at.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { SettingReader } from '../../app/shared/vscode-configuration-registry.ts'
+import { bridgeDebugOn } from './status.ts'
 
 export type Capabilities = Record<string, boolean | string>
 
@@ -27,8 +30,7 @@ const MIRRORED = { evaluate: 'evaluate', windowPerAgent: 'agentWindows' } as con
 /** The settings whose change rewrites the capabilities. */
 export const CAPABILITY_SETTINGS = ['evaluate', 'agentWindows', 'debug', 'debugCallTimeoutSec'] as const
 
-/** Whether the debug mode is on (the icon's amber, the popover's line, the doctor's line). */
-export const bridgeDebugOn = (s: { get(key: string): unknown }): boolean => s.get('debug') === true
+export { bridgeDebugOn } from './status.ts'
 
 /** Seconds as typed on the settings page → the capability's string of whole milliseconds ("0" = no deadline). */
 const msText = (sec: number): string => String(Math.max(0, Math.round(sec * 1000)))
@@ -79,19 +81,25 @@ export function applyCapabilities(b: CapabilitiesBundle, bridgeHome: string, s: 
 
 /**
  * The live writer (Electron main): `sync(changed)` applies the settings in force, one write at a time. Called at activation
- * (changed = []) and at every change of a CAPABILITY_SETTINGS setting. The bundle is loaded at the first call; a failure is
- * logged, never thrown.
+ * (changed = []) and at every change of a CAPABILITY_SETTINGS setting. The bundle (for its config lock) is loaded only when
+ * a write is due: `peek` reads config.json's capabilities alone, without the bundle, and a state already on disk loads
+ * nothing. A failure is logged, never thrown.
  */
 export function createCapabilitiesWriter(o: {
   bridgeHome: string
   settings: SettingReader
   load(): Promise<CapabilitiesBundle>
+  /** Default: peekCapabilities (a plain read of config.json). */
+  peek?(bridgeHome: string): Capabilities | undefined
   log(msg: string): void
 }): { sync(changed?: readonly string[]): Promise<void> } {
   let chain: Promise<void> = Promise.resolve()
   let lastDebug = false
+  const peek = o.peek ?? peekCapabilities
   const once = async (changed: readonly string[]): Promise<void> => {
     try {
+      const seen = peek(o.bridgeHome)
+      if (!seen || sameCapabilities(seen, withTetherCapabilities(seen, o.settings, changed))) { if (seen) lastDebug = bridgeDebugOn(o.settings); return }
       const r = applyCapabilities(await o.load(), o.bridgeHome, o.settings, changed)
       const on = bridgeDebugOn(o.settings)
       if (r === 'written' && on !== lastDebug) o.log(`modo de depuração ${on ? 'ligado' : 'desligado'} (capabilities do bridge gravadas)`)
@@ -102,6 +110,18 @@ export function createCapabilitiesWriter(o: {
     }
   }
   return { sync: (changed = []) => (chain = chain.then(() => once(changed))) }
+}
+
+/**
+ * config.json's `capabilities` read without the bundle, only to decide whether a write is due (the write itself re-reads
+ * under the bridge's lock). Undefined without a config, without capabilities, or with one that does not parse. Nothing else
+ * of the file is kept or returned.
+ */
+export function peekCapabilities(bridgeHome: string): Capabilities | undefined {
+  try {
+    const caps = (JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { capabilities?: unknown }).capabilities
+    return caps && typeof caps === 'object' && !Array.isArray(caps) ? { ...(caps as Capabilities) } : undefined
+  } catch { return undefined }
 }
 
 /** The doctor's words: "desligada", or "ligada" with the call deadline in force. */

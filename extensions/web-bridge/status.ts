@@ -147,6 +147,9 @@ export function browserNames(s: StatusSnapshot): string[] {
   return [...new Set(s.browsers.map(b => b.name))]
 }
 
+/** Whether the debug mode is on (extensions.web-bridge.debug): the setting alone decides (icon, popover, doctor, capabilities). */
+export const bridgeDebugOn = (s: { get(key: string): unknown }): boolean => s.get('debug') === true
+
 /** The popover's line and the tooltip's suffix while the debug mode is on. */
 export const DEBUG_LINE = 'Modo de depuração ligado: o registro guarda mais detalhes de cada chamada. Desligue em Configurações quando terminar.'
 export const DEBUG_SUFFIX = 'modo de depuração ligado'

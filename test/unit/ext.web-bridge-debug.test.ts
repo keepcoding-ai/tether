@@ -125,9 +125,28 @@ describe('web-bridge debug: config.json through the real bundle', () => {
     assert.equal(capsOf(seeded.home), undefined)
   })
 
+  test('the bundle is imported only when a write is due (a start with nothing to apply loads nothing)', async () => {
+    const { home } = await setupHome()
+    let loads = 0
+    const values: Record<string, unknown> = {}
+    const w = createCapabilitiesWriter({ bridgeHome: bridgeHomeOf(home), settings: reader(values), load: () => { loads++; return bundle() }, log: () => {} })
+    await w.sync()
+    await w.sync(['agentWindows'])
+    assert.equal(loads, 0, 'the state on disk already matches: no import')
+    values.debug = true
+    await w.sync(['debug'])
+    assert.equal(loads, 1)
+    assert.equal(capsOf(home)?.debug, true)
+    await w.sync(['debug'])
+    assert.equal(loads, 1, 'unchanged again: no import')
+    const none = createCapabilitiesWriter({ bridgeHome: bridgeHomeOf(tmp.make()), settings: reader({ debug: true }), load: () => { loads++; return bundle() }, log: () => {} })
+    await none.sync()
+    assert.equal(loads, 1, 'no config yet: no import')
+  })
+
   test('a failing bundle is logged, not thrown', async () => {
     const log: string[] = []
-    const w = createCapabilitiesWriter({ bridgeHome: 'x', settings: reader({ debug: true }), load: async () => { throw Object.assign(new Error('boom'), { code: 'NOPE' }) }, log: m => log.push(m) })
+    const w = createCapabilitiesWriter({ bridgeHome: 'x', settings: reader({ debug: true }), peek: () => ({ evaluate: 'own-tabs' }), load: async () => { throw Object.assign(new Error('boom'), { code: 'NOPE' }) }, log: m => log.push(m) })
     await w.sync()
     assert.deepEqual(log, ['capabilities do bridge não gravadas: NOPE'])
   })
