@@ -399,7 +399,7 @@ test('search: the pad end to end (fields, tree, open, keyboard, replace preview,
     })
     const t0 = Date.now()
     await setField(page, 'Pesquisar', 'zebra')
-    // Every match the engine kept arrives, even the batches that land after the search's reply.
+    // Every match the engine kept arrives before the search ends.
     // (Polled with the cheap status: the full snapshot draws every row's text and would itself hold the window.)
     await page.waitForFunction(() => { const x = window.__tether.searchStatus()!; return !x.searching && x.count === 20_000 }, undefined, { timeout: 60_000, polling: 100 })
     const took = Date.now() - t0
@@ -407,7 +407,7 @@ test('search: the pad end to end (fields, tree, open, keyboard, replace preview,
     const gap = await page.evaluate(() => window.__hb.max)
     const domRows = await page.evaluate(sc => document.querySelector(sc)!.querySelectorAll('.sr-row').length, SCROLL)
     s = await waitDone(page, '20.000 resultados em 100 arquivos', 'the big search ends at the limit')
-    console.log(`big search: ${took} ms until all 20000 matches are in (reply after ${s.lastSearchMs} ms), ${s.count} matches in ${s.fileCount} files, ${s.results.rows.length} rows in the tree, ${domRows} in the DOM, longest timer gap ${Math.round(gap)} ms`)
+    console.log(`big search: ${took} ms until all 20000 matches are in (search ended after ${s.lastSearchMs} ms), ${s.count} matches in ${s.fileCount} files, ${s.results.rows.length} rows in the tree, ${domRows} in the DOM, longest timer gap ${Math.round(gap)} ms`)
     assert.equal(s.count, 20_000)
     assert.ok(s.message.includes('O conjunto de resultados contém só uma parte das correspondências. Refine a pesquisa para restringir os resultados.'), `the partial-results warning (${s.message})`)
     assert.ok(domRows < 200, `few rows in the DOM (${domRows})`)
@@ -432,7 +432,7 @@ test('search: the pad end to end (fields, tree, open, keyboard, replace preview,
         tick()
       }), [how, `${PAD_SEL} .srch-cancel`, FIELD('Pesquisar')])
       await page.waitForFunction(() => { const x = window.__tether.searchStatus()!; return !x.searching && x.message.includes('Pesquisa cancelada.') }, undefined, { timeout: 20_000, polling: 100 })
-      await sleep(500) // batches already on their way when it was cancelled still land
+      await sleep(500) // batches of the cancelled search still on their way are dropped
       s = await snap(page)
       console.log(`cancel by ${how}: cancelled with ${at} matches in, ${s.count} kept of 640000`)
       assert.ok(s.count > 0 && s.count < 640_000, `what arrived stays (${s.count})`)

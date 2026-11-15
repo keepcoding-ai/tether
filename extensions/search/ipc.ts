@@ -14,8 +14,12 @@ export type SearchDone =
 
 export interface SearchChannels {
   invoke: {
-    /** Runs a text search; it replaces (cancels) the one this window was running. Resolves when it ends; matches arrive on `progress` with the same id. */
-    search: (id: number, query: ITextQuery) => SearchDone
+    /**
+     * Starts a text search; it replaces (cancels) the one this window was running. The reply only says whether it started:
+     * matches arrive on `progress` and the end on `done`, both with the same id. The end is an event because Electron does
+     * not order the reply of an invoke against `webContents.send` messages, while messages sent in sequence keep their order.
+     */
+    search: (id: number, query: ITextQuery) => { started: true } | { started: false; message: string }
     /** Applies replacements on disk; a file is written only if every range still holds the found text. Only inside the folders of this window's last search. */
     replace: (files: FileEdits[]) => FileOutcome[]
     /** The files changed in git (modified, added, renamed, untracked) under these folders. */
@@ -28,5 +32,7 @@ export interface SearchChannels {
   events: {
     /** A batch of file matches of the search `id`. */
     progress: (id: number, matches: IFileMatch[]) => void
+    /** The search `id` ended; sent after its last `progress` on the same path, so no batch of it arrives later. */
+    done: (id: number, result: SearchDone) => void
   }
 }

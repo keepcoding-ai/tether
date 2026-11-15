@@ -150,8 +150,11 @@ export function activate(main: TetherMain): IDisposable[] {
   return [
     ipc.handle('search', (id, raw) => {
       const query = isInt(id) ? sanitizeQuery(raw) : undefined
-      if (!isInt(id) || !query) return { kind: 'error', message: 'Consulta de pesquisa inválida.' }
-      return service.search(id, query, (sid, matches) => ipc.send('progress', sid, matches))
+      if (!isInt(id) || !query) return { started: false, message: 'Consulta de pesquisa inválida.' }
+      // The end goes out as an event after the last batch (same path, ordered); the reply only confirms the start.
+      void service.search(id, query, (sid, matches) => ipc.send('progress', sid, matches))
+        .then(result => ipc.send('done', id, result))
+      return { started: true }
     }),
     ipc.on('cancel', id => { if (isInt(id)) service.cancel(id) }),
     ipc.handle('replace', files => replaceInFiles(sanitizeReplace(files), { allowed: allowedIn(service.folders()) })),

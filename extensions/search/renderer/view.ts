@@ -86,10 +86,7 @@ export class SearchView implements PadView {
   private viewMode: ViewMode
   private seq = 0
   private live: Live | undefined
-  /**
-   * The last search that ended, while its results are shown. The reply of `search` and the `progress` events travel apart,
-   * so batches the engine sent before it ended can arrive after the reply: they are still this search's, and are added.
-   */
+  /** The last search that ended, while its results are shown (for the completion message). */
   private ended: Ended | undefined
   /** The message line follows the results' changes (a search ran and its results are shown). */
   private counting = false
@@ -157,6 +154,7 @@ export class SearchView implements PadView {
       this.results.onDidRequestFocusInput(() => this.widget.focusSearch()),
       this.results.onDidChangeCollapseState(() => this.updateTopbar()),
       this.ipc.on('progress', (id, matches) => this.onProgress(id, matches)),
+      this.ipc.on('done', (id, result) => this.finish(id, result)),
       ui.settings.onChange('showLineNumbers', () => this.results.refresh()),
       ui.settings.onChange('collapseResults', () => this.results.refresh()),
     )
@@ -244,6 +242,8 @@ export class SearchView implements PadView {
     if (!live) return
     live.byUser = true
     this.ipc.send('cancel', live.id)
+    // Immediate on screen: the batches and the end of this id still on their way are dropped.
+    this.finish(live.id, { kind: 'cancelled' })
   }
 
   collapseAll(): void { this.results.collapseAll(); this.updateTopbar() }
@@ -364,7 +364,7 @@ export class SearchView implements PadView {
     this.setSearching(true)
     this.scheduleHistory()
     this.ipc.invoke('search', id, query).then(
-      done => this.finish(id, done),
+      r => { if (!r.started) this.finish(id, { kind: 'error', message: r.message }) },
       err => this.finish(id, { kind: 'error', message: err instanceof Error ? err.message : String(err) }),
     )
   }
@@ -398,7 +398,7 @@ export class SearchView implements PadView {
 
   private onProgress(id: number, matches: Parameters<SearchChannels['events']['progress']>[1]): void {
     if (this.disposed) return
-    const run = this.live?.id === id ? this.live : this.ended?.id === id ? this.ended : undefined
+    const run = this.live?.id === id ? this.live : undefined
     if (!run) return
     if (!run.added) {
       // The first batch replaces the previous search's results: the tree starts over (collapse state, scroll).
@@ -409,7 +409,6 @@ export class SearchView implements PadView {
     } else {
       this.model.searchResult.add(matches)
     }
-    if (run === this.ended) this.showCompletion()
   }
 
   private finish(id: number, done: SearchDone): void {
