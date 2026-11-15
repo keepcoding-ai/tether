@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import {
   ALWAYS_EXCLUDED, CANCELLED_MESSAGE, completionMessage, countLine, engineErrorText, EXCLUDES_OFF_NOTE, excludeExpression,
   LIMIT_HIT_MESSAGE, noResultsMessage, readViewState, regexError, resultCountMessage, seedFromSelection, triggerOf, withLocalLimit,
+  CHANGED_FILES_NOTE, folderPattern, mergePattern, NO_CHANGED_FILES_MESSAGE, NO_OPEN_EDITORS_MESSAGE, OPEN_EDITORS_NOTE, readSortOrder,
 } from '../../extensions/search/renderer/view-rules.ts'
 
 describe('when an edit searches', () => {
@@ -112,5 +113,82 @@ describe('the limit counts the open editors too', () => {
     assert.equal(withLocalLimit(d, false), d)
     const c = { kind: 'cancelled' }
     assert.equal(withLocalLimit(c, true), c)
+  })
+})
+
+describe('the include field switches', () => {
+  test('the messages for nothing to search in', () => {
+    assert.equal(NO_OPEN_EDITORS_MESSAGE, 'Nenhum editor aberto para pesquisar.')
+    assert.equal(NO_CHANGED_FILES_MESSAGE, 'Nenhum arquivo alterado no git nestas pastas.')
+  })
+
+  test('the count line names each restriction after the counts', () => {
+    assert.equal(countLine(3, 2, true, { onlyOpenEditors: true }), `3 resultados em 2 arquivos — ${OPEN_EDITORS_NOTE}`)
+    assert.equal(countLine(1, 1, true, { onlyChangedFiles: true }), `1 resultado em 1 arquivo — ${CHANGED_FILES_NOTE}`)
+    assert.equal(countLine(3, 2, false, { onlyOpenEditors: true, onlyChangedFiles: true }),
+      `3 resultados em 2 arquivos — ${EXCLUDES_OFF_NOTE} — só nos editores abertos — só nos arquivos alterados`)
+    assert.equal(countLine(3, 2, true, { onlyOpenEditors: false, onlyChangedFiles: false }), '3 resultados em 2 arquivos')
+  })
+
+  test('the completion message carries the restriction', () => {
+    const base = { results: 4, files: 2, include: '', exclude: '', useExcludes: true, scope: { onlyOpenEditors: true } }
+    assert.equal(completionMessage({ kind: 'done', ...base })[0]?.text, '4 resultados em 2 arquivos — só nos editores abertos')
+    assert.equal(completionMessage({ kind: 'cancelled', ...base, byUser: true })[0]?.text, '4 resultados em 2 arquivos — só nos editores abertos')
+  })
+})
+
+describe('the sort order setting', () => {
+  test('a known value is kept; anything else is the default order', () => {
+    for (const v of ['default', 'fileNames', 'type', 'modified', 'countDescending', 'countAscending']) assert.equal(readSortOrder(v), v)
+    assert.equal(readSortOrder('bogus'), 'default')
+    assert.equal(readSortOrder(undefined), 'default')
+    assert.equal(readSortOrder(3), 'default')
+  })
+})
+
+describe('a folder in the include and exclude fields', () => {
+  /** Windows paths written with slashes. */
+  const w = (p: string): string => p.split('/').join('\\')
+  const one = [{ path: w('C:/w/alpha'), name: 'alpha' }]
+  const two = [{ path: w('C:/w/alpha'), name: 'alpha' }, { path: w('C:/w/beta'), name: 'beta' }]
+  const posix = [{ path: '/w/alpha', name: 'alpha' }]
+
+  test('one project: relative to it; the project itself is "./"', () => {
+    assert.equal(folderPattern(w('C:/w/alpha/src/ui'), one, 'win32'), './src/ui')
+    assert.equal(folderPattern(w('C:/w/alpha'), one, 'win32'), './')
+    assert.equal(folderPattern('/w/alpha/src', posix, 'posix'), './src')
+  })
+
+  test('several projects: the name of the project leads; the project itself is "./name"', () => {
+    assert.equal(folderPattern(w('C:/w/beta/src'), two, 'win32'), './beta/src')
+    assert.equal(folderPattern(w('C:/w/alpha'), two, 'win32'), './alpha')
+  })
+
+  test('the deepest project that holds the folder owns it; none holds it: undefined', () => {
+    const nested = [...two, { path: w('C:/w/alpha/inner'), name: 'inner' }]
+    assert.equal(folderPattern(w('C:/w/alpha/inner/x'), nested, 'win32'), './inner/x')
+    assert.equal(folderPattern(w('C:/elsewhere'), two, 'win32'), undefined)
+  })
+
+  test('two projects with the same name: the absolute path', () => {
+    const same = [{ path: w('C:/a/app'), name: 'app' }, { path: w('C:/b/app'), name: 'app' }]
+    assert.equal(folderPattern(w('C:/b/app/src'), same, 'win32'), w('C:/b/app/src'))
+  })
+
+  test('a space is kept; ? * [ ] are escaped as the origin does', () => {
+    assert.equal(folderPattern('/w/alpha/my docs', posix, 'posix'), './my docs')
+    assert.equal(folderPattern('/w/alpha/a[1]*?', posix, 'posix'), './a[[]1[]][*][?]')
+  })
+
+  test('a comma or braces in the name are not escaped (the origin does not either)', () => {
+    assert.equal(folderPattern('/w/alpha/a,b{c}', posix, 'posix'), './a,b{c}')
+  })
+
+  test('the exclude field gets the folder once, after the others', () => {
+    assert.equal(mergePattern('', './src'), './src')
+    assert.equal(mergePattern('  ', './src'), './src')
+    assert.equal(mergePattern('*.md', './src'), '*.md, ./src')
+    assert.equal(mergePattern('*.md, ./src', './src'), '*.md, ./src')
+    assert.equal(mergePattern('{a,b}, c', './src'), '{a,b}, c, ./src')
   })
 })

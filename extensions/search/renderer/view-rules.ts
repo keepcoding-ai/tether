@@ -6,6 +6,8 @@
 //                                                             updateSearchResultCount)
 //   src/vs/workbench/contrib/search/browser/searchWidget.ts  (validateSearchInput)
 import { splitGlobAware, type IExpression } from '../../../app/shared/vscode-search.ts'
+import { createPathOps, escapeGlobPattern } from '../../../app/shared/vscode-search-query.ts'
+import { SearchSortOrder } from '../../../app/shared/vscode-search-model.ts'
 import { normalizeHistory, normalizeState, type SearchWidgetHistory, type SearchWidgetState } from './widget-rules.ts'
 
 export type ViewMode = 'list' | 'tree'
@@ -17,6 +19,13 @@ export const NO_FOLDER_MESSAGE = 'Abra uma pasta para pesquisar nos arquivos.'
 export const CANCELLED_MESSAGE = 'Pesquisa cancelada.'
 export const LIMIT_HIT_MESSAGE = 'O conjunto de resultados contém só uma parte das correspondências. Refine a pesquisa para restringir os resultados.'
 export const EXCLUDES_OFF_NOTE = 'exclusões das configurações e arquivos ignore desligados'
+export const NO_OPEN_EDITORS_MESSAGE = 'Nenhum editor aberto para pesquisar.'
+export const NO_CHANGED_FILES_MESSAGE = 'Nenhum arquivo alterado no git nestas pastas.'
+export const OPEN_EDITORS_NOTE = 'só nos editores abertos'
+export const CHANGED_FILES_NOTE = 'só nos arquivos alterados'
+
+/** The restrictions of the include field's two switches that a search ran with. */
+export interface SearchScope { onlyOpenEditors?: boolean; onlyChangedFiles?: boolean }
 
 /** One line of the message under the fields. */
 export interface MessageLine { text: string; tone: 'info' | 'warning' }
@@ -34,10 +43,13 @@ export function resultCountMessage(results: number, files: number): string {
   return `${count(results)} ${results === 1 ? 'resultado' : 'resultados'} em ${count(files)} ${files === 1 ? 'arquivo' : 'arquivos'}`
 }
 
-/** The line shown while results exist: the counts, and a note when the exclusions and ignore files are off. */
-export function countLine(results: number, files: number, useExcludes: boolean): string {
-  const base = resultCountMessage(results, files)
-  return useExcludes ? base : `${base} — ${EXCLUDES_OFF_NOTE}`
+/** The line shown while results exist: the counts, and a note for each thing that narrowed or widened the search. */
+export function countLine(results: number, files: number, useExcludes: boolean, scope: SearchScope = {}): string {
+  let line = resultCountMessage(results, files)
+  if (!useExcludes) line += ` — ${EXCLUDES_OFF_NOTE}`
+  if (scope.onlyOpenEditors) line += ` — ${OPEN_EDITORS_NOTE}`
+  if (scope.onlyChangedFiles) line += ` — ${CHANGED_FILES_NOTE}`
+  return line
 }
 
 /** A search that found nothing (onSearchComplete): where it looked, and the hint that the exclusions were in force. */
@@ -64,6 +76,7 @@ export interface Completion {
   messages?: readonly { text: string; type: number }[]
   /** The person cancelled it (a search replaced by a newer one says nothing). */
   byUser?: boolean
+  scope?: SearchScope
 }
 
 /** How a search ended, counting the results from the open editors too: their limit, or the cap on the disk's batches, is a limit hit. */
@@ -75,11 +88,11 @@ export function withLocalLimit<D extends { kind: string; limitHit?: boolean }>(d
 export function completionMessage(c: Completion): MessageLine[] {
   const lines: MessageLine[] = []
   if (c.kind === 'cancelled') {
-    if (c.results > 0) lines.push({ text: countLine(c.results, c.files, c.useExcludes), tone: 'info' })
+    if (c.results > 0) lines.push({ text: countLine(c.results, c.files, c.useExcludes, c.scope), tone: 'info' })
     if (c.byUser) lines.push({ text: CANCELLED_MESSAGE, tone: 'info' })
     return lines
   }
-  if (c.results > 0) lines.push({ text: countLine(c.results, c.files, c.useExcludes), tone: 'info' })
+  if (c.results > 0) lines.push({ text: countLine(c.results, c.files, c.useExcludes, c.scope), tone: 'info' })
   else lines.push({ text: noResultsMessage(c), tone: 'info' })
   if (c.limitHit) lines.push({ text: LIMIT_HIT_MESSAGE, tone: 'warning' })
   for (const m of c.messages ?? []) if (m.text) lines.push({ text: m.text, tone: m.type === 2 ? 'warning' : 'info' })
@@ -140,6 +153,42 @@ export function readViewState(raw: unknown): SearchViewState {
   }
   if (src.viewMode === 'list' || src.viewMode === 'tree') out.viewMode = src.viewMode
   return out
+}
+
+/** The `sortOrder` setting as the results model takes it; an unknown value is the default order. */
+export function readSortOrder(value: unknown): SearchSortOrder {
+  const known = Object.values(SearchSortOrder) as string[]
+  return typeof value === 'string' && known.includes(value) ? value as SearchSortOrder : SearchSortOrder.Default
+}
+
+/** A project as the include/exclude fields name it. */
+export interface RootRef { path: string; name: string }
+
+/**
+ * A folder as the include/exclude field understands it (resolveResourcesForSearchIncludes): relative to the project when
+ * there is one ("./src", "./" for the project itself), "./name/src" ("./name") with several projects, and the absolute path
+ * when another project has the same name. `?*[]` are escaped as the origin does. Undefined when no project holds the folder.
+ */
+export function folderPattern(folder: string, roots: readonly RootRef[], platform: 'win32' | 'posix'): string | undefined {
+  const ops = createPathOps(platform)
+  const owner = [...roots]
+    .filter(r => ops.isEqualOrParent(folder, r.path))
+    .sort((a, b) => b.path.length - a.path.length)[0]
+  if (!owner) return undefined
+  const rel = ops.relative(owner.path, folder).replace(/\\/g, '/')
+  const inside = rel === '' || rel === '.' ? '' : rel
+  let pattern: string
+  if (roots.length === 1) pattern = inside === '' ? './' : `./${inside}`
+  else if (roots.filter(r => r.name === owner.name).length === 1) pattern = inside === '' ? `./${owner.name}` : `./${owner.name}/${inside}`
+  else pattern = folder
+  return escapeGlobPattern(pattern)
+}
+
+/** Adds a glob to a comma separated field unless it is already there (mergeSearchPatternIfNotExists). */
+export function mergePattern(current: string, pattern: string): string {
+  if (current.trim() === '') return pattern
+  const existing = splitGlobAware(current, ',').map(p => p.trim()).filter(p => p !== '')
+  return existing.includes(pattern) ? current : `${current}, ${pattern}`
 }
 
 /** A single-line selection becomes the search term (updateTextFromSelection); escaped when the regex toggle is on. */

@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { manifest } from '../../extensions/explorer/manifest.ts'
-import { ActivityGate, agentsHint, agentsTooltip, pinLabel, recentRow, recentToOffer, rootMenu, rootTitle, type RootInfo } from '../../extensions/explorer/renderer/rules.ts'
+import { ActivityGate, agentsHint, agentsTooltip, itemMenu, pinLabel, recentRow, recentToOffer, rootMenu, rootTitle, type RootInfo } from '../../extensions/explorer/renderer/rules.ts'
 import { parseKeys, resolvedDefaults } from '../../app/renderer/shortcuts.ts'
 
 const root = (over: Partial<RootInfo> = {}): RootInfo => ({ path: 'C:\\proj\\alpha', name: 'alpha', pinned: false, agents: [], ...over })
@@ -108,5 +108,25 @@ describe('ActivityGate (the disk is watched only while a view is shown)', () => 
     const g = new ActivityGate(a => sent.push(a), false)
     g.setView({}, true)
     assert.deepEqual(sent, [])
+  })
+})
+
+describe('explorer: Pesquisar na pasta…', () => {
+  const acts = (m: ReturnType<typeof itemMenu>): string[] => m.map(i => (i === 'sep' ? '-' : i.action))
+  const rootActs = (m: ReturnType<typeof rootMenu>): string[] => m.map(i => (i === 'sep' ? '-' : i.action))
+
+  test('a project root offers it only while the search is active, after the create group', () => {
+    assert.equal(rootActs(rootMenu(root({ pinned: true }), 0, 1)).includes('find-in-folder'), false)
+    assert.equal(rootActs(rootMenu(root({ pinned: true }), 0, 1, { search: false })).includes('find-in-folder'), false)
+    assert.deepEqual(rootActs(rootMenu(root({ pinned: true }), 0, 1, { search: true })),
+      ['unpin', 'close', '-', 'new-file', 'new-folder', 'new-pane', '-', 'find-in-folder', '-', 'copy-path', 'reveal'])
+  })
+
+  test('a folder offers it, a file never does', () => {
+    assert.equal(acts(itemMenu('dir')).includes('find-in-folder'), false)
+    assert.deepEqual(acts(itemMenu('dir', { search: true })).slice(0, 6), ['new-file', 'new-folder', 'new-pane', '-', 'find-in-folder', '-'])
+    assert.equal(acts(itemMenu('file', { search: true })).includes('find-in-folder'), false)
+    const item = itemMenu('dir', { search: true }).find(i => i !== 'sep' && i.action === 'find-in-folder')
+    assert.deepEqual(item, { action: 'find-in-folder', label: 'Pesquisar na pasta…', icon: 'magnifying-glass' })
   })
 })

@@ -25,6 +25,11 @@ export const manifest: ExtensionManifest = {
       followSymlinks: { type: 'boolean', default: false, title: 'Seguir links simbólicos', description: 'Entra em links simbólicos e junctions ao pesquisar.' },
       exclude: { type: 'string', default: '**/node_modules, **/bower_components, **/*.code-search', title: 'Excluir da pesquisa', description: 'Globs separados por vírgula que a pesquisa deixa de fora, além das pastas de controle de versão.' },
       collapseResults: { type: 'string', enum: ['alwaysExpand', 'auto', 'alwaysCollapse'], enumLabels: ['Sempre expandir', 'Automático (recolhe arquivo com mais de 10 resultados)', 'Sempre recolher'], default: 'alwaysExpand', title: 'Recolher resultados', description: 'Se os arquivos da lista de resultados aparecem abertos ou fechados.' },
+      sortOrder: {
+        type: 'string', enum: ['default', 'fileNames', 'type', 'modified', 'countDescending', 'countAscending'],
+        enumLabels: ['Padrão (por pasta e nome)', 'Nome do arquivo', 'Tipo de arquivo', 'Modificado (trata como padrão)', 'Mais resultados primeiro', 'Menos resultados primeiro'],
+        default: 'default', title: 'Ordem dos resultados', description: 'Como os arquivos e as pastas da lista de resultados são ordenados.',
+      },
       defaultViewMode: { type: 'string', enum: ['list', 'tree'], enumLabels: ['Lista', 'Árvore'], default: 'list', title: 'Modo de exibição dos resultados', description: 'Mostrar os arquivos achados em lista ou agrupados por pasta, em árvore.' },
       showLineNumbers: { type: 'boolean', default: false, title: 'Mostrar números de linha', description: 'Mostra o número da linha ao lado de cada resultado.' },
       useReplacePreview: { type: 'boolean', default: true, title: 'Prévia ao substituir', description: 'Mostra a diferença no editor ao substituir uma ocorrência.' },

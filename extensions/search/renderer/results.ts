@@ -41,6 +41,8 @@ export interface ResultsHost {
   replace(element: RenderableMatch): void
   /** The dismiss action of a row (button, Delete). The host removes it from the model; the tree follows the model's change event. */
   dismiss(element: RenderableMatch): void
+  /** The "Copiar" of a row (Ctrl+C on the tree): its text to the clipboard. */
+  copy(element: RenderableMatch): void
   /** The rows of the context menu for an element. */
   menu(element: RenderableMatch): ContextMenuEntry[]
   /** A folder's or file's description beside its name (the host knows the project roots): '' for none. */
@@ -460,6 +462,14 @@ export class SearchResults {
     this.host.dismiss(node.element.element)
   }
 
+  /**
+   * A row action (a button that never takes the keyboard) leaves the keyboard on the tree: the button goes away with its row,
+   * and a keyboard that was in a field would stay there while the person is working the results.
+   */
+  private keepKeyboard(): void {
+    if (document.activeElement !== this.scroll) this.scroll.focus({ preventScroll: true })
+  }
+
   private showMenu(node: Node, x: number, y: number): void {
     this.setFocused(node, false)
     const entries = this.host.menu(node.element.element)
@@ -493,6 +503,13 @@ export class SearchResults {
     if (ev.key === 'Delete' && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) {
       ev.preventDefault()
       this.dismiss(node)
+      return
+    }
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.key.toLowerCase() === 'c') {
+      // A text the person selected in the page is theirs to copy; otherwise the focused row is copied.
+      if (window.getSelection()?.toString()) return
+      ev.preventDefault()
+      this.host.copy(e)
       return
     }
     if (ev.code === 'Digit1' && (ev.ctrlKey || ev.metaKey) && ev.shiftKey && !ev.altKey) {
@@ -562,7 +579,7 @@ export class SearchResults {
       const node = rowOf(ev)
       if (!node) return
       const act = (ev.target as HTMLElement).closest<HTMLElement>('.sr-act')
-      if (act) { ev.stopPropagation(); this.act(act.dataset.act ?? '', node); return }
+      if (act) { ev.stopPropagation(); this.keepKeyboard(); this.act(act.dataset.act ?? '', node); return }
       if (document.activeElement !== this.scroll) this.scroll.focus({ preventScroll: true })
       this.activate(node, ev.ctrlKey || ev.metaKey || ev.altKey)
     })
@@ -587,7 +604,7 @@ export class SearchResults {
       const node = this.sticky.nodeOfElement(ev.target as HTMLElement)
       if (!node) return
       const act = (ev.target as HTMLElement).closest<HTMLElement>('.sr-act')
-      if (act) { this.act(act.dataset.act ?? '', node); return }
+      if (act) { this.keepKeyboard(); this.act(act.dataset.act ?? '', node); return }
       const index = this.indexOf(node)
       if (index < 0) return
       const onTwistie = !!(ev.target as HTMLElement).closest('.sr-twist')

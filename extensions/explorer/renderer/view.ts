@@ -26,6 +26,7 @@ import { rebasePath } from '../../../app/shared/notes.ts'
 import { Emitter } from '../../../app/shared/vscode-event.ts'
 import { IndexTreeModel, type IIndexTreeNode, type IIndexTreeModelSpliceOptions, type ITreeElement, type ITreeNode } from '../../../app/shared/vscode-index-tree-model.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
+import { requestFindInFolder } from '../../search/api.ts'
 import { renameSelection, validateFileName, type NameProblem } from '../file-names.ts'
 import type { Entry, ExplorerChannels } from '../ipc.ts'
 import { emptyState, isTypeAheadKey, joinPath, navigate, pageTarget, parentPath, readState, revealChain, TYPE_AHEAD_RESET_MS, typeAheadMatch, type Indexed, type NavRow } from '../tree-rules.ts'
@@ -387,6 +388,7 @@ export class ExplorerView implements PadView {
     else if (action === 'move-down') ws.move(f.path, 'down')
     else if (action === 'copy-path') this.ui.shell.writeClipboard(f.path)
     else if (action === 'reveal') void this.ui.shell.openPath(f.path)
+    else if (action === 'find-in-folder') requestFindInFolder(f.path)
     else if (action === 'new-file' || action === 'new-folder' || action === 'new-pane') {
       const node = this.treeNode(rowKey(f.path, f.path))
       if (node) this.runOn(node, action)
@@ -395,7 +397,7 @@ export class ExplorerView implements PadView {
 
   private showRootMenu(f: ProjectFolder, x: number, y: number): void {
     const list = this.ui.workspace.folders()
-    const entries = rootMenu(f, list.findIndex(g => g.path === f.path), list.length)
+    const entries = rootMenu(f, list.findIndex(g => g.path === f.path), list.length, { search: this.searchActive() })
     this.ui.menus.context(x, y, entries.map((e): ContextMenuEntry => e === 'sep' ? 'sep' : {
       icon: e.icon, label: e.label, run: () => this.act(e.action, f), ...(e.disabled ? { disabled: true } : {}),
     }))
@@ -410,14 +412,20 @@ export class ExplorerView implements PadView {
     if (action === 'open') this.openFile(row, false)
     else if (action === 'open-side') this.openFile(row, true)
     else if (action === 'reveal') void this.ui.shell.openPath(row.dir ? row.path : parentPath(row.path))
+    else if (action === 'find-in-folder') requestFindInFolder(row.path)
     else {
       const node = this.treeNode(row.key)
       if (node) this.runOn(node, action)
     }
   }
 
+  /** The search extension is active (optional: the explorer offers "Pesquisar na pasta…" only then). */
+  private searchActive(): boolean {
+    return this.ui.commands.ids().includes('search.focus')
+  }
+
   private showItemMenu(row: Row, x: number, y: number): void {
-    this.ui.menus.context(x, y, itemMenu(row.dir ? 'dir' : 'file').map((e): ContextMenuEntry => e === 'sep' ? 'sep' : {
+    this.ui.menus.context(x, y, itemMenu(row.dir ? 'dir' : 'file', { search: this.searchActive() }).map((e): ContextMenuEntry => e === 'sep' ? 'sep' : {
       icon: e.icon, label: e.label, run: () => this.itemAction(e.action, row), ...(e.danger ? { danger: true } : {}),
     }))
   }

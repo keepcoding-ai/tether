@@ -45,11 +45,17 @@ export function rootTitle(root: Pick<RootInfo, 'path' | 'pinned'>): string {
   return root.pinned ? root.path : `${root.path}\nInferido dos agentes · fecha sozinho quando saírem`
 }
 
-export type RootAction = 'pin' | 'unpin' | 'close' | 'auto-close' | 'move-up' | 'move-down' | 'copy-path' | 'reveal' | 'new-file' | 'new-folder' | 'new-pane'
+/** What the menus offer depending on the window: "Pesquisar na pasta…" only while the search extension is active. */
+export interface MenuOptions { search?: boolean }
+
+/** A folder's (and a root's) entry that sends it to the search pad. */
+const FIND_ITEM = { action: 'find-in-folder', label: 'Pesquisar na pasta…', icon: 'magnifying-glass' } as const
+
+export type RootAction = 'pin' | 'find-in-folder' | 'unpin' | 'close' | 'auto-close' | 'move-up' | 'move-down' | 'copy-path' | 'reveal' | 'new-file' | 'new-folder' | 'new-pane'
 export interface RootMenuItem { action: RootAction; label: string; icon: string; disabled?: boolean }
 
 /** A root's context menu, by state: the groups are separated by `'sep'`. */
-export function rootMenu(root: RootInfo, index: number, count: number): (RootMenuItem | 'sep')[] {
+export function rootMenu(root: RootInfo, index: number, count: number, options: MenuOptions = {}): (RootMenuItem | 'sep')[] {
   const out: (RootMenuItem | 'sep')[] = []
   if (root.pinned) {
     out.push({ action: 'unpin', label: 'Desafixar', icon: 'push-pin' })
@@ -60,6 +66,7 @@ export function rootMenu(root: RootInfo, index: number, count: number): (RootMen
     out.push({ action: 'auto-close', label: 'Fecha sozinho quando os agentes saírem', icon: 'info', disabled: true })
   }
   out.push('sep', ...CREATE_ITEMS)
+  if (options.search) out.push('sep', FIND_ITEM)
   const moves: RootMenuItem[] = []
   if (index > 0) moves.push({ action: 'move-up', label: 'Mover para cima', icon: 'arrow-up' })
   if (index < count - 1) moves.push({ action: 'move-down', label: 'Mover para baixo', icon: 'arrow-down' })
@@ -87,7 +94,7 @@ export function recentToOffer(recent: readonly string[], open: readonly string[]
 export const MISSING_TEXT = 'pasta não encontrada'
 export const MISSING_TITLE = 'A pasta deste projeto não existe mais (ou o disco não está disponível). Feche o projeto ou restaure a pasta.'
 
-export type ItemAction = 'open' | 'open-side' | 'copy-path' | 'copy-relative-path' | 'reveal' | 'new-file' | 'new-folder' | 'new-pane' | 'rename' | 'delete'
+export type ItemAction = 'find-in-folder' | 'open' | 'open-side' | 'copy-path' | 'copy-relative-path' | 'reveal' | 'new-file' | 'new-folder' | 'new-pane' | 'rename' | 'delete'
 export interface ItemMenuItem { action: ItemAction; label: string; icon: string; danger?: boolean }
 
 /** New file, new folder and "Novo painel aqui": a folder's (and a project root's) first group. */
@@ -98,10 +105,10 @@ const CREATE_ITEMS: { action: 'new-file' | 'new-folder' | 'new-pane'; label: str
 ]
 
 /** A tree row's context menu by kind: a file opens here or beside, a folder creates inside; both rename, go to the trash, copy their path and reveal. */
-export function itemMenu(kind: 'file' | 'dir'): (ItemMenuItem | 'sep')[] {
+export function itemMenu(kind: 'file' | 'dir', options: MenuOptions = {}): (ItemMenuItem | 'sep')[] {
   const head: (ItemMenuItem | 'sep')[] = kind === 'file'
     ? [{ action: 'open', label: 'Abrir', icon: 'file-text' }, { action: 'open-side', label: 'Abrir ao lado', icon: 'square-split-horizontal' }]
-    : CREATE_ITEMS
+    : [...CREATE_ITEMS, ...(options.search ? ['sep' as const, FIND_ITEM] : [])]
   return [
     ...head,
     'sep',

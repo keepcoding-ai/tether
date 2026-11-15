@@ -15,24 +15,30 @@
 // the start, their files dropped from the disk's batches. While results are shown, each open model in the search is
 // watched (FileMatch.bindModel): an edit recomputes its file 250 ms after the last change; a replace of one match
 // recomputes the rest of its file (from its model, or from disk by `searchFile`), so the positions never go stale.
-// Left out (next steps): "only open editors", "only changed files", the search editor.
+// The include field's two switches narrow the query: "only open editors" searches the files open in panes (searchView.ts
+// onQueryChanged -> QueryBuilder onlyOpenEditors), "only changed files" asks main for the git changes of the projects first
+// and searches just those (changedFiles); with both on, the open files that changed. The rows' menu copies (searchActionsCopy.ts),
+// restricts the search to a folder or leaves it out (searchActionsFind.ts); the explorer's "Pesquisar na pasta…" comes through api.ts.
+// Left out (next steps): the search editor.
 import type { ContextMenuEntry, PadHost, PadView, TetherUi } from '../../../app/renderer/ext-api.ts'
 import { icon, type IconName } from '../../../app/renderer/icons.ts'
 import type { UiIpc } from '../../../app/shared/ext-ipc.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { monaco } from '../../../app/renderer/monaco.ts'
 import { createPathOps, QueryBuilder, type ITextQueryBuilderOptions, type QueryBuilderEnv, type SearchFolder } from '../../../app/shared/vscode-search-query.ts'
-import { dirname, editsOf, FileMatch, Match, SearchModel, SearchResult, SearchSortOrder, type RenderableMatch } from '../../../app/shared/vscode-search-model.ts'
+import { dirname, editsOf, FileMatch, FolderMatch, Match, SearchModel, SearchResult, type RenderableMatch } from '../../../app/shared/vscode-search-model.ts'
 import { DEFAULT_MAX_SEARCH_RESULTS, DEFAULT_TEXT_SEARCH_PREVIEW_OPTIONS, type IFileMatch, type ITextQuery, type ITextSearchResult } from '../../../app/shared/vscode-search.ts'
 import type { SearchChannels, SearchDone } from '../ipc.ts'
 import { applyFileResults, bufferInQuery, bufferResults, bufferSearch, matchCount, mergeDiskBatch, resourceOf } from './buffer-search.ts'
+import { copyAllText, copyPathText, copyText, lineDelimiter } from './copy-rules.ts'
 import { applyReplace } from './replace.ts'
 import { afterReplace, isQuietSingle, replaceAllConfirmation, replaceSummary, toRemove, type ReplaceOutcome } from './replace-rules.ts'
 import { replaceLabel } from './results-rules.ts'
 import { SearchResults, type ResultsSnapshot } from './results.ts'
 import {
-  completionMessage, countLine, engineErrorText, excludeExpression, NO_FOLDER_MESSAGE, readViewState, regexError,
-  seedFromSelection, triggerOf, withLocalLimit, type MessageLine, type ViewMode,
+  completionMessage, countLine, engineErrorText, excludeExpression, folderPattern, mergePattern, NO_CHANGED_FILES_MESSAGE, NO_FOLDER_MESSAGE,
+  NO_OPEN_EDITORS_MESSAGE, readSortOrder, readViewState, regexError, seedFromSelection, triggerOf, withLocalLimit, type MessageLine,
+  type SearchScope, type ViewMode,
 } from './view-rules.ts'
 import { SearchWidget, type SearchWidgetState } from './widget.ts'
 
@@ -45,6 +51,9 @@ const COUNT_EVERY_MS = 100
 const HISTORY_DELAY_MS = 2000
 /** An edit of an open file recomputes its results once its text has been still for this long (FileMatch's scheduler). */
 const MODEL_UPDATE_MS = 250
+
+/** The switches of the include field that restrict a search. */
+const scopeOf = (s: SearchWidgetState): SearchScope => ({ onlyOpenEditors: s.onlyOpenEditors, onlyChangedFiles: s.onlyChangedFiles })
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag)
@@ -60,6 +69,8 @@ interface Live {
   include: string
   exclude: string
   useExcludes: boolean
+  /** Which of the include field's switches narrowed this search. */
+  scope: SearchScope
   started: number
   /** A batch arrived (the previous search's results are gone). */
   added: boolean
@@ -114,6 +125,8 @@ export class SearchView implements PadView {
   private readonly buttons: Record<'refresh' | 'clear' | 'view' | 'collapse' | 'cancel' | 'more', HTMLButtonElement>
   private viewMode: ViewMode
   private seq = 0
+  /** Grows with every request to search (and whenever the running search is dropped): a changed-files answer for an older one is ignored. */
+  private ticket = 0
   private live: Live | undefined
   /** The last search that ended, while its results are shown (for the completion message). */
   private ended: Ended | undefined
@@ -155,7 +168,7 @@ export class SearchView implements PadView {
     this.results = new SearchResults(ui, {
       model: this.model,
       viewMode: () => this.viewMode,
-      sortOrder: () => SearchSortOrder.Default,
+      sortOrder: () => readSortOrder(ui.settings.get<string>('sortOrder')),
       collapseResults: () => {
         const v = ui.settings.get<string>('collapseResults')
         return v === 'auto' || v === 'alwaysCollapse' ? v : 'alwaysExpand'
@@ -164,6 +177,7 @@ export class SearchView implements PadView {
       open: (match, opts) => this.open(match, opts.side),
       replace: element => this.replace(element),
       dismiss: element => this.dismiss(element),
+      copy: element => this.copyRow(element),
       menu: element => this.rowMenu(element),
       describe: element => this.describe(element),
     })
@@ -201,6 +215,7 @@ export class SearchView implements PadView {
       this.ipc.on('done', (id, result) => this.finish(id, result)),
       ui.settings.onChange('showLineNumbers', () => this.results.refresh()),
       ui.settings.onChange('collapseResults', () => this.results.refresh()),
+      ui.settings.onChange('sortOrder', () => this.results.refresh()),
     )
     // The results model announces every change (a batch, a dismissal): the tree redraws at its pace, the count follows.
     const onChange = this.model.searchResult.onChange(e => { this.results.update(e); this.onResultsChanged() })
@@ -380,7 +395,22 @@ export class SearchView implements PadView {
     return this.ui.workspace.folders().filter(f => !f.missing).map(f => ({ path: f.path, name: f.name }))
   }
 
-  private env(folders: SearchFolder[]): QueryBuilderEnv {
+  /** The files open in the window's panes (a note, a preview), each once. */
+  private openFiles(): string[] {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const pane of this.ui.panes.all()) {
+      if (!pane.file) continue
+      const key = this.model.searchResult.paths.key(pane.file)
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(pane.file)
+    }
+    return out
+  }
+
+  /** `changed`: the git changes, when "only changed files" is on; the open files are then narrowed to them (the builder lets "open editors" win over "changed files"). */
+  private env(folders: SearchFolder[], changed?: readonly string[]): QueryBuilderEnv {
     const s = this.ui.settings
     return {
       folders: () => folders,
@@ -392,7 +422,12 @@ export class SearchView implements PadView {
         followSymlinks: s.get<boolean>('followSymlinks') === true,
         smartCase: s.get<boolean>('smartCase') === true,
       }),
-      openEditors: () => [],
+      openEditors: () => {
+        const open = this.openFiles()
+        if (!changed) return open
+        const keys = new Set(changed.map(p => this.model.searchResult.paths.key(p)))
+        return open.filter(p => keys.has(this.model.searchResult.paths.key(p)))
+      },
       platform: PLATFORM,
     }
   }
@@ -401,6 +436,7 @@ export class SearchView implements PadView {
     if (this.disposed) return
     clearTimeout(this.typeTimer)
     this.typeTimer = undefined
+    const ticket = ++this.ticket
     if (this.busy) { this.searchAfter = true; return }
     const s = this.widget.state()
     if (s.search === '') {
@@ -423,9 +459,48 @@ export class SearchView implements PadView {
       const error = regexError(s.search)
       if (error) { this.widget.setSearchMessage({ text: error, tone: 'error' }); return }
     }
-    const built = this.buildQuery(s, folders)
+    if (s.onlyOpenEditors && this.openFiles().length === 0) {
+      this.stopLive()
+      this.widget.setSearchMessage(undefined)
+      this.clearResults()
+      this.setMessage([{ text: NO_OPEN_EDITORS_MESSAGE, tone: 'info' }])
+      return
+    }
+    if (!s.onlyChangedFiles) { this.startSearch(s, folders, undefined); return }
+    // The git changes come from main; only the newest request goes on with them.
+    this.ipc.invoke('changedFiles', folders.map(f => f.path)).then(
+      changed => {
+        if (ticket !== this.ticket || this.disposed) return
+        if (this.busy) { this.searchAfter = true; return }
+        if (changed.length === 0) {
+          this.stopLive()
+          this.widget.setSearchMessage(undefined)
+          this.clearResults()
+          this.setMessage([{ text: NO_CHANGED_FILES_MESSAGE, tone: 'info' }])
+          return
+        }
+        this.startSearch(s, folders, changed)
+      },
+      err => {
+        if (ticket !== this.ticket || this.disposed) return
+        this.widget.setSearchMessage({ text: err instanceof Error ? err.message : String(err), tone: 'error' })
+      },
+    )
+  }
+
+  /** Builds the query from the fields and starts it; `changed` is the git changes when "only changed files" is on. */
+  private startSearch(s: SearchWidgetState, folders: SearchFolder[], changed: readonly string[] | undefined): void {
+    const built = this.buildQuery(s, folders, changed)
     if (!built) return
     const { query, builder } = built
+    if (query.folderQueries.length === 0) {
+      // Nothing the switches allow lies in the projects (the open files that also changed: none): there is nothing to ask the engine.
+      this.stopLive()
+      this.widget.setSearchMessage(undefined)
+      this.clearResults()
+      this.setMessage(completionMessage({ kind: 'done', results: 0, files: 0, include: s.include, exclude: s.exclude, useExcludes: s.useExcludesAndIgnoreFiles, scope: scopeOf(s) }))
+      return
+    }
     this.widget.setSearchMessage(undefined)
     this.stopLive()
     const id = ++this.seq
@@ -433,7 +508,7 @@ export class SearchView implements PadView {
     // The open editors first, from their text (getLocalResults); their files stay out of the disk's batches.
     const local = this.searchBuffers(shown)
     this.live = {
-      id, query, include: s.include, exclude: s.exclude, useExcludes: s.useExcludesAndIgnoreFiles, started: performance.now(), added: false, byUser: false,
+      id, query, include: s.include, exclude: s.exclude, useExcludes: s.useExcludesAndIgnoreFiles, scope: scopeOf(s), started: performance.now(), added: false, byUser: false,
       buffered: local.keys, remaining: local.remaining, localLimitHit: local.limitHit,
     }
     // New roots; the previous results stay on screen until the first batch (or the end) of this search.
@@ -449,7 +524,7 @@ export class SearchView implements PadView {
     )
   }
 
-  private buildQuery(s: SearchWidgetState, folders: SearchFolder[]): { query: ReturnType<QueryBuilder['text']>; builder: QueryBuilder } | undefined {
+  private buildQuery(s: SearchWidgetState, folders: SearchFolder[], changed: readonly string[] | undefined): { query: ReturnType<QueryBuilder['text']>; builder: QueryBuilder } | undefined {
     const settings = this.ui.settings
     const off = !s.useExcludesAndIgnoreFiles
     const options: ITextQueryBuilderOptions = {
@@ -462,9 +537,11 @@ export class SearchView implements PadView {
       previewOptions: { ...DEFAULT_TEXT_SEARCH_PREVIEW_OPTIONS },
       isSmartCase: settings.get<boolean>('smartCase') === true,
       expandPatterns: true,
+      ...(s.onlyOpenEditors ? { onlyOpenEditors: true } : {}),
+      ...(changed ? { changedFiles: [...changed] } : {}),
     }
     try {
-      const builder = new QueryBuilder(this.env(folders))
+      const builder = new QueryBuilder(this.env(folders, changed))
       const query = builder.text({ pattern: s.search, isRegExp: s.regex, isCaseSensitive: s.caseSensitive, isWordMatch: s.wholeWord }, folders, options)
       return { query, builder }
     } catch (e) {
@@ -656,13 +733,14 @@ export class SearchView implements PadView {
     if (!e) return
     const r = this.model.searchResult
     this.setMessage(completionMessage({
-      kind: e.done.kind, results: r.count(), files: r.fileCount(), include: e.include, exclude: e.exclude, useExcludes: e.useExcludes,
+      kind: e.done.kind, results: r.count(), files: r.fileCount(), include: e.include, exclude: e.exclude, useExcludes: e.useExcludes, scope: e.scope,
       ...(e.done.kind === 'done' ? { limitHit: e.done.limitHit, messages: e.done.messages } : {}), byUser: e.byUser,
     }))
   }
 
   /** Drops the running search without a word (a newer one, an empty term, clearing). */
   private stopLive(): void {
+    this.ticket++
     this.ended = undefined
     const live = this.live
     if (!live) return
@@ -697,7 +775,7 @@ export class SearchView implements PadView {
   private showCount(): void {
     const r = this.model.searchResult
     const useExcludes = this.live?.useExcludes ?? this.widget.state().useExcludesAndIgnoreFiles
-    this.setMessage([{ text: countLine(r.count(), r.fileCount(), useExcludes), tone: 'info' }])
+    this.setMessage([{ text: countLine(r.count(), r.fileCount(), useExcludes, (this.live ?? this.ended)?.scope ?? scopeOf(this.widget.state())), tone: 'info' }])
   }
 
   private scheduleHistory(): void {
@@ -802,21 +880,68 @@ export class SearchView implements PadView {
     })
   }
 
+  /** The row's context menu: replace and dismiss, the folder's restrict/exclude, then the copies. */
   private rowMenu(element: RenderableMatch): ContextMenuEntry[] {
-    const dismiss: ContextMenuEntry = { icon: 'x', label: 'Dispensar', run: () => this.dismiss(element) }
-    // The replace entries only while the replace field is open (as the row buttons).
-    const replace: ContextMenuEntry[] = this.model.replaceActive
-      ? [{ icon: 'swap', label: replaceLabel(element instanceof Match ? 'match' : element instanceof FileMatch ? 'file' : 'folder'), run: () => this.replace(element) }, 'sep']
-      : []
-    if (element instanceof Match) {
-      return [...replace, { icon: 'copy', label: 'Copiar', run: () => this.ui.shell.writeClipboard(element.fullPreviewLines().join('\n')) }, 'sep', dismiss]
+    const out: ContextMenuEntry[] = []
+    // The replace entry only while the replace field is open (as the row buttons).
+    if (this.model.replaceActive) {
+      out.push({ icon: 'swap', label: replaceLabel(element instanceof Match ? 'match' : element instanceof FileMatch ? 'file' : 'folder'), run: () => this.replace(element) })
     }
-    const path = element.resource
-    return [
-      ...replace,
-      ...(path ? [{ icon: 'copy', label: 'Copiar caminho', run: () => this.ui.shell.writeClipboard(path) } satisfies ContextMenuEntry, 'sep' as const] : []),
-      dismiss,
-    ]
+    out.push({ icon: 'x', label: 'Dispensar', run: () => this.dismiss(element) })
+    const path = copyPathText(element)
+    // The folder of files outside every project has no path to restrict the search to.
+    if (element instanceof FolderMatch && path) {
+      out.push(
+        'sep',
+        { icon: 'folder-open', label: 'Restringir a pesquisa à pasta', run: () => this.restrictToFolder(path) },
+        { icon: 'eye-closed', label: 'Excluir a pasta da pesquisa', run: () => this.excludeFolder(path) },
+      )
+    }
+    out.push('sep', { icon: 'copy', label: 'Copiar', run: () => this.copyRow(element) })
+    if (path) out.push({ icon: 'copy', label: 'Copiar caminho', run: () => this.ui.shell.writeClipboard(path) })
+    out.push({ icon: 'copy', label: 'Copiar tudo', run: () => this.copyAll() })
+    return out
+  }
+
+  /** "Copiar": the row as text (a match, a file with its matches, a folder with its files). */
+  private copyRow(element: RenderableMatch): void {
+    const text = copyText(element, lineDelimiter(PLATFORM))
+    if (text !== undefined) this.ui.shell.writeClipboard(text)
+  }
+
+  /** "Copiar tudo": every root of the results. */
+  private copyAll(): void {
+    const text = copyAllText(this.model.searchResult, lineDelimiter(PLATFORM))
+    if (text !== undefined) this.ui.shell.writeClipboard(text)
+  }
+
+  /** "Restringir a pesquisa à pasta": the include field becomes the folder, the details open and the search runs again. */
+  private restrictToFolder(path: string): void {
+    const pattern = folderPattern(path, this.folders(), PLATFORM)
+    if (pattern === undefined) return
+    this.widget.setState({ include: pattern, detailsShown: true })
+    this.host.persist()
+    this.onQueryEdit('toggle')
+  }
+
+  /** "Excluir a pasta da pesquisa": the folder joins the exclude field (once) and the search runs again. */
+  private excludeFolder(path: string): void {
+    const pattern = folderPattern(path, this.folders(), PLATFORM)
+    if (pattern === undefined) return
+    this.widget.setState({ exclude: mergePattern(this.widget.state().exclude, pattern), detailsShown: true })
+    this.host.persist()
+    this.onQueryEdit('toggle')
+  }
+
+  /** The explorer's "Pesquisar na pasta…": the include field becomes the folder, the details open, the keyboard goes to the search field. */
+  findInFolder(path: string): void {
+    const pattern = folderPattern(path, this.folders(), PLATFORM)
+    if (pattern === undefined) return
+    this.widget.setState({ include: pattern, detailsShown: true })
+    this.host.persist()
+    if (this.widget.state().search !== '') this.onQueryEdit('toggle')
+    this.widget.focusSearch(true)
+    this.results.layout()
   }
 
   /** A file's folder relative to its project (list view only: the tree shows the folders); nothing beside a folder. */

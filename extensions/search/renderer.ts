@@ -2,6 +2,7 @@
 import type { TetherUi } from '../../app/renderer/ext-api.ts'
 import { monaco } from '../../app/renderer/monaco.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { onFindInFolder } from './api.ts'
 import { manifest } from './manifest.ts'
 import { SearchView } from './renderer/view.ts'
 
@@ -26,6 +27,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   /** Opens the pad and runs `fn` on its view. */
   const onView = (fn: (v: SearchView) => void) => () => { ui.pads.open(PAD); if (view) fn(view) }
   return [
+    // The explorer's "Pesquisar na pasta…" (api.ts): the pad opens with the folder in the include field.
+    onFindInFolder(path => { ui.pads.open(PAD); view?.findInFolder(path) }),
     ui.pads.register({ id: PAD, create: host => (view = new SearchView(ui, host)) }),
     ui.commands.registerCommand('search.focus', () => {
       // Read before the pad takes the keyboard from the editor.
