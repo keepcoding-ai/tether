@@ -34,6 +34,8 @@ A semana de uso real (PRD §8) é do usuário.
 
 ## Decisões para validar
 
+- 15/11, status line do Claude: todo Claude lançado pelo tether ganha por padrão uma status line (modelo, com alerta forte em vermelho quando é Fable; effort; pasta), injetada pelo `--settings` (`src/report/claude-statusline.mjs`). Se a pessoa já tem `statusLine` nas configurações do usuário ou do projeto (`settings.json`/`settings.local.json`), o lançamento usa um settings sem a nossa. Ainda não há chave para desligar.
+
 - 11/11, emblemas nas guias (F14 simplificado; prévia `docs/tab-emblems-preview.html`, aprovada pelo Guga com "pode ir, prefiro ver e pedir melhoria"):
   - Decididos pelo Guga: um emblema por guia; preso à guia (fechar perde); emblemas padrão + editor (nome, 12 cores, ícone Phosphor); seletor por categorias com busca pt/en.
   - Decididos pela coordenação: os 6 padrão (Cliente, Pessoal, Estudo, Revisar, Deploy, Bug); padrão se edita, restaura e oculta, nunca apaga; a biblioteca mora no `layout.json` (`emblems`, campo aditivo); aplicar é "Emblema…" no menu de toda guia (o menu não tem submenu); o chip fica logo após o ícone da guia; 219 ícones em 9 categorias (`app/emblem-icons-derive.mjs`, `npm run emblems:derive`).

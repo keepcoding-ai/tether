@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { claudeAdapter, cleanEnv, encodeProjectDir, findTranscript, lastCustomTitle, resolveClaudeCommand, withCommandDirOnPath } from '../../src/agents/claude.ts'
+import { claudeAdapter, cleanEnv, hookSettings, userHasStatusLine, encodeProjectDir, findTranscript, lastCustomTitle, resolveClaudeCommand, withCommandDirOnPath } from '../../src/agents/claude.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
@@ -36,7 +36,8 @@ const binding: Binding = {
 describe('claudeAdapter.plan', () => {
   const saved: Record<string, string | undefined> = {}
   beforeEach(() => {
-    for (const k of ['CLAUDE_FAKE_FROM_TEST', 'ClaudeCodeMixedCase', 'NOT_CLAUDE_KEEP']) saved[k] = process.env[k]
+    for (const k of ['CLAUDE_FAKE_FROM_TEST', 'ClaudeCodeMixedCase', 'NOT_CLAUDE_KEEP', 'CLAUDE_CONFIG_DIR']) saved[k] = process.env[k]
+    process.env.CLAUDE_CONFIG_DIR = configs.make() // the machine's own ~/.claude (maybe with a statusLine) stays out
     process.env.CLAUDE_FAKE_FROM_TEST = '1'
     process.env.ClaudeCodeMixedCase = '1'
     process.env.NOT_CLAUDE_KEEP = 'yes'
@@ -336,5 +337,59 @@ describe('resolveClaudeCommand', () => {
     assert.equal(env.PATH, '/h/.local/bin:/usr/bin:/bin')
     withCommandDirOnPath(env, 'claude', 'darwin')
     assert.equal(env.PATH, '/h/.local/bin:/usr/bin:/bin')
+  })
+})
+
+describe('status line', () => {
+  const STATUSLINE = resolve(import.meta.dirname, '../../src/report/claude-statusline.mjs')
+  const saved = process.env.CLAUDE_CONFIG_DIR
+  afterEach(() => {
+    if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = saved
+  })
+
+  test('injected settings run the status line script by absolute forward-slash path', () => {
+    const settings = hookSettings('C:\\x\\hook.mjs', 'C:\\x\\claude-statusline.mjs') as { statusLine?: { type: string; command: string } }
+    assert.deepEqual(settings.statusLine, { type: 'command', command: 'node "C:/x/claude-statusline.mjs"' })
+    assert.equal('statusLine' in (hookSettings('C:\\x\\hook.mjs', null) as object), false)
+  })
+
+  test('the default settings file points at the real script', () => {
+    const home = homes.make()
+    process.env.CLAUDE_CONFIG_DIR = configs.make()
+    const plan = claudeAdapter.plan({ slot: { ...slot, cwd: configs.make() }, home, extraArgs: [] })
+    assert.equal(plan.args[1], join(home, 'claude-settings.json'))
+    const settings = JSON.parse(readFileSync(plan.args[1]!, 'utf8')) as { statusLine: { command: string } }
+    assert.equal(settings.statusLine.command, `node "${STATUSLINE.replace(/\\/g, '/')}"`)
+  })
+
+  test('a statusLine of the user (user, project or local settings) suppresses ours', () => {
+    for (const where of ['user', 'settings.json', 'settings.local.json']) {
+      const config = configs.make()
+      const cwd = configs.make()
+      if (where === 'user') writeFileSync(join(config, 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: 'x' } }))
+      else {
+        mkdirSync(join(cwd, '.claude'), { recursive: true })
+        writeFileSync(join(cwd, '.claude', where), JSON.stringify({ statusLine: { type: 'command', command: 'x' } }))
+      }
+      assert.equal(userHasStatusLine(cwd, config), true, where)
+      process.env.CLAUDE_CONFIG_DIR = config
+      const home = homes.make()
+      const plan = claudeAdapter.plan({ slot: { ...slot, cwd }, home, extraArgs: [] })
+      assert.equal(plan.args[1], join(home, 'claude-settings.no-statusline.json'), where)
+      const settings = JSON.parse(readFileSync(plan.args[1]!, 'utf8')) as { hooks: object }
+      assert.equal('statusLine' in settings, false, where)
+      assert.ok('SessionStart' in settings.hooks, where)
+    }
+  })
+
+  test('malformed or statusLine-less settings count as no status line', () => {
+    const config = configs.make()
+    const cwd = configs.make()
+    writeFileSync(join(config, 'settings.json'), '{ not json')
+    mkdirSync(join(cwd, '.claude'), { recursive: true })
+    writeFileSync(join(cwd, '.claude', 'settings.json'), JSON.stringify({ model: 'opus' }))
+    assert.equal(userHasStatusLine(cwd, config), false)
+    assert.equal(userHasStatusLine(cwd, config, () => { throw new Error('nope') }), false)
   })
 })
