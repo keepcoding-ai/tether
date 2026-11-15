@@ -6,6 +6,8 @@ import { createServer, connect, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CRASH_REPEAT_MS, pausedAfter } from '../../extensions/browser/crash-rules.ts'
+import type { AgentInfo } from '../../app/shared/agent-info.ts'
+import { serveChildReady } from '../../extensions/browser/agent-resync.ts'
 import { BROWSER_CRASHED, Wire } from '../../app/main/browser-wire.ts'
 
 test('pausedAfter: a tab suspect in two crashes within the window is paused; otherwise none', () => {
@@ -50,4 +52,24 @@ test('Wire: calls both ways, errors, bytes, one-way posts, and BROWSER_CRASHED w
     await assert.rejects(pending, new RegExp(BROWSER_CRASHED))
     await assert.rejects(a.call('add', 1, 1), new RegExp(BROWSER_CRASHED))
   } finally { a.close(); b.close(); close() }
+})
+
+test('serveChildReady: an agentChange sent before the process registered its handler is lost, and the replay on ready restores it', async () => {
+  const { a: host, b: child, close } = await pair()
+  try {
+    const mirror = new Map<string, unknown>()
+    const agents: AgentInfo[] = [{ slotId: 's1', kind: 'claude', name: 'Sonda', alive: true }, { slotId: 's2', kind: 'claude', name: 'Eco', alive: true }]
+    // Sent while the child has no handler yet: the line drops it.
+    host.post('agentChange', agents[0], false)
+    await new Promise(r => setTimeout(r, 50))
+    child.handle('agentChange', (x: unknown, gone: unknown) => { const i = x as AgentInfo; if (gone === true) mirror.delete(i.slotId); else mirror.set(i.slotId, i) })
+    assert.equal(mirror.size, 0, 'the early change was lost')
+    serveChildReady(host as never, () => agents, () => {})
+    child.post('ready')
+    await new Promise(r => setTimeout(r, 100))
+    assert.deepEqual([...mirror.keys()].sort(), ['s1', 's2'])
+    child.post('ready')
+    await new Promise(r => setTimeout(r, 100))
+    assert.equal(mirror.size, 2, 'replaying again changes nothing')
+  } finally { host.close(); child.close(); close() }
 })

@@ -20,6 +20,7 @@ import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycl
 import type { NoticeHandle } from '../../app/main/tray-notices.ts'
 import type { SettingValue } from '../../app/shared/vscode-configuration-registry.ts'
 import { type BrowserCrash, CHILD_START_MS, HEARTBEAT_MISSES, HEARTBEAT_MS, pausedAfter } from './crash-rules.ts'
+import { serveChildReady } from './agent-resync.ts'
 import { BROWSER_INVOKES } from './ipc.ts'
 import { manifest } from './manifest.ts'
 import { scrubLogLine } from './log-scrub.ts'
@@ -223,7 +224,7 @@ export function activateRemote(main: TetherMain): IDisposable[] {
         if (child === proc && proc.exitCode === null) proc.kill()
         return undefined
       }
-      const isReady = new Promise<void>(resolve => { w.handle('ready', () => resolve()); w.whenClosed(() => resolve()) })
+      const isReady = new Promise<void>(resolve => { serveChildReady(w, () => main.agents.list(), resolve); w.whenClosed(() => resolve()) })
       wire = w
       w.whenClosed(() => { if (wire === w) wire = undefined })
       const cur = main.window.current()
