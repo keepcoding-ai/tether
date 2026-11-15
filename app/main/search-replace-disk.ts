@@ -67,6 +67,9 @@ function offsetOf(text: string, starts: readonly number[], line: number, column:
  */
 export function applyEdits(text: string, edits: readonly DiskEdit[]): string | undefined {
   const starts = lineStarts(text)
+  // The replacement follows the file's line ending (its first break), as the editor does.
+  const firstBreak = text.indexOf('\n')
+  const eol = firstBreak === -1 ? undefined : text[firstBreak - 1] === '\r' ? '\r\n' : '\n'
   const resolved: { start: number; end: number; text: string }[] = []
   for (const edit of edits) {
     const r = edit.range
@@ -78,8 +81,10 @@ export function applyEdits(text: string, edits: readonly DiskEdit[]): string | u
       const limit = lineEnd(text, starts, r.endLineNumber)
       if (end > limit - (text[limit - 1] === '\r' && limit > (starts[r.endLineNumber - 1] ?? 0) ? 1 : 0)) return undefined
     }
-    if (text.slice(start, end) !== edit.expected) return undefined
-    resolved.push({ start, end, text: edit.text })
+    // The results model joins preview lines with "\n" even in a "\r\n" file: the found text matches modulo line ending.
+    const found = text.slice(start, end)
+    if (found !== edit.expected && found.replaceAll('\r\n', '\n') !== edit.expected.replaceAll('\r\n', '\n')) return undefined
+    resolved.push({ start, end, text: eol === undefined ? edit.text : edit.text.replace(/\r?\n/g, eol) })
   }
   resolved.sort((a, b) => a.start - b.start || a.end - b.end)
   for (let i = 1; i < resolved.length; i++) {

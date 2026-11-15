@@ -147,6 +147,16 @@ describe('search-replace-disk', () => {
     assert.equal(await readFile(c, 'utf8'), 'a\n')
   })
 
+  it('accepts expected text that differs only in line endings', () => {
+    assert.equal(applyEdits('a\r\nb\r\nc\r\n', [edit(1, 1, 2, 2, 'a\nb', 'X')]), 'X\r\nc\r\n')
+    assert.equal(applyEdits('a\r\nb\r\n', [edit(1, 1, 2, 2, 'a\nB', 'X')]), undefined)
+  })
+
+  it('makes the replacement follow the file line ending', () => {
+    assert.equal(applyEdits('a\r\nb\r\n', [edit(1, 1, 1, 2, 'a', 'x\ny\r\nz')]), 'x\r\ny\r\nz\r\nb\r\n')
+    assert.equal(applyEdits('a\nb\n', [edit(1, 1, 1, 2, 'a', 'x\r\ny')]), 'x\ny\nb\n')
+  })
+
   it('applyEdits is pure and rejects out-of-bounds ranges', () => {
     assert.equal(applyEdits('abc\n', [edit(1, 1, 1, 9, 'abc', 'x')]), undefined)
     assert.equal(applyEdits('abc\n', [edit(3, 1, 3, 2, 'a', 'x')]), undefined)

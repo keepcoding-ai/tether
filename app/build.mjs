@@ -4,6 +4,7 @@
 //   browser-child.cjs  the browser process (extensions/browser/process-child.ts); koffi (user32, native) stays external
 //   file-index-worker.cjs  Quick Open's file index (worker thread of main). It runs rg from node_modules/@vscode/ripgrep-<platform>-<arch>
 //                 (resolved from the repo root at run time, never bundled: the app runs from this repo, no asar)
+//   text-search-worker.cjs  "Search in files" (worker thread of main): ripgrep runs and is parsed away from the main process
 //   renderer.js   browser bundle (ESM) with xterm + dockview-core
 //   dockview.css  dockview-core's stylesheet. The ESM build of dockview-core 8 ships no CSS file: the
 //                 styles exist only as a string injected by its UMD bundle, so they are extracted from it.
@@ -61,6 +62,7 @@ await Promise.all([
   build({ ...common, ...node, external: [...node.external, 'koffi'], define: { __TETHER_TEST_EXTENSIONS__: String(process.env.TETHER_TEST_EXTENSIONS === '1') }, entryPoints: [join(root, 'extensions', 'browser', 'process-child.ts')], outfile: join(out, 'browser-child.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-worker.ts')], outfile: join(out, 'file-index-worker.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-shard-worker.ts')], outfile: join(out, 'file-index-shard-worker.cjs') }),
+  build({ ...common, ...node, entryPoints: [join(here, 'main', 'text-search-worker.ts')], outfile: join(out, 'text-search-worker.cjs') }),
   // TETHER_TEST_EXTENSIONS=1 (E2E only) builds in the probes of extensions/index.renderer.ts; every other build drops them.
   build({ ...common, ...browser, define: { __TETHER_TEST_EXTENSIONS__: String(process.env.TETHER_TEST_EXTENSIONS === '1') }, entryPoints: [join(here, 'renderer', 'main.ts')], outfile: join(out, 'renderer.js') }),
   build({ ...common, platform: 'browser', format: 'iife', entryPoints: [join(here, '..', 'node_modules', 'monaco-editor', 'esm', 'vs', 'editor', 'editor.worker.js')], outfile: join(out, 'editor.worker.js') }),
