@@ -416,6 +416,18 @@ test('search: the pad end to end (fields, tree, open, keyboard, replace preview,
     // ---- 9. cancel a big search: the button, then Esc ----
     writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { search: { maxResults: 200_000 } } }))
     await sleep(1_500) // settings.json is read again on change
+    // The stop button while a big search runs: first of the group, in the alert colour, in both themes.
+    for (const scheme of ['dark', 'light'] as const) {
+      await setTheme(page, scheme)
+      await page.focus(FIELD('Pesquisar'))
+      await setField(page, 'Pesquisar', scheme === 'dark' ? 'okapi' : 'okap')
+      await page.waitForFunction(() => { const x = window.__tether.searchStatus()!; return x.searching && x.count > 0 }, undefined, { timeout: 20_000, polling: 5 })
+      await page.screenshot({ path: join(shots, `search-stop-${scheme}.png`) })
+      const order = await page.evaluate(sel => Array.from(document.querySelectorAll(sel + ' .srch-topbar .ib')).map(b => ((b as unknown as { className: string }).className.split(' ')[1])), PAD_SEL)
+      assert.equal(order[0], 'srch-cancel', `the stop button comes first (${order})`)
+      await page.evaluate(sel => (document.querySelector(sel + ' .srch-cancel') as unknown as { click(): void }).click(), PAD_SEL)
+      await page.waitForFunction(() => !window.__tether.searchStatus()!.searching, undefined, { timeout: 20_000, polling: 100 })
+    }
     for (const how of ['button', 'Escape'] as const) {
       await page.focus(FIELD('Pesquisar'))
       await setField(page, 'Pesquisar', how === 'button' ? 'okapi' : 'okap')

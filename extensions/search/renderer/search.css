@@ -42,3 +42,5 @@
 /* Every file and result line is a link there: underlined only while Ctrl points at it (Monaco underlines detected links always). */
 .monaco-editor[data-mode-id="search-result"] .detected-link { text-decoration: none; }
 .monaco-editor[data-mode-id="search-result"] .detected-link-active { text-decoration: underline; }
+.srch-topbar .ib.srch-cancel { color: var(--err); background: color-mix(in srgb, var(--err) 14%, transparent); }
+.srch-topbar .ib.srch-cancel:hover:not(:disabled) { color: var(--err); background: color-mix(in srgb, var(--err) 26%, transparent); }

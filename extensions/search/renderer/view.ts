@@ -258,12 +258,13 @@ export class SearchView implements PadView {
     })
 
     this.buttons = {
+      // First of the group: the bar is right-aligned, so it appearing never moves the other icons.
+      cancel: this.button('srch-cancel', 'stop', 'Cancelar pesquisa', () => this.cancel()),
       refresh: this.button('srch-refresh', 'arrows-clockwise', 'Atualizar', () => this.refresh()),
       clear: this.button('srch-clear', 'broom', 'Limpar resultados da pesquisa', () => this.clear()),
       editor: this.button('srch-editor', 'file-magnifying-glass', 'Abrir novo editor de pesquisa', () => this.openEditor()),
       view: this.button('srch-view', 'tree-view', 'Ver como árvore', () => this.setViewMode(this.viewMode === 'tree' ? 'list' : 'tree')),
       collapse: this.button('srch-collapse', 'arrows-in-line-vertical', 'Recolher tudo', () => this.toggleCollapse()),
-      cancel: this.button('srch-cancel', 'stop', 'Cancelar pesquisa', () => this.cancel()),
       more: this.button('srch-more', 'dots-three', 'Mais ações da prancheta', () => this.showMore()),
     }
     this.topbar.append(el('span', 'srch-title', 'Pesquisar'), el('span', 'srch-sp'), ...Object.values(this.buttons))
