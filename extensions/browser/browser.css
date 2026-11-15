@@ -72,48 +72,45 @@
 @keyframes br-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .br-web-tab[data-activity="loading"] .br-web-tab-dot { animation: none; } }
 
-/* E11: the pad "Guias": the controls, the tabs with the person on top, then each agent's. */
-.br-pad-list { display: flex; flex-direction: column; gap: 10px; padding: 8px; font-size: 12px; }
-.br-pad-bar, .br-pad-acts, .br-pad-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* E11: the pad "Guias": the tabs with the person, then each agent's, then the ended agents'. Every action lives in an action bar. */
+.br-pad-list { display: flex; flex-direction: column; gap: 12px; padding: 8px; font-size: 12px; }
 .br-pad-btn { padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--fg); font: inherit; font-size: 11.5px; cursor: pointer; }
 .br-pad-btn:hover:not(:disabled) { background: var(--bg-hover); }
-.br-pad-btn:disabled { color: var(--fg-dim); opacity: .5; cursor: default; }
 .br-pad-btn:focus-visible, .br-pad-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.br-pad-filter { justify-content: space-between; padding: 4px 8px; border-radius: 6px; background: var(--bg-2); }
-.br-pad-filter-text { font-weight: 600; }
-.br-pad-section { display: flex; flex-direction: column; gap: 4px; }
+.br-pad-filter { padding: 4px 8px; border-radius: 6px; background: var(--bg-2); font-weight: 600; }
+.br-pad-section { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .br-pad-section[data-section="user"] .br-pad-row { border-left: 3px solid var(--accent); }
-.br-pad-head { margin: 0; font-size: 11.5px; font-weight: 600; text-transform: none; color: var(--fg-dim); }
-.br-pad-ghead { display: flex; align-items: center; gap: 8px; }
+.br-pad-head { margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-dim); }
+.br-pad-sechead { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.br-pad-sechead > .br-pad-head { flex: none; }
+.br-pad-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.br-pad-ghead { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.br-pad-ghead > .br-pad-agent, .br-pad-ghead > .br-pad-count { flex: none; }
 .br-pad-agent { cursor: pointer; }
 .br-pad-count { color: var(--fg-dim); font-size: 11px; }
-.br-pad-section[data-ended="true"] .br-pad-row { opacity: .75; }
-.br-pad-row { border-radius: 6px; background: var(--bg-2); }
-.br-pad-open { display: flex; flex-direction: column; align-items: stretch; gap: 1px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.br-pad-open:hover { background: var(--bg-hover); }
+.br-pad-group[data-ended="true"] .br-pad-agent { opacity: .65; }
+.br-pad-group[data-ended="true"] .br-pad-row { opacity: .8; }
+.br-pad-row { display: flex; flex-direction: column; min-width: 0; padding: 4px 4px 3px 0; border-radius: 6px; background: var(--bg-2); cursor: pointer; }
+.br-pad-row:hover { background: var(--bg-hover); }
+.br-pad-open { display: flex; flex-direction: column; align-items: stretch; gap: 1px; min-width: 0; padding: 1px 8px 0; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .br-pad-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.br-pad-addr, .br-pad-meta, .br-pad-place { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: 11.5px; }
-.br-pad-addr { font-family: var(--mono, ui-monospace, monospace); }
-.br-pad-meta { display: flex; gap: 6px; }
-.br-pad-row[data-control="user"] .br-pad-meta [data-role="control"] { color: var(--fg); font-weight: 600; }
+.br-pad-addr, .br-pad-state, .br-pad-place { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: 11.5px; }
+.br-pad-addrline { display: flex; gap: 8px; min-width: 0; }
+.br-pad-addr { flex: 0 1 auto; min-width: 0; font-family: var(--mono, ui-monospace, monospace); }
+.br-pad-place { flex: none; }
+.br-pad-foot { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 8px; }
+.br-pad-foot-text { flex: 1 1 4ch; min-width: 0; display: flex; }
+.br-pad-foot .action-bar { flex: 0 1 auto; }
+.br-pad-row[data-control="user"] .br-pad-state { color: var(--fg); font-weight: 600; }
 
 /* E13: "Baixados" in the pad */
 .br-pad-downloads { margin-top: 8px; }
 .br-pad-dgroup { display: flex; flex-direction: column; gap: 4px; }
 .br-pad-dagent { font-size: 11.5px; color: var(--fg-dim); margin-top: 4px; }
-.br-pad-drow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+.br-pad-drow { flex-direction: row; align-items: center; gap: 8px; padding: 6px 8px; cursor: default; }
 .br-pad-dtext { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .br-pad-dtext .br-pad-title, .br-pad-dtext .br-pad-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Each row of the pad: the tab's own actions at one click (tab-actions.ts), the same icons and names as its tab menu. */
-.br-pad-row { display: flex; align-items: center; }
-.br-pad-row > .br-pad-open { flex: 1 1 auto; min-width: 0; }
-.br-pad-row-acts { flex: none; display: flex; align-items: center; gap: 2px; padding-right: 4px; }
-.br-pad-icon { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--fg-dim); cursor: pointer; }
-.br-pad-icon .ph, .br-pad-icon svg { width: 14px; height: 14px; }
-.br-pad-icon:hover { background: var(--bg-hover); color: var(--fg); }
-.br-pad-icon[data-danger="true"]:hover { color: var(--err); }
-.br-pad-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The crash state: the page area shows what stopped and "Reabrir" (the surface is let go meanwhile). */
 .br-web-crash { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--fg-dim); font-size: 13px; }
 .br-web-crash[hidden] { display: none; }

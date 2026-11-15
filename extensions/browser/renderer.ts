@@ -22,7 +22,8 @@
 // The tab is the core's standard tab (`tether-tab`: kind, title, ×, right-click for the menu) with the owner's chip and the
 // activity dot inside; its menu and each row of the pad offer the same per-tab actions (tab-actions.ts), run by `runTabAction`.
 import type { GroupPanelPartInitParameters, IContentRenderer, IDockviewPanel, ITabRenderer } from 'dockview-core'
-import type { AttentionHandle, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
+import { type ActionBar, createActionBar } from '../../app/renderer/action-bar.ts'
+import type { AttentionHandle, ContextMenuEntry, PadHost, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
 import { createTabHeader } from '../../app/renderer/tab-header.ts'
 import { factsOf } from '../../app/renderer/surface-host.ts'
@@ -37,15 +38,15 @@ import {
 } from './files-rules.ts'
 import type { DialogSpec } from '../../app/shared/dialog.ts'
 import {
-  ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, buildPad, endedTabIds, hostOf, isEnded, type LastAction, lastActionText,
-  PAD_NONE_OF_AGENT, PAD_SHOW_ALL, PAD_WITH_YOU, type PadAgentInfo, padBadge, padCloseAgent, padCloseEnded, padFiltered, type PadModel, padResumeAgent,
-  logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, pillBadgeCount, type PadTab, padWhere, resolveAgent, shortAddress,
+  ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, buildPad, hostOf, isEnded, type LastAction, logoutDialog, type MainAgentView, oldestAsking,
+  PAD_ACTIVE, PAD_CLOSE_ALL_ENDED, PAD_ENDED, PAD_NONE_OF_AGENT, PAD_WITH_YOU, type PadAgentInfo, padBadge, type PadGroup, type PadGroupMenuId, padGroupMenu,
+  padMenu, type PadMenuId, type PadModel, padOnlyAgent, padSections, type PadSectionId, padSeeAgent, type PadTab, padWhere, pillBadgeCount, resolveAgent,
+  rowStateText, shortAddress,
 } from './pad-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
 import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, DEBUG_PILL, DEBUG_PILL_HINT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
-import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, padRowActions, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
-import type { IconName } from '../../app/renderer/icons.ts'
+import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
 
 export { manifest }
 
@@ -182,19 +183,18 @@ export function activate(ui: TetherUi): IDisposable[] {
       closeTabs([tabId])
     }
   }
-  /** The tab's menu: who has it, the brake, the clean reload; the link and the address; where it lives; close (the core's order). */
-  const showWebMenu = (paneId: string, x: number, y: number): void => {
+  /** The tab's menu: who has it, the brake, the clean reload; the link and the address; where it lives; close (the core's order). The tab's right-click, the strip's "⋯" and the pad's row bar all read it. */
+  const tabMenuEntries = (paneId: string): ContextMenuEntry[] => {
     const p = panels.get(paneId)
     const tabId = p?.saved?.tabId
     if (!p || !tabId) {
-      ui.menus.context(x, y, [{ icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(paneId) }, { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(paneId) }, 'sep', { icon: 'x', label: CLOSE_TAB, run: () => ui.panes.close(paneId) }])
-      return
+      return [{ icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(paneId) }, { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(paneId) }, 'sep', { icon: 'x', label: CLOSE_TAB, run: () => ui.panes.close(paneId) }]
     }
     const acts = tabActions(actionState(tabId), ownerName(tabId))
-    const entry = (a: TabAction) => ({ icon: a.icon, label: a.label, ...(a.danger ? { danger: true } : {}), run: () => { void runTabAction(a.id, tabId) } })
+    const entry = (a: TabAction): ContextMenuEntry => ({ icon: a.icon, label: a.label, ...(a.danger ? { danger: true } : {}), ...(a.pin ? { pin: a.pin } : {}), run: () => { void runTabAction(a.id, tabId) } })
     const url = p.padTab()?.url ?? ''
     const owner = p.saved?.ownerSlotId
-    ui.menus.context(x, y, [
+    return [
       ...acts.filter(a => a.id !== 'close').map(entry),
       'sep',
       ...(owner && agentOf(owner) ? [{ icon: 'globe-simple', label: padSeeAgent(agentName(owner)), run: () => seeAgent(owner) }] : []),
@@ -204,17 +204,9 @@ export function activate(ui: TetherUi): IDisposable[] {
       { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(paneId) },
       'sep',
       ...acts.filter(a => a.id === 'close').map(entry),
-    ])
+    ]
   }
-
-  const btn = (text: string, action: string, onClick: () => void, disabled = false): HTMLButtonElement => {
-    const b = el('button', 'br-pad-btn', text)
-    b.type = 'button'
-    b.dataset.action = action
-    b.disabled = disabled
-    b.addEventListener('click', () => onClick())
-    return b
-  }
+  const showWebMenu = (paneId: string, x: number, y: number): void => { ui.menus.context(x, y, tabMenuEntries(paneId)) }
 
   /** "Sair de todas as contas" (design §12a): asks first; the answer clears every login of every agent. */
   const confirmLogout = async (): Promise<void> => {
@@ -222,106 +214,122 @@ export function activate(ui: TetherUi): IDisposable[] {
     if (a?.choice === 'logout') await ipc.invoke('logoutAll').catch(() => {})
   }
 
-  const drawList = (root: HTMLElement, all: PadModel, model: PadModel): void => {
+  /** The pad panel's menu (its header bar shows the pinned items): the items of padMenu, run over every tab. */
+  const padMenuEntries = (): ContextMenuEntry[] => {
+    const tabs = padTabs()
+    const run = (id: PadMenuId): void => {
+      if (id === 'show-all') { padFilter = undefined; refreshPad() }
+      else if (id === 'pause-all') void ipc.invoke('pauseTabs', tabs.filter(t => t.control !== 'paused' && !isEnded(agentInfo(t.ownerSlotId))).map(t => t.tabId))
+      else if (id === 'resume-all') void ipc.invoke('resumeTabs', tabs.filter(t => t.control === 'paused').map(t => t.tabId))
+      else void confirmLogout()
+    }
+    return padMenu(buildPad(tabs, agentInfo), padFilter !== undefined).map((i): ContextMenuEntry => i === 'sep' ? i : {
+      icon: i.icon, label: i.label, run: () => run(i.id),
+      ...(i.pin ? { pin: i.pin } : {}), ...(i.disabled ? { disabled: true } : {}), ...(i.danger ? { danger: true } : {}),
+    })
+  }
+  /** An agent group's menu: the brake and close act on every tab of the agent (the ones with the person included). */
+  const groupMenuEntries = (g: PadGroup): ContextMenuEntry[] => {
+    const own = (): string[] => padTabs().filter(t => t.ownerSlotId === g.slotId).map(t => t.tabId)
+    const run = (id: PadGroupMenuId): void => {
+      if (id === 'pause-agent') void ipc.invoke('pauseTabs', own())
+      else if (id === 'resume-agent') void ipc.invoke('resumeTabs', own())
+      else if (id === 'see-agent') seeAgent(g.slotId)
+      else closeTabs(own())
+    }
+    return padGroupMenu(g).map((i): ContextMenuEntry => i === 'sep' ? i : {
+      icon: i.icon, label: i.label, run: () => run(i.id), ...(i.pin ? { pin: i.pin } : {}), ...(i.danger ? { danger: true } : {}),
+    })
+  }
+
+  /** The action bars drawn in each pad root: the pad redraws by replacing children, so the bars (each with a ResizeObserver) are let go first. */
+  const barsOf = new WeakMap<HTMLElement, ActionBar[]>()
+  const disposeBars = (root: HTMLElement): void => { for (const b of barsOf.get(root) ?? []) b.dispose(); barsOf.delete(root) }
+
+  const drawList = (root: HTMLElement, model: PadModel): void => {
     const now = Date.now()
+    const bars: ActionBar[] = []
+    barsOf.set(root, bars)
+    const bar = (label: string, entries: () => ContextMenuEntry[]): HTMLElement => {
+      const b = createActionBar({ entries, label, align: 'end', openMenu: (x, y) => ui.menus.context(x, y, entries()) })
+      bars.push(b)
+      return b.element
+    }
     const list = el('div', 'br-pad-list')
     list.dataset.state = 'list'
-    const all$ = padTabs()
-    const ended = endedTabIds(all$, agentInfo)
-    const t = controlTexts('')
-    // the controls over every tab
-    const bar = el('div', 'br-pad-bar')
-    bar.dataset.role = 'controls'
-    bar.append(
-      btn(t.pauseAll, 'pause-all', () => { void ipc.invoke('pauseTabs', all$.map(x => x.tabId)) }, all.total === 0 || all.paused === all.total),
-      btn(t.resumeAll, 'resume-all', () => { void ipc.invoke('resumeTabs', all$.map(x => x.tabId)) }, all.paused === 0),
-    )
-    if (ended.length > 0) bar.append(btn(padCloseEnded(ended.length), 'close-ended', () => closeTabs(ended)))
-    bar.append(btn(PAD_LOGOUT_ALL, 'logout-all', () => { void confirmLogout() }))
-    list.append(bar)
     if (padFilter !== undefined) {
-      const f = el('div', 'br-pad-filter')
+      const f = el('div', 'br-pad-filter', padOnlyAgent(agentName(padFilter)))
       f.dataset.role = 'filter'
-      f.append(el('span', 'br-pad-filter-text', padFiltered(agentName(padFilter))), btn(PAD_SHOW_ALL, 'show-all', () => { padFilter = undefined; refreshPad() }))
       list.append(f)
       if (model.total === 0) list.append(el('p', 'br-empty-help', PAD_NONE_OF_AGENT))
     }
 
-    const row = (tab: PadTab): HTMLElement => {
+    const row = (tab: PadTab, section: PadSectionId): HTMLElement => {
       const owner = agentInfo(tab.ownerSlotId)
       const name = shortName(owner?.name)
       const control = controls.get(tab.tabId)?.control ?? tab.control
-      const ct = controlTexts(name)
+      const paneId = paneIdOf(tab.tabId)
       const r = el('div', 'br-pad-row')
       r.dataset.tab = tab.tabId
       r.dataset.control = control
       const open = el('button', 'br-pad-open')
       open.type = 'button'
       open.dataset.action = 'open-tab'
-      const title = el('span', 'br-pad-title', tab.title || shortAddress(tab.url) || 'Guia')
-      const addr = el('span', 'br-pad-addr', shortAddress(tab.url))
-      const who = el('span', 'br-pad-who', isEnded(owner) && control === 'agent' ? ct.ended : ct[control])
-      who.dataset.role = 'control'
-      const action = el('span', 'br-pad-action', lastActionText({ control, asking: tab.asking, expired: tab.expired, ended: isEnded(owner), name, url: tab.url, ...(actions.get(tab.tabId) ? { action: actions.get(tab.tabId)! } : {}), now }))
-      action.dataset.role = 'action'
-      const meta = el('span', 'br-pad-meta')
-      meta.append(who, action)
-      open.append(title, addr, meta)
-      if (tab.place && tab.place !== 'Browser') {
-        const where = el('span', 'br-pad-place', padWhere(tab.place))
-        where.dataset.role = 'place'
-        open.append(where)
-      }
-      open.addEventListener('click', () => ui.panes.reveal(paneIdOf(tab.tabId)))
-      // One click per action, the same names and icons as the tab menu.
-      const acts = el('div', 'br-pad-row-acts')
-      acts.dataset.role = 'row-actions'
-      for (const a of padRowActions(actionState(tab.tabId), name)) {
-        const b = el('button', 'br-pad-icon')
-        b.type = 'button'
-        b.dataset.action = a.id
-        b.title = a.label
-        b.setAttribute('aria-label', a.label)
-        if (a.danger) b.dataset.danger = 'true'
-        b.append(icon(a.icon as IconName))
-        b.addEventListener('click', () => { void runTabAction(a.id, tab.tabId) })
-        acts.append(b)
-      }
-      r.append(open, acts)
+      const where = el('span', 'br-pad-addrline')
+      where.append(el('span', 'br-pad-addr', shortAddress(tab.url)))
+      if (tab.place && tab.place !== 'Browser') { const w = el('span', 'br-pad-place', padWhere(tab.place)); w.dataset.role = 'place'; where.append(w) }
+      open.append(el('span', 'br-pad-title', tab.title || shortAddress(tab.url) || 'Guia'), where)
+      const foot = el('div', 'br-pad-foot')
+      const text = el('span', 'br-pad-foot-text')
+      const state = rowStateText(section, { control, asking: tab.asking, expired: tab.expired, ended: isEnded(owner), name, url: tab.url, ...(actions.get(tab.tabId) ? { action: actions.get(tab.tabId)! } : {}), now })
+      if (state) { const s = el('span', 'br-pad-state', state); s.dataset.role = 'state'; text.append(s) }
+      foot.append(text, bar('Ações da guia', () => tabMenuEntries(paneId)))
+      r.append(open, foot)
+      // The whole row reveals the tab (the bar's buttons stop their own clicks); right-click opens the tab's menu.
+      r.addEventListener('click', () => ui.panes.reveal(paneId))
+      r.addEventListener('contextmenu', ev => { ev.preventDefault(); ui.menus.context(ev.clientX, ev.clientY, tabMenuEntries(paneId)) })
       return r
     }
 
-    if (model.withPerson.length > 0) {
-      const sec = el('section', 'br-pad-section')
-      sec.dataset.section = 'user'
-      const head = el('h4', 'br-pad-head', `${PAD_WITH_YOU} (${model.withPerson.length})`)
-      sec.append(head, ...model.withPerson.map(row))
-      list.append(sec)
-    }
-    for (const g of model.groups) {
-      const sec = el('section', 'br-pad-section')
-      sec.dataset.section = 'agent'
-      sec.dataset.agent = g.slotId
-      sec.dataset.ended = g.ended ? 'true' : 'false'
+    const sections = padSections(model)
+    const title = (text: string): HTMLElement => el('h4', 'br-pad-head', text)
+    const group = (g: PadGroup, section: PadSectionId): HTMLElement => {
+      const box = el('div', 'br-pad-group')
+      box.dataset.agent = g.slotId
+      box.dataset.ended = g.ended ? 'true' : 'false'
       const head = el('div', 'br-pad-ghead')
       const chip = el('button', 'br-web-owner br-pad-agent')
       chip.type = 'button'
       chip.dataset.action = 'focus-agent'
       dressChip(chip, g.slotId, agentInfo(g.slotId) ?? { name: g.name, alive: false })
-      if (!chip.textContent) chip.textContent = g.name
+      // The ended section already says it: the chip is the short name alone.
+      if (g.ended || !chip.textContent) chip.textContent = g.name
       chip.addEventListener('click', () => { ui.agents.focus(g.slotId) })
-      const count = el('span', 'br-pad-count', String(g.total))
+      const count = el('span', 'br-pad-count', String(g.tabs.length))
       count.dataset.role = 'count'
-      head.append(chip, count)
-      const acts = el('div', 'br-pad-acts')
-      const allPaused = g.paused === g.total && g.total > 0
-      acts.append(
-        allPaused
-          ? btn(padResumeAgent(g.name), 'resume-agent', () => { void ipc.invoke('resumeTabs', all$.filter(x => x.ownerSlotId === g.slotId).map(x => x.tabId)) })
-          : btn(controlTexts(g.name).pauseAgent, 'pause-agent', () => { void ipc.invoke('pauseTabs', all$.filter(x => x.ownerSlotId === g.slotId).map(x => x.tabId)) }),
-        btn(padCloseAgent(g.name), 'close-agent', () => closeTabs(all$.filter(x => x.ownerSlotId === g.slotId).map(x => x.tabId))),
-      )
-      sec.append(head, acts, ...g.tabs.map(row))
+      head.append(chip, count, bar(`Ações do ${g.name}`, () => groupMenuEntries(g)))
+      box.append(head, ...g.tabs.map(t => row(t, section)))
+      return box
+    }
+    if (sections.withPerson.length > 0) {
+      const sec = el('section', 'br-pad-section')
+      sec.dataset.section = 'user'
+      sec.append(title(`${PAD_WITH_YOU} (${sections.withPerson.length})`), ...sections.withPerson.map(t => row(t, 'user')))
+      list.append(sec)
+    }
+    if (sections.active.length > 0) {
+      const sec = el('section', 'br-pad-section')
+      sec.dataset.section = 'active'
+      sec.append(title(PAD_ACTIVE), ...sections.active.map(g => group(g, 'active')))
+      list.append(sec)
+    }
+    if (sections.ended.length > 0) {
+      const sec = el('section', 'br-pad-section')
+      sec.dataset.section = 'ended'
+      const head = el('div', 'br-pad-sechead')
+      const closeAll = (): ContextMenuEntry[] => [{ icon: 'x', label: PAD_CLOSE_ALL_ENDED, danger: true, pin: 'primary', run: () => closeTabs(sections.endedIds) }]
+      head.append(title(`${PAD_ENDED} (${sections.endedIds.length})`), bar('Ações das guias de agentes encerrados', closeAll))
+      sec.append(head, ...sections.ended.map(g => group(g, 'ended')))
       list.append(sec)
     }
     root.replaceChildren(list)
@@ -329,6 +337,14 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   // ---- E13: "Baixados" (design §4.3, §12a): by agent, name, size, when, and "Mostrar na pasta" ----
   let downloadsList: DownloadEntry[] = []
+  /** The one text button left in the pad: a downloaded file's "Mostrar na pasta". */
+  const showButton = (text: string, onClick: () => void): HTMLButtonElement => {
+    const b = el('button', 'br-pad-btn', text)
+    b.type = 'button'
+    b.dataset.action = 'show-in-folder'
+    b.addEventListener('click', () => onClick())
+    return b
+  }
   const drawDownloads = (root: HTMLElement): void => {
     const shown = padFilter === undefined ? downloadsList : downloadsList.filter(d => d.slotId === padFilter)
     if (shown.length === 0) return
@@ -345,7 +361,7 @@ export function activate(ui: TetherUi): IDisposable[] {
         r.dataset.name = f.name
         const text = el('span', 'br-pad-dtext')
         text.append(el('span', 'br-pad-title', f.name), el('span', 'br-pad-addr', `${formatBytes(f.bytes)} · ${whenText(f.at, now)}`))
-        r.append(text, btn(PAD_SHOW_IN_FOLDER, 'show-in-folder', () => { void ipc.invoke('showDownload', f.slotId, f.name).catch(() => {}) }))
+        r.append(text, showButton(PAD_SHOW_IN_FOLDER, () => { void ipc.invoke('showDownload', f.slotId, f.name).catch(() => {}) }))
         group.append(r)
       }
       sec.append(group)
@@ -356,7 +372,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   const drawPad = (root: HTMLElement): void => {
     const all = padModel()
     if (all.total === 0) drawEmpty(root)
-    else drawList(root, all, padFilter === undefined ? all : padModel(padFilter))
+    else drawList(root, padFilter === undefined ? all : padModel(padFilter))
     drawDownloads(root)
   }
   const pads = new Set<Pad>()
@@ -383,7 +399,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const sig = padSignature()
       if (sig !== drawnSignature) {
         drawnSignature = sig
-        for (const p of pads) drawPad(p.element)
+        for (const p of pads) p.redraw()
       }
     }, 0)
   }
@@ -396,19 +412,23 @@ export function activate(ui: TetherUi): IDisposable[] {
   class Pad implements PadView {
     readonly element = el('div', 'br-pad')
     private readonly sub: IDisposable
-    constructor() {
+    private readonly host: PadHost
+    constructor(host: PadHost) {
+      this.host = host
       this.element.dataset.pad = PAD_ID
       drawPad(this.element)
-      this.sub = ui.settings.onChange('serveToAgents', () => drawPad(this.element))
+      this.sub = ui.settings.onChange('serveToAgents', () => this.redraw())
       pads.add(this)
     }
-    redraw(): void { drawPad(this.element) }
+    /** The header shows the pinned items of menu(), which follow the same state as the list. */
+    redraw(): void { drawPad(this.element); this.host.menuChanged() }
+    menu(): ContextMenuEntry[] { return padMenuEntries() }
     focus(): void {
       // The icon was clicked (or the pad opened from the keyboard) with a help request pending: straight to the tab that asks.
       if (!ownOpen && goToOldestAsk()) return
       this.element.querySelector<HTMLElement>('button')?.focus()
     }
-    dispose(): void { this.sub.dispose(); pads.delete(this) }
+    dispose(): void { this.sub.dispose(); disposeBars(this.element); pads.delete(this) }
   }
 
   /** The live `web` panes by pane id. */
@@ -923,22 +943,29 @@ export function activate(ui: TetherUi): IDisposable[] {
     const text = (e: Element | null | undefined): string => e?.textContent ?? ''
     const rowOf = (r: Element) => ({
       tabId: (r as HTMLElement).dataset.tab ?? '', title: text(r.querySelector('.br-pad-title')), address: text(r.querySelector('.br-pad-addr')),
-      control: text(r.querySelector('[data-role="control"]')), action: text(r.querySelector('[data-role="action"]')), place: text(r.querySelector('[data-role="place"]')),
-      actions: [...r.querySelectorAll<HTMLButtonElement>('[data-role="row-actions"] button')].map(b => ({ action: b.dataset.action ?? '', label: b.getAttribute('aria-label') ?? '' })),
+      control: (r as HTMLElement).dataset.control ?? '', state: text(r.querySelector('[data-role="state"]')), place: text(r.querySelector('[data-role="place"]')),
+      actions: [...r.querySelectorAll<HTMLButtonElement>('.br-pad-foot .ab-act[data-label]')].map(b => ({ pin: b.dataset.pin ?? '', label: b.dataset.label ?? '' })),
     })
-    const buttons = (root: Element) => [...root.querySelectorAll<HTMLButtonElement>('.br-pad-btn')].map(b => ({ action: b.dataset.action ?? '', text: b.textContent ?? '', disabled: b.disabled }))
+    const groupOf = (g: HTMLElement) => ({
+      slotId: g.dataset.agent ?? '', ended: g.dataset.ended === 'true', chip: text(g.querySelector('.br-pad-agent')), count: text(g.querySelector('[data-role="count"]')),
+      actions: [...g.querySelectorAll<HTMLButtonElement>('.br-pad-ghead .ab-act[data-label]')].map(b => ({ pin: b.dataset.pin ?? '', label: b.dataset.label ?? '' })),
+      rows: [...g.querySelectorAll('.br-pad-row')].map(rowOf),
+    })
+    const section = (id: string) => pad.element.querySelector<HTMLElement>(`[data-section="${id}"]`)
     return {
       state: (pad.element.firstElementChild as HTMLElement | null)?.dataset.state ?? '',
       emptyText: text(pad.element.querySelector('.br-empty-help')),
       offShown: !!pad.element.querySelector('[data-role="off"]'),
-      controls: buttons(pad.element.querySelector('[data-role="controls"]') ?? document.createElement('div')),
-      filter: text(pad.element.querySelector('.br-pad-filter-text')),
+      filter: text(pad.element.querySelector('[data-role="filter"]')),
+      noneOfAgent: !!pad.element.querySelector('.br-pad-list > .br-empty-help'),
       withPerson: [...pad.element.querySelectorAll('[data-section="user"] .br-pad-row')].map(rowOf),
-      withPersonHead: text(pad.element.querySelector('[data-section="user"] .br-pad-head')),
-      groups: [...pad.element.querySelectorAll<HTMLElement>('[data-section="agent"]')].map(g => ({
-        slotId: g.dataset.agent ?? '', ended: g.dataset.ended === 'true', chip: text(g.querySelector('.br-pad-agent')), count: text(g.querySelector('[data-role="count"]')),
-        buttons: buttons(g), rows: [...g.querySelectorAll('.br-pad-row')].map(rowOf),
-      })),
+      withPersonHead: text(section('user')?.querySelector('.br-pad-head')),
+      sections: [...pad.element.querySelectorAll<HTMLElement>('.br-pad-section')].map(s => s.dataset.section ?? ''),
+      activeHead: text(section('active')?.querySelector('.br-pad-head')),
+      endedHead: text(section('ended')?.querySelector('.br-pad-head')),
+      endedActions: [...(section('ended')?.querySelectorAll<HTMLButtonElement>('.br-pad-sechead .ab-act[data-label]') ?? [])].map(b => ({ pin: b.dataset.pin ?? '', label: b.dataset.label ?? '' })),
+      groups: [...pad.element.querySelectorAll<HTMLElement>('.br-pad-group')].map(groupOf),
+      buttonsInContent: [...pad.element.querySelectorAll<HTMLButtonElement>('button.br-pad-btn')].map(b => b.dataset.action ?? ''),
       badge: lastBadge ?? null,
       downloads: [...pad.element.querySelectorAll<HTMLElement>('[data-section="downloads"] .br-pad-dgroup')].map(g => ({
         slotId: g.dataset.agent ?? '', agent: text(g.querySelector('.br-pad-dagent')),
@@ -958,7 +985,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   return [
     ui.profiles.registerOption({ key: PROFILE_OPTION, label: PROFILE_OPTION_LABEL, hint: PROFILE_OPTION_HINT }),
-    ui.pads.register({ id: PAD_ID, create: () => new Pad() }),
+    ui.pads.register({ id: PAD_ID, create: host => new Pad(host) }),
     ui.panes.register({
       id: 'web', idPrefix: WEB_PANE_PREFIX, component: WEB_COMPONENT, tabComponent: WEB_TAB, hasSlot: false, icon: 'globe-simple',
       optionsOf: p => ({ id: p.id, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: p.title ?? 'Guia', params: p.params ?? {} }),
