@@ -445,11 +445,15 @@ test('browser accounts and help requests: logout of all accounts, tray, pill and
     assert.equal(await B((t, a) => t.load(a.tab, a.url), { tab, url: `${base}/who` }), '')
     await until('the page carries the session', async () => (await body(tab)) === `cookie=sid=${SESSION}`)
     await win.evaluate(() => window.__tether.browserPadOpen())
-    const logout = win.locator('[data-pad="browser.tabs"] [data-action="logout-all"]')
-    await logout.waitFor()
-    assert.equal(await logout.textContent(), 'Sair de todas as contas')
+    // The action lives in the pad's menu (the header's "⋯"), never loose in the content.
+    const more = win.locator('[data-pad="browser.tabs"] .pad-head .ab-more')
+    const logout = async (): Promise<void> => {
+      await more.click()
+      await win.locator('#ctx-menu li[role=menuitem]', { hasText: 'Sair de todas as contas' }).click()
+    }
+    await more.waitFor()
 
-    await logout.click()
+    await logout()
     const dlg = win.locator('dialog[data-dialog="browser-logout-all"]')
     await dlg.waitFor()
     assert.match(await dlg.textContent() ?? '', /Todos os agentes perdem o acesso às contas logadas\./)
@@ -458,7 +462,7 @@ test('browser accounts and help requests: logout of all accounts, tray, pill and
     await sleep(800)
     assert.equal(await body(tab), `cookie=sid=${SESSION}`, 'cancelling changes nothing')
 
-    await logout.click()
+    await logout()
     await dlg.waitFor()
     await dlg.locator('button.choice[data-choice="logout"]').click()
     await until('the open tab was reloaded without the session', async () => (await body(tab)) === 'cookie=none')
