@@ -34,6 +34,11 @@ A semana de uso real (PRD §8) é do usuário.
 
 ## Decisões para validar
 
+- 14/11, Fira Code como fonte padrão do terminal (branch `feat/fira-code-default`, saído de `develop`):
+  - Decidido pelo Guga: Fira Code embarcada e padrão no lugar da JetBrains Mono (ele a usa no editor com sucesso).
+  - Decididos pela coordenação: release oficial 6.2 (woff2 variável, eixo 300–700, OFL-1.1, licença ao lado em `app/renderer/fonts/`); primeira da lista no diálogo; peso 350 / negrito 600 / 14px / 1.2 mantidos; JetBrains Mono segue como opção. Quem nunca escolheu fonte passa a ver a Fira Code; quem já escolheu mantém a sua.
+  - **Ligaduras continuam desligadas** (`=>` e `!=` saem como dois caracteres): além de o WebGL desenhar célula a célula, `.xterm { font-variant-ligatures: none }` cobre o renderizador DOM de reserva, porque as ligaduras da Fira Code vêm por `calt`. A validar com o Guga: se ele quiser ligaduras também no terminal, é fatia própria (addon de ligaduras do xterm + chave no diálogo).
+  - Prova: unitário `app.terminal-theme` 8/8; e2e `app.terminal-theme` verde no Electron (faces 350 e 600 carregadas, amostra do diálogo conferida a olho sem ligadura). `npm run check` tem 6 falhas e 4 cancelados em arquivos alheios à fonte (`resolveClaudeCommand`, middleware do web-bridge, perfis no protocolo, `ext.index`); a de `ext.index` (`cookie-runtime-main.ts` importa `extensions/browser/private-dir.ts`) já falha no `develop` limpo.
 - 11/11, emblemas nas guias (F14 simplificado; prévia `docs/tab-emblems-preview.html`, aprovada pelo Guga com "pode ir, prefiro ver e pedir melhoria"):
   - Decididos pelo Guga: um emblema por guia; preso à guia (fechar perde); emblemas padrão + editor (nome, 12 cores, ícone Phosphor); seletor por categorias com busca pt/en.
   - Decididos pela coordenação: os 6 padrão (Cliente, Pessoal, Estudo, Revisar, Deploy, Bug); padrão se edita, restaura e oculta, nunca apaga; a biblioteca mora no `layout.json` (`emblems`, campo aditivo); aplicar é "Emblema…" no menu de toda guia (o menu não tem submenu); o chip fica logo após o ícone da guia; 219 ícones em 9 categorias (`app/emblem-icons-derive.mjs`, `npm run emblems:derive`).
