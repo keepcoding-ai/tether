@@ -9,6 +9,9 @@
 //   7. the desk-edge "+" ADDS an empty pane (no duplicate); its right-click menu names the three actions;
 //   8. the contextless popup with a pane active: "Onde" in one line, the grid in one click, "abaixo" honoured;
 //   9. the origin travels in layout.json; screenshots chooser-{dark,light}.png.
+// A second test covers the chooser inside an empty pane: the card of a wide / tall pane (and the plain fill of a small
+// one), a click that only selects, and a double click that opens an item that was not selected, including the one
+// whose selection grows the bottom band and moves the row under the pointer.
 // Every kill goes through test/kill.ts (pid + creation time).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -59,10 +62,10 @@ function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
 }
 
-async function launch(home: string): Promise<{ app: ElectronApplication; page: Page }> {
+async function launch(home: string, pipeName = pipe): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
-  env.TETHER_PIPE = pipe
+  env.TETHER_PIPE = pipeName
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
@@ -335,6 +338,154 @@ test('app chooser: popup, strip "+", Ctrl+N, origins, digits, focus mode, edge "
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark')
     await sleep(300)
     await shot(app, 'chooser-dark')
+  } finally {
+    if (app) await killElectron(app, root).catch(e => console.error(String(e)))
+    for (const d of daemons) {
+      const r = await killOwned(d, { tree: true })
+      if (r === 'not-ours') console.error(`tetherd cleanup: pid ${d.pid} is no longer ours; not killed`)
+    }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
+    for (const dir of [home, work]) {
+      for (let i = 0; i < 5; i++) {
+        try { rmSync(dir, { recursive: true, force: true }); break } catch { await sleep(300) }
+      }
+    }
+  }
+})
+
+/** The window's content at full size (the layout shots are read at their real pixels). */
+async function shotFull(app: ElectronApplication, name: string): Promise<void> {
+  const b64 = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0]!.webContents.capturePage()).toPNG().toString('base64'))
+  writeFileSync(join(artifacts, `${name}.png`), Buffer.from(b64, 'base64'))
+}
+
+async function resize(app: ElectronApplication, page: Page, width: number, height: number): Promise<void> {
+  await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0]?.setContentSize(s.width, s.height), { width, height })
+  await sleep(500) // dockview lays the panes out on its own resize observer
+}
+
+type Box = { x: number; y: number; width: number; height: number }
+async function boxes(page: Page, id: string): Promise<{ pane: Box; ch: Box; list: Box; bottom: Box }> {
+  const base = `.empty-panel[data-empty-id="${id}"]`
+  const box = async (sel: string): Promise<Box> => { const b = await page.locator(sel).boundingBox(); assert.ok(b, `${sel} is laid out`); return b }
+  return { pane: await box(base), ch: await box(`${base} > .ch`), list: await box(`${base} .ch-list`), bottom: await box(`${base} .ch-bottom`) }
+}
+
+test('app chooser in an empty pane: card on a wide / tall pane, click selects, double click opens', async () => {
+  mkdirSync(artifacts, { recursive: true })
+  const home = mkdtempSync(join(tmpdir(), 'tether-chooser-card-'))
+  const work = mkdtempSync(join(tmpdir(), 'tether-chooser-card-work-'))
+  const daemons: Owned[] = []
+  let app: ElectronApplication | undefined
+  try {
+    let page: Page
+    ;({ app, page } = await launch(home, `${pipe}-card`))
+    const daemonPid = (await page.evaluate(() => window.__tether.connection()))?.pid
+    assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
+    daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
+    await page.waitForFunction(() => window.__tether.profiles().length >= 3)
+
+    // A shell to hang the empty tab on: the only group of the desk, so the empty pane is as large as the window.
+    await page.click('#btn-new')
+    await page.waitForSelector('#dlg-new[open]')
+    await page.fill('#dlg-new .ch-path-input', work)
+    await page.click('#dlg-new .ch-item[data-id="powershell"]')
+    await page.click('#dlg-new .btn.primary.go')
+    await noDialog(page)
+    await page.waitForFunction(() => window.__tether.panelIds().length === 1)
+    const [shell] = await ids(page)
+    const openEmpty = async (from: string): Promise<string> => {
+      await focusShell(page, from)
+      await page.keyboard.press('Control+N')
+      await page.waitForFunction(() => window.__tether.empties().length === 1)
+      const id = (await empties(page))[0]!.id
+      await page.waitForFunction(id => window.__tether.empty(id)?.focused === true, id)
+      return id
+    }
+    const e1 = await openEmpty(shell!)
+    const pane1 = `.empty-panel[data-empty-id="${e1}"]`
+    await page.evaluate(() => window.__tether.runCommand('theme.dark'))
+
+    // 1. Wide and tall: a card of at most 760px, centred, hanging from the top, its bottom band right under the list.
+    await resize(app, page, 2560, 1080)
+    let b = await boxes(page, e1)
+    assert.ok(b.pane.width > 820 && b.pane.height > 640, `the pane is wide and tall (${JSON.stringify(b.pane)})`)
+    assert.ok(b.ch.width <= 760.5, `the card is at most 760px wide (${b.ch.width})`)
+    assert.ok(Math.abs((b.ch.x + b.ch.width / 2) - (b.pane.x + b.pane.width / 2)) <= 1, 'the card is centred horizontally')
+    assert.ok(b.ch.y >= b.pane.y + 24, `the card hangs below the pane's top (${b.ch.y - b.pane.y})`)
+    assert.ok(b.bottom.y + b.bottom.height <= b.pane.y + b.pane.height - 24, 'the bottom band ends above the pane\'s bottom')
+    assert.ok(Math.abs(b.bottom.y - (b.list.y + b.list.height)) <= 1, 'the bottom band sits right under the list')
+    console.log(`wide pane: ${JSON.stringify(b.pane)} card: ${JSON.stringify(b.ch)}`)
+    const top = b.ch.y
+    await shotFull(app, 'chooser-card-wide')
+    // The search filters the list: the card shrinks from below, its top stays where it was.
+    await page.keyboard.type('pow')
+    await page.waitForFunction(id => window.__tether.empty(id)?.query === 'pow', e1)
+    const filtered = await boxes(page, e1)
+    assert.equal(filtered.ch.y, top, 'the card does not jump while the search filters')
+    assert.ok(filtered.ch.height < b.ch.height, 'the card follows its content')
+    await shotFull(app, 'chooser-card-wide-filtered')
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(id => window.__tether.empty(id)?.query === '', e1)
+
+    // 2. Wide but low: still a card in width, as tall as the pane allows.
+    await resize(app, page, 1400, 480)
+    b = await boxes(page, e1)
+    assert.ok(b.pane.width > 820 && b.pane.height <= 640, `the pane is wide and low (${JSON.stringify(b.pane)})`)
+    assert.ok(b.ch.width <= 760.5 && Math.abs((b.ch.x + b.ch.width / 2) - (b.pane.x + b.pane.width / 2)) <= 1, 'a centred card')
+    assert.ok(b.ch.height >= b.pane.height - 26, 'the card takes the pane\'s height')
+    await shotFull(app, 'chooser-card-low')
+
+    // 3. Small: the chooser fills the pane, as before.
+    await resize(app, page, 700, 500)
+    b = await boxes(page, e1)
+    assert.ok(b.pane.width <= 820, `the pane is not wide (${b.pane.width})`)
+    assert.ok(Math.abs(b.ch.width - b.pane.width) <= 1 && Math.abs(b.ch.x - b.pane.x) <= 1, 'the chooser takes the pane\'s width')
+    assert.ok(Math.abs(b.ch.height - b.pane.height) <= 1, 'the chooser takes the pane\'s height')
+    await shotFull(app, 'chooser-card-small')
+
+    // 4. A click only selects; a double click on an item that is not selected opens it.
+    await resize(app, page, 1280, 800)
+    await page.locator(`${pane1} .ch-path-input`).fill(work)
+    await page.locator(`${pane1} .ch-item[data-id="soul"]`).click()
+    await page.waitForFunction(id => window.__tether.empty(id)?.highlight === 'soul', e1)
+    assert.deepEqual(await page.locator(`${pane1} .ch-item.hl`).evaluateAll(els => els.map(e => e.getAttribute('data-id'))), ['soul'], 'the click selected the item')
+    await sleep(300)
+    assert.deepEqual((await empties(page)).map(e => e.id), [e1], 'a click does not open: the pane is still there')
+    let before = await ids(page)
+    assert.equal(await page.locator(`${pane1} .ch-item[data-id="powershell"]`).first().evaluate(el => el.classList.contains('hl')), false, 'the item to open is not the selected one')
+    await page.locator(`${pane1} .ch-item[data-id="powershell"]`).first().dblclick()
+    await page.waitForFunction(() => window.__tether.empties().length === 0)
+    const shell2 = newOf(before, await ids(page))
+    assert.equal((await page.evaluate(() => window.__tether.slots())).find(s => s.slotId === shell2)?.cwd, work, 'the double click opened the shell in the pane\'s place')
+
+    // 5. The same in a pane whose list scrolls, on a row at the list's bottom edge whose selection adds the "Salvar em"
+    //    row: the bottom band grows and the list scrolls the row back into view, so the second press of a human double
+    //    click (a frame or more after the first) lands away from the row. The item pressed first still opens.
+    const e2 = await openEmpty(shell2)
+    const pane2 = `.empty-panel[data-empty-id="${e2}"]`
+    await resize(app, page, 900, 420)
+    const note = page.locator(`${pane2} .ch-item[data-id="kind:note-new"]`)
+    assert.notEqual((await page.evaluate(id => window.__tether.empty(id), e2))!.highlight, 'kind:note-new', 'the note is not the selected item')
+    await note.evaluate(row => {
+      const list = row.closest('.ch-list')!
+      list.scrollTop = 0
+      list.scrollTop = row.getBoundingClientRect().bottom - list.getBoundingClientRect().bottom
+    })
+    const listBox = (await page.locator(`${pane2} .ch-list`).boundingBox())!
+    const noteBox = (await note.boundingBox())!
+    assert.ok(Math.abs(noteBox.y + noteBox.height - (listBox.y + listBox.height)) <= 2, 'the note is the row at the list\'s bottom edge')
+    before = await ids(page)
+    const at = { x: noteBox.x + noteBox.width / 2, y: noteBox.y + noteBox.height / 2 }
+    await page.mouse.move(at.x, at.y)
+    await page.mouse.down(); await page.mouse.up()
+    await sleep(150)
+    const moved = (await note.boundingBox())!
+    console.log(`row under the pointer moved by ${moved.y - noteBox.y}px between the two presses`)
+    await page.mouse.down({ clickCount: 2 }); await page.mouse.up({ clickCount: 2 })
+    await page.waitForFunction(() => window.__tether.empties().length === 0)
+    newOf(before, await ids(page))
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))
     for (const d of daemons) {

@@ -1581,6 +1581,20 @@ dialog.ask.move .primary:disabled { opacity: .45; cursor: not-allowed; backgroun
   .ch-sep { padding-top: 5px; }
 }
 @container pane (max-height: 300px) { .ch-item { min-height: 30px; } }
+/* wide pane (the chooser inside an empty pane only, never the popup): a card of bounded width, centred, so the list and
+   "Abrir" stay close on a very wide screen. No `overflow: hidden` on the card: the folder list (.ch-recents) opens upwards
+   and may pass the top of a short card; the bottom band rounds its own corners instead. */
+@container pane (min-width: 821px) {
+  .empty-panel > .ch { box-sizing: border-box; width: 100%; max-width: 760px; align-self: center; margin-block: min(12px, 3cqh); border: 1px solid var(--border); border-radius: 10px; }
+  .empty-panel > .ch > .ch-bottom { border-radius: 0 0 9px 9px; }
+}
+/* wide and tall pane: the card takes its content's height (the list no longer stretches, it scrolls once the card reaches
+   the room left) and hangs from the top like a command palette. Anchored at the top, not centred: the card must not
+   jump while the search filters the list. */
+@container pane (min-width: 821px) and (min-height: 641px) {
+  .empty-panel > .ch { flex: 0 1 auto; margin-top: clamp(24px, 10cqh, 120px); margin-bottom: 24px; }
+  .empty-panel > .ch > .ch-list { flex: 0 1 auto; }
+}
 /* the popup (focus mode / "Novo painel…"): the same chooser in a window; the header carries the context chip */
 dialog.chooser-dlg { width: min(600px, 94vw); height: min(600px, 86vh); padding: 0; flex-direction: column; overflow: hidden; }
 dialog.chooser-dlg[open] { display: flex; }

@@ -116,6 +116,8 @@ export class Chooser {
   private recentsOpen = false
   private whereOpen = false
   private disposed = false
+  /** The item a single click on its row just selected: the row a double click opens (cleared by the next first press). */
+  private pressedRow: string | undefined
   private readonly dest: HTMLElement
   private readonly destChips: HTMLElement
   private readonly destNote: HTMLElement
@@ -164,17 +166,28 @@ export class Chooser {
       if (!row) return
       this.state.highlight = row.dataset.id
       this.paintHighlight()
+      if (ev.detail === 1) this.pressedRow = row.dataset.id
     })
     // A double click opens the item, same as select + Enter (the destination and folder as they stand); never on the manage links.
-    this.list.addEventListener('dblclick', ev => {
-      const t = ev.target as HTMLElement
-      if (t.closest('.ch-manage, button')) return
-      const row = t.closest<HTMLElement>('.ch-item')
-      if (!row || this.busy) return
-      this.state.highlight = row.dataset.id
-      this.paintHighlight()
+    // It belongs to the row its FIRST press selected, wherever the second press lands: selecting a row can move it from
+    // under the pointer (the bottom band changes height with "Salvar em", the list scrolls the row back into view), so the
+    // second press may hit another row, a destination chip or the folder field. That press is therefore swallowed in the
+    // capture phase (it selects nothing, clicks nothing, takes no focus) and the double click opens the row pressed first.
+    const secondPress = (ev: MouseEvent): boolean => ev.detail >= 2 && this.pressedRow !== undefined
+    root.addEventListener('mousedown', ev => {
+      if (ev.detail < 2) this.pressedRow = undefined
+      else if (secondPress(ev)) { ev.preventDefault(); ev.stopPropagation() }
+    }, true)
+    root.addEventListener('click', ev => { if (secondPress(ev)) ev.stopPropagation() }, true)
+    root.addEventListener('dblclick', ev => {
+      const id = this.pressedRow
+      if (id === undefined) return
+      this.pressedRow = undefined
+      ev.stopPropagation()
+      if (this.busy || !this.items.some(i => i.id === id)) return
+      if (this.state.highlight !== id) { this.state.highlight = id; this.paintHighlight() }
       void this.open(this.highlighted())
-    })
+    }, true)
     // The selection moves only by a click, the arrows, a digit or the search; the mouse over a row is only a hover (CSS).
 
     // ---- bottom: folder, where, actions ----
