@@ -119,6 +119,8 @@ export interface PadHost {
    * false (the default) to have the core float the pad's "⋯" in the top-right corner.
    */
   setMenuHosted(hosted: boolean): void
+  /** The view's menu() changed: the header's pinned items are redrawn. A no-op for a pad that absorbs the header. */
+  menuChanged(): void
 }
 
 export interface PadView {

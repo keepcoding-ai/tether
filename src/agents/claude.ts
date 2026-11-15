@@ -21,6 +21,11 @@ function defaultHookPath(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.mjs')
 }
 
+/** The status line script, next to the reporter (same read-on-use rule as defaultHookPath). */
+function defaultStatusLinePath(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-statusline.mjs')
+}
+
 /**
  * Settings injected with `--settings`: every hook runs the reporter. Forward slashes: the hook runs under Git Bash on Windows.
  * The hook stays on the plain `node` (not on <home>/bin/tetherd.exe like the daemon): it lives ~150 ms per session
@@ -29,7 +34,7 @@ function defaultHookPath(): string {
  * copy being present and current, and on bash quoting of a Windows path, for a failure mode that is worse (every
  * event lost) than the one it avoids.
  */
-export function hookSettings(hookPath: string = defaultHookPath()): object {
+export function hookSettings(hookPath: string = defaultHookPath(), statusLinePath: string | null = defaultStatusLinePath()): object {
   const script = hookPath.replace(/\\/g, '/')
   const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit' | 'SubagentStart' | 'SubagentStop') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
@@ -42,7 +47,7 @@ export function hookSettings(hookPath: string = defaultHookPath()): object {
     },
   ]
   // Stop / Notification feed the attention badge (turn finished / waiting for the user); UserPromptSubmit marks the turn start.
-  return {
+  const settings: Record<string, unknown> = {
     hooks: {
       SessionStart: hook('SessionStart'),
       SessionEnd: hook('SessionEnd'),
@@ -55,12 +60,19 @@ export function hookSettings(hookPath: string = defaultHookPath()): object {
       SubagentStop: hook('SubagentStop'),
     },
   }
+  // Model (loud when it is Fable), effort and cwd. Left out (null) when the user has a status line of their own.
+  if (statusLinePath !== null) settings.statusLine = { type: 'command', command: `node "${statusLinePath.replace(/\\/g, '/')}"` }
+  return settings
 }
 
-/** Writes <home>/claude-settings.json only when its content changed (atomic: temp + rename). Returns the path. */
-export function ensureSettingsFile(home: string): string {
-  const path = join(home, 'claude-settings.json')
-  const content = JSON.stringify(hookSettings(), null, 2) + '\n'
+/**
+ * Writes the injected settings only when their content changed (atomic: temp + rename). Returns the path.
+ * Two files: <home>/claude-settings.json (with our status line) and claude-settings.no-statusline.json (without),
+ * because `--settings` wins over the user's own statusLine and the choice depends on each launch's cwd.
+ */
+export function ensureSettingsFile(home: string, withStatusLine = true): string {
+  const path = join(home, withStatusLine ? 'claude-settings.json' : 'claude-settings.no-statusline.json')
+  const content = JSON.stringify(hookSettings(defaultHookPath(), withStatusLine ? defaultStatusLinePath() : null), null, 2) + '\n'
   let current: string | undefined
   try { current = readFileSync(path, 'utf8') } catch { /* missing */ }
   if (current !== content) {
@@ -70,6 +82,25 @@ export function ensureSettingsFile(home: string): string {
     renameSync(tmp, path)
   }
   return path
+}
+
+/** True when a settings file defines a statusLine. Missing or malformed JSON counts as none. */
+function definesStatusLine(path: string, read: (path: string) => string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(read(path))
+    return typeof parsed === 'object' && parsed !== null && (parsed as { statusLine?: unknown }).statusLine != null
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether the user already has a status line for a launch in `cwd`: user settings (<configDir>/settings.json) or the
+ * project's .claude/settings.json / settings.local.json. Then tether leaves theirs alone.
+ */
+export function userHasStatusLine(cwd: string, configDir: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): boolean {
+  return [join(configDir, 'settings.json'), join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]
+    .some((p) => definesStatusLine(p, read))
 }
 
 /** Seams of the resolver, so tests can fake the platform, the home, the file system and the login shell. */
@@ -159,7 +190,9 @@ const PICKS_SESSION = new Set(['-c', '--continue', '-r', '--resume'])
 
 function plan(input: PlanInput): LaunchPlan {
   const { slot, home, resume, extraArgs, profile } = input
-  const settings = ensureSettingsFile(home)
+  const cwd = canonicalDir(resume ? resume.cwd : slot.cwd)
+  const configDir = profile?.env?.CLAUDE_CONFIG_DIR || claudeConfigDir()
+  const settings = ensureSettingsFile(home, !userHasStatusLine(cwd, configDir))
   const args = ['--settings', settings]
   // Profile args first (the baseline), the slot's own args, then this launch's: a repeated option takes its last value.
   const own = [...(profile?.args ?? []), ...slot.args, ...extraArgs]
@@ -179,7 +212,7 @@ function plan(input: PlanInput): LaunchPlan {
     args,
     // Canonical even for slots/bindings recorded before the fix (a lower-case drive letter would hide
     // the project's sessions from Claude's /resume picker).
-    cwd: canonicalDir(resume ? resume.cwd : slot.cwd),
+    cwd,
     env,
   }
 }

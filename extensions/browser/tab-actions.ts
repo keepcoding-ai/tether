@@ -4,6 +4,7 @@
 // hands back one she holds; the brake (pause/resume) is a separate bit and works on a tab not loaded yet (E12); "Recarregar
 // limpo" only on a tab she holds. Closing a tab the agent is using asks first, in the app's own dialog.
 import type { DialogSpec } from '../../app/shared/dialog.ts'
+import type { MenuPin } from '../../app/renderer/ext-api.ts'
 import { controlTexts } from './control-rules.ts'
 
 export type TabActionId = 'take' | 'give-back' | 'pause' | 'resume' | 'clean-reload' | 'close'
@@ -22,6 +23,8 @@ export interface TabAction {
   icon: string
   label: string
   danger?: boolean
+  /** How the bar shows it (see MenuPin); undefined stays in the menu only. */
+  pin?: MenuPin
 }
 
 /** One icon per action, the same in the menu and the pad. */
@@ -44,18 +47,15 @@ export const closeNeedsConfirm = agentUsing
 export function tabActions(s: TabActionState, agent: string): TabAction[] {
   const t = controlTexts(agent)
   const out: TabAction[] = []
-  const add = (id: TabActionId, label: string, danger?: boolean): void => { out.push({ id, icon: TAB_ACTION_ICON[id], label, ...(danger ? { danger } : {}) }) }
-  if (s.holder === 'user') add('give-back', t.giveBack)
-  else if (s.loaded) add('take', t.take)
-  add(s.paused ? 'resume' : 'pause', s.paused ? t.resume : t.pause)
+  const add = (id: TabActionId, label: string, danger?: boolean, pin?: MenuPin): void => { out.push({ id, icon: TAB_ACTION_ICON[id], label, ...(danger ? { danger } : {}), ...(pin ? { pin } : {}) }) }
+  if (s.holder === 'user') add('give-back', t.giveBack, false, s.agentAlive ? 'highlight' : undefined)
+  else if (s.loaded) add('take', t.take, false, s.agentAlive ? 'icon' : undefined)
+  // An ended agent has no brake: nobody answers on its tabs.
+  // Held by the person, the brake stays in the menu only (the bar keeps the hand back and ×).
+  if (s.agentAlive) add(s.paused ? 'resume' : 'pause', s.paused ? t.resume : t.pause, false, s.holder === 'user' ? undefined : 'icon')
   if (s.holder === 'user' && s.loaded) add('clean-reload', t.cleanReload)
-  add('close', closeNeedsConfirm(s) ? `${CLOSE_TAB}…` : CLOSE_TAB, true)
+  add('close', closeNeedsConfirm(s) ? `${CLOSE_TAB}…` : CLOSE_TAB, true, 'icon')
   return out
-}
-
-/** What a row of the pad offers at one click: who has it, the brake, close (the clean reload stays in the menu and the bar). */
-export function padRowActions(s: TabActionState, agent: string): TabAction[] {
-  return tabActions(s, agent).filter(a => a.id !== 'clean-reload')
 }
 
 /** The question before closing a tab the agent is using. */
