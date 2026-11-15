@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tether Bridge",
-  "version": "0.2.0.6560",
+  "version": "0.2.0.6564",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0nO41gGGG97Mi1W8c56yT+A/HT6vkcV8kEkk4e65dpotN964rHVWJu7qBizpZXpIzB7Ei8ONhO1SeK19okyIu5n/vcJM4mJhBfMfDWUYVfAGWYxCugXJiysEe4keVYZllH70IjaYdPI7M5vGk4pmYd8m1E+moUY7usAN81oL/lgzUfJDGI0oJkQP9T5e1vWLyzyyqLB1tKmx4L2a/v8cxTh2sWOl+koxVQbYWYf99mm3uROQFOCRpNJw4GE5iflNbH9tjcNl/zkOL2TFcUsOGMT8iyZzzM1YInP4ID7im4oNH+2ZTMjCW26nHkUw5WZOY8yfGamqDKRBz3CnQx505QIDAQAB",
   "description": "Deixa os agentes do Tether (Claude, soul) usarem este navegador, só nas abas que eles abriram ou que você entregou.",
   "minimum_chrome_version": "116",

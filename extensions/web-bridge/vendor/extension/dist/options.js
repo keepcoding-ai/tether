@@ -49,6 +49,25 @@ function applyBrandUi(title) {
   if (logos) mountLogo(title, logos);
 }
 
+// extension/src/debug-request.ts
+var DEBUG_TIMEOUT_MAX_SECONDS = 86400;
+function parseTimeoutSeconds(raw) {
+  const s = raw.trim();
+  if (s === "") return { ok: true };
+  if (!/^\d{1,6}$/.test(s)) return { ok: false };
+  const n = Number(s);
+  if (n > DEBUG_TIMEOUT_MAX_SECONDS) return { ok: false };
+  return { ok: true, callTimeoutMs: n * 1e3 };
+}
+function timeoutSecondsField(choice) {
+  return choice?.callTimeoutMs === void 0 ? "" : String(Math.round(choice.callTimeoutMs / 1e3));
+}
+function debugState(choice, host, connected) {
+  if (!connected) return "offline";
+  if (!host) return choice?.enabled ? "outdated" : "off";
+  return host.on ? "on" : "off";
+}
+
 // src/protocol.ts
 var DEFAULT_PORT = 47821;
 
@@ -91,6 +110,18 @@ async function setAllowEvaluate(allow) {
   await chrome.storage.local.set({ [ALLOW_EVALUATE_KEY]: allow });
 }
 var ALLOW_EVALUATE_STORAGE_KEY = ALLOW_EVALUATE_KEY;
+var DEBUG_CHOICE_STORAGE_KEY = "debugChoice";
+var HOST_DEBUG_STORAGE_KEY = "hostDebugMode";
+async function getDebugChoice() {
+  const v = (await chrome.storage.local.get(DEBUG_CHOICE_STORAGE_KEY))[DEBUG_CHOICE_STORAGE_KEY];
+  return v && typeof v.enabled === "boolean" ? v : null;
+}
+async function setDebugChoice(choice) {
+  await chrome.storage.local.set({ [DEBUG_CHOICE_STORAGE_KEY]: choice });
+}
+async function loadHostDebugMode() {
+  return (await chrome.storage.local.get(HOST_DEBUG_STORAGE_KEY))[HOST_DEBUG_STORAGE_KEY] ?? null;
+}
 var STATUS_STORAGE_KEY = STATUS_KEY;
 
 // extension/src/strings.ts
@@ -139,6 +170,8 @@ var POPUP = {
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
   /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
   debugOn: "Modo de depura\xE7\xE3o ligado",
+  /** O atalho da linha de depuração para a página de opções. */
+  debugOptions: "Op\xE7\xF5es de depura\xE7\xE3o",
   reloadHint: (expected, running) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running}): clique em Recarregar em chrome://extensions.`
 };
 var EVALUATE = {
@@ -181,6 +214,24 @@ var OPTIONS = {
   saved: "Salvo.",
   invalidPort: "A porta precisa ser um n\xFAmero entre 1 e 65535.",
   id: "Identificador"
+};
+var DEBUG = {
+  optionTitle: "Depura\xE7\xE3o",
+  optionHelp: "Grava neste computador o passo a passo de cada a\xE7\xE3o dos agentes, com os endere\xE7os das p\xE1ginas e os textos digitados (senhas ficam sempre de fora), e relaxa os prazos. Serve para investigar uma falha; desligue quando terminar. S\xF3 voc\xEA liga este modo, aqui neste navegador.",
+  off: "Desligado",
+  offHint: "Nada \xE9 gravado al\xE9m do registro de sempre.",
+  on: "Modo de depura\xE7\xE3o",
+  onHint: "Grava o passo a passo e usa o prazo abaixo.",
+  timeoutLabel: "Prazo de cada chamada (segundos)",
+  timeoutHelp: "Vazio = o padr\xE3o de 60 s. 0 = sem prazo.",
+  timeoutInvalid: `Use um n\xFAmero inteiro de segundos, de 0 a 86400, ou deixe vazio.`,
+  saved: "Salvo.",
+  stateOff: "Agora: desligado.",
+  stateOn: "Agora: ligado.",
+  stateOutdated: `Ligado aqui, mas o programa do ${B} neste computador precisa ser atualizado para o modo valer.`,
+  stateOffline: `Sem conex\xE3o com o ${B}: a escolha vale quando ele conectar.`,
+  timeoutNow: (ms) => ms === null ? "Prazo em vigor: sem prazo." : `Prazo em vigor: ${Math.round(ms / 1e3)} s.`,
+  traceAt: (path) => `O passo a passo \xE9 gravado em ${path}`
 };
 
 // extension/src/options.ts
@@ -249,6 +300,60 @@ async function initEvaluate() {
   });
   await renderEvaluate();
 }
+var debugChoices = [...document.querySelectorAll("#debug-choice button")];
+async function renderDebug() {
+  const [choice, host, status] = await Promise.all([getDebugChoice(), loadHostDebugMode(), getStatus()]);
+  const on = choice?.enabled === true;
+  for (const b of debugChoices) b.setAttribute("aria-checked", String(b.dataset.value === (on ? "on" : "off")));
+  const field = $("debug-timeout");
+  if (document.activeElement !== field) field.value = timeoutSecondsField(choice);
+  const kind = debugState(choice, host, status.state === "connected");
+  const text = { off: DEBUG.stateOff, on: DEBUG.stateOn, outdated: DEBUG.stateOutdated, offline: DEBUG.stateOffline }[kind];
+  const state = $("debug-state");
+  state.textContent = host?.on && kind !== "offline" ? `${text} ${DEBUG.timeoutNow(host.callTimeoutMs)}` : text;
+  state.dataset.state = kind;
+  $("debug-trace").textContent = host ? DEBUG.traceAt(host.traceLog) : "";
+}
+function readTimeout() {
+  const parsed = parseTimeoutSeconds($("debug-timeout").value);
+  if (!parsed.ok) {
+    $("debug-message").textContent = DEBUG.timeoutInvalid;
+    return null;
+  }
+  return parsed;
+}
+var saving = Promise.resolve();
+function saveDebug(enabled) {
+  saving = saving.then(async () => {
+    const t = readTimeout();
+    if (!t) return;
+    await setDebugChoice({ enabled, ...t.callTimeoutMs !== void 0 ? { callTimeoutMs: t.callTimeoutMs } : {} });
+    $("debug-message").textContent = DEBUG.saved;
+  });
+  return saving;
+}
+var debugOnScreen = () => debugChoices.some((b) => b.dataset.value === "on" && b.getAttribute("aria-checked") === "true");
+async function initDebug() {
+  for (const [id, text] of Object.entries({
+    "label-debug": DEBUG.optionTitle,
+    "help-debug": DEBUG.optionHelp,
+    "debug-off-title": DEBUG.off,
+    "debug-off-hint": DEBUG.offHint,
+    "debug-on-title": DEBUG.on,
+    "debug-on-hint": DEBUG.onHint,
+    "label-debug-timeout": DEBUG.timeoutLabel,
+    "help-debug-timeout": DEBUG.timeoutHelp
+  })) {
+    $(id).textContent = text;
+  }
+  for (const b of debugChoices) b.addEventListener("click", () => void saveDebug(b.dataset.value === "on"));
+  $("debug-timeout").addEventListener("change", () => void saveDebug(debugOnScreen()));
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && (DEBUG_CHOICE_STORAGE_KEY in changes || HOST_DEBUG_STORAGE_KEY in changes)) void renderDebug();
+    if (area === "session" && STATUS_STORAGE_KEY in changes) void renderDebug();
+  });
+  await renderDebug();
+}
 async function init() {
   document.title = OPTIONS.title;
   for (const [id, text] of Object.entries({
@@ -290,5 +395,6 @@ async function init() {
   });
   await renderStatus();
   await initEvaluate();
+  await initDebug();
 }
 void init();

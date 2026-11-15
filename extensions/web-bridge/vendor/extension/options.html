@@ -42,6 +42,20 @@
       <p id="risk" class="risk tape" hidden></p>
       <div id="evaluate-message" role="status" style="min-height:1.4em;margin-top:8px;color:var(--ok)"></div>
     </section>
+    <section aria-labelledby="label-debug">
+      <h2 id="label-debug" style="font-size:15px;margin:26px 0 2px"></h2>
+      <p id="help-debug"></p>
+      <div id="debug-choice" class="choice" role="radiogroup" aria-labelledby="label-debug">
+        <button type="button" role="radio" data-value="off"><strong id="debug-off-title"></strong><small id="debug-off-hint"></small></button>
+        <button type="button" role="radio" data-value="on"><strong id="debug-on-title"></strong><small id="debug-on-hint"></small></button>
+      </div>
+      <label for="debug-timeout" id="label-debug-timeout"></label>
+      <input id="debug-timeout" type="text" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <small id="help-debug-timeout"></small>
+      <p id="debug-state" role="status" style="margin-top:10px"></p>
+      <small id="debug-trace"></small>
+      <div id="debug-message" role="status" style="min-height:1.4em;margin-top:8px;color:var(--ok)"></div>
+    </section>
     <div id="confirm" class="overlay" hidden>
       <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
         <h2 id="confirm-title" class="tape"></h2>

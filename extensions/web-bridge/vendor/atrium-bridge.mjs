@@ -154,12 +154,14 @@ import { randomBytes as randomBytes2 } from "node:crypto";
 import { chmodSync, existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join as join2 } from "node:path";
-function debugFromCapabilities(capabilities) {
-  if (!capabilities || capabilities.debug !== true) return { on: false };
-  const raw = capabilities.debugCallTimeoutMs;
-  if (raw === void 0) return { on: true };
-  if (typeof raw !== "string" || !DEBUG_TIMEOUT_PATTERN.test(raw.trim())) return { on: false };
-  return { on: true, callTimeoutMs: Number(raw.trim()) };
+function debugFromRequest(request2) {
+  if (request2?.enabled !== true) return { on: false };
+  return { on: true, ...request2.callTimeoutMs !== void 0 ? { callTimeoutMs: request2.callTimeoutMs } : {} };
+}
+function debugRequestFrom(msg) {
+  const t = msg.callTimeoutMs;
+  const ok = typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 9999999999;
+  return { enabled: msg.enabled === true, ...ok ? { callTimeoutMs: t } : {} };
 }
 function bridgeHome(env = process.env) {
   return env.ATRIUM_BRIDGE_HOME || join2(homedir(), ".atrium-bridge");
@@ -343,7 +345,7 @@ function removeDaemonPid(home2, pid) {
   } catch {
   }
 }
-var KEY_SCOPES, UPLOAD_TOOLS, UPLOAD_KEY_NAME, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, traceLogPath, localKeyPath, uploadKeyPath, configPath, lockPath, DEBUG_TIMEOUT_PATTERN, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
+var KEY_SCOPES, UPLOAD_TOOLS, UPLOAD_KEY_NAME, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, traceLogPath, localKeyPath, uploadKeyPath, configPath, lockPath, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
 var init_config = __esm({
   "daemon/src/config.ts"() {
     "use strict";
@@ -365,7 +367,6 @@ var init_config = __esm({
     uploadKeyPath = (home2) => join2(home2, "upload.key");
     configPath = (home2) => join2(home2, "config.json");
     lockPath = (home2) => join2(home2, "config.lock");
-    DEBUG_TIMEOUT_PATTERN = /^\d{1,10}$/;
     isKey = (v) => {
       const k = v;
       return !!k && typeof k.name === "string" && KEY_NAME_PATTERN.test(k.name) && isSecretHash(k.hash) && typeof k.createdAt === "string" && (k.scope === void 0 || KEY_SCOPES.includes(k.scope));
@@ -736,8 +737,7 @@ function targetFromEnv(env = process.env) {
     );
   }
   const client = clientFromEnv(env);
-  const debug = debugFromCapabilities(config2.capabilities);
-  return { port: envPort(env) ?? config2.port, apiKey, ...client ? { client } : {}, ...debug.on ? { debug } : {} };
+  return { port: envPort(env) ?? config2.port, apiKey, ...client ? { client } : {} };
 }
 function uploadKeyOf(get) {
   try {
@@ -774,11 +774,10 @@ function unreachable(port, e) {
     phase: classifyFetchFailure(e)
   });
 }
-function callCeilingMs(debug, toolTimeoutMs, args = {}) {
-  if (debug?.on && debug.callTimeoutMs !== void 0) {
-    return debug.callTimeoutMs === 0 ? null : Math.max(debug.callTimeoutMs, toolTimeoutMs ?? 0, toolOwnTimeoutMs(args) ?? 0);
-  }
-  return Math.min(toolTimeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5);
+function ceilingFromMode(mode, toolTimeoutMs, args = {}) {
+  if (!mode.on) return Math.min(toolTimeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5);
+  if (mode.callTimeoutMs === null) return null;
+  return Math.max(mode.callTimeoutMs, toolTimeoutMs ?? 0, toolOwnTimeoutMs(args) ?? 0);
 }
 function toolOwnTimeoutMs(args) {
   const own2 = args.timeoutMs;
@@ -817,10 +816,10 @@ var init_client = __esm({
         this.controlTimeoutMs = opts.controlTimeoutMs ?? CONTROL_TIMEOUT_MS;
         this.callMarginMs = opts.callMarginMs ?? CALL_MARGIN_MS;
       }
-      /** `timeoutMs`: o prazo do fetch, fixo ou calculado do alvo (o modo debug mora na config); null = sem prazo. */
+      /** `timeoutMs`: o prazo do fetch; null = sem prazo (modo debug sem prazo, informado pelo daemon). */
       async request(method, path, timeoutMs, body, upload = false, callId) {
         const target = typeof this.target === "function" ? this.target() : this.target;
-        const deadline = typeof timeoutMs === "function" ? timeoutMs(target) : timeoutMs;
+        const deadline = timeoutMs;
         const bearer = upload && target.uploadKey ? uploadKeyOf(target.uploadKey) : target.apiKey;
         let res;
         let text;
@@ -883,12 +882,10 @@ var init_client = __esm({
        * POST /browsers/:id/call. `timeoutMs`: o teto da chamada no daemon (sem ele, o do daemon, 60 s). `callId`: vai em
        * X-Bridge-Call (sem ele, o daemon gera um).
        */
-      async call(browserId, tool, args, timeoutMs, callId) {
+      async call(browserId, tool, args, timeoutMs, callId, debugMode) {
         const body = { tool, args, ...timeoutMs ? { timeoutMs } : {} };
-        const deadline = (target) => {
-          const ceiling = callCeilingMs(target.debug, timeoutMs, args);
-          return ceiling === null ? null : ceiling + this.callMarginMs;
-        };
+        const ceiling = debugMode ? ceilingFromMode(debugMode, timeoutMs, args) : Math.min(timeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5);
+        const deadline = ceiling === null ? null : ceiling + this.callMarginMs;
         return (await this.request("POST", `/browsers/${encodeURIComponent(browserId)}/call`, deadline, body, UPLOAD_TOOLS.has(tool), callId)).result;
       }
     };
@@ -901,7 +898,7 @@ var init_texts = __esm({
   "src/texts.ts"() {
     "use strict";
     SERVER_NAME = "atrium-bridge";
-    SERVER_INSTRUCTIONS = 'When a call fails, keep the call id from the error ("(call <id>)"). Run diagnose with that callId to see the stage where it stopped, the tab queue and the debug mode; diagnose answers even while the tab is stuck. A timeout error (CALL_TIMEOUT) already says the stage, the last browser command and the position in the tab queue. If the error says "debug dump: <folder>", read the files there: the screenshot, console.json, target.json and call.json. If the debug mode is off and this trace is not enough, ask the user to turn it on (in the tether: Settings \u2192 Debugging) and repeat the call.';
+    SERVER_INSTRUCTIONS = 'When a call fails, keep the call id from the error ("(call <id>)"). Run diagnose with that callId to see the stage where it stopped, the tab queue and the debug mode; diagnose answers even while the tab is stuck. A timeout error (CALL_TIMEOUT) already says the stage, the last browser command and the position in the tab queue. If the error says "debug dump: <folder>", read the files there: the screenshot, console.json, target.json and call.json. If the debug mode is off and this trace is not enough, ask the user to turn it on in the options page of the Bridge extension in their browser (section "Depura\xE7\xE3o") and repeat the call.';
     REF = 'Element ref from the latest snapshot of this tab (for example "e12").';
     REF_OR_POINT = `${REF} Alternatively give x and y instead of ref.`;
     X = "Horizontal pixel coordinate in the viewport (use together with y, instead of ref).";
@@ -20394,7 +20391,7 @@ function createResilientBridge(client, shell2) {
       listBrowsers: async () => ({ value: await client.browsers(), restarted: false }),
       callTool: async (tool, args, requested, callId) => {
         const { browser, notice } = chooseBrowser(await client.browsers(), requested);
-        const value = await client.call(browser.id, tool, args, daemonTimeoutFor(args), callId);
+        const value = await client.call(browser.id, tool, args, daemonTimeoutFor(args), callId, browser.debug);
         return { value, restarted: false, browser: browser.id, ...notice ? { notice } : {} };
       }
     };
@@ -20486,7 +20483,7 @@ function createResilientBridge(client, shell2) {
         if (notice) progress.notice = notice;
         progress.browser = browser.id;
         progress.stage = "call";
-        return alive(client.call(browser.id, tool, args, daemonTimeoutFor(args), callId));
+        return alive(client.call(browser.id, tool, args, daemonTimeoutFor(args), callId, browser.debug));
       },
       callId
     )
@@ -24863,6 +24860,8 @@ var init_registry = __esm({
       tabs = [];
       /** Último `{t:'focus'}` desta conexão (ISO); undefined se nunca. */
       lastFocusedAt;
+      /** O modo debug pedido pela extensão desta conexão (`{t:'debug'}`, F6). Só em memória: some com a conexão. */
+      debugRequest;
       constructor(info2, ws) {
         this.info = info2;
         this.ws = ws;
@@ -25019,6 +25018,10 @@ var init_registry = __esm({
           })
         );
       }
+      /** As conexões vivas (para mensagens que variam por browser, como o `{t:'config'}` com o modo debug de cada um). */
+      connections() {
+        return [...this.browsers.values()];
+      }
       /** Uma mensagem sem resposta a todas as extensões conectadas (ex.: `{t:'config'}` quando o config.json muda). */
       broadcast(message) {
         for (const conn of this.browsers.values()) {
@@ -25127,33 +25130,43 @@ async function startDaemon(opts) {
   const registry2 = new Registry();
   const traceLog = createTraceLog(traceLogPath(opts.home));
   const dumps = createDumps(join8(dirname6(traceLogPath(opts.home)), "debug"), opts.dumpsMax);
-  const debugOf = (c) => {
-    const fromConfig = debugFromCapabilities(c.capabilities);
-    if (fromConfig.on) return fromConfig.callTimeoutMs === void 0 && opts.debugCallTimeoutMs !== void 0 ? { on: true, callTimeoutMs: opts.debugCallTimeoutMs } : fromConfig;
-    if (opts.debug) return { on: true, ...opts.debugCallTimeoutMs !== void 0 ? { callTimeoutMs: opts.debugCallTimeoutMs } : {} };
-    return { on: false };
+  const debugOf = (_c, conn) => debugFromRequest(conn?.debugRequest);
+  const modeInfo = (conn) => {
+    const dbg = debugOf(config2, conn);
+    const t = timeoutFor(void 0, {}, conn);
+    return {
+      on: dbg.on,
+      callTimeoutMs: Number.isFinite(t) ? t : null,
+      traceLog: traceLog.path,
+      dumpsDir: dumps.dir
+    };
   };
-  const capabilitiesFor = (c) => {
-    const dbg = debugOf(c);
+  const configMessageFor = (conn) => {
+    const capabilities = capabilitiesFor(config2, conn);
+    return { t: "config", ...config2.brand ? { brand: config2.brand } : {}, ...capabilities ? { capabilities } : {}, debugMode: modeInfo(conn) };
+  };
+  const capabilitiesFor = (c, conn) => {
+    const dbg = debugOf(c, conn);
     if (!c.capabilities && !dbg.on) return void 0;
     const { debug: _debug, debugCallTimeoutMs: _timeout, ...rest2 } = c.capabilities ?? {};
     const timeout = dbg.on && dbg.callTimeoutMs !== void 0 ? { debugCallTimeoutMs: String(dbg.callTimeoutMs) } : {};
-    return { ...rest2, ...dbg.on ? { debug: true, ...timeout } : c.capabilities && "debug" in c.capabilities ? { debug: false } : {} };
+    if (!dbg.on && Object.keys(rest2).length === 0 && !c.capabilities) return void 0;
+    return { ...rest2, ...dbg.on ? { debug: true, ...timeout } : {} };
   };
-  const trace = (event, fields) => {
-    if (debugOf(config2).on) traceLog.write(event, fields);
+  const trace = (event, fields, conn) => {
+    if (debugOf(config2, conn).on) traceLog.write(event, fields);
   };
-  const timeoutFor = (own2, args = {}) => {
-    const dbg = debugOf(config2);
+  const timeoutFor = (own2, args = {}, conn) => {
+    const dbg = debugOf(config2, conn);
     if (dbg.on && dbg.callTimeoutMs !== void 0) {
       if (dbg.callTimeoutMs === 0) return Infinity;
       return Math.max(dbg.callTimeoutMs, own2 ?? 0, toolOwnTimeoutMs(args) ?? 0);
     }
     return own2 ?? callTimeoutMs;
   };
-  const modeNow = () => {
-    const t = timeoutFor(void 0);
-    return { debug: debugOf(config2).on, callTimeoutMs: Number.isFinite(t) ? t : null, traceLog: traceLog.path, dumps: { dir: dumps.dir, count: dumps.count() } };
+  const modeNow = (conn) => {
+    const m = modeInfo(conn);
+    return { debug: m.on, callTimeoutMs: m.callTimeoutMs, traceLog: traceLog.path, dumps: { dir: dumps.dir, count: dumps.count() } };
   };
   const stamp = () => {
     const s = statSync8(configPath(opts.home), { bigint: true });
@@ -25174,9 +25187,12 @@ async function startDaemon(opts) {
     }
     seen = now;
     log("config_reloaded", { keys: config2.apiKeys.length });
-    const capabilities = capabilitiesFor(config2);
-    registry2.broadcast({ t: "config", ...config2.brand ? { brand: config2.brand } : {}, ...capabilities ? { capabilities } : {} });
-    log("debug_mode", { on: debugOf(config2).on });
+    for (const conn of registry2.connections()) {
+      try {
+        conn.send(configMessageFor(conn));
+      } catch {
+      }
+    }
     return config2;
   };
   let paused = false;
@@ -25231,7 +25247,7 @@ async function startDaemon(opts) {
     return id;
   };
   registry2.onTimeout = async (conn, rid, tool, inspect, message) => {
-    if (!debugOf(current()).on) return void 0;
+    if (!debugOf(current(), conn).on) return void 0;
     let pieces;
     try {
       pieces = await registry2.ask(conn, "dump", (irid) => ({ t: "dump-request", rid: irid, call: rid }), DUMP_REQUEST_TIMEOUT_MS, `${rid}.dump`);
@@ -25242,7 +25258,7 @@ async function startDaemon(opts) {
     }
     const dir = dumps.write(rid, pieces, { inspect, error: { code: "CALL_TIMEOUT", message } });
     if (!dir) return void 0;
-    trace("dump", { callId: rid, browser: conn.info.id, dir });
+    trace("dump", { callId: rid, browser: conn.info.id, dir }, conn);
     return { data: { dump: dir }, suffix: `; debug dump: ${dir}` };
   };
   const diagnoseBrowser = async (id, args, client, callId) => {
@@ -25256,7 +25272,7 @@ async function startDaemon(opts) {
       extension2 = { error: toWireError(e) };
     }
     const pending = conn.inFlight().filter((p) => p.callId !== callId && (wanted === void 0 || p.callId === wanted));
-    return { browser: id, daemon: { pending, mode: modeNow() }, extension: extension2 };
+    return { browser: id, daemon: { pending, mode: modeNow(conn) }, extension: extension2 };
   };
   let boundPort = 0;
   let embedded;
@@ -25344,10 +25360,11 @@ async function startDaemon(opts) {
       const client = clientOf(req);
       if (req.method === "GET" && url.pathname === "/browsers") {
         if (client) registry2.noteClient(client, "list_browsers");
-        return json2(res, 200, { ok: true, browsers: registry2.list() });
+        return json2(res, 200, { ok: true, browsers: registry2.list().map((b) => ({ ...b, debug: modeInfo(registry2.get(b.id)) })) });
       }
       if (req.method === "GET" && url.pathname === "/status") {
-        const body = { ok: true, paused, ...registry2.status() };
+        const status = registry2.status();
+        const body = { ok: true, paused, ...status, browsers: status.browsers.map((b) => ({ ...b, debug: modeInfo(registry2.get(b.id)) })) };
         return json2(res, 200, body);
       }
       if (req.method === "POST" && url.pathname === "/pause") {
@@ -25403,8 +25420,9 @@ async function startDaemon(opts) {
           throw Object.assign(new Error(`${body.tool} runs only in the MCP server of the Bridge (the upload authorizations live in its memory), not in the daemon API`), { code: "INVALID_ARGUMENT" });
         }
         const callId = callIdOf(req);
+        const target = registry2.get(id);
         if (UPLOAD_TOOLS.has(body.tool)) {
-          trace("gate", { callId, gate: "upload-scope", decision: key.scope === "upload" ? "allow" : "deny", reason: `key "${key.name}" has scope "${key.scope ?? "full"}"` });
+          trace("gate", { callId, gate: "upload-scope", decision: key.scope === "upload" ? "allow" : "deny", reason: `key "${key.name}" has scope "${key.scope ?? "full"}"` }, target);
         }
         if (UPLOAD_TOOLS.has(body.tool) && key.scope !== "upload") {
           log("upload_refused", { key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool });
@@ -25416,15 +25434,15 @@ async function startDaemon(opts) {
         if (body.tool === "list_browsers") {
           throw Object.assign(new Error("list_browsers is GET /browsers"), { code: "INVALID_ARGUMENT" });
         }
-        const timeout = timeoutFor(typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? Math.min(body.timeoutMs, 6e5) : void 0, args);
+        const timeout = timeoutFor(typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? Math.min(body.timeoutMs, 6e5) : void 0, args, target);
         const started = Date.now();
         if (client) registry2.noteClient(client, body.tool);
         const who = { callId, key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool };
         const timeoutMs = Number.isFinite(timeout) ? timeout : null;
         log("call_started", { ...who, timeoutMs });
-        trace("call_started", { ...who, timeoutMs, args: clipForTrace(body.tool === "type" && "text" in args ? { ...args, text: REDACTED } : args) });
+        trace("call_started", { ...who, timeoutMs, args: clipForTrace(body.tool === "type" && "text" in args ? { ...args, text: REDACTED } : args) }, target);
         try {
-          trace("gate", { callId, gate: "pause", decision: paused ? "deny" : "allow", reason: paused ? "the user paused the Bridge" : "not paused" });
+          trace("gate", { callId, gate: "pause", decision: paused ? "deny" : "allow", reason: paused ? "the user paused the Bridge" : "not paused" }, target);
           if (paused) throw new BridgeError("BRIDGE_PAUSED", "the user paused the Bridge: no tool runs and no tab is under control until they resume it. Tell the user and wait.");
           if (body.tool === "upload") args.paths = assertUploadPaths(args.paths);
           if (body.tool === "diagnose") {
@@ -25435,13 +25453,13 @@ async function startDaemon(opts) {
           let result = await registry2.call(id, body.tool, args, timeout, client, callId);
           if (body.tool === "pdf") result = persistPdf(downloadsDir(), result);
           log("call_finished", { ...who, ok: true, durationMs: Date.now() - started });
-          trace("call_finished", { ...who, ok: true, durationMs: Date.now() - started, result: clipForTrace(result) });
+          trace("call_finished", { ...who, ok: true, durationMs: Date.now() - started, result: clipForTrace(result) }, target);
           return json2(res, 200, { ok: true, result });
         } catch (e) {
           log("call_finished", { ...who, ok: false, code: toWireError(e).code, durationMs: Date.now() - started });
-          trace("call_finished", { ...who, ok: false, durationMs: Date.now() - started, error: clipForTrace(toWireError(e)) });
+          trace("call_finished", { ...who, ok: false, durationMs: Date.now() - started, error: clipForTrace(toWireError(e)) }, target);
           const wire = wireWithCallId(e, callId);
-          const dump = debugOf(config2).on && !wire.data?.dump ? dumps.pathOf(callId) : void 0;
+          const dump = debugOf(config2, target).on && !wire.data?.dump ? dumps.pathOf(callId) : void 0;
           throw new RemoteError(dump ? { ...wire, message: `${wire.message}; debug dump: ${dump}`, data: { ...wire.data, dump } } : wire);
         }
       }
@@ -25512,7 +25530,7 @@ async function startDaemon(opts) {
         conn = mine;
         const latest = current();
         const { brand, extensionVersion } = latest;
-        const capabilities = capabilitiesFor(latest);
+        const capabilities = capabilitiesFor(latest, mine);
         mine.send({
           t: "welcome",
           ...brand ? { brand } : {},
@@ -25530,14 +25548,22 @@ async function startDaemon(opts) {
       if (msg.t === "resume") return resume({ browser: conn.info.id });
       if (msg.t === "ping") return conn.send({ t: "pong" });
       if (msg.t === "dump") {
-        if (typeof msg.call === "string" && msg.pieces && typeof msg.pieces === "object" && debugOf(current()).on) {
+        if (typeof msg.call === "string" && msg.pieces && typeof msg.pieces === "object" && debugOf(current(), conn).on) {
           const dir = dumps.write(msg.call, msg.pieces);
-          if (dir) trace("dump", { callId: msg.call, browser: conn.info.id, dir });
+          if (dir) trace("dump", { callId: msg.call, browser: conn.info.id, dir }, conn);
         }
         return;
       }
+      if (msg.t === "debug") {
+        const before = debugOf(current(), conn).on;
+        conn.debugRequest = debugRequestFrom(msg);
+        const after = debugOf(config2, conn);
+        conn.send(configMessageFor(conn));
+        if (before !== after.on) log("debug_request", { browser: conn.info.id, on: after.on });
+        return;
+      }
       if (msg.t === "trace") {
-        if (!Array.isArray(msg.events) || !debugOf(current()).on) return;
+        if (!Array.isArray(msg.events) || !debugOf(current(), conn).on) return;
         for (const ev of msg.events.slice(0, TRACE_BATCH_MAX)) {
           if (!isTraceEvent(ev)) continue;
           const { event, ...fields } = ev;
@@ -25674,9 +25700,7 @@ var init_cli = __esm({
                             start the daemon (WebSocket + HTTP on 127.0.0.1). --embedded (or "embedded": true in
                             config.json) also hosts the Atrium supervisor on 127.0.0.1:<port+1> for the Assistant
         [--call-timeout-ms N] the ceiling of a call to the browser (default 60000)
-        [--debug [--debug-call-timeout-ms N]]
-                            debug mode for this process: trace.log next to daemon.log, and the call ceiling N
-                            (0 = none). Also turned on live by "debug": true in config.json capabilities
+                            (debug mode is turned on only by the person, in the extension options page)
   token pairing|api [--copy] show a secret on request (pairing: typed into the extension options; api: the local
                             API key in api.key, the one the MCP server uses when no key is given to it)
   key create <name> [--scope use|admin|upload] [--replace] [--json]
@@ -25722,19 +25746,15 @@ Files in that folder: daemon.pid (pid of the process that listens; written once 
       };
       const callTimeoutMs = msFlag("--call-timeout-ms");
       if (callTimeoutMs === 0) {
-        process.stderr.write("--call-timeout-ms must be more than 0 (no limit exists only in debug: --debug --debug-call-timeout-ms 0)\n");
+        process.stderr.write("--call-timeout-ms must be more than 0\n");
         process.exit(2);
       }
-      const debugCallTimeoutMs = msFlag("--debug-call-timeout-ms");
-      const debug = rest.includes("--debug") ? true : void 0;
       const daemon = await startDaemon({
         home,
         port,
         ...embedded ? { embedded } : {},
         ...supervisorEnvFile !== void 0 ? { supervisorEnvFile } : {},
-        ...callTimeoutMs !== void 0 ? { callTimeoutMs } : {},
-        ...debug ? { debug } : {},
-        ...debugCallTimeoutMs !== void 0 ? { debugCallTimeoutMs } : {}
+        ...callTimeoutMs !== void 0 ? { callTimeoutMs } : {}
       }).catch((e) => {
         process.stderr.write(`atrium-bridge daemon: ${e instanceof Error ? e.message : String(e)}
 `);
