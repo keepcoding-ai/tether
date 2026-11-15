@@ -83,6 +83,9 @@
 @font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 100 700; font-display: block; src: url("fonts/IBMPlexMonoVar-Roman.woff2") format("woff2"); }
 @font-face { font-family: "Cascadia Mono Bundled"; font-style: normal; font-weight: 200 700; font-display: block; src: url("fonts/CascadiaMono-wght.woff2") format("woff2"); }
 
+/* The interface follows the tether theme: main.ts sets --mono to the theme's font chain and, with ligatures off,
+   the `no-ligatures` class here (contextual alternates only: the interface font keeps its common ligatures). */
+:root.no-ligatures { font-variant-ligatures: no-contextual; }
 /* Programming ligatures (=>, !=, ===) come from the OpenType `calt`/`liga` features. A terminal with ligatures on
    carries the `ligatures` class (app/renderer/terminal-theme.ts TerminalAddons) and the addon's inline
    `font-feature-settings: "calt" on`. Without the class every ligature feature is off: the DOM renderer (the

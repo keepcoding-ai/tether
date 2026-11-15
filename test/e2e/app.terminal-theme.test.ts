@@ -36,9 +36,12 @@ type Hooks = {
   sample(): { text: string; fontFamily: string; background: string | undefined; ligatures: boolean } | undefined
   paint(selector: string, maxW: number, maxH: number): { png: string; painted: number; width: number; height: number } | undefined
   inject(id: string, data: string): void
+  runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
+  notes(): { id: string }[]
 }
 declare const window: { __tether: Hooks }
-declare const document: { querySelectorAll(selector: string): { length: number }; querySelector(selector: string): { open?: boolean } | null }
+declare const document: { querySelectorAll(selector: string): { length: number }; querySelector(selector: string): { open?: boolean } | null; documentElement: { classList: { contains(c: string): boolean } } }
+declare function getComputedStyle(el: unknown): { getPropertyValue(n: string): string; fontFeatureSettings: string; fontFamily: string }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -143,6 +146,33 @@ async function ligaturesSwitch(page: Page): Promise<{ checked: boolean; disabled
   return { checked: await page.isChecked('#term-ligatures'), disabled: await page.isDisabled('#term-ligatures') }
 }
 
+/** The interface and the note editor as painted: `--mono` on the root, the ligatures class, Monaco's lines. */
+async function interfaceLook(page: Page): Promise<{ mono: string; noLigatures: boolean; editorFamily: string; editorFeatures: string }> {
+  return page.evaluate(() => {
+    const lines = document.querySelector('.note-panel .monaco-editor .view-lines') as unknown
+    const cs = getComputedStyle(lines)
+    return {
+      mono: getComputedStyle(document.querySelector('html')).getPropertyValue('--mono').trim(),
+      noLigatures: document.documentElement.classList.contains('no-ligatures'),
+      editorFamily: cs.fontFamily,
+      editorFeatures: cs.fontFeatureSettings,
+    }
+  })
+}
+/** Waits for the interface to follow `family` / `ligatures` (the editor's feature string says "off" for calt/liga when its ligatures are off). */
+async function assertInterface(page: Page, family: string, ligatures: boolean): Promise<void> {
+  await page.waitForFunction(([f, l]) => {
+    const html = document.querySelector('html') as unknown
+    const mono = getComputedStyle(html).getPropertyValue('--mono').trim()
+    return mono.startsWith(`"${f}"`) && document.documentElement.classList.contains('no-ligatures') === !l
+  }, [family, ligatures] as const)
+  const look = await interfaceLook(page)
+  assert.ok(look.mono.startsWith(`"${family}"`), `--mono ${look.mono}`)
+  assert.equal(look.noLigatures, !ligatures, 'root no-ligatures class')
+  assert.ok(look.editorFamily.replace(/\\"/g, '"').includes(`"${family}"`) || look.editorFamily.includes(family), `editor family ${look.editorFamily}`)
+  assert.equal(/"(liga|calt)"\s*(off|0)/.test(look.editorFeatures), !ligatures, `editor features ${look.editorFeatures}`)
+}
+
 const BOX = '\r\n╭──────────────╮ ┌───┬───┐\r\n│ caixa  ▀▄█░▒▓ │ ├───┼───┤\r\n╰──────────────╯ └───┴───┘\r\n'
 
 /**
@@ -162,6 +192,8 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpdir(), 'tether-termtheme-'))
+  // The panels' cwd (not a repository): the note opened below is born in its .tether/notes, outside the repo.
+  const work = mkdtempSync(join(tmpdir(), 'tether-termtheme-work-'))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -173,12 +205,18 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
 
     // 1. Defaults, with the bundled font loaded before the terminal opened.
     assert.deepEqual(await hooks.appearance(page), DEFAULT_APPEARANCE)
-    const first = await createShellPanel(page, root)
+    const first = await createShellPanel(page, work)
     await page.keyboard.press('Control+Alt+ArrowRight')
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 2)
     const ids = await page.evaluate(() => window.__tether.panelIds())
     assert.equal(ids.length, 2)
     await assertPanes(page, ids, DEFAULT_APPEARANCE, 'Fira Code')
+    // A note, for the editor's look.
+    assert.equal(await page.evaluate(() => window.__tether.runCommand('note.new')), 'ran')
+    await page.waitForSelector('.note-panel .monaco-editor .view-lines')
+    await assertInterface(page, 'Fira Code', true)
+    await sleep(400)
+    await page.screenshot({ path: join(artifacts, 'terminal-theme-window.png') })
     assert.equal(await hooks.fontLoaded(page, '350 14px "Fira Code"'), true, 'Fira Code regular face loaded')
     assert.equal(await hooks.fontLoaded(page, '600 14px "Fira Code"'), true, 'Fira Code bold face loaded')
     const renderer = (await hooks.options(page, first))!.renderer
@@ -244,6 +282,7 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
       assert.equal((saved(home) as TerminalAppearance).ligatures, false, 'settings.json has ligatures off')
       await assertPanes(page, ids, { ...DEFAULT_APPEARANCE, ligatures: false }, 'Fira Code')
       assert.equal((await hooks.sample(page))!.ligatures, false)
+      await assertInterface(page, 'Fira Code', false)
       assert.equal((await hooks.options(page, first))!.renderer, 'webgl', 'WebGL is back after the ligatures change')
       await sleep(400)
       const ligOff = (await hooks.paint(page, sampleSel, 700, 130))!
@@ -251,6 +290,7 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
       assert.notEqual(ligOff.png, ligOn.png, 'the sample paints differently without ligatures')
       await page.check('#term-ligatures')
       await waitAppearance(page, { ligatures: true })
+      await assertInterface(page, 'Fira Code', true)
       await assertPanes(page, ids, DEFAULT_APPEARANCE, 'Fira Code')
       await sleep(400)
       assert.equal((await hooks.paint(page, sampleSel, 700, 130))!.png, ligOn.png, 'checked again, the sample paints as it did')
@@ -321,6 +361,7 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     assert.equal((await hooks.sample(page))!.ligatures, true)
     await page.selectOption('#term-font', 'cascadia-mono')
     await waitAppearance(page, { font: 'cascadia-mono', ligatures: false })
+    await assertInterface(page, 'Cascadia Mono Bundled', false)
 
     // 4. The pair follows the app theme (dark ↔ light), with the dialog open.
     const other = scheme0 === 'dark' ? 'light' : 'dark'
@@ -366,11 +407,14 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     app = undefined
     ;({ app, page } = await launch(home))
     assert.deepEqual(await hooks.appearance(page), chosen, 'comes back with the saved appearance')
-    await page.waitForFunction(n => window.__tether.panelIds().length === n, ids.length)
-    const restored = await page.evaluate(() => window.__tether.panelIds())
+    // The two terminals and the note opened for the interface checks.
+    await page.waitForFunction(n => window.__tether.panelIds().length === n, ids.length + 1)
+    const restored = (await page.evaluate(() => window.__tether.panelIds())).filter(id => ids.includes(id))
     assert.deepEqual(restored.sort(), [...ids].sort(), 'layout restored')
     assert.equal(await hooks.fontLoaded(page, '300 14px "Ubuntu Sans Mono"'), true, 'the saved font is loaded before the panes open')
     await assertPanes(page, restored, chosen, 'Ubuntu Sans Mono')
+    await page.waitForSelector('.note-panel .monaco-editor .view-lines')
+    await assertInterface(page, 'Ubuntu Sans Mono', false)
 
     // 6c. Fira Code with ligatures turned off survives a relaunch: the panes open without the addon.
     await page.evaluate(() => window.__tether.openTerminalTheme())
@@ -386,8 +430,10 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     app = undefined
     ;({ app, page } = await launch(home))
     assert.deepEqual(await hooks.appearance(page), firaOff, 'comes back with ligatures off')
-    await page.waitForFunction(n => window.__tether.panelIds().length === n, ids.length)
-    const relaunched = await page.evaluate(() => window.__tether.panelIds())
+    await page.waitForFunction(n => window.__tether.panelIds().length === n, ids.length + 1)
+    const relaunched = (await page.evaluate(() => window.__tether.panelIds())).filter(id => ids.includes(id))
+    await page.waitForSelector('.note-panel .monaco-editor .view-lines')
+    await assertInterface(page, 'Fira Code', false)
     await page.waitForFunction(ids => ids.every(id => window.__tether.termOptions(id)?.renderer === 'webgl' || window.__tether.termOptions(id)?.renderer === 'dom'), relaunched)
     await assertPanes(page, relaunched, firaOff, 'Fira Code')
     await page.evaluate(() => window.__tether.openTerminalTheme())
@@ -412,7 +458,7 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     const deadline = Date.now() + 10_000
     while (Date.now() < deadline && daemons.some(d => pidAlive(d.pid))) await sleep(200)
     for (let i = 0; i < 5; i++) {
-      try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
+      try { rmSync(home, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); break } catch { await sleep(300) }
     }
   }
 })

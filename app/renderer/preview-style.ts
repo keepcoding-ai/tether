@@ -16,10 +16,11 @@ export function readPreviewTokens(el: Element = document.documentElement): Recor
   return out
 }
 
-/** `:root { --x: …; }` for the tokens, with the colour scheme and the terminal's code font. */
-export function tokensCss(tokens: Record<string, string>, scheme: ColorScheme, codeFont: string): string {
+/** `:root { --x: …; }` for the tokens, with the colour scheme, the terminal's code font and its ligatures choice (off also covers `calt`, which browsers apply by default). */
+export function tokensCss(tokens: Record<string, string>, scheme: ColorScheme, codeFont: string, ligatures = true): string {
   const vars = Object.entries(tokens).map(([k, v]) => `${k}:${v};`).join('')
-  return `:root{${vars}--code-font:${codeFont};color-scheme:${scheme};}`
+  const off = ligatures ? '' : 'code,kbd,pre{font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0,"clig" 0,"dlig" 0;}'
+  return `:root{${vars}--code-font:${codeFont};color-scheme:${scheme};}${off}`
 }
 
 /** The document's stylesheet (variables come from `tokensCss`). */

@@ -179,6 +179,7 @@ export class NotePanel implements IContentRenderer {
       fontFamily: font.fontFamily,
       fontSize: font.fontSize,
       fontWeight: String(font.fontWeight),
+      fontLigatures: appearance.ligatures,
       lineHeight: Math.round(font.fontSize * font.lineHeight),
       wordWrap: this.wordWrapEnabled() ? 'on' : 'off',
       wrappingIndent: 'same',
@@ -583,7 +584,7 @@ export class NotePanel implements IContentRenderer {
 
   setAppearance(appearance: TerminalAppearance): void {
     const font = terminalFontOptions(appearance)
-    this.editor?.updateOptions({ fontFamily: font.fontFamily, fontSize: font.fontSize, fontWeight: String(font.fontWeight), lineHeight: Math.round(font.fontSize * font.lineHeight) })
+    this.editor?.updateOptions({ fontFamily: font.fontFamily, fontSize: font.fontSize, fontWeight: String(font.fontWeight), fontLigatures: appearance.ligatures, lineHeight: Math.round(font.fontSize * font.lineHeight) })
   }
 
   private showState(ic: Parameters<typeof icon>[0], title: string, text: string): void {

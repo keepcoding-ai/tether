@@ -6,7 +6,7 @@ import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../s
 import type { ConnectionState, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
-import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
+import { DEFAULT_APPEARANCE, terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { appCommands, GROUP, type CommandHost } from './app-commands.ts'
 import { installBuilderGuard, isBuilder, onBuilderChange, setBuilder } from './builder-mode.ts'
@@ -194,7 +194,7 @@ let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-sc
 let appearance: TerminalAppearance = DEFAULT_APPEARANCE
 let themeDialog: TerminalThemeDialog
 /** The saved appearance read and its font loaded: no panel opens before this, so xterm measures the real glyphs. */
-const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; await loadTerminalFonts(a); for (const l of appearanceListeners) l(a) })
+const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; paintInterface(a); await loadTerminalFonts(a); for (const l of appearanceListeners) l(a) })
 /** Remembered dialog answers ("não perguntar de novo"); main owns the file and pushes every change. */
 let confirmations: Confirmations = {}
 /** The launch profiles (<home>/profiles.json), as last listed or pushed by the daemon's `profiles` event. */
@@ -374,9 +374,16 @@ function applyUi(next: UiSettings): void {
 
 // ---------- terminal appearance ----------
 
+/** The tether theme beyond the panes: `--mono` (the interface's code font) and the ligatures switch on the root. */
+function paintInterface(a: TerminalAppearance): void {
+  document.documentElement.style.setProperty('--mono', terminalFontOptions(a).fontFamily)
+  document.documentElement.classList.toggle('no-ligatures', !a.ligatures)
+}
+
 /** Puts an appearance on every pane (and the dialog's sample); the font must be loaded already. */
 function applyAppearance(a: TerminalAppearance): void {
   appearance = a
+  paintInterface(a)
   for (const p of panels.values()) p.setAppearance(a, theme.scheme)
   for (const l of appearanceListeners) l(a)
   themeDialog?.refresh()

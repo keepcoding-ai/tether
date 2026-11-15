@@ -252,9 +252,10 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
   private paintStyle(): void {
     const doc = this.doc
     if (!doc) return
-    const font = terminalFontOptions(this.host.getAppearance()).fontFamily
+    const appearance = this.host.getAppearance()
+    const font = terminalFontOptions(appearance).fontFamily
     const set = (id: string, css: string): void => { const el = doc.getElementById(id); if (el && el.textContent !== css) el.textContent = css }
-    set('tokens', tokensCss(readPreviewTokens(), this.host.getScheme(), font))
+    set('tokens', tokensCss(readPreviewTokens(), this.host.getScheme(), font, appearance.ligatures))
     set('syntax', tokenColorsCss())
     this.blocksCache = undefined
   }
