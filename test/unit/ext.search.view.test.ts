@@ -4,7 +4,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ALWAYS_EXCLUDED, CANCELLED_MESSAGE, completionMessage, countLine, engineErrorText, EXCLUDES_OFF_NOTE, excludeExpression,
-  LIMIT_HIT_MESSAGE, noResultsMessage, readViewState, regexError, resultCountMessage, seedFromSelection, triggerOf,
+  LIMIT_HIT_MESSAGE, noResultsMessage, readViewState, regexError, resultCountMessage, seedFromSelection, triggerOf, withLocalLimit,
 } from '../../extensions/search/renderer/view-rules.ts'
 
 describe('when an edit searches', () => {
@@ -100,5 +100,17 @@ describe('seed from a selection', () => {
     assert.equal(seedFromSelection('a.b(c)', true), 'a\\.b\\(c\\)')
     assert.equal(seedFromSelection('', false), undefined)
     assert.equal(seedFromSelection('a\nb', false), undefined)
+  })
+})
+
+describe('the limit counts the open editors too', () => {
+  test('a local limit makes a finished search a limit hit', () => {
+    assert.deepEqual(withLocalLimit({ kind: 'done', limitHit: false, messages: [] }, true), { kind: 'done', limitHit: true, messages: [] })
+  })
+  test('no local limit, or a cancelled search: as it was', () => {
+    const d = { kind: 'done', limitHit: false, messages: [] }
+    assert.equal(withLocalLimit(d, false), d)
+    const c = { kind: 'cancelled' }
+    assert.equal(withLocalLimit(c, true), c)
   })
 })

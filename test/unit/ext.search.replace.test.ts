@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  baseName, guardModel, inOrder, isQuietSingle, NOTHING_REPLACED, overlaps, replaceAllConfirmation, replaceAllTitle, replacedLine,
+  afterReplace, baseName, guardModel, inOrder, isQuietSingle, NOTHING_REPLACED, overlaps, replaceAllConfirmation, replaceAllTitle, replacedLine,
   replaceSummary, sameText, splitByEditor, toEol, toRemove, UNDO_NOTE, type GuardModel, type ReplaceOutcome, type ReplaceRange,
 } from '../../extensions/search/renderer/replace-rules.ts'
 
@@ -152,5 +152,20 @@ describe('the confirmation of "Substituir tudo"', () => {
   test('a long replace value shows at most 10 lines', () => {
     const v = Array.from({ length: 12 }, (_, i) => `l${i}`).join('\n')
     assert.match(replaceAllConfirmation(1, 1, v).message ?? '', /l9\n…'/)
+  })
+})
+
+describe('what a replace leaves to do', () => {
+  const out = (path: string, status: ReplaceOutcome['status']): ReplaceOutcome =>
+    status === 'replaced' ? { path, status, count: 1 } : status === 'failed' ? { path, status, message: 'x' } : { path, status } as ReplaceOutcome
+  test('one match replaced, others left in its file: the file is searched again', () => {
+    assert.deepEqual(afterReplace('match', [out('/a', 'replaced')], () => true), { recompute: ['/a'], dropped: [] })
+  })
+  test('the last match of a file, or a skipped file: nothing to search again', () => {
+    assert.deepEqual(afterReplace('match', [out('/a', 'replaced')], () => false), { recompute: [], dropped: [] })
+    assert.deepEqual(afterReplace('match', [out('/a', 'changed')], () => true), { recompute: [], dropped: [] })
+  })
+  test('files replaced as a whole leave for good; the skipped ones stay', () => {
+    assert.deepEqual(afterReplace('many', [out('/a', 'replaced'), out('/b', 'changed'), out('/c', 'replaced')], () => true), { recompute: [], dropped: ['/a', '/c'] })
   })
 })

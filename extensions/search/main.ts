@@ -1,15 +1,19 @@
 // The search extension's Electron-main side: "Search in files" (service.ts, over the worker thread of
 // app/main/text-search-worker.ts, built next to main.cjs) on the bus `ext:search:*`. Every argument comes from the
 // renderer and is checked here: the query is rebuilt field by field, the disk replace is limited to the folders of the
-// last search.
+// last search. `searchFile` searches one file again (after a replace in it), in this process: a short ripgrep run that
+// leaves the worker and its live search alone.
 import { realpathSync, statSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
-import { isInside } from '../../app/main/file-index.ts'
+import { findRipgrep, isInside } from '../../app/main/file-index.ts'
+import { RipgrepTextSearchEngine } from '../../app/main/vscode-ripgrep-text-search.ts'
+import { TextSearchManager } from '../../app/main/vscode-text-search-manager.ts'
+import { escapeGlobPattern } from '../../app/shared/vscode-search-query.ts'
 import { gitChangedFiles } from '../../app/main/git-changed-files.ts'
 import { type FileEdits, replaceInFiles } from '../../app/main/search-replace-disk.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
-import { type IExpression, type IFolderQuery, type ITextQuery, QueryType } from '../../app/shared/vscode-search.ts'
+import { type IExpression, type IFileMatch, type IFolderQuery, type ITextQuery, QueryType } from '../../app/shared/vscode-search.ts'
 import type { SearchChannels } from './ipc.ts'
 import { SearchService } from './service.ts'
 
@@ -20,6 +24,8 @@ const MAX_FOLDERS = 64
 const MAX_REPLACE_FILES = 20_000
 const DEFAULT_MAX_RESULTS = 20_000
 const MAX_RESULTS_LIMIT = 200_000
+/** A one-file search that takes longer than this is abandoned (the file keeps the results it has). */
+const SEARCH_FILE_TIMEOUT_MS = 15_000
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
@@ -144,9 +150,61 @@ export function sanitizeReplace(raw: unknown): FileEdits[] {
   return out
 }
 
+/**
+ * The query that searches only `path`, with the content pattern and the preview options of `query`: its folder is the
+ * file's, its include the file's name (glob characters escaped). Ignore files and exclusions are left out: the file
+ * was already accepted by the search. The encoding and the symbolic link setting come from the searched folder that
+ * holds it.
+ */
+export function fileQuery(query: ITextQuery, path: string): ITextQuery {
+  const holder = query.folderQueries.find(f => isInside(f.folder, path))
+  const folder: IFolderQuery = {
+    folder: dirname(path),
+    includePattern: { [escapeGlobPattern(basename(path))]: true },
+    disregardIgnoreFiles: true,
+    disregardGlobalIgnoreFiles: true,
+    disregardParentIgnoreFiles: true,
+  }
+  if (holder?.fileEncoding !== undefined) folder.fileEncoding = holder.fileEncoding
+  if (holder?.ignoreSymlinks !== undefined) folder.ignoreSymlinks = holder.ignoreSymlinks
+  if (query.ignoreGlobCase !== undefined) folder.ignoreGlobCase = query.ignoreGlobCase
+  const out: ITextQuery = { type: QueryType.Text, folderQueries: [folder], contentPattern: query.contentPattern }
+  if (query.maxResults !== undefined) out.maxResults = query.maxResults
+  if (query.previewOptions) out.previewOptions = query.previewOptions
+  if (query.surroundingContext !== undefined) out.surroundingContext = query.surroundingContext
+  if (query.maxFileSize !== undefined) out.maxFileSize = query.maxFileSize
+  if (query.ignoreGlobCase !== undefined) out.ignoreGlobCase = query.ignoreGlobCase
+  return out
+}
+
+const isFile = (p: string): boolean => { try { return statSync(p).isFile() } catch { return false } }
+
+/**
+ * Searches one file again: the query is checked as `search` checks it and the file must lie inside its folders (the
+ * same real-path guard as the disk replace). Undefined when the file has no match; an error when the arguments are
+ * refused or the search fails (the caller leaves the file's results as they are).
+ */
+export async function searchFile(engine: RipgrepTextSearchEngine | undefined, rawQuery: unknown, path: unknown): Promise<IFileMatch | undefined> {
+  const query = sanitizeQuery(rawQuery)
+  if (!query) throw new Error('Consulta de pesquisa inválida.')
+  if (typeof path !== 'string' || !allowedIn(query.folderQueries.map(f => f.folder))(path)) throw new Error('Arquivo fora das pastas pesquisadas.')
+  if (!isFile(path)) return undefined
+  if (!engine) throw new Error('O ripgrep não foi encontrado nesta instalação.')
+  const results: NonNullable<IFileMatch['results']> = []
+  await new TextSearchManager(fileQuery(query, path), engine)
+    .search(batch => { for (const f of batch) results.push(...(f.results ?? [])) }, AbortSignal.timeout(SEARCH_FILE_TIMEOUT_MS))
+  return results.length > 0 ? { resource: path, results } : undefined
+}
+
 export function activate(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<SearchChannels>()
-  const service = new SearchService(join(main.dist, 'text-search-worker.cjs'), join(main.dist, '..', '..'))
+  const repo = join(main.dist, '..', '..')
+  const service = new SearchService(join(main.dist, 'text-search-worker.cjs'), repo)
+  let engine: RipgrepTextSearchEngine | undefined
+  const rgEngine = (): RipgrepTextSearchEngine | undefined => {
+    if (!engine) { const rg = findRipgrep(repo) ?? findRipgrep(); if (rg) engine = new RipgrepTextSearchEngine(rg) }
+    return engine
+  }
   return [
     ipc.handle('search', (id, raw) => {
       const query = isInt(id) ? sanitizeQuery(raw) : undefined
@@ -157,6 +215,7 @@ export function activate(main: TetherMain): IDisposable[] {
       return { started: true }
     }),
     ipc.on('cancel', id => { if (isInt(id)) service.cancel(id) }),
+    ipc.handle('searchFile', (query, path) => searchFile(rgEngine(), query, path)),
     ipc.handle('replace', files => replaceInFiles(sanitizeReplace(files), { allowed: allowedIn(service.folders()) })),
     ipc.handle('changedFiles', async folders => {
       if (!Array.isArray(folders) || folders.length > MAX_FOLDERS) return []

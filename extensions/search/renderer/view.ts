@@ -11,23 +11,28 @@
 //   src/vs/workbench/contrib/search/browser/searchActionsRemoveReplace.ts (replace a match, a file, a folder; replace all)
 // Replacing checks each range against the found text first (replace.ts): a file that changed after the search is skipped,
 // stays in the tree and is named on the message line.
-// Left out (next steps): the open editors' unsaved text as search input, "only open editors", "only changed files", the
-// search editor.
+// The open editors' text is the search input for their files (buffer-search.ts, getLocalResults): searched in memory at
+// the start, their files dropped from the disk's batches. While results are shown, each open model in the search is
+// watched (FileMatch.bindModel): an edit recomputes its file 250 ms after the last change; a replace of one match
+// recomputes the rest of its file (from its model, or from disk by `searchFile`), so the positions never go stale.
+// Left out (next steps): "only open editors", "only changed files", the search editor.
 import type { ContextMenuEntry, PadHost, PadView, TetherUi } from '../../../app/renderer/ext-api.ts'
 import { icon, type IconName } from '../../../app/renderer/icons.ts'
 import type { UiIpc } from '../../../app/shared/ext-ipc.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
+import { monaco } from '../../../app/renderer/monaco.ts'
 import { createPathOps, QueryBuilder, type ITextQueryBuilderOptions, type QueryBuilderEnv, type SearchFolder } from '../../../app/shared/vscode-search-query.ts'
 import { dirname, editsOf, FileMatch, Match, SearchModel, SearchResult, SearchSortOrder, type RenderableMatch } from '../../../app/shared/vscode-search-model.ts'
-import { DEFAULT_TEXT_SEARCH_PREVIEW_OPTIONS } from '../../../app/shared/vscode-search.ts'
+import { DEFAULT_MAX_SEARCH_RESULTS, DEFAULT_TEXT_SEARCH_PREVIEW_OPTIONS, type IFileMatch, type ITextQuery, type ITextSearchResult } from '../../../app/shared/vscode-search.ts'
 import type { SearchChannels, SearchDone } from '../ipc.ts'
+import { applyFileResults, bufferInQuery, bufferResults, bufferSearch, matchCount, mergeDiskBatch, resourceOf } from './buffer-search.ts'
 import { applyReplace } from './replace.ts'
-import { isQuietSingle, replaceAllConfirmation, replaceSummary, toRemove, type ReplaceOutcome } from './replace-rules.ts'
+import { afterReplace, isQuietSingle, replaceAllConfirmation, replaceSummary, toRemove, type ReplaceOutcome } from './replace-rules.ts'
 import { replaceLabel } from './results-rules.ts'
 import { SearchResults, type ResultsSnapshot } from './results.ts'
 import {
   completionMessage, countLine, engineErrorText, excludeExpression, NO_FOLDER_MESSAGE, readViewState, regexError,
-  seedFromSelection, triggerOf, type MessageLine, type ViewMode,
+  seedFromSelection, triggerOf, withLocalLimit, type MessageLine, type ViewMode,
 } from './view-rules.ts'
 import { SearchWidget, type SearchWidgetState } from './widget.ts'
 
@@ -38,6 +43,8 @@ const IS_LINUX = /linux/i.test(navigator.platform)
 const COUNT_EVERY_MS = 100
 /** The fields' values enter their histories once the person stops changing the search for this long (VS Code's delayer). */
 const HISTORY_DELAY_MS = 2000
+/** An edit of an open file recomputes its results once its text has been still for this long (FileMatch's scheduler). */
+const MODEL_UPDATE_MS = 250
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag)
@@ -57,7 +64,21 @@ interface Live {
   /** A batch arrived (the previous search's results are gone). */
   added: boolean
   byUser: boolean
+  /** The keys (PathIdentity) of the files searched in memory: the disk's batches leave them out. */
+  buffered: Set<string>
+  /** Matches the disk's batches may still add (maxResults less what the open editors gave). */
+  remaining: number
+  /** The open editors hit the limit, or a disk batch was cut to it. */
+  localLimitHit: boolean
 }
+
+/** The search whose results are on screen: what recomputes a file. */
+interface Shown {
+  query: ITextQuery
+  included: (path: string) => boolean
+}
+
+type TextModel = monaco.editor.ITextModel
 
 /** A search that ended, with how. */
 interface Ended extends Live { done: Exclude<SearchDone, { kind: 'error' }> }
@@ -110,6 +131,15 @@ export class SearchView implements PadView {
   private searchAfter = false
   /** Grows whenever the results model is emptied or refilled: a replace that ends after that leaves the new results alone. */
   private epoch = 0
+  /** The search the results on screen come from, while they are shown. */
+  private shown: Shown | undefined
+  /** The open models watched for edits; the watch of the models opened later. */
+  private readonly bound = new Map<TextModel, { listener: IDisposable; timer: ReturnType<typeof setTimeout> | undefined }>()
+  private modelWatch: IDisposable | undefined
+  /** Files to recompute once the running search (or replace) ends. */
+  private readonly pending = new Set<string>()
+  /** The keys of files the person took out of the results as a whole (dismissed, replaced): an edit does not bring them back. */
+  private readonly dropped = new Set<string>()
 
   constructor(ui: TetherUi, host: PadHost) {
     this.ui = ui
@@ -133,7 +163,7 @@ export class SearchView implements PadView {
       showLineNumbers: () => ui.settings.get<boolean>('showLineNumbers') === true,
       open: (match, opts) => this.open(match, opts.side),
       replace: element => this.replace(element),
-      dismiss: element => this.model.searchResult.remove(element),
+      dismiss: element => this.dismiss(element),
       menu: element => this.rowMenu(element),
       describe: element => this.describe(element),
     })
@@ -211,6 +241,7 @@ export class SearchView implements PadView {
     clearTimeout(this.historyTimer)
     if (this.live) this.ipc.send('cancel', this.live.id)
     this.live = undefined
+    this.unbindModels()
     for (const s of this.subs) s.dispose()
     this.subs.length = 0
     this.results.dispose()
@@ -392,23 +423,33 @@ export class SearchView implements PadView {
       const error = regexError(s.search)
       if (error) { this.widget.setSearchMessage({ text: error, tone: 'error' }); return }
     }
-    const query = this.buildQuery(s, folders)
-    if (!query) return
+    const built = this.buildQuery(s, folders)
+    if (!built) return
+    const { query, builder } = built
     this.widget.setSearchMessage(undefined)
     this.stopLive()
     const id = ++this.seq
-    this.live = { id, query, include: s.include, exclude: s.exclude, useExcludes: s.useExcludesAndIgnoreFiles, started: performance.now(), added: false, byUser: false }
+    const shown: Shown = { query, included: path => builder.pathIncludedInQuery(query, path) }
+    // The open editors first, from their text (getLocalResults); their files stay out of the disk's batches.
+    const local = this.searchBuffers(shown)
+    this.live = {
+      id, query, include: s.include, exclude: s.exclude, useExcludes: s.useExcludesAndIgnoreFiles, started: performance.now(), added: false, byUser: false,
+      buffered: local.keys, remaining: local.remaining, localLimitHit: local.limitHit,
+    }
     // New roots; the previous results stay on screen until the first batch (or the end) of this search.
     this.model.query = query
+    this.dropped.clear()
+    this.bindModels(shown)
     this.setSearching(true)
     this.scheduleHistory()
+    if (local.files.length > 0) this.addBatch(this.live, local.files)
     this.ipc.invoke('search', id, query).then(
       r => { if (!r.started) this.finish(id, { kind: 'error', message: r.message }) },
       err => this.finish(id, { kind: 'error', message: err instanceof Error ? err.message : String(err) }),
     )
   }
 
-  private buildQuery(s: SearchWidgetState, folders: SearchFolder[]): ReturnType<QueryBuilder['text']> | undefined {
+  private buildQuery(s: SearchWidgetState, folders: SearchFolder[]): { query: ReturnType<QueryBuilder['text']>; builder: QueryBuilder } | undefined {
     const settings = this.ui.settings
     const off = !s.useExcludesAndIgnoreFiles
     const options: ITextQueryBuilderOptions = {
@@ -423,8 +464,9 @@ export class SearchView implements PadView {
       expandPatterns: true,
     }
     try {
-      return new QueryBuilder(this.env(folders)).text(
-        { pattern: s.search, isRegExp: s.regex, isCaseSensitive: s.caseSensitive, isWordMatch: s.wholeWord }, folders, options)
+      const builder = new QueryBuilder(this.env(folders))
+      const query = builder.text({ pattern: s.search, isRegExp: s.regex, isCaseSensitive: s.caseSensitive, isWordMatch: s.wholeWord }, folders, options)
+      return { query, builder }
     } catch (e) {
       // A pattern the builder refuses (a missing folder in "./x", a bad glob): shown under the field, the results go.
       this.widget.setSearchMessage({ text: e instanceof Error ? e.message : String(e), tone: 'error' })
@@ -439,6 +481,14 @@ export class SearchView implements PadView {
     if (this.disposed) return
     const run = this.live?.id === id ? this.live : undefined
     if (!run) return
+    const merged = mergeDiskBatch(matches, run.buffered, p => this.model.searchResult.paths.key(p), run.remaining)
+    run.remaining -= merged.count
+    if (merged.trimmed) run.localLimitHit = true
+    if (merged.files.length > 0) this.addBatch(run, merged.files)
+  }
+
+  /** A batch of the running search enters the results; the first one replaces the previous search's. */
+  private addBatch(run: Live, matches: IFileMatch[]): void {
     if (!run.added) {
       // The first batch replaces the previous search's results: the tree starts over (collapse state, scroll).
       run.added = true
@@ -465,6 +515,7 @@ export class SearchView implements PadView {
       this.setMessage([])
       return
     }
+    done = withLocalLimit(done, live.localLimitHit)
     if (!live.added) {
       // Nothing arrived yet: the previous search's results are still in the model. They go; the roots of this search come
       // back for a batch still on its way.
@@ -478,6 +529,125 @@ export class SearchView implements PadView {
     this.counting = true
     this.results.refresh()
     this.showCompletion()
+    this.runPending()
+  }
+
+  // ---------- the open editors' text ----------
+
+  /** The open models in the search, searched in memory: their results, the keys of their files, what the limit leaves, and whether they hit it. */
+  private searchBuffers(shown: Shown): { files: IFileMatch[]; keys: Set<string>; remaining: number; limitHit: boolean } {
+    const files: IFileMatch[] = []
+    const keys = new Set<string>()
+    let remaining = shown.query.maxResults ?? DEFAULT_MAX_SEARCH_RESULTS
+    let limitHit = false
+    for (const model of monaco.editor.getModels()) {
+      const path = this.pathOf(model, shown)
+      if (path === undefined) continue
+      keys.add(this.model.searchResult.paths.key(path))
+      if (limitHit) continue
+      const r = bufferSearch(model, shown.query, remaining)
+      remaining -= matchCount(r.results)
+      if (r.limitHit) limitHit = true
+      if (r.results.length > 0) files.push({ resource: path, results: r.results })
+    }
+    return { files, keys, remaining: Math.max(0, remaining), limitHit }
+  }
+
+  /** The model's file as the results name it, when the model takes part in the search. */
+  private pathOf(model: TextModel, shown: Shown): string | undefined {
+    if (model.uri.scheme !== 'file') return undefined
+    const path = resourceOf(model.uri.fsPath, shown.query.folderQueries.map(f => f.folder), CASE_INSENSITIVE)
+    return bufferInQuery(model, () => shown.included(path)) ? path : undefined
+  }
+
+  /** Watches the open models in the search, and the models opened from now on, for edits. */
+  private bindModels(shown: Shown): void {
+    this.unbindModels()
+    this.shown = shown
+    for (const model of monaco.editor.getModels()) this.bindModel(model)
+    this.modelWatch = monaco.editor.onDidCreateModel(model => this.bindModel(model))
+  }
+
+  /** An edit recomputes the model's file once the text has been still for MODEL_UPDATE_MS (one timer per model). */
+  private bindModel(model: TextModel): void {
+    const shown = this.shown
+    if (!shown || this.bound.has(model) || this.pathOf(model, shown) === undefined) return
+    const entry: { listener: IDisposable; timer: ReturnType<typeof setTimeout> | undefined } = { listener: { dispose: () => {} }, timer: undefined }
+    const change = model.onDidChangeContent(() => {
+      clearTimeout(entry.timer)
+      entry.timer = setTimeout(() => {
+        entry.timer = undefined
+        const path = this.shown && !model.isDisposed() ? this.pathOf(model, this.shown) : undefined
+        if (path !== undefined) void this.recompute(path)
+      }, MODEL_UPDATE_MS)
+    })
+    const gone = model.onWillDispose(() => this.unbindModel(model))
+    entry.listener = { dispose: () => { change.dispose(); gone.dispose() } }
+    this.bound.set(model, entry)
+  }
+
+  private unbindModel(model: TextModel): void {
+    const entry = this.bound.get(model)
+    if (!entry) return
+    clearTimeout(entry.timer)
+    entry.listener.dispose()
+    this.bound.delete(model)
+  }
+
+  /** Stops watching the models (results cleared, a new search, the pad gone). */
+  private unbindModels(): void {
+    this.modelWatch?.dispose()
+    this.modelWatch = undefined
+    for (const model of [...this.bound.keys()]) this.unbindModel(model)
+    this.shown = undefined
+    this.pending.clear()
+  }
+
+  /**
+   * Recomputes one file of the results from its text now: an open model is searched in memory, a closed file again on
+   * disk (`searchFile`). While a search or a replace runs it waits for its end.
+   */
+  private async recompute(path: string): Promise<void> {
+    const shown = this.shown
+    if (!shown || this.disposed) return
+    if (this.mustWait()) { this.pending.add(path); return }
+    if (this.dropped.has(this.model.searchResult.paths.key(path))) return
+    const epoch = this.epoch
+    const model = monaco.editor.getModel(monaco.Uri.file(path))
+    let results: ITextSearchResult[]
+    if (model) results = bufferResults(model, shown.query)
+    else {
+      try {
+        results = (await this.ipc.invoke('searchFile', shown.query, path))?.results ?? []
+      } catch {
+        return // refused or failed: the file keeps the results it has
+      }
+    }
+    if (this.disposed || epoch !== this.epoch || this.shown !== shown) return
+    if (this.mustWait()) { this.pending.add(path); return }
+    applyFileResults(this.model.searchResult, path, results)
+  }
+
+  /** A search runs or a replace is being applied: the results are not touched until it ends. */
+  private mustWait(): boolean {
+    return this.live !== undefined || this.busy === 'apply'
+  }
+
+  /** The files that waited for a search or a replace to end. */
+  private runPending(): void {
+    if (this.pending.size === 0 || this.live || this.busy) return
+    const paths = [...this.pending]
+    this.pending.clear()
+    for (const p of paths) void this.recompute(p)
+  }
+
+  /** The person dismisses a row: a file or a folder leaves for good (an edit of its text does not bring it back). */
+  private dismiss(element: RenderableMatch): void {
+    if (!(element instanceof Match)) {
+      const files = element instanceof FileMatch ? [element] : element.allDownstreamFileMatches()
+      for (const f of files) this.dropped.add(this.model.searchResult.paths.key(f.resource))
+    }
+    this.model.searchResult.remove(element)
   }
 
   /** The message of the search that ended, over the results shown now. */
@@ -503,6 +673,8 @@ export class SearchView implements PadView {
 
   private clearResults(): void {
     this.epoch++
+    this.unbindModels()
+    this.dropped.clear()
     this.ended = undefined
     this.counting = false
     clearTimeout(this.countTimer)
@@ -594,6 +766,10 @@ export class SearchView implements PadView {
     if (epoch === this.epoch) {
       const gone = toRemove(targets, outcomes)
       if (gone.length > 0) this.model.searchResult.batchRemove(gone)
+      // A file with matches left after one was replaced is searched again: their positions moved with the new text.
+      const todo = afterReplace(target instanceof Match ? 'match' : 'many', outcomes, p => this.fileOf(p) !== null)
+      for (const p of todo.dropped) this.dropped.add(this.model.searchResult.paths.key(p))
+      for (const p of todo.recompute) this.pending.add(p)
       // A single match replaced keeps the count line, unless nothing is left to count.
       if (isQuietSingle(target instanceof Match ? 'match' : 'many', outcomes) && this.model.searchResult.count() > 0) this.showCount()
       else this.setMessage(replaceSummary(outcomes))
@@ -604,7 +780,13 @@ export class SearchView implements PadView {
   /** A replace ended: the actions come back, and a search asked for meanwhile runs now. */
   private afterReplace(): void {
     this.updateReplaceAll()
-    if (this.searchAfter && !this.disposed) { this.searchAfter = false; this.runSearch() }
+    if (this.searchAfter && !this.disposed) { this.searchAfter = false; this.runSearch(); return }
+    this.runPending()
+  }
+
+  /** The file's entry in the results, when it has one. */
+  private fileOf(path: string): FileMatch | null {
+    return this.model.searchResult.getFolderMatch(path)?.getDownstreamFileMatch(path) ?? null
   }
 
   // ---------- the tree's actions ----------
@@ -621,7 +803,7 @@ export class SearchView implements PadView {
   }
 
   private rowMenu(element: RenderableMatch): ContextMenuEntry[] {
-    const dismiss: ContextMenuEntry = { icon: 'x', label: 'Dispensar', run: () => this.model.searchResult.remove(element) }
+    const dismiss: ContextMenuEntry = { icon: 'x', label: 'Dispensar', run: () => this.dismiss(element) }
     // The replace entries only while the replace field is open (as the row buttons).
     const replace: ContextMenuEntry[] = this.model.replaceActive
       ? [{ icon: 'swap', label: replaceLabel(element instanceof Match ? 'match' : element instanceof FileMatch ? 'file' : 'folder'), run: () => this.replace(element) }, 'sep']

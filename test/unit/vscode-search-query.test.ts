@@ -551,6 +551,41 @@ for (const platform of ['posix', 'win32'] as const) {
       })
     })
 
+    describe('pathIncludedInQuery (from outside, on a built query)', () => {
+      const SRC = fix('/foo/root1/src/a.ts')
+      const JS = fix('/foo/root1/b.js')
+      const OUTSIDE = fix('/other/dir/c.ts')
+
+      test('no include or exclude: every path is in', () => {
+        const qb = single()
+        const query = qb.text(PATTERN_INFO, [ROOT_1])
+        for (const p of [SRC, JS, OUTSIDE]) assert.equal(qb.pathIncludedInQuery(query, p), true, p)
+      })
+
+      test('the exclude field takes a path out', () => {
+        const qb = single()
+        const query = qb.text(PATTERN_INFO, [ROOT_1], { excludePattern: [{ pattern: '*.js' }], expandPatterns: true })
+        assert.equal(qb.pathIncludedInQuery(query, JS), false)
+        assert.equal(qb.pathIncludedInQuery(query, SRC), true)
+      })
+
+      test('an include glob keeps only what it matches', () => {
+        const qb = single()
+        const query = qb.text(PATTERN_INFO, [ROOT_1], { includePattern: '*.ts', expandPatterns: true })
+        assert.equal(qb.pathIncludedInQuery(query, SRC), true)
+        assert.equal(qb.pathIncludedInQuery(query, JS), false)
+      })
+
+      test('a search path keeps only the files under it', () => {
+        const qb = single()
+        const query = qb.text(PATTERN_INFO, [ROOT_1], { includePattern: './src', expandPatterns: true })
+        assert.equal(query.usingSearchPaths, true)
+        assert.equal(qb.pathIncludedInQuery(query, SRC), true)
+        assert.equal(qb.pathIncludedInQuery(query, JS), false)
+        assert.equal(qb.pathIncludedInQuery(query, OUTSIDE), false)
+      })
+    })
+
     describe('changedFiles', () => {
       test('searches only the changed files', () => {
         const query = single().text(PATTERN_INFO, [ROOT_1], { changedFiles: [fix('/foo/root1/a.ts'), fix('/foo/root1/sub/b.ts')] })

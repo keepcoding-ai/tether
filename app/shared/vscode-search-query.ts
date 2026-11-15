@@ -250,6 +250,15 @@ export interface BuiltTextQuery extends ITextQuery {
   userDisabledExcludesAndIgnoreFiles?: boolean
 }
 
+/** The part of a built query that decides whether a path is in it (`pathIncludedInQuery`). */
+export interface PathQueryProps {
+  folderQueries: readonly IFolderQuery[]
+  usingSearchPaths?: boolean
+  excludePattern?: IExpression
+  includePattern?: IExpression
+  ignoreGlobCase?: boolean
+}
+
 /** What `commonQuery` returns (the part shared by every query type). */
 interface ICommonQueryProps {
   folderQueries: IFolderQuery[]
@@ -412,8 +421,10 @@ export class QueryBuilder {
 
   /**
    * Whether a file passes the query's global include/exclude expressions and search paths (`pathIncludedInQuery` of search.ts).
+   * Takes any query this builder made (the open editors' buffers are filtered with it, as getLocalResults does); the
+   * folders' own exclusions and ignore files are not read, as in VS Code.
    */
-  private pathIncludedInQuery(queryProps: ICommonQueryProps, fsPath: string): boolean {
+  pathIncludedInQuery(queryProps: PathQueryProps, fsPath: string): boolean {
     const globOptions = queryProps.ignoreGlobCase ? { ignoreCase: true } : undefined
     if (queryProps.excludePattern && withoutExceptions(queryProps.excludePattern, globOptions)(fsPath)) {
       return false

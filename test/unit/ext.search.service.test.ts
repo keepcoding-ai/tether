@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { Worker } from 'node:worker_threads'
-import { allowedIn, sanitizeQuery, sanitizeReplace } from '../../extensions/search/main.ts'
+import { allowedIn, fileQuery, sanitizeQuery, sanitizeReplace, searchFile } from '../../extensions/search/main.ts'
+import { findRipgrep } from '../../app/main/file-index.ts'
+import { RipgrepTextSearchEngine } from '../../app/main/vscode-ripgrep-text-search.ts'
 import { SearchService } from '../../extensions/search/service.ts'
 import type { TextSearchWorkerReply } from '../../app/main/text-search-worker.ts'
 import { QueryType, type IFileMatch, type ITextQuery } from '../../app/shared/vscode-search.ts'
@@ -188,5 +190,46 @@ describe('replace guard (allowedIn)', () => {
       return
     }
     assert.equal(allowed(join(proj, 'link', 'out.txt')), false)
+  })
+})
+
+describe('searchFile (one file searched again, in main)', () => {
+  const rg = findRipgrep(REPO) ?? findRipgrep()
+  const engine = rg ? new RipgrepTextSearchEngine(rg) : undefined
+  const lines = (m: IFileMatch | undefined): number[] =>
+    (m?.results ?? []).flatMap(r => 'rangeLocations' in r ? r.rangeLocations.map(x => x.source.startLineNumber) : [])
+
+  it('the file query: its folder, its escaped name, no ignore files, the pattern and previews of the search', () => {
+    const q: ITextQuery = { ...query(root, 'x'), previewOptions: { matchLines: 1, charsPerLine: 100 }, surroundingContext: 2, includePattern: { '*.md': true }, excludePattern: { '**/a': true } }
+    const f = fileQuery(q, join(root, 'small', 'a[1]*.txt'))
+    assert.deepEqual(f.folderQueries, [{ folder: join(root, 'small'), includePattern: { 'a[[]1[]][*].txt': true }, disregardIgnoreFiles: true, disregardGlobalIgnoreFiles: true, disregardParentIgnoreFiles: true }])
+    assert.deepEqual(f.contentPattern, q.contentPattern)
+    assert.deepEqual(f.previewOptions, q.previewOptions)
+    assert.equal(f.surroundingContext, 2)
+    assert.equal(f.includePattern, undefined, 'the global include is left out')
+    assert.equal(f.excludePattern, undefined, 'the global exclude is left out')
+  })
+
+  it('finds the matches of that file only, even one an ignore file hides', { skip: !engine }, async () => {
+    const dir = join(root, 'one')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'f.txt'), 'pin one\nno\npin pin\n')
+    await writeFile(join(dir, 'f.txt.bak'), 'pin\n')
+    await writeFile(join(dir, 'other.txt'), 'pin\n')
+    await writeFile(join(dir, '.gitignore'), 'f.txt\n')
+    const m = await searchFile(engine, query(root, 'pin'), join(dir, 'f.txt'))
+    assert.equal(m?.resource, join(dir, 'f.txt'))
+    assert.deepEqual(lines(m), [0, 2, 2])
+  })
+
+  it('no match: undefined; a file that is gone: undefined', { skip: !engine }, async () => {
+    assert.equal(await searchFile(engine, query(root, 'nomatchzz'), join(root, 'small', 'a.txt')), undefined)
+    assert.equal(await searchFile(engine, query(root, 'needle'), join(root, 'small', 'gone.txt')), undefined)
+  })
+
+  it('refuses a bad query and a path outside the folders', async () => {
+    await assert.rejects(searchFile(engine, { contentPattern: { pattern: '' } }, join(root, 'small', 'a.txt')))
+    await assert.rejects(searchFile(engine, query(join(root, 'small'), 'needle'), join(root, 'big', 'huge.txt')))
+    await assert.rejects(searchFile(engine, query(join(root, 'small'), 'needle'), 'relative.txt'))
   })
 })

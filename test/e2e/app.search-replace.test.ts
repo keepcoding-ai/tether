@@ -7,8 +7,8 @@
 //   4. regex with $1 and \u$1; preserve case (quux/Quux/QUUX); an empty replace field erases the found text;
 //   5. \r\n, accents and emoji before the match, a BOM: the bytes outside the replaced text stay;
 //   6. the guard: a file changed on disk after the search is skipped (intact), named on the message line, still in the tree;
-//   7. files open in an editor: the replace lands in the editor, the note saves it, Ctrl+Z undoes it; an open file whose
-//      editor text differs from what the search found is skipped;
+//   7. files open in an editor: the replace lands in the editor, the note saves it, Ctrl+Z undoes it; an open file edited
+//      after the search has its matches recomputed from the editor's text and is replaced where the match is now;
 //   8. a read-only file fails with the reason, the others are replaced;
 //   9. the replace field closed: no replace button on the rows, the commands do nothing; "Substituir nos arquivos" opens it;
 //  10. volume: "Substituir tudo" over 1 000 files × 5 matches (time logged), sampled on disk.
@@ -374,11 +374,12 @@ test('search: replace end to end (match, file, folder, all, regex, case, encodin
     await page.keyboard.press('Control+Home')
     await page.keyboard.type('abc')
     await until('ed2 saved', async () => { const n = await noteOf(page, ed2); return !!n && !n.dirty && n.text.startsWith('abcEDQ') })
-    s = await replaceAll(page, '2 ocorrências substituídas em 1 arquivo.', 'open editors')
-    assert.match(s.message[1] ?? '', /^1 arquivo mudou depois da pesquisa e foi pulado: ed2\.txt\./, 'the edited open file is skipped')
+    await until('ed2 recomputed from its editor', async () => (await snap(page)).results.rows.some(r => r.kind === 'match' && r.before === 'abc' && r.inside === 'EDQ'))
+    s = await replaceAll(page, '3 ocorrências substituídas em 2 arquivos.', 'open editors')
+    assert.equal(s.message.length, 1, 'nothing skipped')
     let note = (await noteOf(page, ed))!
     assert.equal(note.text.replaceAll('\r\n', '\n'), 'Y first\nsecond Y\n', 'the replace landed in the editor')
-    assert.equal((await noteOf(page, ed2))!.text.replaceAll('\r\n', '\n'), 'abcEDQ x\n', 'the skipped editor untouched')
+    assert.equal((await noteOf(page, ed2))!.text.replaceAll('\r\n', '\n'), 'abcY x\n', 'the edited editor replaced where its match is now')
     await until('the note saves the replace', async () => { const n = await noteOf(page, ed); return !!n && !n.dirty && read(ed) === n.text })
     assert.equal(read(ed).replaceAll('\r\n', '\n'), 'Y first\nsecond Y\n', 'the disk got the new text by the note')
     await page.evaluate(x => window.__tether.openNote(x), ed)

@@ -20,6 +20,11 @@ export interface SearchChannels {
      * not order the reply of an invoke against `webContents.send` messages, while messages sent in sequence keep their order.
      */
     search: (id: number, query: ITextQuery) => { started: true } | { started: false; message: string }
+    /**
+     * Searches one file again with the query (its pattern and preview options; no ignore files, no exclusions), outside
+     * the live search: undefined when the file has no match. The file must lie inside the query's folders.
+     */
+    searchFile: (query: ITextQuery, path: string) => IFileMatch | undefined
     /** Applies replacements on disk; a file is written only if every range still holds the found text. Only inside the folders of this window's last search. */
     replace: (files: FileEdits[]) => FileOutcome[]
     /** The files changed in git (modified, added, renamed, untracked) under these folders. */

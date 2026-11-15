@@ -100,6 +100,17 @@ export function toRemove<T>(targets: readonly { path: string; element: T }[], ou
   return targets.filter(t => replaced.has(t.path)).map(t => t.element)
 }
 
+/**
+ * What a replace leaves to do in the results (FileMatch.updatesMatchesForLineAfterReplace): a file where one match was
+ * replaced and others are left is searched again (their positions moved), and a file replaced as a whole (a file, a
+ * folder, everything) has left the results for good: later edits of its text do not bring it back.
+ */
+export function afterReplace(target: 'match' | 'many', outcomes: readonly ReplaceOutcome[], hasMatches: (path: string) => boolean): { recompute: string[]; dropped: string[] } {
+  const replaced = outcomes.filter(o => o.status === 'replaced').map(o => o.path)
+  if (target === 'many') return { recompute: [], dropped: replaced }
+  return { recompute: replaced.filter(hasMatches), dropped: [] }
+}
+
 const n = (v: number): string => v.toLocaleString('pt-BR')
 const plural = (v: number, one: string, many: string): string => (v === 1 ? one : many)
 

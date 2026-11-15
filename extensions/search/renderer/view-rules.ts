@@ -66,6 +66,11 @@ export interface Completion {
   byUser?: boolean
 }
 
+/** How a search ended, counting the results from the open editors too: their limit, or the cap on the disk's batches, is a limit hit. */
+export function withLocalLimit<D extends { kind: string; limitHit?: boolean }>(done: D, localLimitHit: boolean): D {
+  return done.kind === 'done' && localLimitHit && !done.limitHit ? { ...done, limitHit: true } : done
+}
+
 /** The message lines once a search ends. */
 export function completionMessage(c: Completion): MessageLine[] {
   const lines: MessageLine[] = []
