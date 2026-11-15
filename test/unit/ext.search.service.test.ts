@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { Worker } from 'node:worker_threads'
-import { allowedIn, fileQuery, sanitizeQuery, sanitizeReplace, searchFile } from '../../extensions/search/main.ts'
+import { allowedIn, fileQuery, MAX_READ_BYTES, readText, sanitizeQuery, sanitizeReplace, searchFile } from '../../extensions/search/main.ts'
 import { findRipgrep } from '../../app/main/file-index.ts'
 import { RipgrepTextSearchEngine } from '../../app/main/vscode-ripgrep-text-search.ts'
 import { SearchService } from '../../extensions/search/service.ts'
@@ -231,5 +231,32 @@ describe('searchFile (one file searched again, in main)', () => {
     await assert.rejects(searchFile(engine, { contentPattern: { pattern: '' } }, join(root, 'small', 'a.txt')))
     await assert.rejects(searchFile(engine, query(join(root, 'small'), 'needle'), join(root, 'big', 'huge.txt')))
     await assert.rejects(searchFile(engine, query(join(root, 'small'), 'needle'), 'relative.txt'))
+  })
+})
+
+describe('readText (the replace preview reads a file)', () => {
+  it('decodes as the disk replace does: BOM out of the text, UTF-16, CRLF kept', async () => {
+    const dir = join(root, 'read')
+    await mkdir(dir)
+    await writeFile(join(dir, 'plain.txt'), 'ação\r\nnext\n')
+    await writeFile(join(dir, 'bom.txt'), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('with bom\n', 'utf8')]))
+    await writeFile(join(dir, 'u16.txt'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('wide\n', 'utf16le')]))
+    assert.deepEqual(await readText([dir], join(dir, 'plain.txt')), { ok: true, text: 'ação\r\nnext\n' })
+    assert.deepEqual(await readText([dir], join(dir, 'bom.txt')), { ok: true, text: 'with bom\n' })
+    assert.deepEqual(await readText([dir], join(dir, 'u16.txt')), { ok: true, text: 'wide\n' })
+  })
+
+  it('refuses outside the folders, invalid UTF-8, a missing file and a file over the limit', async () => {
+    const dir = join(root, 'read2')
+    await mkdir(dir)
+    await writeFile(join(dir, 'bad.bin'), Buffer.from([0x61, 0xff, 0xfe, 0x00, 0xc3]))
+    await writeFile(join(dir, 'big.txt'), Buffer.alloc(MAX_READ_BYTES + 1, 0x61))
+    assert.deepEqual(await readText([dir], join(dir, 'bad.bin')), { ok: false, message: 'A codificação deste arquivo não é suportada.' })
+    assert.deepEqual(await readText([dir], join(dir, 'gone.txt')), { ok: false, message: 'O arquivo não foi encontrado.' })
+    assert.equal((await readText([dir], join(dir, 'big.txt'))).ok, false)
+    assert.deepEqual(await readText([dir], join(root, 'small', 'a.txt')), { ok: false, message: 'Arquivo fora das pastas pesquisadas.' })
+    assert.deepEqual(await readText([dir], 'relative.txt'), { ok: false, message: 'Arquivo fora das pastas pesquisadas.' })
+    assert.deepEqual(await readText([], join(dir, 'big.txt')), { ok: false, message: 'Arquivo fora das pastas pesquisadas.' })
+    assert.equal((await readText([dir], 42)).ok, false)
   })
 })

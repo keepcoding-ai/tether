@@ -21,7 +21,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
-type Row = { kind: 'folder' | 'file' | 'match'; id: string; level: number; label: string; count?: number; line?: number; before?: string; inside?: string; after?: string; focused: boolean }
+type Row = { kind: 'folder' | 'file' | 'match'; id: string; level: number; label: string; count?: number; expanded?: boolean; line?: number; before?: string; inside?: string; after?: string; focused: boolean }
 type Snap = {
   widget: { search: string; replace: string; replaceShown: boolean; replaceAllEnabled: boolean }
   message: string[]; searching: boolean; replacing: boolean; viewMode: 'list' | 'tree'; count: number; fileCount: number
@@ -93,12 +93,23 @@ async function until(what: string, fn: () => boolean | Promise<boolean>, ms = 8_
   assert.fail(`timed out: ${what}`)
 }
 
-/** The tree has redrawn: the rows match the model's counts. */
+/**
+ * The tree has redrawn: the rows match the model's counts, and every expanded file shows as many match rows as it counts
+ * (a file row can be redrawn with its new count before its match rows are).
+ */
 async function settled(page: Page): Promise<Snap> {
   await page.waitForFunction(() => {
     const s = window.__tether.search()!
     const rows = s.results.rows
-    return rows.filter(r => r.kind === 'file').reduce((n, r) => n + (r.count ?? 0), 0) === s.count && (s.count > 0 || rows.length === 0)
+    if (rows.filter(r => r.kind === 'file').reduce((n, r) => n + (r.count ?? 0), 0) !== s.count || (s.count === 0 && rows.length > 0)) return false
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]!
+      if (r.kind !== 'file' || r.expanded === false) continue
+      let n = 0
+      while (rows[i + 1 + n]?.kind === 'match') n++
+      if (n !== r.count) return false
+    }
+    return true
   })
   return snap(page)
 }

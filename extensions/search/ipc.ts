@@ -27,6 +27,11 @@ export interface SearchChannels {
     searchFile: (query: ITextQuery, path: string) => IFileMatch | undefined
     /** Applies replacements on disk; a file is written only if every range still holds the found text. Only inside the folders of this window's last search. */
     replace: (files: FileEdits[]) => FileOutcome[]
+    /**
+     * A file's text for the replace preview, decoded as the disk replace decodes it (BOM outside the text). Only inside the
+     * folders of this window's last search, at most 5 MB; a refusal or a failure comes back as a message in Portuguese.
+     */
+    readText: (path: string) => { ok: true; text: string } | { ok: false; message: string }
     /** The files changed in git (modified, added, renamed, untracked) under these folders. */
     changedFiles: (folders: string[]) => string[]
   }

@@ -1,0 +1,9 @@
+/* The replace preview pane (preview-panel.ts): the read-only diff editor on the frame's background, or a message in its place. */
+.srp-pane { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; background: var(--frame-bg); color: var(--fg); font: 13px var(--ui); }
+.srp-diff { flex: 1; min-height: 0; min-width: 0; }
+.srp-diff[hidden] { display: none; }
+.srp-msg { margin: 18px 20px; color: var(--fg-dim); line-height: 1.5; }
+.srp-msg[hidden] { display: none; }
+/* The activated match's line, on both sides. */
+.srp-pane .srp-line { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.srp-pane .srp-line-gutter { border-left: 3px solid var(--accent); margin-left: 3px; }

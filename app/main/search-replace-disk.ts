@@ -101,11 +101,12 @@ export function applyEdits(text: string, edits: readonly DiskEdit[]): string | u
   return out
 }
 
-type Encoding = 'utf8' | 'utf8-bom' | 'utf16le' | 'utf16be'
+export type Encoding = 'utf8' | 'utf8-bom' | 'utf16le' | 'utf16be'
 
 const NOT_SUPPORTED = 'A codificação deste arquivo não é suportada para substituição.'
 
-function decode(bytes: Buffer): { text: string; encoding: Encoding } | undefined {
+/** A file's text without its BOM, and the encoding to write it back in; undefined for bytes that are not valid UTF-8/UTF-16. */
+export function decode(bytes: Buffer): { text: string; encoding: Encoding } | undefined {
   try {
     if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
       return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(3)), encoding: 'utf8-bom' }

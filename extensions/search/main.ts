@@ -4,6 +4,7 @@
 // last search. `searchFile` searches one file again (after a replace in it), in this process: a short ripgrep run that
 // leaves the worker and its live search alone.
 import { realpathSync, statSync } from 'node:fs'
+import { readFile, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import { findRipgrep, isInside } from '../../app/main/file-index.ts'
@@ -11,7 +12,7 @@ import { RipgrepTextSearchEngine } from '../../app/main/vscode-ripgrep-text-sear
 import { TextSearchManager } from '../../app/main/vscode-text-search-manager.ts'
 import { escapeGlobPattern } from '../../app/shared/vscode-search-query.ts'
 import { gitChangedFiles } from '../../app/main/git-changed-files.ts'
-import { type FileEdits, replaceInFiles } from '../../app/main/search-replace-disk.ts'
+import { decode, type FileEdits, replaceInFiles } from '../../app/main/search-replace-disk.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { type IExpression, type IFileMatch, type IFolderQuery, type ITextQuery, QueryType } from '../../app/shared/vscode-search.ts'
 import type { SearchChannels } from './ipc.ts'
@@ -26,6 +27,8 @@ const DEFAULT_MAX_RESULTS = 20_000
 const MAX_RESULTS_LIMIT = 200_000
 /** A one-file search that takes longer than this is abandoned (the file keeps the results it has). */
 const SEARCH_FILE_TIMEOUT_MS = 15_000
+/** The largest file `readText` reads (the replace preview); the openers hand bigger ones to the system's program. */
+export const MAX_READ_BYTES = 5 * 1024 * 1024
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
@@ -196,6 +199,29 @@ export async function searchFile(engine: RipgrepTextSearchEngine | undefined, ra
   return results.length > 0 ? { resource: path, results } : undefined
 }
 
+export type ReadTextResult = { ok: true; text: string } | { ok: false; message: string }
+
+/**
+ * A file's text for the replace preview: only inside the folders of the last search (the disk replace's guard), at most
+ * MAX_READ_BYTES, decoded as the disk replace decodes it (the BOM stays out of the text; invalid UTF-8 is refused).
+ */
+export async function readText(folders: readonly string[], path: unknown): Promise<ReadTextResult> {
+  if (typeof path !== 'string' || !allowedIn(folders)(path)) return { ok: false, message: 'Arquivo fora das pastas pesquisadas.' }
+  try {
+    const st = await stat(path)
+    if (!st.isFile()) return { ok: false, message: 'O arquivo não foi encontrado.' }
+    if (st.size > MAX_READ_BYTES) return { ok: false, message: 'O arquivo é grande demais para a prévia (mais de 5 MB).' }
+    const decoded = decode(await readFile(path))
+    if (!decoded) return { ok: false, message: 'A codificação deste arquivo não é suportada.' }
+    return { ok: true, text: decoded.text }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { ok: false, message: 'O arquivo não foi encontrado.' }
+    if (code === 'EACCES' || code === 'EPERM') return { ok: false, message: 'Sem permissão para ler este arquivo.' }
+    return { ok: false, message: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export function activate(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<SearchChannels>()
   const repo = join(main.dist, '..', '..')
@@ -216,6 +242,7 @@ export function activate(main: TetherMain): IDisposable[] {
     }),
     ipc.on('cancel', id => { if (isInt(id)) service.cancel(id) }),
     ipc.handle('searchFile', (query, path) => searchFile(rgEngine(), query, path)),
+    ipc.handle('readText', path => readText(service.folders(), path)),
     ipc.handle('replace', files => replaceInFiles(sanitizeReplace(files), { allowed: allowedIn(service.folders()) })),
     ipc.handle('changedFiles', async folders => {
       if (!Array.isArray(folders) || folders.length > MAX_FOLDERS) return []

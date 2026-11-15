@@ -1,6 +1,8 @@
 // The search extension: "Pesquisar nos arquivos", a port of VS Code's Search view for the left side bar, over the window's
-// projects. The pad id and the command ids are in people's layout.json and keybindings.json and never change.
+// projects. The pad id, the command ids and the replace preview's pane type are in people's layout.json and
+// keybindings.json and never change.
 import type { ExtensionManifest } from '../types.ts'
+import { REPLACE_PREVIEW_LAYOUT } from './layouts.ts'
 
 const SEARCH = 'Pesquisar'
 
@@ -12,6 +14,7 @@ export const manifest: ExtensionManifest = {
   hosts: ['renderer', 'main'],
   optional: true,
   contributes: {
+    paneTypes: [REPLACE_PREVIEW_LAYOUT],
     pads: [
       { id: 'search.view', title: 'Pesquisar', icon: 'magnifying-glass', defaultSide: 'left', scope: 'global', absorbsHeader: true, order: 20 },
     ],

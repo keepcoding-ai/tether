@@ -19,6 +19,8 @@
 // onQueryChanged -> QueryBuilder onlyOpenEditors), "only changed files" asks main for the git changes of the projects first
 // and searches just those (changedFiles); with both on, the open files that changed. The rows' menu copies (searchActionsCopy.ts),
 // restricts the search to a folder or leaves it out (searchActionsFind.ts); the explorer's "Pesquisar na pasta…" comes through api.ts.
+// With the replace field open, activating a match (not "to the side") shows the replace preview (preview-panel.ts) instead
+// of opening the file, while the setting useReplacePreview is on; the preview follows the results and the replace term.
 // Left out (next steps): the search editor.
 import type { ContextMenuEntry, PadHost, PadView, TetherUi } from '../../../app/renderer/ext-api.ts'
 import { icon, type IconName } from '../../../app/renderer/icons.ts'
@@ -31,6 +33,8 @@ import { DEFAULT_MAX_SEARCH_RESULTS, DEFAULT_TEXT_SEARCH_PREVIEW_OPTIONS, type I
 import type { SearchChannels, SearchDone } from '../ipc.ts'
 import { applyFileResults, bufferInQuery, bufferResults, bufferSearch, matchCount, mergeDiskBatch, resourceOf } from './buffer-search.ts'
 import { copyAllText, copyPathText, copyText, lineDelimiter } from './copy-rules.ts'
+import type { ReplacePreview } from './preview-panel.ts'
+import { opensPreview } from './preview-rules.ts'
 import { applyReplace } from './replace.ts'
 import { afterReplace, isQuietSingle, replaceAllConfirmation, replaceSummary, toRemove, type ReplaceOutcome } from './replace-rules.ts'
 import { replaceLabel } from './results-rules.ts'
@@ -113,6 +117,7 @@ export class SearchView implements PadView {
   readonly element = el('div', 'srch')
   private readonly ui: TetherUi
   private readonly host: PadHost
+  private readonly preview: ReplacePreview
   private readonly ipc: UiIpc<SearchChannels>
   private readonly model = new SearchModel({ caseInsensitive: CASE_INSENSITIVE })
   private readonly widget: SearchWidget
@@ -154,9 +159,10 @@ export class SearchView implements PadView {
   /** The keys of files the person took out of the results as a whole (dismissed, replaced): an edit does not bring them back. */
   private readonly dropped = new Set<string>()
 
-  constructor(ui: TetherUi, host: PadHost) {
+  constructor(ui: TetherUi, host: PadHost, preview: ReplacePreview) {
     this.ui = ui
     this.host = host
+    this.preview = preview
     this.ipc = ui.ipc<SearchChannels>()
     const saved = readViewState(host.state)
     this.viewMode = saved.viewMode ?? (ui.settings.get<string>('defaultViewMode') === 'tree' ? 'tree' : 'list')
@@ -216,6 +222,12 @@ export class SearchView implements PadView {
       ui.settings.onChange('showLineNumbers', () => this.results.refresh()),
       ui.settings.onChange('collapseResults', () => this.results.refresh()),
       ui.settings.onChange('sortOrder', () => this.results.refresh()),
+      preview.attach({
+        model: this.model,
+        fileOf: path => this.fileOf(path),
+        busy: () => this.mustWait(),
+        replaceShown: () => this.widget.state().replaceShown,
+      }),
     )
     // The results model announces every change (a batch, a dismissal): the tree redraws at its pace, the count follows.
     const onChange = this.model.searchResult.onChange(e => { this.results.update(e); this.onResultsChanged() })
@@ -327,7 +339,7 @@ export class SearchView implements PadView {
     this.host.persist()
   }
 
-  /** F4 / Shift+F4: the next (previous) match is selected in the tree and opened; the keyboard goes to the editor. */
+  /** F4 / Shift+F4: the next (previous) match is selected in the tree and opened (the keyboard goes to the editor), or shown in the replace preview. */
   step(backwards: boolean): void {
     const match = backwards ? this.results.previous() : this.results.next()
     if (match) this.open(match, false)
@@ -607,6 +619,7 @@ export class SearchView implements PadView {
     this.results.refresh()
     this.showCompletion()
     this.runPending()
+    this.preview.changed()
   }
 
   // ---------- the open editors' text ----------
@@ -759,6 +772,7 @@ export class SearchView implements PadView {
     this.countTimer = undefined
     this.model.searchResult.clear()
     this.results.reset()
+    this.preview.close()
     this.updateTopbar()
   }
 
@@ -766,6 +780,7 @@ export class SearchView implements PadView {
   private onResultsChanged(): void {
     if (this.disposed) return
     this.updateTopbar()
+    this.preview.changed()
     if (!this.counting) return
     if (!this.live) { this.showCount(); return }
     if (this.countTimer !== undefined) return
@@ -798,6 +813,9 @@ export class SearchView implements PadView {
     this.model.replaceString = s.replace
     this.results.refresh()
     this.updateReplaceAll()
+    // The preview shows what the replace field would do: it closes with the field and follows its term.
+    if (s.replaceShown) this.preview.changed()
+    else this.preview.close()
   }
 
   private updateReplaceAll(): void {
@@ -858,6 +876,7 @@ export class SearchView implements PadView {
   /** A replace ended: the actions come back, and a search asked for meanwhile runs now. */
   private afterReplace(): void {
     this.updateReplaceAll()
+    this.preview.changed()
     if (this.searchAfter && !this.disposed) { this.searchAfter = false; this.runSearch(); return }
     this.runPending()
   }
@@ -869,8 +888,15 @@ export class SearchView implements PadView {
 
   // ---------- the tree's actions ----------
 
-  /** Opens the match's file with its range selected; `root` is the project that holds it (else the file's folder). */
+  /**
+   * Opens the match's file with its range selected; `root` is the project that holds it (else the file's folder). With the
+   * replace field open (and useReplacePreview on) a match activated in place shows the replace preview instead.
+   */
   private open(match: Match, side: boolean): void {
+    if (opensPreview({ replaceShown: this.model.replaceActive, useReplacePreview: this.ui.settings.get<boolean>('useReplacePreview') !== false, side })) {
+      this.preview.show(match)
+      return
+    }
     const file = match.parent().resource
     const r = match.range()
     const root = this.ui.workspace.folderOf(file)?.path ?? dirname(file)

@@ -1,9 +1,10 @@
-// The search extension's renderer entry: the pad (SearchView) and its commands.
+// The search extension's renderer entry: the pad (SearchView), its commands and the replace preview's pane type.
 import type { TetherUi } from '../../app/renderer/ext-api.ts'
 import { monaco } from '../../app/renderer/monaco.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { onFindInFolder } from './api.ts'
 import { manifest } from './manifest.ts'
+import { ReplacePreview } from './renderer/preview-panel.ts'
 import { SearchView } from './renderer/view.ts'
 
 export { manifest }
@@ -21,15 +22,20 @@ function editorSelection(): string | undefined {
 
 export function activate(ui: TetherUi): IDisposable[] {
   let view: SearchView | undefined
+  const preview = new ReplacePreview(ui)
+  ui.test.expose('searchPreview', () => preview.snapshot())
+  // The URIs of every Monaco model: the preview's two go with its pane.
+  ui.test.expose('monacoModels', () => monaco.editor.getModels().map(m => m.uri.toString()))
   ui.test.expose('search', () => view?.snapshot())
   // The cheap part of the snapshot (no rows): for polling while a big result set is in.
   ui.test.expose('searchStatus', () => view?.status())
   /** Opens the pad and runs `fn` on its view. */
   const onView = (fn: (v: SearchView) => void) => () => { ui.pads.open(PAD); if (view) fn(view) }
   return [
+    ui.panes.register(preview.paneType()),
     // The explorer's "Pesquisar na pasta…" (api.ts): the pad opens with the folder in the include field.
     onFindInFolder(path => { ui.pads.open(PAD); view?.findInFolder(path) }),
-    ui.pads.register({ id: PAD, create: host => (view = new SearchView(ui, host)) }),
+    ui.pads.register({ id: PAD, create: host => (view = new SearchView(ui, host, preview)) }),
     ui.commands.registerCommand('search.focus', () => {
       // Read before the pad takes the keyboard from the editor.
       const selected = editorSelection()
@@ -52,5 +58,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     // Both do nothing while the replace field is closed (the view checks).
     ui.commands.registerCommand('search.replace-all', () => view?.replace('all')),
     ui.commands.registerCommand('search.replace', () => view?.replaceFocused()),
+    { dispose: () => preview.dispose() },
   ]
 }
