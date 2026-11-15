@@ -1,6 +1,5 @@
 // The search extension: "Pesquisar nos arquivos", a port of VS Code's Search view for the left side bar, over the window's
-// projects. The pad id and the command ids are in people's layout.json and keybindings.json and never change. Skeleton:
-// the pad and its settings; the service, the fields, the results tree and the commands come in the next steps.
+// projects. The pad id and the command ids are in people's layout.json and keybindings.json and never change.
 import type { ExtensionManifest } from '../types.ts'
 
 const SEARCH = 'Pesquisar'
@@ -33,9 +32,23 @@ export const manifest: ExtensionManifest = {
     },
     commands: [
       { command: 'search.focus', title: 'Pesquisar nos arquivos', category: SEARCH, icon: 'magnifying-glass' },
+      { command: 'search.refresh', title: 'Atualizar pesquisa', category: SEARCH, icon: 'arrows-clockwise' },
+      { command: 'search.clear', title: 'Limpar resultados da pesquisa', category: SEARCH, icon: 'broom' },
+      { command: 'search.cancel', title: 'Cancelar pesquisa', category: SEARCH, icon: 'stop' },
+      { command: 'search.collapse-all', title: 'Recolher todos os resultados', category: SEARCH, icon: 'arrows-in-line-vertical' },
+      { command: 'search.expand-all', title: 'Expandir todos os resultados', category: SEARCH, icon: 'arrows-out-line-vertical' },
+      { command: 'search.view-as-tree', title: 'Ver resultados como árvore', category: SEARCH, icon: 'tree-view' },
+      { command: 'search.view-as-list', title: 'Ver resultados como lista', category: SEARCH, icon: 'list' },
+      { command: 'search.toggle-details', title: 'Alternar detalhes da pesquisa', category: SEARCH, icon: 'dots-three' },
+      { command: 'search.next-match', title: 'Ir para o próximo resultado da pesquisa', category: SEARCH, icon: 'arrow-down' },
+      { command: 'search.previous-match', title: 'Ir para o resultado anterior da pesquisa', category: SEARCH, icon: 'arrow-up' },
+      { command: 'search.clear-history', title: 'Limpar histórico de pesquisa', category: SEARCH, icon: 'broom' },
     ],
     keybindings: [
       { key: 'ctrl+shift+f', command: 'search.focus' },
+      // Not in a terminal: function keys belong to the programs running there (mc, htop, editors).
+      { key: 'f4', command: 'search.next-match', where: ['window', 'note'] },
+      { key: 'shift+f4', command: 'search.previous-match', where: ['window', 'note'] },
     ],
   },
 }

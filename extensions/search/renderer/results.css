@@ -1,1 +1,59 @@
-/* The search pad: results tree (filled in the next steps). */
+/* The search results tree (results.ts): folder, file and match rows of one height, the sticky layer over the scrolling list. */
+.sr { position: relative; height: 100%; min-height: 0; overflow: hidden; color: var(--fg); font: 13px var(--ui); }
+/* The virtual list's scrolling element (rows are absolutely placed in it); it holds the keyboard, its active row shows the ring. */
+.sr-scroll { position: absolute; inset: 0; overflow: auto; outline: none; }
+.sr-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+.sr-scroll::-webkit-scrollbar-track, .sr-scroll::-webkit-scrollbar-corner { background: transparent; }
+.sr-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg-dim) 35%, transparent); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+.sr-scroll::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg-dim) 55%, transparent); background-clip: content-box; }
+
+/* ---- the rows: indent by level, twistie, then what the kind shows ---- */
+.sr-row {
+  position: relative; display: flex; align-items: center; gap: 4px; height: 24px; box-sizing: border-box;
+  padding: 0 6px 0 calc(4px + (var(--lvl, 1) - 1) * 14px); cursor: pointer; outline: none; user-select: none; white-space: nowrap;
+}
+.sr-row:hover { background: var(--bg-hover); }
+.sr-row.selected { background: var(--bg-3); }
+.sr-scroll:focus-visible .sr-row.focused, .sr-scroll:focus .sr-row.focused.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
+.sr-twist { flex: none; display: grid; place-items: center; width: 16px; height: 16px; color: var(--fg-dim); }
+.sr-twist .ph { width: 12px; height: 12px; transition: transform .12s ease; }
+.sr-row[aria-expanded="true"] > .sr-twist .ph { transform: rotate(90deg); }
+.sr-ico { flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin-right: 2px; color: var(--fg-dim); }
+.sr-ico .ph { width: 16px; height: 16px; }
+.sr-folder > .sr-ico { color: var(--accent); }
+.sr-name { flex: none; max-width: 70%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sr-desc { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--fg-dim); }
+.sr-sp { flex: 1; min-width: 4px; }
+/* The count pill (VS Code's CountBadge). */
+.sr-count {
+  flex: none; min-width: 18px; height: 18px; padding: 0 6px; box-sizing: border-box; border-radius: 9px; text-align: center;
+  font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; color: var(--fg); background: var(--bg-3);
+}
+
+/* A match: the line around the found text, the found text highlighted; with the replace preview, struck out beside the replacement. */
+.sr-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sr-hit { border-radius: 2px; background: color-mix(in srgb, var(--warn) 32%, transparent); }
+.sr-hit-replaced { text-decoration: line-through; background: color-mix(in srgb, var(--err) 26%, transparent); }
+.sr-rep { border-radius: 2px; background: color-mix(in srgb, var(--ok) 28%, transparent); }
+.sr-line { flex: none; margin-left: 4px; font-size: 11.5px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+
+/* The row actions: shown on hover and on the row the keyboard is on. */
+.sr-acts { flex: none; display: none; align-items: center; gap: 1px; }
+.sr-row:hover > .sr-acts, .sr-scroll:focus .sr-row.focused > .sr-acts { display: flex; }
+.sr-act.ib { width: 20px; height: 20px; border-radius: 4px; color: var(--fg-dim); }
+.sr-act.ib .ph { width: 14px; height: 14px; }
+.sr-act.ib:hover { color: var(--fg); background: var(--bg-hover-2, var(--bg-hover)); }
+
+/* ---- sticky scroll: the folders and files above the first row in view, drawn over the tree ---- */
+/* Its width is set to the scrolling element's content box, so the vertical scrollbar stays uncovered. */
+.sr-sticky { position: absolute; top: 0; left: 0; z-index: 3; background: var(--frame-bg); }
+.sr-sticky.empty { display: none; }
+.sr-sticky::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px; pointer-events: none;
+  background: linear-gradient(color-mix(in srgb, var(--fg) 12%, transparent), transparent);
+}
+/* Each row is opaque (a pushed-up row slides under the ones above it); hover and selection are layered over the card's colour. */
+.sr-sticky-row { position: absolute; left: 0; width: 100%; box-sizing: border-box; background: var(--frame-bg); }
+.sr-sticky-row:hover { background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--frame-bg); }
+.sr-sticky-row.selected { background: linear-gradient(var(--bg-3), var(--bg-3)), var(--frame-bg); }
+.sr-sticky .sr-row:hover > .sr-acts { display: flex; }
