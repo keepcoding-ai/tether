@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { manifest } from '../../extensions/explorer/manifest.ts'
-import { agentsHint, agentsTooltip, pinLabel, recentRow, recentToOffer, rootMenu, rootTitle, type RootInfo } from '../../extensions/explorer/renderer/rules.ts'
+import { ActivityGate, agentsHint, agentsTooltip, pinLabel, recentRow, recentToOffer, rootMenu, rootTitle, type RootInfo } from '../../extensions/explorer/renderer/rules.ts'
 import { parseKeys, resolvedDefaults } from '../../app/renderer/shortcuts.ts'
 
 const root = (over: Partial<RootInfo> = {}): RootInfo => ({ path: 'C:\\proj\\alpha', name: 'alpha', pinned: false, agents: [], ...over })
@@ -81,5 +81,32 @@ describe('explorer manifest', () => {
     assert.ok(chord !== undefined && resolvedDefaults(false).length > 20)
     assert.ok(!resolvedDefaults(false).some(b => JSON.stringify(b.keys) === chord), 'no core binding on Ctrl+K E')
     assert.ok(c.commands!.some(x => x.command === 'explorer.focus'))
+  })
+})
+
+describe('ActivityGate (the disk is watched only while a view is shown)', () => {
+  test('active while some view is shown and the window is not hidden; sends only changes', () => {
+    const sent: boolean[] = []
+    const g = new ActivityGate(a => sent.push(a))
+    const v1 = {}, v2 = {}
+    g.setView(v1, true)
+    g.setView(v2, true)
+    g.setView(v1, false)
+    assert.deepEqual(sent, [true], 'one view still shown')
+    g.setDocument(false)
+    g.setView(v1, true)
+    assert.deepEqual(sent, [true, false], 'a hidden window stays inactive')
+    g.setDocument(true)
+    g.setView(v1, false)
+    g.setView(v2, false)
+    assert.deepEqual(sent, [true, false, true, false])
+    assert.equal(g.active, false)
+  })
+
+  test('a window hidden at start sends nothing until shown', () => {
+    const sent: boolean[] = []
+    const g = new ActivityGate(a => sent.push(a), false)
+    g.setView({}, true)
+    assert.deepEqual(sent, [])
   })
 })

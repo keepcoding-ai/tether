@@ -165,3 +165,39 @@ export function failedSituation(title: string, message: string, consequence = 'N
 export function trashFailedSituation(name: string, message: string): DialogSpec {
   return failedSituation(`Não foi possível mover "${name}" para a lixeira`, message, 'Nada foi apagado.')
 }
+
+/**
+ * Whether the disk is worth watching: some view of the explorer is shown and the window itself is not hidden (minimized).
+ * `send` runs only when that answer changes.
+ */
+export class ActivityGate {
+  private readonly shown = new Set<object>()
+  private documentVisible: boolean
+  private last = false
+  private readonly send: (active: boolean) => void
+
+  constructor(send: (active: boolean) => void, documentVisible = true) {
+    this.send = send
+    this.documentVisible = documentVisible
+  }
+
+  /** One view shown or hidden (a disposed view is hidden). */
+  setView(view: object, visible: boolean): void {
+    if (visible) this.shown.add(view); else this.shown.delete(view)
+    this.update()
+  }
+
+  setDocument(visible: boolean): void {
+    this.documentVisible = visible
+    this.update()
+  }
+
+  get active(): boolean { return this.last }
+
+  private update(): void {
+    const active = this.documentVisible && this.shown.size > 0
+    if (active === this.last) return
+    this.last = active
+    this.send(active)
+  }
+}

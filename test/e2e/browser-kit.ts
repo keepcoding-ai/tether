@@ -70,3 +70,11 @@ export async function rawCdp(port: number, key: string, headers: Record<string, 
     events, closed, close: () => ws.close(),
   }
 }
+
+/**
+ * `app.evaluate` where the browser lives: the function (with the same `(electron, arg)` signature) runs in the browser process
+ * when there is one (Windows), else in the app's main process. What it returns must be serializable.
+ */
+export function inBrowser<R>(app: ElectronApplication, fn: ((electron: any, a: any) => R) | Function, arg?: unknown): Promise<Awaited<R>> {
+  return app.evaluate((_e, x) => ((globalThis as Record<string, unknown>).__browserEval as (src: string, a: unknown) => Promise<unknown>)(x.src, x.a), { src: fn.toString(), a: arg ?? null }) as Promise<Awaited<R>>
+}

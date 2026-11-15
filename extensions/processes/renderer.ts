@@ -579,7 +579,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     init(p: GroupPanelPartInitParameters): void {
       this.paneId = p.api.id
       this.name = String((p.params as { name?: string }).name ?? this.paneId.slice(PROCESS_PANE_PREFIX.length))
-      this.element.append(icon('pulse'), el('span', 'pr-tab-title', this.name), this.mark)
+      const close = el('button', 'close')
+      close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
+      close.append(icon('x'))
+      close.addEventListener('pointerdown', ev => ev.stopPropagation())
+      close.addEventListener('click', ev => { ev.stopPropagation(); ui.panes.close(this.paneId) })
+      this.element.append(icon('pulse'), el('span', 'pr-tab-title', this.name), this.mark, close)
+      this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.panes.showTabMenu(this.paneId, ev.clientX, ev.clientY) })
       tabs.set(this.paneId, this)
       this.paint()
     }
@@ -632,6 +638,18 @@ export function activate(ui: TetherUi): IDisposable[] {
       id: 'process', idPrefix: PROCESS_PANE_PREFIX, component: PROCESS_COMPONENT, tabComponent: PROCESS_TAB, hasSlot: false, icon: 'pulse',
       optionsOf: p => ({ id: p.id, component: PROCESS_COMPONENT, tabComponent: PROCESS_TAB, title: p.title ?? p.id.slice(PROCESS_PANE_PREFIX.length), params: p.params ?? {} }),
       create: () => new OutputPanel(), createTab: () => new OutputTab() as unknown as ITabRenderer, has: id => outputs.has(id),
+      // The process' own actions, then the minimum every tab has (hiding the tabs' × never leaves a tab without a close).
+      tabMenu: (id, x, y) => {
+        const name = id.slice(PROCESS_PANE_PREFIX.length)
+        const p = ui.procs.get(name)
+        ui.menus.context(x, y, [
+          ...(p ? [...menuEntries(p, { inPane: true }), 'sep' as const] : []),
+          { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
+          { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(id) },
+          'sep',
+          { icon: 'x', label: 'Fechar painel', run: () => ui.panes.close(id) },
+        ])
+      },
     }),
     ui.commands.registerCommand(OPEN_COMMAND, () => ui.pads.open(PAD_ID)),
     ui.procs.onDidChange(e => {

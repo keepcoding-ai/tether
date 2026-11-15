@@ -24,6 +24,7 @@
 import type { GroupPanelPartInitParameters, IContentRenderer, IDockviewPanel, ITabRenderer } from 'dockview-core'
 import type { AttentionHandle, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
+import { createTabHeader } from '../../app/renderer/tab-header.ts'
 import { factsOf } from '../../app/renderer/surface-host.ts'
 import { hostVisible } from '../../app/shared/surface-panel-rules.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
@@ -41,7 +42,7 @@ import {
   logoutDialog, PAD_LOGOUT_ALL, type MainAgentView, oldestAsking, padSeeAgent, pillBadgeCount, type PadTab, padWhere, resolveAgent, shortAddress,
 } from './pad-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRED_NOT_KEPT, DEBUG_PILL, DEBUG_PILL_HINT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, serveModeOf, shortName, type ServeMode } from './rules.ts'
+import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, DEBUG_PILL, DEBUG_PILL_HINT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, padRowActions, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
 import type { IconName } from '../../app/renderer/icons.ts'
@@ -63,6 +64,22 @@ function dressChip(chip: HTMLElement, slotId: string | undefined, agent: { name:
   chip.dataset.ended = c.ended ? 'true' : 'false'
   chip.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
   chip.title = agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : ''
+}
+/**
+ * The owner on the tab strip: a compact emblem (the owner's initial on its hue, the size of the terminal tabs' emblems), with
+ * the full text ("‹agente›", "‹agente› encerrado") in data-label, the tooltip and aria-label instead of inline.
+ */
+function dressTabOwner(badge: HTMLElement, slotId: string | undefined, agent: { name: string; alive: boolean } | undefined): void {
+  const c = ownerChip(agent)
+  const label = slotId ? c.text : ''
+  badge.dataset.label = label
+  badge.dataset.ended = c.ended ? 'true' : 'false'
+  badge.hidden = !label
+  badge.textContent = label ? (agent ? shortName(agent.name) : label).trim().charAt(0).toUpperCase() : ''
+  badge.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
+  const tip = agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : label
+  badge.title = tip
+  if (tip) badge.setAttribute('aria-label', tip); else badge.removeAttribute('aria-label')
 }
 /** How long the tab's dot stays lit after the agent's last command. */
 const ACTIVE_MS = 1500
@@ -170,7 +187,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const p = panels.get(paneId)
     const tabId = p?.saved?.tabId
     if (!p || !tabId) {
-      ui.menus.context(x, y, [{ icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(paneId) }, 'sep', { icon: 'x', label: CLOSE_TAB, run: () => ui.panes.close(paneId) }])
+      ui.menus.context(x, y, [{ icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(paneId) }, { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(paneId) }, 'sep', { icon: 'x', label: CLOSE_TAB, run: () => ui.panes.close(paneId) }])
       return
     }
     const acts = tabActions(actionState(tabId), ownerName(tabId))
@@ -429,6 +446,11 @@ export function activate(ui: TetherUi): IDisposable[] {
     saved: SavedTab | undefined
     private info: TabInfo | undefined
     private binding: SurfaceBinding | undefined
+    private boundSurface = ''
+    private readonly crashEl = el('div', 'br-web-crash')
+    private readonly crashText = el('span', 'br-web-crash-text')
+    private readonly crashBtn = el('button', 'br-web-crash-act', REOPEN)
+    private reopening = false
     private restoring = false
     private readonly subs: IDisposable[] = []
     private ro: ResizeObserver | undefined
@@ -466,6 +488,20 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.debugEl.hidden = !debugOn(ui.settings)
       this.bar.append(this.backBtn, this.fwdBtn, this.reloadBtn, this.ownerEl, this.titleEl, this.urlEl, this.spinner, this.cookiesEl, this.memoryEl, this.debugEl, this.stateEl, this.ctlEl, this.actBtn)
       this.element.append(this.bar, this.notice, this.page)
+      this.crashEl.dataset.role = 'crash'
+      this.crashEl.hidden = true
+      this.crashBtn.type = 'button'
+      this.crashBtn.dataset.action = 'reopen'
+      this.crashEl.append(this.crashText, this.crashBtn)
+      this.page.append(this.crashEl)
+      this.crashBtn.addEventListener('click', () => {
+        const tabId = this.info?.tabId
+        if (!tabId || this.reopening) return
+        this.reopening = true
+        this.crashBtn.disabled = true
+        void ipc.invoke('reopen', tabId).then(info => { if (info && panels.get(this.paneId) === this) this.bind(info) })
+          .finally(() => { this.reopening = false; this.crashBtn.disabled = false })
+      })
       const run = (action: string | undefined): void => {
         const tabId = this.info?.tabId ?? this.saved?.tabId
         if (tabId && (action === 'take' || action === 'give-back' || action === 'resume' || action === 'clean-reload')) void runTabAction(action, tabId)
@@ -497,7 +533,10 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     /** The tab's surface is tied to the page area; the frame shows main's title and address. */
     bind(info: TabInfo): void {
-      if (!this.binding) {
+      // A crashed tab lets its surface go (nothing to draw); "Reabrir" brings the tab back with a new surface.
+      if (this.binding && (info.crashed || this.boundSurface !== info.surfaceId)) { this.binding.dispose(); this.binding = undefined }
+      if (!this.binding && !info.crashed) {
+        this.boundSurface = info.surfaceId
         this.binding = ui.surfaces.attach(info.surfaceId, this.page)
         // The person's click or key on the shield (the agent has the tab): the bar answers, with the way to take it.
         this.subs.push(this.binding.onShieldInput(i => { if (i.kind === 'down' || i.kind === 'key' || i.kind === 'wheel') this.ignored() }))
@@ -561,7 +600,10 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.urlEl.textContent = displayUrl(url)
       this.urlEl.title = url.length <= 2048 && !/^data:/i.test(url) ? url : ''
       dressChip(this.ownerEl, s?.ownerSlotId, s ? agentOf(s.ownerSlotId) : undefined)
-      const state = this.info ? (this.info.loading ? 'loading' : 'live') : s?.url ? 'not-loaded' : 'no-address'
+      const crash = this.info?.crashed
+      this.crashEl.hidden = !crash
+      this.crashText.textContent = crash === 'suspect' ? CRASH_PAUSED : crash === 'browser' ? CRASH_BROWSER : crash === 'unresponsive' ? CRASH_HUNG : crash ? CRASH_GONE : ''
+      const state = crash ? 'crashed' : this.info ? (this.info.loading ? 'loading' : 'live') : s?.url ? 'not-loaded' : 'no-address'
       this.element.dataset.state = state
       this.stateEl.textContent = state === 'loading' ? LOADING : state === 'not-loaded' ? NOT_LOADED : state === 'no-address' ? CRED_NOT_KEPT : ''
       this.spinner.hidden = state !== 'loading'
@@ -655,20 +697,25 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
   }
 
-  /**
-   * The tab of a pane: the core's standard tab (`tether-tab`: kind, title, ×, right-click for the menu), its kind the site's icon
-   * (the globe until there is one), with the owner's chip and a dot while the page loads or the agent acts before the ×.
-   */
+  /** The tab of a pane (the shared tab header): favicon, title, the owner's emblem and a dot while the page loads or the agent acts. */
   const tabs = new Set<Tab>()
   class Tab implements ITabRenderer {
-    readonly element = el('div', 'tether-tab web br-web-tab')
-    private readonly kind = el('span', 'kind')
     private readonly iconEl = el('img', 'br-web-tab-icon')
     private readonly globe = icon('globe-simple', 'br-web-tab-globe')
-    private readonly titleEl = el('span', 'text br-web-tab-title')
     private readonly chip = el('span', 'br-web-tab-owner')
     private readonly dot = el('span', 'br-web-tab-dot')
-    private readonly close = el('button', 'close')
+    private readonly header = createTabHeader({
+      className: 'br-web-tab', kindChildren: [this.iconEl, this.globe], textClass: 'br-web-tab-title',
+      emblems: [this.chip], dot: this.dot,
+      close: { label: 'Fechar guia', onClose: () => {
+        const tabId = panels.get(this.paneId)?.saved?.tabId
+        if (tabId) void runTabAction('close', tabId)
+        else ui.panes.close(this.paneId)
+      } },
+      onMenu: ev => showWebMenu(this.paneId, ev.clientX, ev.clientY),
+    })
+    readonly element = this.header.element
+    private readonly titleEl = this.header.text
     private sub: IDisposable | undefined
     paneId = ''
     init(p: GroupPanelPartInitParameters & { api: { title?: string } }): void {
@@ -680,20 +727,6 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.dot.dataset.role = 'activity'
       this.chip.dataset.role = 'tab-owner'
       this.titleEl.textContent = p.api.title ?? 'Guia'
-      this.kind.append(this.iconEl, this.globe)
-      this.close.type = 'button'
-      this.close.title = CLOSE_TAB
-      this.close.setAttribute('aria-label', CLOSE_TAB)
-      this.close.append(icon('x'))
-      this.close.addEventListener('pointerdown', ev => ev.stopPropagation())
-      this.close.addEventListener('click', ev => {
-        ev.stopPropagation()
-        const tabId = panels.get(this.paneId)?.saved?.tabId
-        if (tabId) void runTabAction('close', tabId)
-        else ui.panes.close(this.paneId)
-      })
-      this.element.append(this.kind, this.titleEl, this.chip, this.dot, this.close)
-      this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.panes.showTabMenu(this.paneId, ev.clientX, ev.clientY) })
       const owner = (p.params as { ownerSlotId?: string } | undefined)?.ownerSlotId
       if (owner) this.element.dataset.owner = owner
       this.sub = p.api.onDidTitleChange(e => { this.titleEl.textContent = e.title })
@@ -704,7 +737,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     paint(): void {
       const panel = panels.get(this.paneId)
       const owner = panel?.saved?.ownerSlotId ?? this.element.dataset.owner
-      dressChip(this.chip, owner, owner ? agentOf(owner) : undefined)
+      dressTabOwner(this.chip, owner, owner ? agentOf(owner) : undefined)
       const favicon = panel?.favicon()
       if (favicon) { if (this.iconEl.src !== favicon) this.iconEl.src = favicon } else this.iconEl.removeAttribute('src')
       this.iconEl.hidden = !favicon
@@ -872,7 +905,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     if (!t) return undefined
     const chip = t.element.querySelector('.br-web-tab-owner') as HTMLElement
     return {
-      title: t.element.querySelector('.br-web-tab-title')?.textContent ?? '', owner: chip.textContent ?? '', ownerHue: chip.style.getPropertyValue('--br-hue'),
+      title: t.element.querySelector('.br-web-tab-title')?.textContent ?? '', owner: chip.dataset.label ?? '', ownerHue: chip.style.getPropertyValue('--br-hue'),
       ownerEnded: chip.dataset.ended === 'true', icon: (t.element.querySelector('.br-web-tab-icon') as HTMLElement | null)?.hidden === false,
       activity: t.element.dataset.activity ?? '',
     }

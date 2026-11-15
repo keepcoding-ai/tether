@@ -131,3 +131,22 @@ describe('settings.json: dotted and nested keys (VS Code toValuesTree / configur
     assert.deepEqual(parseSettings(m.text).raw, { terminal: { theme: 'x', fontSize: 14 } })
   })
 })
+
+describe('setSettingText: nested prefix object', () => {
+  const src = '{ "theme":"dark", "extensions":{ "disabled":[] }, "extensions.explorer.follow": true }'
+  test('a nested prefix that lacks the path does not throw and keeps its siblings', () => {
+    const r = setSettingText(src, ['extensions', 'explorer', 'autoReveal'], [], true)
+    assert.ok(r.ok)
+    assert.deepEqual(parseSettings(r.text).raw, {
+      theme: 'dark',
+      extensions: { disabled: [] },
+      'extensions.explorer.follow': true,
+      'extensions.explorer.autoReveal': true,
+    })
+  })
+  test('a nested path that exists is removed, with the parents it leaves empty', () => {
+    const r = setSettingText('{ "extensions": { "explorer": { "autoReveal": false }, "disabled": [] } }', ['extensions', 'explorer', 'autoReveal'], [], true)
+    assert.ok(r.ok)
+    assert.deepEqual(parseSettings(r.text).raw, { extensions: { disabled: [] }, 'extensions.explorer.autoReveal': true })
+  })
+})

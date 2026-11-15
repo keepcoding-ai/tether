@@ -232,7 +232,7 @@ describe('daemon: ports and declared uses through an in-process host', () => {
       (e: Error) => e instanceof DaemonError && e.code === 'proc-in-use' && /painel-a \(shell\) até .*: e2e do checkout/.test(e.message) && /--wait/.test(e.message) && /--force "motivo"/.test(e.message))
     assert.equal(await pid('svc'), before)
     assert.equal(kinds('svc').at(-1), 'refused-in-use')
-    assert.ok(pendingNotices(home, A).some((n) => /\[tether\] processos: painel-b \(shell\) quer reiniciar svc; seu uso vai até .*tether proc release svc/.test(n.text)))
+    assert.ok(pendingNotices(home, A).some((n) => /\[tether\] processes: painel-b \(shell\) quer reiniciar svc; seu uso vai até .*tether proc release svc/.test(n.text)))
   })
 
   test('--wait: the act runs once the use is released', async () => {

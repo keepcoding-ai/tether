@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { chromium, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep } from './browser-kit.ts'
+import { cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep, inBrowser } from './browser-kit.ts'
 
 declare const window: { __tether: { connection(): { connected: boolean; pid?: number } | undefined } }
 type Tabs = {
@@ -165,15 +165,15 @@ test('browser escape: 0 leaks of HttpOnly cookies, credentials, the disk decoy o
     ;({ app, page: win } = await launchHidden(home, pipe))
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const T = app
-    const gate = (await T.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.gate()))!
+    const gate = (await inBrowser(T, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.gate()))!
     assert.ok(gate, 'the gate is open')
     const base = `http://127.0.0.1:${gate.port}`
 
     // ---- setup, from the HOST side: A's tab logs the shared partition into the bank; B's tab holds B's secret. ----
-    const aTab = await T.evaluate(async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('agent-a', url)).tabId, `${origin}/bank/login`)
-    const bTab = await T.evaluate(async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('agent-b', url)).tabId, `${origin}/b.html`)
+    const aTab = await inBrowser(T, async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('agent-a', url)).tabId, `${origin}/bank/login`)
+    const bTab = await inBrowser(T, async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('agent-b', url)).tabId, `${origin}/b.html`)
     await sleep(1500)
-    const hostEval = (tab: string, code: string): Promise<unknown> => T.evaluate(async (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tab, a.code), { tab, code })
+    const hostEval = (tab: string, code: string): Promise<unknown> => inBrowser(T, async (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tab, a.code), { tab, code })
     assert.equal(await hostEval(aTab, `document.getElementById('bankstate')?.textContent`), 'LOGGED-IN-AS-OWNER', 'A is logged in')
 
     // ============================ 1. the endpoint (B1/S2 handshake) ============================
@@ -341,7 +341,7 @@ test('browser escape: 0 leaks of HttpOnly cookies, credentials, the disk decoy o
 
     // ---- the host's truth: B untouched, the decoy unread, nothing of B's opened by A ----
     assert.equal(await hostEval(bTab, 'window.__bClicks'), 0, 'B\'s tab untouched')
-    assert.ok((await T.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list())).some(t => t.tabId === bTab), 'B\'s tab alive')
+    assert.ok((await inBrowser(T, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list())).some(t => t.tabId === bTab), 'B\'s tab alive')
     assert.equal(readFileSync(decoyPath, 'utf8').includes(DISK_BAIT), true)
 
     const count = (v: Verdict): number => rows.filter(r => r.verdict === v).length

@@ -66,6 +66,8 @@ import x from '@phosphor-icons/core/assets/regular/x.svg'
 import xCircle from '@phosphor-icons/core/assets/regular/x-circle.svg'
 import check from '@phosphor-icons/core/assets/regular/check.svg'
 import bell from '@phosphor-icons/core/assets/regular/bell.svg'
+import bellSlash from '@phosphor-icons/core/assets/regular/bell-slash.svg'
+import clockIcon from '@phosphor-icons/core/assets/regular/clock.svg'
 import swap from '@phosphor-icons/core/assets/regular/swap.svg'
 import copy from '@phosphor-icons/core/assets/regular/copy.svg'
 import pencilSimple from '@phosphor-icons/core/assets/regular/pencil-simple.svg'
@@ -194,6 +196,8 @@ const SVG = {
   check,
   copy,
   bell,
+  'bell-slash': bellSlash,
+  clock: clockIcon,
   swap,
   folder,
   list,

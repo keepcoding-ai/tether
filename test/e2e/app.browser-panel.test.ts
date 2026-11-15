@@ -20,7 +20,7 @@ import type { SlotState } from '../../src/daemon/protocol.ts'
 import { ownerHue } from '../../extensions/browser/rules.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { daemonMain, launchHidden, pidAlive, rawCdp, root, sleep } from './browser-kit.ts'
+import { daemonMain, launchHidden, pidAlive, rawCdp, root, sleep, inBrowser } from './browser-kit.ts'
 
 type Lb = { host: { width: number; height: number }; effective: { x: number; y: number; width: number; height: number } | undefined; scale: number; visibility: string }
 type TabView = { title: string; owner: string; ownerHue: string; ownerEnded: boolean; icon: boolean; activity: string }
@@ -116,7 +116,7 @@ test('browser panel: bar, tab, letterbox, take maximizes and give back restores,
     win.on('pageerror', e => console.error(`renderer error: ${e.message}`))
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const B = <R>(fn: (t: Tabs, a: any) => R | Promise<R>, a?: unknown): Promise<R> =>
-      app!.evaluate(new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
+      inBrowser(app!, new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
 
     // The agent: a soul slot named Sonda (alive).
     const slot = await win.evaluate(async cwd => {

@@ -119,7 +119,10 @@ const startsWith = (a: readonly string[], b: readonly string[]): boolean => b.le
 /** `text` with `sub` removed inside the top-level key `name`, and the objects that removal left empty removed too. */
 function removeInside(text: string, name: string, sub: readonly string[]): string {
   const fmt = { formattingOptions: formattingOf(text) }
-  text = applyEdits(text, modify(text, [name, ...sub], undefined, fmt))
+  // jsonc-parser throws when deleting below a parent that is absent, so the edit is made only when the path exists.
+  let present: unknown = parseSettings(text).raw
+  for (const s of [name, ...sub]) present = isObject(present) && s in present ? present[s] : undefined
+  if (present !== undefined) text = applyEdits(text, modify(text, [name, ...sub], undefined, fmt))
   for (let n = sub.length - 1; n >= 0; n--) {
     const at = [name, ...sub.slice(0, n)]
     let v: unknown = parseSettings(text).raw

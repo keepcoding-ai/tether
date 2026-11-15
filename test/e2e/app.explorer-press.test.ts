@@ -15,7 +15,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
-type Row = { root: string; path: string; name: string; level: number; kind: string; expanded: boolean; selected: boolean; focused: boolean; icon: string }
+type Row = { root: string; path: string; name: string; level: number; kind: string; expanded: boolean; selected: boolean; focused: boolean }
 type Snapshot = { mode: 'empty' | 'roots'; rows: Row[] }
 type Hooks = { connection(): { pid?: number } | undefined; explorer(): Snapshot | undefined }
 declare const window: { __tether: Hooks }

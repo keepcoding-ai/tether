@@ -15,6 +15,7 @@ import { terminalFontOptions, terminalTheme, type TerminalAppearance } from '../
 import type { ColorScheme } from '../shared/theme.ts'
 import { renderChoices, roveWithArrows } from './dialog.ts'
 import { decodeOsc52 } from './clipboard.ts'
+import { createTabHeader } from './tab-header.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
 import { rondaLabel, rondaTooltip } from './ronda-rules.ts'
 import { detailsOpen } from './pane-details.ts'
@@ -756,23 +757,18 @@ export class SlotTab implements ITabRenderer {
   constructor(host: PanelHost, onClose: (slotId: string) => void) {
     this.host = host
     this.onClose = onClose
-    this.element = document.createElement('div')
-    this.element.className = 'tether-tab'
-    this.kind = document.createElement('span'); this.kind.className = 'kind'
     this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.append(icon('circle-fill'))
-    this.text = document.createElement('span'); this.text.className = 'text'
     this.unsafe = unsafeBadge(false)
     this.ronda = document.createElement('span'); this.ronda.className = 'ronda-mark'; this.ronda.hidden = true; this.ronda.append(icon('timer'))
     this.attn = document.createElement('span'); this.attn.className = 'attn'
     this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
-    const close = document.createElement('button')
-    close.className = 'close'; close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    this.element.append(this.kind, this.text, this.unsafe, this.ronda, this.attn, this.dot, close)
-    this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
+    const h = createTabHeader({
+      emblems: [this.unsafe, this.ronda, this.attn], dot: this.dot,
+      close: { label: 'Fechar painel', onClose: () => { if (this.api) this.onClose(this.api.id) } },
+      onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
+      onDblClick: () => this.startRename(),
+    })
+    this.element = h.element; this.kind = h.kind; this.text = h.text
   }
 
   init(params: TabPartInitParameters): void {

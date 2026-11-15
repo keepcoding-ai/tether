@@ -1200,3 +1200,20 @@ O navegador e o bridge deixam de custar processos por sessão de agente (eram 3 
 - A ociosidade de 10 min da sessão do pacote do navegador fica desligada no tetherd (`sessionIdleMs: Infinity`): o servidor vive com o slot.
 - O log do servidor do navegador dentro do daemon leva só a linha de conexão (falhas de tool citam endereços e ficam fora do log).
 - A extensão do bridge sobe para 0.2.0: o painel do bridge vai pedir "Recarregar" no Chrome.
+
+## Explorador: cabeçalho, árvore virtualizada e pastas-pai grudadas (2026-11-14, branch feat/explorer-virtual)
+
+Pedido do Guga a partir da comparação com o explorador do VSCodium: lá as pastas-pai ficam grudadas ao rolar e o título tem as ações de arquivo; no nosso a árvore subia inteira.
+
+- **Cabeçalho.** Novo arquivo, Nova pasta e Recolher tudo na barra da prancheta; sem seleção o comando cai na raiz do projeto atual.
+- **Portes do VS Code** (commit `9cc2376778e1`, padrão `vscode-*`): `app/shared/vscode-range-map.ts`, `vscode-index-tree-model.ts`, `vscode-event.ts`; `app/renderer/vscode-list-view.ts` (miolo do ListView + RowCache, scroll nativo, overscan) e `vscode-tree-sticky-scroll.ts`. Fora: filtro, diff por identidade, alturas dinâmicas, scroll horizontal, DnD, `listWidget`, `asyncDataTree`.
+- **Árvore virtualizada.** `view.ts` vive num `IndexTreeModel` desenhado pelo `ListView`: só as linhas ao redor da janela existem no DOM. Pasta de 30 mil arquivos: ~0,4 s e menos de 200 linhas no DOM (e2e). Foco no contêiner com `aria-activedescendant`; mensagem de validação flutuante; erro de pasta numa linha.
+- **Sticky scroll.** Até 7 linhas e 40% da altura; empurrão quando a pasta acaba; clique na linha grudada rola até a pasta, seleciona e dá o teclado; twistie grudado recolhe; teclado e revelar descontam a faixa grudada.
+- **Defeito achado e corrigido no caminho.** Gravar uma configuração derrubava o main (diálogo de erro do Electron, janela congelada) quando o `settings.json` tinha um objeto aninhado prefixo da chave (`"extensions": {...}` + `extensions.explorer.autoReveal`). `removeInside` só apaga caminho que existe; `MainExtensionHost.setSetting` registra a falha em vez de lançar.
+- **Prova.** 8 suítes de e2e do explorador verdes (a de seguir/revelar e a 1a estavam vermelhas antes desta entrega); unitários do explorador, dos portes e de settings-file verdes. `npm test` inteiro tem 6 falhas em arquivos que esta entrega não toca (web-bridge launch, três do daemon, set-profile, `ext.index`: `cookie-runtime-main.ts` importa fora do índice); `app:typecheck` tem 3 erros antigos (`note-panel.ts`, `preview-panel.ts`, `tab-header.ts`).
+
+### Decisões para validar
+- Atualizar fica no "⋯" (o explorador já acompanha o disco); na barra só Novo arquivo, Nova pasta e Recolher tudo.
+- Sticky scroll sempre ligado, sem configuração para desligar.
+- Recolher uma pasta tira os filhos do modelo (o modelo guarda só o que está na tela).
+- Sem prova automática: "novo" sem seleção cair no projeto atual; botões do cabeçalho desabilitados sem projeto.
