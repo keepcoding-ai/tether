@@ -17,6 +17,7 @@ import { chordFromLabel, EDITOR_GROUP, editorCommandId } from './note-rules.ts'
 import { terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ColorScheme } from '../shared/theme.ts'
 import type { NoteRead, NoteWritten } from '../shared/api.ts'
+import type { LineColumn } from '../shared/file-open.ts'
 import { externalChangeAction, noteParams, noteTitle, type NoteView } from '../shared/notes.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
 
@@ -88,6 +89,8 @@ export interface NoteSnapshot {
   dirty: boolean
   cursor: { lineNumber: number; column: number } | undefined
   selections: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }[]
+  /** The editor's current selection (1-based), if there is an editor. */
+  selection: { startLine: number; startColumn: number; endLine: number; endColumn: number } | undefined
   scrollTop: number
   /** The source line at the top (0-based, fractional): what the preview follows. */
   topLine: number
@@ -281,16 +284,25 @@ export class NotePanel implements IContentRenderer {
     if (this.api?.isActive) requestAnimationFrame(() => this.focus())
   }
 
-  private pendingReveal: { line: number; column?: number } | undefined
+  private pendingReveal: LineColumn | undefined
 
   /** Puts the cursor at a line (and column), centred, as Quick Open's `file:42:7` asks; waits for the text when it is still loading. */
-  reveal(pos: { line: number; column?: number }): void {
+  reveal(pos: LineColumn): void {
     if (!this.loaded || !this.editor || !this.model) { this.pendingReveal = pos; return }
     const lineNumber = Math.min(Math.max(1, pos.line), this.model.getLineCount())
     const column = Math.min(Math.max(1, pos.column ?? 1), this.model.getLineMaxColumn(lineNumber))
     this.pendingView = undefined
-    this.editor.setPosition({ lineNumber, column })
-    this.editor.revealPositionInCenter({ lineNumber, column })
+    if (pos.endLine !== undefined || pos.endColumn !== undefined) {
+      // Clamped like the start: the file may have changed since the match was found.
+      const endLineNumber = Math.min(Math.max(1, pos.endLine ?? pos.line), this.model.getLineCount())
+      const endColumn = Math.min(Math.max(1, pos.endColumn ?? column), this.model.getLineMaxColumn(endLineNumber))
+      const range = { startLineNumber: lineNumber, startColumn: column, endLineNumber, endColumn }
+      this.editor.setSelection(range)
+      this.editor.revealRangeInCenter(range)
+    } else {
+      this.editor.setPosition({ lineNumber, column })
+      this.editor.revealPositionInCenter({ lineNumber, column })
+    }
     this.scheduleView()
   }
 
@@ -626,10 +638,12 @@ export class NotePanel implements IContentRenderer {
 
   snapshot(): NoteSnapshot {
     const pos = this.editor?.getPosition()
+    const sel = this.editor?.getSelection()
     return {
       id: this.id, path: this.path, text: this.text, savedText: this.savedText, dirty: this.dirty,
       cursor: pos ? { lineNumber: pos.lineNumber, column: pos.column } : undefined,
       selections: (this.editor?.getSelections() ?? []).map(s => ({ startLineNumber: s.startLineNumber, startColumn: s.startColumn, endLineNumber: s.endLineNumber, endColumn: s.endColumn })),
+      selection: sel ? { startLine: sel.startLineNumber, startColumn: sel.startColumn, endLine: sel.endLineNumber, endColumn: sel.endColumn } : undefined,
       scrollTop: this.editor?.getScrollTop() ?? 0,
       topLine: this.topLine(),
       viewport: { width: this.editor?.getLayoutInfo().width ?? 0, height: this.editor?.getLayoutInfo().height ?? 0, scrollHeight: this.editor?.getScrollHeight() ?? 0 },
