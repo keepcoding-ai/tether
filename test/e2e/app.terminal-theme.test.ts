@@ -1,5 +1,5 @@
 // E2E of "Tema do terminal…" in the Electron app, against the real tetherd on a private home/pipe, hidden window:
-//   1. a shell panel comes up with the defaults (GitHub, JetBrains Mono 350/14px/1.2, contrast 4.5, bundled
+//   1. a shell panel comes up with the defaults (GitHub, Fira Code 350/14px/1.2, contrast 4.5, bundled
 //      font loaded before xterm measured it);
 //   2. the dialog opens from the ≡ menu and from the native menu; its sample shows the colours and box drawing;
 //   3. preset, font, weight, size and line height change every pane at once and land in settings.json;
@@ -167,9 +167,9 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 2)
     const ids = await page.evaluate(() => window.__tether.panelIds())
     assert.equal(ids.length, 2)
-    await assertPanes(page, ids, DEFAULT_APPEARANCE, 'JetBrains Mono')
-    assert.equal(await hooks.fontLoaded(page, '350 14px "JetBrains Mono"'), true, 'JetBrains Mono regular face loaded')
-    assert.equal(await hooks.fontLoaded(page, '600 14px "JetBrains Mono"'), true, 'JetBrains Mono bold face loaded')
+    await assertPanes(page, ids, DEFAULT_APPEARANCE, 'Fira Code')
+    assert.equal(await hooks.fontLoaded(page, '350 14px "Fira Code"'), true, 'Fira Code regular face loaded')
+    assert.equal(await hooks.fontLoaded(page, '600 14px "Fira Code"'), true, 'Fira Code bold face loaded')
     const renderer = (await hooks.options(page, first))!.renderer
     console.error(`renderer: ${renderer}`)
     assert.ok(renderer === 'webgl' || renderer === 'dom')
@@ -190,10 +190,10 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     const sample = (await hooks.sample(page))!
     assert.match(sample.text, /vermelho .*verde .*amarelo/)
     assert.match(sample.text, /╭─+╮/)
-    assert.ok(sample.fontFamily.startsWith('"JetBrains Mono"'))
+    assert.ok(sample.fontFamily.startsWith('"Fira Code"'))
     assert.equal(await page.locator('#term-presets .preset-option').count(), 7)
     assert.equal(await page.locator('input[name=term-preset]:checked').getAttribute('value'), 'github')
-    assert.equal(await page.inputValue('#term-font'), 'jetbrains-mono')
+    assert.equal(await page.inputValue('#term-font'), 'fira-code')
     assert.equal(await page.inputValue('#term-weight'), '350')
     assert.equal(await page.inputValue('#term-size'), '14')
     assert.equal(await page.inputValue('#term-line-height'), '1.2')
@@ -206,7 +206,7 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     // 3. Preset, font, weight, size, line height: every pane follows, settings.json remembers.
     await page.check('input[name=term-preset][value=catppuccin]')
     await waitAppearance(page, { preset: 'catppuccin' })
-    await assertPanes(page, ids, { ...DEFAULT_APPEARANCE, preset: 'catppuccin' }, 'JetBrains Mono')
+    await assertPanes(page, ids, { ...DEFAULT_APPEARANCE, preset: 'catppuccin' }, 'Fira Code')
     assert.equal((saved(home) as TerminalAppearance).preset, 'catppuccin', 'settings.json has the preset')
     assert.equal((await hooks.sample(page))!.background, (await hooks.theme(page, first))!.background, 'the sample sits on the panes\' background')
 
@@ -252,7 +252,7 @@ test('terminal theme: presets and fonts apply live to every pane, persist, follo
     // "Restaurar padrão".
     await page.click('#btn-term-theme-reset')
     await waitAppearance(page, DEFAULT_APPEARANCE)
-    await assertPanes(page, ids, DEFAULT_APPEARANCE, 'JetBrains Mono')
+    await assertPanes(page, ids, DEFAULT_APPEARANCE, 'Fira Code')
     assert.deepEqual(saved(home), DEFAULT_APPEARANCE)
     assert.equal(await page.locator('input[name=term-preset]:checked').getAttribute('value'), 'github')
     await page.keyboard.press('Escape')

@@ -77,10 +77,16 @@
 /* Bundled terminal fonts (app/renderer/fonts, variable woff2 + licence text next to each; app/shared/terminal-theme.ts
    lists them). Loaded from the app itself (CSP font-src 'self'); the renderer awaits document.fonts.load before
    any xterm opens. Cascadia gets its own family name so the bundled file wins over the system copy of Cascadia. */
+@font-face { font-family: "Fira Code"; font-style: normal; font-weight: 300 700; font-display: block; src: url("fonts/FiraCode-VF.woff2") format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: block; src: url("fonts/JetBrainsMono-wght.woff2") format("woff2"); }
 @font-face { font-family: "Ubuntu Sans Mono"; font-style: normal; font-weight: 100 700; font-display: block; src: url("fonts/UbuntuSansMono-wght.woff2") format("woff2"); }
 @font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 100 700; font-display: block; src: url("fonts/IBMPlexMonoVar-Roman.woff2") format("woff2"); }
 @font-face { font-family: "Cascadia Mono Bundled"; font-style: normal; font-weight: 200 700; font-display: block; src: url("fonts/CascadiaMono-wght.woff2") format("woff2"); }
+
+/* Fira Code draws its programming ligatures (=>, !=, ===) through the OpenType `calt` feature. The WebGL renderer
+   paints each cell alone, but the DOM fallback (after a lost context) shapes runs of text; `none` turns off
+   every ligature feature, calt included. The dialog sample is an xterm too, so `.xterm` covers it. */
+.xterm, .term-sample { font-variant-ligatures: none; }
 
 * { box-sizing: border-box; }
 

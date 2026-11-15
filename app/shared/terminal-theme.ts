@@ -121,7 +121,7 @@ export function presetOf(id: unknown): TerminalPreset {
 
 // ---------- fonts ----------
 
-export type TerminalFontId = 'jetbrains-mono' | 'ubuntu-sans-mono' | 'ibm-plex-mono' | 'cascadia-mono'
+export type TerminalFontId = 'fira-code' | 'jetbrains-mono' | 'ubuntu-sans-mono' | 'ibm-plex-mono' | 'cascadia-mono'
 
 export interface TerminalFont {
   id: TerminalFontId
@@ -139,13 +139,14 @@ export interface TerminalFont {
 
 /** Bundled with the app (woff2 + licence text in app/renderer/fonts); no network. */
 export const TERMINAL_FONTS: readonly TerminalFont[] = [
+  { id: 'fira-code', label: 'Fira Code', family: 'Fira Code', file: 'FiraCode-VF.woff2', minWeight: 300, maxWeight: 700, license: 'OFL-1.1', version: '6.2', source: 'https://github.com/tonsky/FiraCode/releases/tag/6.2 (woff2/FiraCode-VF.woff2)' },
   { id: 'jetbrains-mono', label: 'JetBrains Mono', family: 'JetBrains Mono', file: 'JetBrainsMono-wght.woff2', minWeight: 100, maxWeight: 800, license: 'OFL-1.1', version: '2.304', source: 'https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 (fonts/variable/JetBrainsMono[wght].ttf → woff2)' },
   { id: 'ubuntu-sans-mono', label: 'Ubuntu Sans Mono', family: 'Ubuntu Sans Mono', file: 'UbuntuSansMono-wght.woff2', minWeight: 100, maxWeight: 700, license: 'Ubuntu Font Licence 1.0', version: '1.0 (2023)', source: 'https://github.com/canonical/Ubuntu-Sans-Mono-fonts (fonts/variable/UbuntuSansMono[wght].ttf → woff2)' },
   { id: 'ibm-plex-mono', label: 'IBM Plex Mono', family: 'IBM Plex Mono', file: 'IBMPlexMonoVar-Roman.woff2', minWeight: 100, maxWeight: 700, license: 'OFL-1.1', version: '@ibm/plex-mono-variable 1.0.0', source: 'https://github.com/IBM/plex (npm @ibm/plex-mono-variable, fonts/complete/woff2)' },
   { id: 'cascadia-mono', label: 'Cascadia Mono', family: 'Cascadia Mono Bundled', file: 'CascadiaMono-wght.woff2', minWeight: 200, maxWeight: 700, license: 'OFL-1.1', version: '2407.24', source: 'https://github.com/microsoft/cascadia-code/releases/tag/v2407.24 (woff2/CascadiaMono.woff2)' },
 ]
 
-export const DEFAULT_FONT_ID: TerminalFontId = 'jetbrains-mono'
+export const DEFAULT_FONT_ID: TerminalFontId = 'fira-code'
 
 export function fontOf(id: unknown): TerminalFont {
   return TERMINAL_FONTS.find(f => f.id === id) ?? TERMINAL_FONTS.find(f => f.id === DEFAULT_FONT_ID)!

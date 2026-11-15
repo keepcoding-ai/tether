@@ -64,9 +64,9 @@ test('terminalTheme: the preset colours over the frame background, cursorAccent 
   for (const k of [...KEYS, 'background', 'cursorAccent'] as const) assert.ok(typeof d[k] === 'string' && d[k], k)
 })
 
-test('fonts: four bundled variable fonts, files and licences present, JetBrains Mono the default', () => {
-  assert.deepEqual(TERMINAL_FONTS.map(f => f.id), ['jetbrains-mono', 'ubuntu-sans-mono', 'ibm-plex-mono', 'cascadia-mono'])
-  assert.equal(DEFAULT_FONT_ID, 'jetbrains-mono')
+test('fonts: five bundled variable fonts, files and licences present, Fira Code the default', () => {
+  assert.deepEqual(TERMINAL_FONTS.map(f => f.id), ['fira-code', 'jetbrains-mono', 'ubuntu-sans-mono', 'ibm-plex-mono', 'cascadia-mono'])
+  assert.equal(DEFAULT_FONT_ID, 'fira-code')
   const dir = join(import.meta.dirname, '..', '..', 'app', 'renderer', 'fonts')
   for (const f of TERMINAL_FONTS) {
     assert.ok(existsSync(join(dir, f.file)), `${f.id}: ${f.file}`)
@@ -74,12 +74,12 @@ test('fonts: four bundled variable fonts, files and licences present, JetBrains 
     assert.match(f.license, /OFL-1\.1|Ubuntu Font Licence/)
   }
   assert.equal(fontOf('ubuntu-sans-mono').license, 'Ubuntu Font Licence 1.0')
-  for (const name of ['JetBrainsMono-OFL.txt', 'UbuntuSansMono-LICENCE.txt', 'IBMPlexMono-LICENSE.txt', 'CascadiaMono-LICENSE.txt']) assert.ok(existsSync(join(dir, name)), name)
+  for (const name of ['FiraCode-LICENSE.txt', 'JetBrainsMono-OFL.txt', 'UbuntuSansMono-LICENCE.txt', 'IBMPlexMono-LICENSE.txt', 'CascadiaMono-LICENSE.txt']) assert.ok(existsSync(join(dir, name)), name)
 })
 
 test('terminalFontOptions: family with the Windows fallbacks, bold = weight + 200 (at least 600, within the font), ligatures off, contrast 4.5', () => {
   const o = terminalFontOptions(DEFAULT_APPEARANCE)
-  assert.match(o.fontFamily, /^"JetBrains Mono", "Cascadia Mono", Consolas/)
+  assert.match(o.fontFamily, /^"Fira Code", "Cascadia Mono", Consolas/)
   assert.equal(o.fontWeight, 350)
   assert.equal(o.fontWeightBold, 600)
   assert.equal(o.fontSize, 14)
@@ -89,7 +89,7 @@ test('terminalFontOptions: family with the Windows fallbacks, bold = weight + 20
   assert.equal(boldWeightOf(fontOf('jetbrains-mono'), 500), 700)
   assert.equal(boldWeightOf(fontOf('jetbrains-mono'), 700), 800)
   assert.equal(boldWeightOf(fontOf('cascadia-mono'), 700), 700) // the axis ends at 700
-  assert.deepEqual(fontLoadSpecs(DEFAULT_APPEARANCE), ['350 14px "JetBrains Mono"', '600 14px "JetBrains Mono"'])
+  assert.deepEqual(fontLoadSpecs(DEFAULT_APPEARANCE), ['350 14px "Fira Code"', '600 14px "Fira Code"'])
 })
 
 test('normalizeAppearance: missing, corrupt or unknown → defaults; numbers clamped to the font and the ranges', () => {
@@ -99,6 +99,7 @@ test('normalizeAppearance: missing, corrupt or unknown → defaults; numbers cla
   assert.deepEqual(normalizeAppearance({ preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1 }), { preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1 })
   // Cascadia's axis starts at 200: a lighter saved weight is lifted; a weight past the axis is lowered.
   assert.equal(normalizeAppearance({ font: 'cascadia-mono', fontWeight: 100 }).fontWeight, 200)
+  assert.equal(normalizeAppearance({ font: 'fira-code', fontWeight: 100 }).fontWeight, 300) // the Fira Code axis starts at 300
   assert.equal(normalizeAppearance({ font: 'ibm-plex-mono', fontWeight: 900 }).fontWeight, 700)
   assert.equal(normalizeAppearance({ fontWeight: 337 }).fontWeight, 325) // steps of 25
   assert.equal(normalizeAppearance({ fontSize: 3 }).fontSize, 9)
