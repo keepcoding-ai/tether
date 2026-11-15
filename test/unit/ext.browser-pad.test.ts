@@ -4,7 +4,7 @@ import { pillMark } from '../../app/renderer/seal-rules.ts'
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ACTION_FRESH_MS, actionKindOf, buildPad, endedTabIds, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, pillBadgeCount, padCloseEnded, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
+  ACTION_FRESH_MS, actionKindOf, buildPad, endedTabIds, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, pillBadgeCount, padCloseEnded, padSections, padMenu, padGroupMenu, rowStateText, PAD_ACTIVE, PAD_ENDED, PAD_CLOSE_ALL_ENDED, padOnlyAgent, type PadModel, type PadGroup, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
 } from '../../extensions/browser/pad-rules.ts'
 
 const tab = (tabId: string, ownerSlotId: string, over: Partial<PadTab> = {}): PadTab =>
@@ -158,5 +158,72 @@ describe('browser: the Browser pill counts requests, not seals', () => {
   test('nothing in the desk but a request pending: the pill stays lit as a pip', () => {
     const mark = pillMark({ done: 0, waiting: 0 }, { count: pillBadgeCount([]), attention: true, tooltip: 't' })
     assert.deepEqual(mark, { text: '', tone: 'waiting', lines: ['t'] })
+  })
+})
+
+describe('browser pad: sections, menus and row state', () => {
+  const tabs = [tab('a1', 'a'), tab('a2', 'a', { control: 'user' }), tab('b1', 'b', { control: 'user' }), tab('b2', 'b', { asking: true }),
+    tab('c1', 'c'), tab('c2', 'c', { control: 'paused' }), tab('a3', 'a', { control: 'paused' })]
+  const m = buildPad(tabs, agentOf)
+
+  test('brakeable counts unpaused tabs of alive agents only', () => {
+    assert.equal(m.paused, 2)
+    assert.equal(m.brakeable, 4) // a1, a2, b1, b2
+  })
+
+  test('sections: a group wholly with the person is in neither list; ended rows feed "Fechar todas"', () => {
+    const s = padSections(m)
+    assert.deepEqual(s.withPerson.map(t => t.tabId), ['a2', 'b1', 'b2'])
+    assert.deepEqual(s.active.map(g => g.slotId), ['a'])
+    assert.deepEqual(s.ended.map(g => g.slotId), ['c'])
+    assert.deepEqual(s.endedIds, ['c1', 'c2'])
+    assert.equal(PAD_ACTIVE, 'Com os agentes'); assert.equal(PAD_ENDED, 'De agentes encerrados')
+    assert.equal(PAD_CLOSE_ALL_ENDED, 'Fechar todas'); assert.equal(padOnlyAgent('Sonda'), 'Só as guias do Sonda')
+  })
+
+  const model = (over: Partial<PadModel>): PadModel => ({ ...m, ...over })
+  const pins = (x: PadModel, f = false) => Object.fromEntries(padMenu(x, f).filter(i => i !== 'sep').map(i => [(i as { id: string }).id, i])) as Record<string, { pin?: string; disabled?: boolean }>
+  test('panel menu pins in the four brakeable/paused cases', () => {
+    let p = pins(model({ brakeable: 3, paused: 0 }))
+    assert.equal(p['pause-all']!.pin, 'primary'); assert.equal(p['resume-all']!.disabled, true); assert.equal(p['resume-all']!.pin, undefined)
+    p = pins(model({ brakeable: 2, paused: 1 }))
+    assert.equal(p['pause-all']!.pin, 'icon'); assert.equal(p['resume-all']!.pin, 'highlight')
+    p = pins(model({ brakeable: 0, paused: 2 }))
+    assert.equal(p['pause-all']!.disabled, true); assert.equal(p['pause-all']!.pin, undefined); assert.equal(p['resume-all']!.pin, 'highlight')
+    p = pins(model({ brakeable: 0, paused: 0 }))
+    assert.equal(p['pause-all']!.disabled, true); assert.equal(p['resume-all']!.disabled, true)
+  })
+
+  test('panel menu: order, labels, filter entry, one highlight, logout last and dangerous', () => {
+    const list = padMenu(model({ brakeable: 1, paused: 1 }), true)
+    assert.deepEqual(list.map(i => i === 'sep' ? 'sep' : i.id), ['show-all', 'sep', 'pause-all', 'resume-all', 'sep', 'logout-all'])
+    const items = list.filter(i => i !== 'sep')
+    assert.equal(items.filter(i => i.pin === 'highlight').length, 1)
+    assert.equal(items[0]!.pin, 'primary')
+    assert.deepEqual(items.map(i => i.label), ['Mostrar todas', 'Pausar todas as guias', 'Retomar todas', 'Sair de todas as contas…'])
+    assert.equal(items.at(-1)!.danger, true)
+    assert.equal((padMenu(m, false)[0] as { id: string }).id, 'pause-all')
+  })
+
+  const grp = (over: Partial<PadGroup>): PadGroup => ({ slotId: 'a', name: 'Sonda', ended: false, tabs: [], total: 2, paused: 0, ...over })
+  const gids = (g: PadGroup) => padGroupMenu(g).map(i => i === 'sep' ? 'sep' : i.id)
+  test('agent menu: brake follows the group; an ended agent has none', () => {
+    assert.deepEqual(gids(grp({})), ['pause-agent', 'see-agent', 'sep', 'close-agent'])
+    assert.deepEqual(gids(grp({ paused: 1 })), ['pause-agent', 'see-agent', 'sep', 'close-agent'])
+    assert.deepEqual(gids(grp({ paused: 2 })), ['resume-agent', 'see-agent', 'sep', 'close-agent'])
+    const brake = padGroupMenu(grp({})).find(i => i !== 'sep' && i.id === 'pause-agent')
+    assert.equal((brake as { pin: string }).pin, 'icon')
+    const ended = padGroupMenu(grp({ ended: true, paused: 2 }))
+    assert.deepEqual(ended.map(i => i === 'sep' ? 'sep' : i.id), ['close-agent', 'see-agent'])
+    assert.deepEqual([(ended[0] as { pin: string }).pin, (ended[0] as { danger: boolean }).danger], ['icon', true])
+  })
+
+  test('row state: one sentence per section', () => {
+    const base = { control: 'agent', asking: false, expired: false, ended: false, name: 'Sonda', url: 'https://x.test/', now: 1 } as const
+    assert.equal(rowStateText('ended', { ...base, ended: true }), '')
+    assert.equal(rowStateText('user', { ...base, asking: true }), 'Sonda espera você')
+    assert.equal(rowStateText('user', { ...base, expired: true }), 'Sonda desistiu de esperar')
+    assert.equal(rowStateText('user', { ...base, control: 'user' }), 'com você, do Sonda')
+    assert.equal(rowStateText('active', { ...base, control: 'paused' }), 'pausada')
   })
 })

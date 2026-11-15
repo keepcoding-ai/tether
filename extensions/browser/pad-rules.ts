@@ -2,7 +2,8 @@
 // how the rest are grouped by agent, the counts the controls and the icon show, and the sentence for an agent's last action.
 // The view (renderer.ts) feeds these what it knows (the panes, the agents, who has each tab) and only draws the answer.
 import type { DialogSpec } from '../../app/shared/dialog.ts'
-import type { Control } from './control-rules.ts'
+import type { MenuPin } from '../../app/renderer/ext-api.ts'
+import { controlTexts, type Control } from './control-rules.ts'
 import { shortName } from './rules.ts'
 
 /** What the pad knows of one tab. `place` is the desk the pane is in now (the Browser desk, or where the person took it). */
@@ -39,6 +40,8 @@ export interface PadModel {
   groups: PadGroup[]
   total: number
   paused: number
+  /** Tabs of alive agents that are not paused: what "pause all" can still act on. */
+  brakeable: number
   /** Tabs of agents that ended. */
   endedTabs: number
   /** The icon's number: tabs with the person or asking for help. */
@@ -91,6 +94,7 @@ export function buildPad(tabs: readonly PadTab[], agentOf: (slotId: string) => P
   const top = kept.filter(withPerson)
   return {
     withPerson: top, groups, total: kept.length, paused: kept.filter(t => t.control === 'paused').length,
+    brakeable: kept.filter(t => t.control !== 'paused' && !isEnded(agentOf(t.ownerSlotId))).length,
     endedTabs: groups.reduce((n, g) => n + (g.ended ? g.total : 0), 0), attention: top.length, asking: kept.filter(t => t.asking).length,
   }
 }
@@ -190,6 +194,11 @@ export const padFiltered = (name: string): string => `Guias do ${name}`
 export const PAD_NONE_OF_AGENT = 'Este agente não tem guias abertas.'
 export const padWhere = (place: string): string => `Em ${place}`
 
+export const PAD_ACTIVE = 'Com os agentes'
+export const PAD_ENDED = 'De agentes encerrados'
+export const PAD_CLOSE_ALL_ENDED = 'Fechar todas'
+export const padOnlyAgent = (name: string): string => `Só as guias do ${name}`
+
 export const LOGOUT_SITUATION = 'browser-logout-all'
 
 /** The confirmation of "Sair de todas as contas" (design §12a, §4.2): the one question before the logins of every agent go. */
@@ -217,4 +226,76 @@ export function logoutDialog(): DialogSpec {
  */
 export function pillBadgeCount(waiting: readonly { paneInBrowserDesk: boolean }[]): number {
   return waiting.filter(w => !w.paneInBrowserDesk).length
+}
+
+// ---- the pad's sections ----
+
+export interface PadSections {
+  /** Tabs with the person (asking, or she holds them): the pad's first section. */
+  withPerson: PadTab[]
+  /** Alive agents that have at least one tab not with the person, in the model's order. */
+  active: PadGroup[]
+  /** Ended agents that have at least one tab not with the person. */
+  ended: PadGroup[]
+  /** The tab ids of the `ended` rows: what the section's "Fechar todas" closes. */
+  endedIds: string[]
+}
+
+export function padSections(m: PadModel): PadSections {
+  const shown = m.groups.filter(g => g.tabs.length > 0)
+  const ended = shown.filter(g => g.ended)
+  return {
+    withPerson: m.withPerson, active: shown.filter(g => !g.ended), ended,
+    endedIds: ended.flatMap(g => g.tabs.map(t => t.tabId)),
+  }
+}
+
+// ---- the menus of the pad's action bars ----
+
+export type PadMenuId = 'show-all' | 'pause-all' | 'resume-all' | 'logout-all'
+export interface PadMenuItem { id: PadMenuId; icon: string; label: string; pin?: MenuPin; disabled?: boolean; danger?: boolean }
+
+/** The panel's menu. It always lists every item; pinning only promotes. `all` is the model of every tab (never the filtered one). */
+export function padMenu(all: PadModel, filtered: boolean): (PadMenuItem | 'sep')[] {
+  const t = controlTexts('')
+  const out: (PadMenuItem | 'sep')[] = []
+  if (filtered) out.push({ id: 'show-all', icon: 'list', label: PAD_SHOW_ALL, pin: 'primary' }, 'sep')
+  const pause: PadMenuItem = { id: 'pause-all', icon: 'pause', label: t.pauseAll }
+  if (all.brakeable === 0) pause.disabled = true
+  else pause.pin = all.paused === 0 ? 'primary' : 'icon'
+  const resume: PadMenuItem = { id: 'resume-all', icon: 'play', label: t.resumeAll }
+  if (all.paused === 0) resume.disabled = true
+  else resume.pin = 'highlight'
+  out.push(pause, resume, 'sep', { id: 'logout-all', icon: 'shield-warning', label: `${PAD_LOGOUT_ALL}…`, danger: true })
+  return out
+}
+
+export type PadGroupMenuId = 'pause-agent' | 'resume-agent' | 'see-agent' | 'close-agent'
+export interface PadGroupMenuItem { id: PadGroupMenuId; icon: string; label: string; pin?: MenuPin; danger?: boolean }
+
+/** The agent header's menu. An ended agent has no brake: nobody answers on its tabs. */
+export function padGroupMenu(g: PadGroup): (PadGroupMenuItem | 'sep')[] {
+  const see: PadGroupMenuItem = { id: 'see-agent', icon: 'list', label: padSeeAgent(g.name) }
+  const close: PadGroupMenuItem = { id: 'close-agent', icon: 'x', label: padCloseAgent(g.name), danger: true }
+  if (g.ended) return [{ ...close, pin: 'icon' }, see]
+  const allPaused = g.paused === g.total && g.total > 0
+  const brake: PadGroupMenuItem = allPaused
+    ? { id: 'resume-agent', icon: 'play', label: padResumeAgent(g.name), pin: 'icon' }
+    : { id: 'pause-agent', icon: 'pause', label: controlTexts(g.name).pauseAgent, pin: 'icon' }
+  return [brake, see, 'sep', close]
+}
+
+// ---- the row's one state sentence ----
+
+export type PadSectionId = 'user' | 'active' | 'ended'
+
+/** The sentence of a row; the section already says what the ended ones are. */
+export function rowStateText(section: PadSectionId, i: Parameters<typeof lastActionText>[0]): string {
+  if (section === 'ended') return ''
+  if (section === 'user') {
+    if (i.asking) return `${i.name} espera você`
+    if (i.expired) return lastActionText(i)
+    return `com você, do ${i.name}`
+  }
+  return lastActionText(i)
 }
