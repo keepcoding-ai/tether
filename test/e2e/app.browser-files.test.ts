@@ -23,7 +23,7 @@ import type { ElectronApplication, Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { cleanEnv, daemonMain, electronPath, launchHidden, rawCdp, root, serverMjs, sleep, inBrowser } from './browser-kit.ts'
+import { FAKE_SOUL_CMD as FAKE_SOUL, cleanEnv, daemonMain, electronPath, launchHidden, rawCdp, root, serverMjs, sleep, inBrowser } from './browser-kit.ts'
 
 declare const window: {
   __tether: {
@@ -46,7 +46,6 @@ type Tabs = {
 }
 
 const pipe = `\\\\.\\pipe\\tether-brfiles-${process.pid}`
-const FAKE_SOUL = `"${process.execPath}" -e "setInterval(()=>{},1000)"`
 const html = (title: string, body: string): string => `<!doctype html><meta charset="utf-8"><title>${title}</title><link rel="icon" href="data:,">${body}`
 const BIG = 51 * 1024 * 1024
 
