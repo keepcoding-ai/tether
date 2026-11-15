@@ -1,12 +1,14 @@
 // The toolbar's session search (DOM): a compact input at the start of .tb-right; typing lists the matching sessions
 // of every desk under it, Enter or a click jumps to one. The ranking is session-search-rules.ts; main.ts feeds the
-// live sessions (read on every keystroke, so renames show at once) and does the jump.
+// sessions, snapshotted when the box gains focus (keystrokes filter the snapshot), and does the jump.
 import { highlightRuns } from './fuzzy.ts'
 import { moveSelection, searchSessions, type SearchHit, type SearchSession } from './session-search-rules.ts'
 
 export interface SessionSearchHost {
   /** The sessions that have a tab, in the desks' order. */
   sessions(): SearchSession[]
+  /** Where the session's tab is ("Mesa 1", "Gaveta"); asked only for the rows shown. */
+  placeOf(slotId: string): string | undefined
   /** Brings the session's pane to the front and focuses it. */
   jump(slotId: string): void
 }
@@ -19,13 +21,16 @@ export interface SessionSearch {
 export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): SessionSearch {
   const input = wrap.querySelector<HTMLInputElement>('input')!
   const list = wrap.querySelector<HTMLElement>('.ss-list')!
+  let snapshot: SearchSession[] = []
   let hits: SearchHit[] = []
   let selected = -1
+  let rows: HTMLElement[] = []
 
   const close = (): void => { list.hidden = true; input.setAttribute('aria-expanded', 'false') }
 
   const render = (): void => {
     list.replaceChildren()
+    rows = []
     hits.forEach((h, i) => {
       const row = document.createElement('div')
       row.className = 'ss-item' + (i === selected ? ' selected' : '')
@@ -39,11 +44,12 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
       }
       const place = document.createElement('span')
       place.className = 'ss-place'
-      place.textContent = h.place
+      place.textContent = host.placeOf(h.slotId) ?? ''
       row.append(title, place)
       // mousedown, not click: the input's blur would close the list before the click lands.
       row.addEventListener('mousedown', e => { e.preventDefault(); go(i) })
       list.append(row)
+      rows.push(row)
     })
     if (hits.length === 0 && input.value.trim() !== '') {
       const empty = document.createElement('div')
@@ -57,8 +63,20 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
     list.querySelector('.selected')?.scrollIntoView({ block: 'nearest' })
   }
 
+  /** Moves the selection between the existing rows, without rebuilding them. */
+  const select = (next: number): void => {
+    rows[selected]?.classList.remove('selected')
+    rows[selected]?.setAttribute('aria-selected', 'false')
+    selected = next
+    const row = rows[selected]
+    if (!row) return
+    row.classList.add('selected')
+    row.setAttribute('aria-selected', 'true')
+    row.scrollIntoView({ block: 'nearest' })
+  }
+
   const update = (): void => {
-    hits = searchSessions(input.value, host.sessions())
+    hits = searchSessions(input.value, snapshot)
     selected = hits.length > 0 ? 0 : -1
     render()
   }
@@ -74,13 +92,12 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
   }
 
   input.addEventListener('input', update)
-  input.addEventListener('focus', () => { if (input.value.trim() !== '') update() })
+  input.addEventListener('focus', () => { snapshot = host.sessions(); if (input.value.trim() !== '') update() })
   input.addEventListener('blur', close)
   input.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
-      selected = moveSelection(selected, e.key === 'ArrowDown' ? 1 : -1, hits.length)
-      render()
+      select(moveSelection(selected, e.key === 'ArrowDown' ? 1 : -1, hits.length))
     } else if (e.key === 'Enter') {
       e.preventDefault()
       go(selected)
@@ -92,5 +109,6 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
     }
   })
 
-  return { focus: () => { input.focus(); input.select() } }
+  // The chord on a box that already has the caret: focus does not fire again, so the snapshot is taken here.
+  return { focus: () => { if (document.activeElement === input) snapshot = host.sessions(); else input.focus(); input.select() } }
 }

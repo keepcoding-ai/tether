@@ -4,21 +4,20 @@ import assert from 'node:assert/strict'
 import { moveSelection, searchSessions, type SearchSession } from '../../app/renderer/session-search-rules.ts'
 
 const S: SearchSession[] = [
-  { slotId: 'a1b2c3', title: 'budget-management', place: 'Mesa 1' },
-  { slotId: 'd4e5f6', title: 'kai-aware', place: 'Mesa 2' },
-  { slotId: '9z8y7x', title: '', place: 'Gaveta' },
-  { slotId: 'bb0000', title: 'Próxima entrega', place: 'Mesa 1' },
+  { slotId: 'a1b2c3', title: 'budget-management' },
+  { slotId: 'd4e5f6', title: 'kai-aware' },
+  { slotId: '9z8y7x', title: '' },
+  { slotId: 'bb0000', title: 'Próxima entrega' },
 ]
 
 describe('searchSessions', () => {
   test('empty query lists nothing', () => {
     assert.deepEqual(searchSessions('  ', S), [])
   })
-  test('fuzzy match on the title, with positions and place', () => {
+  test('fuzzy match on the title, with positions', () => {
     const r = searchSessions('kaw', S)
     assert.equal(r.length, 1)
     assert.equal(r[0]!.slotId, 'd4e5f6')
-    assert.equal(r[0]!.place, 'Mesa 2')
     assert.deepEqual(r[0]!.positions, [0, 4, 5])
   })
   test('accents do not matter', () => {

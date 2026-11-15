@@ -3467,7 +3467,8 @@ function setupUi(): void {
   // Static icons: <span data-icon="name"> in index.html becomes the inline SVG.
   for (const el of document.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
   sessionSearch = setupSessionSearch($('session-search'), {
-    sessions: () => [...slots.values()].filter(s => findPanel(s.slotId) !== undefined).map(s => ({ slotId: s.slotId, title: panelTitle(s), place: placeOf(s.slotId) ?? '' })),
+    sessions: () => { const out: { slotId: string; title: string }[] = []; for (const s of slots.values()) if (findPanel(s.slotId)) out.push({ slotId: s.slotId, title: panelTitle(s) }); return out },
+    placeOf,
     jump: revealPane,
   })
   bell = setupBell({

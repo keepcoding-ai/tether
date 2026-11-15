@@ -1,20 +1,18 @@
 // The toolbar's session search (pure): which sessions match the typed text and in what order. The DOM is
-// session-search.ts; main.ts feeds it the sessions that have a tab, with the tab's title and the desk's name.
+// session-search.ts; main.ts feeds it the sessions that have a tab, with the tab's title (the place is looked up
+// only for the rows shown).
 import { fuzzyMatch } from './fuzzy.ts'
 
 export interface SearchSession {
   slotId: string
   /** What the tab shows; may be empty (then the row falls back to the slot id). */
   title: string
-  /** Where the tab lives ("Mesa 1", "Gaveta"). */
-  place: string
 }
 
 export interface SearchHit {
   slotId: string
   /** The text the row shows (the title, or the slot id when there is none). */
   label: string
-  place: string
   /** Indexes into `label` to highlight. */
   positions: number[]
   score: number
@@ -42,7 +40,7 @@ export function searchSessions(query: string, sessions: readonly SearchSession[]
     if (!fm && !idPrefix) return
     const score = (fm?.score ?? 0) + (idPrefix ? ID_PREFIX : 0)
     const positions = fm?.positions ?? []
-    hits.push({ hit: { slotId: s.slotId, label, place: s.place, positions, score }, index })
+    hits.push({ hit: { slotId: s.slotId, label, positions, score }, index })
   })
   hits.sort((a, b) => b.hit.score - a.hit.score || a.index - b.index)
   return hits.slice(0, limit).map(h => h.hit)
