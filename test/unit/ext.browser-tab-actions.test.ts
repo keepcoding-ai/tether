@@ -92,3 +92,23 @@ describe('browser frame: the tab strip stays on screen', () => {
     assert.match(rule, /height:\s*100%/)
   })
 })
+
+describe('browser tab actions: ended agent and bar pins', () => {
+  const pinsOf = (s: TabActionState) => Object.fromEntries(tabActions(s, 'Sonda').map(a => [a.id, a.pin]))
+  test('an ended agent has no brake', () => {
+    assert.deepEqual(ids(st({ agentAlive: false })), ['take', 'close'])
+    assert.deepEqual(ids(st({ agentAlive: false, paused: true })), ['take', 'close'])
+    assert.deepEqual(ids(st({ agentAlive: false, holder: 'user' })), ['give-back', 'clean-reload', 'close'])
+  })
+  test('pins: person holds, agent alive, agent ended', () => {
+    assert.deepEqual(pinsOf(st({ holder: 'user' })), { 'give-back': 'highlight', pause: 'icon', 'clean-reload': undefined, close: 'icon' })
+    assert.deepEqual(pinsOf(st()), { take: 'icon', pause: 'icon', close: 'icon' })
+    assert.deepEqual(pinsOf(st({ paused: true })), { take: 'icon', resume: 'icon', close: 'icon' })
+    assert.deepEqual(pinsOf(st({ agentAlive: false })), { take: undefined, close: 'icon' })
+    assert.equal(pinsOf(st({ agentAlive: false, holder: 'user' }))['give-back'], undefined)
+  })
+  test('at most one highlight per list', () => {
+    for (const s of [st(), st({ holder: 'user' }), st({ paused: true }), st({ agentAlive: false })])
+      assert.ok(tabActions(s, 'Sonda').filter(a => a.pin === 'highlight').length <= 1)
+  })
+})
