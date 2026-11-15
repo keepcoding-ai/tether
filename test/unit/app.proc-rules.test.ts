@@ -116,7 +116,7 @@ test('timeline: time with seconds, who (tether for the system), the CLI\'s phras
   const e: ProcEvent = { v: 1, ts: '2026-11-11T13:41:05.000Z', kind: 'restart-requested', run: 2, by: { kind: 'app' }, reason: 'travou' }
   assert.deepEqual(timelineItem(e), { time: clockTime(e.ts), who: 'você (pelo app)', what: 'pediu o reinício (execução 2)', reason: 'travou' })
   const end: ProcEvent = { v: 1, ts: '2026-11-11T13:41:06.000Z', kind: 'ended', run: 2, code: 0, cause: 'requested' }
-  assert.equal(timelineItem(end).who, 'tether')
+  assert.equal(timelineItem(end).who, 'Tether')
   assert.match(timelineItem(end).time, /^\d\d:\d\d:\d\d$/)
   assert.equal(runSeparator(3), '── execução 3 ──')
 })

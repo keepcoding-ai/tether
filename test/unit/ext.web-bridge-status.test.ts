@@ -111,7 +111,7 @@ describe('web-bridge status: state, badge, tooltip (design §5)', () => {
     assert.equal(ago(NOW - 3 * 86_400_000, NOW), 'há 3 d')
     assert.deepEqual(versionLine({ vendored: '0.1.0', installed: '0.1.0', pendingReload: false }), { text: 'Extensão 0.1.0', reload: false })
     assert.deepEqual(versionLine({ vendored: '0.1.0', installed: '0.1.0', pendingReload: true }), { text: 'Extensão 0.1.0', reload: true })
-    assert.deepEqual(versionLine({ vendored: '0.2.0', installed: '0.1.0', pendingReload: false }), { text: 'Extensão: 0.2.0 no tether · 0.1.0 instalada', reload: true })
+    assert.deepEqual(versionLine({ vendored: '0.2.0', installed: '0.1.0', pendingReload: false }), { text: 'Extensão: 0.2.0 no Tether · 0.1.0 instalada', reload: true })
     assert.deepEqual(versionLine({ vendored: '0.1.0', pendingReload: false }), { text: 'Extensão 0.1.0 · não instalada neste computador', reload: false })
   })
 })

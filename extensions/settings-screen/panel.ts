@@ -34,7 +34,7 @@ export interface SettingsHost {
 /** Things a section does besides its settings: the core's dialogs that edit what the page does not edit as a value. */
 interface SectionAction { label: string; icon: IconName; command: string; description?: string }
 const SECTION_ACTIONS: Record<string, SectionAction[]> = {
-  'core/Tema': [{ label: 'Tema do tether…', icon: 'palette', command: 'terminal.theme', description: 'Cores do terminal; fonte, tamanho e ligaduras do terminal e dos editores.' }],
+  'core/Tema': [{ label: 'Tema do Tether…', icon: 'palette', command: 'terminal.theme', description: 'Cores do terminal; fonte, tamanho e ligaduras do terminal e dos editores.' }],
   'core/Confirmações': [{ label: 'Voltar a perguntar antes de fechar painéis', icon: 'arrow-clockwise', command: 'confirmations.restore', description: 'Os painéis em que você marcou "não perguntar de novo" voltam a pedir confirmação antes de fechar.' }],
 }
 /** Sections that hold only actions (no setting declares them), placed after the node's own sections. */
@@ -492,7 +492,7 @@ export class SettingsTab implements ITabRenderer {
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onClose(this.api.id) })
     this.element.append(kind, text, close)
     this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
-    this.element.title = `${SETTINGS_TITLE}\nTodas as configurações do tether e das extensões`
+    this.element.title = `${SETTINGS_TITLE}\nTodas as configurações do Tether e das extensões`
   }
 
   init(params: TabPartInitParameters): void {

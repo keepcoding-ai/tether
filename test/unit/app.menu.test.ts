@@ -39,7 +39,7 @@ describe('the ≡ menu from the registry', () => {
       'Painel ›', '  Nova aba', '  Duplicar painel à direita', '  Duplicar painel abaixo', '  Novo painel na borda do quadro…', '  Novo quadro…', '  Trocar perfil do painel…',
       'Nota ›', '  Nova nota', '  Abrir nota…', '  Salvar nota como…',
       'Mesa ›', '  Nova mesa', '  Montar a mesa (modo builder)', '  Mover…', '  Mesa atual: renomear, cor, mover…', '  Fechar mesa…',
-      'Ferramentas ›', '  Perfis de lançamento…', '  Atalhos de teclado', '  Extensões', '  Instalar Tether Bridge…', '  Associar links tether:// a este tether…',
+      'Ferramentas ›', '  Perfis de lançamento…', '  Atalhos de teclado', '  Extensões', '  Instalar Tether Bridge…', '  Associar links tether:// a este Tether…',
       '---',
       'Configurações…',
       '---',

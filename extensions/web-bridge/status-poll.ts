@@ -149,14 +149,14 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
 
   const act = async (what: string, path: string): Promise<ActionOutcome> => {
     const key = readKey()
-    if (!key) return { ok: false, message: 'A instalação do bridge ainda não tem chave; abra o tether de novo.' }
+    if (!key) return { ok: false, message: 'A instalação do bridge ainda não tem chave; abra o Tether de novo.' }
     try {
       const r = await call('POST', path, key)
       await r.arrayBuffer().catch(() => undefined)
       if (r.ok) { deps.log(`${what}: ok`); return { ok: true } }
       deps.log(`${what}: o daemon respondeu ${r.status}`)
       if (r.status === 404) return { ok: false, message: 'Pausar está indisponível nesta versão do bridge; o próximo "npm run bridge:build" traz o recurso.' }
-      if (r.status === 401 || r.status === 403) return { ok: false, message: 'O daemon recusou a chave do tether.' }
+      if (r.status === 401 || r.status === 403) return { ok: false, message: 'O daemon recusou a chave do Tether.' }
       return { ok: false, message: `O daemon respondeu ${r.status}.` }
     } catch {
       deps.log(`${what}: daemon sem resposta na porta ${deps.port}`)

@@ -162,7 +162,7 @@ test('browser tabs: born behind and grouped, real frame, popup, permissions, sch
     assert.deepEqual(await mainTabs(app), [], 'nothing loads on its own')
     for (const x of back) {
       if (x.tabId === cred) { assert.equal(x.state, 'no-address'); assert.equal(x.url, '') }
-      else { assert.equal(x.state, 'not-loaded', x.tabId); assert.equal(x.stateText, 'Não carregada desde que o tether reabriu') }
+      else { assert.equal(x.state, 'not-loaded', x.tabId); assert.equal(x.stateText, 'Não carregada desde que o Tether reabriu') }
     }
     assert.equal((await byTab(page, a1)).title, 'Página A', 'the saved title shows while not loaded')
     assert.equal(await page.evaluate(() => window.__tether.activeDesk()), d1)

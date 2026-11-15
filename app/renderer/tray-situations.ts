@@ -11,8 +11,8 @@ export function trayFirstCloseSituation(): DialogSpec {
     situation: 'tray-first-close',
     tone: 'info',
     icon: 'tray',
-    title: 'O tether continua na bandeja',
-    message: 'Os agentes seguem rodando. Clique no ícone da bandeja para abrir a janela de novo; o menu do ícone também sai do tether.',
+    title: 'O Tether continua na bandeja',
+    message: 'Os agentes seguem rodando. Clique no ícone da bandeja para abrir a janela de novo; o menu do ícone também sai do Tether.',
     choices: [
       { id: 'ok', icon: 'check', label: 'Entendi', consequence: 'A janela se esconde e os agentes continuam rodando. Este aviso aparece só desta vez.', tone: 'safe' },
     ],

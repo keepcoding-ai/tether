@@ -52,7 +52,7 @@ export const CORE_APP_MENU: readonly Item[] = [
   ...items('tools', [
     { command: 'profiles.manage', icon: 'sliders-horizontal', label: 'Perfis de lançamento…' },
     { command: 'extensions.show', icon: 'puzzle-piece', label: 'Extensões', order: 30 },
-    { command: 'links.associate', icon: 'link', label: 'Associar links tether:// a este tether…', order: 45 },
+    { command: 'links.associate', icon: 'link', label: 'Associar links tether:// a este Tether…', order: 45 },
   ]),
   // The settings screen's "Configurações…" (group 'settings').
   ...items('exit', [

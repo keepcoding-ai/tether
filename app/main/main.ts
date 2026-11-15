@@ -929,7 +929,7 @@ function createMenu(): void {
         themeMenu(),
         ...fontSizeMenu(),
         { type: 'separator' },
-        { id: 'terminal-theme', label: 'Tema do tether…', click: () => win?.webContents.send('tether:open-terminal-theme') },
+        { id: 'terminal-theme', label: 'Tema do Tether…', click: () => win?.webContents.send('tether:open-terminal-theme') },
         { id: 'profiles', label: 'Perfis de lançamento…', click: () => win?.webContents.send('tether:open-profiles') },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },
@@ -1259,7 +1259,7 @@ async function start(): Promise<void> {
   while (outcome === 'stale') {
     // The previous instance is still releasing the lock and nobody is alive to focus: say so in the app's
     // own dialog (stderr too, for a launch from a terminal) and let the user retry or leave.
-    const message = 'o tether ainda está fechando; tente de novo em alguns segundos'
+    const message = 'o Tether ainda está fechando; tente de novo em alguns segundos'
     appLog(`${message} (lock de instância única ocupado por ${LOCK_RETRY_MS / 1000} s em ${app.getPath('userData')})`)
     await app.whenReady()
     closeStandalone?.()

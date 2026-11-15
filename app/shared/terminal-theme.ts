@@ -107,9 +107,9 @@ export const TERMINAL_PRESETS: readonly TerminalPreset[] = [
   {
     // What tether painted before presets existed (app/renderer/panel.ts TERMINAL_THEME): Dark+ brights used
     // as normal colours in the dark scheme; Light+ with yellow and cyan darkened by hand in the light one.
-    id: 'tether-classic', label: 'tether clássico', license: 'MIT (microsoft/vscode, ajustado)',
-    source: 'tether, app/renderer/panel.ts antes de 2026-10-30',
-    note: 'O que o tether usava até aqui: no escuro, as brilhantes do VS Code como normais.',
+    id: 'tether-classic', label: 'Tether clássico', license: 'MIT (microsoft/vscode, ajustado)',
+    source: 'Tether, app/renderer/panel.ts antes de 2026-10-30',
+    note: 'O que o Tether usava até aqui: no escuro, as brilhantes do VS Code como normais.',
     light: colors('#24292f', '#24292f', '#b4d5fe', ['#000000', '#cd3131', '#107c10', '#8a6d00', '#0451a5', '#bc05bc', '#0a7f99', '#555555', '#5f6368', '#cd3131', '#0f8a0f', '#946f00', '#0451a5', '#bc05bc', '#0a7f99', '#777777']),
     dark: colors('#d8d8dc', '#d8d8dc', '#3a5a8a', ['#1b1b1f', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#e5e5e5', '#6b6b75', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#ffffff']),
   },

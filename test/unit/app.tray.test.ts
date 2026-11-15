@@ -13,9 +13,9 @@ const commands = (items: TrayItem[]) => items.flatMap(i => (i.kind === 'command'
 test('no slots: only the commands, tooltip says nothing runs, no badge', () => {
   const m = trayModel([])
   assert.deepEqual(commands(m.items), ['open', 'open-drawer', 'restart-daemon', 'quit-keep', 'quit-all'])
-  assert.equal(m.items[0]!.kind === 'command' && m.items[0]!.label, 'Abrir tether')
+  assert.equal(m.items[0]!.kind === 'command' && m.items[0]!.label, 'Abrir Tether')
   assert.equal(panes(m.items).length, 0)
-  assert.equal(m.tooltip, 'tether: nenhum agente rodando')
+  assert.equal(m.tooltip, 'Tether: nenhum agente rodando')
   assert.equal(m.running, 0)
   assert.equal(m.badge, 'none')
 })
@@ -23,7 +23,7 @@ test('no slots: only the commands, tooltip says nothing runs, no badge', () => {
 test('commands are labelled in Portuguese and the pane list sits between two separators', () => {
   const m = trayModel([slot('a', 'running')])
   const labels = m.items.map(i => (i.kind === 'separator' ? '---' : i.label))
-  assert.deepEqual(labels, ['Abrir tether', 'Abrir gaveta', '---', 'a (rodando)', '---', 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', 'Sair (manter agentes)', 'Sair e encerrar tudo…'])
+  assert.deepEqual(labels, ['Abrir Tether', 'Abrir gaveta', '---', 'a (rodando)', '---', 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', 'Sair (manter agentes)', 'Sair e encerrar tudo…'])
 })
 
 test('panes: live first, then the rest; the label is title, else name, else folder, with the state', () => {
@@ -48,11 +48,11 @@ test('panes: live first, then the rest; the label is title, else name, else fold
 test('running count and tooltip: running and starting count, exited does not; singular and plural', () => {
   const one = trayModel([slot('a', 'running'), slot('b', 'exited')])
   assert.equal(one.running, 1)
-  assert.equal(one.tooltip, 'tether: 1 agente rodando')
+  assert.equal(one.tooltip, 'Tether: 1 agente rodando')
   assert.equal(one.badge, 'active')
   const two = trayModel([slot('a', 'running'), slot('b', 'starting'), slot('c', 'queued')])
   assert.equal(two.running, 2)
-  assert.equal(two.tooltip, 'tether: 2 agentes rodando')
+  assert.equal(two.tooltip, 'Tether: 2 agentes rodando')
   assert.equal(trayModel([slot('a', 'exited')]).badge, 'none')
 })
 
@@ -81,7 +81,7 @@ test('trayWanted: tests (private home/pipe, hidden window) get no tray unless th
 
 test('an extension notice: a line right after the commands, the attention badge and the count, even with no terminal waiting', () => {
   const m = trayModel([slot('a', 'running')], [{ id: '1', slotId: 'a', message: 'Sonda pede ajuda em github.com: fazer login' }, { id: '2', message: 'outra' }])
-  assert.deepEqual(m.items.slice(0, 5).map(i => (i.kind === 'separator' ? '---' : i.label)), ['Abrir tether', 'Abrir gaveta', '---', 'Sonda pede ajuda em github.com: fazer login', 'outra'])
+  assert.deepEqual(m.items.slice(0, 5).map(i => (i.kind === 'separator' ? '---' : i.label)), ['Abrir Tether', 'Abrir gaveta', '---', 'Sonda pede ajuda em github.com: fazer login', 'outra'])
   const first = m.items[3]!
   assert.equal(first.kind === 'notice' && first.slotId, 'a')
   assert.equal(m.attention, 2)

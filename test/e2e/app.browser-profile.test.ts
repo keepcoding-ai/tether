@@ -61,7 +61,7 @@ test('browser option in the profile editor', { timeout: 300_000 }, async () => {
     await page.waitForSelector(OPTION, { state: 'visible' })
     assert.equal(await page.isChecked(OPTION), false, 'off by default')
     const hint = (await page.locator('#profile-ext-options').textContent()) ?? ''
-    assert.match(hint, /Os agentes do tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias\./)
+    assert.match(hint, /Os agentes do Tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias\./)
     assert.match(hint, /mesmos para todos os perfis/)
     await page.check(OPTION)
     await page.click('#btn-profile-save')

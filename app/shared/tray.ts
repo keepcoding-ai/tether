@@ -78,7 +78,7 @@ export function trayModel(slots: Iterable<SlotState>, notices: readonly TrayNoti
     .sort((a, b) => ORDER[a.s.status] - ORDER[b.s.status] || a.i - b.i)
     .map(x => x.s)
   const running = list.filter(s => s.status === 'running' || s.status === 'starting').length
-  const items: TrayItem[] = [{ kind: 'command', id: 'open', label: 'Abrir tether' }, { kind: 'command', id: 'open-drawer', label: 'Abrir gaveta' }]
+  const items: TrayItem[] = [{ kind: 'command', id: 'open', label: 'Abrir Tether' }, { kind: 'command', id: 'open-drawer', label: 'Abrir gaveta' }]
   if (notices.length > 0) {
     items.push({ kind: 'separator' })
     for (const n of notices.slice(0, TRAY_PANE_LIMIT)) items.push({ kind: 'notice', ...(n.slotId ? { slotId: n.slotId } : {}), label: n.message })
@@ -99,7 +99,7 @@ export function trayModel(slots: Iterable<SlotState>, notices: readonly TrayNoti
     { kind: 'command', id: 'quit-all', label: 'Sair e encerrar tudo…' },
   )
   const attention = list.filter(s => s.attention !== undefined).length + notices.length
-  let tooltip = running === 0 ? 'tether: nenhum agente rodando' : `tether: ${plural(running, 'agente rodando', 'agentes rodando')}`
+  let tooltip = running === 0 ? 'Tether: nenhum agente rodando' : `Tether: ${plural(running, 'agente rodando', 'agentes rodando')}`
   if (attention > 0) tooltip += ` · ${plural(attention, 'esperando você', 'esperando você')}`
   return { items, tooltip, running, attention, badge: attention > 0 ? 'attention' : running > 0 ? 'active' : 'none' }
 }

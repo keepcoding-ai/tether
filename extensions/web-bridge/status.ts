@@ -195,8 +195,8 @@ export function titleOf(s: StatusSnapshot, now: number, product: string): string
 function baseTitleOf(s: StatusSnapshot, now: number, product: string): string {
   const state = stateOf({ ...s, debug: false }, now) // the mode is the tooltip's suffix, not a state of the base text
   if (state === 'error') return 'O daemon do bridge caiu; a próxima chamada o reinicia'
-  if (s.daemon === 'no-key') return `${product}: instalação ainda não preparada (abra o tether de novo)`
-  if (s.daemon === 'refused') return `${product}: o daemon recusou a chave do tether`
+  if (s.daemon === 'no-key') return `${product}: instalação ainda não preparada (abra o Tether de novo)`
+  if (s.daemon === 'refused') return `${product}: o daemon recusou a chave do Tether`
   if (s.daemon !== 'up') return `${product}: serviço ainda não respondeu`
   if (state === 'warn') return `${product} pausado`
   if (state === 'idle') return `${product}: nenhum navegador conectado · Instalar…`
@@ -233,5 +233,5 @@ export function versionLine(v: StatusSnapshot['version']): { text: string; reloa
   if (!v.installed) return { text: `Extensão ${vendored} · não instalada neste computador`, reload: false }
   const differ = v.installed !== vendored
   const reload = v.pendingReload || differ
-  return { text: differ ? `Extensão: ${vendored} no tether · ${v.installed} instalada` : `Extensão ${vendored}`, reload }
+  return { text: differ ? `Extensão: ${vendored} no Tether · ${v.installed} instalada` : `Extensão ${vendored}`, reload }
 }

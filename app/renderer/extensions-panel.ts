@@ -35,7 +35,7 @@ export class ExtensionsPanel implements IContentRenderer {
     this.element = document.createElement('div')
     this.element.className = 'ext-pane'
     this.element.dataset.extensions = 'pane'
-    this.element.innerHTML = `<header><h2>${EXTENSIONS_TITLE}</h2><p class="dim">O que o tether carrega além do núcleo. Ligar ou desligar uma extensão vale depois de "Reiniciar o app"; os agentes continuam rodando.</p></header><div class="ext-restart" role="status" hidden><span>Há mudanças que valem depois de reiniciar o app.</span><button type="button" class="ext-relaunch">Reiniciar o app</button></div><div class="ext-list" tabindex="0" role="list" aria-label="${EXTENSIONS_TITLE}"></div>`
+    this.element.innerHTML = `<header><h2>${EXTENSIONS_TITLE}</h2><p class="dim">O que o Tether carrega além do núcleo. Ligar ou desligar uma extensão vale depois de "Reiniciar o app"; os agentes continuam rodando.</p></header><div class="ext-restart" role="status" hidden><span>Há mudanças que valem depois de reiniciar o app.</span><button type="button" class="ext-relaunch">Reiniciar o app</button></div><div class="ext-list" tabindex="0" role="list" aria-label="${EXTENSIONS_TITLE}"></div>`
     this.list = this.element.querySelector<HTMLElement>('.ext-list')!
     this.restart = this.element.querySelector<HTMLElement>('.ext-restart')!
     this.restart.querySelector('button')!.addEventListener('click', () => host.relaunch())

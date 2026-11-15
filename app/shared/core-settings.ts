@@ -47,7 +47,7 @@ export const CORE_SETTINGS: ConfigurationNode = {
     },
     'notifications.os': {
       type: 'string', default: DEFAULT_OS_NOTIFY, enum: OS_NOTIFY_LEVELS, enumLabels: ['Todas', 'Só quando esperam você', 'Desligadas'],
-      title: 'Notificações do sistema', description: 'Avisos do Windows quando um agente termina ou espera você e o tether não está em primeiro plano.', section: 'Notificações', order: 20,
+      title: 'Notificações do sistema', description: 'Avisos do Windows quando um agente termina ou espera você e o Tether não está em primeiro plano.', section: 'Notificações', order: 20,
     },
   },
 }

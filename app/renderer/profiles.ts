@@ -123,7 +123,7 @@ export function fieldOfError(line: string): Field {
 
 /** The renderer's copy of the validator's one warning, so it shows while typing, not only after a save. */
 export function envWarning(key: string): string | undefined {
-  if (/^claude/i.test(key) && key !== 'CLAUDE_CONFIG_DIR') return `a variável ${key} pode impedir o Claude de gravar o transcript (o tether remove as CLAUDE* herdadas por isso)`
+  if (/^claude/i.test(key) && key !== 'CLAUDE_CONFIG_DIR') return `a variável ${key} pode impedir o Claude de gravar o transcript (o Tether remove as CLAUDE* herdadas por isso)`
   return undefined
 }
 

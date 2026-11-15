@@ -15,7 +15,7 @@ export const manifest: ExtensionManifest = {
   id: 'browser',
   version: '0.1.0',
   displayName: 'Browser',
-  description: 'O navegador do tether: as guias que os agentes abrem, numa mesa própria, com a pessoa sempre podendo assistir e assumir.',
+  description: 'O navegador do Tether: as guias que os agentes abrem, numa mesa própria, com a pessoa sempre podendo assistir e assumir.',
   hosts: ['renderer', 'main', 'daemon'],
   optional: true,
   contributes: {
@@ -28,7 +28,7 @@ export const manifest: ExtensionManifest = {
         type: 'string', default: 'perProfile', enum: ['perProfile', 'all', 'off'], fromBoolean: { true: 'all', false: 'perProfile' },
         enumLabels: ['Só nos perfis marcados', 'Todos os agentes', 'Ninguém'],
         title: 'Navegador para os agentes dos painéis',
-        description: 'Os agentes do tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias. Em "Só nos perfis marcados", vale para os agentes lançados com um perfil que tenha a opção "Navegador para os agentes" ligada; agentes sem perfil não recebem.',
+        description: 'Os agentes do Tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias. Em "Só nos perfis marcados", vale para os agentes lançados com um perfil que tenha a opção "Navegador para os agentes" ligada; agentes sem perfil não recebem.',
         order: 3,
       },
       evaluate: { type: 'boolean', default: false, title: 'Permitir que o agente execute JavaScript na página', description: 'Desligado, o agente lê e age na página, mas não roda código nela.', order: 1 },
@@ -39,7 +39,7 @@ export const manifest: ExtensionManifest = {
       debug: {
         type: 'boolean', default: false, section: 'Depuração', order: 100,
         title: 'Modo de depuração',
-        description: 'Para investigar quando o navegador do tether falha com um agente. Ligado, o registro guarda mais detalhes de cada ação e valem os prazos abaixo; cada guia mostra a marca "Depuração". Os pedidos de permissão continuam iguais. Vale na hora, sem reabrir o agente. Deixe desligado no uso normal.',
+        description: 'Para investigar quando o navegador do Tether falha com um agente. Ligado, o registro guarda mais detalhes de cada ação e valem os prazos abaixo; cada guia mostra a marca "Depuração". Os pedidos de permissão continuam iguais. Vale na hora, sem reabrir o agente. Deixe desligado no uso normal.',
       },
       debugActionTimeoutSec: {
         type: 'number', default: 15, min: 0, max: 86400, section: 'Depuração', order: 101,

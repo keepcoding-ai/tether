@@ -99,7 +99,7 @@ describe('keybindings.json', () => {
     if (!parsed.ok) return
     const again = mergeKeybindings(parsed.entries, known, false).bindings
     assert.deepEqual(overridesFor(again, false), entries)
-    assert.match(text, /^\/\/ Atalhos do tether/)
+    assert.match(text, /^\/\/ Atalhos do Tether/)
   })
 
   test('prefix issues: a single key that opens chords; a chord whose first key is a single binding', () => {

@@ -26,8 +26,8 @@ export function registerFileOpen(ipcMain: IpcMain, shell: Shell): void {
     const target = inspectFile(path, readHead)
     if (target.kind === 'missing') return { ok: false, message: 'O arquivo não existe mais.' }
     if (target.kind === 'folder') return { ok: false, message: 'O caminho é uma pasta.' }
-    if (target.kind === 'text') return { ok: false, message: 'Arquivo de texto: abre no editor do tether.' }
-    if (target.runnable) return { ok: false, message: 'Este tipo de arquivo é executável: o tether não o abre.' }
+    if (target.kind === 'text') return { ok: false, message: 'Arquivo de texto: abre no editor do Tether.' }
+    if (target.runnable) return { ok: false, message: 'Este tipo de arquivo é executável: o Tether não o abre.' }
     const err = await shell.openPath(path)
     return err ? { ok: false, message: err } : { ok: true }
   })
