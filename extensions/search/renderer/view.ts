@@ -604,7 +604,8 @@ export class SearchView implements PadView {
     this.scheduleHistory()
     if (local.files.length > 0) this.addBatch(this.live, local.files)
     this.ipc.invoke('search', id, query).then(
-      r => { if (!r.started) this.finish(id, { kind: 'error', message: r.message }) },
+      // The main drops pinned folders that no longer exist; a refusal means none is left to search.
+      r => { if (!r.started) this.finish(id, { kind: 'error', message: NO_FOLDER_MESSAGE }) },
       err => this.finish(id, { kind: 'error', message: err instanceof Error ? err.message : String(err) }),
     )
   }

@@ -148,6 +148,13 @@ describe('sanitizeQuery', () => {
     assert.equal(sanitizeQuery(null), undefined)
   })
 
+  it('drops missing folders and keeps the existing ones; invalid only when none is left', () => {
+    const gone = join(root, 'does-not-exist')
+    const q = sanitizeQuery({ ...good(), folderQueries: [{ folder: gone }, { folder: root }] })
+    assert.deepEqual(q?.folderQueries.map(f => f.folder), [root])
+    assert.equal(sanitizeQuery({ ...good(), folderQueries: [{ folder: gone }] }), undefined)
+  })
+
   it('clamps maxResults and drops fields of the wrong type', () => {
     assert.equal(sanitizeQuery({ ...good(), maxResults: 9e9 })?.maxResults, 200_000)
     assert.equal(sanitizeQuery({ ...good(), maxResults: -5 })?.maxResults, 1)

@@ -84,10 +84,11 @@ export function sanitizeQuery(raw: unknown): ITextQuery | undefined {
   if (!Array.isArray(raw.folderQueries) || raw.folderQueries.length < 1 || raw.folderQueries.length > MAX_FOLDERS) return undefined
   const folderQueries: IFolderQuery[] = []
   for (const f of raw.folderQueries) {
+    // A folder that is gone (pinned project removed from disk) is dropped; the query only fails when none is left.
     const q = folderQuery(f)
-    if (!q) return undefined
-    folderQueries.push(q)
+    if (q) folderQueries.push(q)
   }
+  if (folderQueries.length === 0) return undefined
   const contentPattern: ITextQuery['contentPattern'] = { pattern: cp.pattern }
   for (const k of ['isRegExp', 'isWordMatch', 'isMultiline', 'isUnicode', 'isCaseSensitive'] as const) {
     if (typeof cp[k] === 'boolean') contentPattern[k] = cp[k]
