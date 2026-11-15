@@ -426,12 +426,23 @@ export class QueryBuilder {
    */
   pathIncludedInQuery(queryProps: PathQueryProps, fsPath: string): boolean {
     const globOptions = queryProps.ignoreGlobCase ? { ignoreCase: true } : undefined
-    if (queryProps.excludePattern && withoutExceptions(queryProps.excludePattern, globOptions)(fsPath)) {
+    const ignoreCase = this.env.platform === 'win32' || !!queryProps.ignoreGlobCase
+    // Differs from VS Code on purpose: it tests the globs on the absolute path, while ripgrep applies them relative to the
+    // searched folder. Inside a query folder (the deepest one) the globs get the path relative to it, with '/', so the
+    // buffers in memory and the disk search decide the same; outside every folder the absolute path is kept.
+    let owner: IFolderQuery | undefined
+    for (const fq of queryProps.folderQueries) {
+      if (!this.ops.isEqualOrParent(fsPath, fq.folder, ignoreCase)) continue
+      if (!owner || fq.folder.length > owner.folder.length) owner = fq
+    }
+    const subject = owner ? this.ops.relative(owner.folder, fsPath).replaceAll('\\', '/') : fsPath
+
+    if (queryProps.excludePattern && withoutExceptions(queryProps.excludePattern, globOptions)(subject)) {
       return false
     }
 
     if (queryProps.includePattern || queryProps.usingSearchPaths) {
-      if (queryProps.includePattern && parse(queryProps.includePattern, globOptions)(fsPath)) {
+      if (queryProps.includePattern && parse(queryProps.includePattern, globOptions)(subject)) {
         return true
       }
 
@@ -439,7 +450,7 @@ export class QueryBuilder {
       if (queryProps.usingSearchPaths) {
         return queryProps.folderQueries.some(fq => {
           const searchPath = fq.folder
-          if (this.ops.isEqualOrParent(fsPath, searchPath, this.env.platform === 'win32' || !!queryProps.ignoreGlobCase)) {
+          if (this.ops.isEqualOrParent(fsPath, searchPath, ignoreCase)) {
             const relPath = this.ops.relative(searchPath, fsPath)
             return !fq.includePattern || !!parse(fq.includePattern, globOptions)(relPath)
           }

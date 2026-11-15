@@ -182,11 +182,10 @@ test('search: results follow the text of now (open editors searched in memory, l
     assert.equal(read(P('lost.txt')), 'LIVEQ here\n')
     await page.keyboard.press('Control+Shift+F')
     await page.waitForSelector(`${PAD_SEL}.shown .srw`)
-    // A save that fails on a read-only file leaves the note's temp file (<name>.<pid>.tmp) next to it: kept out. Not
-    // "*.tmp": the open editors are filtered by their absolute path (as VS Code does), and this home lives under .tmp.
+    // A save that fails on a read-only file leaves the note's temp file (<name>.<pid>.tmp) next to it: kept out.
     await page.evaluate(() => window.__tether.runCommand('search.toggle-details'))
     await page.waitForSelector(FIELD('arquivos a excluir'), { state: 'visible' })
-    await page.fill(FIELD('arquivos a excluir'), '*.txt.*.tmp')
+    await page.fill(FIELD('arquivos a excluir'), '*.tmp')
     let s = await search(page, 'LIVEQ', '2 resultados em 2 arquivos')
     assert.deepEqual(files(s).sort(), ['closed.txt', 'live.txt'], 'one entry per file; the open file without the term is out')
     const liveRow = rowOf(s, r => r.kind === 'match' && r.after === ' one')
@@ -228,8 +227,9 @@ test('search: results follow the text of now (open editors searched in memory, l
     await until('the remaining row shows the new text', async () => (await snap(page)).results.rows.some(r => r.kind === 'match' && r.before === 'LONGER and ' && r.inside === 'SAMEQ'))
     s = await settled(page)
     const focusedAfter = s.results.rows.find(r => r.focused)
-    assert.ok(focusedAfter && (focusedAfter.kind === 'match' || focusedAfter.label === 'same.txt'), `the keyboard stays next to the replaced row: ${JSON.stringify(focusedAfter)}`)
-    await clickAct(page, rowOf(s, r => r.kind === 'match' && r.inside === 'SAMEQ').id, 'replace')
+    assert.ok(focusedAfter && focusedAfter.kind === 'match' && focusedAfter.inside === 'SAMEQ', `the focus is on the match that is left: ${JSON.stringify(focusedAfter)}`)
+    await page.locator(SCROLL).focus() // the button was clicked by script, which leaves the keyboard outside the tree
+    await page.keyboard.press('Control+Shift+Digit1')
     await waitDone(page, '1 ocorrência substituída em 1 arquivo.', 'the second match on the same line replaced')
     assert.equal(read(P('same.txt')), 'LONGER and LONGER\n', 'both written')
 

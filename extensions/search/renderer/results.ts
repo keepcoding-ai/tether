@@ -269,11 +269,15 @@ export class SearchResults {
     if (this.pressed) { this.waiting = true; return }
     const started = performance.now()
     const anchor = opts.top ? undefined : this.scrollAnchor()
-    const around = this.neighbours()
+    const focusedNode = this.nodeOf(this.focusedId)
+    const focusedAt = focusedNode ? this.indexOf(focusedNode) : -1
     const elements = treeElements(this.host.model.searchResult, 1, this.options(), this.memory)
     const top = this.model.getNode([])
     this.model.splice([0], top.children.length, elements, this.spliceOptions)
-    if (this.focusedId !== undefined && !this.nodes.has(this.focusedId)) this.focusedId = survivor(around.after, around.before, id => this.nodes.has(id))
+    if (this.focusedId !== undefined && !this.nodes.has(this.focusedId)) {
+      const to = focusedAt < 0 ? -1 : survivor(focusedAt, this.list.length)
+      this.focusedId = to >= 0 ? this.list.element(to).element.id : undefined
+    }
     if (this.selectedId !== undefined && !this.nodes.has(this.selectedId)) this.selectedId = undefined
     if (opts.top) this.list.scrollTop = 0
     else if (anchor) {
@@ -297,18 +301,6 @@ export class SearchResults {
     const index = Math.min(this.list.indexAt(scrollTop), this.list.length - 1)
     if (index < 0) return undefined
     return { id: this.list.element(index).element.id, offset: scrollTop - this.list.elementTop(index), scrollTop }
-  }
-
-  /** The ids of the rows around the focused one, nearest first. */
-  private neighbours(): { after: string[]; before: string[] } {
-    const node = this.nodeOf(this.focusedId)
-    const index = node ? this.indexOf(node) : -1
-    if (index < 0) return { after: [], before: [] }
-    const after: string[] = []
-    const before: string[] = []
-    for (let i = index + 1; i < this.list.length && after.length < NEIGHBOURS; i++) after.push(this.list.element(i).element.id)
-    for (let i = index - 1; i >= 0 && before.length < NEIGHBOURS; i--) before.push(this.list.element(i).element.id)
-    return { after, before }
   }
 
   private announceCollapse(force: boolean): void {

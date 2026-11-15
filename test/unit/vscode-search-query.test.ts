@@ -576,6 +576,19 @@ for (const platform of ['posix', 'win32'] as const) {
         assert.equal(qb.pathIncludedInQuery(query, JS), false)
       })
 
+      test('globs are tested relative to the searched folder, not on the absolute path', () => {
+        const qb = single()
+        const root = fix('/work/.tmp/wt/x')
+        const query = qb.text(PATTERN_INFO, [root], { excludePattern: [{ pattern: '*.tmp' }], expandPatterns: true })
+        assert.equal(qb.pathIncludedInQuery(query, fix('/work/.tmp/wt/x/a.txt')), true)
+        assert.equal(qb.pathIncludedInQuery(query, fix('/work/.tmp/wt/x/sub/a.txt')), true)
+        assert.equal(qb.pathIncludedInQuery(query, fix('/work/.tmp/wt/x/a.txt.1.tmp')), false)
+        assert.equal(qb.pathIncludedInQuery(query, fix('/work/.tmp/wt/x/cache.tmp/a.txt')), false)
+        // outside every folder of the query the absolute path is what the globs see (a .tmp segment above excludes)
+        assert.equal(qb.pathIncludedInQuery(query, fix('/other/.tmp/a.txt')), false)
+        assert.equal(qb.pathIncludedInQuery(query, fix('/other/z.tmp')), false)
+      })
+
       test('a search path keeps only the files under it', () => {
         const qb = single()
         const query = qb.text(PATTERN_INFO, [ROOT_1], { includePattern: './src', expandPatterns: true })

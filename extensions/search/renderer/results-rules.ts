@@ -219,13 +219,11 @@ export function afterDismiss(rows: Indexed<NavRow>, i: number): number {
 }
 
 /**
- * The focused row vanished in a redraw: the nearest row that is still there, looking first at the rows that followed it
- * (`after`, nearest first), then at the ones before it (`before`, nearest first).
+ * The focused row's id is gone after a redraw (a match's id carries its position, which a replace can change): the focus
+ * stays at the same index of the flat list, capped at its end; -1 only when the list is empty.
  */
-export function survivor(after: readonly string[], before: readonly string[], exists: (id: string) => boolean): string | undefined {
-  for (const id of after) if (exists(id)) return id
-  for (const id of before) if (exists(id)) return id
-  return undefined
+export function survivor(index: number, length: number): number {
+  return length <= 0 ? -1 : Math.max(0, Math.min(index, length - 1))
 }
 
 // ---------- the redraw's pace ----------

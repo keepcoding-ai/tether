@@ -225,11 +225,10 @@ describe('where the focus goes', () => {
     assert.equal(afterDismiss(rows([{ level: 1, collapsible: false, expanded: false }]), 0), -1)
   })
 
-  test('a row gone in a redraw: the nearest following row still there, else the nearest before', () => {
-    const alive = new Set(['b', 'z'])
-    assert.equal(survivor(['a', 'b'], ['z'], id => alive.has(id)), 'b')
-    assert.equal(survivor(['a'], ['y', 'z'], id => alive.has(id)), 'z')
-    assert.equal(survivor([], [], () => true), undefined)
+  test('a row gone in a redraw: the focus stays at the same index, capped at the end, none when empty', () => {
+    assert.equal(survivor(2, 5), 2)
+    assert.equal(survivor(4, 3), 2)
+    assert.equal(survivor(0, 0), -1)
   })
 })
 
