@@ -8,7 +8,7 @@
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { normalizeSetting, readExtensionsSettings, type SettingReader, settingReaderOf } from '../../app/shared/vscode-configuration-registry.ts'
+import { normalizeSetting, readExtensionsSettings } from '../../app/shared/vscode-configuration-registry.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { bridgeTraceSource } from './trace-source.ts'
@@ -29,11 +29,6 @@ export function serveToAgents(api: Pick<TetherDaemon, 'settings'>): boolean {
   const schema = manifest.contributes!.settings!.serveToAgents!
   const values = readExtensionsSettings(api.settings.get<unknown>('extensions')).values[manifest.id]
   return normalizeSetting(schema, values?.serveToAgents) === true
-}
-
-/** This extension's settings as settings.json holds them, read now (the daemon has no change event). */
-export function bridgeSettings(api: Pick<TetherDaemon, 'settings'>): SettingReader {
-  return settingReaderOf(manifest.contributes!.settings!, readExtensionsSettings(api.settings.get<unknown>('extensions')).values[manifest.id])
 }
 
 /** The doctor's line of the debug mode: what the bridge daemon reports (it is turned on in the extension's options page). */
@@ -87,7 +82,6 @@ export function activate(api: TetherDaemon): IDisposable[] {
     brand: { name: api.brand.name, color: api.brand.accent, hostId: api.brand.appId },
     nodeExe: () => findNode(),
     log: msg => api.log(msg),
-    settings: () => bridgeSettings(api),
     warm: warmupAllowed(),
   })
   // The bridge over HTTP for agents with `mcp.http` (agents.ts); it listens only in the tetherd that owns the pipe (onStarted).

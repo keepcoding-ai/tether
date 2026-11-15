@@ -28,18 +28,6 @@ export const manifest: ExtensionManifest = {
       serveToAgents: { type: 'boolean', default: true, title: `Oferecer o ${BRIDGE_NAME} aos agentes dos painéis`, description: 'Os agentes dos painéis recebem as ferramentas do navegador.', order: 1 },
       agentWindows: { type: 'boolean', default: true, title: 'Abas dos agentes em uma janela própria por agente', description: 'Cada agente abre suas abas numa janela do navegador só dele.', order: 2 },
       evaluate: { type: 'string', default: 'own-tabs', enum: ['own-tabs', 'all', 'off'], enumLabels: ['Só nas abas do agente', 'Em qualquer aba', 'Em nenhuma'], title: 'Onde um agente pode rodar código na página (evaluate)', description: 'Só nas abas do próprio agente, em qualquer aba, ou em nenhuma.', order: 3 },
-      // The debug mode (capabilities.ts): written live into the bridge's config.json capabilities, which its daemon re-reads
-      // by mtime. The timeout's default is the daemon's own (60 s), shown for reference: unset, the key stays out.
-      debug: {
-        type: 'boolean', default: false, section: 'Depuração', order: 100,
-        title: 'Modo de depuração',
-        description: `Para investigar quando o ${BRIDGE_NAME} falha com um agente. Ligado, o registro guarda mais detalhes de cada chamada e vale o prazo abaixo; o ícone do ${BRIDGE_NAME} na barra fica âmbar. Os pedidos de permissão continuam iguais. Vale na hora, sem reabrir o agente. Deixe desligado no uso normal.`,
-      },
-      debugCallTimeoutSec: {
-        type: 'number', default: 60, min: 0, max: 86400, section: 'Depuração', order: 101,
-        title: 'Prazo de cada chamada, em segundos',
-        description: 'Quanto o agente espera o navegador responder a uma chamada antes de desistir. Só vale com o modo de depuração ligado. 0 = sem prazo. "Redefinir" volta ao prazo normal.',
-      },
     },
     commands: [
       { command: 'web-bridge.install', title: `Instalar ${BRIDGE_NAME}…`, category: BRIDGE_NAME, icon: 'globe-simple' },
