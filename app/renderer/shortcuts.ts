@@ -283,6 +283,7 @@ export const DEFAULT_KEYBINDINGS: readonly DefaultEntry[] = [
   { key: 'ctrl+shift+numpad0', command: 'font.reset' },
   // ----- app -----
   { key: 'ctrl+shift+p', command: 'palette.show' },
+  { key: 'ctrl+shift+j', command: 'sessions.search' },              // the toolbar's session search (J of jump)
   { key: 'ctrl+k', command: PREFIX_COMMAND },                       // the prefix itself: its `where` says where two-key chords open (Terminal off = ^K passes)
   { key: 'ctrl+shift+q', command: 'app.quit-all' },
 ]

@@ -64,6 +64,8 @@ export interface CommandHost {
   openProfiles(): void
   /** The "Sessões" popup: everything running, the polite pause and the resume. */
   sessionsManage(): void
+  /** Puts the caret in the toolbar's session search. */
+  sessionSearch(): void
   /** "Sessões…" / "Pedir pausa…": opens the Sessões menu (the second one with the focus on the pause button); never pauses by itself. */
   sessionsMenu(focusPause: boolean): void
   restoreConfirmations(): void
@@ -207,6 +209,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'sessions.menu', title: 'Sessões…', group: GROUP.app, icon: 'tray', run: () => host.sessionsMenu(false) },
     { id: 'pause.start', title: 'Pedir pausa aos agentes…', group: GROUP.app, icon: 'pause', run: () => host.sessionsMenu(true) },
     { id: 'sessions.manage', title: 'Sessões em andamento…', group: GROUP.app, icon: 'tray', run: () => host.sessionsManage() },
+    { id: 'sessions.search', title: 'Buscar sessão…', group: GROUP.app, icon: 'magnifying-glass', run: () => host.sessionSearch() },
     { id: 'links.associate', title: 'Associar links tether:// a este tether…', group: GROUP.app, icon: 'link', run: () => host.associateLinks() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },
     { id: 'daemon.restart', title: 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'plugs', run: () => host.restartDaemon() },

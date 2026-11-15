@@ -121,6 +121,21 @@ body { display: flex; flex-direction: column; }
 #toolbar .tb-left, #toolbar .tb-right { display: flex; align-items: center; gap: 2px; color: var(--fg-dim); width: max-content; }
 #toolbar .tb-left { justify-self: start; }
 #toolbar .tb-right { justify-self: end; }
+/* The session search: a compact box left of the bell, its list drops under it (session-search.ts). */
+.session-search { position: relative; display: flex; align-items: center; gap: 6px; width: 180px; height: 26px; margin-right: 6px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-2); color: var(--fg-dim); }
+.session-search:focus-within { border-color: var(--accent); color: var(--fg); }
+.session-search .ph { width: 14px; height: 14px; flex: 0 0 auto; }
+.session-search input { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: none; color: var(--fg); font: 12px var(--ui); }
+.session-search input::placeholder { color: var(--fg-dim); }
+.ss-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; width: 300px; max-height: 360px; overflow-y: auto; padding: 4px; background: var(--bg-2); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: 12px; }
+.ss-list[hidden] { display: none; }
+.ss-item { display: flex; align-items: baseline; gap: 10px; padding: 5px 8px; border-radius: 5px; cursor: pointer; }
+.ss-item:hover { background: var(--bg-hover); }
+.ss-item.selected { background: color-mix(in srgb, var(--accent) 16%, var(--bg-3)); }
+.ss-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-title b { color: var(--accent); font-weight: 600; }
+.ss-place { flex: 0 0 auto; color: var(--fg-dim); font-size: 11px; }
+.ss-empty { padding: 6px 8px; color: var(--fg-dim); }
 .ib {
   position: relative; width: 30px; height: 30px; display: grid; place-items: center; padding: 0;
   border: 0; border-radius: 6px; background: none; color: inherit; cursor: pointer;

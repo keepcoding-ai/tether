@@ -42,6 +42,12 @@
       <span class="sw-div" aria-hidden="true"></span>
     </div>
     <div class="tb-right">
+      <!-- The session search (app/renderer/session-search.ts): find a session of any desk by name and jump to it. -->
+      <div id="session-search" class="session-search">
+        <span class="i" data-icon="magnifying-glass"></span>
+        <input type="text" placeholder="Buscar sessão…" aria-label="Buscar sessão" role="combobox" aria-expanded="false" aria-controls="ss-list" spellcheck="false" autocomplete="off">
+        <div id="ss-list" class="ss-list" role="listbox" hidden></div>
+      </div>
       <!-- The bell (app/renderer/bell.ts): recent attention, the system toasts' level and a temporary mute. -->
       <div class="dropdown" id="bell-wrap">
         <button id="btn-bell" class="ib" aria-label="Notificações" aria-haspopup="dialog" aria-expanded="false"><span class="i" data-icon="bell"></span></button>

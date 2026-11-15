@@ -40,6 +40,7 @@ import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDr
 import type { PauseBatch } from '../../src/daemon/pause.ts'
 import { bulkCloseSituation, forgetEndedSituation } from './sessions-rules.ts'
 import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
+import { setupSessionSearch, type SessionSearch } from './session-search.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
@@ -2088,15 +2089,18 @@ function openPauseDialog(): void {
     slots: () => slots.values(),
     batch: () => pauseBatch,
     hasTab: id => findPanel(id) !== undefined,
-    placeOf: slotId => {
-      if (!findPanel(slotId)) return undefined
-      const pad = framePadOf(slotId)
-      return inDrawer(slotId) ? 'Gaveta' : pad ? padRegistry.get(pad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(slotId) ?? desks.activeDeskId)
-    },
+    placeOf,
     titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
     request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
     openSlot,
   })
+}
+
+/** Where a session's tab is ("Mesa 1", "Gaveta", a pad's title), or undefined when it has none. */
+function placeOf(slotId: string): string | undefined {
+  if (!findPanel(slotId)) return undefined
+  const pad = framePadOf(slotId)
+  return inDrawer(slotId) ? 'Gaveta' : pad ? padRegistry.get(pad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(slotId) ?? desks.activeDeskId)
 }
 
 /** Opens a panel for a slot the daemon knows; an exited slot is started (an unconfirmed one shows the choice). */
@@ -3129,6 +3133,7 @@ const commandHost: CommandHost = {
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
   sessionsManage: () => openPauseDialog(),
+  sessionSearch: () => sessionSearch?.focus(),
   sessionsMenu: focusPause => { if (focusPause) sessionsMenu?.openOnPause(); else sessionsMenu?.setOpen(true) },
   restoreConfirmations: () => window.tether.command('restore-confirmations'),
   associateLinks: () => { void associateLinks() },
@@ -3430,6 +3435,7 @@ function setupConnectionPopover(): void {
 }
 
 let bell: { close(): void } | undefined
+let sessionSearch: SessionSearch | undefined
 
 function closeToolbarPopups(): void {
   statusBar?.close()
@@ -3460,6 +3466,10 @@ function renderConnection(): void {
 function setupUi(): void {
   // Static icons: <span data-icon="name"> in index.html becomes the inline SVG.
   for (const el of document.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
+  sessionSearch = setupSessionSearch($('session-search'), {
+    sessions: () => [...slots.values()].filter(s => findPanel(s.slotId) !== undefined).map(s => ({ slotId: s.slotId, title: panelTitle(s), place: placeOf(s.slotId) ?? '' })),
+    jump: revealPane,
+  })
   bell = setupBell({
     openSlot: slotId => openSlot(slotId),
     showSettings: key => { if (settingsRevealer) settingsRevealer(key); else void commands.run('settings.show', 'menu') },
