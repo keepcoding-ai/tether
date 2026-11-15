@@ -1,5 +1,5 @@
 // Terminal appearance shared by the main process (settings.json) and the renderer (xterm options, the
-// "Tema do terminal" dialog): the colour presets (16 ANSI + foreground, cursor, selection, one pair per
+// "Tema do tether" dialog): the colour presets (16 ANSI + foreground, cursor, selection, one pair per
 // scheme), the bundled fonts, and the user's choice (preset, font, weight, size, line height, ligatures). Fonts
 // that draw programming ligatures carry a default for the ligatures switch: on for Fira Code, off for any other;
 // fonts without them always run with ligatures off. The panel background is not part of a preset: it is always

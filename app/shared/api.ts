@@ -117,7 +117,7 @@ export interface TetherApi {
   /** Persists it; the normalized value comes back through onTerminalAppearance (to this and any other window). */
   setTerminalAppearance(appearance: TerminalAppearance): void
   onTerminalAppearance(listener: (appearance: TerminalAppearance) => void): () => void
-  /** Menu "Exibir → Tema do terminal…": main asks the renderer to open the dialog. */
+  /** Menu "Exibir → Tema do tether…": main asks the renderer to open the dialog. */
   onOpenTerminalTheme(listener: () => void): () => void
   /** Chrome preferences (settings.json `ui`), normalized. */
   getUi(): Promise<UiSettings>

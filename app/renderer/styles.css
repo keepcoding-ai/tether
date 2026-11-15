@@ -1092,7 +1092,7 @@ button.danger:hover { background: color-mix(in srgb, var(--err) 12%, var(--bg-3)
 button.danger .ph { color: var(--err); }
 button[hidden] { display: none !important; }
 
-/* --- terminal theme dialog (Tema do terminal…): presets on the left, font on the right, sample below --- */
+/* --- terminal theme dialog (Tema do tether…): presets on the left, font on the right, sample below --- */
 dialog.term-theme { width: 900px; max-width: 94vw; padding: 0; max-height: 94vh; flex-direction: column; }
 dialog.term-theme[open] { display: flex; }
 dialog.term-theme > header { padding: 16px 20px 12px; margin: 0; border-bottom: 1px solid var(--border); align-items: flex-start; }

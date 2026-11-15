@@ -1,4 +1,4 @@
-// E2E of "Tema do terminal…" in the Electron app, against the real tetherd on a private home/pipe, hidden window:
+// E2E of "Tema do tether…" in the Electron app, against the real tetherd on a private home/pipe, hidden window:
 //   1. a shell panel comes up with the defaults (GitHub, Fira Code 350/14px/1.2, contrast 4.5, bundled
 //      font loaded before xterm measured it);
 //   2. the dialog opens from the ≡ menu and from the native menu; its sample shows the colours and box drawing;

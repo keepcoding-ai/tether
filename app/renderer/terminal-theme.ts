@@ -1,4 +1,4 @@
-// "Tema do terminal": the dialog (app/renderer/index.html #dlg-term-theme) where the user picks the colour
+// "Tema do tether": the dialog (app/renderer/index.html #dlg-term-theme) where the user picks the colour
 // preset, the font, its weight, size and line height. Every change applies to every pane at once and is
 // persisted through main (settings.json); the dialog carries a small sample terminal that shows the 16
 // colours, bold/dim text and box drawing with the exact xterm options the panes get. The presets and the

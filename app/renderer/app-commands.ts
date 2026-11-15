@@ -194,7 +194,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'ui.dim-weak', title: 'Esmaecer: fraco', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('weak') },
     { id: 'ui.dim-medium', title: 'Esmaecer: médio', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('medium') },
     { id: 'ui.dim-strong', title: 'Esmaecer: forte', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('strong') },
-    { id: 'terminal.theme', title: 'Tema do terminal…', group: GROUP.look, icon: 'palette', run: () => host.openTerminalTheme() },
+    { id: 'terminal.theme', title: 'Tema do tether…', group: GROUP.look, icon: 'palette', run: () => host.openTerminalTheme() },
     { id: 'font.increase', title: 'Aumentar a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('increase') },
     { id: 'font.decrease', title: 'Diminuir a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('decrease') },
     { id: 'font.reset', title: 'Fonte do terminal no tamanho padrão', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('reset') },

@@ -25,7 +25,7 @@ export interface SettingsHost {
   reset(key: string): Promise<SettingWriteResult>
   /** "Abrir settings.json": in an editor tab of this group. */
   openFile(): void
-  /** A section's action runs a command of the app ("Tema do terminal…"). */
+  /** A section's action runs a command of the app ("Tema do tether…"). */
   runCommand(id: string): void
   onTabMenu(id: string, ev: MouseEvent): void
   onClose(id: string): void
@@ -34,7 +34,7 @@ export interface SettingsHost {
 /** Things a section does besides its settings: the core's dialogs that edit what the page does not edit as a value. */
 interface SectionAction { label: string; icon: IconName; command: string; description?: string }
 const SECTION_ACTIONS: Record<string, SectionAction[]> = {
-  'core/Tema': [{ label: 'Tema do terminal…', icon: 'palette', command: 'terminal.theme', description: 'Cores, fonte e tamanho do texto dos terminais.' }],
+  'core/Tema': [{ label: 'Tema do tether…', icon: 'palette', command: 'terminal.theme', description: 'Cores do terminal; fonte, tamanho e ligaduras do terminal e dos editores.' }],
   'core/Confirmações': [{ label: 'Voltar a perguntar antes de fechar painéis', icon: 'arrow-clockwise', command: 'confirmations.restore', description: 'Os painéis em que você marcou "não perguntar de novo" voltam a pedir confirmação antes de fechar.' }],
 }
 /** Sections that hold only actions (no setting declares them), placed after the node's own sections. */

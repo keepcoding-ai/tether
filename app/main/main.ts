@@ -563,7 +563,7 @@ ipcMain.on('theme:set', (_e, setting: unknown) => setTheme(normalizeTheme(settin
 
 // ---------- font size ----------
 
-/** The size itself is appearance.fontSize ("Tema do terminal"): the renderer steps it and saves it through terminal:set. */
+/** The size itself is appearance.fontSize ("Tema do tether"): the renderer steps it and saves it through terminal:set. */
 
 /** Menu items without accelerators: the shortcuts (Cmd+=/-/0, Ctrl+Shift+=/-/0) are handled by the renderer itself. */
 function fontSizeMenu(): Electron.MenuItemConstructorOptions[] {
@@ -860,7 +860,7 @@ function createMenu(): void {
         themeMenu(),
         ...fontSizeMenu(),
         { type: 'separator' },
-        { id: 'terminal-theme', label: 'Tema do terminal…', click: () => win?.webContents.send('tether:open-terminal-theme') },
+        { id: 'terminal-theme', label: 'Tema do tether…', click: () => win?.webContents.send('tether:open-terminal-theme') },
         { id: 'profiles', label: 'Perfis de lançamento…', click: () => win?.webContents.send('tether:open-profiles') },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },

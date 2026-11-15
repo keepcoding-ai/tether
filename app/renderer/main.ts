@@ -315,7 +315,7 @@ const host: PanelHost = {
 // ---------- font size ----------
 
 /**
- * Keyboard and menu steps of the terminal font size. The size is the appearance's ("Tema do terminal"): main
+ * Keyboard and menu steps of the terminal font size. The size is the appearance's ("Tema do tether"): main
  * stores it and echoes it back (onTerminalAppearance), which repaints every panel and refits it.
  */
 function runFontSizeCommand(command: FontSizeCommand): void {
@@ -3580,7 +3580,7 @@ declare global {
       linkHover(slotId: string): { underline: boolean; hand: boolean; title: string } | undefined
       /** The terminal appearance in force. */
       terminalAppearance(): TerminalAppearance
-      /** Opens "Tema do terminal…" as the menu does. */
+      /** Opens "Tema do tether…" as the menu does. */
       openTerminalTheme(): void
       /** Whether the browser has the font face loaded (`document.fonts.check`). */
       fontLoaded(spec: string): boolean
