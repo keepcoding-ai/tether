@@ -13,9 +13,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import type { Terminal } from '@xterm/xterm'
 import type { ContextMenuEntry, Disposable, PadView, ProcAttachment, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
-import { createTerminal, loadTerminalRenderer } from '../../app/renderer/panel.ts'
+import { createTerminal } from '../../app/renderer/panel.ts'
 import { terminalLinkProvider } from '../../app/renderer/terminal-links.ts'
-import { applyAppearance } from '../../app/renderer/terminal-theme.ts'
+import { applyAppearance, TerminalAddons } from '../../app/renderer/terminal-theme.ts'
 import { openLink } from '../../app/renderer/link-open.ts'
 import type { Reply } from '../../src/daemon/protocol.ts'
 import type { PortRow } from '../../src/daemon/ports.ts'
@@ -380,6 +380,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     private readonly timeline = el('aside', 'pr-timeline')
     private readonly fit = new FitAddon()
     private term: Terminal | undefined
+    /** WebGL and ligatures, the same as the slot panes (follow the appearance live). */
+    private addons: TerminalAddons | undefined
     private name = ''
     private paneId = ''
     private api: GroupPanelPartInitParameters['api'] | undefined
@@ -415,7 +417,8 @@ export function activate(ui: TetherUi): IDisposable[] {
         open: target => openLink(target, { baseDir: ui.procs.get(this.name)?.card.cwd }),
       }))
       term.open(this.termHost)
-      loadTerminalRenderer(term, () => {})
+      this.addons = new TerminalAddons(term)
+      this.addons.start(ui.theme.appearance())
       this.ro = new ResizeObserver(() => this.scheduleFit())
       this.ro.observe(this.termHost)
       this.subs.push(
@@ -431,6 +434,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     private repaintTerm(scheme: ReturnType<TetherUi['theme']['scheme']>): void {
       if (!this.term) return
       applyAppearance(this.term, ui.theme.appearance(), scheme)
+      this.addons?.update(ui.theme.appearance())
       this.term.refresh(0, this.term.rows - 1)
       this.scheduleFit()
     }

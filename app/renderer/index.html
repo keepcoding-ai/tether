@@ -240,6 +240,10 @@
           <span>Família</span>
           <select id="term-font" class="select"><button type="button"><selectedcontent></selectedcontent></button></select>
         </label>
+        <label class="field check ligatures">
+          <input type="checkbox" id="term-ligatures" name="term-ligatures">
+          <span>Ligaduras <span class="hint-inline"><code>=&gt;</code> vira seta, <code>!=</code> vira ≠</span></span>
+        </label>
         <label class="field">
           <span>Peso <output id="term-weight-label" for="term-weight"></output></span>
           <input type="range" id="term-weight" name="term-weight">
@@ -252,7 +256,7 @@
           <span>Altura da linha <output id="term-line-height-label" for="term-line-height"></output></span>
           <input type="range" id="term-line-height" name="term-line-height">
         </label>
-        <span class="hint">Negrito usa um peso 200 acima do normal (mínimo 600). Ligaduras ficam desligadas: os agentes imprimem <code>=&gt;</code> e <code>!=</code> em diffs.</span>
+        <span class="hint">Negrito usa um peso 200 acima do normal (mínimo 600). Ligaduras só existem em Fira Code (ligadas por padrão) e JetBrains Mono (desligadas por padrão).</span>
       </fieldset>
       <div class="field sample">
         <span>Amostra</span>

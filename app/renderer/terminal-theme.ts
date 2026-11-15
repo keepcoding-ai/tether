@@ -5,11 +5,106 @@
 // fonts themselves live in app/shared/terminal-theme.ts.
 import { Terminal } from '@xterm/xterm'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { LigaturesAddon } from '@xterm/addon-ligatures'
 import {
   DEFAULT_APPEARANCE, FONT_SIZE_RANGE, FONT_WEIGHT_STEP, fontLoadSpecs, fontOf, LINE_HEIGHT_RANGE, normalizeAppearance,
-  TERMINAL_FONTS, TERMINAL_PRESETS, terminalFontOptions, terminalTheme, weightLabel, type TerminalAppearance,
+  TERMINAL_FONTS, TERMINAL_PRESETS, terminalFontOptions, terminalTheme, weightLabel, type TerminalAppearance, type TerminalFontId,
 } from '../shared/terminal-theme.ts'
 import type { ColorScheme } from '../shared/theme.ts'
+
+/** Which xterm renderer a terminal ended up with: WebGL draws box/block glyphs itself (no gaps at line height 1.2); DOM is the fallback. */
+export type TerminalRenderer = 'webgl' | 'dom'
+
+/**
+ * The renderer and the ligatures of one xterm (a pane or the dialog's sample), kept in the order xterm needs.
+ *
+ * WebGL after `open()`: xterm then draws box drawing and block glyphs itself (`customGlyphs`), so they join at
+ * any line height; the texture atlas also keeps a tall scrollback cheap. When the GPU is not there (software
+ * rendering, a lost context later) the DOM renderer carries on with the font's glyphs.
+ *
+ * Ligatures: the addon registers a character joiner (runs like `=>` become one cell range, drawn as one string, so
+ * the font's `calt`/`liga` can shape them) and sets `font-feature-settings` on the terminal element. It reads the
+ * font file through the Local Font Access API when it can, else joins the font's own sequence list (fallback).
+ * The WebGL addon is loaded again after every ligatures change, so its atlas is built with the joiner and the
+ * feature settings in place. The `ligatures` class on the element is what styles.css keys on: without it every
+ * ligature feature is off, which is what keeps the DOM renderer (it shapes whole spans) from ligating anyway.
+ */
+export class TerminalAddons {
+  private readonly term: Terminal
+  private webgl: WebglAddon | undefined
+  private ligatures: LigaturesAddon | undefined
+  private ligatureFont: TerminalFontId | undefined
+  /** The WebGL context was lost once: the terminal stays on the DOM renderer from then on. */
+  private lost = false
+
+  constructor(term: Terminal) { this.term = term }
+
+  get renderer(): TerminalRenderer { return this.webgl ? 'webgl' : 'dom' }
+  /** True while the ligatures addon is loaded (the state the terminal really is in). */
+  get ligaturesActive(): boolean { return this.ligatures !== undefined }
+
+  /** After `term.open()`: the ligatures the appearance asks for, then the renderer. */
+  start(appearance: TerminalAppearance): void {
+    this.setLigatures(appearance)
+    this.loadWebgl()
+  }
+
+  /** An appearance change: when the ligatures change (on/off, or another font's list), WebGL is reloaded after them. */
+  update(appearance: TerminalAppearance): void {
+    if (!this.term.element) return
+    const want = wantsLigatures(appearance)
+    if (want === this.ligaturesActive && (!want || appearance.font === this.ligatureFont)) return
+    const hadWebgl = this.webgl !== undefined
+    this.webgl?.dispose()
+    this.webgl = undefined
+    this.setLigatures(appearance)
+    if (hadWebgl) this.loadWebgl()
+  }
+
+  private setLigatures(appearance: TerminalAppearance): void {
+    this.ligatures?.dispose()
+    this.ligatures = undefined
+    this.ligatureFont = undefined
+    const want = wantsLigatures(appearance)
+    if (want) {
+      const list = fontOf(appearance.font).ligatureList
+      const addon = new LigaturesAddon(list ? { fallbackLigatures: [...list] } : {})
+      this.term.loadAddon(addon)
+      this.ligatures = addon
+      this.ligatureFont = appearance.font
+    }
+    this.term.element?.classList.toggle('ligatures', want)
+  }
+
+  private loadWebgl(): void {
+    if (this.lost) return
+    const webgl = loadWebglRenderer(this.term, () => {
+      if (this.webgl === webgl) this.webgl = undefined
+      this.lost = true
+    })
+    this.webgl = webgl
+  }
+}
+
+/**
+ * Loads the WebGL renderer on an opened xterm; undefined when the GPU is not there (the DOM renderer stays).
+ * On a lost context the addon is disposed (xterm falls back to DOM) and `onLost` runs.
+ */
+function loadWebglRenderer(term: Terminal, onLost: () => void): WebglAddon | undefined {
+  try {
+    // preserveDrawingBuffer: the canvas keeps its last frame, so a window capture (E2E screenshots) sees it.
+    const webgl = new WebglAddon(true)
+    webgl.onContextLoss(() => { webgl.dispose(); onLost() })
+    term.loadAddon(webgl)
+    return webgl
+  } catch {
+    return undefined
+  }
+}
+
+function wantsLigatures(appearance: TerminalAppearance): boolean {
+  return appearance.ligatures && fontOf(appearance.font).hasLigatures
+}
 
 /**
  * Loads the regular and bold faces of the appearance's font so xterm measures the real glyphs (measuring the
@@ -72,8 +167,10 @@ export class TerminalThemeDialog {
   private readonly size: HTMLInputElement
   private readonly lineHeight: HTMLInputElement
   private readonly lineHeightLabel: HTMLElement
+  private readonly ligatures: HTMLInputElement
   private readonly sampleHost: HTMLElement
   private sample: Terminal | undefined
+  private sampleAddons: TerminalAddons | undefined
   private readonly host: TerminalThemeHost
   /** The appearance the dialog shows; equals the host's unless a change is in flight (fonts loading). */
   private current: TerminalAppearance
@@ -95,6 +192,7 @@ export class TerminalThemeDialog {
     this.lineHeight = $('term-line-height')
     this.lineHeightLabel = $('term-line-height-label')
     this.sampleHost = $('term-sample')
+    this.ligatures = $('term-ligatures')
 
     for (const f of TERMINAL_FONTS) {
       const opt = document.createElement('option')
@@ -112,7 +210,12 @@ export class TerminalThemeDialog {
       const input = ev.target as HTMLInputElement
       if (input.name === 'term-preset') this.change({ preset: input.value as TerminalAppearance['preset'] })
     })
-    this.font.addEventListener('change', () => this.change({ font: this.font.value as TerminalAppearance['font'] }))
+    // A font change puts the ligatures switch on that font's default (one change, one save); the switch can be flipped after.
+    this.font.addEventListener('change', () => {
+      const font = fontOf(this.font.value)
+      this.change({ font: font.id, ligatures: font.ligaturesByDefault })
+    })
+    this.ligatures.addEventListener('change', () => this.change({ ligatures: this.ligatures.checked }))
     this.weight.addEventListener('input', () => { this.weightLabel.textContent = weightLabel(Number(this.weight.value)) })
     this.weight.addEventListener('change', () => this.change({ fontWeight: Number(this.weight.value) }))
     this.size.addEventListener('change', () => this.change({ fontSize: Number(this.size.value) }))
@@ -121,7 +224,7 @@ export class TerminalThemeDialog {
     $('btn-term-theme-reset').addEventListener('click', () => this.change(DEFAULT_APPEARANCE))
     $('btn-term-theme-close').addEventListener('click', () => this.dlg.close())
     $('btn-term-theme-done').addEventListener('click', () => this.dlg.close())
-    this.dlg.addEventListener('close', () => { this.sample?.dispose(); this.sample = undefined })
+    this.dlg.addEventListener('close', () => { this.sample?.dispose(); this.sample = undefined; this.sampleAddons = undefined })
   }
 
   get open(): boolean { return this.dlg.open }
@@ -160,8 +263,11 @@ export class TerminalThemeDialog {
     this.size.value = String(a.fontSize)
     this.lineHeight.value = String(a.lineHeight)
     this.lineHeightLabel.textContent = a.lineHeight.toFixed(2)
+    this.ligatures.checked = a.ligatures
+    this.ligatures.disabled = !font.hasLigatures
     if (this.sample) {
       applyAppearance(this.sample, a, scheme)
+      this.sampleAddons?.update(a)
       this.sampleHost.style.background = terminalTheme(a, scheme).background
     }
   }
@@ -204,11 +310,14 @@ export class TerminalThemeDialog {
     this.sampleHost.replaceChildren()
     this.sampleHost.style.background = terminalTheme(a, this.host.scheme()).background
     term.open(this.sampleHost)
-    // The same renderer the panes get (box glyphs drawn by xterm): what the sample shows is what the panes do.
-    try { const webgl = new WebglAddon(true); webgl.onContextLoss(() => webgl.dispose()); term.loadAddon(webgl) } catch { /* DOM renderer */ }
+    // The same renderer and ligatures the panes get (TerminalAddons): what the sample shows is what the panes do.
+    this.sampleAddons = new TerminalAddons(term)
+    this.sampleAddons.start(a)
     for (const line of SAMPLE_LINES) term.writeln(line)
   }
 
   /** The sample's xterm (tests read its options and buffer). */
   get sampleTerminal(): Terminal | undefined { return this.sample }
+  /** Whether the sample has the ligatures addon loaded (false while the dialog is closed). */
+  get sampleLigatures(): boolean { return this.sampleAddons?.ligaturesActive ?? false }
 }

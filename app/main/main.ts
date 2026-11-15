@@ -623,6 +623,18 @@ function trackWindowState(w: BrowserWindow): void {
   w.on('closed', () => clearTimeout(timer))
 }
 
+/**
+ * The main window's session grants every permission (Electron's default) except `local-fonts`: the terminal draws
+ * the bundled fonts (app/renderer/fonts), so the ligatures addon must not read the copies installed in Windows
+ * (a missing family would resolve to an installed font without ligatures). Refused, it joins its fallback list.
+ */
+function denyLocalFonts(win: BrowserWindow): void {
+  const ses = win.webContents.session
+  // queryLocalFonts() reads the permission status (the check handler) and, denied, resolves to an empty list without
+  // ever reaching a request handler; a request handler alone leaves the API answering.
+  ses.setPermissionCheckHandler((_wc, permission) => permission !== 'local-fonts')
+}
+
 function createWindow(): void {
   const saved = normalizeWindowState(settings().window)
   const displays = screen.getAllDisplays()
@@ -650,6 +662,7 @@ function createWindow(): void {
     },
   })
   win.setMenuBarVisibility(false)
+  denyLocalFonts(win)
   if (hidden) win.webContents.setFrameRate(30)
   const created = win
   if (start.maximized) created.maximize()

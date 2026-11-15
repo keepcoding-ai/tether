@@ -3574,8 +3574,8 @@ declare global {
       theme(): ThemeState
       /** The xterm palette a panel is using (its `theme.background`, etc). */
       termTheme(slotId: string): Record<string, string | undefined> | undefined
-      /** The xterm font options a panel is using, and which renderer it got. */
-      termOptions(slotId: string): { fontFamily: string; fontWeight: number | string; fontWeightBold: number | string; fontSize: number; lineHeight: number; letterSpacing: number; minimumContrastRatio: number; renderer: string } | undefined
+      /** The xterm font options a panel is using, which renderer it got and whether its ligatures addon is loaded. */
+      termOptions(slotId: string): { fontFamily: string; fontWeight: number | string; fontWeightBold: number | string; fontSize: number; lineHeight: number; letterSpacing: number; minimumContrastRatio: number; renderer: string; ligatures: boolean } | undefined
       /** The path link under the pointer in a terminal: underlined, hand pointer, and the pane's tooltip (empty without one). */
       linkHover(slotId: string): { underline: boolean; hand: boolean; title: string } | undefined
       /** The terminal appearance in force. */
@@ -3584,8 +3584,8 @@ declare global {
       openTerminalTheme(): void
       /** Whether the browser has the font face loaded (`document.fonts.check`). */
       fontLoaded(spec: string): boolean
-      /** The dialog's sample terminal: its buffer text and options (undefined while the dialog is closed). */
-      sample(): { text: string; fontFamily: string; background: string | undefined } | undefined
+      /** The dialog's sample terminal: its buffer text, options and whether its ligatures addon is loaded (undefined while the dialog is closed). */
+      sample(): { text: string; fontFamily: string; background: string | undefined; ligatures: boolean } | undefined
       /**
        * What a terminal canvas (WebGL renderer) actually painted: the top-left `maxW`×`maxH` CSS px as a PNG data
        * URL and how many of those pixels differ from the corner one. A window capture does not see a WebGL
@@ -3754,7 +3754,7 @@ function setupTestHooks(): void {
       const p = panels.get(slotId)
       if (!p) return undefined
       const o = p.term.options
-      return { fontFamily: o.fontFamily!, fontWeight: o.fontWeight!, fontWeightBold: o.fontWeightBold!, fontSize: o.fontSize!, lineHeight: o.lineHeight!, letterSpacing: o.letterSpacing!, minimumContrastRatio: o.minimumContrastRatio!, renderer: p.renderer }
+      return { fontFamily: o.fontFamily!, fontWeight: o.fontWeight!, fontWeightBold: o.fontWeightBold!, fontSize: o.fontSize!, lineHeight: o.lineHeight!, letterSpacing: o.letterSpacing!, minimumContrastRatio: o.minimumContrastRatio!, renderer: p.renderer, ligatures: p.ligaturesActive }
     },
     linkHover: slotId => {
       const p = panels.get(slotId)
@@ -3775,7 +3775,7 @@ function setupTestHooks(): void {
       const buf = t.buffer.active
       const lines: string[] = []
       for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? '')
-      return { text: lines.join('\n').replace(/\n+$/, ''), fontFamily: t.options.fontFamily!, background: t.options.theme?.background }
+      return { text: lines.join('\n').replace(/\n+$/, ''), fontFamily: t.options.fontFamily!, background: t.options.theme?.background, ligatures: themeDialog.sampleLigatures }
     },
     paint: (selector, maxW, maxH) => {
       // The WebGL addon appends its canvas after its 2D link layer: the last canvas is the one with the glyphs.

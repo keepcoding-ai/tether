@@ -6,6 +6,7 @@ import {
   boldWeightOf, DEFAULT_APPEARANCE, DEFAULT_FONT_ID, DEFAULT_PRESET_ID, fontLoadSpecs, fontOf, normalizeAppearance, presetOf,
   TERMINAL_FONTS, TERMINAL_PRESETS, terminalFontOptions, terminalTheme, weightLabel,
 } from '../../app/shared/terminal-theme.ts'
+import { FIRA_CODE_LIGATURES } from '../../app/shared/terminal-ligatures.ts'
 import { FRAME_BACKGROUND } from '../../app/shared/theme.ts'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -77,7 +78,7 @@ test('fonts: five bundled variable fonts, files and licences present, Fira Code 
   for (const name of ['FiraCode-LICENSE.txt', 'JetBrainsMono-OFL.txt', 'UbuntuSansMono-LICENCE.txt', 'IBMPlexMono-LICENSE.txt', 'CascadiaMono-LICENSE.txt']) assert.ok(existsSync(join(dir, name)), name)
 })
 
-test('terminalFontOptions: family with the Windows fallbacks, bold = weight + 200 (at least 600, within the font), ligatures off, contrast 4.5', () => {
+test('terminalFontOptions: family with the Windows fallbacks, bold = weight + 200 (at least 600, within the font), contrast 4.5', () => {
   const o = terminalFontOptions(DEFAULT_APPEARANCE)
   assert.match(o.fontFamily, /^"Fira Code", "Cascadia Mono", Consolas/)
   assert.equal(o.fontWeight, 350)
@@ -96,7 +97,7 @@ test('normalizeAppearance: missing, corrupt or unknown → defaults; numbers cla
   assert.deepEqual(normalizeAppearance(undefined), DEFAULT_APPEARANCE)
   assert.deepEqual(normalizeAppearance('dark'), DEFAULT_APPEARANCE)
   assert.deepEqual(normalizeAppearance({ preset: 'solarized', font: 'fira' }), DEFAULT_APPEARANCE)
-  assert.deepEqual(normalizeAppearance({ preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1 }), { preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1 })
+  assert.deepEqual(normalizeAppearance({ preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1 }), { preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1, ligatures: false })
   // Cascadia's axis starts at 200: a lighter saved weight is lifted; a weight past the axis is lowered.
   assert.equal(normalizeAppearance({ font: 'cascadia-mono', fontWeight: 100 }).fontWeight, 200)
   assert.equal(normalizeAppearance({ font: 'fira-code', fontWeight: 100 }).fontWeight, 300) // the Fira Code axis starts at 300
@@ -108,6 +109,49 @@ test('normalizeAppearance: missing, corrupt or unknown → defaults; numbers cla
   assert.equal(normalizeAppearance({ lineHeight: 0.5 }).lineHeight, 1)
   assert.equal(normalizeAppearance({ lineHeight: 1.333 }).lineHeight, 1.35)
   assert.equal(normalizeAppearance({ lineHeight: NaN }).lineHeight, 1.2)
+})
+
+test('ligatures per font: Fira Code on by default with its own list, JetBrains Mono has them but off, the rest have none', () => {
+  const by = Object.fromEntries(TERMINAL_FONTS.map(f => [f.id, f]))
+  assert.equal(by['fira-code']!.hasLigatures, true)
+  assert.equal(by['fira-code']!.ligaturesByDefault, true)
+  assert.equal(by['fira-code']!.ligatureList, FIRA_CODE_LIGATURES)
+  assert.equal(by['jetbrains-mono']!.hasLigatures, true)
+  assert.equal(by['jetbrains-mono']!.ligaturesByDefault, false)
+  assert.equal(by['jetbrains-mono']!.ligatureList, undefined, 'the addon\'s own list')
+  for (const id of ['ubuntu-sans-mono', 'ibm-plex-mono', 'cascadia-mono']) {
+    assert.equal(by[id]!.hasLigatures, false, id)
+    assert.equal(by[id]!.ligaturesByDefault, false, id)
+    assert.equal(by[id]!.ligatureList, undefined, id)
+  }
+  assert.equal(DEFAULT_APPEARANCE.ligatures, true)
+})
+
+test('normalizeAppearance ligatures: missing or not a boolean → the font\'s default; a font without them → always false', () => {
+  assert.equal(normalizeAppearance({}).ligatures, true)
+  assert.equal(normalizeAppearance({ font: 'fira-code' }).ligatures, true)
+  assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: 'no' }).ligatures, true)
+  assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: false }).ligatures, false)
+  // A JetBrains Mono saved before the switch existed keeps running without ligatures.
+  assert.equal(normalizeAppearance({ font: 'jetbrains-mono' }).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'jetbrains-mono', ligatures: 1 }).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'jetbrains-mono', ligatures: true }).ligatures, true)
+  for (const font of ['ubuntu-sans-mono', 'ibm-plex-mono', 'cascadia-mono']) {
+    assert.equal(normalizeAppearance({ font, ligatures: true }).ligatures, false, font)
+    assert.equal(normalizeAppearance({ font }).ligatures, false, font)
+  }
+  // An unknown font falls back to Fira Code and so to its default.
+  assert.equal(normalizeAppearance({ font: 'comic-mono' }).ligatures, true)
+})
+
+test('Fira Code ligature list: 124 distinct non-empty sequences, longest first, with the common operators', () => {
+  assert.equal(FIRA_CODE_LIGATURES.length, 124)
+  assert.equal(new Set(FIRA_CODE_LIGATURES).size, FIRA_CODE_LIGATURES.length, 'no repeats')
+  for (const s of FIRA_CODE_LIGATURES) assert.ok(s.length >= 2, `"${s}" has at least two characters`)
+  for (let i = 1; i < FIRA_CODE_LIGATURES.length; i++) {
+    assert.ok(FIRA_CODE_LIGATURES[i - 1]!.length >= FIRA_CODE_LIGATURES[i]!.length, `"${FIRA_CODE_LIGATURES[i - 1]}" before "${FIRA_CODE_LIGATURES[i]}"`)
+  }
+  for (const s of ['=>', '!=', '===', '->', '>=']) assert.ok(FIRA_CODE_LIGATURES.includes(s), s)
 })
 
 test('weightLabel: named steps in Portuguese, in-between values name both neighbours', () => {

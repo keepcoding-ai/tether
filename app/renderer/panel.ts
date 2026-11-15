@@ -7,7 +7,6 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { LinkTarget } from '../shared/links.ts'
 import { terminalLinkProvider } from './terminal-links.ts'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { tabMark, tabMarkTip } from './turn-rules.ts'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
@@ -22,15 +21,12 @@ import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
-import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
+import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
 
 // The palette and the font come from the terminal appearance (app/shared/terminal-theme.ts: preset per
 // scheme over the window background, bundled font, weight, size, line height, contrast 4.5). The host owns
 // the current value; every panel is repainted through setAppearance when it or the scheme changes.
-
-/** Which xterm renderer a panel ended up with: WebGL draws box/block glyphs itself (no gaps at line height 1.2); DOM is the fallback. */
-export type TerminalRenderer = 'webgl' | 'dom'
 
 /** An xterm with the appearance's font and palette for the scheme (every terminal pane: the agents' and a process' output). */
 export function createTerminal(appearance: TerminalAppearance, scheme: ColorScheme, opts: { cursorBlink?: boolean; disableStdin?: boolean } = {}): Terminal {
@@ -42,23 +38,6 @@ export function createTerminal(appearance: TerminalAppearance, scheme: ColorSche
     allowProposedApi: true,
     theme: terminalTheme(appearance, scheme),
   })
-}
-
-/**
- * WebGL after `open()`: xterm then draws box drawing and block glyphs itself (`customGlyphs`), so they
- * join at any line height; the texture atlas also keeps a tall scrollback cheap. When the GPU is not
- * there (software rendering, a lost context later) the DOM renderer carries on with the font's glyphs.
- */
-export function loadTerminalRenderer(term: Terminal, onLost: () => void): TerminalRenderer {
-  try {
-    // preserveDrawingBuffer: the canvas keeps its last frame, so a window capture (E2E screenshots) sees it.
-    const webgl = new WebglAddon(true)
-    webgl.onContextLoss(() => { webgl.dispose(); onLost() })
-    term.loadAddon(webgl)
-    return 'webgl'
-  } catch {
-    return 'dom'
-  }
 }
 
 export const KIND_LABEL: Record<SlotKind, string> = agentTable('Shell', ui => ui.label, n => n)
@@ -305,7 +284,12 @@ export class TerminalPanel implements IContentRenderer {
   private lastSize = { cols: 0, rows: 0 }
   private fitTimer: ReturnType<typeof setTimeout> | undefined
   private readonly host: PanelHost
-  renderer: TerminalRenderer = 'dom'
+  /** WebGL and ligatures, in xterm's order (created once the xterm exists; started after `open()`). */
+  private readonly addons: TerminalAddons
+  /** Which renderer the terminal is on right now (WebGL until a lost context; DOM before `open()`). */
+  get renderer(): TerminalRenderer { return this.addons.renderer }
+  /** Whether the ligatures addon is loaded on this terminal. */
+  get ligaturesActive(): boolean { return this.addons.ligaturesActive }
 
   constructor(host: PanelHost) {
     this.host = host
@@ -368,6 +352,7 @@ export class TerminalPanel implements IContentRenderer {
     this.setDetails(false)
 
     this.term = createTerminal(host.getAppearance(), host.getScheme())
+    this.addons = new TerminalAddons(this.term)
     this.term.loadAddon(this.fit)
     // Ctrl+click on a URL or on a path that exists (relative ones read against the folder this pane was opened in): the app's links.
     this.term.registerLinkProvider(terminalLinkProvider(this.term, {
@@ -621,7 +606,7 @@ export class TerminalPanel implements IContentRenderer {
   focus(): void { this.term.focus() }
 
   private loadRenderer(): void {
-    this.renderer = loadTerminalRenderer(this.term, () => { this.renderer = 'dom' })
+    this.addons.start(this.host.getAppearance())
   }
 
   /**
@@ -643,6 +628,7 @@ export class TerminalPanel implements IContentRenderer {
     // xterm only measures again when a font option changes: a font that loaded after `open()` needs the nudge.
     if (opts.remeasure) this.term.options.fontFamily = 'monospace'
     applyAppearance(this.term, appearance, scheme)
+    this.addons.update(appearance)
     this.term.refresh(0, this.term.rows - 1)
     this.scheduleFit()
   }
