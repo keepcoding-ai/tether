@@ -311,9 +311,11 @@ test('browser pad: list by agent, filter, taken on top, moved tab, pause, reopen
     // ---- 6b. E12: a restored tab that is not loaded yet can be paused and resumed ----
     const unloaded = (await panes()).find(p => p.tabId === a2)!
     assert.equal(unloaded.state, 'not-loaded', 'a2 came back from layout.json without loading')
-    // After the reopening no agent lives for the pad (so it offers no brake on these tabs): the brake is applied in main, as an agent's own would.
-    assert.ok(!(await header()).some(h => h.label === 'Pausar todas as guias'), 'no live agent: nothing to brake')
-    await B((t, id) => t.control.pause(id), a2)
+    // Sonda's slot runs again in the reopened app: its tabs are with the agents and the header offers the brake (main's list reaches the browser process after its hello).
+    v = await until('a live agent is not ended after the reopening', async () => { const x = await pad(); return x.groups[0]!.slotId === sonda && !x.groups[0]!.ended ? x : undefined })
+    assert.equal(v.endedHead, 'De agentes encerrados (3)', 'only the gone owners x and y')
+    await until('the header offers the brake', async () => (await header()).some(h => h.label === 'Pausar todas as guias'))
+    await headerClick('Pausar todas as guias')
     await until('the unloaded tab is paused in main', async () => (await control(a2)) === 'paused')
     await until('and its bar says so', async () => { const p = (await panes()).find(q => q.tabId === a2)!; return p.controlText === 'Pausada' && p.action === 'Retomar' && p.state === 'not-loaded' })
     v = await until('the pad row is paused', async () => { const x = await pad(); return x.groups.find(g => g.slotId === sonda)!.rows.find(r => r.tabId === a2)?.control === 'paused' ? x : undefined })
