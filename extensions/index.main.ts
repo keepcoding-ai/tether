@@ -5,6 +5,7 @@ import type { ExtensionEntry } from './types.ts'
 import * as note from './note/main.ts'
 import * as quickOpen from './quick-open/main.ts'
 import * as explorer from './explorer/main.ts'
+import * as search from './search/main.ts'
 import * as keybindingsScreen from './keybindings-screen/main.ts'
 import * as webBridge from './web-bridge/main.ts'
 import * as panelPadManager from './panel-pad-manager/main.ts'
@@ -19,6 +20,7 @@ export const extensions: readonly ExtensionEntry<TetherMain>[] = [
   { manifest: note.manifest, activate: note.activate },
   { manifest: quickOpen.manifest, activate: quickOpen.activate },
   { manifest: explorer.manifest, activate: explorer.activate },
+  { manifest: search.manifest, activate: search.activate },
   { manifest: keybindingsScreen.manifest, activate: keybindingsScreen.activate },
   { manifest: webBridge.manifest, activate: webBridge.activate },
   { manifest: panelPadManager.manifest, activate: panelPadManager.activate },

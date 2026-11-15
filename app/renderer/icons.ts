@@ -100,6 +100,15 @@ import rows from '@phosphor-icons/core/assets/regular/rows.svg'
 import dotsThree from '@phosphor-icons/core/assets/regular/dots-three.svg'
 import textAa from '@phosphor-icons/core/assets/regular/text-aa.svg'
 import magnifyingGlass from '@phosphor-icons/core/assets/regular/magnifying-glass.svg'
+import broom from '@phosphor-icons/core/assets/regular/broom.svg'
+import fileMagnifyingGlass from '@phosphor-icons/core/assets/regular/file-magnifying-glass.svg'
+import treeView from '@phosphor-icons/core/assets/regular/tree-view.svg'
+import arrowsOutLineVertical from '@phosphor-icons/core/assets/regular/arrows-out-line-vertical.svg'
+import stopIcon from '@phosphor-icons/core/assets/regular/stop.svg'
+import checks from '@phosphor-icons/core/assets/regular/checks.svg'
+import bookOpen from '@phosphor-icons/core/assets/regular/book-open.svg'
+import gitDiff from '@phosphor-icons/core/assets/regular/git-diff.svg'
+import funnel from '@phosphor-icons/core/assets/regular/funnel.svg'
 import caretRight from '@phosphor-icons/core/assets/regular/caret-right.svg'
 import arrowLeft from '@phosphor-icons/core/assets/regular/arrow-left.svg'
 import arrowRight from '@phosphor-icons/core/assets/regular/arrow-right.svg'
@@ -226,6 +235,15 @@ const SVG = {
   rows,
   'dots-three': dotsThree,
   'magnifying-glass': magnifyingGlass,
+  broom,
+  'file-magnifying-glass': fileMagnifyingGlass,
+  'tree-view': treeView,
+  'arrows-out-line-vertical': arrowsOutLineVertical,
+  stop: stopIcon,
+  checks,
+  'book-open': bookOpen,
+  'git-diff': gitDiff,
+  funnel,
   'caret-right': caretRight,
   'arrow-left': arrowLeft,
   'arrow-right': arrowRight,
