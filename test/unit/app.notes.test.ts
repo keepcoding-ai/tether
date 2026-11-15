@@ -4,7 +4,7 @@
 // the editor keeps from the app (app/renderer/key-capture.ts).
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { addTetherToGitignore, findGitRoot, gitignoreStatus, notesDirFor, prepareNote, readNote, renameNote, userNotesDir, writeNote, writeTextAtomic } from '../../app/main/note-files.ts'
 import { editorKeyOwner } from '../../app/renderer/key-capture.ts'
@@ -133,6 +133,28 @@ describe('reading, writing, renaming', () => {
     const w = writeNote(join(dir, 'sub', 'deep', 'x.md'), 'y')
     assert.ok(w.ok, 'creates the folders')
     assert.ok(!writeNote(join(dir, 'n.md', 'impossible.md'), 'z').ok, 'a file is not a folder: an error, not a throw')
+  })
+
+  test('writeTextAtomic removes its temp file and rethrows when the rename fails; the target stays intact', () => {
+    const dir = tmp.make()
+    const path = join(dir, 'ro.txt')
+    writeTextAtomic(path, 'original')
+    chmodSync(path, 0o444)
+    let threw = false
+    try { writeTextAtomic(path, 'novo') } catch { threw = true }
+    if (!threw) {
+      // Platform lets a read-only file be replaced (POSIX): force the failure with a non-empty directory as target.
+      chmodSync(path, 0o644)
+      rmSync(path)
+      mkdirSync(path)
+      writeFileSync(join(path, 'keep'), 'x')
+      assert.throws(() => writeTextAtomic(path, 'novo'))
+      assert.deepEqual(readdirSync(path), ['keep'])
+    } else {
+      assert.equal(readFileSync(path, 'utf8'), 'original')
+      chmodSync(path, 0o644)
+    }
+    assert.deepEqual(readdirSync(dir).filter(f => f.endsWith('.tmp')), [], 'no .tmp left')
   })
 
   test('renameNote moves the file and refuses to overwrite', () => {
