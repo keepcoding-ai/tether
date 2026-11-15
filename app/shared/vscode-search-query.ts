@@ -441,6 +441,23 @@ export class QueryBuilder {
       return false
     }
 
+    if (owner) {
+      // The folder's own layers, as QueryGlobTester applies them on disk: an exclude entry is relative to its `folder`
+      // (else to the folder query), and the path is out when every entry excludes it; the folder's include joins the global one.
+      const entries = owner.excludePattern ?? []
+      if (entries.length > 0 && entries.every(entry => {
+        const base = entry.folder ?? owner.folder
+        const entrySubject = this.ops.relative(base, fsPath).replaceAll('\\', '/')
+        if (entrySubject.startsWith('..')) return false
+        return !!entry.pattern && withoutExceptions(entry.pattern, globOptions)(entrySubject)
+      })) {
+        return false
+      }
+      if (owner.includePattern && !queryProps.usingSearchPaths) {
+        return !!parse({ ...queryProps.includePattern, ...owner.includePattern }, globOptions)(subject)
+      }
+    }
+
     if (queryProps.includePattern || queryProps.usingSearchPaths) {
       if (queryProps.includePattern && parse(queryProps.includePattern, globOptions)(subject)) {
         return true

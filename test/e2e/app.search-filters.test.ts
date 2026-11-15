@@ -253,10 +253,11 @@ test('search filters: open editors, changed files, row menu, sort order, explore
     s = await waitDone(page, '6 resultados em 5 arquivos', 'other excluded')
     assert.equal(s.widget.exclude, './other')
     assert.ok(!files(s).includes('f.txt'))
-    // (A folder with an open file would keep that file: the in-memory search ignores a folder-relative exclude. `deep` has none.)
-    await menuOn(rowByName(page, 'folder', 'deep'), page, 'Excluir a pasta da pesquisa')
-    s = await waitDone(page, '5 resultados em 4 arquivos', 'deep excluded too')
-    assert.equal(s.widget.exclude, './other, ./sub/deep')
+    // `sub` holds d.txt, which is open in an editor: the in-memory search drops it too.
+    await menuOn(rowByName(page, 'folder', 'sub'), page, 'Excluir a pasta da pesquisa')
+    s = await waitDone(page, '3 resultados em 3 arquivos', 'sub excluded too')
+    assert.equal(s.widget.exclude, './other, ./sub')
+    assert.ok(!files(s).includes('d.txt') && !files(s).includes('e.txt'))
     await page.fill(FIELD('arquivos a excluir'), '')
     await waitDone(page, '7 resultados em 6 arquivos', 'exclude cleared')
 

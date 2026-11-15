@@ -589,6 +589,34 @@ for (const platform of ['posix', 'win32'] as const) {
         assert.equal(qb.pathIncludedInQuery(query, fix('/other/z.tmp')), false)
       })
 
+      test('a relative folder exclusion (./sub) takes the files inside it out, like the bare name does', () => {
+        const qb = single()
+        const inSub = fix('/foo/root1/sub/d.txt')
+        const other = fix('/foo/root1/keep/d.txt')
+        for (const pattern of ['./sub', 'sub']) {
+          const query = qb.text(PATTERN_INFO, [ROOT_1], { excludePattern: [{ pattern }], expandPatterns: true })
+          assert.equal(qb.pathIncludedInQuery(query, inSub), false, pattern)
+          assert.equal(qb.pathIncludedInQuery(query, other), true, pattern)
+        }
+      })
+
+      test('a folder exclusion with its own folder is relative to that folder', () => {
+        const qb = single()
+        const query = {
+          folderQueries: [{ folder: ROOT_1, excludePattern: [{ folder: fix('/foo/root1/src'), pattern: { 'gen/**': true } }] }],
+        }
+        assert.equal(qb.pathIncludedInQuery(query, fix('/foo/root1/src/gen/x.ts')), false)
+        assert.equal(qb.pathIncludedInQuery(query, fix('/foo/root1/src/x.ts')), true)
+        assert.equal(qb.pathIncludedInQuery(query, fix('/foo/root1/gen/x.ts')), true)
+      })
+
+      test('a folder include keeps only what it matches', () => {
+        const qb = single()
+        const query = { folderQueries: [{ folder: ROOT_1, includePattern: { '**/*.ts': true } }] }
+        assert.equal(qb.pathIncludedInQuery(query, SRC), true)
+        assert.equal(qb.pathIncludedInQuery(query, JS), false)
+      })
+
       test('a search path keeps only the files under it', () => {
         const qb = single()
         const query = qb.text(PATTERN_INFO, [ROOT_1], { includePattern: './src', expandPatterns: true })
