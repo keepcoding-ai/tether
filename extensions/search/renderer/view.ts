@@ -21,7 +21,8 @@
 // restricts the search to a folder or leaves it out (searchActionsFind.ts); the explorer's "Pesquisar na pasta…" comes through api.ts.
 // With the replace field open, activating a match (not "to the side") shows the replace preview (preview-panel.ts) instead
 // of opening the file, while the setting useReplacePreview is on; the preview follows the results and the replace term.
-// Left out (next steps): the search editor.
+// "Abrir novo editor de pesquisa" writes the results on screen as a `.code-search` document and opens it in the note
+// editor (search-editor.ts).
 import type { ContextMenuEntry, PadHost, PadView, TetherUi } from '../../../app/renderer/ext-api.ts'
 import { icon, type IconName } from '../../../app/renderer/icons.ts'
 import type { UiIpc } from '../../../app/shared/ext-ipc.ts'
@@ -45,6 +46,9 @@ import {
   type SearchScope, type ViewMode,
 } from './view-rules.ts'
 import { SearchWidget, type SearchWidgetState } from './widget.ts'
+import { serializeSearchResultForEditor } from '../../../app/shared/vscode-search-editor-serialization.ts'
+import { composeDocument, emptyDocument, labelFor, SEARCH_RESULT_LANGUAGE } from './search-editor-rules.ts'
+import type { SearchEditors } from './search-editor.ts'
 
 const PLATFORM: 'win32' | 'posix' = /^win/i.test(navigator.platform) ? 'win32' : 'posix'
 const CASE_INSENSITIVE = /^(win|mac)/i.test(navigator.platform)
@@ -55,6 +59,69 @@ const COUNT_EVERY_MS = 100
 const HISTORY_DELAY_MS = 2000
 /** An edit of an open file recomputes its results once its text has been still for this long (FileMatch's scheduler). */
 const MODEL_UPDATE_MS = 250
+
+/** What a text query is built from: the pad's fields, or a search editor's header. */
+export interface QueryFields {
+  search: string
+  regex: boolean
+  caseSensitive: boolean
+  wholeWord: boolean
+  include: string
+  exclude: string
+  useExcludesAndIgnoreFiles: boolean
+  onlyOpenEditors: boolean
+}
+
+/** The query builder's view of the window: these folders, the search settings, the open files `openEditors` gives. */
+export function queryEnv(ui: TetherUi, folders: SearchFolder[], openEditors: () => readonly string[]): QueryBuilderEnv {
+  const s = ui.settings
+  return {
+    folders: () => folders,
+    config: () => ({
+      exclude: excludeExpression(s.get<string>('exclude')),
+      useIgnoreFiles: s.get<boolean>('useIgnoreFiles') !== false,
+      useGlobalIgnoreFiles: s.get<boolean>('useGlobalIgnoreFiles') === true,
+      useParentIgnoreFiles: s.get<boolean>('useParentIgnoreFiles') === true,
+      followSymlinks: s.get<boolean>('followSymlinks') === true,
+      smartCase: s.get<boolean>('smartCase') === true,
+    }),
+    openEditors: () => [...openEditors()],
+    platform: PLATFORM,
+  }
+}
+
+/** The builder's options for these fields and the search settings; `changed`: the git changes ("only changed files"). */
+export function queryOptions(ui: TetherUi, s: QueryFields, changed?: readonly string[]): ITextQueryBuilderOptions {
+  const settings = ui.settings
+  const off = !s.useExcludesAndIgnoreFiles
+  return {
+    maxResults: settings.get<number>('maxResults') ?? undefined,
+    disregardIgnoreFiles: off || undefined,
+    disregardExcludeSettings: off || undefined,
+    ignoreGlobCase: !IS_LINUX || undefined,
+    excludePattern: [{ pattern: s.exclude }],
+    includePattern: s.include,
+    previewOptions: { ...DEFAULT_TEXT_SEARCH_PREVIEW_OPTIONS },
+    isSmartCase: settings.get<boolean>('smartCase') === true,
+    expandPatterns: true,
+    ...(s.onlyOpenEditors ? { onlyOpenEditors: true } : {}),
+    ...(changed ? { changedFiles: [...changed] } : {}),
+  }
+}
+
+/** The files open in the window's panes (a note, a preview), each once (`key`: how two paths are the same file). */
+export function openPaneFiles(ui: TetherUi, key: (path: string) => string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const pane of ui.panes.all()) {
+    if (!pane.file) continue
+    const k = key(pane.file)
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push(pane.file)
+  }
+  return out
+}
 
 /** The switches of the include field that restrict a search. */
 const scopeOf = (s: SearchWidgetState): SearchScope => ({ onlyOpenEditors: s.onlyOpenEditors, onlyChangedFiles: s.onlyChangedFiles })
@@ -127,7 +194,8 @@ export class SearchView implements PadView {
   private readonly messageEl = el('div', 'srch-msg')
   private readonly body = el('div', 'srch-body')
   private readonly subs: IDisposable[] = []
-  private readonly buttons: Record<'refresh' | 'clear' | 'view' | 'collapse' | 'cancel' | 'more', HTMLButtonElement>
+  private readonly editors: SearchEditors
+  private readonly buttons: Record<'refresh' | 'clear' | 'editor' | 'view' | 'collapse' | 'cancel' | 'more', HTMLButtonElement>
   private viewMode: ViewMode
   private seq = 0
   /** Grows with every request to search (and whenever the running search is dropped): a changed-files answer for an older one is ignored. */
@@ -159,10 +227,11 @@ export class SearchView implements PadView {
   /** The keys of files the person took out of the results as a whole (dismissed, replaced): an edit does not bring them back. */
   private readonly dropped = new Set<string>()
 
-  constructor(ui: TetherUi, host: PadHost, preview: ReplacePreview) {
+  constructor(ui: TetherUi, host: PadHost, preview: ReplacePreview, editors: SearchEditors) {
     this.ui = ui
     this.host = host
     this.preview = preview
+    this.editors = editors
     this.ipc = ui.ipc<SearchChannels>()
     const saved = readViewState(host.state)
     this.viewMode = saved.viewMode ?? (ui.settings.get<string>('defaultViewMode') === 'tree' ? 'tree' : 'list')
@@ -191,6 +260,7 @@ export class SearchView implements PadView {
     this.buttons = {
       refresh: this.button('srch-refresh', 'arrows-clockwise', 'Atualizar', () => this.refresh()),
       clear: this.button('srch-clear', 'broom', 'Limpar resultados da pesquisa', () => this.clear()),
+      editor: this.button('srch-editor', 'file-magnifying-glass', 'Abrir novo editor de pesquisa', () => this.openEditor()),
       view: this.button('srch-view', 'tree-view', 'Ver como árvore', () => this.setViewMode(this.viewMode === 'tree' ? 'list' : 'tree')),
       collapse: this.button('srch-collapse', 'arrows-in-line-vertical', 'Recolher tudo', () => this.toggleCollapse()),
       cancel: this.button('srch-cancel', 'stop', 'Cancelar pesquisa', () => this.cancel()),
@@ -318,6 +388,31 @@ export class SearchView implements PadView {
     this.finish(live.id, { kind: 'cancelled' })
   }
 
+  /**
+   * "Abrir novo editor de pesquisa": the results on screen as a `.code-search` document (the header from the fields in
+   * force, no context lines, the sort order in force), written by main and opened in the note editor; with no results,
+   * the header and "Nenhum resultado".
+   */
+  openEditor(): void {
+    const s = this.widget.state()
+    if (this.disposed || s.search === '') return
+    const flags = { useExcludeSettingsAndIgnoreFiles: s.useExcludesAndIgnoreFiles, onlyOpenEditors: s.onlyOpenEditors }
+    const r = this.model.searchResult
+    const roots = this.folders()
+    let doc: ReturnType<typeof emptyDocument>
+    if (r.query && r.count() > 0) {
+      const limitHit = this.ended?.done.kind === 'done' && this.ended.done.limitHit
+      const out = serializeSearchResultForEditor(r, s.include, s.exclude, 0, p => labelFor(p, roots, PLATFORM), readSortOrder(this.ui.settings.get<string>('sortOrder')), limitHit)
+      doc = composeDocument({ ...out.config, ...flags }, out)
+    } else {
+      doc = emptyDocument({
+        query: s.search, isRegexp: s.regex, isCaseSensitive: s.caseSensitive, matchWholeWord: s.wholeWord, filesToInclude: s.include, filesToExclude: s.exclude,
+        contextLines: 0, ...flags,
+      })
+    }
+    void this.editors.open(doc)
+  }
+
   collapseAll(): void { this.results.collapseAll(); this.updateTopbar() }
   expandAll(): void { this.results.expandAll(); this.updateTopbar() }
 
@@ -409,39 +504,17 @@ export class SearchView implements PadView {
 
   /** The files open in the window's panes (a note, a preview), each once. */
   private openFiles(): string[] {
-    const seen = new Set<string>()
-    const out: string[] = []
-    for (const pane of this.ui.panes.all()) {
-      if (!pane.file) continue
-      const key = this.model.searchResult.paths.key(pane.file)
-      if (seen.has(key)) continue
-      seen.add(key)
-      out.push(pane.file)
-    }
-    return out
+    return openPaneFiles(this.ui, p => this.model.searchResult.paths.key(p))
   }
 
   /** `changed`: the git changes, when "only changed files" is on; the open files are then narrowed to them (the builder lets "open editors" win over "changed files"). */
   private env(folders: SearchFolder[], changed?: readonly string[]): QueryBuilderEnv {
-    const s = this.ui.settings
-    return {
-      folders: () => folders,
-      config: () => ({
-        exclude: excludeExpression(s.get<string>('exclude')),
-        useIgnoreFiles: s.get<boolean>('useIgnoreFiles') !== false,
-        useGlobalIgnoreFiles: s.get<boolean>('useGlobalIgnoreFiles') === true,
-        useParentIgnoreFiles: s.get<boolean>('useParentIgnoreFiles') === true,
-        followSymlinks: s.get<boolean>('followSymlinks') === true,
-        smartCase: s.get<boolean>('smartCase') === true,
-      }),
-      openEditors: () => {
-        const open = this.openFiles()
-        if (!changed) return open
-        const keys = new Set(changed.map(p => this.model.searchResult.paths.key(p)))
-        return open.filter(p => keys.has(this.model.searchResult.paths.key(p)))
-      },
-      platform: PLATFORM,
-    }
+    return queryEnv(this.ui, folders, () => {
+      const open = this.openFiles()
+      if (!changed) return open
+      const keys = new Set(changed.map(p => this.model.searchResult.paths.key(p)))
+      return open.filter(p => keys.has(this.model.searchResult.paths.key(p)))
+    })
   }
 
   private runSearch(): void {
@@ -537,21 +610,7 @@ export class SearchView implements PadView {
   }
 
   private buildQuery(s: SearchWidgetState, folders: SearchFolder[], changed: readonly string[] | undefined): { query: ReturnType<QueryBuilder['text']>; builder: QueryBuilder } | undefined {
-    const settings = this.ui.settings
-    const off = !s.useExcludesAndIgnoreFiles
-    const options: ITextQueryBuilderOptions = {
-      maxResults: settings.get<number>('maxResults') ?? undefined,
-      disregardIgnoreFiles: off || undefined,
-      disregardExcludeSettings: off || undefined,
-      ignoreGlobCase: !IS_LINUX || undefined,
-      excludePattern: [{ pattern: s.exclude }],
-      includePattern: s.include,
-      previewOptions: { ...DEFAULT_TEXT_SEARCH_PREVIEW_OPTIONS },
-      isSmartCase: settings.get<boolean>('smartCase') === true,
-      expandPatterns: true,
-      ...(s.onlyOpenEditors ? { onlyOpenEditors: true } : {}),
-      ...(changed ? { changedFiles: [...changed] } : {}),
-    }
+    const options = queryOptions(this.ui, s, changed)
     try {
       const builder = new QueryBuilder(this.env(folders, changed))
       const query = builder.text({ pattern: s.search, isRegExp: s.regex, isCaseSensitive: s.caseSensitive, isWordMatch: s.wholeWord }, folders, options)
@@ -646,6 +705,9 @@ export class SearchView implements PadView {
   /** The model's file as the results name it, when the model takes part in the search. */
   private pathOf(model: TextModel, shown: Shown): string | undefined {
     if (model.uri.scheme !== 'file') return undefined
+    // A search editor's document is not searched in memory unless the include asks for it (VS Code's getLocalResults):
+    // open outside the projects, it would otherwise join every search whose term it shows.
+    if (model.getLanguageId() === SEARCH_RESULT_LANGUAGE && !shown.query.includePattern?.['**/*.code-search']) return undefined
     const path = resourceOf(model.uri.fsPath, shown.query.folderQueries.map(f => f.folder), CASE_INSENSITIVE)
     return bufferInQuery(model, () => shown.included(path)) ? path : undefined
   }
@@ -1018,6 +1080,7 @@ export class SearchView implements PadView {
     const has = this.model.searchResult.count() > 0
     b.refresh.disabled = this.widget.state().search === ''
     b.clear.disabled = !has
+    b.editor.disabled = this.widget.state().search === ''
     b.view.disabled = !has
     b.collapse.disabled = !has
     b.cancel.hidden = this.live === undefined

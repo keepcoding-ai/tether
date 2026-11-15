@@ -36,3 +36,9 @@
 
 /* The results tree takes the rest of the card (results.css: .sr is height 100% of this box). */
 .srch-body { flex: 1; min-height: 0; position: relative; border-top: 1px solid transparent; }
+
+/* The search editor (a .code-search document in the note editor): its matches, as the results tree marks them (.sr-hit). */
+.monaco-editor .srch-ed-match { border-radius: 2px; background: color-mix(in srgb, var(--warn) 32%, transparent); }
+/* Every file and result line is a link there: underlined only while Ctrl points at it (Monaco underlines detected links always). */
+.monaco-editor[data-mode-id="search-result"] .detected-link { text-decoration: none; }
+.monaco-editor[data-mode-id="search-result"] .detected-link-active { text-decoration: underline; }

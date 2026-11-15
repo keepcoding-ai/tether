@@ -2,9 +2,10 @@
 // app/main/text-search-worker.ts, built next to main.cjs) on the bus `ext:search:*`. Every argument comes from the
 // renderer and is checked here: the query is rebuilt field by field, the disk replace is limited to the folders of the
 // last search. `searchFile` searches one file again (after a replace in it), in this process: a short ripgrep run that
-// leaves the worker and its live search alone.
+// leaves the worker and its live search alone. The search editor writes its documents through `saveEditor` (in the
+// person's configuration folder, outside every project) and searches through `searchOnce`, on a second worker.
 import { realpathSync, statSync } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import { findRipgrep, isInside } from '../../app/main/file-index.ts'
@@ -15,7 +16,8 @@ import { gitChangedFiles } from '../../app/main/git-changed-files.ts'
 import { decode, type FileEdits, replaceInFiles } from '../../app/main/search-replace-disk.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { type IExpression, type IFileMatch, type IFolderQuery, type ITextQuery, QueryType } from '../../app/shared/vscode-search.ts'
-import type { SearchChannels } from './ipc.ts'
+import type { SearchChannels, SearchOnceResult } from './ipc.ts'
+import { editorsToPrune, KEEP_SEARCH_EDITORS, MAX_SEARCH_EDITOR_BYTES, SEARCH_EDITORS_DIR, searchEditorName, SUPERSEDED_MESSAGE } from './renderer/search-editor-rules.ts'
 import { SearchService } from './service.ts'
 
 export { manifest } from './manifest.ts'
@@ -222,10 +224,74 @@ export async function readText(folders: readonly string[], path: unknown): Promi
   }
 }
 
+export type SaveEditorResult = { ok: true; path: string } | { ok: false; message: string }
+
+/**
+ * Writes a search editor's document in `dir` (created when missing) as `Pesquisa-AAAAMMDD-HHMMSS.code-search`, with
+ * `-2`, `-3`… when the name is taken (written exclusively: two saves in the same second never share a file); then the
+ * folder keeps only the KEEP_SEARCH_EDITORS most recent documents.
+ */
+export async function saveSearchEditor(dir: string, text: unknown, now = new Date(), keep = KEEP_SEARCH_EDITORS): Promise<SaveEditorResult> {
+  if (typeof text !== 'string') return { ok: false, message: 'Documento de pesquisa inválido.' }
+  if (Buffer.byteLength(text, 'utf8') > MAX_SEARCH_EDITOR_BYTES) return { ok: false, message: 'O documento de pesquisa é grande demais (mais de 50 MB).' }
+  let path: string | undefined
+  try {
+    await mkdir(dir, { recursive: true })
+    for (let attempt = 1; attempt <= 1000 && path === undefined; attempt++) {
+      const candidate = join(dir, searchEditorName(now, attempt))
+      try {
+        await writeFile(candidate, text, { encoding: 'utf8', flag: 'wx' })
+        path = candidate
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException | undefined)?.code !== 'EEXIST') throw error
+      }
+    }
+  } catch (error) {
+    return { ok: false, message: `Não foi possível gravar o documento de pesquisa: ${error instanceof Error ? error.message : String(error)}` }
+  }
+  if (path === undefined) return { ok: false, message: 'Não foi possível escolher um nome para o documento de pesquisa.' }
+  // Pruning is best effort: a document that cannot be removed now goes on a later save.
+  try {
+    const names = await readdir(dir)
+    const entries: { name: string; mtimeMs: number }[] = []
+    for (const name of names) {
+      try { const st = await stat(join(dir, name)); if (st.isFile()) entries.push({ name, mtimeMs: st.mtimeMs }) } catch { /* gone meanwhile */ }
+    }
+    for (const name of editorsToPrune(entries, keep, basename(path))) await unlink(join(dir, name)).catch(() => {})
+  } catch { /* the folder cannot be listed: nothing pruned */ }
+  return { ok: true, path }
+}
+
+/**
+ * The search editor's searches: one at a time on a SearchService of their own (its own worker), so the pad's live
+ * search is never cancelled by them. The batches are joined and answered at once; a newer call replaces the running
+ * one, which answers SUPERSEDED_MESSAGE.
+ */
+export class SearchOnce {
+  private seq = 0
+  private readonly service: SearchService
+  constructor(service: SearchService) { this.service = service }
+
+  async run(raw: unknown): Promise<SearchOnceResult> {
+    const query = sanitizeQuery(raw)
+    if (!query) return { ok: false, message: 'Consulta de pesquisa inválida.' }
+    const id = ++this.seq
+    const matches: IFileMatch[] = []
+    const done = await this.service.search(id, query, (_id, batch) => { for (const m of batch) matches.push(m) })
+    if (done.kind === 'cancelled') return { ok: false, message: SUPERSEDED_MESSAGE }
+    if (done.kind === 'error') return { ok: false, message: done.message, ...(done.code ? { code: done.code } : {}) }
+    return { ok: true, matches, limitHit: done.limitHit }
+  }
+
+  dispose(): Promise<void> { return this.service.dispose() }
+}
+
 export function activate(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<SearchChannels>()
   const repo = join(main.dist, '..', '..')
-  const service = new SearchService(join(main.dist, 'text-search-worker.cjs'), repo)
+  const workerPath = join(main.dist, 'text-search-worker.cjs')
+  const service = new SearchService(workerPath, repo)
+  const once = new SearchOnce(new SearchService(workerPath, repo))
   let engine: RipgrepTextSearchEngine | undefined
   const rgEngine = (): RipgrepTextSearchEngine | undefined => {
     if (!engine) { const rg = findRipgrep(repo) ?? findRipgrep(); if (rg) engine = new RipgrepTextSearchEngine(rg) }
@@ -253,6 +319,8 @@ export function activate(main: TetherMain): IDisposable[] {
       }
       return [...seen]
     }),
-    { dispose: () => { void service.dispose() } },
+    ipc.handle('saveEditor', text => saveSearchEditor(join(main.userDir, SEARCH_EDITORS_DIR), text)),
+    ipc.handle('searchOnce', query => once.run(query)),
+    { dispose: () => { void service.dispose(); void once.dispose() } },
   ]
 }

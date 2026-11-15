@@ -1,11 +1,12 @@
 // The search extension's main side under plain Node: the real worker (.ts, run directly), the real rg, temp folders.
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { Worker } from 'node:worker_threads'
-import { allowedIn, fileQuery, MAX_READ_BYTES, readText, sanitizeQuery, sanitizeReplace, searchFile } from '../../extensions/search/main.ts'
+import { allowedIn, fileQuery, MAX_READ_BYTES, readText, sanitizeQuery, sanitizeReplace, saveSearchEditor, searchFile, SearchOnce } from '../../extensions/search/main.ts'
+import { MAX_SEARCH_EDITOR_BYTES, SUPERSEDED_MESSAGE } from '../../extensions/search/renderer/search-editor-rules.ts'
 import { findRipgrep } from '../../app/main/file-index.ts'
 import { RipgrepTextSearchEngine } from '../../app/main/vscode-ripgrep-text-search.ts'
 import { SearchService } from '../../extensions/search/service.ts'
@@ -258,5 +259,103 @@ describe('readText (the replace preview reads a file)', () => {
     assert.deepEqual(await readText([dir], 'relative.txt'), { ok: false, message: 'Arquivo fora das pastas pesquisadas.' })
     assert.deepEqual(await readText([], join(dir, 'big.txt')), { ok: false, message: 'Arquivo fora das pastas pesquisadas.' })
     assert.equal((await readText([dir], 42)).ok, false)
+  })
+})
+
+describe('SearchOnce (the search editor: one whole search on its own worker)', () => {
+  it('answers every match in one reply; maxResults sets limitHit', async () => {
+    const once = new SearchOnce(new SearchService(WORKER, REPO))
+    const r = await once.run(query(join(root, 'small'), 'needle'))
+    assert.equal(r.ok, true)
+    if (!r.ok) return
+    assert.equal(r.limitHit, false)
+    assert.deepEqual(r.matches.map(m => m.resource.split(/[\\/]/).pop()).sort(), ['a.txt', 'b.txt'])
+    const limited = await once.run({ ...query(join(root, 'small'), 'needle'), maxResults: 1 })
+    assert.ok(limited.ok && limited.limitHit && limited.matches.flatMap(m => m.results ?? []).length === 1, JSON.stringify(limited))
+    await once.dispose()
+  })
+
+  it('context lines come with surroundingContext', async () => {
+    const once = new SearchOnce(new SearchService(WORKER, REPO))
+    const r = await once.run({ ...query(join(root, 'small'), 'needle'), surroundingContext: 1 })
+    assert.ok(r.ok)
+    if (!r.ok) return
+    const a = r.matches.find(m => m.resource.endsWith('a.txt'))
+    assert.ok(a?.results?.some(x => !('rangeLocations' in x) && (x as { text: string }).text.startsWith('second line')), JSON.stringify(a))
+    await once.dispose()
+  })
+
+  it('a newer call replaces the running one: it answers "substituída"', async () => {
+    const once = new SearchOnce(new SearchService(WORKER, REPO))
+    const p1 = once.run(query(big, 'haystack'))
+    const p2 = once.run(query(join(root, 'small'), 'needle'))
+    assert.deepEqual(await p1, { ok: false, message: SUPERSEDED_MESSAGE })
+    assert.equal((await p2).ok, true)
+    await once.dispose()
+  })
+
+  it('an invalid regex answers the engine message; an invalid query is refused', async () => {
+    const once = new SearchOnce(new SearchService(WORKER, REPO))
+    const r = await once.run(query(join(root, 'small'), '(unclosed', { isRegExp: true }))
+    assert.equal(r.ok, false)
+    if (r.ok) return
+    assert.ok(r.message.length > 0)
+    assert.equal(r.code, 'regexParseError', JSON.stringify(r))
+    assert.deepEqual(await once.run({ nope: true }), { ok: false, message: 'Consulta de pesquisa inválida.' })
+    await once.dispose()
+  })
+
+  it("does not cancel the pad's live search (two services, two workers)", async () => {
+    const pad = new SearchService(WORKER, REPO)
+    const once = new SearchOnce(new SearchService(WORKER, REPO))
+    let liveBatches = 0
+    let running = true
+    const live = pad.search(1, { ...query(big, 'haystack'), maxResults: 60_000 }, () => { liveBatches++ }).finally(() => { running = false })
+    const r = await once.run(query(join(root, 'small'), 'needle'))
+    assert.equal(r.ok, true)
+    assert.ok(running, 'the live search was still running when the editor search answered')
+    const d = await live
+    assert.equal(d.kind, 'done', 'the live search ran to its end')
+    assert.ok(liveBatches > 0)
+    await pad.dispose()
+    await once.dispose()
+  })
+})
+
+describe('saveSearchEditor (the documents of the search editor)', () => {
+  it('names by date, adds -2, -3 when taken, creates the folder', async () => {
+    const dir = join(root, 'editors-a', 'search-editors')
+    const now = new Date(2026, 10, 15, 17, 5, 9)
+    const a = await saveSearchEditor(dir, '# Query: x\n', now)
+    const b = await saveSearchEditor(dir, '# Query: y\n', now)
+    const c = await saveSearchEditor(dir, '# Query: z\n', now)
+    assert.ok(a.ok && b.ok && c.ok)
+    if (!a.ok || !b.ok || !c.ok) return
+    assert.equal(a.path, join(dir, 'Pesquisa-20261115-170509.code-search'))
+    assert.equal(b.path, join(dir, 'Pesquisa-20261115-170509-2.code-search'))
+    assert.equal(c.path, join(dir, 'Pesquisa-20261115-170509-3.code-search'))
+    assert.equal(await readFile(b.path, 'utf8'), '# Query: y\n')
+  })
+
+  it('keeps only the most recent documents (other files stay)', async () => {
+    const dir = join(root, 'editors-b')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'keep.txt'), 'not a search')
+    const paths: string[] = []
+    for (let i = 0; i < 5; i++) {
+      const r = await saveSearchEditor(dir, `# Query: ${i}\n`, new Date(2026, 0, 1, 0, 0, i), 3)
+      assert.ok(r.ok)
+      if (r.ok) paths.push(r.path)
+      await utimes(paths[paths.length - 1]!, new Date(2026, 0, 1, 0, 0, i), new Date(2026, 0, 1, 0, 0, i))
+    }
+    const left = (await readdir(dir)).sort()
+    assert.deepEqual(left, ['Pesquisa-20260101-000002.code-search', 'Pesquisa-20260101-000003.code-search', 'Pesquisa-20260101-000004.code-search', 'keep.txt'])
+  })
+
+  it('refuses what is not text and what is over 50 MB', async () => {
+    const dir = join(root, 'editors-c')
+    assert.deepEqual(await saveSearchEditor(dir, 42), { ok: false, message: 'Documento de pesquisa inválido.' })
+    const huge = await saveSearchEditor(dir, 'x'.repeat(MAX_SEARCH_EDITOR_BYTES + 1))
+    assert.equal(huge.ok, false)
   })
 })

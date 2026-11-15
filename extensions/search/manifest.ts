@@ -55,12 +55,18 @@ export const manifest: ExtensionManifest = {
       { command: 'search.toggle-replace', title: 'Substituir nos arquivos', category: SEARCH, icon: 'swap' },
       { command: 'search.replace-all', title: 'Substituir tudo', category: SEARCH, icon: 'swap' },
       { command: 'search.replace', title: 'Substituir', category: SEARCH, icon: 'swap' },
+      { command: 'search.open-editor', title: 'Abrir novo editor de pesquisa', category: SEARCH, icon: 'file-magnifying-glass' },
+      { command: 'search.editor.rerun', title: 'Pesquisar de novo no editor de pesquisa', category: SEARCH, icon: 'arrows-clockwise' },
+      { command: 'search.editor.go-to-file', title: 'Ir ao arquivo do resultado no editor de pesquisa', category: SEARCH, icon: 'arrow-square-out' },
     ],
     keybindings: [
       { key: 'ctrl+shift+f', command: 'search.focus' },
       // Not in a terminal: function keys belong to the programs running there (mc, htop, editors).
       { key: 'f4', command: 'search.next-match', where: ['window', 'note'] },
       { key: 'shift+f4', command: 'search.previous-match', where: ['window', 'note'] },
+      // In a note only: they act on a `.code-search` document and do nothing in any other note.
+      { key: 'ctrl+shift+r', command: 'search.editor.rerun', where: ['note'] },
+      { key: 'f12', command: 'search.editor.go-to-file', where: ['note'] },
     ],
   },
 }

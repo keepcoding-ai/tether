@@ -12,6 +12,11 @@ export type SearchDone =
   /** `code` is a SearchErrorCode name when the engine gave one (e.g. 'regexParseError'). */
   | { kind: 'error'; message: string; code?: string }
 
+/** The answer of `searchOnce`; `code` is the engine's SearchErrorCode name when it gave one (e.g. 'regexParseError'). */
+export type SearchOnceResult =
+  | { ok: true; matches: IFileMatch[]; limitHit: boolean }
+  | { ok: false; message: string; code?: string }
+
 export interface SearchChannels {
   invoke: {
     /**
@@ -34,6 +39,16 @@ export interface SearchChannels {
     readText: (path: string) => { ok: true; text: string } | { ok: false; message: string }
     /** The files changed in git (modified, added, renamed, untracked) under these folders. */
     changedFiles: (folders: string[]) => string[]
+    /**
+     * A search editor's document written to `<userDir>/search-editors/Pesquisa-AAAAMMDD-HHMMSS.code-search` (`-2`, `-3`…
+     * when the name is taken), at most 50 MB; the folder keeps the 50 most recent documents.
+     */
+    saveEditor: (text: string) => { ok: true; path: string } | { ok: false; message: string }
+    /**
+     * One whole search for the search editor, on a worker of its own (the pad's live search goes on): every batch joined
+     * in one reply. A newer call replaces the running one, which answers `ok: false` with SUPERSEDED_MESSAGE.
+     */
+    searchOnce: (query: ITextQuery) => SearchOnceResult
   }
   send: {
     /** Cancels the search `id` if it is still running. */
