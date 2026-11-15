@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  CLOSE_TAB, CLOSE_TAB_SITUATION, TAB_ACTION_ICON, agentUsing, closeNeedsConfirm, closeTabDialog, padRowActions, tabActions, type TabActionState,
+  CLOSE_TAB, CLOSE_TAB_SITUATION, TAB_ACTION_ICON, agentUsing, closeNeedsConfirm, closeTabDialog, tabActions, type TabActionState,
 } from '../../extensions/browser/tab-actions.ts'
 
 const st = (over: Partial<TabActionState> = {}): TabActionState => ({ holder: 'agent', paused: false, loaded: true, agentAlive: true, ...over })
@@ -56,16 +56,6 @@ describe('browser tab actions: what each state offers', () => {
     // icons.ts imports SVG files (the bundler's job): its table is read as text.
     const table = readFileSync(join(import.meta.dirname, '..', '..', 'app', 'renderer', 'icons.ts'), 'utf8')
     for (const name of Object.values(TAB_ACTION_ICON)) assert.ok(table.includes(`'${name}':`) || new RegExp(`^\\s+${name},$`, 'm').test(table), name)
-  })
-})
-
-describe('browser tab actions: the pad row', () => {
-  test('the row offers the menu\'s actions, same names and icons, without the clean reload', () => {
-    for (const s of [st(), st({ holder: 'user' }), st({ paused: true }), st({ loaded: false })]) {
-      const menu = tabActions(s, 'Sonda')
-      assert.deepEqual(padRowActions(s, 'Sonda'), menu.filter(a => a.id !== 'clean-reload'))
-    }
-    assert.deepEqual(padRowActions(st({ holder: 'user' }), 'Sonda').map(a => a.id), ['give-back', 'pause', 'close'])
   })
 })
 

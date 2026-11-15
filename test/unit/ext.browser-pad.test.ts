@@ -4,7 +4,7 @@ import { pillMark } from '../../app/renderer/seal-rules.ts'
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ACTION_FRESH_MS, actionKindOf, buildPad, endedTabIds, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, pillBadgeCount, padCloseEnded, padSections, padMenu, padGroupMenu, rowStateText, PAD_ACTIVE, PAD_ENDED, PAD_CLOSE_ALL_ENDED, padOnlyAgent, type PadModel, type PadGroup, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
+  ACTION_FRESH_MS, actionKindOf, buildPad, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, pillBadgeCount, padSections, padMenu, padGroupMenu, rowStateText, PAD_ACTIVE, PAD_ENDED, PAD_CLOSE_ALL_ENDED, padOnlyAgent, type PadModel, type PadGroup, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
 } from '../../extensions/browser/pad-rules.ts'
 
 const tab = (tabId: string, ownerSlotId: string, over: Partial<PadTab> = {}): PadTab =>
@@ -47,8 +47,7 @@ describe('browser pad: the model', () => {
   })
 
   test('the ended agents\' tabs, for the clean-up', () => {
-    assert.deepEqual(endedTabIds(tabs, agentOf), ['c1'])
-    assert.equal(padCloseEnded(3), 'Fechar guias de agentes encerrados (3)')
+    assert.deepEqual(padSections(buildPad(tabs, agentOf)).endedIds, ['c1'])
   })
 
   test('the icon: nothing with nobody holding a tab; a plain count for a take; the flag when an agent asks', () => {
@@ -99,7 +98,7 @@ describe('browser pad: the agent\'s real life (E12)', () => {
     const info = resolveAgent(undefined, slot(true), true)
     assert.deepEqual(info, { name: 'Slot A', alive: true })
     assert.equal(isEnded(info), false)
-    assert.deepEqual(endedTabIds([tab('a1', 'a')], () => info), [])
+    assert.deepEqual(padSections(buildPad([tab('a1', 'a')], () => info)).endedIds, [])
   })
 
   test('open pane with an exited slot is ended; main\'s word on life wins over the pane\'s', () => {
@@ -111,7 +110,7 @@ describe('browser pad: the agent\'s real life (E12)', () => {
     const info = resolveAgent(undefined, undefined, true)
     assert.equal(isEnded(info), true)
     assert.equal(info?.name, 'Agente')
-    assert.deepEqual(endedTabIds([tab('a1', 'a')], () => info), ['a1'])
+    assert.deepEqual(padSections(buildPad([tab('a1', 'a')], () => info)).endedIds, ['a1'])
   })
 
   test('the pane\'s name wins; before main answered the pane\'s word stands and nothing is ended by guess', () => {

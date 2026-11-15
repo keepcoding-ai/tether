@@ -57,11 +57,6 @@ export function tabActions(s: TabActionState, agent: string): TabAction[] {
   return out
 }
 
-/** What a row of the pad offers at one click: who has it, the brake, close (the clean reload stays in the menu and the bar). */
-export function padRowActions(s: TabActionState, agent: string): TabAction[] {
-  return tabActions(s, agent).filter(a => a.id !== 'clean-reload')
-}
-
 /** The question before closing a tab the agent is using. */
 export function closeTabDialog(agent: string, title: string): DialogSpec {
   return {

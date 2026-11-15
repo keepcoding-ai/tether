@@ -99,11 +99,6 @@ export function buildPad(tabs: readonly PadTab[], agentOf: (slotId: string) => P
   }
 }
 
-/** The tabs of agents that ended, for "Fechar guias de agentes encerrados". */
-export function endedTabIds(tabs: readonly PadTab[], agentOf: (slotId: string) => PadAgentInfo | undefined): string[] {
-  return tabs.filter(t => isEnded(agentOf(t.ownerSlotId))).map(t => t.tabId)
-}
-
 // ---- the agent's last action, in words ----
 
 export type ActionKind = 'typing' | 'clicking' | 'scrolling' | 'navigating' | 'reading' | 'acting'
@@ -184,13 +179,10 @@ export function padBadge(m: PadModel): { count: number; attention: boolean; tool
 export const PAD_LOGOUT_ALL = 'Sair de todas as contas'
 export const PAD_LOGOUT_CONFIRM = 'Todos os agentes perdem o acesso às contas logadas.'
 export const PAD_WITH_YOU = 'Com você'
-export const PAD_CLOSE_ENDED = 'Fechar guias de agentes encerrados'
-export const padCloseEnded = (n: number): string => `${PAD_CLOSE_ENDED} (${n})`
 export const padResumeAgent = (name: string): string => `Retomar as guias do ${name}`
 export const padCloseAgent = (name: string): string => `Fechar as guias do ${name}`
 export const padSeeAgent = (name: string): string => `Ver guias do ${name}`
 export const PAD_SHOW_ALL = 'Mostrar todas'
-export const padFiltered = (name: string): string => `Guias do ${name}`
 export const PAD_NONE_OF_AGENT = 'Este agente não tem guias abertas.'
 export const padWhere = (place: string): string => `Em ${place}`
 
