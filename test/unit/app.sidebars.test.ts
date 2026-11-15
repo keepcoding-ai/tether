@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import {
   clampWidth, DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, MAX_SIDEBAR_WIDTH, MIN_DOCK_WIDTH, MIN_SIDEBAR_WIDTH, movePad, openPad, openPadOn,
   PadRegistry, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, readSideBars, restorePad, setWidth, sideOf, togglePad, toggleSideBar, type PadDescriptor, type SideBarsLayout,
+  shownPadOn, togglePadFollowing, openPadFollowing, toggleSideBarFollowing, type PadOwners,
 } from '../../app/renderer/sidebar-rules.ts'
 import { allPanelIds, isLayoutV4, migrateLayout, planRestore, type LayoutV2 } from '../../app/renderer/layout.ts'
 
@@ -192,5 +193,58 @@ describe('the per-panel pad', () => {
     assert.equal(isMoved(l, panel), true)
     l = restorePad(l, pads, panel.id)
     assert.equal(sideOf(l, panel), 'right')
+  })
+})
+
+describe('pads that follow their owner (ui.padsFollowFocus)', () => {
+  const ALL = [panel, desk, global]
+  const at = (panelId: string | undefined, deskId = 'd1'): PadOwners => ({ deskId, ...(panelId ? { panelId } : {}) })
+
+  test('off (no owners): the open scoped pad stays shown whatever the panel or desk', () => {
+    const s = togglePad(emptySideBars(), ALL, panel.id)
+    assert.equal(shownPadOn(ALL, s, 'right')?.id, panel.id)
+    assert.equal(s.following, undefined, 'the default behaviour writes no follow keys')
+  })
+
+  test('on: a panel pad shows only on the panel it was opened on, and comes back there', () => {
+    let s = togglePadFollowing(emptySideBars(), ALL, panel.id, at('p1'))
+    assert.deepEqual(s.following, [`${panel.id}@p1`])
+    assert.equal(shownPadOn(ALL, s, 'right', at('p1'))?.id, panel.id)
+    assert.equal(shownPadOn(ALL, s, 'right', at('p2')), undefined, 'another panel: the bar is closed')
+    assert.equal(shownPadOn(ALL, s, 'right', at(undefined)), undefined, 'no focused panel: closed')
+    s = togglePadFollowing(s, ALL, panel.id, at('p2'))
+    assert.equal(shownPadOn(ALL, s, 'right', at('p2'))?.id, panel.id)
+    s = togglePadFollowing(s, ALL, panel.id, at('p2'))
+    assert.equal(shownPadOn(ALL, s, 'right', at('p2')), undefined, 'the icon closes it for this panel only')
+    assert.equal(shownPadOn(ALL, s, 'right', at('p1'))?.id, panel.id)
+    s = togglePadFollowing(s, ALL, panel.id, at('p1'))
+    assert.equal(s.right.open, undefined, 'no owner left: the side closes')
+    assert.equal(s.following, undefined)
+  })
+
+  test('on: a desk pad follows the desk; Ctrl+B and open act on the current desk', () => {
+    let s = openPadFollowing(emptySideBars(), ALL, desk.id, at('p1', 'd1'))
+    assert.equal(shownPadOn(ALL, s, 'right', at('p9', 'd1'))?.id, desk.id, 'any panel of the same desk')
+    assert.equal(shownPadOn(ALL, s, 'right', at('p1', 'd2')), undefined)
+    assert.equal(openPadFollowing(s, ALL, desk.id, at('p1', 'd1')), s, 'already shown: no-op')
+    s = toggleSideBarFollowing(s, ALL, 'right', at(undefined, 'd2'))
+    assert.equal(shownPadOn(ALL, s, 'right', at(undefined, 'd2'))?.id, desk.id, 'Ctrl+B reopens the last pad for this desk')
+    s = toggleSideBarFollowing(s, ALL, 'right', at(undefined, 'd2'))
+    assert.equal(shownPadOn(ALL, s, 'right', at(undefined, 'd2')), undefined)
+    assert.equal(shownPadOn(ALL, s, 'right', at(undefined, 'd1'))?.id, desk.id)
+  })
+
+  test('on: global pads behave as before', () => {
+    let s = togglePadFollowing(emptySideBars(), ALL, global.id, at('p1'))
+    assert.equal(shownPadOn(ALL, s, 'right', at('p2', 'd2'))?.id, global.id)
+    assert.equal(s.following, undefined)
+    s = togglePadFollowing(s, ALL, global.id, at('p2'))
+    assert.equal(s.right.open, undefined)
+  })
+
+  test('the follow keys survive a read; malformed entries are dropped', () => {
+    const s = readSideBars({ following: ['frame-pads.panel@p1', 3, 'bad', 'frame-pads.panel@p1'] })
+    assert.deepEqual(s.following, ['frame-pads.panel@p1'])
+    assert.equal(readSideBars({}).following, undefined)
   })
 })

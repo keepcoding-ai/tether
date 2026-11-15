@@ -44,5 +44,9 @@ export const CORE_SETTINGS: ConfigurationNode = {
       type: 'boolean', default: DEFAULT_UI.tabClose, title: 'Botão de fechar nas guias',
       description: 'O × em cada guia. Desligado, a guia fecha pelo menu do botão direito.', section: 'Janela', order: 15,
     },
+    'ui.padsFollowFocus': {
+      type: 'boolean', default: DEFAULT_UI.padsFollowFocus, title: 'Prancheta acompanha o painel/mesa',
+      description: 'Fecha ao sair do painel ou mesa e reabre ao voltar.', section: 'Janela', order: 16,
+    },
   },
 }

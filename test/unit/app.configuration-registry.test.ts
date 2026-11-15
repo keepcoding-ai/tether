@@ -30,7 +30,7 @@ test('a key is its storage path: the core at the top level, an extension under e
 
 test('page order: nodes by order then registration; properties by order then key', () => {
   const keys = registry().properties().map(p => p.key)
-  assert.deepEqual(keys, ['theme', 'ui.deskLine', 'ui.tabBorder', 'ui.dimUnfocused', 'ui.dimLevel', 'ui.fixedDeskLabel', 'ui.tabClose', 'extensions.note.minimap', 'extensions.note.wordWrap', 'extensions.note.lineNumbers'])
+  assert.deepEqual(keys, ['theme', 'ui.deskLine', 'ui.tabBorder', 'ui.dimUnfocused', 'ui.dimLevel', 'ui.fixedDeskLabel', 'ui.tabClose', 'ui.padsFollowFocus', 'extensions.note.minimap', 'extensions.note.wordWrap', 'extensions.note.lineNumbers'])
   assert.equal(registry().properties()[0]!.node, 'core')
 })
 
