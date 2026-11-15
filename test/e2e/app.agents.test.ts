@@ -18,6 +18,7 @@ import type { AgentPane } from '../../app/renderer/agent-panes.ts'
 import type { AgentExit, AgentInfo } from '../../app/main/agents.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { FAKE_SOUL_CMD as FAKE_SOUL } from './browser-kit.ts'
 
 type Hooks = {
   slots(): SlotState[]
@@ -39,7 +40,6 @@ const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const pipe = `\\\\.\\pipe\\tether-agents-${process.pid}`
 const SYS = 'system-desk-probe.main'
-const FAKE_SOUL = `"${process.execPath}" -e "setInterval(()=>{},1000)"`
 
 /** The statuses of a slot with a process (a stopped agent with no confirmed session reads "unconfirmed", not "exited"). */
 const LIVE = ['running', 'starting', 'queued']

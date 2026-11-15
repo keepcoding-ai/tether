@@ -22,6 +22,7 @@
     "app/main",
     "app/preload",
     "app/shared",
+    "app/renderer/svg.d.ts",
     "extensions/types.ts",
     "extensions/index.main.ts",
     "extensions/index.daemon.ts"

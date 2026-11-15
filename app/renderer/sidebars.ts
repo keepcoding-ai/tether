@@ -14,6 +14,7 @@ import { countLabel, type Badge } from './seal-rules.ts'
 
 import { createBlankView } from './blank-view.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
+import { createActionBar, type ActionBar } from './action-bar.ts'
 import {
   DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, openPadOn, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, restorePad, setWidth, SIDES, sideOf,
   togglePad, toggleSideBar, type PadDescriptor, type Side, type SideBarsLayout,
@@ -333,7 +334,7 @@ export class SideBars {
   }
 
   /** The wrapper of a pad's area (header or floating "⋯") and the body its content goes in. */
-  private buildWrapper(pad: PadDescriptor, deskId: string | undefined, panelId: string | undefined): { wrapper: HTMLElement; body: HTMLElement } {
+  private buildWrapper(pad: PadDescriptor, deskId: string | undefined, panelId: string | undefined, viewOf?: () => PadView | undefined): { wrapper: HTMLElement; body: HTMLElement; bar?: ActionBar } {
     const wrapper = document.createElement('section')
     wrapper.className = pad.absorbsHeader ? 'pad absorbed' : 'pad'
     wrapper.dataset.pad = pad.id
@@ -358,6 +359,7 @@ export class SideBars {
     more.addEventListener('click', ev => { const r = more.getBoundingClientRect(); ev.stopPropagation(); this.host.onPadMenu(pad.id, r.left, r.bottom + 4, more) })
     const body = document.createElement('div')
     body.className = 'pad-body'
+    let bar: ActionBar | undefined
     if (pad.absorbsHeader) {
       // No header row: the "⋯" floats over the content's top-right corner (hidden while the view hosts the menu).
       const float = document.createElement('div')
@@ -369,11 +371,19 @@ export class SideBars {
       close.className = 'ib pad-close'; close.type = 'button'; close.title = 'Fechar a prancheta'; close.setAttribute('aria-label', 'Fechar a prancheta')
       close.append(icon('x'))
       close.addEventListener('click', () => this.toggle(pad.id, false))
-      head.append(sp, more, close)
+      // The header's "⋯" lives in the action bar, after the view's pinned menu items; it opens the same complete menu.
+      bar = createActionBar({
+        entries: () => viewOf?.()?.menu?.() ?? [],
+        label: 'Ações da prancheta',
+        openMenu: (x, y, opener) => this.host.onPadMenu(pad.id, x, y, opener),
+        moreClass: 'ib pad-more',
+        align: 'end',
+      })
+      head.append(sp, bar.element, close)
       wrapper.append(head, body)
     }
     this.layer.append(wrapper)
-    return { wrapper, body }
+    return { wrapper, body, ...(bar ? { bar } : {}) }
   }
 
   /** A per-panel pad open while no panel has the focus: nothing to show but a discreet line saying why. */
@@ -402,9 +412,9 @@ export class SideBars {
   }
 
   private createView(pad: PadDescriptor, type: PadType, key: string, deskId: string | undefined, panelId: string | undefined): Mounted | undefined {
-    const { wrapper, body } = this.buildWrapper(pad, deskId, panelId)
+    let view: PadView | undefined
+    const { wrapper, body, bar } = this.buildWrapper(pad, deskId, panelId, () => view)
     const state = panelId !== undefined ? this.state.pads[panelPadKey(pad.id, panelId)] : deskId === undefined ? this.state.pads[pad.id] : this.deskStates.get(deskId)?.[pad.id]
-    let view: PadView
     try {
       view = type.create({
         padId: pad.id, ...(deskId ? { deskId } : {}), ...(panelId ? { panelId } : {}), state,
@@ -412,6 +422,7 @@ export class SideBars {
         title: () => this.padTitle(pad.id, deskId, panelId),
         menuItems: () => this.host.padMenuItems(pad.id),
         setMenuHosted: hosted => { wrapper.classList.toggle('menu-hosted', !!pad.absorbsHeader && hosted) },
+        menuChanged: () => bar?.refresh(),
       })
     } catch (err) {
       console.error(`prancheta ${pad.id}: a extensão falhou ao criar a vista`, err)
@@ -419,6 +430,7 @@ export class SideBars {
       return undefined
     }
     body.append(view.element)
+    bar?.refresh()
     const m: Mounted = { padId: pad.id, ...(deskId ? { deskId } : {}), ...(panelId ? { panelId } : {}), wrapper, view, shown: false }
     this.views.set(key, m)
     return m

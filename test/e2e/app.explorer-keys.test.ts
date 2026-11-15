@@ -2,7 +2,8 @@
 //   1. type to navigate: a prefix jumps to the matching row, a repeated letter cycles and wraps, 800 ms of silence starts over;
 //   2. PageDown goes to the last row in view and then a page further, PageUp the reverse (a short window makes the tree scroll);
 //   3. Ctrl+K E lands the keyboard on the selected row; Esc gives it back to the pane;
-//   4. the ARIA tree: role=tree/treeitem, aria-level, aria-expanded on folders only, one aria-selected row.
+//   4. the ARIA tree: role=tree on the container that holds the keyboard, aria-activedescendant on the active row,
+//      role=treeitem with aria-level, aria-setsize/aria-posinset, aria-expanded on folders only, one aria-selected row.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -15,10 +16,10 @@ import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
 type Row = { name: string; level: number; kind: string; expanded: boolean; selected: boolean; focused: boolean }
-type Hooks = { connection(): { pid?: number } | undefined; explorer(): { rows: Row[] } | undefined }
-type El = { getAttribute(n: string): string | null; dataset: Record<string, string> }
+type Hooks = { connection(): { pid?: number } | undefined; explorer(): { rows: Row[]; rendered: number } | undefined }
+type El = { id: string; getAttribute(n: string): string | null; dataset: Record<string, string>; classList: { contains(c: string): boolean }; scrollTop: number; scrollHeight: number }
 declare const window: { __tether: Hooks }
-declare const document: { querySelectorAll(s: string): Iterable<El> }
+declare const document: { querySelectorAll(s: string): Iterable<El>; querySelector(s: string): El | null }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -72,7 +73,9 @@ test('explorer 4: type to navigate, paging, focus on the selected row, ARIA tree
     await page.waitForSelector(rowSel('cherry.md'))
 
     // ---- 1. type to navigate (rows: keys, docs, alpha, apple, beta, Bravo, cherry) ----
-    await page.locator(rowSel('keys')).focus()
+    // The keyboard lives on the tree's container; the row it stands on starts as the project just opened.
+    await page.locator('.pad.shown .xp-scroll').focus()
+    assert.equal(await focusedName(page), 'keys')
     await page.keyboard.type('b')
     assert.equal(await focusedName(page), 'beta.md', 'a prefix jumps to the first match')
     await page.keyboard.type('r')
@@ -95,7 +98,8 @@ test('explorer 4: type to navigate, paging, focus on the selected row, ARIA tree
     await page.setViewportSize({ width: 1000, height: 360 })
     await page.keyboard.press('ArrowDown') // docs
     await page.keyboard.press('ArrowRight') // opens it
-    await page.waitForSelector(rowSel('n59.txt'), { state: 'attached' })
+    // Rows are drawn only around the viewport: the last file of docs is in the tree, not necessarily in the DOM.
+    await page.waitForFunction(() => window.__tether.explorer()!.rows.some(r => r.name === 'n59.txt'))
     const before = await focusedIndex(page)
     await page.keyboard.press('PageDown')
     const first = await focusedIndex(page)
@@ -112,6 +116,8 @@ test('explorer 4: type to navigate, paging, focus on the selected row, ARIA tree
     await page.setViewportSize({ width: 1280, height: 800 })
 
     // ---- 3. Ctrl+K E lands on the selected row ----
+    // beta.md is below the 60 files of docs: scroll down to it as a person would, then click it.
+    await page.evaluate(() => { const tree = document.querySelector('.pad.shown .xp-scroll')!; tree.scrollTop = tree.scrollHeight })
     await page.click(rowSel('beta.md'))
     await page.keyboard.press('Home') // keyboard elsewhere in the tree, the selection stays on beta.md
     await page.keyboard.press('Escape')
@@ -123,13 +129,20 @@ test('explorer 4: type to navigate, paging, focus on the selected row, ARIA tree
 
     // ---- 4. ARIA ----
     const aria = await page.evaluate(() => {
-      const items: { level: string | null; expanded: string | null; selected: string | null; kind: string }[] = []
-      for (const r of document.querySelectorAll('.pad.shown [role=treeitem]')) items.push({ level: r.getAttribute('aria-level'), expanded: r.getAttribute('aria-expanded'), selected: r.getAttribute('aria-selected'), kind: r.dataset.kind! })
-      return { trees: [...document.querySelectorAll('.pad.shown [role=tree]')].length, items }
+      const items: { level: string | null; expanded: string | null; selected: string | null; size: string | null; pos: string | null; kind: string; id: string; focused: boolean }[] = []
+      for (const r of document.querySelectorAll('.pad.shown [role=treeitem]')) items.push({ level: r.getAttribute('aria-level'), expanded: r.getAttribute('aria-expanded'), selected: r.getAttribute('aria-selected'), size: r.getAttribute('aria-setsize'), pos: r.getAttribute('aria-posinset'), kind: r.dataset.kind!, id: r.id, focused: r.classList.contains('focused') })
+      const trees = [...document.querySelectorAll('.pad.shown [role=tree]')]
+      return { trees: trees.length, treeClass: trees[0]?.getAttribute('class') ?? '', active: trees[0]?.getAttribute('aria-activedescendant') ?? '', items }
     })
     assert.equal(aria.trees, 1)
-    assert.ok(aria.items.length > 60)
+    assert.equal(aria.treeClass, 'xp-scroll', 'the tree is the scrolling container that holds the keyboard')
+    const all = (await page.evaluate(() => window.__tether.explorer()!))
+    assert.ok(all.rows.length > 60, 'the tree holds every row')
+    assert.equal(aria.items.length, all.rendered, 'every row in the DOM is a treeitem')
+    assert.ok(aria.items.length < all.rows.length, `only the rows near the viewport are in the DOM (${aria.items.length} of ${all.rows.length})`)
     assert.ok(aria.items.every(i => /^\d+$/.test(i.level ?? '')), 'every item has aria-level')
+    assert.ok(aria.items.every(i => /^\d+$/.test(i.size ?? '') && /^\d+$/.test(i.pos ?? '') && Number(i.pos) <= Number(i.size)), 'every item has its place among its siblings')
+    assert.equal(aria.items.find(i => i.focused)?.id, aria.active, 'aria-activedescendant names the row the keyboard is on')
     assert.ok(aria.items.filter(i => i.kind === 'dir').every(i => i.expanded === 'true' || i.expanded === 'false'), 'folders have aria-expanded')
     assert.ok(aria.items.filter(i => i.kind === 'file').every(i => i.expanded === null), 'files do not')
     assert.equal(aria.items.filter(i => i.selected === 'true').length, 1, 'one selected row')

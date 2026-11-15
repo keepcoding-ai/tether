@@ -11,6 +11,7 @@ import type { UiSettings } from '../shared/ui-settings.ts'
 import type { KeybindingsFileState } from '../shared/keybindings.ts'
 import type { ExtSettingChange } from '../shared/api.ts'
 import type { SettingsError } from '../shared/settings-file.ts'
+import type { AttentionState } from '../shared/os-notify.ts'
 import { extChannel } from '../shared/ext-ipc.ts'
 import type { SurfaceEvent } from '../shared/surface-panel-rules.ts'
 
@@ -98,6 +99,10 @@ const api: TetherApi = {
   settingsReset: key => ipcRenderer.invoke('settings:reset', key),
   settingsFile: () => ipcRenderer.invoke('settings:file'),
   settingsOpen: () => ipcRenderer.invoke('settings:open'),
+  attentionGet: () => ipcRenderer.invoke('attention:get'),
+  attentionSeen: () => ipcRenderer.send('attention:seen'),
+  attentionMute: choice => ipcRenderer.send('attention:mute', choice),
+  onAttention: listener => on<AttentionState>('tether:attention', listener),
   onSettingsChanged: listener => on<string[]>('tether:settings-changed', listener),
   onSettingsErrors: listener => on<SettingsError[]>('tether:settings-errors', listener),
 }

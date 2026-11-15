@@ -88,6 +88,18 @@ describe('explorer keyboard rules', () => {
     assert.deepEqual(navigate(rows, 3, 'Enter'), { type: 'toggle' })
     assert.deepEqual(navigate(rows, 3, 'x'), { type: 'none' })
   })
+  test('a virtual list read one row at a time gives the same answers, and only the rows the rule needs are read', () => {
+    const asked: number[] = []
+    const lazy = { length: rows.length, at: (i: number): NavRow | undefined => { asked.push(i); return rows[i] } }
+    for (const [i, key] of [[1, 'ArrowDown'], [4, 'ArrowDown'], [1, 'ArrowRight'], [3, 'ArrowLeft'], [2, 'ArrowLeft'], [0, 'End'], [4, 'Enter']] as const) {
+      assert.deepEqual(navigate(lazy, i, key), navigate(rows, i, key), `${key} on ${i}`)
+    }
+    asked.length = 0
+    navigate(lazy, 2, 'ArrowDown')
+    assert.deepEqual(asked, [2], 'a step down reads only the current row')
+    assert.deepEqual(navigate(rows, -1, 'ArrowDown'), { type: 'none' }, 'a row that is not in the list does nothing')
+    assert.deepEqual(navigate(rows, 5, 'ArrowUp'), { type: 'none' })
+  })
 })
 
 describe('explorer main side: only inside the project roots', () => {
@@ -170,6 +182,12 @@ describe('explorer type to navigate and paging', () => {
   test('a repeated letter cycles through the names that start with it', () => {
     assert.equal(typeAheadMatch(names, 2, 'aa'), 3)
     assert.equal(typeAheadMatch(names, 3, 'aaa'), 5)
+  })
+  test('a virtual list read one name at a time matches as an array does', () => {
+    const lazy = { length: names.length, at: (i: number): string | undefined => names[i] }
+    for (const [from, typed] of [[0, 'd'], [4, 'a'], [5, 'a'], [0, 'al'], [2, 'aa'], [3, 'aaa'], [0, 'zz']] as const) {
+      assert.equal(typeAheadMatch(lazy, from, typed), typeAheadMatch(names, from, typed), `"${typed}" from ${from}`)
+    }
   })
   test('which keys feed the prefix', () => {
     assert.equal(isTypeAheadKey('a', ''), true)

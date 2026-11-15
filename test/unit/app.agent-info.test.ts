@@ -82,7 +82,7 @@ test('AgentTracker: exit fires once when a live agent ends, with the reason', ()
   assert.equal(t.get('s1'), undefined)
 })
 
-test('AgentTracker: a lost daemon ends the live agents only; reset is silent; a throwing listener does not stop the others', () => {
+test('AgentTracker: a lost daemon ends the live agents only; reset ends nothing; a throwing listener does not stop the others', () => {
   const t = new AgentTracker()
   const exits: AgentExit[] = []
   t.reset([slot({ slotId: 'a' }), slot({ slotId: 'b', status: 'exited' })])
@@ -97,4 +97,22 @@ test('AgentTracker: a lost daemon ends the live agents only; reset is silent; a 
   t.apply(slot({ slotId: 'z' }))
   t.remove('z')
   assert.equal(exits.length, 1, 'a disposed listener hears nothing')
+})
+
+test('AgentTracker: reset announces the list the daemon answered as changes (a listener that read the list earlier hears it), never as exits', () => {
+  const t = new AgentTracker()
+  const heard: [string, boolean][] = []
+  const exits: AgentExit[] = []
+  t.onDidChange(a => heard.push([a.slotId, a.alive]))
+  t.onDidExit(e => exits.push(e))
+  t.reset([slot({ slotId: 'a' }), slot({ slotId: 'b', status: 'exited' }), slot({ slotId: 'sh', kind: 'shell' })])
+  assert.deepEqual(heard, [['a', true], ['b', false]], 'every agent of the list, the shell is no agent')
+  heard.length = 0
+  t.reset([slot({ slotId: 'a' }), slot({ slotId: 'c', name: 'novo' })])
+  assert.deepEqual(heard, [['c', true], ['b', false]], 'a is unchanged: not repeated; b left the list: announced as not alive')
+  assert.deepEqual(exits, [], 'a fresh connection ends nothing')
+  heard.length = 0
+  t.lost()
+  t.reset([slot({ slotId: 'a' })])
+  assert.deepEqual(heard.slice(-1), [['a', true]], 'after a lost daemon the agent that came back is announced alive again')
 })

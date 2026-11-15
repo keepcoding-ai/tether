@@ -29,7 +29,12 @@ type Hooks = {
   explorerWrite: { create(p: string, k: 'file' | 'dir'): Promise<Result>; rename(a: string, b: string): Promise<Result>; trash(p: string): Promise<Result> }
 }
 declare const window: { __tether: Hooks }
-declare const document: { documentElement: { dataset: Record<string, string> }; activeElement: { className?: string } | null }
+type Rect = { top: number; bottom: number; left: number; right: number }
+declare const document: {
+  documentElement: { dataset: Record<string, string> }
+  activeElement: { className?: string } | null
+  querySelector(s: string): { textContent: string | null; getBoundingClientRect(): Rect } | null
+}
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -74,7 +79,8 @@ async function toTree(page: Page): Promise<void> {
   await sleep(150)
   await page.keyboard.press('Control+k')
   await page.keyboard.press('e')
-  await page.waitForFunction(() => (globalThis as unknown as { document: { activeElement: { classList?: { contains(c: string): boolean } } | null } }).document.activeElement?.classList?.contains('xp-row') === true)
+  // The tree's container holds the keyboard (the row it stands on is the snapshot's `focused`, checked by the caller).
+  await page.waitForFunction(() => (globalThis as unknown as { document: { activeElement: { classList?: { contains(c: string): boolean } } | null } }).document.activeElement?.classList?.contains('xp-scroll') === true)
 }
 async function pick(page: Page, name: string): Promise<void> {
   for (let i = 0; i < 5; i++) {
@@ -144,6 +150,18 @@ test('explorer 5: new file/folder, rename, trash, guard, copy path, new pane her
     await page.fill('.pad.shown .xp-input', 'keep.txt')
     await until('existing name message', async () => /Já existe/.test((await edit(page))?.message ?? ''))
     assert.equal((await edit(page))!.severity, 'error')
+    // The message floats over the tree right under the input (the row keeps its height; the rows below do not move).
+    const layer = await page.evaluate(() => {
+      const m = document.querySelector('.pad.shown .xp-body > .xp-validate')
+      const i = document.querySelector('.pad.shown .xp-edit .xp-input')
+      const row = document.querySelector('.pad.shown .xp-edit')
+      if (!m || !i || !row) return undefined
+      const mr = m.getBoundingClientRect(), ir = i.getBoundingClientRect(), rr = row.getBoundingClientRect()
+      return { text: m.textContent ?? '', gap: Math.round(mr.top - ir.bottom), left: Math.round(mr.left - ir.left), rowHeight: Math.round(rr.bottom - rr.top) }
+    })
+    assert.ok(layer, 'the validation message is shown')
+    assert.match(layer.text, /Já existe/)
+    assert.deepEqual([layer.gap, layer.left, layer.rowHeight], [0, 0, 26], 'just under the input, aligned with it, over a row of fixed height')
     await page.fill('.pad.shown .xp-input', 'nome.')
     await until('trailing dot message', async () => /não é um nome válido/.test((await edit(page))?.message ?? ''))
     await page.keyboard.press('Escape')
@@ -246,6 +264,18 @@ test('explorer 5: new file/folder, rename, trash, guard, copy path, new pane her
     await until('the chooser on docs', async () => (await page.inputValue('#dlg-new .ch-path-input')).replace(/[\\/]+$/, '') === join(F, 'docs'))
     await page.keyboard.press('Escape')
     await page.waitForSelector('#dlg-new[open]', { state: 'detached' })
+
+    // ---- 9. top bar: "Novo arquivo…" lands in the selected folder; "Recolher tudo" closes the folders ----
+    await pick(page, 'docs')
+    await page.click('.xp-topbar .xp-new-file')
+    await page.waitForSelector('.pad.shown .xp-edit .xp-input')
+    const docsLevel = (await page.evaluate(() => window.__tether.explorer()!.rows)).find(r => r.name === 'docs')!.level
+    assert.equal(Number(await page.locator('.pad.shown .xp-edit').first().getAttribute('data-level')), docsLevel + 1, 'the input row is inside docs')
+    await page.keyboard.press('Escape')
+    assert.equal(await edit(page), undefined)
+    await page.click('.xp-topbar .xp-collapse')
+    await until('folders collapsed', async () => (await page.evaluate(() => window.__tether.explorer()!.rows)).every(r => r.name !== 'sub'))
+    assert.equal(await page.locator(rowSel('docs')).getAttribute('aria-expanded'), 'false', 'docs closed')
   } finally {
     if (app && clipboardBefore !== undefined) await app.evaluate(({ clipboard }, t) => clipboard.writeText(t), clipboardBefore).catch(() => {})
     if (app) await killElectron(app, root).catch(() => {})

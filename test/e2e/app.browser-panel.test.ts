@@ -20,7 +20,7 @@ import type { SlotState } from '../../src/daemon/protocol.ts'
 import { ownerHue } from '../../extensions/browser/rules.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { daemonMain, launchHidden, pidAlive, rawCdp, root, sleep } from './browser-kit.ts'
+import { FAKE_SOUL_CMD as FAKE_SOUL, daemonMain, launchHidden, pidAlive, rawCdp, root, sleep, inBrowser } from './browser-kit.ts'
 
 type Lb = { host: { width: number; height: number }; effective: { x: number; y: number; width: number; height: number } | undefined; scale: number; visibility: string }
 type TabView = { title: string; owner: string; ownerHue: string; ownerEnded: boolean; icon: boolean; activity: string }
@@ -51,7 +51,6 @@ type Tabs = {
 const pipe = `\\\\.\\pipe\\tether-brpanel-${process.pid}`
 const artifacts = join(root, 'test', 'e2e', 'artifacts')
 const ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
-const FAKE_SOUL = `"${process.execPath}" -e "setInterval(()=>{},1000)"`
 const html = (title: string, body: string): string => `<!doctype html><title>${title}</title><link rel="icon" href="${ICON}"><body style="font:16px sans-serif;margin:0;background:#fffbe6">${body}`
 
 function serve(): Promise<{ server: Server; base: string; hits: Record<string, number> }> {
@@ -116,7 +115,7 @@ test('browser panel: bar, tab, letterbox, take maximizes and give back restores,
     win.on('pageerror', e => console.error(`renderer error: ${e.message}`))
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const B = <R>(fn: (t: Tabs, a: any) => R | Promise<R>, a?: unknown): Promise<R> =>
-      app!.evaluate(new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
+      inBrowser(app!, new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
 
     // The agent: a soul slot named Sonda (alive).
     const slot = await win.evaluate(async cwd => {

@@ -23,7 +23,7 @@ import { join } from 'node:path'
 import type { ElectronApplication, Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep } from './browser-kit.ts'
+import { cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep, inBrowser } from './browser-kit.ts'
 
 declare const window: { __tether: { connection(): { connected: boolean; pid?: number } | undefined } }
 type Tabs = {
@@ -135,7 +135,7 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     ;({ app, page: win } = await launchHidden(home, pipe))
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const T = app
-    const gate = await T.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.gate())
+    const gate = await inBrowser(T, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.gate())
     assert.ok(gate, 'the gate is open')
     const endpointFile = join(home, 'browser', 'endpoint.json')
     const endpoint = JSON.parse(readFileSync(endpointFile, 'utf8'))
@@ -158,7 +158,7 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     await assert.rejects(rawCdp(gate.port, 'zzzzZZZZzzzzZZZZzzzzZZZZ'), 'a WebSocket with an unknown key is refused')
 
     // ---- 2. isolation: B's tab is invisible and unreachable for A ----
-    const bTab = await T.evaluate(async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('agent-b', url)).tabId, `${pages.base}/b.html`)
+    const bTab = await inBrowser(T, async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('agent-b', url)).tabId, `${pages.base}/b.html`)
     const b = await rawCdp(gate.port, KEY_B)
     const bTargets = (await b.call('Target.getTargets')).result.targetInfos
     assert.equal(bTargets.length, 1, 'B sees its own tab')
@@ -175,7 +175,7 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     assert.equal((await b.call('Runtime.evaluate', { expression: 'document.title', returnByValue: true }, bSession)).result.result.value, 'Page B')
     assert.match((await b.call('Network.getAllCookies', {}, bSession)).error.message, /wasn't found/, 'off the strict list')
     assert.match((await b.call('Storage.getCookies')).error.message, /wasn't found/, 'off the browser-level list')
-    assert.ok((await T.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => t.tabId))).includes(bTab), 'B\'s tab is alive')
+    assert.ok((await inBrowser(T, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => t.tabId))).includes(bTab), 'B\'s tab is alive')
     a.close()
 
     // ---- 3. the battery: the vendored MCP server as agent A ----
@@ -195,10 +195,10 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
       return r.text
     }
     const aTab = async (): Promise<string> => {
-      const list = await T.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list())
+      const list = await inBrowser(T, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list())
       return list.find(t => t.ownerSlotId === 'agent-a' && /a\.html/.test(t.url))?.tabId ?? ''
     }
-    const host = async (code: string): Promise<any> => T.evaluate(async (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tab, a.code), { tab: await aTab(), code })
+    const host = async (code: string): Promise<any> => inBrowser(T, async (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tab, a.code), { tab: await aTab(), code })
     const refOf = (tree: string, pattern: string): string => new RegExp(`${pattern}[^\\n]*\\[ref=(\\w+)\\]`).exec(tree)?.[1] ?? 'missing'
     let tree = ''
 
@@ -252,14 +252,14 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     await step('navigate back', () => tool('WebNavigate', { url: `${pages.base}/a.html` }))
     await step('newTab (the gate creates it)', () => tool('WebNewTab', { url: `${pages.base}/two.html` }))
     await step('host created the new tab for agent-a', async () => {
-      const list = await T.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list())
+      const list = await inBrowser(T, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list())
       if (!list.some(t => t.ownerSlotId === 'agent-a' && /two\.html/.test(t.url))) throw new Error(JSON.stringify(list))
     })
     await step('snapshot of the new tab', async () => { const t = await tool('WebSnapshot'); if (!/PAGE-TWO/.test(t)) throw new Error(t.slice(0, 100)) })
     await step('resize (refused on purpose: the page size is the tether\'s)', () => tool('WebResize', { width: 480, height: 320 }), true)
     await step('evaluate', async () => { const t = await tool('WebEvaluate', { expression: '6*7' }).catch(() => tool('WebEvaluate', { code: '6*7' })); if (!/42/.test(t)) throw new Error(t) })
     await step('B\'s tab untouched (host truth)', async () => {
-      const n = await T.evaluate(async (_e, tab) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(tab, 'window.__bClicks'), bTab)
+      const n = await inBrowser(T, async (_e, tab) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(tab, 'window.__bClicks'), bTab)
       if (n !== 0) throw new Error(`B clicks: ${n}`)
     })
     if (process.env.TETHER_GATE_TRACE) writeFileSync(`${process.env.TETHER_GATE_TRACE}.mcp.log`, server.stderr())
@@ -301,14 +301,14 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     const aTabId = await aTab()
     await Promise.all([P('Page.navigate', { url: `${pages.base}/two.html` }), P('Page.navigate', { url: 'about:blank' })])
     await sleep(1500)
-    const href = await T.evaluate(async (_e, tab) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(tab, 'location.href'), aTabId)
+    const href = await inBrowser(T, async (_e, tab) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(tab, 'location.href'), aTabId)
     assert.equal(href, 'about:blank', 'the second navigation went out second')
     ra.close()
 
     // ---- 3c. E6b: no native surface opens from the page; the main process keeps answering ----
     type Hook = { __browserTabs: Tabs & { registry: { surface(tabId: string): { debugger: { onMessage(l: (m: string, p: unknown, s?: string) => void): { dispose(): void } } } } } }
-    const pageEval = (tab: string, code: string): Promise<any> => T.evaluate(async (_e, a) => (globalThis as unknown as Hook).__browserTabs.eval(a.tab, a.code), { tab, code })
-    const newTab = (url: string): Promise<string> => T.evaluate(async (_e, u) => (await (globalThis as unknown as Hook).__browserTabs.create('agent-a', u)).tabId, url)
+    const pageEval = (tab: string, code: string): Promise<any> => inBrowser(T, async (_e, a) => (globalThis as unknown as Hook).__browserTabs.eval(a.tab, a.code), { tab, code })
+    const newTab = (url: string): Promise<string> => inBrowser(T, async (_e, u) => (await (globalThis as unknown as Hook).__browserTabs.create('agent-a', u)).tabId, url)
     const until = async (tab: string, code: string, ok: (v: any) => boolean): Promise<any> => {
       let v: any
       for (let i = 0; i < 40; i++) { v = await pageEval(tab, code).catch(() => undefined); if (ok(v)) return v; await sleep(250) }
@@ -332,7 +332,7 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     assert.deepEqual(await pageEval(nativeTab, `(() => { try { window.print = () => 1 } catch {} try { delete window.print } catch {} return [window.print() ?? null, /native code/.test(String(window.print))] })()`), [null, false], 'print() does nothing and stays replaced')
     // The native file chooser: a click of the page's <input type=file> (with a user gesture) is intercepted on the core's own
     // session (Page.fileChooserOpened there, host truth), so no box opens; the agent's session never sees it.
-    await T.evaluate((_e, tab) => {
+    await inBrowser(T, (_e: unknown, tab: string) => {
       const g = globalThis as unknown as Hook & { __rootEvents: string[]; __rootSub: { dispose(): void } }
       g.__rootEvents = []
       g.__rootSub = g.__browserTabs.registry.surface(tab).debugger.onMessage((m, _p, sid) => { if (!sid) g.__rootEvents.push(m) })
@@ -344,12 +344,12 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     await rn.call('Page.enable', {}, ns)
     rn.events.length = 0
     await rn.call('Runtime.evaluate', { expression: `document.getElementById('f').click(); 'clicked'`, userGesture: true }, ns)
-    const rootEvents = (): Promise<string[]> => T.evaluate(() => (globalThis as unknown as { __rootEvents: string[] }).__rootEvents)
+    const rootEvents = (): Promise<string[]> => inBrowser(T, () => (globalThis as unknown as { __rootEvents: string[] }).__rootEvents)
     for (let i = 0; i < 20 && !(await rootEvents()).includes('Page.fileChooserOpened'); i++) await sleep(150)
     assert.ok((await rootEvents()).includes('Page.fileChooserOpened'), 'the chooser was intercepted on the core\'s session (no native box)')
     assert.equal(rn.events.filter(e => e.method === 'Page.fileChooserOpened').length, 0, 'the agent\'s session did not see it')
     assert.equal(await pageEval(nativeTab, `document.getElementById('f').files.length`), 0, 'no file was chosen')
-    await T.evaluate(() => (globalThis as unknown as { __rootSub: { dispose(): void } }).__rootSub.dispose())
+    await inBrowser(T, () => (globalThis as unknown as { __rootSub: { dispose(): void } }).__rootSub.dispose())
     rn.close()
 
     // ---- 4. a deleted key: refused, and its live connection drops ----
@@ -357,7 +357,7 @@ test('browser gate: endpoint, keys, isolation between agents, and the conformanc
     const dropped = await Promise.race([b.closed.then(() => true), sleep(4000).then(() => false)])
     assert.ok(dropped, 'B\'s live connection closed after its key was deleted')
     assert.equal((await fetch(`${base}/json/version`, { headers: { 'x-tether-key': KEY_B } })).status, 401, 'deleted key refused')
-    assert.ok((await T.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => t.tabId))).includes(bTab), 'B\'s tab stays (an agent that exits keeps its tabs)')
+    assert.ok((await inBrowser(T, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => t.tabId))).includes(bTab), 'B\'s tab stays (an agent that exits keeps its tabs)')
   } finally {
     if (server) {
       server.child.stdin.end()

@@ -19,7 +19,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
-type Row = { root: string; path: string; name: string; level: number; kind: string; expanded: boolean; selected: boolean; focused: boolean; icon: string }
+type Row = { root: string; path: string; name: string; level: number; kind: string; expanded: boolean; selected: boolean; focused: boolean }
 type Snapshot = {
   mode: 'empty' | 'roots'
   roots: { path: string; name: string; pinned: boolean; hint: string; current: boolean; missing: boolean }[]
@@ -41,7 +41,7 @@ declare const document: {
   documentElement: { dataset: Record<string, string> }
   querySelector(s: string): { scrollTop: number; scrollHeight: number; clientHeight: number } | null
   querySelectorAll(s: string): Iterable<{ textContent: string | null; click(): void; scrollIntoView(o?: unknown): void; focus(): void }> & ArrayLike<unknown>
-  activeElement: { querySelector(s: string): { textContent: string | null } | null } | null
+  activeElement: { classList: { contains(c: string): boolean } } | null
 }
 
 const require = createRequire(import.meta.url)
@@ -155,24 +155,36 @@ test('explorer 3: the tree follows the disk; reads only what is open; one handle
     console.log(`follows the disk: create ${tCreate} ms, rename ${tRename} ms, delete ${tDelete} ms, mkdir ${tMkdir} ms`)
     for (const [what, ms] of [['create', tCreate], ['rename', tRename], ['delete', tDelete], ['mkdir', tMkdir]] as const) assert.ok(ms < 1_500, `${what} showed in ${ms} ms`)
 
-    // selection, scroll and keyboard stay put when the folder being read again is big (past the 400-row chunk)
+    // selection, scroll and keyboard stay put when the folder being read again is big (most of its rows are not in the DOM)
     await page.click(rowSel('many')) // selects the folder row and opens it
     await until(page, 'the big folder is drawn', s => s.rows.filter(r => /^m\d{3}\.txt$/.test(r.name)).length === MANY, 10_000)
-    await page.locator(rowSel('m420.txt')).focus()
+    // The keyboard lives on the tree's container: type to navigate takes it to m420.txt and brings the row into view.
+    await page.locator('.pad.shown .xp-scroll').focus()
+    await page.keyboard.type('m420')
     await page.evaluate(() => {
       for (const n of document.querySelectorAll('.xp-row.xp-item > .xp-name')) if (n.textContent === 'm420.txt') (n as unknown as { parentElement: { scrollIntoView(o?: unknown): void } }).parentElement.scrollIntoView({ block: 'center' })
     })
     await sleep(150)
-    const before = await page.evaluate(() => ({ top: document.querySelector('.pad.shown .xp')!.scrollTop, active: document.activeElement?.querySelector('.xp-name')?.textContent ?? '' }))
+    /** The tree's scroll, whether the tree holds the keyboard, and the row the keyboard is on. */
+    const where = async (): Promise<{ top: number; tree: boolean; active: string }> => ({
+      ...(await page.evaluate(() => ({ top: document.querySelector('.pad.shown .xp-scroll')!.scrollTop, tree: document.activeElement?.classList.contains('xp-scroll') === true }))),
+      active: (await snap(page)).rows.find(r => r.focused)?.name ?? '',
+    })
+    const before = await where()
     assert.ok(before.top > 1_000, `the folder is scrolled (${before.top})`)
+    assert.equal(before.tree, true, 'the tree has the keyboard')
     assert.equal(before.active, 'm420.txt')
     writeFileSync(join(F, 'many', 'm9999.txt'), '')
     await until(page, 'the big folder shows the new file', has('m9999.txt'), 10_000)
     await sleep(200)
-    const after = await page.evaluate(() => ({ top: document.querySelector('.pad.shown .xp')!.scrollTop, active: document.activeElement?.querySelector('.xp-name')?.textContent ?? '' }))
+    const after = await where()
     assert.ok(Math.abs(after.top - before.top) <= 2, `the scroll stayed (${before.top} → ${after.top})`)
+    assert.equal(after.tree, true, 'the tree kept the keyboard')
     assert.equal(after.active, 'm420.txt', 'the keyboard stayed on the same row')
     assert.equal((await snap(page)).rows.find(r => r.name === 'many')!.selected, true, 'the selection stayed')
+    // The folder row is far above the viewport (not in the DOM): scroll back up to it, then click it.
+    await page.evaluate(() => { document.querySelector('.pad.shown .xp-scroll')!.scrollTop = 0 })
+    await page.waitForSelector(rowSel('many'))
     await page.evaluate(() => { for (const n of document.querySelectorAll('.xp-row.xp-item[data-level="2"] > .xp-name')) if (n.textContent === 'many') n.click() })
     await until(page, 'the big folder closes', s => s.rows.every(r => !/^m\d{3}\.txt$/.test(r.name)))
     rmSync(join(F, 'many', 'm9999.txt'))

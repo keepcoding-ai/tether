@@ -486,6 +486,23 @@ body.sb-resizing #pads, body.sb-resizing #dock { pointer-events: none; }
 .pad-desk::before { content: "·"; margin-right: 6px; }
 .pad-head .sp { flex: 1; }
 .pad-head .ib { width: 24px; height: 24px; }
+/* The action bar (action-bar.ts): the menu's pinned items and the "⋯". */
+.action-bar { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+.action-bar.ab-spread { flex: 1; }
+.action-bar.ab-end { flex: 0 1 auto; margin-left: auto; justify-content: flex-end; }
+.action-bar .ab-sp { flex: 1; }
+.action-bar.ab-end .ab-sp { display: none; }
+.ab-act { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 24px; min-width: 24px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); font: 12px var(--ui); white-space: nowrap; cursor: pointer; }
+.ab-act[hidden] { display: none; }
+.ab-act svg { width: 15px; height: 15px; flex: none; }
+.ab-act:hover:not(:disabled), .ab-act[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
+.ab-act:disabled { opacity: .45; cursor: default; }
+.ab-act.ab-primary, .ab-act.ab-highlight { padding: 0 8px 0 6px; }
+.ab-act.ab-highlight, .ab-act.ab-highlight:hover:not(:disabled) { color: var(--accent); }
+.ab-act.danger { color: var(--err); }
+.ab-act[aria-pressed="true"] { background: var(--bg-hover); color: var(--fg); }
+.ab-act.ab-compact { padding: 0; }
+.ab-act.ab-compact .ab-text { display: none; }
 .pad-body { position: relative; flex: 1; min-height: 0; }
 /* A frames pad (F10b): a Desk filling the pad's body, like the drawer's (.drawer-desk); two classes so it beats `.desk`'s position. */
 .pad-frames, .pad-frames > .pad-desk-box { position: absolute; inset: 0; }
@@ -700,14 +717,14 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 .tether-tab .dot.asleep .ph { width: 13px; height: 13px; }
 .tether-tab .dot.starting, .tether-tab .dot.queued, .tether-tab .dot.unconfirmed { color: var(--warn); }
 .tether-tab .dot.error { color: var(--err); }
-.tether-tab .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
-.tether-tab .close .ph { width: 13px; height: 13px; }
-.tether-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close .ph { width: 13px; height: 13px; }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close:hover { background: var(--bg-hover-2); color: var(--fg); }
 /* `inherit`, not `visible`: a visible child of a visibility:hidden ancestor still paints, so the active tab of an
    inactive desk layer (or of the closed drawer) would draw its × over the tab strip of the desk on screen. */
-.dv-active-tab .tether-tab .close, .tether-tab:hover .close, .tether-tab .close:focus-visible { visibility: inherit; }
+.dv-active-tab :is(.tether-tab, .br-web-tab, .pr-tab) .close, :is(.tether-tab, .br-web-tab, .pr-tab):hover .close, :is(.tether-tab, .br-web-tab, .pr-tab) .close:focus-visible { visibility: inherit; }
 /* Setting ui.tabClose off: no × on any tab (display:none also drops the click target and the keyboard focus, and gives the width back to the title); the tab still closes through its context menu. */
-body.no-tab-close .tether-tab .close { display: none; }
+body.no-tab-close :is(.tether-tab, .br-web-tab, .pr-tab) .close { display: none; }
 
 /* --- the fixed right end of the tab strip: "+N", status-bar toggle, "⋯" (tab-strip.ts; the preview's .tr) --- */
 .dv-theme-tether .dv-right-actions-container { flex: none; height: 100%; }
@@ -1596,6 +1613,20 @@ dialog.ask.move .primary:disabled { opacity: .45; cursor: not-allowed; backgroun
   .ch-sep { padding-top: 5px; }
 }
 @container pane (max-height: 300px) { .ch-item { min-height: 30px; } }
+/* wide pane (the chooser inside an empty pane only, never the popup): a card of bounded width, centred, so the list and
+   "Abrir" stay close on a very wide screen. No `overflow: hidden` on the card: the folder list (.ch-recents) opens upwards
+   and may pass the top of a short card; the bottom band rounds its own corners instead. */
+@container pane (min-width: 821px) {
+  .empty-panel > .ch { box-sizing: border-box; width: 100%; max-width: 760px; align-self: center; margin-block: min(12px, 3cqh); border: 1px solid var(--border); border-radius: 10px; }
+  .empty-panel > .ch > .ch-bottom { border-radius: 0 0 9px 9px; }
+}
+/* wide and tall pane: the card takes its content's height (the list no longer stretches, it scrolls once the card reaches
+   the room left) and hangs from the top like a command palette. Anchored at the top, not centred: the card must not
+   jump while the search filters the list. */
+@container pane (min-width: 821px) and (min-height: 641px) {
+  .empty-panel > .ch { flex: 0 1 auto; margin-top: clamp(24px, 10cqh, 120px); margin-bottom: 24px; }
+  .empty-panel > .ch > .ch-list { flex: 0 1 auto; }
+}
 /* the popup (focus mode / "Novo painel…"): the same chooser in a window; the header carries the context chip */
 dialog.chooser-dlg { width: min(600px, 94vw); height: min(600px, 86vh); padding: 0; flex-direction: column; overflow: hidden; }
 dialog.chooser-dlg[open] { display: flex; }

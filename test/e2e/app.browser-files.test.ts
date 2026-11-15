@@ -23,7 +23,7 @@ import type { ElectronApplication, Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { cleanEnv, daemonMain, electronPath, launchHidden, rawCdp, root, serverMjs, sleep } from './browser-kit.ts'
+import { FAKE_SOUL_CMD as FAKE_SOUL, cleanEnv, daemonMain, electronPath, launchHidden, rawCdp, root, serverMjs, sleep, inBrowser } from './browser-kit.ts'
 
 declare const window: {
   __tether: {
@@ -46,7 +46,6 @@ type Tabs = {
 }
 
 const pipe = `\\\\.\\pipe\\tether-brfiles-${process.pid}`
-const FAKE_SOUL = `"${process.execPath}" -e "setInterval(()=>{},1000)"`
 const html = (title: string, body: string): string => `<!doctype html><meta charset="utf-8"><title>${title}</title><link rel="icon" href="data:,">${body}`
 const BIG = 51 * 1024 * 1024
 
@@ -191,7 +190,7 @@ test('browser files: downloads by agent with "Baixados", the ceiling, the upload
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const T = app
     const B = <R>(fn: (t: Tabs, a: any) => R | Promise<R>, a?: unknown): Promise<R> =>
-      T.evaluate(new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
+      inBrowser(T, new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
     const slot = await win.evaluate(async dir => {
       const r = await window.tether.request({ t: 'create', kind: 'soul', cwd: dir, name: 'Sonda', start: true })
       await window.__tether.openSlot(r.slot!.slotId)

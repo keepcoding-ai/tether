@@ -15,6 +15,7 @@
 import { type BrowserWindow, type IpcMainEvent, type NativeImage, nativeImage, WebContentsView } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import type { RemoteSurfaceBridge } from './surface-bridge.ts'
 import type { ExtSurfaces, Surface, SurfaceOptions, SurfaceShieldInput, SurfaceState } from './ext-api.ts'
 import { canMove, fitRect, hiddenBounds, isCoreDebuggerMethod, isPageSize, isRect, metricsOverride, parkedBounds, type Rect, shieldVisible, type Size, surfacePreferences, type Visibility } from './surface-rules.ts'
 import { type IDisposable, toDisposable } from '../shared/vscode-lifecycle.ts'
@@ -23,10 +24,53 @@ import { type IDisposable, toDisposable } from '../shared/vscode-lifecycle.ts'
 export const SHIELD_CHANNEL = 'surface:shield'
 const SHIELD_PAGE = 'data:text/html,<html style="background:transparent"><body style="margin:0;background:transparent"></body></html>'
 
+/**
+ * Where a surface's views live and how they are placed, in window coordinates (DIP of the app window's content area). In the
+ * app's own process it is the window itself (`windowStage`); in the browser process each surface has a stage of its own, a
+ * frameless window embedded in the app's window (app/main/browser-child.ts).
+ */
+export interface SurfaceStage {
+  /** Stages with the same key share the resize/close watch (one per window). */
+  readonly key: object
+  destroyed(): boolean
+  contentSize(): Size
+  /** Adds the view on top of the stage's others (re-adding raises it). */
+  add(view: WebContentsView): void
+  remove(view: WebContentsView): void
+  setBounds(view: WebContentsView, rect: Rect): void
+  getBounds(view: WebContentsView): Rect
+  setVisible(view: WebContentsView, on: boolean): void
+  /** Keyboard focus back on the app's interface (the shield went up). */
+  focusInterface(): void
+  onResize(fn: () => void): void
+  onClosed(fn: () => void): void
+  /** The surface using this stage was destroyed (a stage of its own lets its window go). */
+  release?(): void
+}
+
+/** The app window as the stage of its surfaces. */
+export function windowStage(win: BrowserWindow): SurfaceStage {
+  return {
+    key: win,
+    destroyed: () => win.isDestroyed(),
+    contentSize: () => { const [width, height] = win.getContentSize() as [number, number]; return { width, height } },
+    add: view => win.contentView.addChildView(view),
+    remove: view => win.contentView.removeChildView(view),
+    setBounds: (view, rect) => view.setBounds(rect),
+    getBounds: view => view.getBounds(),
+    setVisible: (view, on) => view.setVisible(on),
+    focusInterface: () => win.webContents.focus(),
+    onResize: fn => { win.on('resize', fn) },
+    onClosed: fn => { win.on('closed', fn) },
+  }
+}
+
 export interface SurfaceDeps {
   /** app/dist: where the shield's preload bundle is. */
   dist: string
-  window(): BrowserWindow | undefined
+  /** The app window (its own stage), or `stage` instead: a stage for each new surface. */
+  window?(): BrowserWindow | undefined
+  stage?(): SurfaceStage | undefined
   ipc: { on(channel: string, fn: (event: IpcMainEvent, ...args: unknown[]) => void): unknown }
   log(msg: string): void
 }
@@ -43,7 +87,7 @@ interface Shield { view: WebContentsView }
 interface SurfaceRecord {
   id: string
   owner: string
-  win: BrowserWindow
+  win: SurfaceStage
   view: WebContentsView
   shield: Shield | undefined
   visibility: Visibility
@@ -67,7 +111,7 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v.leng
 
 export class SurfaceManager {
   private readonly records = new Map<string, SurfaceRecord>()
-  private readonly windows = new WeakSet<BrowserWindow>()
+  private readonly windows = new WeakSet<object>()
   private readonly deps: SurfaceDeps
 
   constructor(deps: SurfaceDeps) {
@@ -75,9 +119,15 @@ export class SurfaceManager {
     deps.ipc.on(SHIELD_CHANNEL, (event, raw) => this.onShield(event, raw))
   }
 
+  /** Owners whose surfaces live in another process: the panel bridge hands their window messages over. */
+  private readonly remotes = new Map<string, RemoteSurfaceBridge>()
+
+  remoteFor(owner: string): RemoteSurfaceBridge | undefined { return this.remotes.get(owner) }
+
   /** The surfaces of one extension. */
   forOwner(owner: string): ExtSurfaces {
     return {
+      forwardTo: bridge => { this.remotes.set(owner, bridge); return toDisposable(() => { if (this.remotes.get(owner) === bridge) this.remotes.delete(owner) }) },
       create: options => this.create(owner, options),
       get: id => { const r = this.records.get(id); return r && r.owner === owner ? r.handle : undefined },
       list: () => [...this.records.values()].filter(r => r.owner === owner).map(r => r.handle),
@@ -87,19 +137,25 @@ export class SurfaceManager {
   /** Every surface (destroyed ones are gone); the E2E counts them. */
   count(): number { return this.records.size }
 
-  private watchWindow(win: BrowserWindow): void {
-    if (this.windows.has(win)) return
-    this.windows.add(win)
-    win.on('resize', () => { for (const r of this.records.values()) if (r.win === win) this.place(r) })
-    win.on('closed', () => { for (const r of [...this.records.values()]) if (r.win === win) this.destroy(r) })
+  private watchWindow(win: SurfaceStage): void {
+    if (this.windows.has(win.key)) return
+    this.windows.add(win.key)
+    win.onResize(() => { for (const r of this.records.values()) if (r.win.key === win.key) this.place(r) })
+    win.onClosed(() => { for (const r of [...this.records.values()]) if (r.win.key === win.key) this.destroy(r) })
+  }
+
+  private stageNow(): SurfaceStage | undefined {
+    if (this.deps.stage) return this.deps.stage()
+    const win = this.deps.window?.()
+    return win && !win.isDestroyed() ? windowStage(win) : undefined
   }
 
   private async create(owner: string, options: SurfaceOptions = {}): Promise<Surface> {
-    const win = this.deps.window()
-    if (!win || win.isDestroyed()) throw new Error('superfície: não há janela')
     const prefs = surfacePreferences(options.webPreferences)
     if (!prefs.ok) throw new Error(`superfície: ${prefs.reason}`)
     if (options.pageSize !== undefined && !isPageSize(options.pageSize)) throw new Error('superfície: pageSize inválido')
+    const win = this.stageNow()
+    if (!win || win.destroyed()) throw new Error('superfície: não há janela')
     this.watchWindow(win)
     const view = new WebContentsView({ webPreferences: prefs.value })
     const wc = view.webContents
@@ -114,7 +170,7 @@ export class SurfaceManager {
     }
     r.handle = this.handleOf(r)
     this.records.set(r.id, r)
-    win.contentView.addChildView(view)
+    win.add(view)
     this.place(r)
     wc.on('destroyed', () => this.destroy(r))
     try {
@@ -192,7 +248,7 @@ export class SurfaceManager {
         if (on && !r.shield) r.shield = await this.makeShield(r)
         r.shieldOn = on
         this.place(r)
-        if (on) { if (r.visibility === 'shown' && !r.win.isDestroyed()) r.win.webContents.focus() }
+        if (on) { if (r.visibility === 'shown' && !r.win.destroyed()) r.win.focusInterface() }
         else if (r.visibility === 'shown') r.view.webContents.focus()
       }),
       onShieldInput: l => r.shieldInput.add(l),
@@ -247,26 +303,25 @@ export class SurfaceManager {
 
   /** The view's bounds for its state; the shield follows (visible only over a shown surface). */
   private place(r: SurfaceRecord): void {
-    if (r.destroyed || r.win.isDestroyed()) return
-    const [width, height] = r.win.getContentSize() as [number, number]
-    const content = { width, height }
+    if (r.destroyed || r.win.destroyed()) return
+    const content = r.win.contentSize()
     const fit = this.fit(r)
     const bounds = r.visibility === 'shown' && fit ? fit.rect
       : r.visibility === 'parked' && fit ? parkedBounds(content, fit.rect)
       : hiddenBounds(content)
-    r.view.setBounds(bounds)
+    r.win.setBounds(r.view, bounds)
     if (r.shield) {
       const visible = shieldVisible(r.visibility, r.shieldOn)
-      if (visible) r.shield.view.setBounds(bounds)
-      r.shield.view.setVisible(visible)
+      if (visible) r.win.setBounds(r.shield.view, bounds)
+      r.win.setVisible(r.shield.view, visible)
     }
   }
 
   /** Re-adding a child view puts it on top: the surface, then its shield right above it. */
   private raise(r: SurfaceRecord): void {
-    if (r.win.isDestroyed()) return
-    r.win.contentView.addChildView(r.view)
-    if (r.shield) r.win.contentView.addChildView(r.shield.view)
+    if (r.win.destroyed()) return
+    r.win.add(r.view)
+    if (r.shield) r.win.add(r.shield.view)
   }
 
   private async makeShield(r: SurfaceRecord): Promise<Shield> {
@@ -283,7 +338,7 @@ export class SurfaceManager {
     const wc = view.webContents
     wc.setWindowOpenHandler(() => ({ action: 'deny' }))
     wc.on('will-navigate', e => e.preventDefault())
-    r.win.contentView.addChildView(view)
+    r.win.add(view)
     await wc.loadURL(SHIELD_PAGE)
     wc.debugger.attach('1.3')
     await wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
@@ -299,7 +354,7 @@ export class SurfaceManager {
     if (kind !== 'down' && kind !== 'move' && kind !== 'wheel' && kind !== 'key') return
     const x = num(a.x), y = num(a.y)
     if (x === undefined || y === undefined) return
-    const at = r.shield!.view.getBounds()
+    const at = r.win.getBounds(r.shield!.view)
     const input: SurfaceShieldInput = { kind, x: at.x + x, y: at.y + y }
     if (num(a.button) !== undefined) input.button = num(a.button)
     if (kind === 'wheel') { input.deltaX = num(a.deltaX) ?? 0; input.deltaY = num(a.deltaY) ?? 0 }
@@ -352,8 +407,8 @@ export class SurfaceManager {
     r.chain = next.catch(() => {})
   }
 
-  private closeView(win: BrowserWindow, view: WebContentsView): void {
-    if (!win.isDestroyed()) { try { win.contentView.removeChildView(view) } catch { /* already gone */ } }
+  private closeView(win: SurfaceStage, view: WebContentsView): void {
+    if (!win.destroyed()) { try { win.remove(view) } catch { /* already gone */ } }
     const wc = view.webContents
     if (wc.isDestroyed()) return
     try { if (wc.debugger.isAttached()) wc.debugger.detach() } catch { /* closing anyway */ }
@@ -366,6 +421,7 @@ export class SurfaceManager {
     this.records.delete(r.id)
     if (r.shield) this.closeView(r.win, r.shield.view)
     this.closeView(r.win, r.view)
+    try { r.win.release?.() } catch { /* the stage's window is gone already */ }
     r.destroyedL.fire()
     for (const l of [r.messages, r.detach, r.shieldInput, r.destroyedL]) l.clear()
   }

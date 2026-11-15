@@ -14,6 +14,8 @@ export const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 export const serverMjs = join(root, 'extensions', 'browser', 'vendor', 'tether-browser', 'server.mjs')
 export const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 export const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' } }
+// The trailing `--` makes node hand the flags tetherd appends (e.g. --mcp-config) to the script instead of parsing them as node options.
+export const FAKE_SOUL_CMD = `"${process.execPath}" -e "setInterval(()=>{},1000)" --`
 
 /** The environment without ELECTRON_* and CLAUDE*. */
 export function cleanEnv(): Record<string, string> {
@@ -69,4 +71,12 @@ export async function rawCdp(port: number, key: string, headers: Record<string, 
     ]),
     events, closed, close: () => ws.close(),
   }
+}
+
+/**
+ * `app.evaluate` where the browser lives: the function (with the same `(electron, arg)` signature) runs in the browser process
+ * when there is one (Windows), else in the app's main process. What it returns must be serializable.
+ */
+export function inBrowser<R>(app: ElectronApplication, fn: ((electron: any, a: any) => R) | Function, arg?: unknown): Promise<Awaited<R>> {
+  return app.evaluate((_e, x) => ((globalThis as Record<string, unknown>).__browserEval as (src: string, a: unknown) => Promise<unknown>)(x.src, x.a), { src: fn.toString(), a: arg ?? null }) as Promise<Awaited<R>>
 }

@@ -1050,6 +1050,15 @@ async function getAllowEvaluate() {
   return (await chrome.storage.local.get(ALLOW_EVALUATE_KEY))[ALLOW_EVALUATE_KEY] === true;
 }
 var ALLOW_EVALUATE_STORAGE_KEY = ALLOW_EVALUATE_KEY;
+var DEBUG_CHOICE_STORAGE_KEY = "debugChoice";
+var HOST_DEBUG_STORAGE_KEY = "hostDebugMode";
+async function getDebugChoice() {
+  const v = (await chrome.storage.local.get(DEBUG_CHOICE_STORAGE_KEY))[DEBUG_CHOICE_STORAGE_KEY];
+  return v && typeof v.enabled === "boolean" ? v : null;
+}
+async function saveHostDebugMode(mode) {
+  await chrome.storage.local.set({ [HOST_DEBUG_STORAGE_KEY]: mode ?? null });
+}
 var SETTINGS_KEYS = ["port", "token", "name"];
 async function saveHostBrand(brand, opts = {}) {
   if (opts.onlyIfMissing && await loadHostBrand()) return;
@@ -2707,6 +2716,8 @@ var POPUP = {
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
   /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
   debugOn: "Modo de depura\xE7\xE3o ligado",
+  /** O atalho da linha de depuração para a página de opções. */
+  debugOptions: "Op\xE7\xF5es de depura\xE7\xE3o",
   reloadHint: (expected, running2) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running2}): clique em Recarregar em chrome://extensions.`
 };
 var EVALUATE = {
@@ -2749,6 +2760,24 @@ var OPTIONS = {
   saved: "Salvo.",
   invalidPort: "A porta precisa ser um n\xFAmero entre 1 e 65535.",
   id: "Identificador"
+};
+var DEBUG = {
+  optionTitle: "Depura\xE7\xE3o",
+  optionHelp: "Grava neste computador o passo a passo de cada a\xE7\xE3o dos agentes, com os endere\xE7os das p\xE1ginas e os textos digitados (senhas ficam sempre de fora), e relaxa os prazos. Serve para investigar uma falha; desligue quando terminar. S\xF3 voc\xEA liga este modo, aqui neste navegador.",
+  off: "Desligado",
+  offHint: "Nada \xE9 gravado al\xE9m do registro de sempre.",
+  on: "Modo de depura\xE7\xE3o",
+  onHint: "Grava o passo a passo e usa o prazo abaixo.",
+  timeoutLabel: "Prazo de cada chamada (segundos)",
+  timeoutHelp: "Vazio = o padr\xE3o de 60 s. 0 = sem prazo.",
+  timeoutInvalid: `Use um n\xFAmero inteiro de segundos, de 0 a 86400, ou deixe vazio.`,
+  saved: "Salvo.",
+  stateOff: "Agora: desligado.",
+  stateOn: "Agora: ligado.",
+  stateOutdated: `Ligado aqui, mas o programa do ${B} neste computador precisa ser atualizado para o modo valer.`,
+  stateOffline: `Sem conex\xE3o com o ${B}: a escolha vale quando ele conectar.`,
+  timeoutNow: (ms) => ms === null ? "Prazo em vigor: sem prazo." : `Prazo em vigor: ${Math.round(ms / 1e3)} s.`,
+  traceAt: (path) => `O passo a passo \xE9 gravado em ${path}`
 };
 
 // extension/src/notice.ts
@@ -3635,6 +3664,12 @@ var DaemonConnection = class {
   constructor() {
     setReporter((msg) => this.send(msg));
     setTraceSink((events) => this.send({ t: "trace", events }));
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && DEBUG_CHOICE_STORAGE_KEY in changes) void this.sendDebugChoice();
+    });
+    void getDebugChoice().then((c) => {
+      this.debugChoice ??= c;
+    });
   }
   /** Abre a conexão se não há uma viva. Chamada pelo startup, pelo alarme e pela troca de opções. */
   async ensure() {
@@ -3699,7 +3734,8 @@ var DaemonConnection = class {
         void setStatus({ state: "connected" });
         void saveHostBrand(msg.brand);
         void saveHostCapabilities(msg.capabilities);
-        setDebug(msg.capabilities?.debug === true, debugTimeoutOf(msg.capabilities?.debugCallTimeoutMs));
+        this.applyDebug(msg.capabilities);
+        void saveHostDebugMode(void 0).then(() => this.sendDebugChoice());
         this.pingTimer = setInterval(() => this.send({ t: "ping" }), PING_MS);
         void publishTabs();
         void publishFocusIfFocused();
@@ -3723,7 +3759,8 @@ var DaemonConnection = class {
       } else if (msg.t === "config") {
         void saveHostBrand(msg.brand);
         void saveHostCapabilities(msg.capabilities);
-        setDebug(msg.capabilities?.debug === true, debugTimeoutOf(msg.capabilities?.debugCallTimeoutMs));
+        this.applyDebug(msg.capabilities);
+        void saveHostDebugMode(msg.debugMode);
       }
     };
     ws.onclose = () => {
@@ -3749,6 +3786,24 @@ var DaemonConnection = class {
     if (!this.isOpen()) return false;
     this.send({ t: paused ? "pause" : "resume" });
     return true;
+  }
+  /**
+   * O modo debug desta extensão: só liga com a escolha da pessoa AQUI e a confirmação do daemon. Um daemon que mande
+   * `debug: true` sem ela ter escolhido não liga nada (o hospedeiro não toma o controle do navegador).
+   */
+  applyDebug(capabilities) {
+    const chosen = this.debugChoice?.enabled === true;
+    setDebug(chosen && capabilities?.debug === true, debugTimeoutOf(capabilities?.debugCallTimeoutMs));
+  }
+  /** A escolha da pessoa, em memória (aplicar o modo é síncrono: a chamada seguinte já o segue). */
+  debugChoice = null;
+  /** F6: manda ao daemon o modo debug que a pessoa escolheu aqui (sem escolha guardada, nada sai). */
+  async sendDebugChoice() {
+    const choice = await getDebugChoice();
+    this.debugChoice = choice;
+    if (!choice) return;
+    if (!choice.enabled) setDebug(false);
+    this.send({ t: "debug", enabled: choice.enabled, ...choice.callTimeoutMs !== void 0 ? { callTimeoutMs: choice.callTimeoutMs } : {} });
   }
   send(msg) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));

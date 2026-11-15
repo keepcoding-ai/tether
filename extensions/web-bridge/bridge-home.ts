@@ -11,8 +11,7 @@
 //   c. `capabilities` seeded ONCE, when the config has none: from build-info.json `brand.capabilities` (the package's
 //      defaults, f7-bridge-marca §1.3) or, for a build without a brand, from this extension's settings defaults. The
 //      bundle's `seedCapabilities` does it under the bridge's own config lock; existing values are never touched: the
-//      package brings the default, the installation decides. Then the tether's own part (capabilities.ts: evaluate and
-//      windowPerAgent when the person set them in the tether, the debug mode) is applied over it; main keeps it live;
+//      package brings the default, the installation decides;
 //   d. <TETHER_HOME>/mcp/tether-bridge.json, the --mcp-config the agents will receive (C3): `node <vendor>/atrium-bridge.mjs
 //      mcp` with ATRIUM_BRIDGE_HOME, ATRIUM_BRIDGE_PORT and ATRIUM_BRIDGE_SERVER_NAME (the package's `brand.mcp.serverName`
 //      when it has a valid one, else this extension's). Rewritten only when its content changed (the ensureSettingsFile
@@ -28,8 +27,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
-import type { SettingReader } from '../../app/shared/vscode-configuration-registry.ts'
-import { applyCapabilities, type Capabilities } from './capabilities.ts'
 import { manifest } from './manifest.ts'
 import { bridgeHomeOf, extensionDirOf, MCP_SERVER_NAME, mcpConfigPathOf } from './paths.ts'
 import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutdated, syncExtensionVersion, updateExtensionDir, writeUpdateMarker, type RestartDeps } from './update.ts'
@@ -48,10 +45,6 @@ export interface BridgeBundle {
   seedCapabilities(home: string, defaults: Record<string, unknown>): string[]
   /** config.extensionVersion (the installed folder's manifest version, carried in the daemon's welcome); null removes it. */
   setExtensionVersion(home: string, version: string | null): void
-  /** The stored config (secrets included: only `capabilities` is ever looked at here), or null without one. */
-  readConfig(home: string): { capabilities?: Capabilities } | null
-  /** Replaces config.capabilities (null removes it), under the bridge's config lock. */
-  setCapabilities(home: string, capabilities: Capabilities | null): void
   localKeyPath(home: string): string
   version: string
 }
@@ -142,8 +135,6 @@ export interface BridgeHostDeps {
   brand: BridgeBrand
   nodeExe(): string | undefined
   log(msg: string): void
-  /** This extension's settings in force (capabilities.ts); without it the tether's part of the capabilities is not applied. */
-  settings?: () => SettingReader
   /** May this tetherd start the daemon (paths.ts warmupAllowed)? Default yes. The files are written either way. */
   warm?: boolean
   /** Injected in the unit test. */
@@ -220,7 +211,6 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
       brandAndSeed(b, bridgeHome, currentDir, deps.port, deps.brand)
       report.capabilities = b.seedCapabilities(bridgeHome, defaultCapabilities(info))
       if (report.capabilities.length) deps.log(`capabilities semeadas do pacote: ${report.capabilities.join(', ')}`)
-      if (deps.settings && applyCapabilities(b, bridgeHome, deps.settings()) === 'written') deps.log('capabilities do tether (evaluate, janela por agente, depuração) aplicadas ao config.json do bridge')
       serverName = serverNameOf(info)
     } catch (e) {
       const code = (e as { code?: unknown } | undefined)?.code

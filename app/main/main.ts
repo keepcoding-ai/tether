@@ -4,11 +4,12 @@
 // renderer's memory is freed; the process stays, still connected to the daemon, to feed the tray). The daemon
 // keeps every slot running whatever the app does.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, screen, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { createAppLog } from './app-log.ts'
+import { startCrashReports } from './crash-report.ts'
 import { handOffToCookieRuntime } from './cookie-runtime-main.ts'
 import { ackFromLiveInstance, relaunchArgs, relaunchedFrom } from './relaunch.ts'
 import { userInfo } from 'node:os'
@@ -37,7 +38,8 @@ import { SurfaceManager } from './surfaces.ts'
 import { SurfaceBridge } from './surface-bridge.ts'
 import { AgentTracker } from './agents.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
-import { trayModel, trayWanted } from '../shared/tray.ts'
+import { slotLabel, trayModel, trayWanted } from '../shared/tray.ts'
+import { AttentionHistory, isMuted, isMuteChoice, muteUntil, normalizeOsNotify, OS_NOTIFY_COALESCE_MS, OsNotifyRules, toastFor, type AttentionState, type PendingToast } from '../shared/os-notify.ts'
 import type { TrayCommand } from '../shared/tray.ts'
 import { createTray, type TrayController } from './tray.ts'
 import { TrayNotices } from './tray-notices.ts'
@@ -78,6 +80,7 @@ const appLog = createAppLog(join(home, 'tether-app.log'))
 appLog(`start: ppid ${process.ppid}, exec ${process.execPath}, cwd ${process.cwd()}, args ${JSON.stringify(process.argv.slice(1))}${replacedPid ? `, replaces pid ${replacedPid} (Reiniciar o app)` : ''}`)
 // The Start Menu launch prefers the runtime copy with the cookie fuse on (app/shared/cookie-runtime.ts): handed over, this
 // process leaves before taking the single-instance lock or touching any state.
+startCrashReports(home, 'tether', appLog)
 if (handOffToCookieRuntime({ home, argv: process.argv, execPath: process.execPath, electronVersion: process.versions.electron, log: appLog })) process.exit(0)
 
 let daemon: DaemonClient | undefined
@@ -93,6 +96,16 @@ let restartingDaemon = false
 let tray: TrayController | undefined
 /** What the tray shows: the daemon's slots, kept up to date from the list at connect time and the state events. */
 const slotStates = new Map<string, SlotState>()
+// System toasts for attention while tether is not in front (app/shared/os-notify.ts holds the rules).
+const osNotifyRules = new OsNotifyRules()
+let osNotifyBatch: PendingToast[] = []
+let osNotifyTimer: ReturnType<typeof setTimeout> | undefined
+/** Live toasts: a Notification collected by the GC loses its click handler. */
+const liveToasts = new Set<Notification>()
+/** The bell's recent notices (fed by the same transitions as the toasts) and its temporary mute (never written to settings). */
+const attentionHistory = new AttentionHistory()
+let mutedUntil: number | undefined
+let muteTimer: ReturnType<typeof setTimeout> | undefined
 /** The agents extensions see (TetherMain.agents), fed by the same daemon events. */
 const agentTracker = new AgentTracker()
 /** The extensions' notices the tray shows next to the terminals' attention (TetherMain.notices). */
@@ -178,9 +191,9 @@ function connectDaemon(): Promise<void> {
     try {
       const client = await connectOnce()
       daemon = client
-      client.on('state', slot => { slotStates.set(slot.slotId, slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
+      client.on('state', slot => { slotStates.set(slot.slotId, slot); noteAttention(slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
-      client.on('removed', slotId => { slotStates.delete(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('removed', slotId => { slotStates.delete(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('proc', proc => win?.webContents.send('tether:event', { t: 'proc', proc }))
@@ -190,6 +203,8 @@ function connectDaemon(): Promise<void> {
         if (daemon !== client) return
         daemon = undefined
         slotStates.clear()
+        osNotifyRules.clear()
+        dropOsToasts()
         agentTracker.lost()
         updateTray()
         if (quittingAll || quitting) return
@@ -216,12 +231,65 @@ function connectDaemon(): Promise<void> {
   return connecting
 }
 
+function windowInFront(): boolean {
+  return !!win && !win.isDestroyed() && win.isFocused() && !win.isMinimized()
+}
+
+/** Feeds a slot state to the toast rules; a due toast waits a moment for others (one toast per burst). */
+function noteAttention(slot: SlotState): void {
+  const toast = osNotifyRules.apply(slot, slotLabel(slot), normalizeOsNotify(settings().notifications?.os), windowInFront())
+  if (!toast) return
+  attentionHistory.add(toast, Date.now())
+  sendAttention()
+  if (isMuted(mutedUntil, Date.now())) return
+  osNotifyBatch.push(toast)
+  osNotifyTimer ??= setTimeout(showOsToast, OS_NOTIFY_COALESCE_MS)
+}
+
+function attentionState(): AttentionState {
+  return { items: attentionHistory.list(), unseen: attentionHistory.unseen, ...(isMuted(mutedUntil, Date.now()) ? { mutedUntil } : {}) }
+}
+
+function sendAttention(): void { win?.webContents.send('tether:attention', attentionState()) }
+
+/** Mutes the toasts until a deadline (null lifts it); one timer brings the bell back when the mute expires. */
+function setMute(until: number | undefined): void {
+  if (muteTimer) clearTimeout(muteTimer)
+  muteTimer = undefined
+  mutedUntil = until
+  if (until !== undefined) muteTimer = setTimeout(() => setMute(undefined), Math.max(0, until - Date.now()))
+  sendAttention()
+}
+
+ipcMain.handle('attention:get', () => attentionState())
+ipcMain.on('attention:seen', () => { attentionHistory.markSeen(); sendAttention() })
+ipcMain.on('attention:mute', (_e, choice: unknown) => setMute(isMuteChoice(choice) ? muteUntil(choice, Date.now()) : undefined))
+
+function dropOsToasts(): void {
+  if (osNotifyTimer) clearTimeout(osNotifyTimer)
+  osNotifyTimer = undefined
+  osNotifyBatch = []
+}
+
+function showOsToast(): void {
+  const t = toastFor(osNotifyBatch)
+  dropOsToasts()
+  // E2E windows never reach the user's screen; focus may also have come back while coalescing (the tab seal is enough).
+  if (!t || hidden || windowInFront() || isMuted(mutedUntil, Date.now()) || !Notification.isSupported()) return
+  const n = new Notification({ title: t.title, body: t.body, icon: join(__dirname, 'tether.ico') })
+  liveToasts.add(n)
+  n.on('click', () => { liveToasts.delete(n); void openWindow(t.slotId) })
+  n.on('close', () => liveToasts.delete(n))
+  n.show()
+  if (win && !win.isDestroyed()) win.flashFrame(true)
+}
+
 /** Loads the slot list for the tray (the renderer asks for its own copy). */
 async function syncSlots(client: DaemonClient): Promise<void> {
   const list = await request({ t: 'list' })
   if (daemon !== client || list.t !== 'ok') return
   slotStates.clear()
-  for (const s of list.slots ?? []) slotStates.set(s.slotId, s)
+  for (const s of list.slots ?? []) { slotStates.set(s.slotId, s); osNotifyRules.seed(s) }
   agentTracker.reset(list.slots ?? [])
   updateTray()
 }
@@ -416,14 +484,14 @@ function replaySettings(keys: readonly string[]): void {
   if (roots.has('confirmations')) win?.webContents.send('tether:confirmations', readConfirmations())
   if (roots.has('extensions')) extensionHost.settingsChangedOnDisk(keys)
 }
-type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown }
+type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown; notifications?: { os?: unknown } }
 
 // ---------- extensions (F9) ----------
 // The main side of the extensions (extensions/index.main.ts) and the core channels of their settings and listing
 // (app/main/ext-host.ts). The handlers exist from the start; activation runs when the app is ready, before the window.
 // Native views over the interface, owned by the extension that creates them (app/main/surfaces.ts).
 const surfaces = new SurfaceManager({ dist: __dirname, window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
-new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
+new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg), remote: owner => surfaces.remoteFor(owner) })
 const extensionHost = new MainExtensionHost(mainExtensions, {
   home,
   userDir: userHome,
@@ -669,6 +737,7 @@ function createWindow(): void {
   if (start.fullscreen) created.setFullScreen(true)
   if (!hidden) created.once('ready-to-show', () => created.show())
   trackWindowState(created)
+  created.on('focus', () => created.flashFrame(false))
   // A <webview> is only ever an extension's isolated page (the note's HTML preview): with no extension guarding, none attaches.
   extensionHost.guardWebviews(created.webContents, () => created.webContents.on('will-attach-webview', event => event.preventDefault()))
   created.on('close', e => {

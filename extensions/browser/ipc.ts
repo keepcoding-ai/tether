@@ -18,6 +18,8 @@ export interface BrowserChannels {
     /** Brings back a tab saved in layout.json (the person showed it): created again with its id and owner, its address loaded. */
     restore: (saved: SavedTab) => TabInfo | null
     close: (tabId: string) => void
+    /** "Reabrir" of a tab in the crash state: created again with its id, owner and address. */
+    reopen: (tabId: string) => TabInfo | null
     status: () => BrowserStatus
     /** The local-network questions still waiting for the person (the renderer asks when it starts). */
     localNetworkOpen: () => LocalNetworkAsk[]
@@ -73,3 +75,16 @@ export interface BrowserChannels {
     uploadCancelled: (id: string) => void
   }
 }
+
+/**
+ * Every invoke channel, at run time: the app registers them all before the browser process is up (app/main/browser-host.ts), so
+ * the renderer's first calls wait for it instead of finding no handler. The type keeps the list whole.
+ */
+export const BROWSER_INVOKES = [
+  'list', 'get', 'restore', 'close', 'reopen', 'status', 'localNetworkOpen', 'localNetworkAnswer', 'controls', 'take', 'giveBack',
+  'cleanReload', 'pause', 'resume', 'back', 'forward', 'reload', 'pauseTabs', 'resumeTabs', 'agents', 'logoutAll', 'downloads',
+  'showDownload', 'uploadOpen', 'uploadAnswer',
+] as const satisfies readonly (keyof BrowserChannels['invoke'])[]
+type Missing = Exclude<keyof BrowserChannels['invoke'], (typeof BROWSER_INVOKES)[number]>
+const whole: [Missing] extends [never] ? true : Missing = true
+void whole

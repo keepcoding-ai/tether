@@ -1,27 +1,39 @@
 /* The explorer pad (F8 slice 1a). The pad is a card on the desk ground, like a frame; colours come from the theme tokens. */
 .xp {
-  position: absolute; inset: var(--pad-inset, 0 var(--gap) var(--gap)); display: flex; flex-direction: column; overflow: auto;
+  position: absolute; inset: var(--pad-inset, 0 var(--gap) var(--gap)); display: flex; flex-direction: column; overflow: hidden;
   background: var(--frame-bg); border: 1px solid var(--frame-border); border-radius: var(--frame-radius);
   color: var(--fg); font: 13px var(--ui);
 }
 
+/* Under the bars: the tree's scrolling area (and the layers drawn over it), or the empty state. */
+.xp-body { flex: 1; min-height: 0; position: relative; }
+/* The virtual list's scrolling element (rows are absolutely placed in it); it holds the keyboard, its active row shows the ring. */
+.xp-scroll { position: absolute; inset: 0; overflow: auto; outline: none; }
+.xp-body > .xp-empty { height: 100%; overflow: auto; }
+
 /* Slim scrollbar, same as the markdown preview pane (app/renderer/preview-style.ts). Webkit pseudo-elements only: scrollbar-width/color would override them. */
-.xp::-webkit-scrollbar { width: 12px; height: 12px; }
-.xp::-webkit-scrollbar-track, .xp::-webkit-scrollbar-corner { background: transparent; }
-.xp::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg-dim) 35%, transparent); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
-.xp::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg-dim) 55%, transparent); background-clip: content-box; }
+.xp-scroll::-webkit-scrollbar, .xp-empty::-webkit-scrollbar { width: 12px; height: 12px; }
+.xp-scroll::-webkit-scrollbar-track, .xp-scroll::-webkit-scrollbar-corner, .xp-empty::-webkit-scrollbar-track, .xp-empty::-webkit-scrollbar-corner { background: transparent; }
+.xp-scroll::-webkit-scrollbar-thumb, .xp-empty::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg-dim) 35%, transparent); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+.xp-scroll::-webkit-scrollbar-thumb:hover, .xp-empty::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg-dim) 55%, transparent); background-clip: content-box; }
 
 /* The top bar inside the card: title left, actions right (same 24px icon buttons as the pad and frame headers). */
 .xp-topbar {
-  position: sticky; top: 0; z-index: 3; flex: none; display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 4px 0 12px;
+  flex: none; display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 4px 0 12px;
   background: var(--frame-bg); border-bottom: 1px solid var(--border); color: var(--fg-dim); user-select: none;
 }
 .xp-topbar-title { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .xp-topbar .ib { width: 24px; height: 24px; flex: none; }
+/* The tree actions are disabled while no project is open. */
+.xp-topbar .ib:disabled { opacity: .4; cursor: default; }
+/* Header toggles (seguir, revelar): accent when on, dimmed when off. */
+.xp-topbar .xp-toggle[aria-pressed="false"] { opacity: .55; }
+.xp-topbar .xp-toggle[aria-pressed="false"]:hover { opacity: 1; }
+.xp-topbar .xp-toggle[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 /* The watcher notice: the pad cannot follow the disk by itself; "Atualizar" reads again. */
 .xp-notice {
-  position: sticky; top: 30px; z-index: 2; flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12px;
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12px;
   background: var(--bg-2); border-bottom: 1px solid var(--border); color: var(--fg);
 }
 .xp-notice[hidden] { display: none; }
@@ -34,10 +46,8 @@
 .xp-notice-btn:hover { background: var(--bg-hover-2); }
 .xp-notice-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* ---- the roots ---- */
-.xp-roots-wrap { display: flex; flex-direction: column; flex: 1 0 auto; }
-.xp-roots { padding: 6px 0; }
-/* Every row (a project root or a file/folder): indent by level, twistie, icon, name. */
+/* ---- the rows ---- */
+/* Every row (a project root or a file/folder): indent by level, twistie, icon, name. The list places it (absolute, top, height). */
 .xp-row {
   position: relative; display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px 0 calc(6px + (var(--lvl, 1) - 1) * 14px);
   cursor: pointer; outline: none; user-select: none; white-space: nowrap;
@@ -47,7 +57,7 @@
 .xp-row.selected { background: var(--bg-3); }
 .xp-root.current { background: var(--bg-3); }
 .xp-root.current::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; border-radius: 2px; background: var(--accent); }
-.xp-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.xp-scroll:focus-visible .xp-row.focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 .xp-twist { flex: none; display: grid; place-items: center; width: 16px; height: 16px; color: var(--fg-dim); }
 .xp-twist .ph { width: 12px; height: 12px; transition: transform .12s ease; }
 .xp-row[aria-expanded="true"] > .xp-twist .ph { transform: rotate(90deg); }
@@ -55,7 +65,9 @@
 .xp-ico .ph { width: 16px; height: 16px; }
 .xp-item[data-kind="dir"] > .xp-ico { color: var(--accent); }
 .xp-item .xp-name { font-weight: 400; }
-.xp-msg { padding: 3px 8px 3px calc(6px + (var(--lvl, 1) - 1) * 14px + 20px); font-size: 12px; color: var(--fg-dim); white-space: normal; }
+/* A folder that could not be read: one line, the whole text in the tooltip. */
+.xp-msg { display: flex; align-items: center; padding: 0 8px 0 calc(6px + (var(--lvl, 1) - 1) * 14px + 20px); font-size: 12px; color: var(--fg-dim); user-select: none; }
+.xp-msg-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .xp-root.missing .xp-name { color: var(--fg-dim); }
 .xp-root.missing .xp-ico { opacity: .6; }
 .xp-warn { flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; color: var(--warn, var(--fg)); background: var(--bg-2); border: 1px solid var(--border); white-space: nowrap; }
@@ -73,7 +85,7 @@
 /* A pinned root shows its pin always (filled); an inferred one only when the pointer or the keyboard is on the row. */
 .xp-root[data-pinned="true"] .xp-pin { color: var(--accent); }
 .xp-root[data-pinned="false"] .xp-pin { opacity: 0; }
-.xp-root[data-pinned="false"]:hover .xp-pin, .xp-root[data-pinned="false"]:focus-within .xp-pin, .xp-root[data-pinned="false"] .xp-pin:focus-visible { opacity: 1; }
+.xp-root[data-pinned="false"]:hover .xp-pin, .xp-scroll:focus .xp-root[data-pinned="false"].focused .xp-pin, .xp-root[data-pinned="false"] .xp-pin:focus-visible { opacity: 1; }
 
 
 /* ---- the empty state ---- */
@@ -102,19 +114,31 @@
 .xp-recent-name { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .xp-recent-dir { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--fg-dim); }
 
-/* ---- slice 5: a name edited in place (new file/folder, rename), VS Code's input box with its validation message ---- */
-.xp-row.xp-edit { cursor: default; height: auto; min-height: 26px; align-items: flex-start; padding-top: 2px; padding-bottom: 2px; }
-.xp-row.xp-edit > .xp-twist, .xp-row.xp-edit > .xp-ico { margin-top: 3px; }
-.xp-row:has(.xp-edit-box) { height: auto; min-height: 26px; }
-.xp-edit-box { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* ---- slice 5: a name edited in place (new file/folder, rename), VS Code's input box; its validation message floats under it ---- */
+.xp-row.xp-edit { cursor: default; }
+.xp-edit-box { flex: 1; min-width: 0; display: flex; }
 .xp-input {
   width: 100%; min-width: 0; height: 22px; padding: 0 5px; box-sizing: border-box; font: inherit; color: var(--fg);
   background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; outline: none; user-select: text;
 }
 .xp-input.invalid { border-color: var(--err); }
 .xp-validate {
-  margin-top: 2px; padding: 4px 6px; font-size: 12px; line-height: 1.35; white-space: normal; border-radius: 3px;
+  position: absolute; z-index: 4; padding: 4px 6px; font-size: 12px; line-height: 1.35; white-space: normal; border-radius: 3px; pointer-events: none;
   color: var(--fg); background: color-mix(in srgb, var(--err) 14%, var(--bg)); border: 1px solid var(--err);
 }
 .xp-validate.warning { background: color-mix(in srgb, var(--warn) 14%, var(--bg)); border-color: var(--warn); }
-.xp-validate[hidden] { display: none; }
+
+/* ---- sticky scroll (VS Code's .monaco-tree-sticky-container): the folders above the first row in view, drawn over the tree ---- */
+/* Its width is set to the scrolling element's content box, so the vertical scrollbar stays uncovered. Below the validation message (z-index 4). */
+.xp-sticky { position: absolute; top: 0; left: 0; z-index: 3; background: var(--frame-bg); }
+.xp-sticky.empty { display: none; }
+/* A discreet shadow under the last row. */
+.xp-sticky::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px; pointer-events: none;
+  background: linear-gradient(color-mix(in srgb, var(--fg) 12%, transparent), transparent);
+}
+/* Each row is opaque (a pushed-up row slides under the ones above it); hover and selection, which may be translucent, are layered over the card's colour. */
+.xp-sticky-row { position: absolute; left: 0; width: 100%; box-sizing: border-box; background: var(--frame-bg); }
+.xp-sticky-row:hover { background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--frame-bg); }
+.xp-sticky-row.selected, .xp-sticky-row.xp-root.current { background: linear-gradient(var(--bg-3), var(--bg-3)), var(--frame-bg); }
+.xp-sticky .xp-root[data-pinned="false"]:hover .xp-pin { opacity: 1; }

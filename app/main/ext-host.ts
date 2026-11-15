@@ -121,7 +121,12 @@ export class MainExtensionHost {
     if (!ID.test(id) || !KEY.test(key) || !isValue(value)) return
     const schema = this.configuration.schemaOf(id, key)
     const v = schema ? this.configuration.read({ disabled: [], values: { [id]: { [key]: value } } }, id, key)! : value
-    this.deps.writeSettings(withSetting(this.deps.readSettings(), id, key, v))
+    try {
+      this.deps.writeSettings(withSetting(this.deps.readSettings(), id, key, v))
+    } catch (e) {
+      this.deps.log(`extensões: falha ao gravar ${id}.${key}: ${e instanceof Error ? e.message : String(e)}`)
+      return
+    }
     this.announce(id, key, v)
   }
 

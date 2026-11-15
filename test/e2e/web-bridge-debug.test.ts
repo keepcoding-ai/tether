@@ -1,12 +1,15 @@
-// E2E of the bridge's debug mode end to end (tether-bridge-debug T3b), with the REAL vendored bridge daemon in a temp home
-// and a FAKE extension that speaks its WebSocket protocol (hello with the home's pairing token, results by rid), as the
-// bridge's own tests do: no real browser. The tether side is the real one: the settings reader, capabilities.ts writing
-// config.json through the bundle, and `tether trace` (the bridge's TraceSource).
-//   - debug on by the settings (with a 1 s call deadline): the daemon reads it live (diagnose's `daemon.mode` says debug and
-//     1000 ms); a call that works leaves its call_started (with the arguments) and call_finished in trace.log under its id,
-//     and the timeline tells them; a call the extension never answers ends in CALL_TIMEOUT after ~1 s (the debug deadline,
-//     not the 60 s default), its error carries data.dump, the dump folder exists and the timeline names it;
-//   - debug off by the settings, live: diagnose says so and the next call writes nothing to trace.log.
+// E2E of the bridge's debug mode end to end, with the REAL vendored bridge daemon in a temp home and a FAKE extension that
+// speaks its WebSocket protocol (hello with the home's pairing token, results by rid), as the bridge's own tests do: no
+// real browser. The debug mode is switched ONLY by the extension in the browser ({t:'debug', enabled, callTimeoutMs?}, kept
+// in memory per connection); the host (tether) only sees it. The tether side is the real one: the bundle writing
+// config.json and `tether trace` (the bridge's TraceSource).
+//   - before the extension asks: diagnose says debug off, and `debug: true` seeded in the config capabilities does NOT turn
+//     it on (diagnose stays off, a call writes nothing to trace.log);
+//   - the extension asks {debug on, 1 s deadline}: the daemon answers with the mode in force, diagnose says on and 1000 ms;
+//     a call that works leaves its call_started (with the arguments) and call_finished in trace.log under its id, and the
+//     timeline tells them; a call the extension never answers ends in CALL_TIMEOUT after ~1 s (the debug deadline, not the
+//     60 s default), its error carries data.dump, the dump folder exists and the timeline names it;
+//   - the extension asks {debug off}: diagnose says so and the next call writes nothing to trace.log.
 // Kills go through test/kill.ts (pid + identity). The person's tether home, ~/.atrium-bridge and port 47831 are never touched.
 // Run: node --test test/e2e/web-bridge-debug.test.ts
 import { test } from 'node:test'
@@ -17,12 +20,9 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { importBundleFromDisk } from '../../extensions/web-bridge/bridge-home.ts'
-import { applyCapabilities } from '../../extensions/web-bridge/capabilities.ts'
-import { manifest } from '../../extensions/web-bridge/manifest.ts'
 import { bridgeHomeOf } from '../../extensions/web-bridge/paths.ts'
 import { bridgeTraceSource } from '../../extensions/web-bridge/trace-source.ts'
 import { VENDOR_BUNDLE } from '../../extensions/web-bridge/vendor-rules.ts'
-import { settingReaderOf } from '../../app/shared/vscode-configuration-registry.ts'
 import { callTimeline, renderTimeline } from '../../src/trace/timeline.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 
@@ -44,17 +44,19 @@ async function waitUntil(cond: () => Promise<boolean> | boolean, ms: number, wha
   }
 }
 
-test('bridge debug mode: the setting reaches the real daemon live, trace.log by call id, the timeout dump, tether trace', { timeout: 120_000 }, async () => {
+type DebugMode = { on: boolean; callTimeoutMs: number | null }
+
+test('bridge debug mode: only the extension turns it on (the config does not), trace.log by call id, the timeout dump, tether trace', { timeout: 120_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), 'tether-wbdebug-'))
   const bridgeHome = bridgeHomeOf(home)
   mkdirSync(bridgeHome, { recursive: true })
   const port = await freePort()
   const b = await importBundleFromDisk(bundlePath)
   const { pairingToken: token } = b.ensureConfig(bridgeHome, port)
-  b.seedCapabilities(bridgeHome, { evaluate: 'own-tabs' })
-  const values: Record<string, unknown> = { debug: true, debugCallTimeoutSec: 1 }
-  const settings = settingReaderOf(manifest.contributes!.settings!, values)
-  assert.equal(applyCapabilities(b, bridgeHome, settings), 'written')
+  // What the host used to write to turn the mode on, now seeded through the bundle (no hand-edited config.json): the
+  // daemon must ignore it.
+  const seeded = b.seedCapabilities(bridgeHome, { evaluate: 'own-tabs', debug: true, debugCallTimeoutMs: '1000' })
+  assert.ok(seeded.includes('debug'), `debug: true seeded into the capabilities (keys: ${seeded.join(',')})`)
   // The test home's own api key (made just now in a temp folder, with the pairing token above), as the bridge's tests use them.
   const key = readFileSync(b.localKeyPath(bridgeHome), 'utf8').trim()
 
@@ -70,19 +72,40 @@ test('bridge debug mode: the setting reaches the real daemon live, trace.log by 
     }
     await waitUntil(async () => { try { return (await fetch(`http://127.0.0.1:${port}/health`)).ok } catch { return false } }, 15_000, 'the daemon\'s /health')
 
-    // The fake extension: answers every call at once with {tool, args}, except `type`, which it never answers.
+    // The fake extension: answers every call at once with {tool, args}, except `type`, which it never answers. It records
+    // the daemon's {t:'config'} messages (the answer to {t:'debug'}).
+    const configs: Array<{ debugMode?: DebugMode }> = []
     ws = new WebSocket(`ws://127.0.0.1:${port}/ext`, { headers: { origin: 'chrome-extension://fake' } } as never)
     const socket = ws
     socket.addEventListener('open', () => socket.send(JSON.stringify({ t: 'hello', v: 1, id: 'fake-1', name: 'fake-1', userAgent: 'test', token })))
     socket.addEventListener('message', ev => {
-      const m = JSON.parse(String(ev.data)) as { t: string; rid?: string; tool?: string; args?: unknown }
+      const m = JSON.parse(String(ev.data)) as { t: string; rid?: string; tool?: string; args?: unknown; debugMode?: DebugMode }
+      if (m.t === 'config') configs.push(m)
       if (m.t === 'call' && m.tool !== 'type') socket.send(JSON.stringify({ t: 'result', rid: m.rid, ok: true, value: { tool: m.tool, args: m.args } }))
     })
     await waitUntil(async () => ((await api('/browsers')).body?.browsers ?? (await api('/browsers')).body ?? []).some?.((x: { id: string }) => x.id === 'fake-1') ?? false, 10_000, 'the fake extension connected')
     const call = (tool: string, args: object, callId: string) => api('/browsers/fake-1/call', { method: 'POST', body: { tool, args }, headers: { 'x-bridge-call': callId } })
     const sources = [bridgeTraceSource(home)]
+    const traceLog = (): string => { try { return readFileSync(join(bridgeHome, 'trace.log'), 'utf8') } catch { return '' } }
+    /** The extension asks for a mode and waits for the daemon's answer (a new {t:'config'} with the mode in force). */
+    const askDebug = async (req: { enabled: boolean; callTimeoutMs?: number }): Promise<DebugMode> => {
+      const seen = configs.length
+      socket.send(JSON.stringify({ t: 'debug', ...req }))
+      await waitUntil(() => configs.length > seen, 10_000, 'the daemon\'s answer to {t:"debug"}')
+      return configs[configs.length - 1]!.debugMode!
+    }
 
-    // On: the daemon read the capabilities (diagnose's mode), a call that works is in trace.log with its arguments.
+    // Before the extension asks: off, and the seeded `debug: true` in the config does not turn it on.
+    const diag0 = await call('diagnose', {}, 'diag0000')
+    assert.equal(diag0.status, 200, JSON.stringify(diag0.body))
+    assert.equal(diag0.body.result.daemon.mode.debug, false, 'the config capability does not turn the mode on')
+    assert.equal((await call('snapshot', {}, 'cfgcall1')).status, 200)
+    assert.ok(!traceLog().includes('cfgcall1'), 'no trace.log line while only the config says debug')
+
+    // On, by the extension (1 s deadline): the daemon answers with the mode, diagnose says so, a call that works is in
+    // trace.log with its arguments.
+    const asked = await askDebug({ enabled: true, callTimeoutMs: 1000 })
+    assert.deepEqual([asked.on, asked.callTimeoutMs], [true, 1000])
     const diag = await call('diagnose', {}, 'diag0001')
     assert.equal(diag.status, 200, JSON.stringify(diag.body))
     assert.deepEqual([diag.body.result.daemon.mode.debug, diag.body.result.daemon.mode.callTimeoutMs], [true, 1000])
@@ -107,15 +130,14 @@ test('bridge debug mode: the setting reaches the real daemon live, trace.log by 
     assert.match(stuckText, /falhou \(CALL_TIMEOUT\)/)
     assert.ok(stuckText.includes(`despejo da falha: ${dump}`), stuckText)
 
-    // Off, live, by the settings: diagnose says so and the next call writes nothing to trace.log.
-    values.debug = false
-    assert.equal(applyCapabilities(b, bridgeHome, settings, ['debug']), 'written')
+    // Off, by the extension: diagnose says so and the next call writes nothing to trace.log.
+    const askedOff = await askDebug({ enabled: false })
+    assert.equal(askedOff.on, false)
     const off = await call('diagnose', {}, 'diag0002')
     assert.equal(off.body.result.daemon.mode.debug, false)
     assert.equal(off.body.result.daemon.mode.callTimeoutMs, 60_000, 'back to the default deadline')
     assert.equal((await call('snapshot', {}, 'offcall1')).status, 200)
-    const traced = readFileSync(join(bridgeHome, 'trace.log'), 'utf8')
-    assert.ok(!traced.includes('offcall1'), 'no trace.log line once off')
+    assert.ok(!traceLog().includes('offcall1'), 'no trace.log line once off')
     assert.ok(readFileSync(join(bridgeHome, 'daemon.log'), 'utf8').includes('offcall1'), 'the daemon.log (layer 0) still has it')
   } finally {
     try { ws?.close() } catch { /* closed */ }

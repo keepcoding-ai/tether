@@ -56,9 +56,17 @@ export class AgentTracker implements MainAgents {
     this.commit(next, 'removed')
   }
 
-  /** The list the daemon answered at connect time replaces what is known; nothing is announced (a fresh connection). */
+  /**
+   * The list the daemon answered at connect time replaces what is known. The change listeners hear it (the answer arrives after
+   * the app is up, so a listener that read the list before it, as the browser process's mirror does at its hello, would keep an
+   * empty one: its agents alive in the slots, ended in the pad), but no exit is announced: a fresh connection ends nothing.
+   */
   reset(slots: readonly SlotState[]): void {
-    this.agents = new Map(slots.flatMap(s => { const a = agentInfoOf(s); return a ? [[s.slotId, a] as const] : [] }))
+    const next = new Map(slots.flatMap(s => { const a = agentInfoOf(s); return a ? [[s.slotId, a] as const] : [] }))
+    const diff = diffAgents(this.list(), [...next.values()])
+    this.agents = next
+    for (const a of [...diff.added, ...diff.changed]) this.fire(this.changeListeners, a, 'onDidChange')
+    for (const a of diff.removed) this.fire(this.changeListeners, { ...a, alive: false }, 'onDidChange')
   }
 
   /** The daemon connection closed: its agents are gone with it. */

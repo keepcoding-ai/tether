@@ -36,6 +36,22 @@ export interface SurfaceBridgeDeps {
     handle(channel: string, fn: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown): unknown
   }
   log(msg: string): void
+  /**
+   * The surfaces of an owner that lives in another process (the browser process): the window's messages about them are handed
+   * over as they came (the other process runs its own bridge), and its answers come back.
+   */
+  remote?(owner: string): RemoteSurfaceBridge | undefined
+}
+
+export interface RemoteSurfaceBridge {
+  send(channel: string, raw: unknown): void
+  invoke(channel: string, raw: unknown): Promise<unknown>
+}
+
+/** The owner a window message names (place, release, capture, freeze all carry it). */
+const ownerOf = (raw: unknown): string | undefined => {
+  const o = (raw as { owner?: unknown } | null)?.owner
+  return typeof o === 'string' ? o : undefined
 }
 
 /** What the renderer last asked for one surface, and the machinery that applies it in order. */
@@ -81,7 +97,18 @@ export class SurfaceBridge {
     return b && b.owner === msg.owner && !b.surface.state().destroyed ? b : undefined
   }
 
+  /** The remote bridge for a window message about another process's surface (checked to come from the window). */
+  private remoteFor(sender: unknown, raw: unknown): RemoteSurfaceBridge | undefined {
+    const owner = ownerOf(raw)
+    const remote = owner === undefined ? undefined : this.deps.remote?.(owner)
+    if (!remote) return undefined
+    const win = this.deps.window()
+    return win && !win.isDestroyed() && sender === win.webContents ? remote : undefined
+  }
+
   private async onCapture(event: IpcMainInvokeEvent, raw: unknown): Promise<Uint8Array | null> {
+    const remote = this.remoteFor(event.sender, raw)
+    if (remote) return (await remote.invoke(CAPTURE_CHANNEL, raw).catch(() => null)) as Uint8Array | null
     const b = this.boundFor(event.sender, raw)
     if (!b) return null
     try {
@@ -91,6 +118,8 @@ export class SurfaceBridge {
   }
 
   private async onFreeze(event: IpcMainInvokeEvent, raw: unknown): Promise<boolean> {
+    const remote = this.remoteFor(event.sender, raw)
+    if (remote) return (await remote.invoke(FREEZE_CHANNEL, raw).catch(() => false)) === true
     const b = this.boundFor(event.sender, raw)
     const frozen = (raw as { frozen?: unknown } | null)?.frozen
     if (!b || typeof frozen !== 'boolean') return false
@@ -105,6 +134,8 @@ export class SurfaceBridge {
   private onPlace(event: IpcMainEvent, raw: unknown): void {
     const win = this.deps.window()
     if (!win || win.isDestroyed() || event.sender !== win.webContents) return
+    const remote = this.remoteFor(event.sender, raw)
+    if (remote) { remote.send(PLACE_CHANNEL, raw); return }
     const msg = parsePlace(raw)
     if (!msg) return
     const b = this.bind(msg)
@@ -123,6 +154,8 @@ export class SurfaceBridge {
   private onRelease(event: IpcMainEvent, raw: unknown): void {
     const win = this.deps.window()
     if (win && !win.isDestroyed() && event.sender !== win.webContents) return
+    const remote = this.remoteFor(event.sender, raw)
+    if (remote) { remote.send(RELEASE_CHANNEL, raw); return }
     const msg = parseRelease(raw)
     if (!msg) return
     const b = this.bindings.get(msg.surface)

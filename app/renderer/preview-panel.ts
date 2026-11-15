@@ -8,7 +8,8 @@
 //     the editor, links open where they should (browser, anchor, file) and relative images load from the note's folder;
 //   - the pane remembers its file and where it was scrolled in its params; the next launch reopens it.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
-import { icon, setIcon } from './icons.ts'
+import { createTabHeader } from './tab-header.ts'
+import { setIcon } from './icons.ts'
 import { colorizeCode, tokenColorsCss } from './monaco.ts'
 import type { NoteIo, NotePanel } from './note-panel.ts'
 import type { PreviewPane } from './preview-pane.ts'
@@ -470,17 +471,12 @@ export class PreviewTab implements ITabRenderer {
 
   constructor(host: PreviewHost) {
     this.host = host
-    this.element = document.createElement('div')
-    this.element.className = 'tether-tab note preview'
-    const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon('eye'))
-    this.text = document.createElement('span'); this.text.className = 'text'
-    const close = document.createElement('button')
-    close.className = 'close'; close.title = 'Fechar prévia'; close.setAttribute('aria-label', 'Fechar prévia')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onClose(this.api.id) })
-    this.element.append(kind, this.text, close)
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev.clientX, ev.clientY) })
+    const h = createTabHeader({
+      className: 'note preview', glyph: 'eye',
+      close: { label: 'Fechar prévia', onClose: () => { if (this.api) this.host.onClose(this.api.id) } },
+      onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev.clientX, ev.clientY) },
+    })
+    this.element = h.element; this.text = h.text
   }
 
   init(params: TabPartInitParameters): void {

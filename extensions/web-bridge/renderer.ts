@@ -17,7 +17,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DetectedBrowser } from './browsers.ts'
 import type { ActionOutcome, InstallOutcome, StatusSnapshot, WebBridgeChannels } from './ipc.ts'
 import { BRIDGE_NAME, STATUS_ID } from './manifest.ts'
-import { activeAgents, ago, badgeOf, bridgeDebugOn, DEBUG_LINE, EMPTY_SNAPSHOT, stateOf, tabsLabel, titleOf, versionLine } from './status.ts'
+import { activeAgents, ago, badgeOf, DEBUG_LINE, EMPTY_SNAPSHOT, stateOf, tabsLabel, titleOf, versionLine } from './status.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -198,8 +198,6 @@ export function activate(ui: TetherUi): IDisposable[] {
   let noticeTimer: ReturnType<typeof setTimeout> | undefined
   let busyTimer: ReturnType<typeof setTimeout> | undefined
   let acting = false
-  /** The debug mode (extensions.web-bridge.debug): the icon goes amber and the popover says so while it is on. */
-  const debug = (): boolean => bridgeDebugOn(ui.settings)
 
   const el = (tag: string, className?: string, text?: string): HTMLElement => {
     const e = document.createElement(tag)
@@ -247,13 +245,13 @@ export function activate(ui: TetherUi): IDisposable[] {
   const render = (pop: HTMLElement): void => {
     const now = Date.now()
     pop.classList.add('wb-pop')
-    const state = stateOf(snapshot, now, debug())
+    const state = stateOf(snapshot, now)
     pop.dataset.state = state
 
     const head = el('div', 'wb-pop-head')
     head.append(icon('brand'), el('span', 'wb-pop-title', BRIDGE_NAME), el('span', 'wb-pop-state', titleOf(snapshot, now, BRIDGE_NAME)))
     pop.append(head)
-    if (debug()) { const d = el('p', 'wb-debug', DEBUG_LINE); d.setAttribute('role', 'status'); pop.append(d) }
+    if (snapshot.debug) { const d = el('p', 'wb-debug', DEBUG_LINE); d.setAttribute('role', 'status'); pop.append(d) }
 
     if (snapshot.daemon === 'up') {
       // Browsers.
@@ -330,8 +328,8 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   const handle = ui.status.register({
     id: STATUS_ID,
-    title: () => titleOf(snapshot, Date.now(), BRIDGE_NAME, debug()),
-    state: () => stateOf(snapshot, Date.now(), debug()),
+    title: () => titleOf(snapshot, Date.now(), BRIDGE_NAME),
+    state: () => stateOf(snapshot, Date.now()),
     badge: () => badgeOf(snapshot, Date.now()),
     render: pop => {
       render(pop)
@@ -359,7 +357,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   ui.test.expose('webBridge', {
     guide: (): GuideSnapshot => guide?.snapshot ?? { open: false },
-    status: (): { snapshot: StatusSnapshot; state: string; badge: number | 'dot' | undefined; title: string; watching: boolean } => ({ snapshot, state: stateOf(snapshot, Date.now(), debug()), badge: badgeOf(snapshot, Date.now()), title: titleOf(snapshot, Date.now(), BRIDGE_NAME, debug()), watching: popoverOpen }),
+    status: (): { snapshot: StatusSnapshot; state: string; badge: number | 'dot' | undefined; title: string; watching: boolean } => ({ snapshot, state: stateOf(snapshot, Date.now()), badge: badgeOf(snapshot, Date.now()), title: titleOf(snapshot, Date.now(), BRIDGE_NAME), watching: popoverOpen }),
   })
 
   return [
@@ -367,7 +365,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     toDisposable(() => guide?.close()),
     handle,
     onStatus,
-    ui.settings.onChange('debug', () => handle.update()),
     toDisposable(() => { if (busyTimer) clearTimeout(busyTimer); if (noticeTimer) clearTimeout(noticeTimer) }),
   ]
 }
