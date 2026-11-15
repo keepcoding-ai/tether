@@ -43,6 +43,10 @@ export const manifest: ExtensionManifest = {
       { command: 'search.next-match', title: 'Ir para o próximo resultado da pesquisa', category: SEARCH, icon: 'arrow-down' },
       { command: 'search.previous-match', title: 'Ir para o resultado anterior da pesquisa', category: SEARCH, icon: 'arrow-up' },
       { command: 'search.clear-history', title: 'Limpar histórico de pesquisa', category: SEARCH, icon: 'broom' },
+      // No default key: Ctrl+Shift+H belongs to another command of the app.
+      { command: 'search.toggle-replace', title: 'Substituir nos arquivos', category: SEARCH, icon: 'swap' },
+      { command: 'search.replace-all', title: 'Substituir tudo', category: SEARCH, icon: 'swap' },
+      { command: 'search.replace', title: 'Substituir', category: SEARCH, icon: 'swap' },
     ],
     keybindings: [
       { key: 'ctrl+shift+f', command: 'search.focus' },

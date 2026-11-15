@@ -45,5 +45,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.commands.registerCommand('search.next-match', () => view?.step(false)),
     ui.commands.registerCommand('search.previous-match', () => view?.step(true)),
     ui.commands.registerCommand('search.clear-history', () => view?.clearHistory()),
+    ui.commands.registerCommand('search.toggle-replace', onView(v => v.focusReplace())),
+    // Both do nothing while the replace field is closed (the view checks).
+    ui.commands.registerCommand('search.replace-all', () => view?.replace('all')),
+    ui.commands.registerCommand('search.replace', () => view?.replaceFocused()),
   ]
 }

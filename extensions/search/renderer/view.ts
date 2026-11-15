@@ -8,16 +8,22 @@
 //                                                                     onSearchComplete, clearSearchResults, cancelSearch,
 //                                                                     updateTextFromSelection, the result tree's open)
 //   src/vs/workbench/contrib/search/browser/searchActionsTopBar.ts   (refresh, clear, collapse/expand, tree/list, cancel)
-// Left out (next steps): replacing on disk, the open editors' unsaved text, "only open editors", "only changed files", the
+//   src/vs/workbench/contrib/search/browser/searchActionsRemoveReplace.ts (replace a match, a file, a folder; replace all)
+// Replacing checks each range against the found text first (replace.ts): a file that changed after the search is skipped,
+// stays in the tree and is named on the message line.
+// Left out (next steps): the open editors' unsaved text as search input, "only open editors", "only changed files", the
 // search editor.
 import type { ContextMenuEntry, PadHost, PadView, TetherUi } from '../../../app/renderer/ext-api.ts'
 import { icon, type IconName } from '../../../app/renderer/icons.ts'
 import type { UiIpc } from '../../../app/shared/ext-ipc.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { createPathOps, QueryBuilder, type ITextQueryBuilderOptions, type QueryBuilderEnv, type SearchFolder } from '../../../app/shared/vscode-search-query.ts'
-import { dirname, FileMatch, Match, SearchModel, SearchSortOrder, type RenderableMatch } from '../../../app/shared/vscode-search-model.ts'
+import { dirname, editsOf, FileMatch, Match, SearchModel, SearchResult, SearchSortOrder, type RenderableMatch } from '../../../app/shared/vscode-search-model.ts'
 import { DEFAULT_TEXT_SEARCH_PREVIEW_OPTIONS } from '../../../app/shared/vscode-search.ts'
 import type { SearchChannels, SearchDone } from '../ipc.ts'
+import { applyReplace } from './replace.ts'
+import { isQuietSingle, replaceAllConfirmation, replaceSummary, toRemove, type ReplaceOutcome } from './replace-rules.ts'
+import { replaceLabel } from './results-rules.ts'
 import { SearchResults, type ResultsSnapshot } from './results.ts'
 import {
   completionMessage, countLine, engineErrorText, excludeExpression, NO_FOLDER_MESSAGE, readViewState, regexError,
@@ -61,6 +67,8 @@ export interface SearchViewSnapshot {
   /** The message line, one entry per line. */
   message: string[]
   searching: boolean
+  /** A replace is being confirmed or applied. */
+  replacing: boolean
   viewMode: ViewMode
   count: number
   fileCount: number
@@ -96,6 +104,12 @@ export class SearchView implements PadView {
   private historyTimer: ReturnType<typeof setTimeout> | undefined
   private lastSearchMs: number | undefined
   private disposed = false
+  /** A replace is asking for confirmation or being applied: other replaces are ignored, a search waits for its end. */
+  private busy: 'confirm' | 'apply' | undefined
+  /** A search was asked for while a replace ran: it runs when the replace ends. */
+  private searchAfter = false
+  /** Grows whenever the results model is emptied or refilled: a replace that ends after that leaves the new results alone. */
+  private epoch = 0
 
   constructor(ui: TetherUi, host: PadHost) {
     this.ui = ui
@@ -273,11 +287,34 @@ export class SearchView implements PadView {
     if (match) this.open(match, false)
   }
 
-  /** Replacing: the tree's and the widget's actions are tied here; the disk replace comes in the next step. */
-  replace(_target: RenderableMatch | 'all'): void {}
+  /** "Substituir nos arquivos": the pad with the replace field open and the keyboard in it. */
+  focusReplace(): void {
+    this.widget.focusReplace()
+    this.results.layout()
+  }
 
-  status(): { searching: boolean; count: number; fileCount: number; message: string[] } {
-    return { searching: this.live !== undefined, count: this.model.searchResult.count(), fileCount: this.model.searchResult.fileCount(), message: this.message.map(l => l.text) }
+  /**
+   * Replaces a match, a file, a folder or everything (asked first). Only while the replace field is open; while a replace
+   * or a search runs nothing is replaced (the edits are computed from the results on screen).
+   */
+  replace(target: RenderableMatch | 'all'): void {
+    if (this.disposed || this.busy || this.live || !this.model.replaceActive || !this.model.replacePattern) return
+    if (this.model.searchResult.count() === 0) return
+    if (target === 'all') { void this.confirmReplaceAll(); return }
+    void this.runReplace(target)
+  }
+
+  /** The row the tree's keyboard is on. */
+  replaceFocused(): void {
+    const e = this.results.focused()
+    if (e) this.replace(e)
+  }
+
+  status(): { searching: boolean; replacing: 'confirm' | 'apply' | undefined; count: number; fileCount: number; message: string[] } {
+    return {
+      searching: this.live !== undefined, replacing: this.busy, count: this.model.searchResult.count(), fileCount: this.model.searchResult.fileCount(),
+      message: this.message.map(l => l.text),
+    }
   }
 
   snapshot(): SearchViewSnapshot {
@@ -285,6 +322,7 @@ export class SearchView implements PadView {
       widget: this.widget.snapshot(),
       message: this.message.map(l => l.text),
       searching: this.live !== undefined,
+      replacing: this.busy !== undefined,
       viewMode: this.viewMode,
       count: this.model.searchResult.count(),
       fileCount: this.model.searchResult.fileCount(),
@@ -332,6 +370,7 @@ export class SearchView implements PadView {
     if (this.disposed) return
     clearTimeout(this.typeTimer)
     this.typeTimer = undefined
+    if (this.busy) { this.searchAfter = true; return }
     const s = this.widget.state()
     if (s.search === '') {
       this.stopLive()
@@ -403,6 +442,7 @@ export class SearchView implements PadView {
     if (!run.added) {
       // The first batch replaces the previous search's results: the tree starts over (collapse state, scroll).
       run.added = true
+      this.epoch++
       this.counting = true
       this.model.searchResult.add(matches)
       this.results.reset()
@@ -429,6 +469,7 @@ export class SearchView implements PadView {
       // Nothing arrived yet: the previous search's results are still in the model. They go; the roots of this search come
       // back for a batch still on its way.
       this.counting = false
+      this.epoch++
       this.model.searchResult.clear()
       this.model.query = live.query
       this.results.reset()
@@ -461,6 +502,7 @@ export class SearchView implements PadView {
   }
 
   private clearResults(): void {
+    this.epoch++
     this.ended = undefined
     this.counting = false
     clearTimeout(this.countTimer)
@@ -509,7 +551,60 @@ export class SearchView implements PadView {
   }
 
   private updateReplaceAll(): void {
-    this.widget.setReplaceAllEnabled(this.model.searchResult.count() > 0 && this.widget.state().replaceShown)
+    this.widget.setReplaceAllEnabled(this.model.searchResult.count() > 0 && this.widget.state().replaceShown && this.busy === undefined)
+  }
+
+  // ---------- replacing ----------
+
+  private async confirmReplaceAll(): Promise<void> {
+    const r = this.model.searchResult
+    this.busy = 'confirm'
+    this.updateReplaceAll()
+    let ok = false
+    try {
+      const answer = await this.ui.dialogs.ask(replaceAllConfirmation(r.count(), r.fileCount(), this.model.replaceString))
+      ok = answer.choice === 'replace'
+    } finally {
+      this.busy = undefined
+    }
+    if (ok && !this.disposed && this.model.replaceActive && this.model.replacePattern) await this.runReplace(r)
+    else this.afterReplace()
+  }
+
+  private async runReplace(target: RenderableMatch | SearchResult): Promise<void> {
+    const files = editsOf(target, this.model)
+    if (files.length === 0) { this.afterReplace(); return }
+    // What leaves the tree once written: the match itself, or the files (those of a folder, or all of them).
+    const targets: { path: string; element: RenderableMatch }[] = target instanceof Match
+      ? [{ path: target.parent().resource, element: target }]
+      : (target instanceof FileMatch ? [target] : target instanceof SearchResult ? target.matches() : target.allDownstreamFileMatches())
+          .map(f => ({ path: f.resource, element: f }))
+    const epoch = this.epoch
+    this.busy = 'apply'
+    this.setSearching(this.live !== undefined)
+    this.updateReplaceAll()
+    let outcomes: ReplaceOutcome[]
+    try {
+      outcomes = await applyReplace(files, this.ipc)
+    } finally {
+      this.busy = undefined
+      this.setSearching(this.live !== undefined)
+    }
+    if (this.disposed) return
+    if (epoch === this.epoch) {
+      const gone = toRemove(targets, outcomes)
+      if (gone.length > 0) this.model.searchResult.batchRemove(gone)
+      // A single match replaced keeps the count line, unless nothing is left to count.
+      if (isQuietSingle(target instanceof Match ? 'match' : 'many', outcomes) && this.model.searchResult.count() > 0) this.showCount()
+      else this.setMessage(replaceSummary(outcomes))
+    }
+    this.afterReplace()
+  }
+
+  /** A replace ended: the actions come back, and a search asked for meanwhile runs now. */
+  private afterReplace(): void {
+    this.updateReplaceAll()
+    if (this.searchAfter && !this.disposed) { this.searchAfter = false; this.runSearch() }
   }
 
   // ---------- the tree's actions ----------
@@ -527,11 +622,16 @@ export class SearchView implements PadView {
 
   private rowMenu(element: RenderableMatch): ContextMenuEntry[] {
     const dismiss: ContextMenuEntry = { icon: 'x', label: 'Dispensar', run: () => this.model.searchResult.remove(element) }
+    // The replace entries only while the replace field is open (as the row buttons).
+    const replace: ContextMenuEntry[] = this.model.replaceActive
+      ? [{ icon: 'swap', label: replaceLabel(element instanceof Match ? 'match' : element instanceof FileMatch ? 'file' : 'folder'), run: () => this.replace(element) }, 'sep']
+      : []
     if (element instanceof Match) {
-      return [{ icon: 'copy', label: 'Copiar', run: () => this.ui.shell.writeClipboard(element.fullPreviewLines().join('\n')) }, 'sep', dismiss]
+      return [...replace, { icon: 'copy', label: 'Copiar', run: () => this.ui.shell.writeClipboard(element.fullPreviewLines().join('\n')) }, 'sep', dismiss]
     }
     const path = element.resource
     return [
+      ...replace,
       ...(path ? [{ icon: 'copy', label: 'Copiar caminho', run: () => this.ui.shell.writeClipboard(path) } satisfies ContextMenuEntry, 'sep' as const] : []),
       dismiss,
     ]
@@ -572,8 +672,9 @@ export class SearchView implements PadView {
     else this.collapseAll()
   }
 
+  /** The progress bar: a search running, or a replace being applied. */
   private setSearching(on: boolean): void {
-    this.element.classList.toggle('searching', on)
+    this.element.classList.toggle('searching', on || this.busy === 'apply')
     this.updateTopbar()
   }
 

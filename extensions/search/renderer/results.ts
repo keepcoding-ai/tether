@@ -451,7 +451,8 @@ export class SearchResults {
 
   private act(action: string, node: Node): void {
     const e = node.element.element
-    if (action === 'replace') { if (this.host.model.replaceActive) this.host.replace(e) }
+    // The replaced row is the focus anchor (as VS Code's performReplace): once it leaves, the keyboard goes to the next row.
+    if (action === 'replace') { if (this.host.model.replaceActive) { this.setFocused(node, false); this.host.replace(e) } }
     else if (action === 'dismiss') this.dismiss(node)
   }
 
