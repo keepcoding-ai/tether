@@ -51,7 +51,8 @@ export function tabActions(s: TabActionState, agent: string): TabAction[] {
   if (s.holder === 'user') add('give-back', t.giveBack, false, s.agentAlive ? 'highlight' : undefined)
   else if (s.loaded) add('take', t.take, false, s.agentAlive ? 'icon' : undefined)
   // An ended agent has no brake: nobody answers on its tabs.
-  if (s.agentAlive) add(s.paused ? 'resume' : 'pause', s.paused ? t.resume : t.pause, false, 'icon')
+  // Held by the person, the brake stays in the menu only (the bar keeps the hand back and ×).
+  if (s.agentAlive) add(s.paused ? 'resume' : 'pause', s.paused ? t.resume : t.pause, false, s.holder === 'user' ? undefined : 'icon')
   if (s.holder === 'user' && s.loaded) add('clean-reload', t.cleanReload)
   add('close', closeNeedsConfirm(s) ? `${CLOSE_TAB}…` : CLOSE_TAB, true, 'icon')
   return out

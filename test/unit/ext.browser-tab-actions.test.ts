@@ -91,7 +91,7 @@ describe('browser tab actions: ended agent and bar pins', () => {
     assert.deepEqual(ids(st({ agentAlive: false, holder: 'user' })), ['give-back', 'clean-reload', 'close'])
   })
   test('pins: person holds, agent alive, agent ended', () => {
-    assert.deepEqual(pinsOf(st({ holder: 'user' })), { 'give-back': 'highlight', pause: 'icon', 'clean-reload': undefined, close: 'icon' })
+    assert.deepEqual(pinsOf(st({ holder: 'user' })), { 'give-back': 'highlight', pause: undefined, 'clean-reload': undefined, close: 'icon' })
     assert.deepEqual(pinsOf(st()), { take: 'icon', pause: 'icon', close: 'icon' })
     assert.deepEqual(pinsOf(st({ paused: true })), { take: 'icon', resume: 'icon', close: 'icon' })
     assert.deepEqual(pinsOf(st({ agentAlive: false })), { take: undefined, close: 'icon' })

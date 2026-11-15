@@ -283,6 +283,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const text = el('span', 'br-pad-foot-text')
       const state = rowStateText(section, { control, asking: tab.asking, expired: tab.expired, ended: isEnded(owner), name, url: tab.url, ...(actions.get(tab.tabId) ? { action: actions.get(tab.tabId)! } : {}), now })
       if (state) { const s = el('span', 'br-pad-state', state); s.dataset.role = 'state'; text.append(s) }
+      else r.dataset.bare = 'true' // no state phrase: the bar shares the address line instead of taking a third one
       foot.append(text, bar('Ações da guia', () => tabMenuEntries(paneId)))
       r.append(open, foot)
       // The whole row reveals the tab (the bar's buttons stop their own clicks); right-click opens the tab's menu.

@@ -101,6 +101,9 @@
 .br-pad-foot { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 8px; }
 .br-pad-foot-text { flex: 1 1 4ch; min-width: 0; display: flex; }
 .br-pad-foot .action-bar { flex: 0 1 auto; }
+.br-pad-row[data-bare="true"] { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: end; }
+.br-pad-row[data-bare="true"] > .br-pad-open { grid-column: 1; grid-row: 1 / 3; }
+.br-pad-row[data-bare="true"] > .br-pad-foot { grid-column: 2; grid-row: 2; padding-left: 0; }
 .br-pad-row[data-control="user"] .br-pad-state { color: var(--fg); font-weight: 600; }
 
 /* E13: "Baixados" in the pad */

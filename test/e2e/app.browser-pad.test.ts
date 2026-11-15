@@ -212,6 +212,7 @@ test('browser pad: list by agent, filter, taken on top, moved tab, pause, reopen
     v = await until('a1 on top', async () => { const x = await pad(); return x.withPerson.length === 1 ? x : undefined })
     assert.deepEqual(v.withPerson.map(r => [r.tabId, r.state]), [[a1, 'com você, do Sonda']])
     assert.ok(v.withPerson[0]!.actions.some(a => a.pin === 'highlight' && a.label === 'Devolver ao Sonda'), 'the row bar highlights the hand back')
+    assert.deepEqual(v.withPerson[0]!.actions.filter(x => x.pin).map(x => x.label), ['Devolver ao Sonda', 'Fechar guia'], 'held by the person: the brake is not pinned')
     assert.deepEqual(v.sections, ['user', 'active', 'ended'])
     assert.equal(v.withPersonHead, 'Com você (1)')
     assert.deepEqual(v.groups[0]!.rows.map(r => r.tabId), [a2], 'the rest of the agent stays below')
