@@ -4,7 +4,7 @@
 // icon's amber rule, the tooltip and the doctor's line.
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import '../../extensions/index.daemon.ts'
@@ -14,7 +14,7 @@ import { bridgeDebugCheck, bridgeSettings } from '../../extensions/web-bridge/da
 import { manifest } from '../../extensions/web-bridge/manifest.ts'
 import { BridgeMcpRewriter, patchBridgeInitialize, SETTINGS_NEW, SETTINGS_OLD } from '../../extensions/web-bridge/mcp-texts.ts'
 import { bridgeHomeOf } from '../../extensions/web-bridge/paths.ts'
-import { EMPTY_SNAPSHOT, stateOf, titleOf, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
+import { EMPTY_SNAPSHOT, reduceStatus, stateOf, titleOf, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
 import { VENDOR_BUNDLE } from '../../extensions/web-bridge/vendor-rules.ts'
 import { settingReaderOf } from '../../app/shared/vscode-configuration-registry.ts'
 import { tempDirs } from './tmp.helpers.ts'
@@ -25,6 +25,16 @@ after(() => tmp.cleanup())
 const reader = (values: Record<string, unknown>) => settingReaderOf(manifest.contributes!.settings!, values)
 const capsOf = (home: string): Capabilities | undefined => (JSON.parse(readFileSync(join(bridgeHomeOf(home), 'config.json'), 'utf8')) as { capabilities?: Capabilities }).capabilities
 const PACKAGE: Capabilities = { evaluate: 'own-tabs', download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: true }
+
+const doctor = (browsers: unknown[] | 'mute', dumpDir?: string) => {
+  const home = tmp.make()
+  writeFileSync(join(home, 'api.key'), 'test-key')
+  const fetch = (async () => {
+    if (browsers === 'mute') throw new Error('ECONNREFUSED')
+    return new Response(JSON.stringify({ browsers }), { status: 200 })
+  }) as unknown as typeof globalThis.fetch
+  return bridgeDebugCheck({ port: 1, bridgeHome: home, displayName: 'Tether Bridge', dumpDir, fetch })
+}
 
 describe('web-bridge debug: the tether part of the capabilities (pure)', () => {
   test('nothing set and debug never on: the installation\'s capabilities stay exactly as they are', () => {
@@ -157,31 +167,40 @@ describe('web-bridge debug: the warning', () => {
   const up: StatusSnapshot = { ...EMPTY_SNAPSHOT, daemon: 'up', everUp: true, browsers: [{ id: 'b1', name: 'Chrome', tabs: 0 }] }
   const now = 1_000_000
 
-  test('the icon goes amber while debug is on and the daemon is up; a fallen daemon stays red', () => {
+  test('the icon goes amber while a browser reports debug on and the daemon is up; a fallen daemon stays red', () => {
+    const dbg = { ...up, debug: true }
     assert.equal(stateOf(up, now), 'normal')
-    assert.equal(stateOf(up, now, true), 'warn')
-    assert.equal(stateOf({ ...up, browsers: [] }, now, true), 'warn', 'without a browser too')
-    assert.equal(stateOf({ ...up, daemon: 'down' }, now, true), 'error')
+    assert.equal(stateOf(dbg, now), 'warn')
+    assert.equal(stateOf({ ...dbg, browsers: [] }, now), 'warn', 'without a browser too')
+    assert.equal(stateOf({ ...dbg, daemon: 'down' }, now), 'error')
   })
 
   test('the tooltip names the mode last', () => {
     assert.equal(titleOf(up, now, 'Tether Bridge'), 'Chrome conectado')
-    assert.equal(titleOf(up, now, 'Tether Bridge', true), 'Chrome conectado · modo de depuração ligado')
-    assert.equal(titleOf({ ...up, paused: true }, now, 'Tether Bridge', true), 'Tether Bridge pausado · modo de depuração ligado')
+    assert.equal(titleOf({ ...up, debug: true }, now, 'Tether Bridge'), 'Chrome conectado · modo de depuração ligado')
+    assert.equal(titleOf({ ...up, paused: true, debug: true }, now, 'Tether Bridge'), 'Tether Bridge pausado · modo de depuração ligado')
   })
 
-  test('the setting alone decides', () => {
+  test('the snapshot reads debug from /status: on, off and absent (older daemon)', () => {
+    const body = (debug: unknown) => ({ browsers: [{ id: 'b1', name: 'Chrome', ...(debug === undefined ? {} : { debug }) }] })
+    assert.equal(reduceStatus(body({ on: true, callTimeoutMs: null, traceLog: 't', dumpsDir: 'd' })).debug, true)
+    assert.equal(reduceStatus(body({ on: false, callTimeoutMs: null, traceLog: 't', dumpsDir: 'd' })).debug, false)
+    assert.equal(reduceStatus(body(undefined)).debug, false)
+    assert.equal(reduceStatus(undefined).debug, false)
+    assert.equal(EMPTY_SNAPSHOT.debug, false)
+  })
+
+  test('the setting-side helper stays strict', () => {
     assert.equal(bridgeDebugOn({ get: () => true }), true)
     assert.equal(bridgeDebugOn({ get: () => 'true' }), false)
   })
 
-  test('tether doctor: OK while off, AVISO with the deadline while on', () => {
-    const api = (b: Record<string, unknown> | undefined) => ({ settings: { get: <T,>(key: string) => (key === 'extensions' && b ? ({ 'web-bridge': b } as T) : undefined) } })
-    assert.deepEqual(bridgeDebugCheck(bridgeSettings(api(undefined))), { level: 'OK', name: 'depuração do Tether Bridge', detail: 'desligada' })
-    const on = bridgeDebugCheck(bridgeSettings(api({ debug: true, debugCallTimeoutSec: 0 })))
+  test('tether doctor: OK while off or mute, AVISO naming the browser and the deadline while on', async () => {
+    assert.deepEqual(await doctor([{ id: 'b1', name: 'Chrome' }, { id: 'b2', name: 'Edge', debug: { on: false } }]), { level: 'OK', name: 'depuração do Tether Bridge', detail: 'desligada' })
+    assert.equal((await doctor('mute')).detail, 'desligada')
+    const on = await doctor([{ id: 'b1', name: 'Chrome', debug: { on: true, callTimeoutMs: null } }, { id: 'b2', name: 'Edge', debug: { on: true, callTimeoutMs: 180000 } }])
     assert.equal(on.level, 'AVISO')
-    assert.equal(on.detail, 'ligada (prazo de cada chamada: sem prazo)')
-    assert.equal(bridgeDebugCheck(bridgeSettings(api({ debug: true }))).detail, 'ligada (prazo de cada chamada: o normal)')
+    assert.equal(on.detail, 'ligada em Chrome, prazo de cada chamada: sem prazo; Edge, prazo de cada chamada: 180 s')
   })
 })
 
@@ -205,12 +224,11 @@ describe('web-bridge debug: the agent\'s instructions and the dumps', () => {
     assert.ok(bundle.includes(String.raw`in the tether: Settings \u2192 Debugging`) || bundle.includes(`in the tether: ${SETTINGS_OLD}`))
   })
 
-  test('the doctor\'s debug line counts the dump folders of the bridge home', () => {
-    const home = tmp.make()
-    const dir = join(home, 'debug')
-    const s = reader({ debug: true })
-    assert.doesNotMatch(bridgeDebugCheck(s, dir).detail, /despejo/)
+  test('the doctor debug line counts the dump folders of the bridge home', async () => {
+    const dir = join(tmp.make(), 'debug')
+    const bro = [{ id: 'b1', name: 'Chrome', debug: { on: true, callTimeoutMs: null } }]
+    assert.doesNotMatch((await doctor(bro, dir)).detail, /despejo/)
     for (const id of ['a1', 'b2', 'c3']) mkdirSync(join(dir, id), { recursive: true })
-    assert.equal(bridgeDebugCheck(s, dir).detail, `ligada (prazo de cada chamada: o normal); 3 despejos de falha em ${dir}`)
+    assert.equal((await doctor(bro, dir)).detail, `ligada em Chrome, prazo de cada chamada: sem prazo; 3 despejos de falha em ${dir}`)
   })
 })

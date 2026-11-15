@@ -20,7 +20,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SettingReader } from '../../app/shared/vscode-configuration-registry.ts'
-import { bridgeDebugOn } from './status.ts'
 
 export type Capabilities = Record<string, boolean | string>
 
@@ -30,7 +29,8 @@ const MIRRORED = { evaluate: 'evaluate', windowPerAgent: 'agentWindows' } as con
 /** The settings whose change rewrites the capabilities. */
 export const CAPABILITY_SETTINGS = ['evaluate', 'agentWindows', 'debug', 'debugCallTimeoutSec'] as const
 
-export { bridgeDebugOn } from './status.ts'
+/** Whether the debug mode is on (extensions.web-bridge.debug). */
+export const bridgeDebugOn = (s: { get(key: string): unknown }): boolean => s.get('debug') === true
 
 /** Seconds as typed on the settings page → the capability's string of whole milliseconds ("0" = no deadline). */
 const msText = (sec: number): string => String(Math.max(0, Math.round(sec * 1000)))

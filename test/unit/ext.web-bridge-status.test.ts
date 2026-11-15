@@ -55,8 +55,8 @@ describe('web-bridge status: the snapshot from /status', () => {
       { clientId: 'tether:s2', slotId: 's2', name: 'Claude · b', tabs: 1, lastTool: 'click', lastSeenAt: NOW - 5000, calls: 2 },
       { clientId: 'atrium:x', name: 'atrium:x', tabs: 0, calls: 0 },
     ])
-    assert.deepEqual(reduceStatus(undefined), { paused: false, browsers: [], agents: [] })
-    assert.deepEqual(reduceStatus('x'), { paused: false, browsers: [], agents: [] })
+    assert.deepEqual(reduceStatus(undefined), { paused: false, debug: false, browsers: [], agents: [] })
+    assert.deepEqual(reduceStatus('x'), { paused: false, debug: false, browsers: [], agents: [] })
   })
 
   test('browser labels', () => {

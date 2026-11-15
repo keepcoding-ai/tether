@@ -5,8 +5,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { releaseClient } from './agents.ts'
+import { folderCount } from '../../src/trace/timeline.ts'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
-import { EMPTY_SNAPSHOT, pendingOf, reduceStatus, type DaemonReach, type StatusSnapshot } from './status.ts'
+import { debugOf, EMPTY_SNAPSHOT, pendingOf, reduceStatus, type DaemonReach, type StatusSnapshot } from './status.ts'
 
 export const POLL_IDLE_MS = 15_000
 export const POLL_OPEN_MS = 2_000
@@ -71,6 +72,29 @@ export async function bridgeInFlightCheck(deps: { port: number; bridgeHome: stri
   } finally { clearTimeout(t) }
 }
 
+/** `tether doctor`: the debug mode as the bridge daemon reports it (GET /status `browsers[].debug`), set in the extension's options page. */
+export async function bridgeDebugStatusCheck(deps: { port: number; bridgeHome: string; displayName: string; dumpDir?: string; fetch?: typeof fetch }): Promise<DaemonCheck> {
+  const name = `depuração do ${deps.displayName}`
+  const dumps = deps.dumpDir ? folderCount(deps.dumpDir) : 0
+  const dumpNote = dumps ? `; ${dumps} despejo${dumps === 1 ? '' : 's'} de falha em ${deps.dumpDir}` : ''
+  const off: DaemonCheck = { level: 'OK', name, detail: `desligada${dumpNote}` }
+  const key = readApiKey(deps.bridgeHome)
+  if (!key) return off
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
+  try {
+    const r = await (deps.fetch ?? fetch)(`http://127.0.0.1:${deps.port}/status`, { signal: ctl.signal, headers: { authorization: `Bearer ${key}`, connection: 'close' } })
+    if (!r.ok) return off
+    const on = debugOf(await r.json())
+    if (!on.length) return off
+    const deadline = (ms: number | null): string => ms === null ? 'sem prazo' : `${Math.round(ms / 1000)} s`
+    const list = on.map(d => `${d.browser}, prazo de cada chamada: ${deadline(d.callTimeoutMs)}`).join('; ')
+    return { level: 'AVISO', name, detail: `ligada em ${list}${dumpNote}`, hint: 'desligue nas opções da extensão no navegador quando terminar de investigar' }
+  } catch {
+    return off
+  } finally { clearTimeout(t) }
+}
+
 export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   const doFetch = deps.fetch ?? fetch
   const now = deps.now ?? (() => Date.now())
@@ -97,7 +121,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   const take = async (): Promise<StatusSnapshot> => {
     const key = readKey()
     let daemon: DaemonReach = 'down'
-    let reduced: ReturnType<typeof reduceStatus> = { paused: false, browsers: [], agents: [] }
+    let reduced: ReturnType<typeof reduceStatus> = { paused: false, debug: false, browsers: [], agents: [] }
     if (!key) daemon = 'no-key'
     else {
       try {
