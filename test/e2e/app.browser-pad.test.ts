@@ -23,7 +23,7 @@ import type { ElectronApplication, Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { daemonMain, launchHidden, pidAlive, rawCdp, root, sleep, inBrowser } from './browser-kit.ts'
+import { FAKE_SOUL_CMD as FAKE_SOUL, daemonMain, launchHidden, pidAlive, rawCdp, root, sleep, inBrowser } from './browser-kit.ts'
 
 type Row = { tabId: string; title: string; address: string; control: string; action: string; place: string }
 type Btn = { action: string; text: string; disabled: boolean }
@@ -60,7 +60,6 @@ type Tabs = {
 }
 
 const pipe = `\\\\.\\pipe\\tether-brpad-${process.pid}`
-const FAKE_SOUL = `"${process.execPath}" -e "setInterval(()=>{},1000)"`
 const PAD = '[data-pad="browser.tabs"]'
 
 function serve(): Promise<{ server: Server; base: string }> {

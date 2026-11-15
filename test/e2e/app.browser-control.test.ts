@@ -36,7 +36,7 @@ import type { ElectronApplication, Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep, inBrowser } from './browser-kit.ts'
+import { FAKE_SOUL_CMD as FAKE_SOUL, cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep, inBrowser } from './browser-kit.ts'
 
 type Pane = { id: string; tabId?: string; control: string; controlText: string; action: string; notice: string; noticeKind: string; noticeAction: string; front?: boolean }
 declare const window: {
@@ -396,7 +396,6 @@ test('browser control: take, pause, shield, help request with the clean hand-off
   }
 })
 
-const FAKE_SOUL = `"${process.execPath}" -e "setInterval(()=>{},1000)"`
 const SESSION = 'SESSION-COOKIE-4Q8'
 type TrayModel = { items: { kind: string; label?: string; slotId?: string }[]; badge: string; attention: number; tooltip: string }
 
