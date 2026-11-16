@@ -7,6 +7,7 @@ import { folderNameOf, slotIsLive } from '../shared/agent-info.ts'
 import type { Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import type { LinkAssociation } from '../shared/api.ts'
+import { isUnsafe } from '../../src/core/unsafe.ts'
 import { KIND_ICON } from './icons.ts'
 import { pauseFirstConsequence } from './sessions-rules.ts'
 
@@ -221,7 +222,7 @@ export function switchProfileSituation(s: SlotState, profiles: Profile[]): Dialo
     return {
       id: p.id, icon: KIND_ICON[kind] ?? 'terminal-window', label: p.name,
       detail: args.length ? args.join(' ') : (shell && !p.shell ? 'shell padrão' : 'sem argumentos'),
-      ...(p.args.includes('--dangerously-skip-permissions') ? { mark: 'sem restrições' } : {}),
+      ...(isUnsafe(p.args) ? { mark: 'sem restrições' } : {}),
       ...(p.id === currentId ? { current: true } : {}),
     }
   })

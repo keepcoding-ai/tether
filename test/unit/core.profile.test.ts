@@ -232,5 +232,8 @@ describe('a slot and its profile', () => {
   test('isUnsafe', () => {
     assert.equal(isUnsafe(['--model', 'haiku']), false)
     assert.equal(isUnsafe(['--dangerously-skip-permissions']), true)
+    assert.equal(isUnsafe(['--dangerously-bypass-approvals-and-sandbox']), true)
+    assert.equal(isUnsafe(['--model', 'o3', '--yolo']), true)
+    assert.equal(isUnsafe(['--dangerously-bypass-hook-trust']), false)
   })
 })

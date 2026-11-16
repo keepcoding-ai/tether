@@ -10,6 +10,7 @@ import { defaultShell } from '../agents/shell.ts'
 import type { AgentName, SlotMeta } from './event.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import '../agents/load.ts'
+export { isUnsafe, UNSAFE_ARGS } from './unsafe.ts'
 
 export type ProfileAgent = AgentName | 'shell'
 
@@ -379,10 +380,6 @@ export function snapshotProfile(meta: SlotMeta, p: Profile): boolean {
   return JSON.stringify([meta.profileId, meta.profileArgs, meta.profileEnv]) !== before
 }
 
-/** The launch skips Claude's permission prompts: the UI shows a badge for it. */
-export function isUnsafe(args: string[]): boolean {
-  return args.includes(UNSAFE_ARG)
-}
 
 // ---- a store with a cache keyed on the file's stat --------------------------
 

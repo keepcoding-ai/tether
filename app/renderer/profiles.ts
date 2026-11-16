@@ -11,13 +11,13 @@ import { formatArgs, parseArgs } from './args.ts'
 import { askDialog } from './dialog.ts'
 import { icon, KIND_ICON } from './icons.ts'
 import { profileOptions } from './profile-options.ts'
+import { isUnsafe, isUnsafeArg } from '../../src/core/unsafe.ts'
 import { UNSAFE_LABEL, UNSAFE_TOOLTIP } from './panel.ts'
 import { deleteProfileSituation } from './situations.ts'
 
 /** The agents in the profile manager's order: the extensions' (registration order), then the shell. */
 export const agentOrder = (): ProfileAgent[] => [...agentUiNames(), 'shell']
 export const AGENT_LABEL: Record<ProfileAgent, string> = agentTable('Shell', ui => ui.label, n => n)
-const UNSAFE_ARG = '--dangerously-skip-permissions'
 
 /** What the list shows for a profile's command line: shell profiles show the executable's args too. */
 export function displayArgs(p: Profile): string[] {
@@ -25,7 +25,7 @@ export function displayArgs(p: Profile): string[] {
 }
 
 export function profileIsUnsafe(p: Profile): boolean {
-  return p.args.includes(UNSAFE_ARG)
+  return isUnsafe(p.args)
 }
 
 export function defaultOf(profiles: Profile[], agent: ProfileAgent): Profile | undefined {
@@ -259,7 +259,7 @@ export class ProfileManager {
     chips.replaceChildren()
     for (const a of args) {
       const c = document.createElement('span'); c.className = 'chip'; c.textContent = a
-      if (a === UNSAFE_ARG) { c.classList.add('unsafe'); c.title = UNSAFE_TOOLTIP; c.prepend(icon('shield-warning')) }
+      if (isUnsafeArg(a)) { c.classList.add('unsafe'); c.title = UNSAFE_TOOLTIP; c.prepend(icon('shield-warning')) }
       chips.append(c)
     }
     chips.hidden = args.length === 0
