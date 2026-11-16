@@ -9,7 +9,7 @@ import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { extensions as daemonIndex } from '../../extensions/index.daemon.ts'
-import { CLIENT_ID_PATTERN, CLIENT_NAME_MAX, clientIdOf, clientNameOf, createLaunchMiddleware, ENV_CLIENT_ID, ENV_CLIENT_NAME, releaseClient } from '../../extensions/web-bridge/agents.ts'
+import { BridgeIdentities, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, cleanName, clientIdOf, clientNameOf, createLaunchMiddleware, ENV_CLIENT_ID, ENV_CLIENT_NAME, releaseClient } from '../../extensions/web-bridge/agents.ts'
 import { serveToAgents } from '../../extensions/web-bridge/daemon.ts'
 import { mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
 import { MCP_CONFIG_FLAG, withMcpConfigFlag } from '../../src/agents/mcp.ts'
@@ -30,7 +30,8 @@ describe('web-bridge launch middleware (F7 C3)', () => {
 
   before(() => {
     home = tempHome()
-    host = new DaemonExtensionHost({ home, log: m => logs.push(m), agents: new AgentRegistry(), extensions: daemonIndex })
+    // Only the bridge and the agents it serves: another extension's launch middleware (skills' --plugin-dir) is not this test's.
+    host = new DaemonExtensionHost({ home, log: m => logs.push(m), agents: new AgentRegistry(), extensions: daemonIndex.filter(e => ['claude', 'soul', 'web-bridge'].includes(e.manifest.id)) })
     host.activate()
     assert.deepEqual(host.activated, ['claude', 'soul', 'web-bridge'])
     mkdirSync(join(home, 'mcp'), { recursive: true })
@@ -45,7 +46,7 @@ describe('web-bridge launch middleware (F7 C3)', () => {
       assert.notEqual(out, input, `${agent}: rewritten`)
       assert.deepEqual(out.args, [...input.args, MCP_CONFIG_FLAG, mcpFile()], `${agent}: flag appended after the slot's own args`)
       assert.equal(out.env[ENV_CLIENT_ID], 'tether:a1b2c3d4')
-      assert.equal(out.env[ENV_CLIENT_NAME], `${agent === 'claude' ? 'Claude' : 'Soul'} · Pesquisa`)
+      assert.equal(out.env[ENV_CLIENT_NAME], 'Pesquisa', `${agent}: the tab's text, nothing else`)
       assert.equal(out.env.PATH, 'p'); assert.equal(out.env.TETHER_SLOT_ID, 'a1b2c3d4')
       assert.equal(out.command, input.command); assert.equal(out.cwd, input.cwd)
       assert.deepEqual(input, plan(), `${agent}: the plan given is never mutated`)
@@ -107,15 +108,43 @@ describe('createLaunchMiddleware rules', () => {
     assert.equal(logs.length, 2, 'warned again after the file came and went')
   })
 
-  test('identity: the id follows the bridge pattern; the name takes the slot name, else the folder, within the limit', () => {
+  test('identity: the id follows the bridge pattern; the name is the text of the pane\'s tab (name, else title, else folder), within the limit', () => {
     assert.match(clientIdOf('a1b2c3d4'), CLIENT_ID_PATTERN)
-    assert.equal(clientNameOf('claude', { name: '  Pesquisa ', cwd: 'D:\\x\\y' }), 'Claude · Pesquisa')
-    assert.equal(clientNameOf('soul', { cwd: 'D:\\work\\proj\\' }), 'Soul · proj')
-    assert.equal(clientNameOf('claude', { cwd: '/home/g/app' }), 'Claude · app')
-    const long = clientNameOf('claude', { name: 'x'.repeat(200), cwd: 'D:\\' })
+    assert.equal(clientNameOf({ name: '  Pesquisa ', title: 'kai-thinking', cwd: 'D:\\x\\y' }), 'Pesquisa', 'the name the person gave wins')
+    assert.equal(clientNameOf({ title: 'kai-thinking', cwd: 'D:\\x\\atrium' }), 'kai-thinking', 'then the session title')
+    assert.equal(clientNameOf({ cwd: 'D:\\work\\proj\\' }), 'proj', 'then the folder')
+    assert.equal(clientNameOf({ cwd: '/home/g/app' }), 'app')
+    assert.equal(clientNameOf({ name: '\u202ekai\u200b-thinking\u0007 x', cwd: 'D:\\x' }), 'kai-thinking x', 'bidi, zero-width and control characters never reach the browser')
+    assert.equal(clientNameOf({ name: '\u200b \u202e', cwd: 'D:\\x\\atrium' }), 'atrium', 'a name that cleans to nothing falls back to the folder')
+    assert.equal(cleanName(' a \t b\r\n c '), 'a b c')
+    const ids = new BridgeIdentities()
+    const long = ids.nameFor('s1', 'x'.repeat(200))
     assert.equal(long.length, CLIENT_NAME_MAX); assert.ok(long.endsWith('…'))
+    assert.equal([...ids.nameFor('s2', '😀'.repeat(100))].length, CLIENT_NAME_MAX, 'cut by character, never inside a surrogate pair')
     const out = make().mw(plan(), meta('claude', { name: 'Pesquisa' }))
-    assert.equal(out.env[ENV_CLIENT_NAME], 'Claude · Pesquisa')
+    assert.equal(out.env[ENV_CLIENT_NAME], 'Pesquisa')
+  })
+
+  test('the launch takes the tab\'s text from the slot\'s state (a resumed session\'s title); without it, the meta', () => {
+    const { mw } = make()
+    const state = { slotId: 'a1b2c3d4', kind: 'claude', cwd: 'D:\\work\\atrium', folder: 'D:\\work\\atrium', status: 'starting', title: 'kai-thinking' } as const
+    assert.equal(mw(plan(), meta('claude'), state).env[ENV_CLIENT_NAME], 'kai-thinking')
+    assert.equal(make().mw(plan(), meta('claude')).env[ENV_CLIENT_NAME], 'proj', 'no state: the folder of the meta')
+  })
+
+  test('two running agents with the same tab text: the first keeps it, the next is numbered; nobody is renumbered', () => {
+    const identities = new BridgeIdentities()
+    const { mw } = make({ identities })
+    const launch = (slotId: string, cwd: string) => mw(plan(), meta('claude', { slotId, cwd }), { slotId, kind: 'claude', cwd, folder: cwd, status: 'starting' }).env[ENV_CLIENT_NAME]
+    assert.equal(launch('s1', 'D:\\a\\atrium'), 'atrium')
+    assert.equal(launch('s2', 'D:\\b\\atrium'), 'atrium 2')
+    assert.equal(launch('s3', 'D:\\c\\Atrium'), 'Atrium 3', 'case does not make a different name for the person')
+    assert.equal(launch('s1', 'D:\\a\\atrium'), 'atrium', 'a relaunch with the same text keeps its name')
+    identities.drop('s1')
+    assert.equal(identities.nameOf('s2'), 'atrium 2', 'the first one ending does not renumber the others')
+    assert.equal(launch('s4', 'D:\\d\\atrium'), 'atrium', 'the plain name is free again')
+    assert.equal(identities.nameFor('s2', 'kai'), 'kai', 'renamed: the new text, plain')
+    assert.equal(identities.nameFor('s3', 'Atrium'), 'Atrium 3', 'same text: same name')
   })
 })
 

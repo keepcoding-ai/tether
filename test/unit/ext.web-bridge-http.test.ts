@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { extensions as daemonIndex } from '../../extensions/index.daemon.ts'
-import { type BridgeBackendInput, createLaunchMiddleware, ENV_BRIDGE_MCP_KEY, ENV_CLIENT_ID, releaseHttp } from '../../extensions/web-bridge/agents.ts'
+import { type BridgeBackendInput, BridgeIdentities, createLaunchMiddleware, ENV_BRIDGE_MCP_KEY, ENV_CLIENT_ID, ENV_CLIENT_NAME, releaseHttp } from '../../extensions/web-bridge/agents.ts'
 import { createBridgeBackends } from '../../extensions/web-bridge/daemon.ts'
 import { dropGrants, grantsFileOf, grantStoreOf } from '../../extensions/web-bridge/grant-store.ts'
 import { httpMcpConfigPathOf, mcpConfigPathOf } from '../../extensions/web-bridge/paths.ts'
@@ -15,6 +15,7 @@ import { MCP_CONFIG_FLAG } from '../../src/agents/mcp.ts'
 import { AgentRegistry } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import type { SlotState } from '../../src/daemon/protocol.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
 import type { McpBackendSpec, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 
@@ -27,7 +28,7 @@ const slotOf = (agent: SlotMeta['agent']): SlotMeta => ({ v: 1, slotId: 's1', ag
 const base = (): LaunchPlan => ({ command: 'agent.exe', args: ['--model', 'haiku'], cwd: 'D:/w/proj', env: { PATH: 'p' } })
 const STDIO = { mcpServers: { 'tether-bridge': { command: 'node', args: ['C:/v/atrium-bridge.mjs', 'mcp'], env: { ATRIUM_BRIDGE_HOME: 'C:/h/bridge', ATRIUM_BRIDGE_PORT: '47831', ATRIUM_BRIDGE_SERVER_NAME: 'tether-bridge' } } } }
 
-function setup(listening = true, withBackend = true) {
+function setup(listening = true, withBackend = true, identities?: BridgeIdentities) {
   const home = mkdtempSync(join(tmpdir(), 'tether-brhttp-'))
   mkdirSync(join(home, 'mcp'), { recursive: true })
   writeFileSync(mcpConfigPathOf(home), JSON.stringify(STDIO))
@@ -41,7 +42,7 @@ function setup(listening = true, withBackend = true) {
   const httpConfigFile = (id: string) => httpMcpConfigPathOf(home, id)
   const made: BridgeBackendInput[] = []
   const backend = (input: BridgeBackendInput) => { made.push(input); return { connect: async () => undefined, close: async () => undefined } }
-  const mw = createLaunchMiddleware({ agent: n => registry.get(n), serve: () => true, configFile: mcpConfigPathOf(home), exists: existsSync, log: () => {}, http, httpConfigFile, node: () => NODE, key: () => KEY, ...(withBackend ? { backend } : {}) })
+  const mw = createLaunchMiddleware({ agent: n => registry.get(n), serve: () => true, configFile: mcpConfigPathOf(home), exists: existsSync, log: () => {}, http, httpConfigFile, node: () => NODE, key: () => KEY, ...(withBackend ? { backend } : {}), ...(identities ? { identities } : {}) })
   return { home, mw, grants, revoked, made, http, httpConfigFile, done: () => rmSync(home, { recursive: true, force: true }) }
 }
 
@@ -74,6 +75,32 @@ describe('web-bridge over HTTP', () => {
       releaseHttp(t, 's1')
       assert.deepEqual(t.revoked, ['s1'])
       assert.equal(existsSync(file), false)
+    } finally { t.done() }
+  })
+
+  test('a renamed tab renames the running agent: the env its shells read at every request takes the new name; soul keeps the launch name', () => {
+    const identities = new BridgeIdentities()
+    const t = setup(true, true, identities)
+    try {
+      const state = (over: Partial<SlotState> = {}): SlotState => ({ slotId: 's1', kind: 'claude', cwd: 'D:/w/atrium', folder: 'D:/w/atrium', status: 'running', ...over })
+      const out = t.mw(base(), slotOf('claude'), state({ title: 'kai-thinking' }))
+      assert.equal(out.env[ENV_CLIENT_NAME], 'kai-thinking', 'the tab\'s text at launch')
+      void t.grants.get('s1')!.spec.create()
+      void t.grants.get('s1')!.spec.create()
+      const [first, second] = t.made
+      assert.equal(first!.env, second!.env, 'every shell of the run shares one env object')
+      identities.follow(state({ title: 'kai-thinking', name: 'pesquisa' }))
+      assert.equal(first!.env[ENV_CLIENT_NAME], 'pesquisa', 'renamed without a relaunch')
+      identities.follow(state({ title: 'kai-thinking' }))
+      assert.equal(first!.env[ENV_CLIENT_NAME], 'kai-thinking', 'the name cleared: the title again')
+      identities.drop('s1')
+      identities.follow(state({ name: 'after the end' }))
+      assert.equal(first!.env[ENV_CLIENT_NAME], 'kai-thinking', 'an ended run is not touched')
+      // soul (stdio): named at launch, an event changes nothing (it has no shell inside the daemon)
+      const soul = t.mw(base(), { ...slotOf('soul'), slotId: 's2' }, state({ slotId: 's2', kind: 'soul', title: 'soul-env' }))
+      assert.equal(soul.env[ENV_CLIENT_NAME], 'soul-env')
+      identities.follow(state({ slotId: 's2', kind: 'soul', name: 'other' }))
+      assert.equal(identities.nameOf('s2'), 'soul-env')
     } finally { t.done() }
   })
 

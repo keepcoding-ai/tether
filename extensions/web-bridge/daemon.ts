@@ -14,7 +14,7 @@ import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { bridgeTraceSource } from './trace-source.ts'
 import { bridgeDebugStatusCheck, bridgeInFlightCheck } from './status-poll.ts'
 import { McpHttpHost, type McpBackend, type McpTransport } from '../../src/daemon/mcp-http.ts'
-import { type BridgeBackendInput, clientIdOf, createLaunchMiddleware, releaseClient, releaseHttp } from './agents.ts'
+import { type BridgeBackendInput, BridgeIdentities, clientIdOf, createLaunchMiddleware, releaseClient, releaseHttp } from './agents.ts'
 import { dropGrants, type GrantStore, grantStoreOf } from './grant-store.ts'
 import { auditVendor, VENDOR_BUNDLE } from './vendor-rules.ts'
 import { createBridgeHost } from './bridge-home.ts'
@@ -88,7 +88,10 @@ export function activate(api: TetherDaemon): IDisposable[] {
   const http = new McpHttpHost({ name: MCP_SERVER_NAME, log: msg => api.log(msg) })
   const backend = createBridgeBackends({ vendorDir: resolve(import.meta.dirname ?? '.', 'vendor'), grants: slotId => grantStoreOf(api.home, slotId, msg => api.log(msg)) })
   const httpDeps = { http, httpConfigFile: (slotId: string) => httpMcpConfigPathOf(api.home, slotId) }
+  // The agents' names at the bridge: given at launch, followed when the pane's tab changes, freed when the agent ends.
+  const identities = new BridgeIdentities()
   const middleware = createLaunchMiddleware({
+    identities,
     agent: name => api.agents.get(name),
     serve: () => serveToAgents(api),
     configFile: mcpConfigPathOf(api.home),
@@ -110,8 +113,12 @@ export function activate(api: TetherDaemon): IDisposable[] {
     { dispose: () => { void http.close() } },
     api.onSlot(ev => {
       // The pane was closed for good: the upload authorizations kept with it go.
-      if (ev.kind === 'removed') { dropGrants(api.home, ev.slot.slotId); return }
-      if (ev.kind !== 'exited' || ev.slot.kind === 'shell') return
+      if (ev.kind === 'removed') { identities.drop(ev.slot.slotId); dropGrants(api.home, ev.slot.slotId); return }
+      if (ev.slot.kind === 'shell') return
+      // A renamed tab (or a new session's title): the agent served over HTTP is renamed at the bridge at its next call.
+      if (ev.kind === 'changed' || ev.kind === 'bound' || ev.kind === 'spawned') { identities.follow(ev.slot); return }
+      if (ev.kind !== 'exited') return
+      identities.drop(ev.slot.slotId)
       releaseHttp(httpDeps, ev.slot.slotId)
       void releaseClient({ port, bridgeHome: bridgeHomeOf(api.home), log: msg => api.log(msg) }, clientIdOf(ev.slot.slotId))
     }),
