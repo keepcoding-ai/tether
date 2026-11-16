@@ -19,8 +19,12 @@ export interface DaemonCheck {
   hint?: string
 }
 
-/** `removed`: the slot was forgotten (its pane closed for good); after it no event of that slot comes. */
-export type SlotEventKind = 'spawned' | 'exited' | 'bound' | 'removed'
+/**
+ * `removed`: the slot was forgotten (its pane closed for good); after it no event of that slot comes. `changed`: the text
+ * the pane's tab shows (app/shared/agent-info.ts slotTitle: the slot's name, else its session title, else its folder)
+ * changed, live (a rename, a title the agent set); an agent slot only.
+ */
+export type SlotEventKind = 'spawned' | 'exited' | 'bound' | 'removed' | 'changed'
 
 export interface TetherDaemon {
   /** The extension's id (manifest.id). */
@@ -41,8 +45,11 @@ export interface TetherDaemon {
    * A listener registered after the start runs at once.
    */
   onStarted(listener: () => void): IDisposable
-  /** Rewrites every launch plan (agents and shells), in registration order. F7 C3: web-bridge adds its --mcp-config to every agent. */
-  launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan): IDisposable }
+  /**
+   * Rewrites every launch plan (agents and shells), in registration order. F7 C3: web-bridge adds its --mcp-config to every
+   * agent. `state` is the slot as the app sees it at that launch (its tab's text, a resumed session's title).
+   */
+  launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan): IDisposable }
   /** Checks `tether doctor` runs after the core's (src/doctor.ts, through src/agents/load.ts). */
   doctor: { register(check: () => Promise<DaemonCheck>): IDisposable }
   /** The logs `tether trace` reads (src/trace/timeline.ts, through src/agents/load.ts): the agents' browser tools register theirs. */

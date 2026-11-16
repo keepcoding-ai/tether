@@ -189,9 +189,10 @@ describe('daemon extension host', () => {
 
     const home = tempHome()
     let plans: LaunchPlan[] = []
+    const states: SlotState[] = []
     const daemon = await startDaemon({
       home, pipe: uniquePipe(home), readyFallbackMs: 60_000, minAgentAgeMs: 0,
-      transformPlan: (plan, meta) => { const out = host.transformPlan(plan, meta); plans.push(out); return out },
+      transformPlan: (plan, meta, state) => { const out = host.transformPlan(plan, meta, state); plans.push(out); if (state) states.push(state); return out },
       onSlot: host.emitSlot,
     })
     const c = await Recorder.connect(daemon.pipe)
@@ -201,6 +202,17 @@ describe('daemon extension host', () => {
       assert.equal(slot!.status, 'starting')
       assert.equal(plans[0]!.env.TETHER_TEST_MW, '1')
       await waitUntil(() => seen.some((e) => e.kind === 'spawned' && e.slot.slotId === slot!.slotId), 5_000, 'spawned event')
+      assert.equal(states[0]?.slotId, slot!.slotId, 'the middleware gets the slot as the app sees it')
+      // The text of the pane's tab changing is a `changed` (web-bridge renames the agent at the bridge); the same text is none.
+      const changed = () => seen.filter((e) => e.kind === 'changed' && e.slot.slotId === slot!.slotId)
+      assert.equal(changed().length, 0, 'no change yet')
+      await c.client.request({ t: 'rename-slot', slotId: slot!.slotId, name: 'kai-thinking' })
+      await waitUntil(() => changed().length === 1, 5_000, 'changed event')
+      assert.equal(changed()[0]!.slot.name, 'kai-thinking')
+      await c.client.request({ t: 'rename-slot', slotId: slot!.slotId, name: 'kai-thinking' })
+      await c.client.request({ t: 'rename-slot', slotId: slot!.slotId, name: '' })
+      await waitUntil(() => changed().length === 2, 5_000, 'changed back to the folder')
+      assert.equal(changed()[1]!.slot.name, undefined, 'the same name again was no change; the cleared one is')
       await c.client.request({ t: 'stop', slotId: slot!.slotId })
       await waitUntil(() => seen.some((e) => e.kind === 'exited' && e.slot.slotId === slot!.slotId), 10_000, 'exited event')
     } finally {

@@ -2,6 +2,8 @@
 // watches <home>/slots/*.jsonl so every client sees the current binding. Speaks protocol.ts over a named
 // pipe / unix socket (NDJSON). "Running" means: this process holds the PTY and it has not exited.
 import { withTabEnv } from '../core/tab-env.ts'
+import { slotTitle } from '../../app/shared/agent-info.ts'
+import type { SlotEventKind } from './ext-api.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
@@ -85,9 +87,9 @@ export interface DaemonOptions {
   /** Replaces an agent's adapter (tests: a fake that launches an inert process instead of the agent). */
   adapters?: Partial<Record<AgentName, AgentAdapter>>
   /** Daemon extensions' launch middlewares (TetherDaemon.launch.use), applied in order to every agent/shell plan. */
-  transformPlan?: (plan: LaunchPlan, meta: SlotMeta) => LaunchPlan
+  transformPlan?: (plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan
   /** Slot lifecycle for daemon extensions (TetherDaemon.onSlot). */
-  onSlot?: (kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: SlotState) => void
+  onSlot?: (kind: SlotEventKind, slot: SlotState) => void
   /** Overrides READY_FALLBACK_MS (tests). */
   readyFallbackMs?: number
   /** How often a running Claude slot's title is polled from its transcript (tests shorten it). */
@@ -171,6 +173,8 @@ interface Slot {
   queuedChoice?: 'resume' | 'new'
   /** Stops the adapter's title watch (running claude slots). */
   stopTitleWatch?: () => void
+  /** The text the pane's tab showed when the extensions last heard of the slot (slotTitle): a different one is a `changed`. */
+  tabTitle?: string
   /** A `set-profile` restart in progress (waiting for the agent's minimum age, or relaunching). */
   restarting?: true
   /** A stop is waiting for the agent to be old enough to kill (see MIN_AGENT_AGE_MS). */
@@ -229,8 +233,8 @@ class DaemonImpl implements Daemon {
   private readonly pending = new Map<string, NodeJS.Timeout>()
   /** Test overrides; everything else comes from the agent registry at the time of use. */
   private readonly adapterOverrides: Partial<Record<AgentName, AgentAdapter>>
-  private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta) => LaunchPlan) | undefined
-  private readonly onSlot: ((kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: SlotState) => void) | undefined
+  private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan) | undefined
+  private readonly onSlot: ((kind: SlotEventKind, slot: SlotState) => void) | undefined
   private readonly readyFallbackMs: number
   private readonly minAgentAgeMs: number
   private readonly killWaitCapMs: number
@@ -612,9 +616,22 @@ class DaemonImpl implements Daemon {
     return { code: 'agent-unavailable', message: `o agente ${meta.agent} não está disponível (extensão desativada ou ausente); o slot continua guardado` }
   }
 
-  private emitSlot(kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: Slot): void {
+  private emitSlot(kind: SlotEventKind, slot: Slot, state = this.stateOf(slot)): void {
     if (!this.onSlot) return
-    try { this.onSlot(kind, this.stateOf(slot)) } catch (e) { this.log(`onSlot listener failed: ${(e as Error).message}`) }
+    if (slot.meta.agent !== 'shell') slot.tabTitle = slotTitle(state)
+    try { this.onSlot(kind, state) } catch (e) { this.log(`onSlot listener failed: ${(e as Error).message}`) }
+  }
+
+  /**
+   * The text of the pane's tab (slot name, else session title, else folder) changed since the extensions last heard of the
+   * slot: they get a `changed` (the web-bridge renames the agent at the bridge). Every path that changes it (rename, title
+   * read or polled, new binding) broadcasts the state, so this one check covers them; the first sight of a slot is no change.
+   */
+  private noteTabTitle(slot: Slot, state: SlotState): void {
+    if (!this.onSlot || slot.meta.agent === 'shell') return
+    const title = slotTitle(state)
+    if (slot.tabTitle === undefined) { slot.tabTitle = title; return }
+    if (slot.tabTitle !== title) this.emitSlot('changed', slot, state)
   }
 
   private load(meta: SlotMeta): Slot {
@@ -787,7 +804,7 @@ class DaemonImpl implements Daemon {
     const { meta } = slot
     let plan: LaunchPlan
     try {
-      plan = this.planFor(meta, resume)
+      plan = this.planFor(slot, resume)
     } catch (e) {
       throw this.fail(slot, e instanceof RequestError ? e.code : 'spawn-failed', (e as Error).message)
     }
@@ -871,7 +888,8 @@ class DaemonImpl implements Daemon {
    * The plan applies the slot's profile AS IT IS NOW (an edit takes effect on the next start) and refreshes the
    * slot's snapshot of it, so a profile deleted later still launches the slot the way it last ran.
    */
-  private planFor(meta: SlotMeta, resume: Binding | undefined): LaunchPlan {
+  private planFor(slot: Slot, resume: Binding | undefined): LaunchPlan {
+    const { meta } = slot
     const profiles = this.profileStore.profiles()
     const current = profiles.find((p) => p.id === meta.profileId)
     if (current && snapshotProfile(meta, current)) {
@@ -886,7 +904,7 @@ class DaemonImpl implements Daemon {
       plan = adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
     }
     plan = withTabEnv(plan, meta)
-    return this.transformPlan ? this.transformPlan(plan, meta) : plan
+    return this.transformPlan ? this.transformPlan(plan, meta, this.stateOf(slot)) : plan
   }
 
   /**
@@ -1023,7 +1041,9 @@ class DaemonImpl implements Daemon {
   }
 
   private broadcastState(slot: Slot): void {
-    this.broadcast({ t: 'state', slot: this.stateOf(slot) })
+    const state = this.stateOf(slot)
+    this.broadcast({ t: 'state', slot: state })
+    this.noteTabTitle(slot, state)
     // A due ronda goes as soon as the agent turns idle, not at the next retry.
     if (slot.rondaDue && this.rondaBlocker(slot) === undefined) setImmediate(() => this.rondaTick(slot))
   }

@@ -16,7 +16,7 @@ import { treeValueAt } from '../../app/shared/settings-file.ts'
 import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 
-type Middleware = (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan
+type Middleware = (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan
 type SlotListener = (ev: { kind: SlotEventKind; slot: SlotState }) => void
 
 export interface DaemonHostOptions {
@@ -88,10 +88,10 @@ export class DaemonExtensionHost implements IDisposable {
   }
 
   /** The launch middlewares, applied in order (DaemonOptions.transformPlan). */
-  readonly transformPlan = (plan: LaunchPlan, meta: SlotMeta): LaunchPlan => {
+  readonly transformPlan = (plan: LaunchPlan, meta: SlotMeta, state?: SlotState): LaunchPlan => {
     let out = plan
     for (const mw of this.middlewares) {
-      try { out = mw(out, meta) } catch (e) { this.opts.log(`launch middleware failed for slot ${meta.slotId}: ${(e as Error).message}`) }
+      try { out = mw(out, meta, state) } catch (e) { this.opts.log(`launch middleware failed for slot ${meta.slotId}: ${(e as Error).message}`) }
     }
     return out
   }
