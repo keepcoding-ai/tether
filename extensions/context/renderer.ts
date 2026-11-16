@@ -6,9 +6,9 @@ import type { Disposable, PadView, TetherUi } from '../../app/renderer/ext-api.t
 import { icon } from '../../app/renderer/icons.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { ContextCategory, ContextReport } from '../../src/context/context-report.ts'
-import type { ContextChannels, InventoryView, LiveView, MeasureReply, SnapshotReply, TranscriptView } from './ipc.ts'
+import type { ContextChannels, InventoryView, LiveView, MeasuredView, MeasureReply, SnapshotReply, TranscriptView } from './ipc.ts'
 import {
-  agentLabel, baseName, compositionSegments, curveGeometry, diffSections, estimatedCategories, fmtPct, fmtTokens, fmtUsd, mcpByServer, memoryTitle, nextSort,
+  agentLabel, baseName, compositionSegments, curveGeometry, diffSections, estimatedCategories, fmtPct, measuredInventory, fmtTokens, fmtUsd, mcpByServer, memoryTitle, nextSort,
   nextTarget, sameTarget, sectionSigs, skillSortValue, sortRows, topConsumers, turnLabel, usageLevel, type Section, type SortState, type Target,
 } from './rules.ts'
 import { manifest, OPEN_COMMAND, PAD_ID } from './manifest.ts'
@@ -73,6 +73,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     private live: LiveView | undefined
     private transcript: TranscriptView | undefined
     private inventory: InventoryView | undefined
+    private measured: MeasuredView | undefined
     private canMeasure = true
     private sigs: Record<Section, string> | undefined
     private measures = new Map<string, Measure>()
@@ -103,7 +104,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     targetChanged(): void {
       this.epoch++
-      this.live = undefined; this.transcript = undefined; this.inventory = undefined; this.sigs = undefined; this.cursor = undefined; this.canMeasure = true
+      this.live = undefined; this.transcript = undefined; this.inventory = undefined; this.measured = undefined; this.sigs = undefined; this.cursor = undefined; this.canMeasure = true
       this.showTarget()
       this.syncTimer()
     }
@@ -149,9 +150,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
 
     private showTarget(): void {
-      if (!target) { this.say('Foque o painel de um agente Claude ou Codex para ver o contexto dele.'); return }
+      if (!target) { this.say('Foque o painel de um agente Claude, Codex ou Soul para ver o contexto dele.'); return }
       if (target.kind === 'unsupported') {
-        this.say(target.why === 'shell' ? 'Este painel é um terminal comum: não há contexto de agente para mostrar.' : `O contexto só é inspecionado para agentes Claude e Codex (este painel é ${target.agent}).`)
+        this.say(target.why === 'shell' ? 'Este painel é um terminal comum: não há contexto de agente para mostrar.' : `O contexto só é inspecionado para agentes Claude, Codex e Soul (este painel é ${target.agent}).`)
         return
       }
       this.say(this.live || this.transcript ? undefined : 'Lendo o contexto do agente…')
@@ -159,13 +160,14 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     private apply(r: SnapshotReply): void {
       if (!r.supported) {
-        this.say(r.reason === 'not-claude' ? 'O contexto só é inspecionado para agentes Claude e Codex.' : 'Não encontrei este agente para ler o contexto.')
+        this.say(r.reason === 'not-claude' ? 'O contexto só é inspecionado para agentes Claude, Codex e Soul.' : 'Não encontrei este agente para ler o contexto.')
         return
       }
       const heldRev = this.transcript?.rev ?? ''
       const heldInv = this.inventory?.key ?? ''
       this.live = r.live
       this.canMeasure = r.canMeasure
+      this.measured = r.measured
       if (r.transcript && r.transcript !== 'same') this.transcript = r.transcript
       else if (!r.transcript) this.transcript = undefined
       if (r.inventory && r.inventory !== 'same') this.inventory = r.inventory
@@ -215,6 +217,7 @@ export function activate(ui: TetherUi): IDisposable[] {
         const line = el('div', 'cx-line')
         line.append(el('span', 'cx-num', `${used} / ${win} tokens${l.usedPct !== undefined ? ` (${fmtPct(l.usedPct)})` : ''}`))
         if (l.costUsd !== undefined) line.append(el('span', 'cx-dim', `sessão ${fmtUsd(l.costUsd)}`))
+        else if (l.credits !== undefined) line.append(el('span', 'cx-dim', `créditos ${fmtTokens(l.credits)}`))
         kids.push(line)
         if (l.exceeds200k) kids.push(el('div', 'cx-warn', 'Passou de 200k tokens: a sessão está na faixa de contexto longo.'))
       }
@@ -247,8 +250,14 @@ export function activate(ui: TetherUi): IDisposable[] {
 
       let cats: readonly ContextCategory[] | undefined
       let note = ''
-      if (m.state === 'done') {
+      let max = this.live?.windowSize
+      if (this.measured) {
+        cats = this.measured.categories
+        max = this.measured.maxTokens ?? max
+        note = `medido pelo soul no último turno${this.measured.at ? ` (${hhmm(this.measured.at)})` : ''}`
+      } else if (m.state === 'done') {
         cats = m.report.categories
+        max = m.report.maxTokens ?? max
         const stale = this.inventory && this.inventory.key !== m.inventoryKey
         note = `medido pelo /context (estimativa do Claude Code) às ${hhmm(m.measuredAt)}${stale ? ' · desatualizado: os arquivos mudaram desde então' : ''}`
       } else if (this.inventory) {
@@ -258,7 +267,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       if (m.state === 'error') kids.push(el('div', 'cx-err', m.message))
       if (m.state === 'busy') kids.push(el('div', 'cx-dim', 'Rodando o /context do Claude; leva alguns segundos.'))
       if (cats) {
-        const segs = compositionSegments(cats, m.state === 'done' ? m.report.maxTokens ?? this.live?.windowSize : this.live?.windowSize)
+        const segs = compositionSegments(cats, max)
         const stack = el('div', 'cx-stack')
         stack.setAttribute('role', 'img')
         stack.setAttribute('aria-label', segs.map(s => `${s.name} ${fmtPct(s.pct)}`).join(', '))
@@ -302,11 +311,12 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     private paintFixed(): void {
       const root = this.sec.fixed
-      const inv = this.inventory
+      const mv = this.measured
+      const inv = mv ? measuredInventory(mv) : this.inventory
       const head = el('h3', '', 'Peso fixo')
       if (!inv) { root.replaceChildren(head, el('div', 'cx-dim', 'Lendo os arquivos do agente…')); return }
       const m = this.measureOf()
-      const tools = m.state === 'done' ? m.report.mcpTools : undefined
+      const tools = mv ? mv.mcpTools.map(t => ({ name: t.name, source: t.server, tokens: t.tokens })) : m.state === 'done' ? m.report.mcpTools : undefined
       const byServer = tools ? mcpByServer(tools) : undefined
       const kids: Node[] = [head]
 

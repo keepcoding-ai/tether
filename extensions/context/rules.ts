@@ -2,7 +2,7 @@
 // ordering, the chart's geometry, the stacked composition, what changed between two snapshots, and the policy that drops
 // idle transcript readers. No Electron, no DOM, no clock of its own.
 import type { ContextCategory } from '../../src/context/context-report.ts'
-import type { InventoryView, JumpView, SnapshotReply, TurnRow, SkillView } from './ipc.ts'
+import type { InventoryView, JumpView, MeasuredView, SnapshotReply, TurnRow, SkillView } from './ipc.ts'
 
 // ---------- formatting (pt-BR) ----------
 
@@ -89,6 +89,21 @@ export function mcpByServer(items: readonly { name: string; source: string; toke
   return out
 }
 
+/** The "Peso fixo" view derived from an agent's own measure (soul): what it measured, nothing estimated from the disk. */
+export function measuredInventory(m: MeasuredView): InventoryView {
+  const servers = [...new Set(m.mcpTools.map(t => t.server || 'MCP'))]
+  return {
+    key: `measured:${m.at}`,
+    memory: m.memoryFiles,
+    skills: m.skills.map(s => ({ name: s.name, scope: s.source, promptTokens: s.tokens, bodyTokens: 0 })),
+    agents: m.agents.map(a => ({ name: a.name, scope: a.source, promptTokens: a.tokens, bodyTokens: 0 })),
+    commands: 0,
+    mcpServers: servers.map(name => ({ name, transport: '' })),
+    hooks: [],
+    plugins: 0,
+  }
+}
+
 // ---------- composition ----------
 
 export interface Segment { name: string; tokens: number; pct: number; kind: 'free' | 'buffer' | 'used' }
@@ -161,11 +176,12 @@ const SECTIONS: readonly Section[] = ['head', 'compose', 'fixed', 'curve']
 /** Cheap content signatures per section; the renderer repaints only the sections whose signature differs. */
 export function sectionSigs(r: Extract<SnapshotReply, { supported: true }>, held: { inventoryKey: string; transcriptRev: string }): Record<Section, string> {
   const l = r.live
-  const head = l ? [r.agent, l.modelId, l.effort, l.usedPct, l.windowSize, l.usedTokens, l.costUsd, l.exceeds200k].join('|') : '-'
+  const head = l ? [r.agent, l.modelId, l.effort, l.usedPct, l.windowSize, l.usedTokens, l.costUsd, l.credits, l.exceeds200k].join('|') : '-'
   const t = r.transcript
   const tr = t === 'same' ? held.transcriptRev : t?.rev ?? '-'
   const inv = r.inventory === 'same' ? held.inventoryKey : r.inventory?.key ?? '-'
-  return { head: `${head}#${tr}`, compose: `${inv}|${l?.windowSize ?? ''}|${r.canMeasure ? 1 : 0}`, fixed: inv, curve: tr }
+  const m = r.measured ? `${r.measured.at}|${r.measured.categories.map(c => c.tokens).join(',')}` : ''
+  return { head: `${head}#${tr}`, compose: `${inv}|${l?.windowSize ?? ''}|${r.canMeasure ? 1 : 0}|${m}`, fixed: `${inv}|${m}`, curve: tr }
 }
 
 /** Sections whose signature changed since `prev` (all of them for the first snapshot). */
@@ -224,16 +240,16 @@ export type Target =
  * supported; anything else (a note, a preview, the pad itself, nothing) keeps the current target.
  */
 /** Agent kinds that have a context provider (extensions/context/providers.ts). */
-export const CONTEXT_AGENTS: readonly string[] = ['claude', 'codex']
+export const CONTEXT_AGENTS: readonly string[] = ['claude', 'codex', 'soul']
 
 /** What the "Peso fixo" memory group is called for an agent kind. */
 /** The agent's name in the board's sentences. */
 export function agentLabel(agent: string | undefined): string {
-  return agent === 'codex' ? 'Codex' : 'Claude'
+  return agent === 'codex' ? 'Codex' : agent === 'soul' ? 'Soul' : 'Claude'
 }
 
 export function memoryTitle(agent: string | undefined): string {
-  return agent === 'codex' ? 'AGENTS.md da cadeia' : 'CLAUDE.md da cadeia'
+  return agent === 'codex' ? 'AGENTS.md da cadeia' : agent === 'soul' ? 'Memória medida' : 'CLAUDE.md da cadeia'
 }
 
 export function nextTarget(prev: Target, info: { id: string; type: string; cwd?: string; agent?: string } | undefined): Target {

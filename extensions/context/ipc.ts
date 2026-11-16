@@ -14,6 +14,8 @@ export interface LiveView {
   windowSize: number | undefined
   usedTokens: number | undefined
   costUsd: number | undefined
+  /** Credits the session spent (soul only), shown where Claude shows its cost. */
+  credits?: number
   exceeds200k: boolean
   sessionId: string
   /** Epoch ms of the statusline write. */
@@ -57,6 +59,18 @@ export interface InventoryView {
   plugins: number
 }
 
+/** A composition measured by the agent itself (soul: one per finished turn), not estimated from the disk. */
+export interface MeasuredView {
+  categories: { name: string; tokens: number; percent: number | undefined; approx: boolean }[]
+  maxTokens: number | undefined
+  memoryFiles: MemoryView[]
+  skills: { name: string; source: string; tokens: number }[]
+  agents: { name: string; source: string; tokens: number }[]
+  mcpTools: { server: string; name: string; tokens: number }[]
+  /** Epoch ms of the measured turn. */
+  at: number
+}
+
 export type SnapshotReply =
   | { supported: false; reason: 'not-claude' | 'unknown-slot' }
   | {
@@ -68,6 +82,8 @@ export type SnapshotReply =
       live: LiveView | undefined
       transcript: TranscriptView | 'same' | undefined
       inventory: InventoryView | 'same' | undefined
+      /** Present when the agent reports its own composition (soul): the board draws it instead of the disk estimate. */
+      measured?: MeasuredView
     }
 
 export type MeasureReply =

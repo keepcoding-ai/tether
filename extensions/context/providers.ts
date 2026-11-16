@@ -9,7 +9,8 @@ import { readInventory, type Inventory } from '../../src/context/inventory.ts'
 import { codexHome, CodexRolloutReader, findCodexRollout, readCodexInventory, type CodexSessionInfo } from '../../src/context/codex.ts'
 import { slotEventsPath } from '../../src/core/paths.ts'
 import { parseEvents } from '../../src/core/store.ts'
-import type { LiveView } from './ipc.ts'
+import { SoulEventsReader, type SoulContext } from '../../src/context/soul.ts'
+import type { LiveView, MeasuredView } from './ipc.ts'
 
 export interface ReaderLike {
   poll(): number
@@ -24,6 +25,8 @@ export interface SessionHandle {
   path: string | undefined
   /** The header, computed after the reader (if any) polled. */
   live(reader: ReaderLike | undefined): LiveView | undefined
+  /** The composition the agent measured itself (soul), when it reports one. */
+  measured?(reader: ReaderLike | undefined): MeasuredView | undefined
 }
 
 export interface ContextProvider {
@@ -154,5 +157,62 @@ export function codexLiveView(s: CodexSessionInfo): LiveView | undefined {
     exceeds200k: false,
     sessionId: s.sessionId,
     at: s.at,
+  }
+}
+
+// ---------- soul ----------
+
+export interface SoulProviderDeps {
+  /** tether's home (slot events live in <home>/slots). */
+  home: string
+}
+
+/** Soul writes nothing on disk the board would estimate: the fixed weight comes from its measure, so the inventory is empty. */
+export function emptyInventory(cwd: string): Inventory {
+  return { cwd, claudeVersion: '', memory: [], skills: [], agents: [], commands: [], mcpServers: [], hooks: [], statusLine: undefined, plugins: [], files: [] }
+}
+
+export function soulProvider(deps: SoulProviderDeps): ContextProvider {
+  const ctxOf = (reader: ReaderLike | undefined): SoulContext | undefined => (reader instanceof SoulEventsReader ? reader.context() : undefined)
+  return {
+    canMeasure: false,
+    session(slotId) {
+      const path = /^[\w-]+$/.test(slotId) ? slotEventsPath(deps.home, slotId) : undefined
+      return {
+        path,
+        live: reader => { const c = ctxOf(reader); return c ? soulLiveView(c) : undefined },
+        measured: reader => { const c = ctxOf(reader); return c ? soulMeasured(c) : undefined },
+      }
+    },
+    makeReader: p => new SoulEventsReader(p),
+    readInventory: async c => emptyInventory(c),
+  }
+}
+
+export function soulLiveView(c: SoulContext): LiveView {
+  return {
+    model: c.model || 'modelo desconhecido',
+    modelId: c.model,
+    effort: '',
+    usedPct: c.percentage,
+    windowSize: c.maxTokens || undefined,
+    usedTokens: c.totalTokens,
+    costUsd: undefined,
+    ...(c.credits !== undefined ? { credits: c.credits } : {}),
+    exceeds200k: false,
+    sessionId: c.sessionId,
+    at: c.at,
+  }
+}
+
+export function soulMeasured(c: SoulContext): MeasuredView {
+  return {
+    categories: c.categories.map(k => ({ name: k.isDeferred ? `${k.name} (adiado)` : k.name, tokens: k.isDeferred ? 0 : k.tokens, percent: undefined, approx: false })),
+    maxTokens: c.maxTokens || undefined,
+    memoryFiles: c.memoryFiles.map(m => ({ path: m.path, kind: m.type, tokens: m.tokens })),
+    skills: c.skills.map(s => ({ name: s.name, source: s.source, tokens: s.tokens })),
+    agents: c.agents.map(a => ({ name: a.agentType, source: a.source, tokens: a.tokens })),
+    mcpTools: c.mcpTools.map(t => ({ server: t.serverName, name: t.name, tokens: t.tokens })),
+    at: c.at,
   }
 }

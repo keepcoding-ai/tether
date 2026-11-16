@@ -156,7 +156,7 @@ describe('which panel the pad follows', () => {
     assert.equal(nextTarget(t1, { id: 'n', type: 'note' }), t1)
     assert.equal(nextTarget(t1, undefined), t1)
     assert.deepEqual(nextTarget(t1, { id: 'x', type: 'terminal' }), { kind: 'unsupported', why: 'shell' })
-    assert.deepEqual(nextTarget(t1, { id: 'x', type: 'terminal', agent: 'soul' }), { kind: 'unsupported', why: 'agent', agent: 'soul' })
+    assert.deepEqual(nextTarget(t1, { id: 'x', type: 'terminal', agent: 'gemini' }), { kind: 'unsupported', why: 'agent', agent: 'gemini' })
   })
   test('sameTarget', () => {
     assert.ok(sameTarget(nextTarget(undefined, claude), nextTarget(undefined, claude)))

@@ -12,7 +12,7 @@ import { stat } from 'node:fs/promises'
 import { cacheHitRatio, detectContextJumps } from '../../src/context/live.ts'
 import { inventoryKey, type Inventory } from '../../src/context/inventory.ts'
 import { ContextMeter, type MeasureInput, type MeasureResult } from '../../src/context/measure.ts'
-import { claudeProvider, codexProvider, liveView, type ContextProvider, type ReaderLike } from './providers.ts'
+import { claudeProvider, codexProvider, soulProvider, liveView, type ContextProvider, type ReaderLike } from './providers.ts'
 import type { InventoryView, JumpView, MeasureReply, SnapshotReply, SnapshotRequest, TranscriptView, TurnRow } from './ipc.ts'
 import { inventoryForWire, MAX_READERS, MAX_TURNS_SENT, READER_TTL_MS, readersToDrop } from './rules.ts'
 
@@ -34,7 +34,7 @@ export interface ServiceDeps {
   /** Claude provider overrides (tests). */
   readInventory?: (cwd: string) => Promise<Inventory>
   makeReader?: (path: string) => ReaderLike
-  /** Providers by agent kind; default: claude and codex. */
+  /** Providers by agent kind; default: claude, codex and soul. */
   providers?: Record<string, ContextProvider>
   meter?: { measure(input: MeasureInput): Promise<MeasureResult> }
   isDirectory?: (path: string) => boolean
@@ -62,6 +62,7 @@ export class ContextService {
     this.providers = deps.providers ?? {
       claude: claudeProvider({ home: deps.home, ...(deps.readInventory ? { readInventory: deps.readInventory } : {}), ...(deps.makeReader ? { makeReader: deps.makeReader } : {}) }),
       codex: codexProvider({ home: deps.home, now: this.now }),
+      soul: soulProvider({ home: deps.home }),
     }
     this.meter = deps.meter ?? new ContextMeter({ inventory: async cwd => (await this.inventoryFor('claude', cwd)).inv })
   }
@@ -83,7 +84,8 @@ export class ContextService {
     }
     const reader = session.path ? this.readers.get(req.slotId)?.reader : undefined
     this.sweep(req.slotId)
-    return { supported: true, agent: kind, canMeasure: provider.canMeasure, live: session.live(reader), transcript, inventory }
+    const measured = session.measured?.(reader)
+    return { supported: true, agent: kind, canMeasure: provider.canMeasure, live: session.live(reader), transcript, inventory, ...(measured ? { measured } : {}) }
   }
 
   async measure(req: { slotId: string; cwd: string; force?: boolean }): Promise<MeasureReply> {

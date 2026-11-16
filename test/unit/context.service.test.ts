@@ -116,9 +116,9 @@ describe('ContextService', () => {
   })
 
   test('not Claude, unknown slot, bad folder: unsupported, no work', async () => {
-    const soul = setup({ kind: 'soul' })
-    assert.deepEqual(await soul.svc.snapshot({ slotId: 's1', cwd: dir }), { supported: false, reason: 'not-claude' })
-    assert.equal(soul.svc.readerCount, 0)
+    const other = setup({ kind: 'gemini' })
+    assert.deepEqual(await other.svc.snapshot({ slotId: 's1', cwd: dir }), { supported: false, reason: 'not-claude' })
+    assert.equal(other.svc.readerCount, 0)
     const c = setup()
     assert.deepEqual(await c.svc.snapshot({ slotId: 'nope', cwd: dir }), { supported: false, reason: 'unknown-slot' })
     assert.deepEqual(await c.svc.snapshot({ slotId: 's1', cwd: 'relative' }), { supported: false, reason: 'unknown-slot' })
