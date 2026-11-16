@@ -53,6 +53,11 @@ export function activate(ui: TetherUi): IDisposable[] {
     pad?.targetChanged()
   }
   let pad: Pad | undefined
+  // Never at activation: the desks do not exist yet then and `activeId()` throws (that failed the whole extension).
+  const syncFromActive = (): void => {
+    const id = ui.panes.activeId()
+    if (id) syncTarget(ui.panes.describe(id))
+  }
 
   class Pad implements PadView {
     readonly element = el('div', 'cx-pad')
@@ -87,6 +92,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       window.addEventListener('blur', sync)
       document.addEventListener('visibilitychange', sync)
       this.offs.push(() => { window.removeEventListener('focus', sync); window.removeEventListener('blur', sync); document.removeEventListener('visibilitychange', sync) })
+      syncFromActive()
       this.showTarget()
     }
 
@@ -463,13 +469,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.pads.register({ id: PAD_ID, create: () => (pad = new Pad()) }),
     ui.commands.registerCommand(OPEN_COMMAND, () => ui.pads.open(PAD_ID)),
     ui.panes.onDidChangeActive(info => syncTarget(info)),
-    ui.agents.onDidChange(() => {
-      // The pane's folder can follow a rebind: re-read the target from the active pane.
-      const id = ui.panes.activeId()
-      if (id) syncTarget(ui.panes.describe(id))
-    }),
+    // The pane's folder can follow a rebind: re-read the target from the active pane.
+    ui.agents.onDidChange(() => syncFromActive()),
   ]
-  const first = ui.panes.activeId()
-  if (first) syncTarget(ui.panes.describe(first))
   return disposables as Disposable[]
 }
