@@ -60,18 +60,18 @@ describe('agent registry', () => {
 
   test('register refuses duplicates, shell and bad names; dispose unregisters', () => {
     const r = new AgentRegistry()
-    const d = r.register(contribution('codex'))
-    assert.throws(() => r.register(contribution('codex')), /já está registrado/)
+    const d = r.register(contribution('aider'))
+    assert.throws(() => r.register(contribution('aider')), /já está registrado/)
     assert.throws(() => r.register({ ...contribution('shell') }), /inválido/)
     assert.throws(() => r.register(contribution('Codex X')), /inválido/)
     assert.throws(() => r.register({ ...contribution('a'), adapter: fakeAdapter('b') }), /adaptador/)
     d.dispose()
-    assert.equal(r.has('codex'), false)
+    assert.equal(r.has('aider'), false)
   })
 
   test('isAgentName accepts any plausible name (readers never lose a slot), never shell', () => {
     assert.ok(isAgentName('claude'))
-    assert.ok(isAgentName('codex'))
+    assert.ok(isAgentName('aider'))
     assert.ok(!isAgentName('shell'))
     assert.ok(!isAgentName(''))
     assert.ok(!isAgentName(42))
@@ -79,7 +79,7 @@ describe('agent registry', () => {
 
   test('default profiles come from the contributions, in the same order and content as before', () => {
     const ids = defaultProfiles({}, 'linux').map((p) => p.id)
-    assert.deepEqual(ids, ['claude', 'claude-dev', 'soul', 'shell'])
+    assert.deepEqual(ids, ['claude', 'claude-dev', 'soul', 'codex', 'codex-dev', 'shell'])
     const dev = defaultProfiles({}, 'linux').find((p) => p.id === 'claude-dev')!
     assert.deepEqual(dev.args, ['--dangerously-skip-permissions'])
   })
@@ -90,14 +90,15 @@ describe('agent registry', () => {
   })
 
   test('saving a profile of an unregistered agent is refused (reading keeps it: see the fixtures)', () => {
-    assert.match(validateProfile({ name: 'Codex', agent: 'codex', args: [] }).errors.join(), /agente inválido: codex/)
+    assert.match(validateProfile({ name: 'Aider', agent: 'aider', args: [] }).errors.join(), /agente inválido: aider/)
   })
 
   test('attention options and TETHER_*_ARGS come from the contribution', () => {
     assert.deepEqual(attentionOptions('claude'), { idle: false, bel: false })
     assert.deepEqual(attentionOptions('soul'), { idle: true, bel: true })
     assert.deepEqual(attentionOptions('shell'), { idle: false, bel: true })
-    assert.deepEqual(attentionOptions('codex'), { idle: false, bel: true })
+    assert.deepEqual(attentionOptions('codex'), { idle: true, bel: true })
+    assert.deepEqual(attentionOptions('aider'), { idle: false, bel: true })
     assert.deepEqual(defaultAgentArgs('claude', { TETHER_CLAUDE_ARGS: '--model haiku' }), ['--model', 'haiku'])
     assert.deepEqual(defaultAgentArgs('soul', { TETHER_SOUL_ARGS: ' -g ' }), ['-g'])
   })
@@ -111,17 +112,17 @@ describe('persisted format stays compatible (fixtures)', () => {
   test('profiles.json with an unregistered agent parses whole', () => {
     const parsed = parseProfilesFile(readFileSync(join(fixtures, 'profiles.json'), 'utf8'))
     assert.ok(parsed.ok)
-    assert.deepEqual(parsed.profiles.map((p) => p.id), ['claude', 'soul', 'codex', 'powershell'])
+    assert.deepEqual(parsed.profiles.map((p) => p.id), ['claude', 'soul', 'aider', 'powershell'])
     assert.equal(parsed.skipped, 0)
     copyFileSync(join(fixtures, 'profiles.json'), join(home, 'profiles.json'))
     const read = readProfiles(home)
     assert.equal(read.problem, undefined)
-    assert.deepEqual(read.profiles.map((p) => p.id), ['claude', 'soul', 'codex', 'powershell'])
+    assert.deepEqual(read.profiles.map((p) => p.id), ['claude', 'soul', 'aider', 'powershell'])
   })
 
   test('slot metas of a registered and an unregistered agent both read', () => {
     installSlot(home, 'slot-claude.json', home)
-    installSlot(home, 'slot-codex.json', home)
+    installSlot(home, 'slot-aider.json', home)
     assert.equal(readSlot(home, 'a1b2c3d4')!.agent, 'claude')
     assert.deepEqual(readSlot(home, 'e5f6a7b8')!.args, ['--model', 'x'])
     assert.deepEqual(listSlots(home).map((m) => m.slotId).sort(), ['a1b2c3d4', 'e5f6a7b8'])
@@ -134,7 +135,7 @@ describe('tetherd with an unregistered agent', () => {
   before(async () => {
     home = tempHome()
     installSlot(home, 'slot-claude.json', home)
-    installSlot(home, 'slot-codex.json', home)
+    installSlot(home, 'slot-aider.json', home)
     daemon = await startDaemon({ home, pipe: uniquePipe(home), adapters: { claude: fakeAdapter('claude') }, readyFallbackMs: 60_000, minAgentAgeMs: 0 })
   })
   after(async () => {
@@ -146,13 +147,13 @@ describe('tetherd with an unregistered agent', () => {
     const c = await Recorder.connect(daemon.pipe)
     try {
       const slots = (await c.client.request({ t: 'list' })).slots!
-      const codex = slots.find((s) => s.slotId === 'e5f6a7b8')!
-      assert.equal(codex.kind, 'codex')
-      assert.equal(codex.status, 'error')
-      assert.equal(codex.error?.code, 'agent-unavailable')
+      const aider = slots.find((s) => s.slotId === 'e5f6a7b8')!
+      assert.equal(aider.kind, 'aider')
+      assert.equal(aider.status, 'error')
+      assert.equal(aider.error?.code, 'agent-unavailable')
       assert.equal(slots.find((s) => s.slotId === 'a1b2c3d4')!.status, 'exited')
       await assert.rejects(c.client.request({ t: 'start', slotId: 'e5f6a7b8' }), (e: Error & { code?: string }) => e.code === 'agent-unavailable')
-      await assert.rejects(c.client.request({ t: 'create', kind: 'codex', cwd: home }), (e: Error & { code?: string }) => e.code === 'bad-request')
+      await assert.rejects(c.client.request({ t: 'create', kind: 'aider', cwd: home }), (e: Error & { code?: string }) => e.code === 'bad-request')
       assert.ok(readSlot(home, 'e5f6a7b8'), 'the meta is still on disk')
     } finally {
       c.close()
@@ -161,8 +162,8 @@ describe('tetherd with an unregistered agent', () => {
 })
 
 describe('daemon extension host', () => {
-  test('the committed index holds the built-in agents, claude then soul (slice 4), then skills, web-bridge (F7 C2) and browser', () => {
-    assert.deepEqual(daemonIndex.map((e) => e.manifest.id), ['claude', 'soul', 'skills', 'web-bridge', 'browser'])
+  test('the committed index holds the built-in agents, claude then soul (slice 4) and codex, then skills, web-bridge (F7 C2) and browser', () => {
+    assert.deepEqual(daemonIndex.map((e) => e.manifest.id), ['claude', 'soul', 'codex', 'skills', 'web-bridge', 'browser'])
   })
 
   test('an extension registers an agent, a launch middleware and a slot listener; dispose undoes them', async () => {
