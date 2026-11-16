@@ -13,6 +13,8 @@ export interface MeasureInput {
   model: string
   /** Who asked. Informational: the cache is shared by every slot of the same folder. */
   slotKey?: string
+  /** Skip the cached report and measure again. */
+  force?: boolean
 }
 
 export type MeasureResult =
@@ -102,7 +104,7 @@ export class ContextMeter {
     } catch {
       return fail('failed')
     }
-    const hit = this.cache.get(key)
+    const hit = input.force ? undefined : this.cache.get(key)
     if (hit) {
       this.cache.delete(key)
       this.cache.set(key, hit)
