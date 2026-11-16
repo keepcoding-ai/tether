@@ -1,7 +1,7 @@
 {
   "name": "tether-bridge",
   "version": "0.2.0",
-  "extensionVersion": "0.2.0.6658",
+  "extensionVersion": "0.2.0.6659",
   "extensionId": "injmgjkjjfjeamlnnpacjcfnfkjgpmnk",
   "brand": {
     "slug": "tether",
@@ -65,7 +65,7 @@
   },
   "extension": {
     "dir": "extension",
-    "sha256": "6e1dadc14aeec78333874402f27350c5e1b5ef5b821b6f5a82c3e8535442f8f2",
+    "sha256": "90befefc0751519222cdf37e35dcdc2580074c7aef453bed583ff0768760c36f",
     "files": 15
   }
 }

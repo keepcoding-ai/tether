@@ -3,21 +3,21 @@
   "extensionId": "injmgjkjjfjeamlnnpacjcfnfkjgpmnk",
   "files": {
     "atrium-bridge.mjs": "56b3f15b6dfd4196c39dd0abfcb3980aa631ed11ade37b6153652fea2326e5d8",
-    "build-info.json": "76f1015b476f457526635cf763ad3aad644ac23aa17d0fdcd4197e939eab36c8",
+    "build-info.json": "7610fc2909757509f80af7a3cd90b35542682adcbe068ff9267df8239196aab5",
     "extension/brand/logo-dark.svg": "2f02e267393803d15a5188e4c35100139494c461ccd6b5f16bfc405e5c44e446",
     "extension/brand/logo-h-dark.svg": "7c94a9da07e3af3985086953095b4415af11028431d7df8271a6cd717edc1d1f",
     "extension/brand/logo-h-light.svg": "1885df2eea97c90f1642a898b0075720a3975dcec2579035345d06037f973dbb",
     "extension/brand/logo-light.svg": "69088752719e5f0c918dfc987a0ca1839aa9193f3f708a4600ccb2d9c6ce7149",
-    "extension/dist/background.js": "17a4351adbeb989d58929950bace39f14fd5cbbbffdd8793b1fed2c425bd9031",
-    "extension/dist/options.js": "960dd147cb07d25670fac07c3efe03dd476b9462e4ac3ac1bd79be39403b9737",
-    "extension/dist/popup.js": "f9701c51ad80fb9acb4abfba8d7840061fafe63988d98b2788911d56b8ebb1d4",
+    "extension/dist/background.js": "bc80aa098be99547b4ff8cef373783cac25199296cf075077126152e62bc2aa4",
+    "extension/dist/options.js": "c4e28329f12f7af537d8dfa2d73a36aee691aed0d87b57d34fc48fff774636a6",
+    "extension/dist/popup.js": "5505d6d66301b176a94b1bfa56ba7c7f85a1c97906c272550c7cb9a8c872f34c",
     "extension/icons/icon-128.png": "6c9986bfd7b8c68e556ebddb3432434d7fd2340b329777206e20519d570316ad",
     "extension/icons/icon-16.png": "fbd612385946ed94e98a76810517a4c511665836752d318fe8b24e78e8e8ee7f",
     "extension/icons/icon-32.png": "6653f66fc9571a276aad07fa3e8d89a33acb74593a782dec65b0fe17c899c5e6",
     "extension/icons/icon-48.png": "b4cd027bcadbe2f329e11fa805a57a283459d22e9be0edf97f65be0be963abb0",
-    "extension/manifest.json": "38c6f61cb6df06028e765fc983a859a7f8d2a7600b199dac72c176ed2e2c7bc6",
+    "extension/manifest.json": "2a3b2ed45c93f17f7d19b5a770a7fb8261bdd26252f7596346f147617ff3094b",
     "extension/options.html": "ca495f06e11d2c826050b3c62f40c5504137439c37e52e8f916efebb0e542eac",
-    "extension/popup.html": "07ff79480308cae043e94cee7d15bfce94ba748a310a264930d29f86f4e60229",
-    "extension/ui.css": "a1327d055bc6013f3a220fa235fa704973be56c40a61bc7f88febe34e2a861ed"
+    "extension/popup.html": "b8c376157239fff706158e143729f492b94c2146b651103f7ce24654f0a35745",
+    "extension/ui.css": "ce0eab426ff11694092c9ec90514db6d0cde3995db2f846f0defb28acb8146ec"
   }
 }

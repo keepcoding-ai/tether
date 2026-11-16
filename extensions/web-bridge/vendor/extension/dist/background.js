@@ -1358,16 +1358,19 @@ var ALERT_COLOR = "#f5a524";
 var ALERT_TEXT_COLOR = "#1a1a1a";
 var BADGE_COLOR = brandAccent() ?? "#d7813d";
 var BADGE_TEXT_COLOR = "#ffffff";
-function badgeText(controlled, allowEvaluate) {
+var DEBUG_BADGE_COLOR = "#d93025";
+function badgeText(controlled, allowEvaluate, debug = false) {
+  if (debug) return "DBG";
   if (controlled > 0) return controlled > 99 ? "99+" : String(controlled);
   return allowEvaluate ? "JS" : "";
 }
 async function applyBadge() {
   const allow = await getAllowEvaluate();
+  const debug = (await getDebugChoice())?.enabled === true;
   const controlled = (await listScope()).length;
-  await chrome.action.setBadgeText({ text: badgeText(controlled, allow) });
-  await chrome.action.setBadgeBackgroundColor({ color: allow ? ALERT_COLOR : BADGE_COLOR });
-  await chrome.action.setBadgeTextColor({ color: allow ? ALERT_TEXT_COLOR : BADGE_TEXT_COLOR });
+  await chrome.action.setBadgeText({ text: badgeText(controlled, allow, debug) });
+  await chrome.action.setBadgeBackgroundColor({ color: debug ? DEBUG_BADGE_COLOR : allow ? ALERT_COLOR : BADGE_COLOR });
+  await chrome.action.setBadgeTextColor({ color: debug ? BADGE_TEXT_COLOR : allow ? ALERT_TEXT_COLOR : BADGE_TEXT_COLOR });
 }
 async function applyAlertState() {
   await applyBadge();
@@ -2789,9 +2792,10 @@ var POPUP = {
   browserName: "Nome deste navegador",
   browserNameHelp: "Como os agentes veem este navegador. Enter ou sair do campo salva.",
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
-  /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
-  debugOn: "Modo de depura\xE7\xE3o ligado",
-  /** O atalho da linha de depuração para a página de opções. */
+  /** Faixa no topo do popup enquanto a depuração (escolha da pessoa nas opções) está ligada. */
+  debugBanner: "Depura\xE7\xE3o LIGADA \u2014 prazos relaxados e chamadas gravadas no disco",
+  debugTurnOff: "Desligar",
+  /** O atalho dentro da faixa para a seção de depuração das opções. */
   debugOptions: "Op\xE7\xF5es de depura\xE7\xE3o",
   reloadHint: (expected, running2) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running2}): clique em Recarregar em chrome://extensions.`
 };
@@ -3917,7 +3921,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && SETTINGS_KEYS.some((k) => k in changes)) void connection.restart();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && ALLOW_EVALUATE_STORAGE_KEY in changes) void applyAlertState();
+  if (area === "local" && (ALLOW_EVALUATE_STORAGE_KEY in changes || DEBUG_CHOICE_STORAGE_KEY in changes)) void applyAlertState();
 });
 void applyAlertState();
 async function overview() {

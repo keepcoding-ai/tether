@@ -168,9 +168,10 @@ var POPUP = {
   browserName: "Nome deste navegador",
   browserNameHelp: "Como os agentes veem este navegador. Enter ou sair do campo salva.",
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
-  /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
-  debugOn: "Modo de depura\xE7\xE3o ligado",
-  /** O atalho da linha de depuração para a página de opções. */
+  /** Faixa no topo do popup enquanto a depuração (escolha da pessoa nas opções) está ligada. */
+  debugBanner: "Depura\xE7\xE3o LIGADA \u2014 prazos relaxados e chamadas gravadas no disco",
+  debugTurnOff: "Desligar",
+  /** O atalho dentro da faixa para a seção de depuração das opções. */
   debugOptions: "Op\xE7\xF5es de depura\xE7\xE3o",
   reloadHint: (expected, running) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running}): clique em Recarregar em chrome://extensions.`
 };
