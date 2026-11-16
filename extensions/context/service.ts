@@ -4,13 +4,16 @@
 // MAX_READERS (one shared sweep timer, alive only while there are readers). The inventory is read once per folder and
 // re-validated by the files' stat, so a call without changes costs a few stats. Secrets: only the inventory view's
 // names, sizes and estimates and the live summary's numbers leave this file (the statusline's other fields do not).
+// What differs per agent kind (where the session's usage lives, how it is read, what the fixed weight is) comes from a
+// provider (providers.ts); a kind without a provider is answered 'not-claude' (kept on the wire: "no context for it").
 import { isAbsolute } from 'node:path'
 import { statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { cacheHitRatio, detectContextJumps, readLiveSummary, TranscriptUsageReader, type LiveSummary } from '../../src/context/live.ts'
-import { inventoryKey, readInventory, type Inventory } from '../../src/context/inventory.ts'
+import { cacheHitRatio, detectContextJumps } from '../../src/context/live.ts'
+import { inventoryKey, type Inventory } from '../../src/context/inventory.ts'
 import { ContextMeter, type MeasureInput, type MeasureResult } from '../../src/context/measure.ts'
-import type { InventoryView, JumpView, LiveView, MeasureReply, SnapshotReply, SnapshotRequest, TranscriptView, TurnRow } from './ipc.ts'
+import { claudeProvider, codexProvider, liveView, type ContextProvider, type ReaderLike } from './providers.ts'
+import type { InventoryView, JumpView, MeasureReply, SnapshotReply, SnapshotRequest, TranscriptView, TurnRow } from './ipc.ts'
 import { inventoryForWire, MAX_READERS, MAX_TURNS_SENT, READER_TTL_MS, readersToDrop } from './rules.ts'
 
 /** The inventory is trusted unchanged for this long without even a stat; then its files are re-statted. */
@@ -20,20 +23,19 @@ const INVENTORY_RESCAN_MS = 60_000
 const MAX_INVENTORIES = 8
 const SWEEP_MS = 30_000
 
-export interface ReaderLike {
-  poll(): number
-  turns(): ReturnType<TranscriptUsageReader['turns']>
-  last(): ReturnType<TranscriptUsageReader['last']>
-  totals(): ReturnType<TranscriptUsageReader['totals']>
-}
+export type { ReaderLike }
+export { liveView }
 
 export interface ServiceDeps {
   home: string
   /** The agent kind behind a slot id ('claude'…), undefined when unknown (also for a plain shell). */
   agentKind(slotId: string): string | undefined
   now?: () => number
+  /** Claude provider overrides (tests). */
   readInventory?: (cwd: string) => Promise<Inventory>
   makeReader?: (path: string) => ReaderLike
+  /** Providers by agent kind; default: claude and codex. */
+  providers?: Record<string, ContextProvider>
   meter?: { measure(input: MeasureInput): Promise<MeasureResult> }
   isDirectory?: (path: string) => boolean
   /** Replaces the sweep timer in tests: receives the sweep and returns its disposer. */
@@ -41,6 +43,7 @@ export interface ServiceDeps {
 }
 
 interface ReaderEntry { reader: ReaderLike; path: string; lastUsed: number }
+type Gate = { supported: false; reason: 'not-claude' | 'unknown-slot' } | { kind: string; provider: ContextProvider }
 interface InvEntry { inv: Inventory; key: string; view: InventoryView; readAt: number; checkedAt: number }
 
 export class ContextService {
@@ -51,11 +54,16 @@ export class ContextService {
   private stopSweep: (() => void) | undefined
   private readonly now: () => number
   private readonly deps: ServiceDeps
+  private readonly providers: Record<string, ContextProvider>
 
   constructor(deps: ServiceDeps) {
     this.deps = deps
     this.now = deps.now ?? Date.now
-    this.meter = deps.meter ?? new ContextMeter({ inventory: async cwd => (await this.inventoryFor(cwd)).inv })
+    this.providers = deps.providers ?? {
+      claude: claudeProvider({ home: deps.home, ...(deps.readInventory ? { readInventory: deps.readInventory } : {}), ...(deps.makeReader ? { makeReader: deps.makeReader } : {}) }),
+      codex: codexProvider({ home: deps.home, now: this.now }),
+    }
+    this.meter = deps.meter ?? new ContextMeter({ inventory: async cwd => (await this.inventoryFor('claude', cwd)).inv })
   }
 
   /** Readers currently held (tests and diagnostics). */
@@ -63,28 +71,30 @@ export class ContextService {
 
   async snapshot(req: SnapshotRequest): Promise<SnapshotReply> {
     const gate = this.gate(req.slotId, req.cwd)
-    if (gate) return gate
-    const live = readLiveSummary(this.deps.home, req.slotId)
-    const transcript = this.transcriptFor(req.slotId, live?.transcript_path, req.rev)
+    if ('supported' in gate) return gate
+    const { kind, provider } = gate
+    const session = provider.session(req.slotId)
+    const transcript = this.transcriptFor(req.slotId, provider, session.path, req.rev)
     let inventory: InventoryView | 'same' | undefined
     try {
-      inventory = inventoryForWire(req.invKey, (await this.inventoryFor(req.cwd)).view)
+      inventory = inventoryForWire(req.invKey, (await this.inventoryFor(kind, req.cwd)).view)
     } catch {
       inventory = undefined
     }
+    const reader = session.path ? this.readers.get(req.slotId)?.reader : undefined
     this.sweep(req.slotId)
-    return { supported: true, live: live ? liveView(live, this.lastModel(req.slotId)) : undefined, transcript, inventory }
+    return { supported: true, agent: kind, canMeasure: provider.canMeasure, live: session.live(reader), transcript, inventory }
   }
 
   async measure(req: { slotId: string; cwd: string; force?: boolean }): Promise<MeasureReply> {
     const gate = this.gate(req.slotId, req.cwd)
-    if (gate) return gate
-    const live = readLiveSummary(this.deps.home, req.slotId)
-    const model = live?.model?.id || this.lastModel(req.slotId)
+    if ('supported' in gate) return gate
+    if (!gate.provider.canMeasure) return { supported: true, ok: false, message: 'Medir não está disponível para este agente.' }
+    const model = gate.provider.session(req.slotId).live(this.readers.get(req.slotId)?.reader)?.modelId || this.lastModel(req.slotId)
     if (!model) return { supported: true, ok: false, message: 'Ainda não sei o modelo desta sessão: espere a primeira resposta do agente e meça de novo.' }
     let key: string
     try {
-      key = (await this.inventoryFor(req.cwd)).key
+      key = (await this.inventoryFor(gate.kind, req.cwd)).key
     } catch {
       return { supported: true, ok: false, message: 'Não consegui ler os arquivos da pasta do agente.' }
     }
@@ -102,26 +112,27 @@ export class ContextService {
 
   // ---------- internals ----------
 
-  private gate(slotId: string, cwd: string): { supported: false; reason: 'not-claude' | 'unknown-slot' } | undefined {
+  private gate(slotId: string, cwd: string): Gate {
     const kind = this.deps.agentKind(slotId)
     if (kind === undefined) return { supported: false, reason: 'unknown-slot' }
-    if (kind !== 'claude') return { supported: false, reason: 'not-claude' }
+    const provider = Object.hasOwn(this.providers, kind) ? this.providers[kind] : undefined
+    if (!provider) return { supported: false, reason: 'not-claude' }
     const isDir = this.deps.isDirectory ?? ((p: string) => { try { return statSync(p).isDirectory() } catch { return false } })
     if (typeof cwd !== 'string' || !isAbsolute(cwd) || !isDir(cwd)) return { supported: false, reason: 'unknown-slot' }
-    return undefined
+    return { kind, provider }
   }
 
   private lastModel(slotId: string): string {
     return this.readers.get(slotId)?.reader.last()?.model ?? ''
   }
 
-  private transcriptFor(slotId: string, path: string | undefined, heldRev: string | undefined): TranscriptView | 'same' | undefined {
+  private transcriptFor(slotId: string, provider: ContextProvider, path: string | undefined, heldRev: string | undefined): TranscriptView | 'same' | undefined {
     if (!path) return undefined
     const now = this.now()
     let e = this.readers.get(slotId)
     if (e && e.path !== path) { this.readers.delete(slotId); e = undefined } // the session changed (clear, resume)
     if (!e) {
-      e = { reader: (this.deps.makeReader ?? (p => new TranscriptUsageReader(p)))(path), path, lastUsed: now }
+      e = { reader: provider.makeReader(path), path, lastUsed: now }
       this.readers.set(slotId, e)
       this.armSweep()
     }
@@ -163,28 +174,29 @@ export class ContextService {
   }
 
   /** The folder's inventory: trusted for a few seconds, re-statted after that, rescanned when a file changed or after a minute. */
-  private async inventoryFor(cwd: string): Promise<InvEntry> {
+  private async inventoryFor(kind: string, cwd: string): Promise<InvEntry> {
     const now = this.now()
-    const hit = this.inventories.get(cwd)
+    const id = `${kind} ${cwd}`
+    const hit = this.inventories.get(id)
     if (hit) {
-      this.inventories.delete(cwd)
-      this.inventories.set(cwd, hit) // recency
+      this.inventories.delete(id)
+      this.inventories.set(id, hit) // recency
       if (now - hit.checkedAt < INVENTORY_TRUST_MS) return hit
       if (now - hit.readAt < INVENTORY_RESCAN_MS && (await unchanged(hit.inv))) { hit.checkedAt = now; return hit }
     }
-    const pending = this.inflightInv.get(cwd)
+    const pending = this.inflightInv.get(id)
     if (pending) return pending
     const job = (async (): Promise<InvEntry> => {
-      const inv = await (this.deps.readInventory ?? (c => readInventory(c)))(cwd)
+      const inv = await this.providers[kind]!.readInventory(cwd)
       const t = this.now()
       const entry: InvEntry = { inv, key: inventoryKey(inv), view: inventoryView(inv), readAt: t, checkedAt: t }
       entry.view.key = entry.key
-      this.inventories.set(cwd, entry)
+      this.inventories.set(id, entry)
       while (this.inventories.size > MAX_INVENTORIES) this.inventories.delete(this.inventories.keys().next().value as string)
       return entry
     })()
-    this.inflightInv.set(cwd, job)
-    try { return await job } finally { this.inflightInv.delete(cwd) }
+    this.inflightInv.set(id, job)
+    try { return await job } finally { this.inflightInv.delete(id) }
   }
 }
 
@@ -207,28 +219,5 @@ export function inventoryView(inv: Inventory): InventoryView {
     mcpServers: inv.mcpServers.map(s => ({ name: s.name, transport: s.transport })),
     hooks: inv.hooks.map(h => ({ event: h.event, count: h.count, commands: h.commands })),
     plugins: inv.plugins.length,
-  }
-}
-
-export function liveView(s: LiveSummary, fallbackModel: string): LiveView {
-  const cw = s.context_window
-  const u = cw?.current_usage
-  const fromUsage = u ? (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) : undefined
-  const size = cw?.context_window_size
-  const pct = cw?.used_percentage
-  const used = fromUsage !== undefined && fromUsage > 0 ? fromUsage : size !== undefined && pct !== undefined ? Math.round((size * pct) / 100) : undefined
-  const at = s.at ? Date.parse(s.at) : NaN
-  const modelId = s.model?.id || fallbackModel
-  return {
-    model: s.model?.display_name || modelId || 'modelo desconhecido',
-    modelId,
-    effort: s.effort?.level ?? '',
-    usedPct: pct,
-    windowSize: size,
-    usedTokens: used,
-    costUsd: s.cost?.total_cost_usd,
-    exceeds200k: s.exceeds_200k_tokens === true,
-    sessionId: s.session_id ?? '',
-    at: Number.isFinite(at) ? at : 0,
   }
 }

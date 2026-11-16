@@ -60,7 +60,7 @@ export interface InventoryMcpServer {
   name: string
   /** stdio | http | sse | ... as declared (or inferred from command/url); never args, env, headers or URLs. */
   transport: string
-  source: 'project-file' | 'claude-json-project' | 'claude-json-user'
+  source: 'project-file' | 'claude-json-project' | 'claude-json-user' | 'codex-config'
 }
 
 export interface InventoryHook {
@@ -94,7 +94,7 @@ export interface InventoryOptions {
   maxReadBytes?: number
 }
 
-const estimate = (chars: number) => Math.ceil(chars / 4)
+export const estimate = (chars: number): number => Math.ceil(chars / 4)
 
 // ---------- secrets ----------
 
@@ -113,7 +113,7 @@ export function redactSecrets(text: string, max = 300): string {
 
 // ---------- fs helpers ----------
 
-async function statFile(path: string): Promise<InventoryFile | undefined> {
+export async function statFile(path: string): Promise<InventoryFile | undefined> {
   try {
     const st = await stat(path)
     return st.isFile() ? { path, bytes: st.size, mtimeMs: st.mtimeMs } : undefined
@@ -122,7 +122,7 @@ async function statFile(path: string): Promise<InventoryFile | undefined> {
   }
 }
 
-async function readText(file: InventoryFile, max: number): Promise<string | undefined> {
+export async function readText(file: InventoryFile, max: number): Promise<string | undefined> {
   if (file.bytes > max) return undefined
   try {
     return await readFile(file.path, 'utf8')
@@ -236,7 +236,7 @@ async function readMemory(cwd: string, home: string, configDir: string, max: num
 
 // ---------- skills / agents / commands ----------
 
-async function readSkills(dir: string, scope: 'project' | 'user', max: number): Promise<InventorySkill[]> {
+export async function readSkills(dir: string, scope: 'project' | 'user', max: number): Promise<InventorySkill[]> {
   const names = await listDir(dir)
   const out = await Promise.all(names.map(async (n): Promise<InventorySkill | undefined> => {
     const f = await statFile(join(dir, n, 'SKILL.md'))

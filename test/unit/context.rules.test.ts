@@ -101,7 +101,7 @@ describe('curve', () => {
 
 describe('snapshot diff', () => {
   const reply = (over: Partial<Extract<SnapshotReply, { supported: true }>> = {}): Extract<SnapshotReply, { supported: true }> => ({
-    supported: true,
+    supported: true, agent: 'claude', canMeasure: true,
     live: { model: 'M', modelId: 'm', effort: 'high', usedPct: 10, windowSize: 1000, usedTokens: 100, costUsd: 1, exceeds200k: false, sessionId: 's', at: 1 },
     transcript: { rev: 'r1', turns: [], jumps: [], firstTurn: 1, totals: { turns: 0, input: 0, cacheRead: 0, cacheCreate: 0, output: 0 }, cacheHit: 0.5, cold: false },
     inventory: inv(),
@@ -151,7 +151,8 @@ describe('which panel the pad follows', () => {
   const claude = { id: 's1', type: 'terminal', cwd: 'C:\\p', agent: 'claude' }
   test('claude pane becomes the target; notes keep it; shell and other agents say unsupported', () => {
     const t1 = nextTarget(undefined, claude)
-    assert.deepEqual(t1, { kind: 'agent', slotId: 's1', cwd: 'C:\\p' })
+    assert.deepEqual(t1, { kind: 'agent', slotId: 's1', cwd: 'C:\\p', agent: 'claude' })
+    assert.deepEqual(nextTarget(t1, { id: 'c2', type: 'terminal', cwd: 'C:\\q', agent: 'codex' }), { kind: 'agent', slotId: 'c2', cwd: 'C:\\q', agent: 'codex' })
     assert.equal(nextTarget(t1, { id: 'n', type: 'note' }), t1)
     assert.equal(nextTarget(t1, undefined), t1)
     assert.deepEqual(nextTarget(t1, { id: 'x', type: 'terminal' }), { kind: 'unsupported', why: 'shell' })

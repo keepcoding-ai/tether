@@ -161,11 +161,11 @@ const SECTIONS: readonly Section[] = ['head', 'compose', 'fixed', 'curve']
 /** Cheap content signatures per section; the renderer repaints only the sections whose signature differs. */
 export function sectionSigs(r: Extract<SnapshotReply, { supported: true }>, held: { inventoryKey: string; transcriptRev: string }): Record<Section, string> {
   const l = r.live
-  const head = l ? [l.modelId, l.effort, l.usedPct, l.windowSize, l.usedTokens, l.costUsd, l.exceeds200k].join('|') : '-'
+  const head = l ? [r.agent, l.modelId, l.effort, l.usedPct, l.windowSize, l.usedTokens, l.costUsd, l.exceeds200k].join('|') : '-'
   const t = r.transcript
   const tr = t === 'same' ? held.transcriptRev : t?.rev ?? '-'
   const inv = r.inventory === 'same' ? held.inventoryKey : r.inventory?.key ?? '-'
-  return { head: `${head}#${tr}`, compose: `${inv}|${l?.windowSize ?? ''}`, fixed: inv, curve: tr }
+  return { head: `${head}#${tr}`, compose: `${inv}|${l?.windowSize ?? ''}|${r.canMeasure ? 1 : 0}`, fixed: inv, curve: tr }
 }
 
 /** Sections whose signature changed since `prev` (all of them for the first snapshot). */
@@ -215,17 +215,30 @@ export function skillSortValue(row: SkillView, key: string): number | string {
 // ---------- which panel the pad follows ----------
 
 export type Target =
-  | { kind: 'agent'; slotId: string; cwd: string }
+  | { kind: 'agent'; slotId: string; cwd: string; agent: string }
   | { kind: 'unsupported'; why: 'shell' | 'agent'; agent?: string }
   | undefined
 
 /**
- * The pad follows the focused panel: a Claude pane becomes the target; a plain terminal or another agent says it is not
+ * The pad follows the focused panel: a pane of an agent the board knows (CONTEXT_AGENTS) becomes the target; a plain terminal or another agent says it is not
  * supported; anything else (a note, a preview, the pad itself, nothing) keeps the current target.
  */
+/** Agent kinds that have a context provider (extensions/context/providers.ts). */
+export const CONTEXT_AGENTS: readonly string[] = ['claude', 'codex']
+
+/** What the "Peso fixo" memory group is called for an agent kind. */
+/** The agent's name in the board's sentences. */
+export function agentLabel(agent: string | undefined): string {
+  return agent === 'codex' ? 'Codex' : 'Claude'
+}
+
+export function memoryTitle(agent: string | undefined): string {
+  return agent === 'codex' ? 'AGENTS.md da cadeia' : 'CLAUDE.md da cadeia'
+}
+
 export function nextTarget(prev: Target, info: { id: string; type: string; cwd?: string; agent?: string } | undefined): Target {
   if (!info) return prev
-  if (info.agent === 'claude') return info.cwd ? { kind: 'agent', slotId: info.id, cwd: info.cwd } : prev
+  if (info.agent && CONTEXT_AGENTS.includes(info.agent)) return info.cwd ? { kind: 'agent', slotId: info.id, cwd: info.cwd, agent: info.agent } : prev
   if (info.agent) return { kind: 'unsupported', why: 'agent', agent: info.agent }
   if (info.type === 'terminal') return { kind: 'unsupported', why: 'shell' }
   return prev
@@ -234,5 +247,5 @@ export function nextTarget(prev: Target, info: { id: string; type: string; cwd?:
 export function sameTarget(a: Target, b: Target): boolean {
   if (a === b) return true
   if (!a || !b || a.kind !== b.kind) return false
-  return a.kind === 'agent' ? b.kind === 'agent' && a.slotId === b.slotId && a.cwd === b.cwd : b.kind === 'unsupported' && a.why === b.why && a.agent === b.agent
+  return a.kind === 'agent' ? b.kind === 'agent' && a.slotId === b.slotId && a.cwd === b.cwd && a.agent === b.agent : b.kind === 'unsupported' && a.why === b.why && a.agent === b.agent
 }

@@ -61,6 +61,10 @@ export type SnapshotReply =
   | { supported: false; reason: 'not-claude' | 'unknown-slot' }
   | {
       supported: true
+      /** The agent kind whose provider answered ('claude', 'codex'). */
+      agent: string
+      /** The board offers "Medir" (only Claude has /context). */
+      canMeasure: boolean
       live: LiveView | undefined
       transcript: TranscriptView | 'same' | undefined
       inventory: InventoryView | 'same' | undefined

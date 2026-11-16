@@ -8,7 +8,7 @@ import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { ContextCategory, ContextReport } from '../../src/context/context-report.ts'
 import type { ContextChannels, InventoryView, LiveView, MeasureReply, SnapshotReply, TranscriptView } from './ipc.ts'
 import {
-  baseName, compositionSegments, curveGeometry, diffSections, estimatedCategories, fmtPct, fmtTokens, fmtUsd, mcpByServer, nextSort,
+  agentLabel, baseName, compositionSegments, curveGeometry, diffSections, estimatedCategories, fmtPct, fmtTokens, fmtUsd, mcpByServer, memoryTitle, nextSort,
   nextTarget, sameTarget, sectionSigs, skillSortValue, sortRows, topConsumers, turnLabel, usageLevel, type Section, type SortState, type Target,
 } from './rules.ts'
 import { manifest, OPEN_COMMAND, PAD_ID } from './manifest.ts'
@@ -73,6 +73,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     private live: LiveView | undefined
     private transcript: TranscriptView | undefined
     private inventory: InventoryView | undefined
+    private canMeasure = true
     private sigs: Record<Section, string> | undefined
     private measures = new Map<string, Measure>()
     private sorts: Record<TableName, SortState> = {
@@ -102,7 +103,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     targetChanged(): void {
       this.epoch++
-      this.live = undefined; this.transcript = undefined; this.inventory = undefined; this.sigs = undefined; this.cursor = undefined
+      this.live = undefined; this.transcript = undefined; this.inventory = undefined; this.sigs = undefined; this.cursor = undefined; this.canMeasure = true
       this.showTarget()
       this.syncTimer()
     }
@@ -148,9 +149,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
 
     private showTarget(): void {
-      if (!target) { this.say('Foque o painel de um agente Claude para ver o contexto dele.'); return }
+      if (!target) { this.say('Foque o painel de um agente Claude ou Codex para ver o contexto dele.'); return }
       if (target.kind === 'unsupported') {
-        this.say(target.why === 'shell' ? 'Este painel é um terminal comum: não há contexto de agente para mostrar.' : `O contexto só é inspecionado para agentes Claude (este painel é ${target.agent}).`)
+        this.say(target.why === 'shell' ? 'Este painel é um terminal comum: não há contexto de agente para mostrar.' : `O contexto só é inspecionado para agentes Claude e Codex (este painel é ${target.agent}).`)
         return
       }
       this.say(this.live || this.transcript ? undefined : 'Lendo o contexto do agente…')
@@ -158,12 +159,13 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     private apply(r: SnapshotReply): void {
       if (!r.supported) {
-        this.say(r.reason === 'not-claude' ? 'O contexto só é inspecionado para agentes Claude.' : 'Não encontrei este agente para ler o contexto.')
+        this.say(r.reason === 'not-claude' ? 'O contexto só é inspecionado para agentes Claude e Codex.' : 'Não encontrei este agente para ler o contexto.')
         return
       }
       const heldRev = this.transcript?.rev ?? ''
       const heldInv = this.inventory?.key ?? ''
       this.live = r.live
+      this.canMeasure = r.canMeasure
       if (r.transcript && r.transcript !== 'same') this.transcript = r.transcript
       else if (!r.transcript) this.transcript = undefined
       if (r.inventory && r.inventory !== 'same') this.inventory = r.inventory
@@ -190,7 +192,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const tr = this.transcript
       const kids: Node[] = []
       if (!l) {
-        kids.push(el('div', 'cx-dim', 'Sem dados ao vivo ainda: o Claude grava o uso depois da primeira resposta.'))
+        kids.push(el('div', 'cx-dim', `Sem dados ao vivo ainda: o ${agentLabel(target?.kind === 'agent' ? target.agent : undefined)} grava o uso depois da primeira resposta.`))
       } else {
         const meta = el('div', 'cx-meta')
         meta.append(el('strong', '', l.model))
@@ -240,7 +242,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       btn.type = 'button'
       btn.disabled = m.state === 'busy'
       btn.addEventListener('click', () => { void this.measure(m.state === 'done') })
-      head.append(btn)
+      if (this.canMeasure) head.append(btn)
       const kids: Node[] = [head]
 
       let cats: readonly ContextCategory[] | undefined
@@ -251,7 +253,7 @@ export function activate(ui: TetherUi): IDisposable[] {
         note = `medido pelo /context (estimativa do Claude Code) às ${hhmm(m.measuredAt)}${stale ? ' · desatualizado: os arquivos mudaram desde então' : ''}`
       } else if (this.inventory) {
         cats = estimatedCategories(this.inventory)
-        note = 'estimado do disco (só o peso fixo; use Medir para a composição real)'
+        note = this.canMeasure ? 'estimado do disco (só o peso fixo; use Medir para a composição real)' : 'estimado do disco (só o peso fixo; o Codex não tem medição da composição)'
       }
       if (m.state === 'error') kids.push(el('div', 'cx-err', m.message))
       if (m.state === 'busy') kids.push(el('div', 'cx-dim', 'Rodando o /context do Claude; leva alguns segundos.'))
@@ -322,13 +324,13 @@ export function activate(ui: TetherUi): IDisposable[] {
         kids.push(box)
       }
 
-      kids.push(this.group('CLAUDE.md da cadeia', inv.memory.length, 'memory', [{ key: 'name', label: 'Arquivo' }, { key: 'kind', label: 'Tipo' }, { key: 'tokens', label: 'Tokens', num: true }],
+      kids.push(this.group(memoryTitle(target?.kind === 'agent' ? target.agent : undefined), inv.memory.length, 'memory', [{ key: 'name', label: 'Arquivo' }, { key: 'kind', label: 'Tipo' }, { key: 'tokens', label: 'Tokens', num: true }],
         inv.memory.map(f => ({ name: baseName(f.path), kind: f.kind, tokens: f.tokens, title: f.path }))))
       kids.push(this.group('Skills', inv.skills.length, 'skills', [{ key: 'name', label: 'Nome' }, { key: 'prompt', label: 'No prompt', num: true }, { key: 'body', label: 'Ao invocar', num: true }],
         inv.skills.map(s => ({ name: s.name, prompt: s.promptTokens, body: s.bodyTokens, title: s.scope }))))
       kids.push(this.group('Agentes', inv.agents.length, 'agents', [{ key: 'name', label: 'Nome' }, { key: 'prompt', label: 'No prompt', num: true }, { key: 'body', label: 'Ao invocar', num: true }],
         inv.agents.map(s => ({ name: s.name, prompt: s.promptTokens, body: s.bodyTokens, title: s.scope }))))
-      kids.push(this.group('MCP por servidor', inv.mcpServers.length, 'mcp', [{ key: 'name', label: 'Servidor' }, { key: 'transport', label: 'Transporte' }, { key: 'tokens', label: byServer ? 'Tokens' : 'Tokens (meça)', num: true }],
+      kids.push(this.group('MCP por servidor', inv.mcpServers.length, 'mcp', [{ key: 'name', label: 'Servidor' }, { key: 'transport', label: 'Transporte' }, { key: 'tokens', label: byServer ? 'Tokens' : this.canMeasure ? 'Tokens (meça)' : 'Tokens', num: true }],
         inv.mcpServers.map(s => ({ name: s.name, transport: s.transport, tokens: byServer?.get(s.name) ?? 0, title: '' }))))
       if (tools?.length) {
         kids.push(this.group('MCP por tool', tools.length, 'tools', [{ key: 'name', label: 'Tool' }, { key: 'tokens', label: 'Tokens', num: true }],
