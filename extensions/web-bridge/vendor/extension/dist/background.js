@@ -12,7 +12,8 @@ function isClientId(v) {
 }
 function cleanClientName(raw2) {
   if (typeof raw2 !== "string") return void 0;
-  const cleaned = raw2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CLIENT_NAME_MAX).trim();
+  const spaced = raw2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(new RegExp("\\p{Cf}", "gu"), "").replace(/\s+/g, " ").trim();
+  const cleaned = [...spaced].slice(0, CLIENT_NAME_MAX).join("").trim();
   return cleaned || void 0;
 }
 var SEED_FILE = "bridge.json";
@@ -1009,10 +1010,6 @@ function ownerGroupColor(clientId) {
 function ownerGroupTitle(client) {
   return agentGroupTitle(client.name ?? client.id);
 }
-var RELEASED_SUFFIX = " (encerrado)";
-function releasedGroupTitle(title) {
-  return title.endsWith(RELEASED_SUFFIX) ? title : `${title}${RELEASED_SUFFIX}`;
-}
 
 // extension/src/settings.ts
 var STATUS_KEY = "status";
@@ -1106,6 +1103,7 @@ var CURRENT_KEY = "currentTab";
 var CURRENT_BY_OWNER_KEY = "currentByOwner";
 var CLIENT_NAMES_KEY = "clientNames";
 var WINDOW_BY_OWNER_KEY = "windowByOwner";
+var GROUPS_BY_OWNER_KEY = "groupsByOwner";
 var cache = null;
 async function load() {
   if (!cache) cache = (await chrome.storage.session.get(SCOPE_KEY))[SCOPE_KEY] ?? {};
@@ -1147,7 +1145,7 @@ async function addScope(tabId, owner, handed = false) {
     scope[String(tabId)] = { grouped: false, ...owner ? { owner: owner.id } : {}, ...handed ? { handed: true } : {} };
   }
   await save();
-  if (owner) await rememberClient(owner);
+  await noteCaller(owner);
   scheduleTabs();
 }
 async function removeScope(tabId) {
@@ -1211,11 +1209,19 @@ async function clientNames() {
   return (await chrome.storage.session.get(CLIENT_NAMES_KEY))[CLIENT_NAMES_KEY] ?? {};
 }
 async function rememberClient(client) {
-  if (!client.name) return;
+  if (!client.name) return false;
   const names = await clientNames();
-  if (names[client.id] === client.name) return;
+  if (names[client.id] === client.name) return false;
   names[client.id] = client.name;
   await chrome.storage.session.set({ [CLIENT_NAMES_KEY]: names });
+  return true;
+}
+async function noteCaller(client) {
+  if (!client?.name) return;
+  try {
+    if (await rememberClient(client)) await renameOwnerGroups(client.id);
+  } catch {
+  }
 }
 async function clientName(id) {
   return (await clientNames())[id];
@@ -1257,28 +1263,94 @@ async function groupTitleFor(owner) {
   const name = await clientName(owner);
   return ownerGroupTitle(name ? { id: owner, name } : { id: owner });
 }
+async function groupsByOwner() {
+  return (await chrome.storage.session.get(GROUPS_BY_OWNER_KEY))[GROUPS_BY_OWNER_KEY] ?? {};
+}
+async function ownerGroups(owner, prune = false) {
+  const map = await groupsByOwner();
+  const ids = map[owner] ?? [];
+  const groups = (await Promise.all(ids.map((id) => chrome.tabGroups.get(id).catch(() => null)))).filter((g) => g !== null);
+  if (prune && groups.length !== ids.length) {
+    if (groups.length) map[owner] = groups.map((g) => g.id);
+    else delete map[owner];
+    await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
+  }
+  return groups;
+}
+async function claimGroup(owner, groupId) {
+  const map = await groupsByOwner();
+  const ids = map[owner] ?? [];
+  if (ids.includes(groupId)) return;
+  map[owner] = [...ids, groupId];
+  await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
+}
+async function ownerGroupWindow(owner) {
+  return (await ownerGroups(owner))[0]?.windowId ?? null;
+}
 var grouping = Promise.resolve();
-function groupTab(tabId) {
-  const run = async () => {
+function inGroupQueue(run) {
+  const next = grouping.then(run, run);
+  grouping = next.catch(() => void 0);
+  return next;
+}
+function forgetGroup(groupId) {
+  return inGroupQueue(async () => {
+    const map = await groupsByOwner();
+    const owners = Object.keys(map).filter((o) => map[o].includes(groupId));
+    if (!owners.length) return;
+    for (const o of owners) {
+      const rest = map[o].filter((id) => id !== groupId);
+      if (rest.length) map[o] = rest;
+      else delete map[o];
+    }
+    await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
+  });
+}
+function renameOwnerGroups(owner) {
+  return inGroupQueue(async () => {
+    const title = await groupTitleFor(owner);
+    for (const g of await ownerGroups(owner, true)) if (g.title !== title) await chrome.tabGroups.update(g.id, { title }).catch(() => void 0);
+  });
+}
+function collapseOwnerGroups(owner) {
+  return inGroupQueue(async () => {
+    const groups = await ownerGroups(owner, true);
+    for (const g of groups) await chrome.tabGroups.update(g.id, { collapsed: true }).catch(() => void 0);
+    return groups.length;
+  });
+}
+function groupTab(tabId, opts = {}) {
+  return inGroupQueue(async () => {
     const entry = await entryOf(tabId);
     const owner = entry?.owner;
     const title = await groupTitleFor(owner);
-    const color = owner === void 0 ? await groupColor() : ownerGroupColor(owner);
     const tab = await chrome.tabs.get(tabId);
-    const existing = (await chrome.tabGroups.query({ title, windowId: tab.windowId }))[0];
-    const groupId = await chrome.tabs.group(
-      existing ? { tabIds: tabId, groupId: existing.id } : { tabIds: tabId, createProperties: { windowId: tab.windowId } }
-    );
-    if (!existing) await chrome.tabGroups.update(groupId, { title, color });
+    if (owner === void 0) {
+      const existing = (await chrome.tabGroups.query({ title, windowId: tab.windowId }))[0];
+      const groupId = await chrome.tabs.group(
+        existing ? { tabIds: tabId, groupId: existing.id } : { tabIds: tabId, createProperties: { windowId: tab.windowId } }
+      );
+      if (!existing) await chrome.tabGroups.update(groupId, { title, color: await groupColor() });
+    } else {
+      const groups = await ownerGroups(owner, true);
+      const target = groups.find((g) => g.windowId === tab.windowId) ?? (opts.inPlace ? void 0 : groups[0]);
+      const color = ownerGroupColor(owner);
+      if (target) {
+        await chrome.tabs.group({ tabIds: tabId, groupId: target.id });
+        const retitle = target.title !== title && await clientName(owner) !== void 0;
+        if (target.collapsed || retitle) await chrome.tabGroups.update(target.id, { collapsed: false, ...retitle ? { title } : {} }).catch(() => void 0);
+      } else {
+        const groupId = await chrome.tabs.group({ tabIds: tabId, createProperties: { windowId: tab.windowId } });
+        await chrome.tabGroups.update(groupId, { title, color });
+        await claimGroup(owner, groupId);
+      }
+    }
     const scope = await load();
     if (scope[String(tabId)]) {
       scope[String(tabId)].grouped = true;
       await save();
     }
-  };
-  const next = grouping.then(run, run);
-  grouping = next.catch(() => void 0);
-  return next;
+  });
 }
 
 // extension/src/alert.ts
@@ -1594,7 +1666,7 @@ async function takeControl(tabId, owner, opts = {}) {
   const s = sessionFor(tabId);
   try {
     await s.attach();
-    await groupTab(tabId);
+    await groupTab(tabId, { inPlace: opts.inPlace === true || opts.handed === true });
   } catch (e) {
     await releaseControl(tabId);
     throw e;
@@ -1625,7 +1697,6 @@ async function releaseControl(tabId) {
   await s?.detach();
 }
 async function releaseClient(clientId) {
-  const title = await groupTitleFor(clientId);
   const released = [];
   for (const [tabId, entry] of await listEntries()) {
     if (entry.owner !== clientId) continue;
@@ -1633,12 +1704,7 @@ async function releaseClient(clientId) {
     released.push(tabId);
   }
   await clearCurrent(clientId);
-  await clearWindow(clientId);
-  let groups = 0;
-  for (const g of await chrome.tabGroups.query({ title })) {
-    await chrome.tabGroups.update(g.id, { title: releasedGroupTitle(title), collapsed: true }).catch(() => chrome.tabGroups.update(g.id, { title: releasedGroupTitle(title) }));
-    groups++;
-  }
+  const groups = await collapseOwnerGroups(clientId);
   await forgetClient(clientId);
   scheduleTabs();
   return { released, groups };
@@ -1699,6 +1765,9 @@ function watchBrowserEvents() {
   });
   chrome.windows.onRemoved.addListener((windowId) => {
     void forgetWindow(windowId);
+  });
+  chrome.tabGroups.onRemoved.addListener((group) => {
+    void forgetGroup(group.id);
   });
   chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) return;
@@ -2617,10 +2686,16 @@ async function listTabs(client) {
   return rows2;
 }
 async function createBlankTab(client, preference) {
+  const groupWindow = client !== void 0 && preference !== "user-window" ? await ownerGroupWindow(client.id) : null;
   const inAgentWindow = client !== void 0 && preference !== "user-window" && await windowPerAgent();
   if (!inAgentWindow) {
-    const created = await chrome.tabs.create({ url: "about:blank", active: true });
+    const created = await chrome.tabs.create({ ...groupWindow !== null ? { windowId: groupWindow } : {}, url: "about:blank", active: true });
     return { id: created.id, windowId: created.windowId };
+  }
+  if (groupWindow !== null) {
+    const created = await chrome.tabs.create({ windowId: groupWindow, url: "about:blank", active: true });
+    await setWindow(client.id, groupWindow);
+    return { id: created.id, windowId: groupWindow };
   }
   const existing = await getWindow(client.id);
   if (existing !== null) {
@@ -2643,7 +2718,7 @@ async function tabs(a, client) {
       const { id, windowId } = await createBlankTab(client, a.where);
       let s;
       try {
-        s = await takeControl(id, client);
+        s = await takeControl(id, client, { inPlace: a.where === "user-window" });
       } catch (e) {
         await chrome.tabs.remove(id).catch(() => void 0);
         throw e;
@@ -3747,7 +3822,10 @@ var DaemonConnection = class {
         void setStatus({ state: "denied", detail: msg.reason });
         void applySeed();
       } else if (msg.t === "call") {
-        void this.handleCall(msg.rid, () => runTool(msg.tool, msg.args, msg.client, msg.rid), { tool: msg.tool, client: msg.client?.id });
+        void this.handleCall(msg.rid, async () => {
+          await noteCaller(msg.client);
+          return runTool(msg.tool, msg.args, msg.client, msg.rid);
+        }, { tool: msg.tool, client: msg.client?.id });
       } else if (msg.t === "release") {
         void this.handleCall(msg.rid, () => releaseClient(msg.client), { tool: "release" });
       } else if (msg.t === "release-all") {
