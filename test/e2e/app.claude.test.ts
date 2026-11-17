@@ -50,6 +50,17 @@ const MIN_UPTIME_MS = 11_000
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
+/** The fullscreen mark Claude Code keeps in the global ~/.claude.json: `{ at, strikes, ... }`, or undefined. */
+type FullscreenMark = { at?: string } & Record<string, unknown>
+function readFullscreenMark(): FullscreenMark | undefined {
+  const p = join(homedir(), '.claude.json')
+  const cfg = existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown> : {}
+  return cfg.fullscreenAutoDisabled as FullscreenMark | undefined
+}
+/** Start of this run, and the mark as it was then: the global file is shared, so only a mark written during this run counts. */
+const runStartMs = Date.now()
+const markAtStart = readFullscreenMark()
+
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
 }
@@ -345,8 +356,12 @@ async function waitGone(procs: Proc[], ms: number): Promise<Proc[]> {
   return left
 }
 
-test('fullscreen canary: ~/.claude.json has no fullscreenAutoDisabled after the app test', () => {
-  const p = join(homedir(), '.claude.json')
-  const cfg = existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown> : {}
-  assert.ok(!cfg.fullscreenAutoDisabled, 'fullscreenAutoDisabled is set: a Claude session died before 10 s of life; run /tui fullscreen')
+test('fullscreen canary: no fullscreenAutoDisabled mark written during this run', () => {
+  const mark = readFullscreenMark()
+  if (!mark) return
+  const at = Date.parse(String(mark.at))
+  if (!markAtStart) assert.fail(`fullscreenAutoDisabled appeared during this run (at ${mark.at}): a Claude session died before 10 s of life; run /tui fullscreen`)
+  if (Number.isNaN(at) || at > runStartMs) assert.fail(`fullscreenAutoDisabled was set during this run (at ${mark.at}): a Claude session died before 10 s of life; run /tui fullscreen`)
+  // Older mark from another run: informational only, it does not fail this one.
+  console.log(`fullscreenAutoDisabled predates this run (at ${mark.at}); not counted`)
 })
