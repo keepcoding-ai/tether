@@ -415,10 +415,10 @@ class DaemonImpl implements Daemon {
     // Panes a previous tetherd left alive in tether-ptyd: listed now (read only), so the reaper spares them, and adopted
     // once this daemon owns the pipe (a loser of the race never touches them).
     const hostRuns = metas.length > 0 ? await this.hostRunsAtBoot() : undefined
-    const ownedElsewhere = await this.reapOrphans(new Set((hostRuns ?? []).map((r) => r.pid)))
+    const ownedElsewhere = await perf.timedAsync('boot:reap', () => this.reapOrphans(new Set((hostRuns ?? []).map((r) => r.pid))))
     const profiles = this.profileStore.read()
     if (profiles.problem) this.log(`profiles: ${profiles.problem}`)
-    for (const meta of metas) this.load(meta)
+    perf.timed('boot:load', () => { for (const meta of metas) this.load(meta) })
     const adoptions = this.holdAdoptions(hostRuns ?? [], ownedElsewhere)
     this.loadPause()
     await this.procs.init()
@@ -438,13 +438,13 @@ class DaemonImpl implements Daemon {
       throw e
     }
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
-    await Promise.all(adoptions.map((a) => this.adoptSlot(a)))
+    await perf.timedAsync('boot:adopt', () => Promise.all(adoptions.map((a) => this.adoptSlot(a))))
     if (adoptions.length > 0) this.pump()
     // Only the owner of the pipe serves the channel (a loser of the race never gets here).
     try { this.log(`ronda channel served on 127.0.0.1:${await this.rondaChannel.listen()}`) }
     catch (e) { this.log(`ronda channel not served (${(e as Error).message}); the ronda is unavailable this run`) }
     if (this.memoryIntervalMs > 0) {
-      this.memoryTimer = setInterval(() => void this.sampleMemory(), this.memoryIntervalMs)
+      this.memoryTimer = setInterval(perf.wrap('timer:memory', () => void this.sampleMemory()), this.memoryIntervalMs)
       this.memoryTimer.unref()
     }
     this.log(`listening on ${this.pipe} (${this.slotMap.size} slots)`)
@@ -523,7 +523,7 @@ class DaemonImpl implements Daemon {
   /** A fresh slot should not wait a whole interval for its first reading: one sample a few seconds after a spawn (coalesced). */
   private kickMemory(): void {
     if (this.memoryIntervalMs <= 0 || this.memoryKick) return
-    this.memoryKick = setTimeout(() => { this.memoryKick = undefined; void this.sampleMemory() }, Math.min(5_000, this.memoryIntervalMs))
+    this.memoryKick = setTimeout(perf.wrap('timer:memory-kick', () => { this.memoryKick = undefined; void this.sampleMemory() }), Math.min(5_000, this.memoryIntervalMs))
     this.memoryKick.unref()
   }
 
@@ -570,7 +570,7 @@ class DaemonImpl implements Daemon {
       delete meta.profileArgs
       delete meta.profileEnv
     }
-    if (changed) writeSlotMeta(this.home, meta)
+    if (changed) perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta))
     this.broadcastState(slot)
     return changed
   }
@@ -581,7 +581,7 @@ class DaemonImpl implements Daemon {
     if (saved.profileId === undefined) delete meta.profileId; else meta.profileId = saved.profileId
     if (saved.profileArgs === undefined) delete meta.profileArgs; else meta.profileArgs = saved.profileArgs
     if (saved.profileEnv === undefined) delete meta.profileEnv; else meta.profileEnv = saved.profileEnv
-    try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot restore the profile fields: ${(e as Error).message}`) }
+    try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta)) } catch (e) { this.log(`slot ${meta.slotId}: cannot restore the profile fields: ${(e as Error).message}`) }
     this.broadcastState(slot)
   }
 
@@ -746,7 +746,7 @@ class DaemonImpl implements Daemon {
     try {
       slot.scrollback.clear()
       const adopted = await this.panels().adopt(meta.slotId, {
-        onData: (data) => { if (early) early.push(data); else this.paneData(slot, data, true) },
+        onData: perf.wrap('pane:data', (data: string) => { if (early) early.push(data); else this.paneData(slot, data, true) }),
         onExit: (exit) => {
           ended = true
           if (slot.pty !== undefined && mine !== undefined && slot.pty !== mine) return
@@ -778,7 +778,7 @@ class DaemonImpl implements Daemon {
       slot.error = undefined
       if (meta.endedAt) {
         delete meta.endedAt
-        try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot clear endedAt: ${(e as Error).message}`) }
+        try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta)) } catch (e) { this.log(`slot ${meta.slotId}: cannot clear endedAt: ${(e as Error).message}`) }
       }
       this.log(`slot ${meta.slotId}: adopted pid ${mine.pid} from the terminal-pane host (spawned ${adopted.spawnedAt})`)
       void this.recordRun(slot, mine)
@@ -934,11 +934,11 @@ class DaemonImpl implements Daemon {
     if (slot.stopTitleWatch || !binding || slot.meta.agent === 'shell') return
     const adapter = this.adapterOf(slot.meta.agent)
     if (!adapter?.watchTitle) return
-    const stop = adapter.watchTitle(binding, (title) => {
+    const stop = adapter.watchTitle(binding, perf.wrap('watch:title', (title: string) => {
       if (slot.binding !== binding || slot.title === title) return
       slot.title = title
       this.broadcastState(slot)
-    }, this.titlePollMs, this.lookupOf(slot))
+    }), this.titlePollMs, this.lookupOf(slot))
     slot.stopTitleWatch = (): void => {
       slot.stopTitleWatch = undefined
       stop()
@@ -1007,6 +1007,10 @@ class DaemonImpl implements Daemon {
 
   /** Launches queued slots while seats are free. A start that fails now is reported through the slot's state. */
   private pump(): void {
+    perf.timed('pump', () => this.pumpQueue())
+  }
+
+  private pumpQueue(): void {
     while (this.queue.length > 0 && this.startingCount() < MAX_STARTING) {
       const slot = this.queue.shift()!
       if (slot.status !== 'queued') continue
@@ -1063,7 +1067,7 @@ class DaemonImpl implements Daemon {
     slot.memoryMB = undefined
     if (meta.endedAt) {
       delete meta.endedAt
-      try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot clear endedAt: ${(e as Error).message}`) }
+      try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta)) } catch (e) { this.log(`slot ${meta.slotId}: cannot clear endedAt: ${(e as Error).message}`) }
     }
     slot.spawnedAt = new Date().toISOString()
     slot.runUnsafe = isUnsafe(plan.args)
@@ -1071,7 +1075,7 @@ class DaemonImpl implements Daemon {
     let ended = false
     let mine: PtyHandle | undefined
     const callbacks: PanelCallbacks = {
-      onData: (data) => this.paneData(slot, data, hosted),
+      onData: perf.wrap('pane:data', (data: string) => this.paneData(slot, data, hosted)),
       onExit: (exit) => {
         ended = true
         // A hosted run that is no longer the slot's (it ended after a relaunch) changes nothing.
@@ -1127,9 +1131,9 @@ class DaemonImpl implements Daemon {
     if (meta.agent === 'shell') slot.status = 'running'
     else {
       slot.status = 'starting'
-      slot.readyTimer = setTimeout(() => {
+      slot.readyTimer = setTimeout(perf.wrap('timer:ready', () => {
         if (slot.status === 'starting') this.setRunning(slot)
-      }, this.readyFallbackMs)
+      }), this.readyFallbackMs)
       slot.readyTimer.unref()
     }
     this.broadcastState(slot)
@@ -1217,7 +1221,7 @@ class DaemonImpl implements Daemon {
     const profiles = this.profileStore.profiles()
     const current = profiles.find((p) => p.id === meta.profileId)
     if (current && snapshotProfile(meta, current)) {
-      try { writeSlotMeta(this.home, meta) } catch (e) { this.log(`slot ${meta.slotId}: cannot refresh the profile snapshot: ${(e as Error).message}`) }
+      try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta)) } catch (e) { this.log(`slot ${meta.slotId}: cannot refresh the profile snapshot: ${(e as Error).message}`) }
     }
     const profile = this.profileOf(meta, profiles).launch
     let plan: LaunchPlan
@@ -1244,10 +1248,10 @@ class DaemonImpl implements Daemon {
     slot.confirmWatch = undefined
     const pty = slot.pty
     this.log(`slot ${slot.meta.slotId}: channel confirmation recognized; answering`)
-    setTimeout(() => {
+    setTimeout(perf.wrap('timer:confirm', () => {
       if (slot.pty !== pty || !isAlive(slot) || this.reportedThisRun(slot)) return
       pty?.write(w.spec.keys)
-    }, CONFIRM_DELAY_MS).unref()
+    }), CONFIRM_DELAY_MS).unref()
   }
 
   /** A start event of the agent arrived at/after the last spawn (the binding describes what this run opened). */
@@ -1258,7 +1262,7 @@ class DaemonImpl implements Daemon {
   /** Records when the run ended (in the meta, so a restarted daemon still knows). */
   private markEnded(slot: Slot): void {
     slot.meta.endedAt = new Date().toISOString()
-    try { writeSlotMeta(this.home, slot.meta) } catch (e) { this.log(`slot ${slot.meta.slotId}: cannot record endedAt: ${(e as Error).message}`) }
+    try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, slot.meta)) } catch (e) { this.log(`slot ${slot.meta.slotId}: cannot record endedAt: ${(e as Error).message}`) }
   }
 
   private fail(slot: Slot, code: ErrorCode, message: string): RequestError {
@@ -1338,9 +1342,9 @@ class DaemonImpl implements Daemon {
     const client: Client = { socket, parser: new LineParser(), attached: new Set(), procsWatched: new Set() }
     this.clients.add(client)
     socket.setEncoding('utf8')
-    socket.on('data', (chunk: string) => {
+    socket.on('data', perf.wrap('net:client-data', (chunk: string) => {
       for (const line of client.parser.push(chunk)) void this.onLine(client, line.value, line.raw)
-    })
+    }))
     socket.on('error', (e) => this.log(`client error: ${e.message}`))
     socket.on('close', () => {
       this.clients.delete(client)
@@ -1462,7 +1466,7 @@ class DaemonImpl implements Daemon {
     if (typeof id !== 'number') return // not a request we can answer
     let reply: Reply
     try {
-      reply = await this.handle(client, msg as Request)
+      reply = await perf.timed(`req:${String(msg.t)}`, () => this.handle(client, msg as Request))
     } catch (e) {
       const err = e instanceof RequestError ? e : new RequestError('bad-request', (e as Error).message)
       reply = { t: 'error', id, code: err.code, message: err.message }
@@ -1485,10 +1489,10 @@ class DaemonImpl implements Daemon {
         if (process.env.TETHER_TEST_BLOCK !== '1') throw new RequestError('bad-request', 'debug-block indisponível')
         const ms = req.ms
         if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0 || ms > DEBUG_BLOCK_MAX_MS) throw new RequestError('bad-request', `ms inválido (0 < ms <= ${DEBUG_BLOCK_MAX_MS})`)
-        setImmediate(() => {
+        setImmediate(perf.wrap('req:debug-block', () => {
           perf.incident('debug-block', { ms })
           busyWait(ms)
-        })
+        }))
         return { t: 'ok', id }
       }
       case 'create': {
@@ -1633,7 +1637,7 @@ class DaemonImpl implements Daemon {
         if (r.outcome !== 'unchanged') {
           if (r.outcome === 'created' || r.ronda.nextAt !== slot.ronda?.nextAt) slot.rondaDue = false
           slot.ronda = r.ronda
-          writeRonda(this.home, slot.meta.slotId, r.ronda)
+          perf.timed('store:ronda-write', () => writeRonda(this.home, slot.meta.slotId, r.ronda))
           this.log(`slot ${slot.meta.slotId}: ronda ${r.outcome} (${r.ronda.intervalMs} ms${r.ronda.criterion ? ', com critério' : ''})`)
           this.armRonda(slot)
           this.broadcastState(slot)
@@ -1763,7 +1767,7 @@ class DaemonImpl implements Daemon {
 
   private startWatching(): void {
     try {
-      this.watcher = watch(slotsDir(this.home), (_event, filename) => {
+      this.watcher = watch(slotsDir(this.home), perf.wrap('watch:slots', (_event, filename: string | null) => {
         if (typeof filename !== 'string') return
         const pr = /^([^.]+)\.pause\.jsonl$/.exec(filename)
         if (pr && SLOT_ID_RE.test(pr[1]!)) { this.schedulePauseReport(pr[1]!); return }
@@ -1774,7 +1778,7 @@ class DaemonImpl implements Daemon {
         const m = /^([^.]+)\.(jsonl|json)$/.exec(filename)
         if (!m || !SLOT_ID_RE.test(m[1]!)) return
         this.schedule(m[1]!)
-      })
+      }))
       this.watcher.on('error', (e) => this.log(`watch error: ${e.message}`))
     } catch (e) {
       this.log(`cannot watch ${slotsDir(this.home)}: ${(e as Error).message}`)
@@ -1786,11 +1790,11 @@ class DaemonImpl implements Daemon {
     const key = `${slotId}.bg`
     const prev = this.pending.get(key)
     if (prev) clearTimeout(prev)
-    const t = setTimeout(() => {
+    const t = setTimeout(perf.wrap('timer:background', () => {
       this.pending.delete(key)
       const slot = this.slotMap.get(slotId)
       if (slot) this.applyBackground(slot)
-    }, WATCH_DEBOUNCE_MS)
+    }), WATCH_DEBOUNCE_MS)
     this.pending.set(key, t)
   }
 
@@ -1820,10 +1824,10 @@ class DaemonImpl implements Daemon {
     if (slot.wakeTimer) { clearTimeout(slot.wakeTimer); slot.wakeTimer = undefined }
     const due = slot.attention.wakeDueAt()
     if (due === undefined) return
-    slot.wakeTimer = setTimeout(() => {
+    slot.wakeTimer = setTimeout(perf.wrap('timer:wake', () => {
       slot.wakeTimer = undefined
       if (slot.attention.wakeExpired(Date.now())) this.broadcastState(slot)
-    }, Math.max(50, due - Date.now()))
+    }), Math.max(50, due - Date.now()))
     slot.wakeTimer.unref()
   }
 
@@ -1840,11 +1844,11 @@ class DaemonImpl implements Daemon {
     const key = `${slotId}.attention`
     const prev = this.pending.get(key)
     if (prev) clearTimeout(prev)
-    const t = setTimeout(() => {
+    const t = setTimeout(perf.wrap('timer:attention-report', () => {
       this.pending.delete(key)
       const slot = this.slotMap.get(slotId)
       if (slot) this.applyAttentionReport(slot)
-    }, WATCH_DEBOUNCE_MS)
+    }), WATCH_DEBOUNCE_MS)
     this.pending.set(key, t)
   }
 
@@ -1884,11 +1888,11 @@ class DaemonImpl implements Daemon {
   private scheduleAttention(slot: Slot): void {
     const due = slot.attention.dueAt()
     if (due === undefined || slot.attentionTimer) return
-    slot.attentionTimer = setTimeout(() => {
+    slot.attentionTimer = setTimeout(perf.wrap('timer:attention', () => {
       slot.attentionTimer = undefined
       if (slot.attention.poll(Date.now())) this.broadcastState(slot)
       else this.scheduleAttention(slot)
-    }, Math.max(50, due - Date.now()))
+    }), Math.max(50, due - Date.now()))
     slot.attentionTimer.unref()
   }
 
@@ -1924,7 +1928,7 @@ class DaemonImpl implements Daemon {
     slot.rondaTimer = undefined
     if (!slot.ronda || this.closing) return
     const wait = slot.rondaDue ? this.rondaRetryMs : Math.max(0, Date.parse(slot.ronda.nextAt) - Date.now())
-    slot.rondaTimer = setTimeout(() => { slot.rondaTimer = undefined; this.rondaTick(slot) }, Math.min(wait, 2 ** 31 - 1))
+    slot.rondaTimer = setTimeout(perf.wrap('timer:ronda', () => { slot.rondaTimer = undefined; this.rondaTick(slot) }), Math.min(wait, 2 ** 31 - 1))
     slot.rondaTimer.unref()
   }
 
@@ -1940,7 +1944,7 @@ class DaemonImpl implements Daemon {
     }
     slot.ronda = { ...ronda, lastAt: new Date().toISOString(), nextAt: new Date(Date.now() + ronda.intervalMs).toISOString() }
     slot.rondaDue = false
-    try { writeRonda(this.home, slot.meta.slotId, slot.ronda) } catch (e) { this.log(`ronda: cannot save ${slot.meta.slotId}: ${(e as Error).message}`) }
+    try { perf.timed('store:ronda-write', () => writeRonda(this.home, slot.meta.slotId, slot.ronda!)) } catch (e) { this.log(`ronda: cannot save ${slot.meta.slotId}: ${(e as Error).message}`) }
     this.log(`slot ${slot.meta.slotId}: ronda sent through the channel`)
     this.armRonda(slot)
     this.broadcastState(slot)
@@ -2109,7 +2113,7 @@ class DaemonImpl implements Daemon {
   private savePause(): void {
     const batch = this.batch
     if (!batch) return
-    try { writePauseFile(this.home, batch) } catch (e) { this.log(`pause: cannot write pause.json: ${(e as Error).message}`) }
+    try { perf.timed('store:pause-write', () => writePauseFile(this.home, batch)) } catch (e) { this.log(`pause: cannot write pause.json: ${(e as Error).message}`) }
     this.broadcast({ t: 'pause', batch })
   }
 
@@ -2126,10 +2130,10 @@ class DaemonImpl implements Daemon {
     const key = `${slotId}.pause.jsonl`
     const prev = this.pending.get(key)
     if (prev) clearTimeout(prev)
-    const t = setTimeout(() => {
+    const t = setTimeout(perf.wrap('timer:pause-report', () => {
       this.pending.delete(key)
       this.applyPauseReports(slotId)
-    }, WATCH_DEBOUNCE_MS)
+    }), WATCH_DEBOUNCE_MS)
     this.pending.set(key, t)
   }
 
@@ -2171,7 +2175,7 @@ class DaemonImpl implements Daemon {
   private schedule(slotId: string): void {
     const prev = this.pending.get(slotId)
     if (prev) clearTimeout(prev)
-    const t = setTimeout(() => {
+    const t = setTimeout(perf.wrap('timer:slot-events', () => {
       this.pending.delete(slotId)
       const slot = this.slotMap.get(slotId)
       if (slot) {
@@ -2182,7 +2186,7 @@ class DaemonImpl implements Daemon {
       // A slot created by another process (the CLI): adopt it.
       const meta = readSlot(this.home, slotId)
       if (meta) this.broadcastState(this.load(meta))
-    }, WATCH_DEBOUNCE_MS)
+    }), WATCH_DEBOUNCE_MS)
     this.pending.set(slotId, t)
   }
 }

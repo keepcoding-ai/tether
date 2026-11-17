@@ -97,3 +97,63 @@ test('real loop: a 300 ms busy wait shows up as maxMs >= 250 and a loop-lag inci
     assert.ok(snap.incidents.some((i) => i.kind === 'loop-lag'))
   } finally { perf.stop() }
 })
+
+/** A rig whose high-resolution clock the test advances by hand. */
+function timedRig(opts: ConstructorParameters<typeof Perf>[0] = {}) {
+  const hr = { t: 0 }
+  const r = rig({ hrNow: () => hr.t, ...opts })
+  return { ...r, hr }
+}
+
+test('timed: over the limit raises slow with the label, under it does not, and the result passes through', () => {
+  const { perf, hr } = timedRig()
+  assert.equal(perf.timed('fast', () => { hr.t += 99; return 7 }), 7)
+  assert.equal(perf.snapshot().incidents.length, 0)
+  assert.equal(perf.timed('slow-one', () => { hr.t += 150; return 'x' }), 'x')
+  const inc = perf.snapshot().incidents
+  assert.equal(inc.length, 1)
+  assert.equal(inc[0]!.kind, 'slow')
+  assert.deepEqual(inc[0]!.data, { label: 'slow-one', ms: 150 })
+})
+
+test('timed: a throw is still charged and rethrown', () => {
+  const { perf, hr } = timedRig()
+  assert.throws(() => perf.timed('boom', () => { hr.t += 200; throw new Error('x') }), /x/)
+  assert.equal(perf.snapshot().incidents[0]!.data && (perf.snapshot().incidents[0]!.data as { label: string }).label, 'boom')
+})
+
+test('wrap: times every call, passes arguments and result', () => {
+  const { perf, hr } = timedRig({ slowMs: 50 })
+  const f = perf.wrap('cb', (a: number, b: number) => { hr.t += a; return a + b })
+  assert.equal(f(10, 1), 11)
+  assert.equal(perf.snapshot().incidents.length, 0)
+  assert.equal(f(60, 1), 61)
+  assert.deepEqual(perf.snapshot().incidents[0]!.data, { label: 'cb', ms: 60 })
+  assert.deepEqual(perf.snapshot().labels!.cb, { n: 2, totalMs: 70, maxMs: 60 })
+})
+
+test('slow incidents are limited per label: different labels do not erase each other', () => {
+  const { perf, hr, clock } = timedRig()
+  for (const l of ['a', 'b', 'a', 'a', 'b']) perf.timed(l, () => { hr.t += 200 })
+  const snap = perf.snapshot()
+  assert.deepEqual(snap.incidents.map((i) => (i.data as { label: string }).label), ['a', 'b'])
+  assert.equal(snap.dropped.slow, 3)
+  clock.t += 1000
+  perf.timed('a', () => { hr.t += 200 })
+  assert.equal(perf.snapshot().incidents.length, 3)
+})
+
+test('label tables are bounded: labels past the cap fold into (other)', () => {
+  const { perf, hr, clock } = timedRig()
+  for (let i = 0; i < 100; i++) { clock.t += 1000; perf.timed('l' + i, () => { hr.t += 200 }) }
+  const snap = perf.snapshot()
+  assert.ok(Object.keys(snap.labels!).length <= 65)
+  assert.equal(snap.labels!['(other)']!.n, 36)
+  assert.ok(snap.incidents.length >= 64)
+})
+
+test('timedAsync charges wall time and flags the incident', async () => {
+  const { perf, hr } = timedRig()
+  await perf.timedAsync('boot:x', async () => { hr.t += 300 })
+  assert.deepEqual(perf.snapshot().incidents[0]!.data, { label: 'boot:x', ms: 300, wall: true })
+})

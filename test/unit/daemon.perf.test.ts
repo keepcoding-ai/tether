@@ -31,3 +31,20 @@ test('perf: replies with samples and incidents, and `since` filters them', async
   assert.equal(later.perf!.incidents.length, 0)
   c.client.close()
 })
+
+test('perf: a blocked request handler shows up as a slow incident with its label', async () => {
+  process.env.TETHER_TEST_BLOCK = '1'
+  try {
+    const c = await Recorder.connect(daemon.pipe)
+    await c.client.request({ t: 'debug-block', ms: 250 })
+    await waitUntil(() => perf.snapshot().incidents.some((i) => i.kind === 'slow' && (i.data as { label?: string }).label === 'req:debug-block'), 5_000, 'the slow incident')
+    const r = await c.client.request({ t: 'perf' })
+    const slow = r.perf!.incidents.find((i) => i.kind === 'slow')!
+    assert.ok((slow.data as { ms: number }).ms >= 200)
+    assert.ok(r.perf!.labels!['req:debug-block']!.n >= 1)
+    assert.ok(r.perf!.labels!['req:perf']!.n >= 1)
+    c.client.close()
+  } finally {
+    delete process.env.TETHER_TEST_BLOCK
+  }
+})
