@@ -5,8 +5,10 @@
 //   2. Ctrl+\ → a second Claude panel in the same folder → "responda apenas: carambola";
 //   3. kill the Electron main by PID (window crash) → relaunch → both panels back, same slot ids, same claude
 //      PIDs (the agents never died), scrollback shows the answers, panel 1 recalls tamarindo;
-//   4. kill the daemon by PID (reboot) → relaunch → both panels resume (running) on their previous session ids
-//      (the slot jsonl says so), panel 2 recalls carambola.
+//   4. kill the daemon by PID → relaunch. Hosted in tether-ptyd (default, TETHER_PANEL_HOST=1) the agents survive and
+//      the new daemon adopts them (same PIDs, same sessions, panel 2 recalls carambola). With TETHER_PANEL_HOST=0 the
+//      agents die with the daemon (a reboot): both panels resume (running) on their previous session ids (the slot
+//      jsonl says so), panel 2 recalls carambola.
 // Claude runs with --model haiku through TETHER_CLAUDE_ARGS; no Claude session is killed before 11 s of life
 // (fullscreen canary, see harness.ts). Windows stay hidden. Screenshots go to test/e2e/artifacts/.
 import { test } from 'node:test'
@@ -22,6 +24,7 @@ import { DaemonClient } from '../../src/daemon/client.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { panelHostOn, ptydEnv, stopPtyd } from './ptyd-driver.ts'
 import { aliveProcs, CLAUDE_DIALECT, processTree, type Proc } from './harness.ts'
 
 // Browser-side globals used inside page.evaluate callbacks (this tsconfig has no DOM lib).
@@ -66,6 +69,7 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
   env.TETHER_CLAUDE_ARGS = '--model haiku'
+  ptydEnv(env, undefined)
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()
   page.setDefaultTimeout(10_000)
@@ -280,9 +284,15 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     assert.equal(await killOwned(daemons[0]!), 'killed', 'tetherd killed by identity')
     await waitUntil(() => !pidAlive(daemonPid), 10_000, 'tetherd to die')
     // The PTYs go with the daemon; the agents die once their console is gone (a real reboot kills them anyway).
-    const orphans = await waitGone(trees.flat(), 15_000)
-    evidence.claudeAfterDaemonKill = orphans.length ? `still alive, killed by the test: ${orphans.map(p => `${p.pid} ${p.name}`).join(', ')}` : 'gone with the daemon'
-    for (const p of orphans) await killOwned(p, { tree: true })
+    const hosted = panelHostOn(home)
+    if (hosted) {
+      for (const [id, pid] of pidsBefore) assert.ok(pidAlive(pid), `hosted claude of ${id} (pid ${pid}) survived the tetherd kill`)
+      evidence.claudeAfterDaemonKill = 'alive in tether-ptyd'
+    } else {
+      const orphans = await waitGone(trees.flat(), 15_000)
+      evidence.claudeAfterDaemonKill = orphans.length ? `still alive, killed by the test: ${orphans.map(p => `${p.pid} ${p.name}`).join(', ')}` : 'gone with the daemon'
+      for (const p of orphans) await killOwned(p, { tree: true })
+    }
     ;({ app, page } = await launch(home))
     const daemonPid2 = (await hooks.daemonPid(page))!
     assert.ok(daemonPid2 && daemonPid2 !== daemonPid && pidAlive(daemonPid2), 'a new tetherd was spawned')
@@ -291,11 +301,12 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
     assert.deepEqual([...(await hooks.ids(page))].sort(), [id1, id2].sort(), 'same 2 slots after the daemon restart')
     for (const id of [id1, id2]) readyAt.set(id, await awaitClaude(page, id))
     const pidsResumed = await waitRunning(page, [id1, id2])
-    for (const [id, pid] of pidsResumed) { assert.notEqual(pid, pidsBefore.get(id), `slot ${id} got a new claude`); trees.push(await processTree(pid)) }
+    if (hosted) assert.deepEqual([...pidsResumed].sort(), [...pidsBefore].sort(), 'same claude PIDs: the new tetherd adopted the hosted agents')
+    else for (const [id, pid] of pidsResumed) { assert.notEqual(pid, pidsBefore.get(id), `slot ${id} got a new claude`); trees.push(await processTree(pid)) }
     for (const s of await hooks.slots(page)) {
       assert.equal(s.binding?.sessionId, sessions.get(s.slotId), `slot ${s.slotId} resumed its previous session`)
       assert.equal(lastSessionId(home, s.slotId), sessions.get(s.slotId), `the jsonl of ${s.slotId} shows a start of the same session`)
-      assert.equal(readEvents(home, s.slotId).filter(e => e.kind === 'start').at(-1)?.source, 'resume')
+      if (!hosted) assert.equal(readEvents(home, s.slotId).filter(e => e.kind === 'start').at(-1)?.source, 'resume') // adopted agents were never restarted
       assert.equal(await hooks.status(page, s.slotId), 'running')
     }
     const r2 = await ask(page, id2, 'qual palavra você respondeu antes? só ela')
@@ -316,6 +327,7 @@ test('app + tetherd + Claude: two panels answer, survive a window kill (same PID
       } catch { /* not answering */ }
       await waitUntil(() => !pidAlive(d.pid), 10_000, 'tetherd to exit').catch(async () => { await killOwned(d, { tree: true }) })
     }
+    await stopPtyd(home) // hosted agents outlive the tetherd on purpose
     const left = await waitGone(trees.flat(), 15_000)
     for (const p of left) await killOwned(p, { tree: true })
     for (const dir of [home, work]) {

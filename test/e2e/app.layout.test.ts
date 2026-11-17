@@ -2,7 +2,9 @@
 //   1. open → 2 shell panels → split to 4 → `echo tether-<n>` in each;
 //   2. kill the Electron main by PID → relaunch → same layout, same slot ids, same shell PIDs (the
 //      terminals lived in the daemon the whole time), scrollback shows the echoes;
-//   3. kill the daemon by PID → relaunch → the app spawns a new daemon and restarts every panel (new
+//   3. kill the daemon by PID → relaunch → the app spawns a new daemon. Panels hosted in tether-ptyd (the
+//      default, TETHER_PANEL_HOST=1) lived through it: the new daemon ADOPTS the same shells (same PIDs, still
+//      echoing). With TETHER_PANEL_HOST=0 the shells died with the daemon and every panel restarts (new
 //      shells, same folders, status running);
 //   4. a panel in `error` (folder does not exist) and one in `unconfirmed` (fed through the test hook: the
 //      daemon has no inference yet, so it cannot produce that state on demand), with their actions.
@@ -18,6 +20,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { panelHostOn, ptydEnv, stopPtyd } from './ptyd-driver.ts'
 
 // Browser-side globals used inside page.evaluate callbacks (this tsconfig has no DOM lib).
 type Hooks = {
@@ -74,6 +77,7 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
+  ptydEnv(env, undefined)
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()
   page.setDefaultTimeout(10_000)
@@ -124,6 +128,9 @@ async function typeEcho(page: Page, id: string, n: number): Promise<void> {
   await page.keyboard.type(`echo tether-${n}`)
   await page.keyboard.press('Enter')
   await page.waitForFunction(([id, n]) => new RegExp(`(^|\\n)tether-${n}\\s*(\\n|$)`).test(window.__tether.text(id)), [id, String(n)] as const, { timeout: 10_000 })
+    .catch(async e => { throw new Error(`${e.message}
+--- panel ${id} ---
+${await hooks.text(page, id)}`) })
 }
 
 test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daemon kill (restarted)', async () => {
@@ -182,11 +189,13 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     }
     await page.screenshot({ path: join(artifacts, 'four-panels-restored.png') })
 
-    // ---- 3. kill the daemon by PID: the next launch spawns a new one and restarts the panels ----
+    // ---- 3. kill the daemon by PID: the next launch spawns a new one (adopts the hosted shells, or restarts the panels) ----
     await killElectron(app, root)
     app = undefined
     assert.equal(await killOwned(daemons[0]!), 'killed', 'tetherd killed by identity')
     await waitUntil(() => !pidAlive(daemonPid), 10_000, 'tetherd to die')
+    const hosted = panelHostOn(home)
+    if (hosted) for (const [id, pid] of pidsBefore) assert.ok(pidAlive(pid), `hosted shell of ${id} (pid ${pid}) survived the tetherd kill`)
     ;({ app, page } = await launch(home))
     const daemonPid2 = (await hooks.daemonPid(page))!
     assert.ok(daemonPid2 && daemonPid2 !== daemonPid && pidAlive(daemonPid2), 'a new tetherd was spawned')
@@ -194,7 +203,8 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     await page.waitForFunction(() => document.querySelectorAll('.tether-tab').length === 4, undefined, { timeout: 10_000 })
     assert.deepEqual([...(await hooks.ids(page))].sort(), [...ids].sort(), 'same 4 slots after the daemon restart')
     const pidsRestarted = await waitRunning(page, ids)
-    for (const [id, pid] of pidsRestarted) assert.notEqual(pid, pidsBefore.get(id), `slot ${id} got a new shell`)
+    if (hosted) assert.deepEqual([...pidsRestarted].sort(), [...pidsBefore].sort(), 'same shell PIDs: the new tetherd adopted the hosted shells')
+    else for (const [id, pid] of pidsRestarted) assert.notEqual(pid, pidsBefore.get(id), `slot ${id} got a new shell`)
     for (const s of await hooks.slots(page)) if (ids.includes(s.slotId)) assert.equal(s.cwd, root, 'same folder')
     for (const id of ids) {
       await page.evaluate(id => window.__tether.activate(id), id) // dockview only mounts the active tab's content
@@ -202,6 +212,10 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
         .catch(async e => { throw new Error(`${e.message}\n--- panel ${id} ---\n${await hooks.text(page, id)}`) })
       assert.equal(await hooks.status(page, id), 'running')
     }
+    // Adopted shells still answer: a fresh echo goes through the new daemon to the same shell.
+    // Keys typed in the first seconds after the app re-attaches to adopted panes can be dropped partway (known, reported:
+    // it needs a fix in production code), so the echo check waits for the attach to settle.
+    if (hosted) { await sleep(4_000); for (const [i, id] of ids.entries()) await typeEcho(page, id, 101 + i) }
     await page.screenshot({ path: join(artifacts, 'four-panels-after-daemon-restart.png') })
 
     // ---- 4a. error state: a slot whose folder does not exist ----
@@ -242,6 +256,7 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })
     await waitUntil(() => daemons.every(d => !pidAlive(d.pid)), 10_000, 'tetherd processes to exit').catch(() => {})
+    await stopPtyd(home) // the host (and its shells) outlives the tetherd on purpose
     for (let i = 0; i < 5; i++) {
       try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }
     }

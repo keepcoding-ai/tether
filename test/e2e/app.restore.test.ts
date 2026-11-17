@@ -16,6 +16,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { ptydEnv, stopPtyd } from './ptyd-driver.ts'
 
 type Hooks = {
   panelIds(): string[]
@@ -40,6 +41,8 @@ const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const daemonPipe = `\\\\.\\pipe\\tether-restoretest-d-${process.pid}`
 const appPipe = `\\\\.\\pipe\\tether-restoretest-a-${process.pid}`
+// One ptyd pipe for tetherd and app: the app finds the host by ITS pipe, which here is not the daemon's (the proxy sits on it).
+const ptydPipe = `\\\\.\\pipe\\tether-restoretest-p-${process.pid}`
 const HOLD_MS = 3_500
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
@@ -50,6 +53,7 @@ async function launch(home: string, pipe: string): Promise<{ app: ElectronApplic
   delete env.TETHER_CLAUDE_ARGS
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
+  ptydEnv(env, ptydPipe)
   env.TETHER_E2E_HIDDEN = '1'
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()
@@ -167,6 +171,7 @@ test('restore: panes painted before the daemon answers, loading stages, then ter
     if (app) await killElectron(app, root).catch(() => {})
     proxy?.close()
     if (daemon) await killOwned(daemon)
+    await stopPtyd(home)
     await sleep(500)
     rmSync(home, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 })
     rmSync(gone, { recursive: true, force: true })
