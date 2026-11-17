@@ -1,6 +1,7 @@
 // Slot state on disk: metadata, append-only events, run info, and the binding derived from the events.
 // No locks and nothing in memory: one slot = its own files, events are appended one line at a time.
 import { randomBytes } from 'node:crypto'
+import { open, type FileHandle } from 'node:fs/promises'
 import {
   appendFileSync,
   existsSync,
@@ -50,19 +51,32 @@ export function readSlot(home: string, slotId: string): SlotMeta | undefined {
   return isSlotMeta(parsed) && parsed.slotId === slotId ? parsed : undefined
 }
 
-/** All readable slots, sorted by creation time (oldest first). Unreadable `.json` files are skipped. */
-export function listSlots(home: string): SlotMeta[] {
+/** What one pass over the slots directory found: the readable slots (oldest first) and every file name in it. */
+export interface SlotsScan {
+  metas: SlotMeta[]
+  names: string[]
+}
+
+/** One `readdir` of the slots directory plus the readable `.json` metas; the names tell a caller which side files exist without more disk calls. */
+export function scanSlots(home: string): SlotsScan {
   const dir = slotsDir(home)
-  if (!existsSync(dir)) return []
-  const out: SlotMeta[] = []
-  for (const name of readdirSync(dir)) {
+  if (!existsSync(dir)) return { metas: [], names: [] }
+  const names = readdirSync(dir)
+  const metas: SlotMeta[] = []
+  for (const name of names) {
     if (!name.endsWith('.json') || name.endsWith('.run.json')) continue
     const id = name.slice(0, -'.json'.length)
     if (!SLOT_ID_RE.test(id)) continue
     const meta = readSlot(home, id)
-    if (meta) out.push(meta)
+    if (meta) metas.push(meta)
   }
-  return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slotId.localeCompare(b.slotId))
+  metas.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slotId.localeCompare(b.slotId))
+  return { metas, names }
+}
+
+/** All readable slots, sorted by creation time (oldest first). Unreadable `.json` files are skipped. */
+export function listSlots(home: string): SlotMeta[] {
+  return scanSlots(home).metas
 }
 
 /** Forgets the slot: removes tether's files. Never touches the agent's session files. */
@@ -84,14 +98,73 @@ export function appendEvent(home: string, event: TetherEvent): void {
 
 /** Every well-formed v1 event in the slot's file, in file order. Blank, corrupt, partial or foreign lines are skipped. */
 export function readEvents(home: string, slotId: string): TetherEvent[] {
-  assertSlotId(slotId)
-  let text: string
-  try {
-    text = readFileSync(slotEventsPath(home, slotId), 'utf8')
-  } catch {
-    return []
+  const r = readEventsFile(home, slotId)
+  return parseEvents(r.complete + r.fragment)
+}
+
+/**
+ * A stretch of a slot's events file: bytes [start, end). `complete` holds the whole lines (up to the last newline) and
+ * `fragment` what follows it (a line still being written, or one the writer did not terminate). `end` is the file size
+ * seen; the next incremental read resumes at `end - bytes(fragment)`, i.e. `resume`.
+ */
+export interface EventsRead {
+  start: number
+  end: number
+  resume: number
+  complete: string
+  fragment: string
+}
+
+function splitRead(buf: Buffer, start: number): EventsRead {
+  const nl = buf.lastIndexOf(0x0a)
+  const cut = nl + 1
+  return {
+    start,
+    end: start + buf.length,
+    resume: start + cut,
+    complete: buf.toString('utf8', 0, cut),
+    fragment: buf.toString('utf8', cut),
   }
-  return parseEvents(text)
+}
+
+/** The events file in one read (missing file = empty), parsed from byte `from` on; a file shorter than `from` is taken whole. */
+export function readEventsFile(home: string, slotId: string, from = 0): EventsRead {
+  assertSlotId(slotId)
+  try {
+    const buf = readFileSync(slotEventsPath(home, slotId))
+    const start = buf.length < from ? 0 : from
+    return splitRead(start === 0 ? buf : buf.subarray(start), start)
+  } catch {
+    return splitRead(Buffer.alloc(0), 0)
+  }
+}
+
+/**
+ * The events file from byte `from` on, asynchronously. A file shorter than `from` was truncated or rewritten: it is read
+ * whole (`start` 0 tells the caller to forget what it kept). `from` must sit on a line start (a previous `resume`).
+ */
+export async function readEventsFrom(home: string, slotId: string, from: number): Promise<EventsRead> {
+  assertSlotId(slotId)
+  let fh: FileHandle
+  try {
+    fh = await open(slotEventsPath(home, slotId), 'r')
+  } catch {
+    return splitRead(Buffer.alloc(0), 0)
+  }
+  try {
+    const size = (await fh.stat()).size
+    const start = size < from ? 0 : from
+    const buf = Buffer.alloc(size - start)
+    let got = 0
+    while (got < buf.length) {
+      const { bytesRead } = await fh.read(buf, got, buf.length - got, start + got)
+      if (bytesRead === 0) break
+      got += bytesRead
+    }
+    return splitRead(got === buf.length ? buf : buf.subarray(0, got), start)
+  } finally {
+    await fh.close()
+  }
 }
 
 export function parseEvents(text: string): TetherEvent[] {

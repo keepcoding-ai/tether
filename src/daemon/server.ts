@@ -7,22 +7,22 @@ import type { SlotEventKind } from './ext-api.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
-import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports } from './attention.ts'
+import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports, type TurnReport } from './attention.ts'
 import { memoryChanged, sampleProcessTable, treeBytes } from './memory.ts'
 import '../agents/load.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import { shellAdapter } from '../agents/shell.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
-import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
+import type { AgentName, Binding, RunInfo, SlotMeta, TetherEvent } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
-import { canonicalDir, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
+import { canonicalDir, slotAttentionPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
 import { RONDA_MCP_SERVER as RONDA_SERVER_NAME, RondaChannel, showsConfirm, type RondaChannelAgent } from './ronda-channel.ts'
 import type { ChannelConfirm } from '../agents/registry.ts'
 import { applyChange, buildChannelText, clearRonda, criterionStimulus, ENV_RONDA_TEST_SECONDS, flatText, readRonda, RondaError, writeRonda, type Ronda } from './ronda.ts'
 import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
-import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
+import { clearRun, createSlot, currentBinding, newSlotId, parseEventLine, parseEvents, readEventsFile, readEventsFrom, readRun, readSlot, removeSlot, scanSlots, SLOT_ID_RE, writeRun, writeSlotMeta, type EventsRead, type SlotsScan } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import {
   KILL_WAIT_CAP_MS,
@@ -144,7 +144,12 @@ export interface DaemonOptions {
    * host answers; true: launches it first when needed. Default: HostClient on ptydPipePath, launching tether-ptyd detached.
    */
   connectPanelHost?: (launch: boolean) => Promise<HostClient | undefined>
+  /** Tests: told about every disk read the daemon makes to follow the slots' files (what was read, and for which slot). */
+  fsProbe?: (op: FsProbeOp, slotId?: string) => void
 }
+
+/** The disk reads `fsProbe` reports: the boot scan of slots/, an events file (whole or from an offset), a slot's marker listing, a run file. */
+export type FsProbeOp = 'slots:scan' | 'events:full' | 'events:tail' | 'markers:list' | 'run:read'
 
 export interface Daemon {
   readonly home: string
@@ -226,8 +231,13 @@ interface Slot {
   attentionReportTs?: string
   /** The wake fallback after the last background subagent ended (see AttentionState.wakeDueAt). */
   wakeTimer?: NodeJS.Timeout
-  /** How many `turn` lines of the events file were already applied (the file is append-only and spans runs). */
-  turnLinesSeen?: number
+  /** What the slot's events file held when last read: the file is append-only, so only the appended bytes are read again. */
+  events?: EventsView
+  /** `turn` reports read but not yet applied (see applyTurnReports). */
+  turnPending?: TurnReport[]
+  /** An incremental read of the events file in flight; `pullAgain`: the file changed meanwhile, read once more. */
+  pulling?: Promise<void>
+  pullAgain?: true
   /** The slot's ronda (persisted in <home>/slots/<id>.ronda.json); `rondaDue`: its time came and it waits for an idle agent. */
   ronda?: Ronda
   rondaDue?: boolean
@@ -243,6 +253,19 @@ interface Slot {
   attached: Set<Client>
   cols: number
   rows: number
+}
+
+/**
+ * The part of a slot's events file the daemon keeps: the events from the last `start` on (all that `currentBinding` needs),
+ * the timestamp of the very last one, and where the next read resumes (a byte offset on a line start).
+ */
+interface EventsView {
+  resume: number
+  kept: TetherEvent[]
+  lastTs?: string
+  /** The unterminated last line, read as an event when it parses (it counts until its newline arrives). */
+  fragment: string
+  transient?: TetherEvent
 }
 
 /** A live run of the terminal-pane host held for a slot at boot (see holdAdoptions); `release` frees the slot's `launching`. */
@@ -282,6 +305,13 @@ class DaemonImpl implements Daemon {
   private readonly slotMap = new Map<string, Slot>()
   private watcher: FSWatcher | undefined
   private readonly pending = new Map<string, NodeJS.Timeout>()
+  /** Slots whose events file changed since their debounce timer was armed (a change of the slot's .json alone needs no read). */
+  private readonly eventsDirty = new Set<string>()
+  /** Per slot, its subagent markers (`<slot>.bg.<id>` -> mtime) as the watcher reported them; a slot with no entry is unknown and gets listed once. */
+  private readonly bgMarkers = new Map<string, Map<string, number>>()
+  /** Marker files the watcher reported since the slot's last debounce. */
+  private readonly bgTouched = new Map<string, Set<string>>()
+  private readonly fsProbe: ((op: FsProbeOp, slotId?: string) => void) | undefined
   /** Test overrides; everything else comes from the agent registry at the time of use. */
   private readonly adapterOverrides: Partial<Record<AgentName, AgentAdapter>>
   private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan) | undefined
@@ -328,6 +358,7 @@ class DaemonImpl implements Daemon {
     this.adapterOverrides = { ...opts.adapters }
     this.transformPlan = opts.transformPlan
     this.onSlot = opts.onSlot
+    this.fsProbe = opts.fsProbe
     this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
     this.minAgentAgeMs = opts.minAgentAgeMs ?? MIN_AGENT_AGE_MS
     this.killWaitCapMs = opts.killWaitCapMs ?? KILL_WAIT_CAP_MS
@@ -411,14 +442,17 @@ class DaemonImpl implements Daemon {
   async listen(): Promise<void> {
     mkdirSync(slotsDir(this.home), { recursive: true })
     this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
-    const metas = listSlots(this.home)
+    this.fsProbe?.('slots:scan')
+    const scan = scanSlots(this.home)
+    const metas = scan.metas
     // Panes a previous tetherd left alive in tether-ptyd: listed now (read only), so the reaper spares them, and adopted
     // once this daemon owns the pipe (a loser of the race never touches them).
     const hostRuns = metas.length > 0 ? await this.hostRunsAtBoot() : undefined
-    const ownedElsewhere = await perf.timedAsync('boot:reap', () => this.reapOrphans(new Set((hostRuns ?? []).map((r) => r.pid))))
+    const ownedElsewhere = await perf.timedAsync('boot:reap', () => this.reapOrphans(new Set((hostRuns ?? []).map((r) => r.pid)), scan))
     const profiles = this.profileStore.read()
     if (profiles.problem) this.log(`profiles: ${profiles.problem}`)
     perf.timed('boot:load', () => { for (const meta of metas) this.load(meta) })
+    this.seedMarkers(scan)
     const adoptions = this.holdAdoptions(hostRuns ?? [], ownedElsewhere)
     this.loadPause()
     await this.procs.init()
@@ -440,6 +474,7 @@ class DaemonImpl implements Daemon {
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
     await perf.timedAsync('boot:adopt', () => Promise.all(adoptions.map((a) => this.adoptSlot(a))))
     if (adoptions.length > 0) this.pump()
+    for (const slot of this.slotMap.values()) if (!isAlive(slot)) slot.turnPending = undefined // history of a dead process: nothing to apply
     // Only the owner of the pipe serves the channel (a loser of the race never gets here).
     try { this.log(`ronda channel served on 127.0.0.1:${await this.rondaChannel.listen()}`) }
     catch (e) { this.log(`ronda channel not served (${(e as Error).message}); the ronda is unavailable this run`) }
@@ -469,10 +504,9 @@ class DaemonImpl implements Daemon {
     return env ? { env } : {}
   }
 
-  /** Timestamp of the slot's last logged event: the best idle-since for a slot that had no turn since the daemon booted. */
+  /** Timestamp of the slot's last logged event (kept in memory by foldEvents): the best idle-since for a slot that had no turn since the daemon booted. */
   private lastEventTs(slot: Slot): string | undefined {
-    const events = readEvents(this.home, slot.meta.slotId)
-    return events.length ? events[events.length - 1]!.ts : undefined
+    return slot.events?.transient?.ts ?? slot.events?.lastTs
   }
 
   private stateOf(slot: Slot, profiles = this.profileStore.profiles()): SlotState {
@@ -649,10 +683,13 @@ class DaemonImpl implements Daemon {
    * Runs whose owning tetherd is still alive (same pid and start time) are left alone; their slots are returned, so they
    * are not adopted either. Runs the terminal-pane host holds (`hostHeld`, by agent pid) are spared for adoption.
    */
-  private async reapOrphans(hostHeld: ReadonlySet<number>): Promise<Set<string>> {
+  private async reapOrphans(hostHeld: ReadonlySet<number>, scan: SlotsScan): Promise<Set<string>> {
     const ownedElsewhere = new Set<string>()
-    for (const meta of listSlots(this.home)) {
+    const withRun = new Set(scan.names.filter((n) => n.endsWith('.run.json')).map((n) => n.slice(0, -'.run.json'.length)))
+    for (const meta of scan.metas) {
       const id = meta.slotId
+      if (!withRun.has(id)) continue
+      this.fsProbe?.('run:read', id)
       const run = readRun(this.home, id)
       if (!run || run.by !== 'tetherd' || run.pid === this.pid) continue
       if (run.agentPid === undefined || run.agentStartedAt === undefined) { clearRun(this.home, id); continue }
@@ -829,6 +866,7 @@ class DaemonImpl implements Daemon {
       }
     }
     this.watcher?.close()
+    this.eventsDirty.clear()
     for (const t of this.pending.values()) clearTimeout(t)
     await this.rondaChannel.close()
     this.panelHost?.close() // the host outlives tetherd: only the connection closes
@@ -892,9 +930,69 @@ class DaemonImpl implements Daemon {
     return s
   }
 
-  /** Re-reads the slot's events; broadcasts `state` when binding or title changed. */
+  /** Reads what the slot's events file gained since the last read (the whole file the first time), synchronously. */
   private refreshBinding(slot: Slot, broadcast = true): void {
-    const binding = currentBinding(readEvents(this.home, slot.meta.slotId), slot.meta)
+    this.fsProbe?.('events:full', slot.meta.slotId)
+    this.foldEvents(slot, readEventsFile(this.home, slot.meta.slotId, slot.events?.resume ?? 0))
+    this.applyBinding(slot, broadcast)
+  }
+
+  /**
+   * Folds a read of the events file into the slot's view; false when nothing new arrived. Only the events from the last
+   * `start` on are kept (`currentBinding` looks at nothing older); a read that starts at 0 means the file was rewritten.
+   */
+  private foldEvents(slot: Slot, r: EventsRead): boolean {
+    let v = slot.events
+    if (r.start === 0 || !v) {
+      v = slot.events = { resume: 0, kept: [], fragment: '' }
+      slot.turnPending = undefined
+    } else if (r.complete === '' && r.fragment === v.fragment) return false
+    const added = parseEvents(r.complete)
+    if (added.length) {
+      v.lastTs = added[added.length - 1]!.ts
+      v.kept = v.kept.concat(added)
+      for (let i = v.kept.length - 1; i > 0; i--) if (v.kept[i]!.kind === 'start') { v.kept = v.kept.slice(i); break }
+    }
+    const turns = parseTurnReports(r.complete)
+    if (turns.length) slot.turnPending = (slot.turnPending ?? []).concat(turns)
+    v.resume = r.resume
+    v.fragment = r.fragment
+    const transient = r.fragment ? parseEventLine(r.fragment) : undefined
+    if (transient) v.transient = transient
+    else delete v.transient
+    return true
+  }
+
+  /**
+   * The same read, off the event loop, from where the last one stopped: the debounced watcher path. A synchronous refresh
+   * that lands meanwhile moves the offset, and the read that lost the race is dropped and repeated.
+   */
+  private pullEvents(slot: Slot): Promise<void> {
+    if (slot.pulling) { slot.pullAgain = true; return slot.pulling }
+    const slotId = slot.meta.slotId
+    const run = async (): Promise<void> => {
+      do {
+        slot.pullAgain = undefined
+        const from = slot.events?.resume ?? 0
+        this.fsProbe?.('events:tail', slotId)
+        const r = await readEventsFrom(this.home, slotId, from)
+        if (this.slotMap.get(slotId) !== slot) return
+        if ((slot.events?.resume ?? 0) !== from) { slot.pullAgain = true; continue }
+        if (this.foldEvents(slot, r)) {
+          this.applyBinding(slot, true)
+          this.applyTurnReports(slot)
+        }
+      } while (slot.pullAgain)
+    }
+    const p: Promise<void> = run().catch((e: Error) => this.log(`slot ${slotId}: cannot read the events file: ${e.message}`)).finally(() => { if (slot.pulling === p) slot.pulling = undefined })
+    slot.pulling = p
+    return p
+  }
+
+  /** Derives the binding from the kept events; broadcasts `state` when binding or title changed. */
+  private applyBinding(slot: Slot, broadcast: boolean): void {
+    const v = slot.events
+    const binding = currentBinding(v?.transient ? [...v.kept, v.transient] : (v?.kept ?? []), slot.meta)
     const changed = JSON.stringify(binding) !== JSON.stringify(slot.binding)
     if (!changed) return
     slot.binding = binding
@@ -1558,6 +1656,7 @@ class DaemonImpl implements Daemon {
         const slot = this.slot(req.slotId)
         await this.stopSlot(slot)
         this.slotMap.delete(slot.meta.slotId)
+        this.bgMarkers.delete(slot.meta.slotId)
         this.dropInput(slot)
         this.rondaChannel.revoke(slot.meta.slotId)
         if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
@@ -1772,49 +1871,48 @@ class DaemonImpl implements Daemon {
         const pr = /^([^.]+)\.pause\.jsonl$/.exec(filename)
         if (pr && SLOT_ID_RE.test(pr[1]!)) { this.schedulePauseReport(pr[1]!); return }
         const bg = /^([^.]+)\.bg\./.exec(filename)
-        if (bg && SLOT_ID_RE.test(bg[1]!)) { this.scheduleBackground(bg[1]!); return }
+        if (bg && SLOT_ID_RE.test(bg[1]!)) { this.scheduleBackground(bg[1]!, filename); return }
         const a = /^([^.]+)\.attention$/.exec(filename)
         if (a && SLOT_ID_RE.test(a[1]!)) { this.scheduleAttentionReport(a[1]!); return }
         const m = /^([^.]+)\.(jsonl|json)$/.exec(filename)
         if (!m || !SLOT_ID_RE.test(m[1]!)) return
-        this.schedule(m[1]!)
+        this.schedule(m[1]!, m[2] === 'jsonl')
       }))
-      this.watcher.on('error', (e) => this.log(`watch error: ${e.message}`))
+      this.watcher.on('error', (e) => {
+        this.log(`watch error: ${e.message}`)
+        this.bgMarkers.clear() // events may have been lost: the markers are listed again on next use
+      })
     } catch (e) {
       this.log(`cannot watch ${slotsDir(this.home)}: ${(e as Error).message}`)
     }
   }
 
   /** Debounces the subagent markers per slot (<slot>.bg.<agentId>, written and removed by Claude's Subagent hooks). */
-  private scheduleBackground(slotId: string): void {
+  private scheduleBackground(slotId: string, file: string): void {
     const key = `${slotId}.bg`
+    const touched = this.bgTouched.get(slotId)
+    if (touched) touched.add(file)
+    else this.bgTouched.set(slotId, new Set([file]))
     const prev = this.pending.get(key)
     if (prev) clearTimeout(prev)
     const t = setTimeout(perf.wrap('timer:background', () => {
       this.pending.delete(key)
+      const files = this.bgTouched.get(slotId)
+      this.bgTouched.delete(slotId)
       const slot = this.slotMap.get(slotId)
-      if (slot) this.applyBackground(slot)
+      if (slot) this.applyBackground(slot, files)
     }), WATCH_DEBOUNCE_MS)
     this.pending.set(key, t)
   }
 
   /** Counts the slot's live subagent markers: written in this run and younger than BG_MAX_AGE_MS (a lost Stop must not pin it). */
-  private applyBackground(slot: Slot): void {
+  private applyBackground(slot: Slot, touched?: Set<string>): void {
+    const markers = this.markersOf(slot.meta.slotId, touched)
     if (!isAlive(slot)) return
-    const dir = slotsDir(this.home)
-    const prefix = `${slot.meta.slotId}.bg.`
     const since = slot.spawnedAt ? Date.parse(slot.spawnedAt) : 0
     const now = Date.now()
     let n = 0
-    try {
-      for (const name of readdirSync(dir)) {
-        if (!name.startsWith(prefix)) continue
-        try {
-          const m = statSync(join(dir, name)).mtimeMs
-          if (m >= since - 1000 && now - m < BG_MAX_AGE_MS) n++
-        } catch { /* removed meanwhile */ }
-      }
-    } catch { return }
+    for (const m of markers.values()) if (m >= since - 1000 && now - m < BG_MAX_AGE_MS) n++
     if (slot.attention.setBackground(n, now)) this.broadcastState(slot)
     this.scheduleWake(slot)
   }
@@ -1831,12 +1929,57 @@ class DaemonImpl implements Daemon {
     slot.wakeTimer.unref()
   }
 
+  /**
+   * The slot's subagent markers with their mtimes, from memory: the boot scan seeded it and the watcher's events (the files it
+   * names, `touched`) keep it current, one stat per file. A slot the memory does not know is listed from disk once.
+   */
+  private markersOf(slotId: string, touched?: Set<string>): Map<string, number> {
+    const dir = slotsDir(this.home)
+    const known = this.bgMarkers.get(slotId)
+    if (known) {
+      for (const name of touched ?? []) {
+        const m = this.markerMtime(name)
+        if (m === undefined) known.delete(name) // removed
+        else known.set(name, m)
+      }
+      return known
+    }
+    this.fsProbe?.('markers:list', slotId)
+    const listed = new Map<string, number>()
+    const prefix = `${slotId}.bg.`
+    try {
+      for (const name of readdirSync(dir)) {
+        if (!name.startsWith(prefix)) continue
+        const m = this.markerMtime(name)
+        if (m !== undefined) listed.set(name, m)
+      }
+    } catch { /* no dir */ }
+    this.bgMarkers.set(slotId, listed)
+    return listed
+  }
+
+  /** A marker file's mtime; undefined when it is gone. */
+  private markerMtime(name: string): number | undefined {
+    try { return statSync(join(slotsDir(this.home), name)).mtimeMs } catch { return undefined }
+  }
+
+  /** Fills the marker memory from the boot scan: every slot known, with the markers already on disk. */
+  private seedMarkers(scan: SlotsScan): void {
+    for (const meta of scan.metas) this.bgMarkers.set(meta.slotId, new Map())
+    for (const name of scan.names) {
+      const m = /^([^.]+)\.bg\./.exec(name)
+      const markers = m ? this.bgMarkers.get(m[1]!) : undefined
+      if (!markers) continue
+      const mtime = this.markerMtime(name)
+      if (mtime !== undefined) markers.set(name, mtime)
+    }
+  }
+
   /** Removes the slot's subagent markers (a launch or exit: whatever ran belonged to the old process). */
   private clearBackground(slotId: string): void {
-    const dir = slotsDir(this.home)
-    try {
-      for (const name of readdirSync(dir)) if (name.startsWith(`${slotId}.bg.`)) { try { unlinkSync(join(dir, name)) } catch { /* gone */ } }
-    } catch { /* no dir */ }
+    const markers = this.markersOf(slotId)
+    for (const name of markers.keys()) { try { unlinkSync(join(slotsDir(this.home), name)) } catch { /* gone */ } }
+    markers.clear()
   }
 
   /** Debounces the hook's attention file per slot (the write may be seen as several change events). */
@@ -1869,15 +2012,12 @@ class DaemonImpl implements Daemon {
    * ones written by the current run of a live process. They feed the attention turn, replacing the Enter / quiet heuristic.
    */
   private applyTurnReports(slot: Slot): void {
-    let text: string
-    try { text = readFileSync(slotEventsPath(this.home, slot.meta.slotId), 'utf8') } catch { return }
-    const reports = parseTurnReports(text)
-    const seen = slot.turnLinesSeen ?? 0
-    if (reports.length <= seen) return
-    slot.turnLinesSeen = reports.length
+    const reports = slot.turnPending
+    if (!reports?.length) return
+    slot.turnPending = undefined
     if (!isAlive(slot)) return
     let changed = false
-    for (const report of reports.slice(seen)) {
+    for (const report of reports) {
       if (slot.spawnedAt && report.ts < slot.spawnedAt) continue
       if (slot.attention.signal(report.state)) changed = true
     }
@@ -2172,20 +2312,25 @@ class DaemonImpl implements Daemon {
   }
 
   /** Debounces per slot: the hook writes a line and the editor/CLI may write more right after. */
-  private schedule(slotId: string): void {
+  private schedule(slotId: string, eventsChanged: boolean): void {
+    if (eventsChanged) this.eventsDirty.add(slotId)
     const prev = this.pending.get(slotId)
     if (prev) clearTimeout(prev)
     const t = setTimeout(perf.wrap('timer:slot-events', () => {
       this.pending.delete(slotId)
+      const dirty = this.eventsDirty.delete(slotId)
       const slot = this.slotMap.get(slotId)
       if (slot) {
-        this.refreshBinding(slot)
-        this.applyTurnReports(slot)
+        if (dirty) void this.pullEvents(slot)
         return
       }
       // A slot created by another process (the CLI): adopt it.
       const meta = readSlot(this.home, slotId)
-      if (meta) this.broadcastState(this.load(meta))
+      if (meta) {
+        const adopted = this.load(meta)
+        adopted.turnPending = undefined
+        this.broadcastState(adopted)
+      }
     }), WATCH_DEBOUNCE_MS)
     this.pending.set(slotId, t)
   }
