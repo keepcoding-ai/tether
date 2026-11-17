@@ -8,7 +8,7 @@ import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { ContextCategory, ContextReport } from '../../src/context/context-report.ts'
 import type { ContextChannels, InventoryView, LiveView, MeasuredView, MeasureReply, SnapshotReply, TranscriptView } from './ipc.ts'
 import {
-  agentLabel, baseName, compositionSegments, curveGeometry, diffSections, estimatedCategories, fmtPct, measuredInventory, fmtTokens, fmtUsd, mcpByServer, memoryTitle, nextSort,
+  agentLabel, baseName, compositionSegments, curveGeometry, diffSections, estimateNote, estimatedCategories, fmtPct, measuredInventory, fmtTokens, fmtUsd, mcpByServer, memoryTitle, nextSort,
   nextTarget, sameTarget, sectionSigs, skillSortValue, sortRows, topConsumers, turnLabel, usageLevel, type Section, type SortState, type Target,
 } from './rules.ts'
 import { manifest, OPEN_COMMAND, PAD_ID } from './manifest.ts'
@@ -262,7 +262,7 @@ export function activate(ui: TetherUi): IDisposable[] {
         note = `medido pelo /context (estimativa do Claude Code) às ${hhmm(m.measuredAt)}${stale ? ' · desatualizado: os arquivos mudaram desde então' : ''}`
       } else if (this.inventory) {
         cats = estimatedCategories(this.inventory)
-        note = this.canMeasure ? 'estimado do disco (só o peso fixo; use Medir para a composição real)' : 'estimado do disco (só o peso fixo; o Codex não tem medição da composição)'
+        note = estimateNote(this.canMeasure, target?.kind === 'agent' ? target.agent : undefined)
       }
       if (m.state === 'error') kids.push(el('div', 'cx-err', m.message))
       if (m.state === 'busy') kids.push(el('div', 'cx-dim', 'Rodando o /context do Claude; leva alguns segundos.'))

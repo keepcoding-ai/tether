@@ -248,6 +248,17 @@ export function agentLabel(agent: string | undefined): string {
   return agent === 'codex' ? 'Codex' : agent === 'soul' ? 'Soul' : 'Claude'
 }
 
+/**
+ * The caption of a composition estimated from disk, when nothing better was measured. Claude Code measures on demand
+ * (Medir); soul measures by itself when a turn ends (the `context` line), so without one yet it is awaited, not missing;
+ * Codex has no measure of the composition at all.
+ */
+export function estimateNote(canMeasure: boolean, agent: string | undefined): string {
+  if (canMeasure) return 'estimado do disco (só o peso fixo; use Medir para a composição real)'
+  if (agent === 'soul') return 'estimado do disco (só o peso fixo; aguardando a medição do soul no fim do turno)'
+  return `estimado do disco (só o peso fixo; o ${agentLabel(agent)} não tem medição da composição)`
+}
+
 export function memoryTitle(agent: string | undefined): string {
   return agent === 'codex' ? 'AGENTS.md da cadeia' : agent === 'soul' ? 'Memória medida' : 'CLAUDE.md da cadeia'
 }

@@ -2,7 +2,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  compositionSegments, curveGeometry, diffSections, fmtPct, fmtTokens, inventoryForWire, mcpByServer, nextSort, nextTarget, readersToDrop,
+  compositionSegments, curveGeometry, diffSections, estimateNote, fmtPct, fmtTokens, inventoryForWire, mcpByServer, nextSort, nextTarget, readersToDrop,
   sameTarget, sectionSigs, sortRows, topConsumers, usageLevel,
 } from '../../extensions/context/rules.ts'
 import type { InventoryView, SnapshotReply, TurnRow } from '../../extensions/context/ipc.ts'
@@ -161,5 +161,15 @@ describe('which panel the pad follows', () => {
   test('sameTarget', () => {
     assert.ok(sameTarget(nextTarget(undefined, claude), nextTarget(undefined, claude)))
     assert.ok(!sameTarget(nextTarget(undefined, claude), undefined))
+  })
+})
+
+describe('estimateNote', () => {
+  test('Claude measures on demand, soul is awaited, Codex has none', () => {
+    assert.match(estimateNote(true, 'claude'), /use Medir/)
+    const soul = estimateNote(false, 'soul')
+    assert.match(soul, /aguardando a medição do soul/)
+    assert.doesNotMatch(soul, /Codex/)
+    assert.match(estimateNote(false, 'codex'), /o Codex não tem medição da composição/)
   })
 })
