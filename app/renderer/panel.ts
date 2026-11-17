@@ -24,6 +24,7 @@ import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
+import { focusIfStillActive, followActive, type ActivePanelApi } from './focus-follow.ts'
 import { startProbe } from '../../src/core/perf-probe.ts'
 
 /** Key->echo probe: the main loads the page with ?probe when TETHER_PROBE=1. Off, a key costs one `if`. */
@@ -410,8 +411,8 @@ export class TerminalPanel implements IContentRenderer {
     this.render()
     // Keyboard focus follows the active panel. dockview may activate the panel before this init runs,
     // so the current state is applied too (deferred: the element is not laid out yet).
-    params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.term.focus()) })
-    void this.boot(() => params.api.isActive)
+    followActive(params.api, () => this.term.focus())
+    void this.boot(params.api)
   }
 
   /** The tab title and the hint the layout file carried (the header before the daemon answers). */
@@ -423,7 +424,7 @@ export class TerminalPanel implements IContentRenderer {
    * is ready — even when the panel is a hidden tab (zero size): the scrollback must land and `data` must flow
    * whether or not the panel is visible. Fits only send `resize` afterwards.
    */
-  private async boot(isActive: () => boolean): Promise<void> {
+  private async boot(api: Pick<ActivePanelApi, 'isActive'>): Promise<void> {
     await this.host.fontsReady()
     if (this.disposed) return
     this.term.open(this.termHost)
@@ -433,7 +434,7 @@ export class TerminalPanel implements IContentRenderer {
     this.observer = new ResizeObserver(() => this.scheduleFit())
     this.observer.observe(this.termHost)
     this.scheduleFit()
-    if (isActive()) requestAnimationFrame(() => this.term.focus())
+    if (api.isActive) focusIfStillActive(api, () => this.term.focus())
     await this.host.daemonReady()
     if (this.disposed) return
     void this.attach()

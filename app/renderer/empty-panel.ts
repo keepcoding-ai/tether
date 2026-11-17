@@ -16,6 +16,7 @@ import { createTabHeader } from './tab-header.ts'
 import type { ChooserDestination } from './ext-api.ts'
 import { EMPTY_TITLE, emptyOrigin, emptyParams, type EmptyOrigin } from '../shared/empty.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
+import { followActive } from './focus-follow.ts'
 
 export interface EmptyHost extends ChooserHost {
   /** The person picked: the host opens it in this pane's place. Resolves with an error message to show, or nothing. */
@@ -71,7 +72,7 @@ export class EmptyPanel implements IContentRenderer {
     this.element.dataset.blank = String(this.blank)
     if (this.blank) this.mountBlank()
     else this.mount({ folder: this.folder })
-    this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
+    this.disposers.push(followActive(params.api, () => this.focus()))
   }
 
   private mountBlank(): void {

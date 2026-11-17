@@ -212,10 +212,9 @@ test('app + tetherd: 4 shell panels survive a window kill (same PIDs) and a daem
         .catch(async e => { throw new Error(`${e.message}\n--- panel ${id} ---\n${await hooks.text(page, id)}`) })
       assert.equal(await hooks.status(page, id), 'running')
     }
-    // Adopted shells still answer: a fresh echo goes through the new daemon to the same shell.
-    // Keys typed in the first seconds after the app re-attaches to adopted panes can be dropped partway (known, reported:
-    // it needs a fix in production code), so the echo check waits for the attach to settle.
-    if (hosted) { await sleep(4_000); for (const [i, id] of ids.entries()) await typeEcho(page, id, 101 + i) }
+    // Adopted shells still answer: a fresh echo goes through the new daemon to the same shell, typed right away. The
+    // panes were just activated in a row above, so this also proves no stale deferred focus steals the keyboard.
+    if (hosted) for (const [i, id] of ids.entries()) await typeEcho(page, id, 101 + i)
     await page.screenshot({ path: join(artifacts, 'four-panels-after-daemon-restart.png') })
 
     // ---- 4a. error state: a slot whose folder does not exist ----

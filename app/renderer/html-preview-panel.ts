@@ -15,6 +15,7 @@ import type { PreviewKey, PreviewReport } from '../shared/api.ts'
 import { blockedLabel, fromFileUrl, pathKey, previewPartition, toFileUrl } from '../shared/html-preview.ts'
 import { noteTitle } from '../shared/notes.ts'
 import { previewParams, previewTitle } from '../shared/preview.ts'
+import { followActive } from './focus-follow.ts'
 
 /** After the last change of a watched file the page reloads (an editor writes in two steps; a build touches many files). */
 export const HTML_RELOAD_DEBOUNCE_MS = 200
@@ -154,7 +155,7 @@ export class HtmlPreviewPanel implements IContentRenderer, PreviewPane {
     this.path = preview.path
     this.currentPath = preview.path
     if (preview.scroll) { this.scroll = preview.scroll; this.pendingScroll = preview.scroll }
-    this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
+    this.disposers.push(followActive(params.api, () => this.focus()))
     this.paintStrip()
     this.watch(this.path)
     this.mount()
