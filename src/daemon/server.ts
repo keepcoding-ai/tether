@@ -40,6 +40,7 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 import { HostClient } from '../procd/client.ts'
+import { perf } from '../core/perf.ts'
 import { procdPipePath } from '../procd/protocol.ts'
 import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
 import { ProcError, WAIT_MAX_MS, type ProcAuthor, type ProcBy } from './procs.ts'
@@ -348,6 +349,7 @@ class DaemonImpl implements Daemon {
     for (const meta of listSlots(this.home)) this.load(meta)
     this.loadPause()
     await this.procs.init()
+    perf.start()
     this.startWatching()
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
     await new Promise<void>((resolve, reject) => {
@@ -587,6 +589,7 @@ class DaemonImpl implements Daemon {
   async close(): Promise<void> {
     if (this.closing) return
     this.closing = true
+    perf.stop()
     if (this.memoryTimer) clearInterval(this.memoryTimer)
     if (this.memoryKick) clearTimeout(this.memoryKick)
     for (const s of this.slotMap.values()) if (s.rondaTimer) clearTimeout(s.rondaTimer)
@@ -1083,6 +1086,8 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id, hello: { v: PROTOCOL_VERSION, pid: this.pid, version: DAEMON_VERSION, exec: process.execPath } }
       case 'list':
         return { t: 'ok', id, slots: this.slots() }
+      case 'perf':
+        return { t: 'ok', id, perf: perf.snapshot(typeof req.since === 'number' ? req.since : 0) }
       case 'create': {
         if (!isKind(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${String(req.kind)}`)
         if (req.kind !== 'shell' && !this.adapterOf(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${req.kind} (use ${agentChoices()})`)

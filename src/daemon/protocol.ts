@@ -3,13 +3,14 @@
 // Terminal bytes travel as UTF-8 strings (node-pty emits strings).
 
 import type { AgentName, Binding } from '../core/event.ts'
+import type { PerfSnapshot } from '../core/perf.ts'
 import type { Profile, ProfileInput } from '../core/profile.ts'
 import type { PauseBatch } from './pause.ts'
 import type { Ronda } from './ronda.ts'
 import type { ProcBy, ProcEvent, ProcRecipe, ProcState } from './procs.ts'
 import type { PortRow } from './ports.ts'
 
-export type { Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
+export type { PerfSnapshot, Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
 
 export const PROTOCOL_VERSION = 1
 
@@ -134,6 +135,8 @@ export type ErrorCode =
 export type Request =
   | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test' }
   | { t: 'list'; id: number }
+  /** Performance ruler snapshot (pull only): loop-delay samples and incidents newer than `since` (wall-clock ms). Reply: `perf`. */
+  | { t: 'perf'; id: number; since?: number }
   /** `profileId`: the launch profile (must be of `kind`); its args/env apply on every start, the slot keeps a snapshot. */
   | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string }
   /** Start the slot's process: resumes the binding; `choice: 'new'` starts a new session instead. */
@@ -243,6 +246,8 @@ export type Reply =
       /** `exec`: the executable the daemon runs as (tetherd.exe, or the plain node when the copy failed). */
       hello?: { v: number; pid: number; version: string; exec?: string }
       slots?: SlotState[]
+      /** perf. */
+      perf?: PerfSnapshot
       slot?: SlotState
       scrollback?: string
       profiles?: Profile[]
