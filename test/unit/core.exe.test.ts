@@ -26,6 +26,7 @@ describe('name tests', () => {
     assert.ok(!isNodeExecutable('C:\\x\\soul.exe'))
     assert.ok(!isNodeExecutable('bash'))
     assert.ok(isRenamedNode('tetherd.exe') && isRenamedNode('/h/bin/tether-soul') && !isRenamedNode('node.exe'))
+    assert.ok(isRenamedNode('tether-ptyd.exe') && isRenamedNode('/h/bin/tether-ptyd') && isNodeExecutable('C:/h/bin/tether-ptyd.exe'))
   })
 })
 
@@ -202,12 +203,12 @@ describe('orphan temp files in bin/', () => {
     const bin = join(home, 'bin')
     mkdirSync(bin, { recursive: true })
     const dead = 2 ** 22 - 7 // past any real pid on these systems (pid_max 99998 on macOS, 4194304 default max on Linux)
-    for (const n of [`tetherd.${dead}.tmp`, `tether-soul.exe.${dead}.tmp`, `tetherd.json.${dead}.tmp`, `tetherd.${process.pid}.tmp`, `tetherd.${process.ppid}.tmp`, 'other.1.tmp', 'tetherd.json']) writeFileSync(join(bin, n), 'x')
+    for (const n of [`tetherd.${dead}.tmp`, `tether-soul.exe.${dead}.tmp`, `tether-ptyd.exe.${dead}.tmp`, `tetherd.json.${dead}.tmp`, `tetherd.${process.pid}.tmp`, `tetherd.${process.ppid}.tmp`, 'other.1.tmp', 'tetherd.json']) writeFileSync(join(bin, n), 'x')
     const log: string[] = []
     const removed = sweepOrphanTemps(home, (m) => log.push(m))
-    assert.deepEqual(removed.map((p) => basename(p)).sort(), [`tether-soul.exe.${dead}.tmp`, `tetherd.${dead}.tmp`, `tetherd.json.${dead}.tmp`])
+    assert.deepEqual(removed.map((p) => basename(p)).sort(), [`tether-ptyd.exe.${dead}.tmp`, `tether-soul.exe.${dead}.tmp`, `tetherd.${dead}.tmp`, `tetherd.json.${dead}.tmp`])
     assert.deepEqual(readdirSync(bin).sort(), ['other.1.tmp', `tetherd.${process.pid}.tmp`, `tetherd.${process.ppid}.tmp`, 'tetherd.json'].sort())
-    assert.equal(log.length, 3)
+    assert.equal(log.length, 4)
     assert.match(log[0]!, /temporário órfão/)
   })
 

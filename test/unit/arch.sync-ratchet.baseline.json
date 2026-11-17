@@ -34,6 +34,7 @@
     "src/daemon/ronda.ts": 5,
     "src/daemon/server.ts": 16,
     "src/doctor.ts": 25,
+    "src/procd/host.ts": 12,
     "src/procd/protocol.ts": 4,
     "src/trace/timeline.ts": 7
   },
