@@ -52,8 +52,9 @@ export class Recorder {
     client.on('data', (id, data) => this.output.set(id, (this.output.get(id) ?? '') + data))
   }
 
-  static async connect(pipe: string): Promise<Recorder> {
-    return new Recorder(await DaemonClient.open(pipe, 'test'))
+  /** `direct`: the client says it reads hosted panes from the host (tetherd sends it no output of them). */
+  static async connect(pipe: string, how: { direct?: boolean } = {}): Promise<Recorder> {
+    return new Recorder(await DaemonClient.open(pipe, 'test', how))
   }
 
   text(slotId: string): string {

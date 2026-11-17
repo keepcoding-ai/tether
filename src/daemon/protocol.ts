@@ -136,7 +136,11 @@ export type ErrorCode =
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
 
 export type Request =
-  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test' }
+  /**
+   * `direct`: the client reads the panes hosted in tether-ptyd straight from the host (the app). tetherd then sends it no
+   * `data` of a hosted pane (`ptyHost`) and no scrollback of one in `attach`; in-process panes go to it as to anyone.
+   */
+  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test'; direct?: boolean }
   | { t: 'list'; id: number }
   /** Performance ruler snapshot (pull only): loop-delay samples and incidents newer than `since` (wall-clock ms). Reply: `perf`. */
   | { t: 'perf'; id: number; since?: number }
@@ -146,7 +150,10 @@ export type Request =
   | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string }
   /** Start the slot's process: resumes the binding; `choice: 'new'` starts a new session instead. */
   | { t: 'start'; id: number; slotId: string; choice?: 'resume' | 'new' }
-  /** Subscribe to the slot's output. Reply carries the scrollback; then `data` events stream. */
+  /**
+   * Subscribe to the slot's output. Reply carries the scrollback; then `data` events stream. A `direct` client attaching a
+   * hosted pane gets neither (no `scrollback` field): it reads the pane from the host.
+   */
   | { t: 'attach'; id: number; slotId: string; cols: number; rows: number }
   | { t: 'detach'; id: number; slotId: string }
   | { t: 'resize'; id: number; slotId: string; cols: number; rows: number }
@@ -241,7 +248,13 @@ export type Request =
  * Fire-and-forget (no reply): keystrokes. `probe` (optional) times the key->echo path: the client's stamps so far
  * (epoch ms with fraction, see core/perf-probe.ts); tetherd appends arrive + write and hangs it on the slot's next `data`.
  */
-export type Notice = { t: 'input'; slotId: string; data: string; probe?: Probe }
+export type Notice =
+  | { t: 'input'; slotId: string; data: string; probe?: Probe }
+  /**
+   * Keystrokes a `direct` client already wrote to the pane in the host: tetherd only feeds the slot's attention with them
+   * (typing clears `attention`, Enter starts a turn); nothing is written to the PTY.
+   */
+  | { t: 'typed'; slotId: string; data: string }
 
 export type ClientMessage = Request | Notice
 
