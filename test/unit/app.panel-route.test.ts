@@ -1,6 +1,6 @@
 // PanelRouter (main process): a live hosted pane goes through the link (scrollback, output, keystrokes, resize) and the
 // rest through tetherd; output that arrives during a link attach lands after the scrollback, once; a launch seen with
-// the window attached is followed from 0; an exit detaches after the grace; a link down drops hosted keystrokes.
+// the window attached is followed from 0; an exit detaches after the grace; a link down hands hosted keystrokes to the link queue.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { PanelRouter, TERMINAL_RESET, type RouteLink } from '../../app/main/panel-route.ts'
@@ -91,7 +91,7 @@ describe('PanelRouter', () => {
     assert.equal(t.requests.filter((b) => b.t === 'detach').length, 1)
   })
 
-  test('link down: hosted keystrokes are dropped (never sent to tetherd), logged once', async () => {
+  test('link queue full: hosted keystrokes are dropped (never sent to tetherd), logged once', async () => {
     const t = setup(() => hostedReply())
     await t.router.request({ t: 'attach', slotId: 's1', cols: 80, rows: 24 })
     t.link.writeOk = false
@@ -101,12 +101,14 @@ describe('PanelRouter', () => {
     assert.equal(t.logs.filter((l) => l.includes('dropped')).length, 1)
   })
 
-  test('host unreachable at attach: empty scrollback, keystrokes dropped, attached when the link comes up', async () => {
+  test('host unreachable at attach: empty scrollback, keystrokes handed to the link (which queues them), attached when the link comes up', async () => {
     const t = setup(() => hostedReply())
     t.link.connected = false
     const r = await t.router.request({ t: 'attach', slotId: 's1', cols: 80, rows: 24 })
     assert.equal((r as { scrollback?: string }).scrollback, '')
-    assert.equal(t.router.input('s1', 'a'), 'dropped')
+    assert.equal(t.router.input('s1', 'a'), 'link', 'handed to the link queue, not dropped')
+    assert.deepEqual(t.link.writes, [['s1', 'a']])
+    assert.deepEqual(t.typed, [['s1', 'a']], 'attention still hears it')
     t.link.connected = true
     t.router.onLinkState(true)
     await tick(); await tick()

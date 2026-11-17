@@ -34,7 +34,7 @@ export interface PanelRouterOptions {
   exitGraceMs?: number
 }
 
-/** Where a keystroke went: the host, nowhere (hosted pane with the link down), or tetherd (the caller sends it). */
+/** Where a keystroke went: the link (sent or queued for the host), nowhere (the link queue is full), or tetherd (the caller sends it). */
 export type InputRoute = 'link' | 'dropped' | 'daemon'
 
 /** ESC c (RIS): xterm resets the terminal, screen and scrollback, before the host's whole ring is painted again. */
@@ -69,13 +69,13 @@ export class PanelRouter {
 
   /** A keystroke of the window. 'daemon': the caller sends it to tetherd (with its probe, when any). */
   input(slotId: string, data: string): InputRoute {
-    if (this.o.link.has(slotId)) {
+    // A hosted pane's keys always go to the link: it queues them (in order, bounded) while the host is away or backed up.
+    if (this.o.link.has(slotId) || (this.viewed.has(slotId) && this.hosted.has(slotId))) {
       if (!this.o.link.write(slotId, data)) { this.noteDrop(slotId); return 'dropped' }
       this.dropLogged = false
       this.o.daemon()?.typed(slotId, data)
       return 'link'
     }
-    if (this.viewed.has(slotId) && this.hosted.has(slotId)) { this.noteDrop(slotId); return 'dropped' }
     return 'daemon'
   }
 
@@ -164,7 +164,7 @@ export class PanelRouter {
 
   onLinkState(connected: boolean): void {
     if (!connected) {
-      this.o.log('panel host link down: keystrokes of hosted panes are dropped until it comes back (the link retries by itself)')
+      this.o.log('panel host link down: keystrokes of hosted panes wait in the link queue until it comes back (the link retries by itself)')
       return
     }
     this.o.log('panel host link up')
@@ -243,6 +243,6 @@ export class PanelRouter {
   private noteDrop(slotId: string): void {
     if (this.dropLogged) return
     this.dropLogged = true
-    this.o.log(`panel host unreachable: keystrokes of hosted pane ${slotId} dropped (tetherd has no output relay for this window)`)
+    this.o.log(`panel host unreachable: keystrokes of hosted pane ${slotId} dropped (the link input queue is full)`)
   }
 }

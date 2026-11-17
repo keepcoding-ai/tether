@@ -9,6 +9,8 @@ export interface PanelConn {
   on(event: 'data', fn: (name: string, data: string, off?: number) => void): unknown
   on(event: 'lag', fn: (name: string) => void): unknown
   on(event: 'close', fn: () => void): unknown
+  /** The socket's send buffer emptied: queued input may go. */
+  on(event: 'drain', fn: () => void): unknown
   request(body: { t: 'attach'; name: string; from?: number; epoch?: string } | { t: 'detach'; name: string } | { t: 'resize'; name: string; cols: number; rows: number }): Promise<{ scrollback?: string; off?: number; epoch?: string }>
   write(name: string, data: string): void
   close(): void
@@ -34,12 +36,14 @@ export interface PanelLinkOptions {
   schedule?: (fn: () => void, ms: number) => () => void
   retryMinMs?: number
   retryMaxMs?: number
-  /** `write` is dropped while the host socket holds more than this unsent (default 1 MiB). */
+  /** `write` queues (per slot) while the host socket holds more than this unsent (default 1 MiB). */
   writeMaxPending?: number
+  /** Per-slot ceiling of queued input chars while the link is down or backed up (default 64 KiB); the excess is dropped and counted. */
+  writeQueueMax?: number
   openTimeoutMs?: number
 }
 
-export interface PanelLinkStats { writesDropped: number; reconnects: number; resyncs: number; resets: number }
+export interface PanelLinkStats { writesDropped: number; writesQueued: number; reconnects: number; resyncs: number; resets: number }
 
 interface Slot {
   epoch: string
@@ -52,12 +56,13 @@ interface Slot {
 }
 
 export const WRITE_MAX_PENDING = 1024 * 1024
+export const WRITE_QUEUE_MAX = 64 * 1024
 
 /** Adapts a HostClient (its socket is private to it) to PanelConn. */
 export function adaptHostClient(c: HostClient): PanelConn {
   const sock = (): Socket | undefined => (c as unknown as { socket?: Socket }).socket
   return {
-    on: (event: string, fn: (...a: never[]) => void) => c.on(event as 'close', fn as () => void),
+    on: (event: string, fn: (...a: never[]) => void) => (event === 'drain' ? sock()?.on('drain', fn as () => void) : c.on(event as 'close', fn as () => void)),
     request: (body) => c.request(body),
     write: (n, d) => c.write(n, d),
     close: () => c.close(),
@@ -69,7 +74,9 @@ export function adaptHostClient(c: HostClient): PanelConn {
 export class PanelLink {
   private readonly o: Required<Pick<PanelLinkOptions, 'pipe' | 'onData'>> & PanelLinkOptions
   private readonly slots = new Map<string, Slot>()
-  private readonly counters: PanelLinkStats = { writesDropped: 0, reconnects: 0, resyncs: 0, resets: 0 }
+  private readonly counters: PanelLinkStats = { writesDropped: 0, writesQueued: 0, reconnects: 0, resyncs: 0, resets: 0 }
+  /** Input waiting for the link, per slot, in order. */
+  private readonly queues = new Map<string, { chunks: string[]; size: number }>()
   private conn: PanelConn | undefined
   private delay: number
   private cancelRetry: (() => void) | undefined
@@ -111,6 +118,7 @@ export class PanelLink {
     const c = this.conn
     this.conn = undefined
     c?.close()
+    this.queues.clear()
   }
 
   /**
@@ -133,24 +141,53 @@ export class PanelLink {
     const res: AttachResult = { scrollback: r.scrollback ?? '', off: r.off ?? 0, epoch: r.epoch ?? '' }
     slot.epoch = res.epoch
     slot.next = res.off
-    queueMicrotask(() => this.release(slotId, slot))
+    queueMicrotask(() => { this.release(slotId, slot); this.drain() })
     return res
   }
 
   async detach(slotId: string): Promise<void> {
+    this.queues.delete(slotId)
     if (!this.slots.delete(slotId)) return
     if (this.connected) await this.conn!.request({ t: 'detach', name: slotId }).catch(() => undefined)
   }
 
-  /** Input to the slot's process; dropped (and counted) while the host socket is backed up or the link is down. */
+  /**
+   * Input to the slot's process. While the link is down or the host socket is backed up (or older input of the slot is
+   * still waiting) it is queued per slot and goes out in order once the link allows; false only when the queue ceiling
+   * dropped it (counted).
+   */
   write(slotId: string, data: string): boolean {
-    const c = this.conn
-    if (!c || c.isClosed || c.pending() > (this.o.writeMaxPending ?? WRITE_MAX_PENDING)) {
+    if (!this.queues.has(slotId) && this.canSend()) { this.conn!.write(slotId, data); return true }
+    let q = this.queues.get(slotId)
+    if (!q) this.queues.set(slotId, (q = { chunks: [], size: 0 }))
+    if (q.size + data.length > (this.o.writeQueueMax ?? WRITE_QUEUE_MAX)) {
       this.counters.writesDropped++
+      if (!q.chunks.length) this.queues.delete(slotId)
       return false
     }
-    c.write(slotId, data)
+    q.chunks.push(data)
+    q.size += data.length
+    this.counters.writesQueued++
+    this.drain()
     return true
+  }
+
+  private canSend(): boolean {
+    const c = this.conn
+    return !!c && !c.isClosed && c.pending() <= (this.o.writeMaxPending ?? WRITE_MAX_PENDING)
+  }
+
+  /** Sends queued input, slot by slot, in order, while the link has room. */
+  private drain(): void {
+    for (const [id, q] of this.queues) {
+      while (q.chunks.length && this.canSend()) {
+        const d = q.chunks.shift()!
+        q.size -= d.length
+        this.conn!.write(id, d)
+      }
+      if (!q.chunks.length) this.queues.delete(id)
+      if (!this.canSend()) return
+    }
   }
 
   resize(slotId: string, cols: number, rows: number): void {
@@ -178,8 +215,10 @@ export class PanelLink {
     c.on('data', (name, data, off) => this.onHostData(c, name, data, off))
     c.on('lag', (name) => { if (c === this.conn) this.resync(name) })
     c.on('close', () => this.onClose(c))
+    c.on('drain', () => { if (c === this.conn) this.drain() })
     this.o.onState?.(true)
     for (const id of this.slots.keys()) this.resync(id)
+    this.drain()
   }
 
   private onClose(c: PanelConn): void {
@@ -258,6 +297,7 @@ export class PanelLink {
         s.again = false
         this.release(name, s)
         if (again) this.resync(name)
+        this.drain()
       }
     })()
   }
