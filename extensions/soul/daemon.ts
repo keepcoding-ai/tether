@@ -24,7 +24,9 @@ export const soulAgent: AgentContribution = {
     '--fork-session': 'bifurcar é uma ação por retomada, não uma propriedade do perfil (o slot perderia a sessão a cada reinício)',
   },
   envArgsVar: 'TETHER_SOUL_ARGS',
-  // `soul --mcp-config <file|json>` (repeatable; the servers run in-process, so a remote session over -H has none).
+  // `soul --mcp-config <file|json>` (repeatable). In process the servers join the session; over -H the soul-cli
+  // runs the stdio ones here and lends them to the remote agent as hands grouped by server name
+  // (soul-cli src/hands/localMcp.ts), so the agent still sees them.
   mcp: { inject: withMcpConfigFlag },
   // The tether's skills as a shared folder (SOUL_CLI_SHARED_FOLDERS, like `-S`): `<dir>/skills/<skill>/SKILL.md`.
   skills: soulSkills,
