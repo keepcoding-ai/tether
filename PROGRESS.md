@@ -1257,3 +1257,11 @@ Pedido do Guga: reproduzir o painel Search do VSCodium, substituir incluído, "a
 
 - `npm run check` sozinho em `0989faf`: typecheck limpo; 2683 testes, 2676 passam, 3 falham. As 3 são a linha de base conhecida: `daemon.profiles` ("Claude modo dev"), `daemon.set-profile` ("Claude modo dev") e `ext.index` (`app/main/cookie-runtime-main.ts` importa `extensions/browser/private-dir.ts`). Fatia nova só conta se não acrescentar falha a esta lista.
 - Duas correções no caminho: testes da bandeja com "Tether" maiúsculo (c65b96f) e `src/agents/claude.ts` usando o `path` da plataforma injetada (0989faf; os testes que simulam darwin quebravam no Windows desde 85153c6). A mudança de desempenho a36a681 não tinha culpa.
+
+## Desempenho — etapa 1: digitação independente do tetherd (2026-11-17)
+
+- Os painéis vivem no `tether-ptyd` (o mesmo `ProcHost` do procd, sem disco) e o app digita e recebe o eco direto dele (`PanelLink`); o tetherd assina o fluxo e segue dono das decisões. Chave `daemon.panelHost` / `TETHER_PANEL_HOST`, **ligada por padrão**; recuo = `false` + reiniciar o tetherd.
+- Números (E2E isolados): tetherd travado 5 s ⇒ eco p99 4,6 ms (antes 2975 ms); com 5 e 10 painéis ativos (~0,6 e ~1,2 MB/s) p99 6,2 ms; tether-ptyd 12–32% de um núcleo. Matar o tetherd à força mantém os painéis com os mesmos pids e o tetherd novo os adota. `tether attach` igual.
+- Corrigido no caminho: foco que rodava entre painéis após restaurar o layout (teclas caíam em outro painel) — anterior à etapa; três pontos que descartavam tecla agora enfileiram (64 KB) e entregam em ordem; adopt sem duplicar; fila do host que podia travar com teto pequeno; testes da CLI isolados do host em processo.
+- Fica para depois: agente adotado sem atenção/ronda/MCP refeitos (reiniciar o painel devolve); atraso de laço do host não medido; limpeza `s.held.length >= 0` em `PanelLink.resync`.
+- Suíte: 3 falhas de base (profiles/set-profile "Claude modo dev", ext.index cookie-runtime-main).
