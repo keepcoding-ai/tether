@@ -1,42 +1,11 @@
 // Shared bits for the daemon tests: a temp home, a unique pipe, a client that records events, pid checks.
-import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { after } from 'node:test'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import { ProcHost } from '../../src/procd/host.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.basics.ts'
 
-export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
-
-export function tempHome(): string {
-  return mkdtempSync(join(tmpdir(), 'tether-daemon-'))
-}
-
-export function uniquePipe(home: string): string {
-  const tag = randomBytes(4).toString('hex')
-  return process.platform === 'win32' ? `\\\\.\\pipe\\tether-test-${tag}` : join(home, `d-${tag}.sock`)
-}
-
-export async function removeHome(home: string): Promise<void> {
-  for (let i = 0; i < 5; i++) {
-    try { rmSync(home, { recursive: true, force: true }); return } catch { await sleep(300) }
-  }
-}
-
-/** True when a process with this pid exists right now (pid-only; fine for short-lived tests). */
-export function pidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' }
-}
-
-export async function waitUntil(cond: () => boolean, timeoutMs: number, what: string): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (!cond()) {
-    if (Date.now() > deadline) throw new Error(`timeout (${timeoutMs} ms) waiting for ${what}`)
-    await sleep(50)
-  }
-}
+export { pidAlive, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.basics.ts'
 
 /** A connected client that keeps every `state` and `data` it received, per slot. */
 export class Recorder {
