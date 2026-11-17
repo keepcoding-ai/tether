@@ -9,7 +9,7 @@
 import type { AddPanelOptions, DockviewTheme, IDockviewPanel } from 'dockview-core'
 import type { Target } from './create.ts'
 import { Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
-import { closeDesk, type DeskHue, type DeskInfo, insertDesk, moveDesk, readDeskColor, recolorDesk, renameDesk, touchMru } from './desks.ts'
+import { closeDesk, type DeskHue, type DeskInfo, insertDesk, moveDesk, readDeskColor, recolorDesk, renameDesk, setDeskAsleep, touchMru } from './desks.ts'
 import { emptyDesk, isSystemDeskId, queueDesks, resolveActiveDesk, type DeskLayout, type Layout, type SystemDeskLayout } from './layout.ts'
 
 export interface DeskSetHost {
@@ -176,6 +176,7 @@ export class DeskSet {
   // Queue-only: a system desk is never renamed, recoloured or reordered (its id is not in the row).
   rename(id: string, name: string): void { if (!this.inQueue(id)) return; this.row = renameDesk(this.row, id, name); this.syncMeta(); this.host.onDesksChange() }
   recolor(id: string, color: DeskHue): void { if (!this.inQueue(id)) return; this.row = recolorDesk(this.row, id, color); this.syncMeta(); this.host.onDesksChange() }
+  setAsleep(id: string, asleep: boolean): void { if (!this.inQueue(id)) return; this.row = setDeskAsleep(this.row, id, asleep); this.syncMeta(); this.host.onDesksChange() }
   move(id: string, to: number): void { if (!this.inQueue(id)) return; this.row = moveDesk(this.row, id, to); this.host.onDesksChange() }
   private inQueue(id: string): boolean { return this.row.some(d => d.id === id) }
 
@@ -305,7 +306,7 @@ export class DeskSet {
     for (const d of queueDesks(file)) {
       if (seen.has(d.id)) continue // a duplicated id would make two desks share one name: keep the first
       seen.add(d.id)
-      const info: DeskInfo = { id: d.id, name: d.name || d.id, color: readDeskColor(d.color) }
+      const info: DeskInfo = { id: d.id, name: d.name || d.id, color: readDeskColor(d.color), ...(d.asleep === true ? { asleep: true } : {}) }
       this.row.push(info)
       this.mount(info).desk.fromJSON(d)
     }

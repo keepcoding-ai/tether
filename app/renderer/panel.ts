@@ -16,12 +16,14 @@ import type { ColorScheme } from '../shared/theme.ts'
 import { renderChoices, roveWithArrows } from './dialog.ts'
 import { decodeOsc52 } from './clipboard.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
+import { rondaLabel, rondaTooltip } from './ronda-rules.ts'
 import { detailsOpen } from './pane-details.ts'
 import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
+import { mountTabEmblem } from './tab-emblems.ts'
 
 // The palette and the font come from the terminal appearance (app/shared/terminal-theme.ts: preset per
 // scheme over the window background, bundled font, weight, size, line height, contrast 4.5). The host owns
@@ -29,6 +31,35 @@ import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './termi
 
 /** Which xterm renderer a panel ended up with: WebGL draws box/block glyphs itself (no gaps at line height 1.2); DOM is the fallback. */
 export type TerminalRenderer = 'webgl' | 'dom'
+
+/** An xterm with the appearance's font and palette for the scheme (every terminal pane: the agents' and a process' output). */
+export function createTerminal(appearance: TerminalAppearance, scheme: ColorScheme, opts: { cursorBlink?: boolean; disableStdin?: boolean } = {}): Terminal {
+  return new Terminal({
+    ...terminalFontOptions(appearance),
+    cursorBlink: opts.cursorBlink ?? true,
+    ...(opts.disableStdin ? { disableStdin: true } : {}),
+    scrollback: 5000,
+    allowProposedApi: true,
+    theme: terminalTheme(appearance, scheme),
+  })
+}
+
+/**
+ * WebGL after `open()`: xterm then draws box drawing and block glyphs itself (`customGlyphs`), so they
+ * join at any line height; the texture atlas also keeps a tall scrollback cheap. When the GPU is not
+ * there (software rendering, a lost context later) the DOM renderer carries on with the font's glyphs.
+ */
+export function loadTerminalRenderer(term: Terminal, onLost: () => void): TerminalRenderer {
+  try {
+    // preserveDrawingBuffer: the canvas keeps its last frame, so a window capture (E2E screenshots) sees it.
+    const webgl = new WebglAddon(true)
+    webgl.onContextLoss(() => { webgl.dispose(); onLost() })
+    term.loadAddon(webgl)
+    return 'webgl'
+  } catch {
+    return 'dom'
+  }
+}
 
 export const KIND_LABEL: Record<SlotKind, string> = agentTable('Shell', ui => ui.label, n => n)
 export const STATUS_LABEL: Record<SlotStatus, string> = {
@@ -174,6 +205,17 @@ function exitedOverlay(s: SlotState): OverlaySpec {
   }
 }
 
+function asleepOverlay(s: SlotState): OverlaySpec {
+  return {
+    icon: 'eye-closed', title: 'Guia hibernada', tone: 'info',
+    text: s.kind === 'shell' ? 'O shell foi parado para poupar a máquina.' : `O ${KIND_LABEL[s.kind]} foi parado para poupar a máquina. A conversa está salva e volta de onde parou.`,
+    choices: [
+      { id: 'start', icon: 'sun', label: 'Acordar', consequence: s.kind === 'shell' ? 'Abre um shell novo na mesma pasta.' : 'Retoma a conversa de onde parou.', tone: 'safe' },
+      CLOSE,
+    ],
+  }
+}
+
 const UNKNOWN: OverlaySpec = {
   icon: 'x-circle', title: 'Slot desconhecido', tone: 'error', text: 'O tetherd não conhece mais este painel.',
   choices: [{ id: 'close', icon: 'x', label: 'Fechar painel', consequence: 'Só remove o painel: não há slot por trás dele.', tone: 'safe' }],
@@ -189,6 +231,8 @@ export interface PanelHost {
   getStartError(slotId: string): SlotError | undefined
   /** A `start` was sent and not answered yet: show "iniciando…" instead of "encerrado". */
   isStartPending(slotId: string): boolean
+  /** The pane was hibernated on purpose: it shows "hibernada" and offers to wake it. */
+  isAsleep?(slotId: string): boolean
   onAction(slotId: string, action: PanelAction): void
   /** The user renamed the tab; an empty name removes the custom name (the session title shows again). */
   onRename(slotId: string, name: string): void
@@ -242,7 +286,7 @@ export class TerminalPanel implements IContentRenderer {
   readonly term: Terminal
   slotId = ''
   private readonly fit = new FitAddon()
-  private readonly head: { status: HTMLElement; bell: HTMLElement; profile: HTMLElement; unsafe: HTMLElement; cwd: HTMLElement; openFolder: HTMLButtonElement; copyFolder: HTMLButtonElement; switchProfile: HTMLButtonElement }
+  private readonly head: { status: HTMLElement; bell: HTMLElement; ronda: HTMLButtonElement; profile: HTMLElement; unsafe: HTMLElement; cwd: HTMLElement; openFolder: HTMLButtonElement; copyFolder: HTMLButtonElement; switchProfile: HTMLButtonElement }
   private readonly termHost: HTMLElement
   private readonly details: HTMLElement
   private readonly overlay: HTMLElement
@@ -277,6 +321,10 @@ export class TerminalPanel implements IContentRenderer {
     const profile = document.createElement('span'); profile.className = 'info-profile'; profile.hidden = true
     const cwd = document.createElement('span'); cwd.className = 'info-cwd'
     const unsafe = unsafeBadge(true)
+    // The ronda (tether's nudge clock for this agent): visible while on; one click switches it off, no questions asked.
+    const ronda = document.createElement('button'); ronda.type = 'button'; ronda.className = 'ronda'; ronda.dataset.action = 'ronda-off'; ronda.hidden = true
+    ronda.append(icon('timer'), document.createElement('span'))
+    ronda.addEventListener('click', ev => { ev.stopPropagation(); if (this.slotId) void window.tether.request({ t: 'ronda-off', slotId: this.slotId, force: true }) })
     const spacer = document.createElement('span'); spacer.className = 'sp'
     const action = (name: string, ic: IconName, label: string, run: () => void): HTMLButtonElement => {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'sb-action'; b.dataset.action = name
@@ -288,8 +336,8 @@ export class TerminalPanel implements IContentRenderer {
     switchProfile.hidden = true
     const openFolder = action('open-folder', 'folder-open', OPEN_FOLDER_TOOLTIP, () => { if (this.slotId) this.host.onOpenFolder(this.slotId) })
     const copyFolder = action('copy-folder', 'copy', COPY_FOLDER_TOOLTIP, () => { if (this.slotId) this.host.onCopyFolder(this.slotId) })
-    head.append(status, bell, profile, cwd, unsafe, spacer, switchProfile, openFolder, copyFolder)
-    this.head = { status, bell, profile, unsafe, cwd, openFolder, copyFolder, switchProfile }
+    head.append(status, bell, profile, cwd, unsafe, ronda, spacer, switchProfile, openFolder, copyFolder)
+    this.head = { status, bell, ronda, profile, unsafe, cwd, openFolder, copyFolder, switchProfile }
     this.termHost = document.createElement('div')
     this.termHost.className = 'panel-term'
     this.overlay = document.createElement('div')
@@ -319,13 +367,7 @@ export class TerminalPanel implements IContentRenderer {
     this.element.append(details, body)
     this.setDetails(false)
 
-    this.term = new Terminal({
-      ...terminalFontOptions(host.getAppearance()),
-      cursorBlink: true,
-      scrollback: 5000,
-      allowProposedApi: true,
-      theme: terminalTheme(host.getAppearance(), host.getScheme()),
-    })
+    this.term = createTerminal(host.getAppearance(), host.getScheme())
     this.term.loadAddon(this.fit)
     // Ctrl+click on a URL or on a path that exists (relative ones read against the folder this pane was opened in): the app's links.
     this.term.registerLinkProvider(terminalLinkProvider(this.term, {
@@ -445,6 +487,15 @@ export class TerminalPanel implements IContentRenderer {
     this.head.switchProfile.title = `${profileTip}\n${SWITCH_PROFILE_TOOLTIP}`
     this.head.switchProfile.setAttribute('aria-label', `Perfil: ${profileLabel} · ${SWITCH_PROFILE_TOOLTIP}`)
     this.head.unsafe.hidden = !s.unsafe
+    this.head.ronda.hidden = !s.ronda
+    if (s.ronda) {
+      this.head.ronda.lastElementChild!.textContent = rondaLabel(s.ronda)
+      const tip = rondaTooltip(s.ronda)
+      this.head.ronda.title = tip
+      this.head.ronda.setAttribute('aria-label', tip)
+      this.head.ronda.classList.toggle('due', !!s.ronda.due)
+      this.head.ronda.classList.toggle('busy', s.turn === 'busy')
+    }
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
     const att = this.host.attentionOf?.(this.slotId) ?? { level: s.attention, lines: s.attention === 'waiting' ? ['Esperando você'] : s.attention === 'done' ? ['Terminou'] : [] }
@@ -454,6 +505,7 @@ export class TerminalPanel implements IContentRenderer {
     this.head.bell.title = bellTip
     this.head.bell.setAttribute('aria-label', bellTip)
     if (s.restarting) this.setStatus('starting', 'reiniciando…')
+    else if (status === 'exited' && this.host.isAsleep?.(this.slotId)) this.setStatus(status, 'hibernada')
     else this.setStatus(status, STATUS_LABEL[status])
     this.element.dataset.status = status
 
@@ -462,7 +514,7 @@ export class TerminalPanel implements IContentRenderer {
     if (isAgentUnavailable(s.kind)) this.showOverlay(errorOverlay(s, { code: 'agent-unavailable', message: `O agente ${s.kind} não está disponível neste app (extensão desligada ou ausente); o painel continua guardado.` }))
     else if (status === 'unconfirmed') this.showOverlay(unconfirmedOverlay(s))
     else if (status === 'error' && err) this.showOverlay(errorOverlay(s, err))
-    else if (status === 'exited') this.showOverlay(exitedOverlay(s))
+    else if (status === 'exited') this.showOverlay(this.host.isAsleep?.(this.slotId) ? asleepOverlay(s) : exitedOverlay(s))
     else this.overlay.hidden = true
     this.renderLoading()
   }
@@ -476,6 +528,7 @@ export class TerminalPanel implements IContentRenderer {
     this.head.profile.hidden = !showProfile
     this.head.switchProfile.hidden = !showProfile
     this.head.unsafe.hidden = !hint?.unsafe
+    this.head.ronda.hidden = true
     this.head.bell.hidden = true
     this.head.cwd.textContent = hint?.cwd ?? ''
     this.head.cwd.title = hint?.cwd ?? ''
@@ -567,21 +620,8 @@ export class TerminalPanel implements IContentRenderer {
 
   focus(): void { this.term.focus() }
 
-  /**
-   * WebGL after `open()`: xterm then draws box drawing and block glyphs itself (`customGlyphs`), so they
-   * join at any line height; the texture atlas also keeps a tall scrollback cheap. When the GPU is not
-   * there (software rendering, a lost context later) the DOM renderer carries on with the font's glyphs.
-   */
   private loadRenderer(): void {
-    try {
-      // preserveDrawingBuffer: the canvas keeps its last frame, so a window capture (E2E screenshots) sees it.
-      const webgl = new WebglAddon(true)
-      webgl.onContextLoss(() => { webgl.dispose(); this.renderer = 'dom' })
-      this.term.loadAddon(webgl)
-      this.renderer = 'webgl'
-    } catch {
-      this.renderer = 'dom'
-    }
+    this.renderer = loadTerminalRenderer(this.term, () => { this.renderer = 'dom' })
   }
 
   /**
@@ -699,11 +739,13 @@ export class TerminalPanel implements IContentRenderer {
  */
 export class SlotTab implements ITabRenderer {
   readonly element: HTMLElement
+  private unmountEmblem: (() => void) | undefined
   private api: DockviewPanelApi | undefined
   private readonly kind: HTMLElement
   private readonly text: HTMLElement
   private readonly dot: HTMLElement
   private readonly unsafe: HTMLElement
+  private readonly ronda: HTMLElement
   private readonly attn: HTMLElement
   private disposers: Array<() => void> = []
   private readonly host: PanelHost
@@ -720,6 +762,7 @@ export class SlotTab implements ITabRenderer {
     this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.append(icon('circle-fill'))
     this.text = document.createElement('span'); this.text.className = 'text'
     this.unsafe = unsafeBadge(false)
+    this.ronda = document.createElement('span'); this.ronda.className = 'ronda-mark'; this.ronda.hidden = true; this.ronda.append(icon('timer'))
     this.attn = document.createElement('span'); this.attn.className = 'attn'
     this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
     const close = document.createElement('button')
@@ -727,13 +770,15 @@ export class SlotTab implements ITabRenderer {
     close.append(icon('x'))
     close.addEventListener('pointerdown', ev => ev.stopPropagation())
     close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    this.element.append(this.kind, this.text, this.unsafe, this.attn, this.dot, close)
+    this.element.append(this.kind, this.text, this.unsafe, this.ronda, this.attn, this.dot, close)
     this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
     this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
   }
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
+    this.unmountEmblem?.()
+    this.unmountEmblem = mountTabEmblem(this.element.querySelector<HTMLElement>('.kind')!, params.api, params.params)
     this.hint = hintParam(params.params)
     // The tab strip's actions (tab-strip.ts) find the panel id of each tab through this attribute.
     this.element.dataset.slot = params.api.id
@@ -751,13 +796,23 @@ export class SlotTab implements ITabRenderer {
       this.text.textContent = this.api.title ?? this.api.id
       this.dot.className = 'dot starting'
       this.unsafe.hidden = !hint?.unsafe
+      this.ronda.hidden = true
       this.element.title = `${this.api.title ?? this.api.id}\nConectando ao serviço…`
       return
     }
     setIcon(this.kind, s ? KIND_ICON[s.kind] ?? 'terminal-window' : 'question')
     this.text.textContent = this.api.title ?? this.api.id
-    this.dot.className = `dot ${s ? effectiveStatus(s) : 'error'}`
+    // A hibernated pane: a closed eye instead of the "ended" dot.
+    const asleep = !!s && effectiveStatus(s) === 'exited' && !!this.host.isAsleep?.(this.api.id)
+    if (asleep !== (this.dot.dataset.glyph === 'eye-closed')) {
+      this.dot.dataset.glyph = asleep ? 'eye-closed' : ''
+      this.dot.replaceChildren(icon(asleep ? 'eye-closed' : 'circle-fill'))
+    }
+    this.dot.className = `dot ${asleep ? 'asleep' : s ? effectiveStatus(s) : 'error'}`
+    this.dot.title = asleep ? 'Guia hibernada' : ''
     this.unsafe.hidden = !s?.unsafe
+    this.ronda.hidden = !s?.ronda
+    if (s?.ronda) this.ronda.title = rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, '')
     const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
     // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
     const mark = att.level ? 'attention' : tabMark(s)
@@ -807,6 +862,8 @@ export class SlotTab implements ITabRenderer {
   }
 
   dispose(): void {
+    this.unmountEmblem?.()
+    this.unmountEmblem = undefined
     for (const d of this.disposers) d()
     this.disposers = []
   }

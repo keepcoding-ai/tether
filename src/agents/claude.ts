@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
 import { canonicalDir } from '../core/paths.ts'
-import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
+import { ENV_AGENT, ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
 
 /**
  * The reporter script, next to this module. Read on use, never at load: Electron main bundles this module as CommonJS
@@ -31,14 +31,14 @@ function defaultHookPath(): string {
  */
 export function hookSettings(hookPath: string = defaultHookPath()): object {
   const script = hookPath.replace(/\\/g, '/')
-  const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit') => [
+  const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit' | 'SubagentStart' | 'SubagentStop') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
   ]
-  // PostToolUse fires per tool call: a shell guard keeps Node from spawning unless a polite-pause request is pending for this slot.
+  // PostToolUse fires per tool call: a shell guard keeps Node from spawning unless a polite-pause request or a notice is pending for this slot.
   const postToolUse = [
     {
       matcher: '*',
-      hooks: [{ type: 'command', command: `test -e "$TETHER_HOME/slots/$TETHER_SLOT_ID.pause-request.json" && node "${script}" PostToolUse || true` }],
+      hooks: [{ type: 'command', command: `{ test -e "$TETHER_HOME/slots/$TETHER_SLOT_ID.pause-request.json" || test -e "$TETHER_HOME/slots/$TETHER_SLOT_ID.notices.jsonl"; } && node "${script}" PostToolUse || true` }],
     },
   ]
   // Stop / Notification feed the attention badge (turn finished / waiting for the user); UserPromptSubmit marks the turn start.
@@ -50,6 +50,9 @@ export function hookSettings(hookPath: string = defaultHookPath()): object {
       Notification: hook('Notification'),
       UserPromptSubmit: hook('UserPromptSubmit'),
       PostToolUse: postToolUse,
+      // A subagent's life (background ones keep the agent "working" after its Stop; see claude-hook.mjs backgroundStep).
+      SubagentStart: hook('SubagentStart'),
+      SubagentStop: hook('SubagentStop'),
     },
   }
 }
@@ -167,6 +170,7 @@ function plan(input: PlanInput): LaunchPlan {
   // The profile's env goes on AFTER the CLAUDE* strip: an explicit CLAUDE_CONFIG_DIR (a second account) must reach Claude.
   Object.assign(env, profile?.env ?? {})
   env[ENV_SLOT] = slot.slotId
+  env[ENV_AGENT] = 'claude'
   env[ENV_HOME] = home
   const command = resolveClaudeCommand(env)
   withCommandDirOnPath(env, command)
@@ -292,4 +296,4 @@ function watchTitle(binding: Binding, onTitle: (title: string) => void, interval
   return () => clearInterval(timer)
 }
 
-export const claudeAdapter: AgentAdapter = { name: 'claude', plan, sessionExists, title, watchTitle }
+export const claudeAdapter: AgentAdapter = { name: 'claude', resumes: true, plan, sessionExists, title, watchTitle }

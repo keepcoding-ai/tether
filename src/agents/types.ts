@@ -31,6 +31,8 @@ export interface PlanInput {
 
 export interface AgentAdapter {
   name: AgentName
+  /** The agent resumes a session by its id (`plan` honours `resume`): the slot may be restarted in place. Absent = false. */
+  resumes?: boolean
   plan(input: PlanInput): LaunchPlan
   /** Does the agent still have this session? 'unknown' when it cannot be told locally (e.g. soul over -H). */
   sessionExists(binding: Binding, opts?: LookupOptions): Promise<boolean | 'unknown'>
@@ -46,3 +48,5 @@ export interface AgentAdapter {
 /** Env vars the launcher sets for every slot (adapters add their own). */
 export const ENV_SLOT = 'TETHER_SLOT_ID'
 export const ENV_HOME = 'TETHER_HOME'
+/** The kind of agent in the pane (`claude`, `soul`…): each adapter sets its own name, so skills can tell their platform. */
+export const ENV_AGENT = 'TETHER_AGENT'

@@ -8,6 +8,7 @@ import {
   checkClaude,
   checkClaudeEnv,
   checkDaemon,
+  checkProcHost,
   checkExecutables,
   checkStartTime,
   checkHome,
@@ -199,5 +200,21 @@ describe('doctor: report', () => {
   test('exit code 1 only with an ERRO', () => {
     assert.equal(exitCodeFor(results), 1)
     assert.equal(exitCodeFor(results.slice(0, 2)), 0)
+  })
+})
+
+describe('doctor: background processes', () => {
+  test('host running: pid, version, how many run and ask attention', () => {
+    const r = checkProcHost({ host: { pid: 42, version: '0.1.0' }, running: 2, attention: 1 })
+    assert.equal(r.level, 'OK')
+    assert.match(r.detail, /anfitrião pid 42, versão 0\.1\.0; 2 processo\(s\) rodando, 1 pede\(m\) atenção/)
+  })
+  test('no host: OK, it starts on the next proc start', () => {
+    assert.match(checkProcHost({ host: null, running: 0 }).detail, /anfitrião parado/)
+  })
+  test('another protocol version: AVISO with the action', () => {
+    const r = checkProcHost({ host: null, running: 0, versionProblem: 'o anfitrião rodando (pid 7) fala a versão 2 do protocolo; esta é a 1' })
+    assert.equal(r.level, 'AVISO')
+    assert.match(r.hint ?? '', /tether proc host stop/)
   })
 })

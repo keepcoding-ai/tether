@@ -15,8 +15,8 @@ import { countLabel, type Badge } from './seal-rules.ts'
 import { createBlankView } from './blank-view.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import {
-  DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, openPadOn, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, restorePad, setWidth, SIDES, sideOf,
-  togglePad, toggleSideBar, type PadDescriptor, type Side, type SideBarsLayout,
+  DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, restorePad, setWidth, SIDES, sideOf,
+  togglePad, toggleSideBar, shownPadOn, togglePadFollowing, openPadFollowing, toggleSideBarFollowing, type PadOwners, type PadDescriptor, type Side, type SideBarsLayout,
 } from './sidebar-rules.ts'
 
 export interface SideBarsHost {
@@ -30,6 +30,8 @@ export interface SideBarsHost {
   deskName(id: string): string
   /** The focusable panel the per-panel pads follow (the pane the Foco de Mesa is on); undefined when there is none. */
   activePanelId(): string | undefined
+  /** Setting `ui.padsFollowFocus`: scoped pads open only for the panel / desk they were opened on. */
+  padsFollowFocus(): boolean
   /** A panel's name as its tab shows it. */
   panelName(id: string): string
   /** The key hint of a command ('' when none). */
@@ -140,17 +142,31 @@ export class SideBars {
 
   // ---------- what the person does ----------
 
-  toggle(padId: string, focus = true): void { this.apply(togglePad(this.state, this.host.pads(), padId), focus ? padId : undefined) }
-  open(padId: string, focus = true): void { this.apply(openPad(this.state, this.host.pads(), padId), focus ? padId : undefined) }
+  toggle(padId: string, focus = true): void {
+    const o = this.owners()
+    this.apply(o ? togglePadFollowing(this.state, this.host.pads(), padId, o) : togglePad(this.state, this.host.pads(), padId), focus ? padId : undefined)
+  }
+  open(padId: string, focus = true): void {
+    const o = this.owners()
+    this.apply(o ? openPadFollowing(this.state, this.host.pads(), padId, o) : openPad(this.state, this.host.pads(), padId), focus ? padId : undefined)
+  }
   toggleSide(side: Side): void {
-    const next = toggleSideBar(this.state, this.host.pads(), side)
-    this.apply(next, next[side].open && next[side].open !== this.state[side].open ? next[side].open : undefined)
+    const o = this.owners()
+    const before = this.openOn(side)?.id
+    const next = o ? toggleSideBarFollowing(this.state, this.host.pads(), side, o) : toggleSideBar(this.state, this.host.pads(), side)
+    const after = shownPadOn(this.host.pads(), next, side, o)?.id
+    this.apply(next, after && after !== before ? after : undefined)
   }
   move(padId: string): void { this.apply(movePad(this.state, this.host.pads(), padId), padId) }
   restore(padId: string): void { this.apply(restorePad(this.state, this.host.pads(), padId), padId) }
 
   /** The pad open on a side (declared and on that side), if any. */
-  openOn(side: Side): PadDescriptor | undefined { return openPadOn(this.host.pads(), this.state, side) }
+  openOn(side: Side): PadDescriptor | undefined { return shownPadOn(this.host.pads(), this.state, side, this.owners()) }
+
+  /** The current owners when the setting `ui.padsFollowFocus` is on; undefined (the default behaviour) when off. */
+  private owners(): PadOwners | undefined {
+    return this.host.padsFollowFocus() ? { deskId: this.host.activeDeskId(), panelId: this.host.activePanelId() } : undefined
+  }
   isOpen(padId: string): boolean { return SIDES.some(s => this.openOn(s)?.id === padId) }
   sideOf(padId: string): Side | undefined { const p = this.pad(padId); return p ? sideOf(this.state, p) : undefined }
   isMoved(padId: string): boolean { const p = this.pad(padId); return !!p && isMoved(this.state, p) }

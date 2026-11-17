@@ -8,7 +8,17 @@
 
 import { HUE_NAMES, type HueName } from '../shared/palette.ts'
 
-export interface DeskInfo { id: string; name: string; color: DeskHue }
+/** `asleep`: the desk is hibernated — its agents were stopped, it leaves the capsule and waits in the moon menu. */
+export interface DeskInfo { id: string; name: string; color: DeskHue; asleep?: boolean }
+
+/** Puts desk `id` to sleep (or wakes it). */
+export function setDeskAsleep(desks: readonly DeskInfo[], id: string, asleep: boolean): DeskInfo[] {
+  return desks.map(d => {
+    if (d.id !== id) return d
+    const { asleep: _, ...rest } = d
+    return asleep ? { ...rest, asleep: true } : rest
+  })
+}
 
 export type DeskHue = HueName
 

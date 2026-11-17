@@ -1,7 +1,7 @@
-// tether's long-lived Node processes run under their own executable names: the daemon as `tetherd.exe` and
-// each soul panel as `tether-soul.exe`. Both are the node.exe that would have run them, placed in <home>/bin,
-// so a "kill every node.exe" (the user's own killall, a stray cleanup script) leaves them alone and the Task
-// Manager names them. node-pty keeps loading: it is built for the Node ABI and the binary is the same one.
+// tether's long-lived Node processes run under their own executable names: the daemon as `tetherd.exe`, the
+// background-process host as `tether-procd.exe` and each soul panel as `tether-soul.exe`. All are the node.exe
+// that would have run them, placed in <home>/bin, so a "kill every node.exe" (the user's own killall, a stray
+// cleanup script) leaves them alone and the Task Manager names them. node-pty keeps loading: it is built for the Node ABI and the binary is the same one.
 //
 // The copy follows its source: when the node it was made from changes (size or mtime), it is remade. A hard
 // link is tried first (same volume: instant, no disk cost, the process name still comes from the link's name),
@@ -18,7 +18,7 @@
 import { appendFileSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
-export type ExeName = 'tetherd' | 'tether-soul'
+export type ExeName = 'tetherd' | 'tether-soul' | 'tether-procd'
 export type ExeMethod = 'hardlink' | 'copy'
 /** How the process gets its name: a renamed file, none at all (`fallback`), or argv[0] over the real node (`argv0`). */
 export type ExeHow = ExeMethod | 'fallback' | 'argv0'
@@ -88,7 +88,7 @@ function isCurrent(stamp: ExeStamp | undefined, source: string, size: number, mt
 
 /** Is a name one of tether's own copies of node (so a command naming it is "node" for our purposes)? */
 export function isRenamedNode(path: string): boolean {
-  return /^(tetherd|tether-soul)(\.exe)?$/i.test(basename(path))
+  return /^(tetherd|tether-soul|tether-procd)(\.exe)?$/i.test(basename(path))
 }
 
 /** `node`, `node.exe`, or one of tether's own copies. */
@@ -97,7 +97,7 @@ export function isNodeExecutable(path: string): boolean {
 }
 
 /** The temp names ensureRenamedNode writes before renaming into place: <name>[.exe][.json].<pid>.tmp. */
-const TEMP_NAME = /^(?:tetherd|tether-soul)(?:\.exe)?(?:\.json)?\.(\d+)\.tmp$/i
+const TEMP_NAME = /^(?:tetherd|tether-soul|tether-procd)(?:\.exe)?(?:\.json)?\.(\d+)\.tmp$/i
 
 function isAlive(pid: number): boolean {
   try {

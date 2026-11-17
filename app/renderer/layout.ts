@@ -32,6 +32,8 @@ export interface DeskLayout {
   name: string
   /** The desk's hue name (palette.ts). Files from before the 12-hue palette hold a number: an index of the old 8 (`readDeskColor`). */
   color: DeskHue
+  /** The desk is hibernated (DeskInfo.asleep). */
+  asleep?: boolean
   frames: { grid: FrameGrid; views: Record<string, SerializedDockview> }
   activeFrame?: string
   /** v3: the saved state of this desk's per-desk pads (pad id → what its view serialized). */
@@ -58,6 +60,8 @@ export interface LayoutV3 extends Omit<LayoutV2, 'v'> {
   sidebars: SideBarsLayout
   /** F8, additive (no version bump): the pinned projects. Absent = none; read with tolerance (workspace.ts readWorkspace). */
   workspace?: WorkspaceState
+  /** Additive (no version bump): the tab emblems' library (emblem-rules.ts readEmblems). Absent = the built-ins. */
+  emblems?: unknown[]
 }
 
 /**
@@ -75,6 +79,8 @@ export type SystemDesks = Record<string, SystemDeskLayout>
 export interface LayoutV4 extends Omit<LayoutV3, 'v'> {
   v: 4
   systemDesks: SystemDesks
+  /** Hibernated panes (slot ids): stopped on purpose, not started when the app opens; a `start` wakes them. */
+  asleepPanes?: string[]
 }
 
 export type Layout = LayoutV4

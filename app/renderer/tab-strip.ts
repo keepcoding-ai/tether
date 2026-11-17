@@ -55,6 +55,10 @@ export class TabStripActions implements IHeaderActionsRenderer {
   private disposers: Array<() => void> = []
   private paramsSub: (() => void) | undefined
   private frame = 0
+  /** The "+N" count: one text node whose data changes, so a re-measure with the same count writes nothing. */
+  private readonly moreCount = document.createTextNode('')
+  private moreDot: HTMLElement | undefined
+  private observer: MutationObserver | undefined
 
   private readonly host: TabStripHost
 
@@ -70,6 +74,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.more = document.createElement('button')
     this.more.className = 'tab-more'; this.more.dataset.action = 'more'; this.more.hidden = true
     this.more.type = 'button'; this.more.setAttribute('aria-haspopup', 'menu'); this.more.setAttribute('aria-expanded', 'false')
+    this.more.append(this.moreCount)
     this.preview = document.createElement('button')
     this.preview.className = 'tab-act'; this.preview.dataset.action = 'md-preview-side'; this.preview.type = 'button'; this.preview.hidden = true
     this.preview.title = PREVIEW_SIDE_LABEL; this.preview.setAttribute('aria-label', PREVIEW_SIDE_LABEL)
@@ -116,8 +121,11 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.disposers.push(params.containerApi.onDidRemovePanel(p => { this.used.delete(p.id); this.schedule() }).dispose)
     active()
     // Tabs added, removed, reordered or retitled, and attention changes: measure again. Only these are
-    // observed (not `class`), so hiding a tab does not trigger a new pass.
-    const mo = new MutationObserver(() => this.schedule())
+    // observed (not `class`), so hiding a tab does not trigger a new pass. The strip's own buttons live inside
+    // the observed header: what measuring writes there is dropped (here and by `takeRecords` in measure), or
+    // every pass would schedule the next one.
+    const mo = new MutationObserver(records => { if (records.some(r => !this.ownMutation(r))) this.schedule() })
+    this.observer = mo
     const ro = new ResizeObserver(() => this.schedule())
     queueMicrotask(() => {
       const head = this.header()
@@ -146,9 +154,20 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.element.hidden = !p
     this.preview.hidden = !p || !this.host.canPreview(p.id)
     const open = detailsOpen(p?.params)
-    this.toggle.title = `${detailsLabel(open)} (${shortcutHint('pane.details')})`
-    this.toggle.setAttribute('aria-label', detailsLabel(open))
-    this.toggle.setAttribute('aria-pressed', String(open))
+    const title = `${detailsLabel(open)} (${shortcutHint('pane.details')})`
+    if (this.toggle.title !== title) this.toggle.title = title
+    if (this.toggle.getAttribute('aria-label') !== detailsLabel(open)) this.toggle.setAttribute('aria-label', detailsLabel(open))
+    if (this.toggle.getAttribute('aria-pressed') !== String(open)) this.toggle.setAttribute('aria-pressed', String(open))
+  }
+
+  /** Whether a mutation record is this strip's own doing: inside its buttons, or the placing of "+N" and "+". */
+  private ownMutation(r: MutationRecord): boolean {
+    const own = (n: Node): boolean => this.more.contains(n) || this.add.contains(n) || this.element.contains(n)
+    if (own(r.target)) return true
+    if (r.type !== 'childList') return false
+    for (const n of r.addedNodes) if (!own(n)) return false
+    for (const n of r.removedNodes) if (!own(n)) return false
+    return true
   }
 
   private schedule(): void {
@@ -176,11 +195,17 @@ export class TabStripActions implements IHeaderActionsRenderer {
     if (this.more.previousElementSibling !== row || this.add.previousElementSibling !== this.more) row.after(this.more, this.add)
     const els = this.tabs(head)
     const order = [...els.keys()]
+    // Writes only what changed: an unchanged pass must leave the DOM (and the layout) untouched.
     const apply = (vis: readonly string[]): void => {
       const v = new Set(vis)
-      for (const [id, el] of els) el.classList.toggle('tab-hidden', !v.has(id))
-      this.more.hidden = vis.length === order.length
-      this.more.textContent = `+${order.length - vis.length}`
+      for (const [id, el] of els) {
+        const hide = !v.has(id)
+        if (el.classList.contains('tab-hidden') !== hide) el.classList.toggle('tab-hidden', hide)
+      }
+      const none = vis.length === order.length
+      if (this.more.hidden !== none) this.more.hidden = none
+      const count = `+${order.length - vis.length}`
+      if (this.moreCount.data !== count) this.moreCount.data = count
     }
     // The trial passes show and hide the "+N" (its width changes the room); a hidden element loses the focus, so a
     // keyboard user sitting on it would be thrown to <body> by any re-measure. Put it back when it is still there.
@@ -191,17 +216,24 @@ export class TabStripActions implements IHeaderActionsRenderer {
     if (hadFocus && !this.more.hidden && document.activeElement !== this.more) this.more.focus({ preventScroll: true })
     this.hidden = hiddenTabs(order, vis)
     this.paintMore()
+    // Everything queued up to here is either this pass's own writes or a change this pass has already read.
+    this.observer?.takeRecords()
   }
 
   private paintMore(): void {
     const n = this.hidden.length
     const attention = this.hidden.some(id => this.host.describe(id).attention)
-    this.more.classList.toggle('attention', attention)
-    this.more.classList.toggle('busy', !attention && this.hidden.some(id => this.host.describe(id).busy))
-    if (attention) { const dot = document.createElement('span'); dot.className = 'more-dot'; this.more.append(dot) }
+    const busy = !attention && this.hidden.some(id => this.host.describe(id).busy)
+    if (this.more.classList.contains('attention') !== attention) this.more.classList.toggle('attention', attention)
+    if (this.more.classList.contains('busy') !== busy) this.more.classList.toggle('busy', busy)
+    if (attention && !this.moreDot) {
+      this.moreDot = document.createElement('span'); this.moreDot.className = 'more-dot'; this.more.append(this.moreDot)
+    } else if (!attention && this.moreDot) {
+      this.moreDot.remove(); this.moreDot = undefined
+    }
     const label = n === 1 ? '1 aba escondida' : `${n} abas escondidas`
-    this.more.title = label
-    this.more.setAttribute('aria-label', label)
+    if (this.more.title !== label) this.more.title = label
+    if (this.more.getAttribute('aria-label') !== label) this.more.setAttribute('aria-label', label)
   }
 
   private openHidden(): void {
@@ -232,5 +264,6 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.paramsSub?.()
     for (const d of this.disposers) d()
     this.disposers = []
+    this.observer = undefined
   }
 }

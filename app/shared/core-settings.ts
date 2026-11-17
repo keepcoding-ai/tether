@@ -7,7 +7,7 @@
 // stay out: they are objects the core writes whole. Defaults and enums come from ui-settings.ts / theme.ts, so the readers
 // there (normalizeUi, normalizeTheme) and the registry cannot drift (a unit test holds that too). Pure.
 import type { ConfigurationNode } from './vscode-configuration-registry.ts'
-import { DEFAULT_UI, DIM_LEVELS } from './ui-settings.ts'
+import { DEFAULT_UI, DIM_LEVELS, FIXED_DESK_LABELS } from './ui-settings.ts'
 import { DEFAULT_THEME, THEME_LABEL, THEME_SETTINGS } from './theme.ts'
 
 export const CORE_SETTINGS: ConfigurationNode = {
@@ -35,6 +35,18 @@ export const CORE_SETTINGS: ConfigurationNode = {
     'ui.dimLevel': {
       type: 'string', default: DEFAULT_UI.dimLevel, enum: DIM_LEVELS, enumLabels: ['Fraco', 'Médio', 'Forte'],
       title: 'Intensidade do escurecimento', description: 'Só vale com "Escurecer painéis sem foco" ligado.', section: 'Janela', order: 13,
+    },
+    'ui.fixedDeskLabel': {
+      type: 'string', default: DEFAULT_UI.fixedDeskLabel, enum: FIXED_DESK_LABELS, enumLabels: ['Ícone', 'Ícone e nome'],
+      title: 'Mesas fixas', description: 'Como a Gaveta e as mesas do sistema aparecem na barra de mesas.', section: 'Janela', order: 14,
+    },
+    'ui.tabClose': {
+      type: 'boolean', default: DEFAULT_UI.tabClose, title: 'Botão de fechar nas guias',
+      description: 'O × em cada guia. Desligado, a guia fecha pelo menu do botão direito.', section: 'Janela', order: 15,
+    },
+    'ui.padsFollowFocus': {
+      type: 'boolean', default: DEFAULT_UI.padsFollowFocus, title: 'Prancheta acompanha o painel/mesa',
+      description: 'Fecha ao sair do painel ou mesa e reabre ao voltar.', section: 'Janela', order: 16,
     },
   },
 }

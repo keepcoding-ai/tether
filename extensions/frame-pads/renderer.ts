@@ -6,6 +6,7 @@
 // Without the panel-pad-manager extension the pad has one state and offers neither.
 import type { PadView, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
+import { guideGroups } from '../../app/renderer/panel-frames.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { padManager, type ManagerView } from './manager-slot.ts'
 import { manifest } from './manifest.ts'
@@ -46,7 +47,7 @@ function withManager(ui: TetherUi, view: PadView): PadView {
       b.title = on ? BACK_LABEL : MANAGER_LABEL.replace('…', '')
       b.setAttribute('aria-label', b.title)
       b.setAttribute('aria-pressed', String(on))
-      b.classList.toggle('attention', has && ui.pads.panelFrames.tree().loose.some(r => !r.empty))
+      b.classList.toggle('attention', has && guideGroups(ui.pads.panelFrames.tree(), 'loose').length > 0)
     }
   }
   /** The manager sits under the frame's first tab bar: its top follows the bar's height. */

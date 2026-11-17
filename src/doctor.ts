@@ -14,8 +14,9 @@ import { inspectRenamedNode, isNodeExecutable, type ExeStatus } from './core/exe
 import { processStartTime, startTimeMethod, type StartTimeMethod } from './core/liveness.ts'
 import { parseEventLine } from './core/store.ts'
 import { tetherHome } from './core/paths.ts'
-import { pingDaemon, type Hello } from './daemon/client.ts'
+import { DaemonClient, pingDaemon, type Hello } from './daemon/client.ts'
 import { pipePath } from './daemon/protocol.ts'
+import { procdPipePath } from './procd/protocol.ts'
 
 export type Level = 'OK' | 'AVISO' | 'ERRO'
 
@@ -87,6 +88,50 @@ export function checkHome(home: string, writable: boolean, error?: string): Chec
 export function checkDaemon(pipe: string, hello: Hello | undefined): CheckResult {
   if (hello) return { level: 'OK', name: 'tetherd', detail: `em execução (pid ${hello.pid}, versão ${hello.version}, protocolo v${hello.v}) em ${pipe}` }
   return { level: 'AVISO', name: 'tetherd', detail: `não está em execução (${pipe})`, hint: 'sobe sozinho quando o app ou a CLI conectam; à mão: npm run daemon' }
+}
+
+export interface ProcHostFacts {
+  /** The host that answered (null: none). */
+  host: { pid: number; version: string } | null
+  /** It answered with another protocol version (the message says which). */
+  versionProblem?: string
+  /** Processes alive in the host. */
+  running: number
+  /** Processes that ended by themselves or with the host and nobody looked yet (undefined: tetherd did not answer). */
+  attention?: number
+}
+
+/** The process host (tether proc): running? which version? how many managed processes run / ask attention. */
+export function checkProcHost(f: ProcHostFacts): CheckResult {
+  const name = 'processos de fundo'
+  if (f.versionProblem) return { level: 'AVISO', name, detail: f.versionProblem, hint: 'pare o anfitrião antigo: tether proc host stop (com --force se houver processos, que param)' }
+  const attention = f.attention ? `, ${f.attention} pede(m) atenção (tether proc ls)` : ''
+  if (!f.host) return { level: 'OK', name, detail: `anfitrião parado (sobe sozinho no próximo tether proc start)${attention}` }
+  return { level: 'OK', name, detail: `anfitrião pid ${f.host.pid}, versão ${f.host.version}; ${f.running} processo(s) rodando${attention}` }
+}
+
+/** Talks to the host directly (it outlives tetherd) and asks tetherd, when it answers, what needs attention. */
+async function probeProcHost(pipe: string, home: string, daemonUp: boolean): Promise<ProcHostFacts> {
+  // Loaded on use: procd/client resolves its entry from import.meta.url at load, and Electron main bundles this
+  // module as CommonJS (where import.meta.url is undefined).
+  const { HostClient, HostRequestError } = await import('./procd/client.ts')
+  const facts: ProcHostFacts = { host: null, running: 0 }
+  try {
+    const c = await HostClient.open(procdPipePath(pipe, home), 3_000)
+    try {
+      facts.host = { pid: c.hello.pid, version: c.hello.version }
+      facts.running = ((await c.request({ t: 'list' })).runs ?? []).filter((r) => !r.exit).length
+    } finally { c.close() }
+  } catch (e) {
+    if (e instanceof HostRequestError && e.code === 'version') facts.versionProblem = e.message
+  }
+  if (daemonUp) {
+    try {
+      const d = await DaemonClient.open(pipe, 'cli')
+      try { facts.attention = ((await d.request({ t: 'proc-list' })).procs ?? []).filter((p) => p.attention).length } finally { d.close() }
+    } catch { /* an older tetherd, or it went away */ }
+  }
+  return facts
 }
 
 export interface SoulProbe {
@@ -323,6 +368,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
   const pipe = pipePath(home, userInfo().username)
   const hello = await pingDaemon(pipe)
   results.push(checkDaemon(pipe, hello))
+  results.push(checkProcHost(await probeProcHost(pipe, home, hello !== undefined)))
 
   let soulIsNode = false
   try { soulIsNode = isNodeExecutable(resolveSoulCommand().command) } catch { /* reported by probeSoul */ }

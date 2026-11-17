@@ -9,6 +9,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { AgentName } from '../core/event.ts'
 import type { Profile } from '../core/profile.ts'
 import type { AttentionOptions } from '../daemon/attention.ts'
+import type { AgentSkills } from './skills.ts'
 import type { AgentAdapter, LaunchPlan } from './types.ts'
 
 /** How this agent's CLI loads an MCP config file (`{ "mcpServers": {...} }`); absent = the agent takes no MCP servers. */
@@ -19,6 +20,12 @@ export interface AgentMcp {
    * the server names the file holds: a name already injected from another file throws McpNameCollisionError.
    */
   inject(plan: LaunchPlan, configFile: string, servers?: readonly string[]): LaunchPlan
+  /**
+   * The CLI loads `{ "type": "http", "url", "headers" }` servers and expands `${VAR}` in their headers from its env
+   * (httpMcpConfigOf). Then the extensions serve it from the daemon (src/daemon/mcp-http.ts) and the agent spawns no MCP
+   * process; absent = the stdio files, as always.
+   */
+  http?: boolean
 }
 
 export interface AgentContribution {
@@ -35,6 +42,28 @@ export interface AgentContribution {
   envArgsVar?: string
   /** MCP servers a daemon extension offers to every AI agent (F7 C3: the Tether Bridge) reach this agent through here. */
   mcp?: AgentMcp
+  /**
+   * How this agent takes the tether's skills (src/agents/skills.ts): its native format when it has one, else
+   * `systemPromptSkills(<its system prompt flag>)`. Absent = the agent gets no skills.
+   */
+  skills?: AgentSkills
+  /**
+   * The CLI takes channel messages from an MCP server (Claude Code: `notifications/claude/channel`): the args that turn them
+   * on for the server named `server`. Only with `mcp.http`: the daemon's ronda channel (src/daemon/ronda-channel.ts) is an
+   * HTTP server. Absent = the agent has no channel and the ronda is unavailable to it.
+   */
+  channel?: (server: string) => string[]
+  /** The confirmation the CLI shows at start for those args, which the daemon answers only when it sees it exactly. */
+  channelConfirm?: ChannelConfirm
+}
+
+/**
+ * A start dialog the daemon may answer: only before the run's start report, only when every fragment is on screen (compared
+ * without escape sequences and whitespace), and then it types `keys` once. A screen that does not match gets nothing.
+ */
+export interface ChannelConfirm {
+  screen: string[]
+  keys: string
 }
 
 export const AGENT_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/

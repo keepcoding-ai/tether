@@ -31,7 +31,7 @@ import type { Binding } from '../core/event.ts'
 import { ensureRenamedNode, exeLog, isNodeExecutable, isRenamedNode } from '../core/exe.ts'
 import { canonicalDir, slotEventsPath } from '../core/paths.ts'
 import { findOnPath } from './shell.ts'
-import { ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
+import { ENV_AGENT, ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
 
 export const ENV_SOUL_CMD = 'TETHER_SOUL_CMD'
 export const ENV_SOUL_REPORT = 'SOUL_SESSION_REPORT'
@@ -236,6 +236,7 @@ function plan(input: PlanInput): LaunchPlan {
   function withReport(p: LaunchPlan): LaunchPlan {
     p.env[ENV_SOUL_REPORT] = slotEventsPath(home, slot.slotId)
     p.env[ENV_SLOT] = slot.slotId
+    p.env[ENV_AGENT] = 'soul'
     p.env[ENV_HOME] = home
     return p
   }
@@ -249,4 +250,4 @@ async function title(binding: Binding): Promise<string | undefined> {
   return binding.title
 }
 
-export const soulAdapter: AgentAdapter = { name: 'soul', plan, sessionExists, title }
+export const soulAdapter: AgentAdapter = { name: 'soul', resumes: true, plan, sessionExists, title }

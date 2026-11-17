@@ -157,6 +157,15 @@ body { display: flex; flex-direction: column; }
 .seg.desk-add { color: var(--fg-dim); padding: 0 8px; }
 .seg.desk-add:hover { color: var(--fg); }
 .seg.desk-add .ph { width: 14px; height: 14px; }
+.seg.desk-sleep { color: var(--fg-dim); padding: 0 8px; gap: 4px; font-variant-numeric: tabular-nums; }
+.seg.desk-sleep:hover { color: var(--fg); }
+.seg.desk-sleep .ph { width: 14px; height: 14px; }
+.seg.desk-options { color: var(--fg-dim); padding: 0 8px; }
+.seg.desk-options:hover, .seg.desk-options[aria-expanded="true"] { color: var(--fg); }
+.seg.desk-options .ph { width: 14px; height: 14px; }
+/* Mesas fixas: só ícone (settings ui.fixedDeskLabel = 'icon'); the name stays in the title. */
+body.fixed-icon-only .seg.gav .pill-name { display: none; }
+body.fixed-icon-only .seg.gav { padding: 0 9px; }
 .seg.desk-more .more-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--x-alert); }
 /* Dragging a segment to reorder (desk-switch.ts): the held one follows the pointer on X, the others make room. */
 .seg[data-desk] { touch-action: none; }
@@ -676,6 +685,8 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 /* Running is the normal state: no dot. The others keep theirs. */
 .tether-tab .dot.running { display: none; }
 .tether-tab .dot.exited { color: var(--fg-dim); }
+.tether-tab .dot.asleep { color: var(--fg-dim); }
+.tether-tab .dot.asleep .ph { width: 13px; height: 13px; }
 .tether-tab .dot.starting, .tether-tab .dot.queued, .tether-tab .dot.unconfirmed { color: var(--warn); }
 .tether-tab .dot.error { color: var(--err); }
 .tether-tab .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
@@ -684,6 +695,8 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 /* `inherit`, not `visible`: a visible child of a visibility:hidden ancestor still paints, so the active tab of an
    inactive desk layer (or of the closed drawer) would draw its × over the tab strip of the desk on screen. */
 .dv-active-tab .tether-tab .close, .tether-tab:hover .close, .tether-tab .close:focus-visible { visibility: inherit; }
+/* Setting ui.tabClose off: no × on any tab (display:none also drops the click target and the keyboard focus, and gives the width back to the title); the tab still closes through its context menu. */
+body.no-tab-close .tether-tab .close { display: none; }
 
 /* --- the fixed right end of the tab strip: "+N", status-bar toggle, "⋯" (tab-strip.ts; the preview's .tr) --- */
 .dv-theme-tether .dv-right-actions-container { flex: none; height: 100%; }
@@ -1657,3 +1670,95 @@ body.dim-unfocused .desk-set .frame:not(.focused)::after { opacity: var(--dim-ve
 /* The settings page's reveal (a chooser's "Minhas notas" gear): the row is marked for a moment. */
 @keyframes st-flash { from { background: color-mix(in srgb, var(--accent) 18%, transparent); } to { background: transparent; } }
 .st-item.st-flash { animation: st-flash 1.6s ease-out; }
+
+/* --- ronda (tether's nudge clock for the agent): a calm chip in the status bar, a small timer on the tab --- */
+.status-bar .ronda { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border: 0; border-radius: 4px; font: inherit; font-size: 11px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); cursor: pointer; }
+.status-bar .ronda[hidden] { display: none; }
+.status-bar .ronda .ph { width: 13px; height: 13px; }
+.status-bar .ronda:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.status-bar .ronda:hover span::after { content: ' · desligar'; font-weight: 400; }
+.status-bar .ronda.due .ph { animation: ronda-due 1.6s ease-in-out infinite; }
+@keyframes ronda-due { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .status-bar .ronda.due .ph { animation: none; } }
+.tether-tab .ronda-mark { display: inline-flex; flex: none; color: var(--accent); }
+.tether-tab .ronda-mark[hidden] { display: none; }
+.tether-tab .ronda-mark .ph { width: 12px; height: 12px; }
+/* Ronda colour: blue (accent) while the agent is idle, green (ok) while its turn is running. */
+.status-bar .ronda.busy { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.status-bar .ronda.busy:hover { background: color-mix(in srgb, var(--ok) 24%, transparent); }
+
+/* --- tab emblems (tab-emblems.ts): the chip is static, raw hue fill with its paired foreground glyph --- */
+.emb-chip { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; flex: none; }
+.emb-chip[hidden] { display: none; }
+.emb-chip svg { width: 11px; height: 11px; fill: currentColor; }
+.emb-chip.lg { width: 22px; height: 22px; border-radius: 5px; }
+.emb-chip.lg svg { width: 14px; height: 14px; }
+.emb-chip.emb-none { box-shadow: inset 0 0 0 1px var(--border); }
+.emb-chip.emb-new { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.emb-chip.emb-new .ph { width: 14px; height: 14px; }
+#ctx-menu.emb-menu .emb-dim { color: var(--fg-dim); }
+#ctx-menu.emb-menu .emb-mname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+dialog.ask.emb-dlg { width: min(860px, 96vw); max-width: 96vw; height: min(600px, 92vh); font-size: 13px; }
+.emb-ed { display: grid; grid-template-columns: 230px 1fr; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+.emb-h { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.emb-sp { flex: 1; }
+.emb-ib { width: 28px; height: 28px; display: grid; place-items: center; border: 0; background: none; border-radius: 6px; color: var(--fg-dim); cursor: pointer; }
+.emb-ib:hover { background: var(--bg-hover); color: var(--fg); }
+.emb-lst { border-right: 1px solid var(--border); overflow: auto; padding: 6px; }
+.emb-li { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 8px; border: 0; background: none; border-radius: 6px; cursor: pointer; text-align: left; color: var(--fg); font: inherit; }
+.emb-li:hover { background: var(--bg-hover); }
+.emb-li.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.emb-li.new { color: var(--accent); }
+.emb-li.hid { opacity: .5; }
+.emb-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emb-meta { font-size: 11px; color: var(--fg-dim); }
+.emb-fm { display: flex; flex-direction: column; min-height: 0; padding: 14px 16px 12px; gap: 12px; }
+.emb-row { display: flex; align-items: center; gap: 12px; }
+.emb-lbl { width: 46px; color: var(--fg-dim); font-size: 12px; flex: none; }
+.emb-inp { flex: 1; min-width: 0; height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; outline: 0; }
+.emb-inp:focus { border-color: var(--accent); }
+.emb-pv { display: flex; gap: 8px; margin-left: auto; }
+/* The preview shows the chip on both schemes at once: the other scheme's tab colours are fixed here (no token for them). */
+.emb-pvt { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; border: 1px solid; }
+.emb-pvt.d { background: #1e1e23; color: #d8d8dc; border-color: #35353d; }
+.emb-pvt.l { background: #fbfbfd; color: #24292f; border-color: #cfd1d8; }
+.emb-sw { display: flex; gap: 6px; flex-wrap: wrap; }
+.emb-s { width: 22px; height: 22px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; box-shadow: 0 0 0 2px var(--bg-2); }
+.emb-s[aria-checked="true"] { box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 4px var(--fg); }
+.emb-s:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.emb-pk { flex: 1; min-height: 0; display: grid; grid-template-columns: 40px 1fr; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); overflow: hidden; }
+.emb-pk-s { grid-column: 1 / -1; display: flex; align-items: center; gap: 7px; padding: 0 10px; border-bottom: 1px solid var(--border); color: var(--fg-dim); }
+.emb-pk-s input { flex: 1; height: 34px; border: 0; background: none; color: var(--fg); font: inherit; outline: 0; }
+.emb-rail { display: flex; flex-direction: column; gap: 2px; padding: 6px 4px; border-right: 1px solid var(--border); overflow: auto; }
+.emb-rail.dim { opacity: .35; }
+.emb-rail button { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; }
+.emb-rail button:hover { background: var(--bg-hover); color: var(--fg); }
+.emb-rail button.on { background: var(--bg-3); color: var(--accent); }
+.emb-rail svg { width: 16px; height: 16px; fill: currentColor; }
+.emb-grid { overflow: auto; padding: 4px 10px 10px; scrollbar-width: thin; contain: strict; }
+.emb-grid[hidden] { display: none; }
+.emb-sec h4 { position: sticky; top: 0; margin: 0; padding: 8px 2px 5px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); background: var(--bg); z-index: 1; }
+.emb-cells { display: grid; grid-template-columns: repeat(auto-fill, 34px); gap: 2px; }
+.emb-c { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--fg); cursor: pointer; padding: 0; }
+.emb-c:hover, .emb-c:focus-visible { background: var(--bg-hover); outline: 0; }
+.emb-c[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.emb-c svg { width: 18px; height: 18px; fill: currentColor; }
+.emb-empty { padding: 28px 6px; color: var(--fg-dim); text-align: center; }
+.emb-pk-f { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; }
+.emb-pk-f b { color: var(--fg); font-weight: 600; }
+.emb-ft { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.emb-bt { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 6px; border: 1px solid var(--border); background: var(--frame-bg); color: var(--fg); cursor: pointer; font: inherit; font-size: 12px; }
+.emb-bt:hover { background: var(--bg-3); }
+.emb-bt.pri { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.emb-bt.dng { color: var(--err); }
+.emb-bt.dng.solid { background: var(--err); border-color: var(--err); color: #fff; font-weight: 600; }
+.emb-bt .ph { width: 13px; height: 13px; }
+.emb-msg { font-size: 12px; color: var(--fg); }
+.emb-msg.dim { color: var(--fg-dim); }
+@media (max-width: 640px) {
+  .emb-ed { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); }
+  .emb-lst { border-right: 0; border-bottom: 1px solid var(--border); display: flex; overflow-x: auto; }
+  .emb-li { width: auto; flex: none; }
+  .emb-meta, .emb-pv { display: none; }
+}

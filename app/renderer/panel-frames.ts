@@ -5,7 +5,8 @@
 // Vocabulary: the panel pad has one frame ("quadro") per focusable panel, and a frame holds panes of any kind (a note, a
 // terminal, an agent, a browser tab). A frame is "loose" ("solto") when its panel is gone (closed); it is "empty" when
 // every pane it holds is an empty pane (the blank view the pad is seeded with). The desk pad and the global pad are other
-// pads and not looked after here.
+// pads and not looked after here. The manager's item is the PANE of a frame (a guide), grouped by the frame's owner
+// (`guideGroups`), and it works one desk at a time: `forDesk`.
 //
 // Each frame may carry a small record (`PanelFrameMeta`) written while its panel lives: the panel's label and desk, and
 // when its content last changed. A loose frame keeps it, so the manager can still say "antes em <painel>".
@@ -69,6 +70,8 @@ export interface FrameDeskGroup {
 }
 
 export interface PanelFrameTree {
+  /** The desk on screen: the manager shows this desk's panels and loose frames (`forDesk`). */
+  activeDeskId: string
   /** The frames whose panel is gone: content before empty, most recent first. */
   loose: PanelFrameRow[]
   /** Each desk (desk order) with the frames of its live panels. */
@@ -84,6 +87,7 @@ export interface PanelFrameTreeInput {
   /** The panels alive now (anywhere in the window): their label and desk. */
   livePanels: ReadonlyMap<string, { label: string; deskId?: string }>
   focusedPanel?: string
+  activeDeskId: string
 }
 
 export type FrameFilter = 'loose' | 'all'
@@ -134,7 +138,7 @@ export function buildFrameTree(input: PanelFrameTreeInput): PanelFrameTree {
   const loose = rows.filter(r => r.loose).sort((a, b) => Number(a.empty) - Number(b.empty) || byRecent(a, b))
   const desks = input.desks.map((d): FrameDeskGroup => ({ id: d.id, name: d.name, panels: rows.filter(r => !r.loose && r.deskId === d.id) }))
   const elsewhere = rows.filter(r => !r.loose && !input.desks.some(d => d.id === r.deskId))
-  return { loose, desks, elsewhere }
+  return { activeDeskId: input.activeDeskId, loose, desks, elsewhere }
 }
 
 /** Every row of a tree, in tree order. */
@@ -142,10 +146,40 @@ export function allRows(tree: PanelFrameTree): PanelFrameRow[] {
   return [...tree.loose, ...tree.desks.flatMap(d => d.panels), ...tree.elsewhere]
 }
 
-/** The rows a filter shows, in tree order. A live panel's empty frame (the blank a pad starts with) is not listed: nothing to look after. */
-export function visibleRows(tree: PanelFrameTree, filter: FrameFilter): PanelFrameRow[] {
-  if (filter === 'loose') return tree.loose
-  return [...tree.loose, ...tree.desks.flatMap(d => d.panels).filter(r => !r.empty), ...tree.elsewhere.filter(r => !r.empty)]
+/**
+ * One desk's share of the tree (what the manager shows: the desk on screen): the loose frames whose panel lived in that
+ * desk (a loose frame keeps its desk in its record; one never recorded has no desk and shows in every desk, so it is
+ * never lost), then the frames of the desk's live panels.
+ */
+export function forDesk(tree: PanelFrameTree, deskId: string): { loose: PanelFrameRow[]; panels: PanelFrameRow[] } {
+  return { loose: tree.loose.filter(r => !r.deskId || r.deskId === deskId), panels: tree.desks.find(d => d.id === deskId)?.panels ?? [] }
+}
+
+/** The rows a filter shows for a desk, in order. A live panel's empty frame (the blank a pad starts with) is not listed: nothing to look after. */
+export function visibleRows(tree: PanelFrameTree, filter: FrameFilter, deskId: string = tree.activeDeskId): PanelFrameRow[] {
+  const d = forDesk(tree, deskId)
+  if (filter === 'loose') return d.loose
+  return [...d.loose, ...d.panels.filter(r => !r.empty)]
+}
+
+/** One owner of the manager's list: the owner's frame (the group's header) and the panes it keeps (the cards). */
+export interface FrameGuideGroup {
+  row: PanelFrameRow
+  /** The frame's real panes (an empty pane is not a guide), in view order. */
+  guides: FramePane[]
+}
+
+/**
+ * What the manager lists for a desk: the panes of the pad grouped by their owner, the owner in focus first, then the
+ * other open owners (desk order), then the closed ones (most recent first). An owner without real panes has no group,
+ * open or closed: a frame left with nothing in it leaves the list. 'loose' keeps only the closed owners.
+ */
+export function guideGroups(tree: PanelFrameTree, filter: FrameFilter, deskId: string = tree.activeDeskId): FrameGuideGroup[] {
+  const d = forDesk(tree, deskId)
+  const open = filter === 'loose' ? [] : [...d.panels].sort((a, b) => Number(b.focused) - Number(a.focused))
+  return [...open, ...d.loose]
+    .map(row => ({ row, guides: row.panes.filter(p => p.component !== EMPTY_COMPONENT) }))
+    .filter(g => g.guides.length > 0)
 }
 
 /** How many loose frames have content (the warning dot) and how many frames have content at all. */
@@ -202,63 +236,6 @@ export function restoreFrames(store: FrameStore, snap: FrameSnapshot): FrameStor
 export function cleanEmptyFrames(store: FrameStore, tree: PanelFrameTree): { store: FrameStore; undo: FrameSnapshot; keys: string[] } {
   const keys = emptyLooseKeys(tree)
   return { ...closeFrames(store, keys), keys }
-}
-
-type Leaf = { type: 'leaf'; data: { views: string[]; activeView?: string; id: string } }
-type Node = Leaf | { type: 'branch'; data: Node[] }
-
-function firstLeaf(n: Node): Leaf | undefined {
-  if (n.type === 'leaf') return n
-  for (const c of n.data) { const l = firstLeaf(c); if (l) return l }
-  return undefined
-}
-
-/** The first view of a frame state and its first group: where moved panes go (a pad has one frame). */
-function firstGroup(state: DrawerLayout): { view: SerializedDockview; leaf: Leaf } | undefined {
-  for (const view of Object.values(state.frames.views)) {
-    if (!isLayoutV1(view)) continue
-    const leaf = firstLeaf(view.grid.root as unknown as Node)
-    if (leaf) return { view, leaf }
-  }
-  return undefined
-}
-
-/**
- * Moves a frame's content to another panel's key: the source's real panes become tabs of the target's frame (the tabs
- * add up; the target's empty panes give way), and the source frame closes. A target with no state takes the source's as
- * it is. Unchanged (and an empty snapshot) when the source has nothing to move or the keys are the same.
- */
-export function moveFrame(store: FrameStore, from: string, to: string, now: number): { store: FrameStore; undo: FrameSnapshot } {
-  const src = store.pads[from]
-  if (from === to || !hasContent(src)) return { store, undo: { entries: [] } }
-  const undo = snapshotOf(store, [from, to])
-  const target = store.pads[to]
-  let next: unknown
-  const moving = panesOf(src).filter(p => p.component !== EMPTY_COMPONENT)
-  const into = isDrawerLayout(target) ? structuredClone(target) : undefined
-  const group = into ? firstGroup(into) : undefined
-  if (!into || !group) {
-    next = structuredClone(src)
-  } else {
-    const srcPanels = Object.assign({}, ...Object.values((src as DrawerLayout).frames.views).filter(isLayoutV1).map(v => v.panels)) as SerializedDockview['panels']
-    // The target's empty panes give way to what arrives.
-    for (const [id, p] of Object.entries(group.view.panels)) {
-      if ((p.contentComponent ?? 'terminal') !== EMPTY_COMPONENT) continue
-      delete group.view.panels[id]
-      group.leaf.data.views = group.leaf.data.views.filter(v => v !== id)
-    }
-    for (const p of moving) {
-      group.view.panels[p.id] = srcPanels[p.id]!
-      group.leaf.data.views.push(p.id)
-    }
-    group.leaf.data.activeView = moving[0]!.id
-    next = into
-  }
-  const fromMeta = store.meta[from]
-  const toMeta = store.meta[to]
-  const meta = without(store.meta, [from])
-  meta[to] = { ownerLabel: toMeta?.ownerLabel ?? fromMeta?.ownerLabel ?? '', ...(toMeta?.deskId ?? fromMeta?.deskId ? { deskId: toMeta?.deskId ?? fromMeta?.deskId } : {}), updatedAt: now }
-  return { store: { pads: { ...without(store.pads, [from]), [to]: next }, meta }, undo }
 }
 
 /** The records with only the keys that still have a frame state. */

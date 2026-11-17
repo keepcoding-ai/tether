@@ -24,7 +24,7 @@ import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } fr
 import { CommandPalette, type PaletteModeProvider } from './palette.ts'
 import { fileOpenFailedSituation, openFile, type OpenFileOptions } from './file-open.ts'
 import type { PaletteMode } from './palette-rules.ts'
-import { type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
+import { beginPaneDrag, type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
 import { SurfaceHosts, type FreezeTiming } from './surface-host.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
@@ -61,7 +61,8 @@ import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMI
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
 import { registerProfileOption } from './profile-options.ts'
-import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, PadHost, PadType, TetherUi } from './ext-api.ts'
+import { ProcsStore } from './procs-store.ts'
+import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, LooseCause, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -80,6 +81,7 @@ import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
 import type { PaneInfo } from './ext-api.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
+import { type EmblemHost, initEmblems, openEmblemMenu } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
@@ -90,7 +92,7 @@ import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable
 import { associateLinksFailedSituation, associateLinksSituation, closedTabSituation, linksAssociatedSituation, missingTabSituation } from './situations.ts'
 import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
 import { markKeyboardTab, pulseTab, tabCell } from './tab-marks.ts'
-import { closeDeskSituation, closePanelSituation, folderName, moveFailedSituation, NO_PROFILE, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { closeDeskSituation, closePanelSituation, hibernateSituation, folderName, moveFailedSituation, NO_PROFILE, restartFailedSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
 import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -272,6 +274,7 @@ const $ =<T extends HTMLElement>(id: string): T => {
 
 const host: PanelHost = {
   getSlot: id => slots.get(id),
+  isAsleep: id => asleepPanes.has(id),
   attentionOf: id => ({ level: paneAttention(id), lines: attentionLines(slots.get(id)?.attention, seals.messages(id)) }),
   onSealClick: id => activateSeals(id),
   getStartError: id => startErrors.get(id),
@@ -350,11 +353,18 @@ function trackDpr(): void {
 }
 trackDpr()
 
-/** Applies the chrome preferences: the desk colour line and its check in the ≡ menu. */
+/** Applies the chrome preferences: the desk colour line, the tab × and the checks in the ≡ menu. */
 function applyUi(next: UiSettings): void {
   ui = next
   document.body.classList.toggle('desk-line', ui.deskLine)
   document.body.classList.toggle('tab-border', ui.tabBorder)
+  document.body.classList.toggle('no-tab-close', !ui.tabClose)
+  // ui.padsFollowFocus changes which pad a side bar shows.
+  sidebars?.render()
+  const iconOnly = document.body.classList.contains('fixed-icon-only')
+  document.body.classList.toggle('fixed-icon-only', ui.fixedDeskLabel === 'icon')
+  // The capsule's chrome changed width: fit the desks again.
+  if (iconOnly !== (ui.fixedDeskLabel === 'icon') && strip && desks) renderStrip()
   document.body.classList.toggle('dim-unfocused', ui.dimUnfocused)
   for (const level of DIM_LEVELS) document.body.classList.toggle(`dim-${level}`, ui.dimLevel === level)
   // The radios show the level only while the dim is on.
@@ -468,16 +478,31 @@ function setupDock(): void {
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
+    sleepMenu: (entries, x, y, wake, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'sun' as const, label: `Acordar ${e.name}`, run: () => wake(e.id) })), opener),
     overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
     hint: position => shortcutHint(`desk.go.${position}`),
     move: (id, to) => desks.move(id, to),
     toggleSystem: id => desks.toggleSystem(id),
+    optionsMenu: (x, y, opener) => {
+      // A radio pair: the leading icon is the mark (filled = chosen). A ui from before the setting reads as the default.
+      const label = ui.fixedDeskLabel ?? DEFAULT_UI.fixedDeskLabel
+      const radio = (value: typeof label, text: string): MenuItem => ({ icon: label === value ? 'radio-button-fill' : 'circle', label: text, run: () => window.tether.setUi({ ...ui, fixedDeskLabel: value }) })
+      showContextMenu(x, y, [
+      { heading: 'Mesas fixas' },
+      radio('icon', 'Exibir ícone'),
+      radio('iconName', 'Exibir ícone e nome'),
+      SEP,
+      { heading: 'Aparência' },
+      { icon: 'minus', label: 'Exibir linha colorida', checked: ui.deskLine, run: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }) },
+      { icon: 'square-half', label: 'Exibir cor ao redor da guia ativa', checked: ui.tabBorder, run: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }) },
+    ], opener)
+    },
   })
   desks = new DeskSet($('dock'), {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.allDeskIds); scheduleSave() },
     onBeforeSwitch: () => { surfaceHosts.suspendAll() },
-    onSwitch: () => { focusActivePane(); notifyActivePane(); notifySystemDeskActive(); scheduleKeyboardTab() },
+    onSwitch: id => { if (desks.desks.find(d => d.id === id)?.asleep) wakeDesk(id); focusActivePane(); notifyActivePane(); notifySystemDeskActive(); scheduleKeyboardTab() },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
@@ -497,6 +522,7 @@ function setupDock(): void {
     activeDeskId: () => desks.activeDeskId,
     deskName: id => deskName(id),
     activePanelId: () => focusablePanelId(),
+    padsFollowFocus: () => ui.padsFollowFocus,
     panelName: id => findPanel(id)?.api.title ?? id,
     hint: id => commands.hint(id),
     onChange: () => scheduleSave(),
@@ -627,7 +653,8 @@ function layoutJSON(): Layout {
   // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
   let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
   for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
-  const out: Layout = { ...file, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState }
+  const { asleepPanes: _asleep, ...rest } = file
+  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}) }
   if (!sidebars) return out
   // The panel frames' records follow what is live now (panel label, desk, last change): written into the side bars before saving.
   const { meta: _stale, ...bars } = out.sidebars
@@ -717,7 +744,19 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   if (!panel) return
   const slot = slots.get(slotId)
   rememberClosed(slotId)
-  if (!slot) { removeAnyPanel(panel); return }
+  if (!slot) { closedByPerson.add(slotId); removeAnyPanel(panel); return }
+  closedByPerson.add(slotId) // before the daemon's answer: 'forget' may take the panel before settleClose returns
+  if (!await settleClose(slot, opts)) { closedByPerson.delete(slotId); return }
+  const still = findPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
+  if (still) removeAnyPanel(still)
+}
+
+/**
+ * The close dialog's answer for a slot (or the remembered one), carried out on the daemon: 'stop' stops it, 'forget'
+ * forgets it, 'detach' leaves it running. False when the person cancelled.
+ */
+async function settleClose(slot: SlotState, opts: { ask?: boolean } = {}): Promise<boolean> {
+  const { slotId } = slot
   const spec = closePanelSituation(slot)
   // Only an answer the dialog offers to remember is honoured ('stop' only where the person ticked it); 'forget' always asks.
   let choice: string | undefined = opts.ask === false ? 'detach' : rememberedClose(spec, confirmations[spec.situation])
@@ -730,18 +769,17 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
       window.tether.rememberConfirmation(spec.situation, remembered)
     }
   }
-  if (choice === 'cancel') return
+  if (choice === 'cancel') return false
   if (choice === 'stop') await window.tether.request({ t: 'stop', slotId })
   if (choice === 'forget') await window.tether.request({ t: 'forget', slotId })
-  const still = findPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
-  if (still) removeAnyPanel(still)
+  return true
 }
 
 /** Main asks for a situation to be put to the user (menu items live in main; the dialog lives here). */
 async function onAsk(req: AskRequest): Promise<void> {
   switch (req.situation) {
     case 'quit-all': {
-      const answer = await askDialog(quitAllSituation(req.slots ?? [...slots.values()]))
+      const answer = await askDialog(quitAllSituation(req.slots ?? [...slots.values()], procsStore.liveCount()))
       if (answer.choice === 'pause-first') {
         // Not leaving: start the batch and show it; main gets a cancel, so nothing quits.
         window.tether.answer(req.askId, { choice: 'cancel', remember: false })
@@ -754,7 +792,7 @@ async function onAsk(req: AskRequest): Promise<void> {
       return
     }
     case 'restart-daemon': {
-      const answer = await askDialog(restartDaemonSituation(req.slots ?? [...slots.values()]))
+      const answer = await askDialog(restartDaemonSituation(req.slots ?? [...slots.values()], procsStore.liveCount()))
       window.tether.answer(req.askId, answer)
       return
     }
@@ -766,7 +804,7 @@ async function onAsk(req: AskRequest): Promise<void> {
     case 'reload-all': {
       // What the person sees is what is at stake: the slots behind open panels, not every slot on disk.
       const open = [...slots.values()].filter(s => findPanel(s.slotId))
-      const answer = await askDialog(reloadAllSituation(open))
+      const answer = await askDialog(reloadAllSituation(open, procsStore.liveCount()))
       window.tether.answer(req.askId, answer)
       return
     }
@@ -967,6 +1005,54 @@ async function closeDesk(id: string): Promise<void> {
   refreshSessions()
 }
 
+/**
+ * Hibernating a desk: its agents are stopped (the daemon's `stop`, the same as closing a pane: the slot stays, the
+ * session is saved), the desk leaves the capsule for the moon menu, and the app does not start its panes on launch.
+ * Agents mid-turn are only stopped after the person confirms. The last awake desk never sleeps.
+ */
+async function hibernateDesk(id: string): Promise<void> {
+  if (desks.isSystem(id)) return
+  const awake = desks.desks.filter(d => !d.asleep)
+  if (awake.length <= 1 || !awake.some(d => d.id === id)) return
+  await hibernatePanes(deskPanes(id).map(p => p.id), `da mesa "${deskName(id)}"`, () => {
+    if (desks.activeDeskId === id) {
+      const i = awake.findIndex(d => d.id === id)
+      desks.switchTo((awake[i + 1] ?? awake[i - 1])!.id)
+    }
+    desks.setAsleep(id, true)
+  })
+}
+
+/**
+ * Hibernating panes (one, or a desk's): each process is stopped (the daemon's `stop`: the slot stays, the session is
+ * saved) and the pane is marked asleep (layout `asleepPanes`), so the app does not start it on launch. A `start` from
+ * anywhere wakes it. Agents mid-turn are only stopped after the person confirms; `before` runs once confirmed.
+ */
+async function hibernatePanes(ids: string[], where: string, before?: () => void): Promise<void> {
+  const states = ids.map(id => slots.get(id)).filter((s): s is SlotState => s !== undefined)
+  const busy = states.filter(s => isLiveSlot(s) && s.turn === 'busy')
+  if (busy.length > 0 && (await askDialog(hibernateSituation(where, busy))).choice !== 'hibernate') return
+  before?.()
+  for (const s of states) asleepPanes.add(s.slotId)
+  scheduleSave()
+  await Promise.all(states.filter(isLiveSlot).map(s => window.tether.request({ t: 'stop', slotId: s.slotId })))
+  for (const s of states) { panels.get(s.slotId)?.render(); tabs.get(s.slotId)?.render() }
+  refreshSessions()
+}
+
+/** Waking a desk: back in the capsule, its hibernated panes resume through `start` (the daemon queues agents beyond 3 at once). */
+function wakeDesk(id: string): void {
+  desks.setAsleep(id, false)
+  for (const p of deskPanes(id)) if (asleepPanes.has(p.id)) void startSlot(p.id)
+}
+
+/** "Hibernar guia": a live pane that is not restarting or stopping. */
+function hibernateMenuEntry(slotId: string): MenuEntry[] {
+  const slot = slots.get(slotId)
+  if (!slot || !isLiveSlot(slot) || slot.restarting || slot.stopping) return []
+  return [{ icon: 'moon', label: 'Hibernar guia', run: () => { void hibernatePanes([slotId], `da guia "${panelTitle(slot)}"`) } }]
+}
+
 /** Right-click on a desk chip. */
 function showDeskMenu(id: string, x: number, y: number): void {
   const index = desks.desks.findIndex(d => d.id === id)
@@ -980,6 +1066,7 @@ function showDeskMenu(id: string, x: number, y: number): void {
   if (index < desks.desks.length - 1) items.push({ icon: 'arrow-line-right', label: 'Mover para a direita', run: () => desks.move(id, index + 1) })
   if (index > 1) items.push({ icon: 'arrow-line-left', label: 'Mover para o início', run: () => desks.move(id, 0) })
   if (index < desks.desks.length - 2) items.push({ icon: 'arrow-line-right', label: 'Mover para o fim', run: () => desks.move(id, desks.desks.length - 1) })
+  if (!desks.desks[index]?.asleep && desks.desks.filter(d => !d.asleep).length > 1) items.push({ icon: 'moon', label: 'Hibernar mesa', run: () => { void hibernateDesk(id) } })
   if (desks.desks.length > 1) items.push({ icon: 'x', label: 'Fechar mesa…', danger: true, run: () => { void closeDesk(id) } })
   showContextMenu(x, y, items)
 }
@@ -1366,12 +1453,17 @@ function frameTree(): PanelFrameTree {
   const focused = focusablePanelId()
   return buildFrameTree({
     sources: frameSourcesOf(layout), meta: readFrameMeta(layout.sidebars?.meta), desks: desks.desks.map(d => ({ id: d.id, name: d.name })),
-    livePanels: livePanelMap(), ...(focused ? { focusedPanel: focused } : {}),
+    livePanels: livePanelMap(), ...(focused ? { focusedPanel: focused } : {}), activeDeskId: desks.activeDeskId,
   })
 }
 
 const framesListeners = new Set<() => void>()
-const looseListeners = new Set<(key: string) => void>()
+const looseListeners = new Set<(key: string, cause: LooseCause) => void>()
+/**
+ * Panels the person closed (closePanel, closeSlotless), until the next frames check reads them: their frame becomes
+ * loose with cause 'closed' (the extension closes it, with an undo); any other way a panel goes is 'lost'.
+ */
+const closedByPerson = new Set<string>()
 /** The loose frames with content already told (undefined until the first check after the restore, which tells nothing). */
 let toldLoose: Set<string> | undefined
 let framesTimer: ReturnType<typeof setTimeout> | undefined
@@ -1393,7 +1485,10 @@ function checkFrames(): void {
   toldLoose = new Set(tree.loose.filter(r => !r.empty).map(r => r.key))
   const empty = tree.loose.filter(r => r.empty).map(r => r.key)
   if (empty.length) { dropFrames(empty); scheduleSave() }
-  if (!first) for (const r of fresh) for (const l of [...looseListeners]) { try { l(r.key) } catch (err) { console.error('onDidLoose', err) } }
+  const cause = (key: string): LooseCause => closedByPerson.has(frameOwnerOf(key)?.panelId ?? '') ? 'closed' : 'lost'
+  const told = first ? [] : fresh.map(r => ({ key: r.key, cause: cause(r.key) }))
+  closedByPerson.clear()
+  for (const t of told) for (const l of [...looseListeners]) { try { l(t.key, t.cause) } catch (err) { console.error('onDidLoose', err) } }
   for (const l of [...framesListeners]) { try { l() } catch (err) { console.error('panelFrames.onDidChange', err) } }
 }
 
@@ -1448,43 +1543,62 @@ function padOfFrameKey(key: string): FramesPad | undefined {
 }
 
 /**
- * "Mover…": the frame's panes become tabs of the target panel's frame (the tabs add up; the target's empty panes give
- * way), then the source frame closes. Panes are re-created from their options (a terminal re-attaches; no process is touched).
+ * Whether a loose frame's panel can come back: its slot still exists in the tetherd (running without a pane, or exited:
+ * reopening resumes it, as the closed-slots menu does). A panel that is open is not loose; anything else is gone for good.
  */
-function moveFrameLive(from: string, to: string): boolean {
-  if (from === to) return false
-  const src = padOfFrameKey(from)
-  const dst = padOfFrameKey(to)
-  if (!src || !dst || src === dst) return false
-  const moving = src.desk.panels.filter(p => !empties.has(p.id))
-  if (!moving.length) return false
-  for (const p of moving) transferPanel(src.desk, dst.desk, p.id, paneTypes.optionsOf(p))
-  for (const p of [...dst.desk.panels]) if (empties.has(p.id)) dst.desk.removePanel(p)
-  dst.desk.getPanel(moving[0]!.id)?.api.setActive()
-  dropFrames([from])
-  toldLoose?.delete(from)
+function frameRevivable(key: string): { ok: boolean; reason: string } {
+  const o = frameOwnerOf(key)
+  if (!o) return { ok: false, reason: 'quadro desconhecido' }
+  if (findPanel(o.panelId)) return { ok: true, reason: 'painel aberto' }
+  const slot = slots.get(o.panelId)
+  if (slot && liveTypeOf(paneTypes, o.panelId)?.closedEntry?.(o.panelId)) {
+    return { ok: true, reason: effectiveStatus(slot) === 'exited' ? 'sessão encerrada, dá para reabrir' : 'sessão rodando sem guia, dá para trazer de volta' }
+  }
+  return { ok: false, reason: o.panelId.startsWith('note:') ? 'era uma nota; abra o arquivo de novo' : 'o painel não existe mais' }
+}
+
+/** Brings a loose frame's panel back: the pane reopens (the slot resumes) and the frame, keyed by the panel, is its again. */
+function reviveFrame(key: string): boolean {
+  const o = frameOwnerOf(key)
+  if (!o || findPanel(o.panelId)) return false
+  const entry = liveTypeOf(paneTypes, o.panelId)?.closedEntry?.(o.panelId)
+  if (!entry?.reopen()) return false
+  toldLoose?.delete(key)
   afterFrames()
+  requestAnimationFrame(() => { sidebars?.render(); sidebars?.open(o.padId) })
   return true
 }
 
-/** Where a frame's content can go: the frame of every live panel, by desk (panels outside every desk last). */
-function frameTargets(): { key: string; label: string; group: string }[] {
-  const out: { key: string; label: string; group: string }[] = []
-  const pads = padRegistry.all().filter(p => p.frames && p.scope === 'panel')
-  const seen = new Set<string>()
-  for (const d of desks.desks) {
-    const group = /^mesa\b/i.test(d.name) ? d.name : `Mesa ${d.name}`
-    for (const p of desks.desk(d.id)?.panels ?? []) {
-      if (empties.has(p.id)) continue
-      seen.add(p.id)
-      for (const pad of pads) out.push({ key: frameKeyOf(pad.id, p.id), label: p.api.title ?? p.id, group })
-    }
-  }
-  for (const p of allPanels()) {
-    if (seen.has(p.id) || empties.has(p.id) || framePadOf(p.id) || inDrawer(p.id)) continue
-    for (const pad of pads) out.push({ key: frameKeyOf(pad.id, p.id), label: p.api.title ?? p.id, group: 'Outros' })
-  }
-  return out
+/**
+ * A frame's view mounted (built from its saved state when it never showed), so the panes it keeps are live panes like
+ * any other: found, described, dragged, closed and given their tab's menu. A closed owner's frame stays closed: only
+ * its view exists, hidden (the panel pad shows the focused panel's frame). False when the key names no frame.
+ */
+function mountFrame(key: string): boolean {
+  return !!padOfFrameKey(key)
+}
+
+/**
+ * "Focar guia": a pane of a frame to the front, active and focused. Its owner comes forward with it (a panel pad shows
+ * its owner's frame); a closed owner is reopened first (its slot resumes), since only a live panel's frame can be shown.
+ */
+function focusGuide(id: string): void {
+  const pad = framePadOf(id)
+  const owner = pad?.panelId
+  if (!pad || !owner || findPanel(owner)) { revealPane(id); return }
+  if (!liveTypeOf(paneTypes, owner)?.closedEntry?.(owner)?.reopen()) return
+  toldLoose?.delete(frameKeyOf(pad.padId, owner))
+  afterFrames()
+  // The reopened panel may take a few frames to be placed; the pane goes to the front once its owner is there.
+  let tries = 60
+  const wait = (): void => { if (findPanel(owner) || --tries <= 0) revealPane(id); else requestAnimationFrame(wait) }
+  requestAnimationFrame(wait)
+}
+
+/** "Fechar guia": the pane closes the way its tab's × closes it (a slot's pane asks what to do with the process). */
+function closeGuide(id: string): void {
+  if (slots.has(id)) void closePanel(id)
+  else closeSlotless(id)
 }
 
 /** Brings a live frame forward: its panel comes to the front and its pad opens. A loose frame has nowhere to go. */
@@ -1670,6 +1784,7 @@ async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<voi
 /** Starts every open panel whose slot is exited (the daemon queues agents beyond 3 at once). Unconfirmed ones wait for the user. */
 function autoStartPanels(): void {
   for (const panel of allPanels()) {
+    if (asleepPanes.has(panel.id)) continue // a hibernated pane stays asleep until it is woken
     const slot = slots.get(panel.id)
     if (slot && effectiveStatus(slot) === 'exited') void startSlot(slot.slotId)
   }
@@ -1707,9 +1822,15 @@ async function moveToFolder(slotId: string): Promise<void> {
 // ---------- daemon events / state ----------
 
 function applyState(slot: SlotState): void {
+  const before = slots.get(slot.slotId)
   slots.set(slot.slotId, slot)
   queue.update(slot.slotId, slot.status === 'queued')
-  if (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued') startErrors.delete(slot.slotId)
+  if (slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued') {
+    startErrors.delete(slot.slotId)
+    // A pane that comes back up is awake, whoever started it. Only a stopped → live change counts: while a hibernation's
+    // stop is under way the daemon still reports the slot running (stopping), and that must not wake it.
+    if (before && !isLiveSlot(before) && asleepPanes.delete(slot.slotId)) scheduleSave()
+  }
   const panel = findPanel(slot.slotId)
   if (panel) {
     const title = panelTitle(slot)
@@ -1732,6 +1853,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
     case 'data': panels.get(ev.slotId)?.write(ev.data); break
     case 'profiles': setProfiles(ev.profiles, undefined); break
     case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshSessionsDialog(); break
+    case 'proc': case 'proc-removed': case 'proc-data': procsStore.onEvent(ev); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
@@ -1790,6 +1912,13 @@ function updateHint(slot: SlotState): void {
  * frame's view) and backed up as layout.v1.bak before the first v2 write. Panes the daemon no longer knows are
  * pruned frame by frame; a frame whose JSON is refused still reopens every pane it named (Desk.loadView).
  */
+/** What the tab emblems (tab-emblems.ts) need: the panels, a tab's `emblem` param, the library in layout.json. */
+const emblemHost: EmblemHost = {
+  panels: () => allPanels().map(p => ({ id: p.id, params: p.params })),
+  setParam: (id, emblem) => { findPanel(id)?.api.updateParameters({ emblem }); scheduleSave() },
+  saveLibrary: lib => { layoutFile = { ...layoutFile, emblems: lib }; scheduleSave() },
+}
+
 async function restoreLayout(): Promise<void> {
   const result = await (geometry ?? paintGeometry())
   // Pruning is for display only (planRestore): a pane whose slot the daemon does not list right now is not a
@@ -1797,6 +1926,7 @@ async function restoreLayout(): Promise<void> {
   const { layout, orphaned } = planRestore(result?.layout ?? null, new Set(slots.keys()), id => paneTypes.isSlotless(id))
   if (layout) {
     layoutFile = layout
+    asleepPanes = new Set((layout.asleepPanes ?? []).filter(id => slots.has(id)))
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
@@ -1813,6 +1943,7 @@ async function restoreLayout(): Promise<void> {
   if (orphaned.length) console.warn('painéis sem slot no tetherd, fora da tela até a próxima ação:', orphaned)
   await discardPendingSave()
   workspaceState = readWorkspace(layoutFile.workspace)
+  initEmblems(layoutFile.emblems, emblemHost)
   layoutRestored = true
   scheduleKeyboardTab()
   recomputeProjects()
@@ -1831,6 +1962,7 @@ async function restoreLayout(): Promise<void> {
 function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
   geometry ??= window.tether.loadLayout().then(raw => {
     const result = migrateLayout(raw)
+    if (result && !layoutRestored) asleepPanes = new Set(result.layout.asleepPanes ?? [])
     if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, deskPadsOf(result.layout)) }
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
@@ -1863,6 +1995,7 @@ async function onConnection(state: ConnectionState): Promise<void> {
   conn.className = 'ib conn on'
   $('overlay').hidden = true
   startErrors.clear()
+  void procsStore.refresh(layoutRestored)
   await refreshSlots()
   if (!layoutRestored) {
     await restoreLayout()
@@ -1888,7 +2021,12 @@ async function onConnection(state: ConnectionState): Promise<void> {
 
 // ---------- sessions menu (one icon, one menu: sessions without a tab, the polite pause, the ended ones) ----------
 
+/** Hibernated panes (slot ids), saved in the layout: not started on launch until a `start` wakes them. */
+let asleepPanes = new Set<string>()
+
 let pauseBatch: PauseBatch | null = null
+/** The background processes (tether proc): the core keeps the list, the processes extension draws it (TetherUi.procs). */
+const procsStore = new ProcsStore(body => window.tether.request(body))
 let sessionsMenu: SessionsMenu | undefined
 
 /** Re-renders the Sessões menu and its icon (counter, tooltip, glyph). Safe before the menu exists. */
@@ -1982,6 +2120,13 @@ function revealPane(id: string): void {
     const pad = framePadOf(id)
     if (pad) {
       if (pad.deskId && pad.deskId !== desks.activeDeskId) desks.switchTo(pad.deskId)
+      // A panel pad shows its own panel's pane: that panel takes the Foco de Mesa first.
+      if (pad.panelId && pad.panelId !== focusablePanelId() && desks.getPanel(pad.panelId)) {
+        const ownerDesk = desks.deskOf(pad.panelId)
+        if (ownerDesk && ownerDesk !== desks.activeDeskId) desks.switchTo(ownerDesk)
+        desks.getPanel(pad.panelId)?.api.setActive()
+        sidebars?.render()
+      }
       sidebars?.open(pad.padId, false)
       setFocusedPad(pad)
     } else {
@@ -2095,6 +2240,14 @@ async function followTetherLink(url: string): Promise<void> {
     const root = link.path.replace(/[\\/][^\\/]*$/, '')
     const pad = link.pad ? openPadForLink(link.pad) : undefined
     if (link.pad && !pad) return // said to the person already
+    // A note asked into a pad while open somewhere else (a desk, another pad, the drawer) MOVES there: the pad is where it lives now.
+    if (pad) {
+      const open = panelOfFile(link.path)
+      if (open && !pad.desk.getPanel(open)) {
+        if (await movePaneIntoPad(open, pad)) drawAttention(open)
+        return
+      }
+    }
     // In a pad: the file opens next to the pad's active pane (a blank one is replaced). A note already open anywhere is only revealed.
     const reference = pad?.desk.activePanel?.id
     void openFile(fileOpenHost, link.path, { side: false, root, ...(reference ? { reference } : {}) }).then(() => {
@@ -2111,6 +2264,24 @@ async function followTetherLink(url: string): Promise<void> {
     return
   }
   void askDialog(missingTabSituation())
+}
+
+/**
+ * Moves an open pane into a frames pad, as "Mover…" would: beside the pad's active pane as a tab of its group (a blank pane
+ * there is dropped, as a file opened into the pad replaces it), or alone in a new frame when the pad is empty.
+ */
+async function movePaneIntoPad(slotId: string, pad: FramesPad): Promise<boolean> {
+  const from = scopeOf(slotId)
+  if (!from) return false
+  const scope = padScope(pad.padId, pad.deskId ?? pad.panelId)
+  const ref = pad.desk.activePanel
+  const frame = ref ? pad.desk.frameOf(ref.id) : undefined
+  const op: MoveOp = ref && frame
+    ? { op: 'pane-beside', slotId, from, scope, frameId: frame.id, reference: ref.id, direction: 'within' }
+    : { op: 'pane-new-frame', slotId, from, scope, direction: 'right' }
+  const ok = await runMove(op, slotId)
+  if (ok && ref && empties.has(ref.id) && pad.desk.getPanel(ref.id)) { pad.desk.removePanel(ref); scheduleSave() }
+  return ok
 }
 
 /** The pane showing a file (a note's `fileOf`, paths compared case-insensitively: Windows), wherever it lives. */
@@ -2186,6 +2357,34 @@ async function switchProfile(slotId: string): Promise<void> {
   await sendSetProfile(slot, profileId, name, answer.choice === 'now')
 }
 
+/** "Reiniciar agente": the daemon kills the agent and resumes the SAME session in the same panel (no confirmation). */
+const pendingRestarts = new Set<string>()
+async function restartAgent(slotId: string): Promise<void> {
+  const slot = slots.get(slotId)
+  if (!slot || slot.kind === 'shell' || pendingRestarts.has(slotId) || dialogOpen()) return
+  pendingRestarts.add(slotId)
+  try {
+    const reply = await window.tether.request({ t: 'restart', slotId })
+    if (reply.t === 'ok') { if (reply.slot) applyState(reply.slot); return }
+    const current = slots.get(slotId) ?? slot
+    // The restart itself failed after the kill (session gone, already open…): the panel overlay shows that state.
+    if (current.status === 'error') return
+    await askDialog(restartFailedSituation(current, reply.message))
+  } finally {
+    pendingRestarts.delete(slotId)
+  }
+}
+
+const RESTART_UNREGISTERED_TIP = 'O agente ainda não registrou a sessão; reiniciar agora perderia a conversa.'
+/** Agents that resume a session (the daemon's `canRestart` is the live truth; this only decides whether to show the entry at all). */
+function restartMenuEntry(slotId: string): MenuEntry[] {
+  const slot = slots.get(slotId)
+  if (!slot || slot.kind === 'shell' || !isLiveSlot(slot) || slot.restarting || slot.stopping) return []
+  if (slot.canRestart) return [{ icon: 'arrow-clockwise', label: 'Reiniciar agente', run: () => { void restartAgent(slotId) } }]
+  if (slot.kind !== 'claude' && slot.kind !== 'soul') return [] // extension agents: only with the daemon's capability
+  return [{ icon: 'arrow-clockwise', label: 'Reiniciar agente', tip: RESTART_UNREGISTERED_TIP, disabled: true, run: () => {} }]
+}
+
 async function sendSetProfile(slot: SlotState, profileId: string | null, name: string, restart: boolean): Promise<void> {
   const { slotId } = slot
   pendingSwitches.add(slotId)
@@ -2208,7 +2407,8 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 
 // ---------- tab context menu ----------
 
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean }
+/** `pin`: how the item also shows outside the menu (ext-api MenuPin). `standalone`: it acts without the pane on screen (a closed tab's menu runs it as is). `tip`: tooltip. */
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean; tip?: string }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
 /** A line naming what the items under it act on (a pad's title over its items); not an item. */
@@ -2221,8 +2421,14 @@ type MenuEntry = MenuItem | MenuHeading | typeof SEP
  */
 let padSection: string | undefined
 
+/** The pane whose tab menu the next context menu is: it gets "Emblema…" (tab-emblems.ts), whichever pane type draws the menu. */
+let emblemSection: string | undefined
+
 /** The button that opens the next context menu when the opener cannot be passed (the "⋯" goes through showTabMenu). */
 let menuOpener: HTMLElement | undefined
+
+/** While set, showContextMenu collects its items here instead of showing them (a pane type's menu read as data). */
+let menuCapture: MenuEntry[] | undefined
 
 /**
  * A floating menu at (x, y), closed by a click anywhere else, Esc, or picking an item. `opener` is the button that
@@ -2230,6 +2436,7 @@ let menuOpener: HTMLElement | undefined
  * focus back to it. Keys: Up/Down (wrapping), Home/End, Enter/Space, Esc, Tab (closes).
  */
 function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpener?: HTMLElement): void {
+  if (menuCapture) { menuCapture.push(...items); return }
   const opener = explicitOpener ?? menuOpener
   menuOpener = undefined
   const active = document.activeElement
@@ -2255,6 +2462,12 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     else if (ev.key === 'End') { ev.preventDefault(); lis[lis.length - 1]?.focus() }
     else if ((ev.key === 'Enter' || ev.key === ' ') && i >= 0) { ev.preventDefault(); lis[i]!.click() }
   }
+  if (emblemSection) {
+    const id = emblemSection; emblemSection = undefined
+    const entry: MenuItem = { icon: 'tag', label: 'Emblema…', run: () => openEmblemMenu(id, x, y) }
+    const last = items.lastIndexOf(SEP)
+    items = last < 0 ? [...items, SEP, entry] : [...items.slice(0, last), entry, ...items.slice(last)]
+  }
   if (padSection) { const id = padSection; padSection = undefined; items = [...items, SEP, ...padMenuEntries(id)] }
   for (const item of items) {
     if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
@@ -2263,6 +2476,7 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     if (item.checked !== undefined) li.setAttribute('aria-checked', String(item.checked))
     if (item.danger) li.classList.add('danger')
     if (item.disabled) li.setAttribute('aria-disabled', 'true')
+    if (item.tip) li.title = item.tip
     li.append(icon(item.icon), document.createTextNode(item.label))
     if (item.checked) li.append(icon('check', 'ctx-check'))
     if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
@@ -2289,19 +2503,84 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
  * The pane menu: right-click on a tab and the "⋯" at the tab strip's right end (one source). Grouped: open
  * next to it, name and profile, the status bar and its folder entries, where it lives, close.
  */
-function showTabMenu(slotId: string, x: number, y: number): void {
+function showTabMenu(slotId: string, x: number, y: number, opener?: HTMLElement): void {
+  emblemSection = slotId
+  try { showTabMenuOf(slotId, x, y, opener) } finally { emblemSection = undefined }
+}
+
+function showTabMenuOf(slotId: string, x: number, y: number, opener?: HTMLElement): void {
   const slot = slots.get(slotId)
   const panel = findPanel(slotId)
   if (!slot) {
-    if (empties.has(slotId)) { panel?.api.setActive(); showEmptyMenu(slotId, x, y); return }
+    if (empties.has(slotId)) { panel?.api.setActive(); showContextMenu(x, y, emptyMenuEntries(slotId), opener); return }
     // Any other kind of pane shows its type's own menu (an extension's: the note, the previews, a placeholder).
     const type = liveTypeOf(paneTypes, slotId)
     if (!type?.tabMenu) return
     panel?.api.setActive()
+    if (opener) menuOpener = opener
     type.tabMenu(slotId, x, y)
     return
   }
   panel?.api.setActive()
+  showContextMenu(x, y, slotMenuEntries(slot), opener)
+}
+
+/** Labels shared by the core's menus and the pins read off menus drawn by pane types (which declare no pins). */
+const MOVE_LABEL = 'Mover…'
+const LINK_LABEL = 'Copiar link do painel'
+const CLOSE_PANEL_LABEL = 'Fechar painel…'
+/** The pins of the actions every pane menu has, for the menus pane types draw themselves. */
+const COMMON_PINS: Readonly<Record<string, MenuPin>> = { [MOVE_LABEL]: 'icon', [LINK_LABEL]: 'icon', [CLOSE_PANEL_LABEL]: 'primary' }
+
+/** A pane type's own menu (the note's, the previews', a placeholder's) as data, read through showContextMenu. */
+function typeMenuEntries(id: string): MenuEntry[] {
+  const type = liveTypeOf(paneTypes, id)
+  if (!type?.tabMenu || !findPanel(id)) return []
+  const out: MenuEntry[] = []
+  const section = padSection
+  padSection = undefined
+  menuCapture = out
+  try { type.tabMenu(id, 0, 0) } catch (err) { console.error('tabMenu', err) } finally { menuCapture = undefined; padSection = section }
+  return out.map(e => e === SEP || 'heading' in e || e.pin || !COMMON_PINS[e.label] ? e : { ...e, pin: COMMON_PINS[e.label] })
+}
+
+/** The manager's primaries on a pane's menu. */
+const FOCUS_GUIDE_LABEL = 'Focar guia'
+const CLOSE_GUIDE_LABEL = 'Fechar guia'
+
+/**
+ * The menu of a pane as its tab shows it, or as a view that lists panes apart from their tabs shows it (TabMenuOptions
+ * 'manager'): the same menu after "Focar guia" and "Fechar guia", which are then its only primaries ("Fechar painel…"
+ * stays in the menu without a pin). A pane that is not live has no menu (a closed owner's frame is mounted first:
+ * TetherUi.pads.panelFrames.mount).
+ */
+function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
+  if (!findPanel(id)) return []
+  const slot = slots.get(id)
+  const base = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
+  if (opts.from !== 'manager') return base
+  const owner = framePadOf(id)?.panelId
+  const canFocus = !owner || !!findPanel(owner) || !!liveTypeOf(paneTypes, owner)?.closedEntry?.(owner)
+  const focus: MenuItem = { icon: 'arrow-right', label: FOCUS_GUIDE_LABEL, pin: 'primary', run: () => focusGuide(id), ...(canFocus ? {} : { disabled: true, tip: 'O painel dono desta guia não existe mais: mova a guia para outro lugar' }) }
+  const close: MenuItem = { icon: 'x', label: CLOSE_GUIDE_LABEL, pin: 'primary', run: () => closeGuide(id) }
+  const rest = base.map((e): MenuEntry => {
+    if (e === SEP || 'heading' in e || e.pin !== 'primary') return e
+    const { pin: _pin, ...unpinned } = e
+    return unpinned
+  })
+  return [focus, close, SEP, ...rest]
+}
+
+/** The menu of `paneMenuEntries` at page coordinates; it does not activate the pane (the view that asked keeps its state). */
+function showPaneMenu(id: string, x: number, y: number, opener?: HTMLElement, opts?: TabMenuOptions): void {
+  const items = paneMenuEntries(id, opts)
+  if (items.length) showContextMenu(x, y, items, opener)
+}
+
+/** A slot pane's tab menu (agent, terminal), whether its tab is open or closed. */
+function slotMenuEntries(slot: SlotState): MenuEntry[] {
+  const { slotId } = slot
+  const panel = findPanel(slotId)
   const fromExtensions: MenuEntry[] = []
   if (slot.kind !== 'shell') {
     for (const provider of [...agentTabMenuProviders]) {
@@ -2309,7 +2588,7 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     }
     if (fromExtensions.length > 0) fromExtensions.push(SEP)
   }
-  showContextMenu(x, y, [
+  return [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: slotId }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.right}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'right' }) } },
     { icon: 'copy', label: `${DUPLICATE_LABEL} ${PLACEMENT_LABEL.below}`, run: () => { void duplicatePanel(slotId, { level: 'pane', placement: 'below' }) } },
@@ -2317,31 +2596,33 @@ function showTabMenu(slotId: string, x: number, y: number): void {
     { icon: 'columns', label: `${NEW_FRAME_LABEL}…`, run: () => { void openNewDialog({ reference: slotId, target: { level: 'desk', placement: 'right' } }) } },
     SEP,
     { icon: 'pencil-simple', label: 'Renomear…', run: () => tabs.get(slotId)?.startRename() },
-    { icon: 'sliders-horizontal', label: 'Trocar perfil…', run: () => { void switchProfile(slotId) } },
+    { icon: 'sliders-horizontal', label: 'Trocar perfil…', standalone: true, run: () => { void switchProfile(slotId) } },
+    ...restartMenuEntry(slotId),
+    ...hibernateMenuEntry(slotId),
     SEP,
     { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
-    { icon: 'link', label: 'Copiar link do painel', run: () => copyPaneLink(slotId) },
-    { icon: 'copy', label: 'Copiar pasta', run: () => copyFolder(slotId) },
-    { icon: 'folder-open', label: 'Abrir pasta no Explorer', run: () => openFolder(slotId) },
+    { icon: 'link', label: LINK_LABEL, pin: 'icon', standalone: true, run: () => copyPaneLink(slotId) },
+    { icon: 'copy', label: 'Copiar pasta', standalone: true, run: () => copyFolder(slotId) },
+    { icon: 'folder-open', label: 'Abrir pasta no Explorer', standalone: true, run: () => openFolder(slotId) },
     SEP,
-    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(slotId) } },
+    { icon: 'arrow-square-out', label: MOVE_LABEL, pin: 'icon', run: () => { void openMove(slotId) } },
     SEP,
     ...fromExtensions,
-    { icon: 'x', label: 'Fechar painel…', run: () => { void closePanel(slotId) } },
-  ])
+    { icon: 'x', label: CLOSE_PANEL_LABEL, pin: 'primary', run: () => { void closePanel(slotId) } },
+  ]
 }
 
 /** The empty pane's tab menu: new things next to it, where it lives, close. */
-function showEmptyMenu(id: string, x: number, y: number): void {
-  showContextMenu(x, y, [
+function emptyMenuEntries(id: string): MenuEntry[] {
+  return [
     { icon: 'plus', label: NEW_PANEL_LABEL, run: () => { void openNewDialog({ reference: id }) } },
     { icon: 'plus', label: `${SPLIT_EMPTY_LABEL} ${PLACEMENT_LABEL.right} ${EMPTY_SUFFIX}`, run: () => { void splitEmpty({ level: 'pane', placement: 'right' }, 'layout', id) } },
     { icon: 'plus', label: `${SPLIT_EMPTY_LABEL} ${PLACEMENT_LABEL.below} ${EMPTY_SUFFIX}`, run: () => { void splitEmpty({ level: 'pane', placement: 'below' }, 'layout', id) } },
     SEP,
-    { icon: 'arrow-square-out', label: 'Mover…', run: () => { void openMove(id) } },
+    { icon: 'arrow-square-out', label: MOVE_LABEL, pin: 'icon', run: () => { void openMove(id) } },
     SEP,
     { icon: 'x', label: 'Fechar', run: () => { const p = findPanel(id); if (p) removeAnyPanel(p) } },
-  ])
+  ]
 }
 
 // ---------- empty panes (F5) ----------
@@ -2532,7 +2813,7 @@ let paletteMode: PaletteModeProvider | undefined
 function closeSlotless(id: string): void {
   const panel = findPanel(id)
   rememberClosed(id)
-  if (panel) removeAnyPanel(panel)
+  if (panel) { closedByPerson.add(id); removeAnyPanel(panel) }
 }
 
 
@@ -2782,6 +3063,8 @@ const commandHost: CommandHost = {
   activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || liveTypeOf(paneTypes, a.id)) ? a.id : undefined },
   renamePane: id => { const type = liveTypeOf(paneTypes, id); if (type?.rename) type.rename(id); else tabs.get(id)?.startRename() },
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
+  restartAgent: id => { if (slots.has(id)) void restartAgent(id) },
+  hibernatePane: id => { const s = slots.get(id); if (s && isLiveSlot(s)) void hibernatePanes([id], `da guia "${panelTitle(s)}"`) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
   copyLink: id => copyPaneLink(id),
   copyFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) window.tether.writeClipboard(f); else if (slots.has(id)) copyFolder(id) },
@@ -2789,7 +3072,7 @@ const commandHost: CommandHost = {
   movePane: id => { void openMove(id) },
   closePane: id => { void closePanel(id) },
   createDesk: side => { createBlankDesk(side) },
-  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks, desks.isSystem(desks.activeDeskId) ? desks.returnDeskId : desks.activeDeskId, step)),
+  cycleDesk: step => desks.switchTo(cycleDesk(desks.desks.filter(d => !d.asleep || d.id === desks.activeDeskId), desks.isSystem(desks.activeDeskId) ? desks.returnDeskId : desks.activeDeskId, step)),
   moveActiveDesk: where => {
     const last = desks.desks.length - 1
     const at = desks.desks.findIndex(d => d.id === desks.activeDeskId)
@@ -2807,6 +3090,7 @@ const commandHost: CommandHost = {
   toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
   toggleTabBorder: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }),
   toggleDimUnfocused: () => window.tether.setUi({ ...ui, dimUnfocused: !ui.dimUnfocused }),
+  toggleTabClose: () => window.tether.setUi({ ...ui, tabClose: !ui.tabClose }),
   setDimLevel: level => window.tether.setUi({ ...ui, dimUnfocused: true, dimLevel: level }),
   openTerminalTheme: () => themeDialog.show(),
   fontSize: command => runFontSizeCommand(command),
@@ -3778,10 +4062,12 @@ function activateRendererExtensions(): void {
         copyLink: paneId => copyPaneLink(paneId),
         attention: paneId => drawAttention(paneId),
         close: paneId => closeSlotless(paneId),
-        showTabMenu: (paneId, x, y) => showTabMenu(paneId, x, y),
+        showTabMenu: (paneId, x, y, opener, opts) => { if (opts?.from) showPaneMenu(paneId, x, y, opener, opts); else showTabMenu(paneId, x, y, opener) },
+        tabMenuEntries: (paneId, opts) => paneMenuEntries(paneId, opts).flatMap((e): ContextMenuEntry[] => e === SEP ? ['sep'] : 'heading' in e ? [] : [e]),
         newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
         newPanelLabel: NEW_PANEL_LABEL,
         move: paneId => { void openMove(paneId) },
+        beginDrag: (paneId, ev) => beginPaneDrag(paneId, ev),
         all: () => allPanels().map(p => describePane(p.id)).filter((x): x is PaneInfo => x !== undefined),
         describe: paneId => describePane(paneId),
         onDidChangeActive: listener => { activePaneListeners.add(listener); return add(toDisposable(() => { activePaneListeners.delete(listener) })) },
@@ -3875,6 +4161,21 @@ function activateRendererExtensions(): void {
         focus: slotId => focusAgentPane(slotId),
         tabMenu: provider => { agentTabMenuProviders.add(provider); return add(toDisposable(() => { agentTabMenuProviders.delete(provider) })) },
       },
+      procs: {
+        list: () => procsStore.list(),
+        get: name => procsStore.get(name),
+        onDidChange: listener => add(procsStore.onDidChange(listener)),
+        start: name => procsStore.start(name),
+        stop: (name, opts) => procsStore.stop(name, opts),
+        restart: (name, opts) => procsStore.restart(name, opts),
+        forget: (name, opts) => procsStore.forget(name, opts),
+        use: (name, duration, purpose) => procsStore.use(name, duration, purpose),
+        release: name => procsStore.release(name),
+        seen: name => procsStore.seen(name),
+        info: name => procsStore.info(name),
+        ports: () => procsStore.ports(),
+        attach: (name, onData) => procsStore.attach(name, onData),
+      },
       profiles: {
         registerOption: option => add(registerProfileOption(id, option)),
       },
@@ -3960,11 +4261,12 @@ function activateRendererExtensions(): void {
           tree: () => frameTree(),
           onDidChange: listener => { framesListeners.add(listener); return add(toDisposable(() => { framesListeners.delete(listener) })) },
           onDidLoose: listener => { looseListeners.add(listener); return add(toDisposable(() => { looseListeners.delete(listener) })) },
-          targets: () => frameTargets(),
-          move: (from, to) => moveFrameLive(from, to),
+          revivable: key => frameRevivable(key),
+          revive: key => reviveFrame(key),
           close: keys => closeFramesLive(keys),
           restore: snap => restoreFramesLive(snap),
           show: key => showFrame(key),
+          mount: key => mountFrame(key),
         },
       },
       keybindings: {

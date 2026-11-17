@@ -6,10 +6,10 @@ import { connect, type Socket } from 'node:net'
 import { userInfo } from 'node:os'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ensureRenamedNode, exeLog } from '../core/exe.ts'
+import { ensureRenamedNode, exeLog, type ExeName } from '../core/exe.ts'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
-import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type PauseBatch, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
+import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type PauseBatch, type ProcState, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
 
 export type Hello = { v: number; pid: number; version: string; exec?: string }
 export type OkReply = Extract<Reply, { t: 'ok' }>
@@ -54,6 +54,9 @@ type Events = {
   removed: [slotId: string]
   profiles: [profiles: Profile[]]
   pause: [batch: PauseBatch]
+  proc: [proc: ProcState]
+  'proc-removed': [name: string]
+  'proc-data': [name: string, data: string]
   close: []
 }
 
@@ -194,6 +197,15 @@ export class DaemonClient extends EventEmitter<Events> {
       case 'pause':
         this.emit('pause', msg.batch)
         return
+      case 'proc':
+        this.emit('proc', msg.proc)
+        return
+      case 'proc-removed':
+        this.emit('proc-removed', msg.name)
+        return
+      case 'proc-data':
+        this.emit('proc-data', msg.name, msg.data)
+        return
     }
   }
 
@@ -268,15 +280,42 @@ export interface SpawnOptions {
  * tree a kill could walk. Measured: handles not inherited, ~1.3 s. (Verified by test/unit/daemon.spawn.test.ts.)
  */
 export function spawnDaemon(opts: SpawnOptions): Promise<number | undefined> {
-  const node = opts.execPath ?? process.execPath
-  const exe = ensureRenamedNode(opts.home, 'tetherd', node, opts.log ?? exeLog(opts.home, 'spawn'))
+  return spawnDetachedNode({
+    name: 'tetherd',
+    what: 'o tetherd',
+    home: opts.home,
+    node: opts.execPath ?? process.execPath,
+    mainPath: opts.mainPath ?? fileURLToPath(new URL('./main.ts', import.meta.url)),
+    env: { ...(opts.env ?? process.env), TETHER_HOME: opts.home, TETHER_PIPE: opts.pipe },
+    ...(opts.log ? { log: opts.log } : {}),
+  })
+}
+
+export interface DetachedNodeOptions {
+  /** The executable name it runs under (<home>/bin/<name>.exe, see core/exe.ts). */
+  name: ExeName
+  /** For the error message: "o tetherd", "o anfitrião de processos". */
+  what: string
+  home: string
+  /** The node the renamed executable is made from (TETHER_NODE in the child's environment). */
+  node: string
+  mainPath: string
+  /** The child's complete environment (TETHER_NODE is added). */
+  env: NodeJS.ProcessEnv
+  log?: (msg: string) => void
+}
+
+/**
+ * Starts a long-lived tether node process (tetherd, tether-procd) outside the caller's tree, as described on
+ * spawnDaemon. Resolves with its pid once created.
+ */
+export function spawnDetachedNode(opts: DetachedNodeOptions): Promise<number | undefined> {
+  const exe = ensureRenamedNode(opts.home, opts.name, opts.node, opts.log ?? exeLog(opts.home, 'spawn'))
   const execPath = exe.path
-  const mainPath = opts.mainPath ?? fileURLToPath(new URL('./main.ts', import.meta.url))
+  const mainPath = opts.mainPath
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(opts.env ?? process.env)) if (v !== undefined) env[k] = v
-  env.TETHER_HOME = opts.home
-  env.TETHER_PIPE = opts.pipe
-  env.TETHER_NODE = node
+  for (const [k, v] of Object.entries(opts.env)) if (v !== undefined) env[k] = v
+  env.TETHER_NODE = opts.node
   if (process.platform !== 'win32') {
     // macOS: the real node with its name in argv[0] (see core/exe.ts); elsewhere the renamed file names itself.
     const child = spawn(execPath, [mainPath], { detached: true, stdio: 'ignore', env, ...(exe.argv0 ? { argv0: exe.argv0 } : {}) })
@@ -290,7 +329,7 @@ export function spawnDaemon(opts: SpawnOptions): Promise<number | undefined> {
   return new Promise((resolve, reject) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
       { env, windowsHide: true, timeout: 30_000, encoding: 'utf8' }, (err, stdout, stderr) => {
-        if (err) return reject(new Error(`não consegui iniciar o tetherd: ${stderr.trim() || err.message}`))
+        if (err) return reject(new Error(`não consegui iniciar ${opts.what}: ${stderr.trim() || err.message}`))
         const pid = Number.parseInt(stdout.trim(), 10)
         resolve(Number.isNaN(pid) ? undefined : pid)
       })

@@ -128,6 +128,10 @@ describe('soulAdapter.plan', () => {
     }
   })
 
+  test('the pane knows its agent kind (TETHER_AGENT)', () => {
+    assert.equal(soulAdapter.plan({ slot, home: dirs.make(), extraArgs: [] }).env.TETHER_AGENT, 'soul')
+  })
+
   // The plan makes <home>/bin/tether-soul.exe (core/exe.ts): the home must be a real temp folder, never a made-up path.
   test('new session: TETHER_SOUL_CMD + slot args + extra args, in the slot cwd, reporting to the slot jsonl; the node runs as tether-soul.exe', () => {
     const home = dirs.make()

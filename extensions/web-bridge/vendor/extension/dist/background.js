@@ -919,6 +919,17 @@ var LOCAL_TOOL_TEXTS = {
     }
   }
 };
+var ADOPT_TOOL_TEXTS = {
+  ask_user: {
+    name: "WebAskUser",
+    description: 'Ask the person to do something in the active tab that only they can do, and wait until they hand the tab back. Use it when you are blocked by a login (a password, a two-factor code, a passkey), a captcha or a check that says you are a robot, or when the next step is a decision that belongs to the person (a purchase, sending a message in their name, accepting terms). Do not use it for things you can do yourself, and do not ask twice for the same thing. The tab goes to the person at once and this call WAITS for them, possibly many minutes: you cannot use the tab meanwhile, and the call ends when the person hands the tab back, dismisses the request, or when the wait runs out. Write the message as a short plain sentence that says what you need and why ("Log in to github.com so I can open the repository"); it is shown to the person as plain text and is cut at 500 characters. The answer says how it ended. After the tab comes back the page may have changed: take a new WebSnapshot before acting. Never ask the person to type a secret in the chat; this tool is how they enter it, in the page itself.',
+    params: {
+      message: "What you need from the person, in one or two plain sentences (text only, cut at 500 characters).",
+      kind: '"login" when you need the person to sign in (the host hands the tab over clean of scripts), "other" for anything else. Default "other".'
+    }
+  }
+};
+var ASK_USER_TIMEOUT_MS = 30 * 6e4;
 
 // ../../packages/browser/src/core/catalog.ts
 var TOOL_TIERS = {
@@ -976,6 +987,9 @@ function def(op, params, required = []) {
 }
 function defLocal(op, params, required, destructive) {
   return { op, scope: "local", tier: "advanced", destructive, ...build(LOCAL_TOOL_TEXTS[op], op, params, required) };
+}
+function defAdopt(op, params, required) {
+  return { op, scope: "local", tier: "advanced", ...build(ADOPT_TOOL_TEXTS[op], op, params, required) };
 }
 var PDF_FORMATS = ["letter", "legal", "tabloid", "ledger", "a0", "a1", "a2", "a3", "a4", "a5", "a6"];
 var BROWSER_CATALOG = Object.freeze([
@@ -1036,6 +1050,7 @@ var LOCAL_CATALOG = Object.freeze([
   defLocal("revoke_uploads", { folder: str, origin: str }, ["origin"], false),
   defLocal("set_gpu", { gpu: { ...str, enum: ["on", "off"] }, confirm: bool }, ["gpu"], false)
 ]);
+var ADOPT_CATALOG = Object.freeze([defAdopt("ask_user", { message: str, kind: { ...str, enum: ["login", "other"] } }, ["message"])]);
 var STANDARD_TOOLS = Object.freeze(BROWSER_CATALOG.filter((t) => t.tier === "standard"));
 
 // ../../packages/browser/src/core/cosmetics/colors.ts

@@ -23,6 +23,22 @@ export class McpNameCollisionError extends Error {
   }
 }
 
+/** A server reached over Streamable HTTP (src/daemon/mcp-http.ts), for agents whose contribution says `mcp.http`. */
+export interface HttpMcpServer {
+  type: 'http'
+  url: string
+  headers: Record<string, string>
+}
+
+/**
+ * The `--mcp-config` file of one HTTP server: the bearer is `${keyEnvVar}`, expanded by the CLI from its own env (the launch
+ * plan carries the key), so the file holds no secret. Claude Code expands `${VAR}` in a server's headers (checked against
+ * 2.1.322: the bearer arrives expanded).
+ */
+export function httpMcpConfigOf(server: string, url: string, keyEnvVar: string): { mcpServers: Record<string, HttpMcpServer> } {
+  return { mcpServers: { [server]: { type: 'http', url, headers: { Authorization: `Bearer \${${keyEnvVar}}` } } } }
+}
+
 /**
  * `plan` with `--mcp-config <file>` appended (a copy; the plan given is never mutated). `servers`, when given, are the
  * server names of `configFile`: a name already taken by another file throws McpNameCollisionError.

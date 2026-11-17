@@ -48,6 +48,11 @@ describe('claudeAdapter.plan', () => {
     }
   })
 
+  test('the pane knows its agent kind (TETHER_AGENT), over any profile env', () => {
+    const plan = claudeAdapter.plan({ slot, home: homes.make(), extraArgs: [], profile: { env: { TETHER_AGENT: 'forged' } } as never })
+    assert.equal(plan.env.TETHER_AGENT, 'claude')
+  })
+
   test('new session: --settings file, --session-id uuid, then slot args, then extra args', () => {
     const home = homes.make()
     const plan = claudeAdapter.plan({ slot, home, extraArgs: ['-p', 'oi'] })
@@ -100,15 +105,15 @@ describe('claudeAdapter.plan', () => {
     assert.deepEqual(env, { XCLAUDE: 'keep', FOO: 'bar' })
   })
 
-  test('settings file: valid JSON, all five hooks call the reporter by absolute forward-slash path', () => {
+  test('settings file: valid JSON, every hook call the reporter by absolute forward-slash path', () => {
     const home = homes.make()
     claudeAdapter.plan({ slot, home, extraArgs: [] })
     const file = join(home, 'claude-settings.json')
     const settings = JSON.parse(readFileSync(file, 'utf8')) as {
       hooks: Record<string, { matcher?: string; hooks: { type: string; command: string }[] }[]>
     }
-    assert.deepEqual(Object.keys(settings.hooks).sort(), ['Notification', 'PostToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit'])
-    for (const event of ['SessionStart', 'SessionEnd', 'Stop', 'Notification', 'UserPromptSubmit'] as const) {
+    assert.deepEqual(Object.keys(settings.hooks).sort(), ['Notification', 'PostToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit'])
+    for (const event of ['SessionStart', 'SessionEnd', 'Stop', 'Notification', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop'] as const) {
       const group = settings.hooks[event]
       assert.equal(group?.length, 1)
       const hook = group![0]!.hooks[0]!
@@ -120,7 +125,7 @@ describe('claudeAdapter.plan', () => {
     }
   })
 
-  test('settings file: PostToolUse is guarded by a shell test so Node only spawns when a pause request exists', () => {
+  test('settings file: PostToolUse is guarded by a shell test so Node only spawns when a pause request or a notice exists', () => {
     const home = homes.make()
     claudeAdapter.plan({ slot, home, extraArgs: [] })
     const settings = JSON.parse(readFileSync(join(home, 'claude-settings.json'), 'utf8')) as {
@@ -129,7 +134,7 @@ describe('claudeAdapter.plan', () => {
     const group = settings.hooks.PostToolUse![0]!
     assert.equal(group.matcher, '*')
     const command = group.hooks[0]!.command
-    assert.match(command, /^test -e "\$TETHER_HOME\/slots\/\$TETHER_SLOT_ID\.pause-request\.json" && node ".*claude-hook\.mjs" PostToolUse \|\| true$/)
+    assert.match(command, /^\{ test -e "\$TETHER_HOME\/slots\/\$TETHER_SLOT_ID\.pause-request\.json" \|\| test -e "\$TETHER_HOME\/slots\/\$TETHER_SLOT_ID\.notices\.jsonl"; \} && node ".*claude-hook\.mjs" PostToolUse \|\| true$/)
     assert.ok(!command.includes('\\'))
   })
 

@@ -10,8 +10,10 @@ export function tabMark(s: Pick<SlotState, 'attention' | 'turn'> | undefined): T
 }
 
 /** The dot's tooltip (Portuguese, what the person reads). */
-export function tabMarkTip(s: Pick<SlotState, 'attention' | 'turn'> | undefined): string {
+export function tabMarkTip(s: Pick<SlotState, 'attention' | 'turn' | 'background'> | undefined): string {
   const m = tabMark(s)
   if (m === 'attention') return s?.attention === 'waiting' ? 'Pede sua atenção: esperando você' : 'Pede sua atenção: terminou'
-  return m === 'busy' ? 'Em andamento' : ''
+  if (m !== 'busy') return ''
+  const n = s?.background ?? 0
+  return n > 0 ? `Em andamento: esperando ${n === 1 ? '1 subagente' : `${n} subagentes`} de fundo` : 'Em andamento'
 }

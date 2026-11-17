@@ -39,10 +39,14 @@ export interface DeskSwitchHost {
   menu(id: string, x: number, y: number): void
   /** The "+N" menu: one entry per hidden desk; `pick` switches to it. */
   overflowMenu(entries: { id: string; name: string; attention: number }[], x: number, y: number, pick: (id: string) => void, opener: HTMLElement): void
+  /** The moon at the end of the capsule: one entry per hibernated desk; `wake` wakes it and switches to it. */
+  sleepMenu(entries: { id: string; name: string }[], x: number, y: number, wake: (id: string) => void, opener: HTMLElement): void
   /** Hint shown in a segment's tooltip ("Ctrl+1"). */
   hint(position: number): string
   /** A system desk's pill: enters that desk, or leaves it for the queue desk the person came from. */
   toggleSystem(id: string): void
+  /** The capsule's own options menu (the "⋯" at its end). */
+  optionsMenu(x: number, y: number, opener: HTMLElement): void
   /** Moves a desk to `to`, an index in the FULL queue (hidden desks count). */
   move(id: string, to: number): void
 }
@@ -71,6 +75,8 @@ export class DeskSwitch {
   private readonly segs: HTMLElement
   private readonly more: HTMLButtonElement
   private readonly add: HTMLButtonElement
+  private readonly sleep: HTMLButtonElement
+  private readonly options: HTMLButtonElement
   private readonly measure: HTMLElement
   private readonly bar: HTMLElement
   private readonly sides: readonly HTMLElement[]
@@ -113,10 +119,31 @@ export class DeskSwitch {
     this.add.append(icon('plus'))
     this.add.addEventListener('mousedown', ev => ev.preventDefault())
     this.add.addEventListener('click', ev => { ev.stopPropagation(); this.host.create() })
+    this.sleep = document.createElement('button')
+    this.sleep.type = 'button'
+    this.sleep.className = 'seg desk-sleep'
+    this.sleep.setAttribute('aria-haspopup', 'menu')
+    this.sleep.hidden = true
+    this.sleep.addEventListener('mousedown', ev => ev.preventDefault())
+    this.sleep.addEventListener('click', ev => { ev.stopPropagation(); this.openSleep() })
+    this.options = document.createElement('button')
+    this.options.type = 'button'
+    this.options.className = 'seg desk-options'
+    this.options.title = 'Opções da barra de mesas'
+    this.options.setAttribute('aria-label', 'Opções da barra de mesas')
+    this.options.setAttribute('aria-haspopup', 'menu')
+    this.options.setAttribute('aria-expanded', 'false')
+    this.options.append(icon('dots-three'))
+    this.options.addEventListener('mousedown', ev => ev.preventDefault())
+    this.options.addEventListener('click', ev => {
+      ev.stopPropagation()
+      const r = this.options.getBoundingClientRect()
+      this.host.optionsMenu(r.left, r.bottom + 4, this.options)
+    })
     this.measure = document.createElement('div')
     this.measure.className = 'desk-measure'
     this.measure.setAttribute('aria-hidden', 'true')
-    element.append(this.segs, this.more, this.add, this.measure)
+    element.append(this.segs, this.more, this.add, this.sleep, this.options, this.measure)
     const ro = new ResizeObserver(() => this.schedule())
     ro.observe(bar)
     for (const s of sides) ro.observe(s)
@@ -146,7 +173,8 @@ export class DeskSwitch {
       b.title = `${p.title}${p.hint ? ` (${p.hint})` : ''}${p.active ? ' — clique para voltar à mesa anterior' : ''}`
       let glyph: SVGSVGElement
       try { glyph = icon(p.icon ?? 'cards') } catch { glyph = icon('cards') } // an unknown icon name must not take the capsule down
-      b.append(glyph, document.createTextNode(p.title))
+      const name = document.createElement('span'); name.className = 'pill-name'; name.textContent = p.title
+      b.append(glyph, name)
       const mark = pillMark(p.attention, p.badge)
       if (mark) {
         const el = document.createElement('span')
@@ -165,7 +193,7 @@ export class DeskSwitch {
 
   /** What the capsule shows now (test hook). */
   state(): { visible: string[]; hidden: string[]; active: string } {
-    const order = this.desks.map(d => d.id)
+    const order = this.awake.map(d => d.id)
     return { visible: [...this.visible], hidden: overflowDesks(order, this.visible), active: this.active }
   }
 
@@ -176,8 +204,9 @@ export class DeskSwitch {
 
   /** Measures every segment's natural width, decides who is visible, and paints. */
   private layout(): void {
-    const order = this.desks.map(d => d.id)
-    this.measure.replaceChildren(...this.desks.map((d, i) => this.segment(d, i, true)))
+    const order = this.awake.map(d => d.id)
+    this.paintSleep()
+    this.measure.replaceChildren(...this.awake.map((d, i) => this.segment(d, i, true)))
     const probe = document.createElement('span')
     probe.className = 'seg desk-more'
     probe.textContent = `+${Math.max(order.length, 10)}`
@@ -194,7 +223,7 @@ export class DeskSwitch {
     const shown = new Set(this.visible)
     const before = this.segRects()
     const focused = this.segs.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.desk : undefined
-    this.segs.replaceChildren(...this.desks.flatMap((d, i) => shown.has(d.id) ? [this.segment(d, i, false)] : []))
+    this.segs.replaceChildren(...this.awake.flatMap((d, i) => shown.has(d.id) ? [this.segment(d, i, false)] : []))
     if (focused) this.segs.querySelector<HTMLElement>(`.seg[data-desk="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true })
     this.flip(before)
     const hidden = overflowDesks(order, this.visible)
@@ -272,8 +301,26 @@ export class DeskSwitch {
     return seg
   }
 
+  /** The desks in the capsule: every queue desk but the hibernated ones (the active desk always shows). */
+  private get awake(): readonly DeskInfo[] { return this.desks.filter(d => !d.asleep || d.id === this.active) }
+
+  private get asleep(): readonly DeskInfo[] { return this.desks.filter(d => d.asleep && d.id !== this.active) }
+
+  private paintSleep(): void {
+    const n = this.asleep.length
+    this.sleep.hidden = n === 0
+    this.sleep.replaceChildren(icon('moon'), document.createTextNode(String(n)))
+    this.sleep.title = n === 1 ? '1 mesa hibernada' : `${n} mesas hibernadas`
+    this.sleep.setAttribute('aria-label', this.sleep.title)
+  }
+
+  private openSleep(): void {
+    const r = this.sleep.getBoundingClientRect()
+    this.host.sleepMenu(this.asleep.map(d => ({ id: d.id, name: d.name })), r.left, r.bottom + 4, id => this.host.switchTo(id), this.sleep)
+  }
+
   private openOverflow(): void {
-    const order = this.desks.map(d => d.id)
+    const order = this.awake.map(d => d.id)
     const hidden = overflowDesks(order, this.visible)
     const r = this.more.getBoundingClientRect()
     const entries = hidden.map(id => { const a = this.attention(id); return { id, name: this.desks.find(d => d.id === id)?.name ?? id, attention: a.done + a.waiting } })

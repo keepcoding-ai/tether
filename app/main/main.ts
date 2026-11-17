@@ -184,6 +184,9 @@ function connectDaemon(): Promise<void> {
       client.on('removed', slotId => { slotStates.delete(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
+      client.on('proc', proc => win?.webContents.send('tether:event', { t: 'proc', proc }))
+      client.on('proc-removed', name => win?.webContents.send('tether:event', { t: 'proc-removed', name }))
+      client.on('proc-data', (name, data) => win?.webContents.send('tether:event', { t: 'proc-data', name, data }))
       client.on('close', () => {
         if (daemon !== client) return
         daemon = undefined

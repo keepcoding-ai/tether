@@ -34,6 +34,10 @@ A semana de uso real (PRD §8) é do usuário.
 
 ## Decisões para validar
 
+- 11/11, emblemas nas guias (F14 simplificado; prévia `docs/tab-emblems-preview.html`, aprovada pelo Guga com "pode ir, prefiro ver e pedir melhoria"):
+  - Decididos pelo Guga: um emblema por guia; preso à guia (fechar perde); emblemas padrão + editor (nome, 12 cores, ícone Phosphor); seletor por categorias com busca pt/en.
+  - Decididos pela coordenação: os 6 padrão (Cliente, Pessoal, Estudo, Revisar, Deploy, Bug); padrão se edita, restaura e oculta, nunca apaga; a biblioteca mora no `layout.json` (`emblems`, campo aditivo); aplicar é "Emblema…" no menu de toda guia (o menu não tem submenu); o chip fica logo após o ícone da guia; 219 ícones em 9 categorias (`app/emblem-icons-derive.mjs`, `npm run emblems:derive`).
+
 - 05–06/11, F6–F10 (frente mind/effort/on/tether, seção "Objetivo em curso"):
   - **F9:** as 13 decisões do estudo (`mind/effort/on/tether/f9-estudo.md` §7.2) foram aprovadas pela coordenação, porque são de engenharia. Pasta `extensions/`, ativação ao abrir, desligar só depois de "Reiniciar o app", nota e prévias numa extensão só, terminal no núcleo, configurações em `extensions.<id>`, barramento `ext:<id>:<canal>`, menu ≡ gerado pelo registro, layout v3 e versão semver no manifesto.
   - **F6 → F11:** o esmaecer usa a cor do fundo (`--desk-bg`) e nunca escurece para o preto. Tem três níveis (0,20 / 0,32 / 0,45), com o médio como padrão, porque o contraste depende do monitor.
@@ -1152,3 +1156,47 @@ Os "+" de borda passaram a existir só nesse modo.
 8. Pausa: azul = em curso, verde = parou, cinza = fila.
 9. `done` e `waiting` viram laranja sólido na guia.
 (Observado na prova: haiku obedeceu nas 3 execuções, com frase e nota úteis; um agente que ignore o pedido cai em "parou sem nota", caminho coberto só por unitários.)
+
+## Skills do tether + use-todo (2026-11-10, branch feat/tether-skills)
+
+**O que entrou.**
+- Conceito "skill do tether": `extensions/skills/library/<nome>/SKILL.md`, escrita uma vez, sem depender de agente. A extensão `skills` (só daemon) registra um middleware de lançamento que entrega a biblioteca a todo agente de IA (nunca ao shell) pelo `AgentContribution.skills` do próprio agente (`src/agents/skills.ts`). Nada cai em `~/.claude`, `~/.soul` ou config global: cada adaptador grava o seu formato em `<TETHER_HOME>/skills/<agente>/` (staging + rename, reescrito só quando a biblioteca muda) e entrega por flag/env no lançamento.
+  - Claude Code: plugin `tether` (`.claude-plugin/plugin.json` + `skills/<nome>/SKILL.md`) por `--plugin-dir`, no início da linha de comando (o `--mcp-config` variádico vem depois). Comando: `/tether:use-todo`.
+  - soul-cli: pasta compartilhada (`<dir>/skills/<nome>/SKILL.md`) por `SOUL_CLI_SHARED_FOLDERS` (o mesmo que `-S`, somado ao que o env já tem). Comando: `/use-todo`. O soul não tem `--plugin-dir`; `--add-dir` não carrega skills numa sessão soul.
+  - Reserva para agente sem skills: `systemPromptSkills(<flag>)` anexa o texto das skills pela flag de prompt de sistema. Agente novo só escreve o seu `AgentSkills`.
+- Skill `use-todo` reescrita: 3 caixas (🚨 PRECISO DE VOCÊ, Plano, Pendências suas), guia do agente, tabela de chamadas (sem argumento / `--focus` / `--pad` / `<arquivo>`), sem frente/ronda/.gitignore.
+- `tether focus <nota> --pad` com a nota aberta em outro lugar (mesa, outra prancheta, gaveta) agora MOVE a nota para a prancheta (antes só a trazia para a frente), pelo mesmo `runMove` do "Mover…"; um painel vazio da prancheta é descartado. Vale para CLI e link (mesmo caminho).
+
+**Provas.** Unitário `agents.skills` 6/6; E2E novo `app.pad-move` 1/1 (nota na mesa → `--pad` → está na prancheta do painel, saiu da mesa, uma só). Claude real com o plano do daemon lista `tether:use-todo` e executa `/tether:use-todo <arquivo>`; soul real lista `use-todo` (e não lista no controle sem a variável) e executa `/use-todo <arquivo>`. `npm run check`: 1843 testes, 11 falhas, todas anteriores ao branch (as 10 conhecidas + `extension indexes`, que falha igual no develop por `extensions/browser/private-dir.ts`). Evidências em `D:/atrium/.tmp/use-todo-proof/`.
+
+**Decisões para validar.**
+1. soul pela variável `SOUL_CLI_SHARED_FOLDERS` e não por `-S`: não colide com os args de comando do soul (`node <cli>`/`bash <script>`); um `-S` explícito no perfil vence a variável (aí o soul fica sem as skills do tether).
+2. A extensão `skills` não tem chave de liga/desliga própria além de desligar a extensão.
+
+## Ronda do tether (2026-11-10, branch feat/tether-ronda)
+
+**O que entrou.**
+- **Relógio no tetherd, uma ronda por painel** (`src/daemon/ronda.ts`, `server.ts`): guardada em `<home>/slots/<id>.ronda.json` (sobrevive ao reinício do agente e do daemon; `forget` apaga). Um timer por slot até `nextAt`; na hora, se o agente pode receber, o tether digita `RONDA_DEFAULT_NUDGE` + o `nudge` montado e, 130 ms depois, Enter em pedaço separado (o mesmo caminho do "Retomar" da pausa). Senão a ronda fica `due` e tenta de novo a cada 2 s, e também a cada `broadcastState` (sai assim que o agente fica ocioso).
+- **Quem pode receber** (`rondaBlocker`): agente (nunca shell), processo vivo e `running`, sem reinício nem parada em curso, **sessão desta execução registrada** (`reportedThisRun`: sem isso o `running` pode vir do fallback com o agente ainda num menu, e o texto escolheria uma opção — visto na prova com o seletor de perfil do soul), `turn` ocioso (Claude: UserPromptSubmit→Stop; um cartão de permissão mantém o turno ocupado; soul: eventos `turn` ou a heurística), ninguém digitou no painel há 10 s, e o slot não está numa pausa viva.
+- **Protocolo** (`DAEMON_VERSION` 0.3.5): `ronda-set` (intervalo; `nudge`/`criterion`: ausente mantém, `""` limpa; resposta `created|updated|unchanged`), `ronda-get`, `ronda-off` (`force`; com critério e sem `force` → erro `ronda-criterion` cuja mensagem é o estímulo). `SlotState.ronda` (+ `due`).
+- **CLI** `tether ronda [intervalo] [--nudge] [--criterion] | --status [--json] | --off [--force]` (`src/cli/ronda.ts`), painel por `TETHER_SLOT_ID` ou `--slot`. O estímulo sai no stdout com código 3. Intervalo em `m`/`h` (1m–24h); segundos só com `TETHER_RONDA_TEST_SECONDS=1` no ambiente do tetherd.
+- **Skill** `extensions/skills/library/ronda/SKILL.md` (`/tether:ronda`, soul `/ronda`): instrução livre é de montagem (cutucão, critério, comportamento), estimula ligar sozinho em trabalho longo. A `use-todo` já tinha o `argument-hint` pedido.
+- **Interface**: chip "⏱ Ronda 20m" na barra de status (tooltip com intervalo, próximo cutucão, extra e critério; hover "· desligar"; clique desliga com `force`, sem negociação; ícone pulsa quando `due`) e marca ⏱ na aba (`app/renderer/ronda-rules.ts`).
+
+**Provas.** Unitário novo `daemon.ronda` 5/5 (modelo; relógio com agente falso que ecoa: nada antes da sessão registrada, cutucão no tempo, nada com turno ocupado e cutucão logo ao ficar ocioso, mantida com o agente parado e cutucando a nova execução, volta do disco após reinício do daemon; `--off` com critério/`--force`). `npm run check`: 1848 testes, só as falhas conhecidas (web-bridge, índices de extensão, perfis). Prova real em tetherd isolado (`TETHER_HOME`/`TETHER_PIPE` próprios), evidências em `D:/atrium/.tmp/ronda-proof/`: Claude haiku (`claude.log`) cutucão 1 a 29,9 s de uma ronda de 30 s, ronda venceu durante uma espera de 48 s sem nada digitado, cutucão 2 0,3 s depois de ficar ocioso, `--off` → estímulo (código 3), `--off --force` desliga; soul (`soul.log`, `soul-ronda-daemon.log`, `soul-not-ready.log`): segurou o cutucão com o soul no seletor de perfil, cutucou após a sessão abrir, o soul leu a skill, rodou `--off`, recebeu o estímulo, cumpriu o critério e terminou com `--off --force`; com ronda de 5 s o daemon esperou cada turno e cutucou logo ao fim (o soul respondeu RECEBI). Capturas `ui-ronda-on.png`, `ui-ronda-hover.png`, `ui-ronda-off-after-click.png`.
+
+**Decisões para validar.** (1) Tela do agente num menu: só cutuca com sessão registrada nesta execução. (2) 10 s sem digitação do usuário antes de cutucar. (3) Clique no chip desliga mesmo com critério (o critério é conversa do agente, não do usuário). (4) A skill global antiga `~/.claude/skills/ronda` continua lá (não apagada) e o Claude a vê junto com `/tether:ronda`: na prova o Claude chegou a procurar `CronList`. Aposentá-la é decisão do Guga.
+
+## MCP dentro do tetherd: zero processo por sessão (2026-11-11, branch feat/mcp-in-process)
+
+O navegador e o bridge deixam de custar processos por sessão de agente (eram 3 node + 2 conhost por sessão; medido em 11/11 com 15 sessões: 45 node + 30 conhost, ~2,7 GB). Para agentes com `mcp.http` (Claude), o tetherd importa os bundles vendorizados como biblioteca e cria UM servidor por slot dentro do próprio processo, atrás da rota HTTP por slot (`src/daemon/mcp-http.ts`). O soul segue no stdio.
+
+- **Sem filho e sem desligamento por inatividade.** O servidor do slot vive enquanto a chave do slot vale; um segundo `initialize` abre outra sessão no mesmo servidor. O que o servidor manda por conta própria (progresso, elicitation) vai ao stream do pedido, senão ao stream GET, senão espera por ele; keep-alive nos streams.
+- **Estado junto da guia.** Os ids das abas do agente (`t1`, `t2`...) e a aba ativa ficam em `<home>/browser/agent-tabs.json`, por id de guia do tether (`Tether.tabHandle` / `Tether.setActiveTab` no porteiro); somem quando a guia é fechada. As autorizações de upload do bridge ficam em `<home>/web-bridge/grants/<slot>.json` (pasta só do dono) e somem quando o slot é esquecido (evento novo `removed`).
+- **Vendor.** tether-browser 0.2.0 e Tether Bridge 0.2.0 (atrium `feat/mcp-in-process`); os dois bundles são conferidos pelo manifesto antes de entrarem no daemon.
+- **Prova no app real** (home, pipe e porta do bridge próprios; Claude Code real, haiku): 3 guias abertas pelas tools, autorização de upload dada por elicitation, `WebAskUser` com espera de 55 s e devolução, tetherd morto por PID e sessão retomada: mesmas `t1..t3`, guia nova `t4`, autorização presente. Árvore do agente: só `claude.exe` (0 node, 0 conhost de MCP).
+
+### Decisões para validar
+- A ociosidade de 10 min da sessão do pacote do navegador fica desligada no tetherd (`sessionIdleMs: Infinity`): o servidor vive com o slot.
+- O log do servidor do navegador dentro do daemon leva só a linha de conexão (falhas de tool citam endereços e ficam fora do log).
+- A extensão do bridge sobe para 0.2.0: o painel do bridge vai pedir "Recarregar" no Chrome.

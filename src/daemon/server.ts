@@ -2,8 +2,9 @@
 // watches <home>/slots/*.jsonl so every client sees the current binding. Speaks protocol.ts over a named
 // pipe / unix socket (NDJSON). "Running" means: this process holds the PTY and it has not exited.
 import { withTabEnv } from '../core/tab-env.ts'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
+import { join } from 'node:path'
 import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports } from './attention.ts'
 import { memoryChanged, sampleProcessTable, treeBytes } from './memory.ts'
 import '../agents/load.ts'
@@ -14,6 +15,9 @@ import type { AgentName, Binding, RunInfo, SlotMeta } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { canonicalDir, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
+import { RONDA_MCP_SERVER as RONDA_SERVER_NAME, RondaChannel, showsConfirm, type RondaChannelAgent } from './ronda-channel.ts'
+import type { ChannelConfirm } from '../agents/registry.ts'
+import { applyChange, buildChannelText, clearRonda, criterionStimulus, ENV_RONDA_TEST_SECONDS, flatText, readRonda, RondaError, writeRonda, type Ronda } from './ronda.ts'
 import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
 import { clearRun, createSlot, currentBinding, listSlots, newSlotId, readEvents, readRun, readSlot, removeSlot, SLOT_ID_RE, writeRun, writeSlotMeta } from '../core/store.ts'
@@ -33,8 +37,12 @@ import {
 } from './protocol.ts'
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
+import { HostClient } from '../procd/client.ts'
+import { procdPipePath } from '../procd/protocol.ts'
+import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
+import { ProcError, WAIT_MAX_MS, type ProcAuthor, type ProcBy } from './procs.ts'
 
-export const DAEMON_VERSION = '0.3.4'
+export const DAEMON_VERSION = '0.3.7'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
@@ -52,9 +60,17 @@ export function defaultAgentArgs(agent: AgentName, env: NodeJS.ProcessEnv = proc
   return raw ? raw.split(/\s+/) : []
 }
 const WATCH_DEBOUNCE_MS = 100
+/** A subagent marker older than this no longer counts (its SubagentStop was lost: a crash, a kill). */
+const BG_MAX_AGE_MS = 6 * 60 * 60_000
 /** Pause resume: slots typed into at once, and the gap between the text and the Enter (else the TUI sees a paste). */
 const PAUSE_RESUME_PARALLEL = 3
 const PAUSE_RESUME_ENTER_DELAY_MS = 130
+/** A due ronda re-checks a busy agent (or one whose channel is not connected) this often. */
+const RONDA_RETRY_MS = 2_000
+/** Screen kept while looking for the channel's start dialog (chars of raw output). */
+const CONFIRM_SCREEN_MAX = 16_000
+/** Gap between seeing the dialog and answering it (the TUI must have finished drawing and be reading keys). */
+const CONFIRM_DELAY_MS = 400
 const ENTER = String.fromCharCode(13)
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 const DEFAULT_COLS = 120
@@ -71,7 +87,7 @@ export interface DaemonOptions {
   /** Daemon extensions' launch middlewares (TetherDaemon.launch.use), applied in order to every agent/shell plan. */
   transformPlan?: (plan: LaunchPlan, meta: SlotMeta) => LaunchPlan
   /** Slot lifecycle for daemon extensions (TetherDaemon.onSlot). */
-  onSlot?: (kind: 'spawned' | 'exited' | 'bound', slot: SlotState) => void
+  onSlot?: (kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: SlotState) => void
   /** Overrides READY_FALLBACK_MS (tests). */
   readyFallbackMs?: number
   /** How often a running Claude slot's title is polled from its transcript (tests shorten it). */
@@ -82,6 +98,21 @@ export interface DaemonOptions {
   killWaitCapMs?: number
   /** How often live slots' memory is sampled (default MEMORY_INTERVAL_MS); 0 turns the sampler off (tests). */
   memoryIntervalMs?: number
+  /** Ronda intervals in seconds are accepted (tests); default: TETHER_RONDA_TEST_SECONDS=1 in the daemon's env. */
+  rondaAllowSeconds?: boolean
+  /** How often a due ronda re-checks a busy agent (default RONDA_RETRY_MS). */
+  rondaRetryMs?: number
+  /**
+   * How the ronda's channel is offered to an agent (undefined = it has none). Default: the agent's contribution (`channel`
+   * with `mcp.http`), except for agents whose adapter is overridden (test fakes speak no MCP unless the test says so here).
+   */
+  channelOf?: (agent: AgentName) => RondaChannelAgent | undefined
+  /** tether-procd's pipe (default: procdPipePath of this daemon's pipe). */
+  procdPipe?: string
+  /** Connects to the process host (tests: one running in process, never launched). Default: HostClient, launching tether-procd detached. */
+  connectProcHost?: (launch: boolean) => Promise<HostClient>
+  /** How long a lost host connection is retried before its processes count as lost (default HOST_RECONNECT_MS). */
+  procHostReconnectMs?: number
 }
 
 export interface Daemon {
@@ -93,6 +124,29 @@ export interface Daemon {
   listening(): boolean
   /** Kills every PTY tree, drops the clients and closes the server. */
   close(): Promise<void>
+}
+
+/** A reason as typed, flattened to one line; undefined when empty. */
+function optText(v: unknown): string | undefined {
+  const t = typeof v === 'string' ? flatText(v) : ''
+  return t || undefined
+}
+
+/** The guard part of a stop / restart / forget: `waitMs` within 0..5 min, `force` a reason that is not empty. */
+function guardOf(req: { waitMs?: unknown; force?: unknown }): GuardOptions {
+  const g: GuardOptions = {}
+  if (req.waitMs !== undefined) {
+    if (typeof req.waitMs !== 'number' || !Number.isFinite(req.waitMs) || req.waitMs < 0) throw new RequestError('bad-request', 'waitMs inválido')
+    if (req.waitMs > WAIT_MAX_MS) throw new RequestError('bad-request', 'espera longa demais: o máximo é 5m')
+    g.waitMs = req.waitMs
+  }
+  if (req.force !== undefined) {
+    const reason = optText(req.force)
+    if (!reason) throw new RequestError('bad-request', 'forçar pede um motivo: --force "motivo" (ele chega a quem usa)')
+    g.force = reason
+  }
+  if (g.force !== undefined && g.waitMs !== undefined) throw new RequestError('bad-request', 'escolha esperar (--wait) ou forçar (--force), não os dois')
+  return g
 }
 
 class RequestError extends Error {
@@ -131,8 +185,16 @@ interface Slot {
   attentionTimer?: NodeJS.Timeout
   /** ts of the last hook report applied (the file is rewritten per report; older ones are ignored). */
   attentionReportTs?: string
+  /** The wake fallback after the last background subagent ended (see AttentionState.wakeDueAt). */
+  wakeTimer?: NodeJS.Timeout
   /** How many `turn` lines of the events file were already applied (the file is append-only and spans runs). */
   turnLinesSeen?: number
+  /** The slot's ronda (persisted in <home>/slots/<id>.ronda.json); `rondaDue`: its time came and it waits for an idle agent. */
+  ronda?: Ronda
+  rondaDue?: boolean
+  rondaTimer?: NodeJS.Timeout
+  /** Looking for the channel's start dialog: until it is answered once or the run reports its start. */
+  confirmWatch?: { spec: ChannelConfirm; screen: string }
   attached: Set<Client>
   cols: number
   rows: number
@@ -142,6 +204,10 @@ interface Client {
   socket: Socket
   parser: LineParser
   attached: Set<string>
+  /** Background processes whose output this client watches (proc-attach). */
+  procsWatched: Set<string>
+  /** From the hello: 'app' | 'cli' | 'test'. */
+  kind?: string
 }
 
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
@@ -164,12 +230,17 @@ class DaemonImpl implements Daemon {
   /** Test overrides; everything else comes from the agent registry at the time of use. */
   private readonly adapterOverrides: Partial<Record<AgentName, AgentAdapter>>
   private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta) => LaunchPlan) | undefined
-  private readonly onSlot: ((kind: 'spawned' | 'exited' | 'bound', slot: SlotState) => void) | undefined
+  private readonly onSlot: ((kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: SlotState) => void) | undefined
   private readonly readyFallbackMs: number
   private readonly minAgentAgeMs: number
   private readonly killWaitCapMs: number
   private readonly titlePollMs: number | undefined
   private readonly memoryIntervalMs: number
+  private readonly rondaAllowSeconds: boolean
+  private readonly rondaRetryMs: number
+  private readonly channelOf: (agent: AgentName) => RondaChannelAgent | undefined
+  /** The ronda's channel: the daemon's own MCP server, one route per slot. */
+  private readonly rondaChannel: RondaChannel
   private memoryTimer: NodeJS.Timeout | undefined
   private memorySampling = false
   private memoryKick: NodeJS.Timeout | undefined
@@ -182,6 +253,10 @@ class DaemonImpl implements Daemon {
   private batch: PauseBatch | undefined
   /** This process' OS start time: goes into every run file so a later tetherd can tell this one is gone. */
   private startedAt = new Date().toISOString()
+  /** Background processes (tether proc): the model and the link to tether-procd. */
+  private readonly procs: ProcManager
+  /** Who watches each background process' output (one host attachment per name, shared). */
+  private readonly procWatchers = new Map<string, Set<Client>>()
 
   constructor(opts: DaemonOptions) {
     this.home = opts.home
@@ -196,8 +271,68 @@ class DaemonImpl implements Daemon {
     this.killWaitCapMs = opts.killWaitCapMs ?? KILL_WAIT_CAP_MS
     this.titlePollMs = opts.titlePollMs
     this.memoryIntervalMs = opts.memoryIntervalMs ?? MEMORY_INTERVAL_MS
+    this.rondaAllowSeconds = opts.rondaAllowSeconds ?? process.env[ENV_RONDA_TEST_SECONDS] === '1'
+    this.rondaRetryMs = opts.rondaRetryMs ?? RONDA_RETRY_MS
+    this.channelOf = opts.channelOf ?? ((agent) => {
+      if (this.adapterOverrides[agent]) return undefined
+      const c = agentRegistry.get(agent)
+      if (!c?.channel || !c.mcp?.http) return undefined
+      return { args: c.channel(RONDA_SERVER_NAME), inject: c.mcp.inject, ...(c.channelConfirm ? { confirm: c.channelConfirm } : {}) }
+    })
+    this.rondaChannel = new RondaChannel({
+      home: opts.home,
+      log: this.log,
+      onChange: (slotId) => {
+        const slot = this.slotMap.get(slotId)
+        if (!slot) return
+        this.log(`slot ${slotId}: ronda channel ${this.rondaChannel.connected(slotId) ? 'listening' : 'closed'}`)
+        this.broadcastState(slot)
+      },
+    })
     this.profileStore = new ProfileStore(opts.home)
     this.server = createServer((socket) => this.onConnection(socket))
+    const procdPipe = opts.procdPipe ?? procdPipePath(opts.pipe, opts.home)
+    this.procs = new ProcManager({
+      home: opts.home,
+      log: this.log,
+      broadcast: (msg) => this.broadcast(msg),
+      author: (by, client) => this.procAuthor(by, client),
+      connectHost: opts.connectProcHost ?? ((launch) => launch
+        ? HostClient.ensure({ home: opts.home, pipe: procdPipe, node: process.env.TETHER_NODE?.trim() || process.execPath, env: process.env, log: this.log })
+        : HostClient.open(procdPipe)),
+      ...(opts.procHostReconnectMs !== undefined ? { reconnectMs: opts.procHostReconnectMs } : {}),
+      allowSeconds: this.rondaAllowSeconds,
+      slotExists: (slotId) => this.slotMap.has(slotId),
+      protectedPids: () => [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit).map((s) => s.pty!.pid),
+      sampleSoon: () => this.kickMemory(),
+      onData: (name, data) => { for (const c of this.procWatchers.get(name) ?? []) this.send(c, { t: 'proc-data', name, data }) },
+    })
+  }
+
+  /** The portrait of whoever asks for a process act: their slot when it is one of ours, else external (or the app). */
+  private procAuthor(by: ProcBy | undefined, client: string | undefined): ProcAuthor {
+    const label = typeof by?.as === 'string' && by.as.trim() ? by.as.trim() : undefined
+    const user = typeof by?.user === 'string' && by.user ? by.user : osUser()
+    if (!by && client === 'app') return { kind: 'app', ...(user ? { user } : {}) }
+    const slotId = typeof by?.slotId === 'string' && by.slotId ? by.slotId : undefined
+    const slot = slotId ? this.slotMap.get(slotId) : undefined
+    const a: ProcAuthor = slot ? { kind: slot.meta.agent === 'shell' ? 'shell' : 'agent', slotId: slot.meta.slotId } : { kind: 'external', ...(slotId ? { slotId } : {}) }
+    if (slot?.meta.name) a.name = slot.meta.name
+    if (slot && slot.meta.agent !== 'shell') a.agent = slot.meta.agent
+    if (slot?.binding?.sessionId) a.sessionId = slot.binding.sessionId
+    if (user) a.user = user
+    if (label) a.label = label
+    return a
+  }
+
+  /** Runs a process act, turning the model's refusals into replies. */
+  private async procAct<T>(fn: () => Promise<T> | T): Promise<T> {
+    try {
+      return await fn()
+    } catch (e) {
+      if (e instanceof ProcError) throw new RequestError(e.code, e.message)
+      throw e
+    }
   }
 
   async listen(): Promise<void> {
@@ -208,6 +343,7 @@ class DaemonImpl implements Daemon {
     if (profiles.problem) this.log(`profiles: ${profiles.problem}`)
     for (const meta of listSlots(this.home)) this.load(meta)
     this.loadPause()
+    await this.procs.init()
     this.startWatching()
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
     await new Promise<void>((resolve, reject) => {
@@ -218,6 +354,9 @@ class DaemonImpl implements Daemon {
       })
     })
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
+    // Only the owner of the pipe serves the channel (a loser of the race never gets here).
+    try { this.log(`ronda channel served on 127.0.0.1:${await this.rondaChannel.listen()}`) }
+    catch (e) { this.log(`ronda channel not served (${(e as Error).message}); the ronda is unavailable this run`) }
     if (this.memoryIntervalMs > 0) {
       this.memoryTimer = setInterval(() => void this.sampleMemory(), this.memoryIntervalMs)
       this.memoryTimer.unref()
@@ -272,10 +411,12 @@ class DaemonImpl implements Daemon {
     if (unsafe) s.unsafe = true
     if (slot.restarting) s.restarting = true
     if (slot.stopping) s.stopping = true
+    if (this.adapterOf(slot.meta.agent)?.resumes && isAlive(slot) && this.reportedThisRun(slot) && !slot.restarting && !slot.stopping) s.canRestart = true
     if (slot.attention.value) s.attention = slot.attention.value
     if (slot.attention.turn === 'busy') {
       s.turn = 'busy'
       if (slot.attention.busySince) s.busySince = slot.attention.busySince
+      if (slot.attention.background > 0) s.background = slot.attention.background
     }
     else {
       const idleSince = slot.attention.idleSince ?? slot.spawnedAt ?? this.lastEventTs(slot)
@@ -285,6 +426,7 @@ class DaemonImpl implements Daemon {
       const endedAt = slot.meta.endedAt ?? this.lastEventTs(slot)
       if (endedAt) s.endedAt = endedAt
     } else if (slot.memoryMB !== undefined) s.memoryMB = slot.memoryMB
+    if (slot.ronda) s.ronda = { ...slot.ronda, ...(slot.rondaDue ? { due: true } : {}), channel: this.rondaChannel.connected(slot.meta.slotId) ? 'listening' : 'none' }
     return s
   }
 
@@ -295,14 +437,17 @@ class DaemonImpl implements Daemon {
     this.memoryKick.unref()
   }
 
-  /** One process-table query for every live slot; broadcasts the slots whose memory moved enough. Never overlaps itself. */
+  /** One process-table query for every live slot and background process; broadcasts those whose memory moved enough. Never overlaps itself. */
   private async sampleMemory(): Promise<void> {
     if (this.memorySampling || this.closing) return
     const live = [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit)
-    if (!live.length) return
+    const procRoots = this.procs.liveRoots()
+    if (!live.length && !procRoots.length) return
     this.memorySampling = true
     try {
-      const sums = treeBytes(await sampleProcessTable(), live.map((s) => s.pty!.pid))
+      await this.procs.observeExternals()
+      const sums = treeBytes(await sampleProcessTable(), [...live.map((s) => s.pty!.pid), ...procRoots.map((r) => r.pid)])
+      this.procs.setMemory(sums, memoryChanged)
       for (const slot of live) {
         if (!slot.pty || slot.pty.exit) continue
         const bytes = sums.get(slot.pty.pid)
@@ -371,7 +516,7 @@ class DaemonImpl implements Daemon {
           throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa. Troque o perfil na próxima abertura, ou encerre o slot e escolha a sessão ao iniciar`)
         }
       }
-      this.log(`slot ${slot.meta.slotId}: restarting pid ${pty.pid} with profile ${slot.meta.profileId ?? '(none)'}`)
+      this.log(`slot ${slot.meta.slotId}: restarting pid ${pty.pid} (profile ${slot.meta.profileId ?? '(none)'})`)
       await this.stopSlot(slot)
       await this.startSlot(slot, slot.meta.agent === 'shell' ? undefined : 'resume')
     } finally {
@@ -440,12 +585,16 @@ class DaemonImpl implements Daemon {
     this.closing = true
     if (this.memoryTimer) clearInterval(this.memoryTimer)
     if (this.memoryKick) clearTimeout(this.memoryKick)
+    for (const s of this.slotMap.values()) if (s.rondaTimer) clearTimeout(s.rondaTimer)
     this.queue.length = 0
+    // Background processes live in tether-procd and outlive this daemon: only the connection to it closes.
+    this.procs.close()
     // Every slot is stopped in parallel (each waits for its own agent to be old enough) while the event files
     // are still watched: a young Claude's start report must be seen to let its kill go ahead.
     await Promise.all([...this.slotMap.values()].map((s) => this.stopSlot(s)))
     this.watcher?.close()
     for (const t of this.pending.values()) clearTimeout(t)
+    await this.rondaChannel.close()
     for (const c of this.clients) c.socket.destroy()
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
     this.log('closed')
@@ -463,7 +612,7 @@ class DaemonImpl implements Daemon {
     return { code: 'agent-unavailable', message: `o agente ${meta.agent} não está disponível (extensão desativada ou ausente); o slot continua guardado` }
   }
 
-  private emitSlot(kind: 'spawned' | 'exited' | 'bound', slot: Slot): void {
+  private emitSlot(kind: 'spawned' | 'exited' | 'bound' | 'removed', slot: Slot): void {
     if (!this.onSlot) return
     try { this.onSlot(kind, this.stateOf(slot)) } catch (e) { this.log(`onSlot listener failed: ${(e as Error).message}`) }
   }
@@ -482,6 +631,8 @@ class DaemonImpl implements Daemon {
     }
     this.slotMap.set(meta.slotId, slot)
     this.refreshBinding(slot, false)
+    const ronda = readRonda(this.home, meta.slotId)
+    if (ronda) { slot.ronda = ronda; this.armRonda(slot) }
     return slot
   }
 
@@ -640,8 +791,14 @@ class DaemonImpl implements Daemon {
     } catch (e) {
       throw this.fail(slot, e instanceof RequestError ? e.code : 'spawn-failed', (e as Error).message)
     }
+    // The ronda's channel, offered at every launch of an agent that takes one (a new key per run).
+    const channel = meta.agent === 'shell' ? undefined : this.channelOf(meta.agent)
+    const offer = this.rondaChannel.prepare(plan, meta.slotId, channel)
+    plan = offer.plan
+    slot.confirmWatch = offer.offered && channel?.confirm ? { spec: channel.confirm, screen: '' } : undefined
     slot.scrollback.clear()
     slot.attention.reset()
+    this.clearBackground(meta.slotId)
     slot.error = undefined
     slot.memoryMB = undefined
     if (meta.endedAt) {
@@ -656,6 +813,7 @@ class DaemonImpl implements Daemon {
         rows: slot.rows,
         onData: (data) => {
           slot.scrollback.push(data)
+          if (slot.confirmWatch) this.watchConfirm(slot, data)
           if (slot.attention.output(data, Date.now())) this.broadcastState(slot)
           this.scheduleAttention(slot)
           for (const c of slot.attached) this.send(c, { t: 'data', slotId: meta.slotId, data })
@@ -663,11 +821,15 @@ class DaemonImpl implements Daemon {
         onExit: (exit) => {
           this.log(`slot ${meta.slotId}: exited (code ${exit.exitCode})`)
           this.forgetRun(meta.slotId)
+          this.rondaChannel.revoke(meta.slotId)
+          slot.confirmWatch = undefined
           if (slot.readyTimer) clearTimeout(slot.readyTimer)
           slot.readyTimer = undefined
           slot.status = 'exited'
           slot.memoryMB = undefined
           slot.attention.reset()
+          this.clearBackground(meta.slotId)
+          if (slot.wakeTimer) { clearTimeout(slot.wakeTimer); slot.wakeTimer = undefined }
           this.markEnded(slot)
           if (slot.attentionTimer) clearTimeout(slot.attentionTimer)
           this.unwatchTitle(slot)
@@ -680,6 +842,9 @@ class DaemonImpl implements Daemon {
           }
           this.broadcastState(slot)
           this.emitSlot('exited', slot)
+          // The panel's agent left: its process uses end. A restart in place (restartSlot, set-profile) and tetherd
+          // closing are not leaving.
+          if (!slot.restarting && !this.closing) this.procs.slotGone(meta.slotId)
           this.pump()
         },
       })
@@ -722,6 +887,25 @@ class DaemonImpl implements Daemon {
     }
     plan = withTabEnv(plan, meta)
     return this.transformPlan ? this.transformPlan(plan, meta) : plan
+  }
+
+  /**
+   * The channel's start dialog (Claude Code asks to confirm `--dangerously-load-development-channels`): answered once, only
+   * while this run has not reported its start, only when the screen shows exactly the dialog the agent described. Anything
+   * else gets no key: the slot shows what the agent shows.
+   */
+  private watchConfirm(slot: Slot, data: string): void {
+    const w = slot.confirmWatch!
+    if (this.reportedThisRun(slot)) { slot.confirmWatch = undefined; return }
+    w.screen = (w.screen + data).slice(-CONFIRM_SCREEN_MAX)
+    if (!showsConfirm(w.screen, w.spec)) return
+    slot.confirmWatch = undefined
+    const pty = slot.pty
+    this.log(`slot ${slot.meta.slotId}: channel confirmation recognized; answering`)
+    setTimeout(() => {
+      if (slot.pty !== pty || !isAlive(slot) || this.reportedThisRun(slot)) return
+      pty?.write(w.spec.keys)
+    }, CONFIRM_DELAY_MS).unref()
   }
 
   /** A start event of the agent arrived at/after the last spawn (the binding describes what this run opened). */
@@ -806,7 +990,7 @@ class DaemonImpl implements Daemon {
   // ---- connections ---------------------------------------------------------------------------
 
   private onConnection(socket: Socket): void {
-    const client: Client = { socket, parser: new LineParser(), attached: new Set() }
+    const client: Client = { socket, parser: new LineParser(), attached: new Set(), procsWatched: new Set() }
     this.clients.add(client)
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
@@ -816,7 +1000,17 @@ class DaemonImpl implements Daemon {
     socket.on('close', () => {
       this.clients.delete(client)
       for (const id of client.attached) this.slotMap.get(id)?.attached.delete(client)
+      for (const name of client.procsWatched) this.unwatchProc(client, name)
     })
+  }
+
+  /** The client no longer watches the process' output; the host attachment goes with the last watcher. */
+  private unwatchProc(client: Client, name: string): void {
+    client.procsWatched.delete(name)
+    const set = this.procWatchers.get(name)
+    if (!set?.delete(client) || set.size) return
+    this.procWatchers.delete(name)
+    this.procs.detachOutput(name)
   }
 
   private send(client: Client, msg: DaemonMessage): void {
@@ -830,6 +1024,8 @@ class DaemonImpl implements Daemon {
 
   private broadcastState(slot: Slot): void {
     this.broadcast({ t: 'state', slot: this.stateOf(slot) })
+    // A due ronda goes as soon as the agent turns idle, not at the next retry.
+    if (slot.rondaDue && this.rondaBlocker(slot) === undefined) setImmediate(() => this.rondaTick(slot))
   }
 
   private async onLine(client: Client, value: Record<string, unknown> | undefined, raw: string): Promise<void> {
@@ -863,6 +1059,7 @@ class DaemonImpl implements Daemon {
     const { id } = req
     switch (req.t) {
       case 'hello':
+        if (typeof req.client === 'string') client.kind = req.client
         return { t: 'ok', id, hello: { v: PROTOCOL_VERSION, pid: this.pid, version: DAEMON_VERSION, exec: process.execPath } }
       case 'list':
         return { t: 'ok', id, slots: this.slots() }
@@ -927,8 +1124,14 @@ class DaemonImpl implements Daemon {
         const slot = this.slot(req.slotId)
         await this.stopSlot(slot)
         this.slotMap.delete(slot.meta.slotId)
+        this.rondaChannel.revoke(slot.meta.slotId)
+        if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
+        slot.ronda = undefined
         for (const c of slot.attached) c.attached.delete(slot.meta.slotId)
         removeSlot(this.home, slot.meta.slotId)
+        // The slot is gone for good (its pane was closed): extensions drop what they kept with it.
+        this.emitSlot('removed', slot)
+        this.procs.slotGone(slot.meta.slotId)
         this.broadcast({ t: 'removed', slotId: slot.meta.slotId })
         return { t: 'ok', id }
       }
@@ -982,6 +1185,52 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id, pause: this.pauseCancel() }
       case 'pause-resume':
         return { t: 'ok', id, pause: this.pauseResume(req.slotIds) }
+      case 'ronda-set': {
+        const slot = this.slot(req.slotId)
+        const unavailable = this.rondaUnavailable(slot)
+        if (unavailable) throw new RequestError('ronda-unavailable', unavailable)
+        for (const k of ['interval', 'nudge', 'criterion'] as const) {
+          if (req[k] !== undefined && typeof req[k] !== 'string') throw new RequestError('bad-request', `${k} deve ser texto`)
+        }
+        let r: ReturnType<typeof applyChange>
+        try {
+          r = applyChange(slot.ronda, { ...(req.interval !== undefined ? { interval: req.interval } : {}), ...(req.nudge !== undefined ? { nudge: req.nudge } : {}), ...(req.criterion !== undefined ? { criterion: req.criterion } : {}) }, Date.now(), this.rondaAllowSeconds)
+        } catch (e) {
+          if (e instanceof RondaError) throw new RequestError('bad-request', e.message)
+          throw e
+        }
+        if (r.outcome !== 'unchanged') {
+          if (r.outcome === 'created' || r.ronda.nextAt !== slot.ronda?.nextAt) slot.rondaDue = false
+          slot.ronda = r.ronda
+          writeRonda(this.home, slot.meta.slotId, r.ronda)
+          this.log(`slot ${slot.meta.slotId}: ronda ${r.outcome} (${r.ronda.intervalMs} ms${r.ronda.criterion ? ', com critério' : ''})`)
+          this.armRonda(slot)
+          this.broadcastState(slot)
+        }
+        return { t: 'ok', id, ronda: this.stateOf(slot).ronda ?? null, rondaOutcome: r.outcome }
+      }
+      case 'ronda-get': {
+        const slot = this.slot(req.slotId)
+        return { t: 'ok', id, ronda: this.stateOf(slot).ronda ?? null }
+      }
+      case 'ronda-off': {
+        const slot = this.slot(req.slotId)
+        if (!slot.ronda) return { t: 'ok', id, ronda: null, rondaOutcome: 'was-off' }
+        if (slot.ronda.criterion && req.force !== true) throw new RequestError('ronda-criterion', criterionStimulus(slot.ronda.criterion))
+        this.rondaOff(slot)
+        return { t: 'ok', id, ronda: null, rondaOutcome: 'off' }
+      }
+      case 'restart': {
+        const slot = this.slot(req.slotId)
+        if (!this.adapterOf(slot.meta.agent)?.resumes) throw new RequestError('bad-request', `o ${slot.meta.agent} não retoma sessão: não há como reiniciar o slot ${slot.meta.slotId}`)
+        if (!isAlive(slot)) throw new RequestError('bad-request', `o slot ${slot.meta.slotId} não está rodando`)
+        // Same early refusal as set-profile: nothing is touched when the agent never reported its session.
+        if (slot.status === 'running' && !this.reportedThisRun(slot)) {
+          throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa`)
+        }
+        await this.restartSlot(slot)
+        return { t: 'ok', id, slot: this.stateOf(slot) }
+      }
       case 'set-profile': {
         const slot = this.slot(req.slotId)
         if (req.profileId !== null && typeof req.profileId !== 'string') throw new RequestError('bad-request', 'profileId obrigatório (ou null para nenhum perfil)')
@@ -1006,6 +1255,61 @@ class DaemonImpl implements Daemon {
         }
         return { t: 'ok', id, slot: this.stateOf(slot) }
       }
+      case 'proc-list':
+        return { t: 'ok', id, procs: await this.procs.list() }
+      case 'proc-info': {
+        const { proc, events } = await this.procAct(() => this.procs.info(req.name))
+        return { t: 'ok', id, proc, events }
+      }
+      case 'proc-start':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.start(req.name, req.recipe, req.by, client.kind, req.force === true)) }
+      case 'proc-stop':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.stop(req.name, optText(req.reason), req.by, client.kind, guardOf(req))) }
+      case 'proc-restart':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.restart(req.name, optText(req.reason), req.by, client.kind, guardOf(req))) }
+      case 'proc-use':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.use(req.name, typeof req.duration === 'string' ? req.duration : undefined, typeof req.purpose === 'string' ? req.purpose : undefined, req.by, client.kind)) }
+      case 'proc-release': {
+        const r = await this.procAct(() => this.procs.release(req.name, req.by, client.kind))
+        return { t: 'ok', id, proc: r.proc, released: r.released }
+      }
+      case 'proc-ports':
+        return { t: 'ok', id, ports: await this.procAct(() => this.procs.ports(req.check)) }
+      case 'proc-adopt':
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.adoptExternal(String(req.name), Number(req.pid), req.recipe, req.by, client.kind)) }
+      case 'proc-forget': {
+        const note = await this.procAct(() => this.procs.forget(req.name, req.by, client.kind, guardOf(req)))
+        return { t: 'ok', id, ...(note ? { note } : {}) }
+      }
+      case 'proc-seen':
+        await this.procAct(() => this.procs.seen(req.name))
+        return { t: 'ok', id }
+      case 'proc-attach': {
+        // Watching before the host answers: output that follows the scrollback may arrive in the same read as the reply.
+        const name = String(req.name)
+        const known = client.procsWatched.has(name)
+        client.procsWatched.add(name)
+        let set = this.procWatchers.get(name)
+        if (!set) this.procWatchers.set(name, set = new Set())
+        set.add(client)
+        let scrollback: string | undefined
+        try {
+          scrollback = await this.procAct(() => this.procs.attachOutput(name))
+        } catch (e) {
+          if (!known) this.unwatchProc(client, name)
+          throw e
+        }
+        if (client.socket.destroyed) this.unwatchProc(client, name)
+        return { t: 'ok', id, ...(scrollback !== undefined ? { scrollback } : {}) }
+      }
+      case 'proc-detach':
+        this.unwatchProc(client, req.name)
+        return { t: 'ok', id }
+      case 'proc-host':
+        return { t: 'ok', id, host: await this.procAct(() => this.procs.hostStatus()) }
+      case 'proc-host-stop':
+        await this.procAct(() => this.procs.hostStop(req.force === true, req.by, client.kind))
+        return { t: 'ok', id }
       default:
         throw new RequestError('bad-request', `mensagem desconhecida: ${String((req as { t?: unknown }).t)}`)
     }
@@ -1032,6 +1336,8 @@ class DaemonImpl implements Daemon {
         if (typeof filename !== 'string') return
         const pr = /^([^.]+)\.pause\.jsonl$/.exec(filename)
         if (pr && SLOT_ID_RE.test(pr[1]!)) { this.schedulePauseReport(pr[1]!); return }
+        const bg = /^([^.]+)\.bg\./.exec(filename)
+        if (bg && SLOT_ID_RE.test(bg[1]!)) { this.scheduleBackground(bg[1]!); return }
         const a = /^([^.]+)\.attention$/.exec(filename)
         if (a && SLOT_ID_RE.test(a[1]!)) { this.scheduleAttentionReport(a[1]!); return }
         const m = /^([^.]+)\.(jsonl|json)$/.exec(filename)
@@ -1042,6 +1348,60 @@ class DaemonImpl implements Daemon {
     } catch (e) {
       this.log(`cannot watch ${slotsDir(this.home)}: ${(e as Error).message}`)
     }
+  }
+
+  /** Debounces the subagent markers per slot (<slot>.bg.<agentId>, written and removed by Claude's Subagent hooks). */
+  private scheduleBackground(slotId: string): void {
+    const key = `${slotId}.bg`
+    const prev = this.pending.get(key)
+    if (prev) clearTimeout(prev)
+    const t = setTimeout(() => {
+      this.pending.delete(key)
+      const slot = this.slotMap.get(slotId)
+      if (slot) this.applyBackground(slot)
+    }, WATCH_DEBOUNCE_MS)
+    this.pending.set(key, t)
+  }
+
+  /** Counts the slot's live subagent markers: written in this run and younger than BG_MAX_AGE_MS (a lost Stop must not pin it). */
+  private applyBackground(slot: Slot): void {
+    if (!isAlive(slot)) return
+    const dir = slotsDir(this.home)
+    const prefix = `${slot.meta.slotId}.bg.`
+    const since = slot.spawnedAt ? Date.parse(slot.spawnedAt) : 0
+    const now = Date.now()
+    let n = 0
+    try {
+      for (const name of readdirSync(dir)) {
+        if (!name.startsWith(prefix)) continue
+        try {
+          const m = statSync(join(dir, name)).mtimeMs
+          if (m >= since - 1000 && now - m < BG_MAX_AGE_MS) n++
+        } catch { /* removed meanwhile */ }
+      }
+    } catch { return }
+    if (slot.attention.setBackground(n, now)) this.broadcastState(slot)
+    this.scheduleWake(slot)
+  }
+
+  /** Arms the wake fallback: the last subagent ended and the agent must finish its turn within WAKE_MS, or it counts as done. */
+  private scheduleWake(slot: Slot): void {
+    if (slot.wakeTimer) { clearTimeout(slot.wakeTimer); slot.wakeTimer = undefined }
+    const due = slot.attention.wakeDueAt()
+    if (due === undefined) return
+    slot.wakeTimer = setTimeout(() => {
+      slot.wakeTimer = undefined
+      if (slot.attention.wakeExpired(Date.now())) this.broadcastState(slot)
+    }, Math.max(50, due - Date.now()))
+    slot.wakeTimer.unref()
+  }
+
+  /** Removes the slot's subagent markers (a launch or exit: whatever ran belonged to the old process). */
+  private clearBackground(slotId: string): void {
+    const dir = slotsDir(this.home)
+    try {
+      for (const name of readdirSync(dir)) if (name.startsWith(`${slotId}.bg.`)) { try { unlinkSync(join(dir, name)) } catch { /* gone */ } }
+    } catch { /* no dir */ }
   }
 
   /** Debounces the hook's attention file per slot (the write may be seen as several change events). */
@@ -1066,6 +1426,7 @@ class DaemonImpl implements Daemon {
     slot.attentionReportTs = report.ts
     if (!isAlive(slot) || (slot.spawnedAt && report.ts < slot.spawnedAt)) return
     if (slot.attention.hook(report.kind)) this.broadcastState(slot)
+    this.scheduleWake(slot)
   }
 
   /**
@@ -1098,6 +1459,70 @@ class DaemonImpl implements Daemon {
       else this.scheduleAttention(slot)
     }, Math.max(50, due - Date.now()))
     slot.attentionTimer.unref()
+  }
+
+  // ---- ronda ------------------------------------------------------------------------------------
+
+  /**
+   * Why a due ronda cannot be sent now; undefined = go. It goes through the channel, never the terminal, so the user's
+   * typing is no concern: only a running agent whose channel is connected, not in a turn (a nudge mid-turn would only queue
+   * behind the work it asks about), and not in a polite pause.
+   */
+  private rondaBlocker(slot: Slot): string | undefined {
+    if (slot.meta.agent === 'shell') return 'shell'
+    if (!isAlive(slot) || slot.status !== 'running') return 'not-running'
+    if (slot.restarting || slot.stopping) return 'restarting'
+    if (!this.rondaChannel.connected(slot.meta.slotId)) return 'no-channel'
+    // Claude: a permission prompt keeps the turn busy; the idle prompt (Notification after a finished turn) does not.
+    if (slot.attention.turn === 'busy') return 'busy'
+    const pause = this.batch?.entries.find((e) => e.slotId === slot.meta.slotId)
+    if (this.batch && this.batch.state !== 'closed' && pause && pause.state !== 'removed' && pause.state !== 'resumed' && pause.state !== 'resume-skipped') return 'paused'
+    return undefined
+  }
+
+  /** Why the ronda cannot be switched on in this slot at all (an agent with no channel); undefined = it can. */
+  private rondaUnavailable(slot: Slot): string | undefined {
+    if (slot.meta.agent === 'shell') return 'a ronda não está disponível num terminal sem agente: ela acorda um agente por um canal dele, e um shell não tem canal.'
+    if (!this.channelOf(slot.meta.agent)) return `a ronda não está disponível para o agente ${slot.meta.agent}: ele não recebe mensagens por canal, e o tether não digita no terminal.`
+    return undefined
+  }
+
+  /** (Re)arms the slot's ronda timer: at nextAt, or a retry while it is due. */
+  private armRonda(slot: Slot): void {
+    if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
+    slot.rondaTimer = undefined
+    if (!slot.ronda || this.closing) return
+    const wait = slot.rondaDue ? this.rondaRetryMs : Math.max(0, Date.parse(slot.ronda.nextAt) - Date.now())
+    slot.rondaTimer = setTimeout(() => { slot.rondaTimer = undefined; this.rondaTick(slot) }, Math.min(wait, 2 ** 31 - 1))
+    slot.rondaTimer.unref()
+  }
+
+  private rondaTick(slot: Slot): void {
+    const ronda = slot.ronda
+    if (!ronda || this.closing || this.slotMap.get(slot.meta.slotId) !== slot) return
+    if (!slot.rondaDue && Date.now() < Date.parse(ronda.nextAt)) { this.armRonda(slot); return }
+    const blocker = this.rondaBlocker(slot)
+    if (blocker !== undefined || !this.rondaChannel.send(slot.meta.slotId, buildChannelText(ronda))) {
+      if (!slot.rondaDue) { slot.rondaDue = true; this.log(`slot ${slot.meta.slotId}: ronda due, waiting (${blocker ?? 'no-channel'})`); this.broadcastState(slot) }
+      this.armRonda(slot)
+      return
+    }
+    slot.ronda = { ...ronda, lastAt: new Date().toISOString(), nextAt: new Date(Date.now() + ronda.intervalMs).toISOString() }
+    slot.rondaDue = false
+    try { writeRonda(this.home, slot.meta.slotId, slot.ronda) } catch (e) { this.log(`ronda: cannot save ${slot.meta.slotId}: ${(e as Error).message}`) }
+    this.log(`slot ${slot.meta.slotId}: ronda sent through the channel`)
+    this.armRonda(slot)
+    this.broadcastState(slot)
+  }
+
+  private rondaOff(slot: Slot): void {
+    if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
+    slot.rondaTimer = undefined
+    slot.ronda = undefined
+    slot.rondaDue = false
+    clearRonda(this.home, slot.meta.slotId)
+    this.log(`slot ${slot.meta.slotId}: ronda off`)
+    this.broadcastState(slot)
   }
 
   // ---- polite pause ----------------------------------------------------------------------------

@@ -18,6 +18,8 @@
 // agent on that tab is refused with a named error (TAB_WITH_USER, TAB_PAUSED) and every event of it is dropped (rule 14:
 // refusing commands alone lets the form's POST with the password reach the agent); `Tether.tabStateChanged` goes to the owner's
 // browser sessions at each change. `cleanTab` removes the scripts the agents registered on a tab (the clean hand-off).
+// MCP inside the daemon: `Tether.tabHandle` / `Tether.setActiveTab` give the agent's tool the id it calls each tab by and which
+// one is active, kept with the tab (agent-tabs.ts), so a new server over the same tabs names them as before.
 // E7b: auto-attach forwarded with the gate's filter (frames and dedicated workers only): a page's service worker is never
 // attached, so it is never announced and never detached (detaching one crashed Electron's main process).
 // E7c (the gatekeeper's security review): leaving `agent`, every command of the tab still waiting for its answer is answered at
@@ -86,6 +88,11 @@ export interface GateOptions {
   control?: Pick<ControlHub, 'control' | 'view' | 'onChange' | 'openAsks' | 'ask'>
   /** E13: the person's answer to an upload (`Tether.confirmUpload`); without it every upload is refused. */
   confirmUpload?: (req: { tabId: string; slotId: string; path: string; frameOrigin: string }) => Promise<boolean>
+  /**
+   * What an agent's tool knows each tab by, kept with the tab (agent-tabs.ts): `Tether.tabHandle` and `Tether.setActiveTab`.
+   * Without it the gate does not know those two (the tool numbers the tabs itself).
+   */
+  agentTabs?: { handle(owner: string, tabId: string): { handle: string; active: boolean }; setActive(owner: string, tabId: string): void; forget(tabId: string): void }
   /** E9: the agent's command reached a tab it has (the tab's "agent acting" dot). E11: and the coarse kind of it ("typing"), nothing of the command's content. */
   activity?: (tabId: string, kind: ActionKind) => void
   /** Test builds only: one line per command, answer and event (method names and ids, never params nor keys). */
@@ -626,6 +633,17 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           this.uploadGrants.set(t.tabId, { origin: params.frameUrl, until: Date.now() + UPLOAD_GRANT_MS })
           return { allowed: true }
         }
+        case 'Tether.tabHandle': {
+          if (!opts.agentTabs) break
+          // Answered whoever has the tab: it reads nothing of the page, only what the tether keeps with the tab.
+          const h = opts.agentTabs.handle(this.slotId, (await tabOf()).tabId)
+          return { handle: h.handle, ...(h.active ? { active: true } : {}) }
+        }
+        case 'Tether.setActiveTab': {
+          if (!opts.agentTabs) break
+          opts.agentTabs.setActive(this.slotId, (await tabOf()).tabId)
+          return {}
+        }
         case 'Tether.requestLocalNetwork': {
           const url = params.url
           if (typeof url !== 'string' || !navigable(url) || url === 'about:blank') return { allowed: false }
@@ -722,6 +740,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           if (!t) throw noTarget()
           const c = controlOf(t.tabId)
           if (c !== 'agent') throw new GateError(heldError(c).message, -32000, true)
+          opts.agentTabs?.forget(t.tabId)
           opts.tabs.close(t.tabId)
           return { success: true }
         }

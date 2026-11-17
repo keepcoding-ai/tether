@@ -3,6 +3,7 @@
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { claudeAdapter } from '../../src/agents/claude.ts'
 import { withMcpConfigFlag } from '../../src/agents/mcp.ts'
+import { claudeSkills } from '../../src/agents/skills.ts'
 import { UNSAFE_ARG } from '../../src/core/profile.ts'
 import type { AgentContribution, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { checkClaudeEnv, probeClaude, probeHookCheck } from '../../src/doctor.ts'
@@ -30,7 +31,23 @@ export const claudeAgent: AgentContribution = {
   },
   envArgsVar: 'TETHER_CLAUDE_ARGS',
   // `claude --mcp-config <file>`: added to the project's own .mcp.json servers (the default; --strict-mcp-config would drop them).
-  mcp: { inject: withMcpConfigFlag },
+  // `type: "http"` servers with `${VAR}` in their headers: the browser and the bridge come from the daemon, no process per pane.
+  mcp: { inject: withMcpConfigFlag, http: true },
+  // The tether's skills as a plugin named `tether` (`--plugin-dir`, this session only): `/tether:<skill>`.
+  skills: claudeSkills,
+  // The ronda's channel (src/daemon/ronda-channel.ts): a server of the daemon's own, not on the approved channels list, so the
+  // development flag; it asks for a confirmation at every start (Claude Code 2.1.322), option 1 already selected.
+  channel: server => ['--dangerously-load-development-channels', `server:${server}`],
+  channelConfirm: {
+    screen: [
+      'WARNING: Loading development channels',
+      '--dangerously-load-development-channels is for local channel development only.',
+      '❯ 1. I am using this for local development',
+      '2. Exit',
+      'Enter to confirm',
+    ],
+    keys: '\r',
+  },
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {

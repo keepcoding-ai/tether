@@ -21,6 +21,7 @@ import { lineAtOffset, offsetOfLine, type LineBlock } from '../shared/markdown-s
 import { previewParams, previewTitle } from '../shared/preview.ts'
 import { terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ColorScheme } from '../shared/theme.ts'
+import { mountTabEmblem } from './tab-emblems.ts'
 
 /** How long after the last keystroke the preview is drawn again. */
 export const PREVIEW_DEBOUNCE_MS = 150
@@ -460,6 +461,7 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
 /** The preview's tab: the eye, "Prévia: nome.md", the ×; right-click opens the pane menu. */
 export class PreviewTab implements ITabRenderer {
   readonly element: HTMLElement
+  private unmountEmblem: (() => void) | undefined
   private api: DockviewPanelApi | undefined
   private readonly text: HTMLElement
   private readonly host: PreviewHost
@@ -482,6 +484,8 @@ export class PreviewTab implements ITabRenderer {
 
   init(params: TabPartInitParameters): void {
     this.api = params.api
+    this.unmountEmblem?.()
+    this.unmountEmblem = mountTabEmblem(this.element.querySelector<HTMLElement>('.kind')!, params.api, params.params)
     this.element.dataset.slot = params.api.id
     this.disposers.push(params.api.onDidTitleChange(() => this.render()))
     this.render()
@@ -496,6 +500,8 @@ export class PreviewTab implements ITabRenderer {
   }
 
   dispose(): void {
+    this.unmountEmblem?.()
+    this.unmountEmblem = undefined
     for (const d of this.disposers) d.dispose()
     this.disposers = []
   }

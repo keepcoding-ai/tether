@@ -29,6 +29,12 @@ import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
 import type { AgentPane } from './agent-panes.ts'
 import type { FrameSnapshot, PanelFrameTree } from './panel-frames.ts'
+import type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
+import type { Reply } from '../../src/daemon/protocol.ts'
+import type { ProcState } from '../../src/daemon/procs.ts'
+
+/** Why a panel frame became loose: the person closed its panel, or the panel went by itself. */
+export type LooseCause = 'closed' | 'lost'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export type { PaneType } from './pane-registry.ts'
@@ -40,6 +46,7 @@ export type { Badge, AttentionHandle, AttentionRaise } from './seal-rules.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
+export type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
 export type { FrameDeskGroup, FrameFilter, FramePane, FrameSnapshot, PanelFrameRow, PanelFrameTree } from './panel-frames.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
@@ -57,7 +64,19 @@ export interface PaneInfo {
 }
 
 /** A row of a context menu (the tab menu): an item, or 'sep' for a thin line between groups. */
-export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean; disabled?: boolean; checked?: boolean } | 'sep'
+/**
+ * How a menu item sits outside the menu, where a view shows the menu's items as a bar of actions (the panel-pad-manager's
+ * rows): 'icon' = the icon alone, 'primary' = icon and label, 'highlight' = icon and label in the accent color. Unset =
+ * only in the menu.
+ */
+export type MenuPin = 'icon' | 'primary' | 'highlight'
+export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin } | 'sep'
+/**
+ * Whose eyes a tab menu is for. 'manager': a view that lists panels (open or with their tab closed) apart from their tabs;
+ * the menu then starts with how to reach the tab ("Focar guia"; for a closed one "Trazer de volta") and does not activate
+ * the pane.
+ */
+export interface TabMenuOptions { from?: 'manager' }
 
 /**
  * Who opens a file (VS Code's EditorResolverService: editors register for the resources they take). Ctrl+P, a
@@ -175,13 +194,24 @@ export interface TetherUi {
     attention(id: string): void
     /** Closes a pane without a slot behind it (remembered for "reabrir o último painel fechado"). */
     close(id: string): void
-    /** The pane's tab menu at page coordinates (the type's own `tabMenu`). */
-    showTabMenu(id: string, x: number, y: number): void
+    /**
+     * The pane's tab menu at page coordinates, by the `opener` button when given (it reads aria-expanded and gets the focus
+     * back). With `from: 'manager'` the same menu comes after "Focar guia" and "Fechar guia" (its only primaries). A pane
+     * that is not live has no menu: a closed owner's frame is mounted first (`pads.panelFrames.mount`).
+     */
+    showTabMenu(id: string, x: number, y: number, opener?: HTMLElement, opts?: TabMenuOptions): void
+    /** The items `showTabMenu` shows, as data (one source for the menu and any bar of actions built from it). */
+    tabMenuEntries(id: string, opts?: TabMenuOptions): ContextMenuEntry[]
     /** "Novo painel…" next to a pane (in `cwd` when given), and its label. */
     newPanelDialog(reference: string, opts?: { cwd?: string }): void
     readonly newPanelLabel: string
     /** "Mover…" for a pane. */
     move(id: string): void
+    /**
+     * From a `dragstart` on any element: the drag the pane's own tab would start, so wherever a tab can be dropped (a
+     * frame, its edges, a pad, the drawer) this drag can too. False when the pane is not in a frame.
+     */
+    beginDrag(id: string, ev: DragEvent): boolean
     /** Every pane in the window (each desk, the drawer, the frames pads). */
     all(): readonly PaneInfo[]
     describe(id: string): PaneInfo | undefined
@@ -312,6 +342,31 @@ export interface TetherUi {
      */
     tabMenu(provider: (slotId: string) => ContextMenuEntry[]): IDisposable
   }
+  /**
+   * The background processes tetherd keeps (tether proc): the core holds the live list, the extension draws it. Each act
+   * is a request answered with tetherd's reply (a refusal is an `error` reply whose message is the text to show, never
+   * thrown); the app sends no author, so tetherd records "você (pelo app)". `attach` watches a process' output, read only.
+   */
+  procs: {
+    list(): readonly ProcState[]
+    get(name: string): ProcState | undefined
+    /** A process changed or went (`proc`, `proc-removed`), or the list was read again (a new connection to tetherd). */
+    onDidChange(listener: (e: ProcsChange) => void): IDisposable
+    start(name: string): Promise<Reply>
+    stop(name: string, opts?: ProcActOptions): Promise<Reply>
+    restart(name: string, opts?: ProcActOptions): Promise<Reply>
+    forget(name: string, opts?: ProcActOptions): Promise<Reply>
+    /** Declares (or renews) the person's use: `duration` like '15m', `purpose` required. */
+    use(name: string, duration: string, purpose: string): Promise<Reply>
+    release(name: string): Promise<Reply>
+    /** Someone looked: clears its attention. */
+    seen(name: string): Promise<Reply>
+    /** The process and its last events. */
+    info(name: string): Promise<Reply>
+    /** Who listens on each port (tether's processes or outside it) and the ports stopped processes declare. */
+    ports(): Promise<Reply>
+    attach(name: string, onData: (data: string) => void): Promise<ProcAttachment>
+  }
   /** The profile editor. */
   profiles: {
     /** Adds a checkbox to the editor for AI-agent profiles; the value lives in `profile.extensions.<this id>.<key>`. */
@@ -400,17 +455,28 @@ export interface TetherUi {
       tree(): PanelFrameTree
       /** The frames may have changed (a pane opened or closed somewhere, an operation ran). */
       onDidChange(listener: () => void): IDisposable
-      /** A frame with content just became loose (its panel closed). */
-      onDidLoose(listener: (key: string) => void): IDisposable
-      /** Where a frame's content can go ("Mover…"): the frame of every live panel, by desk. */
-      targets(): { key: string; label: string; group: string }[]
-      /** The frame's panes become tabs of the target's frame (they add up), and the source closes. */
-      move(from: string, to: string): boolean
+      /**
+       * A frame with content just became loose: its panel closed. `cause` is 'closed' when the person closed the panel
+       * (its tab's ×, "Fechar painel…"), 'lost' when it went by itself (the slot was removed, the daemon forgot it).
+       */
+      onDidLoose(listener: (key: string, cause: LooseCause) => void): IDisposable
+      /**
+       * Whether a loose frame's panel can be brought back (its slot still exists in the tetherd: reopening resumes it),
+       * with the words the manager shows either way.
+       */
+      revivable(key: string): { ok: boolean; reason: string }
+      /** Brings a loose frame's panel back (the frame follows it, being its own). False when it cannot. */
+      revive(key: string): boolean
       /** Closes frames; the snapshot brings them back (`restore`). */
       close(keys: readonly string[]): FrameSnapshot
       restore(snapshot: FrameSnapshot): void
       /** A live frame to the front: its panel comes forward and its pad opens. */
       show(key: string): void
+      /**
+       * Mounts a frame's view (built from its saved state when it never showed) so its panes are live panes: their menu,
+       * drag (`panes.beginDrag`) and close work. A loose frame's owner stays closed. False when the key names no frame.
+       */
+      mount(key: string): boolean
     }
   }
   /**

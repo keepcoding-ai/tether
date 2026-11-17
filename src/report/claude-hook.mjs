@@ -3,10 +3,11 @@
 // with the hook payload on stdin and the slot's env (TETHER_SLOT_ID, TETHER_HOME).
 //
 // Rules (PRD RNF3): never write to stdout (SessionStart stdout is injected into Claude's
-// context), except the polite-pause delivery on PostToolUse/UserPromptSubmit, never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
+// context), except the delivery to the agent on PostToolUse/UserPromptSubmit (polite pause, notices), as ONE JSON
+// per run; never exit non-zero, swallow every error, finish fast. Only node:fs/path/os.
 // Plain JS on purpose: Node's TypeScript loader added ~40% to the hook's run time.
 // It does not import the core: it appends one JSON line itself.
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -106,10 +107,11 @@ export function toAttention(hookName, payload, ts) {
 
 
 /**
- * Polite pause: when <home>/slots/<slot>.pause-request.json exists, PostToolUse / UserPromptSubmit hand its text to the
- * agent as additionalContext (stdout) and log `delivered` once per batch; Stop logs the agent's last message as `stop`.
- * @param {string} home @param {string} slotId @param {string} hookName @param {Payload} payload @param {string} ts */
-function pauseStep(home, slotId, hookName, payload, ts) {
+ * Polite pause: when <home>/slots/<slot>.pause-request.json exists, PostToolUse / UserPromptSubmit return its text for
+ * the agent and log `delivered` once per batch; Stop logs the agent's last message as `stop`.
+ * @param {string} home @param {string} slotId @param {string} hookName @param {Payload} payload @param {string} ts
+ * @returns {string | undefined} the text to hand to the agent */
+export function pauseStep(home, slotId, hookName, payload, ts) {
   if (str(payload.agent_id)) return
   const dir = join(home, 'slots')
   /** @type {{ batchId?: unknown, text?: unknown } | undefined} */
@@ -129,7 +131,51 @@ function pauseStep(home, slotId, hookName, payload, ts) {
   try { seen = readFileSync(report, 'utf8') } catch { /* no report yet */ }
   if (seen.includes(`"batchId":${JSON.stringify(batchId)},"kind":"delivered"`)) return
   appendFileSync(report, JSON.stringify({ ts, batchId, kind: 'delivered' }) + '\n')
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: hookName, additionalContext: text } }))
+  return text
+}
+
+/**
+ * Notices tetherd left for this agent (<home>/slots/<slot>.notices.jsonl, one `{ts, text}` per line): on PostToolUse /
+ * UserPromptSubmit of the main agent (never a subagent's), the file is taken whole (renamed to a name of this run, so
+ * a line tetherd appends meanwhile starts a new file), read and deleted; the texts come back one per line.
+ * @param {string} home @param {string} slotId @param {string} hookName @param {Payload} payload
+ * @returns {string | undefined} */
+export function noticesStep(home, slotId, hookName, payload) {
+  if (str(payload.agent_id)) return
+  if (hookName !== 'PostToolUse' && hookName !== 'UserPromptSubmit') return
+  const path = join(home, 'slots', `${slotId}.notices.jsonl`)
+  const taken = `${path}.${process.pid}.taking`
+  try { renameSync(path, taken) } catch { return } // none pending, or tetherd is writing: the next step takes it
+  let raw = ''
+  try { raw = readFileSync(taken, 'utf8') } finally { try { unlinkSync(taken) } catch { /* gone */ } }
+  /** @type {string[]} */
+  const texts = []
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    try { const t = str(JSON.parse(line)?.text); if (t) texts.push(t) } catch { /* a torn line */ }
+  }
+  return texts.length ? texts.join('\n') : undefined
+}
+
+/**
+ * Background work: SubagentStart leaves a marker <home>/slots/<slot>.bg.<agentId>, SubagentStop removes it, SessionStart
+ * removes them all (a new or resumed session owns none). tetherd counts the markers: while any is there, a Stop does not
+ * mean "stopped", the agent is waiting for its subagents. Foreground subagents pass through too; they end before the turn does.
+ * Returns true when the hook was one of these.
+ * @param {string} home @param {string} slotId @param {string} hookName @param {Payload} payload @returns {boolean} */
+export function backgroundStep(home, slotId, hookName, payload) {
+  if (hookName !== 'SubagentStart' && hookName !== 'SubagentStop' && hookName !== 'SessionStart') return false
+  const dir = join(home, 'slots')
+  if (hookName === 'SessionStart') {
+    try { for (const n of readdirSync(dir)) if (n.startsWith(`${slotId}.bg.`)) { try { unlinkSync(join(dir, n)) } catch { /* gone */ } } } catch { /* no dir */ }
+    return false // SessionStart still reports the session
+  }
+  const id = (str(payload.agent_id) ?? '').replace(/[^A-Za-z0-9_-]/g, '')
+  if (!id) return true
+  const path = join(dir, `${slotId}.bg.${id}`)
+  if (hookName === 'SubagentStart') { mkdirSync(dir, { recursive: true }); writeFileSync(path, '') }
+  else { try { unlinkSync(path) } catch { /* never started here */ } }
+  return true
 }
 
 /** @param {string} stdin */
@@ -151,8 +197,14 @@ function record(stdin) {
     }
     const hookName = process.argv[2] ?? str(payload.hook_event_name) ?? ''
     const ts = new Date().toISOString()
-    try { pauseStep(home, slotId, hookName, payload, ts) } catch (e) { log(home, `pause: ${/** @type {Error} */ (e).message}`) }
+    // Everything for the agent goes out as ONE JSON on stdout: notices first, the pause request last (it asks to stop).
+    /** @type {string[]} */
+    const parts = []
+    try { const n = noticesStep(home, slotId, hookName, payload); if (n) parts.push(n) } catch (e) { log(home, `notices: ${/** @type {Error} */ (e).message}`) }
+    try { const p = pauseStep(home, slotId, hookName, payload, ts); if (p) parts.push(p) } catch (e) { log(home, `pause: ${/** @type {Error} */ (e).message}`) }
+    if (parts.length) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: hookName, additionalContext: parts.join('\n\n') } }))
     if (hookName === 'PostToolUse') return
+    try { if (backgroundStep(home, slotId, hookName, payload)) return } catch (e) { log(home, `background: ${/** @type {Error} */ (e).message}`) }
     const attention = toAttention(hookName, payload, ts)
     if (attention) {
       const dir = join(home, 'slots')
