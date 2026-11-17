@@ -47,7 +47,12 @@ import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 import { BRAND } from '../shared/brand.ts'
-import { registerPerf, stopPerf } from './perf-main.ts'
+import { recordProbe, registerPerf, stopPerf } from './perf-main.ts'
+import { extendProbe, parseProbe } from '../../src/core/perf-probe.ts'
+import { isProbeResultNotice, probeEnabled } from '../shared/probe-app.ts'
+
+// Key->echo probe (TETHER_PROBE=1): off by default; every use below sits behind this flag.
+const probe = probeEnabled(process.env)
 import { TETHER_SCHEME, tetherUrlInArgv } from '../shared/tether-url.ts'
 import type { LinkAssociation } from '../shared/api.ts'
 import { type Association, commandLineFor, describeCommand, readAssociatedCommand, removeAssociation, sameCommand } from './protocol-association.ts'
@@ -193,7 +198,7 @@ function connectDaemon(): Promise<void> {
       const client = await connectOnce()
       daemon = client
       client.on('state', slot => { slotStates.set(slot.slotId, slot); noteAttention(slot); if (attentionHistory.settle(slot.slotId, slot.attention)) sendAttention(); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
-      client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
+      client.on('data', (slotId, data, p) => win?.webContents.send('tether:event', probe && p ? { t: 'data', slotId, data, probe: extendProbe(p) } : { t: 'data', slotId, data })) // probe: main-out stamp
       client.on('removed', slotId => { slotStates.delete(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
@@ -761,7 +766,7 @@ function createWindow(): void {
       resolve()
     })
   })
-  void created.loadFile(join(__dirname, '..', 'renderer', 'index.html'))
+  void created.loadFile(join(__dirname, '..', 'renderer', 'index.html'), probe ? { query: { probe: '1' } } : undefined) // the renderer reads ?probe
 }
 
 // ---------- tray ----------
@@ -949,9 +954,18 @@ function createMenu(): void {
 // ---------- IPC ----------
 
 ipcMain.handle('tether:request', (_e, body: RequestBody) => request(body))
-registerPerf(ipcMain, request)
+registerPerf(ipcMain, request, probe)
 app.on('will-quit', stopPerf)
-ipcMain.on('tether:notice', (_e, notice: Notice) => daemon?.input(notice.slotId, notice.data))
+ipcMain.on('tether:notice', (_e, notice: Notice | { t: 'probe-result' }) => {
+  if (probe) {
+    if (isProbeResultNotice(notice)) { recordProbe(notice); return }
+    if (notice.t === 'input') {
+      const p = parseProbe(notice.probe)
+      if (p) { daemon?.input(notice.slotId, notice.data, extendProbe(p)); return } // main-in stamp
+    }
+  }
+  if (notice.t === 'input') daemon?.input(notice.slotId, notice.data)
+})
 ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 

@@ -2,7 +2,7 @@
 // keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
 import { type AddPanelOptions, type DockviewTheme, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
-import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
+import type { Event as DaemonEvent, Notice, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
@@ -88,6 +88,8 @@ import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
+import { PROBE } from './panel.ts'
+import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
@@ -1891,7 +1893,10 @@ function applyState(slot: SlotState): void {
 
 function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
-    case 'data': panels.get(ev.slotId)?.write(ev.data); break
+    case 'data':
+      if (PROBE && ev.probe) window.tether.notice({ t: 'probe-result', slotId: ev.slotId, probe: extendProbe(ev.probe) } as unknown as Notice) // renderer-recv stamp
+      panels.get(ev.slotId)?.write(ev.data)
+      break
     case 'profiles': setProfiles(ev.profiles, undefined); break
     case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshSessionsDialog(); break
     case 'proc': case 'proc-removed': case 'proc-data': procsStore.onEvent(ev); break

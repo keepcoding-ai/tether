@@ -4,6 +4,17 @@ import type { IpcMain } from 'electron'
 import type { Reply } from '../../src/daemon/protocol.ts'
 import { perf, type PerfSnapshot } from '../../src/core/perf.ts'
 import type { PerfGet, RequestBody } from '../shared/api.ts'
+import { probeResult, ProbeRing, type ProbeResultNotice } from '../shared/probe-app.ts'
+
+/** Totals of the key->echo probe (only fed when the probe is on). */
+export const probeRing = new ProbeRing()
+
+/** Records a finished probe: ring entry, and a `key-echo-app` incident in the ruler when it was slow. */
+export function recordProbe(n: ProbeResultNotice): void {
+  const r = probeResult(n.slotId, n.probe)
+  probeRing.push(r.total, r.incident)
+  if (r.incident) perf.incident('key-echo-app', { slotId: r.slotId, seq: r.seq, t: n.probe.t, labels: r.labels, hops: r.hops })
+}
 
 /** How long the daemon gets to answer before the report goes without it. */
 export const PERF_DAEMON_TIMEOUT_MS = 2000
@@ -35,10 +46,12 @@ export async function buildPerfGet(
 }
 
 /** Starts the main process's ruler and answers `perf:get`; `request` is the main's daemon client. */
-export function registerPerf(ipc: IpcMain, request: (body: RequestBody) => Promise<Reply>): void {
+export function registerPerf(ipc: IpcMain, request: (body: RequestBody) => Promise<Reply>, probe = false): void {
   perf.start()
-  ipc.handle('perf:get', (_e, since?: unknown): Promise<PerfGet> =>
-    buildPerfGet(perf.snapshot(typeof since === 'number' && Number.isFinite(since) ? since : undefined), request, typeof since === 'number' ? since : undefined))
+  ipc.handle('perf:get', async (_e, since?: unknown): Promise<PerfGet> => {
+    const got = await buildPerfGet(perf.snapshot(typeof since === 'number' && Number.isFinite(since) ? since : undefined), request, typeof since === 'number' ? since : undefined)
+    return probe ? { ...got, probe: probeRing.summary() } : got
+  })
 }
 
 /** Stops the main process's ruler (app quit). */

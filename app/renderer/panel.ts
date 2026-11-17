@@ -24,6 +24,11 @@ import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
+import { startProbe } from '../../src/core/perf-probe.ts'
+
+/** Key->echo probe: the main loads the page with ?probe when TETHER_PROBE=1. Off, a key costs one `if`. */
+export const PROBE = new URLSearchParams(location.search).has('probe')
+let probeSeq = 0
 
 const IS_WINDOWS = typeof navigator !== 'undefined' && !IS_MAC && /Win/i.test(navigator.platform)
 /** The key Claude Code reads as "paste the clipboard image": Alt+V (ESC v) on Windows, ^V elsewhere. */
@@ -364,7 +369,11 @@ export class TerminalPanel implements IContentRenderer {
       openingCwd: () => this.host.getSlot(this.slotId)?.cwd ?? this.hint?.cwd,
       open: target => this.host.onOpenLink(this.slotId, target),
     }))
-    this.term.onData(data => { if (this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data }) })
+    this.term.onData(data => {
+      if (!this.slotId) return
+      if (PROBE) window.tether.notice({ t: 'input', slotId: this.slotId, data, probe: startProbe(++probeSeq) }) // renderer-send stamp
+      else window.tether.notice({ t: 'input', slotId: this.slotId, data })
+    })
     // xterm calls this for keydown, keypress and keyup of the same chord: a command is decided on keydown only.
     // What is handled here is also prevented, so Chromium's own copy/paste on the textarea never runs on top
     // of it (a native paste would reach xterm's `paste` listener and paste twice; a native copy would overwrite

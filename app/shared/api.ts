@@ -9,6 +9,7 @@ import type { ThemeSetting, ThemeState } from './theme.ts'
 import type { UiSettings } from './ui-settings.ts'
 import type { FileTarget } from './file-open.ts'
 import type { PerfSnapshot } from '../../src/core/perf.ts'
+import type { ProbeSummary } from './probe-app.ts'
 import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 import type { ExtTransport } from './ext-ipc.ts'
@@ -51,7 +52,9 @@ export type MainCommand = 'quit-all' | 'restore-confirmations' | 'restart-daemon
 
 /** A request without the `id`: the main process numbers them. */
 /** The `perf:get` answer: the main process's ruler, the daemon's (null when absent or too old) and the round trip to it. */
-export interface PerfGet { main: PerfSnapshot; daemon: PerfSnapshot | null; daemonRttMs: number | null }
+export interface PerfGet { main: PerfSnapshot; daemon: PerfSnapshot | null; daemonRttMs: number | null
+  /** Key->echo probe totals (TETHER_PROBE=1 only; absent when the probe is off). */
+  probe?: ProbeSummary }
 
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
 
