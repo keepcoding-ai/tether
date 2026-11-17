@@ -4,7 +4,7 @@ Documento de passagem: tudo o que é preciso para continuar o projeto a partir d
 
 ## 1. O que é
 
-**tether** (nome provisório) é um app de terminais para agentes de código no Windows. Cada painel roda um agente (Claude Code, soul-cli) ou um shell. Duas promessas:
+**tether** é um app de terminais para agentes de código no Windows. Cada painel roda um agente (Claude Code, soul-cli) ou um shell. Duas promessas:
 
 1. **Cada painel sabe qual sessão de agente está rodando e a retoma** depois de fechar, travar ou reiniciar. A sessão nunca é deduzida por data ou pasta: o próprio agente informa o ID a cada troca.
 2. **Robustez:** a janela pode travar ou ser morta sem matar os agentes; os painéis são livres pelo mouse (split vertical/horizontal, arrastar abas), como no VSCodium.

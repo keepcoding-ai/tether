@@ -93,7 +93,7 @@ describe('brand/brand.json', () => {
     assert.deepEqual(brand.mcp, { serverName: 'tether-bridge' })
     assert.equal((brand.extension as { locale: string }).locale, 'pt-BR')
     // Defaults the installer seeds into the bridge home agree with the extension's own settings (manifest.ts).
-    assert.deepEqual(brand.capabilities, { evaluate: 'own-tabs', download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: true })
+    assert.deepEqual(brand.capabilities, { evaluate: 'own-tabs', download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: false })
     assert.deepEqual(brand.tabs, { groupTitle: '{shortName}', agentTitle: '{shortName} · {agent}', groupColor: 'blue' })
     assert.deepEqual(brand.assets, { src: './src', out: './assets/bridge' })
   })

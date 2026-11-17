@@ -1,5 +1,5 @@
 // <define:__BRAND__>
-var define_BRAND_default = { slug: "tether", name: "Tether", shortName: "Tether", description: "Deixa os agentes do Tether (Claude, soul) usarem este navegador, s\xF3 nas abas que eles abriram ou que voc\xEA entregou.", color: "#6aa6ff", colors: { accent: "#6aa6ff", light: { ink: "#1b1b1f", paper: "#f4f4f7" }, dark: { ink: "#e8e8ee", paper: "#141418" } }, host: { name: "tether", id: "studio.codr.tether" }, locale: "pt-BR", mcp: { serverName: "tether-bridge" }, tabs: { groupTitle: "{shortName}", agentTitle: "{shortName} \xB7 {agent}", groupColor: "blue" }, capabilities: { evaluate: "own-tabs", download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: true }, icons: { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }, logos: { h: { light: "brand/logo-h-light.svg", dark: "brand/logo-h-dark.svg" }, symbol: { light: "brand/logo-light.svg", dark: "brand/logo-dark.svg" } }, product: "Tether Bridge" };
+var define_BRAND_default = { slug: "tether", name: "Tether", shortName: "Tether", description: "Deixa os agentes do Tether (Claude, soul) usarem este navegador, s\xF3 nas abas que eles abriram ou que voc\xEA entregou.", color: "#6aa6ff", colors: { accent: "#6aa6ff", light: { ink: "#1b1b1f", paper: "#f4f4f7" }, dark: { ink: "#e8e8ee", paper: "#141418" } }, host: { name: "tether", id: "studio.codr.tether" }, locale: "pt-BR", mcp: { serverName: "tether-bridge" }, tabs: { groupTitle: "{shortName}", agentTitle: "{shortName} \xB7 {agent}", groupColor: "blue" }, capabilities: { evaluate: "own-tabs", download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: false }, icons: { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }, logos: { h: { light: "brand/logo-h-light.svg", dark: "brand/logo-h-dark.svg" }, symbol: { light: "brand/logo-light.svg", dark: "brand/logo-dark.svg" } }, product: "Tether Bridge" };
 
 // extension/src/brand.ts
 var DEFAULT_BRAND = { name: "Atrium", product: "Atrium Bridge" };
@@ -168,10 +168,9 @@ var POPUP = {
   browserName: "Nome deste navegador",
   browserNameHelp: "Como os agentes veem este navegador. Enter ou sair do campo salva.",
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
-  /** Faixa no topo do popup enquanto a depuração (escolha da pessoa nas opções) está ligada. */
-  debugBanner: "Depura\xE7\xE3o LIGADA \u2014 prazos relaxados e chamadas gravadas no disco",
-  debugTurnOff: "Desligar",
-  /** O atalho dentro da faixa para a seção de depuração das opções. */
+  /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
+  debugOn: "Modo de depura\xE7\xE3o ligado",
+  /** O atalho da linha de depuração para a página de opções. */
   debugOptions: "Op\xE7\xF5es de depura\xE7\xE3o",
   reloadHint: (expected, running) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running}): clique em Recarregar em chrome://extensions.`
 };

@@ -1,4 +1,4 @@
-# PRD — tether (nome provisório)
+# PRD — tether
 
 **Versão:** 0.2 · **Data:** 2026-10-29 · **Fases:** 1 (gestão de sessões) e 2 (o app), as duas implementadas
 

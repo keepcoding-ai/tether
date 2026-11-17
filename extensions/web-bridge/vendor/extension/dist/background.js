@@ -1,5 +1,5 @@
 // <define:__BRAND__>
-var define_BRAND_default = { slug: "tether", name: "Tether", shortName: "Tether", description: "Deixa os agentes do Tether (Claude, soul) usarem este navegador, s\xF3 nas abas que eles abriram ou que voc\xEA entregou.", color: "#6aa6ff", colors: { accent: "#6aa6ff", light: { ink: "#1b1b1f", paper: "#f4f4f7" }, dark: { ink: "#e8e8ee", paper: "#141418" } }, host: { name: "tether", id: "studio.codr.tether" }, locale: "pt-BR", mcp: { serverName: "tether-bridge" }, tabs: { groupTitle: "{shortName}", agentTitle: "{shortName} \xB7 {agent}", groupColor: "blue" }, capabilities: { evaluate: "own-tabs", download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: true }, icons: { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }, logos: { h: { light: "brand/logo-h-light.svg", dark: "brand/logo-h-dark.svg" }, symbol: { light: "brand/logo-light.svg", dark: "brand/logo-dark.svg" } }, product: "Tether Bridge" };
+var define_BRAND_default = { slug: "tether", name: "Tether", shortName: "Tether", description: "Deixa os agentes do Tether (Claude, soul) usarem este navegador, s\xF3 nas abas que eles abriram ou que voc\xEA entregou.", color: "#6aa6ff", colors: { accent: "#6aa6ff", light: { ink: "#1b1b1f", paper: "#f4f4f7" }, dark: { ink: "#e8e8ee", paper: "#141418" } }, host: { name: "tether", id: "studio.codr.tether" }, locale: "pt-BR", mcp: { serverName: "tether-bridge" }, tabs: { groupTitle: "{shortName}", agentTitle: "{shortName} \xB7 {agent}", groupColor: "blue" }, capabilities: { evaluate: "own-tabs", download: true, upload: true, pdf: true, readNetwork: true, windowPerAgent: false }, icons: { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }, logos: { h: { light: "brand/logo-h-light.svg", dark: "brand/logo-h-dark.svg" }, symbol: { light: "brand/logo-light.svg", dark: "brand/logo-dark.svg" } }, product: "Tether Bridge" };
 
 // src/protocol.ts
 var PROTOCOL_VERSION = 1;
@@ -12,8 +12,7 @@ function isClientId(v) {
 }
 function cleanClientName(raw2) {
   if (typeof raw2 !== "string") return void 0;
-  const spaced = raw2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(new RegExp("\\p{Cf}", "gu"), "").replace(/\s+/g, " ").trim();
-  const cleaned = [...spaced].slice(0, CLIENT_NAME_MAX).join("").trim();
+  const cleaned = raw2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CLIENT_NAME_MAX).trim();
   return cleaned || void 0;
 }
 var SEED_FILE = "bridge.json";
@@ -1010,6 +1009,10 @@ function ownerGroupColor(clientId) {
 function ownerGroupTitle(client) {
   return agentGroupTitle(client.name ?? client.id);
 }
+var RELEASED_SUFFIX = " (encerrado)";
+function releasedGroupTitle(title) {
+  return title.endsWith(RELEASED_SUFFIX) ? title : `${title}${RELEASED_SUFFIX}`;
+}
 
 // extension/src/settings.ts
 var STATUS_KEY = "status";
@@ -1103,7 +1106,6 @@ var CURRENT_KEY = "currentTab";
 var CURRENT_BY_OWNER_KEY = "currentByOwner";
 var CLIENT_NAMES_KEY = "clientNames";
 var WINDOW_BY_OWNER_KEY = "windowByOwner";
-var GROUPS_BY_OWNER_KEY = "groupsByOwner";
 var cache = null;
 async function load() {
   if (!cache) cache = (await chrome.storage.session.get(SCOPE_KEY))[SCOPE_KEY] ?? {};
@@ -1145,7 +1147,7 @@ async function addScope(tabId, owner, handed = false) {
     scope[String(tabId)] = { grouped: false, ...owner ? { owner: owner.id } : {}, ...handed ? { handed: true } : {} };
   }
   await save();
-  await noteCaller(owner);
+  if (owner) await rememberClient(owner);
   scheduleTabs();
 }
 async function removeScope(tabId) {
@@ -1209,19 +1211,11 @@ async function clientNames() {
   return (await chrome.storage.session.get(CLIENT_NAMES_KEY))[CLIENT_NAMES_KEY] ?? {};
 }
 async function rememberClient(client) {
-  if (!client.name) return false;
+  if (!client.name) return;
   const names = await clientNames();
-  if (names[client.id] === client.name) return false;
+  if (names[client.id] === client.name) return;
   names[client.id] = client.name;
   await chrome.storage.session.set({ [CLIENT_NAMES_KEY]: names });
-  return true;
-}
-async function noteCaller(client) {
-  if (!client?.name) return;
-  try {
-    if (await rememberClient(client)) await renameOwnerGroups(client.id);
-  } catch {
-  }
 }
 async function clientName(id) {
   return (await clientNames())[id];
@@ -1263,94 +1257,28 @@ async function groupTitleFor(owner) {
   const name = await clientName(owner);
   return ownerGroupTitle(name ? { id: owner, name } : { id: owner });
 }
-async function groupsByOwner() {
-  return (await chrome.storage.session.get(GROUPS_BY_OWNER_KEY))[GROUPS_BY_OWNER_KEY] ?? {};
-}
-async function ownerGroups(owner, prune = false) {
-  const map = await groupsByOwner();
-  const ids = map[owner] ?? [];
-  const groups = (await Promise.all(ids.map((id) => chrome.tabGroups.get(id).catch(() => null)))).filter((g) => g !== null);
-  if (prune && groups.length !== ids.length) {
-    if (groups.length) map[owner] = groups.map((g) => g.id);
-    else delete map[owner];
-    await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
-  }
-  return groups;
-}
-async function claimGroup(owner, groupId) {
-  const map = await groupsByOwner();
-  const ids = map[owner] ?? [];
-  if (ids.includes(groupId)) return;
-  map[owner] = [...ids, groupId];
-  await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
-}
-async function ownerGroupWindow(owner) {
-  return (await ownerGroups(owner))[0]?.windowId ?? null;
-}
 var grouping = Promise.resolve();
-function inGroupQueue(run) {
-  const next = grouping.then(run, run);
-  grouping = next.catch(() => void 0);
-  return next;
-}
-function forgetGroup(groupId) {
-  return inGroupQueue(async () => {
-    const map = await groupsByOwner();
-    const owners = Object.keys(map).filter((o) => map[o].includes(groupId));
-    if (!owners.length) return;
-    for (const o of owners) {
-      const rest = map[o].filter((id) => id !== groupId);
-      if (rest.length) map[o] = rest;
-      else delete map[o];
-    }
-    await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
-  });
-}
-function renameOwnerGroups(owner) {
-  return inGroupQueue(async () => {
-    const title = await groupTitleFor(owner);
-    for (const g of await ownerGroups(owner, true)) if (g.title !== title) await chrome.tabGroups.update(g.id, { title }).catch(() => void 0);
-  });
-}
-function collapseOwnerGroups(owner) {
-  return inGroupQueue(async () => {
-    const groups = await ownerGroups(owner, true);
-    for (const g of groups) await chrome.tabGroups.update(g.id, { collapsed: true }).catch(() => void 0);
-    return groups.length;
-  });
-}
-function groupTab(tabId, opts = {}) {
-  return inGroupQueue(async () => {
+function groupTab(tabId) {
+  const run = async () => {
     const entry = await entryOf(tabId);
     const owner = entry?.owner;
     const title = await groupTitleFor(owner);
+    const color = owner === void 0 ? await groupColor() : ownerGroupColor(owner);
     const tab = await chrome.tabs.get(tabId);
-    if (owner === void 0) {
-      const existing = (await chrome.tabGroups.query({ title, windowId: tab.windowId }))[0];
-      const groupId = await chrome.tabs.group(
-        existing ? { tabIds: tabId, groupId: existing.id } : { tabIds: tabId, createProperties: { windowId: tab.windowId } }
-      );
-      if (!existing) await chrome.tabGroups.update(groupId, { title, color: await groupColor() });
-    } else {
-      const groups = await ownerGroups(owner, true);
-      const target = groups.find((g) => g.windowId === tab.windowId) ?? (opts.inPlace ? void 0 : groups[0]);
-      const color = ownerGroupColor(owner);
-      if (target) {
-        await chrome.tabs.group({ tabIds: tabId, groupId: target.id });
-        const retitle = target.title !== title && await clientName(owner) !== void 0;
-        if (target.collapsed || retitle) await chrome.tabGroups.update(target.id, { collapsed: false, ...retitle ? { title } : {} }).catch(() => void 0);
-      } else {
-        const groupId = await chrome.tabs.group({ tabIds: tabId, createProperties: { windowId: tab.windowId } });
-        await chrome.tabGroups.update(groupId, { title, color });
-        await claimGroup(owner, groupId);
-      }
-    }
+    const existing = (await chrome.tabGroups.query({ title, windowId: tab.windowId }))[0];
+    const groupId = await chrome.tabs.group(
+      existing ? { tabIds: tabId, groupId: existing.id } : { tabIds: tabId, createProperties: { windowId: tab.windowId } }
+    );
+    if (!existing) await chrome.tabGroups.update(groupId, { title, color });
     const scope = await load();
     if (scope[String(tabId)]) {
       scope[String(tabId)].grouped = true;
       await save();
     }
-  });
+  };
+  const next = grouping.then(run, run);
+  grouping = next.catch(() => void 0);
+  return next;
 }
 
 // extension/src/alert.ts
@@ -1358,19 +1286,16 @@ var ALERT_COLOR = "#f5a524";
 var ALERT_TEXT_COLOR = "#1a1a1a";
 var BADGE_COLOR = brandAccent() ?? "#d7813d";
 var BADGE_TEXT_COLOR = "#ffffff";
-var DEBUG_BADGE_COLOR = "#d93025";
-function badgeText(controlled, allowEvaluate, debug = false) {
-  if (debug) return "DBG";
+function badgeText(controlled, allowEvaluate) {
   if (controlled > 0) return controlled > 99 ? "99+" : String(controlled);
   return allowEvaluate ? "JS" : "";
 }
 async function applyBadge() {
   const allow = await getAllowEvaluate();
-  const debug = (await getDebugChoice())?.enabled === true;
   const controlled = (await listScope()).length;
-  await chrome.action.setBadgeText({ text: badgeText(controlled, allow, debug) });
-  await chrome.action.setBadgeBackgroundColor({ color: debug ? DEBUG_BADGE_COLOR : allow ? ALERT_COLOR : BADGE_COLOR });
-  await chrome.action.setBadgeTextColor({ color: debug ? BADGE_TEXT_COLOR : allow ? ALERT_TEXT_COLOR : BADGE_TEXT_COLOR });
+  await chrome.action.setBadgeText({ text: badgeText(controlled, allow) });
+  await chrome.action.setBadgeBackgroundColor({ color: allow ? ALERT_COLOR : BADGE_COLOR });
+  await chrome.action.setBadgeTextColor({ color: allow ? ALERT_TEXT_COLOR : BADGE_TEXT_COLOR });
 }
 async function applyAlertState() {
   await applyBadge();
@@ -1669,7 +1594,7 @@ async function takeControl(tabId, owner, opts = {}) {
   const s = sessionFor(tabId);
   try {
     await s.attach();
-    await groupTab(tabId, { inPlace: opts.inPlace === true || opts.handed === true });
+    await groupTab(tabId);
   } catch (e) {
     await releaseControl(tabId);
     throw e;
@@ -1700,6 +1625,7 @@ async function releaseControl(tabId) {
   await s?.detach();
 }
 async function releaseClient(clientId) {
+  const title = await groupTitleFor(clientId);
   const released = [];
   for (const [tabId, entry] of await listEntries()) {
     if (entry.owner !== clientId) continue;
@@ -1707,7 +1633,12 @@ async function releaseClient(clientId) {
     released.push(tabId);
   }
   await clearCurrent(clientId);
-  const groups = await collapseOwnerGroups(clientId);
+  await clearWindow(clientId);
+  let groups = 0;
+  for (const g of await chrome.tabGroups.query({ title })) {
+    await chrome.tabGroups.update(g.id, { title: releasedGroupTitle(title), collapsed: true }).catch(() => chrome.tabGroups.update(g.id, { title: releasedGroupTitle(title) }));
+    groups++;
+  }
   await forgetClient(clientId);
   scheduleTabs();
   return { released, groups };
@@ -1768,9 +1699,6 @@ function watchBrowserEvents() {
   });
   chrome.windows.onRemoved.addListener((windowId) => {
     void forgetWindow(windowId);
-  });
-  chrome.tabGroups.onRemoved.addListener((group) => {
-    void forgetGroup(group.id);
   });
   chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) return;
@@ -2689,16 +2617,10 @@ async function listTabs(client) {
   return rows2;
 }
 async function createBlankTab(client, preference) {
-  const groupWindow = client !== void 0 && preference !== "user-window" ? await ownerGroupWindow(client.id) : null;
   const inAgentWindow = client !== void 0 && preference !== "user-window" && await windowPerAgent();
   if (!inAgentWindow) {
-    const created = await chrome.tabs.create({ ...groupWindow !== null ? { windowId: groupWindow } : {}, url: "about:blank", active: true });
+    const created = await chrome.tabs.create({ url: "about:blank", active: true });
     return { id: created.id, windowId: created.windowId };
-  }
-  if (groupWindow !== null) {
-    const created = await chrome.tabs.create({ windowId: groupWindow, url: "about:blank", active: true });
-    await setWindow(client.id, groupWindow);
-    return { id: created.id, windowId: groupWindow };
   }
   const existing = await getWindow(client.id);
   if (existing !== null) {
@@ -2721,7 +2643,7 @@ async function tabs(a, client) {
       const { id, windowId } = await createBlankTab(client, a.where);
       let s;
       try {
-        s = await takeControl(id, client, { inPlace: a.where === "user-window" });
+        s = await takeControl(id, client);
       } catch (e) {
         await chrome.tabs.remove(id).catch(() => void 0);
         throw e;
@@ -2792,10 +2714,9 @@ var POPUP = {
   browserName: "Nome deste navegador",
   browserNameHelp: "Como os agentes veem este navegador. Enter ou sair do campo salva.",
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
-  /** Faixa no topo do popup enquanto a depuração (escolha da pessoa nas opções) está ligada. */
-  debugBanner: "Depura\xE7\xE3o LIGADA \u2014 prazos relaxados e chamadas gravadas no disco",
-  debugTurnOff: "Desligar",
-  /** O atalho dentro da faixa para a seção de depuração das opções. */
+  /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
+  debugOn: "Modo de depura\xE7\xE3o ligado",
+  /** O atalho da linha de depuração para a página de opções. */
   debugOptions: "Op\xE7\xF5es de depura\xE7\xE3o",
   reloadHint: (expected, running2) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running2}): clique em Recarregar em chrome://extensions.`
 };
@@ -3826,10 +3747,7 @@ var DaemonConnection = class {
         void setStatus({ state: "denied", detail: msg.reason });
         void applySeed();
       } else if (msg.t === "call") {
-        void this.handleCall(msg.rid, async () => {
-          await noteCaller(msg.client);
-          return runTool(msg.tool, msg.args, msg.client, msg.rid);
-        }, { tool: msg.tool, client: msg.client?.id });
+        void this.handleCall(msg.rid, () => runTool(msg.tool, msg.args, msg.client, msg.rid), { tool: msg.tool, client: msg.client?.id });
       } else if (msg.t === "release") {
         void this.handleCall(msg.rid, () => releaseClient(msg.client), { tool: "release" });
       } else if (msg.t === "release-all") {
@@ -3921,7 +3839,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && SETTINGS_KEYS.some((k) => k in changes)) void connection.restart();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && (ALLOW_EVALUATE_STORAGE_KEY in changes || DEBUG_CHOICE_STORAGE_KEY in changes)) void applyAlertState();
+  if (area === "local" && ALLOW_EVALUATE_STORAGE_KEY in changes) void applyAlertState();
 });
 void applyAlertState();
 async function overview() {

@@ -47,22 +47,8 @@ function isCallId(v) {
 }
 function cleanClientName(raw) {
   if (typeof raw !== "string") return void 0;
-  const spaced = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(new RegExp("\\p{Cf}", "gu"), "").replace(/\s+/g, " ").trim();
-  const cleaned = [...spaced].slice(0, CLIENT_NAME_MAX).join("").trim();
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CLIENT_NAME_MAX).trim();
   return cleaned || void 0;
-}
-function latin1ClientName(name) {
-  return name.replace(/[^ -~ -ÿ]/gu, "?");
-}
-function clientNameFromHeaders(encoded, plain) {
-  if (typeof encoded === "string") {
-    try {
-      const name = cleanClientName(decodeURIComponent(encoded));
-      if (name) return name;
-    } catch {
-    }
-  }
-  return cleanClientName(plain);
 }
 function sanitizeTabs(v) {
   if (!Array.isArray(v)) return [];
@@ -79,7 +65,7 @@ function sanitizeTabs(v) {
   }
   return out;
 }
-var PROTOCOL_VERSION, DEFAULT_PORT, WS_PATH, CLOSE_DENIED, CLOSE_REPLACED, CLOSE_PROTOCOL, CLIENT_ID_HEADER, CLIENT_NAME_HEADER, CLIENT_NAME_ENCODED_HEADER, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, CALL_ID_HEADER, CALL_ID_PATTERN, STATUS_TABS_MAX, STATUS_URL_MAX, STATUS_TITLE_MAX, SEED_FILE, EXTENSION_ID_PATTERN;
+var PROTOCOL_VERSION, DEFAULT_PORT, WS_PATH, CLOSE_DENIED, CLOSE_REPLACED, CLOSE_PROTOCOL, CLIENT_ID_HEADER, CLIENT_NAME_HEADER, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, CALL_ID_HEADER, CALL_ID_PATTERN, STATUS_TABS_MAX, STATUS_URL_MAX, STATUS_TITLE_MAX, SEED_FILE, EXTENSION_ID_PATTERN;
 var init_protocol = __esm({
   "src/protocol.ts"() {
     "use strict";
@@ -91,7 +77,6 @@ var init_protocol = __esm({
     CLOSE_PROTOCOL = 4400;
     CLIENT_ID_HEADER = "x-bridge-client";
     CLIENT_NAME_HEADER = "x-bridge-client-name";
-    CLIENT_NAME_ENCODED_HEADER = "x-bridge-client-name-enc";
     CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$/;
     CLIENT_NAME_MAX = 80;
     CALL_ID_HEADER = "x-bridge-call";
@@ -849,8 +834,7 @@ var init_client = __esm({
               connection: "close",
               // Quem chama, quando a casca se identificou: o daemon loga o id e o repassa à extensão em cada `call`.
               ...target.client ? { [CLIENT_ID_HEADER]: target.client.id } : {},
-              // O nome vai em UTF-8 codificado (o cabeçalho só leva Latin-1) e, para um daemon antigo, no cabeçalho de antes.
-              ...target.client?.name ? { [CLIENT_NAME_ENCODED_HEADER]: encodeURIComponent(target.client.name), [CLIENT_NAME_HEADER]: latin1ClientName(target.client.name) } : {},
+              ...target.client?.name ? { [CLIENT_NAME_HEADER]: target.client.name } : {},
               // O id desta chamada: o daemon o usa como rid e o põe em cada linha de log e no erro (data.callId).
               ...callId ? { [CALL_ID_HEADER]: callId } : {},
               ...body !== void 0 ? { "content-type": "application/json" } : {}
@@ -1835,7 +1819,6 @@ __export(util_exports, {
   required: () => required,
   safeExtend: () => safeExtend,
   shallowClone: () => shallowClone,
-  sizeCaps: () => sizeCaps,
   slugify: () => slugify,
   stringifyPrimitive: () => stringifyPrimitive,
   toZod: () => toZod,
@@ -2258,18 +2241,6 @@ function prefixIssues(path, issues) {
 }
 function unwrapMessage(message) {
   return typeof message === "string" ? message : message?.message;
-}
-function sizeCaps(defChecks) {
-  const caps = [];
-  for (const ch of defChecks ?? []) {
-    const d = ch._zod.def;
-    if (!/_(length|size)$|_equals$/.test(d.check))
-      break;
-    const max = d.maximum ?? d.length ?? d.size;
-    if (max >= 0)
-      caps.push([max, ch]);
-  }
-  return caps;
 }
 function attachSchema(issues, start, inst) {
   var _a3;
@@ -3472,7 +3443,7 @@ var init_versions = __esm({
     version = {
       major: 4,
       minor: 6,
-      patch: 7
+      patch: 5
     };
   }
 });
@@ -3599,28 +3570,6 @@ function isValidJWT(token, algorithm = null) {
   } catch {
     return false;
   }
-}
-function capSize(inst, size) {
-  const caps = sizeCaps(inst._zod.def.checks);
-  if (!caps.length)
-    return;
-  const cap = Math.min(...caps.map((c) => c[0]));
-  const parse4 = inst._zod.parse;
-  inst._zod.parse = (payload, ctx) => {
-    const n = size(payload.value);
-    if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
-      for (const [max, ch] of sizeCaps(inst._zod.def.checks)) {
-        if (n > max && ch._zod.def.when(payload)) {
-          const start = payload.issues.length;
-          ch._zod.check(payload);
-          payload.issues[start].continue = false;
-          attachSchema(payload.issues, start, inst);
-          return payload;
-        }
-      }
-    }
-    return parse4(payload, ctx);
-  };
 }
 function handleArrayResult(result, final, index) {
   if (result.issues.length) {
@@ -3932,7 +3881,7 @@ function handleRefineResult(result, payload, input, inst) {
     payload.issues.push(issue(_iss));
   }
 }
-var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, arraySize, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
+var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
 var init_schemas = __esm({
   "node_modules/zod/v4/core/schemas.js"() {
     init_checks();
@@ -4390,7 +4339,6 @@ var init_schemas = __esm({
         return payload;
       };
     });
-    arraySize = (input) => Array.isArray(input) ? input.length : -1;
     $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def3) => {
       $ZodType.init(inst, def3);
       const memo2 = globalConfig.memoizer;
@@ -4428,7 +4376,6 @@ var init_schemas = __esm({
         }
         return payload;
       };
-      capSize(inst, arraySize);
     });
     NO_SYMBOL_KEYS = [];
     $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def3) => {
@@ -25288,7 +25235,7 @@ async function startDaemon(opts) {
     if (!isClientId(id)) {
       throw Object.assign(new Error(`invalid X-Bridge-Client: expected ${CLIENT_ID_PATTERN.source}`), { code: "INVALID_ARGUMENT" });
     }
-    const name = clientNameFromHeaders(req.headers[CLIENT_NAME_ENCODED_HEADER], req.headers[CLIENT_NAME_HEADER]);
+    const name = cleanClientName(req.headers[CLIENT_NAME_HEADER]);
     return name ? { id, name } : { id };
   };
   const callIdOf = (req) => {

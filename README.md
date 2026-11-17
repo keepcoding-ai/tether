@@ -1,4 +1,4 @@
-# tether (nome provisório)
+# tether
 
 **Cada terminal sabe qual sessão de agente ele estava rodando, e a retoma depois de qualquer reinício.**
 

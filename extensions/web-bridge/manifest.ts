@@ -26,7 +26,7 @@ export const manifest: ExtensionManifest = {
   contributes: {
     settings: {
       serveToAgents: { type: 'boolean', default: true, title: `Oferecer o ${BRIDGE_NAME} aos agentes dos painéis`, description: 'Os agentes dos painéis recebem as ferramentas do navegador.', order: 1 },
-      agentWindows: { type: 'boolean', default: true, title: 'Abas dos agentes em uma janela própria por agente', description: 'Cada agente abre suas abas numa janela do navegador só dele.', order: 2 },
+      agentWindows: { type: 'boolean', default: false, title: 'Abas dos agentes em uma janela própria por agente', description: 'Cada agente abre suas abas numa janela do navegador só dele.', order: 2 },
       evaluate: { type: 'string', default: 'own-tabs', enum: ['own-tabs', 'all', 'off'], enumLabels: ['Só nas abas do agente', 'Em qualquer aba', 'Em nenhuma'], title: 'Onde um agente pode rodar código na página (evaluate)', description: 'Só nas abas do próprio agente, em qualquer aba, ou em nenhuma.', order: 3 },
     },
     commands: [

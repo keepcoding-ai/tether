@@ -342,9 +342,9 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
 
   test('defaultCapabilities and serverNameOf: the package defaults when the build carries them, else this extension\'s', () => {
     const base = { name: 'tether-bridge', version: '0.1.0', extensionId: buildId, bundle: { file: 'a', sha256: 'b', bytes: 1 }, extension: { dir: 'extension', sha256: 'c', files: 1 } }
-    assert.deepEqual(defaultCapabilities(base), { windowPerAgent: true, evaluate: 'own-tabs' })
+    assert.deepEqual(defaultCapabilities(base), { windowPerAgent: false, evaluate: 'own-tabs' })
     assert.deepEqual(defaultCapabilities({ ...base, brand: { slug: 't', name: 'T', capabilities: { evaluate: 'all', pdf: false } } }), { evaluate: 'all', pdf: false })
-    assert.deepEqual(defaultCapabilities(undefined), { windowPerAgent: true, evaluate: 'own-tabs' })
+    assert.deepEqual(defaultCapabilities(undefined), { windowPerAgent: false, evaluate: 'own-tabs' })
     assert.equal(serverNameOf(undefined), 'tether-bridge')
     assert.equal(serverNameOf(base), 'tether-bridge')
     assert.equal(serverNameOf({ ...base, brand: { slug: 't', name: 'T', mcp: { serverName: 'other-bridge' } } }), 'other-bridge')
