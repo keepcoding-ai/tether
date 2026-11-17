@@ -1705,8 +1705,8 @@ body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-acti
 @media (prefers-reduced-motion: reduce) {
   .dv-tab.attention-tab { animation: none; background-color: color-mix(in srgb, var(--desk-line-color, var(--accent)) 25%, transparent); }
 }
-/* Foco de Mesa: `.focused` is only ever a desk's frame; the drawer has its own `.drawer-focused`. A pad (`.kbd-focused`, a
-   behaviour marker only) has no ring, aura or dim: it looks the same with or without the keyboard. */
+/* Foco de Mesa: `.focused` is only ever a desk's frame; the drawer has its own `.drawer-focused`. A pad (`.kbd-focused`)
+   has no ring or aura; it only takes part in the dim. */
 
 /* Dim: a veil of the desk background over frames without the focus (tabs included), so it dims toward the surface in
    both themes. Above the frame card, below the edge "+" (40) and every overlay. */
@@ -1719,8 +1719,20 @@ body { --dim-veil: .32; }
 body.dim-weak { --dim-veil: .2; }
 body.dim-medium { --dim-veil: .32; }
 body.dim-strong { --dim-veil: .45; }
-/* Only the desk's frames dim (around the Foco de Mesa): a pad or the drawer is never "the other frames". */
-body.dim-unfocused .desk-set .frame:not(.focused)::after { opacity: var(--dim-veil); }
+/* The unit of the dim is the pane group (a dockview group: its tabs and content), not the frame: of every visible group,
+   in the desk, the pads or the drawer, only the active group of the frame holding the focus stays clear. That frame is
+   the one with the DOM focus inside; when none has it (a native view or a menu took it), the marked frame: a pad's or
+   the drawer's when there is one, else the Foco de Mesa. */
+.frame .dv-groupview { position: relative; }
+.frame .dv-groupview::after {
+  content: ""; position: absolute; inset: 0; z-index: 30; pointer-events: none;
+  background: var(--desk-bg); opacity: 0; transition: opacity var(--motion-fast) ease-out;
+}
+body.dim-unfocused .frame .dv-groupview::after { opacity: var(--dim-veil); }
+body.dim-unfocused .frame:focus-within .dv-groupview.dv-active-group::after { opacity: 0; }
+body.dim-unfocused:not(:has(.frame:focus-within)) .frame:is(.kbd-focused, .drawer-focused) .dv-groupview.dv-active-group::after { opacity: 0; }
+body.dim-unfocused:not(:has(.frame:focus-within, .frame.kbd-focused, .frame.drawer-focused)) .frame.focused .dv-groupview.dv-active-group::after { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .frame .dv-groupview::after { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .frame::after { transition: none; } }
 
 /* Drop anywhere (desk.ts): a tab over the outer edge of a desk, a pad or the drawer (a new frame on that side, full

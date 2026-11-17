@@ -87,7 +87,19 @@ export class AttentionHistory {
     this.items = [{ slotId: t.slotId, label: t.label, kind: t.kind, at, seen: false }, ...this.items.filter(e => e.slotId !== t.slotId)].slice(0, this.max)
   }
 
-  markSeen(): void { this.items = this.items.map(e => e.seen ? e : { ...e, seen: true }) }
+  /** Marks the notices as looked at: one slot's (its pane was visited) or, without a slot, all of them (the menu opened). Answers whether anything changed. */
+  markSeen(slotId?: string): boolean {
+    let changed = false
+    this.items = this.items.map(e => e.seen || (slotId !== undefined && e.slotId !== slotId) ? e : (changed = true, { ...e, seen: true }))
+    return changed
+  }
+
+  /** A slot's attention as the daemon reports it now: once it is gone (the person answered, the agent resumed), its notice leaves the list. Answers whether anything changed. */
+  settle(slotId: string, attention: 'done' | 'waiting' | undefined): boolean {
+    if (attention || !this.items.some(e => e.slotId === slotId)) return false
+    this.remove(slotId)
+    return true
+  }
   remove(slotId: string): void { this.items = this.items.filter(e => e.slotId !== slotId) }
   get unseen(): number { return this.items.filter(e => !e.seen).length }
   list(): AttentionEntry[] { return this.items.map(e => ({ ...e })) }

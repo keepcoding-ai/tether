@@ -31,7 +31,7 @@ import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
 import { attentionLines, BadgeBoard, effectiveAttention, SealBoard, type AttentionHandle } from './seal-rules.ts'
 import { deskMark, type DeskMark } from './desk-mark.ts'
 import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
-import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
+import { DEFAULT_UI, DIM_LEVELS, type UiSettings, type DimLevel } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
@@ -494,6 +494,10 @@ function setupDock(): void {
       // A radio pair: the leading icon is the mark (filled = chosen). A ui from before the setting reads as the default.
       const label = ui.fixedDeskLabel ?? DEFAULT_UI.fixedDeskLabel
       const radio = (value: typeof label, text: string): MenuItem => ({ icon: label === value ? 'radio-button-fill' : 'circle', label: text, run: () => window.tether.setUi({ ...ui, fixedDeskLabel: value }) })
+      const dim = (level: DimLevel | null, text: string): MenuItem => {
+        const chosen = level === null ? !ui.dimUnfocused : ui.dimUnfocused && ui.dimLevel === level
+        return { icon: chosen ? 'radio-button-fill' : 'circle', label: text, run: () => window.tether.setUi(level === null ? { ...ui, dimUnfocused: false } : { ...ui, dimUnfocused: true, dimLevel: level }) }
+      }
       showContextMenu(x, y, [
       { heading: 'Mesas fixas' },
       radio('icon', 'Exibir ícone'),
@@ -502,6 +506,13 @@ function setupDock(): void {
       { heading: 'Aparência' },
       { icon: 'minus', label: 'Exibir linha colorida', checked: ui.deskLine, run: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }) },
       { icon: 'square-half', label: 'Exibir cor ao redor da guia ativa', checked: ui.tabBorder, run: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }) },
+      SEP,
+      // The dim is a single choice: off is one of the levels.
+      { heading: 'Escurecer janelas sem foco' },
+      dim(null, 'Desligado'),
+      dim('weak', 'Fraco'),
+      dim('medium', 'Médio'),
+      dim('strong', 'Forte'),
     ], opener)
     },
   })
@@ -949,7 +960,7 @@ function watchedPane(): string | undefined {
 function markSeenIfWatched(): void {
   const id = watchedPane()
   if (id && slots.get(id)?.attention) void window.tether.request({ t: 'seen', slotId: id })
-  if (id) seals.seen(id)
+  if (id) { seals.seen(id); window.tether.attentionSeen(id) }
 }
 
 /** The keyboard to a pane, whatever it is: a terminal or a note. */

@@ -191,7 +191,7 @@ function connectDaemon(): Promise<void> {
     try {
       const client = await connectOnce()
       daemon = client
-      client.on('state', slot => { slotStates.set(slot.slotId, slot); noteAttention(slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
+      client.on('state', slot => { slotStates.set(slot.slotId, slot); noteAttention(slot); if (attentionHistory.settle(slot.slotId, slot.attention)) sendAttention(); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
       client.on('removed', slotId => { slotStates.delete(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
@@ -262,7 +262,7 @@ function setMute(until: number | undefined): void {
 }
 
 ipcMain.handle('attention:get', () => attentionState())
-ipcMain.on('attention:seen', () => { attentionHistory.markSeen(); sendAttention() })
+ipcMain.on('attention:seen', (_e, slotId: unknown) => { if (attentionHistory.markSeen(typeof slotId === 'string' ? slotId : undefined)) sendAttention() })
 ipcMain.on('attention:mute', (_e, choice: unknown) => setMute(isMuteChoice(choice) ? muteUntil(choice, Date.now()) : undefined))
 
 function dropOsToasts(): void {

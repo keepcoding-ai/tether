@@ -46,3 +46,25 @@ test('history keeps at most 20 entries', () => {
   assert.equal(list[0]!.slotId, 's24')
   assert.equal(list[19]!.slotId, 's5')
 })
+
+test('history: visiting a pane marks only that slot as seen', () => {
+  const h = new AttentionHistory()
+  h.add({ slotId: 'a', label: 'A', kind: 'waiting' }, 1)
+  h.add({ slotId: 'b', label: 'B', kind: 'waiting' }, 2)
+  assert.equal(h.markSeen('a'), true)
+  assert.deepEqual(h.list().map(e => [e.slotId, e.seen]), [['b', false], ['a', true]])
+  assert.equal(h.unseen, 1)
+  assert.equal(h.markSeen('a'), false, 'already seen: nothing to repaint')
+  assert.equal(h.markSeen('zz'), false)
+})
+
+test('history: a notice leaves the list once its slot no longer asks for attention', () => {
+  const h = new AttentionHistory()
+  h.add({ slotId: 'a', label: 'A', kind: 'waiting' }, 1)
+  h.add({ slotId: 'b', label: 'B', kind: 'done' }, 2)
+  assert.equal(h.settle('a', 'waiting'), false, 'still waiting: stays')
+  assert.equal(h.settle('a', 'done'), false)
+  assert.equal(h.settle('a', undefined), true)
+  assert.deepEqual(h.list().map(e => e.slotId), ['b'])
+  assert.equal(h.settle('zz', undefined), false)
+})

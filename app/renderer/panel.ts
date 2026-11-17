@@ -18,12 +18,16 @@ import { createTabHeader } from './tab-header.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
 import { rondaLabel, rondaTooltip } from './ronda-rules.ts'
 import { detailsOpen } from './pane-details.ts'
-import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
+import { IS_MAC, paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
+
+const IS_WINDOWS = typeof navigator !== 'undefined' && !IS_MAC && /Win/i.test(navigator.platform)
+/** The key Claude Code reads as "paste the clipboard image": Alt+V (ESC v) on Windows, ^V elsewhere. */
+const IMAGE_PASTE_KEY = IS_WINDOWS ? '\x1bv' : '\x16'
 
 // The palette and the font come from the terminal appearance (app/shared/terminal-theme.ts: preset per
 // scheme over the window background, bundled font, weight, size, line height, contrast 4.5). The host owns
@@ -636,13 +640,14 @@ export class TerminalPanel implements IContentRenderer {
 
   /**
    * Pastes the clipboard text through xterm (bracketed paste when the program asked for it). With no text and
-   * `rawWhenEmpty`, the raw ^V goes to the process instead: Claude Code pastes an image from the clipboard
-   * when it receives that key, and a screenshot in the clipboard has no text form.
+   * `rawWhenEmpty`, the image-paste key goes to the process instead: Claude Code pastes an image from the
+   * clipboard when it receives it (^V on macOS/Linux, Alt+V = ESC v on Windows, where ^V is ignored), and a
+   * screenshot in the clipboard has no text form.
    */
   async paste(rawWhenEmpty = false): Promise<void> {
     const text = await window.tether.readClipboard()
     if (text) this.term.paste(text)
-    else if (rawWhenEmpty && this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data: '\x16' })
+    else if (rawWhenEmpty && this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data: IMAGE_PASTE_KEY })
   }
 
   /** Types raw bytes into the terminal's pty (same path as keyboard input). */
@@ -749,7 +754,7 @@ export class SlotTab implements ITabRenderer {
     this.attn = document.createElement('span'); this.attn.className = 'attn'
     this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
     const h = createTabHeader({
-      emblems: [this.unsafe, this.ronda, this.attn], dot: this.dot,
+      emblems: [this.attn, this.unsafe, this.ronda], dot: this.dot,
       close: { label: 'Fechar painel', onClose: () => { if (this.api) this.onClose(this.api.id) } },
       onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
       onDblClick: () => this.startRename(),

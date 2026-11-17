@@ -179,7 +179,8 @@ export interface TetherApi {
   settingsOpen(): Promise<{ ok: true; path: string } | { ok: false; message: string }>
   /** The bell (top bar): recent attention notices and the temporary mute of the system toasts (app/shared/os-notify.ts). */
   attentionGet(): Promise<AttentionState>
-  attentionSeen(): void
+  /** Without a slot: every notice (the menu opened). With one: that slot's notice (its pane was visited). */
+  attentionSeen(slotId?: string): void
   /** Mutes the toasts for a while; null lifts the mute. `notifications.os` is never touched. */
   attentionMute(choice: MuteChoice | null): void
   onAttention(listener: (state: AttentionState) => void): () => void
