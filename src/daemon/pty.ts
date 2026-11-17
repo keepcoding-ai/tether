@@ -18,6 +18,10 @@ export interface PtyHandle {
   resize(cols: number, rows: number): void
   /** Kills the process and every descendant, then releases the console. Resolves once the exit was observed (or after `timeoutMs`). */
   kill(timeoutMs?: number): Promise<void>
+  /** Releases the ConPTY and handles WITHOUT killing the process tree. Idempotent. */
+  release(): void
+  /** Bytes written to the conin pipe and not yet flushed by Node (socket writableLength); 0 when unavailable. */
+  pendingInput(): number
 }
 
 /**
@@ -102,6 +106,11 @@ export function spawnPty(plan: PtyPlan, opts: SpawnOptions): PtyHandle {
     resize(cols, rows) {
       if (exit || cols < 1 || rows < 1) return
       try { p.resize(cols, rows) } catch { /* process may be dying */ }
+    },
+    release,
+    pendingInput() {
+      const sock = (p as unknown as { _agent?: { _inSocket?: { writableLength?: number } } })._agent?._inSocket
+      return sock?.writableLength ?? 0
     },
     async kill(timeoutMs = 10_000) {
       if (!exit) await killTree(p.pid)
