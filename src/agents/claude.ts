@@ -276,7 +276,7 @@ export async function findTranscriptAsync(binding: Pick<Binding, 'sessionId' | '
 }
 
 async function sessionExists(binding: Binding, opts?: LookupOptions): Promise<boolean | 'unknown'> {
-  return findTranscript(binding, opts) !== undefined
+  return (await findTranscriptAsync(binding, opts)) !== undefined
 }
 
 function titleOf(line: string): string | undefined {
@@ -354,9 +354,9 @@ export async function lastCustomTitleAsync(file: string): Promise<string | undef
 }
 
 async function title(binding: Binding, opts?: LookupOptions): Promise<string | undefined> {
-  const file = findTranscript(binding, opts)
+  const file = await findTranscriptAsync(binding, opts)
   if (!file) return undefined
-  try { return lastCustomTitle(file) } catch { return undefined }
+  try { return await lastCustomTitleAsync(file) } catch { return undefined }
 }
 
 export const TITLE_POLL_MS = 5_000

@@ -212,6 +212,17 @@ describe('sessionExists / title against a fake ~/.claude (CLAUDE_CONFIG_DIR)', (
     return file
   }
 
+  test('title() and sessionExists() stay off the sync lookups (they run on the daemon loop)', () => {
+    const src = readFileSync(resolve('src/agents/claude.ts'), 'utf8')
+    for (const name of ['sessionExists', 'title']) {
+      const start = src.indexOf(`async function ${name}(`)
+      assert.ok(start >= 0, name)
+      const body = src.slice(start, src.indexOf('\n}', start))
+      assert.doesNotMatch(body, /findTranscript\(|lastCustomTitle\(|Sync\(/, `${name} calls a sync lookup`)
+      assert.match(body, /findTranscriptAsync\(/, name)
+    }
+  })
+
   test('false when there is no projects dir at all', async () => {
     assert.equal(await claudeAdapter.sessionExists(b('D:\\x')), false)
   })
