@@ -60,6 +60,8 @@ export const MEMORY_INTERVAL_MS = 60_000
 export { KILL_WAIT_CAP_MS, MIN_AGENT_AGE_MS }
 /** Agent processes allowed in 'starting' at the same time (PRD RA8); the rest wait as 'queued'. */
 export const MAX_STARTING = 3
+/** Keys held for a slot whose pty is not up yet (bytes); the excess is dropped and counted. */
+export const INPUT_QUEUE_MAX_BYTES = 64 * 1024
 
 /** Args appended to every launch of an agent by this daemon, from `TETHER_CLAUDE_ARGS` / `TETHER_SOUL_ARGS`
  *  (whitespace-separated). The app's dialog has no args field; this is how a dev/E2E run pins `--model haiku`. */
@@ -232,6 +234,10 @@ interface Slot {
   /** Key->echo probe waiting for the slot's next output (one per slot; a newer one replaces it), with its write time. */
   probe?: { probe: Probe; at: number }
   rondaTimer?: NodeJS.Timeout
+  /** Keys that arrived while the slot had no pty yet (see queueInput); written in order once it has one. */
+  inputQueue?: { items: { data: string; probe?: unknown; arrive: number }[]; bytes: number; overflowed?: true }
+  /** Bytes of input dropped because the queue was full (all runs of this daemon); logged once per slot. */
+  inputDropped?: number
   /** Looking for the channel's start dialog: until it is answered once or the run reports its start. */
   confirmWatch?: { spec: ChannelConfirm; screen: string }
   attached: Set<Client>
@@ -755,6 +761,7 @@ class DaemonImpl implements Daemon {
       if (!adopted) {
         this.log(`slot ${meta.slotId}: the terminal-pane host's run (pid ${a.run.pid}) ended before it was adopted`)
         if (!ended) { slot.status = a.prior.status; slot.error = a.prior.error }
+        this.dropInput(slot)
         this.forgetRun(meta.slotId)
         return
       }
@@ -765,6 +772,7 @@ class DaemonImpl implements Daemon {
       if (ended) return // its exit already came through onExit
       slot.pty = mine
       slot.ptyHosted = true
+      this.flushInput(slot)
       slot.spawnedAt = adopted.spawnedAt
       slot.status = 'running'
       slot.error = undefined
@@ -781,6 +789,7 @@ class DaemonImpl implements Daemon {
     } catch (e) {
       this.log(`slot ${meta.slotId}: adopting pid ${a.run.pid} failed (${(e as Error).message}); left running in the host`)
       if (!ended && slot.pty === undefined) { slot.status = a.prior.status; slot.error = a.prior.error }
+      if (slot.pty === undefined) this.dropInput(slot)
     } finally {
       a.release()
       if (slot.status !== 'starting') this.broadcastState(slot)
@@ -1078,6 +1087,7 @@ class DaemonImpl implements Daemon {
       }
       slot.pty = mine
       slot.ptyHosted = undefined
+      this.flushInput(slot)
     } else {
       // The seat is taken now (startingCount, pump) but not announced: clients hear 'starting' once, with the pid, as before.
       slot.status = 'starting'
@@ -1097,6 +1107,7 @@ class DaemonImpl implements Daemon {
         })
         slot.pty = mine
         slot.ptyHosted = true
+        if (!ended) this.flushInput(slot)
       } catch (e) {
         const err = this.fail(slot, 'spawn-failed', `não foi possível abrir o terminal no anfitrião de terminais (tether-ptyd): ${(e as Error).message}`)
         this.pump() // the 'starting' seat it held is free again
@@ -1145,6 +1156,7 @@ class DaemonImpl implements Daemon {
   /** The slot's current process ended (the caller already checked it is the slot's run). */
   private paneExit(slot: Slot, exit: PtyExit): void {
     const { meta } = slot
+    this.dropInput(slot)
     this.log(`slot ${meta.slotId}: exited (code ${exit.exitCode})`)
     this.forgetRun(meta.slotId)
     this.rondaChannel.revoke(meta.slotId)
@@ -1252,6 +1264,7 @@ class DaemonImpl implements Daemon {
   private fail(slot: Slot, code: ErrorCode, message: string): RequestError {
     slot.status = 'error'
     slot.error = { code, message }
+    this.dropInput(slot)
     this.markEnded(slot)
     this.log(`slot ${slot.meta.slotId}: ${code}: ${message}`)
     this.broadcastState(slot)
@@ -1297,6 +1310,7 @@ class DaemonImpl implements Daemon {
     if (slot.launching) await slot.launching // stop what the host is spawning, not nothing
     const pty = slot.pty
     if (!pty) {
+      this.dropInput(slot)
       this.unwatchTitle(slot)
       return
     }
@@ -1333,6 +1347,48 @@ class DaemonImpl implements Daemon {
       for (const id of client.attached) this.slotMap.get(id)?.attached.delete(client)
       for (const name of client.procsWatched) this.unwatchProc(client, name)
     })
+  }
+
+  /** The slot has no pty yet but is about to: reserved by a launch (host spawn in flight) or by the boot's adoption. */
+  private awaitsPty(slot: Slot): boolean {
+    return !slot.pty && (slot.status === 'starting' || slot.launching !== undefined)
+  }
+
+  /** Writes input to the slot's pty, or holds it (bounded) while the pty is still coming; an exited or stopped slot drops it as before. */
+  private writeInput(slot: Slot, data: string, probe: unknown, arrive: number): void {
+    if (this.awaitsPty(slot)) { this.queueInput(slot, data, probe, arrive); return }
+    if (probe) this.writeProbed(slot, data, probe, arrive)
+    else slot.pty?.write(data)
+  }
+
+  private queueInput(slot: Slot, data: string, probe: unknown, arrive: number): void {
+    const q = (slot.inputQueue ??= { items: [], bytes: 0 })
+    const size = Buffer.byteLength(data)
+    // Once something is dropped, nothing later is kept: a gap in the middle of the typed text would write garbage.
+    if (q.overflowed || q.bytes + size > INPUT_QUEUE_MAX_BYTES) {
+      if (slot.inputDropped === undefined) this.log(`slot ${slot.meta.slotId}: input queue full (${INPUT_QUEUE_MAX_BYTES} bytes) while the terminal is not ready; dropping the excess`)
+      slot.inputDropped = (slot.inputDropped ?? 0) + size
+      q.overflowed = true
+      return
+    }
+    q.items.push({ data, probe, arrive })
+    q.bytes += size
+  }
+
+  /** The pty just became the slot's: writes what waited for it, in order, before any newer input can. */
+  private flushInput(slot: Slot): void {
+    const q = slot.inputQueue
+    slot.inputQueue = undefined
+    if (!q || !slot.pty) return
+    for (const it of q.items) {
+      if (it.probe) this.writeProbed(slot, it.data, it.probe, it.arrive)
+      else slot.pty.write(it.data)
+    }
+  }
+
+  /** The run the queued input was meant for is not coming (launch failed, slot stopped, exited or removed). */
+  private dropInput(slot: Slot): void {
+    slot.inputQueue = undefined
   }
 
   /** Input with a probe: stamps arrival and the PTY write, and leaves the probe pending for the slot's next output. */
@@ -1391,8 +1447,7 @@ class DaemonImpl implements Daemon {
       const arrive = msg.probe ? stamp() : 0 // line received: the first daemon stamp
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
       if (slot && typeof msg.data === 'string') {
-        if (msg.probe) this.writeProbed(slot, msg.data, msg.probe, arrive)
-        else slot.pty?.write(msg.data)
+        this.writeInput(slot, msg.data, msg.probe, arrive)
         if (slot.attention.input(msg.data)) this.broadcastState(slot)
       }
       return
@@ -1499,6 +1554,7 @@ class DaemonImpl implements Daemon {
         const slot = this.slot(req.slotId)
         await this.stopSlot(slot)
         this.slotMap.delete(slot.meta.slotId)
+        this.dropInput(slot)
         this.rondaChannel.revoke(slot.meta.slotId)
         if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
         slot.ronda = undefined
