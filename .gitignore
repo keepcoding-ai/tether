@@ -10,3 +10,6 @@ test/e2e/artifacts/
 test/e2e/artifacts/
 # The vendored Tether Browser server carries its own node_modules (playwright-core): it is versioned.
 !extensions/browser/vendor/tether-browser/node_modules/
+
+.tmp/
+test-results/
