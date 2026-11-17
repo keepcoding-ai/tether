@@ -40,6 +40,10 @@ import {
 import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 import { HostClient } from '../procd/client.ts'
+import { PanelHost, type PanelCallbacks } from './panel-host.ts'
+import { PTYD_TARGET, ptydPipePath } from '../ptyd/paths.ts'
+import { readUserSettings } from '../core/user-settings.ts'
+import { treeValueAt } from '../../app/shared/settings-file.ts'
 import { perf } from '../core/perf.ts'
 import { ECHO_INCIDENT_MS, PROBE_TTL_MS, extendProbe, isSlow, parseProbe, stamp, type Probe } from '../core/perf-probe.ts'
 import { busyWait, DEBUG_BLOCK_MAX_MS } from './debug-block.ts'
@@ -80,6 +84,19 @@ const ENTER = String.fromCharCode(13)
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 30
+/** How long a launch waits for a tether-ptyd it had to start. */
+const PANEL_HOST_ENSURE_MS = 20_000
+
+/**
+ * Whether NEW panes are launched in the terminal-pane host (tether-ptyd) instead of inside tetherd: TETHER_PANEL_HOST=1|0
+ * in tetherd's environment wins, else `daemon.panelHost` in settings.json, else off. Read once, at boot.
+ */
+export function panelHostEnabled(home: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.TETHER_PANEL_HOST?.trim()
+  if (v === '1') return true
+  if (v === '0') return false
+  return treeValueAt(readUserSettings(home, env), 'daemon.panelHost') === true
+}
 
 export interface DaemonOptions {
   home: string
@@ -118,6 +135,13 @@ export interface DaemonOptions {
   connectProcHost?: (launch: boolean) => Promise<HostClient>
   /** How long a lost host connection is retried before its processes count as lost (default HOST_RECONNECT_MS). */
   procHostReconnectMs?: number
+  /** Launch new panes in the terminal-pane host. Default: panelHostEnabled(home). */
+  panelHost?: boolean
+  /**
+   * Connects to the terminal-pane host (tests: one running in process, never launched). `launch` false: undefined when no
+   * host answers; true: launches it first when needed. Default: HostClient on ptydPipePath, launching tether-ptyd detached.
+   */
+  connectPanelHost?: (launch: boolean) => Promise<HostClient | undefined>
 }
 
 export interface Daemon {
@@ -169,6 +193,10 @@ interface Slot {
   title?: string
   error?: { code: ErrorCode; message: string }
   pty?: PtyHandle
+  /** `pty` lives in the terminal-pane host (tether-ptyd), not in this process. */
+  ptyHosted?: true
+  /** A launch waiting for the terminal-pane host: holds the slot's 'starting' seat; a start or stop meanwhile waits for it. */
+  launching?: Promise<void>
   /** ISO time of the last spawn; a start event at/after it confirms the agent is up. */
   spawnedAt?: string
   readyTimer?: NodeJS.Timeout
@@ -266,6 +294,13 @@ class DaemonImpl implements Daemon {
   private readonly procs: ProcManager
   /** Who watches each background process' output (one host attachment per name, shared). */
   private readonly procWatchers = new Map<string, Set<Client>>()
+  /** New panes go to tether-ptyd (read once at boot; panes already running stay where they are). */
+  private readonly panelHostOn: boolean
+  private readonly connectPanelHost: (launch: boolean) => Promise<HostClient | undefined>
+  /** The link to tether-ptyd, created at the first hosted launch. */
+  private panelHost: PanelHost | undefined
+  /** pid of the tether-ptyd last connected to (from its hello). */
+  private panelHostPid: number | undefined
 
   constructor(opts: DaemonOptions) {
     this.home = opts.home
@@ -299,6 +334,13 @@ class DaemonImpl implements Daemon {
       },
     })
     this.profileStore = new ProfileStore(opts.home)
+    this.panelHostOn = opts.panelHost ?? panelHostEnabled(opts.home)
+    this.connectPanelHost = opts.connectPanelHost ?? ((launch) => {
+      const pipe = ptydPipePath(opts.pipe, opts.home)
+      return launch
+        ? HostClient.ensure({ home: opts.home, pipe, node: process.env.TETHER_NODE?.trim() || process.execPath, env: process.env, log: this.log }, PANEL_HOST_ENSURE_MS, PTYD_TARGET)
+        : HostClient.tryOpen(pipe)
+    })
     this.server = createServer((socket) => this.onConnection(socket))
     const procdPipe = opts.procdPipe ?? procdPipePath(opts.pipe, opts.home)
     this.procs = new ProcManager({
@@ -312,7 +354,11 @@ class DaemonImpl implements Daemon {
       ...(opts.procHostReconnectMs !== undefined ? { reconnectMs: opts.procHostReconnectMs } : {}),
       allowSeconds: this.rondaAllowSeconds,
       slotExists: (slotId) => this.slotMap.has(slotId),
-      protectedPids: () => [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit).map((s) => s.pty!.pid),
+      protectedPids: () => {
+        const pids = [...this.slotMap.values()].filter((s) => s.pty && !s.pty.exit).map((s) => s.pty!.pid)
+        if (this.panelHost?.connected && this.panelHostPid !== undefined) pids.push(this.panelHostPid)
+        return pids
+      },
       sampleSoon: () => this.kickMemory(),
       onData: (name, data) => { for (const c of this.procWatchers.get(name) ?? []) this.send(c, { t: 'proc-data', name, data }) },
     })
@@ -372,6 +418,7 @@ class DaemonImpl implements Daemon {
       this.memoryTimer.unref()
     }
     this.log(`listening on ${this.pipe} (${this.slotMap.size} slots)`)
+    if (this.panelHostOn) this.log('new panes launch in the terminal-pane host (tether-ptyd)')
   }
 
   slots(): SlotState[] {
@@ -407,7 +454,10 @@ class DaemonImpl implements Daemon {
       status: slot.status,
     }
     if (slot.meta.name) s.name = slot.meta.name
-    if (slot.pty && !slot.pty.exit) s.pid = slot.pty.pid
+    if (slot.pty && !slot.pty.exit) {
+      s.pid = slot.pty.pid
+      if (slot.ptyHosted) s.ptyHost = true
+    }
     if (slot.binding) s.binding = slot.binding
     if (slot.title) s.title = slot.title
     if (slot.error) s.error = slot.error
@@ -606,6 +656,7 @@ class DaemonImpl implements Daemon {
     this.watcher?.close()
     for (const t of this.pending.values()) clearTimeout(t)
     await this.rondaChannel.close()
+    this.panelHost?.close() // the host outlives tetherd: only the connection closes
     for (const c of this.clients) c.socket.destroy()
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
     this.log('closed')
@@ -736,7 +787,7 @@ class DaemonImpl implements Daemon {
     if (!existsSync(cwd)) throw this.fail(slot, 'cwd-missing', `a pasta não existe: ${cwd}`)
     if (resume) {
       for (const other of this.slotMap.values()) {
-        if (other !== slot && other.pty && !other.pty.exit && other.binding?.sessionId === resume.sessionId) {
+        if (other !== slot && (other.launching || (other.pty && !other.pty.exit)) && other.binding?.sessionId === resume.sessionId) {
           throw new RequestError('already-open', `a sessão já está aberta no slot ${other.meta.slotId}`)
         }
       }
@@ -755,6 +806,7 @@ class DaemonImpl implements Daemon {
    * restored launches many at once). Shell slots never queue: they are up as soon as they spawn.
    */
   private async startSlot(slot: Slot, choice: 'resume' | 'new' | undefined): Promise<void> {
+    if (slot.launching) { await slot.launching; return } // idempotent: already being launched
     if (slot.pty && !slot.pty.exit) return // idempotent: already up
     if (slot.status === 'queued') return // already waiting its turn
     const unavailable = this.unavailableError(slot.meta)
@@ -764,7 +816,7 @@ class DaemonImpl implements Daemon {
       // PRD C15: a resume of a session the agent no longer has must fail here, not inside the agent's TUI.
       const exists = await (this.adapterOf(resume.agent)?.sessionExists(resume, this.lookupOf(slot)) ?? 'unknown')
       if (exists === false) throw this.fail(slot, 'session-missing', `a sessão ${resume.sessionId} não existe mais no ${resume.agent}`)
-      if (slot.pty && !slot.pty.exit) return // another request started it while we checked
+      if (slot.launching || (slot.pty && !slot.pty.exit)) return // another request started it while we checked
     }
     if (slot.meta.agent !== 'shell' && this.startingCount() >= MAX_STARTING) {
       slot.status = 'queued'
@@ -775,7 +827,7 @@ class DaemonImpl implements Daemon {
       this.broadcastState(slot)
       return
     }
-    this.launch(slot, resume)
+    await this.launch(slot, resume)
   }
 
   /** Launches queued slots while seats are free. A start that fails now is reported through the slot's state. */
@@ -785,13 +837,17 @@ class DaemonImpl implements Daemon {
       if (slot.status !== 'queued') continue
       const choice = slot.queuedChoice
       slot.queuedChoice = undefined
-      try {
-        this.launch(slot, this.resumeFor(slot, choice))
-      } catch (e) {
+      const failed = (e: unknown): void => {
         if (slot.status === 'queued') {
           const err = e instanceof RequestError ? e : new RequestError('spawn-failed', (e as Error).message)
           this.fail(slot, err.code, err.message)
         }
+      }
+      // launch marks the slot 'starting' before it awaits anything, so the next turn of this loop counts its seat.
+      try {
+        this.launch(slot, this.resumeFor(slot, choice)).catch(failed)
+      } catch (e) {
+        failed(e)
       }
     }
   }
@@ -807,7 +863,12 @@ class DaemonImpl implements Daemon {
     }
   }
 
-  private launch(slot: Slot, resume: Binding | undefined): void {
+  /**
+   * Launches the slot's process. In process (spawnPty) everything happens before this returns. In the terminal-pane host the
+   * slot turns 'starting' (its seat counted) BEFORE the host is awaited, and `launching` makes a start or stop meanwhile
+   * wait for the handle. The callbacks are the same either way; output may arrive before the handle does.
+   */
+  private async launch(slot: Slot, resume: Binding | undefined): Promise<void> {
     const { meta } = slot
     let plan: LaunchPlan
     try {
@@ -831,54 +892,95 @@ class DaemonImpl implements Daemon {
     }
     slot.spawnedAt = new Date().toISOString()
     slot.runUnsafe = isUnsafe(plan.args)
-    try {
-      slot.pty = spawnPty(plan, {
-        cols: slot.cols,
-        rows: slot.rows,
-        onData: (data) => {
-          slot.scrollback.push(data)
-          let probe: Probe | undefined
-          if (slot.probe) probe = this.takeProbe(slot)
-          if (slot.confirmWatch) this.watchConfirm(slot, data)
-          if (slot.attention.output(data, Date.now())) this.broadcastState(slot)
-          this.scheduleAttention(slot)
-          for (const c of slot.attached) this.send(c, probe ? { t: 'data', slotId: meta.slotId, data, probe } : { t: 'data', slotId: meta.slotId, data })
-        },
-        onExit: (exit) => {
-          this.log(`slot ${meta.slotId}: exited (code ${exit.exitCode})`)
-          this.forgetRun(meta.slotId)
-          this.rondaChannel.revoke(meta.slotId)
-          slot.confirmWatch = undefined
-          if (slot.readyTimer) clearTimeout(slot.readyTimer)
-          slot.readyTimer = undefined
-          slot.status = 'exited'
-          slot.memoryMB = undefined
-          slot.attention.reset()
-          this.clearBackground(meta.slotId)
-          if (slot.wakeTimer) { clearTimeout(slot.wakeTimer); slot.wakeTimer = undefined }
-          this.markEnded(slot)
-          if (slot.attentionTimer) clearTimeout(slot.attentionTimer)
-          this.unwatchTitle(slot)
-          // PRD C18: an agent run that never reported its session (old version, hook removed, crashed before the
-          // hook) leaves the binding unconfirmed: the next start must be an explicit choice, never a silent guess.
-          this.refreshBinding(slot, false) // the hook's last line may land right before the exit
-          if (meta.agent !== 'shell' && !this.reportedThisRun(slot)) {
-            slot.status = 'unconfirmed'
-            this.log(`slot ${meta.slotId}: no start event for this run; binding unconfirmed`)
-          }
-          this.broadcastState(slot)
-          this.emitSlot('exited', slot)
-          // The panel's agent left: its process uses end. A restart in place (restartSlot, set-profile) and tetherd
-          // closing are not leaving.
-          if (!slot.restarting && !this.closing) this.procs.slotGone(meta.slotId)
-          this.pump()
-        },
-      })
-    } catch (e) {
-      throw this.fail(slot, 'spawn-failed', (e as Error).message)
+    const hosted = this.panelHostOn
+    let ended = false
+    let mine: PtyHandle | undefined
+    const callbacks: PanelCallbacks = {
+      onData: (data) => {
+        slot.scrollback.push(data)
+        let probe: Probe | undefined
+        if (slot.probe) probe = this.takeProbe(slot)
+        if (slot.confirmWatch) this.watchConfirm(slot, data)
+        if (slot.attention.output(data, Date.now())) this.broadcastState(slot)
+        this.scheduleAttention(slot)
+        for (const c of slot.attached) this.send(c, probe ? { t: 'data', slotId: meta.slotId, data, probe } : { t: 'data', slotId: meta.slotId, data })
+      },
+      onExit: (exit) => {
+        ended = true
+        // A hosted run that is no longer the slot's (it ended after a relaunch) changes nothing.
+        if (hosted && slot.pty !== undefined && mine !== undefined && slot.pty !== mine) return
+        this.log(`slot ${meta.slotId}: exited (code ${exit.exitCode})`)
+        this.forgetRun(meta.slotId)
+        this.rondaChannel.revoke(meta.slotId)
+        slot.confirmWatch = undefined
+        if (slot.readyTimer) clearTimeout(slot.readyTimer)
+        slot.readyTimer = undefined
+        slot.status = 'exited'
+        slot.memoryMB = undefined
+        slot.attention.reset()
+        this.clearBackground(meta.slotId)
+        if (slot.wakeTimer) { clearTimeout(slot.wakeTimer); slot.wakeTimer = undefined }
+        this.markEnded(slot)
+        if (slot.attentionTimer) clearTimeout(slot.attentionTimer)
+        this.unwatchTitle(slot)
+        // PRD C18: an agent run that never reported its session (old version, hook removed, crashed before the
+        // hook) leaves the binding unconfirmed: the next start must be an explicit choice, never a silent guess.
+        this.refreshBinding(slot, false) // the hook's last line may land right before the exit
+        if (meta.agent !== 'shell' && !this.reportedThisRun(slot)) {
+          slot.status = 'unconfirmed'
+          this.log(`slot ${meta.slotId}: no start event for this run; binding unconfirmed`)
+        }
+        this.broadcastState(slot)
+        this.emitSlot('exited', slot)
+        // The panel's agent left: its process uses end. A restart in place (restartSlot, set-profile) and tetherd
+        // closing are not leaving.
+        if (!slot.restarting && !this.closing) this.procs.slotGone(meta.slotId)
+        this.pump()
+      },
     }
-    this.log(`slot ${meta.slotId}: spawned pid ${slot.pty.pid} (${meta.agent}${resume ? ', resume ' + resume.sessionId : ''})`)
-    void this.recordRun(slot, slot.pty)
+    if (!hosted) {
+      try {
+        mine = spawnPty(plan, { cols: slot.cols, rows: slot.rows, onData: callbacks.onData, onExit: callbacks.onExit })
+      } catch (e) {
+        throw this.fail(slot, 'spawn-failed', (e as Error).message)
+      }
+      slot.pty = mine
+      slot.ptyHosted = undefined
+    } else {
+      // The seat is taken now (startingCount, pump) but not announced: clients hear 'starting' once, with the pid, as before.
+      slot.status = 'starting'
+      let done!: () => void
+      slot.launching = new Promise<void>((r) => { done = r })
+      const { cols, rows } = slot
+      try {
+        mine = await this.panels().spawn(meta.slotId, plan, {
+          cols,
+          rows,
+          ...callbacks,
+          // The host's ring no longer continues what the slot has: start the scrollback over from it.
+          onReset: (text) => {
+            slot.scrollback.clear()
+            slot.scrollback.push(text)
+          },
+        })
+        slot.pty = mine
+        slot.ptyHosted = true
+      } catch (e) {
+        const err = this.fail(slot, 'spawn-failed', `não foi possível abrir o terminal no anfitrião de terminais (tether-ptyd): ${(e as Error).message}`)
+        this.pump() // the 'starting' seat it held is free again
+        throw err
+      } finally {
+        slot.launching = undefined
+        done()
+      }
+      if (slot.cols !== cols || slot.rows !== rows) mine.resize(slot.cols, slot.rows)
+      if (ended) { // it ended before its handle came back: onExit already reported it
+        this.log(`slot ${meta.slotId}: pid ${mine.pid} ended before its launch finished`)
+        return
+      }
+    }
+    this.log(`slot ${meta.slotId}: spawned pid ${mine.pid} (${meta.agent}${hosted ? ', host' : ''}${resume ? ', resume ' + resume.sessionId : ''})`)
+    void this.recordRun(slot, mine)
     if (meta.agent === 'shell') slot.status = 'running'
     else {
       slot.status = 'starting'
@@ -891,6 +993,28 @@ class DaemonImpl implements Daemon {
     this.watchTitle(slot)
     this.kickMemory()
     this.emitSlot('spawned', slot)
+  }
+
+  /** The link to tether-ptyd (created once; it reconnects, and relaunches the host, at the next spawn after a drop). */
+  private panels(): PanelHost {
+    this.panelHost ??= new PanelHost({
+      log: this.log,
+      connector: {
+        tryOpen: () => this.openPanelHost(false),
+        ensure: async () => {
+          const c = await this.openPanelHost(true)
+          if (!c) throw new Error('o anfitrião de terminais não respondeu')
+          return c
+        },
+      },
+    })
+    return this.panelHost
+  }
+
+  private async openPanelHost(launch: boolean): Promise<HostClient | undefined> {
+    const c = await this.connectPanelHost(launch)
+    if (c) this.panelHostPid = c.hello.pid
+    return c
   }
 
   /**
@@ -991,6 +1115,7 @@ class DaemonImpl implements Daemon {
   /** Stops the slot's process: dequeues it, waits until its agent may be killed, then kills the PTY tree. */
   private async stopSlot(slot: Slot): Promise<void> {
     this.dequeue(slot)
+    if (slot.launching) await slot.launching // stop what the host is spawning, not nothing
     const pty = slot.pty
     if (!pty) {
       this.unwatchTitle(slot)

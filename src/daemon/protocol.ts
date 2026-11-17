@@ -58,6 +58,8 @@ export interface SlotState {
   folder?: string
   status: SlotStatus
   pid?: number
+  /** The live process runs in the terminal-pane host (tether-ptyd), not inside tetherd. Absent on older daemons and for in-process panes. */
+  ptyHost?: true
   binding?: Binding
   /** Session title (binding.title) or undefined. */
   title?: string

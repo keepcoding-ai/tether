@@ -3,7 +3,9 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { after } from 'node:test'
 import { DaemonClient } from '../../src/daemon/client.ts'
+import { ProcHost } from '../../src/procd/host.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -78,4 +80,18 @@ export class Recorder {
   close(): void {
     this.client.close()
   }
+}
+
+/**
+ * TETHER_PANEL_HOST=1: the daemons these tests start launch their panes in a terminal-pane host running in this process
+ * (TETHER_PTYD_PIPE points at it, so the daemon's own connector finds it and never launches tether-ptyd). It closes after
+ * the file's tests. Always a private host: an inherited TETHER_PTYD_PIPE is replaced.
+ */
+if (process.env.TETHER_PANEL_HOST === '1') {
+  const home = tempHome()
+  const pipe = uniquePipe(home)
+  const host = new ProcHost({ home, pipe, persist: false })
+  await host.listen()
+  process.env.TETHER_PTYD_PIPE = pipe
+  after(async () => { await host.close(); await removeHome(home) })
 }
