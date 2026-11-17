@@ -41,6 +41,7 @@ import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 import { HostClient } from '../procd/client.ts'
 import { perf } from '../core/perf.ts'
+import { busyWait, DEBUG_BLOCK_MAX_MS } from './debug-block.ts'
 import { procdPipePath } from '../procd/protocol.ts'
 import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
 import { ProcError, WAIT_MAX_MS, type ProcAuthor, type ProcBy } from './procs.ts'
@@ -1088,6 +1089,16 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id, slots: this.slots() }
       case 'perf':
         return { t: 'ok', id, perf: perf.snapshot(typeof req.since === 'number' ? req.since : 0) }
+      case 'debug-block': {
+        if (process.env.TETHER_TEST_BLOCK !== '1') throw new RequestError('bad-request', 'debug-block indisponível')
+        const ms = req.ms
+        if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0 || ms > DEBUG_BLOCK_MAX_MS) throw new RequestError('bad-request', `ms inválido (0 < ms <= ${DEBUG_BLOCK_MAX_MS})`)
+        setImmediate(() => {
+          perf.incident('debug-block', { ms })
+          busyWait(ms)
+        })
+        return { t: 'ok', id }
+      }
       case 'create': {
         if (!isKind(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${String(req.kind)}`)
         if (req.kind !== 'shell' && !this.adapterOf(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${req.kind} (use ${agentChoices()})`)

@@ -137,6 +137,8 @@ export type Request =
   | { t: 'list'; id: number }
   /** Performance ruler snapshot (pull only): loop-delay samples and incidents newer than `since` (wall-clock ms). Reply: `perf`. */
   | { t: 'perf'; id: number; since?: number }
+  /** Test only (needs TETHER_TEST_BLOCK=1 in the daemon env): replies ok, then blocks the event loop for `ms` (max 30000). */
+  | { t: 'debug-block'; id: number; ms: number }
   /** `profileId`: the launch profile (must be of `kind`); its args/env apply on every start, the slot keeps a snapshot. */
   | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string }
   /** Start the slot's process: resumes the binding; `choice: 'new'` starts a new session instead. */
