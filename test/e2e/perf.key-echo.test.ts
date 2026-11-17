@@ -9,7 +9,8 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { cpus, tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import { HostClient } from '../../src/procd/client.ts'
@@ -85,12 +86,13 @@ const stripAnsi = (s: string): string => s.replace(ANSI, '')
 const pct = (sorted: number[], p: number): number => sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)]!
 
 /** P3 (reported, never asserted): tetherd's own loop delay, from its `perf` request. The host's loop is not measured yet. */
-async function reportLoopDelay(c: DaemonClient, since: number, label: string): Promise<void> {
+async function reportLoopDelay(c: DaemonClient, since: number, label: string): Promise<number> {
   const snap = (await c.request({ t: 'perf', since })).perf
   const samples = snap?.samples ?? []
   const worst = samples.reduce((m, x) => Math.max(m, x.maxMs), 0)
   const kinds = (snap?.incidents ?? []).map(i => i.kind).join(',') || '-'
   console.log(`P3 ${label}: tetherd loop-delay samples=${samples.length} max=${worst.toFixed(1)}ms incidents=[${kinds}] (host loop not measured yet)`)
+  return worst
 }
 
 test('key->echo baseline: a 3 s tetherd stall freezes the echo (red baseline)', { skip: TETHER_PANEL_HOST ? 'panel host on: see P1' : false }, async () => {
@@ -208,3 +210,99 @@ test('P1: panel host on, typing and echo skip tetherd: p99 < 30 ms across a 5 s 
   await sleep(2_000) // the stall ends and tetherd's sampler reads it
   await reportLoopDelay(suite.client, sinceLaunch, 'after the stall')
 })
+
+// ---- P7: the same typing, with N extra panes producing continuous output (an agent at work, ~50-200 KB/s each) ----
+const FLOOD = join(ROOT, 'test', 'e2e', 'fixtures', 'perf', 'flood.mjs')
+const cpuTimes = (): { idle: number; total: number } => {
+  let idle = 0, total = 0
+  for (const c of cpus()) { idle += c.times.idle; total += c.times.user + c.times.nice + c.times.sys + c.times.irq + c.times.idle }
+  return { idle, total }
+}
+/** CPU milliseconds consumed so far by a process (PowerShell on Windows, /proc-free ps elsewhere). */
+function procCpuMs(pid: number): number {
+  const out = process.platform === 'win32'
+    ? execFileSync('powershell', ['-NoProfile', '-Command', `(Get-Process -Id ${pid}).TotalProcessorTime.TotalMilliseconds`], { encoding: 'utf8' })
+    : execFileSync('ps', ['-o', 'cputime=', '-p', String(pid)], { encoding: 'utf8' })
+  return Number.parseFloat(out.trim()) || 0
+}
+
+async function p7(extra: number): Promise<void> {
+  const sinceLaunch = Date.now()
+  const startSlot = async (script: string, args: string[] = []): Promise<string> => {
+    const created = await suite.client.request({ t: 'create', kind: 'shell', cwd: work, args: [process.execPath, script, ...args], start: false })
+    const id = created.slot!.slotId
+    await suite.client.request({ t: 'start', slotId: id })
+    for (const end = Date.now() + 20_000; ; await sleep(100)) {
+      const s = (await suite.client.request({ t: 'list' })).slots?.find(x => x.slotId === id)
+      if (s?.status === 'running') { seen.add(s.pid!); break }
+      assert.ok(Date.now() < end, `slot never ran (${s?.status})`)
+    }
+    return id
+  }
+  const slotId = await startSlot(ECHO)
+  const floods: string[] = []
+  for (let i = 0; i < extra; i++) floods.push(await startSlot(FLOOD, [String(50 + Math.round((150 * i) / Math.max(1, extra - 1)))]))
+  const ptyd = await HostClient.ping(ptydPipe)
+  assert.ok(ptyd, 'tether-ptyd answers on its isolated pipe')
+  seen.add(ptyd.pid)
+
+  typist = await DaemonClient.connect({ home, pipe, client: 'test', spawn: false, direct: true })
+  await typist.request({ t: 'attach', slotId, cols: 120, rows: 40 })
+  let output = ''
+  let floodBytes = 0
+  const arrivals = new Map<number, number>()
+  const floodSet = new Set(floods)
+  link?.stop()
+  link = new PanelLink({ pipe: ptydPipe, onData: (id, d) => {
+    if (id === slotId) { output += d; for (const m of stripAnsi(d).matchAll(/M(\d{3})/g)) { const k = Number(m[1]); if (!arrivals.has(k)) arrivals.set(k, performance.now()) } }
+    else if (floodSet.has(id)) floodBytes += d.length
+  } })
+  await link.start()
+  assert.ok(link.connected, 'link to the host')
+  output = (await link.attach(slotId)).scrollback
+  // The app has every pane attached: the host streams the extra ones to the link too.
+  for (const id of floods) await link.attach(id)
+  for (const end = Date.now() + 20_000; !output.includes('ECHO-READY'); await sleep(50)) assert.ok(Date.now() < end, 'echo never became ready')
+  output = ''
+  await sleep(2_000) // let the floods reach steady state
+
+  blocker = await DaemonClient.connect({ home, pipe, client: 'test', spawn: false })
+  const cpu0 = cpuTimes(), t0 = performance.now(), ptyd0 = procCpuMs(ptyd.pid), fb0 = floodBytes
+  const machine: number[] = []
+  let last = cpu0
+  const sampler = setInterval(() => {
+    const c = cpuTimes(); const dt = c.total - last.total
+    if (dt > 0) machine.push(100 * (1 - (c.idle - last.idle) / dt))
+    last = c
+  }, 500)
+  const sent = new Map<number, number>()
+  const mark = (i: number): string => `M${String(i).padStart(3, '0')}`
+  try {
+    for (let i = 0; i < KEYS; i++) {
+      const tick = Date.now()
+      if (i === BLOCK_AT_KEY) await blocker.request({ t: 'debug-block', ms: P1_BLOCK_MS })
+      sent.set(i, performance.now())
+      assert.ok(link.write(slotId, mark(i) + String.fromCharCode(13, 10)), `write ${i} dropped`)
+      await sleep(Math.max(0, INTERVAL_MS - (Date.now() - tick)))
+    }
+    for (const end = Date.now() + 30_000; arrivals.size < KEYS; await sleep(50)) assert.ok(Date.now() < end, `only ${arrivals.size}/${KEYS} markers echoed`)
+  } finally { clearInterval(sampler) }
+  const wall = performance.now() - t0
+  const cpuAll = cpuTimes()
+  const machineAvg = 100 * (1 - (cpuAll.idle - cpu0.idle) / (cpuAll.total - cpu0.total))
+  const ptydPct = (100 * (procCpuMs(ptyd.pid) - ptyd0)) / wall // % of one core
+  const flooded = (floodBytes - fb0) / 1024 / (wall / 1000)
+  const ids = [...stripAnsi(output).matchAll(/M(\d{3})/g)].map(m => Number(m[1]))
+  assert.deepEqual([...new Set(ids)], Array.from({ length: KEYS }, (_, i) => i), 'every marker, in order')
+
+  const sorted = Array.from({ length: KEYS }, (_, i) => arrivals.get(i)! - sent.get(i)!).sort((a, b) => a - b)
+  const p99 = pct(sorted, 0.99)
+  await sleep(2_000)
+  const loop = await reportLoopDelay(suite.client, sinceLaunch, `P7 extra=${extra}`)
+  console.log(`P7 extra=${extra} | p50=${pct(sorted, 0.5).toFixed(1)}ms p99=${p99.toFixed(1)}ms max=${sorted[KEYS - 1]!.toFixed(1)}ms | machineCPU avg=${machineAvg.toFixed(0)}% peak=${Math.max(0, ...machine).toFixed(0)}% | ptydCPU=${ptydPct.toFixed(0)}% of one core | tetherd loop max=${loop.toFixed(0)}ms (includes the ${P1_BLOCK_MS} ms block) | flood to link=${flooded.toFixed(0)} KB/s total`)
+  for (const id of floods) await suite.client.request({ t: 'stop', slotId: id }).catch(() => undefined)
+  assert.ok(p99 < P1_P99_MS, `p99 ${p99.toFixed(1)} ms >= ${P1_P99_MS} ms with ${extra} extra busy panes`)
+}
+
+test('P7a: 5 extra busy panes: p99 < 30 ms across a 5 s tetherd stall', { skip: TETHER_PANEL_HOST ? false : 'panel host off' }, () => p7(5))
+test('P7b: 10 extra busy panes: p99 < 30 ms across a 5 s tetherd stall', { skip: TETHER_PANEL_HOST ? false : 'panel host off' }, () => p7(10))
