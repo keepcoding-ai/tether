@@ -111,10 +111,10 @@ test('normalizeAppearance: missing, corrupt or unknown → defaults; numbers cla
   assert.equal(normalizeAppearance({ lineHeight: NaN }).lineHeight, 1.2)
 })
 
-test('ligatures per font: Fira Code on by default with its own list, JetBrains Mono has them but off, the rest have none', () => {
+test('ligatures per font: Fira Code has its own list, both ligature fonts default to off, the rest have none', () => {
   const by = Object.fromEntries(TERMINAL_FONTS.map(f => [f.id, f]))
   assert.equal(by['fira-code']!.hasLigatures, true)
-  assert.equal(by['fira-code']!.ligaturesByDefault, true)
+  assert.equal(by['fira-code']!.ligaturesByDefault, false)
   assert.equal(by['fira-code']!.ligatureList, FIRA_CODE_LIGATURES)
   assert.equal(by['jetbrains-mono']!.hasLigatures, true)
   assert.equal(by['jetbrains-mono']!.ligaturesByDefault, false)
@@ -124,13 +124,14 @@ test('ligatures per font: Fira Code on by default with its own list, JetBrains M
     assert.equal(by[id]!.ligaturesByDefault, false, id)
     assert.equal(by[id]!.ligatureList, undefined, id)
   }
-  assert.equal(DEFAULT_APPEARANCE.ligatures, true)
+  assert.equal(DEFAULT_APPEARANCE.ligatures, false)
 })
 
 test('normalizeAppearance ligatures: missing or not a boolean → the font\'s default; a font without them → always false', () => {
-  assert.equal(normalizeAppearance({}).ligatures, true)
-  assert.equal(normalizeAppearance({ font: 'fira-code' }).ligatures, true)
-  assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: 'no' }).ligatures, true)
+  assert.equal(normalizeAppearance({}).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'fira-code' }).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: 'no' }).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: true }).ligatures, true)
   assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: false }).ligatures, false)
   // A JetBrains Mono saved before the switch existed keeps running without ligatures.
   assert.equal(normalizeAppearance({ font: 'jetbrains-mono' }).ligatures, false)
@@ -141,7 +142,7 @@ test('normalizeAppearance ligatures: missing or not a boolean → the font\'s de
     assert.equal(normalizeAppearance({ font }).ligatures, false, font)
   }
   // An unknown font falls back to Fira Code and so to its default.
-  assert.equal(normalizeAppearance({ font: 'comic-mono' }).ligatures, true)
+  assert.equal(normalizeAppearance({ font: 'comic-mono' }).ligatures, false)
 })
 
 test('Fira Code ligature list: 124 distinct non-empty sequences, longest first, with the common operators', () => {

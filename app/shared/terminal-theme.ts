@@ -1,8 +1,8 @@
 // Terminal appearance shared by the main process (settings.json) and the renderer (xterm options, the
 // "Tema do tether" dialog): the colour presets (16 ANSI + foreground, cursor, selection, one pair per
 // scheme), the bundled fonts, and the user's choice (preset, font, weight, size, line height, ligatures). Fonts
-// that draw programming ligatures carry a default for the ligatures switch: on for Fira Code, off for any other;
-// fonts without them always run with ligatures off. The panel background is not part of a preset: it is always
+// that draw programming ligatures carry a default for the ligatures switch: off for every font by default;
+// only the user's switch turns them on (fonts without them always run with ligatures off). The panel background is not part of a preset: it is always
 // the frame card's (app/shared/theme.ts), so the terminal sits flush in its card in both schemes.
 import { FRAME_BACKGROUND, type ColorScheme } from './theme.ts'
 import { FIRA_CODE_LIGATURES } from './terminal-ligatures.ts'
@@ -150,7 +150,7 @@ export interface TerminalFont {
 
 /** Bundled with the app (woff2 + licence text in app/renderer/fonts); no network. */
 export const TERMINAL_FONTS: readonly TerminalFont[] = [
-  { id: 'fira-code', label: 'Fira Code', family: 'Fira Code', file: 'FiraCode-VF.woff2', minWeight: 300, maxWeight: 700, license: 'OFL-1.1', version: '6.2', source: 'https://github.com/tonsky/FiraCode/releases/tag/6.2 (woff2/FiraCode-VF.woff2)', hasLigatures: true, ligaturesByDefault: true, ligatureList: FIRA_CODE_LIGATURES },
+  { id: 'fira-code', label: 'Fira Code', family: 'Fira Code', file: 'FiraCode-VF.woff2', minWeight: 300, maxWeight: 700, license: 'OFL-1.1', version: '6.2', source: 'https://github.com/tonsky/FiraCode/releases/tag/6.2 (woff2/FiraCode-VF.woff2)', hasLigatures: true, ligaturesByDefault: false, ligatureList: FIRA_CODE_LIGATURES },
   { id: 'jetbrains-mono', label: 'JetBrains Mono', family: 'JetBrains Mono', file: 'JetBrainsMono-wght.woff2', minWeight: 100, maxWeight: 800, license: 'OFL-1.1', version: '2.304', source: 'https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 (fonts/variable/JetBrainsMono[wght].ttf → woff2)', hasLigatures: true, ligaturesByDefault: false },
   { id: 'ubuntu-sans-mono', label: 'Ubuntu Sans Mono', family: 'Ubuntu Sans Mono', file: 'UbuntuSansMono-wght.woff2', minWeight: 100, maxWeight: 700, license: 'Ubuntu Font Licence 1.0', version: '1.0 (2023)', source: 'https://github.com/canonical/Ubuntu-Sans-Mono-fonts (fonts/variable/UbuntuSansMono[wght].ttf → woff2)', hasLigatures: false, ligaturesByDefault: false },
   { id: 'ibm-plex-mono', label: 'IBM Plex Mono', family: 'IBM Plex Mono', file: 'IBMPlexMonoVar-Roman.woff2', minWeight: 100, maxWeight: 700, license: 'OFL-1.1', version: '@ibm/plex-mono-variable 1.0.0', source: 'https://github.com/IBM/plex (npm @ibm/plex-mono-variable, fonts/complete/woff2)', hasLigatures: false, ligaturesByDefault: false },
@@ -176,7 +176,7 @@ export interface TerminalAppearance {
   ligatures: boolean
 }
 
-export const DEFAULT_APPEARANCE: TerminalAppearance = { preset: DEFAULT_PRESET_ID, font: DEFAULT_FONT_ID, fontWeight: 350, fontSize: 14, lineHeight: 1.2, ligatures: true }
+export const DEFAULT_APPEARANCE: TerminalAppearance = { preset: DEFAULT_PRESET_ID, font: DEFAULT_FONT_ID, fontWeight: 350, fontSize: 14, lineHeight: 1.2, ligatures: false }
 
 /** Ranges the dialog offers; anything outside (an edited settings.json) is clamped, never refused. */
 export const FONT_SIZE_RANGE = { min: 9, max: 28 } as const
