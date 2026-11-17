@@ -14,6 +14,8 @@ export interface UiSettings {
   fixedDeskLabel: FixedDeskLabel
   /** The × on the panes' tabs; off, a tab closes only through its context menu / commands. */
   tabClose: boolean
+  /** Scoped side-bar pads ('panel', 'desk') open only for the panel / desk they were opened on (app/renderer/sidebar-rules.ts). */
+  padsFollowFocus: boolean
 }
 
 export const FIXED_DESK_LABELS = ['icon', 'iconName'] as const
@@ -22,7 +24,7 @@ export type FixedDeskLabel = typeof FIXED_DESK_LABELS[number]
 export const DIM_LEVELS = ['weak', 'medium', 'strong'] as const
 export type DimLevel = typeof DIM_LEVELS[number]
 
-export const DEFAULT_UI: UiSettings = { deskLine: true, tabBorder: false, dimUnfocused: false, dimLevel: 'medium', fixedDeskLabel: 'iconName', tabClose: true }
+export const DEFAULT_UI: UiSettings = { deskLine: true, tabBorder: false, dimUnfocused: false, dimLevel: 'medium', fixedDeskLabel: 'iconName', tabClose: true, padsFollowFocus: false }
 
 export function normalizeUi(raw: unknown): UiSettings {
   const o = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
@@ -34,5 +36,6 @@ export function normalizeUi(raw: unknown): UiSettings {
     dimLevel: DIM_LEVELS.find(l => l === o.dimLevel) ?? DEFAULT_UI.dimLevel,
     fixedDeskLabel: FIXED_DESK_LABELS.find(l => l === o.fixedDeskLabel) ?? DEFAULT_UI.fixedDeskLabel,
     tabClose: typeof o.tabClose === 'boolean' ? o.tabClose : DEFAULT_UI.tabClose,
+    padsFollowFocus: typeof o.padsFollowFocus === 'boolean' ? o.padsFollowFocus : DEFAULT_UI.padsFollowFocus,
   }
 }

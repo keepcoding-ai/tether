@@ -111,6 +111,11 @@ export interface SideBarsLayout {
    * the owner's label and desk and when its content last changed (app/renderer/panel-frames.ts PanelFrameMeta). Absent = none.
    */
   meta?: Record<string, unknown>
+  /**
+   * Setting `ui.padsFollowFocus` only: the owners a scoped pad is open for, as `<pad id>@<panel id>` / `<pad id>@<desk id>`
+   * (see `padOwnerKey`). A scoped pad open on a side shows only for an owner listed here. Absent = none.
+   */
+  following?: string[]
 }
 
 export const DEFAULT_SIDEBAR_WIDTH = 380
@@ -141,7 +146,9 @@ export function readSideBars(raw: unknown): SideBarsLayout {
   const placement: Record<string, Side> = {}
   if (isObject(raw.placement)) for (const [id, side] of Object.entries(raw.placement)) if (isSide(side)) placement[id] = side
   const meta = isObject(raw.meta) && Object.keys(raw.meta).length ? { meta: { ...raw.meta } } : {}
-  return { left: readSide(raw.left), right: readSide(raw.right), placement, pads: isObject(raw.pads) ? { ...raw.pads } : {}, ...meta }
+  const keys = Array.isArray(raw.following) ? [...new Set(raw.following.filter((k): k is string => typeof k === 'string' && k.includes('@')))] : []
+  const following = keys.length ? { following: keys } : {}
+  return { left: readSide(raw.left), right: readSide(raw.right), placement, pads: isObject(raw.pads) ? { ...raw.pads } : {}, ...meta, ...following }
 }
 
 /** A width the side bar can take on its own; the window's room is applied on screen (`fitWidth`). */
@@ -255,4 +262,80 @@ export function panelPadKey(padId: string, panelId: string): string {
 export function panelIdsOfPad(pads: Record<string, unknown>, padId: string): string[] {
   const prefix = `${padId}@`
   return Object.keys(pads).filter(k => k.startsWith(prefix)).map(k => k.slice(prefix.length))
+}
+
+// ---------- pads that follow their owner (setting `ui.padsFollowFocus`) ----------
+//
+// Off (the default), a side bar's open pad stays open whatever the focus: a scoped pad just swaps its view with the
+// panel or the desk. On, a 'panel' or 'desk' pad is open only for the owners it was opened on (`following`): moving to
+// another owner hides the side bar, coming back shows it again. The side's `open` keeps naming the pad; what is shown is
+// `shownPadOn`. 'global' pads behave the same either way.
+
+/** The owners now: the active desk and the focusable panel (absent when no panel has the focus). */
+export interface PadOwners { deskId: string; panelId?: string }
+
+/** The follow key of a scoped pad for the current owner; undefined for a global pad or a panel pad with no panel. */
+export function padOwnerKey(pad: PadDescriptor, owners: PadOwners): string | undefined {
+  if (pad.scope === 'desk') return `${pad.id}@${owners.deskId}`
+  if (pad.scope === 'panel') return owners.panelId === undefined ? undefined : `${pad.id}@${owners.panelId}`
+  return undefined
+}
+
+/**
+ * The pad shown on a side. Without `owners` (setting off) it is `openPadOn`; with them, a scoped open pad shows only when
+ * it is open for the current owner.
+ */
+export function shownPadOn(pads: readonly PadDescriptor[], layout: SideBarsLayout, side: Side, owners?: PadOwners): PadDescriptor | undefined {
+  const pad = openPadOn(pads, layout, side)
+  if (!pad || !owners || pad.scope === 'global') return pad
+  const key = padOwnerKey(pad, owners)
+  return key !== undefined && (layout.following ?? []).includes(key) ? pad : undefined
+}
+
+function withFollowing(layout: SideBarsLayout, keys: string[]): SideBarsLayout {
+  if (keys.length) return { ...layout, following: keys }
+  const { following: _f, ...rest } = layout
+  return rest
+}
+
+/** Opens `pad` on its side for the current owner. */
+function openFor(layout: SideBarsLayout, pad: PadDescriptor, owners: PadOwners): SideBarsLayout {
+  const side = sideOf(layout, pad)
+  const next = withSide(layout, side, opened(layout[side], pad.id))
+  const key = padOwnerKey(pad, owners)
+  const keys = layout.following ?? []
+  return key === undefined || keys.includes(key) ? next : withFollowing(next, [...keys, key])
+}
+
+/** Closes `pad` (shown on its side) for the current owner; the side closes too when no owner keeps it open. */
+function closeFor(layout: SideBarsLayout, pad: PadDescriptor, owners: PadOwners): SideBarsLayout {
+  const side = sideOf(layout, pad)
+  const key = padOwnerKey(pad, owners)
+  if (key === undefined) return withSide(layout, side, closed(layout[side]))
+  const keys = (layout.following ?? []).filter(k => k !== key)
+  const next = withFollowing(layout, keys)
+  return keys.some(k => k.startsWith(`${pad.id}@`)) ? next : withSide(next, side, closed(next[side]))
+}
+
+/** `togglePad` with the setting on: the icon opens or closes the pad for the current owner only. */
+export function togglePadFollowing(layout: SideBarsLayout, pads: readonly PadDescriptor[], padId: string, owners: PadOwners): SideBarsLayout {
+  const pad = pads.find(p => p.id === padId)
+  if (!pad) return layout
+  return shownPadOn(pads, layout, sideOf(layout, pad), owners)?.id === padId ? closeFor(layout, pad, owners) : openFor(layout, pad, owners)
+}
+
+/** `openPad` with the setting on (a no-op when the pad is already shown for the current owner). */
+export function openPadFollowing(layout: SideBarsLayout, pads: readonly PadDescriptor[], padId: string, owners: PadOwners): SideBarsLayout {
+  const pad = pads.find(p => p.id === padId)
+  if (!pad) return layout
+  return shownPadOn(pads, layout, sideOf(layout, pad), owners)?.id === padId ? layout : openFor(layout, pad, owners)
+}
+
+/** `toggleSideBar` with the setting on: closes or reopens the side bar for the current owner. */
+export function toggleSideBarFollowing(layout: SideBarsLayout, pads: readonly PadDescriptor[], side: Side, owners: PadOwners): SideBarsLayout {
+  const shown = shownPadOn(pads, layout, side, owners)
+  if (shown) return closeFor(layout, shown, owners)
+  const here = padsOn(pads, layout, side)
+  const target = here.find(p => p.id === layout[side].last) ?? here[0]
+  return target ? openFor(layout, target, owners) : layout
 }

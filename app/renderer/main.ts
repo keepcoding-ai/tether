@@ -363,6 +363,8 @@ function applyUi(next: UiSettings): void {
   document.body.classList.toggle('desk-line', ui.deskLine)
   document.body.classList.toggle('tab-border', ui.tabBorder)
   document.body.classList.toggle('no-tab-close', !ui.tabClose)
+  // ui.padsFollowFocus changes which pad a side bar shows.
+  sidebars?.render()
   const iconOnly = document.body.classList.contains('fixed-icon-only')
   document.body.classList.toggle('fixed-icon-only', ui.fixedDeskLabel === 'icon')
   // The capsule's chrome changed width: fit the desks again.
@@ -542,6 +544,7 @@ function setupDock(): void {
     activeDeskId: () => desks.activeDeskId,
     deskName: id => deskName(id),
     activePanelId: () => focusablePanelId(),
+    padsFollowFocus: () => ui.padsFollowFocus,
     panelName: id => findPanel(id)?.api.title ?? id,
     hint: id => commands.hint(id),
     onChange: () => scheduleSave(),
