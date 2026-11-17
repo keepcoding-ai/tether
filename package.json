@@ -1,6 +1,6 @@
 {
   "name": "tether",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Each terminal slot remembers which Claude Code / soul-cli session it runs, and resumes it after any restart.",
   "type": "module",
   "main": "app/dist/main.cjs",

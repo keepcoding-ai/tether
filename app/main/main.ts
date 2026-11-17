@@ -35,6 +35,7 @@ import { extensions as mainExtensions } from '../../extensions/index.main.ts'
 import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
 import { SurfaceManager } from './surfaces.ts'
 import { SurfaceBridge } from './surface-bridge.ts'
+import { externalPath } from '../shared/unpacked-path.ts'
 import { AgentTracker } from './agents.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
 import { trayModel, trayWanted } from '../shared/tray.ts'
@@ -70,7 +71,7 @@ const hidden = process.env.TETHER_E2E_HIDDEN === '1'
 /** E2E only: the device scale of the offscreen window (default 1), to render the app at a display's scale (e.g. 1.25 = 125 %). */
 const hiddenScale = Number(process.env.TETHER_E2E_SCALE) > 0 ? Number(process.env.TETHER_E2E_SCALE) : 1
 /** The daemon's entry point, relative to app/dist (this bundle) → repo root. */
-const daemonMain = join(__dirname, '..', '..', 'src', 'daemon', 'main.ts')
+const daemonMain = externalPath(join(__dirname, '..', '..', 'src', 'daemon', 'main.ts'))
 /** The pid this process replaces when "Reiniciar o app" started it (app/main/relaunch.ts). */
 const replacedPid = relaunchedFrom(process.argv)
 /** What this launch decides, on disk (<home>/tether-app.log) and on stderr: a Start Menu launch has no console. */
