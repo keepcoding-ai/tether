@@ -41,6 +41,7 @@ import { killTree, spawnPty, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 import { HostClient } from '../procd/client.ts'
 import { perf } from '../core/perf.ts'
+import { ECHO_INCIDENT_MS, PROBE_TTL_MS, extendProbe, isSlow, parseProbe, stamp, type Probe } from '../core/perf-probe.ts'
 import { busyWait, DEBUG_BLOCK_MAX_MS } from './debug-block.ts'
 import { procdPipePath } from '../procd/protocol.ts'
 import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
@@ -198,6 +199,8 @@ interface Slot {
   /** The slot's ronda (persisted in <home>/slots/<id>.ronda.json); `rondaDue`: its time came and it waits for an idle agent. */
   ronda?: Ronda
   rondaDue?: boolean
+  /** Key->echo probe waiting for the slot's next output (one per slot; a newer one replaces it), with its write time. */
+  probe?: { probe: Probe; at: number }
   rondaTimer?: NodeJS.Timeout
   /** Looking for the channel's start dialog: until it is answered once or the run reports its start. */
   confirmWatch?: { spec: ChannelConfirm; screen: string }
@@ -834,10 +837,12 @@ class DaemonImpl implements Daemon {
         rows: slot.rows,
         onData: (data) => {
           slot.scrollback.push(data)
+          let probe: Probe | undefined
+          if (slot.probe) probe = this.takeProbe(slot)
           if (slot.confirmWatch) this.watchConfirm(slot, data)
           if (slot.attention.output(data, Date.now())) this.broadcastState(slot)
           this.scheduleAttention(slot)
-          for (const c of slot.attached) this.send(c, { t: 'data', slotId: meta.slotId, data })
+          for (const c of slot.attached) this.send(c, probe ? { t: 'data', slotId: meta.slotId, data, probe } : { t: 'data', slotId: meta.slotId, data })
         },
         onExit: (exit) => {
           this.log(`slot ${meta.slotId}: exited (code ${exit.exitCode})`)
@@ -1026,6 +1031,25 @@ class DaemonImpl implements Daemon {
     })
   }
 
+  /** Input with a probe: stamps arrival and the PTY write, and leaves the probe pending for the slot's next output. */
+  private writeProbed(slot: Slot, data: string, raw: unknown, arrive: number): void {
+    const probe = parseProbe(raw)
+    if (!probe || !slot.pty) { slot.pty?.write(data); return }
+    slot.pty.write(data)
+    const written = extendProbe(extendProbe(probe, arrive), stamp())
+    slot.probe = { probe: written, at: Date.now() }
+  }
+
+  /** The pending probe leaving with an output: its `out` stamp is added; a slow one raises the `key-echo` incident. */
+  private takeProbe(slot: Slot): Probe | undefined {
+    const pending = slot.probe!
+    slot.probe = undefined
+    if (Date.now() - pending.at > PROBE_TTL_MS) return undefined
+    const probe = extendProbe(pending.probe)
+    if (isSlow(probe, ECHO_INCIDENT_MS)) perf.incident('key-echo', { slotId: slot.meta.slotId, seq: probe.seq, t: probe.t })
+    return probe
+  }
+
   /** The client no longer watches the process' output; the host attachment goes with the last watcher. */
   private unwatchProc(client: Client, name: string): void {
     client.procsWatched.delete(name)
@@ -1060,9 +1084,11 @@ class DaemonImpl implements Daemon {
     }
     const msg = value as Partial<ClientMessage>
     if (msg.t === 'input') {
+      const arrive = msg.probe ? stamp() : 0 // line received: the first daemon stamp
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
       if (slot && typeof msg.data === 'string') {
-        slot.pty?.write(msg.data)
+        if (msg.probe) this.writeProbed(slot, msg.data, msg.probe, arrive)
+        else slot.pty?.write(msg.data)
         if (slot.attention.input(msg.data)) this.broadcastState(slot)
       }
       return

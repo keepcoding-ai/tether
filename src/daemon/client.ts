@@ -7,6 +7,7 @@ import { userInfo } from 'node:os'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureRenamedNode, exeLog, type ExeName } from '../core/exe.ts'
+import type { Probe } from '../core/perf-probe.ts'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
 import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type PauseBatch, type ProcState, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
@@ -50,7 +51,7 @@ const FOREIGN_RETRY_MS = 300
 
 type Events = {
   state: [slot: SlotState]
-  data: [slotId: string, data: string]
+  data: [slotId: string, data: string, probe?: Probe]
   removed: [slotId: string]
   profiles: [profiles: Profile[]]
   pause: [batch: PauseBatch]
@@ -186,7 +187,7 @@ export class DaemonClient extends EventEmitter<Events> {
         this.emit('state', msg.slot)
         return
       case 'data':
-        this.emit('data', msg.slotId, msg.data)
+        this.emit('data', msg.slotId, msg.data, msg.probe)
         return
       case 'removed':
         this.emit('removed', msg.slotId)
@@ -219,10 +220,10 @@ export class DaemonClient extends EventEmitter<Events> {
     })
   }
 
-  /** Keystrokes (no reply). */
-  input(slotId: string, data: string): void {
+  /** Keystrokes (no reply); `probe` times key->echo (see Notice). */
+  input(slotId: string, data: string, probe?: Probe): void {
     if (this.closed) return
-    this.socket.write(encode({ t: 'input', slotId, data }))
+    this.socket.write(encode(probe ? { t: 'input', slotId, data, probe } : { t: 'input', slotId, data }))
   }
 
   close(): void {

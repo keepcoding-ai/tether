@@ -4,13 +4,14 @@
 
 import type { AgentName, Binding } from '../core/event.ts'
 import type { PerfSnapshot } from '../core/perf.ts'
+import type { Probe } from '../core/perf-probe.ts'
 import type { Profile, ProfileInput } from '../core/profile.ts'
 import type { PauseBatch } from './pause.ts'
 import type { Ronda } from './ronda.ts'
 import type { ProcBy, ProcEvent, ProcRecipe, ProcState } from './procs.ts'
 import type { PortRow } from './ports.ts'
 
-export type { PerfSnapshot, Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
+export type { PerfSnapshot, Probe, Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
 
 export const PROTOCOL_VERSION = 1
 
@@ -234,8 +235,11 @@ export type Request =
   /** Ask the host to exit; refused with live processes unless `force` (they are stopped, recorded as asked by `by`). */
   | { t: 'proc-host-stop'; id: number; force?: boolean; by?: ProcBy }
 
-/** Fire-and-forget (no reply): keystrokes. */
-export type Notice = { t: 'input'; slotId: string; data: string }
+/**
+ * Fire-and-forget (no reply): keystrokes. `probe` (optional) times the key->echo path: the client's stamps so far
+ * (epoch ms with fraction, see core/perf-probe.ts); tetherd appends arrive + write and hangs it on the slot's next `data`.
+ */
+export type Notice = { t: 'input'; slotId: string; data: string; probe?: Probe }
 
 export type ClientMessage = Request | Notice
 
@@ -281,8 +285,11 @@ export type Reply =
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 
 export type Event =
-  /** Output of an attached slot. */
-  | { t: 'data'; slotId: string; data: string }
+  /**
+   * Output of an attached slot. `probe`: the first `data` after a probed input carries its stamps plus tetherd's three
+   * (arrive, write, out); a newer probe replaces a pending one, and one pending for over 5 s is dropped.
+   */
+  | { t: 'data'; slotId: string; data: string; probe?: Probe }
   /** Any change of a slot (status, binding, title, pid). Sent to every client. */
   | { t: 'state'; slot: SlotState }
   | { t: 'removed'; slotId: string }
