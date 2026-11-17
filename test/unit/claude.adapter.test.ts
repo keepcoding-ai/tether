@@ -1,9 +1,10 @@
 import { test, describe, after, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { readdir as readdirP } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { claudeAdapter, cleanEnv, hookSettings, userHasStatusLine, encodeProjectDir, findTranscript, lastCustomTitle, resolveClaudeCommand, withCommandDirOnPath } from '../../src/agents/claude.ts'
+import { claudeAdapter, cleanEnv, hookSettings, userHasStatusLine, encodeProjectDir, findTranscript, lastCustomTitle, watchTitleWith, resolveClaudeCommand, withCommandDirOnPath } from '../../src/agents/claude.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
@@ -292,6 +293,36 @@ describe('sessionExists / title against a fake ~/.claude (CLAUDE_CONFIG_DIR)', (
     appendFileSync(file, '{"type":"custom-title","customTitle":"três"}\n')
     await new Promise((r) => setTimeout(r, 150))
     assert.deepEqual(seen, ['um', 'dois'])
+  })
+
+  test('watchTitleWith: caches the transcript path, throttles the full scan to 60 s, re-resolves when the file vanishes', async () => {
+    let reads = 0
+    let clock = 1_000_000
+    const seen: string[] = []
+    const readdirSpy = async (d: string): Promise<string[]> => { reads++; return readdirP(d) }
+    const stop = watchTitleWith(b('D:\nowhere'), (t) => seen.push(t), 15, undefined, { now: () => clock, readdir: readdirSpy })
+    await new Promise((r) => setTimeout(r, 120))
+    assert.equal(reads, 1) // first miss scans once; later misses within 60 s only check the direct path
+    clock += 61_000
+    await new Promise((r) => setTimeout(r, 60))
+    assert.equal(reads, 2) // 60 s later: one more scan
+    const file = transcript('elsewhere', id, ['{"type":"custom-title","customTitle":"a"}'])
+    clock += 61_000
+    await waitFor(() => seen.length === 1)
+    assert.deepEqual(seen, ['a'])
+    const afterFound = reads
+    appendFileSync(file, '{"type":"custom-title","customTitle":"b"}\n')
+    await waitFor(() => seen.length === 2)
+    await new Promise((r) => setTimeout(r, 80))
+    assert.equal(reads, afterFound) // cached path: stat only, no readdir
+    rmSync(file)
+    await new Promise((r) => setTimeout(r, 80)) // vanished: cache dropped, resolves again (throttled)
+    const moved = transcript('moved', id, ['{"type":"custom-title","customTitle":"c"}'])
+    clock += 61_000
+    await waitFor(() => seen.length === 3)
+    assert.deepEqual(seen, ['a', 'b', 'c'])
+    assert.ok(moved)
+    stop()
   })
 })
 
