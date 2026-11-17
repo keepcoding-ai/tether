@@ -35,6 +35,14 @@ const LOG_IDLE_FLUSH_MS = 1_000
 /** After `release`, the run is declared ended if the pty did not report an exit by itself. */
 const RELEASE_EXIT_MS = 1_500
 const SCROLLBACK_CHARS = 256 * 1024
+/** A client socket takes direct writes only while its own buffer holds less than this; the rest waits in its queue. */
+export const OUT_HIGH_WATER = 256 * 1024
+/** A client queue above this is dropped and the client is told `lag` (it re-attaches from its last offset). */
+export const OUT_QUEUE_MAX = 2 * 1024 * 1024
+/** Output of one name arriving within this window after a send leaves together in one `data`. */
+export const BATCH_MS = 5
+/** A `write` is dropped while the pty already has more than this waiting for its process. */
+export const INPUT_MAX = 1024 * 1024
 
 export interface HostOptions {
   home: string
@@ -46,6 +54,35 @@ export interface HostOptions {
   logMaxBytes?: number
   /** Default true. False: no clean log, no run.json, no process start-time lookup (terminal panes). */
   persist?: boolean
+  /** Per-client socket buffer ceiling for direct writes (default OUT_HIGH_WATER). */
+  outHighWater?: number
+  /** Per-client queue ceiling before it is dropped with `lag` (default OUT_QUEUE_MAX). */
+  outQueueMax?: number
+  /** Output coalescing window in ms (default BATCH_MS); 0 sends every chunk on its own. */
+  batchMs?: number
+  /** Pending pty input ceiling in bytes (default INPUT_MAX). */
+  inputMax?: number
+  /** Scrollback ring size in characters (default 256 KiB). */
+  scrollbackChars?: number
+}
+
+export interface HostStats {
+  /** `write` notices dropped because the pty input was above the ceiling. */
+  inputDropped: number
+  /** Client queues dropped (each one sent `lag` for the names it affected). */
+  queuesDropped: number
+}
+
+interface OutItem { line: string; name?: string }
+interface NameOut { buf: string; off: number; timer: NodeJS.Timeout | undefined; lagged: boolean }
+
+/** What one client's socket still owes: ordered lines waiting for the socket to drain, and per-name batching. */
+class ClientOut {
+  queue: OutItem[] = []
+  queued = 0
+  names = new Map<string, NameOut>()
+  readonly socket: Socket
+  constructor(socket: Socket) { this.socket = socket }
 }
 
 const CAPS: HostCap[] = ['write', 'offsets', 'lag']
@@ -144,6 +181,13 @@ export class ProcHost {
   private readonly onExit: (reason: string) => void
   private readonly logMaxBytes: number
   private readonly persist: boolean
+  private readonly outHigh: number
+  private readonly outMax: number
+  private readonly batchMs: number
+  private readonly inputMax: number
+  private readonly scrollbackChars: number
+  private readonly outs = new Map<Socket, ClientOut>()
+  private readonly counters: HostStats = { inputDropped: 0, queuesDropped: 0 }
   private readonly server: Server
   private readonly clients = new Set<Socket>()
   private readonly runs = new Map<string, Run>()
@@ -158,6 +202,11 @@ export class ProcHost {
     this.onExit = opts.onExit ?? (() => {})
     this.logMaxBytes = opts.logMaxBytes ?? LOG_MAX_BYTES
     this.persist = opts.persist ?? true
+    this.outHigh = opts.outHighWater ?? OUT_HIGH_WATER
+    this.outMax = opts.outQueueMax ?? OUT_QUEUE_MAX
+    this.batchMs = opts.batchMs ?? BATCH_MS
+    this.inputMax = opts.inputMax ?? INPUT_MAX
+    this.scrollbackChars = opts.scrollbackChars ?? SCROLLBACK_CHARS
     this.server = createServer((socket) => this.onConnection(socket))
   }
 
@@ -175,6 +224,10 @@ export class ProcHost {
 
   live(): HostRun[] {
     return [...this.runs.values()].filter((r) => !r.exit).map(publicRun)
+  }
+
+  stats(): HostStats {
+    return { ...this.counters }
   }
 
   /** Kills every live process tree, drops the clients and closes the server. */
@@ -203,19 +256,98 @@ export class ProcHost {
   private onConnection(socket: Socket): void {
     const parser = new LineParser()
     this.clients.add(socket)
+    const out = new ClientOut(socket)
+    this.outs.set(socket, out)
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
       for (const line of parser.push(chunk)) void this.onLine(socket, line.value, line.raw)
     })
     socket.on('error', () => { /* surfaces as close */ })
+    socket.on('drain', () => this.pump(out))
     socket.on('close', () => {
       this.clients.delete(socket)
+      this.outs.delete(socket)
+      for (const n of out.names.values()) if (n.timer) clearTimeout(n.timer)
+      out.names.clear()
+      out.queue = []
+      out.queued = 0
       for (const r of this.runs.values()) r.attached.delete(socket)
     })
   }
 
+  /** Replies, errors and exits keep their order after every data already produced for this client. */
   private send(socket: Socket, msg: HostReply | HostEvent): void {
-    if (!socket.destroyed && socket.writable) socket.write(encode(msg))
+    const out = this.outs.get(socket)
+    if (!out || socket.destroyed || !socket.writable) return
+    for (const [name, n] of out.names) if (n.buf) this.emitData(out, name, n)
+    this.enqueue(out, { line: encode(msg) })
+  }
+
+  /** Output of a run for one attached client: first chunk now, what follows within batchMs together. */
+  private sendData(socket: Socket, name: string, off: number, data: string): void {
+    const out = this.outs.get(socket)
+    if (!out || socket.destroyed || !socket.writable) return
+    let n = out.names.get(name)
+    if (!n) out.names.set(name, (n = { buf: '', off: 0, timer: undefined, lagged: false }))
+    if (n.lagged) return // dropped: the client re-attaches from its last offset
+    if (this.batchMs <= 0) { this.enqueue(out, { line: encode({ t: 'data', name, off, data }), name }); return }
+    if (n.timer) { n.buf += data; n.off = off; return }
+    this.enqueue(out, { line: encode({ t: 'data', name, off, data }), name })
+    this.openWindow(out, name, n)
+  }
+
+  private openWindow(out: ClientOut, name: string, n: NameOut): void {
+    n.timer = setTimeout(() => {
+      n.timer = undefined
+      if (!n.buf) return
+      this.emitData(out, name, n)
+      this.openWindow(out, name, n)
+    }, this.batchMs)
+    n.timer.unref()
+  }
+
+  private emitData(out: ClientOut, name: string, n: NameOut): void {
+    const data = n.buf
+    n.buf = ''
+    if (!n.lagged) this.enqueue(out, { line: encode({ t: 'data', name, off: n.off, data }), name })
+  }
+
+  private enqueue(out: ClientOut, item: OutItem): void {
+    if (!out.queue.length && out.socket.writableLength < this.outHigh) { out.socket.write(item.line); return }
+    out.queue.push(item)
+    out.queued += item.line.length
+    if (out.queued > this.outMax) this.dropQueue(out)
+  }
+
+  /** Keeps replies and exits, drops the data, and tells the client which names to recover. */
+  private dropQueue(out: ClientOut): void {
+    const lagged = new Set<string>()
+    const kept: OutItem[] = []
+    for (const it of out.queue) {
+      if (it.name === undefined) kept.push(it)
+      else lagged.add(it.name)
+    }
+    for (const [name, n] of out.names) if (n.buf) { n.buf = ''; lagged.add(name) }
+    this.counters.queuesDropped++
+    for (const name of lagged) {
+      let n = out.names.get(name)
+      if (!n) out.names.set(name, (n = { buf: '', off: 0, timer: undefined, lagged: true }))
+      n.lagged = true
+      kept.push({ line: encode({ t: 'lag', name }) })
+    }
+    out.queue = kept
+    out.queued = kept.reduce((a, it) => a + it.line.length, 0)
+    this.log(`client queue dropped; lag for ${[...lagged].join(', ')}`)
+  }
+
+  private pump(out: ClientOut): void {
+    let i = 0
+    while (i < out.queue.length && out.socket.writableLength < this.outHigh && !out.socket.destroyed) {
+      const it = out.queue[i++]!
+      out.queued -= it.line.length
+      out.socket.write(it.line)
+    }
+    if (i) out.queue.splice(0, i)
   }
 
   private async onLine(socket: Socket, value: Record<string, unknown> | undefined, raw: string): Promise<void> {
@@ -239,7 +371,12 @@ export class ProcHost {
 
   private onWrite(n: HostNotice): void {
     const r = typeof n.name === 'string' ? this.runs.get(n.name) : undefined
-    if (r && !r.exit && typeof n.data === 'string') r.pty.write(n.data)
+    if (!r || r.exit || typeof n.data !== 'string') return
+    if (r.pty.pendingInput() > this.inputMax) {
+      if (++this.counters.inputDropped === 1) this.log(`input of ${n.name} dropped: pty input above ${this.inputMax} bytes`)
+      return
+    }
+    r.pty.write(n.data)
   }
 
   private run(name: unknown): Run {
@@ -265,6 +402,9 @@ export class ProcHost {
       case 'attach': {
         const r = this.run(req.name)
         r.attached.add(socket)
+        // The reply carries everything up to scrollback.end: batched or dropped output of this name is superseded.
+        const no = this.outs.get(socket)?.names.get(req.name)
+        if (no) { no.buf = ''; no.lagged = false }
         const epoch = r.spawnedAt
         const sb = req.from !== undefined && req.epoch === epoch ? r.scrollback.since(req.from) : { data: r.scrollback.text(), off: r.scrollback.end }
         return { t: 'ok', id, scrollback: sb.data, off: sb.off, epoch }
@@ -314,7 +454,7 @@ export class ProcHost {
     const ended = new Promise<RunExit>((r) => { resolveEnded = r })
     let run: Run | undefined
     let identity: Promise<string> | undefined
-    const scrollback = new Scrollback(SCROLLBACK_CHARS)
+    const scrollback = new Scrollback(this.scrollbackChars)
     let pty: PtyHandle
     const finish = (code: number): Promise<void> => this.onRunExit(req.name, home, () => run, identity, log, code, resolveEnded)
     try {
@@ -324,7 +464,7 @@ export class ProcHost {
         onData: (data) => {
           scrollback.push(data)
           log?.push(data)
-          if (run) for (const s of run.attached) this.send(s, { t: 'data', name: req.name, off: scrollback.end, data })
+          if (run) for (const s of run.attached) this.sendData(s, req.name, scrollback.end, data)
         },
         onExit: (e) => void finish(e.exitCode),
       })
