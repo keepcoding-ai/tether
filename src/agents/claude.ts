@@ -3,7 +3,7 @@
 // what Claude keeps on disk (transcript exists? current title?).
 import { access, open, readdir, stat } from 'node:fs/promises'
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, delimiter, isAbsolute } from 'node:path'
+import path, { dirname, join, resolve, isAbsolute } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -137,22 +137,24 @@ export function resolveClaudeCommand(env: Record<string, string | undefined> = p
   const platform = deps.platform ?? process.platform
   const exists = deps.exists ?? existsSync
   const pathVar = env.PATH ?? env.Path ?? ''
+  // Path flavor follows the injected platform, not the host's.
+  const P = platform === 'win32' ? path.win32 : path.posix
   if (platform === 'win32') {
-    for (const dir of pathVar.split(delimiter)) {
+    for (const dir of pathVar.split(P.delimiter)) {
       if (!dir) continue
       for (const name of ['claude.exe', 'claude.cmd', 'claude']) {
-        const candidate = join(dir, name)
+        const candidate = P.join(dir, name)
         if (exists(candidate)) return candidate
       }
     }
     return 'claude'
   }
-  for (const dir of pathVar.split(delimiter)) {
-    if (dir && isAbsolute(dir) && exists(join(dir, 'claude'))) return join(dir, 'claude')
+  for (const dir of pathVar.split(P.delimiter)) {
+    if (dir && P.isAbsolute(dir) && exists(P.join(dir, 'claude'))) return P.join(dir, 'claude')
   }
   const home = deps.home ?? homedir()
-  for (const dir of [join(home, '.local', 'bin'), join(home, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']) {
-    if (exists(join(dir, 'claude'))) return join(dir, 'claude')
+  for (const dir of [P.join(home, '.local', 'bin'), P.join(home, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']) {
+    if (exists(P.join(dir, 'claude'))) return P.join(dir, 'claude')
   }
   const shell = env.SHELL ?? ''
   const cached = loginShellCache.get(shell)
@@ -167,12 +169,13 @@ export function resolveClaudeCommand(env: Record<string, string | undefined> = p
 
 /** `env` with the directory of an absolute `command` prepended to PATH (when missing), keeping every other entry. */
 export function withCommandDirOnPath(env: Record<string, string>, command: string, platform: NodeJS.Platform = process.platform): void {
-  if (!isAbsolute(command)) return
-  const dir = dirname(command)
+  const P = platform === 'win32' ? path.win32 : path.posix
+  if (!P.isAbsolute(command)) return
+  const dir = P.dirname(command)
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-  const entries = (env[key] ?? '').split(delimiter).filter(Boolean)
+  const entries = (env[key] ?? '').split(P.delimiter).filter(Boolean)
   if (entries.includes(dir)) return
-  env[key] = [dir, ...entries].join(platform === 'win32' ? ';' : delimiter)
+  env[key] = [dir, ...entries].join(P.delimiter)
 }
 
 /** process.env without any CLAUDE* variable (E0 finding 1: inherited ones make Claude skip the transcript). */
