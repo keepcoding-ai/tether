@@ -100,6 +100,7 @@ const api: TetherApi = {
   settingsFile: () => ipcRenderer.invoke('settings:file'),
   settingsOpen: () => ipcRenderer.invoke('settings:open'),
   attentionGet: () => ipcRenderer.invoke('attention:get'),
+  perfGet: since => ipcRenderer.invoke('perf:get', since),
   attentionSeen: (slotId?: string) => ipcRenderer.send('attention:seen', slotId),
   attentionMute: choice => ipcRenderer.send('attention:mute', choice),
   onAttention: listener => on<AttentionState>('tether:attention', listener),

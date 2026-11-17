@@ -47,6 +47,7 @@ import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 import { BRAND } from '../shared/brand.ts'
+import { registerPerf, stopPerf } from './perf-main.ts'
 import { TETHER_SCHEME, tetherUrlInArgv } from '../shared/tether-url.ts'
 import type { LinkAssociation } from '../shared/api.ts'
 import { type Association, commandLineFor, describeCommand, readAssociatedCommand, removeAssociation, sameCommand } from './protocol-association.ts'
@@ -948,6 +949,8 @@ function createMenu(): void {
 // ---------- IPC ----------
 
 ipcMain.handle('tether:request', (_e, body: RequestBody) => request(body))
+registerPerf(ipcMain, request)
+app.on('will-quit', stopPerf)
 ipcMain.on('tether:notice', (_e, notice: Notice) => daemon?.input(notice.slotId, notice.data))
 ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())

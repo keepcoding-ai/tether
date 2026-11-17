@@ -8,6 +8,7 @@ import type { TerminalAppearance } from './terminal-theme.ts'
 import type { ThemeSetting, ThemeState } from './theme.ts'
 import type { UiSettings } from './ui-settings.ts'
 import type { FileTarget } from './file-open.ts'
+import type { PerfSnapshot } from '../../src/core/perf.ts'
 import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 import type { ExtTransport } from './ext-ipc.ts'
@@ -49,6 +50,9 @@ export interface PreviewKey { partition: string; key: string; code: string; cont
 export type MainCommand = 'quit-all' | 'restore-confirmations' | 'restart-daemon' | 'reload-all' | 'relaunch-app' | 'toggle-devtools' | 'toggle-fullscreen'
 
 /** A request without the `id`: the main process numbers them. */
+/** The `perf:get` answer: the main process's ruler, the daemon's (null when absent or too old) and the round trip to it. */
+export interface PerfGet { main: PerfSnapshot; daemon: PerfSnapshot | null; daemonRttMs: number | null }
+
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
 
 export type ConnectionState = { connected: true; pipe: string; pid: number; version: string } | { connected: false; pipe: string; error: string }
@@ -179,6 +183,8 @@ export interface TetherApi {
   settingsOpen(): Promise<{ ok: true; path: string } | { ok: false; message: string }>
   /** The bell (top bar): recent attention notices and the temporary mute of the system toasts (app/shared/os-notify.ts). */
   attentionGet(): Promise<AttentionState>
+  /** Performance ruler: main-process and daemon snapshots newer than `since` (wall-clock ms). */
+  perfGet(since?: number): Promise<PerfGet>
   /** Without a slot: every notice (the menu opened). With one: that slot's notice (its pane was visited). */
   attentionSeen(slotId?: string): void
   /** Mutes the toasts for a while; null lifts the mute. `notifications.os` is never touched. */
