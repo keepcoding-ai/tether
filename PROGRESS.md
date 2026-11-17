@@ -1252,3 +1252,8 @@ Pedido do Guga: reproduzir o painel Search do VSCodium, substituir incluído, "a
 - Com as exclusões desligadas, `.git` entra na busca, como no VS Code.
 - Arquivo aberto fora de qualquer projeto entra nos resultados em "Outros arquivos", como no VS Code.
 - Na memória vale a regex do JavaScript; no disco, a do ripgrep.
+
+## Desempenho — E0.1: linha de base da suíte (2026-11-17)
+
+- `npm run check` sozinho em `0989faf`: typecheck limpo; 2683 testes, 2676 passam, 3 falham. As 3 são a linha de base conhecida: `daemon.profiles` ("Claude modo dev"), `daemon.set-profile` ("Claude modo dev") e `ext.index` (`app/main/cookie-runtime-main.ts` importa `extensions/browser/private-dir.ts`). Fatia nova só conta se não acrescentar falha a esta lista.
+- Duas correções no caminho: testes da bandeja com "Tether" maiúsculo (c65b96f) e `src/agents/claude.ts` usando o `path` da plataforma injetada (0989faf; os testes que simulam darwin quebravam no Windows desde 85153c6). A mudança de desempenho a36a681 não tinha culpa.
