@@ -161,6 +161,7 @@ export class HostClient extends EventEmitter<Events> {
   private onMessage(msg: HostReply | HostEvent): void {
     if (msg.t === 'exit') { this.emit('exit', msg.name, msg.run, msg.exit); return }
     if (msg.t === 'data') { this.emit('data', msg.name, msg.data); return }
+    if (msg.t === 'lag') return // declared for E1.3; nothing listens yet
     const w = this.waiting.get(msg.id)
     if (!w) return
     this.waiting.delete(msg.id)

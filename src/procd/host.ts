@@ -15,7 +15,9 @@ import {
   PROCD_VERSION,
   writeRunFile,
   type HostErrorCode,
+  type HostCap,
   type HostEvent,
+  type HostNotice,
   type HostReply,
   type HostRequest,
   type HostRun,
@@ -30,6 +32,8 @@ export const LOG_MAX_BYTES = 20 * 1024 * 1024
 export const LOG_RUNS_KEPT = 5
 /** The last line of output that did not end in a newline is written after this much quiet. */
 const LOG_IDLE_FLUSH_MS = 1_000
+/** After `release`, the run is declared ended if the pty did not report an exit by itself. */
+const RELEASE_EXIT_MS = 1_500
 const SCROLLBACK_CHARS = 256 * 1024
 
 export interface HostOptions {
@@ -40,7 +44,11 @@ export interface HostOptions {
   /** Called when the host should leave: idle, or a `shutdown` was honoured. */
   onExit?: (reason: string) => void
   logMaxBytes?: number
+  /** Default true. False: no clean log, no run.json, no process start-time lookup (terminal panes). */
+  persist?: boolean
 }
+
+const CAPS: HostCap[] = ['write', 'offsets', 'lag']
 
 export class HostError extends Error {
   readonly code: HostErrorCode
@@ -116,7 +124,10 @@ class RunLog {
 interface Run extends HostRun {
   pty: PtyHandle
   scrollback: Scrollback
-  log: RunLog
+  log: RunLog | undefined
+  /** Ends the run once (the pty's exit, or the release fallback). */
+  finish: (code: number) => Promise<void>
+  finished?: boolean
   attached: Set<Socket>
   /** Resolves with the exit once the process ended and run.json says so. */
   ended: Promise<RunExit>
@@ -132,6 +143,7 @@ export class ProcHost {
   private readonly idleMs: number
   private readonly onExit: (reason: string) => void
   private readonly logMaxBytes: number
+  private readonly persist: boolean
   private readonly server: Server
   private readonly clients = new Set<Socket>()
   private readonly runs = new Map<string, Run>()
@@ -145,11 +157,12 @@ export class ProcHost {
     this.idleMs = opts.idleMs ?? PROCD_IDLE_MS
     this.onExit = opts.onExit ?? (() => {})
     this.logMaxBytes = opts.logMaxBytes ?? LOG_MAX_BYTES
+    this.persist = opts.persist ?? true
     this.server = createServer((socket) => this.onConnection(socket))
   }
 
   async listen(): Promise<void> {
-    this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
+    if (this.persist) this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
     await new Promise<void>((resolve, reject) => {
       this.server.once('error', reject)
@@ -211,6 +224,7 @@ export class ProcHost {
       if (id !== undefined) this.send(socket, { t: 'error', id, code: 'bad-request', message: 'linha não é JSON válido' })
       return
     }
+    if (value.t === 'write') { this.onWrite(value as unknown as HostNotice); return }
     const req = value as unknown as HostRequest
     if (typeof req.id !== 'number') return
     let reply: HostReply
@@ -221,6 +235,11 @@ export class ProcHost {
       reply = { t: 'error', id: req.id, code: err.code, message: err.message }
     }
     this.send(socket, reply)
+  }
+
+  private onWrite(n: HostNotice): void {
+    const r = typeof n.name === 'string' ? this.runs.get(n.name) : undefined
+    if (r && !r.exit && typeof n.data === 'string') r.pty.write(n.data)
   }
 
   private run(name: unknown): Run {
@@ -234,7 +253,7 @@ export class ProcHost {
     switch (req.t) {
       case 'hello':
         if (req.v !== PROCD_PROTOCOL_VERSION) throw new HostError('version', `anfitrião fala a versão ${PROCD_PROTOCOL_VERSION} do protocolo, o cliente a ${String(req.v)}`)
-        return { t: 'ok', id, hello: { v: PROCD_PROTOCOL_VERSION, pid: this.pid, version: PROCD_VERSION, startedAt: this.startedAt } }
+        return { t: 'ok', id, hello: { v: PROCD_PROTOCOL_VERSION, caps: CAPS, pid: this.pid, version: PROCD_VERSION, startedAt: this.startedAt } }
       case 'spawn': {
         const started = await this.spawn(req)
         return { t: 'ok', id, pid: started.pid, startedAt: started.startedAt }
@@ -246,7 +265,16 @@ export class ProcHost {
       case 'attach': {
         const r = this.run(req.name)
         r.attached.add(socket)
-        return { t: 'ok', id, scrollback: r.scrollback.text() }
+        const epoch = r.spawnedAt
+        const sb = req.from !== undefined && req.epoch === epoch ? r.scrollback.since(req.from) : { data: r.scrollback.text(), off: r.scrollback.end }
+        return { t: 'ok', id, scrollback: sb.data, off: sb.off, epoch }
+      }
+      case 'release': {
+        const r = this.run(req.name)
+        r.pty.release()
+        // A released console may never report an exit: end the run ourselves after a short wait.
+        if (!r.exit) setTimeout(() => void r.finish(-1), RELEASE_EXIT_MS).unref()
+        return { t: 'ok', id }
       }
       case 'detach':
         this.run(req.name).attached.delete(socket)
@@ -281,31 +309,32 @@ export class ProcHost {
     if (prev && !prev.exit) throw new HostError('already-running', `${req.name} já roda neste anfitrião (pid ${prev.pid})`)
     const home = req.home
     const spawnedAt = new Date().toISOString()
-    const log = new RunLog(home, req.name, req.run, this.logMaxBytes, this.log)
+    const log = this.persist ? new RunLog(home, req.name, req.run, this.logMaxBytes, this.log) : undefined
     let resolveEnded!: (e: RunExit) => void
     const ended = new Promise<RunExit>((r) => { resolveEnded = r })
     let run: Run | undefined
     let identity: Promise<string> | undefined
     const scrollback = new Scrollback(SCROLLBACK_CHARS)
     let pty: PtyHandle
+    const finish = (code: number): Promise<void> => this.onRunExit(req.name, home, () => run, identity, log, code, resolveEnded)
     try {
       pty = spawnPty(req.plan, {
         cols: req.cols > 0 ? req.cols : 120,
         rows: req.rows > 0 ? req.rows : 30,
         onData: (data) => {
           scrollback.push(data)
-          log.push(data)
-          if (run) for (const s of run.attached) this.send(s, { t: 'data', name: req.name, data })
+          log?.push(data)
+          if (run) for (const s of run.attached) this.send(s, { t: 'data', name: req.name, off: scrollback.end, data })
         },
-        onExit: (e) => void this.onRunExit(req.name, home, () => run, identity, log, e.exitCode, resolveEnded),
+        onExit: (e) => void finish(e.exitCode),
       })
     } catch (e) {
-      log.close()
+      log?.close()
       throw new HostError('spawn-failed', (e as Error).message)
     }
-    identity = processStartTime(pty.pid).then((t) => t ?? spawnedAt)
+    identity = this.persist ? processStartTime(pty.pid).then((t) => t ?? spawnedAt) : Promise.resolve(spawnedAt)
     const startedAt = await identity
-    run = { name: req.name, run: req.run, pid: pty.pid, startedAt, spawnedAt, pty, scrollback, log, attached: new Set(), ended }
+    run = { name: req.name, run: req.run, pid: pty.pid, startedAt, spawnedAt, pty, scrollback, log, finish, attached: new Set(), ended }
     if (pty.exit) run.exit = { code: pty.exit.exitCode, at: new Date().toISOString() }
     this.runs.set(req.name, run)
     if (!run.exit) this.writeRun(home, run)
@@ -315,12 +344,15 @@ export class ProcHost {
   }
 
   /** run.json gets the exit BEFORE any client hears of it; with no client connected it is written all the same. */
-  private async onRunExit(name: string, home: string, current: () => Run | undefined, identity: Promise<string> | undefined, log: RunLog, code: number, done: (e: RunExit) => void): Promise<void> {
+  private async onRunExit(name: string, home: string, current: () => Run | undefined, identity: Promise<string> | undefined, log: RunLog | undefined, code: number, done: (e: RunExit) => void): Promise<void> {
     const exit: RunExit = { code, at: new Date().toISOString() }
-    log.close()
+    log?.close()
     await identity
+    // Let output already read from the console reach the clients before the exit does.
+    if (!this.persist) await new Promise<void>((r) => setImmediate(r))
     const run = current()
-    if (!run) return
+    if (!run || run.finished) return
+    run.finished = true
     run.exit = exit
     this.writeRun(home, run)
     this.log(`${name} run ${run.run} pid ${run.pid} ended with code ${code}`)
@@ -330,6 +362,7 @@ export class ProcHost {
   }
 
   private writeRun(home: string, run: Run): void {
+    if (!this.persist) return
     try {
       writeRunFile(home, { v: 1, ...publicRun(run), hostPid: this.pid, hostStartedAt: this.startedAt })
     } catch (e) {

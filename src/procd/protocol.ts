@@ -47,7 +47,10 @@ export type HostRequest =
   /** Ctrl+C, wait up to graceMs, then killTree; the reply comes once the process ended. */
   | { t: 'stop'; id: number; name: string; graceMs: number }
   | { t: 'list'; id: number }
-  | { t: 'attach'; id: number; name: string }
+  /** With `from` and a matching `epoch` the reply carries only what is missing after `from`; otherwise the whole ring. */
+  | { t: 'attach'; id: number; name: string; from?: number; epoch?: string }
+  /** Releases the ConPTY WITHOUT killing the process tree; the run then ends with an `exit` event. */
+  | { t: 'release'; id: number; name: string }
   | { t: 'detach'; id: number; name: string }
   | { t: 'resize'; id: number; name: string; cols: number; rows: number }
   /** Drops the scrollback of an ended run. */
@@ -55,22 +58,32 @@ export type HostRequest =
   /** Refused (`busy`) while a process lives, unless `force`: then every process is killed and the host exits. */
   | { t: 'shutdown'; id: number; force?: boolean }
 
+/** Fire-and-forget input: no `id`, no reply. Unknown names are ignored. */
+export type HostNotice = { t: 'write'; name: string; data: string }
+
 export type HostErrorCode = 'spawn-failed' | 'already-running' | 'unknown-run' | 'busy' | 'bad-request' | 'version'
+
+/** Capabilities announced in `hello` (additive: the protocol version stays the same). */
+export type HostCap = 'write' | 'offsets' | 'lag'
 
 export interface HostHello {
   v: number
+  caps?: HostCap[]
   pid: number
   version: string
   startedAt: string
 }
 
 export type HostReply =
-  | { t: 'ok'; id: number; hello?: HostHello; pid?: number; startedAt?: string; exit?: RunExit; runs?: HostRun[]; scrollback?: string }
+  | { t: 'ok'; id: number; hello?: HostHello; pid?: number; startedAt?: string; exit?: RunExit; runs?: HostRun[]; scrollback?: string; off?: number; epoch?: string }
   | { t: 'error'; id: number; code: HostErrorCode; message: string }
 
 export type HostEvent =
   | { t: 'exit'; name: string; run: number; exit: RunExit }
-  | { t: 'data'; name: string; data: string }
+  /** `off` is the run's output offset AFTER this chunk (restarts at 0 with each run). */
+  | { t: 'data'; name: string; off?: number; data: string }
+  /** Declared only: the host will say a client fell behind (E1.3). */
+  | { t: 'lag'; name: string }
 
 /** TETHER_PROCD_PIPE, else derived from tetherd's pipe: `<pipe>-procd` on Windows, `<home>/tether-procd.sock` elsewhere. */
 export function procdPipePath(tetherPipe: string, home: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
