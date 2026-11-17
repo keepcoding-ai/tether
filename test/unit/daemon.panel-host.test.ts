@@ -7,12 +7,14 @@ import { ProcHost, type HostOptions } from '../../src/procd/host.ts'
 import type { ProcPlan } from '../../src/procd/protocol.ts'
 import { pidAlive, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
-// Echo; "FLOOD" prints 8000 numbered 100-char lines then END; "QUIT" prints bye and exits by itself.
+// Echo; "FLOOD" prints 8000 numbered 100-char lines then END; "STREAM" prints 3000 such lines 40 at a time every 2 ms;
+// "QUIT" prints bye and exits by itself.
 const CHILD = [
   "const pad = 'x'.repeat(92), NL = String.fromCharCode(10);",
   "process.stdin.on('data', (d) => {",
   "const s = String(d);",
   "if (s.includes('FLOOD')) { let o = ''; for (let i = 0; i < 8000; i++) o += 'L' + String(i).padStart(5, '0') + pad + NL; process.stdout.write(o + 'END' + NL) }",
+  "else if (s.includes('STREAM')) { let i = 0; const t = setInterval(() => { let o = ''; for (let k = 0; k < 40; k++, i++) o += 'L' + String(i).padStart(5, '0') + pad + NL; process.stdout.write(o); if (i >= 3000) { clearInterval(t); process.stdout.write('END' + NL) } }, 2) }",
   "else if (s.includes('QUIT')) { process.stdout.write('bye' + NL); setTimeout(() => process.exit(3), 50) }",
   "else process.stdout.write(d);",
   "});",
@@ -117,7 +119,9 @@ describe('PanelHost: spawn, write, resize, kill, adopt', () => {
     const s = new Sink()
     const h = await r.panel.spawn('ad', plan(r.home), { ...SIZE, ...s.cb })
     h.write('before-adopt\r')
-    await waitUntil(() => s.text.includes('before-adopt'), 10_000, 'echo')
+    // The console shows the input and the child echoes it: two pieces, the second some ms after the first. Adopt only
+    // once both are out, or the second is legitimate new output for the adopter (and not a replay of the ring).
+    await waitUntil(() => s.text.split('before-adopt').length > 2, 10_000, 'echo seen twice')
     // a second PanelHost = a restarted tetherd
     const other = new PanelHost({ connector: { tryOpen: () => r.connector.tryOpen(), ensure: async () => { throw new Error('no launch') } } })
     assert.deepEqual((await other.list())!.map((x) => x.name), ['ad'])
@@ -131,10 +135,51 @@ describe('PanelHost: spawn, write, resize, kill, adopt', () => {
     got.handle.write('after-adopt\r')
     await waitUntil(() => s2.text.includes('after-adopt'), 10_000, 'adopted handle hears new output')
     assert.equal(s2.text.includes('before-adopt'), false, 'the ring is returned, not replayed through onData')
+    // The first owner heard everything since the spawn: what the adopter hears is that same stream after `off`, once.
+    await waitUntil(() => s.text.length >= got.off + s2.text.length, 10_000, 'first owner caught up')
+    assert.equal(s.text.slice(0, got.off), got.scrollback)
+    assert.equal(s2.text, s.text.slice(got.off, got.off + s2.text.length))
     assert.equal(await other.adopt('missing', s2.cb), undefined)
     other.close()
     await h.kill()
     assert.equal(await r.panel.adopt('ad', s2.cb), undefined, 'ended run is not adoptable')
+  })
+})
+
+describe('PanelHost: adopt while output flows', () => {
+  test('a data event that overtakes the attach reply is superseded by the ring: every line once, in order', async () => {
+    const r = await rig({ scrollbackChars: 4 * 1024 * 1024 })
+    try {
+      // The attach request leaves 30 ms late, so the host keeps sending data on the connection that is already attached.
+      let slow = false
+      const lateAttach: PanelConnector = {
+        async tryOpen() {
+          const c = await r.connector.tryOpen()
+          if (!c) return undefined
+          const request = c.request.bind(c)
+          c.request = async (req) => { if (req.t === 'attach' && slow) await sleep(30); return request(req) }
+          return c
+        },
+        ensure: () => r.connector.ensure(),
+      }
+      const panel = new PanelHost({ connector: lateAttach })
+      const first = new Sink()
+      const h = await panel.spawn('s', plan(r.home), { ...SIZE, ...first.cb })
+      h.write('STREAM\r')
+      await waitUntil(() => first.text.includes('L00300'), 10_000, 'output flowing')
+      slow = true
+      const s = new Sink()
+      const got = await panel.adopt('s', s.cb) // same panel, same connection: a re-adopt
+      assert.ok(got)
+      await waitUntil(() => s.text.includes('END\r\n'), 20_000, 'END reached')
+      const nums = [...(got.scrollback + s.text).matchAll(/L(\d{5})x/g)].map((m) => Number(m[1]))
+      assert.equal(nums.length, 3000, 'no loss, no duplicate')
+      nums.forEach((n, i) => { if (n !== i) assert.fail(`line ${i} out of order: ${n}`) })
+      await h.kill()
+      panel.close()
+    } finally {
+      await r.stop()
+    }
   })
 })
 

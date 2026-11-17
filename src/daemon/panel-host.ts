@@ -65,7 +65,7 @@ class Sub {
   /** Offset after the last output delivered to the owner. */
   lastOff = 0
   epoch = ''
-  /** A re-attach is in flight: data events of this name are superseded by its reply, an `exit` waits for it. */
+  /** An attach is in flight (adopt or re-attach): data events of this name are superseded by its reply, an `exit` waits for it. */
   resyncing = false
   pendingExit: PtyExit | undefined
   private resolveExit!: (e: PtyExit) => void
@@ -158,6 +158,9 @@ export class PanelHost {
     const old = this.subs.get(name)
     if (old) this.drop(old)
     const sub = this.register(new Sub(name, live.run, live.pid, opts))
+    // The connection may already be attached to this name (a re-adopt, or another owner of the same host): data events
+    // that overtake the reply carry bytes the reply's ring already holds, so they are superseded by it, as in a resync.
+    sub.resyncing = true
     let a
     try {
       a = await conn.request({ t: 'attach', name })
@@ -167,6 +170,8 @@ export class PanelHost {
     }
     sub.epoch = a.epoch ?? live.spawnedAt
     sub.lastOff = a.off ?? 0
+    sub.resyncing = false
+    if (sub.pendingExit) { const e = sub.pendingExit; sub.pendingExit = undefined; this.end(sub, e) }
     return { handle: this.handle(sub), scrollback: a.scrollback ?? '', off: sub.lastOff, epoch: sub.epoch, spawnedAt: live.spawnedAt, startedAt: live.startedAt }
   }
 
