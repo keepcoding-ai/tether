@@ -207,7 +207,11 @@ export class ProcHost {
     this.batchMs = opts.batchMs ?? BATCH_MS
     this.inputMax = opts.inputMax ?? INPUT_MAX
     this.scrollbackChars = opts.scrollbackChars ?? SCROLLBACK_CHARS
-    this.server = createServer((socket) => this.onConnection(socket))
+    // The queue is pumped only on 'drain', and a socket emits 'drain' only after a write found it at or above its own
+    // highWaterMark. With that mark equal to outHigh, every item that waits (queued because writableLength >= outHigh)
+    // has a 'drain' coming; with the default mark (16 KiB) above a smaller outHigh, a queue filled while writableLength
+    // sat between the two never moved again (a `lag` stuck in it froze the name for good).
+    this.server = createServer({ highWaterMark: this.outHigh }, (socket) => this.onConnection(socket))
   }
 
   async listen(): Promise<void> {
