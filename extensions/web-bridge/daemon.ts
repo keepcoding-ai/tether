@@ -54,7 +54,7 @@ export function createBridgeBackends(o: {
   const bundlePath = join(o.vendorDir, VENDOR_BUNDLE)
   let bundle: Promise<BridgeMcpBundle> | undefined
   const load = async (): Promise<BridgeMcpBundle> => {
-    const problems = auditVendor(o.vendorDir)
+    const problems = await auditVendor(o.vendorDir)
     if (problems.length) throw new Error(`bundle do bridge não confere com o manifesto (${problems[0]}${problems.length > 1 ? `, +${problems.length - 1}` : ''})`)
     const m = await (o.importBundle ?? (p => import(pathToFileURL(p).href)))(bundlePath) as Partial<BridgeMcpBundle>
     if (typeof m.createBridgeMcp !== 'function') throw new Error('o bundle vendorizado do bridge não tem a entrada de biblioteca (createBridgeMcp): revendorize')

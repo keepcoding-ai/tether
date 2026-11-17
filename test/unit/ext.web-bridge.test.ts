@@ -13,6 +13,7 @@
 // marker and the doctor's "recarregar" notice, extensionVersion in config.json), and a daemon running another bundle is
 // restarted only after pid + command line + port owner are proven.
 import { after, describe, test } from 'node:test'
+import { randomBytes } from 'node:crypto'
 import assert from 'node:assert/strict'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -27,7 +28,8 @@ import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutda
 import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { BRAND } from '../../app/shared/brand.ts'
-import { auditVendor, hashTree, VENDOR_MANIFEST, type BuildInfo } from '../../extensions/web-bridge/vendor-rules.ts'
+import { auditVendor, hashTree, sha256, VENDOR_MANIFEST, type BuildInfo } from '../../extensions/web-bridge/vendor-rules.ts'
+import { hashTree as hashTreeSync, manifestOf } from '../../extensions/web-bridge/vendor-rules-sync.ts'
 import { manifest } from '../../extensions/web-bridge/manifest.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
@@ -59,8 +61,8 @@ HKEY_LOCAL_MACHINE\\SOFTWARE\\Clients\\StartMenuInternet\\Brave\\shell\\open\\co
 `
 
 describe('web-bridge: vendored bridge', () => {
-  test('vendor/ is intact: every file matches manifest.json, the extension tree matches build-info', () => {
-    assert.deepEqual(auditVendor(vendorDir), [])
+  test('vendor/ is intact: every file matches manifest.json, the extension tree matches build-info', async () => {
+    assert.deepEqual(await auditVendor(vendorDir), [])
     const m = JSON.parse(readFileSync(join(vendorDir, VENDOR_MANIFEST), 'utf8')) as { extensionId: string; files: Record<string, string> }
     assert.match(m.extensionId, /^[a-p]{32}$/)
     assert.ok(Object.keys(m.files).length >= 10, 'bundle, build-info and the extension files')
@@ -68,15 +70,47 @@ describe('web-bridge: vendored bridge', () => {
     assert.ok(!(VENDOR_MANIFEST in m.files), 'the manifest does not list itself')
   })
 
-  test('a changed or missing file is caught', () => {
+  test('a changed or missing file is caught', async () => {
     const copy = join(tmp.make(), 'vendor')
     cpSync(vendorDir, copy, { recursive: true })
     writeFileSync(join(copy, 'extension', 'popup.html'), '<!-- tampered -->')
-    const problems = auditVendor(copy)
+    const problems = await auditVendor(copy)
     assert.ok(problems.some(p => p.startsWith('extension/popup.html: sha256')), problems.join('; '))
     assert.ok(problems.some(p => p.startsWith('extension/: hash')), problems.join('; '))
     writeFileSync(join(copy, 'extra.txt'), 'x')
-    assert.ok(auditVendor(copy).some(p => p === 'extra.txt: fora do manifesto'))
+    assert.ok((await auditVendor(copy)).some(p => p === 'extra.txt: fora do manifesto'))
+  })
+
+  test('the audit keeps the event loop answering on a large tree and fails closed on a tampered byte; the sync twin agrees', async () => {
+    const dir = join(tmp.make(), 'vendor')
+    const ext = join(dir, 'extension')
+    mkdirSync(ext, { recursive: true })
+    for (let i = 0; i < 8; i++) writeFileSync(join(ext, `big-${i}.bin`), randomBytes(12 * 1024 * 1024))
+    const bundle = Buffer.from('// bundle')
+    writeFileSync(join(dir, 'atrium-bridge.mjs'), bundle)
+    const real = JSON.parse(readFileSync(join(vendorDir, 'build-info.json'), 'utf8')) as BuildInfo
+    const treeHash = hashTreeSync(ext)
+    assert.equal(await hashTree(ext), treeHash, 'async and sync tree hashes are the same recipe')
+    const info: BuildInfo = { ...real, bundle: { ...real.bundle, sha256: sha256(bundle), bytes: bundle.length }, extension: { ...real.extension, sha256: treeHash, files: 8 } }
+    writeFileSync(join(dir, 'build-info.json'), JSON.stringify(info))
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifestOf(dir, info)))
+
+    let worst = 0
+    let last = performance.now()
+    const timer = setInterval(() => { const now = performance.now(); worst = Math.max(worst, now - last - 10); last = now }, 10)
+    last = performance.now()
+    const problems = await auditVendor(dir)
+    clearInterval(timer)
+    assert.deepEqual(problems, [])
+    assert.ok(worst < 50, `the loop was blocked for ${Math.round(worst)} ms during the audit`)
+
+    const target = join(ext, 'big-5.bin')
+    const bytes = readFileSync(target)
+    bytes[7] = ~bytes[7]! & 0xff
+    writeFileSync(target, bytes)
+    const bad = await auditVendor(dir)
+    assert.ok(bad.some(p => p.startsWith('extension/big-5.bin: sha256')), bad.join(' | '))
+    assert.ok(bad.some(p => p.startsWith('extension/: hash')), bad.join(' | '))
   })
 
   test('the manifest declares the settings, the command and the menu item of the design', () => {
@@ -435,23 +469,23 @@ describe('web-bridge: update in place (F7 C5, real vendored build, temp home)', 
     return current
   }
 
-  test('updateExtensionDir: only differing files are written (temp + rename), removed files go, the seed and equal files stay; no-op when equal', () => {
+  test('updateExtensionDir: only differing files are written (temp + rename), removed files go, the seed and equal files stay; no-op when equal', async () => {
     const home = tmp.make()
     const current = olderInstall(home)
-    assert.equal(extensionOutdated(current, info), true)
-    assert.equal(extensionOutdated(join(home, 'nowhere'), info), false, 'a missing folder is absent, not outdated')
+    assert.equal(await extensionOutdated(current, info), true)
+    assert.equal(await extensionOutdated(join(home, 'nowhere'), info), false, 'a missing folder is absent, not outdated')
     const manifestBefore = statSync(join(current, 'manifest.json')).mtimeMs
-    const u = updateExtensionDir(source, current)
+    const u = await updateExtensionDir(source, current)
     assert.deepEqual(u.written.sort(), ['icons/icon-16.png', 'popup.html'])
     assert.deepEqual(u.removed, ['old/stale.js'])
     assert.ok(!existsSync(join(current, 'old')), 'the emptied folder is pruned')
     assert.equal(readFileSync(join(current, 'popup.html'), 'utf8'), readFileSync(join(source, 'popup.html'), 'utf8'))
-    assert.equal(hashTree(current, SEED), info.extension.sha256, 'the folder IS the build again, seed left out')
-    assert.equal(extensionOutdated(current, info), false)
+    assert.equal(await hashTree(current, SEED), info.extension.sha256, 'the folder IS the build again, seed left out')
+    assert.equal(await extensionOutdated(current, info), false)
     assert.deepEqual(JSON.parse(readFileSync(join(current, 'bridge.json'), 'utf8')), { port: 48141, token: 'tok-tok-tok-tok-tok-1', host: 'Tether' }, 'the seed is never touched')
     assert.equal(statSync(join(current, 'manifest.json')).mtimeMs, manifestBefore, 'an equal file is not rewritten')
     assert.ok(!filesUnder(current).some(f => f.endsWith('.tmp')), 'no temp file left behind')
-    assert.deepEqual(updateExtensionDir(source, current), { written: [], removed: [] }, 'second run: nothing')
+    assert.deepEqual(await updateExtensionDir(source, current), { written: [], removed: [] }, 'second run: nothing')
   })
 
   test('syncExtensionVersion: the field goes through the REAL bundle\'s setExtensionVersion (its own lock, the rest of the config kept); only when it differs; a stale lock is taken over', async () => {
@@ -492,7 +526,7 @@ describe('web-bridge: update in place (F7 C5, real vendored build, temp home)', 
     const r = await host().setup()
     assert.equal(r.extension, 'updated')
     assert.equal(r.daemon, 'running')
-    assert.equal(hashTree(current, SEED), info.extension.sha256)
+    assert.equal(await hashTree(current, SEED), info.extension.sha256)
     assert.deepEqual(JSON.parse(readFileSync(join(current, 'bridge.json'), 'utf8')), { port: 48141, token, host: 'Tether' }, 'the seed carries the installation\'s token and the tether\'s port')
     const config = JSON.parse(readFileSync(join(bridgeHomeOf(home), 'config.json'), 'utf8')) as { pairingToken: string; extensionVersion?: string }
     assert.equal(config.pairingToken, token, 'the token did not rotate')

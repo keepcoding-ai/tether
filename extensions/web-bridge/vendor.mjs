@@ -15,7 +15,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { hashTree, isBuildInfo, manifestOf, sha256, VENDOR_BUILD_INFO, VENDOR_BUNDLE, VENDOR_EXTENSION_DIR, VENDOR_MANIFEST } from './vendor-rules.ts'
+import { hashTree, isBuildInfo, manifestOf, sha256, VENDOR_BUILD_INFO, VENDOR_BUNDLE, VENDOR_EXTENSION_DIR, VENDOR_MANIFEST } from './vendor-rules-sync.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const vendorDir = join(here, 'vendor')

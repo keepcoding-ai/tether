@@ -78,7 +78,7 @@ interface BrowserBundle {
 export function createBrowserBackends(vendorDir: string, server: string, log: (msg: string) => void, importBundle: (path: string) => Promise<unknown> = p => import(pathToFileURL(p).href)): (input: BrowserBackendInput) => Promise<McpBackend> {
   let bundle: Promise<BrowserBundle> | undefined
   const load = async (): Promise<BrowserBundle> => {
-    const problems = auditVendor(vendorDir)
+    const problems = await auditVendor(vendorDir)
     if (problems.length) throw new Error(`servidor do navegador não confere com o manifesto (${problems[0]}${problems.length > 1 ? `, +${problems.length - 1}` : ''})`)
     const m = await importBundle(server) as Partial<BrowserBundle>
     if (typeof m.createTetherBrowserServer !== 'function') throw new Error('o servidor vendorizado do navegador não tem a entrada de biblioteca (createTetherBrowserServer): revendorize')
@@ -127,8 +127,10 @@ export function activate(api: TetherDaemon): IDisposable[] {
   })
   return [
     api.onStarted(() => {
-      const n = sweepStale(api.home)
-      if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`)
+      void sweepStale(api.home).then(
+        n => { if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`) },
+        e => api.log(`limpeza de chaves do navegador falhou: ${e instanceof Error ? e.message : String(e)}`),
+      )
       http.listen().then(
         port => api.log(`navegador servido aos agentes por HTTP em 127.0.0.1:${port}`),
         e => api.log(`servidor HTTP do navegador não subiu (${e instanceof Error ? e.message : String(e)}); agentes recebem o navegador por stdio`),

@@ -18,7 +18,8 @@
 // with the same rewriting, mcp-texts.ts) for as long as the agent's run lives: no process for the browser, in the agent or in
 // the daemon, and nothing is stopped for being idle. What the tool knows the tabs by is kept with the tabs (agent-tabs.ts).
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { access, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { httpMcpConfigOf, McpNameCollisionError } from '../../src/agents/mcp.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
@@ -96,18 +97,25 @@ export function releaseSlot(home: string, slotId: string): void {
  * slot that exists are left over from a daemon that was killed. Only files named after a slot of this home go (a key nobody's
  * slot owns is not ours to judge). Returns how many files went.
  */
-export function sweepStale(home: string): number {
+export async function sweepStale(home: string): Promise<number> {
+  // The sweep runs beside the loop, so an agent may launch while it works: a file written since the sweep began is a live
+  // agent's, never leftover (a killed daemon's files are older than this start).
+  const since = Date.now()
   let n = 0
-  const sweep = (dir: string, slotOf: (name: string) => string | undefined): void => {
+  const sweep = async (dir: string, slotOf: (name: string) => string | undefined): Promise<void> => {
     let names: string[] = []
-    try { names = readdirSync(dir) } catch { /* no folder */ }
+    try { names = await readdir(dir) } catch { /* no folder */ }
     for (const f of names) {
       const slotId = slotOf(f)
-      if (f.endsWith('.tmp') || (slotId !== undefined && existsSync(slotMetaPath(home, slotId)))) { rmSync(join(dir, f), { force: true }); n++ }
+      if (f.endsWith('.tmp') || (slotId !== undefined && await access(slotMetaPath(home, slotId)).then(() => true, () => false))) {
+        const fresh = await stat(join(dir, f)).then(st => st.mtimeMs >= since, () => false)
+        if (fresh) continue
+        await rm(join(dir, f), { force: true }); n++
+      }
     }
   }
-  sweep(keysDirOf(home), slotOfKeyFile)
-  sweep(mcpDirOf(home), f => (f.endsWith('.json') ? f.slice(0, -5) : undefined))
+  await sweep(keysDirOf(home), slotOfKeyFile)
+  await sweep(mcpDirOf(home), f => (f.endsWith('.json') ? f.slice(0, -5) : undefined))
   return n
 }
 

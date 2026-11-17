@@ -1,9 +1,11 @@
 // What the vendored copy of the Atrium Bridge is, as pure rules shared by the vendoring script (vendor.mjs), the main
 // side (which refuses to install a corrupted copy) and the unit test: the files it holds, how a tree is hashed (the
 // same recipe as chrome-extensions/bridge/scripts/build.ts `hashTree`, so `build-info.json` can be checked against the
-// copied folder) and the manifest `vendor/manifest.json` that records every file's sha256.
+// copied folder) and the manifest `vendor/manifest.json` that records every file's sha256. All of it is asynchronous
+// (the tetherd's loop runs it); the synchronous twins for the vendoring script live in vendor-rules-sync.ts.
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
 /** The three artifacts of a brand build the vendoring copies (paths relative to vendor/). */
@@ -46,11 +48,25 @@ export interface VendorManifest {
 
 export const sha256 = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex')
 
+/** sha256 of a file, fed in chunks as it is read, so the loop gets turns between them. */
+export async function sha256File(path: string): Promise<string> {
+  const h = createHash('sha256')
+  for await (const chunk of createReadStream(path)) h.update(chunk as Buffer)
+  return h.digest('hex')
+}
+
+const isFile = (p: string): Promise<boolean> => stat(p).then(st => st.isFile(), () => false)
+const isDir = (p: string): Promise<boolean> => stat(p).then(st => st.isDirectory(), () => false)
+
 /** Every file under `dir`, depth first, names sorted (the order the tree hash depends on). */
-export function walk(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true })
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .flatMap(e => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]))
+export async function walk(dir: string): Promise<string[]> {
+  const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  const out: string[] = []
+  for (const e of entries) {
+    if (e.isDirectory()) out.push(...await walk(join(dir, e.name)))
+    else out.push(join(dir, e.name))
+  }
+  return out
 }
 
 const rel = (root: string, file: string): string => relative(root, file).split('\\').join('/')
@@ -60,12 +76,12 @@ const rel = (root: string, file: string): string => relative(root, file).split('
  * forward slashes) leaves files out: the installed folder carries files the build does not (its seed, bridge.json),
  * and without them its hash is the build's again.
  */
-export function hashTree(dir: string, ignore: ReadonlySet<string> = new Set()): string {
+export async function hashTree(dir: string, ignore: ReadonlySet<string> = new Set()): Promise<string> {
   const h = createHash('sha256')
-  for (const f of walk(dir)) {
+  for (const f of await walk(dir)) {
     const r = rel(dir, f)
     if (ignore.has(r)) continue
-    h.update(`${r}\0${sha256(readFileSync(f))}\n`)
+    h.update(`${r}\0${await sha256File(f)}\n`)
   }
   return h.digest('hex')
 }
@@ -79,47 +95,36 @@ export function isBuildInfo(v: unknown): v is BuildInfo {
     && !!b.bundle && typeof b.bundle.sha256 === 'string' && !!b.extension && typeof b.extension.sha256 === 'string'
 }
 
-/** The manifest of a vendor folder as it is now (every file but the manifest). */
-export function manifestOf(vendorDir: string, info: BuildInfo): VendorManifest {
-  const files: Record<string, string> = {}
-  for (const f of walk(vendorDir)) {
-    const r = rel(vendorDir, f)
-    if (r === VENDOR_MANIFEST) continue
-    files[r] = sha256(readFileSync(f))
-  }
-  return { version: info.version, extensionId: info.extensionId, files }
-}
-
 /**
  * What is wrong with a vendor folder: files missing or changed against its manifest, a manifest that disagrees with
  * build-info.json, or an extension tree whose hash is not the one the bridge build recorded. Empty = intact.
  */
-export function auditVendor(vendorDir: string): string[] {
+export async function auditVendor(vendorDir: string): Promise<string[]> {
   const problems: string[] = []
   const manifestPath = join(vendorDir, VENDOR_MANIFEST)
   const infoPath = join(vendorDir, VENDOR_BUILD_INFO)
-  if (!existsSync(manifestPath)) return [`${VENDOR_MANIFEST} ausente`]
-  if (!existsSync(infoPath)) return [`${VENDOR_BUILD_INFO} ausente`]
+  if (!await isFile(manifestPath)) return [`${VENDOR_MANIFEST} ausente`]
+  if (!await isFile(infoPath)) return [`${VENDOR_BUILD_INFO} ausente`]
   let manifest: VendorManifest
   let info: unknown
-  try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as VendorManifest } catch { return [`${VENDOR_MANIFEST} ilegível`] }
-  try { info = JSON.parse(readFileSync(infoPath, 'utf8')) } catch { return [`${VENDOR_BUILD_INFO} ilegível`] }
+  try { manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as VendorManifest } catch { return [`${VENDOR_MANIFEST} ilegível`] }
+  try { info = JSON.parse(await readFile(infoPath, 'utf8')) } catch { return [`${VENDOR_BUILD_INFO} ilegível`] }
   if (!isBuildInfo(info)) return [`${VENDOR_BUILD_INFO} inválido`]
   if (!manifest.files || typeof manifest.files !== 'object') return [`${VENDOR_MANIFEST} sem files`]
   if (manifest.extensionId !== info.extensionId) problems.push(`extensionId do manifesto (${manifest.extensionId}) difere do build-info (${info.extensionId})`)
   if (manifest.version !== info.version) problems.push(`versão do manifesto (${manifest.version}) difere do build-info (${info.version})`)
   for (const [r, hash] of Object.entries(manifest.files)) {
     const p = join(vendorDir, r)
-    if (!existsSync(p) || !statSync(p).isFile()) { problems.push(`${r}: ausente`); continue }
-    if (sha256(readFileSync(p)) !== hash) problems.push(`${r}: sha256 difere do manifesto`)
+    if (!await isFile(p)) { problems.push(`${r}: ausente`); continue }
+    if (await sha256File(p) !== hash) problems.push(`${r}: sha256 difere do manifesto`)
   }
-  const extra = walk(vendorDir).map(f => rel(vendorDir, f)).filter(r => r !== VENDOR_MANIFEST && !(r in manifest.files))
+  const extra = (await walk(vendorDir)).map(f => rel(vendorDir, f)).filter(r => r !== VENDOR_MANIFEST && !(r in manifest.files))
   for (const r of extra) problems.push(`${r}: fora do manifesto`)
   if (!(VENDOR_BUNDLE in manifest.files)) problems.push(`${VENDOR_BUNDLE}: fora do manifesto`)
   const extDir = join(vendorDir, VENDOR_EXTENSION_DIR)
-  if (!existsSync(extDir)) problems.push(`${VENDOR_EXTENSION_DIR}/: ausente`)
-  else if (hashTree(extDir) !== info.extension.sha256) problems.push(`${VENDOR_EXTENSION_DIR}/: hash da árvore difere do build-info`)
+  if (!await isDir(extDir)) problems.push(`${VENDOR_EXTENSION_DIR}/: ausente`)
+  else if (await hashTree(extDir) !== info.extension.sha256) problems.push(`${VENDOR_EXTENSION_DIR}/: hash da árvore difere do build-info`)
   const bundle = join(vendorDir, VENDOR_BUNDLE)
-  if (existsSync(bundle) && sha256(readFileSync(bundle)) !== info.bundle.sha256) problems.push(`${VENDOR_BUNDLE}: sha256 difere do build-info`)
+  if (await isFile(bundle) && await sha256File(bundle) !== info.bundle.sha256) problems.push(`${VENDOR_BUNDLE}: sha256 difere do build-info`)
   return problems
 }

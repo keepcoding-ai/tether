@@ -24,6 +24,7 @@
 // Secrets (pairing token, api key) stay inside the bundle's functions and the files it owns: no log line, no error and
 // no file written here carries one.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
@@ -96,6 +97,14 @@ export function writeFileAtomic(path: string, text: string): void {
   try { renameSync(tmp, path) } finally { rmSync(tmp, { force: true }) }
 }
 
+/** Same as writeFileAtomic, without blocking the loop. */
+export async function writeFileAtomicAsync(path: string, text: string): Promise<void> {
+  await mkdir(join(path, '..'), { recursive: true })
+  const tmp = `${path}.${process.pid}.tmp`
+  await writeFile(tmp, text, { mode: 0o600 })
+  try { await rename(tmp, path) } finally { await rm(tmp, { force: true }) }
+}
+
 export interface McpConfig {
   mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>
 }
@@ -114,13 +123,13 @@ export function mcpConfigOf(bridgeHome: string, bundlePath: string, port: number
 }
 
 /** Writes <home>/mcp/tether-bridge.json only when its content changed. Returns whether it was written. */
-export function writeMcpConfig(home: string, config: McpConfig): boolean {
+export async function writeMcpConfig(home: string, config: McpConfig): Promise<boolean> {
   const path = mcpConfigPathOf(home)
   const content = JSON.stringify(config, null, 2) + '\n'
   let current: string | undefined
-  try { current = readFileSync(path, 'utf8') } catch { /* missing */ }
+  try { current = await readFile(path, 'utf8') } catch { /* missing */ }
   if (current === content) return false
-  writeFileAtomic(path, content)
+  await writeFileAtomicAsync(path, content)
   return true
 }
 
@@ -180,7 +189,7 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
   const setup = async (): Promise<SetupReport> => {
     const report: SetupReport = { ok: false, created: false, capabilities: [], mcpWritten: false, extension: 'absent', daemon: 'skipped' }
     const fail = (problem: string): SetupReport => { deps.log(problem); return { ...report, problem } }
-    const problems = auditVendor(deps.vendorDir)
+    const problems = await auditVendor(deps.vendorDir)
     if (problems.length) return fail(`vendor do bridge inválido, instalação não tocada: ${problems.slice(0, 3).join('; ')}${problems.length > 3 ? '…' : ''}`)
     const info = readBuildInfo(deps.vendorDir)
     if (!info) return fail(`vendor do bridge sem ${VENDOR_BUILD_INFO} legível, instalação não tocada`)
@@ -199,10 +208,10 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
       // C5: an installed folder is brought to the vendored build before its seed is rewritten below (same token).
       if (existsSync(join(currentDir, 'manifest.json'))) {
         const version = extensionVersionOf(join(deps.vendorDir, VENDOR_EXTENSION_DIR)) ?? info.version
-        if (extensionOutdated(currentDir, info)) {
+        if (await extensionOutdated(currentDir, info)) {
           const from = extensionVersionOf(currentDir) ?? '?'
-          const u = updateExtensionDir(join(deps.vendorDir, VENDOR_EXTENSION_DIR), currentDir)
-          writeUpdateMarker(deps.home, { version, at: new Date().toISOString() })
+          const u = await updateExtensionDir(join(deps.vendorDir, VENDOR_EXTENSION_DIR), currentDir)
+          await writeUpdateMarker(deps.home, { version, at: new Date().toISOString() })
           report.extension = 'updated'
           deps.log(`extensão em ${currentDir} atualizada em lugar (${from} → ${version}: ${u.written.length} arquivo(s) gravado(s), ${u.removed.length} removido(s)); o navegador precisa recarregá-la`)
         } else report.extension = 'current'
@@ -216,7 +225,7 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
       const code = (e as { code?: unknown } | undefined)?.code
       return fail(`instalação do bridge falhou: ${typeof code === 'string' ? code : e instanceof Error ? e.message : String(e)}`)
     }
-    report.mcpWritten = writeMcpConfig(deps.home, mcpConfigOf(bridgeHome, bundlePath, deps.port, serverName))
+    report.mcpWritten = await writeMcpConfig(deps.home, mcpConfigOf(bridgeHome, bundlePath, deps.port, serverName))
     deps.log(`${mcpConfigPathOf(deps.home)} ${report.mcpWritten ? 'gravado' : 'inalterado'} (servidor ${serverName}, porta ${deps.port})`)
     if (deps.warm === false) deps.log(`aquecimento do daemon pulado: home fora do padrão sem TETHER_BRIDGE_PORT próprio (a porta ${deps.port} é da instalação padrão)`)
     else {
@@ -231,7 +240,7 @@ export function createBridgeHost(deps: BridgeHostDeps): BridgeHost {
   const checks = (): Array<() => Promise<DaemonCheck>> => [
     async () => {
       const name = `${deps.brand.name} Bridge`
-      const problems = auditVendor(deps.vendorDir)
+      const problems = await auditVendor(deps.vendorDir)
       if (problems.length) return { level: 'ERRO', name, detail: `cópia vendorizada incompleta ou alterada (${problems[0]})`, hint: 'rode "npm run bridge:build" e reinicie o tetherd' }
       const missing = ['config.json', 'api.key'].filter(f => !existsSync(join(bridgeHome, f)))
       if (missing.length) return { level: 'AVISO', name, detail: `instalação em ${bridgeHome} sem ${missing.join(' e ')}`, hint: 'abra o tether: o tetherd cria a instalação ao subir' }

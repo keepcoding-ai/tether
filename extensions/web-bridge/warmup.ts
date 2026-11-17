@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
 import { healthUrl } from './paths.ts'
-import { sha256 } from './vendor-rules.ts'
+import { sha256File } from './vendor-rules.ts'
 
 /**
  * The tether's own record of which bundle it started the daemon from: <bridgeHome>/daemon.build.json, written at every
@@ -37,8 +37,8 @@ export function writeDaemonRecord(bridgeHome: string, record: DaemonRecord): voi
 }
 
 /** The sha256 of the bundle file, or undefined when it cannot be read. */
-export function bundleSha256Of(bundlePath: string): string | undefined {
-  try { return sha256(readFileSync(bundlePath)) } catch { return undefined }
+export async function bundleSha256Of(bundlePath: string): Promise<string | undefined> {
+  try { return await sha256File(bundlePath) } catch { return undefined }
 }
 
 /** `TETHER_NODE`, then npm's node, then the first `node` on PATH: the same rule app/main/main.ts uses for tetherd. */
@@ -119,7 +119,7 @@ export function createWarmup(deps: WarmupDeps): Warmup {
     const pid = (deps.spawnDaemon ?? spawnBridgeDaemon)(node, deps.bundlePath, deps.port, deps.bridgeHome)
     deps.log(`daemon do bridge iniciado (pid ${pid ?? '?'}, porta ${deps.port}, home ${deps.bridgeHome})`)
     // The record of what was started (C5 reads it at the next start); a failure to write it is not a failure to start.
-    const sha = pid !== undefined ? bundleSha256Of(deps.bundlePath) : undefined
+    const sha = pid !== undefined ? await bundleSha256Of(deps.bundlePath) : undefined
     if (pid !== undefined && sha) {
       try { writeDaemonRecord(deps.bridgeHome, { pid, bundleSha256: sha, startedAt: new Date().toISOString() }) } catch (e) { deps.log(`registro ${DAEMON_RECORD} não gravado: ${e instanceof Error ? e.message : String(e)}`) }
     }

@@ -90,7 +90,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
   }
 
   const install = async (browser: DetectedBrowser): Promise<InstallOutcome> => {
-    const problems = auditVendor(deps.vendorDir)
+    const problems = await auditVendor(deps.vendorDir)
     if (problems.length) {
       deps.log(`vendor do bridge inválido: ${problems.slice(0, 3).join('; ')}${problems.length > 3 ? '…' : ''}`)
       return { ok: false, message: `A cópia do ${deps.brand.name} Bridge dentro do Tether está incompleta ou alterada (${problems[0]}). Rode "npm run bridge:build" e tente de novo.` }
@@ -110,7 +110,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
       // over (the person is at the browser's extensions page with this folder).
       const version = extensionVersionOf(currentDir)
       if (version) syncExtensionVersion(b, bridgeHome, version)
-      clearUpdateMarker(deps.home)
+      await clearUpdateMarker(deps.home)
     } catch (e) {
       const code = (e as { code?: unknown } | undefined)?.code
       deps.log(`instalação da extensão falhou: ${typeof code === 'string' ? code : e instanceof Error ? e.message : String(e)}`)

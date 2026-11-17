@@ -10,7 +10,7 @@
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { auditBundle, manifestOf, VENDOR_BUNDLE_DIR, VENDOR_MANIFEST } from './vendor-rules.ts'
+import { auditBundle, manifestOf, VENDOR_BUNDLE_DIR, VENDOR_MANIFEST } from './vendor-rules-sync.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const vendorDir = join(here, 'vendor')

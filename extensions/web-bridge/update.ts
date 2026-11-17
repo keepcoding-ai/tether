@@ -18,10 +18,11 @@
 //      as outdated: the person's daemon predates the vendored bundle by definition.
 // Nothing here reads a secret out: the seed is left alone, config.json is read only to compare one field, and no log
 // line carries a token.
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { identifyProcess, killProcess, listeningOwner, pidAlive } from './process-info.ts'
-import { hashTree, relPath, sha256, walk, type BuildInfo } from './vendor-rules.ts'
+import { hashTree, relPath, sha256, sha256File, walk, type BuildInfo } from './vendor-rules.ts'
 import { bundleSha256Of, readDaemonRecord, type Warmup } from './warmup.ts'
 
 /** The seed the install flow writes into the folder (chrome-extensions/bridge daemon/src/install.ts SEED_FILE). */
@@ -39,28 +40,28 @@ export function extensionVersionOf(dir: string): string | undefined {
 }
 
 /** Whether the installed folder (seed left out) is a build other than the vendored one. A missing folder is not outdated: it is absent. */
-export function extensionOutdated(currentDir: string, info: BuildInfo): boolean {
+export async function extensionOutdated(currentDir: string, info: BuildInfo): Promise<boolean> {
   if (!existsSync(join(currentDir, 'manifest.json'))) return false
-  return hashTree(currentDir, KEEP) !== info.extension.sha256
+  return await hashTree(currentDir, KEEP) !== info.extension.sha256
 }
 
 export interface FolderUpdate { written: string[]; removed: string[] }
 
-/** Copies `text` into `path` in one move (temp + rename), creating the folders. */
-function placeFile(path: string, data: Buffer): void {
-  mkdirSync(dirname(path), { recursive: true })
+/** Copies `data` into `path` in one move (temp + rename), creating the folders. */
+async function placeFile(path: string, data: Buffer): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
   const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, data)
-  try { renameSync(tmp, path) } finally { rmSync(tmp, { force: true }) }
+  await writeFile(tmp, data)
+  try { await rename(tmp, path) } finally { await rm(tmp, { force: true }) }
 }
 
 /** Removes the folders under `dir` that became empty, deepest first; `dir` itself stays. */
-function pruneEmptyDirs(dir: string): void {
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
+async function pruneEmptyDirs(dir: string): Promise<void> {
+  for (const e of await readdir(dir, { withFileTypes: true })) {
     if (!e.isDirectory()) continue
     const p = join(dir, e.name)
-    pruneEmptyDirs(p)
-    if (readdirSync(p).length === 0) rmSync(p, { recursive: true, force: true })
+    await pruneEmptyDirs(p)
+    if ((await readdir(p)).length === 0) await rm(p, { recursive: true, force: true })
   }
 }
 
@@ -69,27 +70,27 @@ function pruneEmptyDirs(dir: string): void {
  * its place and renamed over it; a file `source` does not have is removed, the seed excepted. Files equal already are
  * not touched. Returns the relative paths written and removed.
  */
-export function updateExtensionDir(source: string, dir: string): FolderUpdate {
+export async function updateExtensionDir(source: string, dir: string): Promise<FolderUpdate> {
   const written: string[] = []
   const removed: string[] = []
   const wanted = new Set<string>()
-  for (const f of walk(source)) {
+  for (const f of await walk(source)) {
     const r = relPath(source, f)
     wanted.add(r)
-    const data = readFileSync(f)
+    const data = await readFile(f)
     const target = join(dir, r)
-    if (existsSync(target) && statSync(target).isFile() && sha256(readFileSync(target)) === sha256(data)) continue
-    placeFile(target, data)
+    if (await stat(target).then(st => st.isFile(), () => false) && await sha256File(target) === sha256(data)) continue
+    await placeFile(target, data)
     written.push(r)
   }
-  if (existsSync(dir)) {
-    for (const f of walk(dir)) {
+  if (await stat(dir).then(() => true, () => false)) {
+    for (const f of await walk(dir)) {
       const r = relPath(dir, f)
       if (wanted.has(r) || KEEP.has(r)) continue
-      rmSync(f, { force: true })
+      await rm(f, { force: true })
       removed.push(r)
     }
-    pruneEmptyDirs(dir)
+    await pruneEmptyDirs(dir)
   }
   return { written, removed }
 }
@@ -107,12 +108,12 @@ export function readUpdateMarker(home: string): UpdateMarker | undefined {
   } catch { return undefined }
 }
 
-export function writeUpdateMarker(home: string, marker: UpdateMarker): void {
-  placeFile(updateMarkerPath(home), Buffer.from(`${JSON.stringify(marker, null, 2)}\n`))
+export async function writeUpdateMarker(home: string, marker: UpdateMarker): Promise<void> {
+  await placeFile(updateMarkerPath(home), Buffer.from(`${JSON.stringify(marker, null, 2)}\n`))
 }
 
-export function clearUpdateMarker(home: string): void {
-  rmSync(updateMarkerPath(home), { force: true })
+export async function clearUpdateMarker(home: string): Promise<void> {
+  await rm(updateMarkerPath(home), { force: true })
 }
 
 // ---- 2. extensionVersion in config.json ------------------------------------------------------------------------------
@@ -175,7 +176,7 @@ export async function restartIfOutdated(deps: RestartDeps): Promise<RestartOutco
   if (pid === undefined || !alive(pid)) return 'current'
   // Nothing answering: there is no daemon to replace (a stale daemon.pid, a pid reused by another program); the warm-up decides.
   if (!(await deps.warmup.health())) return 'current'
-  const vendored = deps.bundleSha256 ?? bundleSha256Of(deps.bundlePath)
+  const vendored = deps.bundleSha256 ?? await bundleSha256Of(deps.bundlePath)
   if (!vendored) return 'current'
   const record = readDaemonRecord(deps.bridgeHome)
   if (record && record.pid === pid && record.bundleSha256 === vendored) return 'current'

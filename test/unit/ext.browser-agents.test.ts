@@ -220,7 +220,7 @@ describe('the key: born at launch, new at every launch, gone at exit', () => {
     } finally { t.done() }
   })
 
-  test('sweepStale clears the keys and MCP files a killed tetherd left for the slots of this home, and nothing else', () => {
+  test('sweepStale clears the keys and MCP files a killed tetherd left for the slots of this home, and nothing else', async () => {
     const t = setup()
     try {
       mkdirSync(join(t.home, 'slots'), { recursive: true })
@@ -229,11 +229,12 @@ describe('the key: born at launch, new at every launch, gone at exit', () => {
       t.mw(base(), slotOf('soul', 'two'))
       t.mw(base(), slotOf('soul', 'stranger')) // no slot of that name: not ours to judge
       writeFileSync(join(t.home, 'browser', 'endpoint.json'), '{}')
-      assert.equal(sweepStale(t.home), 4)
+      await new Promise(r => setTimeout(r, 20)) // the files above are older than the sweep
+      assert.equal(await sweepStale(t.home), 4)
       assert.deepEqual(readdirSync(keysDirOf(t.home)), ['stranger.key'])
       assert.deepEqual(readdirSync(mcpDirOf(t.home)), ['stranger.json'])
       assert.ok(existsSync(join(t.home, 'browser', 'endpoint.json')))
-      assert.equal(sweepStale(join(t.home, 'nowhere')), 0)
+      assert.equal(await sweepStale(join(t.home, 'nowhere')), 0)
     } finally { t.done() }
   })
 })

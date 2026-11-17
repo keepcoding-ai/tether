@@ -26,7 +26,8 @@ import { DaemonClient } from '../../src/daemon/client.ts'
 import { createInstaller } from '../../extensions/web-bridge/installer.ts'
 import { bridgeHomeOf, extensionDirOf } from '../../extensions/web-bridge/paths.ts'
 import { readUpdateMarker } from '../../extensions/web-bridge/update.ts'
-import { auditVendor, hashTree, manifestOf, sha256, walk, type BuildInfo } from '../../extensions/web-bridge/vendor-rules.ts'
+import { auditVendor, hashTree as hashTreeAsync, type BuildInfo } from '../../extensions/web-bridge/vendor-rules.ts'
+import { hashTree, manifestOf, sha256, walk } from '../../extensions/web-bridge/vendor-rules-sync.ts'
 import { findNode, readDaemonRecord } from '../../extensions/web-bridge/warmup.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 
@@ -134,7 +135,7 @@ test('an installed older build is updated in place at tetherd start, the daemon 
   try {
     // 1. The older build, installed: current/ at 0.0.9, the old daemon on the port, the record naming the old bundle.
     const oldInfo = olderVendor(oldVendor)
-    assert.deepEqual(auditVendor(oldVendor), [], 'the fabricated older vendor is audit-clean')
+    assert.deepEqual(await auditVendor(oldVendor), [], 'the fabricated older vendor is audit-clean')
     assert.notEqual(oldInfo.bundle.sha256, newInfo.bundle.sha256)
     assert.notEqual(oldInfo.extension.sha256, newInfo.extension.sha256)
     const installer = createInstaller({ home, vendorDir: oldVendor, port, brand: { name: 'Tether', color: '#6aa6ff', hostId: 'studio.codr.tether' }, nodeExe: () => findNode(), log: m => log.push(m), openBrowser: () => {} })
@@ -173,7 +174,7 @@ test('an installed older build is updated in place at tetherd start, the daemon 
     assert.equal(readDaemonRecord(bridgeHome)?.pid, newPid)
     assert.equal(readDaemonRecord(bridgeHome)?.bundleSha256, newInfo.bundle.sha256, 'the record names the vendored bundle now')
     // The folder: the new build exactly (seed left out), the seed as it was.
-    assert.equal(hashTree(current, new Set(['bridge.json'])), newInfo.extension.sha256, 'current/ is the vendored build')
+    assert.equal(await hashTreeAsync(current, new Set(['bridge.json'])), newInfo.extension.sha256, 'current/ is the vendored build')
     assert.equal((JSON.parse(readFileSync(join(current, 'manifest.json'), 'utf8')) as { version: string }).version, newVersion)
     assert.ok(!existsSync(join(current, 'old')), 'the file the new build does not have is gone')
     assert.equal(readFileSync(join(current, 'popup.html'), 'utf8'), readFileSync(join(vendorDir, 'extension', 'popup.html'), 'utf8'))
