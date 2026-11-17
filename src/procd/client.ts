@@ -53,7 +53,8 @@ export interface HostTarget {
 export const PROCD_TARGET: HostTarget = {
   exe: 'tether-procd',
   what: 'o anfitrião de processos (tether-procd)',
-  main: fileURLToPath(new URL('./main.ts', import.meta.url)),
+  // Lazy: the app bundles this module as CJS, where import.meta.url is empty and evaluating it at load would throw.
+  get main() { return fileURLToPath(new URL('./main.ts', import.meta.url)) },
   pipeEnv: 'TETHER_PROCD_PIPE',
 }
 

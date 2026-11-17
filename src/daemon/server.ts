@@ -89,13 +89,13 @@ const PANEL_HOST_ENSURE_MS = 20_000
 
 /**
  * Whether NEW panes are launched in the terminal-pane host (tether-ptyd) instead of inside tetherd: TETHER_PANEL_HOST=1|0
- * in tetherd's environment wins, else `daemon.panelHost` in settings.json, else off. Read once, at boot.
+ * in tetherd's environment wins, else `daemon.panelHost` in settings.json, else on. Read once, at boot.
  */
 export function panelHostEnabled(home: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const v = env.TETHER_PANEL_HOST?.trim()
   if (v === '1') return true
   if (v === '0') return false
-  return treeValueAt(readUserSettings(home, env), 'daemon.panelHost') === true
+  return treeValueAt(readUserSettings(home, env), 'daemon.panelHost') !== false
 }
 
 export interface DaemonOptions {

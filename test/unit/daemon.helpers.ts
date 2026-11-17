@@ -84,11 +84,11 @@ export class Recorder {
 }
 
 /**
- * TETHER_PANEL_HOST=1: the daemons these tests start launch their panes in a terminal-pane host running in this process
+ * Panel host on (the default; TETHER_PANEL_HOST=0 turns it off): the daemons these tests start launch their panes in a terminal-pane host running in this process
  * (TETHER_PTYD_PIPE points at it, so the daemon's own connector finds it and never launches tether-ptyd). It closes after
  * the file's tests. Always a private host: an inherited TETHER_PTYD_PIPE is replaced.
  */
-if (process.env.TETHER_PANEL_HOST === '1') {
+if (process.env.TETHER_PANEL_HOST?.trim() !== '0') {
   const home = tempHome()
   const pipe = uniquePipe(home)
   const host = new ProcHost({ home, pipe, persist: false })

@@ -48,6 +48,9 @@ import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACK
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 import { BRAND } from '../shared/brand.ts'
 import { recordProbe, registerPerf, stopPerf } from './perf-main.ts'
+import { PanelLink } from './panel-link.ts'
+import { PanelRouter } from './panel-route.ts'
+import { ptydPipePath } from '../../src/ptyd/paths.ts'
 import { extendProbe, parseProbe } from '../../src/core/perf-probe.ts'
 import { isProbeResultNotice, probeEnabled } from '../shared/probe-app.ts'
 
@@ -116,6 +119,25 @@ let muteTimer: ReturnType<typeof setTimeout> | undefined
 const agentTracker = new AgentTracker()
 /** The extensions' notices the tray shows next to the terminals' attention (TetherMain.notices). */
 const trayNotices = new TrayNotices(() => updateTray())
+/**
+ * Hosted panes (SlotState.ptyHost) talk to the panel host (tether-ptyd) straight: output, scrollback and keystrokes go
+ * through this link, never launching the host (tetherd does). The router picks the way per slot (app/main/panel-route.ts).
+ * With TETHER_PROBE=1 the direct way carries no daemon-* stamps: the keystroke never crosses tetherd.
+ */
+const panelLink: PanelLink = new PanelLink({
+  pipe: ptydPipePath(pipe, home),
+  onData: (slotId, data) => panelRouter.onLinkData(slotId, data),
+  onReset: (slotId, scrollback) => { appLog(`panel host: ${slotId} repainted from the host ring`); panelRouter.onLinkReset(slotId, scrollback) },
+  onLost: (slotId, reason) => appLog(`panel host: re-attach of ${slotId} refused (${reason}); retried on the next reconnect`),
+  onState: connected => panelRouter.onLinkState(connected),
+})
+const panelRouter: PanelRouter = new PanelRouter({
+  link: panelLink,
+  daemon: () => daemon,
+  request: body => request(body),
+  emit: (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }),
+  log: msg => appLog(msg),
+})
 
 function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
@@ -183,12 +205,12 @@ function checkVersion(client: DaemonClient): DaemonClient {
 /** Connects to tetherd, spawning it when the pipe does not answer. */
 async function connectOnce(): Promise<DaemonClient> {
   try {
-    return checkVersion(await DaemonClient.open(pipe, 'app'))
+    return checkVersion(await DaemonClient.open(pipe, 'app', { direct: true }))
   } catch (e) {
     if (e instanceof DaemonError) throw e // it answered: spawning another one would not fix a wrong version
     if (e instanceof NotTetherError) throw new Error(`o canal ${pipe} está ocupado por um programa que não é o tetherd (${e.message})`)
   }
-  return checkVersion(await DaemonClient.connect({ ...daemonSpawnOptions(), client: 'app', startTimeoutMs: DAEMON_START_TIMEOUT_MS }))
+  return checkVersion(await DaemonClient.connect({ ...daemonSpawnOptions(), client: 'app', direct: true, startTimeoutMs: DAEMON_START_TIMEOUT_MS }))
 }
 
 function connectDaemon(): Promise<void> {
@@ -197,9 +219,9 @@ function connectDaemon(): Promise<void> {
     try {
       const client = await connectOnce()
       daemon = client
-      client.on('state', slot => { slotStates.set(slot.slotId, slot); noteAttention(slot); if (attentionHistory.settle(slot.slotId, slot.attention)) sendAttention(); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
+      client.on('state', slot => { slotStates.set(slot.slotId, slot); panelRouter.onState(slot); noteAttention(slot); if (attentionHistory.settle(slot.slotId, slot.attention)) sendAttention(); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
       client.on('data', (slotId, data, p) => win?.webContents.send('tether:event', probe && p ? { t: 'data', slotId, data, probe: extendProbe(p) } : { t: 'data', slotId, data })) // probe: main-out stamp
-      client.on('removed', slotId => { slotStates.delete(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('removed', slotId => { slotStates.delete(slotId); panelRouter.onRemoved(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('proc', proc => win?.webContents.send('tether:event', { t: 'proc', proc }))
@@ -209,6 +231,7 @@ function connectDaemon(): Promise<void> {
         if (daemon !== client) return
         daemon = undefined
         slotStates.clear()
+        panelRouter.reset()
         osNotifyRules.clear()
         dropOsToasts()
         agentTracker.lost()
@@ -295,7 +318,7 @@ async function syncSlots(client: DaemonClient): Promise<void> {
   const list = await request({ t: 'list' })
   if (daemon !== client || list.t !== 'ok') return
   slotStates.clear()
-  for (const s of list.slots ?? []) { slotStates.set(s.slotId, s); osNotifyRules.seed(s) }
+  for (const s of list.slots ?? []) { slotStates.set(s.slotId, s); osNotifyRules.seed(s); panelRouter.onState(s) }
   agentTracker.reset(list.slots ?? [])
   updateTray()
 }
@@ -752,6 +775,8 @@ function createWindow(): void {
     void hideToTray()
   })
   created.webContents.on('did-start-loading', () => { if (win === created) tetherLinkListening = false }) // a reload asks again too
+  // A reloaded page (main frame; a subframe never fires this) attaches its panes again, the old ones never detach: the link starts over.
+  created.webContents.on('did-navigate', () => { if (win === created) panelRouter.reset() })
   created.on('closed', () => {
     if (win === created) { win = undefined; tetherLinkListening = false } // a new window asks for its pending link again
     // Nobody will answer the dialogs asked of a window that is gone.
@@ -953,18 +978,20 @@ function createMenu(): void {
 
 // ---------- IPC ----------
 
-ipcMain.handle('tether:request', (_e, body: RequestBody) => request(body))
+ipcMain.handle('tether:request', (_e, body: RequestBody) => panelRouter.request(body))
 registerPerf(ipcMain, request, probe)
 app.on('will-quit', stopPerf)
+app.on('will-quit', () => panelLink.stop())
 ipcMain.on('tether:notice', (_e, notice: Notice | { t: 'probe-result' }) => {
   if (probe) {
     if (isProbeResultNotice(notice)) { recordProbe(notice); return }
+    if (notice.t === 'input' && panelRouter.input(notice.slotId, notice.data) !== 'daemon') return // hosted pane: no daemon-* stamps
     if (notice.t === 'input') {
       const p = parseProbe(notice.probe)
       if (p) { daemon?.input(notice.slotId, notice.data, extendProbe(p)); return } // main-in stamp
     }
   }
-  if (notice.t === 'input') daemon?.input(notice.slotId, notice.data)
+  if (notice.t === 'input' && panelRouter.input(notice.slotId, notice.data) === 'daemon') daemon?.input(notice.slotId, notice.data)
 })
 ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
@@ -1288,6 +1315,7 @@ async function start(): Promise<void> {
   if (outcome === 'focused-other') { app.quit(); return }
   app.on('second-instance', bringToFront)
   await app.whenReady()
+  void panelLink.start()
   void registerTetherScheme()
   if (process.platform === 'darwin') app.dock?.setIcon(join(__dirname, 'tether.png'))
   createMenu()

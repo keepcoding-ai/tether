@@ -23,6 +23,7 @@ export function ptydLogPath(home: string): string {
 export const PTYD_TARGET: HostTarget = {
   exe: 'tether-ptyd',
   what: 'o anfitrião de terminais (tether-ptyd)',
-  main: fileURLToPath(new URL('./main.ts', import.meta.url)),
+  // Lazy: the app bundles this module as CJS, where import.meta.url is empty and evaluating it at load would throw.
+  get main() { return fileURLToPath(new URL('./main.ts', import.meta.url)) },
   pipeEnv: 'TETHER_PTYD_PIPE',
 }

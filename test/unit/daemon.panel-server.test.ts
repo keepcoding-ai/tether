@@ -11,11 +11,11 @@ import { ProcHost } from '../../src/procd/host.ts'
 import { pidAlive, Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 describe('panelHostEnabled', () => {
-  test('TETHER_PANEL_HOST wins; otherwise daemon.panelHost in settings.json; default off', async () => {
+  test('TETHER_PANEL_HOST wins; otherwise daemon.panelHost in settings.json; default on', async () => {
     const { writeFile } = await import('node:fs/promises')
     const home = tempHome()
     try {
-      assert.equal(panelHostEnabled(home, {}), false)
+      assert.equal(panelHostEnabled(home, {}), true)
       await writeFile(join(home, 'settings.json'), '{ "daemon": { "panelHost": true } }')
       assert.equal(panelHostEnabled(home, {}), true)
       assert.equal(panelHostEnabled(home, { TETHER_PANEL_HOST: '0' }), false)
