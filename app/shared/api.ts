@@ -10,6 +10,7 @@ import type { UiSettings } from './ui-settings.ts'
 import type { FileTarget } from './file-open.ts'
 import type { PerfSnapshot } from '../../src/core/perf.ts'
 import type { ProbeSummary } from './probe-app.ts'
+import type { RendererPerf, RendererReport } from './perf-renderer.ts'
 import type { KeybindingsFileState } from './keybindings.ts'
 import type { ResolvedPath } from './vscode-terminal-link-detector.ts'
 import type { ExtTransport } from './ext-ipc.ts'
@@ -54,7 +55,9 @@ export type MainCommand = 'quit-all' | 'restore-confirmations' | 'restart-daemon
 /** The `perf:get` answer: the main process's ruler, the daemon's (null when absent or too old) and the round trip to it. */
 export interface PerfGet { main: PerfSnapshot; daemon: PerfSnapshot | null; daemonRttMs: number | null
   /** Key->echo probe totals (TETHER_PROBE=1 only; absent when the probe is off). */
-  probe?: ProbeSummary }
+  probe?: ProbeSummary
+  /** The renderer's always-on ruler (E4.0): frames, input latency, backlog, heartbeat, priority, echo by pane kind. */
+  renderer?: RendererPerf }
 
 export type RequestBody = Request extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
 
@@ -188,6 +191,8 @@ export interface TetherApi {
   attentionGet(): Promise<AttentionState>
   /** Performance ruler: main-process and daemon snapshots newer than `since` (wall-clock ms). */
   perfGet(since?: number): Promise<PerfGet>
+  /** The renderer's ruler reports to the main (summary every 5 s when something happened; incidents at once). */
+  perfReport(report: RendererReport): void
   /** Without a slot: every notice (the menu opened). With one: that slot's notice (its pane was visited). */
   attentionSeen(slotId?: string): void
   /** Mutes the toasts for a while; null lifts the mute. `notifications.os` is never touched. */

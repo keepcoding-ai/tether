@@ -89,6 +89,7 @@ import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPa
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
+import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
@@ -1912,6 +1913,7 @@ function applyState(slot: SlotState): void {
 function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
     case 'data':
+      perfData(ev.slotId)
       if (PROBE && ev.probe) window.tether.notice({ t: 'probe-result', slotId: ev.slotId, probe: extendProbe(ev.probe) } as unknown as Notice) // renderer-recv stamp
       panels.get(ev.slotId)?.write(ev.data)
       break
@@ -4424,6 +4426,7 @@ window.tether.onOpenProfiles(() => openProfiles())
 window.tether.onOpenTerminalTheme(() => themeDialog.show())
 window.tether.onTerminalAppearance(a => { void onAppearance(a) })
 window.tether.onEvent(onDaemonEvent)
+installPerfCollector({ panels: () => panels, kindOf: id => (slots.get(id)?.kind ?? 'shell') === 'shell' ? 'shell' : 'agent', send: r => window.tether.perfReport(r) })
 window.tether.onConnection(state => { void onConnection(state) })
 window.tether.onTheme(applyTheme)
 void window.tether.getTheme().then(applyTheme)

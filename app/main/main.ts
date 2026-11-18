@@ -49,7 +49,7 @@ import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 import { BRAND } from '../shared/brand.ts'
-import { recordProbe, registerPerf, stopPerf } from './perf-main.ts'
+import { perfEchoData, perfEchoKey, recordProbe, registerPerf, stopPerf } from './perf-main.ts'
 import { PanelLink } from './panel-link.ts'
 import { PanelRouter } from './panel-route.ts'
 import { ptydPipePath } from '../../src/ptyd/paths.ts'
@@ -137,7 +137,7 @@ const panelRouter: PanelRouter = new PanelRouter({
   link: panelLink,
   daemon: () => daemon,
   request: body => request(body),
-  emit: (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }),
+  emit: (slotId, data) => { perfEchoData(slotId); win?.webContents.send('tether:event', { t: 'data', slotId, data }) },
   log: msg => appLog(msg),
 })
 
@@ -222,7 +222,7 @@ function connectDaemon(): Promise<void> {
       const client = await connectOnce()
       daemon = client
       client.on('state', slot => { slotStates.set(slot.slotId, slot); panelRouter.onState(slot); noteAttention(slot); if (attentionHistory.settle(slot.slotId, slot.attention)) sendAttention(); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
-      client.on('data', (slotId, data, p) => win?.webContents.send('tether:event', probe && p ? { t: 'data', slotId, data, probe: extendProbe(p) } : { t: 'data', slotId, data })) // probe: main-out stamp
+      client.on('data', (slotId, data, p) => { perfEchoData(slotId); win?.webContents.send('tether:event', probe && p ? { t: 'data', slotId, data, probe: extendProbe(p) } : { t: 'data', slotId, data }) }) // probe: main-out stamp
       client.on('removed', slotId => { slotStates.delete(slotId); panelRouter.onRemoved(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
@@ -985,10 +985,11 @@ function createMenu(): void {
 // ---------- IPC ----------
 
 ipcMain.handle('tether:request', (_e, body: RequestBody) => panelRouter.request(body))
-registerPerf(ipcMain, request, probe)
+registerPerf(ipcMain, request, probe, () => win?.webContents)
 app.on('will-quit', stopPerf)
 app.on('will-quit', () => panelLink.stop())
 ipcMain.on('tether:notice', (_e, notice: Notice | { t: 'probe-result' }) => {
+  if (notice.t === 'input') perfEchoKey(notice.slotId, slotStates.get(notice.slotId)?.kind === 'shell' ? 'shell' : 'agent')
   if (probe) {
     if (isProbeResultNotice(notice)) { recordProbe(notice); return }
     if (notice.t === 'input' && panelRouter.input(notice.slotId, notice.data) !== 'daemon') return // hosted pane: no daemon-* stamps

@@ -26,6 +26,7 @@ import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded
 import { mountTabEmblem } from './tab-emblems.ts'
 import { focusIfStillActive, followActive, type ActivePanelApi } from './focus-follow.ts'
 import { startProbe } from '../../src/core/perf-probe.ts'
+import { perfKey } from './perf-collector.ts'
 
 /** Key->echo probe: the main loads the page with ?probe when TETHER_PROBE=1. Off, a key costs one `if`. */
 export const PROBE = new URLSearchParams(location.search).has('probe')
@@ -372,6 +373,7 @@ export class TerminalPanel implements IContentRenderer {
     }))
     this.term.onData(data => {
       if (!this.slotId) return
+      perfKey(this.slotId)
       if (PROBE) window.tether.notice({ t: 'input', slotId: this.slotId, data, probe: startProbe(++probeSeq) }) // renderer-send stamp
       else window.tether.notice({ t: 'input', slotId: this.slotId, data })
     })

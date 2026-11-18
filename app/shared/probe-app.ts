@@ -20,7 +20,9 @@ export function appLabels(count: number): (string | undefined)[] {
   return Array.from({ length: count }, (_, i) => APP_LABELS[i])
 }
 
-export interface ProbeResult { slotId: string; seq: number; total: number; labels: string[]; hops: Hop[]; incident: boolean }
+export interface ProbeResult { slotId: string; seq: number; total: number; labels: string[]; hops: Hop[]; incident: boolean
+  /** The program's time: tetherd's daemon-write to daemon-out stamps (write to the PTY, first byte back). Undefined when the probe did not cross tetherd. */
+  agentMs: number | undefined }
 
 /** Totals, labels and the incident decision for a finished probe (strictly above the threshold is an incident). */
 export function probeResult(slotId: string, probe: Probe, thresholdMs: number = APP_ECHO_INCIDENT_MS): ProbeResult {
@@ -31,6 +33,7 @@ export function probeResult(slotId: string, probe: Probe, thresholdMs: number = 
     labels: labels.map((l, i) => l ?? `t${i}`),
     hops: hops(probe, labels),
     incident: total > thresholdMs,
+    agentMs: probe.t.length >= 5 ? Math.max(0, probe.t[4]! - probe.t[3]!) : undefined,
   }
 }
 

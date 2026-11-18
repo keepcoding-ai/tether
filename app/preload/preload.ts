@@ -21,6 +21,9 @@ function on<T>(channel: string, listener: (value: T) => void): () => void {
   return () => ipcRenderer.removeListener(channel, handler)
 }
 
+// Heartbeat (E4.0): the main pings, the preload answers on the renderer's own thread, so a busy page delays the pong.
+ipcRenderer.on('perf:ping', (_e, seq: number) => ipcRenderer.send('perf:pong', seq))
+
 const api: TetherApi = {
   request: body => ipcRenderer.invoke('tether:request', body),
   notice: (notice: Notice) => ipcRenderer.send('tether:notice', notice),
@@ -101,6 +104,7 @@ const api: TetherApi = {
   settingsOpen: () => ipcRenderer.invoke('settings:open'),
   attentionGet: () => ipcRenderer.invoke('attention:get'),
   perfGet: since => ipcRenderer.invoke('perf:get', since),
+  perfReport: report => ipcRenderer.send('perf:renderer', report),
   attentionSeen: (slotId?: string) => ipcRenderer.send('attention:seen', slotId),
   attentionMute: choice => ipcRenderer.send('attention:mute', choice),
   onAttention: listener => on<AttentionState>('tether:attention', listener),
