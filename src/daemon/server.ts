@@ -4,9 +4,10 @@
 import { withTabEnv } from '../core/tab-env.ts'
 import { slotTitle } from '../../app/shared/agent-info.ts'
 import type { SlotEventKind } from './ext-api.ts'
+import { stat as statAsync } from 'node:fs/promises'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports, type TurnReport } from './attention.ts'
 import { memoryChanged, sampleProcessTable, treeBytes } from './memory.ts'
 import '../agents/load.ts'
@@ -372,7 +373,8 @@ class DaemonImpl implements Daemon {
   constructor(opts: DaemonOptions) {
     this.home = opts.home
     this.pipe = opts.pipe
-    this.log = opts.log ?? (() => {})
+    const sink = opts.log
+    this.log = sink ? (msg: string) => perf.timed('log', () => sink(msg)) : () => {}
     this.onShutdown = opts.onShutdown
     this.adapterOverrides = { ...opts.adapters }
     this.transformPlan = opts.transformPlan
@@ -1622,7 +1624,9 @@ class DaemonImpl implements Daemon {
     if (typeof id !== 'number') return // not a request we can answer
     let reply: Reply
     try {
-      reply = await perf.timed(`req:${String(msg.t)}`, () => this.handle(client, msg as Request))
+      // `req:<t>` is the synchronous part (to the first await); `req:<t>:wall` the clock time until the answer is ready.
+      const label = `req:${String(msg.t)}`
+      reply = await perf.timedAsync(`${label}:wall`, () => perf.timed(label, () => this.handle(client, msg as Request)))
     } catch (e) {
       const err = e instanceof RequestError ? e : new RequestError('bad-request', (e as Error).message)
       reply = { t: 'error', id, code: err.code, message: err.message }
@@ -1926,7 +1930,8 @@ class DaemonImpl implements Daemon {
   private startWatching(): void {
     try {
       this.watcher = watch(slotsDir(this.home), perf.wrap('watch:slots', (_event, filename: string | null) => {
-        if (typeof filename !== 'string') return
+        if (!this.watcher) return
+        if (typeof filename !== 'string') { this.watchGone(); return } // a vanished folder reports no name
         const pr = /^([^.]+)\.pause\.jsonl$/.exec(filename)
         if (pr && SLOT_ID_RE.test(pr[1]!)) { this.schedulePauseReport(pr[1]!); return }
         const bg = /^([^.]+)\.bg\./.exec(filename)
@@ -1934,17 +1939,42 @@ class DaemonImpl implements Daemon {
         const a = /^([^.]+)\.attention$/.exec(filename)
         if (a && SLOT_ID_RE.test(a[1]!)) { this.scheduleAttentionReport(a[1]!); return }
         const m = /^([^.]+)\.(jsonl|json)$/.exec(filename)
-        if (!m || !SLOT_ID_RE.test(m[1]!)) return
+        if (!m || !SLOT_ID_RE.test(m[1]!)) {
+          // A vanished folder reports itself by its absolute path (a string test, no disk): only then is the folder looked at, asynchronously.
+          if (isAbsolute(filename)) this.watchGone()
+          return
+        }
         this.schedule(m[1]!, m[2] === 'jsonl')
       }))
       this.watcher.on('error', (e) => {
         this.log(`watch error: ${e.message}`)
+        this.watchGone()
         this.bgMarkers.clear() // events may have been lost: the markers are listed again on next use
       })
     } catch (e) {
       this.log(`cannot watch ${slotsDir(this.home)}: ${(e as Error).message}`)
     }
   }
+
+  /**
+   * The slots folder vanished under the watcher (the home was deleted): on Windows the watch then fires without stopping and
+   * spins a core. Stop it, say so once, and let the daemon go: a tetherd without its home has nothing left to serve.
+   */
+  private watchGone(): void {
+    if (!this.watcher || this.goneChecking) return
+    this.goneChecking = true
+    const dir = slotsDir(this.home)
+    // Asynchronous on purpose: only the rare nameless event or watcher error gets here, never the hot per-file path.
+    void statAsync(dir).then(() => undefined, () => 'gone' as const).then((gone) => {
+      this.goneChecking = false
+      if (gone !== 'gone' || !this.watcher) return
+      this.watcher.close()
+      this.watcher = undefined
+      this.log(`slots folder gone (${dir}): watcher stopped`)
+      setImmediate(() => void this.close().then(() => this.onShutdown?.()))
+    })
+  }
+  private goneChecking = false
 
   /** Debounces the subagent markers per slot (<slot>.bg.<agentId>, written and removed by Claude's Subagent hooks). */
   private scheduleBackground(slotId: string, file: string): void {

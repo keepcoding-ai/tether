@@ -14,6 +14,7 @@ import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Binding } from '../core/event.ts'
 import { fileSig } from '../core/exe.ts'
+import { perf } from '../core/perf.ts'
 import { canonicalDir } from '../core/paths.ts'
 import { cleanEnv } from './claude.ts'
 import { McpNameCollisionError } from './mcp.ts'
@@ -308,7 +309,7 @@ function watchTitle(binding: Binding, onTitle: (title: string) => void, interval
       onTitle(t)
     }
   }
-  const timer = setInterval(tick, intervalMs)
+  const timer = setInterval(perf.wrap('title:codex', tick), intervalMs)
   timer.unref()
   tick()
   return () => clearInterval(timer)

@@ -4,6 +4,7 @@
 // writer of the history. It never restarts anything by itself, and kills only by pid + creation time (a process
 // that the host lost but somehow survived), never by name.
 import { userInfo } from 'node:os'
+import { perf } from '../core/perf.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { HostClient, HostRequestError } from '../procd/client.ts'
 import { readRunFile, type HostRun, type RunExit } from '../procd/protocol.ts'
@@ -253,6 +254,10 @@ export class ProcManager {
 
   /** The memory sample's sums (bytes per root pid); a process whose reading moved enough is broadcast. */
   setMemory(sums: Map<number, number>, changed: (prev: number | undefined, next: number) => boolean): void {
+    perf.timed('procs:memory', () => this.applyMemory(sums, changed))
+  }
+
+  private applyMemory(sums: Map<number, number>, changed: (prev: number | undefined, next: number) => boolean): void {
     for (const e of this.entries.values()) {
       const pid = isLive(e) ? replay(e.events).started?.pid : undefined
       const bytes = typeof pid === 'number' ? sums.get(pid) : undefined
@@ -576,7 +581,7 @@ export class ProcManager {
     e.useTimer = undefined
     if (e.uses.length && !this.closing) {
       const next = Math.min(...e.uses.map((u) => Date.parse(u.until)))
-      e.useTimer = setTimeout(() => this.expireUses(e), Math.max(0, next - Date.now()) + 50)
+      e.useTimer = setTimeout(perf.wrap('procs:uses', () => this.expireUses(e)), Math.max(0, next - Date.now()) + 50)
       e.useTimer.unref()
     }
     for (const w of [...e.waiters]) w()
@@ -868,8 +873,8 @@ export class ProcManager {
   private adopt(c: HostClient): void {
     this.host = c
     this.hostStopping = false
-    c.on('exit', (name, run, exit) => this.onExit(name, run, exit))
-    c.on('data', (name, data) => { if (this.watched.has(name)) this.onData?.(name, data) })
+    c.on('exit', perf.wrap('procs:exit', (name: string, run: number, exit) => this.onExit(name, run, exit)))
+    c.on('data', perf.wrap('procs:data', (name: string, data: string) => { if (this.watched.has(name)) this.onData?.(name, data) }))
     c.on('close', () => void this.onHostClose(c))
     for (const name of this.watched) c.request({ t: 'attach', name }).catch(() => { /* no run of it in this host */ })
     this.log(`proc host: connected to pid ${c.hello.pid} (${c.hello.version})`)

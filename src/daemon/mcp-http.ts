@@ -16,6 +16,7 @@
 // header is refused (no browser page may drive it, whatever it guesses). The host keeps only the digest; no log line carries
 // a key or a message body.
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
+import { perf } from '../core/perf.ts'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 /** Rewrites the JSON-RPC lines between the client and the server (extensions/browser/mcp-texts.ts McpRewriter). */
@@ -236,7 +237,7 @@ export class McpHttpHost {
 
     let text: string
     let msg: unknown
-    try { text = await this.body(req); msg = JSON.parse(text) } catch { res.writeHead(400).end(); return }
+    try { text = await this.body(req); const raw = text; msg = perf.timed(`mcp:${this.opts.name}:parse`, () => JSON.parse(raw)) } catch { res.writeHead(400).end(); return }
     if (!isObject(msg)) { res.writeHead(400).end(); return } // batches left the protocol in 2025-06-18
     const isRequest = typeof msg.method === 'string' && isId(msg.id)
     const sse = String(req.headers.accept ?? '').includes('text/event-stream')
@@ -313,8 +314,14 @@ export class McpHttpHost {
   private toServer(session: Session, text: string, msg: Json): void {
     if (session.closed) return
     // The rewriter only notes what was asked (it never changes a client line).
-    session.rewriter?.fromClient(text)
-    try { session.transport.onmessage?.(msg) } catch (e) {
+    // One label per JSON-RPC method (bounded: the method name is cut), so a slow handler is named in the ruler.
+    const method = typeof msg.method === 'string' ? msg.method.slice(0, 40) : 'reply'
+    try {
+      perf.timed(`mcp:${this.opts.name}:${method}`, () => {
+        session.rewriter?.fromClient(text)
+        session.transport.onmessage?.(msg)
+      })
+    } catch (e) {
       this.opts.log(`${this.opts.name}: o servidor MCP recusou uma mensagem (${e instanceof Error ? e.message : String(e)})`)
     }
   }
@@ -323,8 +330,10 @@ export class McpHttpHost {
     if (!isObject(message)) return
     let line: string
     try {
-      const raw = JSON.stringify(message)
-      line = session.rewriter ? session.rewriter.fromServer(raw) : raw
+      line = perf.timed(`mcp:${this.opts.name}:encode`, () => {
+        const raw = JSON.stringify(message)
+        return session.rewriter ? session.rewriter.fromServer(raw) : raw
+      })
     } catch { return }
     if (isId(message.id) && typeof message.method !== 'string' && ('result' in message || 'error' in message)) {
       const p = session.pending.get(message.id)

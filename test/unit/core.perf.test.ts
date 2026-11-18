@@ -106,7 +106,7 @@ function timedRig(opts: ConstructorParameters<typeof Perf>[0] = {}) {
 }
 
 test('timed: over the limit raises slow with the label, under it does not, and the result passes through', () => {
-  const { perf, hr } = timedRig()
+  const { perf, hr } = timedRig({ slowMs: 100 })
   assert.equal(perf.timed('fast', () => { hr.t += 99; return 7 }), 7)
   assert.equal(perf.snapshot().incidents.length, 0)
   assert.equal(perf.timed('slow-one', () => { hr.t += 150; return 'x' }), 'x')
@@ -145,15 +145,65 @@ test('slow incidents are limited per label: different labels do not erase each o
 
 test('label tables are bounded: labels past the cap fold into (other)', () => {
   const { perf, hr, clock } = timedRig()
-  for (let i = 0; i < 100; i++) { clock.t += 1000; perf.timed('l' + i, () => { hr.t += 200 }) }
+  for (let i = 0; i < 200; i++) { clock.t += 1000; perf.timed('l' + i, () => { hr.t += 200 }) }
   const snap = perf.snapshot()
-  assert.ok(Object.keys(snap.labels!).length <= 65)
-  assert.equal(snap.labels!['(other)']!.n, 36)
-  assert.ok(snap.incidents.length >= 64)
+  assert.ok(Object.keys(snap.labels!).length <= 129)
+  assert.equal(snap.labels!['(other)']!.n, 72)
+  assert.ok(snap.incidents.length >= 128)
 })
 
 test('timedAsync charges wall time and flags the incident', async () => {
   const { perf, hr } = timedRig()
   await perf.timedAsync('boot:x', async () => { hr.t += 300 })
   assert.deepEqual(perf.snapshot().incidents[0]!.data, { label: 'boot:x', ms: 300, wall: true })
+})
+
+test('loop-lag names the longest timed section of the second and carries process and machine CPU', () => {
+  const cpu = { micros: 0 }
+  const mach = { busy: 0, total: 0 }
+  const { perf, source, clock, hr } = timedRig({ cpuMicros: () => cpu.micros, machineCpu: () => ({ ...mach }) })
+  perf.start(); perf.stop() // baselines from the fakes
+  perf.timed('small', () => { hr.t += 10 })
+  perf.timed('big', () => { hr.t += 130 })
+  cpu.micros += 250_000; mach.busy += 60; mach.total += 100
+  clock.t += 1000; source.maxNs = 140e6; perf.sample()
+  const lag = perf.snapshot().incidents.find((i) => i.kind === 'loop-lag')!.data as Record<string, unknown>
+  assert.equal(lag.label, 'big')
+  assert.equal(lag.labelMs, 130)
+  assert.equal(lag.cpuMs, 250)
+  assert.equal(lag.machinePct, 60)
+  // the longest resets each second: a lag with nothing timed names nothing
+  clock.t += 1000; source.maxNs = 150e6; perf.sample()
+  const last = perf.snapshot().incidents.filter((i) => i.kind === 'loop-lag').at(-1)!.data as Record<string, unknown>
+  assert.equal(last.label, undefined)
+})
+
+test('enter/exit track the active label, innermost first, and charge the time', () => {
+  const { perf, hr } = timedRig()
+  assert.equal(perf.active, undefined)
+  perf.enter('outer')
+  perf.enter('inner')
+  assert.equal(perf.active, 'inner')
+  hr.t += 70
+  perf.exit()
+  assert.equal(perf.active, 'outer')
+  perf.exit()
+  assert.equal(perf.active, undefined)
+  assert.equal(perf.snapshot().labels!.inner!.maxMs, 70)
+})
+
+test('a lag sampled while a section is running names that section', () => {
+  const { perf, source, clock } = timedRig()
+  perf.enter('mcp:x:tools/call')
+  clock.t += 1000; source.maxNs = 200e6; perf.sample()
+  perf.exit()
+  assert.equal((perf.snapshot().incidents.find((i) => i.kind === 'loop-lag')!.data as { label: string }).label, 'mcp:x:tools/call')
+})
+
+test('the default slow threshold is 50 ms', () => {
+  const { perf, hr } = timedRig()
+  perf.timed('a', () => { hr.t += 49 })
+  assert.equal(perf.snapshot().incidents.length, 0)
+  perf.timed('b', () => { hr.t += 60 })
+  assert.equal(perf.snapshot().incidents.length, 1)
 })

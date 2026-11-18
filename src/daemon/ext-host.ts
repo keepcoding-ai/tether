@@ -10,6 +10,7 @@ import type { ExtensionEntry } from '../../extensions/types.ts'
 import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
+import { perf } from '../core/perf.ts'
 import { ProfileStore } from '../core/profile.ts'
 import { readUserSettings } from '../core/user-settings.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
@@ -136,15 +137,16 @@ export class DaemonExtensionHost implements IDisposable {
         this.startListeners.add(l)
         return own.add(toDisposable(() => { this.startListeners.delete(l) }))
       },
-      launch: { use: (mw) => { this.middlewares.push(mw); return own.add(removing(this.middlewares, mw)) } },
+      launch: { use: (mw) => { const timed: Middleware = perf.wrap(`ext:${id}:plan`, mw); this.middlewares.push(timed); return own.add(removing(this.middlewares, timed)) } },
       doctor: { register: (check) => { this.checks.push(check); return own.add(removing(this.checks, check)) } },
       traces: { register: (source) => { this.traceSources.push(source); return own.add(removing(this.traceSources, source)) } },
       settings: { get: <T>(key: string): T | undefined => readSetting<T>(home, key) },
       profiles: { get: (pid) => this.profileStore.profiles().find((p) => p.id === pid) },
       log: (msg) => log(`[${id}] ${msg}`),
       onSlot: (l) => {
-        this.slotListeners.add(l)
-        return own.add(toDisposable(() => { this.slotListeners.delete(l) }))
+        const timed: SlotListener = perf.wrap(`ext:${id}:slot`, l)
+        this.slotListeners.add(timed)
+        return own.add(toDisposable(() => { this.slotListeners.delete(timed) }))
       },
     }
   }

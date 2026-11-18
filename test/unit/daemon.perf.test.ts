@@ -2,7 +2,11 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { perf } from '../../src/core/perf.ts'
+import { AgentRegistry } from '../../src/agents/registry.ts'
+import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
+import { McpHttpHost } from '../../src/daemon/mcp-http.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
+import type { ExtensionManifest } from '../../extensions/types.ts'
 import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 let home: string
@@ -47,4 +51,67 @@ test('perf: a blocked request handler shows up as a slow incident with its label
   } finally {
     delete process.env.TETHER_TEST_BLOCK
   }
+})
+
+test('perf: a request records its wall time apart from its synchronous part', async () => {
+  const c = await Recorder.connect(daemon.pipe)
+  await c.client.request({ t: 'perf' })
+  const r = await c.client.request({ t: 'perf' })
+  const labels = r.perf!.labels!
+  assert.ok(labels['req:perf']!.n >= 1, 'the synchronous part')
+  assert.ok(labels['req:perf:wall']!.n >= 1, 'the wall part')
+  c.client.close()
+})
+
+test('perf: a slow MCP handler shows up as slow mcp:<server>:<method>', async () => {
+  const host = new McpHttpHost({ name: 'perfsrv', log: () => {} })
+  await host.listen()
+  const key = 'k'.repeat(32)
+  host.grant('s1', key, {
+    create: () => ({
+      async connect(t) {
+        t.onmessage = (raw) => {
+          const m = raw as { id?: number; method?: string }
+          if (m.method === 'tools/list') { const end = Date.now() + 120; while (Date.now() < end) { /* a handler that blocks the loop */ } }
+          if (m.id !== undefined) void t.send({ jsonrpc: '2.0', id: m.id, result: {} })
+        }
+      },
+      async close() {},
+    }),
+  })
+  try {
+    const url = host.urlOf('s1')!
+    const post = (body: unknown, session?: string) => fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${key}`, ...(session ? { 'mcp-session-id': session } : {}) },
+      body: JSON.stringify(body),
+    })
+    const init = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+    const session = init.headers.get('mcp-session-id')!
+    await init.text()
+    await (await post({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, session)).text()
+    const slow = perf.snapshot().incidents.find((i) => i.kind === 'slow' && (i.data as { label?: string }).label === 'mcp:perfsrv:tools/list')
+    assert.ok(slow, 'slow mcp:perfsrv:tools/list')
+    assert.ok((slow!.data as { ms: number }).ms >= 100)
+    assert.ok(perf.snapshot().labels!['mcp:perfsrv:parse']!.n >= 2)
+  } finally { await host.close() }
+})
+
+test('perf: a slow extension launch middleware and slot listener are named ext:<id>:plan and ext:<id>:slot', () => {
+  const busy = (ms: number): void => { const end = Date.now() + ms; while (Date.now() < end) { /* block */ } }
+  const ext = new DaemonExtensionHost({
+    home, log: () => {}, agents: new AgentRegistry(),
+    extensions: [{
+      manifest: { id: 'perfext', version: '0.0.0', displayName: 'perf', hosts: ['daemon'] } as ExtensionManifest,
+      activate: (api) => [api.launch.use((plan) => { busy(80); return plan }), api.onSlot(() => busy(80))],
+    }],
+  })
+  ext.activate()
+  try {
+    ext.transformPlan({ command: 'x', args: [], env: {} } as never, { slotId: 'a', agent: 'claude' } as never)
+    ext.emitSlot('changed', {} as never)
+    const names = perf.snapshot().incidents.filter((i) => i.kind === 'slow').map((i) => (i.data as { label: string }).label)
+    assert.ok(names.includes('ext:perfext:plan'), names.join())
+    assert.ok(names.includes('ext:perfext:slot'), names.join())
+  } finally { ext.dispose() }
 })

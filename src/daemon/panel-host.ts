@@ -5,6 +5,7 @@
 import type { HostClient, LaunchHostOptions } from '../procd/client.ts'
 import { HostClient as Client } from '../procd/client.ts'
 import type { HostRun, ProcPlan } from '../procd/protocol.ts'
+import { perf } from '../core/perf.ts'
 import { PTYD_TARGET } from '../ptyd/paths.ts'
 import { killTree, type PtyExit, type PtyHandle } from './pty.ts'
 
@@ -207,9 +208,9 @@ export class PanelHost {
     if (!c) return undefined
     if (this.conn && !this.conn.isClosed) { c.close(); return this.conn }
     this.conn = c
-    c.on('data', (name, data, off) => this.onData(name, data, off))
+    c.on('data', perf.wrap('host:data', (name: string, data: string, off: number | undefined) => this.onData(name, data, off)))
     c.on('lag', (name) => void this.resync(c, name))
-    c.on('exit', (name, run, exit) => this.onExit(name, run, exit.code))
+    c.on('exit', perf.wrap('host:exit', (name: string, run: number, exit: { code: number }) => this.onExit(name, run, exit.code)))
     c.on('close', () => this.onClose(c))
     return c
   }

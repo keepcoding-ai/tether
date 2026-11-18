@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
 import { fileSig } from '../core/exe.ts'
+import { perf } from '../core/perf.ts'
 import { canonicalDir } from '../core/paths.ts'
 import { ENV_AGENT, ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
 
@@ -463,7 +464,7 @@ export function watchTitleWith(binding: Binding, onTitle: (title: string) => voi
       running = false
     }
   }
-  const timer = setInterval(() => { void tick() }, intervalMs)
+  const timer = setInterval(perf.wrap('title:claude', () => { void tick() }), intervalMs)
   timer.unref()
   void tick()
   return () => { stopped = true; clearInterval(timer) }
