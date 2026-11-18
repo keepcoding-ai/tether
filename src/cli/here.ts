@@ -30,10 +30,10 @@ export function profileFor(home: string, meta: SlotMeta): SlotProfile {
   return slotProfile(meta, profiles)
 }
 
-export function planFor(home: string, meta: SlotMeta, resume: Binding | undefined, extraArgs: string[]): LaunchPlan {
+export async function planFor(home: string, meta: SlotMeta, resume: Binding | undefined, extraArgs: string[]): Promise<LaunchPlan> {
   const profile = profileFor(home, meta).launch
   if (meta.agent === 'shell') return withTabEnv(shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile }), meta)
-  return withTabEnv(adapterOf(meta.agent).plan({ slot: meta, home, resume, extraArgs, profile }), meta)
+  return withTabEnv(await adapterOf(meta.agent).plan({ slot: meta, home, resume, extraArgs, profile }), meta)
 }
 
 /** `.cmd`/`.bat` need a shell on Windows (Node refuses to spawn them directly); args are quoted for it. */

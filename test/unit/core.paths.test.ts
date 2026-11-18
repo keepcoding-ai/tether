@@ -61,24 +61,24 @@ describe('adapters launch in the canonical cwd', { skip: !win && 'case-sensitive
   const bindingIn = (agent: Binding['agent'], cwd: string): Binding =>
     ({ slotId: `${agent}-1`, agent, sessionId: '0b6f1111-2222-4333-8444-555555555555', cwd, since: '2026-10-29T00:00:00.000Z', confirmed: true, ended: false })
 
-  test('claude: new session in the slot cwd, resume in the binding cwd, both canonical', () => {
+  test('claude: new session in the slot cwd, resume in the binding cwd, both canonical', async () => {
     const home = dirs.make()
     const { onDisk, typed } = wrongCased()
-    assert.equal(claudeAdapter.plan({ slot: meta('claude', typed), home, extraArgs: [] }).cwd, onDisk)
+    assert.equal((await claudeAdapter.plan({ slot: meta('claude', typed), home, extraArgs: [] })).cwd, onDisk)
     const other = wrongCased()
-    const plan = claudeAdapter.plan({ slot: meta('claude', typed), home, resume: bindingIn('claude', other.typed), extraArgs: [] })
+    const plan = await claudeAdapter.plan({ slot: meta('claude', typed), home, resume: bindingIn('claude', other.typed), extraArgs: [] })
     assert.equal(plan.cwd, other.onDisk)
   })
 
-  test('soul: slot cwd, recipe cwd and bare-binding cwd are canonical', () => {
+  test('soul: slot cwd, recipe cwd and bare-binding cwd are canonical', async () => {
     const home = dirs.make()
     const slot = wrongCased()
-    assert.equal(soulAdapter.plan({ slot: meta('soul', slot.typed), home, extraArgs: [] }).cwd, slot.onDisk)
+    assert.equal((await soulAdapter.plan({ slot: meta('soul', slot.typed), home, extraArgs: [] })).cwd, slot.onDisk)
     const recipe = wrongCased()
     const withRecipe: Binding = { ...bindingIn('soul', recipe.typed), resume: { cwd: recipe.typed, args: ['-r', 'sess-1'] } }
-    assert.equal(soulAdapter.plan({ slot: meta('soul', slot.typed), home, resume: withRecipe, extraArgs: [] }).cwd, recipe.onDisk)
+    assert.equal((await soulAdapter.plan({ slot: meta('soul', slot.typed), home, resume: withRecipe, extraArgs: [] })).cwd, recipe.onDisk)
     const bare = wrongCased()
-    assert.equal(soulAdapter.plan({ slot: meta('soul', slot.typed), home, resume: bindingIn('soul', bare.typed), extraArgs: [] }).cwd, bare.onDisk)
+    assert.equal((await soulAdapter.plan({ slot: meta('soul', slot.typed), home, resume: bindingIn('soul', bare.typed), extraArgs: [] })).cwd, bare.onDisk)
   })
 
   test('shell: slot cwd and the "resume here" cwd are canonical', () => {

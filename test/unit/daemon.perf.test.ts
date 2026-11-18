@@ -97,7 +97,7 @@ test('perf: a slow MCP handler shows up as slow mcp:<server>:<method>', async ()
   } finally { await host.close() }
 })
 
-test('perf: a slow extension launch middleware and slot listener are named ext:<id>:plan and ext:<id>:slot', () => {
+test('perf: a slow extension launch middleware and slot listener are named ext:<id>:plan and ext:<id>:slot', async () => {
   const busy = (ms: number): void => { const end = Date.now() + ms; while (Date.now() < end) { /* block */ } }
   const ext = new DaemonExtensionHost({
     home, log: () => {}, agents: new AgentRegistry(),
@@ -108,7 +108,7 @@ test('perf: a slow extension launch middleware and slot listener are named ext:<
   })
   ext.activate()
   try {
-    ext.transformPlan({ command: 'x', args: [], env: {} } as never, { slotId: 'a', agent: 'claude' } as never)
+    await ext.transformPlan({ command: 'x', args: [], env: {} } as never, { slotId: 'a', agent: 'claude' } as never)
     ext.emitSlot('changed', {} as never)
     const names = perf.snapshot().incidents.filter((i) => i.kind === 'slow').map((i) => (i.data as { label: string }).label)
     assert.ok(names.includes('ext:perfext:plan'), names.join())

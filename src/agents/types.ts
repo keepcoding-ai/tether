@@ -33,7 +33,8 @@ export interface AgentAdapter {
   name: AgentName
   /** The agent resumes a session by its id (`plan` honours `resume`): the slot may be restarted in place. Absent = false. */
   resumes?: boolean
-  plan(input: PlanInput): LaunchPlan
+  /** May be a promise (disk or process work off the loop); tetherd holds the slot's 'starting' seat while it waits. */
+  plan(input: PlanInput): LaunchPlan | Promise<LaunchPlan>
   /** Does the agent still have this session? 'unknown' when it cannot be told locally (e.g. soul over -H). */
   sessionExists(binding: Binding, opts?: LookupOptions): Promise<boolean | 'unknown'>
   /** The session's current title, if the agent keeps one where we can read it. */

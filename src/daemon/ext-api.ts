@@ -48,8 +48,10 @@ export interface TetherDaemon {
   /**
    * Rewrites every launch plan (agents and shells), in registration order. F7 C3: web-bridge adds its --mcp-config to every
    * agent. `state` is the slot as the app sees it at that launch (its tab's text, a resumed session's title).
+   * A middleware may return a promise: the next one waits for it. One that takes longer than the host's ceiling (10 s) is
+   * logged and skipped (the launch goes on with the plan it was given).
    */
-  launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan): IDisposable }
+  launch: { use(mw: (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan | Promise<LaunchPlan>): IDisposable }
   /** Checks `tether doctor` runs after the core's (src/doctor.ts, through src/agents/load.ts). */
   doctor: { register(check: () => Promise<DaemonCheck>): IDisposable }
   /** The logs `tether trace` reads (src/trace/timeline.ts, through src/agents/load.ts): the agents' browser tools register theirs. */

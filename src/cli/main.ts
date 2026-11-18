@@ -375,7 +375,7 @@ async function cmdNew(args: string[]): Promise<number> {
     if (name) meta.name = name
     if (profile) meta.profileId = profile.id // planFor takes the snapshot
     createSlot(ctx.home, meta)
-    const plan = planFor(ctx.home, meta, undefined, [])
+    const plan = await planFor(ctx.home, meta, undefined, [])
     err(`slot ${meta.slotId}${name ? ` "${name}"` : ''} criado; ${kind}${profile ? ` (perfil "${profile.name}")` : ''} neste terminal (${plan.command})\n`)
     const r = await runHere(ctx.home, meta.slotId, plan)
     return r.exitCode
@@ -435,7 +435,7 @@ async function openHere(ctx: Context, slot: SlotState, slots: SlotState[], choic
     if (!existsSync(meta.cwd)) throw fail('cwd-missing', `a pasta não existe: ${meta.cwd}`)
     err(choice === 'new' ? 'iniciando nova sessão\n' : 'sem sessão registrada: iniciando nova\n')
   }
-  const plan = planFor(ctx.home, meta, binding, [])
+  const plan = await planFor(ctx.home, meta, binding, [])
   err(`slot ${slot.slotId}: ${meta.agent} neste terminal (${plan.command}${binding ? `, retomando ${shortId(binding.sessionId)}` : ''})\n`)
   const r = await runHere(ctx.home, slot.slotId, plan)
   return r.exitCode

@@ -40,30 +40,30 @@ describe('claude', () => {
   const binding: Binding = { slotId: 'slot-1', agent: 'claude', sessionId: '0b6f1111-2222-4333-8444-555555555555', cwd: 'D:\\outra\\pasta', since: '2026-10-29T00:00:00.000Z', confirmed: true, ended: false }
   const profile = { args: ['--dangerously-skip-permissions'], env: { CLAUDE_CONFIG_DIR: 'D:\\conta-2', FOO: 'bar' } }
 
-  test('new session: profile args after --session-id, before the slot args and the extra args', () => {
+  test('new session: profile args after --session-id, before the slot args and the extra args', async () => {
     const home = dirs.make()
-    const plan = claudeAdapter.plan({ slot, home, extraArgs: ['-p', 'oi'], profile })
+    const plan = await claudeAdapter.plan({ slot, home, extraArgs: ['-p', 'oi'], profile })
     assert.deepEqual(plan.args.slice(0, 3), ['--settings', join(home, 'claude-settings.json'), '--session-id'])
     assert.deepEqual(plan.args.slice(4), ['--dangerously-skip-permissions', '--model', 'haiku', '-p', 'oi'])
   })
 
-  test('resume: --resume <id>, then the profile args, then the slot args', () => {
+  test('resume: --resume <id>, then the profile args, then the slot args', async () => {
     const home = dirs.make()
-    const plan = claudeAdapter.plan({ slot, home, resume: binding, extraArgs: [], profile })
+    const plan = await claudeAdapter.plan({ slot, home, resume: binding, extraArgs: [], profile })
     assert.deepEqual(plan.args, ['--settings', join(home, 'claude-settings.json'), '--resume', binding.sessionId, '--dangerously-skip-permissions', '--model', 'haiku'])
   })
 
-  test('env: inherited CLAUDE* stripped, the profile\'s CLAUDE_CONFIG_DIR applied after the strip, TETHER vars still ours', () => {
+  test('env: inherited CLAUDE* stripped, the profile\'s CLAUDE_CONFIG_DIR applied after the strip, TETHER vars still ours', async () => {
     const home = dirs.make()
-    const plan = claudeAdapter.plan({ slot, home, extraArgs: [], profile })
+    const plan = await claudeAdapter.plan({ slot, home, extraArgs: [], profile })
     assert.equal(plan.env.CLAUDECODE, undefined)
     assert.equal(plan.env.CLAUDE_CONFIG_DIR, 'D:\\conta-2')
     assert.equal(plan.env.FOO, 'bar')
     assert.equal(plan.env.TETHER_SLOT_ID, 'slot-1')
     assert.equal(plan.env.TETHER_HOME, home)
-    const without = claudeAdapter.plan({ slot, home, extraArgs: [], profile: { args: [] } })
+    const without = await claudeAdapter.plan({ slot, home, extraArgs: [], profile: { args: [] } })
     assert.equal(without.env.CLAUDE_CONFIG_DIR, undefined, 'no profile env: the inherited one stays stripped')
-    const hostile = claudeAdapter.plan({ slot, home, extraArgs: [], profile: { args: [], env: { TETHER_SLOT_ID: 'other' } } })
+    const hostile = await claudeAdapter.plan({ slot, home, extraArgs: [], profile: { args: [], env: { TETHER_SLOT_ID: 'other' } } })
     assert.equal(hostile.env.TETHER_SLOT_ID, 'slot-1', 'the slot identity is set after the profile env')
   })
 
@@ -103,32 +103,32 @@ describe('soul', () => {
   }
   const profile = { args: ['-g', '--model', 'cheap'], env: { SOUL_X: 'from-profile', SOUL_Y: 'y' } }
 
-  test('new session: profile args, then the slot args, then the extra args; profile env applied; report var ours', () => {
+  test('new session: profile args, then the slot args, then the extra args; profile env applied; report var ours', async () => {
     const home = dirs.make() // a real folder: the plan makes <home>/bin/tether-soul.exe
-    const plan = soulAdapter.plan({ slot, home, extraArgs: ['-n', 'nova'], profile })
+    const plan = await soulAdapter.plan({ slot, home, extraArgs: ['-n', 'nova'], profile })
     assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-P', 'guga@codr.studio', '-n', 'nova'])
     assert.equal(plan.env.SOUL_X, 'from-profile')
     assert.equal(plan.env.SOUL_Y, 'y')
     assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath(home, slot.slotId))
   })
 
-  test('resume: profile args BEFORE the recipe (the recipe finds the session and wins), slot args last; recipe env over profile env', () => {
-    const plan = soulAdapter.plan({ slot, home: dirs.make(), resume: binding, extraArgs: [], profile })
+  test('resume: profile args BEFORE the recipe (the recipe finds the session and wins), slot args last; recipe env over profile env', async () => {
+    const plan = await soulAdapter.plan({ slot, home: dirs.make(), resume: binding, extraArgs: [], profile })
     assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', '-P', 'guga@codr.studio'])
     assert.equal(plan.env.SOUL_X, '1', 'the recipe\'s env wins over the profile\'s')
     assert.equal(plan.env.SOUL_Y, 'y')
     assert.equal(plan.cwd, 'D:\\outra\\pasta')
   })
 
-  test('resume without a recipe: profile args, -r <id>, slot args', () => {
+  test('resume without a recipe: profile args, -r <id>, slot args', async () => {
     const { resume: _r, ...bare } = binding
-    const plan = soulAdapter.plan({ slot, home: dirs.make(), resume: bare, extraArgs: [], profile })
+    const plan = await soulAdapter.plan({ slot, home: dirs.make(), resume: bare, extraArgs: [], profile })
     assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-g', '--model', 'cheap', '-r', 'sess-1234', '-P', 'guga@codr.studio'])
   })
 
-  test('a profile env cannot redirect the report nor rename the slot (the identity is set last)', () => {
+  test('a profile env cannot redirect the report nor rename the slot (the identity is set last)', async () => {
     const home = dirs.make()
-    const plan = soulAdapter.plan({ slot, home, extraArgs: [], profile: { args: [], env: { [ENV_SOUL_REPORT]: 'C:\\elsewhere', [ENV_SLOT]: 'other' } } })
+    const plan = await soulAdapter.plan({ slot, home, extraArgs: [], profile: { args: [], env: { [ENV_SOUL_REPORT]: 'C:\\elsewhere', [ENV_SLOT]: 'other' } } })
     assert.equal(plan.env[ENV_SOUL_REPORT], slotEventsPath(home, slot.slotId))
     assert.equal(plan.env[ENV_SLOT], slot.slotId)
   })

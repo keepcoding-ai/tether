@@ -46,8 +46,8 @@ describe('ronda channel', () => {
     await ch.listen()
     return { home, ch, changes, logs }
   }
-  function launch(ch: RondaChannel) {
-    const out = ch.prepare(basePlan(), SLOT, agent)
+  async function launch(ch: RondaChannel) {
+    const out = await ch.prepare(basePlan(), SLOT, agent)
     assert.ok(out.offered)
     const file = out.plan.args[out.plan.args.indexOf('--mcp-config') + 1]!
     const cfg = JSON.parse(readFileSync(file, 'utf8')).mcpServers[RONDA_MCP_SERVER]
@@ -57,8 +57,8 @@ describe('ronda channel', () => {
   test('a launch gets the channel args first, the MCP file (no key in it) last, the key in the env; no agent = nothing', async () => {
     const { ch } = await make()
     const plain = basePlan()
-    assert.deepEqual(ch.prepare(plain, SLOT, undefined), { plan: plain, offered: false })
-    const { plan, file, key } = launch(ch)
+    assert.deepEqual(await ch.prepare(plain, SLOT, undefined), { plan: plain, offered: false })
+    const { plan, file, key } = await launch(ch)
     assert.deepEqual(plan.args.slice(0, 2), agent.args, 'variadic channel flag before the slot\'s own args')
     assert.deepEqual(plan.args.slice(-2), ['--mcp-config', file], 'the MCP file at the end')
     assert.equal(key.length, 32)
@@ -70,7 +70,7 @@ describe('ronda channel', () => {
 
   test('era: server/discover never gets a result (Claude Code would drop the channel); initialize is legacy, declares the channel and the instructions', async () => {
     const { ch, logs } = await make()
-    const { url, key } = launch(ch)
+    const { url, key } = await launch(ch)
     // The probe Claude Code sends first, with no session: refused by the host, so the client falls back to initialize.
     const probe = await post(url, key, { jsonrpc: '2.0', id: 0, method: 'server/discover', params: {} })
     assert.notEqual(probe.status, 200)
@@ -100,7 +100,7 @@ describe('ronda channel', () => {
 
   test('connected only while the GET stream is open; a sent ronda reaches it; revoke drops it, the key and the file', async () => {
     const { ch, changes } = await make()
-    const { url, key, file } = launch(ch)
+    const { url, key, file } = await launch(ch)
     const init = await post(url, key, initialize('2025-11-25'))
     assert.equal(ch.connected(SLOT), false, 'no stream yet')
     assert.equal(ch.send(SLOT, 'x'), false, 'nothing sent without a stream')
@@ -118,6 +118,7 @@ describe('ronda channel', () => {
     assert.deepEqual(note, { jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content: '[ronda] olá', meta: { kind: 'ronda' } } })
 
     ch.revoke(SLOT)
+    await ch.flush() // the file goes behind its write, through the store
     assert.equal(ch.connected(SLOT), false)
     assert.deepEqual(changes, [[SLOT, true], [SLOT, false]])
     assert.ok(!existsSync(file))

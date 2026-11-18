@@ -28,7 +28,6 @@
     "src/daemon/pause.ts": 3,
     "src/daemon/proc-launch.ts": 2,
     "src/daemon/procs.ts": 12,
-    "src/daemon/ronda-channel.ts": 4,
     "src/daemon/ronda.ts": 4,
     "src/doctor.ts": 25,
     "src/procd/host.ts": 12,

@@ -193,7 +193,7 @@ describe('daemon extension host', () => {
     const states: SlotState[] = []
     const daemon = await startDaemon({
       home, pipe: uniquePipe(home), readyFallbackMs: 60_000, minAgentAgeMs: 0,
-      transformPlan: (plan, meta, state) => { const out = host.transformPlan(plan, meta, state); plans.push(out); if (state) states.push(state); return out },
+      transformPlan: async (plan, meta, state) => { const out = await host.transformPlan(plan, meta, state); plans.push(out); if (state) states.push(state); return out },
       onSlot: host.emitSlot,
     })
     const c = await Recorder.connect(daemon.pipe)

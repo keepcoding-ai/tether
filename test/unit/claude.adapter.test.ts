@@ -50,14 +50,14 @@ describe('claudeAdapter.plan', () => {
     }
   })
 
-  test('the pane knows its agent kind (TETHER_AGENT), over any profile env', () => {
-    const plan = claudeAdapter.plan({ slot, home: homes.make(), extraArgs: [], profile: { env: { TETHER_AGENT: 'forged' } } as never })
+  test('the pane knows its agent kind (TETHER_AGENT), over any profile env', async () => {
+    const plan = await claudeAdapter.plan({ slot, home: homes.make(), extraArgs: [], profile: { env: { TETHER_AGENT: 'forged' } } as never })
     assert.equal(plan.env.TETHER_AGENT, 'claude')
   })
 
-  test('new session: --settings file, --session-id uuid, then slot args, then extra args', () => {
+  test('new session: --settings file, --session-id uuid, then slot args, then extra args', async () => {
     const home = homes.make()
-    const plan = claudeAdapter.plan({ slot, home, extraArgs: ['-p', 'oi'] })
+    const plan = await claudeAdapter.plan({ slot, home, extraArgs: ['-p', 'oi'] })
     const settings = join(home, 'claude-settings.json')
     assert.deepEqual(plan.args.slice(0, 3), ['--settings', settings, '--session-id'])
     assert.match(plan.args[3]!, UUID)
@@ -66,33 +66,33 @@ describe('claudeAdapter.plan', () => {
     assert.ok(!plan.args.includes('--resume'))
   })
 
-  test('two new sessions get different ids', () => {
+  test('two new sessions get different ids', async () => {
     const home = homes.make()
-    const a = claudeAdapter.plan({ slot, home, extraArgs: [] }).args[3]
-    const b = claudeAdapter.plan({ slot, home, extraArgs: [] }).args[3]
+    const a = (await claudeAdapter.plan({ slot, home, extraArgs: [] })).args[3]
+    const b = (await claudeAdapter.plan({ slot, home, extraArgs: [] })).args[3]
     assert.notEqual(a, b)
   })
 
-  test('new session with -c / --continue / -r / --resume in the slot args: no --session-id (Claude refuses the pair)', () => {
+  test('new session with -c / --continue / -r / --resume in the slot args: no --session-id (Claude refuses the pair)', async () => {
     const home = homes.make()
     for (const flag of ['-c', '--continue', '-r', '--resume']) {
-      const plan = claudeAdapter.plan({ slot: { ...slot, args: ['--model', 'haiku', flag] }, home, extraArgs: [] })
+      const plan = await claudeAdapter.plan({ slot: { ...slot, args: ['--model', 'haiku', flag] }, home, extraArgs: [] })
       assert.deepEqual(plan.args, ['--settings', join(home, 'claude-settings.json'), '--model', 'haiku', flag], flag)
     }
-    const viaExtra = claudeAdapter.plan({ slot, home, extraArgs: ['-c'] })
+    const viaExtra = await claudeAdapter.plan({ slot, home, extraArgs: ['-c'] })
     assert.ok(!viaExtra.args.includes('--session-id'))
   })
 
-  test('resume: --resume <id> in the binding cwd, no --session-id', () => {
+  test('resume: --resume <id> in the binding cwd, no --session-id', async () => {
     const home = homes.make()
-    const plan = claudeAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
+    const plan = await claudeAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
     assert.deepEqual(plan.args, ['--settings', join(home, 'claude-settings.json'), '--resume', binding.sessionId, '--model', 'haiku'])
     assert.equal(plan.cwd, binding.cwd)
   })
 
-  test('env: every CLAUDE* var removed (any case), everything else kept, TETHER vars set', () => {
+  test('env: every CLAUDE* var removed (any case), everything else kept, TETHER vars set', async () => {
     const home = homes.make()
-    const plan = claudeAdapter.plan({ slot, home, extraArgs: [] })
+    const plan = await claudeAdapter.plan({ slot, home, extraArgs: [] })
     const claudeKeys = Object.keys(plan.env).filter(k => /^claude/i.test(k))
     assert.deepEqual(claudeKeys, [])
     assert.equal(plan.env.NOT_CLAUDE_KEEP, 'yes')
@@ -107,9 +107,9 @@ describe('claudeAdapter.plan', () => {
     assert.deepEqual(env, { XCLAUDE: 'keep', FOO: 'bar' })
   })
 
-  test('settings file: valid JSON, every hook call the reporter by absolute forward-slash path', () => {
+  test('settings file: valid JSON, every hook call the reporter by absolute forward-slash path', async () => {
     const home = homes.make()
-    claudeAdapter.plan({ slot, home, extraArgs: [] })
+    await claudeAdapter.plan({ slot, home, extraArgs: [] })
     const file = join(home, 'claude-settings.json')
     const settings = JSON.parse(readFileSync(file, 'utf8')) as {
       hooks: Record<string, { matcher?: string; hooks: { type: string; command: string }[] }[]>
@@ -127,9 +127,9 @@ describe('claudeAdapter.plan', () => {
     }
   })
 
-  test('settings file: PostToolUse is guarded by a shell test so Node only spawns when a pause request or a notice exists', () => {
+  test('settings file: PostToolUse is guarded by a shell test so Node only spawns when a pause request or a notice exists', async () => {
     const home = homes.make()
-    claudeAdapter.plan({ slot, home, extraArgs: [] })
+    await claudeAdapter.plan({ slot, home, extraArgs: [] })
     const settings = JSON.parse(readFileSync(join(home, 'claude-settings.json'), 'utf8')) as {
       hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]>
     }
@@ -142,27 +142,27 @@ describe('claudeAdapter.plan', () => {
 
   test('settings file is written once and left alone afterwards', async () => {
     const home = homes.make()
-    claudeAdapter.plan({ slot, home, extraArgs: [] })
+    await claudeAdapter.plan({ slot, home, extraArgs: [] })
     const file = join(home, 'claude-settings.json')
     const before = statSync(file).mtimeMs
     await new Promise(r => setTimeout(r, 20))
-    claudeAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
+    await claudeAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
     assert.equal(statSync(file).mtimeMs, before)
     assert.ok(!existsSync(`${file}.${process.pid}.tmp`))
   })
 
-  test('settings file is rewritten when its content drifted', () => {
+  test('settings file is rewritten when its content drifted', async () => {
     const home = homes.make()
     mkdirSync(home, { recursive: true })
     writeFileSync(join(home, 'claude-settings.json'), '{"hooks":{}}')
-    claudeAdapter.plan({ slot, home, extraArgs: [] })
+    await claudeAdapter.plan({ slot, home, extraArgs: [] })
     const settings = JSON.parse(readFileSync(join(home, 'claude-settings.json'), 'utf8')) as { hooks: object }
     assert.ok('SessionStart' in settings.hooks)
   })
 
-  test('command: on Windows an absolute path to claude.exe that spawns without a shell', { skip: process.platform !== 'win32' }, () => {
+  test('command: on Windows an absolute path to claude.exe that spawns without a shell', { skip: process.platform !== 'win32' }, async () => {
     const home = homes.make()
-    const plan = claudeAdapter.plan({ slot, home, extraArgs: [] })
+    const plan = await claudeAdapter.plan({ slot, home, extraArgs: [] })
     if (plan.command === 'claude') return // claude not installed here: the bare name is the fallback
     assert.match(plan.command, /[\\/]claude(\.exe|\.cmd)?$/i)
     assert.ok(existsSync(plan.command))
@@ -396,16 +396,16 @@ describe('status line', () => {
     assert.equal('statusLine' in (hookSettings('C:\\x\\hook.mjs', null) as object), false)
   })
 
-  test('the default settings file points at the real script', () => {
+  test('the default settings file points at the real script', async () => {
     const home = homes.make()
     process.env.CLAUDE_CONFIG_DIR = configs.make()
-    const plan = claudeAdapter.plan({ slot: { ...slot, cwd: configs.make() }, home, extraArgs: [] })
+    const plan = await claudeAdapter.plan({ slot: { ...slot, cwd: configs.make() }, home, extraArgs: [] })
     assert.equal(plan.args[1], join(home, 'claude-settings.json'))
     const settings = JSON.parse(readFileSync(plan.args[1]!, 'utf8')) as { statusLine: { command: string } }
     assert.equal(settings.statusLine.command, `node "${STATUSLINE.replace(/\\/g, '/')}"`)
   })
 
-  test('a statusLine of the user (user, project or local settings) suppresses ours', () => {
+  test('a statusLine of the user (user, project or local settings) suppresses ours', async () => {
     for (const where of ['user', 'settings.json', 'settings.local.json']) {
       const config = configs.make()
       const cwd = configs.make()
@@ -417,7 +417,7 @@ describe('status line', () => {
       assert.equal(userHasStatusLine(cwd, config), true, where)
       process.env.CLAUDE_CONFIG_DIR = config
       const home = homes.make()
-      const plan = claudeAdapter.plan({ slot: { ...slot, cwd }, home, extraArgs: [] })
+      const plan = await claudeAdapter.plan({ slot: { ...slot, cwd }, home, extraArgs: [] })
       assert.equal(plan.args[1], join(home, 'claude-settings.no-statusline.json'), where)
       const settings = JSON.parse(readFileSync(plan.args[1]!, 'utf8')) as { hooks: object }
       assert.equal('statusLine' in settings, false, where)

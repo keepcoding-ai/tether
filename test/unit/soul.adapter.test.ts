@@ -128,14 +128,14 @@ describe('soulAdapter.plan', () => {
     }
   })
 
-  test('the pane knows its agent kind (TETHER_AGENT)', () => {
-    assert.equal(soulAdapter.plan({ slot, home: dirs.make(), extraArgs: [] }).env.TETHER_AGENT, 'soul')
+  test('the pane knows its agent kind (TETHER_AGENT)', async () => {
+    assert.equal((await soulAdapter.plan({ slot, home: dirs.make(), extraArgs: [] })).env.TETHER_AGENT, 'soul')
   })
 
   // The plan makes <home>/bin/tether-soul.exe (core/exe.ts): the home must be a real temp folder, never a made-up path.
-  test('new session: TETHER_SOUL_CMD + slot args + extra args, in the slot cwd, reporting to the slot jsonl; the node runs as tether-soul.exe', () => {
+  test('new session: TETHER_SOUL_CMD + slot args + extra args, in the slot cwd, reporting to the slot jsonl; the node runs as tether-soul.exe', async () => {
     const home = dirs.make()
-    const plan = soulAdapter.plan({ slot, home, extraArgs: ['-n', 'nova'] })
+    const plan = await soulAdapter.plan({ slot, home, extraArgs: ['-n', 'nova'] })
     assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', ...slot.args, '-n', 'nova'])
     if (process.platform !== 'darwin') {
       assert.equal(plan.command, exePath(home, 'tether-soul'), plan.command)
@@ -148,9 +148,9 @@ describe('soulAdapter.plan', () => {
     assert.ok(!plan.args.includes('-r'))
   })
 
-  test('resume: the recipe args first, then the slot args (minus -c), its cwd, its env added', () => {
+  test('resume: the recipe args first, then the slot args (minus -c), its cwd, its env added', async () => {
     const home = dirs.make()
-    const plan = soulAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
+    const plan = await soulAdapter.plan({ slot, home, resume: binding, extraArgs: [] })
     assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', ...slot.args])
     assert.equal(plan.cwd, 'D:\\outra\\pasta')
     assert.equal(plan.env.SOUL_X, '1')
@@ -158,15 +158,15 @@ describe('soulAdapter.plan', () => {
     assert.equal(plan.env[ENV_SLOT], slot.slotId)
   })
 
-  test('resume: a slot created with -c/--continue or --fork-session keeps the fork, drops the continue', () => {
+  test('resume: a slot created with -c/--continue or --fork-session keeps the fork, drops the continue', async () => {
     const forked = { ...slot, args: ['-c', '--fork-session', '--continue', '-g'] }
-    const plan = soulAdapter.plan({ slot: forked, home: dirs.make(), resume: binding, extraArgs: [] })
+    const plan = await soulAdapter.plan({ slot: forked, home: dirs.make(), resume: binding, extraArgs: [] })
     assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-r', 'sess-1234', '-g', '-P', 'guga@codr.studio', '--fork-session', '-g'])
   })
 
-  test('resume without a recipe: -r <id> plus the slot args, in the binding cwd', () => {
+  test('resume without a recipe: -r <id> plus the slot args, in the binding cwd', async () => {
     const { resume: _r, ...bare } = binding
-    const plan = soulAdapter.plan({ slot, home: dirs.make(), resume: bare, extraArgs: [] })
+    const plan = await soulAdapter.plan({ slot, home: dirs.make(), resume: bare, extraArgs: [] })
     assert.deepEqual(soulArgs(plan), ['D:/fake/bin/soul', '-r', 'sess-1234', ...slot.args])
     assert.equal(plan.cwd, bare.cwd)
   })

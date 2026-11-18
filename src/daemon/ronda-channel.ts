@@ -15,9 +15,13 @@
 //
 // The key: 192 bits per launch, granted to the host for the slot, carried to the CLI in the plan's env (the MCP file says
 // `Bearer ${TETHER_RONDA_MCP_KEY}`), revoked when the agent exits. The MCP file holds no secret.
+//
+// Disk: the MCP file goes through the slot store (executor, io lane). `prepare` waits for it (the CLI reads it as it starts),
+// `revoke` removes it behind any write of the same path.
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { SlotStore } from '../core/slot-store.ts'
+import { createExecutor } from '../exec/executor.ts'
 import { httpMcpConfigOf } from '../agents/mcp.ts'
 import type { ChannelConfirm } from '../agents/registry.ts'
 import { withLeadingArgs } from '../agents/skills.ts'
@@ -102,15 +106,24 @@ export interface RondaChannelOptions {
   log(msg: string): void
   /** The slot's channel connected or dropped (the client's GET stream). */
   onChange(slotId: string): void
+  /** Where the MCP files are written (tetherd's store). Default: a store of its own on an inline executor. */
+  store?: SlotStore
 }
+
+/** What `prepare` returns: the plan to launch; `run` (offered only) names this grant for `revoke`. */
+export interface RondaOffer { plan: LaunchPlan; offered: boolean; run?: number }
 
 export class RondaChannel {
   private readonly host: McpHttpHost
   private readonly backends = new Map<string, RondaBackend>()
+  /** Per slot, bumped by every revoke (prepare starts with one): a prepare whose run changed while it waited grants nothing. */
+  private readonly runs = new Map<string, number>()
   private readonly opts: RondaChannelOptions
+  private readonly store: SlotStore
 
   constructor(opts: RondaChannelOptions) {
     this.opts = opts
+    this.store = opts.store ?? new SlotStore(createExecutor({ mode: 'inline', log: opts.log }), { log: opts.log })
     this.host = new McpHttpHost({ name: RONDA_MCP_SERVER, log: opts.log, onStream: slotId => opts.onChange(slotId) })
   }
 
@@ -119,7 +132,8 @@ export class RondaChannel {
 
   /** Starts serving (only the tetherd that owns the pipe). Files of a previous tetherd are dropped: their keys died with it. */
   async listen(): Promise<number> {
-    rmSync(this.dir, { recursive: true, force: true })
+    this.store.remove(this.dir)
+    await this.store.flush(this.dir)
     return this.host.listen()
   }
 
@@ -132,34 +146,49 @@ export class RondaChannel {
 
   /**
    * The plan with the channel offered (a new key, the MCP file, the CLI's channel args), or the plan given when the agent takes
-   * no channel or the host is not listening. `offered` says which. Never throws: a failure is logged and the plan kept.
+   * no channel or the host is not listening. `offered` says which. Resolves once the MCP file is on disk (a barrier: the
+   * CLI reads it as it starts). A revoke or another prepare of the slot while it waits wins: this one offers nothing.
+   * Never rejects: a failure is logged and the plan kept.
    */
-  prepare(plan: LaunchPlan, slotId: string, agent: RondaChannelAgent | undefined): { plan: LaunchPlan; offered: boolean } {
+  async prepare(plan: LaunchPlan, slotId: string, agent: RondaChannelAgent | undefined): Promise<RondaOffer> {
     this.revoke(slotId)
+    const run = this.runs.get(slotId)!
     const url = this.host.urlOf(slotId)
     if (!agent || !url) return { plan, offered: false }
     try {
       const file = this.fileOf(slotId)
-      mkdirSync(this.dir, { recursive: true })
-      writeFileSync(file, JSON.stringify(httpMcpConfigOf(RONDA_MCP_SERVER, url, ENV_RONDA_MCP_KEY), null, 2) + '\n')
+      const text = JSON.stringify(httpMcpConfigOf(RONDA_MCP_SERVER, url, ENV_RONDA_MCP_KEY), null, 2) + '\n'
+      this.store.put(file, text)
+      await this.store.flush(file)
+      if (this.runs.get(slotId) !== run) return { plan, offered: false } // superseded meanwhile: the newer call owns the file
+      // The store never rejects; a failed write leaves its echo unset (revoke cleared the previous one), a written one sets it.
+      if (!this.store.isEcho(file, text)) throw new Error('o arquivo MCP da ronda não foi gravado')
       const key = randomBytes(24).toString('base64url')
       let next = agent.inject(plan, file, [RONDA_MCP_SERVER])
       next = withLeadingArgs({ ...next, env: { ...next.env, [ENV_RONDA_MCP_KEY]: key } }, agent.args)
       this.host.grant(slotId, key, { create: () => { const b = new RondaBackend(slotId, this.opts.log); this.backends.set(slotId, b); return b } })
-      return { plan: next, offered: true }
+      return { plan: next, offered: true, run }
     } catch (e) {
       this.opts.log(`slot ${slotId}: ronda channel not offered (${e instanceof Error ? e.message : String(e)})`)
-      this.revoke(slotId)
+      if (this.runs.get(slotId) === run) this.revoke(slotId)
       return { plan, offered: false }
     }
   }
 
-  /** The agent's run is over: the key stops working, the server closes, the file goes. Never throws. */
-  revoke(slotId: string): void {
+  /**
+   * The agent's run is over: the key stops working, the server closes, the file goes (behind its write). With `run`, only
+   * that grant is revoked: a newer prepare of the slot is left alone. Never throws.
+   */
+  revoke(slotId: string, run?: number): void {
+    if (run !== undefined && this.runs.get(slotId) !== run) return
+    this.runs.set(slotId, (this.runs.get(slotId) ?? 0) + 1)
     this.host.revoke(slotId)
     this.backends.delete(slotId)
-    try { rmSync(this.fileOf(slotId), { force: true }) } catch { /* gone already */ }
+    this.store.remove(this.fileOf(slotId))
   }
+
+  /** The MCP files handed so far are on disk (tests, teardown). */
+  flush(): Promise<void> { return this.store.flush() }
 
   /** The agent's CLI is listening: a session with its GET stream open. */
   connected(slotId: string): boolean { return this.host.streamOpen(slotId) }

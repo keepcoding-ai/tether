@@ -118,7 +118,7 @@ export interface DaemonOptions {
   /** Replaces an agent's adapter (tests: a fake that launches an inert process instead of the agent). */
   adapters?: Partial<Record<AgentName, AgentAdapter>>
   /** Daemon extensions' launch middlewares (TetherDaemon.launch.use), applied in order to every agent/shell plan. */
-  transformPlan?: (plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan
+  transformPlan?: (plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan | Promise<LaunchPlan>
   /** Slot lifecycle for daemon extensions (TetherDaemon.onSlot). */
   onSlot?: (kind: SlotEventKind, slot: SlotState) => void
   /** Overrides READY_FALLBACK_MS (tests). */
@@ -261,8 +261,11 @@ interface Slot {
   /** A subagent-marker refresh in flight; names that change meanwhile wait in `bgCarry` for the next pass. */
   bgRunning?: true
   bgCarry?: Set<string>
-  /** A queued slot whose seat is taken while its folder is checked; a stop clears it and the launch is dropped. */
-  preLaunch?: symbol
+  /**
+   * The launch before its spawn (folder check, fresh config, plan, ronda file): it holds the slot's 'starting' seat. A stop
+   * clears it (and releases its waiters) and the launch ends without spawning.
+   */
+  preLaunch?: PreLaunch
   /** A start of this slot in flight: a second one waits for it instead of launching again. */
   startPending?: Promise<void>
   /** The wake fallback after the last background subagent ended (see AttentionState.wakeDueAt). */
@@ -305,6 +308,9 @@ interface EventsView {
   fragment: string
   transient?: TetherEvent
 }
+
+/** One launch's pre-spawn phase: identity for cancellation; `done` settles when it ends (spawned, failed or cancelled). */
+interface PreLaunch { done: Promise<void>; release(): void }
 
 /** A live run of the terminal-pane host held for a slot at boot (see holdAdoptions); `release` frees the slot's `launching`. */
 interface Adoption {
@@ -365,7 +371,7 @@ class DaemonImpl implements Daemon {
   private readonly ownRuns = new Set<string>()
   /** Test overrides; everything else comes from the agent registry at the time of use. */
   private readonly adapterOverrides: Partial<Record<AgentName, AgentAdapter>>
-  private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan) | undefined
+  private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan | Promise<LaunchPlan>) | undefined
   private readonly onSlot: ((kind: SlotEventKind, slot: SlotState) => void) | undefined
   private readonly readyFallbackMs: number
   private readonly minAgentAgeMs: number
@@ -432,6 +438,7 @@ class DaemonImpl implements Daemon {
     this.rondaChannel = new RondaChannel({
       home: opts.home,
       log: this.log,
+      store: this.store,
       onChange: (slotId) => {
         const slot = this.slotMap.get(slotId)
         if (!slot) return
@@ -1232,7 +1239,7 @@ class DaemonImpl implements Daemon {
     }
     if (resume) {
       for (const other of this.slotMap.values()) {
-        if (other !== slot && (other.launching || (other.pty && !other.pty.exit)) && other.binding?.sessionId === resume.sessionId) {
+        if (other !== slot && (other.preLaunch || other.launching || (other.pty && !other.pty.exit)) && other.binding?.sessionId === resume.sessionId) {
           throw new RequestError('already-open', `a sessão já está aberta no slot ${other.meta.slotId}`)
         }
       }
@@ -1240,17 +1247,21 @@ class DaemonImpl implements Daemon {
     return resume
   }
 
-  /** The folder the start runs in must exist (checked by the executor, never in the loop); fails the slot when it does not. */
-  private async checkCwd(slot: Slot, resume: Binding | undefined): Promise<void> {
+  /** The folder the start runs in, or undefined when it exists (checked by the executor, never in the loop). */
+  private async missingCwd(slot: Slot, resume: Binding | undefined): Promise<string | undefined> {
     const cwd = resume ? resume.cwd : slot.meta.cwd
     this.fsProbe?.('cwd:check', slot.meta.slotId)
     // An executor failure is not a missing folder: the spawn itself will say what is wrong.
-    if (!(await this.executor.run('exists', [cwd]).catch(() => true))) throw this.fail(slot, 'cwd-missing', `a pasta não existe: ${cwd}`)
+    return (await this.executor.run('exists', [cwd]).catch(() => true)) ? undefined : cwd
   }
 
   /** Read through a method so a check made before an await is not narrowed away. */
   private isQueued(slot: Slot): boolean {
     return slot.status === 'queued'
+  }
+
+  private preLaunchOf(slot: Slot): PreLaunch | undefined {
+    return slot.preLaunch
   }
 
   private startingCount(): number {
@@ -1272,24 +1283,19 @@ class DaemonImpl implements Daemon {
   }
 
   private async startSlotNow(slot: Slot, choice: 'resume' | 'new' | undefined): Promise<void> {
-    if (slot.launching) { await slot.launching; return } // idempotent: already being launched
+    if (slot.preLaunch) { await slot.preLaunch.done; return } // idempotent: already being launched
+    if (slot.launching) { await slot.launching; return }
     if (slot.pty && !slot.pty.exit) return // idempotent: already up
     if (slot.status === 'queued') return // already waiting its turn
     await this.hydrate(slot) // the binding to resume comes from the events file
+    const pre = this.preLaunchOf(slot) // read through a method: the check above would narrow it away
+    if (pre) { await pre.done; return }
     if (slot.launching) { await slot.launching; return }
     if (slot.pty && !slot.pty.exit) return
+    if (this.isQueued(slot)) return
     const unavailable = this.unavailableError(slot.meta)
     if (unavailable) throw this.fail(slot, unavailable.code, unavailable.message)
-    let resume = this.resumeFor(slot, choice)
-    await Promise.all([this.checkCwd(slot, resume), this.freshLaunchConfig()])
-    if (slot.launching || (slot.pty && !slot.pty.exit) || this.isQueued(slot)) return // another request started it while we checked
-    resume = this.resumeFor(slot, choice) // what the wait may have changed (another slot opened the session)
-    if (resume) {
-      // PRD C15: a resume of a session the agent no longer has must fail here, not inside the agent's TUI.
-      const exists = await (this.adapterOf(resume.agent)?.sessionExists(resume, this.lookupOf(slot)) ?? 'unknown')
-      if (exists === false) throw this.fail(slot, 'session-missing', `a sessão ${resume.sessionId} não existe mais no ${resume.agent}`)
-      if (slot.launching || (slot.pty && !slot.pty.exit)) return // another request started it while we checked
-    }
+    this.resumeFor(slot, choice) // a start that cannot be made is refused before it takes a seat or a queue place
     if (slot.meta.agent !== 'shell' && this.startingCount() >= MAX_STARTING) {
       slot.status = 'queued'
       slot.error = undefined
@@ -1299,7 +1305,39 @@ class DaemonImpl implements Daemon {
       this.broadcastState(slot)
       return
     }
-    await this.launch(slot, resume)
+    await this.seatAndLaunch(slot, choice)
+  }
+
+  /**
+   * Takes the slot's 'starting' seat NOW, synchronously (the caller saw it free), and only then runs the launch's awaits:
+   * folder check, fresh config, session check, plan, ronda file, spawn. A burst of starts therefore never counts more than
+   * MAX_STARTING in 'starting'. The seat is taken silently (clients hear 'starting' once, with the pid). A stop meanwhile
+   * cancels (stopSlot); a failure goes to the slot's error state. Either way the seat frees and the queue is pumped.
+   */
+  private async seatAndLaunch(slot: Slot, choice: 'resume' | 'new' | undefined): Promise<void> {
+    let release!: () => void
+    const pre: PreLaunch = { done: new Promise<void>((r) => { release = r }), release: () => release() }
+    slot.preLaunch = pre
+    slot.status = 'starting'
+    try {
+      // A stop releases `pre` at once: the start answers then, without waiting for a plan that may still be pending
+      // (the launch ends by itself when it comes, spawning nothing; it never rejects once cancelled).
+      const launching = this.launch(slot, choice, pre)
+      launching.catch(() => { /* raced below */ })
+      await Promise.race([launching, pre.done])
+    } catch (e) {
+      // launch fails the slot itself; anything else (a refused resume, an unexpected error) still must free the seat
+      if (slot.preLaunch === pre && slot.status === 'starting' && !slot.pty && !slot.launching) {
+        const err = e instanceof RequestError ? e : new RequestError('spawn-failed', (e as Error).message)
+        slot.preLaunch = undefined
+        throw this.fail(slot, err.code, err.message)
+      }
+      throw e
+    } finally {
+      if (slot.preLaunch === pre) slot.preLaunch = undefined
+      pre.release()
+      this.pump() // a seat may be free again (failure, cancel); a no-op otherwise
+    }
   }
 
   /** The newest profiles and settings, awaited before a plan is made (the snapshots may lag the file by a watcher tick). */
@@ -1318,34 +1356,22 @@ class DaemonImpl implements Daemon {
       if (slot.status !== 'queued') continue
       const choice = slot.queuedChoice
       slot.queuedChoice = undefined
-      const failed = (e: unknown): void => {
-        if (slot.status === 'queued') {
-          const err = e instanceof RequestError ? e : new RequestError('spawn-failed', (e as Error).message)
-          this.fail(slot, err.code, err.message)
-        }
-      }
-      // The seat is taken now (the next turn of this loop counts it) while the folder is checked off the loop.
       try {
-        const resume = this.resumeFor(slot, choice)
-        const token = Symbol('pre-launch')
-        slot.preLaunch = token
-        slot.status = 'starting'
-        void Promise.all([this.checkCwd(slot, resume), this.freshLaunchConfig()]).then(() => {
-          if (slot.preLaunch !== token) return // stopped or forgotten meanwhile
-          slot.preLaunch = undefined
-          return this.launch(slot, resume)
-        }).catch((e: unknown) => {
-          // checkCwd and launch fail the slot themselves; anything else is an unexpected error of the check
-          if (slot.preLaunch === token) {
-            slot.preLaunch = undefined
-            if (slot.status === 'starting' && !slot.pty && !slot.launching) this.fail(slot, 'spawn-failed', (e as Error).message)
-          }
-          this.pump() // a seat may be free again
-        })
+        this.resumeFor(slot, choice)
       } catch (e) {
-        failed(e)
+        const err = e instanceof RequestError ? e : new RequestError('spawn-failed', (e as Error).message)
+        this.fail(slot, err.code, err.message)
+        continue
       }
+      // The seat is taken synchronously (the next turn of this loop counts it); the outcome is reported through the slot's state.
+      this.seatAndLaunch(slot, choice).catch(() => { /* failed or cancelled: the slot says so */ })
     }
+  }
+
+  /** A launch failure while the launch still holds its seat: the seat goes with the error state. */
+  private failLaunch(slot: Slot, pre: PreLaunch, code: ErrorCode, message: string): RequestError {
+    if (slot.preLaunch === pre) slot.preLaunch = undefined
+    return this.fail(slot, code, message)
   }
 
   /** Takes the slot out of the queue (stop/forget while waiting). */
@@ -1364,17 +1390,39 @@ class DaemonImpl implements Daemon {
    * slot turns 'starting' (its seat counted) BEFORE the host is awaited, and `launching` makes a start or stop meanwhile
    * wait for the handle. The callbacks are the same either way; output may arrive before the handle does.
    */
-  private async launch(slot: Slot, resume: Binding | undefined): Promise<void> {
+  private async launch(slot: Slot, choice: 'resume' | 'new' | undefined, pre: PreLaunch): Promise<void> {
     const { meta } = slot
+    // Every await below may end with the launch cancelled (a stop cleared `preLaunch`): then nothing more happens.
+    const cancelled = (): boolean => slot.preLaunch !== pre
+    let resume = this.resumeFor(slot, choice)
+    const [missing] = await Promise.all([this.missingCwd(slot, resume), this.freshLaunchConfig()])
+    if (cancelled()) return
+    if (missing !== undefined) throw this.failLaunch(slot, pre, 'cwd-missing', `a pasta não existe: ${missing}`)
+    resume = this.resumeFor(slot, choice) // what the wait may have changed (another slot opened the session)
+    if (resume) {
+      // PRD C15: a resume of a session the agent no longer has must fail here, not inside the agent's TUI.
+      const exists = await (this.adapterOf(resume.agent)?.sessionExists(resume, this.lookupOf(slot)) ?? 'unknown')
+      if (cancelled()) return
+      if (exists === false) throw this.failLaunch(slot, pre, 'session-missing', `a sessão ${resume.sessionId} não existe mais no ${resume.agent}`)
+    }
     let plan: LaunchPlan
     try {
-      plan = this.planFor(slot, resume)
+      plan = await this.planFor(slot, resume)
     } catch (e) {
-      throw this.fail(slot, e instanceof RequestError ? e.code : 'spawn-failed', (e as Error).message)
+      if (cancelled()) return
+      throw this.failLaunch(slot, pre, e instanceof RequestError ? e.code : 'spawn-failed', (e as Error).message)
     }
-    // The ronda's channel, offered at every launch of an agent that takes one (a new key per run).
+    if (cancelled()) return
+    // The ronda's channel, offered at every launch of an agent that takes one (a new key per run); its MCP file is on disk
+    // when this resolves (the CLI reads it as it starts).
     const channel = meta.agent === 'shell' ? undefined : this.channelOf(meta.agent)
-    const offer = this.rondaChannel.prepare(plan, meta.slotId, channel)
+    const offer = await this.rondaChannel.prepare(plan, meta.slotId, channel)
+    if (cancelled()) {
+      if (offer.offered) this.rondaChannel.revoke(meta.slotId, offer.run) // only this grant: a newer launch keeps its own
+      return
+    }
+    // From here the spawn holds the seat (no await before it in process; `launching` in the host): a stop waits for it.
+    slot.preLaunch = undefined
     plan = offer.plan
     slot.confirmWatch = offer.offered && channel?.confirm ? { spec: channel.confirm, screen: '' } : undefined
     slot.scrollback.clear()
@@ -1533,7 +1581,7 @@ class DaemonImpl implements Daemon {
    * The plan applies the slot's profile AS IT IS NOW (an edit takes effect on the next start) and refreshes the
    * slot's snapshot of it, so a profile deleted later still launches the slot the way it last ran.
    */
-  private planFor(slot: Slot, resume: Binding | undefined): LaunchPlan {
+  private async planFor(slot: Slot, resume: Binding | undefined): Promise<LaunchPlan> {
     const { meta } = slot
     const profiles = this.profileStore.profiles()
     const current = profiles.find((p) => p.id === meta.profileId)
@@ -1546,10 +1594,10 @@ class DaemonImpl implements Daemon {
     else {
       const adapter = this.adapterOf(meta.agent)
       if (!adapter) throw new RequestError('agent-unavailable', `o agente ${meta.agent} não está disponível`)
-      plan = adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
+      plan = await adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
     }
     plan = withTabEnv(plan, meta)
-    return this.transformPlan ? this.transformPlan(plan, meta, this.stateOf(slot)) : plan
+    return this.transformPlan ? await this.transformPlan(plan, meta, this.stateOf(slot)) : plan
   }
 
   /**
@@ -1628,8 +1676,10 @@ class DaemonImpl implements Daemon {
   /** Stops the slot's process: dequeues it, waits until its agent may be killed, then kills the PTY tree. */
   private async stopSlot(slot: Slot): Promise<void> {
     this.dequeue(slot)
-    if (slot.preLaunch) { // its folder is still being checked: the launch will not happen
+    if (slot.preLaunch) { // still before its spawn (checks, plan, ronda file): the launch will not happen
+      const pre = slot.preLaunch
       slot.preLaunch = undefined
+      pre.release()
       if (slot.status === 'starting' && !slot.pty && !slot.launching) {
         slot.status = 'exited'
         this.broadcastState(slot)

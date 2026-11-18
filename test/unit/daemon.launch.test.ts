@@ -39,10 +39,10 @@ describe('web-bridge launch middleware (F7 C3)', () => {
   })
   after(async () => { host.dispose(); await removeHome(home) })
 
-  test('claude and soul plans gain --mcp-config LAST and the identity env; the rest of the plan is kept', () => {
+  test('claude and soul plans gain --mcp-config LAST and the identity env; the rest of the plan is kept', async () => {
     for (const agent of ['claude', 'soul'] as const) {
       const input = plan()
-      const out = host.transformPlan(input, meta(agent, { name: 'Pesquisa' }))
+      const out = await host.transformPlan(input, meta(agent, { name: 'Pesquisa' }))
       assert.notEqual(out, input, `${agent}: rewritten`)
       assert.deepEqual(out.args, [...input.args, MCP_CONFIG_FLAG, mcpFile()], `${agent}: flag appended after the slot's own args`)
       assert.equal(out.env[ENV_CLIENT_ID], 'tether:a1b2c3d4')
@@ -53,20 +53,20 @@ describe('web-bridge launch middleware (F7 C3)', () => {
     }
   })
 
-  test('a shell plan is the same object', () => {
+  test('a shell plan is the same object', async () => {
     const input = plan()
-    assert.equal(host.transformPlan(input, meta('shell')), input)
+    assert.equal(await host.transformPlan(input, meta('shell')), input)
   })
 
-  test('serveToAgents: false (settings.json extensions.web-bridge) leaves the plan untouched; back on, rewritten again', () => {
+  test('serveToAgents: false (settings.json extensions.web-bridge) leaves the plan untouched; back on, rewritten again', async () => {
     const settings = join(home, 'settings.json')
     writeFileSync(settings, JSON.stringify({ extensions: { 'web-bridge': { serveToAgents: false } } }))
     const input = plan()
-    assert.equal(host.transformPlan(input, meta('claude')), input)
+    assert.equal(await host.transformPlan(input, meta('claude')), input)
     writeFileSync(settings, JSON.stringify({ extensions: { 'web-bridge': { serveToAgents: 'garbage' } } }))
-    assert.notEqual(host.transformPlan(input, meta('claude')), input, 'an invalid value reads as the default (on)')
+    assert.notEqual(await host.transformPlan(input, meta('claude')), input, 'an invalid value reads as the default (on)')
     writeFileSync(settings, '{}')
-    assert.notEqual(host.transformPlan(input, meta('claude')), input)
+    assert.notEqual(await host.transformPlan(input, meta('claude')), input)
   })
 
   test('serveToAgents() reads the app\'s layout of settings.json and defaults to on', () => {

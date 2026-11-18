@@ -27,13 +27,13 @@ after(() => { rmSync(dir, { recursive: true, force: true }) })
 const slot = (cwd: string): SlotMeta => ({ v: 1, slotId: 's1', agent: 'codex', cwd, args: ['-m', 'x'], createdAt: '2026-11-16T00:00:00Z' })
 
 describe('codex launch plan', () => {
-  test('new session: notify override, slot args, TETHER_* env, no CLAUDE* vars', () => {
+  test('new session: notify override, slot args, TETHER_* env, no CLAUDE* vars', async () => {
     process.env.CLAUDECODE_TEST_VAR = '1'
     try {
       const codexHome = join(dir, 'ch-plan')
       mkdirSync(codexHome, { recursive: true })
       writeFileSync(join(codexHome, 'config.toml'), 'notify = [ "C:\\\\x\\\\y.exe", \'turn-ended\' ]\n\n[tui]\nnotify = ["no"]\n')
-      const p = codexAdapter.plan({ slot: slot(dir), home: join(dir, 'th'), extraArgs: ['--foo'], profile: { args: ['--p'], env: { CODEX_HOME: codexHome } } })
+      const p = await codexAdapter.plan({ slot: slot(dir), home: join(dir, 'th'), extraArgs: ['--foo'], profile: { args: ['--p'], env: { CODEX_HOME: codexHome } } })
       const i = p.args.indexOf('-c')
       assert.match(p.args[i + 1]!, /^notify=\["node",".*codex-hook\.mjs","notify"\]$/)
       assert.deepEqual(p.args.slice(i + 2), ['--p', '-m', 'x', '--foo'])
@@ -47,8 +47,8 @@ describe('codex launch plan', () => {
     }
   })
 
-  test('resume: `resume <id>` first', () => {
-    const p = codexAdapter.plan({ slot: slot(dir), home: dir, extraArgs: [], resume: { slotId: 's1', agent: 'codex', sessionId: ID, cwd: dir, since: '', confirmed: true, ended: false } })
+  test('resume: `resume <id>` first', async () => {
+    const p = await codexAdapter.plan({ slot: slot(dir), home: dir, extraArgs: [], resume: { slotId: 's1', agent: 'codex', sessionId: ID, cwd: dir, since: '', confirmed: true, ended: false } })
     const at = p.args.indexOf('resume')
     assert.deepEqual(p.args.slice(at, at + 3), ['resume', ID, '-c'])
   })
