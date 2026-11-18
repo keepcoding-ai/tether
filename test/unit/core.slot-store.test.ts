@@ -189,6 +189,40 @@ for (const mode of ['inline', 'worker'] as ExecutorMode[]) {
       } finally { await real.close() }
     })
 
+    test('flush returns in bounded time while the same path keeps being rewritten', () => using(async (s) => {
+      const p = file()
+      let i = 0
+      let stop = false
+      const loop = (async () => { const end = Date.now() + 2000; while (Date.now() < end && !stop) { s.put(p, `v${i++}`); await sleep(1) } })()
+      await sleep(300)
+      const asked = i - 1
+      const t0 = Date.now()
+      await s.flush(p)
+      assert.ok(Date.now() - t0 < 1000, `flush took ${Date.now() - t0} ms`)
+      const onDisk = Number(readFileSync(p, 'utf8').slice(1))
+      assert.ok(onDisk >= asked, `disk has v${onDisk}, asked v${asked}`)
+      const t1 = Date.now()
+      await s.flush()
+      assert.ok(Date.now() - t1 < 1000)
+      stop = true
+      await loop
+    }, { delayMs: 20 }))
+
+    test('state of a path is released after remove and idleness', () => using(async (s) => {
+      const p = file()
+      s.put(p, 'x')
+      await s.flush(p)
+      assert.equal(s.stats.paths, 1)
+      s.remove(p)
+      await s.flush(p)
+      await sleep(5)
+      assert.equal(s.stats.paths, 0)
+      assert.equal(s.isEcho(p, 'x'), false)
+      s.put(p, 'again')
+      await s.flush(p)
+      assert.equal(readFileSync(p, 'utf8'), 'again')
+    }))
+
     test('leaves no temp files behind', () => using(async (s) => {
       const p = file()
       for (let i = 0; i < 5; i++) { s.put(p, String(i)); await sleep(1) }

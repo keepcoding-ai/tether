@@ -22,14 +22,20 @@ export interface SlotStoreOptions {
   append?: { delayMs?: number; maxBytes?: number }
 }
 
-type Entry = { kind: 'put'; text: string; retry: boolean } | { kind: 'rm' }
+/** `gen` is the newest generation this entry covers (puts merged into it, removals it superseded). */
+type Entry = { kind: 'put'; text: string; retry: boolean; gen: number } | { kind: 'rm'; gen: number }
 
 interface PathState {
   queue: Entry[]
   running: boolean
   /** Bumped by every put/remove: a retry only runs if nothing newer happened since the failure. */
   gen: number
-  idle: Array<() => void>
+  /** Highest generation already on disk (or failed, or superseded by a settled one). */
+  settled: number
+  /** Barrier waiters: resolve once `settled >= gen`. */
+  waiters: Array<{ gen: number; resolve: () => void }>
+  /** True while the newest request is a removal: the state may be released once idle. */
+  removed: boolean
   retryTimer: NodeJS.Timeout | undefined
   retryText: string | undefined
 }
@@ -45,7 +51,11 @@ export class SlotStore {
   private readonly echo = new Map<string, string>()
   private readonly dirs = new Set<string>()
   /** puts: calls; writes: writeTextAtomic issued; removes: rm issued; failed: operations that failed (retries included). */
-  readonly stats = { puts: 0, writes: 0, removes: 0, failed: 0 }
+  readonly stats = {
+    puts: 0, writes: 0, removes: 0, failed: 0,
+    /** Paths currently holding state (queue, echo, generation). */
+    paths: 0,
+  }
 
   constructor(ex: Executor, opts: SlotStoreOptions = {}) {
     this.ex = ex
@@ -62,8 +72,9 @@ export class SlotStore {
     const st = this.state(path)
     st.gen++
     this.cancelRetry(st)
+    st.removed = false
     const last = st.queue[st.queue.length - 1]
-    if (last && last.kind === 'put') { last.text = text; last.retry = false } else st.queue.push({ kind: 'put', text, retry: false })
+    if (last && last.kind === 'put') { last.text = text; last.retry = false; last.gen = st.gen } else st.queue.push({ kind: 'put', text, retry: false, gen: st.gen })
     this.kick(path, st)
   }
 
@@ -87,7 +98,8 @@ export class SlotStore {
     this.cancelRetry(st)
     // Cancels everything still queued (puts and older removals); the operation running (already issued) cannot be taken back and stays ahead.
     st.queue = []
-    st.queue.push({ kind: 'rm' })
+    st.queue.push({ kind: 'rm', gen: st.gen })
+    st.removed = true
     // Lines already accumulated for the file go out first, so the removal lands behind them.
     void this.batches.get(path)?.flush()
     this.echo.delete(path)
@@ -96,14 +108,15 @@ export class SlotStore {
 
   // ---- barrier / echo / drain -------------------------------------------
 
-  /** Resolves when the writes handed so far (of `path`, or of every path) are on disk or have failed. A queued retry is not awaited. */
+  /** Resolves when the writes requested up to this call (of `path`, or of every path) are on disk or have failed.
+   *  Later puts do not extend the wait. A queued retry is not awaited. */
   async flush(path?: string): Promise<void> {
     if (path !== undefined) {
       await Promise.all([this.batches.get(path)?.flush(), this.settle(path)])
       return
     }
-    await Promise.all([...this.batches.values()].map((b) => b.flush()))
-    await Promise.all([...this.paths.keys()].map((p) => this.settle(p)))
+    const targets = [...this.paths.keys()].map((p) => this.settle(p)) // generations captured now
+    await Promise.all([...[...this.batches.values()].map((b) => b.flush()), ...targets])
   }
 
   /** True when `text` is what this store last wrote (or is about to write) to `path`: the watcher's own echo. */
@@ -130,16 +143,18 @@ export class SlotStore {
   private state(path: string): PathState {
     let st = this.paths.get(path)
     if (!st) {
-      st = { queue: [], running: false, gen: 0, idle: [], retryTimer: undefined, retryText: undefined }
+      st = { queue: [], running: false, gen: 0, settled: 0, waiters: [], removed: false, retryTimer: undefined, retryText: undefined }
       this.paths.set(path, st)
+      this.stats.paths = this.paths.size
     }
     return st
   }
 
   private settle(path: string): Promise<void> {
     const st = this.paths.get(path)
-    if (!st || (!st.running && st.queue.length === 0)) return Promise.resolve()
-    return new Promise((resolve) => st.idle.push(resolve))
+    if (!st || st.settled >= st.gen) return Promise.resolve()
+    const gen = st.gen
+    return new Promise((resolve) => st.waiters.push({ gen, resolve }))
   }
 
   private kick(path: string, st: PathState): void {
@@ -153,11 +168,25 @@ export class SlotStore {
     for (let e = st.queue.shift(); e; e = st.queue.shift()) {
       if (e.kind === 'put') await this.write(path, st, e)
       else await this.erase(path)
+      if (e.gen > st.settled) st.settled = e.gen
+      this.wake(st)
     }
     st.running = false
-    const waiting = st.idle
-    st.idle = []
-    for (const w of waiting) w()
+    st.settled = st.gen
+    this.wake(st)
+    // Idle after a completed removal: nothing left to remember (a later put starts fresh state).
+    if (st.removed && st.waiters.length === 0 && st.retryTimer === undefined && this.paths.get(path) === st) {
+      this.paths.delete(path)
+      this.echo.delete(path)
+      this.stats.paths = this.paths.size
+    }
+  }
+
+  private wake(st: PathState): void {
+    if (st.waiters.length === 0) return
+    const keep: PathState['waiters'] = []
+    for (const w of st.waiters) { if (w.gen <= st.settled) w.resolve(); else keep.push(w) }
+    st.waiters = keep
   }
 
   private async write(path: string, st: PathState, e: { text: string; retry: boolean }): Promise<void> {
@@ -197,7 +226,7 @@ export class SlotStore {
     const text = st.retryText
     st.retryText = undefined
     if (text === undefined) return
-    st.queue.push({ kind: 'put', text, retry: true })
+    st.queue.push({ kind: 'put', text, retry: true, gen: ++st.gen })
     this.kick(path, st)
   }
 
