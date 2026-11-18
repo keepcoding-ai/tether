@@ -28,6 +28,7 @@ import { registerTerminalLinks } from './terminal-links-main.ts'
 import { KEYBINDINGS_FILE, type KeybindingsFileState } from '../shared/keybindings.ts'
 import type { AskRequest, Confirmations, DialogAnswer, MainSituation } from '../shared/dialog.ts'
 import { normalizeWindowState, resolveWindowState, type WindowState } from '../shared/window-state.ts'
+import { startPriorityKeeper } from './priority.ts'
 import { normalizeUi, type UiSettings } from '../shared/ui-settings.ts'
 import { isValidSetting, readExtensionsSettings, settingPath, valueAt, writeExtensionsSettings } from '../shared/vscode-configuration-registry.ts'
 import { EXTENSION_STATE_KEY } from '../shared/ext-migrations.ts'
@@ -1295,6 +1296,27 @@ function showStandaloneDialog(situation: string): Promise<{ answer: DialogAnswer
     dlg.on('closed', () => { ipcMain.removeListener('dialog:standalone-size', onSize); finish({ choice: 'cancel', remember: false }) })
     void dlg.loadFile(join(__dirname, '..', 'renderer', 'dialog.html'))
   })
+}
+
+/** Interactive processes above normal (E2.7). settings.json "performance.priorities": false turns it off; read once, at boot. */
+function startPriorities(): void {
+  const flat = (settingsStore.value as Record<string, unknown>)['performance.priorities']
+  const nested = ((settingsStore.value as Record<string, unknown>).performance as { priorities?: unknown } | undefined)?.priorities
+  const enabled = (flat ?? nested) !== false
+  const keeper = startPriorityKeeper({
+    enabled,
+    getMetrics: () => app.getAppMetrics(),
+    rendererPids: () => {
+      const pid = win && !win.isDestroyed() && !win.webContents.isDestroyed() ? win.webContents.getOSProcessId() : 0
+      return new Set(pid > 0 ? [pid] : [])
+    },
+    log: appLog,
+  })
+  if (!enabled) { appLog('priorities: off (performance.priorities = false)'); return }
+  // Chromium resets a renderer's class when the window changes visibility or focus: reapply right then.
+  const w = win
+  if (w) { w.on('show', keeper.pass); w.on('focus', keeper.pass); w.on('blur', keeper.pass); w.on('restore', keeper.pass); w.on('hide', keeper.pass) }
+  app.on('browser-window-focus', keeper.pass)
 }
 
 async function start(): Promise<void> {

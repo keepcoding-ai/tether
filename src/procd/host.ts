@@ -9,6 +9,7 @@ import { procLogPath, procLogsDir } from '../core/paths.ts'
 import { encode, guessId, LineParser } from '../daemon/ndjson.ts'
 import { killTree, spawnPty, type PtyHandle } from '../daemon/pty.ts'
 import { Scrollback } from '../daemon/scrollback.ts'
+import { makePrioritySetter, prioritiesEnabled, PRIORITY_BELOW_NORMAL, type SetPriority } from './priority.ts'
 import { makeLineCleaner, type LineCleaner } from './log-clean.ts'
 import {
   PROCD_PROTOCOL_VERSION,
@@ -64,6 +65,8 @@ export interface HostOptions {
   inputMax?: number
   /** Scrollback ring size in characters (default 256 KiB). */
   scrollbackChars?: number
+  /** Priority setter for hosted processes (tests inject one). Default: the OS one; TETHER_PRIORITIES=0 turns it off. */
+  setPriority?: SetPriority
 }
 
 export interface HostStats {
@@ -186,6 +189,7 @@ export class ProcHost {
   private readonly batchMs: number
   private readonly inputMax: number
   private readonly scrollbackChars: number
+  private readonly setPriority: SetPriority
   private readonly outs = new Map<Socket, ClientOut>()
   private readonly counters: HostStats = { inputDropped: 0, queuesDropped: 0 }
   private readonly server: Server
@@ -207,6 +211,7 @@ export class ProcHost {
     this.batchMs = opts.batchMs ?? BATCH_MS
     this.inputMax = opts.inputMax ?? INPUT_MAX
     this.scrollbackChars = opts.scrollbackChars ?? SCROLLBACK_CHARS
+    this.setPriority = makePrioritySetter({ enabled: prioritiesEnabled(), set: opts.setPriority, log: this.log })
     // The queue is pumped only on 'drain', and a socket emits 'drain' only after a write found it at or above its own
     // highWaterMark. With that mark equal to outHigh, every item that waits (queued because writableLength >= outHigh)
     // has a 'drain' coming; with the default mark (16 KiB) above a smaller outHigh, a queue filled while writableLength
@@ -476,6 +481,8 @@ export class ProcHost {
       log?.close()
       throw new HostError('spawn-failed', (e as Error).message)
     }
+    // Below normal: what the host launches (and, on Windows, what that launches) yields to the interactive processes.
+    this.setPriority(pty.pid, PRIORITY_BELOW_NORMAL)
     identity = this.persist ? processStartTime(pty.pid).then((t) => t ?? spawnedAt) : Promise.resolve(spawnedAt)
     const startedAt = await identity
     run = { name: req.name, run: req.run, pid: pty.pid, startedAt, spawnedAt, pty, scrollback, log, finish, attached: new Set(), ended }

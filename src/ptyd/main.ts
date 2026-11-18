@@ -9,6 +9,7 @@ import { tetherHome } from '../core/paths.ts'
 import { pipePath } from '../daemon/protocol.ts'
 import { HostClient } from '../procd/client.ts'
 import { ProcHost, PROCD_IDLE_MS } from '../procd/host.ts'
+import { makePrioritySetter, prioritiesEnabled, PRIORITY_ABOVE_NORMAL } from '../procd/priority.ts'
 import { ptydLogPath, ptydPidPath, ptydPipePath } from './paths.ts'
 
 async function main(): Promise<void> {
@@ -46,6 +47,8 @@ async function main(): Promise<void> {
     setTimeout(() => process.exit(err.code === 'EADDRINUSE' ? 0 : 2), 200)
     return
   }
+  // The pane host carries typing and echo: above normal (what it hosts is set below normal by the ProcHost).
+  makePrioritySetter({ enabled: prioritiesEnabled(), log })(process.pid, PRIORITY_ABOVE_NORMAL)
   await writeFile(ptydPidPath(home), `${process.pid}\n`)
   log(`started pid ${process.pid}, home ${home}`)
 
