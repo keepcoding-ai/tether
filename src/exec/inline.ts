@@ -22,7 +22,11 @@ export class InlineTransport {
   call(_lane: string, req: ExecRequest): Promise<ExecReply> {
     return new Promise((resolve) => {
       setImmediate(() => {
-        void loadTable(this.tableUrl).then((table) => {
+        let tableP: Promise<OpTable>
+        try { tableP = loadTable(this.tableUrl) } catch (e) { tableP = Promise.reject(e) }
+        // A table that cannot load answers every call with the error: a silent never-settling promise hangs the caller forever.
+        tableP.catch((e: unknown) => { loaded = undefined; resolve({ id: req.id, ok: false, error: serializeError(e), ms: 0 }) })
+        void tableP.then((table) => {
           const t0 = performance.now()
           const done = (reply: ExecReply): void => {
             reply.ms = Math.round((performance.now() - t0) * 10) / 10

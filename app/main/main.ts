@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url'
 import { Executor } from '../../src/exec/executor.ts'
 import type { OpTable } from '../../src/exec/table.ts'
 import { setMainExecutor } from './main-executor.ts'
+import { setAgentExecutor } from '../../src/agents/agent-exec.ts'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { createAppLog } from './app-log.ts'
 import { startCrashReports } from './crash-report.ts'
@@ -105,6 +106,9 @@ const mainExec = new Executor({
   log: msg => console.error(`tether: ${msg}`),
 })
 setMainExecutor(mainExec)
+// The adapters and spawnDetachedNode (tetherd, procd, ptyd) run their ops through agentExecutor(): without this they fall back to an
+// inline executor with no tableUrl, which cannot load its table in this CJS bundle and never answers (the app hung on "reiniciando o tetherd…").
+setAgentExecutor(mainExec)
 const appLog = createAppLog(join(home, 'tether-app.log'), mainExec, {
   // The fatal-exit writer only: loaded when needed, synchronously (the table bundle is CJS).
   emergency: (path, text) => (require(join(__dirname, 'exec-table.cjs')) as { table: OpTable }).table.appendText(path, text),
