@@ -1,5 +1,5 @@
 // The browser extension's channels between its renderer and main sides (E2: the tab registry; E4: the local-network question).
-import type { ClosedTab } from './closed-history.ts'
+import type { ClosedTab } from './closed-rules.ts'
 import type { ControlView } from './control.ts'
 import type { DownloadEntry, UploadAsk } from './files-rules.ts'
 import type { LocalNetworkAsk } from './local-network-rules.ts'

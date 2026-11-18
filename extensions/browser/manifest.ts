@@ -33,7 +33,7 @@ export const manifest: ExtensionManifest = {
       },
       evaluate: { type: 'boolean', default: false, title: 'Permitir que o agente execute JavaScript na página', description: 'Desligado, o agente lê e age na página, mas não roda código nela.', order: 1 },
       localNetwork: { type: 'string', default: 'ask', enum: ['ask', 'allow', 'deny'], enumLabels: ['Perguntar na primeira vez', 'Sempre permitir neste perfil', 'Nunca permitir'], title: 'Abrir localhost e a rede local', description: 'Se o agente pode abrir localhost e endereços da rede local nas guias.', order: 2 },
-      // The history of closed tabs (closed-history.ts): expired when read and at start, never by a timer.
+      // The history of closed tabs (closed-rules.ts): expired when read and at start, never by a timer.
       closedHistory: {
         type: 'string', default: '7d', enum: ['1d', '7d', '30d', 'never'], enumLabels: ['1 dia', '7 dias', '30 dias', 'Para sempre'], order: 4,
         title: 'Guardar as guias fechadas',

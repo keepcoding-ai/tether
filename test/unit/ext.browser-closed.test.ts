@@ -6,8 +6,9 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  CLOSED_HISTORY_MAX, ClosedHistory, type ClosedTab, closedEntryOf, closedGroups, keepMs, keepOf, parseClosed, pruneClosed, tabsToCloseOnEnd,
-} from '../../extensions/browser/closed-history.ts'
+  CLOSED_HISTORY_MAX, type ClosedTab, closedEntryOf, closedGroups, keepMs, keepOf, parseClosed, pruneClosed, tabsToCloseOnEnd,
+} from '../../extensions/browser/closed-rules.ts'
+import { ClosedHistory } from '../../extensions/browser/closed-history.ts'
 
 const DAY = 24 * 60 * 60 * 1000
 const NOW = 1_800_000_000_000
