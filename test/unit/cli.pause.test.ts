@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
 import { slotPauseReportPath } from '../../src/core/paths.ts'
 import { cmdPause } from '../../src/cli/pause.ts'
-import { newEntry, writePauseFile, type PauseBatch } from '../../src/daemon/pause.ts'
+import { newEntry, type PauseBatch } from '../../src/daemon/pause.ts'
+import { writePauseFile } from '../../src/daemon/pause-sync.ts'
 
 const homes: string[] = []
 async function run(home: string, args: string[], env: Record<string, string> = {}) {

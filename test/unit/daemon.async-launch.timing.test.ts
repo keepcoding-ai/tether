@@ -148,12 +148,14 @@ describe('asynchronous launch', () => {
       const t0 = Date.now()
       const replies = await Promise.all(Array.from({ length: MAX_STARTING + 1 }, (_, i) => rec.client.request({ t: 'create', kind: 'soul', cwd, name: `h${i}`, start: true })))
       const ids = replies.map((r) => r.slot!.slotId)
-      // The first MAX_STARTING spawn once the ceiling drops the middleware; the last one stays queued (no start event comes).
-      for (const id of ids.slice(0, MAX_STARTING)) await rec.state(id, (s) => s.status === 'starting' && s.pid !== undefined, 10_000, 'spawned')
+      // MAX_STARTING of them spawn once the ceiling drops the middleware; the other stays queued (no start event comes). Which one
+      // queues is whichever start reaches the daemon last: `create` awaits the canonical folder, so arrival order is not request order.
+      const spawned = (): string[] => daemon.slots().filter((s) => ids.includes(s.slotId) && s.status === 'starting' && s.pid !== undefined).map((s) => s.slotId)
+      await waitUntil(() => spawned().length >= MAX_STARTING, 10_000, `${MAX_STARTING} slots spawned`)
       const took = Date.now() - t0
       assert.ok(took >= CEILING - 20, `spawned after the ceiling (${took} ms)`)
       assert.ok(took < CEILING + 3_000, `the hung middleware held the seats for ${took} ms`)
-      assert.equal(daemon.slots().find((s) => s.slotId === ids.at(-1))!.status, 'queued')
+      assert.equal(daemon.slots().filter((s) => ids.includes(s.slotId) && s.status === 'queued').length, 1)
       assert.ok(startingOf(daemon) <= MAX_STARTING)
       assert.equal(hostLogs.filter((m) => m.includes(`launch middleware of hangs took over ${CEILING} ms`)).length, MAX_STARTING)
     } finally {

@@ -11,7 +11,7 @@ import { mainExecutor } from '../../app/main/main-executor.ts'
 import { addTetherToGitignore, isDestinationId, NoteWatchers, notesDirFor, personalNotesDir, prepareNote, readNote, renameNote, writeNote, type NoteDestinationId } from '../../app/main/note-files.ts'
 import { guardHtmlPreviews, openHtmlInBrowser } from '../../app/main/html-preview-main.ts'
 import { NOTE_EXTENSION } from '../../app/shared/notes.ts'
-import { canonicalDir } from '../../src/core/paths.ts'
+import { canonicalDir } from '../../src/core/paths-sync.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { NoteChannels } from './ipc.ts'
 

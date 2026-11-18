@@ -10,7 +10,7 @@ import { claudeAdapter } from '../../src/agents/claude.ts'
 import { shellAdapter } from '../../src/agents/shell.ts'
 import { soulAdapter } from '../../src/agents/soul.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
-import { canonicalDir } from '../../src/core/paths.ts'
+import { canonicalDir } from '../../src/core/paths-sync.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
 const win = process.platform === 'win32'

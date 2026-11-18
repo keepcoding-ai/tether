@@ -13,6 +13,7 @@ import { readProcEvents } from './daemon.proc-disk.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { HostClient } from '../../src/procd/client.ts'
 import { ProcHost } from '../../src/procd/host.ts'
+import { hostStore } from '../../src/procd/run-store.ts'
 import { pidAlive, Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const SERVE = 'setInterval(() => console.log("tick"), 100)'
@@ -32,7 +33,7 @@ describe('daemon: background processes through an in-process host', () => {
   const recipe = (script: string, over: Record<string, unknown> = {}) => ({ command: 'node', args: ['-e', script], cwd: home, ...over })
 
   before(async () => {
-    host = new ProcHost({ home, pipe: hostPipe })
+    host = new ProcHost({ home, pipe: hostPipe, store: hostStore })
     await host.listen()
     await boot()
     rec.client.on('proc', (p) => procs.push(p))
@@ -169,7 +170,7 @@ describe('daemon: ports and declared uses through an in-process host', () => {
   const freePort = () => new Promise<number>((res) => { const s = createServer().listen(0, '127.0.0.1', () => { const p = (s.address() as { port: number }).port; s.close(() => res(p)) }) })
 
   before(async () => {
-    host = new ProcHost({ home, pipe: hostPipe })
+    host = new ProcHost({ home, pipe: hostPipe, store: hostStore })
     await host.listen()
     await boot()
     A = (await rec.client.request({ t: 'create', kind: 'shell', cwd: home, name: 'painel-a' })).slot!.slotId
@@ -233,7 +234,7 @@ describe('daemon: ports and declared uses through an in-process host', () => {
       (e: Error) => e instanceof DaemonError && e.code === 'proc-in-use' && /painel-a \(shell\) até .*: e2e do checkout/.test(e.message) && /--wait/.test(e.message) && /--force "motivo"/.test(e.message))
     assert.equal(await pid('svc'), before)
     assert.equal(kinds('svc').at(-1), 'refused-in-use')
-    assert.ok(pendingNotices(home, A).some((n) => /\[tether\] processes: painel-b \(shell\) quer reiniciar svc; seu uso vai até .*tether proc release svc/.test(n.text)))
+    await waitUntil(() => pendingNotices(home, A).some((n) => /\[tether\] processes: painel-b \(shell\) quer reiniciar svc; seu uso vai até .*tether proc release svc/.test(n.text)), 5_000, 'notice') // the store appends notices in batches of up to 50 ms
   })
 
   test('--wait: the act runs once the use is released', async () => {
@@ -256,7 +257,7 @@ describe('daemon: ports and declared uses through an in-process host', () => {
     const forced = readProcEvents(home, 'svc').find((e) => e.kind === 'forced')!
     assert.equal(forced.reason, 'corrigi o parser')
     assert.equal(forced.over![0]!.by.slotId, A)
-    assert.ok(pendingNotices(home, A).some((n) => /svc foi reiniciado por painel-b \(shell\), à força sobre o seu uso, motivo: "corrigi o parser"/.test(n.text)))
+    await waitUntil(() => pendingNotices(home, A).some((n) => /svc foi reiniciado por painel-b \(shell\), à força sobre o seu uso, motivo: "corrigi o parser"/.test(n.text)), 5_000, 'notice') // the store appends notices in batches of up to 50 ms
     assert.equal(s.uses?.length, 1, 'the use goes on over the new run')
   })
 
@@ -268,14 +269,14 @@ describe('daemon: ports and declared uses through an in-process host', () => {
     assert.equal((await rec.client.request({ t: 'proc-info', name: 'svc' })).proc!.uses?.length, 1, 'kept across the restart')
     await waitUntil(() => kinds('svc').at(-1) === 'use-expired', 8_000, 'use-expired')
     assert.equal((await rec.client.request({ t: 'proc-info', name: 'svc' })).proc!.uses, undefined)
-    assert.ok(pendingNotices(home, A).some((n) => /seu uso de svc venceu às/.test(n.text)))
+    await waitUntil(() => pendingNotices(home, A).some((n) => /seu uso de svc venceu às/.test(n.text)), 5_000, 'notice') // the store appends notices in batches of up to 50 ms
   })
 
   test('the process ends by itself: the panels that use it hear the code', async () => {
     await rec.client.request({ t: 'proc-start', name: 'curto', recipe: recipe('setTimeout(() => process.exit(5), 1500)') })
     await rec.client.request({ t: 'proc-use', name: 'curto', purpose: 'olhar', by: byA() })
     await waitUntil(() => kinds('curto').includes('ended'), 10_000, 'curto ended')
-    assert.ok(pendingNotices(home, A).some((n) => /curto encerrou sozinho às .* com código 5/.test(n.text)))
+    await waitUntil(() => pendingNotices(home, A).some((n) => /curto encerrou sozinho às .* com código 5/.test(n.text)), 5_000, 'notice') // the store appends notices in batches of up to 50 ms
   })
 
   test('the panel is forgotten: its uses end, and the panel refused meanwhile hears the process is free', async () => {
@@ -283,7 +284,7 @@ describe('daemon: ports and declared uses through an in-process host', () => {
     await assert.rejects(rec.client.request({ t: 'proc-stop', name: 'svc', by: byB() }), (e: Error) => e instanceof DaemonError && e.code === 'proc-in-use')
     assert.ok(!pendingNotices(home, B).some((n) => /svc ficou livre/.test(n.text)))
     await rec.client.request({ t: 'forget', slotId: A })
-    assert.ok(pendingNotices(home, B).some((n) => /svc ficou livre/.test(n.text)))
+    await waitUntil(() => pendingNotices(home, B).some((n) => /svc ficou livre/.test(n.text)), 5_000, 'notice') // the store appends notices in batches of up to 50 ms
     const s = (await rec.client.request({ t: 'proc-info', name: 'svc' })).proc!
     assert.equal(s.uses, undefined)
     const last = readProcEvents(home, 'svc').at(-1)!

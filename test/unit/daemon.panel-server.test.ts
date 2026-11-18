@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { panelHostEnabled, startDaemon, type Daemon } from '../../src/daemon/server.ts'
+import { readUserSettings } from '../../src/core/user-settings-sync.ts'
 import { HostClient } from '../../src/procd/client.ts'
 import { ProcHost } from '../../src/procd/host.ts'
 import { pidAlive, Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
@@ -15,13 +16,13 @@ describe('panelHostEnabled', () => {
     const { writeFile } = await import('node:fs/promises')
     const home = tempHome()
     try {
-      assert.equal(panelHostEnabled(home, {}), true)
+      assert.equal(panelHostEnabled(readUserSettings(home, {}), {}), true)
       await writeFile(join(home, 'settings.json'), '{ "daemon": { "panelHost": true } }')
-      assert.equal(panelHostEnabled(home, {}), true)
-      assert.equal(panelHostEnabled(home, { TETHER_PANEL_HOST: '0' }), false)
+      assert.equal(panelHostEnabled(readUserSettings(home, {}), {}), true)
+      assert.equal(panelHostEnabled(readUserSettings(home, {}), { TETHER_PANEL_HOST: '0' }), false)
       await writeFile(join(home, 'settings.json'), '{ "daemon.panelHost": false }')
-      assert.equal(panelHostEnabled(home, {}), false)
-      assert.equal(panelHostEnabled(home, { TETHER_PANEL_HOST: '1' }), true)
+      assert.equal(panelHostEnabled(readUserSettings(home, {}), {}), false)
+      assert.equal(panelHostEnabled(readUserSettings(home, {}), { TETHER_PANEL_HOST: '1' }), true)
     } finally {
       await removeHome(home)
     }

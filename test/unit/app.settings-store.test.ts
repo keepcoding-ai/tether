@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { migrateUserFiles, SettingsStore } from '../../app/main/settings-store.ts'
-import { readUserSettings } from '../../src/core/user-settings.ts'
+import { readUserSettings } from '../../src/core/user-settings-sync.ts'
 import { Executor } from '../../src/exec/executor.ts'
 import { tempDirs } from './tmp.helpers.ts'
 

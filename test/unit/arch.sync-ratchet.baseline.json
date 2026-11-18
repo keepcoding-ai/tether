@@ -1,22 +1,9 @@
 {
   "files": {
     "extensions/browser/doctor.ts": 5,
-    "src/agents/claude.ts": 7,
-    "src/agents/codex.ts": 8,
-    "src/agents/shell.ts": 1,
-    "src/core/exe.ts": 21,
-    "src/core/paths.ts": 1,
-    "src/core/profile.ts": 7,
-    "src/core/store-sync.ts": 15,
-    "src/core/user-settings.ts": 1,
+    "src/core/exe-sync.ts": 19,
     "src/daemon/main.ts": 4,
-    "src/daemon/notices.ts": 2,
-    "src/daemon/pause.ts": 3,
-    "src/daemon/proc-launch.ts": 2,
-    "src/daemon/ronda.ts": 4,
     "src/doctor.ts": 25,
-    "src/procd/host.ts": 12,
-    "src/procd/protocol.ts": 4,
     "src/trace/timeline.ts": 7
   },
   "vendor": {},

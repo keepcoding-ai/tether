@@ -1,8 +1,5 @@
 // Polite pause batch: the pure model (entry state machine, report folding, request text) plus the
 // <home>/pause.json persistence. The agent stops itself at a safe point; nothing here forces anything.
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
-import { pausePath } from '../core/paths.ts'
 
 export type PauseEntryState =
   | 'queued'
@@ -201,13 +198,4 @@ export function parsePauseFile(text: string): PauseBatch | undefined {
   } catch {
     return undefined
   }
-}
-
-/** Atomic: temp + rename. */
-export function writePauseFile(home: string, batch: PauseBatch): void {
-  const path = pausePath(home)
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(batch, null, 2) + '\n')
-  renameSync(tmp, path)
 }

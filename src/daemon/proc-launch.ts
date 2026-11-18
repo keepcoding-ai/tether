@@ -2,12 +2,9 @@
 // panel or an agent session, plus colour support, plus the recipe's env: nothing comes from the caller's shell.
 // The command is resolved here (PATH, PATHEXT-like .exe/.cmd/.bat); a .cmd/.bat shortcut is wrapped in cmd.exe
 // with ONE raw argument string (node-pty re-quotes an args array and breaks inner quotes).
-import { existsSync, statSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+// The lookups that stat the disk (planFor) are in proc-launch-sync.ts, which only the executor's operation imports.
 import { agentExecutor } from '../agents/agent-exec.ts'
-import { findOnPath } from '../agents/shell.ts'
 import { withColorSupport } from '../agents/termenv.ts'
-import { canonicalDir } from '../core/paths.ts'
 import type { ProcPlan } from '../procd/protocol.ts'
 import type { RecipeFields } from './procs.ts'
 
@@ -30,33 +27,9 @@ export function procEnv(base: NodeJS.ProcessEnv, recipeEnv: Record<string, strin
   return Object.assign(env, recipeEnv)
 }
 
-/** A path or a name with a separator is taken as given (relative to the folder); a bare name is looked up on PATH. */
-function resolveCommand(command: string, cwd: string, env: Record<string, string>, platform: NodeJS.Platform): string | undefined {
-  if (isAbsolute(command) || /[\\/]/.test(command)) {
-    const full = resolve(cwd, command)
-    const exts = platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : ['']
-    for (const ext of exts) if (existsSync(full + ext) && statSync(full + ext).isFile()) return full + ext
-    return undefined
-  }
-  return findOnPath(command, env)
-}
-
 /** cmd.exe quoting for one argument of the line: quoted when it has a space, a quote or is empty; inner quotes doubled. */
 export function cmdQuote(arg: string): string {
   return arg === '' || /[\s"]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg
-}
-
-export function planFor(recipe: Pick<RecipeFields, 'command' | 'args' | 'cwd' | 'env'>, base: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): ProcPlan {
-  const cwd = canonicalDir(recipe.cwd)
-  if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new LaunchError(`a pasta ${cwd} não existe; corrija com --cwd e inicie de novo`)
-  const env = procEnv(base, recipe.env)
-  const command = resolveCommand(recipe.command, cwd, env, platform)
-  if (!command) throw new LaunchError(`comando não encontrado: ${recipe.command} (nem como caminho, nem no PATH do tetherd); use o caminho completo`)
-  if (platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
-    const line = [command, ...recipe.args].map(cmdQuote).join(' ')
-    return { command: env.ComSpec ?? env.COMSPEC ?? 'cmd.exe', args: `/d /s /c "${line}"`, cwd, env }
-  }
-  return { command, args: [...recipe.args], cwd, env }
 }
 
 /**

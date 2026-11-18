@@ -85,18 +85,19 @@ describe('reading codex files', () => {
     mkdirSync(join(ch, 'sessions', '2025', '01', '02'), { recursive: true })
     writeFileSync(join(ch, 'sessions', '2025', '01', '02', `rollout-y-${v4}.jsonl`), '{}\n')
     const opts = { env: { CODEX_HOME: ch } }
-    assert.ok(findRollout(ID, opts))
-    assert.ok(findRollout(v4, opts))
-    assert.equal(findRollout('../x', opts), undefined)
+    assert.ok(await findRollout(ID, opts))
+    assert.ok(await findRollout(v4, opts))
+    assert.equal(await findRollout('../x', opts), undefined)
     const b = { slotId: 's', agent: 'codex', sessionId: ID, cwd: dir, since: '', confirmed: true, ended: false }
     assert.equal(await codexAdapter.sessionExists(b, opts), true)
     assert.equal(await codexAdapter.sessionExists({ ...b, sessionId: '01a1e5a8-c6b2-7d90-b956-000000000000' }, opts), false)
     const index = join(ch, 'session_index.jsonl')
     writeFileSync(index, `{"id":"${ID}","thread_name":"Primeiro","updated_at":"x"}\n{"id":"other","thread_name":"Z"}\n{"id":"${ID}","thread_name":"Renomeado","updated_at":"y"}\n{"id":"other","thread_name":"W"}\n`)
-    assert.equal(indexTitle(index, ID), 'Renomeado')
+    assert.equal(await indexTitle(index, ID), 'Renomeado')
     assert.equal(await codexAdapter.title(b, opts), 'Renomeado')
     const seen: string[] = []
     const stop = codexAdapter.watchTitle!(b, (x) => seen.push(x), 10, opts)
+    await new Promise((r) => setTimeout(r, 40)) // the first read is asynchronous now
     appendFileSync(index, `{"id":"${ID}","thread_name":"Terceiro"}\n`)
     await new Promise((r) => setTimeout(r, 80))
     stop()
@@ -114,13 +115,13 @@ describe('codex MCP and skills', () => {
     assert.deepEqual(mcpServerOverrides('a b', { command: 'node', args: ['x.js'], env: { K: 'v' } }), ['mcp_servers."a b".command="node"', 'mcp_servers."a b".args=["x.js"]', 'mcp_servers."a b".env={K="v"}'])
   })
 
-  test('inject appends -c pairs and refuses a name another file took', () => {
+  test('inject appends -c pairs and refuses a name another file took', async () => {
     const files: Record<string, string> = { a: JSON.stringify({ mcpServers: { one: { command: 'x' } } }), b: JSON.stringify({ mcpServers: { one: { command: 'y' } } }) }
     const base = { command: 'c', args: ['z'], cwd: dir, env: {} }
-    const p = withCodexMcpOverrides(base, 'a', undefined, (f) => files[f]!)
+    const p = await withCodexMcpOverrides(base, 'a', undefined, (f) => files[f]!)
     assert.deepEqual(p.args, ['z', '-c', 'mcp_servers.one.command="x"'])
     assert.deepEqual(base.args, ['z'])
-    assert.throws(() => withCodexMcpOverrides(p, 'b', undefined, (f) => files[f]!), McpNameCollisionError)
+    await assert.rejects(() => withCodexMcpOverrides(p, 'b', undefined, (f) => files[f]!), McpNameCollisionError)
   })
 
   test('skills go in developer_instructions as one TOML string', async () => {

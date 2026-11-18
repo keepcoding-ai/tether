@@ -4,10 +4,8 @@
 // launch (new session or resume) applies the profile as it is NOW, so an edit takes effect on the next start.
 // Validation refuses whatever tether itself puts on the command line (session choice, settings, fork) and the
 // env vars that carry the slot's identity. Reads are tolerant: a corrupt file is copied aside, never lost.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { FileSnapshot, type SnapshotIo } from './file-snapshot.ts'
-import { defaultShell } from '../agents/shell.ts'
 import type { AgentName, SlotMeta } from './event.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import '../agents/load.ts'
@@ -85,18 +83,27 @@ export function gitBashPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
 }
 
-export function defaultProfiles(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Profile[] {
-  // Each registered agent brings its own (claude, claude-dev and soul from the built-ins); the shells are the core's.
+/**
+ * The profiles a fresh home starts with. The two facts that need the disk come from the caller: `shell` is the default shell
+ * of the platform (the executor's `resolveShell`; profile-sync.ts walks PATH itself) and `gitBash` tells whether Git for
+ * Windows' bash exists at `gitBashPath(env)`. Each registered agent brings its own profiles.
+ */
+export function defaultProfilesWith(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, shell: ShellCommand, gitBash: boolean): Profile[] {
   const out: Profile[] = agentRegistry.all().flatMap((a) => a.defaultProfiles(env, platform))
-  const shell = defaultShell(env, platform)
   if (platform === 'win32') {
     out.push({ id: 'powershell', name: 'PowerShell', agent: 'shell', args: [], shell, default: true })
-    const bash = gitBashPath(env)
-    if (existsSync(bash)) out.push({ id: 'git-bash', name: 'Git Bash', agent: 'shell', args: [], shell: { command: bash, args: ['--login', '-i'] } })
+    if (gitBash) out.push({ id: 'git-bash', name: 'Git Bash', agent: 'shell', args: [], shell: { command: gitBashPath(env), args: ['--login', '-i'] } })
   } else {
     out.push({ id: 'shell', name: 'Shell', agent: 'shell', args: [], shell, default: true })
   }
   return out
+}
+
+/** `defaultProfilesWith`, asking the executor for the two facts that need the disk. */
+async function defaultProfilesVia(io: SnapshotIo, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<Profile[]> {
+  const shell = await io.run('resolveShell', [[], undefined, { ...env }])
+  const gitBash = platform === 'win32' ? await io.run('exists', [gitBashPath(env)]).catch(() => false) : false
+  return defaultProfilesWith(env, platform, shell, gitBash)
 }
 
 // ---- reading and writing the file ----------------------------------------
@@ -158,57 +165,13 @@ export function parseProfilesFile(text: string): { ok: true; profiles: Profile[]
   return { ok: true, profiles, skipped }
 }
 
-function profilesText(profiles: Profile[]): string {
+export function profilesText(profiles: Profile[]): string {
   const file: ProfilesFile = { v: 1, profiles }
   return JSON.stringify(file, null, 2) + '\n'
 }
 
-/** Atomic: the whole file goes to a temp name first, then replaces the old one. */
-export function writeProfiles(home: string, profiles: Profile[]): void {
-  const path = profilesPath(home)
-  mkdirSync(home, { recursive: true })
-  const file: ProfilesFile = { v: 1, profiles }
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(file, null, 2) + '\n')
-  renameSync(tmp, path)
-}
-
 function stamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-')
-}
-
-/**
- * The profiles on disk. A missing file is created with the defaults. A file that cannot be parsed is copied to
- * `profiles.json.corrompido-<time>` and replaced by the defaults (the copy fails → nothing is overwritten and the
- * defaults are used in memory only); either way `problem` says what happened, for the CLI/app to show.
- */
-export function readProfiles(home: string): ProfilesRead {
-  const path = profilesPath(home)
-  let text: string
-  try {
-    text = readFileSync(path, 'utf8')
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-      return { profiles: defaultProfiles(), problem: `não consegui ler ${path} (${(e as Error).message}); usando os perfis padrão` }
-    }
-    const profiles = defaultProfiles()
-    try { writeProfiles(home, profiles) } catch { /* read-only home: the defaults still work in memory */ }
-    return { profiles }
-  }
-  const parsed = parseProfilesFile(text)
-  if (parsed.ok) {
-    if (parsed.skipped === 0) return { profiles: parsed.profiles }
-    return { profiles: parsed.profiles, problem: `${path}: ${parsed.skipped} perfil(is) malformado(s) ignorado(s)` }
-  }
-  const backup = `${path}.corrompido-${stamp()}`
-  try {
-    copyFileSync(path, backup)
-  } catch (e) {
-    return { profiles: defaultProfiles(), problem: `${path} está inválido (${parsed.error}) e não consegui guardar uma cópia (${(e as Error).message}); usando os perfis padrão sem gravar` }
-  }
-  const profiles = defaultProfiles()
-  writeProfiles(home, profiles)
-  return { profiles, backup, problem: `${path} estava inválido (${parsed.error}); cópia guardada em ${backup}; perfis padrão recriados` }
 }
 
 /**
@@ -218,7 +181,7 @@ export function readProfiles(home: string): ProfilesRead {
 async function readProfilesVia(home: string, io: SnapshotIo, text: string | undefined): Promise<ProfilesRead> {
   const path = profilesPath(home)
   if (text === undefined) {
-    const profiles = defaultProfiles()
+    const profiles = await defaultProfilesVia(io)
     try { await io.run('writeTextAtomic', [path, profilesText(profiles)]) } catch { /* read-only home: the defaults still work in memory */ }
     return { profiles }
   }
@@ -231,9 +194,9 @@ async function readProfilesVia(home: string, io: SnapshotIo, text: string | unde
   try {
     await io.run('writeTextAtomic', [backup, text])
   } catch (e) {
-    return { profiles: defaultProfiles(), problem: `${path} está inválido (${parsed.error}) e não consegui guardar uma cópia (${(e as Error).message}); usando os perfis padrão sem gravar` }
+    return { profiles: await defaultProfilesVia(io), problem: `${path} está inválido (${parsed.error}) e não consegui guardar uma cópia (${(e as Error).message}); usando os perfis padrão sem gravar` }
   }
-  const profiles = defaultProfiles()
+  const profiles = await defaultProfilesVia(io)
   await io.run('writeTextAtomic', [path, profilesText(profiles)])
   return { profiles, backup, problem: `${path} estava inválido (${parsed.error}); cópia guardada em ${backup}; perfis padrão recriados` }
 }
@@ -416,15 +379,6 @@ export function snapshotProfile(meta: SlotMeta, p: Profile): boolean {
 
 // ---- the store ---------------------------------------------------------------
 
-function statKey(path: string): string {
-  try {
-    const s = statSync(path)
-    return `${s.mtimeMs}:${s.size}`
-  } catch {
-    return 'missing'
-  }
-}
-
 /** Where the store's own writes go in snapshot mode (tetherd: its SlotStore, so they are queued, coalesced and ordered). */
 export interface ProfileWriter {
   put(path: string, text: string): void
@@ -432,73 +386,55 @@ export interface ProfileWriter {
 }
 
 /**
- * The profiles file as tetherd sees it. With an executor (`io`) it is a snapshot in memory: `profiles()` and `read()` never
- * touch the disk; the executor reloads it when the file changes (watcher, a check every few seconds) or on `fresh()`, and
- * `save`/`delete` update the memory first and write behind it. Without an executor (the CLI, Electron main, tests) it
- * re-reads whenever the file's stat changed, as before.
+ * The profiles file as tetherd sees it: a snapshot in memory. `profiles()` and `read()` never touch the disk; the executor
+ * reloads it when the file changes (watcher, a check every few seconds) or on `fresh()`, and `save`/`delete` update the memory
+ * first and write behind it. The CLI and Electron main read the file synchronously (profile-sync.ts).
  */
 export class ProfileStore {
   readonly home: string
-  private cache: { key: string; read: ProfilesRead } | undefined
-  private readonly snap: FileSnapshot<ProfilesRead> | undefined
+  private readonly snap: FileSnapshot<ProfilesRead>
   private writer: ProfileWriter | undefined
-  private readonly io: SnapshotIo | undefined
+  private readonly io: SnapshotIo
 
-  constructor(home: string, io?: SnapshotIo, log?: (msg: string) => void) {
+  constructor(home: string, io: SnapshotIo, log?: (msg: string) => void) {
     this.home = home
     this.io = io
-    this.snap = io
-      ? new FileSnapshot<ProfilesRead>(profilesPath(home), io, {
-        decode: (text) => readProfilesVia(home, io, text),
-        // Empty, not the defaults: building the defaults reads the agent registry, which must not load before tetherd's own host does.
-        initial: { profiles: [] },
-        before: () => this.writer?.flush(profilesPath(home)) ?? Promise.resolve(),
-        ...(log ? { log } : {}),
-      })
-      : undefined
+    this.snap = new FileSnapshot<ProfilesRead>(profilesPath(home), io, {
+      decode: (text) => readProfilesVia(home, io, text),
+      // Empty, not the defaults: building the defaults reads the agent registry, which must not load before tetherd's own host does.
+      initial: { profiles: [] },
+      before: () => this.writer?.flush(profilesPath(home)) ?? Promise.resolve(),
+      ...(log ? { log } : {}),
+    })
   }
 
-  /** Snapshot mode: route the store's writes through the daemon's SlotStore. */
+  /** Route the store's writes through the daemon's SlotStore. */
   attachWriter(w: ProfileWriter): void { this.writer = w }
 
-  read(): ProfilesRead {
-    if (this.snap) return this.snap.get()
-    const path = profilesPath(this.home)
-    const key = statKey(path)
-    if (this.cache && this.cache.key === key) return this.cache.read
-    const read = readProfiles(this.home)
-    this.cache = { key: statKey(path), read }
-    return read
-  }
+  read(): ProfilesRead { return this.snap.get() }
 
   profiles(): Profile[] {
     return this.read().profiles
   }
 
-  /** The newest profiles (snapshot mode: reloads through the executor when the file changed). */
+  /** The newest profiles (reloads through the executor when the file changed). */
   async fresh(): Promise<Profile[]> {
-    if (!this.snap) return this.profiles()
     return (await this.snap.fresh()).profiles
   }
 
-  /** Snapshot mode: the file watcher and the periodic check. */
-  start(): void { this.snap?.start() }
-  stop(): void { this.snap?.stop() }
+  /** The file watcher and the periodic check. */
+  start(): void { this.snap.start() }
+  stop(): void { this.snap.stop() }
 
   /** Resolves when what `save`/`delete` wrote is on disk. */
   async flush(): Promise<void> { await this.writer?.flush(profilesPath(this.home)) }
 
   private write(profiles: Profile[]): void {
-    if (!this.snap) {
-      writeProfiles(this.home, profiles)
-      this.cache = undefined
-      return
-    }
     const path = profilesPath(this.home)
     this.snap.set({ profiles })
     const text = profilesText(profiles)
     if (this.writer) this.writer.put(path, text)
-    else void this.io!.run('writeTextAtomic', [path, text]).catch(() => { /* the memory keeps the value */ })
+    else void this.io.run('writeTextAtomic', [path, text]).catch(() => { /* the memory keeps the value */ })
   }
 
   save(input: ProfileInput): { profile: Profile; warnings: string[] } {

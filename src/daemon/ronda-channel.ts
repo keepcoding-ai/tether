@@ -47,7 +47,7 @@ const LEGACY_REVISIONS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'
 /** How the daemon offers the channel to one agent: the CLI's args for it, how its CLI loads an MCP file, its start dialog. */
 export interface RondaChannelAgent {
   args: string[]
-  inject(plan: LaunchPlan, configFile: string, servers?: readonly string[]): LaunchPlan
+  inject(plan: LaunchPlan, configFile: string, servers?: readonly string[]): LaunchPlan | Promise<LaunchPlan>
   confirm?: ChannelConfirm
 }
 
@@ -164,7 +164,7 @@ export class RondaChannel {
       // The store never rejects; a failed write leaves its echo unset (revoke cleared the previous one), a written one sets it.
       if (!this.store.isEcho(file, text)) throw new Error('o arquivo MCP da ronda não foi gravado')
       const key = randomBytes(24).toString('base64url')
-      let next = agent.inject(plan, file, [RONDA_MCP_SERVER])
+      let next = await agent.inject(plan, file, [RONDA_MCP_SERVER])
       next = withLeadingArgs({ ...next, env: { ...next.env, [ENV_RONDA_MCP_KEY]: key } }, agent.args)
       this.host.grant(slotId, key, { create: () => { const b = new RondaBackend(slotId, this.opts.log); this.backends.set(slotId, b); return b } })
       return { plan: next, offered: true, run }

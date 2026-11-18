@@ -26,7 +26,7 @@ import { httpMcpConfigOf } from '../../src/agents/mcp.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
-import { SLOT_ID_RE } from '../../src/core/store.ts'
+import { SLOT_ID_RE } from '../../src/core/store-model.ts'
 import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import type { DaemonIo } from '../../src/daemon/ext-api.ts'
@@ -183,11 +183,11 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
     }
     warnedMissing = false
     const id = clientIdOf(slot.slotId)
-    if (!CLIENT_ID_PATTERN.test(id)) { deps.log(`slot ${slot.slotId}: id de cliente inválido para o bridge; lançado sem identidade`); return agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME]) }
+    if (!CLIENT_ID_PATTERN.test(id)) { deps.log(`slot ${slot.slotId}: id de cliente inválido para o bridge; lançado sem identidade`); return await agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME]) }
     const identity = { [ENV_CLIENT_ID]: id, [ENV_CLIENT_NAME]: identities.nameFor(slot.slotId, clientNameOf(state ?? tabOfMeta(slot))) }
     const viaHttp = agent.mcp.http ? await injectHttp(deps, agent, plan, slot, identity, identities) : undefined
     if (viaHttp) return viaHttp
-    const out = agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME])
+    const out = await agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME])
     return { ...out, env: { ...out.env, ...identity } }
   }
 }
@@ -203,7 +203,7 @@ async function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: Laun
   if (!node || !entry) return undefined
   const file = deps.httpConfigFile(slot.slotId)
   // A name collision throws here, before anything is written or granted (the launch host logs it, as for the stdio file).
-  const out = agent.mcp!.inject(plan, file, [MCP_SERVER_NAME])
+  const out = await agent.mcp!.inject(plan, file, [MCP_SERVER_NAME])
   const key = (deps.key ?? (() => randomBytes(24).toString('base64url')))()
   try {
     await io.writeTextAtomic(file, JSON.stringify(httpMcpConfigOf(entry.name, url, ENV_BRIDGE_MCP_KEY), null, 2) + '\n')

@@ -8,7 +8,7 @@
 // that is --dangerously-bypass-hook-trust, which would also run every other unreviewed hook: so notify, which needs no
 // trust. Consequence: a brand-new session binds to the slot when its first turn ends (a session with no turn has
 // nothing to resume). The user's own `notify` keeps working: the reporter chains to it (TETHER_CODEX_NOTIFY).
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
+import { open, readdir, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -118,7 +118,7 @@ export function notifyOverride(reporterPath: string = defaultReporterPath()): st
 
 async function plan(input: PlanInput): Promise<LaunchPlan> {
   const { slot, home, resume, extraArgs, profile } = input
-  const cwd = canonicalDir(resume ? resume.cwd : slot.cwd)
+  const cwd = await canonicalDir(resume ? resume.cwd : slot.cwd)
   // Inherited CLAUDE* vars belong to a Claude session that launched tether (or the app); Codex does not need them.
   const env = withColorSupport(cleanEnv())
   Object.assign(env, profile?.env ?? {})
@@ -150,9 +150,9 @@ function dayDir(sessions: string, t: number): string {
   return join(sessions, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'))
 }
 
-function findIn(dir: string, suffix: string): string | undefined {
+async function findIn(dir: string, suffix: string): Promise<string | undefined> {
   let names: string[]
-  try { names = readdirSync(dir) } catch { return undefined }
+  try { names = await readdir(dir) } catch { return undefined }
   const hit = names.find((n) => n.startsWith('rollout-') && n.endsWith(suffix))
   return hit ? join(dir, hit) : undefined
 }
@@ -161,42 +161,42 @@ function findIn(dir: string, suffix: string): string | undefined {
  * The session's rollout (<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<local ts>-<id>.jsonl). A UUIDv7 says the day (local
  * time, as the folder names are; ±1 day for clocks and midnight), else every day folder is searched.
  */
-export function findRollout(sessionId: string, opts?: LookupOptions): string | undefined {
+export async function findRollout(sessionId: string, opts?: LookupOptions): Promise<string | undefined> {
   if (!ID_RE.test(sessionId)) return undefined
   const sessions = join(codexHome(opts), 'sessions')
   const suffix = `-${sessionId}.jsonl`
   const t = uuidV7Time(sessionId)
   if (t !== undefined) {
     for (const delta of [0, -86_400_000, 86_400_000]) {
-      const hit = findIn(dayDir(sessions, t + delta), suffix)
+      const hit = await findIn(dayDir(sessions, t + delta), suffix)
       if (hit) return hit
     }
   }
-  const sub = (d: string): string[] => { try { return readdirSync(d).sort().reverse() } catch { return [] } }
-  for (const y of sub(sessions)) for (const m of sub(join(sessions, y))) for (const d of sub(join(sessions, y, m))) {
-    const hit = findIn(join(sessions, y, m, d), suffix)
+  const sub = async (d: string): Promise<string[]> => { try { return (await readdir(d)).sort().reverse() } catch { return [] } }
+  for (const y of await sub(sessions)) for (const m of await sub(join(sessions, y))) for (const d of await sub(join(sessions, y, m))) {
+    const hit = await findIn(join(sessions, y, m, d), suffix)
     if (hit) return hit
   }
   return undefined
 }
 
 async function sessionExists(binding: Binding, opts?: LookupOptions): Promise<boolean | 'unknown'> {
-  return findRollout(binding.sessionId, opts) !== undefined
+  return (await findRollout(binding.sessionId, opts)) !== undefined
 }
 
 const CHUNK = 64 * 1024
 
 /** The `thread_name` of the LAST line of session_index.jsonl for `sessionId` (renames append), read backwards. */
-export function indexTitle(file: string, sessionId: string): string | undefined {
+export async function indexTitle(file: string, sessionId: string): Promise<string | undefined> {
   const needle = `"id":${JSON.stringify(sessionId)}`
-  const fd = openSync(file, 'r')
+  const fh = await open(file, 'r')
   try {
-    let end = fstatSync(fd).size
+    let end = (await fh.stat()).size
     let carry = Buffer.alloc(0)
     while (end > 0) {
       const start = Math.max(0, end - CHUNK)
       const chunk = Buffer.alloc(end - start)
-      readSync(fd, chunk, 0, chunk.length, start)
+      await fh.read(chunk, 0, chunk.length, start)
       let data = Buffer.concat([chunk, carry])
       if (start > 0) {
         const nl = data.indexOf(0x0a)
@@ -217,7 +217,7 @@ export function indexTitle(file: string, sessionId: string): string | undefined 
     }
     return undefined
   } finally {
-    closeSync(fd)
+    await fh.close()
   }
 }
 
@@ -226,7 +226,7 @@ function indexFile(opts?: LookupOptions): string {
 }
 
 async function title(binding: Binding, opts?: LookupOptions): Promise<string | undefined> {
-  try { return indexTitle(indexFile(opts), binding.sessionId) } catch { return undefined }
+  try { return await indexTitle(indexFile(opts), binding.sessionId) } catch { return undefined }
 }
 
 export const TITLE_POLL_MS = 5_000
@@ -235,23 +235,31 @@ export const TITLE_POLL_MS = 5_000
 function watchTitle(binding: Binding, onTitle: (title: string) => void, intervalMs = TITLE_POLL_MS, opts?: LookupOptions): () => void {
   let lastSize = -1
   let lastTitle: string | undefined
-  const tick = (): void => {
-    const file = indexFile(opts)
-    let size: number
-    try { size = statSync(file).size } catch { return }
-    if (size === lastSize) return
-    lastSize = size
-    let t: string | undefined
-    try { t = indexTitle(file, binding.sessionId) } catch { return }
-    if (t !== undefined && t !== lastTitle) {
-      lastTitle = t
-      onTitle(t)
+  let busy = false
+  let stopped = false
+  const tick = async (): Promise<void> => {
+    if (busy || stopped) return // a slow disk must not pile ticks up
+    busy = true
+    try {
+      const file = indexFile(opts)
+      let size: number
+      try { size = (await stat(file)).size } catch { return }
+      if (size === lastSize) return
+      lastSize = size
+      let t: string | undefined
+      try { t = await indexTitle(file, binding.sessionId) } catch { return }
+      if (!stopped && t !== undefined && t !== lastTitle) {
+        lastTitle = t
+        onTitle(t)
+      }
+    } finally {
+      busy = false
     }
   }
-  const timer = setInterval(perf.wrap('title:codex', tick), intervalMs)
+  const timer = setInterval(perf.wrap('title:codex', () => { void tick() }), intervalMs)
   timer.unref()
-  tick()
-  return () => clearInterval(timer)
+  void tick()
+  return () => { stopped = true; clearInterval(timer) }
 }
 
 export const codexAdapter: AgentAdapter = { name: 'codex', resumes: true, plan, sessionExists, title, watchTitle }
@@ -309,12 +317,12 @@ export function mcpServerOverrides(name: string, s: McpFileServer): string[] {
 }
 
 /**
- * AgentMcp.inject for Codex, which has no `--mcp-config <file>`: the file is read now and each server becomes `-c`
+ * AgentMcp.inject for Codex, which has no `--mcp-config <file>`: the file is read now (by the executor) and each server becomes `-c`
  * overrides appended to the plan (a copy). Same collision rule as withMcpConfigFlag, and Codex itself would let the last
  * override win silently, so every name of the file is checked, declared or not.
  */
-export function withCodexMcpOverrides(plan: LaunchPlan, configFile: string, servers?: readonly string[], read: (p: string) => string = (p) => readFileSync(p, 'utf8')): LaunchPlan {
-  const parsed = JSON.parse(read(configFile)) as { mcpServers?: Record<string, McpFileServer> }
+export async function withCodexMcpOverrides(plan: LaunchPlan, configFile: string, servers?: readonly string[], read: (p: string) => string | Promise<string> = (p) => agentExecutor().run('readText', [p])): Promise<LaunchPlan> {
+  const parsed = JSON.parse(await read(configFile)) as { mcpServers?: Record<string, McpFileServer> }
   const entries = Object.entries(parsed.mcpServers ?? {})
   const taken = plan.mcpServers ?? {}
   const names = servers ?? entries.map(([n]) => n)

@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
 import type { SlotMeta } from '../../src/core/event.ts'
 import {
-  defaultProfiles,
   findProfile,
   isUnsafe,
   launchOf,
@@ -14,7 +13,6 @@ import {
   ProfileError,
   ProfileStore,
   profilesPath,
-  readProfiles,
   removeProfile,
   slotProfile,
   slugify,
@@ -22,9 +20,10 @@ import {
   uniqueId,
   upsertProfile,
   validateProfile,
-  writeProfiles,
   type Profile,
 } from '../../src/core/profile.ts'
+import { defaultProfiles, readProfiles, writeProfiles } from '../../src/core/profile-sync.ts'
+import { createExecutor } from '../../src/exec/executor.ts'
 import { createSlot, readSlot, writeSlotMeta } from '../../src/core/store.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
@@ -89,19 +88,21 @@ describe('defaults and the file', () => {
     assert.deepEqual(parseProfilesFile(readFileSync(profilesPath(home), 'utf8')), { ok: true, profiles, skipped: 0 })
   })
 
-  test('ProfileStore re-reads when the file changed on disk (another process edited it)', () => {
+  test('ProfileStore reloads through the executor when the file changed on disk (another process edited it)', async () => {
     const home = homes.make()
-    const store = new ProfileStore(home)
-    assert.ok(store.profiles().length > 0)
+    const ex = createExecutor({ mode: 'inline' })
+    const store = new ProfileStore(home, ex)
+    assert.ok((await store.fresh()).length > 0)
     const edited: Profile[] = [{ id: 'only', name: 'Only', agent: 'soul', args: [] }]
-    // mtime resolution: make sure the key differs (size does)
+    // mtime resolution: make sure the signature differs (size does)
     writeProfiles(home, edited)
-    assert.deepEqual(store.profiles(), edited)
+    assert.deepEqual(await store.fresh(), edited)
     const saved = store.save({ name: 'Novo', agent: 'claude', args: [] })
     assert.equal(saved.profile.id, 'novo')
     assert.deepEqual(store.profiles().map((p) => p.id), ['only', 'novo'])
     store.delete('only')
     assert.deepEqual(store.profiles().map((p) => p.id), ['novo'])
+    await ex.close()
   })
 })
 

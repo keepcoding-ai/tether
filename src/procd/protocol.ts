@@ -2,9 +2,7 @@
 // Transport: the same NDJSON framing as tetherd's own pipe (daemon/ndjson.ts). Requests carry `id` and get one
 // `ok` / `error` reply each; `exit` events go to every client, `data` events to the clients attached to that name.
 // The host knows nothing of cards, authors or history: it runs plans, keeps output and records pid/exit on disk.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { procRunPath } from '../core/paths.ts'
+import { join } from 'node:path'
 
 export const PROCD_PROTOCOL_VERSION = 1
 export const PROCD_VERSION = '0.1.0'
@@ -98,25 +96,4 @@ export function procdPidPath(home: string): string {
 
 export function procdLogPath(home: string): string {
   return join(home, 'tether-procd.log')
-}
-
-/** Write to a temp name and rename into place: a reader never sees half a file. */
-export function writeJsonAtomic(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n')
-  renameSync(tmp, path)
-}
-
-export function writeRunFile(home: string, run: RunFile): void {
-  writeJsonAtomic(procRunPath(home, run.name), run)
-}
-
-export function readRunFile(home: string, name: string): RunFile | undefined {
-  try {
-    const r = JSON.parse(readFileSync(procRunPath(home, name), 'utf8')) as RunFile
-    return r && r.v === 1 && typeof r.run === 'number' && typeof r.pid === 'number' ? r : undefined
-  } catch {
-    return undefined
-  }
 }

@@ -8,6 +8,7 @@ import { tetherHome } from '../core/paths.ts'
 import { pipePath } from '../daemon/protocol.ts'
 import { HostClient } from './client.ts'
 import { ProcHost, PROCD_IDLE_MS } from './host.ts'
+import { hostStore } from './run-store.ts'
 import { procdLogPath, procdPidPath, procdPipePath } from './protocol.ts'
 
 async function main(): Promise<void> {
@@ -32,7 +33,7 @@ async function main(): Promise<void> {
     process.exit(code)
   }
   const idleMs = Number(process.env.TETHER_PROCD_IDLE_MS) > 0 ? Number(process.env.TETHER_PROCD_IDLE_MS) : PROCD_IDLE_MS
-  const host = new ProcHost({ home, pipe, log, idleMs, onExit: (reason) => exit(reason) })
+  const host = new ProcHost({ home, pipe, log, idleMs, store: hostStore, onExit: (reason) => exit(reason) })
   try {
     await host.listen()
   } catch (e) {

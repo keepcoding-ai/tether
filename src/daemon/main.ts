@@ -14,7 +14,7 @@ import { loadOpTable } from '../exec/inline.ts'
 import { PerfLog } from '../exec/perf-log.ts'
 import { tetherHome } from '../core/paths.ts'
 import { pingDaemon } from './client.ts'
-import { disabledExtensions } from '../agents/load.ts'
+import { disabledIn } from '../agents/load.ts'
 import { DaemonExtensionHost } from './ext-host.ts'
 import { ProfileStore } from '../core/profile.ts'
 import { UserSettings } from '../core/user-settings.ts'
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
   const profileStore = new ProfileStore(home, executor, log)
   const userSettings = new UserSettings(home, executor, process.env, log)
   await userSettings.fresh() // the profiles load after the activation: reading them consults the agent registry the extensions fill
-  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home), profileStore, settings: userSettings, executor })
+  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledIn(userSettings.get()), profileStore, settings: userSettings, executor })
   extHost.activate()
 
   let daemon: Daemon

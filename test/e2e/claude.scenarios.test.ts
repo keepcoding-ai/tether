@@ -10,7 +10,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { findTranscript, lastCustomTitle } from '../../src/agents/claude.ts'
+import { findTranscript, lastCustomTitle } from '../../src/agents/claude-sync.ts'
 import type { TetherEvent } from '../../src/core/event.ts'
 import { slotEventsPath } from '../../src/core/paths.ts'
 import { readEvents } from '../../src/core/store.ts'

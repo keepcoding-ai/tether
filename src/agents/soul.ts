@@ -116,13 +116,13 @@ async function plan(input: PlanInput): Promise<LaunchPlan> {
     const recipe = resume.resume
     Object.assign(env, recipe.env ?? {})
     const own = slot.args.filter((a) => a !== '-c' && a !== '--continue')
-    return withReport({ command: base.command, args: [...base.args, ...profileArgs, ...recipe.args, ...own], cwd: canonicalDir(recipe.cwd), env })
+    return withReport({ command: base.command, args: [...base.args, ...profileArgs, ...recipe.args, ...own], cwd: await canonicalDir(recipe.cwd), env })
   }
   if (resume) {
     // A binding without a recipe (older event): the id alone, in the binding's folder.
-    return withReport({ command: base.command, args: [...base.args, ...profileArgs, '-r', resume.sessionId, ...slot.args], cwd: canonicalDir(resume.cwd), env })
+    return withReport({ command: base.command, args: [...base.args, ...profileArgs, '-r', resume.sessionId, ...slot.args], cwd: await canonicalDir(resume.cwd), env })
   }
-  return withReport({ command: base.command, args: [...base.args, ...profileArgs, ...slot.args, ...extraArgs], cwd: canonicalDir(slot.cwd), env })
+  return withReport({ command: base.command, args: [...base.args, ...profileArgs, ...slot.args, ...extraArgs], cwd: await canonicalDir(slot.cwd), env })
 
   /** The slot's identity goes on last: nothing from a profile or a recipe may redirect the report. */
   function withReport(p: LaunchPlan): LaunchPlan {

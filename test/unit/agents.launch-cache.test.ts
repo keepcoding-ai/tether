@@ -12,8 +12,8 @@ import { anyDefinesStatusLine, clearClaudeResolveCache, clearSoulResolveCache, m
 import { ENV_SOUL_CMD } from '../../src/agents/soul.ts'
 
 const inline = createExecutor({ mode: 'inline' })
-import { readUserSettings } from '../../src/core/user-settings.ts'
-import { ensureRenamedNode } from '../../src/core/exe.ts'
+import { readUserSettings } from '../../src/core/user-settings-sync.ts'
+import { ensureRenamedNode } from '../../src/core/exe-sync.ts'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'launch-cache-'))
 const bump = (file: string, ms: number): void => { const t = new Date(Date.now() + ms); utimesSync(file, t, t) }

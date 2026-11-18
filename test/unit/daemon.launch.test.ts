@@ -16,6 +16,7 @@ import { MCP_CONFIG_FLAG, withMcpConfigFlag } from '../../src/agents/mcp.ts'
 import { AgentRegistry, type AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import { readUserSettings } from '../../src/core/user-settings-sync.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
 import { removeHome, tempHome } from './daemon.helpers.ts'
 
@@ -31,7 +32,7 @@ describe('web-bridge launch middleware (F7 C3)', () => {
   before(() => {
     home = tempHome()
     // Only the bridge and the agents it serves: another extension's launch middleware (skills' --plugin-dir) is not this test's.
-    host = new DaemonExtensionHost({ home, log: m => logs.push(m), agents: new AgentRegistry(), extensions: daemonIndex.filter(e => ['claude', 'soul', 'web-bridge'].includes(e.manifest.id)) })
+    host = new DaemonExtensionHost({ home, log: m => logs.push(m), agents: new AgentRegistry(), settings: { get: () => readUserSettings(home) }, extensions: daemonIndex.filter(e => ['claude', 'soul', 'web-bridge'].includes(e.manifest.id)) })
     host.activate()
     assert.deepEqual(host.activated, ['claude', 'soul', 'web-bridge'])
     mkdirSync(join(home, 'mcp'), { recursive: true })

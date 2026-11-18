@@ -6,7 +6,8 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { ensureRenamedNode, exePath, inspectRenamedNode, isNodeExecutable, isRenamedNode, readStamp, sweepOrphanTemps } from '../../src/core/exe.ts'
+import { exePath } from '../../src/core/exe.ts'
+import { ensureRenamedNode, inspectRenamedNode, isNodeExecutable, isRenamedNode, readStamp, sweepOrphanTemps } from '../../src/core/exe-sync.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
 const ROOT = resolve(import.meta.dirname, '../..')

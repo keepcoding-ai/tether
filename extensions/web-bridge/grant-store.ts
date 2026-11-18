@@ -7,7 +7,7 @@
 // trusted as it is: the policy puts every pair through the rules of a new one (inside the allowed folders, not too broad, an
 // exact origin) and drops the rest.
 import { join } from 'node:path'
-import { SLOT_ID_RE } from '../../src/core/store.ts'
+import { SLOT_ID_RE } from '../../src/core/store-model.ts'
 import { ensurePrivateDirAsync } from '../browser/private-dir-core.ts'
 import type { DaemonIo } from '../../src/daemon/ext-api.ts'
 import { fsIo } from '../../src/daemon/ext-io.ts'

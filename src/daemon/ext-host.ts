@@ -11,8 +11,7 @@ import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
 import { perf } from '../core/perf.ts'
-import { ProfileStore } from '../core/profile.ts'
-import { UserSettings } from '../core/user-settings.ts'
+import type { Profile } from '../core/profile.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
 import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
@@ -26,6 +25,9 @@ interface LaunchStep { id: string; mw: Middleware }
 /** How long one extension's launch middleware may take before the launch goes on without it. */
 export const PLAN_MIDDLEWARE_TIMEOUT_MS = 10_000
 const TIMED_OUT: unique symbol = Symbol('timed-out')
+/** What the extensions see when the host was given no snapshots (a bare unit test): nothing. */
+const NO_PROFILES = { profiles: (): Profile[] => [] }
+const NO_SETTINGS = { get: (): Record<string, unknown> => ({}) }
 type SlotListener = (ev: { kind: SlotEventKind; slot: SlotState }) => void
 
 export interface DaemonHostOptions {
@@ -38,8 +40,8 @@ export interface DaemonHostOptions {
   /** Extension ids the person turned off. */
   disabled?: readonly string[]
   /** tetherd's snapshots (memory, reloaded by the executor), shared with the daemon. Default: read from disk when asked (the CLI and Electron main). */
-  profileStore?: ProfileStore
-  settings?: UserSettings
+  profileStore?: { profiles(): Profile[] }
+  settings?: { get(): Record<string, unknown> }
   /** tetherd's executor: `api.io` runs on it. Default: node's async file API (the CLI and Electron main, which never run the io-using code in earnest). */
   executor?: Executor
   /** Ceiling per launch middleware (ms). Default PLAN_MIDDLEWARE_TIMEOUT_MS. */
@@ -147,10 +149,8 @@ export class DaemonExtensionHost implements IDisposable {
     this.store.dispose()
   }
 
-  private profileStoreCache: ProfileStore | undefined
-  private get profileStore(): ProfileStore { return (this.profileStoreCache ??= this.opts.profileStore ?? new ProfileStore(this.opts.home)) }
-  private settingsCache: UserSettings | undefined
-  private get userSettings(): UserSettings { return (this.settingsCache ??= this.opts.settings ?? new UserSettings(this.opts.home)) }
+  private get profileStore(): { profiles(): Profile[] } { return this.opts.profileStore ?? NO_PROFILES }
+  private get userSettings(): { get(): Record<string, unknown> } { return this.opts.settings ?? NO_SETTINGS }
 
   private apiFor(id: string, own: DisposableStore): TetherDaemon {
     const { home, log } = this.opts

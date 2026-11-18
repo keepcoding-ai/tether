@@ -4,6 +4,7 @@
 // writer of the history. It never restarts anything by itself, and kills only by pid + creation time (a process
 // that the host lost but somehow survived), never by name.
 import { userInfo } from 'node:os'
+import { slotNoticesPath } from '../core/paths.ts'
 import { perf } from '../core/perf.ts'
 import type { SlotStore } from '../core/slot-store.ts'
 import type { Executor } from '../exec/executor.ts'
@@ -12,7 +13,7 @@ import { HostClient, HostRequestError } from '../procd/client.ts'
 import type { HostRun, RunExit } from '../procd/protocol.ts'
 import { relativeTime } from '../cli/format.ts'
 import { sampleProcessTable } from './memory.ts'
-import { leaveNotice, quoted } from './notices.ts'
+import { noticeLine, quoted } from './notices.ts'
 import { buildPortRows, listListeners, ownerText, probePort, treeOwners, type PortRow } from './ports.ts'
 import { LaunchError, planForAsync } from './proc-launch.ts'
 import {
@@ -124,6 +125,7 @@ interface Entry {
 
 export class ProcManager {
   private readonly home: string
+  private readonly store: SlotStore
   private readonly files: ProcFiles
   private readonly log: (msg: string) => void
   private readonly broadcast: (msg: DaemonMessage) => void
@@ -148,6 +150,7 @@ export class ProcManager {
 
   constructor(opts: ProcManagerOptions) {
     this.home = opts.home
+    this.store = opts.store
     this.files = new ProcFiles(opts.home, opts.exec, opts.store)
     this.log = opts.log
     this.broadcast = opts.broadcast
@@ -528,7 +531,7 @@ export class ProcManager {
   }
 
   private notice(slotId: string, text: string): void {
-    try { leaveNotice(this.home, slotId, NOTICE_PREFIX + text) } catch (err) { this.log(`notice to ${slotId} failed: ${(err as Error).message}`) }
+    try { this.store.append(slotNoticesPath(this.home, slotId), noticeLine(NOTICE_PREFIX + text)) } catch (err) { this.log(`notice to ${slotId} failed: ${(err as Error).message}`) }
   }
 
   /**

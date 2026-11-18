@@ -2,9 +2,6 @@
 // terminal (a notice never wakes an idle agent). Generic: any part of tetherd may leave one. The file is
 // <home>/slots/<slot>.notices.jsonl, one `{ts, text}` per line; Claude's hook (src/report/claude-hook.mjs) takes the
 // whole file atomically (rename, read, delete) on PostToolUse / UserPromptSubmit and hands the lines to the agent.
-import { appendFileSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
-import { slotNoticesPath } from '../core/paths.ts'
 import { flatText } from './ronda.ts'
 
 /** Text that came from another agent (a reason, a purpose) is cut to this and quoted. */
@@ -21,12 +18,13 @@ export function quoted(text: string | undefined): string {
   return `"${flat.length > QUOTED_MAX ? flat.slice(0, QUOTED_MAX).trimEnd() + '…' : flat}"`
 }
 
-/** Appends a notice for the slot's agent: one line, cut like any text tether hands to an agent (flatText). */
-export function leaveNotice(home: string, slotId: string, text: string, now = new Date()): void {
+/**
+ * The line to append to the slot's notices file (slotNoticesPath): one line, cut like any text tether hands to an agent
+ * (flatText). The daemon appends it through its slot store; nothing here touches the disk.
+ */
+export function noticeLine(text: string, now = new Date()): string {
   const line: Notice = { ts: now.toISOString(), text: flatText(text) }
-  const path = slotNoticesPath(home, slotId)
-  mkdirSync(dirname(path), { recursive: true })
-  appendFileSync(path, JSON.stringify(line) + '\n')
+  return JSON.stringify(line) + '\n'
 }
 
 /** The notice lines of a file's text; a torn line is skipped. */

@@ -2,11 +2,7 @@
 // nudge, a stop criterion) through `tether ronda`; tetherd keeps it in <home>/slots/<id>.ronda.json (so it survives the
 // agent's restart and the daemon's) and, when it is due and the agent is idle, sends the nudge through the ronda's channel
 // (ronda-channel.ts): a message the agent's CLI takes as a turn of its own, never keys typed into the terminal, so the user's
-// draft is never touched. Pure model and persistence here; the timer lives in server.ts.
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { slotRondaPath } from '../core/paths.ts'
+// draft is never touched. Pure model here; the file is written by the daemon's slot store and the timer lives in server.ts.
 
 export interface Ronda {
   v: 1
@@ -121,17 +117,4 @@ export function parseRonda(text: string): Ronda | undefined {
     const x: unknown = JSON.parse(text)
     return isRonda(x) ? x : undefined
   } catch { return undefined }
-}
-
-/** Atomic (temp + rename). */
-export function writeRonda(home: string, slotId: string, r: Ronda): void {
-  const path = slotRondaPath(home, slotId)
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(r, null, 2) + '\n')
-  renameSync(tmp, path)
-}
-
-export function clearRonda(home: string, slotId: string): void {
-  rmSync(slotRondaPath(home, slotId), { force: true })
 }

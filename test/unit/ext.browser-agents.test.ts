@@ -78,7 +78,7 @@ for (const agent of ['claude', 'soul'] as const) {
     test('with the bridge: two --mcp-config, the bridge first, in injection order', async () => {
       const t = setup()
       try {
-        const withBridge = registry.get(agent)!.mcp!.inject(base(), BRIDGE, ['tether-bridge'])
+        const withBridge = await registry.get(agent)!.mcp!.inject(base(), BRIDGE, ['tether-bridge'])
         const out = await t.mw(withBridge, slotOf(agent))
         assert.deepEqual(out.args, [...base().args, MCP_CONFIG_FLAG, BRIDGE, MCP_CONFIG_FLAG, mcpFileOf(t.home, 'abc123')])
         assert.deepEqual(out.mcpServers, { 'tether-bridge': BRIDGE, [MCP_SERVER_NAME]: mcpFileOf(t.home, 'abc123') })
@@ -88,7 +88,7 @@ for (const agent of ['claude', 'soul'] as const) {
     test('a server of that name already injected: refused, plan untouched, nothing written', async () => {
       const t = setup()
       try {
-        const taken = registry.get(agent)!.mcp!.inject(base(), 'C:/other/x.json', [MCP_SERVER_NAME])
+        const taken = await registry.get(agent)!.mcp!.inject(base(), 'C:/other/x.json', [MCP_SERVER_NAME])
         assert.equal(await t.mw(taken, slotOf(agent)), taken)
         assert.equal(existsSync(keyFileOf(t.home, 'abc123')), false)
         assert.equal(existsSync(mcpFileOf(t.home, 'abc123')), false)

@@ -8,7 +8,7 @@ import { readLiveSummary, TranscriptUsageReader, type LiveSummary, type UsageTot
 import { readInventory, type Inventory } from '../../src/context/inventory.ts'
 import { codexHome, CodexRolloutReader, findCodexRollout, readCodexInventory, type CodexSessionInfo } from '../../src/context/codex.ts'
 import { slotEventsPath } from '../../src/core/paths.ts'
-import { parseEvents } from '../../src/core/store.ts'
+import { parseEvents } from '../../src/core/store-model.ts'
 import { SoulEventsReader, type SoulContext } from '../../src/context/soul.ts'
 import type { LiveView, MeasuredView } from './ipc.ts'
 

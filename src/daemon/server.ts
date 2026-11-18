@@ -23,8 +23,8 @@ import type { ChannelConfirm } from '../agents/registry.ts'
 import { applyChange, buildChannelText, criterionStimulus, ENV_RONDA_TEST_SECONDS, flatText, parseRonda, RondaError, type Ronda } from './ronda.ts'
 import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, parsePauseFile, transition, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
-import { currentBinding, parseEventLine, parseEvents, readEventsFile, readEventsFrom, readRun, scanSlotsAsync, SLOT_ID_RE, type EventsRead, type SlotsScan } from '../core/store.ts'
-import { assertSlotId, parseSlotMeta, randomSlotId, serializeMeta, serializeRun } from '../core/store-model.ts'
+import { readEventsFrom, scanSlotsAsync } from '../core/store-async.ts'
+import { assertSlotId, currentBinding, parseEventLine, parseEvents, parseRunInfo, parseSlotMeta, randomSlotId, serializeMeta, serializeRun, SLOT_ID_RE, type EventsRead, type SlotsScan } from '../core/store-model.ts'
 import { SlotStore } from '../core/slot-store.ts'
 import { isAgentExecutor, setAgentExecutor } from '../agents/agent-exec.ts'
 import { createExecutor, type Executor } from '../exec/executor.ts'
@@ -47,7 +47,7 @@ import { Scrollback } from './scrollback.ts'
 import { HostClient } from '../procd/client.ts'
 import { PanelHost, type PanelCallbacks } from './panel-host.ts'
 import { PTYD_TARGET, ptydPipePath } from '../ptyd/paths.ts'
-import { readUserSettings, UserSettings } from '../core/user-settings.ts'
+import { UserSettings } from '../core/user-settings.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
 import { limiter, mapLimit } from '../core/limit.ts'
 import { perf } from '../core/perf.ts'
@@ -103,13 +103,14 @@ const PANEL_HOST_ENSURE_MS = 20_000
 
 /**
  * Whether NEW panes are launched in the terminal-pane host (tether-ptyd) instead of inside tetherd: TETHER_PANEL_HOST=1|0
- * in tetherd's environment wins, else `daemon.panelHost` in settings.json, else on. Read once, at boot.
+ * in tetherd's environment wins, else `daemon.panelHost` in settings.json, else on. Read once, at boot (the settings tree is the
+ * snapshot's, loaded before the daemon listens).
  */
-export function panelHostEnabled(home: string, env: NodeJS.ProcessEnv = process.env): boolean {
+export function panelHostEnabled(settings: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env): boolean {
   const v = env.TETHER_PANEL_HOST?.trim()
   if (v === '1') return true
   if (v === '0') return false
-  return treeValueAt(readUserSettings(home, env), 'daemon.panelHost') !== false
+  return treeValueAt(settings, 'daemon.panelHost') !== false
 }
 
 export interface DaemonOptions {
@@ -149,7 +150,7 @@ export interface DaemonOptions {
   connectProcHost?: (launch: boolean) => Promise<HostClient>
   /** How long a lost host connection is retried before its processes count as lost (default HOST_RECONNECT_MS). */
   procHostReconnectMs?: number
-  /** Launch new panes in the terminal-pane host. Default: panelHostEnabled(home). */
+  /** Launch new panes in the terminal-pane host. Default: panelHostEnabled(settings), once the settings snapshot is loaded. */
   panelHost?: boolean
   /**
    * Connects to the terminal-pane host (tests: one running in process, never launched). `launch` false: undefined when no
@@ -224,6 +225,8 @@ class RequestError extends Error {
 }
 
 interface Slot {
+  /** The tail of the last `paneExit` (the final events read, then the verdict and the broadcast); a stop answers after it. */
+  exitTail?: Promise<void>
   meta: SlotMeta
   status: SlotStatus
   binding?: Binding
@@ -405,7 +408,9 @@ class DaemonImpl implements Daemon {
   /** Who watches each background process' output (one host attachment per name, shared). */
   private readonly procWatchers = new Map<string, Set<Client>>()
   /** New panes go to tether-ptyd (read once at boot; panes already running stay where they are). */
-  private readonly panelHostOn: boolean
+  private panelHostOn: boolean
+  /** `DaemonOptions.panelHost` when given: the settings never override it. */
+  private readonly panelHostForced: boolean | undefined
   private readonly connectPanelHost: (launch: boolean) => Promise<HostClient | undefined>
   /** The link to tether-ptyd, created at the first hosted launch. */
   private panelHost: PanelHost | undefined
@@ -453,7 +458,8 @@ class DaemonImpl implements Daemon {
     this.profileStore = opts.profileStore ?? new ProfileStore(opts.home, this.executor, this.log)
     this.profileStore.attachWriter({ put: (p, t) => this.store.put(p, t), flush: (p) => this.store.flush(p) })
     this.userSettings = opts.userSettings ?? new UserSettings(opts.home, this.executor, process.env, this.log)
-    this.panelHostOn = opts.panelHost ?? panelHostEnabled(opts.home)
+    this.panelHostForced = opts.panelHost
+    this.panelHostOn = opts.panelHost ?? panelHostEnabled(this.userSettings.get())
     this.connectPanelHost = opts.connectPanelHost ?? ((launch) => {
       const pipe = ptydPipePath(opts.pipe, opts.home)
       return launch
@@ -522,6 +528,7 @@ class DaemonImpl implements Daemon {
     const hostRuns = metas.length > 0 ? await this.hostRunsAtBoot() : undefined
     const ownedElsewhere = await perf.timedAsync('boot:reap', () => this.reapOrphans(new Set((hostRuns ?? []).map((r) => r.pid)), scan))
     await Promise.all([this.profileStore.fresh(), this.userSettings.fresh()])
+    if (this.panelHostForced === undefined) this.panelHostOn = panelHostEnabled(this.userSettings.get())
     this.profileStore.start()
     this.userSettings.start()
     const profiles = this.profileStore.read()
@@ -653,9 +660,11 @@ class DaemonImpl implements Daemon {
     const procRoots = this.procs.liveRoots()
     if (!live.length && !procRoots.length) return
     this.memorySampling = true
+    // The pids are taken before the first await: a stop may clear `slot.pty` while the sample runs.
+    const livePids = live.map((s) => s.pty!.pid)
     try {
       await this.procs.observeExternals()
-      const sums = treeBytes(await sampleProcessTable(), [...live.map((s) => s.pty!.pid), ...procRoots.map((r) => r.pid)])
+      const sums = treeBytes(await sampleProcessTable(), [...livePids, ...procRoots.map((r) => r.pid)])
       this.procs.setMemory(sums, memoryChanged)
       for (const slot of live) {
         if (!slot.pty || slot.pty.exit) continue
@@ -761,9 +770,11 @@ class DaemonImpl implements Daemon {
   /** Drops the slot's run file when it is this daemon's (a CLI `--here` launcher's file is left alone). */
   private forgetRun(slotId: string): void {
     if (this.ownRuns.delete(slotId)) { this.store.remove(slotRunPath(this.home, slotId)); return }
-    // Not written by this daemon (a previous tetherd's): the file tells whose it is.
-    const run = readRun(this.home, slotId)
-    if (run && run.by === 'tetherd') this.store.remove(slotRunPath(this.home, slotId))
+    // Not written by this daemon (a previous tetherd's): the file tells whose it is. Read by the executor; a run this daemon
+    // wrote meanwhile (a relaunch of the slot) is its own and stays.
+    void this.executor.run('readText', [slotRunPath(this.home, slotId)]).then(parseRunInfo, () => undefined).then((run) => {
+      if (run && run.by === 'tetherd' && !this.ownRuns.has(slotId)) this.store.remove(slotRunPath(this.home, slotId))
+    })
   }
 
   // ---- slot files: memory is the truth, the store puts it on disk behind the loop ------------------
@@ -840,7 +851,7 @@ class DaemonImpl implements Daemon {
       const id = meta.slotId
       if (!withRun.has(id)) continue
       this.fsProbe?.('run:read', id)
-      const run = readRun(this.home, id)
+      const run = await this.executor.run('readText', [slotRunPath(this.home, id)]).then(parseRunInfo, () => undefined)
       if (!run || run.by !== 'tetherd' || run.pid === this.pid) continue
       if (run.agentPid === undefined || run.agentStartedAt === undefined) { this.store.remove(slotRunPath(this.home, id)); continue }
       if (await isSameProcess(run.pid, run.startedAt)) {
@@ -1119,13 +1130,6 @@ class DaemonImpl implements Daemon {
     const s = typeof slotId === 'string' ? this.slotMap.get(slotId) : undefined
     if (!s) throw new RequestError('unknown-slot', `slot desconhecido: ${String(slotId)}`)
     return s
-  }
-
-  /** Reads what the slot's events file gained since the last read (the whole file the first time), synchronously. */
-  private refreshBinding(slot: Slot, broadcast = true): void {
-    this.fsProbe?.('events:full', slot.meta.slotId)
-    this.foldEvents(slot, readEventsFile(this.home, slot.meta.slotId, slot.events?.resume ?? 0))
-    this.applyBinding(slot, broadcast)
   }
 
   /**
@@ -1550,10 +1554,18 @@ class DaemonImpl implements Daemon {
     this.markEnded(slot)
     if (slot.attentionTimer) clearTimeout(slot.attentionTimer)
     this.unwatchTitle(slot)
+    // The hook's last line may land right before the exit: the events file is read once more (off the loop) before the verdict.
+    const tail: Promise<void> = this.pullEvents(slot, false).then(() => this.finishExit(slot)).catch((e: Error) => this.log(`slot ${slot.meta.slotId}: exit handling failed: ${e.message}`)).finally(() => { if (slot.exitTail === tail) slot.exitTail = undefined })
+    slot.exitTail = tail
+  }
+
+  /** The tail of `paneExit`, once the events file has been read for the last time of this run. */
+  private finishExit(slot: Slot): void {
+    const { meta } = slot
     // PRD C18: an agent run that never reported its session (old version, hook removed, crashed before the
     // hook) leaves the binding unconfirmed: the next start must be an explicit choice, never a silent guess.
-    this.refreshBinding(slot, false) // the hook's last line may land right before the exit
-    if (meta.agent !== 'shell' && !this.reportedThisRun(slot)) {
+    // A relaunch that began meanwhile owns the status now.
+    if (slot.status === 'exited' && meta.agent !== 'shell' && !this.reportedThisRun(slot)) {
       slot.status = 'unconfirmed'
       this.log(`slot ${meta.slotId}: no start event for this run; binding unconfirmed`)
     }
@@ -1719,6 +1731,7 @@ class DaemonImpl implements Daemon {
     this.unwatchTitle(slot)
     await pty.kill()
     if (slot.pty === pty) slot.pty = undefined
+    await slot.exitTail // the verdict of the run that just ended (unconfirmed or not) is what the stop answers with
   }
 
   // ---- connections ---------------------------------------------------------------------------
@@ -1888,11 +1901,12 @@ class DaemonImpl implements Daemon {
         if (typeof req.cwd !== 'string' || !req.cwd) throw new RequestError('bad-request', 'cwd obrigatório')
         // Before the id is drawn: nothing awaits between the new slot's id and its entry in the map.
         const profile = req.profileId !== undefined ? await this.requireProfile(req.profileId) : undefined
+        const cwd = await canonicalDir(req.cwd)
         const meta: SlotMeta = {
           v: 1,
           slotId: this.newSlotId(),
           agent: req.kind,
-          cwd: canonicalDir(req.cwd),
+          cwd,
           args: Array.isArray(req.args) ? req.args.filter((a): a is string => typeof a === 'string') : [],
           createdAt: new Date().toISOString(),
         }

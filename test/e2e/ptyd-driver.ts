@@ -1,13 +1,14 @@
 // What the app E2E tests need around tether-ptyd (the terminal-pane host the tetherd of a test starts on its own):
 // whether this run hosts panels there, and stopping the host (and the shells under it) of a test home by identity.
 import { readFileSync } from 'node:fs'
+import { readUserSettings } from '../../src/core/user-settings-sync.ts'
 import { panelHostEnabled } from '../../src/daemon/server.ts'
 import { ptydPidPath } from '../../src/ptyd/paths.ts'
 import { findProcesses, identify, killOwned, type Owned } from '../kill.ts'
 
 /** True when a tetherd of `home` launches NEW panels in tether-ptyd (TETHER_PANEL_HOST, else the default: on). */
 export function panelHostOn(home: string): boolean {
-  return panelHostEnabled(home)
+  return panelHostEnabled(readUserSettings(home))
 }
 
 /** The environment a test hands the app so the tetherd and the app's PanelLink share one private ptyd pipe. */

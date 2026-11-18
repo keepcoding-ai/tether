@@ -2,7 +2,6 @@
 // tether (hooks injected via --settings, never the user's global settings), and how to read
 // what Claude keeps on disk (transcript exists? current title?).
 import { access, open, readdir, stat } from 'node:fs/promises'
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync } from 'node:fs'
 import path, { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -131,7 +130,7 @@ const PICKS_SESSION = new Set(['-c', '--continue', '-r', '--resume'])
 
 async function plan(input: PlanInput): Promise<LaunchPlan> {
   const { slot, home, resume, extraArgs, profile } = input
-  const cwd = canonicalDir(resume ? resume.cwd : slot.cwd)
+  const cwd = await canonicalDir(resume ? resume.cwd : slot.cwd)
   const configDir = profile?.env?.CLAUDE_CONFIG_DIR || claudeConfigDir()
   const ex = input.exec ?? agentExecutor()
   const settings = await ensureSettingsFile(home, !(await userHasStatusLine(cwd, configDir, ex)), ex)
@@ -162,29 +161,13 @@ async function plan(input: PlanInput): Promise<LaunchPlan> {
 // ---- reading Claude's files ----
 
 /** The slot's CLAUDE_CONFIG_DIR (its profile env) wins over ours; the default is ~/.claude. */
-function claudeConfigDir(opts?: LookupOptions): string {
+export function claudeConfigDir(opts?: LookupOptions): string {
   return opts?.env?.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 }
 
 /** Claude's project folder name for a cwd: every non-alphanumeric character becomes '-'. */
 export function encodeProjectDir(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-')
-}
-
-/** Path of the session's transcript, or undefined when it is not on disk. */
-export function findTranscript(binding: Pick<Binding, 'sessionId' | 'cwd'>, opts?: LookupOptions): string | undefined {
-  if (!/^[A-Za-z0-9-]+$/.test(binding.sessionId)) return undefined
-  const projects = join(claudeConfigDir(opts), 'projects')
-  const file = `${binding.sessionId}.jsonl`
-  const direct = join(projects, encodeProjectDir(binding.cwd), file)
-  if (existsSync(direct)) return direct
-  let dirs: string[]
-  try { dirs = readdirSync(projects) } catch { return undefined }
-  for (const d of dirs) {
-    const candidate = join(projects, d, file)
-    if (existsSync(candidate)) return candidate
-  }
-  return undefined
 }
 
 /** Test seams for the async lookup. */
@@ -196,7 +179,7 @@ export interface AsyncLookupDeps {
 
 const exists = (p: string): Promise<boolean> => access(p).then(() => true, () => false)
 
-/** Non-blocking twin of findTranscript, for timers: it never stalls the event loop on the ~hundreds of project dirs. */
+/** Path of the session's transcript, or undefined when it is not on disk. Never stalls the event loop on the ~hundreds of project dirs. */
 export async function findTranscriptAsync(binding: Pick<Binding, 'sessionId' | 'cwd'>, opts?: LookupOptions, deps: AsyncLookupDeps = {}): Promise<string | undefined> {
   if (!/^[A-Za-z0-9-]+$/.test(binding.sessionId)) return undefined
   const projects = join(claudeConfigDir(opts), 'projects')
@@ -217,7 +200,7 @@ async function sessionExists(binding: Binding, opts?: LookupOptions): Promise<bo
   return (await findTranscriptAsync(binding, opts)) !== undefined
 }
 
-function titleOf(line: string): string | undefined {
+export function titleOf(line: string): string | undefined {
   if (!line.includes('"custom-title"')) return undefined
   try {
     const obj: unknown = JSON.parse(line)
@@ -229,39 +212,9 @@ function titleOf(line: string): string | undefined {
   return undefined
 }
 
-const CHUNK = 64 * 1024
+export const CHUNK = 64 * 1024
 
 /** The last {"type":"custom-title"} line of a transcript, read backwards in chunks (transcripts can be MBs). */
-export function lastCustomTitle(file: string): string | undefined {
-  const fd = openSync(file, 'r')
-  try {
-    let end = fstatSync(fd).size
-    let carry = Buffer.alloc(0) // bytes of the (still incomplete) first line of the chunk above
-    while (end > 0) {
-      const start = Math.max(0, end - CHUNK)
-      const chunk = Buffer.alloc(end - start)
-      readSync(fd, chunk, 0, chunk.length, start)
-      let data = Buffer.concat([chunk, carry])
-      if (start > 0) {
-        const nl = data.indexOf(0x0a)
-        if (nl === -1) { carry = data; end = start; continue }
-        carry = data.subarray(0, nl)
-        data = data.subarray(nl + 1)
-      }
-      const lines = data.toString('utf8').split('\n')
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const t = titleOf(lines[i]!.trimEnd())
-        if (t !== undefined) return t
-      }
-      end = start
-    }
-    return undefined
-  } finally {
-    closeSync(fd)
-  }
-}
-
-/** Async twin of lastCustomTitle (same backwards chunked read) for the watcher. */
 export async function lastCustomTitleAsync(file: string): Promise<string | undefined> {
   const fh = await open(file, 'r')
   try {

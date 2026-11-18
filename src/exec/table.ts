@@ -2,7 +2,7 @@
 // load it (never the coordinator graph, see test/unit/arch.sync-ratchet.test.ts); a new ops file is added here.
 // ops-fs is light and loaded eagerly; ops-agents / ops-ext / ops-os pull heavy graphs, so each of their operations is a stub
 // that imports its module on the first call (a respawned worker stays fast). The name lists are checked against OpName by tsc
-//.
+// and test/unit/exec.table.test.ts checks them against what the modules really export.
 import type { OpName, OpArgs, OpValue } from './protocol.ts'
 import { fsOps } from './ops-fs.ts'
 
@@ -15,7 +15,8 @@ const loaders = {
   os: (() => import('./ops-os.ts').then((m) => m.osOps)) as unknown as Loader,
 }
 
-const lazyNames = {
+/** The operations each lazy module exports (exec.table.test.ts checks the lists against the modules). */
+export const lazyNames = {
   agents: ['resolveClaude', 'resolveCodex', 'ensureSettingsFile', 'hasStatusLine', 'userNotify', 'resolveShell', 'resolveSoul', 'soulLaunch', 'renamedNode', 'loadSkills', 'materializeSkills'],
   ext: ['writeTextAtomicDir'],
   os: ['killTree', 'sampleProcessTable', 'listListeners', 'startTime', 'startTimeInfo', 'stopStartTimeHelper', 'ensurePrivateDir', 'procPlan'],

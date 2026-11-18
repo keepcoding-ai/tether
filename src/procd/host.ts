@@ -2,19 +2,16 @@
 // output (Scrollback) and a clean log on disk, records pid / start time / exit in <home>/procs/<name>.run.json and
 // tells its clients. It decides nothing: tetherd sends ready plans and asks to stop. Small on purpose: if this
 // process dies, every process it hosts dies with it (ConPTY closes with its owner).
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { processStartTime } from '../core/liveness.ts'
-import { procLogPath, procLogsDir } from '../core/paths.ts'
 import { encode, guessId, LineParser } from '../daemon/ndjson.ts'
 import { killTree, spawnPty, type PtyHandle } from '../daemon/pty.ts'
 import { Scrollback } from '../daemon/scrollback.ts'
 import { makePrioritySetter, prioritiesEnabled, PRIORITY_BELOW_NORMAL, type SetPriority } from './priority.ts'
-import { makeLineCleaner, type LineCleaner } from './log-clean.ts'
 import {
   PROCD_PROTOCOL_VERSION,
   PROCD_VERSION,
-  writeRunFile,
   type HostErrorCode,
   type HostCap,
   type HostEvent,
@@ -23,16 +20,13 @@ import {
   type HostRequest,
   type HostRun,
   type RunExit,
+  type RunFile,
 } from './protocol.ts'
 
 /** Without a live process for this long the host leaves (TETHER_PROCD_IDLE_MS overrides). */
 export const PROCD_IDLE_MS = 5 * 60_000
 /** A log file above this keeps its newer half. */
 export const LOG_MAX_BYTES = 20 * 1024 * 1024
-/** Logs of this many runs are kept per process. */
-export const LOG_RUNS_KEPT = 5
-/** The last line of output that did not end in a newline is written after this much quiet. */
-const LOG_IDLE_FLUSH_MS = 1_000
 /** After `release`, the run is declared ended if the pty did not report an exit by itself. */
 const RELEASE_EXIT_MS = 1_500
 const SCROLLBACK_CHARS = 256 * 1024
@@ -53,8 +47,10 @@ export interface HostOptions {
   /** Called when the host should leave: idle, or a `shutdown` was honoured. */
   onExit?: (reason: string) => void
   logMaxBytes?: number
-  /** Default true. False: no clean log, no run.json, no process start-time lookup (terminal panes). */
+  /** Default: true when a `store` is given. False: no clean log, no run.json, no process start-time lookup (terminal panes). */
   persist?: boolean
+  /** The clean log and run.json writers (tether-procd gives run-store.ts; the terminal-pane host persists nothing and has none). */
+  store?: HostStore
   /** Per-client socket buffer ceiling for direct writes (default OUT_HIGH_WATER). */
   outHighWater?: number
   /** Per-client queue ceiling before it is dropped with `lag` (default OUT_QUEUE_MAX). */
@@ -98,73 +94,22 @@ export class HostError extends Error {
   }
 }
 
-/** One run's clean log: <home>/procs/<name>/logs/run-<n>.log, ISO UTC time + space + text per line. */
-class RunLog {
-  private fd: number | undefined
-  private bytes = 0
-  private readonly cleaner: LineCleaner = makeLineCleaner()
-  private idle: NodeJS.Timeout | undefined
-  private readonly path: string
-  private readonly maxBytes: number
-  private readonly log: (msg: string) => void
+/** What a persisting host leaves on disk: one run's clean log and its run.json. run-store.ts is the (synchronous) implementation. */
+export interface HostStore {
+  openLog(home: string, name: string, run: number, maxBytes: number, log: (msg: string) => void): RunLogSink
+  writeRun(home: string, run: RunFile): void
+}
 
-  constructor(home: string, name: string, run: number, maxBytes: number, log: (msg: string) => void) {
-    this.path = procLogPath(home, name, run)
-    this.maxBytes = maxBytes
-    this.log = log
-    const dir = procLogsDir(home, name)
-    mkdirSync(dir, { recursive: true })
-    // Only the newest LOG_RUNS_KEPT runs keep their log (this one included).
-    for (const f of readdirSync(dir)) {
-      const m = /^run-(\d+)\.log$/.exec(f)
-      if (m && Number(m[1]) <= run - LOG_RUNS_KEPT) rmSync(`${dir}/${f}`, { force: true })
-    }
-    this.fd = openSync(this.path, 'a')
-  }
-
-  push(data: string): void {
-    this.write(this.cleaner.push(data))
-    if (this.idle) clearTimeout(this.idle)
-    this.idle = setTimeout(() => this.write(this.cleaner.flush()), LOG_IDLE_FLUSH_MS)
-    this.idle.unref()
-  }
-
-  close(): void {
-    if (this.idle) clearTimeout(this.idle)
-    this.write(this.cleaner.flush())
-    if (this.fd !== undefined) closeSync(this.fd)
-    this.fd = undefined
-  }
-
-  private write(lines: string[]): void {
-    if (!lines.length || this.fd === undefined) return
-    const ts = new Date().toISOString()
-    const text = lines.map((l) => `${ts} ${l}\n`).join('')
-    try {
-      this.bytes += writeSync(this.fd, text)
-      if (this.bytes > this.maxBytes) this.halve()
-    } catch (e) {
-      this.log(`log ${this.path}: ${(e as Error).message}`)
-    }
-  }
-
-  /** Keeps the newer half, cut at a line boundary. */
-  private halve(): void {
-    closeSync(this.fd!)
-    const all = readFileSync(this.path, 'utf8')
-    let keep = all.slice(Math.floor(all.length / 2))
-    const nl = keep.indexOf('\n')
-    keep = nl >= 0 ? keep.slice(nl + 1) : keep
-    writeFileSync(this.path, keep)
-    this.bytes = Buffer.byteLength(keep)
-    this.fd = openSync(this.path, 'a')
-  }
+/** One run's clean log, as the host uses it. */
+export interface RunLogSink {
+  push(data: string): void
+  close(): void
 }
 
 interface Run extends HostRun {
   pty: PtyHandle
   scrollback: Scrollback
-  log: RunLog | undefined
+  log: RunLogSink | undefined
   /** Ends the run once (the pty's exit, or the release fallback). */
   finish: (code: number) => Promise<void>
   finished?: boolean
@@ -184,6 +129,7 @@ export class ProcHost {
   private readonly onExit: (reason: string) => void
   private readonly logMaxBytes: number
   private readonly persist: boolean
+  private readonly store: HostStore | undefined
   private readonly outHigh: number
   private readonly outMax: number
   private readonly batchMs: number
@@ -205,7 +151,9 @@ export class ProcHost {
     this.idleMs = opts.idleMs ?? PROCD_IDLE_MS
     this.onExit = opts.onExit ?? (() => {})
     this.logMaxBytes = opts.logMaxBytes ?? LOG_MAX_BYTES
-    this.persist = opts.persist ?? true
+    this.persist = opts.persist ?? opts.store !== undefined
+    if (this.persist && !opts.store) throw new Error('a persisting ProcHost needs a store (procd/run-store.ts)')
+    this.store = opts.store
     this.outHigh = opts.outHighWater ?? OUT_HIGH_WATER
     this.outMax = opts.outQueueMax ?? OUT_QUEUE_MAX
     this.batchMs = opts.batchMs ?? BATCH_MS
@@ -221,7 +169,7 @@ export class ProcHost {
 
   async listen(): Promise<void> {
     if (this.persist) this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
-    if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
+    if (process.platform !== 'win32') await rm(this.pipe, { force: true }) // a socket file left by a dead host
     await new Promise<void>((resolve, reject) => {
       this.server.once('error', reject)
       this.server.listen(this.pipe, () => { this.server.off('error', reject); resolve() })
@@ -458,7 +406,7 @@ export class ProcHost {
     if (prev && !prev.exit) throw new HostError('already-running', `${req.name} já roda neste anfitrião (pid ${prev.pid})`)
     const home = req.home
     const spawnedAt = new Date().toISOString()
-    const log = this.persist ? new RunLog(home, req.name, req.run, this.logMaxBytes, this.log) : undefined
+    const log = this.store?.openLog(home, req.name, req.run, this.logMaxBytes, this.log)
     let resolveEnded!: (e: RunExit) => void
     const ended = new Promise<RunExit>((r) => { resolveEnded = r })
     let run: Run | undefined
@@ -495,7 +443,7 @@ export class ProcHost {
   }
 
   /** run.json gets the exit BEFORE any client hears of it; with no client connected it is written all the same. */
-  private async onRunExit(name: string, home: string, current: () => Run | undefined, identity: Promise<string> | undefined, log: RunLog | undefined, code: number, done: (e: RunExit) => void): Promise<void> {
+  private async onRunExit(name: string, home: string, current: () => Run | undefined, identity: Promise<string> | undefined, log: RunLogSink | undefined, code: number, done: (e: RunExit) => void): Promise<void> {
     const exit: RunExit = { code, at: new Date().toISOString() }
     log?.close()
     await identity
@@ -515,7 +463,7 @@ export class ProcHost {
   private writeRun(home: string, run: Run): void {
     if (!this.persist) return
     try {
-      writeRunFile(home, { v: 1, ...publicRun(run), hostPid: this.pid, hostStartedAt: this.startedAt })
+      this.store!.writeRun(home, { v: 1, ...publicRun(run), hostPid: this.pid, hostStartedAt: this.startedAt })
     } catch (e) {
       this.log(`run file of ${run.name}: ${(e as Error).message}`)
     }

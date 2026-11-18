@@ -15,7 +15,8 @@ import {
 import { commandFromScript, resolveSoulCommand, withRenamedNode } from '../../src/exec/ops-agents.ts'
 import { ENV_HOME, ENV_SLOT } from '../../src/agents/types.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
-import { exePath, readStamp } from '../../src/core/exe.ts'
+import { exePath } from '../../src/core/exe.ts'
+import { readStamp } from '../../src/core/exe-sync.ts'
 import { slotEventsPath } from '../../src/core/paths.ts'
 import { tempDirs } from './tmp.helpers.ts'
 

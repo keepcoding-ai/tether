@@ -19,7 +19,7 @@ export interface AgentMcp {
    * Several extensions may inject into one plan (one repeated `--mcp-config` each, registration order). `servers` declares
    * the server names the file holds: a name already injected from another file throws McpNameCollisionError.
    */
-  inject(plan: LaunchPlan, configFile: string, servers?: readonly string[]): LaunchPlan
+  inject(plan: LaunchPlan, configFile: string, servers?: readonly string[]): LaunchPlan | Promise<LaunchPlan>
   /**
    * The CLI loads `{ "type": "http", "url", "headers" }` servers and expands `${VAR}` in their headers from its env
    * (httpMcpConfigOf). Then the extensions serve it from the daemon (src/daemon/mcp-http.ts) and the agent spawns no MCP

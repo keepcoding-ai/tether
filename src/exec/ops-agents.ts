@@ -7,10 +7,11 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import path from 'node:path'
 import { homedir } from 'node:os'
-import { ensureRenamedNode as ensureRenamedNodeSync, fileSig, isNodeExecutable, isRenamedNode, type ExeName } from '../core/exe.ts'
+import type { ExeName } from '../core/exe.ts'
+import { ensureRenamedNode as ensureRenamedNodeSync, fileSig, isNodeExecutable, isRenamedNode } from '../core/exe-sync.ts'
 import { parseTopLevelNotify, type CodexCommand } from '../agents/codex.ts'
 import { parseFrontmatter, type TetherSkill } from '../agents/skills.ts'
-import { defaultShell, findOnPath } from '../agents/shell.ts'
+import { defaultShell, findOnPath } from '../agents/shell-sync.ts'
 import { ENV_SOUL_CMD, fromMsysPath, splitCommandLine, type Command } from '../agents/soul.ts'
 import type { EnvMap, MaterializeSpec, RenamedNodeReply, SkillsLoad } from './protocol.ts'
 

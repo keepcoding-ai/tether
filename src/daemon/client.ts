@@ -6,8 +6,8 @@ import { connect, type Socket } from 'node:net'
 import { userInfo } from 'node:os'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { registeredAgentExecutor } from '../agents/agent-exec.ts'
-import { ensureRenamedNode, exeLog, type ExeName, type ExeResult } from '../core/exe.ts'
+import { agentExecutor } from '../agents/agent-exec.ts'
+import { exeLog, type ExeName, type ExeResult } from '../core/exe.ts'
 import type { Probe } from '../core/perf-probe.ts'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
@@ -317,14 +317,12 @@ export interface DetachedNodeOptions {
 }
 
 /**
- * The renamed node copy for a detached start. Inside tetherd (a registered executor) the stat/copy of the executable runs on
- * the worker, so the loop does not wait for the disk; the CLI and Electron main have none and stay synchronous.
+ * The renamed node copy for a detached start, made by the executor's `renamedNode` operation: on tetherd's workers inside the
+ * daemon, on the inline executor (same operation, run in its own loop) in the CLI and Electron main.
  */
 async function renamedNodeFor(opts: DetachedNodeOptions): Promise<ExeResult> {
   const log = opts.log ?? exeLog(opts.home, 'spawn')
-  const executor = registeredAgentExecutor()
-  if (!executor) return ensureRenamedNode(opts.home, opts.name, opts.node, log)
-  const reply = await executor.run('renamedNode', [opts.home, opts.name, opts.node, process.platform])
+  const reply = await agentExecutor().run('renamedNode', [opts.home, opts.name, opts.node, process.platform])
   for (const line of reply.logs) log(line)
   return reply.result
 }

@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { findTranscript } from '../../src/agents/claude.ts'
+import { findTranscript } from '../../src/agents/claude-sync.ts'
 import type { PauseBatch, PauseEntry } from '../../src/daemon/pause.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { openSlot, SuiteDaemon } from './daemon-driver.ts'

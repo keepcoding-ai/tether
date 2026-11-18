@@ -24,7 +24,7 @@ import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { slotMetaPath } from '../../src/core/paths.ts'
-import { SLOT_ID_RE } from '../../src/core/store.ts'
+import { SLOT_ID_RE } from '../../src/core/store-model.ts'
 import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 import { slotOfKeyFile, validKeyShape } from './gate-rules.ts'
 import { McpRewriter } from './mcp-texts.ts'
@@ -157,7 +157,7 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
     const mcpFile = mcpFileOf(deps.home, slot.slotId)
     // The injection is pure: a refused name leaves the plan and the disk as they were.
     let out: LaunchPlan
-    try { out = agent.mcp.inject(plan, mcpFile, [MCP_SERVER_NAME]) } catch (e) {
+    try { out = await agent.mcp.inject(plan, mcpFile, [MCP_SERVER_NAME]) } catch (e) {
       if (e instanceof McpNameCollisionError) { deps.log(`slot ${slot.slotId}: ${e.message}; lançado sem o navegador`); return plan }
       throw e
     }

@@ -1,8 +1,8 @@
 // Default shell per platform: macOS opens the user's login shell, Windows PowerShell, elsewhere $SHELL.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultShell } from '../../src/agents/shell.ts'
-import { defaultProfiles } from '../../src/core/profile.ts'
+import { defaultShell } from '../../src/agents/shell-sync.ts'
+import { defaultProfiles } from '../../src/core/profile-sync.ts'
 
 describe('defaultShell by platform', () => {
   test('darwin: $SHELL as a login shell', () => assert.deepEqual(defaultShell({ SHELL: '/opt/homebrew/bin/fish' }, 'darwin'), { command: '/opt/homebrew/bin/fish', args: ['-l'] }))

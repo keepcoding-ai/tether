@@ -19,7 +19,8 @@ host.activate()
 
 for (const agent of ['claude', 'soul']) {
   describe(`${agent}: MCP files in the launch plan`, () => {
-    const inject = registry.get(agent)!.mcp!.inject
+    // claude and soul inject synchronously (the contract also allows a promise, which codex's file read needs).
+    const inject = registry.get(agent)!.mcp!.inject as (plan: LaunchPlan, file: string, servers?: readonly string[]) => LaunchPlan
 
     test('no file: the plan is not touched', () => {
       const p = base()
