@@ -146,9 +146,13 @@ function entries(): string[] {
 
 const rel = (f: string): string => relative(ROOT, f).split('\\').join('/')
 const isVendor = (f: string): boolean => rel(f).split('/').includes('vendor')
+// Exempt area: the executor's worker and its operation files (and the table that merges them) are where `*Sync` belongs.
+// The coordinator graph must never reach them (see the guard test below); they are neither counted nor traversed.
+const isExempt = (f: string): boolean => /^src\/exec\/(ops-[^/]+|worker|table)\.ts$/.test(rel(f))
 
-function measure(): { counts: Record<string, number>; vendor: Record<string, number>; ids: Record<string, string[]>; reached: number } {
+function measure(): { counts: Record<string, number>; vendor: Record<string, number>; ids: Record<string, string[]>; reached: number; exempt: string[] } {
   const seen = new Set<string>()
+  const exempt: string[] = []
   const queue = entries()
   const counts: Record<string, number> = {}
   const vendor: Record<string, number> = {}
@@ -157,6 +161,7 @@ function measure(): { counts: Record<string, number>; vendor: Record<string, num
     const f = queue.pop()!
     if (seen.has(f)) continue
     seen.add(f)
+    if (isExempt(f)) { exempt.push(rel(f)); continue }
     const a = analyze(f)
     const total = [...a.uses.values()].reduce((x, y) => x + y, 0)
     if (total) {
@@ -167,7 +172,7 @@ function measure(): { counts: Record<string, number>; vendor: Record<string, num
     for (const s of a.specs) { const r = resolveSpec(f, s); if (r && !seen.has(r)) queue.push(r) }
   }
   const sort = (o: Record<string, number>): Record<string, number> => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)))
-  return { counts: sort(counts), vendor: sort(vendor), ids, reached: seen.size }
+  return { counts: sort(counts), vendor: sort(vendor), ids, reached: seen.size, exempt }
 }
 
 test('the tetherd import graph does not grow its synchronous fs / child_process use', () => {
@@ -201,4 +206,13 @@ test('the tetherd import graph does not grow its synchronous fs / child_process 
   if (shrank.length) {
     assert.fail(`sync use went down: lower the baseline with TETHER_RATCHET_UPDATE=1 (the ratchet only moves down):\n  ${shrank.join('\n  ')}`)
   }
+})
+
+test('the coordinator graph (daemon main and extension daemons) never imports the executor operations', () => {
+  const { exempt, reached } = measure()
+  assert.ok(reached > 20, `import graph looks too small (${reached} files)`)
+  assert.deepEqual(exempt, [], `the loop must reach src/exec/ops-*.ts, worker.ts and table.ts only through a worker, never by import: ${exempt.join(', ')}`)
+  // The guard is only worth something when the exempt pattern really matches the files.
+  for (const name of ['ops-fs.ts', 'worker.ts', 'table.ts']) assert.ok(isExempt(join(ROOT, 'src/exec', name)), name)
+  assert.ok(!isExempt(join(ROOT, 'src/exec/executor.ts')))
 })
