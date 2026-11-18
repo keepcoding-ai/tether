@@ -47,11 +47,12 @@ import {
 } from './files-rules.ts'
 import type { DialogSpec } from '../../app/shared/dialog.ts'
 import {
-  ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, buildPad, hostOf, isEnded, type LastAction, logoutDialog, type MainAgentView, oldestAsking,
+  ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, buildPad, CLOSED_SECTION_KEY, groupHead, hostOf, isEnded, type LastAction, logoutDialog, type MainAgentView, oldestAsking,
   PAD_ACTIVE, PAD_CLOSE_ALL_ENDED, PAD_ENDED, PAD_NONE_OF_AGENT, PAD_WITH_YOU, type PadAgentInfo, padBadge, type PadGroup, type PadGroupMenuId, padGroupMenu,
-  padMenu, type PadMenuId, type PadModel, padOnlyAgent, padSections, type PadSectionId, padSeeAgent, type PadTab, padWhere, pillBadgeCount, resolveAgent,
-  rowStateText, shortAddress,
+  padMenu, type PadMenuId, type PadModel, padOnlyAgent, padSections, type PadSectionId, padSeeAgent, type PadTab, type PadViewState, padViewStateOf, padWhere,
+  pillBadgeCount, resolveAgent, rowStateText, shortAddress, toggleCollapsed,
 } from './pad-rules.ts'
+import { type ClosedTab, closedByText, closedGroups, PAD_CLEAR_CLOSED, PAD_CLOSED, PAD_REOPEN } from './closed-history.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
 import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
@@ -160,10 +161,14 @@ export function activate(ui: TetherUi): IDisposable[] {
     return order.map(id => panels.get(id)!.padTab()).filter((t): t is PadTab => !!t)
   }
   const padModel = (only?: string): PadModel => buildPad(padTabs(), agentInfo, only)
-  /** Closes tabs: the live ones in main, and every pane (one back from layout.json has no tab in main yet). */
-  const closeTabs = (tabIds: readonly string[]): void => {
+  /**
+   * Closes tabs: the live ones in main, and every pane (one back from layout.json has no tab in main yet: its saved address goes
+   * with the close, for the closed history). `by` 'cleanup': the ended agents' "Fechar todas".
+   */
+  const closeTabs = (tabIds: readonly string[], by: 'user' | 'cleanup' = 'user'): void => {
     for (const id of tabIds) {
-      void ipc.invoke('close', id)
+      const saved = panels.get(paneIdOf(id))?.saved
+      void ipc.invoke('close', id, by, saved)
       if (ui.panes.find(paneIdOf(id))) ui.panes.close(paneIdOf(id))
     }
   }
@@ -266,16 +271,47 @@ export function activate(ui: TetherUi): IDisposable[] {
   /** The action bars drawn in each pad root: the pad redraws by replacing children, so the bars (each with a ResizeObserver) are let go first. */
   const barsOf = new WeakMap<HTMLElement, ActionBar[]>()
   const disposeBars = (root: HTMLElement): void => { for (const b of barsOf.get(root) ?? []) b.dispose(); barsOf.delete(root) }
+  /** An action bar drawn in `root`, let go at the root's next redraw. */
+  const barIn = (root: HTMLElement, label: string, entries: () => ContextMenuEntry[]): HTMLElement => {
+    const b = createActionBar({ entries, label, align: 'end', openMenu: (x, y) => ui.menus.context(x, y, entries()) })
+    const bars = barsOf.get(root) ?? []
+    barsOf.set(root, bars)
+    bars.push(b)
+    return b.element
+  }
+
+  // ---- collapsing groups: kept in the pad's own state (layout.json), shared by its views ----
+  let viewState: PadViewState = { collapsed: [], closedCollapsed: [] }
+  let viewStateSeeded = false
+  const toggleGroup = (key: string, closed = false): void => {
+    viewState = closed
+      ? { ...viewState, closedCollapsed: toggleCollapsed(viewState.closedCollapsed, key) }
+      : { ...viewState, collapsed: toggleCollapsed(viewState.collapsed, key) }
+    for (const p of pads) p.persist()
+    refreshPad()
+  }
+  /**
+   * A group's header that folds: the caret and the header's free area toggle it; its own buttons (the chip, the action bar) keep
+   * their clicks.
+   */
+  const foldable = (head: HTMLElement, collapsed: boolean, name: string, toggle: () => void): HTMLElement => {
+    const caret = el('button', 'br-pad-caret')
+    caret.type = 'button'
+    caret.dataset.action = 'toggle-group'
+    caret.append(icon(collapsed ? 'caret-right' : 'caret-down'))
+    caret.setAttribute('aria-expanded', String(!collapsed))
+    const label = collapsed ? `Expandir ${name}` : `Recolher ${name}`
+    caret.title = label
+    caret.setAttribute('aria-label', label)
+    caret.addEventListener('click', ev => { ev.stopPropagation(); toggle() })
+    head.dataset.fold = 'true'
+    head.addEventListener('click', ev => { if (!(ev.target as HTMLElement).closest('button, .action-bar')) toggle() })
+    return caret
+  }
 
   const drawList = (root: HTMLElement, model: PadModel): void => {
     const now = Date.now()
-    const bars: ActionBar[] = []
-    barsOf.set(root, bars)
-    const bar = (label: string, entries: () => ContextMenuEntry[]): HTMLElement => {
-      const b = createActionBar({ entries, label, align: 'end', openMenu: (x, y) => ui.menus.context(x, y, entries()) })
-      bars.push(b)
-      return b.element
-    }
+    const bar = (label: string, entries: () => ContextMenuEntry[]): HTMLElement => barIn(root, label, entries)
     const list = el('div', 'br-pad-list')
     list.dataset.state = 'list'
     if (padFilter !== undefined) {
@@ -316,10 +352,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     const sections = padSections(model)
     const title = (text: string): HTMLElement => el('h4', 'br-pad-head', text)
     const group = (g: PadGroup, section: PadSectionId): HTMLElement => {
+      const folded = groupHead(g, viewState.collapsed.includes(g.slotId))
       const box = el('div', 'br-pad-group')
       box.dataset.agent = g.slotId
       box.dataset.ended = g.ended ? 'true' : 'false'
+      box.dataset.collapsed = String(folded.collapsed)
       const head = el('div', 'br-pad-ghead')
+      const caret = foldable(head, folded.collapsed, `as guias do ${g.name}`, () => toggleGroup(g.slotId))
       const chip = el('button', 'br-web-owner br-pad-agent')
       chip.type = 'button'
       chip.dataset.action = 'focus-agent'
@@ -329,8 +368,17 @@ export function activate(ui: TetherUi): IDisposable[] {
       chip.addEventListener('click', () => { ui.agents.focus(g.slotId) })
       const count = el('span', 'br-pad-count', String(g.tabs.length))
       count.dataset.role = 'count'
-      head.append(chip, count, bar(`Ações do ${g.name}`, () => groupMenuEntries(g)))
-      box.append(head, ...g.tabs.map(t => row(t, section)))
+      head.append(caret, chip, count)
+      if (folded.attention) {
+        const attn = el('span', 'br-pad-attn')
+        attn.dataset.role = 'attention'
+        const tip = `${g.asking} ${g.asking === 1 ? 'guia pede' : 'guias pedem'} sua ajuda`
+        attn.title = tip
+        attn.setAttribute('aria-label', tip)
+        head.append(attn)
+      }
+      head.append(bar(`Ações do ${g.name}`, () => groupMenuEntries(g)))
+      box.append(head, ...(folded.collapsed ? [] : g.tabs.map(t => row(t, section))))
       return box
     }
     if (sections.withPerson.length > 0) {
@@ -349,7 +397,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const sec = el('section', 'br-pad-section')
       sec.dataset.section = 'ended'
       const head = el('div', 'br-pad-sechead')
-      const closeAll = (): ContextMenuEntry[] => [{ icon: 'x', label: PAD_CLOSE_ALL_ENDED, danger: true, pin: 'primary', run: () => closeTabs(sections.endedIds) }]
+      const closeAll = (): ContextMenuEntry[] => [{ icon: 'x', label: PAD_CLOSE_ALL_ENDED, danger: true, pin: 'primary', run: () => closeTabs(sections.endedIds, 'cleanup') }]
       head.append(title(`${PAD_ENDED} (${sections.endedIds.length})`), bar('Ações das guias de agentes encerrados', closeAll))
       sec.append(head, ...sections.ended.map(g => group(g, 'ended')))
       list.append(sec)
@@ -391,10 +439,75 @@ export function activate(ui: TetherUi): IDisposable[] {
     const host = root.querySelector('.br-pad-list') ?? root
     host.append(sec)
   }
+  // ---- "Fechadas": the closed history by agent, each with "Reabrir", and "Limpar histórico" ----
+  let closedList: ClosedTab[] = []
+  const closedOwnerName = (slotId: string, kept: string): string => shortName(ui.agents.get(slotId)?.name || slots.get(slotId)?.name || kept || 'Agente')
+  const reopenClosed = async (id: string): Promise<void> => {
+    const info = await ipc.invoke('reopenClosed', id).catch(() => null)
+    if (!info) return
+    // The tab event opened its pane (or will, at once): it is shown, with the person holding it.
+    const show = (tries: number): void => {
+      if (ui.panes.find(paneIdOf(info.tabId))) ui.panes.reveal(paneIdOf(info.tabId))
+      else if (tries > 0) setTimeout(() => show(tries - 1), 50)
+    }
+    show(20)
+  }
+  const drawClosed = (root: HTMLElement): void => {
+    const shown = padFilter === undefined ? closedList : closedList.filter(c => c.ownerSlotId === padFilter)
+    if (shown.length === 0) return
+    const now = Date.now()
+    const sectionFolded = viewState.closedCollapsed.includes(CLOSED_SECTION_KEY)
+    const sec = el('section', 'br-pad-section br-pad-closed')
+    sec.dataset.section = 'closed'
+    sec.dataset.collapsed = String(sectionFolded)
+    const head = el('div', 'br-pad-sechead')
+    const clear = (): ContextMenuEntry[] => [{ icon: 'trash', label: PAD_CLEAR_CLOSED, danger: true, pin: 'icon', run: () => { void ipc.invoke('clearClosed').catch(() => {}) } }]
+    head.append(
+      foldable(head, sectionFolded, 'as guias fechadas', () => toggleGroup(CLOSED_SECTION_KEY, true)),
+      el('h4', 'br-pad-head', `${PAD_CLOSED} (${shown.length})`),
+      barIn(root, 'Ações das guias fechadas', clear),
+    )
+    sec.append(head)
+    if (!sectionFolded) {
+      for (const g of closedGroups(shown)) {
+        const folded = viewState.closedCollapsed.includes(g.slotId)
+        const name = closedOwnerName(g.slotId, g.name)
+        const box = el('div', 'br-pad-group')
+        box.dataset.agent = g.slotId
+        box.dataset.collapsed = String(folded)
+        const ghead = el('div', 'br-pad-ghead')
+        const who = el('span', 'br-pad-dagent', name)
+        const count = el('span', 'br-pad-count', String(g.items.length))
+        count.dataset.role = 'count'
+        ghead.append(foldable(ghead, folded, `as guias fechadas do ${name}`, () => toggleGroup(g.slotId, true)), who, count)
+        box.append(ghead)
+        if (!folded) {
+          for (const c of g.items) {
+            const r = el('div', 'br-pad-row br-pad-drow br-pad-crow')
+            r.dataset.closed = c.id
+            const text = el('span', 'br-pad-dtext')
+            text.append(el('span', 'br-pad-title', c.title || shortAddress(c.url) || 'Guia'), el('span', 'br-pad-addr', `${shortAddress(c.url)} · ${closedByText(c.by)} · ${whenText(c.closedAt, now)}`))
+            text.title = c.url
+            const b = el('button', 'br-pad-btn', PAD_REOPEN)
+            b.type = 'button'
+            b.dataset.action = 'reopen-closed'
+            b.addEventListener('click', () => { void reopenClosed(c.id) })
+            r.append(text, b)
+            box.append(r)
+          }
+        }
+        sec.append(box)
+      }
+    }
+    const host = root.querySelector('.br-pad-list') ?? root
+    host.append(sec)
+  }
   const drawPad = (root: HTMLElement): void => {
+    disposeBars(root)
     const all = padModel()
     if (all.total === 0) drawEmpty(root)
     else drawList(root, padFilter === undefined ? all : padModel(padFilter))
+    drawClosed(root)
     drawDownloads(root)
   }
   const pads = new Set<Pad>()
@@ -403,7 +516,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     const now = Date.now()
     const tabs = padTabs()
     return JSON.stringify([
-      padFilter, serveMode(), persistentLogins, downloadsList.map(d => [d.slotId, d.name, d.bytes, whenText(d.at, now)]),
+      padFilter, serveMode(), persistentLogins, downloadsList.map(d => [d.slotId, d.name, d.bytes, whenText(d.at, now)]), viewState,
+      closedList.map(c => [c.id, c.title, c.ownerSlotId, closedOwnerName(c.ownerSlotId, c.ownerName), whenText(c.closedAt, now)]),
       tabs.map(t => [t.tabId, actionState(t.tabId), t.ownerSlotId, t.title, shortAddress(t.url), t.control, t.asking, t.expired, t.place, agentInfo(t.ownerSlotId), (() => { const a = actions.get(t.tabId); return a && now - a.at <= PAD_ACTION_FRESH_MS ? [a.kind, hostOf(t.url)] : 0 })()]),
     ])
   }
@@ -437,6 +551,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     private readonly host: PadHost
     constructor(host: PadHost) {
       this.host = host
+      if (!viewStateSeeded) { viewState = padViewStateOf(host.state); viewStateSeeded = true }
       this.element.dataset.pad = PAD_ID
       drawPad(this.element)
       this.sub = ui.settings.onChange('serveToAgents', () => this.redraw())
@@ -445,6 +560,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     /** The header shows the pinned items of menu(), which follow the same state as the list. */
     redraw(): void { drawPad(this.element); this.host.menuChanged() }
     menu(): ContextMenuEntry[] { return padMenuEntries() }
+    /** The collapsed groups, kept in layout.json (they survive reopening the pad and the app). */
+    serialize(): PadViewState { return viewState }
+    persist(): void { this.host.persist() }
     focus(): void {
       // The icon was clicked (or the pad opened from the keyboard) with a help request pending: straight to the tab that asks.
       if (!ownOpen && goToOldestAsk()) return
@@ -923,9 +1041,11 @@ export function activate(ui: TetherUi): IDisposable[] {
       for (const s of this.subs) s.dispose()
       if (panels.get(this.paneId) === this) { panels.delete(this.paneId); refreshPad() }
       // The person closed the pane (a move re-creates it at once under the same id): closing the pane closes the tab.
-      const tabId = this.info?.tabId
+      // A pane back from layout.json and never loaded closes too: its saved address goes with it, for the closed history.
+      const tabId = this.info?.tabId ?? this.saved?.tabId
+      const saved = this.saved
       const paneId = this.paneId
-      if (tabId) setTimeout(() => { if (!unloading && !ui.panes.find(paneId)) void ipc.invoke('close', tabId) }, 0)
+      if (tabId) setTimeout(() => { if (!unloading && !ui.panes.find(paneId)) void ipc.invoke('close', tabId, 'user', saved) }, 0)
     }
   }
 
@@ -1104,6 +1224,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   void ipc.invoke('localNetworkOpen').then(list => { for (const a of list) enqueue(a) }).catch(() => {})
   void ipc.invoke('uploadOpen').then(list => { for (const a of list) enqueueUpload(a) }).catch(() => {})
   void ipc.invoke('downloads').then(list => { downloadsList = list; refreshPad() }).catch(() => {})
+  void ipc.invoke('closedList').then(list => { closedList = list; refreshPad() }).catch(() => {})
 
   void ipc.invoke('status').then(s => { persistentLogins = s.persistentLogins; for (const p of pads) p.redraw(); for (const p of panels.values()) p.paintFacts() })
   ui.test.expose('browserPanes', () => [...panels].map(([id, p]) => {
@@ -1269,6 +1390,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     ipc.on('uploadAsk', enqueueUpload),
     ipc.on('uploadCancelled', withdraw),
     ipc.on('downloads', list => { downloadsList = list; refreshPad() }),
+    ipc.on('closedHistory', list => { closedList = list; refreshPad() }),
     ipc.on('closed', tabId => {
       const id = paneIdOf(tabId)
       controls.delete(tabId)

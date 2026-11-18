@@ -5,6 +5,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_FRESH_MS, actionKindOf, buildPad, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, pillBadgeCount, padSections, padMenu, padGroupMenu, rowStateText, PAD_ACTIVE, PAD_ENDED, PAD_CLOSE_ALL_ENDED, padOnlyAgent, type PadModel, type PadGroup, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
+  COLLAPSED_MAX, groupHead, padViewStateOf, toggleCollapsed,
 } from '../../extensions/browser/pad-rules.ts'
 
 const tab = (tabId: string, ownerSlotId: string, over: Partial<PadTab> = {}): PadTab =>
@@ -204,7 +205,7 @@ describe('browser pad: sections, menus and row state', () => {
     assert.equal((padMenu(m, false)[0] as { id: string }).id, 'pause-all')
   })
 
-  const grp = (over: Partial<PadGroup>): PadGroup => ({ slotId: 'a', name: 'Sonda', ended: false, tabs: [], total: 2, paused: 0, ...over })
+  const grp = (over: Partial<PadGroup>): PadGroup => ({ slotId: 'a', name: 'Sonda', ended: false, tabs: [], total: 2, paused: 0, asking: 0, ...over })
   const gids = (g: PadGroup) => padGroupMenu(g).map(i => i === 'sep' ? 'sep' : i.id)
   test('agent menu: brake follows the group; an ended agent has none', () => {
     assert.deepEqual(gids(grp({})), ['pause-agent', 'see-agent', 'sep', 'close-agent'])
@@ -224,5 +225,44 @@ describe('browser pad: sections, menus and row state', () => {
     assert.equal(rowStateText('user', { ...base, expired: true }), 'Sonda desistiu de esperar')
     assert.equal(rowStateText('user', { ...base, control: 'user' }), 'com você, do Sonda')
     assert.equal(rowStateText('active', { ...base, control: 'paused' }), 'pausada')
+  })
+})
+
+describe('browser pad: collapsing an agent group', () => {
+  test('a group counts the tabs that asked, the ones on top included', () => {
+    const m = buildPad([tab('a1', 'a'), tab('a2', 'a', { asking: true, control: 'user' }), tab('b1', 'b')], agentOf)
+    assert.deepEqual(m.groups.map(g => [g.slotId, g.asking]), [['a', 1], ['b', 0]])
+  })
+
+  test('collapsed: the count stays and an open request shows the attention sign; expanded: no sign (the row says it)', () => {
+    const g = { tabs: [tab('a1', 'a'), tab('a3', 'a')], asking: 1 }
+    assert.deepEqual(groupHead(g, true), { collapsed: true, count: 2, attention: true })
+    assert.deepEqual(groupHead(g, false), { collapsed: false, count: 2, attention: false })
+    assert.deepEqual(groupHead({ ...g, asking: 0 }, true), { collapsed: true, count: 2, attention: false })
+  })
+
+  test('a new request does not unfold the group: only the click changes what is kept', () => {
+    const kept = ['a']
+    const before = groupHead({ tabs: [tab('a1', 'a')], asking: 0 }, kept.includes('a'))
+    const after = groupHead({ tabs: [tab('a1', 'a')], asking: 1 }, kept.includes('a'))
+    assert.equal(before.collapsed, true)
+    assert.equal(after.collapsed, true)
+    assert.equal(after.attention, true)
+  })
+
+  test('a click toggles one agent; the list is capped, the oldest choice going first', () => {
+    assert.deepEqual(toggleCollapsed([], 'a'), ['a'])
+    assert.deepEqual(toggleCollapsed(['a', 'b'], 'a'), ['b'])
+    const many = Array.from({ length: COLLAPSED_MAX }, (_, i) => `s${i}`)
+    const next = toggleCollapsed(many, 'new')
+    assert.equal(next.length, COLLAPSED_MAX)
+    assert.equal(next[0], 's1')
+    assert.equal(next.at(-1), 'new')
+  })
+
+  test('the view state read back from layout.json: anything else is dropped', () => {
+    assert.deepEqual(padViewStateOf(undefined), { collapsed: [], closedCollapsed: [] })
+    assert.deepEqual(padViewStateOf({ collapsed: ['a', 'a', 3, '', 'b'], closedCollapsed: 'x' }), { collapsed: ['a', 'b'], closedCollapsed: [] })
+    assert.deepEqual(padViewStateOf({ collapsed: [], closedCollapsed: ['*', 'c'] }), { collapsed: [], closedCollapsed: ['*', 'c'] })
   })
 })
