@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { slotNoticesPath } from '../../src/core/paths.ts'
-import { leaveNotice, pendingNotices, quoted, QUOTED_MAX } from '../../src/daemon/notices.ts'
+import { leaveNotice, quoted, QUOTED_MAX } from '../../src/daemon/notices.ts'
+import { pendingNotices } from '../../src/daemon/notices-read.ts'
 import { removeHome, tempHome } from './daemon.helpers.ts'
 
 test('leaveNotice appends {ts, text} lines; newlines flattened; long text cut', async () => {

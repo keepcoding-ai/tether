@@ -2,7 +2,7 @@
 // terminal (a notice never wakes an idle agent). Generic: any part of tetherd may leave one. The file is
 // <home>/slots/<slot>.notices.jsonl, one `{ts, text}` per line; Claude's hook (src/report/claude-hook.mjs) takes the
 // whole file atomically (rename, read, delete) on PostToolUse / UserPromptSubmit and hands the lines to the agent.
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { slotNoticesPath } from '../core/paths.ts'
 import { flatText } from './ronda.ts'
@@ -29,10 +29,8 @@ export function leaveNotice(home: string, slotId: string, text: string, now = ne
   appendFileSync(path, JSON.stringify(line) + '\n')
 }
 
-/** The notices still waiting for the slot's agent (tests and diagnostics; the hook is the consumer). */
-export function pendingNotices(home: string, slotId: string): Notice[] {
-  let text: string
-  try { text = readFileSync(slotNoticesPath(home, slotId), 'utf8') } catch { return [] }
+/** The notice lines of a file's text; a torn line is skipped. */
+export function parseNotices(text: string): Notice[] {
   const out: Notice[] = []
   for (const l of text.split('\n')) {
     if (!l.trim()) continue

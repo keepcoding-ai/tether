@@ -3,7 +3,8 @@
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { slotPauseReportPath, tetherHome } from '../core/paths.ts'
-import { derivedLabel, readPauseFile, type PauseReportLine } from '../daemon/pause.ts'
+import { derivedLabel, type PauseReportLine } from '../daemon/pause.ts'
+import { readPauseFile } from '../daemon/pause-read.ts'
 import { parseArgs, UsageError } from './args.ts'
 
 export interface PauseIo {

@@ -4,9 +4,10 @@ import { writeFileSync } from 'node:fs'
 import { after, describe, test } from 'node:test'
 import { pausePath } from '../../src/core/paths.ts'
 import {
-  applyReportLine, buildRequestText, canTransition, derivedLabel, newEntry, readPauseFile, transition, writePauseFile,
+  applyReportLine, buildRequestText, canTransition, derivedLabel, newEntry, transition, writePauseFile,
   type PauseBatch, type PauseEntry,
 } from '../../src/daemon/pause.ts'
+import { readPauseFile } from '../../src/daemon/pause-read.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
 const dirs = tempDirs('tether-pause-')

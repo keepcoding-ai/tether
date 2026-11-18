@@ -115,17 +115,10 @@ export function isRonda(x: unknown): x is Ronda {
     && typeof r.createdAt === 'string' && (r.nudge === undefined || typeof r.nudge === 'string') && (r.criterion === undefined || typeof r.criterion === 'string')
 }
 
-export function readRonda(home: string, slotId: string): Ronda | undefined {
+/** A ronda file's text parsed; undefined when it is not one. The read itself goes through the executor (server.ts). */
+export function parseRonda(text: string): Ronda | undefined {
   try {
-    const x: unknown = JSON.parse(readFileSync(slotRondaPath(home, slotId), 'utf8'))
-    return isRonda(x) ? x : undefined
-  } catch { return undefined }
-}
-
-/** `readRonda` off the event loop (boot reads it for every slot). */
-export async function readRondaAsync(home: string, slotId: string): Promise<Ronda | undefined> {
-  try {
-    const x: unknown = JSON.parse(await readFile(slotRondaPath(home, slotId), 'utf8'))
+    const x: unknown = JSON.parse(text)
     return isRonda(x) ? x : undefined
   } catch { return undefined }
 }

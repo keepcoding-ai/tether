@@ -1,6 +1,6 @@
 // Polite pause batch: the pure model (entry state machine, report folding, request text) plus the
 // <home>/pause.json persistence. The agent stops itself at a safe point; nothing here forces anything.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { pausePath } from '../core/paths.ts'
 
@@ -189,10 +189,10 @@ export function derivedLabel(entry: PauseEntry, now: number | string | Date): st
 
 // ---- persistence --------------------------------------------------------------------------------------------------
 
-/** Reads <home>/pause.json; undefined when missing, unreadable or not a batch. */
-export function readPauseFile(home: string): PauseBatch | undefined {
+/** The text of <home>/pause.json parsed; undefined when it is not a batch. The read itself goes through the executor (server.ts). */
+export function parsePauseFile(text: string): PauseBatch | undefined {
   try {
-    const x: unknown = JSON.parse(readFileSync(pausePath(home), 'utf8'))
+    const x: unknown = JSON.parse(text)
     if (typeof x !== 'object' || x === null) return undefined
     const b = x as PauseBatch
     if (b.v !== 1 || typeof b.id !== 'string' || typeof b.createdAt !== 'string' || typeof b.state !== 'string') return undefined
