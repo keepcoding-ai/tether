@@ -134,7 +134,7 @@ test('layout: a state event or an output chunk that changes nothing on screen re
     show('state events refreshing memoryMB/idleSince', noise)
     show('terminal output chunks', out)
     // The chunks reached the visible terminal (so the zero is not an artefact of a hidden or detached pane).
-    await page.waitForFunction(id => ({ id, last }) => window.__tether.text(id).includes(`line ${last}`), { id: shell, last: EVENTS - 1 }, { timeout: 10_000 })
+    await page.waitForFunction(({ id, last }: { id: string; last: number }) => window.__tether.text(id).includes(`line ${last}`), { id: shell, last: EVENTS - 1 }, { timeout: 10_000 })
     // The real daemon keeps talking while we measure (a tooltip's idle time, a status): such a real change may cost one
     // coalesced toolbar pass (about a dozen reads, once per frame at most). Everything else must stay at zero.
     const outsideToolbar = (r: Record<string, number>): number => total(Object.fromEntries(Object.entries(r).filter(([k]) => !/ pass \(/.test(k))))
