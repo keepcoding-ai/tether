@@ -7,6 +7,7 @@ import { folderNameOf, slotIsLive } from '../shared/agent-info.ts'
 import type { Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import type { LinkAssociation } from '../shared/api.ts'
+import { isUnsafe } from '../../src/core/unsafe.ts'
 import { KIND_ICON } from './icons.ts'
 import { pauseFirstConsequence } from './sessions-rules.ts'
 
@@ -69,8 +70,8 @@ export function closePanelSituation(s: SlotState): DialogSpec {
     ? 'A sessão fica em Encerradas, em Sessões; reabrir abre um shell novo na mesma pasta.'
     : 'A sessão fica em Encerradas, em Sessões; reabrir retoma a conversa.'
   const forget = shell
-    ? 'A sessão some do tether. Um shell não tem conversa: nada se perde.'
-    : `A sessão some do tether. A conversa continua no histórico d${SUBJECT[kind]} e pode ser retomada por lá.`
+    ? 'A sessão some do Tether. Um shell não tem conversa: nada se perde.'
+    : `A sessão some do Tether. A conversa continua no histórico d${SUBJECT[kind]} e pode ser retomada por lá.`
   return {
     situation: 'close-panel-idle',
     tone: 'info',
@@ -114,9 +115,9 @@ export function quitAllSituation(slots: SlotState[], background = 0): DialogSpec
     title: 'Sair e encerrar tudo?',
     context: { ...context, lines: [...context.lines, ...backgroundLine(background)] },
     choices: [
-      { id: 'close-window', icon: 'app-window', label: 'Só fechar a janela', consequence: 'Os agentes continuam rodando no tetherd. Ao abrir o tether de novo, tudo volta no lugar.', tone: 'safe' },
+      { id: 'close-window', icon: 'app-window', label: 'Só fechar a janela', consequence: 'Os agentes continuam rodando no tetherd. Ao abrir o Tether de novo, tudo volta no lugar.', tone: 'safe' },
       ...(busy > 0 ? [{ id: 'pause-first', icon: 'pause', label: 'Pedir pausa gentil primeiro', consequence: pauseFirstConsequence(busy), tone: 'neutral' as const }] : []),
-      { id: 'quit', icon: 'power', label: 'Encerrar tudo e sair', consequence: 'Todos os agentes e o tetherd são finalizados agora. As conversas ficam salvas e são retomadas quando o tether abrir de novo.', tone: 'destructive' },
+      { id: 'quit', icon: 'power', label: 'Encerrar tudo e sair', consequence: 'Todos os agentes e o tetherd são finalizados agora. As conversas ficam salvas e são retomadas quando o Tether abrir de novo.', tone: 'destructive' },
     ],
     cancelLabel: 'Cancelar',
   }
@@ -158,11 +159,11 @@ export function stillClosingSituation(): DialogSpec {
     situation: 'still-closing',
     tone: 'info',
     icon: 'hourglass',
-    title: 'O tether ainda está fechando',
+    title: 'O Tether ainda está fechando',
     message: 'A janela anterior ainda está liberando a instância única. Os agentes não foram afetados: eles continuam no tetherd.',
     choices: [
       { id: 'retry', icon: 'arrow-clockwise', label: 'Tentar de novo', consequence: 'Tenta abrir a janela agora. Costuma funcionar depois de alguns segundos.', tone: 'safe' },
-      { id: 'close', icon: 'x', label: 'Fechar', consequence: 'Não abre nada. Abra o tether de novo mais tarde.', tone: 'neutral' },
+      { id: 'close', icon: 'x', label: 'Fechar', consequence: 'Não abre nada. Abra o Tether de novo mais tarde.', tone: 'neutral' },
     ],
     escChoice: 'close',
   }
@@ -221,7 +222,7 @@ export function switchProfileSituation(s: SlotState, profiles: Profile[]): Dialo
     return {
       id: p.id, icon: KIND_ICON[kind] ?? 'terminal-window', label: p.name,
       detail: args.length ? args.join(' ') : (shell && !p.shell ? 'shell padrão' : 'sem argumentos'),
-      ...(p.args.includes('--dangerously-skip-permissions') ? { mark: 'sem restrições' } : {}),
+      ...(isUnsafe(p.args) ? { mark: 'sem restrições' } : {}),
       ...(p.id === currentId ? { current: true } : {}),
     }
   })
@@ -400,7 +401,7 @@ export function closedTabSituation(name: string): DialogSpec {
     tone: 'info',
     icon: 'link',
     title: `A guia “${name}” está fechada`,
-    message: 'O link aponta para uma guia que não está aberta em nenhum lugar do tether.',
+    message: 'O link aponta para uma guia que não está aberta em nenhum lugar do Tether.',
     choices: [{ id: 'reopen', icon: 'arrow-counter-clockwise', label: 'Reabrir a guia', consequence: 'Ela volta para a mesa atual e retoma a sessão de onde parou.', tone: 'safe' }],
     cancelLabel: 'Agora não',
   }
@@ -413,7 +414,7 @@ export function missingTabSituation(): DialogSpec {
     tone: 'warn',
     icon: 'link-break',
     title: 'Essa guia não existe mais',
-    message: 'O link aponta para uma guia que foi esquecida ou que nunca existiu neste tether. Nada foi aberto.',
+    message: 'O link aponta para uma guia que foi esquecida ou que nunca existiu neste Tether. Nada foi aberto.',
     choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Fecha este aviso.', tone: 'neutral' }],
   }
 }
@@ -421,27 +422,27 @@ export function missingTabSituation(): DialogSpec {
 /** "Associar links tether:// a este tether…": what opens the links today, and the offer to make it this tether. */
 export function associateLinksSituation(s: LinkAssociation): DialogSpec {
   const now = s.isMine
-    ? 'Os links tether:// já abrem este tether.'
-    : s.current ? 'Hoje os links tether:// abrem outro programa.' : 'Hoje nenhum programa abre os links tether://: clicar num deles fora do tether não faz nada.'
+    ? 'Os links tether:// já abrem este Tether.'
+    : s.current ? 'Hoje os links tether:// abrem outro programa.' : 'Hoje nenhum programa abre os links tether://: clicar num deles fora do Tether não faz nada.'
   return {
     situation: 'associate-links',
     tone: 'info',
     icon: 'link',
-    title: s.isMine ? 'Links tether:// já são deste tether' : 'Associar links tether:// a este tether?',
+    title: s.isMine ? 'Links tether:// já são deste Tether' : 'Associar links tether:// a este Tether?',
     message: now,
     context: {
       icon: 'link',
       name: 'Abre os links hoje',
-      lines: [s.current ?? 'nenhum programa', ...(s.isMine ? [] : [`Este tether: ${s.mine}`])],
-      status: s.isMine ? { label: 'este tether', tone: 'ok' } : { label: s.current ? 'outro programa' : 'nenhum', tone: 'dim' },
+      lines: [s.current ?? 'nenhum programa', ...(s.isMine ? [] : [`Este Tether: ${s.mine}`])],
+      status: s.isMine ? { label: 'este Tether', tone: 'ok' } : { label: s.current ? 'outro programa' : 'nenhum', tone: 'dim' },
     },
     choices: [{
       id: 'associate',
       icon: 'link',
-      label: s.isMine ? 'Associar de novo' : 'Associar a este tether',
+      label: s.isMine ? 'Associar de novo' : 'Associar a este Tether',
       consequence: s.current && !s.isMine
-        ? 'A associação atual é removida e os links passam a abrir este tether, de qualquer lugar do Windows.'
-        : 'Os links passam a abrir este tether, de qualquer lugar do Windows.',
+        ? 'A associação atual é removida e os links passam a abrir este Tether, de qualquer lugar do Windows.'
+        : 'Os links passam a abrir este Tether, de qualquer lugar do Windows.',
       tone: 'safe',
     }],
     cancelLabel: s.isMine ? 'Fechar' : 'Agora não',
@@ -453,8 +454,8 @@ export function linksAssociatedSituation(s: LinkAssociation): DialogSpec {
     situation: 'links-associated',
     tone: 'info',
     icon: 'link',
-    title: 'Links tether:// associados a este tether',
-    message: `Clicar num link tether:// em qualquer lugar abre este tether: ${s.mine}`,
+    title: 'Links tether:// associados a este Tether',
+    message: `Clicar num link tether:// em qualquer lugar abre este Tether: ${s.mine}`,
     choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Fecha este aviso.', tone: 'neutral' }],
   }
 }

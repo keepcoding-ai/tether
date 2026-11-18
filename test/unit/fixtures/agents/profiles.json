@@ -3,7 +3,7 @@
   "profiles": [
     { "id": "claude", "name": "Claude", "agent": "claude", "args": [], "default": true },
     { "id": "soul", "name": "soul", "agent": "soul", "args": ["-g"], "default": true },
-    { "id": "codex", "name": "Codex", "agent": "codex", "args": ["--model", "x"] },
+    { "id": "aider", "name": "Aider", "agent": "aider", "args": ["--model", "x"] },
     { "id": "powershell", "name": "PowerShell", "agent": "shell", "args": [], "shell": { "command": "pwsh.exe", "args": [] }, "default": true }
   ]
 }

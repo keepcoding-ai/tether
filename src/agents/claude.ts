@@ -1,8 +1,9 @@
 // Claude Code adapter: how to launch `claude` in a slot so that it reports its sessions to
 // tether (hooks injected via --settings, never the user's global settings), and how to read
 // what Claude keeps on disk (transcript exists? current title?).
+import { access, open, readdir, stat } from 'node:fs/promises'
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, delimiter, isAbsolute } from 'node:path'
+import path, { dirname, join, resolve, isAbsolute } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -21,6 +22,11 @@ function defaultHookPath(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-hook.mjs')
 }
 
+/** The status line script, next to the reporter (same read-on-use rule as defaultHookPath). */
+function defaultStatusLinePath(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'report', 'claude-statusline.mjs')
+}
+
 /**
  * Settings injected with `--settings`: every hook runs the reporter. Forward slashes: the hook runs under Git Bash on Windows.
  * The hook stays on the plain `node` (not on <home>/bin/tetherd.exe like the daemon): it lives ~150 ms per session
@@ -29,7 +35,7 @@ function defaultHookPath(): string {
  * copy being present and current, and on bash quoting of a Windows path, for a failure mode that is worse (every
  * event lost) than the one it avoids.
  */
-export function hookSettings(hookPath: string = defaultHookPath()): object {
+export function hookSettings(hookPath: string = defaultHookPath(), statusLinePath: string | null = defaultStatusLinePath()): object {
   const script = hookPath.replace(/\\/g, '/')
   const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit' | 'SubagentStart' | 'SubagentStop') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
@@ -42,7 +48,7 @@ export function hookSettings(hookPath: string = defaultHookPath()): object {
     },
   ]
   // Stop / Notification feed the attention badge (turn finished / waiting for the user); UserPromptSubmit marks the turn start.
-  return {
+  const settings: Record<string, unknown> = {
     hooks: {
       SessionStart: hook('SessionStart'),
       SessionEnd: hook('SessionEnd'),
@@ -55,12 +61,19 @@ export function hookSettings(hookPath: string = defaultHookPath()): object {
       SubagentStop: hook('SubagentStop'),
     },
   }
+  // Model (loud when it is Fable), effort and cwd. Left out (null) when the user has a status line of their own.
+  if (statusLinePath !== null) settings.statusLine = { type: 'command', command: `node "${statusLinePath.replace(/\\/g, '/')}"` }
+  return settings
 }
 
-/** Writes <home>/claude-settings.json only when its content changed (atomic: temp + rename). Returns the path. */
-export function ensureSettingsFile(home: string): string {
-  const path = join(home, 'claude-settings.json')
-  const content = JSON.stringify(hookSettings(), null, 2) + '\n'
+/**
+ * Writes the injected settings only when their content changed (atomic: temp + rename). Returns the path.
+ * Two files: <home>/claude-settings.json (with our status line) and claude-settings.no-statusline.json (without),
+ * because `--settings` wins over the user's own statusLine and the choice depends on each launch's cwd.
+ */
+export function ensureSettingsFile(home: string, withStatusLine = true): string {
+  const path = join(home, withStatusLine ? 'claude-settings.json' : 'claude-settings.no-statusline.json')
+  const content = JSON.stringify(hookSettings(defaultHookPath(), withStatusLine ? defaultStatusLinePath() : null), null, 2) + '\n'
   let current: string | undefined
   try { current = readFileSync(path, 'utf8') } catch { /* missing */ }
   if (current !== content) {
@@ -70,6 +83,25 @@ export function ensureSettingsFile(home: string): string {
     renameSync(tmp, path)
   }
   return path
+}
+
+/** True when a settings file defines a statusLine. Missing or malformed JSON counts as none. */
+function definesStatusLine(path: string, read: (path: string) => string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(read(path))
+    return typeof parsed === 'object' && parsed !== null && (parsed as { statusLine?: unknown }).statusLine != null
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether the user already has a status line for a launch in `cwd`: user settings (<configDir>/settings.json) or the
+ * project's .claude/settings.json / settings.local.json. Then tether leaves theirs alone.
+ */
+export function userHasStatusLine(cwd: string, configDir: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): boolean {
+  return [join(configDir, 'settings.json'), join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]
+    .some((p) => definesStatusLine(p, read))
 }
 
 /** Seams of the resolver, so tests can fake the platform, the home, the file system and the login shell. */
@@ -105,22 +137,24 @@ export function resolveClaudeCommand(env: Record<string, string | undefined> = p
   const platform = deps.platform ?? process.platform
   const exists = deps.exists ?? existsSync
   const pathVar = env.PATH ?? env.Path ?? ''
+  // Path flavor follows the injected platform, not the host's.
+  const P = platform === 'win32' ? path.win32 : path.posix
   if (platform === 'win32') {
-    for (const dir of pathVar.split(delimiter)) {
+    for (const dir of pathVar.split(P.delimiter)) {
       if (!dir) continue
       for (const name of ['claude.exe', 'claude.cmd', 'claude']) {
-        const candidate = join(dir, name)
+        const candidate = P.join(dir, name)
         if (exists(candidate)) return candidate
       }
     }
     return 'claude'
   }
-  for (const dir of pathVar.split(delimiter)) {
-    if (dir && isAbsolute(dir) && exists(join(dir, 'claude'))) return join(dir, 'claude')
+  for (const dir of pathVar.split(P.delimiter)) {
+    if (dir && P.isAbsolute(dir) && exists(P.join(dir, 'claude'))) return P.join(dir, 'claude')
   }
   const home = deps.home ?? homedir()
-  for (const dir of [join(home, '.local', 'bin'), join(home, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']) {
-    if (exists(join(dir, 'claude'))) return join(dir, 'claude')
+  for (const dir of [P.join(home, '.local', 'bin'), P.join(home, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']) {
+    if (exists(P.join(dir, 'claude'))) return P.join(dir, 'claude')
   }
   const shell = env.SHELL ?? ''
   const cached = loginShellCache.get(shell)
@@ -135,12 +169,13 @@ export function resolveClaudeCommand(env: Record<string, string | undefined> = p
 
 /** `env` with the directory of an absolute `command` prepended to PATH (when missing), keeping every other entry. */
 export function withCommandDirOnPath(env: Record<string, string>, command: string, platform: NodeJS.Platform = process.platform): void {
-  if (!isAbsolute(command)) return
-  const dir = dirname(command)
+  const P = platform === 'win32' ? path.win32 : path.posix
+  if (!P.isAbsolute(command)) return
+  const dir = P.dirname(command)
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-  const entries = (env[key] ?? '').split(delimiter).filter(Boolean)
+  const entries = (env[key] ?? '').split(P.delimiter).filter(Boolean)
   if (entries.includes(dir)) return
-  env[key] = [dir, ...entries].join(platform === 'win32' ? ';' : delimiter)
+  env[key] = [dir, ...entries].join(P.delimiter)
 }
 
 /** process.env without any CLAUDE* variable (E0 finding 1: inherited ones make Claude skip the transcript). */
@@ -159,7 +194,9 @@ const PICKS_SESSION = new Set(['-c', '--continue', '-r', '--resume'])
 
 function plan(input: PlanInput): LaunchPlan {
   const { slot, home, resume, extraArgs, profile } = input
-  const settings = ensureSettingsFile(home)
+  const cwd = canonicalDir(resume ? resume.cwd : slot.cwd)
+  const configDir = profile?.env?.CLAUDE_CONFIG_DIR || claudeConfigDir()
+  const settings = ensureSettingsFile(home, !userHasStatusLine(cwd, configDir))
   const args = ['--settings', settings]
   // Profile args first (the baseline), the slot's own args, then this launch's: a repeated option takes its last value.
   const own = [...(profile?.args ?? []), ...slot.args, ...extraArgs]
@@ -179,7 +216,7 @@ function plan(input: PlanInput): LaunchPlan {
     args,
     // Canonical even for slots/bindings recorded before the fix (a lower-case drive letter would hide
     // the project's sessions from Claude's /resume picker).
-    cwd: canonicalDir(resume ? resume.cwd : slot.cwd),
+    cwd,
     env,
   }
 }
@@ -208,6 +245,32 @@ export function findTranscript(binding: Pick<Binding, 'sessionId' | 'cwd'>, opts
   for (const d of dirs) {
     const candidate = join(projects, d, file)
     if (existsSync(candidate)) return candidate
+  }
+  return undefined
+}
+
+/** Test seams for the async lookup. */
+export interface AsyncLookupDeps {
+  /** false = only the direct path (the projects-dir scan is skipped). Default true. */
+  scan?: boolean
+  readdir?: (dir: string) => Promise<string[]>
+}
+
+const exists = (p: string): Promise<boolean> => access(p).then(() => true, () => false)
+
+/** Non-blocking twin of findTranscript, for timers: it never stalls the event loop on the ~hundreds of project dirs. */
+export async function findTranscriptAsync(binding: Pick<Binding, 'sessionId' | 'cwd'>, opts?: LookupOptions, deps: AsyncLookupDeps = {}): Promise<string | undefined> {
+  if (!/^[A-Za-z0-9-]+$/.test(binding.sessionId)) return undefined
+  const projects = join(claudeConfigDir(opts), 'projects')
+  const file = `${binding.sessionId}.jsonl`
+  const direct = join(projects, encodeProjectDir(binding.cwd), file)
+  if (await exists(direct)) return direct
+  if (deps.scan === false) return undefined
+  let dirs: string[]
+  try { dirs = await (deps.readdir ?? readdir)(projects) } catch { return undefined }
+  for (const d of dirs) {
+    const candidate = join(projects, d, file)
+    if (await exists(candidate)) return candidate
   }
   return undefined
 }
@@ -260,6 +323,36 @@ export function lastCustomTitle(file: string): string | undefined {
   }
 }
 
+/** Async twin of lastCustomTitle (same backwards chunked read) for the watcher. */
+export async function lastCustomTitleAsync(file: string): Promise<string | undefined> {
+  const fh = await open(file, 'r')
+  try {
+    let end = (await fh.stat()).size
+    let carry = Buffer.alloc(0)
+    while (end > 0) {
+      const start = Math.max(0, end - CHUNK)
+      const chunk = Buffer.alloc(end - start)
+      await fh.read(chunk, 0, chunk.length, start)
+      let data = Buffer.concat([chunk, carry])
+      if (start > 0) {
+        const nl = data.indexOf(0x0a)
+        if (nl === -1) { carry = data; end = start; continue }
+        carry = data.subarray(0, nl)
+        data = data.subarray(nl + 1)
+      }
+      const lines = data.toString('utf8').split('\n')
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const t = titleOf(lines[i]!.trimEnd())
+        if (t !== undefined) return t
+      }
+      end = start
+    }
+    return undefined
+  } finally {
+    await fh.close()
+  }
+}
+
 async function title(binding: Binding, opts?: LookupOptions): Promise<string | undefined> {
   const file = findTranscript(binding, opts)
   if (!file) return undefined
@@ -267,33 +360,69 @@ async function title(binding: Binding, opts?: LookupOptions): Promise<string | u
 }
 
 export const TITLE_POLL_MS = 5_000
+/** While the transcript is not found, the full projects-dir scan runs at most this often per watcher. */
+export const FULL_SCAN_MS = 60_000
+
+export interface WatchTitleDeps extends AsyncLookupDeps {
+  now?: () => number
+  fullScanMs?: number
+}
 
 /**
  * A `/rename` lands in the transcript, not in the slot's jsonl, so the title is polled: one stat per tick,
  * and the transcript is only re-read when its size changed (a session without a title would otherwise be
  * read back to its first line every tick). The transcript may not exist yet at the first ticks.
+ * Everything is async (the daemon shares its loop with terminal echo): the resolved path is cached, a miss
+ * re-checks only the direct path each tick and does the full scan at most once per FULL_SCAN_MS, and a tick
+ * is skipped while the previous one is still running.
  */
-function watchTitle(binding: Binding, onTitle: (title: string) => void, intervalMs = TITLE_POLL_MS, opts?: LookupOptions): () => void {
+export function watchTitleWith(binding: Binding, onTitle: (title: string) => void, intervalMs: number, opts: LookupOptions | undefined, deps: WatchTitleDeps = {}): () => void {
+  const now = deps.now ?? Date.now
+  const fullScanMs = deps.fullScanMs ?? FULL_SCAN_MS
   let lastSize = -1
   let lastTitle: string | undefined
-  const tick = (): void => {
-    const file = findTranscript(binding, opts)
-    if (!file) return
-    let size: number
-    try { size = statSync(file).size } catch { return }
-    if (size === lastSize) return
-    lastSize = size
-    let t: string | undefined
-    try { t = lastCustomTitle(file) } catch { return }
-    if (t !== undefined && t !== lastTitle) {
-      lastTitle = t
-      onTitle(t)
+  let cached: string | undefined
+  let lastScanAt = -Infinity
+  let running = false
+  let stopped = false
+  const tick = async (): Promise<void> => {
+    if (running || stopped) return
+    running = true
+    try {
+      let file = cached
+      let size: number | undefined
+      if (file) {
+        try { size = (await stat(file)).size } catch { cached = undefined; file = undefined }
+      }
+      if (!file) {
+        const scan = now() - lastScanAt >= fullScanMs
+        file = await findTranscriptAsync(binding, opts, { scan, readdir: deps.readdir })
+        if (scan) lastScanAt = now()
+        if (!file) return
+        try { size = (await stat(file)).size } catch { return }
+        cached = file
+        lastSize = -1 // a new file: never compare against the old one's size
+      }
+      if (size === lastSize) return
+      lastSize = size!
+      let t: string | undefined
+      try { t = await lastCustomTitleAsync(file) } catch { return }
+      if (!stopped && t !== undefined && t !== lastTitle) {
+        lastTitle = t
+        onTitle(t)
+      }
+    } finally {
+      running = false
     }
   }
-  const timer = setInterval(tick, intervalMs)
+  const timer = setInterval(() => { void tick() }, intervalMs)
   timer.unref()
-  tick()
-  return () => clearInterval(timer)
+  void tick()
+  return () => { stopped = true; clearInterval(timer) }
+}
+
+function watchTitle(binding: Binding, onTitle: (title: string) => void, intervalMs = TITLE_POLL_MS, opts?: LookupOptions): () => void {
+  return watchTitleWith(binding, onTitle, intervalMs, opts)
 }
 
 export const claudeAdapter: AgentAdapter = { name: 'claude', resumes: true, plan, sessionExists, title, watchTitle }

@@ -5,8 +5,10 @@ import { connect, type Socket } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { encode, LineParser } from '../daemon/ndjson.ts'
 import { spawnDetachedNode } from '../daemon/client.ts'
+import type { ExeName } from '../core/exe.ts'
 import {
   PROCD_PROTOCOL_VERSION,
+  type HostCap,
   type HostErrorCode,
   type HostEvent,
   type HostHello,
@@ -29,8 +31,31 @@ export class HostRequestError extends Error {
 
 type Events = {
   exit: [name: string, run: number, exit: RunExit]
-  data: [name: string, data: string]
+  /** `off` is the run's output offset after this chunk (hosts with the `offsets` cap). */
+  data: [name: string, data: string, off?: number]
+  /** The host says this client fell behind on `name`: re-attach with the last offset. */
+  lag: [name: string]
   close: []
+}
+
+/** What differs between the hosts that speak this protocol: tether-procd (the default) and tether-ptyd. */
+export interface HostTarget {
+  /** The executable name it runs under (<home>/bin/<exe>.exe). */
+  exe: ExeName
+  /** For the error messages: "o anfitrião de processos (tether-procd)". */
+  what: string
+  /** The host's entry script. */
+  main: string
+  /** The environment variable that carries the pipe to the host. */
+  pipeEnv: string
+}
+
+export const PROCD_TARGET: HostTarget = {
+  exe: 'tether-procd',
+  what: 'o anfitrião de processos (tether-procd)',
+  // Lazy: the app bundles this module as CJS, where import.meta.url is empty and evaluating it at load would throw.
+  get main() { return fileURLToPath(new URL('./main.ts', import.meta.url)) },
+  pipeEnv: 'TETHER_PROCD_PIPE',
 }
 
 export interface LaunchHostOptions {
@@ -42,8 +67,6 @@ export interface LaunchHostOptions {
   env: NodeJS.ProcessEnv
   log?: (msg: string) => void
 }
-
-const HOST_MAIN = fileURLToPath(new URL('./main.ts', import.meta.url))
 
 export class HostClient extends EventEmitter<Events> {
   readonly hello: HostHello
@@ -100,6 +123,20 @@ export class HostClient extends EventEmitter<Events> {
     }
   }
 
+  /** Like `open`, but never throws: undefined when no host answers on the pipe (or it speaks another protocol version). */
+  static async tryOpen(pipe: string, timeoutMs = 5_000): Promise<HostClient | undefined> {
+    try {
+      return await HostClient.open(pipe, timeoutMs)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** What the host announced in `hello` (empty for a host that predates caps). */
+  get caps(): readonly HostCap[] {
+    return this.hello.caps ?? []
+  }
+
   /** The host's hello, or undefined when nothing (or no host) answers. */
   static async ping(pipe: string): Promise<HostHello | undefined> {
     try {
@@ -111,20 +148,20 @@ export class HostClient extends EventEmitter<Events> {
     }
   }
 
-  /** Connects, launching tether-procd detached when nothing answers; waits up to `timeoutMs` for it. */
-  static async ensure(opts: LaunchHostOptions, timeoutMs = 20_000): Promise<HostClient> {
+  /** Connects, launching the host (tether-procd unless `target` says otherwise) detached when nothing answers; waits up to `timeoutMs` for it. */
+  static async ensure(opts: LaunchHostOptions, timeoutMs = 20_000, target: HostTarget = PROCD_TARGET): Promise<HostClient> {
     try {
       return await HostClient.open(opts.pipe)
     } catch (e) {
       if (e instanceof HostRequestError) throw e
     }
     await spawnDetachedNode({
-      name: 'tether-procd',
-      what: 'o anfitrião de processos (tether-procd)',
+      name: target.exe,
+      what: target.what,
       home: opts.home,
       node: opts.node,
-      mainPath: HOST_MAIN,
-      env: { ...opts.env, TETHER_HOME: opts.home, TETHER_PROCD_PIPE: opts.pipe },
+      mainPath: target.main,
+      env: { ...opts.env, TETHER_HOME: opts.home, [target.pipeEnv]: opts.pipe },
       ...(opts.log ? { log: opts.log } : {}),
     })
     const deadline = Date.now() + timeoutMs
@@ -138,7 +175,7 @@ export class HostClient extends EventEmitter<Events> {
         await new Promise((r) => setTimeout(r, 150))
       }
     }
-    throw new Error(`o anfitrião de processos não respondeu em ${opts.pipe}: ${last?.message ?? 'timeout'}`)
+    throw new Error(`${target.what} não respondeu em ${opts.pipe}: ${last?.message ?? 'timeout'}`)
   }
 
   get isClosed(): boolean {
@@ -160,7 +197,8 @@ export class HostClient extends EventEmitter<Events> {
 
   private onMessage(msg: HostReply | HostEvent): void {
     if (msg.t === 'exit') { this.emit('exit', msg.name, msg.run, msg.exit); return }
-    if (msg.t === 'data') { this.emit('data', msg.name, msg.data); return }
+    if (msg.t === 'data') { this.emit('data', msg.name, msg.data, msg.off); return }
+    if (msg.t === 'lag') { this.emit('lag', msg.name); return }
     const w = this.waiting.get(msg.id)
     if (!w) return
     this.waiting.delete(msg.id)
@@ -175,6 +213,12 @@ export class HostClient extends EventEmitter<Events> {
       this.waiting.set(id, { resolve, reject })
       this.socket.write(encode({ ...body, id }))
     })
+  }
+
+  /** Fire-and-forget input to a hosted process (no reply; unknown names are ignored by the host). */
+  write(name: string, data: string): void {
+    if (this.closed) return
+    this.socket.write(encode({ t: 'write', name, data }))
   }
 
   close(): void {

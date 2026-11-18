@@ -125,6 +125,12 @@ export function readState(raw: unknown): ExplorerState {
 /** What the keyboard needs of a visible row. */
 export interface NavRow { level: number; dir: boolean; expanded: boolean }
 
+/**
+ * A read-only sequence read one item at a time: an array, or a virtual list that builds only the item asked for (so a key
+ * press on a tree of thousands of rows never copies all of them). `at` is only called with indices in [0, length).
+ */
+export interface Indexed<T> { readonly length: number; at(index: number): T | undefined }
+
 export type NavAction =
   | { type: 'focus'; index: number }
   | { type: 'expand' | 'collapse' | 'toggle' | 'open' }
@@ -133,9 +139,10 @@ export type NavAction =
 const NONE: NavAction = { type: 'none' }
 
 /** The row index of the parent of `rows[i]` (the nearest earlier row of a lower level), or -1. */
-export function parentIndex(rows: readonly NavRow[], i: number): number {
-  const level = rows[i]?.level ?? 0
-  for (let j = i - 1; j >= 0; j--) if (rows[j]!.level < level) return j
+export function parentIndex(rows: Indexed<NavRow>, i: number): number {
+  if (i < 0 || i >= rows.length) return -1
+  const level = rows.at(i)!.level
+  for (let j = i - 1; j >= 0; j--) if (rows.at(j)!.level < level) return j
   return -1
 }
 
@@ -143,8 +150,9 @@ export function parentIndex(rows: readonly NavRow[], i: number): number {
  * What a key does on row `i` (VS Code's list/tree keys): ↑/↓ move, Home/End jump, → expands a folder or goes to its first child,
  * ← collapses it or goes to the parent, Enter opens a file or toggles a folder, Space the same (the renderer keeps the focus).
  */
-export function navigate(rows: readonly NavRow[], i: number, key: string): NavAction {
-  const row = rows[i]
+export function navigate(rows: Indexed<NavRow>, i: number, key: string): NavAction {
+  if (i < 0 || i >= rows.length) return NONE
+  const row = rows.at(i)
   if (!row) return NONE
   const last = rows.length - 1
   switch (key) {
@@ -155,7 +163,7 @@ export function navigate(rows: readonly NavRow[], i: number, key: string): NavAc
     case 'ArrowRight':
       if (!row.dir) return NONE
       if (!row.expanded) return { type: 'expand' }
-      return rows[i + 1] && rows[i + 1]!.level > row.level ? { type: 'focus', index: i + 1 } : NONE
+      return i < last && rows.at(i + 1)!.level > row.level ? { type: 'focus', index: i + 1 } : NONE
     case 'ArrowLeft': {
       if (row.dir && row.expanded) return { type: 'collapse' }
       const p = parentIndex(rows, i)
@@ -206,7 +214,7 @@ export function isTypeAheadKey(key: string, buffer: string): boolean {
  * or after the current one, wrapping around. A single character (or one letter repeated) starts after the current row, so
  * repeating a letter cycles through the names that start with it. -1 when nothing matches.
  */
-export function typeAheadMatch(names: readonly string[], from: number, buffer: string): number {
+export function typeAheadMatch(names: Indexed<string>, from: number, buffer: string): number {
   const n = names.length
   if (n === 0 || buffer === '') return -1
   const q = buffer.toLowerCase()
@@ -215,10 +223,11 @@ export function typeAheadMatch(names: readonly string[], from: number, buffer: s
   const start = (cycling && q.length > 0 ? from + 1 : from) % n
   for (let k = 0; k < n; k++) {
     const i = (start + k) % n
-    if (names[i]!.toLowerCase().startsWith(prefix)) return i
+    if (names.at(i)!.toLowerCase().startsWith(prefix)) return i
   }
   // "aa" with no other name starting with "a": a name that really starts with "aa" still counts
-  return cycling && q.length > 1 ? names.findIndex(s => s.toLowerCase().startsWith(q)) : -1
+  if (cycling && q.length > 1) for (let i = 0; i < n; i++) if (names.at(i)!.toLowerCase().startsWith(q)) return i
+  return -1
 }
 
 /**

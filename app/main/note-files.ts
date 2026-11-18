@@ -6,7 +6,7 @@
 //   - reading and writing: UTF-8, atomic write (temp file + rename) so a kill mid-write never leaves half a note;
 //   - watching: one `fs.watch` on the note's folder per open path (a replaced file keeps its name; watching the
 //     file itself breaks across the rename our own save makes), debounced, reported to the renderer by path.
-import { existsSync, type FSWatcher, mkdirSync, readFileSync, renameSync, statSync, watch, writeFileSync } from 'node:fs'
+import { existsSync, type FSWatcher, mkdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { gitignoreCovers, gitignoreWithTether, noteFileName, NOTES_SUBDIR, uniqueFileName } from '../shared/notes.ts'
@@ -85,8 +85,14 @@ export function readNote(path: string): NoteRead {
 export function writeTextAtomic(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true })
   const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, text, 'utf8')
-  renameSync(tmp, path)
+  try {
+    writeFileSync(tmp, text, 'utf8')
+    renameSync(tmp, path)
+  } catch (err) {
+    // A failed write or rename (read-only target, file in use) must not leave the temp file next to the user's file.
+    try { rmSync(tmp, { force: true }) } catch { /* best effort */ }
+    throw err
+  }
 }
 
 export type NoteWrite = { ok: true; mtimeMs: number } | { ok: false; message: string }

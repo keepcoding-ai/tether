@@ -3,13 +3,15 @@
 // Terminal bytes travel as UTF-8 strings (node-pty emits strings).
 
 import type { AgentName, Binding } from '../core/event.ts'
+import type { PerfSnapshot } from '../core/perf.ts'
+import type { Probe } from '../core/perf-probe.ts'
 import type { Profile, ProfileInput } from '../core/profile.ts'
 import type { PauseBatch } from './pause.ts'
 import type { Ronda } from './ronda.ts'
 import type { ProcBy, ProcEvent, ProcRecipe, ProcState } from './procs.ts'
 import type { PortRow } from './ports.ts'
 
-export type { Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
+export type { PerfSnapshot, Probe, Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
 
 export const PROTOCOL_VERSION = 1
 
@@ -56,6 +58,8 @@ export interface SlotState {
   folder?: string
   status: SlotStatus
   pid?: number
+  /** The live process runs in the terminal-pane host (tether-ptyd), not inside tetherd. Absent on older daemons and for in-process panes. */
+  ptyHost?: true
   binding?: Binding
   /** Session title (binding.title) or undefined. */
   title?: string
@@ -132,13 +136,24 @@ export type ErrorCode =
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
 
 export type Request =
-  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test' }
+  /**
+   * `direct`: the client reads the panes hosted in tether-ptyd straight from the host (the app). tetherd then sends it no
+   * `data` of a hosted pane (`ptyHost`) and no scrollback of one in `attach`; in-process panes go to it as to anyone.
+   */
+  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test'; direct?: boolean }
   | { t: 'list'; id: number }
+  /** Performance ruler snapshot (pull only): loop-delay samples and incidents newer than `since` (wall-clock ms). Reply: `perf`. */
+  | { t: 'perf'; id: number; since?: number }
+  /** Test only (needs TETHER_TEST_BLOCK=1 in the daemon env): replies ok, then blocks the event loop for `ms` (max 30000). */
+  | { t: 'debug-block'; id: number; ms: number }
   /** `profileId`: the launch profile (must be of `kind`); its args/env apply on every start, the slot keeps a snapshot. */
   | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string }
   /** Start the slot's process: resumes the binding; `choice: 'new'` starts a new session instead. */
   | { t: 'start'; id: number; slotId: string; choice?: 'resume' | 'new' }
-  /** Subscribe to the slot's output. Reply carries the scrollback; then `data` events stream. */
+  /**
+   * Subscribe to the slot's output. Reply carries the scrollback; then `data` events stream. A `direct` client attaching a
+   * hosted pane gets neither (no `scrollback` field): it reads the pane from the host.
+   */
   | { t: 'attach'; id: number; slotId: string; cols: number; rows: number }
   | { t: 'detach'; id: number; slotId: string }
   | { t: 'resize'; id: number; slotId: string; cols: number; rows: number }
@@ -229,8 +244,17 @@ export type Request =
   /** Ask the host to exit; refused with live processes unless `force` (they are stopped, recorded as asked by `by`). */
   | { t: 'proc-host-stop'; id: number; force?: boolean; by?: ProcBy }
 
-/** Fire-and-forget (no reply): keystrokes. */
-export type Notice = { t: 'input'; slotId: string; data: string }
+/**
+ * Fire-and-forget (no reply): keystrokes. `probe` (optional) times the key->echo path: the client's stamps so far
+ * (epoch ms with fraction, see core/perf-probe.ts); tetherd appends arrive + write and hangs it on the slot's next `data`.
+ */
+export type Notice =
+  | { t: 'input'; slotId: string; data: string; probe?: Probe }
+  /**
+   * Keystrokes a `direct` client already wrote to the pane in the host: tetherd only feeds the slot's attention with them
+   * (typing clears `attention`, Enter starts a turn); nothing is written to the PTY.
+   */
+  | { t: 'typed'; slotId: string; data: string }
 
 export type ClientMessage = Request | Notice
 
@@ -243,6 +267,8 @@ export type Reply =
       /** `exec`: the executable the daemon runs as (tetherd.exe, or the plain node when the copy failed). */
       hello?: { v: number; pid: number; version: string; exec?: string }
       slots?: SlotState[]
+      /** perf. */
+      perf?: PerfSnapshot
       slot?: SlotState
       scrollback?: string
       profiles?: Profile[]
@@ -274,8 +300,11 @@ export type Reply =
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 
 export type Event =
-  /** Output of an attached slot. */
-  | { t: 'data'; slotId: string; data: string }
+  /**
+   * Output of an attached slot. `probe`: the first `data` after a probed input carries its stamps plus tetherd's three
+   * (arrive, write, out); a newer probe replaces a pending one, and one pending for over 5 s is dropped.
+   */
+  | { t: 'data'; slotId: string; data: string; probe?: Probe }
   /** Any change of a slot (status, binding, title, pid). Sent to every client. */
   | { t: 'state'; slot: SlotState }
   | { t: 'removed'; slotId: string }

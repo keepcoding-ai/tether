@@ -9,6 +9,7 @@ import { emptyLayout, orphanedPanels, planRestore, type Layout } from '../../app
 import { CommandRegistry, type CommandContext } from '../../app/renderer/commands.ts'
 import { appCommands, type CommandHost } from '../../app/renderer/app-commands.ts'
 import { paneShortcutOf, shortcutHint, shortcutOf } from '../../app/renderer/shortcuts.ts'
+import { tokensCss } from '../../app/renderer/preview-style.ts'
 import { classifyLink, fileUrl, isInside, resolveAgainst, resolveImageSource } from '../../app/shared/markdown-links.ts'
 import { renderMarkdown, renderMarkdownSync, sanitizeHtml, slugify } from '../../app/shared/markdown-render.ts'
 import { lineAtOffset, offsetOfLine, type LineBlock } from '../../app/shared/markdown-scroll.ts'
@@ -307,5 +308,14 @@ describe('Ctrl+Shift+V and the commands', () => {
     assert.equal(await registry.run('markdown.preview', 'key'), 'ran')
     assert.equal(await registry.run('markdown.preview.side', 'palette'), 'ran')
     assert.deepEqual(calls, ['markdown.preview', 'markdown.preview.side'])
+  })
+})
+
+describe('preview tokens: code ligatures follow the tether theme', () => {
+  test('on leaves the browser default; off turns every ligature feature off for code, kbd and pre', () => {
+    assert.ok(!tokensCss({}, 'dark', '"Fira Code"', true).includes('ligatures'))
+    const off = tokensCss({}, 'dark', '"Fira Code"', false)
+    assert.ok(off.includes('code,kbd,pre{font-variant-ligatures:none;'))
+    assert.ok(off.includes('"calt" 0'))
   })
 })

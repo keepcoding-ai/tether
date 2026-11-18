@@ -1013,6 +1013,25 @@ suite('terminal path links: detection', () => {
     deepStrictEqual(found.map(summary), [{ text: 'src/app.ts.', path: 'ABS:src/app.ts', position: undefined, x: [5, 14], y: [1, 1] }])
   })
 
+  test('prose punctuation after a path is stripped from the link and the underline', async () => {
+    const line = '  - D:/atrium/x/01-coordinating.md, o texto principal'
+    const path = 'D:/atrium/x/01-coordinating.md'
+    const found = await links([line], 1, existing(path), 'windows', 120)
+    deepStrictEqual(found.map(summary), [{ text: path + ',', path: `ABS:${path}`, position: undefined, x: [5, 4 + path.length], y: [1, 1] }])
+    for (const tail of [';', ')', '!', '?', ').']) {
+      const f = await links([`see src/app.ts${tail} more`], 1, existing('src/app.ts'))
+      strictEqual(f.length, 1, tail)
+      strictEqual(f[0]!.path, 'ABS:src/app.ts', tail)
+      deepStrictEqual([f[0]!.bufferRange.start.x, f[0]!.bufferRange.end.x], [5, 14], `underline stops before ${tail}`)
+    }
+  })
+
+  test('a missing path followed by a comma is no link, with or without the comma', async () => {
+    const r = existing()
+    deepStrictEqual(await links(['see src/missing.ts, more'], 1, r), [])
+    ok(r.asked.flat().includes('src/missing.ts'), 'the stripped candidate was asked')
+  })
+
   test('a path that wraps across rows is one link spanning both', async () => {
     const text = 'see src/components/Button.tsx:42'
     const r = existing('src/components/Button.tsx')

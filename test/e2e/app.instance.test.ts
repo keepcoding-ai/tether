@@ -28,7 +28,7 @@ const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const pipe = `\\\\.\\pipe\\tether-appinstance-${process.pid}`
-const GIVE_UP = /o tether ainda está fechando; tente de novo em alguns segundos/
+const GIVE_UP = /o Tether ainda está fechando; tente de novo em alguns segundos/
 /** The app's retry window for the lock (LOCK_RETRY_MS in app/main/main.ts). */
 const LOCK_RETRY_MS = 12_000
 

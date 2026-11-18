@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  CLOSE_TAB, CLOSE_TAB_SITUATION, TAB_ACTION_ICON, agentUsing, closeNeedsConfirm, closeTabDialog, padRowActions, tabActions, type TabActionState,
+  CLOSE_TAB, CLOSE_TAB_SITUATION, TAB_ACTION_ICON, agentUsing, closeNeedsConfirm, closeTabDialog, tabActions, type TabActionState,
 } from '../../extensions/browser/tab-actions.ts'
 
 const st = (over: Partial<TabActionState> = {}): TabActionState => ({ holder: 'agent', paused: false, loaded: true, agentAlive: true, ...over })
@@ -59,16 +59,6 @@ describe('browser tab actions: what each state offers', () => {
   })
 })
 
-describe('browser tab actions: the pad row', () => {
-  test('the row offers the menu\'s actions, same names and icons, without the clean reload', () => {
-    for (const s of [st(), st({ holder: 'user' }), st({ paused: true }), st({ loaded: false })]) {
-      const menu = tabActions(s, 'Sonda')
-      assert.deepEqual(padRowActions(s, 'Sonda'), menu.filter(a => a.id !== 'clean-reload'))
-    }
-    assert.deepEqual(padRowActions(st({ holder: 'user' }), 'Sonda').map(a => a.id), ['give-back', 'pause', 'close'])
-  })
-})
-
 describe('browser tab actions: the question before closing', () => {
   const d = closeTabDialog('Sonda', 'Página A')
   test('the app\'s dialog: keeping it open is the default and Esc; closing is the destructive choice', () => {
@@ -90,5 +80,25 @@ describe('browser frame: the tab strip stays on screen', () => {
     assert.doesNotMatch(rule, /position:\s*absolute/)
     assert.doesNotMatch(rule, /inset:/)
     assert.match(rule, /height:\s*100%/)
+  })
+})
+
+describe('browser tab actions: ended agent and bar pins', () => {
+  const pinsOf = (s: TabActionState) => Object.fromEntries(tabActions(s, 'Sonda').map(a => [a.id, a.pin]))
+  test('an ended agent has no brake', () => {
+    assert.deepEqual(ids(st({ agentAlive: false })), ['take', 'close'])
+    assert.deepEqual(ids(st({ agentAlive: false, paused: true })), ['take', 'close'])
+    assert.deepEqual(ids(st({ agentAlive: false, holder: 'user' })), ['give-back', 'clean-reload', 'close'])
+  })
+  test('pins: person holds, agent alive, agent ended', () => {
+    assert.deepEqual(pinsOf(st({ holder: 'user' })), { 'give-back': 'highlight', pause: undefined, 'clean-reload': undefined, close: 'icon' })
+    assert.deepEqual(pinsOf(st()), { take: 'icon', pause: 'icon', close: 'icon' })
+    assert.deepEqual(pinsOf(st({ paused: true })), { take: 'icon', resume: 'icon', close: 'icon' })
+    assert.deepEqual(pinsOf(st({ agentAlive: false })), { take: undefined, close: 'icon' })
+    assert.equal(pinsOf(st({ agentAlive: false, holder: 'user' }))['give-back'], undefined)
+  })
+  test('at most one highlight per list', () => {
+    for (const s of [st(), st({ holder: 'user' }), st({ paused: true }), st({ agentAlive: false })])
+      assert.ok(tabActions(s, 'Sonda').filter(a => a.pin === 'highlight').length <= 1)
   })
 })

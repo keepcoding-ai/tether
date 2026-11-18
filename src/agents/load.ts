@@ -6,7 +6,7 @@
 import { tetherHome } from '../core/paths.ts'
 import { readUserSettings } from '../core/user-settings.ts'
 import { DaemonExtensionHost } from '../daemon/ext-host.ts'
-import type { DaemonCheck } from '../daemon/ext-api.ts'
+import type { DaemonCheck, TraceSource } from '../daemon/ext-api.ts'
 import { agentRegistry } from './registry.ts'
 
 /** settings.json `extensions.disabled` of `home` (empty when absent or unreadable). */
@@ -32,6 +32,12 @@ export function agentExtensionHost(): DaemonExtensionHost {
 export function contributedChecks(): ReadonlyArray<() => Promise<DaemonCheck>> {
   agentRegistry.names() // the lazy load, when nothing read the registry yet
   return host?.checks ?? []
+}
+
+/** The logs the active daemon extensions contribute to `tether trace`, in activation order. */
+export function contributedTraceSources(): ReadonlyArray<TraceSource> {
+  agentRegistry.names() // the lazy load, when nothing read the registry yet
+  return host?.traceSources ?? []
 }
 
 agentRegistry.setLoader(() => { agentExtensionHost() })

@@ -66,6 +66,8 @@ import x from '@phosphor-icons/core/assets/regular/x.svg'
 import xCircle from '@phosphor-icons/core/assets/regular/x-circle.svg'
 import check from '@phosphor-icons/core/assets/regular/check.svg'
 import bell from '@phosphor-icons/core/assets/regular/bell.svg'
+import bellSlash from '@phosphor-icons/core/assets/regular/bell-slash.svg'
+import clockIcon from '@phosphor-icons/core/assets/regular/clock.svg'
 import swap from '@phosphor-icons/core/assets/regular/swap.svg'
 import copy from '@phosphor-icons/core/assets/regular/copy.svg'
 import pencilSimple from '@phosphor-icons/core/assets/regular/pencil-simple.svg'
@@ -98,6 +100,15 @@ import rows from '@phosphor-icons/core/assets/regular/rows.svg'
 import dotsThree from '@phosphor-icons/core/assets/regular/dots-three.svg'
 import textAa from '@phosphor-icons/core/assets/regular/text-aa.svg'
 import magnifyingGlass from '@phosphor-icons/core/assets/regular/magnifying-glass.svg'
+import broom from '@phosphor-icons/core/assets/regular/broom.svg'
+import fileMagnifyingGlass from '@phosphor-icons/core/assets/regular/file-magnifying-glass.svg'
+import treeView from '@phosphor-icons/core/assets/regular/tree-view.svg'
+import arrowsOutLineVertical from '@phosphor-icons/core/assets/regular/arrows-out-line-vertical.svg'
+import stopIcon from '@phosphor-icons/core/assets/regular/stop.svg'
+import checks from '@phosphor-icons/core/assets/regular/checks.svg'
+import bookOpen from '@phosphor-icons/core/assets/regular/book-open.svg'
+import gitDiff from '@phosphor-icons/core/assets/regular/git-diff.svg'
+import funnel from '@phosphor-icons/core/assets/regular/funnel.svg'
 import caretRight from '@phosphor-icons/core/assets/regular/caret-right.svg'
 import arrowLeft from '@phosphor-icons/core/assets/regular/arrow-left.svg'
 import arrowRight from '@phosphor-icons/core/assets/regular/arrow-right.svg'
@@ -134,6 +145,7 @@ import terminalIcon from '@phosphor-icons/core/assets/regular/terminal.svg'
 import filePlusIcon from '@phosphor-icons/core/assets/regular/file-plus.svg'
 import folderPlusIcon from '@phosphor-icons/core/assets/regular/folder-plus.svg'
 import pulse from '@phosphor-icons/core/assets/regular/pulse.svg'
+import gauge from '@phosphor-icons/core/assets/regular/gauge.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -194,6 +206,8 @@ const SVG = {
   check,
   copy,
   bell,
+  'bell-slash': bellSlash,
+  clock: clockIcon,
   swap,
   folder,
   list,
@@ -222,6 +236,15 @@ const SVG = {
   rows,
   'dots-three': dotsThree,
   'magnifying-glass': magnifyingGlass,
+  broom,
+  'file-magnifying-glass': fileMagnifyingGlass,
+  'tree-view': treeView,
+  'arrows-out-line-vertical': arrowsOutLineVertical,
+  stop: stopIcon,
+  checks,
+  'book-open': bookOpen,
+  'git-diff': gitDiff,
+  funnel,
   'caret-right': caretRight,
   'arrow-left': arrowLeft,
   'arrow-right': arrowRight,
@@ -266,6 +289,7 @@ const SVG = {
   'gear-six': gearSixIcon,
   'terminal': terminalIcon,
   pulse,
+  gauge,
   // The product's monogram (brand/assets/app/mask.json, 24x24 currentColor): the Bridge's status icon wears it.
   'brand': BRAND.icon,
 } as const

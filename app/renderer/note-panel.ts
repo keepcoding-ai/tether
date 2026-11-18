@@ -10,12 +10,14 @@
 //     returns), so the palette lists them with their chords.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import type { Command } from './commands.ts'
-import { icon, setIcon } from './icons.ts'
+import { createTabHeader } from './tab-header.ts'
+import { setIcon } from './icons.ts'
 import { defineTheme, type Editor, monaco, THEME_NAME, type ViewState } from './monaco.ts'
 import { chordFromLabel, EDITOR_GROUP, editorCommandId } from './note-rules.ts'
 import { terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ColorScheme } from '../shared/theme.ts'
 import type { NoteRead, NoteWritten } from '../shared/api.ts'
+import type { LineColumn } from '../shared/file-open.ts'
 import { externalChangeAction, noteParams, noteTitle, type NoteView } from '../shared/notes.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
 
@@ -87,6 +89,8 @@ export interface NoteSnapshot {
   dirty: boolean
   cursor: { lineNumber: number; column: number } | undefined
   selections: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }[]
+  /** The editor's current selection (1-based), if there is an editor. */
+  selection: { startLine: number; startColumn: number; endLine: number; endColumn: number } | undefined
   scrollTop: number
   /** The source line at the top (0-based, fractional): what the preview follows. */
   topLine: number
@@ -179,6 +183,7 @@ export class NotePanel implements IContentRenderer {
       fontFamily: font.fontFamily,
       fontSize: font.fontSize,
       fontWeight: String(font.fontWeight),
+      fontLigatures: appearance.ligatures,
       lineHeight: Math.round(font.fontSize * font.lineHeight),
       wordWrap: this.wordWrapEnabled() ? 'on' : 'off',
       wrappingIndent: 'same',
@@ -280,16 +285,25 @@ export class NotePanel implements IContentRenderer {
     if (this.api?.isActive) requestAnimationFrame(() => this.focus())
   }
 
-  private pendingReveal: { line: number; column?: number } | undefined
+  private pendingReveal: LineColumn | undefined
 
   /** Puts the cursor at a line (and column), centred, as Quick Open's `file:42:7` asks; waits for the text when it is still loading. */
-  reveal(pos: { line: number; column?: number }): void {
+  reveal(pos: LineColumn): void {
     if (!this.loaded || !this.editor || !this.model) { this.pendingReveal = pos; return }
     const lineNumber = Math.min(Math.max(1, pos.line), this.model.getLineCount())
     const column = Math.min(Math.max(1, pos.column ?? 1), this.model.getLineMaxColumn(lineNumber))
     this.pendingView = undefined
-    this.editor.setPosition({ lineNumber, column })
-    this.editor.revealPositionInCenter({ lineNumber, column })
+    if (pos.endLine !== undefined || pos.endColumn !== undefined) {
+      // Clamped like the start: the file may have changed since the match was found.
+      const endLineNumber = Math.min(Math.max(1, pos.endLine ?? pos.line), this.model.getLineCount())
+      const endColumn = Math.min(Math.max(1, pos.endColumn ?? column), this.model.getLineMaxColumn(endLineNumber))
+      const range = { startLineNumber: lineNumber, startColumn: column, endLineNumber, endColumn }
+      this.editor.setSelection(range)
+      this.editor.revealRangeInCenter(range)
+    } else {
+      this.editor.setPosition({ lineNumber, column })
+      this.editor.revealPositionInCenter({ lineNumber, column })
+    }
     this.scheduleView()
   }
 
@@ -583,7 +597,7 @@ export class NotePanel implements IContentRenderer {
 
   setAppearance(appearance: TerminalAppearance): void {
     const font = terminalFontOptions(appearance)
-    this.editor?.updateOptions({ fontFamily: font.fontFamily, fontSize: font.fontSize, fontWeight: String(font.fontWeight), lineHeight: Math.round(font.fontSize * font.lineHeight) })
+    this.editor?.updateOptions({ fontFamily: font.fontFamily, fontSize: font.fontSize, fontWeight: String(font.fontWeight), fontLigatures: appearance.ligatures, lineHeight: Math.round(font.fontSize * font.lineHeight) })
   }
 
   private showState(ic: Parameters<typeof icon>[0], title: string, text: string): void {
@@ -625,10 +639,12 @@ export class NotePanel implements IContentRenderer {
 
   snapshot(): NoteSnapshot {
     const pos = this.editor?.getPosition()
+    const sel = this.editor?.getSelection()
     return {
       id: this.id, path: this.path, text: this.text, savedText: this.savedText, dirty: this.dirty,
       cursor: pos ? { lineNumber: pos.lineNumber, column: pos.column } : undefined,
       selections: (this.editor?.getSelections() ?? []).map(s => ({ startLineNumber: s.startLineNumber, startColumn: s.startColumn, endLineNumber: s.endLineNumber, endColumn: s.endColumn })),
+      selection: sel ? { startLine: sel.startLineNumber, startColumn: sel.startColumn, endLine: sel.endLineNumber, endColumn: sel.endColumn } : undefined,
       scrollTop: this.editor?.getScrollTop() ?? 0,
       topLine: this.topLine(),
       viewport: { width: this.editor?.getLayoutInfo().width ?? 0, height: this.editor?.getLayoutInfo().height ?? 0, scrollHeight: this.editor?.getScrollHeight() ?? 0 },
@@ -674,20 +690,15 @@ export class NoteTab implements ITabRenderer {
   constructor(host: NoteHost, isDirty: (id: string) => boolean) {
     this.host = host
     this.isDirty = isDirty
-    this.element = document.createElement('div')
-    this.element.className = 'tether-tab note'
-    const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon('note-pencil'))
-    this.text = document.createElement('span'); this.text.className = 'text'
     this.dirtyMark = document.createElement('span'); this.dirtyMark.className = 'dirty'; this.dirtyMark.hidden = true
     this.dirtyMark.title = 'Gravando…'
-    const close = document.createElement('button')
-    close.className = 'close'; close.title = 'Fechar nota'; close.setAttribute('aria-label', 'Fechar nota')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onClose(this.api.id) })
-    this.element.append(kind, this.text, this.dirtyMark, close)
-    this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
+    const h = createTabHeader({
+      className: 'note', glyph: 'note-pencil', emblems: [this.dirtyMark],
+      close: { label: 'Fechar nota', onClose: () => { if (this.api) this.host.onClose(this.api.id) } },
+      onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
+      onDblClick: () => this.startRename(),
+    })
+    this.element = h.element; this.text = h.text
   }
 
   init(params: TabPartInitParameters): void {

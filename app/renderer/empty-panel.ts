@@ -12,10 +12,11 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import type { Choice } from './chooser-rules.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
 import { createBlankView } from './blank-view.ts'
-import { icon } from './icons.ts'
+import { createTabHeader } from './tab-header.ts'
 import type { ChooserDestination } from './ext-api.ts'
 import { EMPTY_TITLE, emptyOrigin, emptyParams, type EmptyOrigin } from '../shared/empty.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
+import { followActive } from './focus-follow.ts'
 
 export interface EmptyHost extends ChooserHost {
   /** The person picked: the host opens it in this pane's place. Resolves with an error message to show, or nothing. */
@@ -71,7 +72,7 @@ export class EmptyPanel implements IContentRenderer {
     this.element.dataset.blank = String(this.blank)
     if (this.blank) this.mountBlank()
     else this.mount({ folder: this.folder })
-    this.disposers.push(params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.focus()) }))
+    this.disposers.push(followActive(params.api, () => this.focus()))
   }
 
   private mountBlank(): void {
@@ -152,17 +153,12 @@ export class EmptyTab implements ITabRenderer {
 
   constructor(host: EmptyHost) {
     this.host = host
-    this.element = document.createElement('div')
-    this.element.className = 'tether-tab empty'
-    const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon('plus'))
-    this.text = document.createElement('span'); this.text.className = 'text'
-    const close = document.createElement('button')
-    close.className = 'close'; close.title = 'Fechar'; close.setAttribute('aria-label', 'Fechar painel vazio')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.host.onClose(this.api.id) })
-    this.element.append(kind, this.text, close)
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
+    const h = createTabHeader({
+      className: 'empty', glyph: 'plus',
+      close: { label: 'Fechar', aria: 'Fechar painel vazio', onClose: () => { if (this.api) this.host.onClose(this.api.id) } },
+      onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
+    })
+    this.element = h.element; this.text = h.text
   }
 
   init(params: TabPartInitParameters): void {

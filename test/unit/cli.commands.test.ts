@@ -10,8 +10,10 @@ import { defaultShell } from '../../src/agents/shell.ts'
 import { createSlot, readSlot } from '../../src/core/store.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { stopPtyd } from '../e2e/ptyd-driver.ts'
 import { claim, killOwned } from '../kill.ts'
-import { pidAlive, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
+// daemon.basics, not daemon.helpers: the in-process panel host of the latter dies with the event loop that spawnSync blocks.
+import { pidAlive, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.basics.ts'
 
 const BIN = resolve(import.meta.dirname, '../../bin/tether.mjs')
 const DAEMON_MAIN = resolve(import.meta.dirname, '../../src/daemon/main.ts')
@@ -47,6 +49,8 @@ describe('tether CLI', () => {
     pipe = uniquePipe(home)
     cwd = join(home, 'work')
     mkdirSync(cwd)
+    // A private tether-ptyd: the daemon launches it on this pipe (never the real one) and `after` stops it by identity.
+    process.env.TETHER_PTYD_PIPE = uniquePipe(home)
     env = { TETHER_HOME: home, TETHER_PIPE: pipe }
   })
   after(async () => {
@@ -59,6 +63,8 @@ describe('tether CLI', () => {
         await killOwned(await claim(daemonPid, { cmdIncludes: DAEMON_MAIN, what: 'tetherd' }), { tree: true })
       }
     }
+    await stopPtyd(home)
+    delete process.env.TETHER_PTYD_PIPE
     await removeHome(home)
   })
 

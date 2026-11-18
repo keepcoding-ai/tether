@@ -346,7 +346,7 @@ test('in-app dialogs: close panel, remember, quit all, still closing (no native 
         await still.locator('button.choice[data-choice="close"]').click()
         await closed
         app = undefined
-        assert.match(stderr, /o tether ainda está fechando/)
+        assert.match(stderr, /o Tether ainda está fechando/)
         t.diagnostic(`still closing (${scheme}): close quit the app`)
       }
     }

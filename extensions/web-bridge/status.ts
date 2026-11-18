@@ -53,11 +53,13 @@ export interface StatusSnapshot {
   agents: AgentView[]
   /** The extension's versions: vendored in the tether, the folder installed on this machine, and a pending reload (C5 marker). */
   version: { vendored?: string; installed?: string; pendingReload: boolean }
+  /** Some browser of the daemon has the debug mode on (turned on in the extension's options page in the browser). */
+  debug: boolean
   /** "Opções da extensão": the browser it opens in (hidden when none). */
   options?: { browserId: string; browserName: string }
 }
 
-export const EMPTY_SNAPSHOT: StatusSnapshot = Object.freeze({ at: 0, daemon: 'down', everUp: false, paused: false, pauseSupported: true, browsers: [], agents: [], version: { pendingReload: false } }) as StatusSnapshot
+export const EMPTY_SNAPSHOT: StatusSnapshot = Object.freeze({ at: 0, daemon: 'down', everUp: false, paused: false, pauseSupported: true, debug: false, browsers: [], agents: [], version: { pendingReload: false } }) as StatusSnapshot
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.length ? v : undefined)
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v) && !Number.isNaN(Date.parse(v)) ? Date.parse(v) : undefined)
@@ -82,7 +84,7 @@ export function browserLabel(name: string | undefined, userAgent: string | undef
 }
 
 /** The sanitized part of a /status body (browsers, agents, paused). Anything malformed is dropped, never thrown on. */
-export function reduceStatus(raw: unknown): Pick<StatusSnapshot, 'paused' | 'browsers' | 'agents'> {
+export function reduceStatus(raw: unknown): Pick<StatusSnapshot, 'paused' | 'browsers' | 'agents' | 'debug'> {
   const body = (raw && typeof raw === 'object' ? raw : {}) as WireStatus
   const owned = new Map<string, number>()
   const browsers: BrowserView[] = []
@@ -110,7 +112,40 @@ export function reduceStatus(raw: unknown): Pick<StatusSnapshot, 'paused' | 'bro
     agents.push({ clientId: id, ...(slotId ? { slotId } : {}), name: str(c.name) ?? id, tabs: owned.get(id) ?? 0, ...(lastTool ? { lastTool } : {}), ...(lastSeenAt === undefined ? {} : { lastSeenAt }), calls: calls === undefined ? 0 : Math.max(0, Math.floor(calls)) })
   }
   agents.sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0) || a.name.localeCompare(b.name))
-  return { paused: body.paused === true, browsers, agents }
+  return { paused: body.paused === true, debug: debugOf(raw).length > 0, browsers, agents }
+}
+
+/** A call in flight at the daemon (GET /status `browsers[].pending`, bridge layer 0): never arguments. */
+export interface PendingCall { callId: string; tool: string; ageMs: number; browser: string }
+
+/** Every browser's `pending` of a /status body, oldest first; a daemon older than the trace has none (empty). */
+export function pendingOf(body: unknown): PendingCall[] {
+  const out: PendingCall[] = []
+  const browsers = (body as { browsers?: unknown } | undefined)?.browsers
+  for (const b of Array.isArray(browsers) ? browsers as Array<Record<string, unknown>> : []) {
+    const name = str(b?.name) ?? str(b?.id) ?? '?'
+    for (const p of Array.isArray(b?.pending) ? b.pending as Array<Record<string, unknown>> : []) {
+      const callId = str(p?.callId)
+      const ageMs = num(p?.ageMs)
+      if (callId) out.push({ callId, tool: str(p.tool) ?? '?', ageMs: ageMs ?? 0, browser: name })
+    }
+  }
+  return out.sort((a, b) => b.ageMs - a.ageMs)
+}
+
+/** A browser with the debug mode on (GET /status `browsers[].debug`): its name and the call deadline in force (null = none). */
+export interface DebugBrowser { browser: string; callTimeoutMs: number | null }
+
+/** The browsers of a /status body whose `debug.on` is true; a daemon older than the mode reports none (off). */
+export function debugOf(body: unknown): DebugBrowser[] {
+  const out: DebugBrowser[] = []
+  const browsers = (body as { browsers?: unknown } | undefined)?.browsers
+  for (const b of Array.isArray(browsers) ? browsers as Array<Record<string, unknown>> : []) {
+    const d = b?.debug as { on?: unknown; callTimeoutMs?: unknown } | undefined
+    if (d?.on !== true) continue
+    out.push({ browser: str(b.name) ?? str(b.id) ?? '?', callTimeoutMs: num(d.callTimeoutMs) ?? null })
+  }
+  return out
 }
 
 // ---- what the icon shows -----------------------------------------------------------------------------------------
@@ -122,10 +157,13 @@ export function activeAgents(s: StatusSnapshot, now: number): AgentView[] {
 
 export type IconState = 'idle' | 'normal' | 'busy' | 'warn' | 'error'
 
-/** §5: grey without a browser, normal with N browsers, busy while an agent calls, amber paused, red when the daemon fell. */
+/**
+ * §5: grey without a browser, normal with N browsers, busy while an agent calls, amber paused, red when the daemon fell.
+ * The debug mode (`s.debug`, turned on in the extension's options page) is amber too while the daemon is up: it should not go unnoticed.
+ */
 export function stateOf(s: StatusSnapshot, now: number): IconState {
   if (s.daemon !== 'up') return s.everUp ? 'error' : 'idle'
-  if (s.paused) return 'warn'
+  if (s.paused || s.debug) return 'warn'
   if (!s.browsers.length) return 'idle'
   if (activeAgents(s, now).length) return 'busy'
   return 'normal'
@@ -133,7 +171,7 @@ export function stateOf(s: StatusSnapshot, now: number): IconState {
 
 /** A dot while busy, the browser count otherwise (none without browsers or without the daemon). */
 export function badgeOf(s: StatusSnapshot, now: number): number | 'dot' | undefined {
-  const state = stateOf(s, now)
+  const state = stateOf({ ...s, debug: false }, now)
   if (state === 'busy') return 'dot'
   if (state === 'error' || s.daemon !== 'up') return undefined
   return s.browsers.length || undefined
@@ -144,12 +182,21 @@ export function browserNames(s: StatusSnapshot): string[] {
   return [...new Set(s.browsers.map(b => b.name))]
 }
 
-/** The tooltip (§5), in Portuguese. `product` is the Bridge's name ("Tether Bridge"). */
+/** The popover's line and the tooltip's suffix while the debug mode is on. */
+export const DEBUG_LINE = 'Modo de depuração ligado na extensão do navegador: o registro guarda mais detalhes de cada chamada. Desligue nas opções da extensão quando terminar.'
+export const DEBUG_SUFFIX = 'modo de depuração ligado'
+
+/** The tooltip (§5), in Portuguese. `product` is the Bridge's name ("Tether Bridge"); while the debug mode is on, it is named last. */
 export function titleOf(s: StatusSnapshot, now: number, product: string): string {
-  const state = stateOf(s, now)
+  const t = baseTitleOf(s, now, product)
+  return s.debug ? `${t} · ${DEBUG_SUFFIX}` : t
+}
+
+function baseTitleOf(s: StatusSnapshot, now: number, product: string): string {
+  const state = stateOf({ ...s, debug: false }, now) // the mode is the tooltip's suffix, not a state of the base text
   if (state === 'error') return 'O daemon do bridge caiu; a próxima chamada o reinicia'
-  if (s.daemon === 'no-key') return `${product}: instalação ainda não preparada (abra o tether de novo)`
-  if (s.daemon === 'refused') return `${product}: o daemon recusou a chave do tether`
+  if (s.daemon === 'no-key') return `${product}: instalação ainda não preparada (abra o Tether de novo)`
+  if (s.daemon === 'refused') return `${product}: o daemon recusou a chave do Tether`
   if (s.daemon !== 'up') return `${product}: serviço ainda não respondeu`
   if (state === 'warn') return `${product} pausado`
   if (state === 'idle') return `${product}: nenhum navegador conectado · Instalar…`
@@ -186,5 +233,5 @@ export function versionLine(v: StatusSnapshot['version']): { text: string; reloa
   if (!v.installed) return { text: `Extensão ${vendored} · não instalada neste computador`, reload: false }
   const differ = v.installed !== vendored
   const reload = v.pendingReload || differ
-  return { text: differ ? `Extensão: ${vendored} no tether · ${v.installed} instalada` : `Extensão ${vendored}`, reload }
+  return { text: differ ? `Extensão: ${vendored} no Tether · ${v.installed} instalada` : `Extensão ${vendored}`, reload }
 }

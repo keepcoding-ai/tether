@@ -94,6 +94,20 @@ test('a claude slot in a private tetherd gets the Tether Bridge MCP, calls list_
     const screen = term.screen()
     assert.match(screen, /navegadores\s*=\s*0|erro\s*=\s*NO_BROWSER_CONNECTED/i, `the bridge's answer reached the agent\n--- screen ---\n${screen}`)
 
+    // 3b. The agent's name at the bridge is the pane's tab, and follows a rename WITHOUT a relaunch: the shell inside the
+    //     tetherd reads its env at every request. The new name is outside Latin-1 (em dash), so it also proves the header.
+    const clientName = async (): Promise<string | undefined> => {
+      const r = await fetch(`http://localhost:${port}/status`, { headers: { authorization: `Bearer ${apiKey}` } })
+      const s = await r.json() as { clients?: { id: string; name?: string }[] }
+      return s.clients?.find(c => c.id === `tether:${slotId}`)?.name
+    }
+    assert.equal(await clientName(), 'Ponte', 'the tab\'s text, nothing more')
+    await client.request({ t: 'rename-slot', slotId, name: 'Ponte — renomeada' })
+    await term.type('Chame a ferramenta mcp__tether-bridge__list_browsers de novo. Responda apenas uma linha, no mesmo formato.')
+    await term.waitIdle({ timeout: 180_000 })
+    await waitUntil(async () => (await clientName()) === 'Ponte — renomeada', 30_000, 'the renamed agent at the bridge', tetherdLog)
+    assert.equal(self!.pid, (await term.tree()).find(p => p.pid === term!.pid)?.pid, 'the same claude process: no relaunch')
+
     // 4. /exit: the slot exits and the tetherd posts the release of tether:<slotId>; the vendored daemon (A6 and later) has
     //    the route and answers 200, which the tetherd logs as "abas soltas no bridge".
     await term.exit()

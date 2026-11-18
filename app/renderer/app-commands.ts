@@ -64,6 +64,8 @@ export interface CommandHost {
   openProfiles(): void
   /** The "Sessões" popup: everything running, the polite pause and the resume. */
   sessionsManage(): void
+  /** Puts the caret in the toolbar's session search. */
+  sessionSearch(): void
   /** "Sessões…" / "Pedir pausa…": opens the Sessões menu (the second one with the focus on the pause button); never pauses by itself. */
   sessionsMenu(focusPause: boolean): void
   restoreConfirmations(): void
@@ -194,7 +196,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'ui.dim-weak', title: 'Esmaecer: fraco', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('weak') },
     { id: 'ui.dim-medium', title: 'Esmaecer: médio', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('medium') },
     { id: 'ui.dim-strong', title: 'Esmaecer: forte', group: GROUP.look, icon: 'square-half', run: () => host.setDimLevel('strong') },
-    { id: 'terminal.theme', title: 'Tema do terminal…', group: GROUP.look, icon: 'palette', run: () => host.openTerminalTheme() },
+    { id: 'terminal.theme', title: 'Tema do Tether…', group: GROUP.look, icon: 'palette', run: () => host.openTerminalTheme() },
     { id: 'font.increase', title: 'Aumentar a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('increase') },
     { id: 'font.decrease', title: 'Diminuir a fonte do terminal', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('decrease') },
     { id: 'font.reset', title: 'Fonte do terminal no tamanho padrão', group: GROUP.look, icon: 'text-aa', run: () => host.fontSize('reset') },
@@ -207,7 +209,8 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'sessions.menu', title: 'Sessões…', group: GROUP.app, icon: 'tray', run: () => host.sessionsMenu(false) },
     { id: 'pause.start', title: 'Pedir pausa aos agentes…', group: GROUP.app, icon: 'pause', run: () => host.sessionsMenu(true) },
     { id: 'sessions.manage', title: 'Sessões em andamento…', group: GROUP.app, icon: 'tray', run: () => host.sessionsManage() },
-    { id: 'links.associate', title: 'Associar links tether:// a este tether…', group: GROUP.app, icon: 'link', run: () => host.associateLinks() },
+    { id: 'sessions.search', title: 'Buscar sessão…', group: GROUP.app, icon: 'magnifying-glass', run: () => host.sessionSearch() },
+    { id: 'links.associate', title: 'Associar links tether:// a este Tether…', group: GROUP.app, icon: 'link', run: () => host.associateLinks() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },
     { id: 'daemon.restart', title: 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'plugs', run: () => host.restartDaemon() },
     { id: 'app.reload-all', title: 'Reiniciar tudo… (app e tetherd; encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'arrows-clockwise', danger: true, run: () => host.reloadAll() },

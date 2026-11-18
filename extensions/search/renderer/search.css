@@ -1,0 +1,46 @@
+/* The search pad (view.ts): a card on the desk ground like the explorer's; the top bar, the fields, the progress bar, the
+   message line and the results tree filling the rest. */
+.srch {
+  position: absolute; inset: var(--pad-inset, 0 var(--gap) var(--gap)); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--frame-bg); border: 1px solid var(--frame-border); border-radius: var(--frame-radius);
+  color: var(--fg); font: 13px var(--ui); outline: none;
+}
+.srch [hidden] { display: none !important; }
+
+/* The top bar: title left, actions right (24px icon buttons, as the explorer's). */
+.srch-topbar {
+  flex: none; display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 4px 0 12px;
+  background: var(--frame-bg); border-bottom: 1px solid var(--border); color: var(--fg-dim); user-select: none;
+}
+.srch-title { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srch-sp { flex: 1; }
+.srch-topbar .ib { width: 24px; height: 24px; flex: none; }
+.srch-topbar .ib:disabled { opacity: .4; cursor: default; }
+.srch-topbar .ib:disabled:hover { background: none; color: var(--fg-dim); }
+
+.srch > .srw { flex: none; padding-top: 6px; }
+
+/* A thin bar under the fields while a search runs: a stripe sliding across. */
+.srch-progress { flex: none; position: relative; height: 2px; overflow: hidden; visibility: hidden; }
+.srch.searching .srch-progress { visibility: visible; }
+.srch-progress::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 30%; background: var(--accent);
+  animation: srch-progress 1.1s linear infinite;
+}
+@keyframes srch-progress { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+/* The message line: counts, no results, the limit warning. */
+.srch-msg { flex: none; padding: 2px 12px 6px 24px; font-size: 12px; line-height: 1.4; color: var(--fg-dim); user-select: text; overflow-wrap: anywhere; }
+.srch-msg-line.warning { color: var(--fg); }
+.srch-msg-line.warning::before { content: "⚠ "; color: var(--warn); }
+
+/* The results tree takes the rest of the card (results.css: .sr is height 100% of this box). */
+.srch-body { flex: 1; min-height: 0; position: relative; border-top: 1px solid transparent; }
+
+/* The search editor (a .code-search document in the note editor): its matches, as the results tree marks them (.sr-hit). */
+.monaco-editor .srch-ed-match { border-radius: 2px; background: color-mix(in srgb, var(--warn) 32%, transparent); }
+/* Every file and result line is a link there: underlined only while Ctrl points at it (Monaco underlines detected links always). */
+.monaco-editor[data-mode-id="search-result"] .detected-link { text-decoration: none; }
+.monaco-editor[data-mode-id="search-result"] .detected-link-active { text-decoration: underline; }
+.srch-topbar .ib.srch-cancel { color: var(--err); background: color-mix(in srgb, var(--err) 14%, transparent); }
+.srch-topbar .ib.srch-cancel:hover:not(:disabled) { color: var(--err); background: color-mix(in srgb, var(--err) 26%, transparent); }

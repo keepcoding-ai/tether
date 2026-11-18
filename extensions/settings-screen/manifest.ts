@@ -9,7 +9,7 @@ export const manifest: ExtensionManifest = {
   id: 'settings-screen',
   version: '1.0.0',
   displayName: 'Configurações',
-  description: 'A página com todas as configurações do tether e das extensões, com busca, onde cada uma se liga, troca ou volta ao padrão (Ctrl+,).',
+  description: 'A página com todas as configurações do Tether e das extensões, com busca, onde cada uma se liga, troca ou volta ao padrão (Ctrl+,).',
   hosts: ['renderer'],
   optional: true,
   contributes: {

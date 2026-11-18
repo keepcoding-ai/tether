@@ -14,7 +14,7 @@ export const manifest: ExtensionManifest = {
   id: 'processes',
   version: '0.1.0',
   displayName: 'Processos',
-  description: 'Os processos de fundo que os agentes iniciam pelo tether: quem roda, quem iniciou, portas, saída e histórico.',
+  description: 'Os processos de fundo que os agentes iniciam pelo Tether: quem roda, quem iniciou, portas, saída e histórico.',
   hosts: ['renderer'],
   optional: true,
   contributes: {

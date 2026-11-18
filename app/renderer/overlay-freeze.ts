@@ -31,6 +31,40 @@ function visible(selector: string): Element[] {
   })
 }
 
+const OVERLAY_SELECTOR = 'dialog, .menu, .popover, #overlay, #closed-list'
+// Elements whose own attribute changes (open, hidden, class) can flip an overlay.
+const OVERLAY_TARGET = 'dialog, .menu, #overlay, #closed-list, .pinned'
+
+const hasWord = (list: string | null | undefined, word: string): boolean => (list ?? '').split(/\s+/).includes(word)
+
+function touchesOverlay(node: Node): boolean {
+  const el = node as Element
+  if (el.nodeType !== 1 || typeof el.matches !== 'function') return false
+  return el.matches(OVERLAY_SELECTOR) || el.querySelector(OVERLAY_SELECTOR) !== null
+}
+
+/**
+ * Whether a mutation can change what the overlays above read. Terminals (xterm) and unrelated UI toggle classes and nodes
+ * all the time; only these records are worth a full read of the document.
+ */
+export function isRelevant(record: MutationRecord): boolean {
+  const target = record.target as Element
+  if (target.closest?.('.xterm')) return false
+  if (record.type === 'attributes') {
+    if (record.attributeName === 'data-open') return true // the drawer
+    if (record.attributeName === 'class') {
+      const was = record.oldValue
+      const now = target.getAttribute?.('class')
+      if (hasWord(was, 'pinned') !== hasWord(now, 'pinned') || hasWord(was, 'menu') !== hasWord(now, 'menu')) return true
+    }
+    return target.matches?.(OVERLAY_TARGET) === true || target.querySelector?.('.popover') != null
+  }
+  for (const list of [record.addedNodes, record.removedNodes]) {
+    for (const n of Array.from(list)) if (touchesOverlay(n)) return true
+  }
+  return false
+}
+
 /**
  * Starts holding the signal for the overlays above, the open drawer (sparing the surfaces inside it) and a drag of a tab,
  * pane or frame (dockview drags are HTML5 drags: dragstart to dragend/drop). Returns the stop function.
@@ -60,8 +94,8 @@ export function watchOverlays(registry: FreezeRegistry<Element>, drawer: HTMLEle
     scheduled = true
     queueMicrotask(() => { scheduled = false; read() })
   }
-  const mo = new MutationObserver(schedule)
-  mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['open', 'hidden', 'class', 'data-open'] })
+  const mo = new MutationObserver(records => { if (records.some(isRelevant)) schedule() })
+  mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeOldValue: true, attributeFilter: ['open', 'hidden', 'class', 'data-open'] })
 
   // A drag is held from dragstart until it ends. dragend may never reach the document (the source element left the page,
   // dockview removes the tab it dragged), so a drop, and any mouse move with no button pressed (none fires during an HTML5

@@ -1,7 +1,7 @@
 // E2E of the dialog <select>s (customizable select, appearance: base-select) in the Electron app, against the real
 // tetherd on a private home/pipe, hidden window:
 //   1. this Chromium supports base-select, and the dialog select renders with it (selectedcontent);
-//   2. the terminal font (in "Tema do terminal…") opens, the keyboard picks a font and it lands in the appearance;
+//   2. the terminal font (in "Tema do tether…") opens, the keyboard picks a font and it lands in the appearance;
 //   3. disabled is muted; screenshots, light and dark: closed, hover, focused, open (clipped, disk is tight).
 // Every kill goes through test/kill.ts.
 import { test } from 'node:test'

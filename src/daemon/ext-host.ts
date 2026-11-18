@@ -5,7 +5,7 @@
 // unsatisfiable extension is logged and skipped, never taking tetherd down.
 import { DisposableStore, toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts'
-import type { DaemonCheck, SlotEventKind, TetherDaemon } from './ext-api.ts'
+import type { DaemonCheck, SlotEventKind, TetherDaemon, TraceSource } from './ext-api.ts'
 import type { ExtensionEntry } from '../../extensions/types.ts'
 import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
@@ -16,7 +16,7 @@ import { treeValueAt } from '../../app/shared/settings-file.ts'
 import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 
-type Middleware = (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan
+type Middleware = (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan
 type SlotListener = (ev: { kind: SlotEventKind; slot: SlotState }) => void
 
 export interface DaemonHostOptions {
@@ -37,6 +37,7 @@ export class DaemonExtensionHost implements IDisposable {
   private readonly startListeners = new Set<() => void>()
   private started = false
   readonly checks: Array<() => Promise<DaemonCheck>> = []
+  readonly traceSources: TraceSource[] = []
   readonly activated: string[] = []
   readonly failed: { id: string; error: string }[] = []
   private readonly opts: DaemonHostOptions
@@ -87,10 +88,10 @@ export class DaemonExtensionHost implements IDisposable {
   }
 
   /** The launch middlewares, applied in order (DaemonOptions.transformPlan). */
-  readonly transformPlan = (plan: LaunchPlan, meta: SlotMeta): LaunchPlan => {
+  readonly transformPlan = (plan: LaunchPlan, meta: SlotMeta, state?: SlotState): LaunchPlan => {
     let out = plan
     for (const mw of this.middlewares) {
-      try { out = mw(out, meta) } catch (e) { this.opts.log(`launch middleware failed for slot ${meta.slotId}: ${(e as Error).message}`) }
+      try { out = mw(out, meta, state) } catch (e) { this.opts.log(`launch middleware failed for slot ${meta.slotId}: ${(e as Error).message}`) }
     }
     return out
   }
@@ -137,6 +138,7 @@ export class DaemonExtensionHost implements IDisposable {
       },
       launch: { use: (mw) => { this.middlewares.push(mw); return own.add(removing(this.middlewares, mw)) } },
       doctor: { register: (check) => { this.checks.push(check); return own.add(removing(this.checks, check)) } },
+      traces: { register: (source) => { this.traceSources.push(source); return own.add(removing(this.traceSources, source)) } },
       settings: { get: <T>(key: string): T | undefined => readSetting<T>(home, key) },
       profiles: { get: (pid) => this.profileStore.profiles().find((p) => p.id === pid) },
       log: (msg) => log(`[${id}] ${msg}`),

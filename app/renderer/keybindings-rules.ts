@@ -142,7 +142,7 @@ export function overridesFor(current: readonly Keybinding[], mac?: boolean): Key
 
 /** The file's text for a list of entries: one entry per line, a header comment, `[]` when empty. */
 export function formatKeybindingsFile(entries: readonly KeybindingEntry[]): string {
-  const head = '// Atalhos do tether que diferem do padrão (a tela "Atalhos de teclado" escreve aqui; editar à mão também vale).\n// Formato: { "key": "ctrl+k ctrl+s", "command": "id.do.comando", "where": ["window", "terminal", "note"] }; "-id" tira um padrão.\n'
+  const head = '// Atalhos do Tether que diferem do padrão (a tela "Atalhos de teclado" escreve aqui; editar à mão também vale).\n// Formato: { "key": "ctrl+k ctrl+s", "command": "id.do.comando", "where": ["window", "terminal", "note"] }; "-id" tira um padrão.\n'
   if (entries.length === 0) return `${head}[]\n`
   const lines = entries.map(e => {
     const parts = [e.key !== undefined ? `"key": ${JSON.stringify(e.key)}` : '', `"command": ${JSON.stringify(e.command)}`].filter(Boolean)

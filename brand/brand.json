@@ -41,6 +41,6 @@
     "upload": true,
     "pdf": true,
     "readNetwork": true,
-    "windowPerAgent": true
+    "windowPerAgent": false
   }
 }

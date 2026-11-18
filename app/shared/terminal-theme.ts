@@ -1,9 +1,11 @@
 // Terminal appearance shared by the main process (settings.json) and the renderer (xterm options, the
-// "Tema do terminal" dialog): the colour presets (16 ANSI + foreground, cursor, selection, one pair per
-// scheme), the bundled fonts, and the user's choice (preset, font, weight, size, line height). The panel
-// background is not part of a preset: it is always the frame card's (app/shared/theme.ts), so the terminal
-// sits flush in its card in both schemes.
+// "Tema do tether" dialog): the colour presets (16 ANSI + foreground, cursor, selection, one pair per
+// scheme), the bundled fonts, and the user's choice (preset, font, weight, size, line height, ligatures). Fonts
+// that draw programming ligatures carry a default for the ligatures switch: off for every font by default;
+// only the user's switch turns them on (fonts without them always run with ligatures off). The panel background is not part of a preset: it is always
+// the frame card's (app/shared/theme.ts), so the terminal sits flush in its card in both schemes.
 import { FRAME_BACKGROUND, type ColorScheme } from './theme.ts'
+import { FIRA_CODE_LIGATURES } from './terminal-ligatures.ts'
 
 export interface TerminalColors {
   foreground: string
@@ -105,9 +107,9 @@ export const TERMINAL_PRESETS: readonly TerminalPreset[] = [
   {
     // What tether painted before presets existed (app/renderer/panel.ts TERMINAL_THEME): Dark+ brights used
     // as normal colours in the dark scheme; Light+ with yellow and cyan darkened by hand in the light one.
-    id: 'tether-classic', label: 'tether clássico', license: 'MIT (microsoft/vscode, ajustado)',
-    source: 'tether, app/renderer/panel.ts antes de 2026-10-30',
-    note: 'O que o tether usava até aqui: no escuro, as brilhantes do VS Code como normais.',
+    id: 'tether-classic', label: 'Tether clássico', license: 'MIT (microsoft/vscode, ajustado)',
+    source: 'Tether, app/renderer/panel.ts antes de 2026-10-30',
+    note: 'O que o Tether usava até aqui: no escuro, as brilhantes do VS Code como normais.',
     light: colors('#24292f', '#24292f', '#b4d5fe', ['#000000', '#cd3131', '#107c10', '#8a6d00', '#0451a5', '#bc05bc', '#0a7f99', '#555555', '#5f6368', '#cd3131', '#0f8a0f', '#946f00', '#0451a5', '#bc05bc', '#0a7f99', '#777777']),
     dark: colors('#d8d8dc', '#d8d8dc', '#3a5a8a', ['#1b1b1f', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#e5e5e5', '#6b6b75', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#ffffff']),
   },
@@ -121,7 +123,7 @@ export function presetOf(id: unknown): TerminalPreset {
 
 // ---------- fonts ----------
 
-export type TerminalFontId = 'jetbrains-mono' | 'ubuntu-sans-mono' | 'ibm-plex-mono' | 'cascadia-mono'
+export type TerminalFontId = 'fira-code' | 'jetbrains-mono' | 'ubuntu-sans-mono' | 'ibm-plex-mono' | 'cascadia-mono'
 
 export interface TerminalFont {
   id: TerminalFontId
@@ -135,17 +137,27 @@ export interface TerminalFont {
   license: string
   version: string
   source: string
+  /** Whether the font draws programming ligatures (`=>`, `!=`) through its OpenType features. */
+  hasLigatures: boolean
+  /** What the ligatures switch takes when this font is chosen (always false without ligatures). */
+  ligaturesByDefault: boolean
+  /**
+   * The sequences the terminal joins for the font when it cannot read the font file itself (the addon's
+   * fallback); undefined = the addon's own list.
+   */
+  ligatureList?: readonly string[]
 }
 
 /** Bundled with the app (woff2 + licence text in app/renderer/fonts); no network. */
 export const TERMINAL_FONTS: readonly TerminalFont[] = [
-  { id: 'jetbrains-mono', label: 'JetBrains Mono', family: 'JetBrains Mono', file: 'JetBrainsMono-wght.woff2', minWeight: 100, maxWeight: 800, license: 'OFL-1.1', version: '2.304', source: 'https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 (fonts/variable/JetBrainsMono[wght].ttf → woff2)' },
-  { id: 'ubuntu-sans-mono', label: 'Ubuntu Sans Mono', family: 'Ubuntu Sans Mono', file: 'UbuntuSansMono-wght.woff2', minWeight: 100, maxWeight: 700, license: 'Ubuntu Font Licence 1.0', version: '1.0 (2023)', source: 'https://github.com/canonical/Ubuntu-Sans-Mono-fonts (fonts/variable/UbuntuSansMono[wght].ttf → woff2)' },
-  { id: 'ibm-plex-mono', label: 'IBM Plex Mono', family: 'IBM Plex Mono', file: 'IBMPlexMonoVar-Roman.woff2', minWeight: 100, maxWeight: 700, license: 'OFL-1.1', version: '@ibm/plex-mono-variable 1.0.0', source: 'https://github.com/IBM/plex (npm @ibm/plex-mono-variable, fonts/complete/woff2)' },
-  { id: 'cascadia-mono', label: 'Cascadia Mono', family: 'Cascadia Mono Bundled', file: 'CascadiaMono-wght.woff2', minWeight: 200, maxWeight: 700, license: 'OFL-1.1', version: '2407.24', source: 'https://github.com/microsoft/cascadia-code/releases/tag/v2407.24 (woff2/CascadiaMono.woff2)' },
+  { id: 'fira-code', label: 'Fira Code', family: 'Fira Code', file: 'FiraCode-VF.woff2', minWeight: 300, maxWeight: 700, license: 'OFL-1.1', version: '6.2', source: 'https://github.com/tonsky/FiraCode/releases/tag/6.2 (woff2/FiraCode-VF.woff2)', hasLigatures: true, ligaturesByDefault: false, ligatureList: FIRA_CODE_LIGATURES },
+  { id: 'jetbrains-mono', label: 'JetBrains Mono', family: 'JetBrains Mono', file: 'JetBrainsMono-wght.woff2', minWeight: 100, maxWeight: 800, license: 'OFL-1.1', version: '2.304', source: 'https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 (fonts/variable/JetBrainsMono[wght].ttf → woff2)', hasLigatures: true, ligaturesByDefault: false },
+  { id: 'ubuntu-sans-mono', label: 'Ubuntu Sans Mono', family: 'Ubuntu Sans Mono', file: 'UbuntuSansMono-wght.woff2', minWeight: 100, maxWeight: 700, license: 'Ubuntu Font Licence 1.0', version: '1.0 (2023)', source: 'https://github.com/canonical/Ubuntu-Sans-Mono-fonts (fonts/variable/UbuntuSansMono[wght].ttf → woff2)', hasLigatures: false, ligaturesByDefault: false },
+  { id: 'ibm-plex-mono', label: 'IBM Plex Mono', family: 'IBM Plex Mono', file: 'IBMPlexMonoVar-Roman.woff2', minWeight: 100, maxWeight: 700, license: 'OFL-1.1', version: '@ibm/plex-mono-variable 1.0.0', source: 'https://github.com/IBM/plex (npm @ibm/plex-mono-variable, fonts/complete/woff2)', hasLigatures: false, ligaturesByDefault: false },
+  { id: 'cascadia-mono', label: 'Cascadia Mono', family: 'Cascadia Mono Bundled', file: 'CascadiaMono-wght.woff2', minWeight: 200, maxWeight: 700, license: 'OFL-1.1', version: '2407.24', source: 'https://github.com/microsoft/cascadia-code/releases/tag/v2407.24 (woff2/CascadiaMono.woff2)', hasLigatures: false, ligaturesByDefault: false },
 ]
 
-export const DEFAULT_FONT_ID: TerminalFontId = 'jetbrains-mono'
+export const DEFAULT_FONT_ID: TerminalFontId = 'fira-code'
 
 export function fontOf(id: unknown): TerminalFont {
   return TERMINAL_FONTS.find(f => f.id === id) ?? TERMINAL_FONTS.find(f => f.id === DEFAULT_FONT_ID)!
@@ -160,9 +172,11 @@ export interface TerminalAppearance {
   fontWeight: number
   fontSize: number
   lineHeight: number
+  /** Programming ligatures on (only ever true for a font that has them). */
+  ligatures: boolean
 }
 
-export const DEFAULT_APPEARANCE: TerminalAppearance = { preset: DEFAULT_PRESET_ID, font: DEFAULT_FONT_ID, fontWeight: 350, fontSize: 14, lineHeight: 1.2 }
+export const DEFAULT_APPEARANCE: TerminalAppearance = { preset: DEFAULT_PRESET_ID, font: DEFAULT_FONT_ID, fontWeight: 350, fontSize: 14, lineHeight: 1.2, ligatures: false }
 
 /** Ranges the dialog offers; anything outside (an edited settings.json) is clamped, never refused. */
 export const FONT_SIZE_RANGE = { min: 9, max: 28 } as const
@@ -181,7 +195,11 @@ function num(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined
 }
 
-/** Whatever is in settings.json (missing, corrupt, from a newer build) becomes a valid appearance; unknown ids fall back to the defaults. */
+/**
+ * Whatever is in settings.json (missing, corrupt, from a newer build) becomes a valid appearance; unknown ids fall
+ * back to the defaults. `ligatures` missing or not a boolean takes the font's default; a font without ligatures
+ * is always `false`.
+ */
 export function normalizeAppearance(value: unknown): TerminalAppearance {
   const raw = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>
   const preset = presetOf(raw.preset).id
@@ -189,7 +207,8 @@ export function normalizeAppearance(value: unknown): TerminalAppearance {
   const fontWeight = clamp(round(num(raw.fontWeight) ?? DEFAULT_APPEARANCE.fontWeight, FONT_WEIGHT_STEP), font.minWeight, font.maxWeight)
   const fontSize = clamp(Math.round(num(raw.fontSize) ?? DEFAULT_APPEARANCE.fontSize), FONT_SIZE_RANGE.min, FONT_SIZE_RANGE.max)
   const lineHeight = clamp(Number(round(num(raw.lineHeight) ?? DEFAULT_APPEARANCE.lineHeight, LINE_HEIGHT_RANGE.step).toFixed(2)), LINE_HEIGHT_RANGE.min, LINE_HEIGHT_RANGE.max)
-  return { preset, font: font.id, fontWeight, fontSize, lineHeight }
+  const ligatures = font.hasLigatures && (typeof raw.ligatures === 'boolean' ? raw.ligatures : font.ligaturesByDefault)
+  return { preset, font: font.id, fontWeight, fontSize, lineHeight, ligatures }
 }
 
 /** The xterm `theme` for a scheme: the preset's colours over the window's own background. Every key set (a missing one would fall back to xterm's dark defaults). */
@@ -214,7 +233,7 @@ export const MINIMUM_CONTRAST_RATIO = 4.5
 /** The fallback chain after the bundled family: what Windows has, so a glyph the font lacks still renders. */
 const FALLBACK_FAMILIES = '"Cascadia Mono", Consolas, "Courier New", monospace'
 
-/** The xterm font options for an appearance (ligatures stay off: agents print `=>` and `!=` in diffs). */
+/** The xterm font options for an appearance. Ligatures are no xterm option: the ligatures addon carries them (app/renderer/terminal-theme.ts). */
 export function terminalFontOptions(appearance: TerminalAppearance): TerminalFontOptions {
   const font = fontOf(appearance.font)
   return {

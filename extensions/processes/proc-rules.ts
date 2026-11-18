@@ -13,7 +13,7 @@ export type GroupId = 'attention' | 'running' | 'stopped'
 export const GROUP_TITLES: Record<GroupId, string> = { attention: 'Pedem atenção', running: 'Rodando', stopped: 'Parados' }
 const GROUP_ORDER: readonly GroupId[] = ['attention', 'running', 'stopped']
 
-export const EMPTY_TEXT = 'Nenhum processo. Quando um agente iniciar um pelo tether, ele aparece aqui.'
+export const EMPTY_TEXT = 'Nenhum processo. Quando um agente iniciar um pelo Tether, ele aparece aqui.'
 export const FORGET_CONFIRM = 'Esquecer apaga o histórico e os logs.'
 export const NO_OUTPUT = (name: string): string => `sem saída em memória; use \`tether proc logs ${name}\``
 export const FORGOTTEN = 'processo esquecido'
@@ -160,7 +160,7 @@ export function inUseDialog(name: string, action: 'stop' | 'restart', uses: read
     message: `Quem usa declarou que depende dele. Você pode esperar o uso acabar ou ${verb} agora mesmo assim.`,
     context: { icon: 'pulse', name, lines: uses.map(useText), status: { label: uses.length === 1 ? 'em uso' : `${uses.length} usos`, tone: 'warn' } },
     choices: [
-      { id: 'wait', icon: 'hourglass', label: 'Esperar o uso acabar', consequence: `O tether espera até 5 min os usos acabarem e então vai ${verb}. Se não acabarem, nada é feito.`, tone: 'safe' },
+      { id: 'wait', icon: 'hourglass', label: 'Esperar o uso acabar', consequence: `O Tether espera até 5 min os usos acabarem e então vai ${verb}. Se não acabarem, nada é feito.`, tone: 'safe' },
       { id: 'force', icon: action === 'stop' ? 'stop-circle' : 'arrow-clockwise', label: now, consequence: `Vai ${verb} já, por cima do uso. Quem usa recebe um recado dizendo que foi uma decisão sua.`, tone: 'destructive' },
     ],
     defaultChoice: 'wait',
@@ -191,7 +191,7 @@ export function portRowView(r: PortRow): PortRowView {
 export interface TimelineItem { time: string; who: string; what: string; reason?: string }
 
 export function timelineItem(e: ProcEvent): TimelineItem {
-  return { time: clockTime(e.ts), who: e.by ? authorText(e.by) : 'tether', what: eventText(e), ...(e.reason ? { reason: e.reason } : {}) }
+  return { time: clockTime(e.ts), who: e.by ? authorText(e.by) : 'Tether', what: eventText(e), ...(e.reason ? { reason: e.reason } : {}) }
 }
 
 /** The separator written in the output when a new run starts. */

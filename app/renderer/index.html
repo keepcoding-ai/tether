@@ -14,10 +14,16 @@
   <link rel="stylesheet" href="../../extensions/settings-screen/settings.css">
   <link rel="stylesheet" href="../../extensions/panel-pad-manager/manager.css">
   <link rel="stylesheet" href="extensions.css">
+  <link rel="stylesheet" href="bell.css">
   <link rel="stylesheet" href="../../extensions/explorer/renderer/explorer.css">
   <link rel="stylesheet" href="../../extensions/web-bridge/web-bridge.css">
   <link rel="stylesheet" href="../../extensions/browser/browser.css">
   <link rel="stylesheet" href="../../extensions/processes/processes.css">
+  <link rel="stylesheet" href="../../extensions/context/context.css">
+  <link rel="stylesheet" href="../../extensions/search/renderer/search.css">
+  <link rel="stylesheet" href="../../extensions/search/renderer/widget.css">
+  <link rel="stylesheet" href="../../extensions/search/renderer/results.css">
+  <link rel="stylesheet" href="../../extensions/search/renderer/preview.css">
 </head>
 <body>
   <header id="toolbar">
@@ -37,6 +43,17 @@
       <span class="sw-div" aria-hidden="true"></span>
     </div>
     <div class="tb-right">
+      <!-- The session search (app/renderer/session-search.ts): find a session of any desk by name and jump to it. -->
+      <div id="session-search" class="session-search">
+        <span class="i" data-icon="magnifying-glass"></span>
+        <input type="text" placeholder="Buscar sessão…" aria-label="Buscar sessão" role="combobox" aria-expanded="false" aria-controls="ss-list" spellcheck="false" autocomplete="off">
+        <div id="ss-list" class="ss-list" role="listbox" hidden></div>
+      </div>
+      <!-- The bell (app/renderer/bell.ts): recent attention, the system toasts' level and a temporary mute. -->
+      <div class="dropdown" id="bell-wrap">
+        <button id="btn-bell" class="ib" aria-label="Notificações" aria-haspopup="dialog" aria-expanded="false"><span class="i" data-icon="bell"></span></button>
+        <div id="bell-pop" class="bell-pop" role="dialog" aria-label="Notificações" hidden></div>
+      </div>
       <!-- The extensions' status icons (app/renderer/status-bar.ts), left of the connection icon. -->
       <div id="status-area" class="status-area"></div>
       <div class="dropdown" id="conn-wrap">
@@ -116,7 +133,7 @@
     <div class="card">
       <header><span class="badge"><span class="i" data-icon="plugs"></span></span><h2>Sem conexão com o tetherd</h2></header>
       <p id="overlay-msg"></p>
-      <p class="hint">O app tenta subir o tetherd sozinho (<code>node src/daemon/main.ts</code>); se ele não respondeu, veja <code>tetherd.log</code> na pasta do tether e tente de novo.</p>
+      <p class="hint">O app tenta subir o tetherd sozinho (<code>node src/daemon/main.ts</code>); se ele não respondeu, veja <code>tetherd.log</code> na pasta do Tether e tente de novo.</p>
       <div class="actions"><button id="btn-retry" class="primary"><span class="i" data-icon="arrow-clockwise"></span>Tentar de novo</button></div>
     </div>
   </div>
@@ -178,7 +195,7 @@
           <span class="row">
             <input type="text" name="shell" placeholder="C:\Program Files\Git\bin\bash.exe" spellcheck="false" autocomplete="off">
           </span>
-          <span class="hint">Vazio: o shell padrão do tether (pwsh ou PowerShell).</span>
+          <span class="hint">Vazio: o shell padrão do Tether (pwsh ou PowerShell).</span>
           <span class="field-error" data-for="shell" hidden></span>
         </label>
         <label class="field">
@@ -224,7 +241,7 @@
     <header>
       <span class="badge"><span class="i" data-icon="palette"></span></span>
       <div class="head-text">
-        <h2 id="term-theme-title">Tema do terminal</h2>
+        <h2 id="term-theme-title">Tema do tether</h2>
         <p class="sub">Cores e fonte de todos os painéis. Cada mudança vale na hora e fica guardada; o fundo segue o tema do app (Claro / Automático / Escuro).</p>
       </div>
       <button type="button" id="btn-term-theme-close" class="cancel" title="Fechar (Esc)" aria-label="Fechar"><span class="i" data-icon="x"></span></button>
@@ -240,6 +257,10 @@
           <span>Família</span>
           <select id="term-font" class="select"><button type="button"><selectedcontent></selectedcontent></button></select>
         </label>
+        <label class="field check ligatures">
+          <input type="checkbox" id="term-ligatures" name="term-ligatures">
+          <span>Ligaduras <span class="hint-inline"><code>=&gt;</code> vira seta, <code>!=</code> vira ≠</span></span>
+        </label>
         <label class="field">
           <span>Peso <output id="term-weight-label" for="term-weight"></output></span>
           <input type="range" id="term-weight" name="term-weight">
@@ -252,7 +273,7 @@
           <span>Altura da linha <output id="term-line-height-label" for="term-line-height"></output></span>
           <input type="range" id="term-line-height" name="term-line-height">
         </label>
-        <span class="hint">Negrito usa um peso 200 acima do normal (mínimo 600). Ligaduras ficam desligadas: os agentes imprimem <code>=&gt;</code> e <code>!=</code> em diffs.</span>
+        <span class="hint">Negrito usa um peso 200 acima do normal (mínimo 600). Ligaduras só existem em Fira Code (ligadas por padrão) e JetBrains Mono (desligadas por padrão).</span>
       </fieldset>
       <div class="field sample">
         <span>Amostra</span>

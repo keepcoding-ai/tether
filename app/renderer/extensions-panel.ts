@@ -3,7 +3,7 @@
 // the row says so and the screen offers the restart. Registered through the pane registry like the shortcuts screen;
 // one screen at a time.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
-import { icon } from './icons.ts'
+import { createTabHeader } from './tab-header.ts'
 import { STATE_LABEL, type ExtensionRow } from './extensions-list.ts'
 import { EXTENSIONS_TITLE } from '../shared/extensions-screen.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
@@ -35,7 +35,7 @@ export class ExtensionsPanel implements IContentRenderer {
     this.element = document.createElement('div')
     this.element.className = 'ext-pane'
     this.element.dataset.extensions = 'pane'
-    this.element.innerHTML = `<header><h2>${EXTENSIONS_TITLE}</h2><p class="dim">O que o tether carrega além do núcleo. Ligar ou desligar uma extensão vale depois de "Reiniciar o app"; os agentes continuam rodando.</p></header><div class="ext-restart" role="status" hidden><span>Há mudanças que valem depois de reiniciar o app.</span><button type="button" class="ext-relaunch">Reiniciar o app</button></div><div class="ext-list" tabindex="0" role="list" aria-label="${EXTENSIONS_TITLE}"></div>`
+    this.element.innerHTML = `<header><h2>${EXTENSIONS_TITLE}</h2><p class="dim">O que o Tether carrega além do núcleo. Ligar ou desligar uma extensão vale depois de "Reiniciar o app"; os agentes continuam rodando.</p></header><div class="ext-restart" role="status" hidden><span>Há mudanças que valem depois de reiniciar o app.</span><button type="button" class="ext-relaunch">Reiniciar o app</button></div><div class="ext-list" tabindex="0" role="list" aria-label="${EXTENSIONS_TITLE}"></div>`
     this.list = this.element.querySelector<HTMLElement>('.ext-list')!
     this.restart = this.element.querySelector<HTMLElement>('.ext-restart')!
     this.restart.querySelector('button')!.addEventListener('click', () => host.relaunch())
@@ -81,17 +81,13 @@ export class ExtensionsTab implements ITabRenderer {
   private api: DockviewPanelApi | undefined
 
   constructor(host: ExtensionsHost) {
-    this.element = document.createElement('div')
-    this.element.className = 'tether-tab extensions'
-    const kind = document.createElement('span'); kind.className = 'kind'; kind.append(icon('puzzle-piece'))
-    const text = document.createElement('span'); text.className = 'text'; text.textContent = EXTENSIONS_TITLE
-    const close = document.createElement('button')
-    close.className = 'close'; close.title = 'Fechar'; close.setAttribute('aria-label', 'Fechar extensões')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) host.onClose(this.api.id) })
-    this.element.append(kind, text, close)
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) host.onTabMenu(this.api.id, ev) })
+    const h = createTabHeader({
+      className: 'extensions', glyph: 'puzzle-piece',
+      close: { label: 'Fechar', aria: 'Fechar extensões', onClose: () => { if (this.api) host.onClose(this.api.id) } },
+      onMenu: ev => { if (this.api) host.onTabMenu(this.api.id, ev) },
+    })
+    this.element = h.element
+    h.text.textContent = EXTENSIONS_TITLE
     this.element.title = EXTENSIONS_TITLE
   }
 

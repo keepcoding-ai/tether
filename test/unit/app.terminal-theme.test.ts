@@ -6,6 +6,7 @@ import {
   boldWeightOf, DEFAULT_APPEARANCE, DEFAULT_FONT_ID, DEFAULT_PRESET_ID, fontLoadSpecs, fontOf, normalizeAppearance, presetOf,
   TERMINAL_FONTS, TERMINAL_PRESETS, terminalFontOptions, terminalTheme, weightLabel,
 } from '../../app/shared/terminal-theme.ts'
+import { FIRA_CODE_LIGATURES } from '../../app/shared/terminal-ligatures.ts'
 import { FRAME_BACKGROUND } from '../../app/shared/theme.ts'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -64,9 +65,9 @@ test('terminalTheme: the preset colours over the frame background, cursorAccent 
   for (const k of [...KEYS, 'background', 'cursorAccent'] as const) assert.ok(typeof d[k] === 'string' && d[k], k)
 })
 
-test('fonts: four bundled variable fonts, files and licences present, JetBrains Mono the default', () => {
-  assert.deepEqual(TERMINAL_FONTS.map(f => f.id), ['jetbrains-mono', 'ubuntu-sans-mono', 'ibm-plex-mono', 'cascadia-mono'])
-  assert.equal(DEFAULT_FONT_ID, 'jetbrains-mono')
+test('fonts: five bundled variable fonts, files and licences present, Fira Code the default', () => {
+  assert.deepEqual(TERMINAL_FONTS.map(f => f.id), ['fira-code', 'jetbrains-mono', 'ubuntu-sans-mono', 'ibm-plex-mono', 'cascadia-mono'])
+  assert.equal(DEFAULT_FONT_ID, 'fira-code')
   const dir = join(import.meta.dirname, '..', '..', 'app', 'renderer', 'fonts')
   for (const f of TERMINAL_FONTS) {
     assert.ok(existsSync(join(dir, f.file)), `${f.id}: ${f.file}`)
@@ -74,12 +75,12 @@ test('fonts: four bundled variable fonts, files and licences present, JetBrains 
     assert.match(f.license, /OFL-1\.1|Ubuntu Font Licence/)
   }
   assert.equal(fontOf('ubuntu-sans-mono').license, 'Ubuntu Font Licence 1.0')
-  for (const name of ['JetBrainsMono-OFL.txt', 'UbuntuSansMono-LICENCE.txt', 'IBMPlexMono-LICENSE.txt', 'CascadiaMono-LICENSE.txt']) assert.ok(existsSync(join(dir, name)), name)
+  for (const name of ['FiraCode-LICENSE.txt', 'JetBrainsMono-OFL.txt', 'UbuntuSansMono-LICENCE.txt', 'IBMPlexMono-LICENSE.txt', 'CascadiaMono-LICENSE.txt']) assert.ok(existsSync(join(dir, name)), name)
 })
 
-test('terminalFontOptions: family with the Windows fallbacks, bold = weight + 200 (at least 600, within the font), ligatures off, contrast 4.5', () => {
+test('terminalFontOptions: family with the Windows fallbacks, bold = weight + 200 (at least 600, within the font), contrast 4.5', () => {
   const o = terminalFontOptions(DEFAULT_APPEARANCE)
-  assert.match(o.fontFamily, /^"JetBrains Mono", "Cascadia Mono", Consolas/)
+  assert.match(o.fontFamily, /^"Fira Code", "Cascadia Mono", Consolas/)
   assert.equal(o.fontWeight, 350)
   assert.equal(o.fontWeightBold, 600)
   assert.equal(o.fontSize, 14)
@@ -89,16 +90,17 @@ test('terminalFontOptions: family with the Windows fallbacks, bold = weight + 20
   assert.equal(boldWeightOf(fontOf('jetbrains-mono'), 500), 700)
   assert.equal(boldWeightOf(fontOf('jetbrains-mono'), 700), 800)
   assert.equal(boldWeightOf(fontOf('cascadia-mono'), 700), 700) // the axis ends at 700
-  assert.deepEqual(fontLoadSpecs(DEFAULT_APPEARANCE), ['350 14px "JetBrains Mono"', '600 14px "JetBrains Mono"'])
+  assert.deepEqual(fontLoadSpecs(DEFAULT_APPEARANCE), ['350 14px "Fira Code"', '600 14px "Fira Code"'])
 })
 
 test('normalizeAppearance: missing, corrupt or unknown → defaults; numbers clamped to the font and the ranges', () => {
   assert.deepEqual(normalizeAppearance(undefined), DEFAULT_APPEARANCE)
   assert.deepEqual(normalizeAppearance('dark'), DEFAULT_APPEARANCE)
   assert.deepEqual(normalizeAppearance({ preset: 'solarized', font: 'fira' }), DEFAULT_APPEARANCE)
-  assert.deepEqual(normalizeAppearance({ preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1 }), { preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1 })
+  assert.deepEqual(normalizeAppearance({ preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1 }), { preset: 'one', font: 'ibm-plex-mono', fontWeight: 300, fontSize: 13, lineHeight: 1.1, ligatures: false })
   // Cascadia's axis starts at 200: a lighter saved weight is lifted; a weight past the axis is lowered.
   assert.equal(normalizeAppearance({ font: 'cascadia-mono', fontWeight: 100 }).fontWeight, 200)
+  assert.equal(normalizeAppearance({ font: 'fira-code', fontWeight: 100 }).fontWeight, 300) // the Fira Code axis starts at 300
   assert.equal(normalizeAppearance({ font: 'ibm-plex-mono', fontWeight: 900 }).fontWeight, 700)
   assert.equal(normalizeAppearance({ fontWeight: 337 }).fontWeight, 325) // steps of 25
   assert.equal(normalizeAppearance({ fontSize: 3 }).fontSize, 9)
@@ -107,6 +109,50 @@ test('normalizeAppearance: missing, corrupt or unknown → defaults; numbers cla
   assert.equal(normalizeAppearance({ lineHeight: 0.5 }).lineHeight, 1)
   assert.equal(normalizeAppearance({ lineHeight: 1.333 }).lineHeight, 1.35)
   assert.equal(normalizeAppearance({ lineHeight: NaN }).lineHeight, 1.2)
+})
+
+test('ligatures per font: Fira Code has its own list, both ligature fonts default to off, the rest have none', () => {
+  const by = Object.fromEntries(TERMINAL_FONTS.map(f => [f.id, f]))
+  assert.equal(by['fira-code']!.hasLigatures, true)
+  assert.equal(by['fira-code']!.ligaturesByDefault, false)
+  assert.equal(by['fira-code']!.ligatureList, FIRA_CODE_LIGATURES)
+  assert.equal(by['jetbrains-mono']!.hasLigatures, true)
+  assert.equal(by['jetbrains-mono']!.ligaturesByDefault, false)
+  assert.equal(by['jetbrains-mono']!.ligatureList, undefined, 'the addon\'s own list')
+  for (const id of ['ubuntu-sans-mono', 'ibm-plex-mono', 'cascadia-mono']) {
+    assert.equal(by[id]!.hasLigatures, false, id)
+    assert.equal(by[id]!.ligaturesByDefault, false, id)
+    assert.equal(by[id]!.ligatureList, undefined, id)
+  }
+  assert.equal(DEFAULT_APPEARANCE.ligatures, false)
+})
+
+test('normalizeAppearance ligatures: missing or not a boolean → the font\'s default; a font without them → always false', () => {
+  assert.equal(normalizeAppearance({}).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'fira-code' }).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: 'no' }).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: true }).ligatures, true)
+  assert.equal(normalizeAppearance({ font: 'fira-code', ligatures: false }).ligatures, false)
+  // A JetBrains Mono saved before the switch existed keeps running without ligatures.
+  assert.equal(normalizeAppearance({ font: 'jetbrains-mono' }).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'jetbrains-mono', ligatures: 1 }).ligatures, false)
+  assert.equal(normalizeAppearance({ font: 'jetbrains-mono', ligatures: true }).ligatures, true)
+  for (const font of ['ubuntu-sans-mono', 'ibm-plex-mono', 'cascadia-mono']) {
+    assert.equal(normalizeAppearance({ font, ligatures: true }).ligatures, false, font)
+    assert.equal(normalizeAppearance({ font }).ligatures, false, font)
+  }
+  // An unknown font falls back to Fira Code and so to its default.
+  assert.equal(normalizeAppearance({ font: 'comic-mono' }).ligatures, false)
+})
+
+test('Fira Code ligature list: 124 distinct non-empty sequences, longest first, with the common operators', () => {
+  assert.equal(FIRA_CODE_LIGATURES.length, 124)
+  assert.equal(new Set(FIRA_CODE_LIGATURES).size, FIRA_CODE_LIGATURES.length, 'no repeats')
+  for (const s of FIRA_CODE_LIGATURES) assert.ok(s.length >= 2, `"${s}" has at least two characters`)
+  for (let i = 1; i < FIRA_CODE_LIGATURES.length; i++) {
+    assert.ok(FIRA_CODE_LIGATURES[i - 1]!.length >= FIRA_CODE_LIGATURES[i]!.length, `"${FIRA_CODE_LIGATURES[i - 1]}" before "${FIRA_CODE_LIGATURES[i]}"`)
+  }
+  for (const s of ['=>', '!=', '===', '->', '>=']) assert.ok(FIRA_CODE_LIGATURES.includes(s), s)
 })
 
 test('weightLabel: named steps in Portuguese, in-between values name both neighbours', () => {

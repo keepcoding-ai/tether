@@ -111,7 +111,7 @@ export function localNetworkDialog(ask: LocalNetworkAsk): DialogSpec {
     message: 'É um endereço deste computador ou da sua rede. Uma página pode induzir o agente a pedir isso: permita só se você esperava que ele abrisse este endereço.',
     context: { icon: 'globe-simple', name: ask.destination, lines: [ask.profile === undefined ? `${ask.agent}, sem perfil` : `${ask.agent}, perfil ${ask.profile}`] },
     choices: [
-      { id: 'once', icon: 'globe-simple', label: 'Só desta vez', consequence: `${ask.agent} abre ${ask.destination} agora; na próxima vez o tether pergunta de novo.`, tone: 'neutral' },
+      { id: 'once', icon: 'globe-simple', label: 'Só desta vez', consequence: `${ask.agent} abre ${ask.destination} agora; na próxima vez o Tether pergunta de novo.`, tone: 'neutral' },
       { id: 'always', icon: 'globe-simple', label: 'Sempre para este perfil', consequence: `De agora em diante ${who} abrem ${ask.destination} sem perguntar.`, tone: 'neutral' },
       { id: 'deny', icon: 'shield-warning', label: 'Não permitir', consequence: `A página não abre e ${ask.agent} recebe a recusa.`, tone: 'safe' },
     ],

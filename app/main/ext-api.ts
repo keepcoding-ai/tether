@@ -9,8 +9,10 @@ import type { Brand } from '../shared/brand.ts'
 import type { Rect, Size, Visibility } from './surface-rules.ts'
 import type { MainAgents } from './agents.ts'
 import type { MainNotices } from './tray-notices.ts'
+import type { RemoteSurfaceBridge } from './surface-bridge.ts'
 
 export type { Brand } from '../shared/brand.ts'
+export type { RemoteSurfaceBridge } from './surface-bridge.ts'
 export type { Rect, Size, Visibility } from './surface-rules.ts'
 export type { AgentExit, AgentExitReason, AgentInfo, MainAgents } from './agents.ts'
 
@@ -20,6 +22,8 @@ export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 export interface ExtSettings {
   get<T extends SettingValue>(key: string): T | undefined
   set(key: string, value: SettingValue): void
+  /** Whether settings.json holds a valid value for the key (the person's choice), not the schema's default. */
+  isSet(key: string): boolean
   onChange(key: string, listener: (value: SettingValue) => void): IDisposable
 }
 
@@ -114,6 +118,11 @@ export interface ExtSurfaces {
   create(options?: SurfaceOptions): Promise<Surface>
   get(id: string): Surface | undefined
   list(): Surface[]
+  /**
+   * The extension's surfaces live in a process of its own (the browser's): the window's panel messages about them (place,
+   * release, capture, freeze) go to `bridge` instead of this process's surfaces. Absent where surfaces are unavailable.
+   */
+  forwardTo?(bridge: RemoteSurfaceBridge): IDisposable
 }
 
 export interface TetherMain {

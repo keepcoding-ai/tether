@@ -14,7 +14,7 @@ import { extensions as daemonExtensions } from '../../extensions/index.daemon.ts
 import { activateExtensions, type ActivationResult } from '../shared/ext-activation.ts'
 import { applyMigrations, stateOf, withState } from '../shared/ext-migrations.ts'
 import { mainIpc, type MainIpcTransport } from '../shared/ext-ipc.ts'
-import { ConfigurationRegistry, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
+import { ConfigurationRegistry, isValidSetting, withSetting, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { DisposableStore, toDisposable } from '../shared/vscode-lifecycle.ts'
 import type { ExtSurfaces, TetherMain } from './ext-api.ts'
 import { AgentTracker, type MainAgents } from './agents.ts'
@@ -121,7 +121,12 @@ export class MainExtensionHost {
     if (!ID.test(id) || !KEY.test(key) || !isValue(value)) return
     const schema = this.configuration.schemaOf(id, key)
     const v = schema ? this.configuration.read({ disabled: [], values: { [id]: { [key]: value } } }, id, key)! : value
-    this.deps.writeSettings(withSetting(this.deps.readSettings(), id, key, v))
+    try {
+      this.deps.writeSettings(withSetting(this.deps.readSettings(), id, key, v))
+    } catch (e) {
+      this.deps.log(`extensões: falha ao gravar ${id}.${key}: ${e instanceof Error ? e.message : String(e)}`)
+      return
+    }
     this.announce(id, key, v)
   }
 
@@ -156,6 +161,11 @@ export class MainExtensionHost {
       settings: {
         get: <T extends SettingValue>(key: string) => this.configuration.read(deps.readSettings(), id, key) as T | undefined,
         set: (key, value) => this.setSetting(id, key, value),
+        isSet: key => {
+          const schema = this.configuration.schemaOf(id, key)
+          const raw = deps.readSettings().values[id]?.[key]
+          return schema ? isValidSetting(schema, raw) : raw !== undefined
+        },
         onChange: (key, listener) => {
           const full = `${id}.${key}`
           let set = this.listeners.get(full)

@@ -15,7 +15,9 @@ import {
   PROCD_VERSION,
   writeRunFile,
   type HostErrorCode,
+  type HostCap,
   type HostEvent,
+  type HostNotice,
   type HostReply,
   type HostRequest,
   type HostRun,
@@ -30,7 +32,17 @@ export const LOG_MAX_BYTES = 20 * 1024 * 1024
 export const LOG_RUNS_KEPT = 5
 /** The last line of output that did not end in a newline is written after this much quiet. */
 const LOG_IDLE_FLUSH_MS = 1_000
+/** After `release`, the run is declared ended if the pty did not report an exit by itself. */
+const RELEASE_EXIT_MS = 1_500
 const SCROLLBACK_CHARS = 256 * 1024
+/** A client socket takes direct writes only while its own buffer holds less than this; the rest waits in its queue. */
+export const OUT_HIGH_WATER = 256 * 1024
+/** A client queue above this is dropped and the client is told `lag` (it re-attaches from its last offset). */
+export const OUT_QUEUE_MAX = 2 * 1024 * 1024
+/** Output of one name arriving within this window after a send leaves together in one `data`. */
+export const BATCH_MS = 5
+/** A `write` is dropped while the pty already has more than this waiting for its process. */
+export const INPUT_MAX = 1024 * 1024
 
 export interface HostOptions {
   home: string
@@ -40,7 +52,40 @@ export interface HostOptions {
   /** Called when the host should leave: idle, or a `shutdown` was honoured. */
   onExit?: (reason: string) => void
   logMaxBytes?: number
+  /** Default true. False: no clean log, no run.json, no process start-time lookup (terminal panes). */
+  persist?: boolean
+  /** Per-client socket buffer ceiling for direct writes (default OUT_HIGH_WATER). */
+  outHighWater?: number
+  /** Per-client queue ceiling before it is dropped with `lag` (default OUT_QUEUE_MAX). */
+  outQueueMax?: number
+  /** Output coalescing window in ms (default BATCH_MS); 0 sends every chunk on its own. */
+  batchMs?: number
+  /** Pending pty input ceiling in bytes (default INPUT_MAX). */
+  inputMax?: number
+  /** Scrollback ring size in characters (default 256 KiB). */
+  scrollbackChars?: number
 }
+
+export interface HostStats {
+  /** `write` notices dropped because the pty input was above the ceiling. */
+  inputDropped: number
+  /** Client queues dropped (each one sent `lag` for the names it affected). */
+  queuesDropped: number
+}
+
+interface OutItem { line: string; name?: string }
+interface NameOut { buf: string; off: number; timer: NodeJS.Timeout | undefined; lagged: boolean }
+
+/** What one client's socket still owes: ordered lines waiting for the socket to drain, and per-name batching. */
+class ClientOut {
+  queue: OutItem[] = []
+  queued = 0
+  names = new Map<string, NameOut>()
+  readonly socket: Socket
+  constructor(socket: Socket) { this.socket = socket }
+}
+
+const CAPS: HostCap[] = ['write', 'offsets', 'lag']
 
 export class HostError extends Error {
   readonly code: HostErrorCode
@@ -116,7 +161,10 @@ class RunLog {
 interface Run extends HostRun {
   pty: PtyHandle
   scrollback: Scrollback
-  log: RunLog
+  log: RunLog | undefined
+  /** Ends the run once (the pty's exit, or the release fallback). */
+  finish: (code: number) => Promise<void>
+  finished?: boolean
   attached: Set<Socket>
   /** Resolves with the exit once the process ended and run.json says so. */
   ended: Promise<RunExit>
@@ -132,6 +180,14 @@ export class ProcHost {
   private readonly idleMs: number
   private readonly onExit: (reason: string) => void
   private readonly logMaxBytes: number
+  private readonly persist: boolean
+  private readonly outHigh: number
+  private readonly outMax: number
+  private readonly batchMs: number
+  private readonly inputMax: number
+  private readonly scrollbackChars: number
+  private readonly outs = new Map<Socket, ClientOut>()
+  private readonly counters: HostStats = { inputDropped: 0, queuesDropped: 0 }
   private readonly server: Server
   private readonly clients = new Set<Socket>()
   private readonly runs = new Map<string, Run>()
@@ -145,11 +201,17 @@ export class ProcHost {
     this.idleMs = opts.idleMs ?? PROCD_IDLE_MS
     this.onExit = opts.onExit ?? (() => {})
     this.logMaxBytes = opts.logMaxBytes ?? LOG_MAX_BYTES
+    this.persist = opts.persist ?? true
+    this.outHigh = opts.outHighWater ?? OUT_HIGH_WATER
+    this.outMax = opts.outQueueMax ?? OUT_QUEUE_MAX
+    this.batchMs = opts.batchMs ?? BATCH_MS
+    this.inputMax = opts.inputMax ?? INPUT_MAX
+    this.scrollbackChars = opts.scrollbackChars ?? SCROLLBACK_CHARS
     this.server = createServer((socket) => this.onConnection(socket))
   }
 
   async listen(): Promise<void> {
-    this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
+    if (this.persist) this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
     await new Promise<void>((resolve, reject) => {
       this.server.once('error', reject)
@@ -162,6 +224,10 @@ export class ProcHost {
 
   live(): HostRun[] {
     return [...this.runs.values()].filter((r) => !r.exit).map(publicRun)
+  }
+
+  stats(): HostStats {
+    return { ...this.counters }
   }
 
   /** Kills every live process tree, drops the clients and closes the server. */
@@ -190,19 +256,98 @@ export class ProcHost {
   private onConnection(socket: Socket): void {
     const parser = new LineParser()
     this.clients.add(socket)
+    const out = new ClientOut(socket)
+    this.outs.set(socket, out)
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
       for (const line of parser.push(chunk)) void this.onLine(socket, line.value, line.raw)
     })
     socket.on('error', () => { /* surfaces as close */ })
+    socket.on('drain', () => this.pump(out))
     socket.on('close', () => {
       this.clients.delete(socket)
+      this.outs.delete(socket)
+      for (const n of out.names.values()) if (n.timer) clearTimeout(n.timer)
+      out.names.clear()
+      out.queue = []
+      out.queued = 0
       for (const r of this.runs.values()) r.attached.delete(socket)
     })
   }
 
+  /** Replies, errors and exits keep their order after every data already produced for this client. */
   private send(socket: Socket, msg: HostReply | HostEvent): void {
-    if (!socket.destroyed && socket.writable) socket.write(encode(msg))
+    const out = this.outs.get(socket)
+    if (!out || socket.destroyed || !socket.writable) return
+    for (const [name, n] of out.names) if (n.buf) this.emitData(out, name, n)
+    this.enqueue(out, { line: encode(msg) })
+  }
+
+  /** Output of a run for one attached client: first chunk now, what follows within batchMs together. */
+  private sendData(socket: Socket, name: string, off: number, data: string): void {
+    const out = this.outs.get(socket)
+    if (!out || socket.destroyed || !socket.writable) return
+    let n = out.names.get(name)
+    if (!n) out.names.set(name, (n = { buf: '', off: 0, timer: undefined, lagged: false }))
+    if (n.lagged) return // dropped: the client re-attaches from its last offset
+    if (this.batchMs <= 0) { this.enqueue(out, { line: encode({ t: 'data', name, off, data }), name }); return }
+    if (n.timer) { n.buf += data; n.off = off; return }
+    this.enqueue(out, { line: encode({ t: 'data', name, off, data }), name })
+    this.openWindow(out, name, n)
+  }
+
+  private openWindow(out: ClientOut, name: string, n: NameOut): void {
+    n.timer = setTimeout(() => {
+      n.timer = undefined
+      if (!n.buf) return
+      this.emitData(out, name, n)
+      this.openWindow(out, name, n)
+    }, this.batchMs)
+    n.timer.unref()
+  }
+
+  private emitData(out: ClientOut, name: string, n: NameOut): void {
+    const data = n.buf
+    n.buf = ''
+    if (!n.lagged) this.enqueue(out, { line: encode({ t: 'data', name, off: n.off, data }), name })
+  }
+
+  private enqueue(out: ClientOut, item: OutItem): void {
+    if (!out.queue.length && out.socket.writableLength < this.outHigh) { out.socket.write(item.line); return }
+    out.queue.push(item)
+    out.queued += item.line.length
+    if (out.queued > this.outMax) this.dropQueue(out)
+  }
+
+  /** Keeps replies and exits, drops the data, and tells the client which names to recover. */
+  private dropQueue(out: ClientOut): void {
+    const lagged = new Set<string>()
+    const kept: OutItem[] = []
+    for (const it of out.queue) {
+      if (it.name === undefined) kept.push(it)
+      else lagged.add(it.name)
+    }
+    for (const [name, n] of out.names) if (n.buf) { n.buf = ''; lagged.add(name) }
+    this.counters.queuesDropped++
+    for (const name of lagged) {
+      let n = out.names.get(name)
+      if (!n) out.names.set(name, (n = { buf: '', off: 0, timer: undefined, lagged: true }))
+      n.lagged = true
+      kept.push({ line: encode({ t: 'lag', name }) })
+    }
+    out.queue = kept
+    out.queued = kept.reduce((a, it) => a + it.line.length, 0)
+    this.log(`client queue dropped; lag for ${[...lagged].join(', ')}`)
+  }
+
+  private pump(out: ClientOut): void {
+    let i = 0
+    while (i < out.queue.length && out.socket.writableLength < this.outHigh && !out.socket.destroyed) {
+      const it = out.queue[i++]!
+      out.queued -= it.line.length
+      out.socket.write(it.line)
+    }
+    if (i) out.queue.splice(0, i)
   }
 
   private async onLine(socket: Socket, value: Record<string, unknown> | undefined, raw: string): Promise<void> {
@@ -211,6 +356,7 @@ export class ProcHost {
       if (id !== undefined) this.send(socket, { t: 'error', id, code: 'bad-request', message: 'linha não é JSON válido' })
       return
     }
+    if (value.t === 'write') { this.onWrite(value as unknown as HostNotice); return }
     const req = value as unknown as HostRequest
     if (typeof req.id !== 'number') return
     let reply: HostReply
@@ -221,6 +367,16 @@ export class ProcHost {
       reply = { t: 'error', id: req.id, code: err.code, message: err.message }
     }
     this.send(socket, reply)
+  }
+
+  private onWrite(n: HostNotice): void {
+    const r = typeof n.name === 'string' ? this.runs.get(n.name) : undefined
+    if (!r || r.exit || typeof n.data !== 'string') return
+    if (r.pty.pendingInput() > this.inputMax) {
+      if (++this.counters.inputDropped === 1) this.log(`input of ${n.name} dropped: pty input above ${this.inputMax} bytes`)
+      return
+    }
+    r.pty.write(n.data)
   }
 
   private run(name: unknown): Run {
@@ -234,7 +390,7 @@ export class ProcHost {
     switch (req.t) {
       case 'hello':
         if (req.v !== PROCD_PROTOCOL_VERSION) throw new HostError('version', `anfitrião fala a versão ${PROCD_PROTOCOL_VERSION} do protocolo, o cliente a ${String(req.v)}`)
-        return { t: 'ok', id, hello: { v: PROCD_PROTOCOL_VERSION, pid: this.pid, version: PROCD_VERSION, startedAt: this.startedAt } }
+        return { t: 'ok', id, hello: { v: PROCD_PROTOCOL_VERSION, caps: CAPS, pid: this.pid, version: PROCD_VERSION, startedAt: this.startedAt } }
       case 'spawn': {
         const started = await this.spawn(req)
         return { t: 'ok', id, pid: started.pid, startedAt: started.startedAt }
@@ -246,7 +402,19 @@ export class ProcHost {
       case 'attach': {
         const r = this.run(req.name)
         r.attached.add(socket)
-        return { t: 'ok', id, scrollback: r.scrollback.text() }
+        // The reply carries everything up to scrollback.end: batched or dropped output of this name is superseded.
+        const no = this.outs.get(socket)?.names.get(req.name)
+        if (no) { no.buf = ''; no.lagged = false }
+        const epoch = r.spawnedAt
+        const sb = req.from !== undefined && req.epoch === epoch ? r.scrollback.since(req.from) : { data: r.scrollback.text(), off: r.scrollback.end }
+        return { t: 'ok', id, scrollback: sb.data, off: sb.off, epoch }
+      }
+      case 'release': {
+        const r = this.run(req.name)
+        r.pty.release()
+        // A released console may never report an exit: end the run ourselves after a short wait.
+        if (!r.exit) setTimeout(() => void r.finish(-1), RELEASE_EXIT_MS).unref()
+        return { t: 'ok', id }
       }
       case 'detach':
         this.run(req.name).attached.delete(socket)
@@ -281,31 +449,32 @@ export class ProcHost {
     if (prev && !prev.exit) throw new HostError('already-running', `${req.name} já roda neste anfitrião (pid ${prev.pid})`)
     const home = req.home
     const spawnedAt = new Date().toISOString()
-    const log = new RunLog(home, req.name, req.run, this.logMaxBytes, this.log)
+    const log = this.persist ? new RunLog(home, req.name, req.run, this.logMaxBytes, this.log) : undefined
     let resolveEnded!: (e: RunExit) => void
     const ended = new Promise<RunExit>((r) => { resolveEnded = r })
     let run: Run | undefined
     let identity: Promise<string> | undefined
-    const scrollback = new Scrollback(SCROLLBACK_CHARS)
+    const scrollback = new Scrollback(this.scrollbackChars)
     let pty: PtyHandle
+    const finish = (code: number): Promise<void> => this.onRunExit(req.name, home, () => run, identity, log, code, resolveEnded)
     try {
       pty = spawnPty(req.plan, {
         cols: req.cols > 0 ? req.cols : 120,
         rows: req.rows > 0 ? req.rows : 30,
         onData: (data) => {
           scrollback.push(data)
-          log.push(data)
-          if (run) for (const s of run.attached) this.send(s, { t: 'data', name: req.name, data })
+          log?.push(data)
+          if (run) for (const s of run.attached) this.sendData(s, req.name, scrollback.end, data)
         },
-        onExit: (e) => void this.onRunExit(req.name, home, () => run, identity, log, e.exitCode, resolveEnded),
+        onExit: (e) => void finish(e.exitCode),
       })
     } catch (e) {
-      log.close()
+      log?.close()
       throw new HostError('spawn-failed', (e as Error).message)
     }
-    identity = processStartTime(pty.pid).then((t) => t ?? spawnedAt)
+    identity = this.persist ? processStartTime(pty.pid).then((t) => t ?? spawnedAt) : Promise.resolve(spawnedAt)
     const startedAt = await identity
-    run = { name: req.name, run: req.run, pid: pty.pid, startedAt, spawnedAt, pty, scrollback, log, attached: new Set(), ended }
+    run = { name: req.name, run: req.run, pid: pty.pid, startedAt, spawnedAt, pty, scrollback, log, finish, attached: new Set(), ended }
     if (pty.exit) run.exit = { code: pty.exit.exitCode, at: new Date().toISOString() }
     this.runs.set(req.name, run)
     if (!run.exit) this.writeRun(home, run)
@@ -315,12 +484,15 @@ export class ProcHost {
   }
 
   /** run.json gets the exit BEFORE any client hears of it; with no client connected it is written all the same. */
-  private async onRunExit(name: string, home: string, current: () => Run | undefined, identity: Promise<string> | undefined, log: RunLog, code: number, done: (e: RunExit) => void): Promise<void> {
+  private async onRunExit(name: string, home: string, current: () => Run | undefined, identity: Promise<string> | undefined, log: RunLog | undefined, code: number, done: (e: RunExit) => void): Promise<void> {
     const exit: RunExit = { code, at: new Date().toISOString() }
-    log.close()
+    log?.close()
     await identity
+    // Let output already read from the console reach the clients before the exit does.
+    if (!this.persist) await new Promise<void>((r) => setImmediate(r))
     const run = current()
-    if (!run) return
+    if (!run || run.finished) return
+    run.finished = true
     run.exit = exit
     this.writeRun(home, run)
     this.log(`${name} run ${run.run} pid ${run.pid} ended with code ${code}`)
@@ -330,6 +502,7 @@ export class ProcHost {
   }
 
   private writeRun(home: string, run: Run): void {
+    if (!this.persist) return
     try {
       writeRunFile(home, { v: 1, ...publicRun(run), hostPid: this.pid, hostStartedAt: this.startedAt })
     } catch (e) {

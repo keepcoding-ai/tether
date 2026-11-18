@@ -8,6 +8,7 @@
 // there (normalizeUi, normalizeTheme) and the registry cannot drift (a unit test holds that too). Pure.
 import type { ConfigurationNode } from './vscode-configuration-registry.ts'
 import { DEFAULT_UI, DIM_LEVELS, FIXED_DESK_LABELS } from './ui-settings.ts'
+import { DEFAULT_OS_NOTIFY, OS_NOTIFY_LEVELS } from './os-notify.ts'
 import { DEFAULT_THEME, THEME_LABEL, THEME_SETTINGS } from './theme.ts'
 
 export const CORE_SETTINGS: ConfigurationNode = {
@@ -47,6 +48,10 @@ export const CORE_SETTINGS: ConfigurationNode = {
     'ui.padsFollowFocus': {
       type: 'boolean', default: DEFAULT_UI.padsFollowFocus, title: 'Prancheta acompanha o painel/mesa',
       description: 'Fecha ao sair do painel ou mesa e reabre ao voltar.', section: 'Janela', order: 16,
+    },
+    'notifications.os': {
+      type: 'string', default: DEFAULT_OS_NOTIFY, enum: OS_NOTIFY_LEVELS, enumLabels: ['Todas', 'Só quando esperam você', 'Desligadas'],
+      title: 'Notificações do sistema', description: 'Avisos do Windows quando um agente termina ou espera você e o Tether não está em primeiro plano.', section: 'Notificações', order: 20,
     },
   },
 }

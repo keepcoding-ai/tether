@@ -45,7 +45,10 @@ describe('browser extension manifest', () => {
 
   test('settings follow design §10: serve per profile, evaluate off, local network asks', () => {
     const s = manifest.contributes!.settings!
-    assert.deepEqual(Object.keys(s).sort(), ['evaluate', 'localNetwork', 'serveToAgents'])
+    assert.deepEqual(Object.keys(s).sort(), ['debug', 'debugActionTimeoutSec', 'debugSnapshotTimeoutSec', 'evaluate', 'localNetwork', 'serveToAgents'])
+    assert.equal(normalizeSetting(s.debug!, undefined), false, 'the debug mode is off by default')
+    assert.equal(normalizeSetting(s.debugActionTimeoutSec!, -1), 15, 'a negative timeout reads as the default')
+    assert.equal(normalizeSetting(s.debugSnapshotTimeoutSec!, 0), 0, '0 = no deadline is valid')
     assert.equal(normalizeSetting(s.serveToAgents!, undefined), 'perProfile')
     assert.equal(normalizeSetting(s.serveToAgents!, true), 'all', 'the old boolean on')
     assert.equal(normalizeSetting(s.serveToAgents!, false), 'perProfile', 'the old boolean off')

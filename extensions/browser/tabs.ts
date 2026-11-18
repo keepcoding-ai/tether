@@ -33,10 +33,15 @@ import type { TabSession } from './session.ts'
 import { scrubLogLine } from './log-scrub.ts'
 import {
   cleanTitle, faviconPlan, FAVICON_MAX, isId, isNavigable, isWebUrl, makeTab, POPUP_WINDOW_MS, POPUPS_PER_WINDOW, popupVerdict, type SavedTab,
-  storableUrl, type Tab, type TabInfo, TABS_PER_OWNER,
+  storableUrl, type Tab, type TabCrash, type TabInfo, TABS_PER_OWNER,
 } from './tab-rules.ts'
 
 export const PAGE_SIZE = { width: 1280, height: 800 } as const
+
+/** The hang watchdog: how often a tab's page is asked, how long it may take to answer, and the isolated world it runs in. */
+const HANG_PING_MS = 5_000
+const HANG_MS = 15_000
+const WATCHDOG_WORLD = 1_009_002
 
 /**
  * The Electron major the dialog replacement was proven on (test/e2e/app.browser-gate.test.ts: a dialog stays open, with no native
@@ -59,6 +64,8 @@ interface Entry {
   tab: Tab; surface: Surface; loading: boolean; favicon?: string; cookies: number
   /** H3: the times of the page's last popups, how many were refused, and when the last refusal was logged. */
   popups: number[]; popupsRefused: number; popupLoggedAt: number
+  /** The page's renderer went away or stopped answering: the pane shows the crash state until `reopen`. */
+  crashed?: TabCrash
 }
 
 /** A request of a tab refused by the network filter: never the full address, only the destination's origin. */
@@ -107,6 +114,8 @@ export class TabRegistry {
   /** A popup's tab -> the tab that opened it (the gatekeeper's `openerId`). */
   private readonly openers = new Map<string, string>()
   private disposed = false
+  /** Tabs being recreated by `reopen`: their old surface goes without telling the renderer the tab closed. */
+  private readonly reopening = new Set<string>()
 
   constructor(main: TetherMain, session: Promise<TabSession>, events: TabEvents, local: TabLocalNetwork) {
     this.main = main
@@ -248,6 +257,22 @@ export class TabRegistry {
     else wc.reload()
   }
 
+  /**
+   * "Reabrir" of a crashed tab: its surface is let go and the tab created again with the same id, owner and address (a fresh
+   * renderer and debugger; the native surfaces held again). The renderer sees only the tab change (its new surface id). A tab
+   * that is not crashed is left alone.
+   */
+  async reopen(tabId: string): Promise<TabInfo | undefined> {
+    const e = this.entries.get(tabId)
+    if (!e) return undefined
+    if (!e.crashed) return infoOf(e)
+    const { ownerSlotId, url, title } = e.tab
+    this.reopening.add(tabId)
+    try { e.surface.destroy() } finally { this.reopening.delete(tabId) }
+    this.scrubbedLog(`guia ${tabId}: reaberta`)
+    return this.create(ownerSlotId, isNavigable(url) ? url : 'about:blank', { tabId, ...(title ? { title } : {}), ticket: 'granted' })
+  }
+
   close(tabId: string): void {
     this.entries.get(tabId)?.surface.destroy()
   }
@@ -280,7 +305,7 @@ export class TabRegistry {
       if (this.entries.get(tabId) !== entry) return
       this.entries.delete(tabId)
       this.openers.delete(tabId)
-      this.events.closed(tabId)
+      if (!this.reopening.has(tabId)) this.events.closed(tabId)
       for (const w of [...this.watchers]) w.closed(tabId)
     })
     this.scrubbedLog(`guia ${tabId} criada para ${owner}`)
@@ -389,6 +414,34 @@ export class TabRegistry {
         changed()
       }).catch(() => {})
     }
+    // A renderer that dies or hangs takes only this tab: the pane shows the crash state, nothing else is touched.
+    const onGone = (_e: ElectronEvent, details: { reason?: string; exitCode?: number }): void => {
+      entry.crashed = 'gone'; entry.loading = false
+      this.scrubbedLog(`guia ${tabId}: renderer parou (${details?.reason ?? '?'}, código ${details?.exitCode ?? '?'})`)
+      changed()
+    }
+    const onHung = (): void => {
+      if (entry.crashed) return
+      entry.crashed = 'unresponsive'
+      this.scrubbedLog(`guia ${tabId}: página não responde`)
+      changed()
+    }
+    const onAlive = (): void => { if (entry.crashed === 'unresponsive') { entry.crashed = undefined; changed() } }
+    // Chromium's own `unresponsive` waits for input the page leaves unanswered, and a hidden tab gets none: a watchdog asks the
+    // page's main thread (an isolated world of the core's) every HANG_PING_MS while it is not loading; no answer in HANG_MS is a hang.
+    let pinging = false
+    const watchdog = setInterval(() => {
+      if (pinging || entry.loading || entry.crashed === 'gone' || entry.crashed === 'browser' || wc.isDestroyed()) return
+      pinging = true
+      let answered = false
+      const timer = setTimeout(() => { if (!answered && !wc.isDestroyed()) onHung() }, HANG_MS)
+      wc.executeJavaScriptInIsolatedWorld(WATCHDOG_WORLD, [{ code: '1' }])
+        .then(() => { answered = true; onAlive() }, () => { answered = true })
+        .finally(() => { clearTimeout(timer); pinging = false })
+    }, HANG_PING_MS)
+    wc.on('render-process-gone', onGone as never)
+    wc.on('unresponsive', onHung)
+    wc.on('responsive', onAlive)
     wc.on('page-favicon-updated', onIcon as never)
     wc.on('will-navigate', onNavigate)
     wc.on('will-redirect', onRedirect)
@@ -399,11 +452,13 @@ export class TabRegistry {
     wc.on('did-start-loading', onStart)
     wc.on('did-stop-loading', onStop)
     return [toDisposable(() => {
+      clearInterval(watchdog)
       if (wc.isDestroyed()) return
       wc.off('will-navigate', onNavigate); wc.off('will-redirect', onRedirect); wc.off('will-attach-webview', onAttach)
       wc.off('page-title-updated', onTitle); wc.off('did-navigate', onUrl); wc.off('did-navigate-in-page', onInPage)
       wc.off('did-start-loading', onStart); wc.off('did-stop-loading', onStop); wc.off('page-favicon-updated', onIcon as never)
       wc.off('login', onLogin as never); wc.off('select-client-certificate', onCert as never); wc.off('will-prevent-unload', onUnload)
+      wc.off('render-process-gone', onGone as never); wc.off('unresponsive', onHung); wc.off('responsive', onAlive)
     })]
   }
 }
@@ -429,5 +484,6 @@ function infoOf(e: Entry): TabInfo {
     ...e.tab, loading: e.loading,
     canGoBack: live && wc.navigationHistory.canGoBack(), canGoForward: live && wc.navigationHistory.canGoForward(),
     ...(e.favicon ? { favicon: e.favicon } : {}), cookies: e.cookies, ...(e.popupsRefused > 0 ? { popupsRefused: e.popupsRefused } : {}),
+    ...(e.crashed ? { crashed: e.crashed } : {}),
   }
 }

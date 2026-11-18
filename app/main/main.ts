@@ -4,11 +4,12 @@
 // renderer's memory is freed; the process stays, still connected to the daemon, to feed the tray). The daemon
 // keeps every slot running whatever the app does.
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, screen, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { createAppLog } from './app-log.ts'
+import { startCrashReports } from './crash-report.ts'
 import { handOffToCookieRuntime } from './cookie-runtime-main.ts'
 import { ackFromLiveInstance, relaunchArgs, relaunchedFrom } from './relaunch.ts'
 import { userInfo } from 'node:os'
@@ -38,7 +39,8 @@ import { SurfaceBridge } from './surface-bridge.ts'
 import { externalPath } from '../shared/unpacked-path.ts'
 import { AgentTracker } from './agents.ts'
 import { FONT_SIZE_LABEL, type FontSizeCommand } from '../shared/font.ts'
-import { trayModel, trayWanted } from '../shared/tray.ts'
+import { slotLabel, trayModel, trayWanted } from '../shared/tray.ts'
+import { AttentionHistory, isMuted, isMuteChoice, muteUntil, normalizeOsNotify, OS_NOTIFY_COALESCE_MS, OsNotifyRules, toastFor, type AttentionState, type PendingToast } from '../shared/os-notify.ts'
 import type { TrayCommand } from '../shared/tray.ts'
 import { createTray, type TrayController } from './tray.ts'
 import { TrayNotices } from './tray-notices.ts'
@@ -46,6 +48,15 @@ import { normalizeAppearance, type TerminalAppearance } from '../shared/terminal
 import { normalizeTheme, resolveScheme, THEME_LABEL, THEME_SETTINGS, WINDOW_BACKGROUND } from '../shared/theme.ts'
 import type { ThemeSetting, ThemeState } from '../shared/theme.ts'
 import { BRAND } from '../shared/brand.ts'
+import { recordProbe, registerPerf, stopPerf } from './perf-main.ts'
+import { PanelLink } from './panel-link.ts'
+import { PanelRouter } from './panel-route.ts'
+import { ptydPipePath } from '../../src/ptyd/paths.ts'
+import { extendProbe, parseProbe } from '../../src/core/perf-probe.ts'
+import { isProbeResultNotice, probeEnabled } from '../shared/probe-app.ts'
+
+// Key->echo probe (TETHER_PROBE=1): off by default; every use below sits behind this flag.
+const probe = probeEnabled(process.env)
 import { TETHER_SCHEME, tetherUrlInArgv } from '../shared/tether-url.ts'
 import type { LinkAssociation } from '../shared/api.ts'
 import { type Association, commandLineFor, describeCommand, readAssociatedCommand, removeAssociation, sameCommand } from './protocol-association.ts'
@@ -79,6 +90,7 @@ const appLog = createAppLog(join(home, 'tether-app.log'))
 appLog(`start: ppid ${process.ppid}, exec ${process.execPath}, cwd ${process.cwd()}, args ${JSON.stringify(process.argv.slice(1))}${replacedPid ? `, replaces pid ${replacedPid} (Reiniciar o app)` : ''}`)
 // The Start Menu launch prefers the runtime copy with the cookie fuse on (app/shared/cookie-runtime.ts): handed over, this
 // process leaves before taking the single-instance lock or touching any state.
+startCrashReports(home, 'tether', appLog)
 if (handOffToCookieRuntime({ home, argv: process.argv, execPath: process.execPath, electronVersion: process.versions.electron, log: appLog })) process.exit(0)
 
 let daemon: DaemonClient | undefined
@@ -94,10 +106,39 @@ let restartingDaemon = false
 let tray: TrayController | undefined
 /** What the tray shows: the daemon's slots, kept up to date from the list at connect time and the state events. */
 const slotStates = new Map<string, SlotState>()
+// System toasts for attention while tether is not in front (app/shared/os-notify.ts holds the rules).
+const osNotifyRules = new OsNotifyRules()
+let osNotifyBatch: PendingToast[] = []
+let osNotifyTimer: ReturnType<typeof setTimeout> | undefined
+/** Live toasts: a Notification collected by the GC loses its click handler. */
+const liveToasts = new Set<Notification>()
+/** The bell's recent notices (fed by the same transitions as the toasts) and its temporary mute (never written to settings). */
+const attentionHistory = new AttentionHistory()
+let mutedUntil: number | undefined
+let muteTimer: ReturnType<typeof setTimeout> | undefined
 /** The agents extensions see (TetherMain.agents), fed by the same daemon events. */
 const agentTracker = new AgentTracker()
 /** The extensions' notices the tray shows next to the terminals' attention (TetherMain.notices). */
 const trayNotices = new TrayNotices(() => updateTray())
+/**
+ * Hosted panes (SlotState.ptyHost) talk to the panel host (tether-ptyd) straight: output, scrollback and keystrokes go
+ * through this link, never launching the host (tetherd does). The router picks the way per slot (app/main/panel-route.ts).
+ * With TETHER_PROBE=1 the direct way carries no daemon-* stamps: the keystroke never crosses tetherd.
+ */
+const panelLink: PanelLink = new PanelLink({
+  pipe: ptydPipePath(pipe, home),
+  onData: (slotId, data) => panelRouter.onLinkData(slotId, data),
+  onReset: (slotId, scrollback) => { appLog(`panel host: ${slotId} repainted from the host ring`); panelRouter.onLinkReset(slotId, scrollback) },
+  onLost: (slotId, reason) => appLog(`panel host: re-attach of ${slotId} refused (${reason}); retried on the next reconnect`),
+  onState: connected => panelRouter.onLinkState(connected),
+})
+const panelRouter: PanelRouter = new PanelRouter({
+  link: panelLink,
+  daemon: () => daemon,
+  request: body => request(body),
+  emit: (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }),
+  log: msg => appLog(msg),
+})
 
 function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
@@ -165,12 +206,12 @@ function checkVersion(client: DaemonClient): DaemonClient {
 /** Connects to tetherd, spawning it when the pipe does not answer. */
 async function connectOnce(): Promise<DaemonClient> {
   try {
-    return checkVersion(await DaemonClient.open(pipe, 'app'))
+    return checkVersion(await DaemonClient.open(pipe, 'app', { direct: true }))
   } catch (e) {
     if (e instanceof DaemonError) throw e // it answered: spawning another one would not fix a wrong version
     if (e instanceof NotTetherError) throw new Error(`o canal ${pipe} está ocupado por um programa que não é o tetherd (${e.message})`)
   }
-  return checkVersion(await DaemonClient.connect({ ...daemonSpawnOptions(), client: 'app', startTimeoutMs: DAEMON_START_TIMEOUT_MS }))
+  return checkVersion(await DaemonClient.connect({ ...daemonSpawnOptions(), client: 'app', direct: true, startTimeoutMs: DAEMON_START_TIMEOUT_MS }))
 }
 
 function connectDaemon(): Promise<void> {
@@ -179,9 +220,9 @@ function connectDaemon(): Promise<void> {
     try {
       const client = await connectOnce()
       daemon = client
-      client.on('state', slot => { slotStates.set(slot.slotId, slot); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
-      client.on('data', (slotId, data) => win?.webContents.send('tether:event', { t: 'data', slotId, data }))
-      client.on('removed', slotId => { slotStates.delete(slotId); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
+      client.on('state', slot => { slotStates.set(slot.slotId, slot); panelRouter.onState(slot); noteAttention(slot); if (attentionHistory.settle(slot.slotId, slot.attention)) sendAttention(); agentTracker.apply(slot); updateTray(); win?.webContents.send('tether:event', { t: 'state', slot }) })
+      client.on('data', (slotId, data, p) => win?.webContents.send('tether:event', probe && p ? { t: 'data', slotId, data, probe: extendProbe(p) } : { t: 'data', slotId, data })) // probe: main-out stamp
+      client.on('removed', slotId => { slotStates.delete(slotId); panelRouter.onRemoved(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
       client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
       client.on('proc', proc => win?.webContents.send('tether:event', { t: 'proc', proc }))
@@ -191,6 +232,9 @@ function connectDaemon(): Promise<void> {
         if (daemon !== client) return
         daemon = undefined
         slotStates.clear()
+        panelRouter.reset()
+        osNotifyRules.clear()
+        dropOsToasts()
         agentTracker.lost()
         updateTray()
         if (quittingAll || quitting) return
@@ -217,12 +261,65 @@ function connectDaemon(): Promise<void> {
   return connecting
 }
 
+function windowInFront(): boolean {
+  return !!win && !win.isDestroyed() && win.isFocused() && !win.isMinimized()
+}
+
+/** Feeds a slot state to the toast rules; a due toast waits a moment for others (one toast per burst). */
+function noteAttention(slot: SlotState): void {
+  const toast = osNotifyRules.apply(slot, slotLabel(slot), normalizeOsNotify(settings().notifications?.os), windowInFront())
+  if (!toast) return
+  attentionHistory.add(toast, Date.now())
+  sendAttention()
+  if (isMuted(mutedUntil, Date.now())) return
+  osNotifyBatch.push(toast)
+  osNotifyTimer ??= setTimeout(showOsToast, OS_NOTIFY_COALESCE_MS)
+}
+
+function attentionState(): AttentionState {
+  return { items: attentionHistory.list(), unseen: attentionHistory.unseen, ...(isMuted(mutedUntil, Date.now()) ? { mutedUntil } : {}) }
+}
+
+function sendAttention(): void { win?.webContents.send('tether:attention', attentionState()) }
+
+/** Mutes the toasts until a deadline (null lifts it); one timer brings the bell back when the mute expires. */
+function setMute(until: number | undefined): void {
+  if (muteTimer) clearTimeout(muteTimer)
+  muteTimer = undefined
+  mutedUntil = until
+  if (until !== undefined) muteTimer = setTimeout(() => setMute(undefined), Math.max(0, until - Date.now()))
+  sendAttention()
+}
+
+ipcMain.handle('attention:get', () => attentionState())
+ipcMain.on('attention:seen', (_e, slotId: unknown) => { if (attentionHistory.markSeen(typeof slotId === 'string' ? slotId : undefined)) sendAttention() })
+ipcMain.on('attention:mute', (_e, choice: unknown) => setMute(isMuteChoice(choice) ? muteUntil(choice, Date.now()) : undefined))
+
+function dropOsToasts(): void {
+  if (osNotifyTimer) clearTimeout(osNotifyTimer)
+  osNotifyTimer = undefined
+  osNotifyBatch = []
+}
+
+function showOsToast(): void {
+  const t = toastFor(osNotifyBatch)
+  dropOsToasts()
+  // E2E windows never reach the user's screen; focus may also have come back while coalescing (the tab seal is enough).
+  if (!t || hidden || windowInFront() || isMuted(mutedUntil, Date.now()) || !Notification.isSupported()) return
+  const n = new Notification({ title: t.title, body: t.body, icon: join(__dirname, 'tether.ico') })
+  liveToasts.add(n)
+  n.on('click', () => { liveToasts.delete(n); void openWindow(t.slotId) })
+  n.on('close', () => liveToasts.delete(n))
+  n.show()
+  if (win && !win.isDestroyed()) win.flashFrame(true)
+}
+
 /** Loads the slot list for the tray (the renderer asks for its own copy). */
 async function syncSlots(client: DaemonClient): Promise<void> {
   const list = await request({ t: 'list' })
   if (daemon !== client || list.t !== 'ok') return
   slotStates.clear()
-  for (const s of list.slots ?? []) slotStates.set(s.slotId, s)
+  for (const s of list.slots ?? []) { slotStates.set(s.slotId, s); osNotifyRules.seed(s); panelRouter.onState(s) }
   agentTracker.reset(list.slots ?? [])
   updateTray()
 }
@@ -417,14 +514,14 @@ function replaySettings(keys: readonly string[]): void {
   if (roots.has('confirmations')) win?.webContents.send('tether:confirmations', readConfirmations())
   if (roots.has('extensions')) extensionHost.settingsChangedOnDisk(keys)
 }
-type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown }
+type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown; notifications?: { os?: unknown } }
 
 // ---------- extensions (F9) ----------
 // The main side of the extensions (extensions/index.main.ts) and the core channels of their settings and listing
 // (app/main/ext-host.ts). The handlers exist from the start; activation runs when the app is ready, before the window.
 // Native views over the interface, owned by the extension that creates them (app/main/surfaces.ts).
 const surfaces = new SurfaceManager({ dist: __dirname, window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
-new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
+new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg), remote: owner => surfaces.remoteFor(owner) })
 const extensionHost = new MainExtensionHost(mainExtensions, {
   home,
   userDir: userHome,
@@ -564,7 +661,7 @@ ipcMain.on('theme:set', (_e, setting: unknown) => setTheme(normalizeTheme(settin
 
 // ---------- font size ----------
 
-/** The size itself is appearance.fontSize ("Tema do terminal"): the renderer steps it and saves it through terminal:set. */
+/** The size itself is appearance.fontSize ("Tema do tether"): the renderer steps it and saves it through terminal:set. */
 
 /** Menu items without accelerators: the shortcuts (Cmd+=/-/0, Ctrl+Shift+=/-/0) are handled by the renderer itself. */
 function fontSizeMenu(): Electron.MenuItemConstructorOptions[] {
@@ -624,6 +721,18 @@ function trackWindowState(w: BrowserWindow): void {
   w.on('closed', () => clearTimeout(timer))
 }
 
+/**
+ * The main window's session grants every permission (Electron's default) except `local-fonts`: the terminal draws
+ * the bundled fonts (app/renderer/fonts), so the ligatures addon must not read the copies installed in Windows
+ * (a missing family would resolve to an installed font without ligatures). Refused, it joins its fallback list.
+ */
+function denyLocalFonts(win: BrowserWindow): void {
+  const ses = win.webContents.session
+  // queryLocalFonts() reads the permission status (the check handler) and, denied, resolves to an empty list without
+  // ever reaching a request handler; a request handler alone leaves the API answering.
+  ses.setPermissionCheckHandler((_wc, permission) => permission !== 'local-fonts')
+}
+
 function createWindow(): void {
   const saved = normalizeWindowState(settings().window)
   const displays = screen.getAllDisplays()
@@ -651,12 +760,14 @@ function createWindow(): void {
     },
   })
   win.setMenuBarVisibility(false)
+  denyLocalFonts(win)
   if (hidden) win.webContents.setFrameRate(30)
   const created = win
   if (start.maximized) created.maximize()
   if (start.fullscreen) created.setFullScreen(true)
   if (!hidden) created.once('ready-to-show', () => created.show())
   trackWindowState(created)
+  created.on('focus', () => created.flashFrame(false))
   // A <webview> is only ever an extension's isolated page (the note's HTML preview): with no extension guarding, none attaches.
   extensionHost.guardWebviews(created.webContents, () => created.webContents.on('will-attach-webview', event => event.preventDefault()))
   created.on('close', e => {
@@ -665,6 +776,8 @@ function createWindow(): void {
     void hideToTray()
   })
   created.webContents.on('did-start-loading', () => { if (win === created) tetherLinkListening = false }) // a reload asks again too
+  // A reloaded page (main frame; a subframe never fires this) attaches its panes again, the old ones never detach: the link starts over.
+  created.webContents.on('did-navigate', () => { if (win === created) panelRouter.reset() })
   created.on('closed', () => {
     if (win === created) { win = undefined; tetherLinkListening = false } // a new window asks for its pending link again
     // Nobody will answer the dialogs asked of a window that is gone.
@@ -679,7 +792,7 @@ function createWindow(): void {
       resolve()
     })
   })
-  void created.loadFile(join(__dirname, '..', 'renderer', 'index.html'))
+  void created.loadFile(join(__dirname, '..', 'renderer', 'index.html'), probe ? { query: { probe: '1' } } : undefined) // the renderer reads ?probe
 }
 
 // ---------- tray ----------
@@ -848,7 +961,7 @@ function createMenu(): void {
         themeMenu(),
         ...fontSizeMenu(),
         { type: 'separator' },
-        { id: 'terminal-theme', label: 'Tema do terminal…', click: () => win?.webContents.send('tether:open-terminal-theme') },
+        { id: 'terminal-theme', label: 'Tema do Tether…', click: () => win?.webContents.send('tether:open-terminal-theme') },
         { id: 'profiles', label: 'Perfis de lançamento…', click: () => win?.webContents.send('tether:open-profiles') },
         { id: 'restore-confirmations', label: 'Voltar a perguntar antes de fechar painéis', click: restoreConfirmations },
         { type: 'separator' },
@@ -866,8 +979,21 @@ function createMenu(): void {
 
 // ---------- IPC ----------
 
-ipcMain.handle('tether:request', (_e, body: RequestBody) => request(body))
-ipcMain.on('tether:notice', (_e, notice: Notice) => daemon?.input(notice.slotId, notice.data))
+ipcMain.handle('tether:request', (_e, body: RequestBody) => panelRouter.request(body))
+registerPerf(ipcMain, request, probe)
+app.on('will-quit', stopPerf)
+app.on('will-quit', () => panelLink.stop())
+ipcMain.on('tether:notice', (_e, notice: Notice | { t: 'probe-result' }) => {
+  if (probe) {
+    if (isProbeResultNotice(notice)) { recordProbe(notice); return }
+    if (notice.t === 'input' && panelRouter.input(notice.slotId, notice.data) !== 'daemon') return // hosted pane: no daemon-* stamps
+    if (notice.t === 'input') {
+      const p = parseProbe(notice.probe)
+      if (p) { daemon?.input(notice.slotId, notice.data, extendProbe(p)); return } // main-in stamp
+    }
+  }
+  if (notice.t === 'input' && panelRouter.input(notice.slotId, notice.data) === 'daemon') daemon?.input(notice.slotId, notice.data)
+})
 ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 
@@ -1178,7 +1304,7 @@ async function start(): Promise<void> {
   while (outcome === 'stale') {
     // The previous instance is still releasing the lock and nobody is alive to focus: say so in the app's
     // own dialog (stderr too, for a launch from a terminal) and let the user retry or leave.
-    const message = 'o tether ainda está fechando; tente de novo em alguns segundos'
+    const message = 'o Tether ainda está fechando; tente de novo em alguns segundos'
     appLog(`${message} (lock de instância única ocupado por ${LOCK_RETRY_MS / 1000} s em ${app.getPath('userData')})`)
     await app.whenReady()
     closeStandalone?.()
@@ -1190,6 +1316,7 @@ async function start(): Promise<void> {
   if (outcome === 'focused-other') { app.quit(); return }
   app.on('second-instance', bringToFront)
   await app.whenReady()
+  void panelLink.start()
   void registerTetherScheme()
   if (process.platform === 'darwin') app.dock?.setIcon(join(__dirname, 'tether.png'))
   createMenu()

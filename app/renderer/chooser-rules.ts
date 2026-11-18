@@ -6,6 +6,7 @@
 import { stripTether } from '../shared/tether-folder.ts'
 import type { Profile } from '../../src/daemon/protocol.ts'
 import type { ProfileAgent } from '../../src/core/profile.ts'
+import { isUnsafe } from '../../src/core/unsafe.ts'
 import { foldChars, foldQuery, fuzzyMatch } from './fuzzy.ts'
 import { agentUi, agentUiNames } from './agent-ui.ts'
 import type { ChooserGroupContribution, ChooserItemContribution } from '../../extensions/types.ts'
@@ -81,7 +82,6 @@ function groupOrder(items: readonly ChooserItem[]): ItemGroup[] {
   return [...agents, ...contributed, ...rest, 'empty']
 }
 
-const UNSAFE_ARG = '--dangerously-skip-permissions'
 
 export interface ChooserItem {
   /** A profile id, or `kind:<kind>` (the value `choiceOf` reads). */
@@ -128,7 +128,7 @@ function formatArgs(args: readonly string[]): string {
 /** A profile as an item: the args line (a shell profile shows its executable's args too), the unsafe and default marks. */
 export function profileItem(p: Profile): ChooserItem {
   const args = p.agent === 'shell' && p.shell ? [...p.shell.args, ...p.args] : p.args
-  const unsafe = p.args.includes(UNSAFE_ARG)
+  const unsafe = isUnsafe(p.args)
   const hint = args.length ? formatArgs(args) : p.agent === 'shell' && !p.shell ? 'shell padrão' : 'sem argumentos'
   return { id: p.id, kind: 'profile', group: p.agent, name: p.name, hint, hintNone: args.length === 0, icon: groupIcon(p.agent), keywords: profileKeywords(p, unsafe), unsafe, default: !!p.default, ...(p.cwd ? { cwd: p.cwd } : {}) }
 }

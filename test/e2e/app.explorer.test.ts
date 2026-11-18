@@ -121,7 +121,10 @@ test('explorer 1a: the left pad lists the project roots; empty state; open folde
 
     // ---- 1. the icon, the pad, the empty state, Ctrl+K E ----
     const bars = (): Promise<NonNullable<Awaited<ReturnType<Hooks['sidebars']>>>> => page.evaluate(() => window.__tether.sidebars()!)
-    assert.deepEqual((await bars()).left.strip, [PAD], 'the explorer is the left strip')
+    // Other extensions add pads of their own to the left strip (processes.list, …): only the explorer's are counted here.
+    const strip = (await bars()).left.strip
+    assert.deepEqual(strip.filter(id => id.startsWith('explorer.')), [PAD], `the explorer has one pad on the left strip (${strip.join(', ')})`)
+    assert.equal(strip[0], PAD, 'the explorer heads the left strip')
     assert.equal((await bars()).left.open, undefined)
     // recent folders to offer in the empty state (the app's "Novo painel" keeps them the same way)
     await page.evaluate(d => window.tether.rememberFolder(d), C)
@@ -190,12 +193,12 @@ test('explorer 1a: the left pad lists the project roots; empty state; open folde
     await page.click(`.pad.shown ${rowSel('alpha')} .xp-pin`)
     await waitRows(page, ['beta:pinned', 'alpha:inferred:2 agentes'], 'the toggle demotes it back to inferred')
     await page.click(`.pad.shown ${rowSel('alpha')}`, { button: 'right' })
-    assert.deepEqual(await menuLabels(page), ['Fixar', 'Fecha sozinho quando os agentes saírem', 'Novo arquivo…', 'Nova pasta…', 'Novo painel aqui…', 'Mover para cima', 'Copiar caminho', 'Abrir no explorador de arquivos'])
+    assert.deepEqual(await menuLabels(page), ['Fixar', 'Fecha sozinho quando os agentes saírem', 'Novo arquivo…', 'Nova pasta…', 'Novo painel aqui…', 'Pesquisar na pasta…', 'Mover para cima', 'Copiar caminho', 'Abrir no explorador de arquivos'])
     await page.click('#ctx-menu li:has-text("Fecha sozinho")', { force: true })
     assert.equal(await page.locator('#ctx-menu').count(), 1, 'the disabled note does nothing and leaves the menu')
     await page.keyboard.press('Escape')
     await page.click(`.pad.shown ${rowSel('beta')}`, { button: 'right' })
-    assert.deepEqual(await menuLabels(page), ['Desafixar', 'Fechar projeto', 'Novo arquivo…', 'Nova pasta…', 'Novo painel aqui…', 'Mover para baixo', 'Copiar caminho', 'Abrir no explorador de arquivos'])
+    assert.deepEqual(await menuLabels(page), ['Desafixar', 'Fechar projeto', 'Novo arquivo…', 'Nova pasta…', 'Novo painel aqui…', 'Pesquisar na pasta…', 'Mover para baixo', 'Copiar caminho', 'Abrir no explorador de arquivos'])
     await page.click('#ctx-menu li:has-text("Mover para baixo")')
     await waitRows(page, ['alpha:inferred:2 agentes', 'beta:pinned'], 'move down reorders')
     await page.click(`.pad.shown ${rowSel('beta')}`, { button: 'right' })

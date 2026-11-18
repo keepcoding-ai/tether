@@ -77,10 +77,21 @@
 /* Bundled terminal fonts (app/renderer/fonts, variable woff2 + licence text next to each; app/shared/terminal-theme.ts
    lists them). Loaded from the app itself (CSP font-src 'self'); the renderer awaits document.fonts.load before
    any xterm opens. Cascadia gets its own family name so the bundled file wins over the system copy of Cascadia. */
+@font-face { font-family: "Fira Code"; font-style: normal; font-weight: 300 700; font-display: block; src: url("fonts/FiraCode-VF.woff2") format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: block; src: url("fonts/JetBrainsMono-wght.woff2") format("woff2"); }
 @font-face { font-family: "Ubuntu Sans Mono"; font-style: normal; font-weight: 100 700; font-display: block; src: url("fonts/UbuntuSansMono-wght.woff2") format("woff2"); }
 @font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 100 700; font-display: block; src: url("fonts/IBMPlexMonoVar-Roman.woff2") format("woff2"); }
 @font-face { font-family: "Cascadia Mono Bundled"; font-style: normal; font-weight: 200 700; font-display: block; src: url("fonts/CascadiaMono-wght.woff2") format("woff2"); }
+
+/* The interface follows the tether theme: main.ts sets --mono to the theme's font chain and, with ligatures off,
+   the `no-ligatures` class here (contextual alternates only: the interface font keeps its common ligatures). */
+:root.no-ligatures { font-variant-ligatures: no-contextual; }
+/* Programming ligatures (=>, !=, ===) come from the OpenType `calt`/`liga` features. A terminal with ligatures on
+   carries the `ligatures` class (app/renderer/terminal-theme.ts TerminalAddons) and the addon's inline
+   `font-feature-settings: "calt" on`. Without the class every ligature feature is off: the DOM renderer (the
+   fallback after a lost WebGL context) shapes whole spans and would ligate otherwise. The dialog sample is an
+   xterm too, so `.xterm` covers it. */
+.xterm:not(.ligatures) { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0, "clig" 0, "dlig" 0; }
 
 * { box-sizing: border-box; }
 
@@ -110,6 +121,24 @@ body { display: flex; flex-direction: column; }
 #toolbar .tb-left, #toolbar .tb-right { display: flex; align-items: center; gap: 2px; color: var(--fg-dim); width: max-content; }
 #toolbar .tb-left { justify-self: start; }
 #toolbar .tb-right { justify-self: end; }
+/* The session search: a compact box left of the bell, its list drops under it (session-search.ts). */
+/* A sibling of #desk-switch: the same pill (30px = 26px segment + 2px padding, the inset 1px border, transparent on
+   the toolbar); the field is bare, the pill is its frame and lights up with the accent while it has the caret. */
+#session-search { position: relative; display: flex; align-items: center; gap: 6px; width: 180px; height: 30px; box-sizing: border-box; margin-right: 6px; padding: 0 12px 0 11px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--border); color: var(--fg-dim); font-weight: 500; transition: box-shadow var(--motion-fast, .12s) ease-out; }
+#session-search:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+#session-search > .i .ph { width: 14px; height: 14px; flex: none; color: var(--fg-dim); }
+#session-search input[type="text"] { flex: 1; min-width: 0; padding: 0; border: 0; border-radius: 0; outline: none; background: none; color: var(--fg); font: inherit; font-weight: 500; }
+#session-search input[type="text"]:focus { outline: none; }
+#session-search input::placeholder { color: var(--fg-dim); }
+.ss-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; width: 300px; max-height: 360px; overflow-y: auto; padding: 4px; background: var(--bg-2); color: var(--fg); border: 0; border-radius: 15px; box-shadow: inset 0 0 0 1px var(--border), var(--shadow); font-size: 12px; font-weight: 400; }
+.ss-list[hidden] { display: none; }
+.ss-item { display: flex; align-items: baseline; gap: 10px; padding: 5px 10px; border-radius: 11px; cursor: pointer; }
+.ss-item:hover { background: var(--bg-hover); }
+.ss-item.selected { background: color-mix(in srgb, var(--accent) 16%, var(--bg-3)); }
+.ss-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-title b { color: var(--accent); font-weight: 600; }
+.ss-place { flex: 0 0 auto; color: var(--fg-dim); font-size: 11px; }
+.ss-empty { padding: 6px 8px; color: var(--fg-dim); }
 .ib {
   position: relative; width: 30px; height: 30px; display: grid; place-items: center; padding: 0;
   border: 0; border-radius: 6px; background: none; color: inherit; cursor: pointer;
@@ -475,6 +504,23 @@ body.sb-resizing #pads, body.sb-resizing #dock { pointer-events: none; }
 .pad-desk::before { content: "·"; margin-right: 6px; }
 .pad-head .sp { flex: 1; }
 .pad-head .ib { width: 24px; height: 24px; }
+/* The action bar (action-bar.ts): the menu's pinned items and the "⋯". */
+.action-bar { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+.action-bar.ab-spread { flex: 1; }
+.action-bar.ab-end { flex: 0 1 auto; margin-left: auto; justify-content: flex-end; }
+.action-bar .ab-sp { flex: 1; }
+.action-bar.ab-end .ab-sp { display: none; }
+.ab-act { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 24px; min-width: 24px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); font: 12px var(--ui); white-space: nowrap; cursor: pointer; }
+.ab-act[hidden] { display: none; }
+.ab-act svg { width: 15px; height: 15px; flex: none; }
+.ab-act:hover:not(:disabled), .ab-act[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
+.ab-act:disabled { opacity: .45; cursor: default; }
+.ab-act.ab-primary, .ab-act.ab-highlight { padding: 0 8px 0 6px; }
+.ab-act.ab-highlight, .ab-act.ab-highlight:hover:not(:disabled) { color: var(--accent); }
+.ab-act.danger { color: var(--err); }
+.ab-act[aria-pressed="true"] { background: var(--bg-hover); color: var(--fg); }
+.ab-act.ab-compact { padding: 0; }
+.ab-act.ab-compact .ab-text { display: none; }
 .pad-body { position: relative; flex: 1; min-height: 0; }
 /* A frames pad (F10b): a Desk filling the pad's body, like the drawer's (.drawer-desk); two classes so it beats `.desk`'s position. */
 .pad-frames, .pad-frames > .pad-desk-box { position: absolute; inset: 0; }
@@ -689,14 +735,14 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 .tether-tab .dot.asleep .ph { width: 13px; height: 13px; }
 .tether-tab .dot.starting, .tether-tab .dot.queued, .tether-tab .dot.unconfirmed { color: var(--warn); }
 .tether-tab .dot.error { color: var(--err); }
-.tether-tab .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
-.tether-tab .close .ph { width: 13px; height: 13px; }
-.tether-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close .ph { width: 13px; height: 13px; }
+:is(.tether-tab, .br-web-tab, .pr-tab) .close:hover { background: var(--bg-hover-2); color: var(--fg); }
 /* `inherit`, not `visible`: a visible child of a visibility:hidden ancestor still paints, so the active tab of an
    inactive desk layer (or of the closed drawer) would draw its × over the tab strip of the desk on screen. */
-.dv-active-tab .tether-tab .close, .tether-tab:hover .close, .tether-tab .close:focus-visible { visibility: inherit; }
+.dv-active-tab :is(.tether-tab, .br-web-tab, .pr-tab) .close, :is(.tether-tab, .br-web-tab, .pr-tab):hover .close, :is(.tether-tab, .br-web-tab, .pr-tab) .close:focus-visible { visibility: inherit; }
 /* Setting ui.tabClose off: no × on any tab (display:none also drops the click target and the keyboard focus, and gives the width back to the title); the tab still closes through its context menu. */
-body.no-tab-close .tether-tab .close { display: none; }
+body.no-tab-close :is(.tether-tab, .br-web-tab, .pr-tab) .close { display: none; }
 
 /* --- the fixed right end of the tab strip: "+N", status-bar toggle, "⋯" (tab-strip.ts; the preview's .tr) --- */
 .dv-theme-tether .dv-right-actions-container { flex: none; height: 100%; }
@@ -1084,7 +1130,7 @@ button.danger:hover { background: color-mix(in srgb, var(--err) 12%, var(--bg-3)
 button.danger .ph { color: var(--err); }
 button[hidden] { display: none !important; }
 
-/* --- terminal theme dialog (Tema do terminal…): presets on the left, font on the right, sample below --- */
+/* --- terminal theme dialog (Tema do tether…): presets on the left, font on the right, sample below --- */
 dialog.term-theme { width: 900px; max-width: 94vw; padding: 0; max-height: 94vh; flex-direction: column; }
 dialog.term-theme[open] { display: flex; }
 dialog.term-theme > header { padding: 16px 20px 12px; margin: 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
@@ -1107,6 +1153,10 @@ dialog.term-theme > header .cancel .ph { width: 16px; height: 16px; }
 .term-theme-body fieldset.font output { color: var(--fg); font-weight: 600; margin-left: 4px; }
 .term-theme-body fieldset.font .hint { display: block; color: var(--fg-dim); font-size: 11.5px; line-height: 1.4; }
 .term-theme-body fieldset.font .hint code { font-family: var(--mono); font-size: 11px; }
+.term-theme-body fieldset.font .field.check.ligatures { margin-bottom: 10px; }
+.term-theme-body fieldset.font .field.check.ligatures:has(input:disabled) { cursor: default; color: var(--fg-dim); }
+.term-theme-body fieldset.font .hint-inline { color: var(--fg-dim); font-size: 11.5px; margin-left: 4px; }
+.term-theme-body fieldset.font .hint-inline code { font-family: "Fira Code", var(--mono); font-size: 11px; font-variant-ligatures: none; }
 .term-theme-body .field.sample { grid-column: 1 / -1; margin: 0 0 8px; }
 .preset-list { display: flex; flex-direction: column; gap: 4px; }
 .preset-option { display: flex; align-items: center; gap: 10px; padding: 4px 10px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
@@ -1581,6 +1631,20 @@ dialog.ask.move .primary:disabled { opacity: .45; cursor: not-allowed; backgroun
   .ch-sep { padding-top: 5px; }
 }
 @container pane (max-height: 300px) { .ch-item { min-height: 30px; } }
+/* wide pane (the chooser inside an empty pane only, never the popup): a card of bounded width, centred, so the list and
+   "Abrir" stay close on a very wide screen. No `overflow: hidden` on the card: the folder list (.ch-recents) opens upwards
+   and may pass the top of a short card; the bottom band rounds its own corners instead. */
+@container pane (min-width: 821px) {
+  .empty-panel > .ch { box-sizing: border-box; width: 100%; max-width: 760px; align-self: center; margin-block: min(12px, 3cqh); border: 1px solid var(--border); border-radius: 10px; }
+  .empty-panel > .ch > .ch-bottom { border-radius: 0 0 9px 9px; }
+}
+/* wide and tall pane: the card takes its content's height (the list no longer stretches, it scrolls once the card reaches
+   the room left) and hangs from the top like a command palette. Anchored at the top, not centred: the card must not
+   jump while the search filters the list. */
+@container pane (min-width: 821px) and (min-height: 641px) {
+  .empty-panel > .ch { flex: 0 1 auto; margin-top: clamp(24px, 10cqh, 120px); margin-bottom: 24px; }
+  .empty-panel > .ch > .ch-list { flex: 0 1 auto; }
+}
 /* the popup (focus mode / "Novo painel…"): the same chooser in a window; the header carries the context chip */
 dialog.chooser-dlg { width: min(600px, 94vw); height: min(600px, 86vh); padding: 0; flex-direction: column; overflow: hidden; }
 dialog.chooser-dlg[open] { display: flex; }
@@ -1641,8 +1705,8 @@ body.tab-border :is(.frame.focused, .frame.drawer-focused) .dv-groupview.dv-acti
 @media (prefers-reduced-motion: reduce) {
   .dv-tab.attention-tab { animation: none; background-color: color-mix(in srgb, var(--desk-line-color, var(--accent)) 25%, transparent); }
 }
-/* Foco de Mesa: `.focused` is only ever a desk's frame; the drawer has its own `.drawer-focused`. A pad (`.kbd-focused`, a
-   behaviour marker only) has no ring, aura or dim: it looks the same with or without the keyboard. */
+/* Foco de Mesa: `.focused` is only ever a desk's frame; the drawer has its own `.drawer-focused`. A pad (`.kbd-focused`)
+   has no ring or aura; it only takes part in the dim. */
 
 /* Dim: a veil of the desk background over frames without the focus (tabs included), so it dims toward the surface in
    both themes. Above the frame card, below the edge "+" (40) and every overlay. */
@@ -1655,8 +1719,20 @@ body { --dim-veil: .32; }
 body.dim-weak { --dim-veil: .2; }
 body.dim-medium { --dim-veil: .32; }
 body.dim-strong { --dim-veil: .45; }
-/* Only the desk's frames dim (around the Foco de Mesa): a pad or the drawer is never "the other frames". */
-body.dim-unfocused .desk-set .frame:not(.focused)::after { opacity: var(--dim-veil); }
+/* The unit of the dim is the pane group (a dockview group: its tabs and content), not the frame: of every visible group,
+   in the desk, the pads or the drawer, only the active group of the frame holding the focus stays clear. That frame is
+   the one with the DOM focus inside; when none has it (a native view or a menu took it), the marked frame: a pad's or
+   the drawer's when there is one, else the Foco de Mesa. */
+.frame .dv-groupview { position: relative; }
+.frame .dv-groupview::after {
+  content: ""; position: absolute; inset: 0; z-index: 30; pointer-events: none;
+  background: var(--desk-bg); opacity: 0; transition: opacity var(--motion-fast) ease-out;
+}
+body.dim-unfocused .frame .dv-groupview::after { opacity: var(--dim-veil); }
+body.dim-unfocused .frame:focus-within .dv-groupview.dv-active-group::after { opacity: 0; }
+body.dim-unfocused:not(:has(.frame:focus-within)) .frame:is(.kbd-focused, .drawer-focused) .dv-groupview.dv-active-group::after { opacity: 0; }
+body.dim-unfocused:not(:has(.frame:focus-within, .frame.kbd-focused, .frame.drawer-focused)) .frame.focused .dv-groupview.dv-active-group::after { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .frame .dv-groupview::after { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .frame::after { transition: none; } }
 
 /* Drop anywhere (desk.ts): a tab over the outer edge of a desk, a pad or the drawer (a new frame on that side, full

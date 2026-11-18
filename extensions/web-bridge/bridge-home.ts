@@ -76,7 +76,8 @@ export function defaultCapabilities(info: BuildInfo | undefined): Record<string,
   if (info?.brand?.capabilities) return { ...info.brand.capabilities }
   const settings = manifest.contributes?.settings ?? {}
   // serveToAgents is the tether's own switch (whether the MCP is offered at all), not a capability of the bridge.
-  return { agentWindows: settings.agentWindows?.default, evaluate: settings.evaluate?.default }
+  // The bridge's key for "a window per agent" is windowPerAgent (the extension's capability("windowPerAgent")).
+  return { windowPerAgent: settings.agentWindows?.default, evaluate: settings.evaluate?.default }
 }
 
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/

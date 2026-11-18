@@ -17,7 +17,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DetectedBrowser } from './browsers.ts'
 import type { ActionOutcome, InstallOutcome, StatusSnapshot, WebBridgeChannels } from './ipc.ts'
 import { BRIDGE_NAME, STATUS_ID } from './manifest.ts'
-import { activeAgents, ago, badgeOf, EMPTY_SNAPSHOT, stateOf, tabsLabel, titleOf, versionLine } from './status.ts'
+import { activeAgents, ago, badgeOf, DEBUG_LINE, EMPTY_SNAPSHOT, stateOf, tabsLabel, titleOf, versionLine } from './status.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -63,7 +63,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const items: DialogOption[] = browsers.map(b => ({ id: b.id, icon: 'globe-simple', label: b.name, detail: b.exe }))
     const a = await ui.dialogs.ask({
       situation: PICK_SITUATION, tone: 'info', icon: 'globe-simple', title: 'Em qual navegador?',
-      message: `O ${BRIDGE_NAME} é carregado como extensão sem compactação. O tether prepara a pasta, copia o caminho dela e abre o navegador na página de extensões; você faz três cliques.`,
+      message: `O ${BRIDGE_NAME} é carregado como extensão sem compactação. O Tether prepara a pasta, copia o caminho dela e abre o navegador na página de extensões; você faz três cliques.`,
       options: { label: 'Navegadores encontrados', items, selected: browsers[0]!.id },
       choices: [{ id: 'install', icon: 'arrow-square-out', label: 'Preparar e abrir o navegador', consequence: 'Copia a extensão, põe o caminho da pasta na área de transferência e abre {option} na página de extensões.', tone: 'safe' }],
       cancelLabel: 'Agora não',
@@ -251,6 +251,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const head = el('div', 'wb-pop-head')
     head.append(icon('brand'), el('span', 'wb-pop-title', BRIDGE_NAME), el('span', 'wb-pop-state', titleOf(snapshot, now, BRIDGE_NAME)))
     pop.append(head)
+    if (snapshot.debug) { const d = el('p', 'wb-debug', DEBUG_LINE); d.setAttribute('role', 'status'); pop.append(d) }
 
     if (snapshot.daemon === 'up') {
       // Browsers.
@@ -300,7 +301,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     } else {
       pop.append(el('p', 'wb-empty wb-down', snapshot.daemon === 'no-key'
         ? 'A instalação do bridge ainda não tem chave: o tetherd a cria ao subir.'
-        : snapshot.daemon === 'refused' ? 'O daemon recusou a chave do tether; veja tether doctor.'
+        : snapshot.daemon === 'refused' ? 'O daemon recusou a chave do Tether; veja tether doctor.'
           : snapshot.everUp ? 'O daemon do bridge parou de responder. A próxima chamada de um agente o reinicia; "Instalar…" também.' : 'O serviço do bridge ainda não respondeu.'))
     }
 

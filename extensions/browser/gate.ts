@@ -35,7 +35,7 @@
 // package's folder rule. Downloads (downloads.ts) reach the owner's connections as `Browser.downloadWillBegin` /
 // `Browser.downloadProgress` with the final name and size (never the path), only while the agent has the tab.
 import { randomBytes } from 'node:crypto'
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { nativeImage } from 'electron'
@@ -43,6 +43,7 @@ import { join } from 'node:path'
 import type { Duplex } from 'node:stream'
 import type { Surface } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { writeAtomicRetry } from './atomic-file.ts'
 import { KeyStore } from './gate-keys.ts'
 import { connectionQuestionKey, questionTabOf } from './local-network-rules.ts'
 import {
@@ -140,23 +141,6 @@ function encodeShot(data: string, plan: ReturnType<typeof hiddenCapture>, format
 }
 
 type Json = Record<string, unknown>
-
-/** `text` to `file` through a randomly named temp file and a rename, tried again a few times (EPERM/EBUSY on Windows). */
-async function writeAtomicRetry(file: string, text: string, tries = 5): Promise<void> {
-  for (let i = 1; ; i++) {
-    const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
-    try {
-      writeFileSync(tmp, text)
-      renameSync(tmp, file)
-      return
-    } catch (e) {
-      rmSync(tmp, { force: true })
-      const code = (e as NodeJS.ErrnoException).code
-      if (i >= tries || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw e
-      await new Promise(r => setTimeout(r, 50 * i))
-    }
-  }
-}
 
 export async function startGate(opts: GateOptions): Promise<Gate> {
   const dir = join(opts.home, 'browser')

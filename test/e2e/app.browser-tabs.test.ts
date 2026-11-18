@@ -17,6 +17,7 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { inBrowser } from './browser-kit.ts'
 
 type Pane = { id: string; tabId?: string; owner?: string; state?: string; title: string; url: string; stateText: string; group: string[]; front: boolean; place?: string }
 type Hooks = { activeDesk(): string; desks(): { id: string }[]; connection(): { connected: boolean; pid?: number } | undefined; browserPanes(): Pane[]; browserReveal(id: string): void }
@@ -66,10 +67,10 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 const panes = (page: Page): Promise<Pane[]> => page.evaluate(() => window.__tether.browserPanes())
 const byTab = async (page: Page, tabId: string): Promise<Pane> => (await panes(page)).find(p => p.tabId === tabId)!
 const create = (app: ElectronApplication, owner: string, url: string): Promise<string> =>
-  app.evaluate(async (_e, a) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create(a.owner, a.url)).tabId, { owner, url })
+  inBrowser(app, async (_e, a) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create(a.owner, a.url)).tabId, { owner, url })
 const evalIn = (app: ElectronApplication, tabId: string, code: string): Promise<unknown> =>
-  app.evaluate((_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tabId, a.code), { tabId, code })
-const mainTabs = (app: ElectronApplication) => app.evaluate(() => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => ({ tabId: t.tabId, owner: t.ownerSlotId, url: t.url })))
+  inBrowser(app, (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tabId, a.code), { tabId, code })
+const mainTabs = (app: ElectronApplication) => inBrowser(app, () => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.registry.list().map(t => ({ tabId: t.tabId, owner: t.ownerSlotId, url: t.url })))
 
 async function until<T>(what: string, fn: () => Promise<T>, ok: (v: T) => boolean, ms = 15_000): Promise<T> {
   const end = Date.now() + ms
@@ -99,7 +100,7 @@ test('browser tabs: born behind and grouped, real frame, popup, permissions, sch
     const [d1] = await page.evaluate(() => window.__tether.desks().map(d => d.id)) as [string]
 
     // Rule 19: the dev runtime (node_modules' electron.exe) has the cookie fuse off: the partition is in memory.
-    const ses = await app.evaluate(async () => { const s = await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.session(); return { persistentLogins: s.persistentLogins, partition: s.partition } })
+    const ses = await inBrowser(app, async () => { const s = await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.session(); return { persistentLogins: s.persistentLogins, partition: s.partition } })
     assert.deepEqual(ses, { persistentLogins: false, partition: 'tether-browser' })
 
     // ---- 1. born behind, grouped by owner ----
@@ -161,7 +162,7 @@ test('browser tabs: born behind and grouped, real frame, popup, permissions, sch
     assert.deepEqual(await mainTabs(app), [], 'nothing loads on its own')
     for (const x of back) {
       if (x.tabId === cred) { assert.equal(x.state, 'no-address'); assert.equal(x.url, '') }
-      else { assert.equal(x.state, 'not-loaded', x.tabId); assert.equal(x.stateText, 'Não carregada desde que o tether reabriu') }
+      else { assert.equal(x.state, 'not-loaded', x.tabId); assert.equal(x.stateText, 'Não carregada desde que o Tether reabriu') }
     }
     assert.equal((await byTab(page, a1)).title, 'Página A', 'the saved title shows while not loaded')
     assert.equal(await page.evaluate(() => window.__tether.activeDesk()), d1)

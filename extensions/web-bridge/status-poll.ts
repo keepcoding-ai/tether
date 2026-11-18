@@ -5,7 +5,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { releaseClient } from './agents.ts'
-import { EMPTY_SNAPSHOT, reduceStatus, type DaemonReach, type StatusSnapshot } from './status.ts'
+import { folderCount } from '../../src/trace/timeline.ts'
+import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
+import { debugOf, EMPTY_SNAPSHOT, pendingOf, reduceStatus, type DaemonReach, type StatusSnapshot } from './status.ts'
 
 export const POLL_IDLE_MS = 15_000
 export const POLL_OPEN_MS = 2_000
@@ -45,6 +47,54 @@ export interface StatusPoller {
   releaseAll(): Promise<ActionOutcome>
 }
 
+/** api.key of the bridge home (never logged, never returned past the request). */
+const readApiKey = (bridgeHome: string): string | undefined => {
+  try { return readFileSync(join(bridgeHome, 'api.key'), 'utf8').trim() || undefined } catch { return undefined }
+}
+
+/** `tether doctor`: the calls in flight at the bridge daemon now (GET /status `pending`), with their ids and ages. */
+export async function bridgeInFlightCheck(deps: { port: number; bridgeHome: string; fetch?: typeof fetch }): Promise<DaemonCheck> {
+  const name = 'chamadas em voo no bridge'
+  const key = readApiKey(deps.bridgeHome)
+  if (!key) return { level: 'OK', name, detail: 'instalação sem api.key: nada a perguntar' }
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
+  try {
+    const r = await (deps.fetch ?? fetch)(`http://127.0.0.1:${deps.port}/status`, { signal: ctl.signal, headers: { authorization: `Bearer ${key}`, connection: 'close' } })
+    if (!r.ok) return { level: 'AVISO', name, detail: `o daemon respondeu ${r.status} ao /status` }
+    const pending = pendingOf(await r.json())
+    if (!pending.length) return { level: 'OK', name, detail: 'nenhuma' }
+    const secs = (ms: number): string => `${Math.round(ms / 1000)} s`
+    const list = pending.slice(0, 5).map(p => `${p.callId} ${p.tool} há ${secs(p.ageMs)} (${p.browser})`).join('; ')
+    return { level: 'OK', name, detail: `${pending.length}: ${list}${pending.length > 5 ? '; …' : ''}`, hint: `veja tether trace ${pending[0]!.callId}` }
+  } catch {
+    return { level: 'OK', name, detail: 'daemon sem resposta: nada em voo nele' }
+  } finally { clearTimeout(t) }
+}
+
+/** `tether doctor`: the debug mode as the bridge daemon reports it (GET /status `browsers[].debug`), set in the extension's options page. */
+export async function bridgeDebugStatusCheck(deps: { port: number; bridgeHome: string; displayName: string; dumpDir?: string; fetch?: typeof fetch }): Promise<DaemonCheck> {
+  const name = `depuração do ${deps.displayName}`
+  const dumps = deps.dumpDir ? folderCount(deps.dumpDir) : 0
+  const dumpNote = dumps ? `; ${dumps} despejo${dumps === 1 ? '' : 's'} de falha em ${deps.dumpDir}` : ''
+  const off: DaemonCheck = { level: 'OK', name, detail: `desligada${dumpNote}` }
+  const key = readApiKey(deps.bridgeHome)
+  if (!key) return off
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
+  try {
+    const r = await (deps.fetch ?? fetch)(`http://127.0.0.1:${deps.port}/status`, { signal: ctl.signal, headers: { authorization: `Bearer ${key}`, connection: 'close' } })
+    if (!r.ok) return off
+    const on = debugOf(await r.json())
+    if (!on.length) return off
+    const deadline = (ms: number | null): string => ms === null ? 'sem prazo' : `${Math.round(ms / 1000)} s`
+    const list = on.map(d => `${d.browser}, prazo de cada chamada: ${deadline(d.callTimeoutMs)}`).join('; ')
+    return { level: 'AVISO', name, detail: `ligada em ${list}${dumpNote}`, hint: 'desligue nas opções da extensão no navegador quando terminar de investigar' }
+  } catch {
+    return off
+  } finally { clearTimeout(t) }
+}
+
 export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   const doFetch = deps.fetch ?? fetch
   const now = deps.now ?? (() => Date.now())
@@ -58,9 +108,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   let timer: unknown
   let inflight: Promise<StatusSnapshot> | undefined
 
-  const readKey = (): string | undefined => {
-    try { return readFileSync(join(deps.bridgeHome, 'api.key'), 'utf8').trim() || undefined } catch { return undefined }
-  }
+  const readKey = (): string | undefined => readApiKey(deps.bridgeHome)
 
   const call = async (method: 'GET' | 'POST', path: string, key: string): Promise<Response> => {
     const ctl = new AbortController()
@@ -73,7 +121,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   const take = async (): Promise<StatusSnapshot> => {
     const key = readKey()
     let daemon: DaemonReach = 'down'
-    let reduced: ReturnType<typeof reduceStatus> = { paused: false, browsers: [], agents: [] }
+    let reduced: ReturnType<typeof reduceStatus> = { paused: false, debug: false, browsers: [], agents: [] }
     if (!key) daemon = 'no-key'
     else {
       try {
@@ -101,14 +149,14 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
 
   const act = async (what: string, path: string): Promise<ActionOutcome> => {
     const key = readKey()
-    if (!key) return { ok: false, message: 'A instalação do bridge ainda não tem chave; abra o tether de novo.' }
+    if (!key) return { ok: false, message: 'A instalação do bridge ainda não tem chave; abra o Tether de novo.' }
     try {
       const r = await call('POST', path, key)
       await r.arrayBuffer().catch(() => undefined)
       if (r.ok) { deps.log(`${what}: ok`); return { ok: true } }
       deps.log(`${what}: o daemon respondeu ${r.status}`)
       if (r.status === 404) return { ok: false, message: 'Pausar está indisponível nesta versão do bridge; o próximo "npm run bridge:build" traz o recurso.' }
-      if (r.status === 401 || r.status === 403) return { ok: false, message: 'O daemon recusou a chave do tether.' }
+      if (r.status === 401 || r.status === 403) return { ok: false, message: 'O daemon recusou a chave do Tether.' }
       return { ok: false, message: `O daemon respondeu ${r.status}.` }
     } catch {
       deps.log(`${what}: daemon sem resposta na porta ${deps.port}`)

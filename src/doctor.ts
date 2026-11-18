@@ -8,6 +8,7 @@ import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync,
 import { tmpdir, userInfo } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { cleanEnv, resolveClaudeCommand } from './agents/claude.ts'
+import { resolveCodexCommand } from './agents/codex.ts'
 import { ENV_SOUL_REPORT, resolveSoulCommand } from './agents/soul.ts'
 import { contributedChecks } from './agents/load.ts'
 import { inspectRenamedNode, isNodeExecutable, type ExeStatus } from './core/exe.ts'
@@ -356,6 +357,47 @@ export function probeClaude(): CheckResult {
 /** The real hook writing a sample event (the claude extension's check). */
 export function probeHookCheck(): CheckResult {
   try { return checkHook(probeHook()) } catch (e) { return { level: 'ERRO', name: 'hook do claude', detail: (e as Error).message } }
+}
+
+/** `codex --version` prints "codex-cli 0.169.0". Codex is optional: missing is an AVISO. */
+export function checkCodex(command: string, found: boolean, versionOutput: string | undefined): CheckResult {
+  if (!found) return { level: 'AVISO', name: 'codex', detail: 'não encontrado no PATH', hint: 'só importa se você usa o Codex: npm i -g @openai/codex' }
+  const version = /(\d+\.\d+\.\d+)/.exec(versionOutput ?? '')?.[1]
+  if (!version) return { level: 'ERRO', name: 'codex', detail: `${command} não respondeu a --version`, hint: 'rode `codex --version` à mão e veja o erro' }
+  return { level: 'OK', name: 'codex', detail: `${version} (${command})` }
+}
+
+/** `codex --version` through the resolved command (the codex extension's check). */
+export function probeCodex(): CheckResult {
+  const { command, prefix } = resolveCodexCommand()
+  const found = prefix.length > 0 || existsSync(command) || onPath('codex') !== undefined
+  return checkCodex(prefix[0] ?? command, found, found ? run(command, [...prefix, '--version'], cleanEnv()).stdout : undefined)
+}
+
+/** The notify reporter writing a sample start event and a 'done' attention (the codex extension's check). */
+export function probeCodexNotify(): CheckResult {
+  const name = 'notify do codex'
+  const home = mkdtempSync(join(tmpdir(), 'tether-doctor-codex-'))
+  try {
+    const slotId = 'doctor01'
+    const sessionId = '01a1e5a8-0000-7000-8000-000000000000'
+    const script = resolve(import.meta.dirname, 'report', 'codex-hook.mjs')
+    const payload = JSON.stringify({ type: 'agent-turn-complete', 'thread-id': sessionId, cwd: home })
+    const env: Record<string, string> = { ...cleanEnv(), TETHER_HOME: home, TETHER_SLOT_ID: slotId }
+    delete env.TETHER_CODEX_NOTIFY
+    const r = spawnSync(process.execPath, [script, 'notify', payload], { env, encoding: 'utf8', timeout: 20_000, windowsHide: true })
+    const file = join(home, 'slots', `${slotId}.jsonl`)
+    const ev = (existsSync(file) ? readFileSync(file, 'utf8').split('\n') : []).map(parseEventLine).find((e) => e !== undefined)
+    if (r.status !== 0) return { level: 'ERRO', name, detail: `saiu com código ${r.status}`, hint: `rode node "${script}" notify '{...}' à mão` }
+    if (!ev || ev.sessionId !== sessionId) return { level: 'ERRO', name, detail: 'rodou mas não gravou o evento no jsonl do slot', hint: 'veja <TETHER_HOME>/tether.log' }
+    if (!existsSync(join(home, 'slots', `${slotId}.attention`))) return { level: 'ERRO', name, detail: 'gravou a sessão mas não a atenção' }
+    if (onPath('node') === undefined) return { level: 'AVISO', name, detail: 'grava o evento, mas `node` não está no PATH', hint: 'o Codex roda o notify como `node "<script>"`: ponha o node no PATH' }
+    return { level: 'OK', name, detail: 'grava a sessão e a atenção' }
+  } catch (e) {
+    return { level: 'ERRO', name, detail: (e as Error).message }
+  } finally {
+    try { rmSync(home, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
 }
 
 export async function runDoctor(): Promise<CheckResult[]> {

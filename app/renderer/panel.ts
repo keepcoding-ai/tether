@@ -7,7 +7,6 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { LinkTarget } from '../shared/links.ts'
 import { terminalLinkProvider } from './terminal-links.ts'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { tabMark, tabMarkTip } from './turn-rules.ts'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
@@ -15,22 +14,30 @@ import { terminalFontOptions, terminalTheme, type TerminalAppearance } from '../
 import type { ColorScheme } from '../shared/theme.ts'
 import { renderChoices, roveWithArrows } from './dialog.ts'
 import { decodeOsc52 } from './clipboard.ts'
+import { createTabHeader } from './tab-header.ts'
 import { icon, KIND_ICON, setIcon, type IconName } from './icons.ts'
 import { rondaLabel, rondaTooltip } from './ronda-rules.ts'
 import { detailsOpen } from './pane-details.ts'
-import { paneShortcutOf, shortcutHint } from './shortcuts.ts'
+import { IS_MAC, paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
-import { applyAppearance, loadTerminalFonts, terminalFontsLoaded } from './terminal-theme.ts'
+import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
+import { focusIfStillActive, followActive, type ActivePanelApi } from './focus-follow.ts'
+import { startProbe } from '../../src/core/perf-probe.ts'
+
+/** Key->echo probe: the main loads the page with ?probe when TETHER_PROBE=1. Off, a key costs one `if`. */
+export const PROBE = new URLSearchParams(location.search).has('probe')
+let probeSeq = 0
+
+const IS_WINDOWS = typeof navigator !== 'undefined' && !IS_MAC && /Win/i.test(navigator.platform)
+/** The key Claude Code reads as "paste the clipboard image": Alt+V (ESC v) on Windows, ^V elsewhere. */
+const IMAGE_PASTE_KEY = IS_WINDOWS ? '\x1bv' : '\x16'
 
 // The palette and the font come from the terminal appearance (app/shared/terminal-theme.ts: preset per
 // scheme over the window background, bundled font, weight, size, line height, contrast 4.5). The host owns
 // the current value; every panel is repainted through setAppearance when it or the scheme changes.
-
-/** Which xterm renderer a panel ended up with: WebGL draws box/block glyphs itself (no gaps at line height 1.2); DOM is the fallback. */
-export type TerminalRenderer = 'webgl' | 'dom'
 
 /** An xterm with the appearance's font and palette for the scheme (every terminal pane: the agents' and a process' output). */
 export function createTerminal(appearance: TerminalAppearance, scheme: ColorScheme, opts: { cursorBlink?: boolean; disableStdin?: boolean } = {}): Terminal {
@@ -42,23 +49,6 @@ export function createTerminal(appearance: TerminalAppearance, scheme: ColorSche
     allowProposedApi: true,
     theme: terminalTheme(appearance, scheme),
   })
-}
-
-/**
- * WebGL after `open()`: xterm then draws box drawing and block glyphs itself (`customGlyphs`), so they
- * join at any line height; the texture atlas also keeps a tall scrollback cheap. When the GPU is not
- * there (software rendering, a lost context later) the DOM renderer carries on with the font's glyphs.
- */
-export function loadTerminalRenderer(term: Terminal, onLost: () => void): TerminalRenderer {
-  try {
-    // preserveDrawingBuffer: the canvas keeps its last frame, so a window capture (E2E screenshots) sees it.
-    const webgl = new WebglAddon(true)
-    webgl.onContextLoss(() => { webgl.dispose(); onLost() })
-    term.loadAddon(webgl)
-    return 'webgl'
-  } catch {
-    return 'dom'
-  }
 }
 
 export const KIND_LABEL: Record<SlotKind, string> = agentTable('Shell', ui => ui.label, n => n)
@@ -185,7 +175,7 @@ function unconfirmedOverlay(s: SlotState): OverlaySpec {
   const what = s.title ? ` "${s.title}"` : s.binding?.sessionId ? ` (${s.binding.sessionId.slice(0, 8)})` : ''
   return {
     icon: 'question', title: 'Qual sessão este painel estava rodando?', tone: 'warn',
-    text: `O tether não tem certeza de qual sessão de ${KIND_LABEL[s.kind]} era a deste painel${what}.`,
+    text: `O Tether não tem certeza de qual sessão de ${KIND_LABEL[s.kind]} era a deste painel${what}.`,
     choices: [
       { id: 'resume', icon: 'clock-counter-clockwise', label: 'Retomar a última sessão', consequence: 'Continua a conversa mais recente desta pasta.', tone: 'safe' },
       NEW_SESSION(`A conversa anterior continua no histórico de ${KIND_LABEL[s.kind]}.`),
@@ -305,7 +295,12 @@ export class TerminalPanel implements IContentRenderer {
   private lastSize = { cols: 0, rows: 0 }
   private fitTimer: ReturnType<typeof setTimeout> | undefined
   private readonly host: PanelHost
-  renderer: TerminalRenderer = 'dom'
+  /** WebGL and ligatures, in xterm's order (created once the xterm exists; started after `open()`). */
+  private readonly addons: TerminalAddons
+  /** Which renderer the terminal is on right now (WebGL until a lost context; DOM before `open()`). */
+  get renderer(): TerminalRenderer { return this.addons.renderer }
+  /** Whether the ligatures addon is loaded on this terminal. */
+  get ligaturesActive(): boolean { return this.addons.ligaturesActive }
 
   constructor(host: PanelHost) {
     this.host = host
@@ -368,13 +363,18 @@ export class TerminalPanel implements IContentRenderer {
     this.setDetails(false)
 
     this.term = createTerminal(host.getAppearance(), host.getScheme())
+    this.addons = new TerminalAddons(this.term)
     this.term.loadAddon(this.fit)
     // Ctrl+click on a URL or on a path that exists (relative ones read against the folder this pane was opened in): the app's links.
     this.term.registerLinkProvider(terminalLinkProvider(this.term, {
       openingCwd: () => this.host.getSlot(this.slotId)?.cwd ?? this.hint?.cwd,
       open: target => this.host.onOpenLink(this.slotId, target),
     }))
-    this.term.onData(data => { if (this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data }) })
+    this.term.onData(data => {
+      if (!this.slotId) return
+      if (PROBE) window.tether.notice({ t: 'input', slotId: this.slotId, data, probe: startProbe(++probeSeq) }) // renderer-send stamp
+      else window.tether.notice({ t: 'input', slotId: this.slotId, data })
+    })
     // xterm calls this for keydown, keypress and keyup of the same chord: a command is decided on keydown only.
     // What is handled here is also prevented, so Chromium's own copy/paste on the textarea never runs on top
     // of it (a native paste would reach xterm's `paste` listener and paste twice; a native copy would overwrite
@@ -411,8 +411,8 @@ export class TerminalPanel implements IContentRenderer {
     this.render()
     // Keyboard focus follows the active panel. dockview may activate the panel before this init runs,
     // so the current state is applied too (deferred: the element is not laid out yet).
-    params.api.onDidActiveChange(({ isActive }) => { if (isActive) requestAnimationFrame(() => this.term.focus()) })
-    void this.boot(() => params.api.isActive)
+    followActive(params.api, () => this.term.focus())
+    void this.boot(params.api)
   }
 
   /** The tab title and the hint the layout file carried (the header before the daemon answers). */
@@ -424,7 +424,7 @@ export class TerminalPanel implements IContentRenderer {
    * is ready — even when the panel is a hidden tab (zero size): the scrollback must land and `data` must flow
    * whether or not the panel is visible. Fits only send `resize` afterwards.
    */
-  private async boot(isActive: () => boolean): Promise<void> {
+  private async boot(api: Pick<ActivePanelApi, 'isActive'>): Promise<void> {
     await this.host.fontsReady()
     if (this.disposed) return
     this.term.open(this.termHost)
@@ -434,7 +434,7 @@ export class TerminalPanel implements IContentRenderer {
     this.observer = new ResizeObserver(() => this.scheduleFit())
     this.observer.observe(this.termHost)
     this.scheduleFit()
-    if (isActive()) requestAnimationFrame(() => this.term.focus())
+    if (api.isActive) focusIfStillActive(api, () => this.term.focus())
     await this.host.daemonReady()
     if (this.disposed) return
     void this.attach()
@@ -621,7 +621,7 @@ export class TerminalPanel implements IContentRenderer {
   focus(): void { this.term.focus() }
 
   private loadRenderer(): void {
-    this.renderer = loadTerminalRenderer(this.term, () => { this.renderer = 'dom' })
+    this.addons.start(this.host.getAppearance())
   }
 
   /**
@@ -643,19 +643,21 @@ export class TerminalPanel implements IContentRenderer {
     // xterm only measures again when a font option changes: a font that loaded after `open()` needs the nudge.
     if (opts.remeasure) this.term.options.fontFamily = 'monospace'
     applyAppearance(this.term, appearance, scheme)
+    this.addons.update(appearance)
     this.term.refresh(0, this.term.rows - 1)
     this.scheduleFit()
   }
 
   /**
    * Pastes the clipboard text through xterm (bracketed paste when the program asked for it). With no text and
-   * `rawWhenEmpty`, the raw ^V goes to the process instead: Claude Code pastes an image from the clipboard
-   * when it receives that key, and a screenshot in the clipboard has no text form.
+   * `rawWhenEmpty`, the image-paste key goes to the process instead: Claude Code pastes an image from the
+   * clipboard when it receives it (^V on macOS/Linux, Alt+V = ESC v on Windows, where ^V is ignored), and a
+   * screenshot in the clipboard has no text form.
    */
   async paste(rawWhenEmpty = false): Promise<void> {
     const text = await window.tether.readClipboard()
     if (text) this.term.paste(text)
-    else if (rawWhenEmpty && this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data: '\x16' })
+    else if (rawWhenEmpty && this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data: IMAGE_PASTE_KEY })
   }
 
   /** Types raw bytes into the terminal's pty (same path as keyboard input). */
@@ -756,23 +758,18 @@ export class SlotTab implements ITabRenderer {
   constructor(host: PanelHost, onClose: (slotId: string) => void) {
     this.host = host
     this.onClose = onClose
-    this.element = document.createElement('div')
-    this.element.className = 'tether-tab'
-    this.kind = document.createElement('span'); this.kind.className = 'kind'
     this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.append(icon('circle-fill'))
-    this.text = document.createElement('span'); this.text.className = 'text'
     this.unsafe = unsafeBadge(false)
     this.ronda = document.createElement('span'); this.ronda.className = 'ronda-mark'; this.ronda.hidden = true; this.ronda.append(icon('timer'))
     this.attn = document.createElement('span'); this.attn.className = 'attn'
     this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
-    const close = document.createElement('button')
-    close.className = 'close'; close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
-    close.append(icon('x'))
-    close.addEventListener('pointerdown', ev => ev.stopPropagation())
-    close.addEventListener('click', ev => { ev.stopPropagation(); if (this.api) this.onClose(this.api.id) })
-    this.element.append(this.kind, this.text, this.unsafe, this.ronda, this.attn, this.dot, close)
-    this.element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); this.startRename() })
-    this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); if (this.api) this.host.onTabMenu(this.api.id, ev) })
+    const h = createTabHeader({
+      emblems: [this.attn, this.unsafe, this.ronda], dot: this.dot,
+      close: { label: 'Fechar painel', onClose: () => { if (this.api) this.onClose(this.api.id) } },
+      onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
+      onDblClick: () => this.startRename(),
+    })
+    this.element = h.element; this.kind = h.kind; this.text = h.text
   }
 
   init(params: TabPartInitParameters): void {

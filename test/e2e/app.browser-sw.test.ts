@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import type { ElectronApplication, Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { daemonMain, launchHidden, pidAlive, rawCdp, root, sleep } from './browser-kit.ts'
+import { daemonMain, launchHidden, pidAlive, rawCdp, root, sleep, inBrowser } from './browser-kit.ts'
 
 declare const window: { __tether: { connection(): { connected: boolean; pid?: number } | undefined } }
 type Tabs = { create(owner: string, url: string): Promise<{ tabId: string }>; eval(tabId: string, code: string): Promise<unknown>; gate(): Promise<{ port: number } | null> }
@@ -71,7 +71,7 @@ test('browser service worker: a page that registers one does not take the app do
     daemons.push(await claim((await win.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
     const T = app
     const B = <R>(fn: (t: Tabs, a: any) => R | Promise<R>, a?: unknown): Promise<R> =>
-      T.evaluate(new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
+      inBrowser(T, new Function('_e', 'a', `return (${fn.toString()})(globalThis.__browserTabs, a)`) as never, a) as Promise<R>
     // What the main process sees of its children while the page registers.
     await T.evaluate(({ app: a }) => {
       const g = globalThis as { __swGone?: string[] }

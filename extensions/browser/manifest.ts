@@ -15,7 +15,7 @@ export const manifest: ExtensionManifest = {
   id: 'browser',
   version: '0.1.0',
   displayName: 'Browser',
-  description: 'O navegador do tether: as guias que os agentes abrem, numa mesa própria, com a pessoa sempre podendo assistir e assumir.',
+  description: 'O navegador do Tether: as guias que os agentes abrem, numa mesa própria, com a pessoa sempre podendo assistir e assumir.',
   hosts: ['renderer', 'main', 'daemon'],
   optional: true,
   contributes: {
@@ -28,10 +28,29 @@ export const manifest: ExtensionManifest = {
         type: 'string', default: 'perProfile', enum: ['perProfile', 'all', 'off'], fromBoolean: { true: 'all', false: 'perProfile' },
         enumLabels: ['Só nos perfis marcados', 'Todos os agentes', 'Ninguém'],
         title: 'Navegador para os agentes dos painéis',
-        description: 'Os agentes do tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias. Em "Só nos perfis marcados", vale para os agentes lançados com um perfil que tenha a opção "Navegador para os agentes" ligada; agentes sem perfil não recebem.',
+        description: 'Os agentes do Tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias. Em "Só nos perfis marcados", vale para os agentes lançados com um perfil que tenha a opção "Navegador para os agentes" ligada; agentes sem perfil não recebem.',
+        order: 3,
       },
-      evaluate: { type: 'boolean', default: false, title: 'Permitir que o agente execute JavaScript na página', description: 'Desligado, o agente lê e age na página, mas não roda código nela.' },
-      localNetwork: { type: 'string', default: 'ask', enum: ['ask', 'allow', 'deny'], enumLabels: ['Perguntar na primeira vez', 'Sempre permitir neste perfil', 'Nunca permitir'], title: 'Abrir localhost e a rede local', description: 'Se o agente pode abrir localhost e endereços da rede local nas guias.' },
+      evaluate: { type: 'boolean', default: false, title: 'Permitir que o agente execute JavaScript na página', description: 'Desligado, o agente lê e age na página, mas não roda código nela.', order: 1 },
+      localNetwork: { type: 'string', default: 'ask', enum: ['ask', 'allow', 'deny'], enumLabels: ['Perguntar na primeira vez', 'Sempre permitir neste perfil', 'Nunca permitir'], title: 'Abrir localhost e a rede local', description: 'Se o agente pode abrir localhost e endereços da rede local nas guias.', order: 2 },
+      // The debug mode (debug-file.ts): written live to <home>/browser/debug.json, read by the vendored server at every call.
+      // The timeouts' defaults are the server's own (ACTION_TIMEOUT_MS, SNAPSHOT_TIMEOUT_MS), shown for reference: a key
+      // left unset is left out of the file, so the server keeps its own value.
+      debug: {
+        type: 'boolean', default: false, section: 'Depuração', order: 100,
+        title: 'Modo de depuração',
+        description: 'Para investigar quando o navegador do Tether falha com um agente. Ligado, o registro guarda mais detalhes de cada ação e valem os prazos abaixo; cada guia mostra a marca "Depuração". Os pedidos de permissão continuam iguais. Vale na hora, sem reabrir o agente. Deixe desligado no uso normal.',
+      },
+      debugActionTimeoutSec: {
+        type: 'number', default: 15, min: 0, max: 86400, section: 'Depuração', order: 101,
+        title: 'Prazo de cada ação, em segundos',
+        description: 'Quanto o agente espera por um clique, uma digitação ou uma espera na página antes de desistir. Só vale com o modo de depuração ligado. 0 = sem prazo. "Redefinir" volta ao prazo normal.',
+      },
+      debugSnapshotTimeoutSec: {
+        type: 'number', default: 60, min: 0, max: 86400, section: 'Depuração', order: 102,
+        title: 'Prazo para ler a página, em segundos',
+        description: 'Quanto o agente espera para ler o conteúdo da página antes de desistir. Só vale com o modo de depuração ligado. 0 = sem prazo. "Redefinir" volta ao prazo normal.',
+      },
     },
     systemDesks: [{ id: DESK_ID, title: 'Browser', icon: 'app-window', color: 'blue' }],
     // Below the explorer (order 10) on the left bar.

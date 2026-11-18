@@ -39,9 +39,9 @@ describe('the ≡ menu from the registry', () => {
       'Painel ›', '  Nova aba', '  Duplicar painel à direita', '  Duplicar painel abaixo', '  Novo painel na borda do quadro…', '  Novo quadro…', '  Trocar perfil do painel…',
       'Nota ›', '  Nova nota', '  Abrir nota…', '  Salvar nota como…',
       'Mesa ›', '  Nova mesa', '  Montar a mesa (modo builder)', '  Mover…', '  Mesa atual: renomear, cor, mover…', '  Fechar mesa…',
-      'Ferramentas ›', '  Perfis de lançamento…', '  Atalhos de teclado', '  Extensões', '  Instalar Tether Bridge…', '  Associar links tether:// a este tether…',
+      'Ferramentas ›', '  Perfis de lançamento…', '  Atalhos de teclado', '  Extensões', '  Instalar Tether Bridge…', '  Associar links tether:// a este Tether…',
       '---',
-      'Configurações…',
+      'Tema do Tether…', 'Configurações…',
       '---',
       'Fechar a janela', 'Sair e encerrar tudo…',
     ])
@@ -50,7 +50,7 @@ describe('the ≡ menu from the registry', () => {
   test('no appearance toggles in the menu (they live on the Settings page and in the palette)', () => {
     const cmds = flatItems(fullRegistry().build(MenuId.App)).map(i => i.command)
     assert.ok(!(APP_MENU_GROUPS as readonly string[]).includes('look'))
-    for (const gone of ['theme.light', 'theme.auto', 'theme.dark', 'ui.desk-line', 'ui.tab-border', 'ui.dim-unfocused', 'ui.dim-weak', 'ui.dim-medium', 'ui.dim-strong', 'ui.word-wrap', 'ui.minimap', 'ui.line-numbers', 'terminal.theme', 'confirmations.restore']) assert.ok(!cmds.includes(gone), gone)
+    for (const gone of ['theme.light', 'theme.auto', 'theme.dark', 'ui.desk-line', 'ui.tab-border', 'ui.dim-unfocused', 'ui.dim-weak', 'ui.dim-medium', 'ui.dim-strong', 'ui.word-wrap', 'ui.minimap', 'ui.line-numbers', 'confirmations.restore']) assert.ok(!cmds.includes(gone), gone)
     assert.ok(!fullRegistry().build(MenuId.App).some(e => e.type === 'heading'))
   })
 
@@ -61,8 +61,8 @@ describe('the ≡ menu from the registry', () => {
   test('every command of the previous flat menu is still reachable (root or submenu)', () => {
     const cmds = new Set(flatItems(fullRegistry().build(MenuId.App)).map(i => i.command))
     for (const c of ['palette.show', 'pane.new', 'explorer.open-folder', 'drawer.toggle', 'pane.new-tab', 'pane.duplicate.pane.right', 'pane.duplicate.pane.below', 'pane.new-at-frame-edge', 'frame.new', 'pane.switch-profile',
-      'note.new', 'note.open', 'note.save-as', 'desk.new', 'desk.builder', 'pane.move', 'desk.actions', 'desk.close', 'profiles.manage', 'keybindings.show', 'extensions.show', 'web-bridge.install', 'links.associate', 'settings.show', 'window.close', 'app.quit-all']) assert.ok(cmds.has(c), c)
-    assert.equal(cmds.size, 26)
+      'note.new', 'note.open', 'note.save-as', 'desk.new', 'desk.builder', 'pane.move', 'desk.actions', 'desk.close', 'profiles.manage', 'keybindings.show', 'extensions.show', 'web-bridge.install', 'links.associate', 'terminal.theme', 'settings.show', 'window.close', 'app.quit-all']) assert.ok(cmds.has(c), c)
+    assert.equal(cmds.size, 27)
   })
 
   test('an extension item with a submenu group lands inside that submenu, by order', () => {

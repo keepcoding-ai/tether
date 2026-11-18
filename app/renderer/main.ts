@@ -2,11 +2,11 @@
 // keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
 import { type AddPanelOptions, type DockviewTheme, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
-import type { Event as DaemonEvent, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
+import type { Event as DaemonEvent, Notice, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
-import { DEFAULT_APPEARANCE, type TerminalAppearance } from '../shared/terminal-theme.ts'
+import { DEFAULT_APPEARANCE, terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
 import { appCommands, GROUP, type CommandHost } from './app-commands.ts'
 import { installBuilderGuard, isBuilder, onBuilderChange, setBuilder } from './builder-mode.ts'
@@ -31,7 +31,7 @@ import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
 import { attentionLines, BadgeBoard, effectiveAttention, SealBoard, type AttentionHandle } from './seal-rules.ts'
 import { deskMark, type DeskMark } from './desk-mark.ts'
 import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
-import { DEFAULT_UI, DIM_LEVELS, type UiSettings } from '../shared/ui-settings.ts'
+import { DEFAULT_UI, DIM_LEVELS, type UiSettings, type DimLevel } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
 import { askDialog, dialogOpen } from './dialog.ts'
 import { Drawer } from './drawer.ts'
@@ -40,10 +40,12 @@ import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDr
 import type { PauseBatch } from '../../src/daemon/pause.ts'
 import { bulkCloseSituation, forgetEndedSituation } from './sessions-rules.ts'
 import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
+import { setupSessionSearch, type SessionSearch } from './session-search.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
+import { setupBell } from './bell.ts'
 import { openMoveDialog } from './move-dialog.ts'
 import { openSessionsDialog, refreshSessionsDialog } from './sessions-dialog.ts'
 import { buildTree, DRAWER_SCOPE, type FrameViewJSON, type MoveMode, type MoveOp, type ScopeModel } from './move-rules.ts'
@@ -86,6 +88,8 @@ import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
+import { PROBE } from './panel.ts'
+import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
 import { defaultOf, ProfileManager } from './profiles.ts'
 import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable, KeyTable, PANE_SHORTCUTS, setKeyTable, shortcutHint, TERMINAL_INPUTS, terminalInputOf, type Keybinding } from './shortcuts.ts'
@@ -194,7 +198,7 @@ let theme: ThemeState = { setting: 'auto', scheme: matchMedia('(prefers-color-sc
 let appearance: TerminalAppearance = DEFAULT_APPEARANCE
 let themeDialog: TerminalThemeDialog
 /** The saved appearance read and its font loaded: no panel opens before this, so xterm measures the real glyphs. */
-const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; await loadTerminalFonts(a); for (const l of appearanceListeners) l(a) })
+const appearanceReady: Promise<void> = window.tether.getTerminalAppearance().then(async a => { appearance = a; paintInterface(a); await loadTerminalFonts(a); for (const l of appearanceListeners) l(a) })
 /** Remembered dialog answers ("não perguntar de novo"); main owns the file and pushes every change. */
 let confirmations: Confirmations = {}
 /** The launch profiles (<home>/profiles.json), as last listed or pushed by the daemon's `profiles` event. */
@@ -315,7 +319,7 @@ const host: PanelHost = {
 // ---------- font size ----------
 
 /**
- * Keyboard and menu steps of the terminal font size. The size is the appearance's ("Tema do terminal"): main
+ * Keyboard and menu steps of the terminal font size. The size is the appearance's ("Tema do tether"): main
  * stores it and echoes it back (onTerminalAppearance), which repaints every panel and refits it.
  */
 function runFontSizeCommand(command: FontSizeCommand): void {
@@ -376,9 +380,16 @@ function applyUi(next: UiSettings): void {
 
 // ---------- terminal appearance ----------
 
+/** The tether theme beyond the panes: `--mono` (the interface's code font) and the ligatures switch on the root. */
+function paintInterface(a: TerminalAppearance): void {
+  document.documentElement.style.setProperty('--mono', terminalFontOptions(a).fontFamily)
+  document.documentElement.classList.toggle('no-ligatures', !a.ligatures)
+}
+
 /** Puts an appearance on every pane (and the dialog's sample); the font must be loaded already. */
 function applyAppearance(a: TerminalAppearance): void {
   appearance = a
+  paintInterface(a)
   for (const p of panels.values()) p.setAppearance(a, theme.scheme)
   for (const l of appearanceListeners) l(a)
   themeDialog?.refresh()
@@ -487,6 +498,10 @@ function setupDock(): void {
       // A radio pair: the leading icon is the mark (filled = chosen). A ui from before the setting reads as the default.
       const label = ui.fixedDeskLabel ?? DEFAULT_UI.fixedDeskLabel
       const radio = (value: typeof label, text: string): MenuItem => ({ icon: label === value ? 'radio-button-fill' : 'circle', label: text, run: () => window.tether.setUi({ ...ui, fixedDeskLabel: value }) })
+      const dim = (level: DimLevel | null, text: string): MenuItem => {
+        const chosen = level === null ? !ui.dimUnfocused : ui.dimUnfocused && ui.dimLevel === level
+        return { icon: chosen ? 'radio-button-fill' : 'circle', label: text, run: () => window.tether.setUi(level === null ? { ...ui, dimUnfocused: false } : { ...ui, dimUnfocused: true, dimLevel: level }) }
+      }
       showContextMenu(x, y, [
       { heading: 'Mesas fixas' },
       radio('icon', 'Exibir ícone'),
@@ -495,6 +510,13 @@ function setupDock(): void {
       { heading: 'Aparência' },
       { icon: 'minus', label: 'Exibir linha colorida', checked: ui.deskLine, run: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }) },
       { icon: 'square-half', label: 'Exibir cor ao redor da guia ativa', checked: ui.tabBorder, run: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }) },
+      SEP,
+      // The dim is a single choice: off is one of the levels.
+      { heading: 'Escurecer janelas sem foco' },
+      dim(null, 'Desligado'),
+      dim('weak', 'Fraco'),
+      dim('medium', 'Médio'),
+      dim('strong', 'Forte'),
     ], opener)
     },
   })
@@ -653,8 +675,8 @@ function layoutJSON(): Layout {
   // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
   let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
   for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
-  const { asleepPanes: _asleep, ...rest } = file
-  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}) }
+  const { asleepPanes: _asleep, deskSleptPanes: _deskSlept, ...rest } = file
+  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}), deskSleptPanes: [...deskSleptPanes] }
   if (!sidebars) return out
   // The panel frames' records follow what is live now (panel label, desk, last change): written into the side bars before saving.
   const { meta: _stale, ...bars } = out.sidebars
@@ -943,7 +965,7 @@ function watchedPane(): string | undefined {
 function markSeenIfWatched(): void {
   const id = watchedPane()
   if (id && slots.get(id)?.attention) void window.tether.request({ t: 'seen', slotId: id })
-  if (id) seals.seen(id)
+  if (id) { seals.seen(id); window.tether.attentionSeen(id) }
 }
 
 /** The keyboard to a pane, whatever it is: a terminal or a note. */
@@ -1019,6 +1041,8 @@ async function hibernateDesk(id: string): Promise<void> {
       const i = awake.findIndex(d => d.id === id)
       desks.switchTo((awake[i + 1] ?? awake[i - 1])!.id)
     }
+    // Only the panes awake now are the desk's to wake later; panes hibernated one by one stay asleep.
+    for (const p of deskPanes(id)) if (!asleepPanes.has(p.id)) deskSleptPanes.add(p.id)
     desks.setAsleep(id, true)
   })
 }
@@ -1040,10 +1064,28 @@ async function hibernatePanes(ids: string[], where: string, before?: () => void)
   refreshSessions()
 }
 
-/** Waking a desk: back in the capsule, its hibernated panes resume through `start` (the daemon queues agents beyond 3 at once). */
+/**
+ * Waking a desk: back in the capsule, the panes its hibernation put to sleep (`deskSleptPanes`) resume through `start`
+ * (the daemon queues agents beyond 3 at once); panes that were already hibernated before stay asleep.
+ */
 function wakeDesk(id: string): void {
   desks.setAsleep(id, false)
-  for (const p of deskPanes(id)) if (asleepPanes.has(p.id)) void startSlot(p.id)
+  for (const p of deskPanes(id)) {
+    if (!deskSleptPanes.delete(p.id)) continue
+    if (asleepPanes.has(p.id)) void startSlot(p.id)
+  }
+  scheduleSave()
+}
+
+/**
+ * The desk-slept set from a layout. A file without the field predates it: every hibernated pane of a sleeping desk
+ * counts as put to sleep by the desk, so those desks still wake whole.
+ */
+function loadDeskSlept(saved: string[] | undefined, keep: (id: string) => boolean): Set<string> {
+  if (saved) return new Set(saved.filter(keep))
+  const seeded = new Set<string>()
+  for (const d of desks.desks) if (d.asleep) for (const p of deskPanes(d.id)) if (asleepPanes.has(p.id) && keep(p.id)) seeded.add(p.id)
+  return seeded
 }
 
 /** "Hibernar guia": a live pane that is not restarting or stopping. */
@@ -1829,7 +1871,11 @@ function applyState(slot: SlotState): void {
     startErrors.delete(slot.slotId)
     // A pane that comes back up is awake, whoever started it. Only a stopped → live change counts: while a hibernation's
     // stop is under way the daemon still reports the slot running (stopping), and that must not wake it.
-    if (before && !isLiveSlot(before) && asleepPanes.delete(slot.slotId)) scheduleSave()
+    if (before && !isLiveSlot(before)) {
+      const woke = asleepPanes.delete(slot.slotId)
+      const wasDeskSlept = deskSleptPanes.delete(slot.slotId)
+      if (woke || wasDeskSlept) scheduleSave()
+    }
   }
   const panel = findPanel(slot.slotId)
   if (panel) {
@@ -1850,7 +1896,10 @@ function applyState(slot: SlotState): void {
 
 function onDaemonEvent(ev: DaemonEvent): void {
   switch (ev.t) {
-    case 'data': panels.get(ev.slotId)?.write(ev.data); break
+    case 'data':
+      if (PROBE && ev.probe) window.tether.notice({ t: 'probe-result', slotId: ev.slotId, probe: extendProbe(ev.probe) } as unknown as Notice) // renderer-recv stamp
+      panels.get(ev.slotId)?.write(ev.data)
+      break
     case 'profiles': setProfiles(ev.profiles, undefined); break
     case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshSessionsDialog(); break
     case 'proc': case 'proc-removed': case 'proc-data': procsStore.onEvent(ev); break
@@ -1931,6 +1980,7 @@ async function restoreLayout(): Promise<void> {
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
     if (orphaned.length) { desks.load(layout); drawer.load(drawerOf(layout)); sidebars?.load(layout.sidebars, deskPadsOf(layout)) }
+    deskSleptPanes = loadDeskSlept(layout.deskSleptPanes, id => slots.has(id))
     // A v1 file is copied to layout.v1.bak now; layout.json itself stays v1 until the person changes something.
     // A v2 or v3 file is copied to layout.v<n>.bak the same way: an older build reads only its own version.
     if (result?.migrated) await window.tether.backupLayout()
@@ -1964,6 +2014,7 @@ function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
     const result = migrateLayout(raw)
     if (result && !layoutRestored) asleepPanes = new Set(result.layout.asleepPanes ?? [])
     if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, deskPadsOf(result.layout)) }
+    if (result && !layoutRestored) deskSleptPanes = loadDeskSlept(result.layout.deskSleptPanes, () => true)
     return result
   }, err => { console.error('layout.json ilegível', err); return null })
   return geometry!
@@ -2023,6 +2074,8 @@ async function onConnection(state: ConnectionState): Promise<void> {
 
 /** Hibernated panes (slot ids), saved in the layout: not started on launch until a `start` wakes them. */
 let asleepPanes = new Set<string>()
+/** Panes put to sleep by their desk's hibernation (layout `deskSleptPanes`): the ones waking the desk resumes. */
+let deskSleptPanes = new Set<string>()
 
 let pauseBatch: PauseBatch | null = null
 /** The background processes (tether proc): the core keeps the list, the processes extension draws it (TetherUi.procs). */
@@ -2055,15 +2108,18 @@ function openPauseDialog(): void {
     slots: () => slots.values(),
     batch: () => pauseBatch,
     hasTab: id => findPanel(id) !== undefined,
-    placeOf: slotId => {
-      if (!findPanel(slotId)) return undefined
-      const pad = framePadOf(slotId)
-      return inDrawer(slotId) ? 'Gaveta' : pad ? padRegistry.get(pad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(slotId) ?? desks.activeDeskId)
-    },
+    placeOf,
     titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
     request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
     openSlot,
   })
+}
+
+/** Where a session's tab is ("Mesa 1", "Gaveta", a pad's title), or undefined when it has none. */
+function placeOf(slotId: string): string | undefined {
+  if (!findPanel(slotId)) return undefined
+  const pad = framePadOf(slotId)
+  return inDrawer(slotId) ? 'Gaveta' : pad ? padRegistry.get(pad.padId)?.title ?? 'Prancheta' : deskName(desks.deskOf(slotId) ?? desks.activeDeskId)
 }
 
 /** Opens a panel for a slot the daemon knows; an exited slot is started (an unconfirmed one shows the choice). */
@@ -3096,6 +3152,7 @@ const commandHost: CommandHost = {
   fontSize: command => runFontSizeCommand(command),
   openProfiles: () => openProfiles(),
   sessionsManage: () => openPauseDialog(),
+  sessionSearch: () => sessionSearch?.focus(),
   sessionsMenu: focusPause => { if (focusPause) sessionsMenu?.openOnPause(); else sessionsMenu?.setOpen(true) },
   restoreConfirmations: () => window.tether.command('restore-confirmations'),
   associateLinks: () => { void associateLinks() },
@@ -3396,8 +3453,12 @@ function setupConnectionPopover(): void {
   $('conn-restart').addEventListener('click', ev => { ev.stopPropagation(); closeToolbarPopups(); window.tether.command('restart-daemon') })
 }
 
+let bell: { close(): void } | undefined
+let sessionSearch: SessionSearch | undefined
+
 function closeToolbarPopups(): void {
   statusBar?.close()
+  bell?.close()
   $('conn-wrap').classList.remove('pinned')
   $('conn').setAttribute('aria-expanded', 'false')
   $('theme-menu').hidden = true
@@ -3424,6 +3485,16 @@ function renderConnection(): void {
 function setupUi(): void {
   // Static icons: <span data-icon="name"> in index.html becomes the inline SVG.
   for (const el of document.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
+  sessionSearch = setupSessionSearch($('session-search'), {
+    sessions: () => { const out: { slotId: string; title: string }[] = []; for (const s of slots.values()) if (findPanel(s.slotId)) out.push({ slotId: s.slotId, title: panelTitle(s) }); return out },
+    placeOf,
+    jump: revealPane,
+  })
+  bell = setupBell({
+    openSlot: slotId => openSlot(slotId),
+    showSettings: key => { if (settingsRevealer) settingsRevealer(key); else void commands.run('settings.show', 'menu') },
+    closeOthers: () => { statusBar?.close(); $('conn-wrap').classList.remove('pinned'); $('theme-menu').hidden = true; $('btn-theme').setAttribute('aria-expanded', 'false') },
+  })
   $('btn-new').addEventListener('click', () => { void openNewDialog() })
   $('btn-drawer').addEventListener('click', () => setDrawerOpen(!drawer.isOpen))
   $('drawer-new').addEventListener('click', () => { void openNewDialog() })
@@ -3577,18 +3648,18 @@ declare global {
       theme(): ThemeState
       /** The xterm palette a panel is using (its `theme.background`, etc). */
       termTheme(slotId: string): Record<string, string | undefined> | undefined
-      /** The xterm font options a panel is using, and which renderer it got. */
-      termOptions(slotId: string): { fontFamily: string; fontWeight: number | string; fontWeightBold: number | string; fontSize: number; lineHeight: number; letterSpacing: number; minimumContrastRatio: number; renderer: string } | undefined
+      /** The xterm font options a panel is using, which renderer it got and whether its ligatures addon is loaded. */
+      termOptions(slotId: string): { fontFamily: string; fontWeight: number | string; fontWeightBold: number | string; fontSize: number; lineHeight: number; letterSpacing: number; minimumContrastRatio: number; renderer: string; ligatures: boolean } | undefined
       /** The path link under the pointer in a terminal: underlined, hand pointer, and the pane's tooltip (empty without one). */
       linkHover(slotId: string): { underline: boolean; hand: boolean; title: string } | undefined
       /** The terminal appearance in force. */
       terminalAppearance(): TerminalAppearance
-      /** Opens "Tema do terminal…" as the menu does. */
+      /** Opens "Tema do tether…" as the menu does. */
       openTerminalTheme(): void
       /** Whether the browser has the font face loaded (`document.fonts.check`). */
       fontLoaded(spec: string): boolean
-      /** The dialog's sample terminal: its buffer text and options (undefined while the dialog is closed). */
-      sample(): { text: string; fontFamily: string; background: string | undefined } | undefined
+      /** The dialog's sample terminal: its buffer text, options and whether its ligatures addon is loaded (undefined while the dialog is closed). */
+      sample(): { text: string; fontFamily: string; background: string | undefined; ligatures: boolean } | undefined
       /**
        * What a terminal canvas (WebGL renderer) actually painted: the top-left `maxW`×`maxH` CSS px as a PNG data
        * URL and how many of those pixels differ from the corner one. A window capture does not see a WebGL
@@ -3757,7 +3828,7 @@ function setupTestHooks(): void {
       const p = panels.get(slotId)
       if (!p) return undefined
       const o = p.term.options
-      return { fontFamily: o.fontFamily!, fontWeight: o.fontWeight!, fontWeightBold: o.fontWeightBold!, fontSize: o.fontSize!, lineHeight: o.lineHeight!, letterSpacing: o.letterSpacing!, minimumContrastRatio: o.minimumContrastRatio!, renderer: p.renderer }
+      return { fontFamily: o.fontFamily!, fontWeight: o.fontWeight!, fontWeightBold: o.fontWeightBold!, fontSize: o.fontSize!, lineHeight: o.lineHeight!, letterSpacing: o.letterSpacing!, minimumContrastRatio: o.minimumContrastRatio!, renderer: p.renderer, ligatures: p.ligaturesActive }
     },
     linkHover: slotId => {
       const p = panels.get(slotId)
@@ -3778,7 +3849,7 @@ function setupTestHooks(): void {
       const buf = t.buffer.active
       const lines: string[] = []
       for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? '')
-      return { text: lines.join('\n').replace(/\n+$/, ''), fontFamily: t.options.fontFamily!, background: t.options.theme?.background }
+      return { text: lines.join('\n').replace(/\n+$/, ''), fontFamily: t.options.fontFamily!, background: t.options.theme?.background, ligatures: themeDialog.sampleLigatures }
     },
     paint: (selector, maxW, maxH) => {
       // The WebGL addon appends its canvas after its 2D link layer: the last canvas is the one with the glyphs.

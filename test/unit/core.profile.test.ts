@@ -38,7 +38,7 @@ const meta = (extra: Partial<SlotMeta> = {}): SlotMeta => ({
 describe('defaults and the file', () => {
   test('defaults: Claude (default), Claude modo dev (unsafe), soul -g (default), a default shell; Git Bash only when bash.exe exists', () => {
     const d = defaultProfiles({ ProgramFiles: 'C:\\nowhere-at-all', PATH: '' }, 'win32')
-    assert.deepEqual(d.map((p) => p.id), ['claude', 'claude-dev', 'soul', 'powershell'])
+    assert.deepEqual(d.map((p) => p.id), ['claude', 'claude-dev', 'soul', 'codex', 'codex-dev', 'powershell'])
     assert.deepEqual(d.find((p) => p.id === 'claude-dev')!.args, ['--dangerously-skip-permissions'])
     assert.deepEqual(d.find((p) => p.id === 'soul')!.args, ['-g'])
     for (const agent of ['claude', 'soul', 'shell'] as const) assert.equal(d.filter((p) => p.agent === agent && p.default).length, 1, `one default for ${agent}`)
@@ -232,5 +232,8 @@ describe('a slot and its profile', () => {
   test('isUnsafe', () => {
     assert.equal(isUnsafe(['--model', 'haiku']), false)
     assert.equal(isUnsafe(['--dangerously-skip-permissions']), true)
+    assert.equal(isUnsafe(['--dangerously-bypass-approvals-and-sandbox']), true)
+    assert.equal(isUnsafe(['--model', 'o3', '--yolo']), true)
+    assert.equal(isUnsafe(['--dangerously-bypass-hook-trust']), false)
   })
 })

@@ -46,6 +46,8 @@ asarUnpack:
   - brand/assets/app/mask.json
   - node_modules/node-pty/**
   - node_modules/jsonc-parser/**
+  # koffi (user32 for the browser process's embedded windows) is a native module: it loads from outside the asar.
+  - node_modules/koffi/**
   - src/**
   - extensions/**
 win:

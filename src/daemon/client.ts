@@ -7,6 +7,7 @@ import { userInfo } from 'node:os'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureRenamedNode, exeLog, type ExeName } from '../core/exe.ts'
+import type { Probe } from '../core/perf-probe.ts'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
 import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type PauseBatch, type ProcState, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
@@ -29,6 +30,8 @@ export interface ClientOptions extends Partial<SpawnOptions> {
   home?: string
   pipe?: string
   client?: 'app' | 'cli' | 'test'
+  /** This client reads hosted panes straight from tether-ptyd: tetherd sends it no output of them (see the `hello` request). */
+  direct?: boolean
   /** Start tetherd (detached) when nothing answers on the pipe. Default true. */
   spawn?: boolean
   /** Max wait for the daemon to come up after spawning it (ms). Default 15 000. */
@@ -50,7 +53,7 @@ const FOREIGN_RETRY_MS = 300
 
 type Events = {
   state: [slot: SlotState]
-  data: [slotId: string, data: string]
+  data: [slotId: string, data: string, probe?: Probe]
   removed: [slotId: string]
   profiles: [profiles: Profile[]]
   pause: [batch: PauseBatch]
@@ -79,6 +82,7 @@ export class DaemonClient extends EventEmitter<Events> {
     const home = opts.home ?? tetherHome()
     const pipe = opts.pipe ?? pipePath(home, userInfo().username)
     const kind = opts.client ?? 'cli'
+    const how = opts.direct ? { direct: true } : {}
     let foreign = 0
     const foreignError = (e: NotTetherError): Error =>
       new Error(`o canal ${pipe} está ocupado por um programa que não é o tetherd (${e.message}); feche-o ou use outro TETHER_PIPE`)
@@ -92,7 +96,7 @@ export class DaemonClient extends EventEmitter<Events> {
     }
     for (;;) {
       try {
-        return await DaemonClient.open(pipe, kind)
+        return await DaemonClient.open(pipe, kind, how)
       } catch (e) {
         if (opts.spawn === false || e instanceof DaemonError) throw e // a tetherd answered (and refused): nothing to spawn
         if (!(await tolerate(e))) break // nothing listening: start one
@@ -103,7 +107,7 @@ export class DaemonClient extends EventEmitter<Events> {
     let lastError: Error | undefined
     while (Date.now() < deadline) {
       try {
-        return await DaemonClient.open(pipe, kind)
+        return await DaemonClient.open(pipe, kind, how)
       } catch (e) {
         if (e instanceof DaemonError) throw e
         lastError = e as Error
@@ -113,8 +117,8 @@ export class DaemonClient extends EventEmitter<Events> {
     throw new Error(`tetherd não respondeu em ${pipe}: ${lastError?.message ?? 'timeout'}`)
   }
 
-  /** Connects and completes the hello handshake; no spawning. */
-  static async open(pipe: string, kind: 'app' | 'cli' | 'test'): Promise<DaemonClient> {
+  /** Connects and completes the hello handshake; no spawning. `direct`: see ClientOptions. */
+  static async open(pipe: string, kind: 'app' | 'cli' | 'test', how: { direct?: boolean } = {}): Promise<DaemonClient> {
     const socket = await connectSocket(pipe)
     let client: DaemonClient | undefined
     const pendingHello = new Promise<Hello>((resolve, reject) => {
@@ -144,7 +148,7 @@ export class DaemonClient extends EventEmitter<Events> {
       socket.setEncoding('utf8')
       socket.on('data', onData)
       socket.on('close', onClose)
-      socket.write(encode({ t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind }))
+      socket.write(encode(how.direct ? { t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind, direct: true } : { t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind }))
     })
     try {
       const hello = await pendingHello
@@ -186,7 +190,7 @@ export class DaemonClient extends EventEmitter<Events> {
         this.emit('state', msg.slot)
         return
       case 'data':
-        this.emit('data', msg.slotId, msg.data)
+        this.emit('data', msg.slotId, msg.data, msg.probe)
         return
       case 'removed':
         this.emit('removed', msg.slotId)
@@ -219,10 +223,16 @@ export class DaemonClient extends EventEmitter<Events> {
     })
   }
 
-  /** Keystrokes (no reply). */
-  input(slotId: string, data: string): void {
+  /** Keystrokes (no reply); `probe` times key->echo (see Notice). */
+  input(slotId: string, data: string, probe?: Probe): void {
     if (this.closed) return
-    this.socket.write(encode({ t: 'input', slotId, data }))
+    this.socket.write(encode(probe ? { t: 'input', slotId, data, probe } : { t: 'input', slotId, data }))
+  }
+
+  /** Keystrokes already written to the pane in the host (direct clients): tetherd only feeds the slot's attention (see Notice). */
+  typed(slotId: string, data: string): void {
+    if (this.closed) return
+    this.socket.write(encode({ t: 'typed', slotId, data }))
   }
 
   close(): void {

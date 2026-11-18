@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { claimElectron, killElectron } from './electron.ts'
-import { daemonMain, launchHidden, pidAlive, root, sleep } from './browser-kit.ts'
+import { daemonMain, launchHidden, pidAlive, root, sleep, inBrowser } from './browser-kit.ts'
 
 declare const window: { __tether: { connection(): { connected: boolean; pid?: number } | undefined } }
 type Tabs = {
@@ -79,13 +79,13 @@ test('browser cache: the persistent partition keeps no page body on disk, nor wh
     const launched = await launchHidden(home, `\\\\.\\pipe\\tether-brcache-${process.pid}`)
     app = launched.app
     daemons.push(await claim((await launched.page.evaluate(() => window.__tether.connection()))!.pid!, { cmdIncludes: daemonMain, what: 'tetherd' }))
-    const ses = await app.evaluate(async () => { const s = await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.session(); return { persistentLogins: s.persistentLogins, partition: s.partition } })
+    const ses = await inBrowser(app, async () => { const s = await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.session(); return { persistentLogins: s.persistentLogins, partition: s.partition } })
     assert.deepEqual(ses, { persistentLogins: true, partition: 'persist:tether-browser' })
 
-    const tabId = await app.evaluate(async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('owner-a', url)).tabId, `${base}/p`)
+    const tabId = await inBrowser(app, async (_e, url) => (await (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.create('owner-a', url)).tabId, `${base}/p`)
     const deadline = Date.now() + 15_000
     for (;;) {
-      const seen = await app.evaluate((_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tabId, 'document.body.innerText + (window.__s || "") + " " + (window.__stored || "")'), { tabId })
+      const seen = await inBrowser(app, (_e, a) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.eval(a.tabId, 'document.body.innerText + (window.__s || "") + " " + (window.__stored || "")'), { tabId })
       assert.ok(!String(seen).includes('error:'), String(seen))
       if (String(seen).includes(BAIT) && String(seen).includes(BAIT_JS) && String(seen).endsWith(' ok')) break
       assert.ok(Date.now() < deadline, `the page did not load: ${String(seen)}`)
@@ -93,7 +93,7 @@ test('browser cache: the persistent partition keeps no page body on disk, nor wh
     }
     // Give the network stack time to write whatever it is going to write, then let go of the files.
     await sleep(3000)
-    const userData = await app.evaluate(({ app: a }) => a.getPath('userData'))
+    const userData = await inBrowser(app, ({ app: a }: typeof import('electron')) => a.getPath('userData'))
     assert.ok(existsSync(join(userData, 'Partitions', 'tether-browser')), 'the persistent partition is on disk')
     assert.deepEqual(holders(userData, [BAIT, BAIT_JS]), [], 'no file under userData holds the page')
     const partitionDir = join(userData, 'Partitions', 'tether-browser')

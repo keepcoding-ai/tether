@@ -42,6 +42,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 function isClientId(v) {
   return typeof v === "string" && CLIENT_ID_PATTERN.test(v);
 }
+function isCallId(v) {
+  return typeof v === "string" && CALL_ID_PATTERN.test(v);
+}
 function cleanClientName(raw) {
   if (typeof raw !== "string") return void 0;
   const cleaned = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CLIENT_NAME_MAX).trim();
@@ -62,7 +65,7 @@ function sanitizeTabs(v) {
   }
   return out;
 }
-var PROTOCOL_VERSION, DEFAULT_PORT, WS_PATH, CLOSE_DENIED, CLOSE_REPLACED, CLOSE_PROTOCOL, CLIENT_ID_HEADER, CLIENT_NAME_HEADER, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, STATUS_TABS_MAX, STATUS_URL_MAX, STATUS_TITLE_MAX, SEED_FILE, EXTENSION_ID_PATTERN;
+var PROTOCOL_VERSION, DEFAULT_PORT, WS_PATH, CLOSE_DENIED, CLOSE_REPLACED, CLOSE_PROTOCOL, CLIENT_ID_HEADER, CLIENT_NAME_HEADER, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, CALL_ID_HEADER, CALL_ID_PATTERN, STATUS_TABS_MAX, STATUS_URL_MAX, STATUS_TITLE_MAX, SEED_FILE, EXTENSION_ID_PATTERN;
 var init_protocol = __esm({
   "src/protocol.ts"() {
     "use strict";
@@ -76,6 +79,8 @@ var init_protocol = __esm({
     CLIENT_NAME_HEADER = "x-bridge-client-name";
     CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$/;
     CLIENT_NAME_MAX = 80;
+    CALL_ID_HEADER = "x-bridge-call";
+    CALL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
     STATUS_TABS_MAX = 500;
     STATUS_URL_MAX = 2048;
     STATUS_TITLE_MAX = 300;
@@ -149,6 +154,15 @@ import { randomBytes as randomBytes2 } from "node:crypto";
 import { chmodSync, existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join as join2 } from "node:path";
+function debugFromRequest(request2) {
+  if (request2?.enabled !== true) return { on: false };
+  return { on: true, ...request2.callTimeoutMs !== void 0 ? { callTimeoutMs: request2.callTimeoutMs } : {} };
+}
+function debugRequestFrom(msg) {
+  const t = msg.callTimeoutMs;
+  const ok = typeof t === "number" && Number.isSafeInteger(t) && t >= 0 && t <= 9999999999;
+  return { enabled: msg.enabled === true, ...ok ? { callTimeoutMs: t } : {} };
+}
 function bridgeHome(env = process.env) {
   return env.ATRIUM_BRIDGE_HOME || join2(homedir(), ".atrium-bridge");
 }
@@ -331,7 +345,7 @@ function removeDaemonPid(home2, pid) {
   } catch {
   }
 }
-var KEY_SCOPES, UPLOAD_TOOLS, UPLOAD_KEY_NAME, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, localKeyPath, uploadKeyPath, configPath, lockPath, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
+var KEY_SCOPES, UPLOAD_TOOLS, UPLOAD_KEY_NAME, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, traceLogPath, localKeyPath, uploadKeyPath, configPath, lockPath, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
 var init_config = __esm({
   "daemon/src/config.ts"() {
     "use strict";
@@ -348,6 +362,7 @@ var init_config = __esm({
     daemonPidPath = (home2) => join2(home2, "daemon.pid");
     daemonLogPath = (home2) => join2(home2, "daemon.log");
     mcpLogPath = (home2) => join2(home2, "mcp.log");
+    traceLogPath = (home2) => join2(home2, "trace.log");
     localKeyPath = (home2) => join2(home2, "api.key");
     uploadKeyPath = (home2) => join2(home2, "upload.key");
     configPath = (home2) => join2(home2, "config.json");
@@ -635,6 +650,12 @@ function toWireError(e) {
   }
   return { code: "INTERNAL", message: e instanceof Error ? e.message : String(e) };
 }
+function wireWithCallId(e, callId) {
+  const w = toWireError(e);
+  if (w.data === void 0) return { ...w, data: { callId } };
+  if (w.data !== null && typeof w.data === "object" && !Array.isArray(w.data)) return { ...w, data: { ...w.data, callId } };
+  return w;
+}
 var BridgeError, RemoteError;
 var init_errors = __esm({
   "src/errors.ts"() {
@@ -753,7 +774,16 @@ function unreachable(port, e) {
     phase: classifyFetchFailure(e)
   });
 }
-var CONTROL_TIMEOUT_MS, DAEMON_CALL_TIMEOUT_MS, CALL_MARGIN_MS, envPort, BEFORE_SEND_CODES, BridgeClient;
+function ceilingFromMode(mode, toolTimeoutMs, args = {}) {
+  if (!mode.on) return Math.min(toolTimeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5);
+  if (mode.callTimeoutMs === null) return null;
+  return Math.max(mode.callTimeoutMs, toolTimeoutMs ?? 0, toolOwnTimeoutMs(args) ?? 0);
+}
+function toolOwnTimeoutMs(args) {
+  const own2 = args.timeoutMs;
+  return typeof own2 === "number" && Number.isFinite(own2) && own2 > 0 ? own2 + TOOL_TIMEOUT_SLACK_MS : void 0;
+}
+var CONTROL_TIMEOUT_MS, DAEMON_CALL_TIMEOUT_MS, CALL_MARGIN_MS, envPort, BEFORE_SEND_CODES, TOOL_TIMEOUT_SLACK_MS, BridgeClient;
 var init_client = __esm({
   "daemon/src/client.ts"() {
     "use strict";
@@ -776,6 +806,7 @@ var init_client = __esm({
       "EAI_AGAIN",
       "UND_ERR_CONNECT_TIMEOUT"
     ]);
+    TOOL_TIMEOUT_SLACK_MS = 1e4;
     BridgeClient = class {
       target;
       controlTimeoutMs;
@@ -785,8 +816,10 @@ var init_client = __esm({
         this.controlTimeoutMs = opts.controlTimeoutMs ?? CONTROL_TIMEOUT_MS;
         this.callMarginMs = opts.callMarginMs ?? CALL_MARGIN_MS;
       }
-      async request(method, path, timeoutMs, body, upload = false) {
+      /** `timeoutMs`: o prazo do fetch; null = sem prazo (modo debug sem prazo, informado pelo daemon). */
+      async request(method, path, timeoutMs, body, upload = false, callId) {
         const target = typeof this.target === "function" ? this.target() : this.target;
+        const deadline = timeoutMs;
         const bearer = upload && target.uploadKey ? uploadKeyOf(target.uploadKey) : target.apiKey;
         let res;
         let text;
@@ -802,10 +835,12 @@ var init_client = __esm({
               // Quem chama, quando a casca se identificou: o daemon loga o id e o repassa à extensão em cada `call`.
               ...target.client ? { [CLIENT_ID_HEADER]: target.client.id } : {},
               ...target.client?.name ? { [CLIENT_NAME_HEADER]: target.client.name } : {},
+              // O id desta chamada: o daemon o usa como rid e o põe em cada linha de log e no erro (data.callId).
+              ...callId ? { [CALL_ID_HEADER]: callId } : {},
               ...body !== void 0 ? { "content-type": "application/json" } : {}
             },
             ...body !== void 0 ? { body: JSON.stringify(body) } : {},
-            signal: AbortSignal.timeout(timeoutMs)
+            ...deadline !== null ? { signal: AbortSignal.timeout(deadline) } : {}
           });
           text = await res.text();
         } catch (e) {
@@ -843,21 +878,27 @@ var init_client = __esm({
         await this.request("POST", "/resume", this.controlTimeoutMs);
         return { paused: false };
       }
-      async call(browserId, tool, args, timeoutMs) {
+      /**
+       * POST /browsers/:id/call. `timeoutMs`: o teto da chamada no daemon (sem ele, o do daemon, 60 s). `callId`: vai em
+       * X-Bridge-Call (sem ele, o daemon gera um).
+       */
+      async call(browserId, tool, args, timeoutMs, callId, debugMode) {
         const body = { tool, args, ...timeoutMs ? { timeoutMs } : {} };
-        const deadline = Math.min(timeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5) + this.callMarginMs;
-        return (await this.request("POST", `/browsers/${encodeURIComponent(browserId)}/call`, deadline, body, UPLOAD_TOOLS.has(tool))).result;
+        const ceiling = debugMode ? ceilingFromMode(debugMode, timeoutMs, args) : Math.min(timeoutMs ?? DAEMON_CALL_TIMEOUT_MS, 6e5);
+        const deadline = ceiling === null ? null : ceiling + this.callMarginMs;
+        return (await this.request("POST", `/browsers/${encodeURIComponent(browserId)}/call`, deadline, body, UPLOAD_TOOLS.has(tool), callId)).result;
       }
     };
   }
 });
 
 // src/texts.ts
-var SERVER_NAME, REF, REF_OR_POINT, X, Y, COMMON_PARAMS, BRIDGE_TOOL_TEXTS, BROWSER_TEXTS, DAEMON_TEXTS;
+var SERVER_NAME, SERVER_INSTRUCTIONS, REF, REF_OR_POINT, X, Y, COMMON_PARAMS, BRIDGE_TOOL_TEXTS, BROWSER_TEXTS, DAEMON_TEXTS;
 var init_texts = __esm({
   "src/texts.ts"() {
     "use strict";
     SERVER_NAME = "atrium-bridge";
+    SERVER_INSTRUCTIONS = 'When a call fails, keep the call id from the error ("(call <id>)"). Run diagnose with that callId to see the stage where it stopped, the tab queue and the debug mode; diagnose answers even while the tab is stuck. A timeout error (CALL_TIMEOUT) already says the stage, the last browser command and the position in the tab queue. If the error says "debug dump: <folder>", read the files there: the screenshot, console.json, target.json and call.json. If the debug mode is off and this trace is not enough, ask the user to turn it on in the options page of the Bridge extension in their browser (section "Depura\xE7\xE3o") and repeat the call.';
     REF = 'Element ref from the latest snapshot of this tab (for example "e12").';
     REF_OR_POINT = `${REF} Alternatively give x and y instead of ref.`;
     X = "Horizontal pixel coordinate in the viewport (use together with y, instead of ref).";
@@ -1073,6 +1114,12 @@ var init_texts = __esm({
           width: "Viewport width in CSS pixels (1 to 10000).",
           height: "Viewport height in CSS pixels (1 to 10000).",
           reset: "Remove the emulation and go back to the real window size (width and height are then ignored)."
+        }
+      },
+      diagnose: {
+        description: 'Diagnose stuck or slow calls in a browser. It does not wait in the tab queue, so it answers even while a tab is stuck on another call. Returns { browser, daemon: { pending: [{ callId, tool, ageMs }] }, extension: { tabs: [{ tabId, active, windowFocused, windowState, running?, waiting: [...] }], other: [...], history: [...] } }. Each call shows its stage (queued, attach, aim, pointer, focus, typing, waiting...), how long it has been there, the last CDP command it sent and whether the browser has answered it, and, for a call waiting in the tab queue, the call ahead of it. history lists the last calls that finished (tool, duration, ok or error code, the stage where it ended). Every error carries "(call <id>)": pass that id as callId to see only that call. No arguments, typed text or URLs are ever shown.',
+        params: {
+          callId: 'Only this call: the id from "(call <id>)" in an error, or from a previous diagnose.'
         }
       },
       evaluate: {
@@ -1701,7 +1748,7 @@ var init_ensure = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/util.js
+// node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -2434,7 +2481,7 @@ function constantCatch(value) {
 }
 var Cached, EVALUATING, captureStackTrace, allowsEval, getParsedType, propertyKeyTypes, primitiveTypes, NUMBER_FORMAT_RANGES, BIGINT_FORMAT_RANGES, highSurrogate, Class, installing, broke, breaker, CONSTANT_CATCH;
 var init_util = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/util.js"() {
+  "node_modules/zod/v4/core/util.js"() {
     init_core();
     Cached = class {
       constructor(getter) {
@@ -2549,7 +2596,7 @@ var init_util = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/core.js
+// node_modules/zod/v4/core/core.js
 function newError(Definition) {
   const E = _E;
   if (E) {
@@ -2652,7 +2699,7 @@ function config(newConfig) {
 }
 var _a, _zodDesc, _E, $ZodAsyncError, $ZodEncodeError, globalConfig;
 var init_core = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/core.js"() {
+  "node_modules/zod/v4/core/core.js"() {
     init_util();
     _zodDesc = { value: void 0, enumerable: false };
     _E = "captureStackTrace" in Error ? Error : null;
@@ -2672,7 +2719,7 @@ var init_core = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/errors.js
+// node_modules/zod/v4/core/errors.js
 function _getMessage() {
   const internals = this._zod;
   internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -2753,7 +2800,7 @@ function formatError(error2, mapper = (issue2) => issue2.message) {
 }
 var _messageDesc, _issuesDesc, _installedToString, initializer, $ZodError, $ZodRealError;
 var init_errors2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/errors.js"() {
+  "node_modules/zod/v4/core/errors.js"() {
     init_core();
     init_util();
     _messageDesc = {
@@ -2794,7 +2841,7 @@ var init_errors2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/parse.js
+// node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
   return { callee: params?.callee ?? callee, Err: params?.Err };
 }
@@ -2834,7 +2881,7 @@ function validateFallback(schema, value, _ctx) {
 }
 var _parse, _parseAsync, _safeParse, safeParse, _safeParseAsync, COMPILE_INVALID, COMPILE_FALLBACK, validate, validateAsync, _encode, _decode, _encodeAsync, _decodeAsync, _safeEncode, _safeDecode, _safeEncodeAsync, _safeDecodeAsync;
 var init_parse = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/parse.js"() {
+  "node_modules/zod/v4/core/parse.js"() {
     init_core();
     init_errors2();
     init_util();
@@ -2951,7 +2998,7 @@ var init_parse = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/regexes.js
+// node_modules/zod/v4/core/regexes.js
 function nanoidOfLength(length) {
   return new RegExp(`^[a-zA-Z0-9_-]{${length}}$`);
 }
@@ -2979,7 +3026,7 @@ function datetime(args) {
 }
 var cuid, cuid2, ulid, xid, ksuid, nanoid, duration, guid, uuid, email, _emoji, ipv4, ipv6, cidrv4, cidrv6, base64, base64url, httpProtocol, e164, dateSource, date, anyString, integer, number, boolean, _null, lowercase, uppercase;
 var init_regexes = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/regexes.js"() {
+  "node_modules/zod/v4/core/regexes.js"() {
     cuid = /^[cC][0-9a-z]{6,}$/;
     cuid2 = /^[0-9a-z]+$/;
     ulid = /^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$/;
@@ -3015,10 +3062,10 @@ var init_regexes = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/checks.js
+// node_modules/zod/v4/core/checks.js
 var $ZodCheck, _whenHasLength, numericOriginMap, $ZodCheckLessThan, $ZodCheckGreaterThan, $ZodCheckMultipleOf, $ZodCheckNumberFormat, $ZodCheckMaxLength, $ZodCheckMinLength, $ZodCheckLengthEquals, $ZodCheckStringFormat, $ZodCheckRegex, $ZodCheckLowerCase, $ZodCheckUpperCase, $ZodCheckIncludes, $ZodCheckStartsWith, $ZodCheckEndsWith, $ZodCheckOverwrite;
 var init_checks = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/checks.js"() {
+  "node_modules/zod/v4/core/checks.js"() {
     init_core();
     init_regexes();
     init_util();
@@ -3343,10 +3390,10 @@ var init_checks = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/doc.js
+// node_modules/zod/v4/core/doc.js
 var Doc;
 var init_doc = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/doc.js"() {
+  "node_modules/zod/v4/core/doc.js"() {
     Doc = class {
       constructor(args = [], closed = {}) {
         this.content = [];
@@ -3389,10 +3436,10 @@ ${content.join("\n")}
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/versions.js
+// node_modules/zod/v4/core/versions.js
 var version;
 var init_versions = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/versions.js"() {
+  "node_modules/zod/v4/core/versions.js"() {
     version = {
       major: 4,
       minor: 6,
@@ -3401,7 +3448,7 @@ var init_versions = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/schemas.js
+// node_modules/zod/v4/core/schemas.js
 async function validateAsync2(inst, value) {
   const ctx = { async: true };
   return toStandardResult(await inst._zod.run({ value, issues: [] }, ctx), ctx);
@@ -3836,7 +3883,7 @@ function handleRefineResult(result, payload, input, inst) {
 }
 var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
 var init_schemas = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/schemas.js"() {
+  "node_modules/zod/v4/core/schemas.js"() {
     init_checks();
     init_core();
     init_doc();
@@ -5056,7 +5103,7 @@ var init_schemas = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/memoizer.js
+// node_modules/zod/v4/core/memoizer.js
 function isRef(value) {
   return value !== null && typeof value === "object";
 }
@@ -5217,7 +5264,7 @@ function isBackEdge(ctx, value) {
 }
 var $ZodCyclicError, STATE, NO_ISSUES, recursive, NONE, ASSUMED, PROVEN, handoff, open, memo;
 var init_memoizer = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/memoizer.js"() {
+  "node_modules/zod/v4/core/memoizer.js"() {
     init_util();
     $ZodCyclicError = class extends Error {
       constructor() {
@@ -5335,7 +5382,7 @@ var init_memoizer = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/locales/en.js
+// node_modules/zod/v4/locales/en.js
 function en_default() {
   return {
     localeError: error()
@@ -5343,7 +5390,7 @@ function en_default() {
 }
 var error;
 var init_en = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/locales/en.js"() {
+  "node_modules/zod/v4/locales/en.js"() {
     init_util();
     error = () => {
       const Sizable = {
@@ -5466,19 +5513,19 @@ var init_en = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/locales/index.js
+// node_modules/zod/v4/locales/index.js
 var init_locales = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/locales/index.js"() {
+  "node_modules/zod/v4/locales/index.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/registries.js
+// node_modules/zod/v4/core/registries.js
 function registry() {
   return new $ZodRegistry();
 }
 var _a2, $ZodRegistry, globalRegistry;
 var init_registries = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/registries.js"() {
+  "node_modules/zod/v4/core/registries.js"() {
     $ZodRegistry = class {
       constructor() {
         this._map = /* @__PURE__ */ new WeakMap();
@@ -5524,16 +5571,16 @@ var init_registries = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/compile.js
+// node_modules/zod/v4/core/compile.js
 var INVALID, FALLBACK_FLAG;
 var init_compile = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/compile.js"() {
+  "node_modules/zod/v4/core/compile.js"() {
     INVALID = Symbol.for("zod.compile.invalid");
     FALLBACK_FLAG = Symbol.for("zod.compile.fallback");
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/api.js
+// node_modules/zod/v4/core/api.js
 function snapshotChecks(def3) {
   if (def3.checks)
     def3.checks = [...def3.checks];
@@ -6060,13 +6107,13 @@ function _check(fn, params) {
   return ch;
 }
 var init_api = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/api.js"() {
+  "node_modules/zod/v4/core/api.js"() {
     init_checks();
     init_util();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/to-json-schema.js
+// node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
   for (const source of sources) {
     for (const key of Reflect.ownKeys(source)) {
@@ -6102,13 +6149,13 @@ function initializeContext(params) {
     external: params?.external ?? void 0
   };
 }
-function handleUnrepresentable(schema, ctx, json, params, message) {
+function handleUnrepresentable(schema, ctx, json2, params, message) {
   const result = typeof ctx.unrepresentable === "function" ? ctx.unrepresentable({ zodSchema: schema, path: params.path, message }) : ctx.unrepresentable;
   if (result === "any")
     return false;
   if (result === void 0 || result === "throw")
     throw new Error(message);
-  Object.assign(json, result);
+  Object.assign(json2, result);
   return true;
 }
 function processSchema(schema, ctx, _params = { path: [], schemaPath: [] }) {
@@ -6342,12 +6389,12 @@ function foldObjects(members2) {
   }
   return folded;
 }
-function foldIntersection(json) {
-  const allOf = json.allOf;
+function foldIntersection(json2) {
+  const allOf = json2.allOf;
   if (!Array.isArray(allOf) || allOf.length < 2)
     return;
   for (const key of FOLDABLE_KEYS)
-    if (key in json)
+    if (key in json2)
       return;
   const unions = allOf.filter((m) => UNION_KEYS.some((k) => Array.isArray(m[k])));
   let folded = null;
@@ -6366,8 +6413,8 @@ function foldIntersection(json) {
   }
   if (!folded)
     return;
-  delete json.allOf;
-  assignProps(json, folded);
+  delete json2.allOf;
+  assignProps(json2, folded);
 }
 function finalize(ctx, schema) {
   const root = ctx.seen.get(schema);
@@ -6449,20 +6496,20 @@ function finalize(ctx, schema) {
     if (ctx.intersections.length) {
       const carriers = /* @__PURE__ */ new Map();
       for (const seen of ctx.seen.values()) {
-        for (const json of [seen.schema, seen.def]) {
-          const allOf = json?.allOf;
+        for (const json2 of [seen.schema, seen.def]) {
+          const allOf = json2?.allOf;
           if (!Array.isArray(allOf))
             continue;
           const existing = carriers.get(allOf);
           if (existing)
-            existing.push(json);
+            existing.push(json2);
           else
-            carriers.set(allOf, [json]);
+            carriers.set(allOf, [json2]);
         }
       }
       for (const allOf of ctx.intersections) {
-        for (const json of carriers.get(allOf) ?? [])
-          foldIntersection(json);
+        for (const json2 of carriers.get(allOf) ?? [])
+          foldIntersection(json2);
       }
     }
   }
@@ -6582,7 +6629,7 @@ function isTransforming(_schema, _ctx) {
 }
 var FOLDABLE_KEYS, UNION_KEYS, createToJSONSchemaMethod, createStandardJSONSchemaMethod;
 var init_to_json_schema = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/to-json-schema.js"() {
+  "node_modules/zod/v4/core/to-json-schema.js"() {
     init_registries();
     init_util();
     FOLDABLE_KEYS = /* @__PURE__ */ new Set(["type", "properties", "required", "additionalProperties"]);
@@ -6603,7 +6650,7 @@ var init_to_json_schema = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/json-schema-processors.js
+// node_modules/zod/v4/core/json-schema-processors.js
 function aggregateChecks(schema) {
   const agg = {};
   const def3 = schema._zod.def;
@@ -6642,31 +6689,31 @@ function inputOptin(schema) {
   }
   return schema._zod.optin;
 }
-function stringifyKeyNames(bySchema, json, visited) {
-  if (json.$ref) {
-    if (visited.has(json))
-      return json;
-    visited.add(json);
-    const def3 = bySchema.get(json)?.def;
+function stringifyKeyNames(bySchema, json2, visited) {
+  if (json2.$ref) {
+    if (visited.has(json2))
+      return json2;
+    visited.add(json2);
+    const def3 = bySchema.get(json2)?.def;
     if (!def3)
-      return json;
+      return json2;
     const inlined = stringifyKeyNames(bySchema, def3, visited);
-    return inlined === def3 ? json : inlined;
+    return inlined === def3 ? json2 : inlined;
   }
   for (const keyword of ["anyOf", "oneOf"]) {
-    const branches = json[keyword];
+    const branches = json2[keyword];
     if (!Array.isArray(branches))
       continue;
     const mapped = branches.map((branch) => stringifyKeyNames(bySchema, branch, visited));
     if (mapped.some((branch, i) => branch !== branches[i]))
-      json = { ...json, [keyword]: mapped };
+      json2 = { ...json2, [keyword]: mapped };
   }
-  const types = Array.isArray(json.type) ? json.type : [json.type];
+  const types = Array.isArray(json2.type) ? json2.type : [json2.type];
   const numericType = !types.includes("string") && types.some((t) => t === "number" || t === "integer");
-  const values = json.enum ?? (json.const !== void 0 ? [json.const] : void 0);
+  const values = json2.enum ?? (json2.const !== void 0 ? [json2.const] : void 0);
   if (!numericType && !values?.some((v) => typeof v === "number"))
-    return json;
-  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id, ...rest2 } = json;
+    return json2;
+  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id, ...rest2 } = json2;
   if (rest2.enum)
     rest2.enum = rest2.enum.map((v) => typeof v === "number" ? String(v) : v);
   else if (typeof rest2.const === "number")
@@ -6704,7 +6751,7 @@ function rewriteKeyNames(ctx) {
     }
   }
 }
-function serializeDefaultValue(value, schema, ctx, json, params) {
+function serializeDefaultValue(value, schema, ctx, json2, params) {
   let unrepresentable = false;
   const serialized = JSON.stringify(value, (_, val) => {
     if (typeof val !== "bigint")
@@ -6714,12 +6761,12 @@ function serializeDefaultValue(value, schema, ctx, json, params) {
   });
   if (!unrepresentable)
     return JSON.parse(serialized);
-  handleUnrepresentable(schema, ctx, json, params, "BigInt defaults cannot be represented in JSON Schema");
+  handleUnrepresentable(schema, ctx, json2, params, "BigInt defaults cannot be represented in JSON Schema");
   return UNREPRESENTABLE_DEFAULT;
 }
 var narrowMin, narrowMax, narrowBoth, addDivisor, addPattern, intersectMime, setFormat, minContributor, maxContributor, formatContributor, contributors, formatMap, exactPatterns, exactPattern, stringProcessor, numberProcessor, booleanProcessor, nullProcessor, neverProcessor, unknownProcessor, enumProcessor, literalProcessor, customProcessor, transformProcessor, arrayProcessor, objectProcessor, unionProcessor, intersectionProcessor, pendingRecords, recordProcessor, nullableProcessor, nonoptionalProcessor, UNREPRESENTABLE_DEFAULT, defaultProcessor, prefaultProcessor, catchProcessor, pipeProcessor, readonlyProcessor, optionalProcessor;
 var init_json_schema_processors = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/json-schema-processors.js"() {
+  "node_modules/zod/v4/core/json-schema-processors.js"() {
     init_regexes();
     init_schemas();
     init_to_json_schema();
@@ -6798,29 +6845,29 @@ var init_json_schema_processors = __esm({
     ]);
     exactPattern = (p) => exactPatterns.get(p) ?? p;
     stringProcessor = (schema, ctx, _json, _params) => {
-      const json = _json;
-      json.type = "string";
+      const json2 = _json;
+      json2.type = "string";
       const { minimum, maximum, format, patterns, contentEncoding, laxFormat } = aggregateChecks(schema);
       if (typeof minimum === "number")
-        json.minLength = minimum;
+        json2.minLength = minimum;
       if (typeof maximum === "number")
-        json.maxLength = maximum;
+        json2.maxLength = maximum;
       if (format) {
-        json.format = formatMap[format] ?? format;
-        if (json.format === "")
-          delete json.format;
+        json2.format = formatMap[format] ?? format;
+        if (json2.format === "")
+          delete json2.format;
         if (format === "time" || laxFormat) {
-          delete json.format;
+          delete json2.format;
         }
       }
       if (contentEncoding)
-        json.contentEncoding = contentEncoding;
+        json2.contentEncoding = contentEncoding;
       if (patterns && patterns.size > 0) {
         const patternList = [...patterns].map(exactPattern);
         if (patternList.length === 1)
-          json.pattern = patternList[0].source;
+          json2.pattern = patternList[0].source;
         else if (patternList.length > 1) {
-          json.allOf = [
+          json2.allOf = [
             ...patternList.map((regex) => ({
               ...ctx.target === "draft-07" || ctx.target === "draft-04" || ctx.target === "openapi-3.0" ? { type: "string" } : {},
               pattern: regex.source
@@ -6830,31 +6877,31 @@ var init_json_schema_processors = __esm({
       }
     };
     numberProcessor = (schema, ctx, _json, params) => {
-      const json = _json;
+      const json2 = _json;
       const { minimum, maximum, multipleOf, exclusiveMaximum, exclusiveMinimum, isInt } = aggregateChecks(schema);
-      json.type = isInt ? "integer" : "number";
+      json2.type = isInt ? "integer" : "number";
       const exMin = typeof exclusiveMinimum === "number" && exclusiveMinimum >= (minimum ?? Number.NEGATIVE_INFINITY);
       const exMax = typeof exclusiveMaximum === "number" && exclusiveMaximum <= (maximum ?? Number.POSITIVE_INFINITY);
       const legacy = ctx.target === "draft-04" || ctx.target === "openapi-3.0";
       if (exMin) {
         if (legacy) {
-          json.minimum = exclusiveMinimum;
-          json.exclusiveMinimum = true;
+          json2.minimum = exclusiveMinimum;
+          json2.exclusiveMinimum = true;
         } else {
-          json.exclusiveMinimum = exclusiveMinimum;
+          json2.exclusiveMinimum = exclusiveMinimum;
         }
       } else if (typeof minimum === "number") {
-        json.minimum = minimum;
+        json2.minimum = minimum;
       }
       if (exMax) {
         if (legacy) {
-          json.maximum = exclusiveMaximum;
-          json.exclusiveMaximum = true;
+          json2.maximum = exclusiveMaximum;
+          json2.exclusiveMaximum = true;
         } else {
-          json.exclusiveMaximum = exclusiveMaximum;
+          json2.exclusiveMaximum = exclusiveMaximum;
         }
       } else if (typeof maximum === "number") {
-        json.maximum = maximum;
+        json2.maximum = maximum;
       }
       if (multipleOf) {
         const divisors = /* @__PURE__ */ new Set();
@@ -6862,58 +6909,58 @@ var init_json_schema_processors = __esm({
           if (Number.isFinite(divisor) && divisor !== 0)
             divisors.add(Math.abs(divisor));
           else
-            handleUnrepresentable(schema, ctx, json, params, `A multipleOf divisor of ${divisor} cannot be represented in JSON Schema`);
+            handleUnrepresentable(schema, ctx, json2, params, `A multipleOf divisor of ${divisor} cannot be represented in JSON Schema`);
         }
         const [first, ...rest2] = divisors;
         if (first !== void 0)
-          json.multipleOf = first;
+          json2.multipleOf = first;
         if (rest2.length)
-          json.allOf = [...json.allOf ?? [], ...rest2.map((m) => ({ multipleOf: m }))];
+          json2.allOf = [...json2.allOf ?? [], ...rest2.map((m) => ({ multipleOf: m }))];
       }
     };
-    booleanProcessor = (_schema, _ctx, json, _params) => {
-      json.type = "boolean";
+    booleanProcessor = (_schema, _ctx, json2, _params) => {
+      json2.type = "boolean";
     };
-    nullProcessor = (_schema, ctx, json, _params) => {
+    nullProcessor = (_schema, ctx, json2, _params) => {
       if (ctx.target === "openapi-3.0") {
-        json.type = "string";
-        json.nullable = true;
-        json.enum = [null];
+        json2.type = "string";
+        json2.nullable = true;
+        json2.enum = [null];
       } else {
-        json.type = "null";
+        json2.type = "null";
       }
     };
-    neverProcessor = (_schema, _ctx, json, _params) => {
-      json.not = {};
+    neverProcessor = (_schema, _ctx, json2, _params) => {
+      json2.not = {};
     };
     unknownProcessor = (_schema, _ctx, _json, _params) => {
     };
-    enumProcessor = (schema, _ctx, json, _params) => {
+    enumProcessor = (schema, _ctx, json2, _params) => {
       const def3 = schema._zod.def;
       const values = getEnumValues(def3.entries);
       if (values.length === 0) {
-        json.not = {};
+        json2.not = {};
         return;
       }
       if (values.every((v) => typeof v === "number"))
-        json.type = "number";
+        json2.type = "number";
       if (values.every((v) => typeof v === "string"))
-        json.type = "string";
-      json.enum = values;
+        json2.type = "string";
+      json2.enum = values;
     };
-    literalProcessor = (schema, ctx, json, params) => {
+    literalProcessor = (schema, ctx, json2, params) => {
       const def3 = schema._zod.def;
       if (def3.values.length === 0) {
-        json.not = {};
+        json2.not = {};
         return;
       }
       const vals = [];
       for (const val of def3.values) {
         if (val === void 0) {
-          if (handleUnrepresentable(schema, ctx, json, params, "Literal `undefined` cannot be represented in JSON Schema"))
+          if (handleUnrepresentable(schema, ctx, json2, params, "Literal `undefined` cannot be represented in JSON Schema"))
             return;
         } else if (typeof val === "bigint") {
-          if (handleUnrepresentable(schema, ctx, json, params, "BigInt literals cannot be represented in JSON Schema"))
+          if (handleUnrepresentable(schema, ctx, json2, params, "BigInt literals cannot be represented in JSON Schema"))
             return;
           vals.push(Number(val));
         } else {
@@ -6923,56 +6970,56 @@ var init_json_schema_processors = __esm({
       if (vals.length === 0) {
       } else if (vals.length === 1) {
         const val = vals[0];
-        json.type = val === null ? "null" : typeof val;
+        json2.type = val === null ? "null" : typeof val;
         if (ctx.target === "draft-04" || ctx.target === "openapi-3.0") {
-          json.enum = [val];
+          json2.enum = [val];
         } else {
-          json.const = val;
+          json2.const = val;
         }
       } else {
         if (vals.every((v) => typeof v === "number"))
-          json.type = "number";
+          json2.type = "number";
         if (vals.every((v) => typeof v === "string"))
-          json.type = "string";
+          json2.type = "string";
         if (vals.every((v) => typeof v === "boolean"))
-          json.type = "boolean";
+          json2.type = "boolean";
         if (vals.every((v) => v === null))
-          json.type = "null";
-        json.enum = vals;
+          json2.type = "null";
+        json2.enum = vals;
       }
     };
-    customProcessor = (schema, ctx, json, params) => {
-      handleUnrepresentable(schema, ctx, json, params, "Custom types cannot be represented in JSON Schema");
+    customProcessor = (schema, ctx, json2, params) => {
+      handleUnrepresentable(schema, ctx, json2, params, "Custom types cannot be represented in JSON Schema");
     };
-    transformProcessor = (schema, ctx, json, params) => {
-      handleUnrepresentable(schema, ctx, json, params, "Transforms cannot be represented in JSON Schema");
+    transformProcessor = (schema, ctx, json2, params) => {
+      handleUnrepresentable(schema, ctx, json2, params, "Transforms cannot be represented in JSON Schema");
     };
     arrayProcessor = (schema, ctx, _json, params) => {
-      const json = _json;
+      const json2 = _json;
       const def3 = schema._zod.def;
       const { minimum, maximum } = aggregateChecks(schema);
       if (typeof minimum === "number")
-        json.minItems = minimum;
+        json2.minItems = minimum;
       if (typeof maximum === "number")
-        json.maxItems = maximum;
-      json.type = "array";
-      json.items = processSchema(def3.element, ctx, {
+        json2.maxItems = maximum;
+      json2.type = "array";
+      json2.items = processSchema(def3.element, ctx, {
         ...params,
         path: [...params.path, "items"]
       });
     };
     objectProcessor = (schema, ctx, _json, params) => {
-      const json = _json;
+      const json2 = _json;
       const def3 = schema._zod.def;
       const shape = def3.shape;
       const symbolKeys = Object.getOwnPropertySymbols(shape);
-      if (symbolKeys.length && handleUnrepresentable(schema, ctx, json, params, "Symbol keys cannot be represented in JSON Schema")) {
+      if (symbolKeys.length && handleUnrepresentable(schema, ctx, json2, params, "Symbol keys cannot be represented in JSON Schema")) {
         return;
       }
-      json.type = "object";
-      json.properties = {};
+      json2.type = "object";
+      json2.properties = {};
       for (const key in shape) {
-        assignProp(json.properties, key, processSchema(shape[key], ctx, {
+        assignProp(json2.properties, key, processSchema(shape[key], ctx, {
           ...params,
           path: [...params.path, "properties", key]
         }));
@@ -6985,21 +7032,21 @@ var init_json_schema_processors = __esm({
         }
       }
       if (requiredKeys.length > 0) {
-        json.required = requiredKeys;
+        json2.required = requiredKeys;
       }
       if (def3.catchall?._zod.def.type === "never") {
-        json.additionalProperties = false;
+        json2.additionalProperties = false;
       } else if (!def3.catchall) {
         if (ctx.io === "output")
-          json.additionalProperties = false;
+          json2.additionalProperties = false;
       } else if (def3.catchall) {
-        json.additionalProperties = processSchema(def3.catchall, ctx, {
+        json2.additionalProperties = processSchema(def3.catchall, ctx, {
           ...params,
           path: [...params.path, "additionalProperties"]
         });
       }
     };
-    unionProcessor = (schema, ctx, json, params) => {
+    unionProcessor = (schema, ctx, json2, params) => {
       const def3 = schema._zod.def;
       const isExclusive = def3.inclusive === false;
       const options = def3.options.map((x, i) => processSchema(x, ctx, {
@@ -7007,12 +7054,12 @@ var init_json_schema_processors = __esm({
         path: [...params.path, isExclusive ? "oneOf" : "anyOf", i]
       }));
       if (isExclusive) {
-        json.oneOf = options;
+        json2.oneOf = options;
       } else {
-        json.anyOf = options;
+        json2.anyOf = options;
       }
     };
-    intersectionProcessor = (schema, ctx, json, params) => {
+    intersectionProcessor = (schema, ctx, json2, params) => {
       const def3 = schema._zod.def;
       const a = processSchema(def3.left, ctx, {
         ...params,
@@ -7027,14 +7074,14 @@ var init_json_schema_processors = __esm({
         ...isSimpleIntersection(a) ? a.allOf : [a],
         ...isSimpleIntersection(b) ? b.allOf : [b]
       ];
-      json.allOf = allOf;
+      json2.allOf = allOf;
       ctx.intersections.push(allOf);
     };
     pendingRecords = /* @__PURE__ */ new WeakMap();
     recordProcessor = (schema, ctx, _json, params) => {
-      const json = _json;
+      const json2 = _json;
       const def3 = schema._zod.def;
-      json.type = "object";
+      json2.type = "object";
       const keyType = def3.keyType;
       const patterns = aggregateChecks(keyType).patterns;
       if (def3.mode === "loose" && patterns && patterns.size > 0) {
@@ -7042,13 +7089,13 @@ var init_json_schema_processors = __esm({
           ...params,
           path: [...params.path, "patternProperties", "*"]
         });
-        json.patternProperties = {};
+        json2.patternProperties = {};
         for (const pattern of patterns) {
-          assignProp(json.patternProperties, exactPattern(pattern).source, valueSchema);
+          assignProp(json2.patternProperties, exactPattern(pattern).source, valueSchema);
         }
       } else {
         if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") {
-          json.propertyNames = processSchema(def3.keyType, ctx, {
+          json2.propertyNames = processSchema(def3.keyType, ctx, {
             ...params,
             path: [...params.path, "propertyNames"]
           });
@@ -7060,7 +7107,7 @@ var init_json_schema_processors = __esm({
           }
           pending.push(schema);
         }
-        json.additionalProperties = processSchema(def3.valueType, ctx, {
+        json2.additionalProperties = processSchema(def3.valueType, ctx, {
           ...params,
           path: [...params.path, "additionalProperties"]
         });
@@ -7070,19 +7117,19 @@ var init_json_schema_processors = __esm({
       if (keyValues && !def3.partial && !omittableOnInput) {
         const validKeyValues = [...keyValues].filter((v) => typeof v === "string" || typeof v === "number");
         if (validKeyValues.length > 0) {
-          json.required = validKeyValues.map(String);
+          json2.required = validKeyValues.map(String);
         }
       }
     };
-    nullableProcessor = (schema, ctx, json, params) => {
+    nullableProcessor = (schema, ctx, json2, params) => {
       const def3 = schema._zod.def;
       const inner = processSchema(def3.innerType, ctx, params);
       const seen = ctx.seen.get(schema);
       if (ctx.target === "openapi-3.0") {
         seen.ref = def3.innerType;
-        json.nullable = true;
+        json2.nullable = true;
       } else {
-        json.anyOf = [inner, { type: "null" }];
+        json2.anyOf = [inner, { type: "null" }];
       }
     };
     nonoptionalProcessor = (schema, ctx, _json, params) => {
@@ -7092,27 +7139,27 @@ var init_json_schema_processors = __esm({
       seen.ref = def3.innerType;
     };
     UNREPRESENTABLE_DEFAULT = Symbol();
-    defaultProcessor = (schema, ctx, json, params) => {
+    defaultProcessor = (schema, ctx, json2, params) => {
       const def3 = schema._zod.def;
       processSchema(def3.innerType, ctx, params);
       const seen = ctx.seen.get(schema);
       seen.ref = def3.innerType;
-      const value = serializeDefaultValue(def3.defaultValue, schema, ctx, json, params);
+      const value = serializeDefaultValue(def3.defaultValue, schema, ctx, json2, params);
       if (value !== UNREPRESENTABLE_DEFAULT)
-        json.default = value;
+        json2.default = value;
     };
-    prefaultProcessor = (schema, ctx, json, params) => {
+    prefaultProcessor = (schema, ctx, json2, params) => {
       const def3 = schema._zod.def;
       processSchema(def3.innerType, ctx, params);
       const seen = ctx.seen.get(schema);
       seen.ref = def3.innerType;
       if (ctx.io !== "input")
         return;
-      const value = serializeDefaultValue(def3.defaultValue, schema, ctx, json, params);
+      const value = serializeDefaultValue(def3.defaultValue, schema, ctx, json2, params);
       if (value !== UNREPRESENTABLE_DEFAULT)
-        json._prefault = value;
+        json2._prefault = value;
     };
-    catchProcessor = (schema, ctx, json, params) => {
+    catchProcessor = (schema, ctx, json2, params) => {
       const def3 = schema._zod.def;
       processSchema(def3.innerType, ctx, params);
       const seen = ctx.seen.get(schema);
@@ -7121,10 +7168,10 @@ var init_json_schema_processors = __esm({
       try {
         catchValue = def3.catchValue(void 0);
       } catch {
-        handleUnrepresentable(schema, ctx, json, params, "Dynamic catch values are not supported in JSON Schema");
+        handleUnrepresentable(schema, ctx, json2, params, "Dynamic catch values are not supported in JSON Schema");
         return;
       }
-      json.default = catchValue;
+      json2.default = catchValue;
     };
     pipeProcessor = (schema, ctx, _json, params) => {
       const def3 = schema._zod.def;
@@ -7134,12 +7181,12 @@ var init_json_schema_processors = __esm({
       const seen = ctx.seen.get(schema);
       seen.ref = innerType;
     };
-    readonlyProcessor = (schema, ctx, json, params) => {
+    readonlyProcessor = (schema, ctx, json2, params) => {
       const def3 = schema._zod.def;
       processSchema(def3.innerType, ctx, params);
       const seen = ctx.seen.get(schema);
       seen.ref = def3.innerType;
-      json.readOnly = true;
+      json2.readOnly = true;
     };
     optionalProcessor = (schema, ctx, _json, params) => {
       const def3 = schema._zod.def;
@@ -7150,15 +7197,15 @@ var init_json_schema_processors = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/json-schema.js
+// node_modules/zod/v4/core/json-schema.js
 var init_json_schema = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/json-schema.js"() {
+  "node_modules/zod/v4/core/json-schema.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/index.js
+// node_modules/zod/v4/core/index.js
 var init_core2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/core/index.js"() {
+  "node_modules/zod/v4/core/index.js"() {
     init_core();
     init_parse();
     init_errors2();
@@ -7178,40 +7225,40 @@ var init_core2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/parse.js
+// node_modules/zod/v4/mini/parse.js
 var init_parse2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/parse.js"() {
+  "node_modules/zod/v4/mini/parse.js"() {
     init_core2();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/schemas.js
+// node_modules/zod/v4/mini/schemas.js
 var init_schemas2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/schemas.js"() {
+  "node_modules/zod/v4/mini/schemas.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/checks.js
+// node_modules/zod/v4/mini/checks.js
 var init_checks2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/checks.js"() {
+  "node_modules/zod/v4/mini/checks.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/iso.js
+// node_modules/zod/v4/mini/iso.js
 var init_iso = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/iso.js"() {
+  "node_modules/zod/v4/mini/iso.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/coerce.js
+// node_modules/zod/v4/mini/coerce.js
 var init_coerce = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/coerce.js"() {
+  "node_modules/zod/v4/mini/coerce.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/external.js
+// node_modules/zod/v4/mini/external.js
 var init_external = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/mini/external.js"() {
+  "node_modules/zod/v4/mini/external.js"() {
     init_core2();
     init_parse2();
     init_schemas2();
@@ -7222,14 +7269,14 @@ var init_external = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4-mini/index.js
+// node_modules/zod/v4-mini/index.js
 var init_v4_mini = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4-mini/index.js"() {
+  "node_modules/zod/v4-mini/index.js"() {
     init_external();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
   const schema = s;
   return !!schema._zod;
@@ -7292,19 +7339,19 @@ function getLiteralValue(schema) {
   return void 0;
 }
 var init_zod_compat = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js"() {
     init_v4_mini();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/checks.js
+// node_modules/zod/v4/classic/checks.js
 var init_checks3 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/checks.js"() {
+  "node_modules/zod/v4/classic/checks.js"() {
     init_core2();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/errors.js
+// node_modules/zod/v4/classic/errors.js
 function _lazyMethod(proto, key, make) {
   Object.defineProperty(proto, key, {
     configurable: true,
@@ -7321,7 +7368,7 @@ function _lazyMethod(proto, key, make) {
 }
 var _installedErrorProtos, initializer2, ZodRealError;
 var init_errors3 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/errors.js"() {
+  "node_modules/zod/v4/classic/errors.js"() {
     init_core2();
     init_core2();
     init_util();
@@ -7357,10 +7404,10 @@ var init_errors3 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/parse.js
+// node_modules/zod/v4/classic/parse.js
 var parse2, parseAsync2, safeParse3, safeParseAsync2, encode2, decode2, encodeAsync2, decodeAsync2, safeEncode2, safeDecode2, safeEncodeAsync2, safeDecodeAsync2;
 var init_parse3 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/parse.js"() {
+  "node_modules/zod/v4/classic/parse.js"() {
     init_core2();
     init_errors3();
     init_core2();
@@ -7379,7 +7426,7 @@ var init_parse3 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/schemas.js
+// node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
   if (!globalConfig.localeError)
     config(en_default());
@@ -7569,7 +7616,7 @@ function preprocess(fn, schema) {
 }
 var ZodType, _ZodString, ZodString, ZodStringFormat, ZodISODateTime, ZodISODate, ZodISOTime, ZodISODuration, ZodEmail, ZodGUID, ZodUUID, ZodURL, ZodEmoji, ZodNanoID, ZodCUID, ZodCUID2, ZodULID, ZodXID, ZodKSUID, ZodIPv4, ZodIPv6, ZodCIDRv4, ZodCIDRv6, ZodBase64, ZodBase64URL, ZodE164, ZodJWT, ZodNumber, ZodNumberFormat, ZodBoolean, ZodNull, ZodUnknown, ZodNever, ZodArray, ZodObject, ZodUnion, ZodDiscriminatedUnion, ZodIntersection, ZodRecord, ZodEnum, ZodLiteral, ZodTransform, ZodOptional, ZodExactOptional, ZodNullable, ZodDefault, ZodPrefault, ZodNonOptional, ZodCatch, ZodPipe, ZodPreprocess, ZodReadonly, ZodCustom;
 var init_schemas3 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/schemas.js"() {
+  "node_modules/zod/v4/classic/schemas.js"() {
     init_core2();
     init_core2();
     init_json_schema_processors();
@@ -7757,7 +7804,7 @@ var init_schemas3 = __esm({
       (inst, def3) => {
         $ZodString.init(inst, def3);
         ZodType.init(inst, def3);
-        inst._zod.processJSONSchema = (ctx, json, params) => stringProcessor(inst, ctx, json, params);
+        inst._zod.processJSONSchema = (ctx, json2, params) => stringProcessor(inst, ctx, json2, params);
       },
       /* @__PURE__ */ util_exports.derived({
         format: (inst) => aggregateChecks(inst).format ?? null,
@@ -7995,7 +8042,7 @@ var init_schemas3 = __esm({
       (inst, def3) => {
         $ZodNumber.init(inst, def3);
         ZodType.init(inst, def3);
-        inst._zod.processJSONSchema = (ctx, json, params) => numberProcessor(inst, ctx, json, params);
+        inst._zod.processJSONSchema = (ctx, json2, params) => numberProcessor(inst, ctx, json2, params);
         inst.isFinite = true;
       },
       /* @__PURE__ */ util_exports.derived({
@@ -8067,28 +8114,28 @@ var init_schemas3 = __esm({
     ZodBoolean = /* @__PURE__ */ $constructor("ZodBoolean", (inst, def3) => {
       $ZodBoolean.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => booleanProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => booleanProcessor(inst, ctx, json2, params);
     });
     ZodNull = /* @__PURE__ */ $constructor("ZodNull", (inst, def3) => {
       $ZodNull.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => nullProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => nullProcessor(inst, ctx, json2, params);
     });
     ZodUnknown = /* @__PURE__ */ $constructor("ZodUnknown", (inst, def3) => {
       $ZodUnknown.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => unknownProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => unknownProcessor(inst, ctx, json2, params);
     });
     ZodNever = /* @__PURE__ */ $constructor("ZodNever", (inst, def3) => {
       $ZodNever.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => neverProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => neverProcessor(inst, ctx, json2, params);
     });
     ZodArray = /* @__PURE__ */ $constructor("ZodArray", (inst, def3) => {
       _ensureDefaultMemoizer();
       $ZodArray.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => arrayProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => arrayProcessor(inst, ctx, json2, params);
       inst.element = def3.element;
     }, {
       min(n, params) {
@@ -8111,7 +8158,7 @@ var init_schemas3 = __esm({
       _ensureDefaultMemoizer();
       $ZodObjectJIT.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => objectProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => objectProcessor(inst, ctx, json2, params);
       util_exports.installLazyProp(inst, "shape", (self) => self._zod.def.shape, false);
     }, {
       keyof() {
@@ -8160,7 +8207,7 @@ var init_schemas3 = __esm({
     ZodUnion = /* @__PURE__ */ $constructor("ZodUnion", (inst, def3) => {
       $ZodUnion.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => unionProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => unionProcessor(inst, ctx, json2, params);
       inst.options = def3.options;
     });
     ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("ZodDiscriminatedUnion", (inst, def3) => {
@@ -8170,20 +8217,20 @@ var init_schemas3 = __esm({
     ZodIntersection = /* @__PURE__ */ $constructor("ZodIntersection", (inst, def3) => {
       $ZodIntersection.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => intersectionProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => intersectionProcessor(inst, ctx, json2, params);
     });
     ZodRecord = /* @__PURE__ */ $constructor("ZodRecord", (inst, def3) => {
       _ensureDefaultMemoizer();
       $ZodRecord.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => recordProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => recordProcessor(inst, ctx, json2, params);
       inst.keyType = def3.keyType;
       inst.valueType = def3.valueType;
     });
     ZodEnum = /* @__PURE__ */ $constructor("ZodEnum", (inst, def3) => {
       $ZodEnum.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => enumProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => enumProcessor(inst, ctx, json2, params);
       inst.enum = def3.entries;
       inst.options = [...inst._zod.values];
       const keys = new Set(Object.keys(def3.entries));
@@ -8221,7 +8268,7 @@ var init_schemas3 = __esm({
     ZodLiteral = /* @__PURE__ */ $constructor("ZodLiteral", (inst, def3) => {
       $ZodLiteral.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => literalProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => literalProcessor(inst, ctx, json2, params);
       inst.values = new Set(def3.values);
       Object.defineProperty(inst, "value", {
         get() {
@@ -8236,7 +8283,7 @@ var init_schemas3 = __esm({
       _ensureDefaultMemoizer();
       $ZodTransform.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => transformProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => transformProcessor(inst, ctx, json2, params);
       inst._zod.parse = (payload, _ctx) => {
         if (_ctx.direction === "backward") {
           throw new $ZodEncodeError(inst.constructor.name);
@@ -8269,51 +8316,51 @@ var init_schemas3 = __esm({
     ZodOptional = /* @__PURE__ */ $constructor("ZodOptional", (inst, def3) => {
       $ZodOptional.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => optionalProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => optionalProcessor(inst, ctx, json2, params);
       inst.unwrap = () => inst._zod.def.innerType;
     });
     ZodExactOptional = /* @__PURE__ */ $constructor("ZodExactOptional", (inst, def3) => {
       $ZodExactOptional.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => optionalProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => optionalProcessor(inst, ctx, json2, params);
       inst.unwrap = () => inst._zod.def.innerType;
     });
     ZodNullable = /* @__PURE__ */ $constructor("ZodNullable", (inst, def3) => {
       $ZodNullable.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => nullableProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => nullableProcessor(inst, ctx, json2, params);
       inst.unwrap = () => inst._zod.def.innerType;
     });
     ZodDefault = /* @__PURE__ */ $constructor("ZodDefault", (inst, def3) => {
       $ZodDefault.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => defaultProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => defaultProcessor(inst, ctx, json2, params);
       inst.unwrap = () => inst._zod.def.innerType;
       inst.removeDefault = inst.unwrap;
     });
     ZodPrefault = /* @__PURE__ */ $constructor("ZodPrefault", (inst, def3) => {
       $ZodPrefault.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => prefaultProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => prefaultProcessor(inst, ctx, json2, params);
       inst.unwrap = () => inst._zod.def.innerType;
     });
     ZodNonOptional = /* @__PURE__ */ $constructor("ZodNonOptional", (inst, def3) => {
       $ZodNonOptional.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => nonoptionalProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => nonoptionalProcessor(inst, ctx, json2, params);
       inst.unwrap = () => inst._zod.def.innerType;
     });
     ZodCatch = /* @__PURE__ */ $constructor("ZodCatch", (inst, def3) => {
       $ZodCatch.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => catchProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => catchProcessor(inst, ctx, json2, params);
       inst.unwrap = () => inst._zod.def.innerType;
       inst.removeCatch = inst.unwrap;
     });
     ZodPipe = /* @__PURE__ */ $constructor("ZodPipe", (inst, def3) => {
       $ZodPipe.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => pipeProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => pipeProcessor(inst, ctx, json2, params);
       inst.in = def3.in;
       inst.out = def3.out;
     });
@@ -8324,27 +8371,27 @@ var init_schemas3 = __esm({
     ZodReadonly = /* @__PURE__ */ $constructor("ZodReadonly", (inst, def3) => {
       $ZodReadonly.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => readonlyProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => readonlyProcessor(inst, ctx, json2, params);
       inst.unwrap = () => inst._zod.def.innerType;
     });
     ZodCustom = /* @__PURE__ */ $constructor("ZodCustom", (inst, def3) => {
       $ZodCustom.init(inst, def3);
       ZodType.init(inst, def3);
-      inst._zod.processJSONSchema = (ctx, json, params) => customProcessor(inst, ctx, json, params);
+      inst._zod.processJSONSchema = (ctx, json2, params) => customProcessor(inst, ctx, json2, params);
     });
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/compat.js
+// node_modules/zod/v4/classic/compat.js
 var ZodFirstPartyTypeKind;
 var init_compat = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/compat.js"() {
+  "node_modules/zod/v4/classic/compat.js"() {
     /* @__PURE__ */ (function(ZodFirstPartyTypeKind2) {
     })(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/iso.js
+// node_modules/zod/v4/classic/iso.js
 var iso_exports2 = {};
 __export(iso_exports2, {
   ZodISODate: () => ZodISODate,
@@ -8369,22 +8416,22 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 var init_iso2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/iso.js"() {
+  "node_modules/zod/v4/classic/iso.js"() {
     init_core2();
     init_schemas3();
     init_schemas3();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/coerce.js
+// node_modules/zod/v4/classic/coerce.js
 var init_coerce2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/coerce.js"() {
+  "node_modules/zod/v4/classic/coerce.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/external.js
+// node_modules/zod/v4/classic/external.js
 var init_external2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/external.js"() {
+  "node_modules/zod/v4/classic/external.js"() {
     init_core2();
     init_schemas3();
     init_checks3();
@@ -8397,24 +8444,24 @@ var init_external2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/index.js
+// node_modules/zod/v4/classic/index.js
 var init_classic = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/classic/index.js"() {
+  "node_modules/zod/v4/classic/index.js"() {
     init_external2();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/index.js
+// node_modules/zod/v4/index.js
 var init_v4 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod/v4/index.js"() {
+  "node_modules/zod/v4/index.js"() {
     init_classic();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, RELATED_TASK_META_KEY, JSONRPC_VERSION, AssertObjectSchema, ProgressTokenSchema, CursorSchema, TaskCreationParamsSchema, TaskMetadataSchema, RelatedTaskMetadataSchema, RequestMetaSchema, BaseRequestParamsSchema, TaskAugmentedRequestParamsSchema, isTaskAugmentedRequestParams, RequestSchema, NotificationsParamsSchema, NotificationSchema, ResultSchema, RequestIdSchema, JSONRPCRequestSchema, isJSONRPCRequest, JSONRPCNotificationSchema, isJSONRPCNotification, JSONRPCResultResponseSchema, isJSONRPCResultResponse, ErrorCode, JSONRPCErrorResponseSchema, isJSONRPCErrorResponse, JSONRPCMessageSchema, JSONRPCResponseSchema, EmptyResultSchema, CancelledNotificationParamsSchema, CancelledNotificationSchema, IconSchema, IconsSchema, BaseMetadataSchema, ImplementationSchema, FormElicitationCapabilitySchema, ElicitationCapabilitySchema, ClientTasksCapabilitySchema, ServerTasksCapabilitySchema, ClientCapabilitiesSchema, InitializeRequestParamsSchema, InitializeRequestSchema, ServerCapabilitiesSchema, InitializeResultSchema, InitializedNotificationSchema, PingRequestSchema, ProgressSchema, ProgressNotificationParamsSchema, ProgressNotificationSchema, PaginatedRequestParamsSchema, PaginatedRequestSchema, PaginatedResultSchema, TaskStatusSchema, TaskSchema, CreateTaskResultSchema, TaskStatusNotificationParamsSchema, TaskStatusNotificationSchema, GetTaskRequestSchema, GetTaskResultSchema, GetTaskPayloadRequestSchema, GetTaskPayloadResultSchema, ListTasksRequestSchema, ListTasksResultSchema, CancelTaskRequestSchema, CancelTaskResultSchema, ResourceContentsSchema, TextResourceContentsSchema, Base64Schema, BlobResourceContentsSchema, RoleSchema, AnnotationsSchema, ResourceSchema, ResourceTemplateSchema, ListResourcesRequestSchema, ListResourcesResultSchema, ListResourceTemplatesRequestSchema, ListResourceTemplatesResultSchema, ResourceRequestParamsSchema, ReadResourceRequestParamsSchema, ReadResourceRequestSchema, ReadResourceResultSchema, ResourceListChangedNotificationSchema, SubscribeRequestParamsSchema, SubscribeRequestSchema, UnsubscribeRequestParamsSchema, UnsubscribeRequestSchema, ResourceUpdatedNotificationParamsSchema, ResourceUpdatedNotificationSchema, PromptArgumentSchema, PromptSchema, ListPromptsRequestSchema, ListPromptsResultSchema, GetPromptRequestParamsSchema, GetPromptRequestSchema, TextContentSchema, ImageContentSchema, AudioContentSchema, ToolUseContentSchema, EmbeddedResourceSchema, ResourceLinkSchema, ContentBlockSchema, PromptMessageSchema, GetPromptResultSchema, PromptListChangedNotificationSchema, ToolAnnotationsSchema, ToolExecutionSchema, ToolSchema, ListToolsRequestSchema, ListToolsResultSchema, CallToolResultSchema, CompatibilityCallToolResultSchema, CallToolRequestParamsSchema, CallToolRequestSchema, ToolListChangedNotificationSchema, ListChangedOptionsBaseSchema, LoggingLevelSchema, SetLevelRequestParamsSchema, SetLevelRequestSchema, LoggingMessageNotificationParamsSchema, LoggingMessageNotificationSchema, ModelHintSchema, ModelPreferencesSchema, ToolChoiceSchema, ToolResultContentSchema, SamplingContentSchema, SamplingMessageContentBlockSchema, SamplingMessageSchema, CreateMessageRequestParamsSchema, CreateMessageRequestSchema, CreateMessageResultSchema, CreateMessageResultWithToolsSchema, BooleanSchemaSchema, StringSchemaSchema, NumberSchemaSchema, UntitledSingleSelectEnumSchemaSchema, TitledSingleSelectEnumSchemaSchema, LegacyTitledEnumSchemaSchema, SingleSelectEnumSchemaSchema, UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema, MultiSelectEnumSchemaSchema, EnumSchemaSchema, PrimitiveSchemaDefinitionSchema, ElicitRequestFormParamsSchema, ElicitRequestURLParamsSchema, ElicitRequestParamsSchema, ElicitRequestSchema, ElicitationCompleteNotificationParamsSchema, ElicitationCompleteNotificationSchema, ElicitResultSchema, ResourceTemplateReferenceSchema, PromptReferenceSchema, CompleteRequestParamsSchema, CompleteRequestSchema, CompleteResultSchema, RootSchema, ListRootsRequestSchema, ListRootsResultSchema, RootsListChangedNotificationSchema, ClientRequestSchema, ClientNotificationSchema, ClientResultSchema, ServerRequestSchema, ServerNotificationSchema, ServerResultSchema, McpError, UrlElicitationRequiredError;
 var init_types = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/types.js"() {
     init_v4();
     LATEST_PROTOCOL_VERSION = "2025-11-25";
     SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
@@ -9935,137 +9982,137 @@ var init_types = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 var init_interfaces = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/Options.js
+// node_modules/zod-to-json-schema/dist/esm/Options.js
 var ignoreOverride;
 var init_Options = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/Options.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/Options.js"() {
     ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/Refs.js
+// node_modules/zod-to-json-schema/dist/esm/Refs.js
 var init_Refs = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/Refs.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/Refs.js"() {
     init_Options();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/errorMessages.js
+// node_modules/zod-to-json-schema/dist/esm/errorMessages.js
 var init_errorMessages = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/errorMessages.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/errorMessages.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
+// node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
 var init_getRelativePath = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/getRelativePath.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/any.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/any.js
 var init_any = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/any.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/any.js"() {
     init_getRelativePath();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/array.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/array.js
 var init_array = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/array.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/array.js"() {
     init_errorMessages();
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
 var init_bigint = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js"() {
     init_errorMessages();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
 var init_boolean = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
 var init_branded = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/branded.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
 var init_catch = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/catch.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/date.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/date.js
 var init_date = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/date.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/date.js"() {
     init_errorMessages();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/default.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/default.js
 var init_default = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/default.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/default.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
 var init_effects = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/effects.js"() {
     init_parseDef();
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
 var init_enum = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/enum.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
 var init_intersection = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
 var init_literal = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/literal.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC;
 var init_string = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/string.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/string.js"() {
     init_errorMessages();
     ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/record.js
 var init_record = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/record.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/record.js"() {
     init_parseDef();
     init_string();
     init_branded();
@@ -10073,124 +10120,124 @@ var init_record = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/map.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/map.js
 var init_map = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/map.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/map.js"() {
     init_parseDef();
     init_record();
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
 var init_nativeEnum = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/never.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/never.js
 var init_never = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/never.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/never.js"() {
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/null.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/null.js
 var init_null = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/null.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/null.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/union.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/union.js
 var init_union = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/union.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/union.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
 var init_nullable = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js"() {
     init_parseDef();
     init_union();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/number.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/number.js
 var init_number = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/number.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/number.js"() {
     init_errorMessages();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/object.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/object.js
 var init_object = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/object.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/object.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
 var init_optional = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/optional.js"() {
     init_parseDef();
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
 var init_pipeline = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
 var init_promise = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/promise.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/set.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/set.js
 var init_set = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/set.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/set.js"() {
     init_errorMessages();
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
 var init_tuple = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
 var init_undefined = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js"() {
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
 var init_unknown = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js"() {
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
 var init_readonly = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/selectParser.js
+// node_modules/zod-to-json-schema/dist/esm/selectParser.js
 var init_selectParser = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/selectParser.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/selectParser.js"() {
     init_any();
     init_array();
     init_bigint();
@@ -10224,9 +10271,9 @@ var init_selectParser = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parseDef.js
+// node_modules/zod-to-json-schema/dist/esm/parseDef.js
 var init_parseDef = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parseDef.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parseDef.js"() {
     init_Options();
     init_selectParser();
     init_getRelativePath();
@@ -10234,24 +10281,24 @@ var init_parseDef = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parseTypes.js
+// node_modules/zod-to-json-schema/dist/esm/parseTypes.js
 var init_parseTypes = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/parseTypes.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parseTypes.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
+// node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
 var init_zodToJsonSchema = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js"() {
     init_parseDef();
     init_Refs();
     init_any();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/index.js
+// node_modules/zod-to-json-schema/dist/esm/index.js
 var init_esm = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/zod-to-json-schema/dist/esm/index.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/index.js"() {
     init_Options();
     init_Refs();
     init_errorMessages();
@@ -10294,7 +10341,7 @@ var init_esm = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function getMethodLiteral(schema) {
   const shape = getObjectShape(schema);
   const methodSchema = shape?.method;
@@ -10315,13 +10362,13 @@ function parseWithCompat(schema, data) {
   return result.data;
 }
 var init_zod_json_schema_compat = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js"() {
     init_zod_compat();
     init_esm();
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 function isPlainObject2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -10343,7 +10390,7 @@ function mergeCapabilities(base, additional) {
 }
 var DEFAULT_REQUEST_TIMEOUT_MSEC, Protocol;
 var init_protocol2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js"() {
     init_zod_compat();
     init_types();
     init_interfaces();
@@ -11284,9 +11331,9 @@ var init_protocol2 = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/code.js
+// node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/code.js"(exports) {
+  "node_modules/ajv/dist/compile/codegen/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.regexpCode = exports.getEsmExportName = exports.getProperty = exports.safeStringify = exports.stringify = exports.strConcat = exports.addCodeArg = exports.str = exports._ = exports.nil = exports._Code = exports.Name = exports.IDENTIFIER = exports._CodeOrName = void 0;
@@ -11438,9 +11485,9 @@ var require_code = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/scope.js
+// node_modules/ajv/dist/compile/codegen/scope.js
 var require_scope = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
+  "node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ValueScope = exports.ValueScopeName = exports.Scope = exports.varKinds = exports.UsedValueState = void 0;
@@ -11583,9 +11630,9 @@ var require_scope = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/index.js
+// node_modules/ajv/dist/compile/codegen/index.js
 var require_codegen = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/codegen/index.js"(exports) {
+  "node_modules/ajv/dist/compile/codegen/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.or = exports.and = exports.not = exports.CodeGen = exports.operators = exports.varKinds = exports.ValueScopeName = exports.ValueScope = exports.Scope = exports.Name = exports.regexpCode = exports.stringify = exports.getProperty = exports.nil = exports.strConcat = exports.str = exports._ = void 0;
@@ -12303,9 +12350,9 @@ var require_codegen = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/util.js
+// node_modules/ajv/dist/compile/util.js
 var require_util = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/util.js"(exports) {
+  "node_modules/ajv/dist/compile/util.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.checkStrictMode = exports.getErrorPath = exports.Type = exports.useFunc = exports.setEvaluated = exports.evaluatedPropsToName = exports.mergeEvaluated = exports.eachItem = exports.unescapeJsonPointer = exports.escapeJsonPointer = exports.escapeFragment = exports.unescapeFragment = exports.schemaRefOrVal = exports.schemaHasRulesButRef = exports.schemaHasRules = exports.checkUnknownRules = exports.alwaysValidSchema = exports.toHash = void 0;
@@ -12470,9 +12517,9 @@ var require_util = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/names.js
+// node_modules/ajv/dist/compile/names.js
 var require_names = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/names.js"(exports) {
+  "node_modules/ajv/dist/compile/names.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -12509,9 +12556,9 @@ var require_names = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/errors.js
+// node_modules/ajv/dist/compile/errors.js
 var require_errors = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/errors.js"(exports) {
+  "node_modules/ajv/dist/compile/errors.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendErrors = exports.resetErrorsCount = exports.reportExtraError = exports.reportError = exports.keyword$DataError = exports.keywordError = void 0;
@@ -12631,9 +12678,9 @@ var require_errors = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/boolSchema.js
+// node_modules/ajv/dist/compile/validate/boolSchema.js
 var require_boolSchema = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.boolOrEmptySchema = exports.topBoolOrEmptySchema = void 0;
@@ -12682,9 +12729,9 @@ var require_boolSchema = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/rules.js
+// node_modules/ajv/dist/compile/rules.js
 var require_rules = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/rules.js"(exports) {
+  "node_modules/ajv/dist/compile/rules.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getRules = exports.isJSONType = void 0;
@@ -12713,9 +12760,9 @@ var require_rules = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/applicability.js
+// node_modules/ajv/dist/compile/validate/applicability.js
 var require_applicability = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.shouldUseRule = exports.shouldUseGroup = exports.schemaHasRulesForType = void 0;
@@ -12736,9 +12783,9 @@ var require_applicability = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/dataType.js
+// node_modules/ajv/dist/compile/validate/dataType.js
 var require_dataType = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.reportTypeError = exports.checkDataTypes = exports.checkDataType = exports.coerceAndCheckDataType = exports.getJSONTypes = exports.getSchemaTypes = exports.DataType = void 0;
@@ -12920,9 +12967,9 @@ var require_dataType = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/defaults.js
+// node_modules/ajv/dist/compile/validate/defaults.js
 var require_defaults = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.assignDefaults = void 0;
@@ -12957,9 +13004,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/code.js
+// node_modules/ajv/dist/vocabularies/code.js
 var require_code2 = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/code.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateUnion = exports.validateArray = exports.usePattern = exports.callValidateCode = exports.schemaProperties = exports.allSchemaProperties = exports.noPropertyInData = exports.propertyInData = exports.isOwnProperty = exports.hasPropFunc = exports.reportMissingProp = exports.checkMissingProp = exports.checkReportMissingProp = void 0;
@@ -13090,9 +13137,9 @@ var require_code2 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/keyword.js
+// node_modules/ajv/dist/compile/validate/keyword.js
 var require_keyword = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateKeywordUsage = exports.validSchemaType = exports.funcKeywordCode = exports.macroKeywordCode = void 0;
@@ -13208,9 +13255,9 @@ var require_keyword = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/subschema.js
+// node_modules/ajv/dist/compile/validate/subschema.js
 var require_subschema = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendSubschemaMode = exports.extendSubschemaData = exports.getSubschema = void 0;
@@ -13291,9 +13338,9 @@ var require_subschema = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-deep-equal/index.js
+// node_modules/fast-deep-equal/index.js
 var require_fast_deep_equal = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-deep-equal/index.js"(exports, module) {
+  "node_modules/fast-deep-equal/index.js"(exports, module) {
     "use strict";
     module.exports = function equal(a, b) {
       if (a === b) return true;
@@ -13326,9 +13373,9 @@ var require_fast_deep_equal = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/json-schema-traverse/index.js
+// node_modules/json-schema-traverse/index.js
 var require_json_schema_traverse = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/json-schema-traverse/index.js"(exports, module) {
+  "node_modules/json-schema-traverse/index.js"(exports, module) {
     "use strict";
     var traverse = module.exports = function(schema, opts, cb) {
       if (typeof opts == "function") {
@@ -13414,9 +13461,9 @@ var require_json_schema_traverse = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/resolve.js
+// node_modules/ajv/dist/compile/resolve.js
 var require_resolve = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/resolve.js"(exports) {
+  "node_modules/ajv/dist/compile/resolve.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getSchemaRefs = exports.resolveUrl = exports.normalizeId = exports._getFullPath = exports.getFullPath = exports.inlineRef = void 0;
@@ -13570,9 +13617,9 @@ var require_resolve = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/index.js
+// node_modules/ajv/dist/compile/validate/index.js
 var require_validate = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/validate/index.js"(exports) {
+  "node_modules/ajv/dist/compile/validate/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getData = exports.KeywordCxt = exports.validateFunctionCode = void 0;
@@ -14078,9 +14125,9 @@ var require_validate = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/validation_error.js
+// node_modules/ajv/dist/runtime/validation_error.js
 var require_validation_error = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/validation_error.js"(exports) {
+  "node_modules/ajv/dist/runtime/validation_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var ValidationError = class extends Error {
@@ -14094,9 +14141,9 @@ var require_validation_error = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/ref_error.js
+// node_modules/ajv/dist/compile/ref_error.js
 var require_ref_error = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/ref_error.js"(exports) {
+  "node_modules/ajv/dist/compile/ref_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var resolve_1 = require_resolve();
@@ -14111,9 +14158,9 @@ var require_ref_error = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/index.js
+// node_modules/ajv/dist/compile/index.js
 var require_compile = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/compile/index.js"(exports) {
+  "node_modules/ajv/dist/compile/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.resolveSchema = exports.getCompilingSchema = exports.resolveRef = exports.compileSchema = exports.SchemaEnv = void 0;
@@ -14335,9 +14382,9 @@ var require_compile = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/refs/data.json
+// node_modules/ajv/dist/refs/data.json
 var require_data = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/refs/data.json"(exports, module) {
+  "node_modules/ajv/dist/refs/data.json"(exports, module) {
     module.exports = {
       $id: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#",
       description: "Meta-schema for $data reference (JSON AnySchema extension proposal)",
@@ -14354,9 +14401,9 @@ var require_data = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/lib/utils.js
+// node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/lib/utils.js"(exports, module) {
+  "node_modules/fast-uri/lib/utils.js"(exports, module) {
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
@@ -14856,9 +14903,9 @@ var require_utils = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/lib/schemes.js
+// node_modules/fast-uri/lib/schemes.js
 var require_schemes = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/lib/schemes.js"(exports, module) {
+  "node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
     var { isUUID } = require_utils();
     var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
@@ -15067,9 +15114,9 @@ var require_schemes = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/index.js
+// node_modules/fast-uri/index.js
 var require_fast_uri = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/fast-uri/index.js"(exports, module) {
+  "node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
@@ -15473,9 +15520,9 @@ var require_fast_uri = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/uri.js
+// node_modules/ajv/dist/runtime/uri.js
 var require_uri = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/uri.js"(exports) {
+  "node_modules/ajv/dist/runtime/uri.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var uri = require_fast_uri();
@@ -15484,9 +15531,9 @@ var require_uri = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/core.js
+// node_modules/ajv/dist/core.js
 var require_core = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/core.js"(exports) {
+  "node_modules/ajv/dist/core.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = void 0;
@@ -16095,9 +16142,9 @@ var require_core = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/id.js
+// node_modules/ajv/dist/vocabularies/core/id.js
 var require_id = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var def3 = {
@@ -16110,9 +16157,9 @@ var require_id = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/ref.js
+// node_modules/ajv/dist/vocabularies/core/ref.js
 var require_ref = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.callRef = exports.getValidate = void 0;
@@ -16232,9 +16279,9 @@ var require_ref = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/index.js
+// node_modules/ajv/dist/vocabularies/core/index.js
 var require_core2 = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var id_1 = require_id();
@@ -16253,9 +16300,9 @@ var require_core2 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitNumber.js
+// node_modules/ajv/dist/vocabularies/validation/limitNumber.js
 var require_limitNumber = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16285,9 +16332,9 @@ var require_limitNumber = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/multipleOf.js
+// node_modules/ajv/dist/vocabularies/validation/multipleOf.js
 var require_multipleOf = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16313,9 +16360,9 @@ var require_multipleOf = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/ucs2length.js
+// node_modules/ajv/dist/runtime/ucs2length.js
 var require_ucs2length = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
+  "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function ucs2length(str3) {
@@ -16339,9 +16386,9 @@ var require_ucs2length = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitLength.js
+// node_modules/ajv/dist/vocabularies/validation/limitLength.js
 var require_limitLength = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16371,9 +16418,9 @@ var require_limitLength = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/pattern.js
+// node_modules/ajv/dist/vocabularies/validation/pattern.js
 var require_pattern = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -16408,9 +16455,9 @@ var require_pattern = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitProperties.js
+// node_modules/ajv/dist/vocabularies/validation/limitProperties.js
 var require_limitProperties = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16437,9 +16484,9 @@ var require_limitProperties = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/required.js
+// node_modules/ajv/dist/vocabularies/validation/required.js
 var require_required = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -16519,9 +16566,9 @@ var require_required = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitItems.js
+// node_modules/ajv/dist/vocabularies/validation/limitItems.js
 var require_limitItems = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16548,9 +16595,9 @@ var require_limitItems = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/equal.js
+// node_modules/ajv/dist/runtime/equal.js
 var require_equal = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/runtime/equal.js"(exports) {
+  "node_modules/ajv/dist/runtime/equal.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var equal = require_fast_deep_equal();
@@ -16559,9 +16606,9 @@ var require_equal = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
+// node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
 var require_uniqueItems = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var dataType_1 = require_dataType();
@@ -16626,9 +16673,9 @@ var require_uniqueItems = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/const.js
+// node_modules/ajv/dist/vocabularies/validation/const.js
 var require_const = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16655,9 +16702,9 @@ var require_const = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/enum.js
+// node_modules/ajv/dist/vocabularies/validation/enum.js
 var require_enum = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16704,9 +16751,9 @@ var require_enum = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/index.js
+// node_modules/ajv/dist/vocabularies/validation/index.js
 var require_validation = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var limitNumber_1 = require_limitNumber();
@@ -16742,9 +16789,9 @@ var require_validation = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
+// node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
 var require_additionalItems = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateAdditionalItems = void 0;
@@ -16795,9 +16842,9 @@ var require_additionalItems = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/items.js
+// node_modules/ajv/dist/vocabularies/applicator/items.js
 var require_items = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateTuple = void 0;
@@ -16852,9 +16899,9 @@ var require_items = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
+// node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
 var require_prefixItems = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var items_1 = require_items();
@@ -16869,9 +16916,9 @@ var require_prefixItems = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/items2020.js
+// node_modules/ajv/dist/vocabularies/applicator/items2020.js
 var require_items2020 = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16904,9 +16951,9 @@ var require_items2020 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/contains.js
+// node_modules/ajv/dist/vocabularies/applicator/contains.js
 var require_contains = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -16998,9 +17045,9 @@ var require_contains = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/dependencies.js
+// node_modules/ajv/dist/vocabularies/applicator/dependencies.js
 var require_dependencies = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateSchemaDeps = exports.validatePropertyDeps = exports.error = void 0;
@@ -17092,9 +17139,9 @@ var require_dependencies = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
+// node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
 var require_propertyNames = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17135,9 +17182,9 @@ var require_propertyNames = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
+// node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
 var require_additionalProperties = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -17241,9 +17288,9 @@ var require_additionalProperties = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/properties.js
+// node_modules/ajv/dist/vocabularies/applicator/properties.js
 var require_properties = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var validate_1 = require_validate();
@@ -17299,9 +17346,9 @@ var require_properties = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
+// node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
 var require_patternProperties = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -17373,9 +17420,9 @@ var require_patternProperties = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/not.js
+// node_modules/ajv/dist/vocabularies/applicator/not.js
 var require_not = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -17404,9 +17451,9 @@ var require_not = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/anyOf.js
+// node_modules/ajv/dist/vocabularies/applicator/anyOf.js
 var require_anyOf = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -17421,9 +17468,9 @@ var require_anyOf = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/oneOf.js
+// node_modules/ajv/dist/vocabularies/applicator/oneOf.js
 var require_oneOf = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17479,9 +17526,9 @@ var require_oneOf = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/allOf.js
+// node_modules/ajv/dist/vocabularies/applicator/allOf.js
 var require_allOf = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -17506,9 +17553,9 @@ var require_allOf = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/if.js
+// node_modules/ajv/dist/vocabularies/applicator/if.js
 var require_if = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17575,9 +17622,9 @@ var require_if = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/thenElse.js
+// node_modules/ajv/dist/vocabularies/applicator/thenElse.js
 var require_thenElse = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -17593,9 +17640,9 @@ var require_thenElse = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/index.js
+// node_modules/ajv/dist/vocabularies/applicator/index.js
 var require_applicator = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var additionalItems_1 = require_additionalItems();
@@ -17641,9 +17688,9 @@ var require_applicator = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/format/format.js
+// node_modules/ajv/dist/vocabularies/format/format.js
 var require_format = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17731,9 +17778,9 @@ var require_format = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/format/index.js
+// node_modules/ajv/dist/vocabularies/format/index.js
 var require_format2 = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var format_1 = require_format();
@@ -17742,9 +17789,9 @@ var require_format2 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/metadata.js
+// node_modules/ajv/dist/vocabularies/metadata.js
 var require_metadata = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.contentVocabulary = exports.metadataVocabulary = void 0;
@@ -17765,9 +17812,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/draft7.js
+// node_modules/ajv/dist/vocabularies/draft7.js
 var require_draft7 = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var core_1 = require_core2();
@@ -17787,9 +17834,9 @@ var require_draft7 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/discriminator/types.js
+// node_modules/ajv/dist/vocabularies/discriminator/types.js
 var require_types = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DiscrError = void 0;
@@ -17801,9 +17848,9 @@ var require_types = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/discriminator/index.js
+// node_modules/ajv/dist/vocabularies/discriminator/index.js
 var require_discriminator = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
+  "node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17906,9 +17953,9 @@ var require_discriminator = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/refs/json-schema-draft-07.json
+// node_modules/ajv/dist/refs/json-schema-draft-07.json
 var require_json_schema_draft_07 = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
+  "node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
     module.exports = {
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: "http://json-schema.org/draft-07/schema#",
@@ -18063,9 +18110,9 @@ var require_json_schema_draft_07 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/ajv.js
+// node_modules/ajv/dist/ajv.js
 var require_ajv = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv/dist/ajv.js"(exports, module) {
+  "node_modules/ajv/dist/ajv.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.MissingRefError = exports.ValidationError = exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = exports.Ajv = void 0;
@@ -18133,9 +18180,9 @@ var require_ajv = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/formats.js
+// node_modules/ajv-formats/dist/formats.js
 var require_formats = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/formats.js"(exports) {
+  "node_modules/ajv-formats/dist/formats.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
@@ -18336,9 +18383,9 @@ var require_formats = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/limit.js
+// node_modules/ajv-formats/dist/limit.js
 var require_limit = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/limit.js"(exports) {
+  "node_modules/ajv-formats/dist/limit.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatLimitDefinition = void 0;
@@ -18408,9 +18455,9 @@ var require_limit = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/index.js
+// node_modules/ajv-formats/dist/index.js
 var require_dist = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ajv-formats/dist/index.js"(exports, module) {
+  "node_modules/ajv-formats/dist/index.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var formats_1 = require_formats();
@@ -18450,7 +18497,7 @@ var require_dist = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 function createDefaultAjvInstance() {
   const ajv = new import_ajv.default({
     strict: false,
@@ -18464,7 +18511,7 @@ function createDefaultAjvInstance() {
 }
 var import_ajv, import_ajv_formats, AjvJsonSchemaValidator;
 var init_ajv_provider = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js"() {
     import_ajv = __toESM(require_ajv(), 1);
     import_ajv_formats = __toESM(require_dist(), 1);
     AjvJsonSchemaValidator = class {
@@ -18523,10 +18570,10 @@ var init_ajv_provider = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks;
 var init_server = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js"() {
     init_types();
     ExperimentalServerTasks = class {
       constructor(_server) {
@@ -18742,7 +18789,7 @@ var init_server = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -18777,14 +18824,14 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 var init_helpers = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js"() {
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server;
 var init_server2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js"() {
     init_protocol2();
     init_types();
     init_ajv_provider();
@@ -19858,6 +19905,8 @@ var init_catalog2 = __esm({
       def2("revokeUploads", { folder: str2, origin: str2 }, ["origin"], { common: false }),
       def2("download", { ref: str2, url: str2, timeoutMs: { ...int3, minimum: 1, maximum: 6e5 } }),
       def2("downloads", { action: { ...str2, enum: ["list"] }, limit: { ...int3, minimum: 1, maximum: 200 } }, ["action"]),
+      // Fora da fila da aba: responde com a aba presa. `tab` filtra (só as chamadas daquela aba).
+      def2("diagnose", { callId: str2 }),
       def2("pdf", {
         filename: str2,
         landscape: bool2,
@@ -20235,6 +20284,7 @@ var init_upload_policy = __esm({
 });
 
 // daemon/src/mcp-server.ts
+import { randomBytes as randomBytes3 } from "node:crypto";
 import { homedir as homedir3 } from "node:os";
 function describeBrowsers(list) {
   return list.map((b) => `"${b.name}" (id ${b.id})`).join(", ");
@@ -20301,6 +20351,14 @@ ${r.text}${cut}` }];
   }
   return [{ type: "text", text: JSON.stringify(result ?? null, null, 2) }];
 }
+function newCallId() {
+  return randomBytes3(4).toString("hex");
+}
+function daemonTimeoutFor(args) {
+  const wanted = toolOwnTimeoutMs(args);
+  if (wanted === void 0) return void 0;
+  return wanted > DAEMON_CALL_TIMEOUT_MS ? Math.min(wanted, DAEMON_MAX_CALL_TIMEOUT_MS) : void 0;
+}
 function isPureRead(tool, args) {
   switch (tool) {
     case "snapshot":
@@ -20309,6 +20367,7 @@ function isPureRead(tool, args) {
     case "read":
     case "links":
     case "wait":
+    case "diagnose":
     case "readNetwork":
     case "uploadTarget":
       return true;
@@ -20330,9 +20389,10 @@ function createResilientBridge(client, shell2) {
   if (!shell2) {
     return {
       listBrowsers: async () => ({ value: await client.browsers(), restarted: false }),
-      callTool: async (tool, args, requested) => {
+      callTool: async (tool, args, requested, callId) => {
         const { browser, notice } = chooseBrowser(await client.browsers(), requested);
-        return { value: await client.call(browser.id, tool, args), restarted: false, browser: browser.id, ...notice ? { notice } : {} };
+        const value = await client.call(browser.id, tool, args, daemonTimeoutFor(args), callId, browser.debug);
+        return { value, restarted: false, browser: browser.id, ...notice ? { notice } : {} };
       }
     };
   }
@@ -20353,7 +20413,7 @@ function createResilientBridge(client, shell2) {
       throw e;
     }
   }
-  async function browsersWhen(isReady, maxWaitMs) {
+  async function browsersWhen(isReady, maxWaitMs, ids = {}) {
     let list = await alive(client.browsers());
     const ageMs = isReady(list) ? null : ensure.youngAgeMs();
     if (ageMs === null) return { list, waitedMs: 0, ageMs: 0 };
@@ -20363,7 +20423,7 @@ function createResilientBridge(client, shell2) {
       list = await alive(client.browsers());
     }
     const waitedMs = now() - began;
-    log("browsers_waited", { ms: waitedMs, found: isReady(list) });
+    log("browsers_waited", { ...ids, ms: waitedMs, found: isReady(list) });
     return { list, waitedMs, ageMs };
   }
   function resolveAfterWait(waited, requested) {
@@ -20385,7 +20445,8 @@ function createResilientBridge(client, shell2) {
       throw e;
     }
   }
-  async function guarded(tool, pureRead, run) {
+  async function guarded(tool, pureRead, run, callId) {
+    const ids = callId ? { callId } : {};
     let restarted = false;
     for (let round = 1; ; round++) {
       const progress = { stage: "lookup" };
@@ -20399,28 +20460,33 @@ function createResilientBridge(client, shell2) {
           throw e;
         }
         if (round >= MAX_ROUNDS) throw e;
-        log("daemon_unreachable", { phase, tool });
+        log("daemon_unreachable", { ...ids, phase, tool });
         if (phase === "in-flight" && progress.stage === "call" && !pureRead) {
           await ensureAfterLoss(tool);
-          log("call_lost", { tool });
+          log("call_lost", { ...ids, tool });
           throw new BridgeError("DAEMON_RESTARTED", DAEMON_TEXTS.restarted(tool), { tool });
         }
         const outcome = await ensure.ensure("call");
         restarted ||= outcome.restarted && (outcome.source === "call" || sawDaemon);
-        if (phase === "in-flight") log("call_retried", { tool });
+        if (phase === "in-flight") log("call_retried", { ...ids, tool });
       }
     }
   }
   return {
-    listBrowsers: () => guarded("list_browsers", true, async () => (await browsersWhen((list) => list.length > 0, waitListMs)).list),
-    callTool: (tool, args, requested) => guarded(tool, isPureRead(tool, args), async (progress) => {
-      const waited = await browsersWhen((list) => present(list, requested), waitCallMs);
-      const { browser, notice } = resolveAfterWait(waited, requested);
-      if (notice) progress.notice = notice;
-      progress.browser = browser.id;
-      progress.stage = "call";
-      return alive(client.call(browser.id, tool, args));
-    })
+    listBrowsers: (callId) => guarded("list_browsers", true, async () => (await browsersWhen((list) => list.length > 0, waitListMs, callId ? { callId } : {})).list, callId),
+    callTool: (tool, args, requested, callId) => guarded(
+      tool,
+      isPureRead(tool, args),
+      async (progress) => {
+        const waited = await browsersWhen((list) => present(list, requested), waitCallMs, callId ? { callId } : {});
+        const { browser, notice } = resolveAfterWait(waited, requested);
+        if (notice) progress.notice = notice;
+        progress.browser = browser.id;
+        progress.stage = "call";
+        return alive(client.call(browser.id, tool, args, daemonTimeoutFor(args), callId, browser.debug));
+      },
+      callId
+    )
   };
 }
 function serverNameFromEnv(env = process.env, fallback = SERVER_NAME) {
@@ -20444,7 +20510,7 @@ function describeWithStore(name, description, lifetime) {
   return swaps.reduce((text, [from, to]) => text.replace(from, to), description);
 }
 function buildMcpServer(client, shell2, info2 = {}) {
-  const server = new Server({ name: info2.name ?? SERVER_NAME, version: "0.1.0" }, { capabilities: { tools: {} } });
+  const server = new Server({ name: info2.name ?? SERVER_NAME, version: "0.1.0" }, { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS });
   const bridge = createResilientBridge(client, shell2);
   const policyLog = (line) => shell2?.log("upload_policy", { line });
   let policy = null;
@@ -20482,11 +20548,11 @@ function buildMcpServer(client, shell2, info2 = {}) {
     const r = p.revokeUploads({ origin: a.origin, ...a.folder !== void 0 ? { folder: a.folder } : {} });
     return { removed: r.removed.map(showGrant), grants: r.grants.map(showGrant) };
   }
-  async function uploadCall(a) {
+  async function uploadCall(a, callId) {
     const p = uploads();
     const { browser, tab, ref, paths } = a;
     const files = paths.map((path) => p.resolveUploadPath(path));
-    const target = await bridge.callTool("uploadTarget", { ref, ...tab !== void 0 ? { tab } : {} }, browser);
+    const target = await bridge.callTool("uploadTarget", { ref, ...tab !== void 0 ? { tab } : {} }, browser, `${callId}-target`);
     const { tab: tabId, origins, multiple } = target.value;
     if (files.length > 1 && !multiple) {
       throw Object.assign(new Error(`upload: this file input accepts a single file (no multiple attribute); ${files.length} paths were given`), { code: "INVALID_ARGUMENT" });
@@ -20494,7 +20560,7 @@ function buildMcpServer(client, shell2, info2 = {}) {
     for (const file of files) {
       await p.authorizeUpload({ file, site: origins[0], top: origins[origins.length - 1], ancestors: origins.slice(1) });
     }
-    const done = await bridge.callTool("upload", { ref, tab: tabId, paths: files, expect: origins }, target.browser ?? browser);
+    const done = await bridge.callTool("upload", { ref, tab: tabId, paths: files, expect: origins }, target.browser ?? browser, callId);
     return { ...done, restarted: target.restarted || done.restarted, ...target.notice ? { notice: target.notice } : {} };
   }
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -20504,33 +20570,43 @@ function buildMcpServer(client, shell2, info2 = {}) {
       inputSchema: t.inputSchema
     }))
   }));
+  async function runCall(tool, args, callId) {
+    assertValidCall(tool, args);
+    if (tool === "list_browsers") {
+      const { value: value2, restarted: restarted2 } = await bridge.listBrowsers(callId);
+      return withNotice([{ type: "text", text: JSON.stringify(value2, null, 2) }], restarted2);
+    }
+    if (SHELL_ONLY_TOOLS.has(tool)) return render(tool, await grantTool(tool, args));
+    if (tool === "upload") {
+      const { value: value2, restarted: restarted2, notice: notice2 } = await uploadCall(args, callId);
+      return withNotice(render(tool, value2), restarted2, notice2);
+    }
+    const { browser, ...rest2 } = args;
+    const { value, restarted, notice } = await bridge.callTool(tool, rest2, browser, callId);
+    return withNotice(render(tool, value), restarted, notice);
+  }
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const tool = req.params.name;
+    const callId = newCallId();
+    const started = Date.now();
+    shell2?.log("call_started", { callId, tool });
     try {
-      const args = req.params.arguments ?? {};
-      assertValidCall(tool, args);
-      if (tool === "list_browsers") {
-        const { value: value2, restarted: restarted2 } = await bridge.listBrowsers();
-        return { content: withNotice([{ type: "text", text: JSON.stringify(value2, null, 2) }], restarted2) };
-      }
-      if (SHELL_ONLY_TOOLS.has(tool)) return { content: render(tool, await grantTool(tool, args)) };
-      if (tool === "upload") {
-        const { value: value2, restarted: restarted2, notice: notice2 } = await uploadCall(args);
-        return { content: withNotice(render(tool, value2), restarted2, notice2) };
-      }
-      const { browser, ...rest2 } = args;
-      const { value, restarted, notice } = await bridge.callTool(tool, rest2, browser);
-      return { content: withNotice(render(tool, value), restarted, notice) };
+      const content = await runCall(tool, req.params.arguments ?? {}, callId);
+      shell2?.log("call_finished", { callId, tool, ok: true, durationMs: Date.now() - started });
+      return { content };
     } catch (e) {
       const w = toWireError(e);
+      shell2?.log("call_finished", { callId, tool, ok: false, code: w.code, durationMs: Date.now() - started });
       const detail = w.data !== void 0 ? `
 ${JSON.stringify(w.data)}` : "";
-      return { isError: true, content: [{ type: "text", text: `${w.code}: ${w.message}${detail}` }] };
+      const [head, ...tail] = w.message.split("\n");
+      const message = [`${head} (call ${callId})`, ...tail].join("\n");
+      return { isError: true, content: [{ type: "text", text: `${w.code}: ${message}${detail}` }] };
     }
   });
   return server;
 }
-var REAPPEAR_DEFAULTS, MAX_ROUNDS, isRemote, withNotice, SERVER_NAME_PATTERN2, BRIDGE_UPLOAD_NAMES, showGrant;
+var DAEMON_MAX_CALL_TIMEOUT_MS, REAPPEAR_DEFAULTS, MAX_ROUNDS, isRemote, withNotice, SERVER_NAME_PATTERN2, BRIDGE_UPLOAD_NAMES, showGrant;
 var init_mcp_server = __esm({
   "daemon/src/mcp-server.ts"() {
     "use strict";
@@ -20541,6 +20617,7 @@ var init_mcp_server = __esm({
     init_texts();
     init_client();
     init_upload_policy();
+    DAEMON_MAX_CALL_TIMEOUT_MS = 6e5;
     REAPPEAR_DEFAULTS = { waitCallMs: 4e4, waitListMs: 5e3, waitPollMs: 500 };
     MAX_ROUNDS = 3;
     isRemote = (e, code) => e instanceof RemoteError && e.code === code;
@@ -20623,7 +20700,7 @@ var init_mcp_lib = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 function deserializeMessage(line) {
   return JSONRPCMessageSchema.parse(JSON.parse(line));
 }
@@ -20632,7 +20709,7 @@ function serializeMessage(message) {
 }
 var STDIO_DEFAULT_MAX_BUFFER_SIZE, ReadBuffer;
 var init_stdio = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js"() {
     init_types();
     STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
     ReadBuffer = class {
@@ -20666,11 +20743,11 @@ var init_stdio = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 var StdioServerTransport;
 var init_stdio2 = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js"() {
     init_stdio();
     StdioServerTransport = class {
       constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
@@ -20728,8 +20805,8 @@ var init_stdio2 = __esm({
       }
       send(message) {
         return new Promise((resolve9) => {
-          const json = serializeMessage(message);
-          if (this._stdout.write(json)) {
+          const json2 = serializeMessage(message);
+          if (this._stdout.write(json2)) {
             resolve9();
           } else {
             this._stdout.once("drain", resolve9);
@@ -20766,9 +20843,9 @@ var init_mcp = __esm({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/constants.js
+// node_modules/ws/lib/constants.js
 var require_constants = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/constants.js"(exports, module) {
+  "node_modules/ws/lib/constants.js"(exports, module) {
     "use strict";
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
     var hasBlob = typeof Blob !== "undefined";
@@ -20789,9 +20866,9 @@ var require_constants = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/buffer-util.js
+// node_modules/ws/lib/buffer-util.js
 var require_buffer_util = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/buffer-util.js"(exports, module) {
+  "node_modules/ws/lib/buffer-util.js"(exports, module) {
     "use strict";
     var { EMPTY_BUFFER } = require_constants();
     var FastBuffer = Buffer[Symbol.species];
@@ -20864,9 +20941,9 @@ var require_buffer_util = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/limiter.js
+// node_modules/ws/lib/limiter.js
 var require_limiter = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/limiter.js"(exports, module) {
+  "node_modules/ws/lib/limiter.js"(exports, module) {
     "use strict";
     var kDone = Symbol("kDone");
     var kRun = Symbol("kRun");
@@ -20914,9 +20991,9 @@ var require_limiter = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/permessage-deflate.js
+// node_modules/ws/lib/permessage-deflate.js
 var require_permessage_deflate = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/permessage-deflate.js"(exports, module) {
+  "node_modules/ws/lib/permessage-deflate.js"(exports, module) {
     "use strict";
     var zlib = __require("zlib");
     var bufferUtil = require_buffer_util();
@@ -21297,9 +21374,9 @@ var require_permessage_deflate = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/validation.js
+// node_modules/ws/lib/validation.js
 var require_validation2 = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/validation.js"(exports, module) {
+  "node_modules/ws/lib/validation.js"(exports, module) {
     "use strict";
     var { isUtf8 } = __require("buffer");
     var { hasBlob } = require_constants();
@@ -21498,9 +21575,9 @@ var require_validation2 = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/receiver.js
+// node_modules/ws/lib/receiver.js
 var require_receiver = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/receiver.js"(exports, module) {
+  "node_modules/ws/lib/receiver.js"(exports, module) {
     "use strict";
     var { Writable } = __require("stream");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -22121,9 +22198,9 @@ var require_receiver = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/sender.js
+// node_modules/ws/lib/sender.js
 var require_sender = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/sender.js"(exports, module) {
+  "node_modules/ws/lib/sender.js"(exports, module) {
     "use strict";
     var { Duplex } = __require("stream");
     var { randomFillSync } = __require("crypto");
@@ -22614,9 +22691,9 @@ var require_sender = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/event-target.js
+// node_modules/ws/lib/event-target.js
 var require_event_target = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/event-target.js"(exports, module) {
+  "node_modules/ws/lib/event-target.js"(exports, module) {
     "use strict";
     var { kForOnEventAttribute, kListener } = require_constants();
     var kCode = Symbol("kCode");
@@ -22843,9 +22920,9 @@ var require_event_target = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/extension.js
+// node_modules/ws/lib/extension.js
 var require_extension = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/extension.js"(exports, module) {
+  "node_modules/ws/lib/extension.js"(exports, module) {
     "use strict";
     var { tokenChars } = require_validation2();
     function push(dest, name, elem) {
@@ -22996,16 +23073,16 @@ var require_extension = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/websocket.js
+// node_modules/ws/lib/websocket.js
 var require_websocket = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/websocket.js"(exports, module) {
+  "node_modules/ws/lib/websocket.js"(exports, module) {
     "use strict";
     var EventEmitter = __require("events");
     var https = __require("https");
     var http = __require("http");
     var net = __require("net");
     var tls = __require("tls");
-    var { randomBytes: randomBytes4, createHash: createHash3 } = __require("crypto");
+    var { randomBytes: randomBytes5, createHash: createHash3 } = __require("crypto");
     var { Duplex, Readable } = __require("stream");
     var { URL: URL2 } = __require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -23556,7 +23633,7 @@ var require_websocket = __commonJS({
         }
       }
       const defaultPort = isSecure ? 443 : 80;
-      const key = randomBytes4(16).toString("base64");
+      const key = randomBytes5(16).toString("base64");
       const request2 = isSecure ? https.request : http.request;
       const protocolSet = /* @__PURE__ */ new Set();
       let perMessageDeflate;
@@ -23905,9 +23982,9 @@ var require_websocket = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/stream.js
+// node_modules/ws/lib/stream.js
 var require_stream = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/stream.js"(exports, module) {
+  "node_modules/ws/lib/stream.js"(exports, module) {
     "use strict";
     var WebSocket2 = require_websocket();
     var { Duplex } = __require("stream");
@@ -24003,9 +24080,9 @@ var require_stream = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/subprotocol.js
+// node_modules/ws/lib/subprotocol.js
 var require_subprotocol = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/subprotocol.js"(exports, module) {
+  "node_modules/ws/lib/subprotocol.js"(exports, module) {
     "use strict";
     var { tokenChars } = require_validation2();
     function parse4(header) {
@@ -24048,9 +24125,9 @@ var require_subprotocol = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/websocket-server.js
+// node_modules/ws/lib/websocket-server.js
 var require_websocket_server = __commonJS({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/lib/websocket-server.js"(exports, module) {
+  "node_modules/ws/lib/websocket-server.js"(exports, module) {
     "use strict";
     var EventEmitter = __require("events");
     var http = __require("http");
@@ -24449,10 +24526,10 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// ../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/wrapper.mjs
+// node_modules/ws/wrapper.mjs
 var import_stream, import_extension, import_permessage_deflate, import_receiver, import_sender, import_subprotocol, import_websocket, import_websocket_server;
 var init_wrapper = __esm({
-  "../../../../../workspace/atrium/chrome-extensions/bridge/node_modules/ws/wrapper.mjs"() {
+  "node_modules/ws/wrapper.mjs"() {
     import_stream = __toESM(require_stream(), 1);
     import_extension = __toESM(require_extension(), 1);
     import_permessage_deflate = __toESM(require_permessage_deflate(), 1);
@@ -24465,7 +24542,7 @@ var init_wrapper = __esm({
 });
 
 // daemon/src/approval-page.ts
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 function createNonceStore(now = Date.now) {
   const live = /* @__PURE__ */ new Map();
   const sweep = () => {
@@ -24475,7 +24552,7 @@ function createNonceStore(now = Date.now) {
   return {
     issue(userCode) {
       sweep();
-      const nonce = randomBytes3(24).toString("base64url");
+      const nonce = randomBytes4(24).toString("base64url");
       live.set(nonce, { userCode, expiresAt: now() + NONCE_TTL_MS });
       return nonce;
     },
@@ -24540,10 +24617,118 @@ var init_approval_page = __esm({
   }
 });
 
+// daemon/src/trace-log.ts
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync5, renameSync as renameSync3, rmSync as rmSync4, statSync as statSync5 } from "node:fs";
+import { dirname as dirname5 } from "node:path";
+function createTraceLog(path, opts = {}) {
+  const maxBytes = opts.maxBytes ?? TRACE_MAX_BYTES;
+  const generations = opts.generations ?? TRACE_GENERATIONS;
+  let size = null;
+  const rotate = () => {
+    rmSync4(`${path}.${generations}`, { force: true });
+    for (let g = generations - 1; g >= 1; g--) {
+      try {
+        renameSync3(`${path}.${g}`, `${path}.${g + 1}`);
+      } catch {
+      }
+    }
+    renameSync3(path, `${path}.1`);
+    size = 0;
+  };
+  return {
+    path,
+    write(event, fields = {}) {
+      const line = `${JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields })}
+`;
+      try {
+        if (size === null) {
+          mkdirSync5(dirname5(path), { recursive: true });
+          try {
+            size = statSync5(path).size;
+          } catch {
+            size = 0;
+          }
+        }
+        if (size > 0 && size + Buffer.byteLength(line) > maxBytes) rotate();
+        appendFileSync2(path, line);
+        size += Buffer.byteLength(line);
+      } catch {
+        size = null;
+      }
+    }
+  };
+}
+var TRACE_MAX_BYTES, TRACE_GENERATIONS;
+var init_trace_log = __esm({
+  "daemon/src/trace-log.ts"() {
+    "use strict";
+    TRACE_MAX_BYTES = 5 * 1024 * 1024;
+    TRACE_GENERATIONS = 3;
+  }
+});
+
+// daemon/src/dumps.ts
+import { existsSync as existsSync6, mkdirSync as mkdirSync6, readdirSync as readdirSync2, rmSync as rmSync5, statSync as statSync6, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join6 } from "node:path";
+function createDumps(dir, max = DUMPS_MAX) {
+  const entries = () => {
+    try {
+      return readdirSync2(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => ({ name: e.name, mtime: statSync6(join6(dir, e.name)).mtimeMs }));
+    } catch {
+      return [];
+    }
+  };
+  const prune = () => {
+    const all = entries().sort((a, b) => b.mtime - a.mtime);
+    for (const old of all.slice(max)) rmSync5(join6(dir, old.name), { recursive: true, force: true });
+  };
+  return {
+    dir,
+    write(callId, pieces, extra = {}) {
+      if (!safeName(callId)) return void 0;
+      const base = join6(dir, callId);
+      const target = existsSync6(base) ? join6(base, "late") : base;
+      try {
+        mkdirSync6(target, { recursive: true });
+        const missing = { ...pieces.missing ?? {} };
+        if (pieces.screenshot && typeof pieces.screenshot.data === "string") {
+          writeFileSync2(join6(target, pieces.screenshot.format === "jpeg" ? "screenshot.jpg" : "screenshot.png"), Buffer.from(pieces.screenshot.data, "base64"));
+        } else missing.screenshot ??= "not collected";
+        if (pieces.console !== void 0) writeFileSync2(join6(target, "console.json"), json(pieces.console));
+        else missing.console ??= "not collected";
+        if (pieces.target !== void 0) writeFileSync2(join6(target, "target.json"), json(pieces.target));
+        else missing.target ??= "not collected";
+        writeFileSync2(join6(target, "call.json"), json({ ...pieces.call ?? {}, ...extra, missing }));
+        prune();
+        return base;
+      } catch {
+        return existsSync6(base) ? base : void 0;
+      }
+    },
+    pathOf(callId) {
+      if (!safeName(callId)) return void 0;
+      const base = join6(dir, callId);
+      return existsSync6(base) ? base : void 0;
+    },
+    count: () => entries().length
+  };
+}
+var DUMPS_MAX, safeName, json;
+var init_dumps = __esm({
+  "daemon/src/dumps.ts"() {
+    "use strict";
+    init_protocol();
+    DUMPS_MAX = 50;
+    safeName = (callId) => isCallId(callId) && !callId.includes("..");
+    json = (v) => `${JSON.stringify(v, null, 2)}
+`;
+  }
+});
+
 // daemon/src/files.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync5, statSync as statSync5, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync7, statSync as statSync7, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join6, resolve as resolve6 } from "node:path";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join7, resolve as resolve6 } from "node:path";
 function assertUploadPaths(paths) {
   if (!Array.isArray(paths) || paths.length === 0) {
     throw Object.assign(new Error('upload: "paths" must be a non-empty array of absolute file paths'), { code: "INVALID_ARGUMENT" });
@@ -24554,7 +24739,7 @@ function assertUploadPaths(paths) {
     }
     let st;
     try {
-      st = statSync5(p);
+      st = statSync7(p);
     } catch {
       throw new BridgeError("FILE_NOT_FOUND", `upload: file not found: ${p}`, { path: p });
     }
@@ -24574,8 +24759,8 @@ function uniquePath(dir, name) {
   const dot = name.lastIndexOf(".");
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : "";
-  let candidate = join6(dir, name);
-  for (let n = 2; existsSync6(candidate); n++) candidate = join6(dir, `${stem} (${n})${ext}`);
+  let candidate = join7(dir, name);
+  for (let n = 2; existsSync7(candidate); n++) candidate = join7(dir, `${stem} (${n})${ext}`);
   return candidate;
 }
 function persistPdf(dir, result) {
@@ -24586,9 +24771,9 @@ function persistPdf(dir, result) {
   const bytes = Buffer.from(r.data, "base64");
   if (bytes.length === 0) throw new BridgeError("PDF_FAILED", "the extension returned an empty PDF");
   try {
-    mkdirSync5(dir, { recursive: true });
+    mkdirSync7(dir, { recursive: true });
     const path = uniquePath(dir, pdfFilename(typeof r.filename === "string" ? r.filename : void 0, title));
-    writeFileSync2(path, bytes, { flag: "wx" });
+    writeFileSync3(path, bytes, { flag: "wx" });
     return { path, bytes: bytes.length, title, url };
   } catch (e) {
     throw new BridgeError("PDF_FAILED", `could not save the PDF in ${dir}: ${e.message}`);
@@ -24599,19 +24784,74 @@ var init_files = __esm({
   "daemon/src/files.ts"() {
     "use strict";
     init_errors();
-    defaultDownloadsDir = () => join6(homedir4(), "Downloads");
+    defaultDownloadsDir = () => join7(homedir4(), "Downloads");
+  }
+});
+
+// src/trace.ts
+function describeCall(c) {
+  const progress = c.progress ? ` (${c.progress.done}/${c.progress.total} chars)` : "";
+  const parts = [`stage "${c.stage}" for ${secs(c.stageAgeMs)}${progress}`];
+  if (c.cdp) parts.push(c.cdp.pending ? `CDP ${c.cdp.method} still unanswered after ${secs(c.cdp.ageMs)}` : `last CDP ${c.cdp.method} answered, sent ${secs(c.cdp.ageMs)} ago`);
+  return parts.join(", ");
+}
+function describeTab(t) {
+  if (t.error) return `tab ${t.tabId}: ${t.error}`;
+  const tab = t.active ? "tab active" : "tab in background";
+  const win = t.windowState === "minimized" ? "window minimized" : t.windowFocused ? "window focused" : "window not focused";
+  return `${tab}${t.discarded ? " (discarded)" : ""}, ${win}`;
+}
+function describeInspect(o) {
+  if (!o.answered) return `extension did not answer inspect (${o.reason})`;
+  if (!o.found || !o.call) return "the extension has no record of this call: it never arrived, or the service worker restarted";
+  const c = o.call;
+  const where = [];
+  if (c.queue?.state === "queued") {
+    const ahead = o.running ? ` (${o.running.tool}, ${describeCall(o.running)})` : "";
+    where.push(`waiting in the tab queue at position ${c.queue.position} behind call ${c.queue.behind ?? "?"}${ahead}`);
+  } else {
+    where.push(`at the extension: ${describeCall(c)}`);
+  }
+  if (o.tab) where.push(describeTab(o.tab));
+  return where.join("; ");
+}
+function clipForTrace(value, max = TRACE_VALUE_MAX) {
+  const shrink = (v) => {
+    if (typeof v === "string") return BASE64_LONG.test(v) ? `[binary: ${v.length} chars]` : v;
+    if (Array.isArray(v)) return v.map(shrink);
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shrink(x)]));
+    return v;
+  };
+  const small = shrink(value);
+  const json2 = JSON.stringify(small) ?? "null";
+  if (json2.length <= max) return small;
+  return { $truncated: true, chars: json2.length, preview: json2.slice(0, max) };
+}
+var secs, REDACTED, isTraceEvent, TRACE_VALUE_MAX, BASE64_LONG;
+var init_trace = __esm({
+  "src/trace.ts"() {
+    "use strict";
+    secs = (ms) => `${(ms / 1e3).toFixed(1)} s`;
+    REDACTED = "[redacted]";
+    isTraceEvent = (v) => !!v && typeof v === "object" && typeof v.event === "string" && ["cdp", "stage", "gate", "typing", "dropped", "page_events", "page_events_unavailable"].includes(v.event);
+    TRACE_VALUE_MAX = 2048;
+    BASE64_LONG = /^[A-Za-z0-9+/=\r\n]{256,}$/;
   }
 });
 
 // daemon/src/registry.ts
 import { randomUUID } from "node:crypto";
-var CLIENTS_MAX, RELEASE_TOOL, BrowserConnection, Registry;
+var CLIENTS_MAX, RELEASE_TOOL, EXPIRED_CALLS_MAX, INSPECT_TIMEOUT_MS, MAX_TIMER_MS, BrowserConnection, Registry;
 var init_registry = __esm({
   "daemon/src/registry.ts"() {
     "use strict";
     init_errors();
+    init_trace();
     CLIENTS_MAX = 200;
     RELEASE_TOOL = "release";
+    EXPIRED_CALLS_MAX = 200;
+    INSPECT_TIMEOUT_MS = 1500;
+    MAX_TIMER_MS = 2147483647;
     BrowserConnection = class {
       info;
       ws;
@@ -24620,6 +24860,8 @@ var init_registry = __esm({
       tabs = [];
       /** Último `{t:'focus'}` desta conexão (ISO); undefined se nunca. */
       lastFocusedAt;
+      /** O modo debug pedido pela extensão desta conexão (`{t:'debug'}`, F6). Só em memória: some com a conexão. */
+      debugRequest;
       constructor(info2, ws) {
         this.info = info2;
         this.ws = ws;
@@ -24628,8 +24870,12 @@ var init_registry = __esm({
       described() {
         return { ...this.info, ...this.lastFocusedAt ? { lastFocusedAt: this.lastFocusedAt } : {} };
       }
-      status() {
-        return { ...this.described(), tabs: this.tabs };
+      status(now = Date.now()) {
+        return { ...this.described(), tabs: this.tabs, pending: this.inFlight(now) };
+      }
+      /** As chamadas em voo agora: id, tool, idade. Nunca argumentos. */
+      inFlight(now = Date.now()) {
+        return [...this.pending].map(([callId, p]) => ({ callId, tool: p.what, ageMs: Math.max(0, now - p.startedAt) }));
       }
       send(message) {
         this.ws.send(JSON.stringify(message));
@@ -24647,6 +24893,8 @@ var init_registry = __esm({
       browsers = /* @__PURE__ */ new Map();
       /** Clientes vistos, na ordem de inserção; `noteClient` reinsere para que o mais recente fique no fim. */
       clients = /* @__PURE__ */ new Map();
+      /** Chamadas vencidas por id, na ordem em que venceram (limitado a EXPIRED_CALLS_MAX). */
+      expired = /* @__PURE__ */ new Map();
       list() {
         return [...this.browsers.values()].map((c) => c.described());
       }
@@ -24692,12 +24940,46 @@ var init_registry = __esm({
         this.browsers.delete(conn.info.id);
         return true;
       }
-      call(id, tool, args, timeoutMs, client) {
+      /**
+       * Uma chamada de tool. `callId` vira o `rid` da mensagem à extensão (o id que a casca mandou em X-Bridge-Call); sem
+       * ele, um uuid. Um id já em voo neste browser é recusado (INVALID_ARGUMENT): dois pedidos não dividem um rid.
+       */
+      call(id, tool, args, timeoutMs, client, callId) {
         const conn = this.browsers.get(id);
         if (!conn) {
           return Promise.reject(new BridgeError("BROWSER_NOT_FOUND", `no connected browser with id "${id}"`, { browsers: this.list() }));
         }
-        return this.request(conn, tool, (rid) => client ? { t: "call", rid, tool, args, client } : { t: "call", rid, tool, args }, timeoutMs);
+        if (callId !== void 0 && conn.pending.has(callId)) {
+          return Promise.reject(Object.assign(new Error(`call id "${callId}" is already in flight on this browser`), { code: "INVALID_ARGUMENT" }));
+        }
+        return this.request(conn, tool, (rid) => client ? { t: "call", rid, tool, args, client } : { t: "call", rid, tool, args }, timeoutMs, callId, client?.id, {
+          inspect: tool !== "diagnose"
+        });
+      }
+      /**
+       * Modo debug (server.ts): no CALL_TIMEOUT de uma tool, depois da inspeção, o despejo. Devolve o que soma ao erro
+       * (`data.dump`, e o sufixo do texto). Sem ele, o erro é o de sempre.
+       */
+      onTimeout = null;
+      /** Um pedido com resposta à extensão que não é chamada de tool (o despejo): não fica entre as vencidas. */
+      ask(conn, what, build2, timeoutMs, rid) {
+        return this.request(conn, what, build2, timeoutMs, rid, void 0, { remember: false });
+      }
+      /**
+       * Pergunta à extensão onde a chamada `rid` está (`{t:'inspect'}`), com prazo curto. Nunca rejeita: sem resposta (extensão
+       * muda, ocupada, reiniciada, ou antiga que não conhece a mensagem) vem `answered: false` com o motivo.
+       */
+      async inspect(conn, rid, timeoutMs = INSPECT_TIMEOUT_MS) {
+        try {
+          const report = await this.request(conn, "inspect", (irid) => ({ t: "inspect", rid: irid, call: rid }), timeoutMs, `${rid}.inspect`, void 0, {
+            remember: false
+          });
+          if (!report || typeof report !== "object" || typeof report.found !== "boolean") return { answered: false, reason: "the answer was not an inspect report" };
+          return { answered: true, ...report };
+        } catch (e) {
+          const code = toWireError(e).code;
+          return { answered: false, reason: code === "CALL_TIMEOUT" ? `no answer within ${timeoutMs} ms` : code };
+        }
       }
       /**
        * `POST /clients/:id/release`: avisa TODOS os browsers conectados que o cliente encerrou; cada extensão solta as abas
@@ -24736,6 +25018,10 @@ var init_registry = __esm({
           })
         );
       }
+      /** As conexões vivas (para mensagens que variam por browser, como o `{t:'config'}` com o modo debug de cada um). */
+      connections() {
+        return [...this.browsers.values()];
+      }
       /** Uma mensagem sem resposta a todas as extensões conectadas (ex.: `{t:'config'}` quando o config.json muda). */
       broadcast(message) {
         for (const conn of this.browsers.values()) {
@@ -24746,14 +25032,26 @@ var init_registry = __esm({
         }
       }
       /** Um pedido com resposta (`{t:'result'}` com o mesmo rid) a uma extensão: o que `call` e `releaseClient` têm em comum. */
-      request(conn, what, build2, timeoutMs) {
-        const rid = randomUUID();
+      request(conn, what, build2, timeoutMs, callId, client, opts = {}) {
+        const rid = callId ?? randomUUID();
+        this.expired.delete(rid);
         return new Promise((resolve9, reject) => {
-          const timer = setTimeout(() => {
+          const onTimeout = () => {
             conn.pending.delete(rid);
-            reject(new BridgeError("CALL_TIMEOUT", `browser "${conn.info.name}" did not answer ${what} within ${timeoutMs} ms`));
-          }, timeoutMs);
-          conn.pending.set(rid, { resolve: resolve9, reject, timer });
+            if (opts.remember !== false) this.noteExpired(rid, { browser: conn.info.id, what, deadlineAt: Date.now(), ...client ? { client } : {} });
+            const message = `browser "${conn.info.name}" did not answer ${what} within ${timeoutMs} ms`;
+            if (!opts.inspect) {
+              reject(new BridgeError("CALL_TIMEOUT", message));
+              return;
+            }
+            void (async () => {
+              const inspect = await this.inspect(conn, rid);
+              const extra = this.onTimeout ? await this.onTimeout(conn, rid, what, inspect, message).catch(() => void 0) : void 0;
+              reject(new BridgeError("CALL_TIMEOUT", `${message}; ${describeInspect(inspect)}${extra?.suffix ?? ""}`, { inspect, ...extra?.data ?? {} }));
+            })();
+          };
+          const timer = timeoutMs > 0 && timeoutMs <= MAX_TIMER_MS ? setTimeout(onTimeout, timeoutMs) : void 0;
+          conn.pending.set(rid, { resolve: resolve9, reject, timer, what, startedAt: Date.now(), ...client ? { client } : {} });
           try {
             conn.send(build2(rid));
           } catch (e) {
@@ -24762,6 +25060,21 @@ var init_registry = __esm({
             reject(new BridgeError("BROWSER_DISCONNECTED", `browser "${conn.info.name}" is not reachable: ${e.message}`));
           }
         });
+      }
+      noteExpired(rid, entry) {
+        this.expired.delete(rid);
+        this.expired.set(rid, entry);
+        while (this.expired.size > EXPIRED_CALLS_MAX) this.expired.delete(this.expired.keys().next().value);
+      }
+      /**
+       * Um resultado sem chamada em voo (`settle` deu false): se o rid é de uma chamada que venceu neste browser, devolve
+       * o que ela era e quanto atrasou, e a esquece (um segundo resultado do mesmo rid não conta de novo).
+       */
+      takeExpired(conn, rid, now = Date.now()) {
+        const e = this.expired.get(rid);
+        if (!e || e.browser !== conn.info.id) return void 0;
+        this.expired.delete(rid);
+        return { what: e.what, lateMs: Math.max(0, now - e.deadlineAt), ...e.client ? { client: e.client } : {} };
       }
       /** Entrega o resultado de uma chamada; false se o rid é desconhecido (timeout já disparou). */
       settle(conn, rid, outcome) {
@@ -24778,9 +25091,11 @@ var init_registry = __esm({
 });
 
 // daemon/src/server.ts
-import { statSync as statSync6 } from "node:fs";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { statSync as statSync8 } from "node:fs";
 import { createServer as createServer2 } from "node:http";
 import { resolve as resolve7 } from "node:path";
+import { dirname as dirname6, join as join8 } from "node:path";
 function statusFor(code) {
   switch (code) {
     case "BROWSER_NOT_FOUND":
@@ -24813,8 +25128,48 @@ async function startDaemon(opts) {
   const callTimeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   let config2 = ensureConfig(opts.home, opts.port);
   const registry2 = new Registry();
+  const traceLog = createTraceLog(traceLogPath(opts.home));
+  const dumps = createDumps(join8(dirname6(traceLogPath(opts.home)), "debug"), opts.dumpsMax);
+  const debugOf = (_c, conn) => debugFromRequest(conn?.debugRequest);
+  const modeInfo = (conn) => {
+    const dbg = debugOf(config2, conn);
+    const t = timeoutFor(void 0, {}, conn);
+    return {
+      on: dbg.on,
+      callTimeoutMs: Number.isFinite(t) ? t : null,
+      traceLog: traceLog.path,
+      dumpsDir: dumps.dir
+    };
+  };
+  const configMessageFor = (conn) => {
+    const capabilities = capabilitiesFor(config2, conn);
+    return { t: "config", ...config2.brand ? { brand: config2.brand } : {}, ...capabilities ? { capabilities } : {}, debugMode: modeInfo(conn) };
+  };
+  const capabilitiesFor = (c, conn) => {
+    const dbg = debugOf(c, conn);
+    if (!c.capabilities && !dbg.on) return void 0;
+    const { debug: _debug, debugCallTimeoutMs: _timeout, ...rest2 } = c.capabilities ?? {};
+    const timeout = dbg.on && dbg.callTimeoutMs !== void 0 ? { debugCallTimeoutMs: String(dbg.callTimeoutMs) } : {};
+    if (!dbg.on && Object.keys(rest2).length === 0 && !c.capabilities) return void 0;
+    return { ...rest2, ...dbg.on ? { debug: true, ...timeout } : {} };
+  };
+  const trace = (event, fields, conn) => {
+    if (debugOf(config2, conn).on) traceLog.write(event, fields);
+  };
+  const timeoutFor = (own2, args = {}, conn) => {
+    const dbg = debugOf(config2, conn);
+    if (dbg.on && dbg.callTimeoutMs !== void 0) {
+      if (dbg.callTimeoutMs === 0) return Infinity;
+      return Math.max(dbg.callTimeoutMs, own2 ?? 0, toolOwnTimeoutMs(args) ?? 0);
+    }
+    return own2 ?? callTimeoutMs;
+  };
+  const modeNow = (conn) => {
+    const m = modeInfo(conn);
+    return { debug: m.on, callTimeoutMs: m.callTimeoutMs, traceLog: traceLog.path, dumps: { dir: dumps.dir, count: dumps.count() } };
+  };
   const stamp = () => {
-    const s = statSync6(configPath(opts.home), { bigint: true });
+    const s = statSync8(configPath(opts.home), { bigint: true });
     return `${s.ino}:${s.mtimeNs}:${s.size}`;
   };
   let seen = stamp();
@@ -24832,7 +25187,12 @@ async function startDaemon(opts) {
     }
     seen = now;
     log("config_reloaded", { keys: config2.apiKeys.length });
-    registry2.broadcast({ t: "config", ...config2.brand ? { brand: config2.brand } : {}, ...config2.capabilities ? { capabilities: config2.capabilities } : {} });
+    for (const conn of registry2.connections()) {
+      try {
+        conn.send(configMessageFor(conn));
+      } catch {
+      }
+    }
     return config2;
   };
   let paused = false;
@@ -24878,18 +25238,54 @@ async function startDaemon(opts) {
     const name = cleanClientName(req.headers[CLIENT_NAME_HEADER]);
     return name ? { id, name } : { id };
   };
+  const callIdOf = (req) => {
+    const id = req.headers[CALL_ID_HEADER];
+    if (id === void 0) return randomUUID2();
+    if (!isCallId(id)) {
+      throw Object.assign(new Error(`invalid X-Bridge-Call: expected ${CALL_ID_PATTERN.source}`), { code: "INVALID_ARGUMENT" });
+    }
+    return id;
+  };
+  registry2.onTimeout = async (conn, rid, tool, inspect, message) => {
+    if (!debugOf(current(), conn).on) return void 0;
+    let pieces;
+    try {
+      pieces = await registry2.ask(conn, "dump", (irid) => ({ t: "dump-request", rid: irid, call: rid }), DUMP_REQUEST_TIMEOUT_MS, `${rid}.dump`);
+      if (!pieces || typeof pieces !== "object") throw new Error("the answer was not a dump");
+    } catch (e) {
+      const why = `extension did not answer the dump request (${toWireError(e).code})`;
+      pieces = { call: { callId: rid, tool }, missing: { screenshot: why, console: why, target: why } };
+    }
+    const dir = dumps.write(rid, pieces, { inspect, error: { code: "CALL_TIMEOUT", message } });
+    if (!dir) return void 0;
+    trace("dump", { callId: rid, browser: conn.info.id, dir }, conn);
+    return { data: { dump: dir }, suffix: `; debug dump: ${dir}` };
+  };
+  const diagnoseBrowser = async (id, args, client, callId) => {
+    const conn = registry2.get(id);
+    if (!conn) throw new BridgeError("BROWSER_NOT_FOUND", `no connected browser with id "${id}"`, { browsers: registry2.list() });
+    const wanted = typeof args.callId === "string" ? args.callId : void 0;
+    let extension2;
+    try {
+      extension2 = await registry2.call(id, "diagnose", args, DIAGNOSE_TIMEOUT_MS, client, callId);
+    } catch (e) {
+      extension2 = { error: toWireError(e) };
+    }
+    const pending = conn.inFlight().filter((p) => p.callId !== callId && (wanted === void 0 || p.callId === wanted));
+    return { browser: id, daemon: { pending, mode: modeNow(conn) }, extension: extension2 };
+  };
   let boundPort = 0;
   let embedded;
   const nonces = createNonceStore();
   const hostOk = (host) => !!host && [`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`].includes(host.toLowerCase());
-  const json = (res, status, body) => {
+  const json2 = (res, status, body) => {
     const text = JSON.stringify(body);
     res.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(text) });
     res.end(text);
   };
   const fail = (res, e) => {
     const error2 = toWireError(e);
-    json(res, statusFor(error2.code), { ok: false, error: error2 });
+    json2(res, statusFor(error2.code), { ok: false, error: error2 });
   };
   const readBody = (req) => new Promise((resolve9, reject) => {
     const chunks = [];
@@ -24958,25 +25354,26 @@ async function startDaemon(opts) {
       if (await handleApprovalPage(req, res, url)) return;
       if (req.headers.origin) throw Object.assign(new Error("browser-origin requests are refused"), { code: "UNAUTHORIZED" });
       if (req.method === "GET" && url.pathname === "/health") {
-        return json(res, 200, { ok: true, ...embedded ? { embedded: embedded.state() } : {} });
+        return json2(res, 200, { ok: true, ...embedded ? { embedded: embedded.state() } : {} });
       }
       const key = authenticate(req);
       const client = clientOf(req);
       if (req.method === "GET" && url.pathname === "/browsers") {
         if (client) registry2.noteClient(client, "list_browsers");
-        return json(res, 200, { ok: true, browsers: registry2.list() });
+        return json2(res, 200, { ok: true, browsers: registry2.list().map((b) => ({ ...b, debug: modeInfo(registry2.get(b.id)) })) });
       }
       if (req.method === "GET" && url.pathname === "/status") {
-        const body = { ok: true, paused, ...registry2.status() };
-        return json(res, 200, body);
+        const status = registry2.status();
+        const body = { ok: true, paused, ...status, browsers: status.browsers.map((b) => ({ ...b, debug: modeInfo(registry2.get(b.id)) })) };
+        return json2(res, 200, body);
       }
       if (req.method === "POST" && url.pathname === "/pause") {
         const browsers = await pause({ key: key.name });
-        return json(res, 200, { ok: true, paused: true, browsers });
+        return json2(res, 200, { ok: true, paused: true, browsers });
       }
       if (req.method === "POST" && url.pathname === "/resume") {
         resume({ key: key.name });
-        return json(res, 200, { ok: true, paused: false });
+        return json2(res, 200, { ok: true, paused: false });
       }
       if (req.method === "POST" && url.pathname === "/embedded/approve") {
         if (key.scope === "use" || key.scope === "upload") throw new BridgeError("FORBIDDEN", `key "${key.name}" has scope "${key.scope}"; approving a login needs a full or admin key`);
@@ -24992,7 +25389,7 @@ async function startDaemon(opts) {
         if (!code) throw Object.assign(new Error('"user_code" is required (as shown in the Assistant panel)'), { code: "INVALID_ARGUMENT" });
         await embedded.approve(code);
         log("device_approved", { via: "api", key: key.name });
-        return json(res, 200, { ok: true });
+        return json2(res, 200, { ok: true });
       }
       const rel = /^\/clients\/([^/]+)\/release$/.exec(url.pathname);
       if (req.method === "POST" && rel) {
@@ -25004,7 +25401,7 @@ async function startDaemon(opts) {
         const browsers = await registry2.releaseClient(id, callTimeoutMs);
         registry2.noteClient({ id }, "release");
         log("release", { key: key.name, client: id, browsers: browsers.length, ok: browsers.every((b) => b.ok), ms: Date.now() - started });
-        return json(res, 200, { ok: true, client: id, browsers });
+        return json2(res, 200, { ok: true, client: id, browsers });
       }
       const m = /^\/browsers\/([^/]+)\/call$/.exec(url.pathname);
       if (req.method === "POST" && m) {
@@ -25022,6 +25419,11 @@ async function startDaemon(opts) {
         if (SHELL_ONLY_TOOLS.has(body.tool)) {
           throw Object.assign(new Error(`${body.tool} runs only in the MCP server of the Bridge (the upload authorizations live in its memory), not in the daemon API`), { code: "INVALID_ARGUMENT" });
         }
+        const callId = callIdOf(req);
+        const target = registry2.get(id);
+        if (UPLOAD_TOOLS.has(body.tool)) {
+          trace("gate", { callId, gate: "upload-scope", decision: key.scope === "upload" ? "allow" : "deny", reason: `key "${key.name}" has scope "${key.scope ?? "full"}"` }, target);
+        }
         if (UPLOAD_TOOLS.has(body.tool) && key.scope !== "upload") {
           log("upload_refused", { key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool });
           throw new BridgeError(
@@ -25032,23 +25434,36 @@ async function startDaemon(opts) {
         if (body.tool === "list_browsers") {
           throw Object.assign(new Error("list_browsers is GET /browsers"), { code: "INVALID_ARGUMENT" });
         }
-        const timeout = typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? Math.min(body.timeoutMs, 6e5) : callTimeoutMs;
+        const timeout = timeoutFor(typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? Math.min(body.timeoutMs, 6e5) : void 0, args, target);
         const started = Date.now();
         if (client) registry2.noteClient(client, body.tool);
-        const who = { key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool };
+        const who = { callId, key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool };
+        const timeoutMs = Number.isFinite(timeout) ? timeout : null;
+        log("call_started", { ...who, timeoutMs });
+        trace("call_started", { ...who, timeoutMs, args: clipForTrace(body.tool === "type" && "text" in args ? { ...args, text: REDACTED } : args) }, target);
         try {
+          trace("gate", { callId, gate: "pause", decision: paused ? "deny" : "allow", reason: paused ? "the user paused the Bridge" : "not paused" }, target);
           if (paused) throw new BridgeError("BRIDGE_PAUSED", "the user paused the Bridge: no tool runs and no tab is under control until they resume it. Tell the user and wait.");
           if (body.tool === "upload") args.paths = assertUploadPaths(args.paths);
-          let result = await registry2.call(id, body.tool, args, timeout, client);
+          if (body.tool === "diagnose") {
+            const result2 = await diagnoseBrowser(id, args, client, callId);
+            log("call_finished", { ...who, ok: true, durationMs: Date.now() - started });
+            return json2(res, 200, { ok: true, result: result2 });
+          }
+          let result = await registry2.call(id, body.tool, args, timeout, client, callId);
           if (body.tool === "pdf") result = persistPdf(downloadsDir(), result);
-          log("call", { ...who, ok: true, ms: Date.now() - started });
-          return json(res, 200, { ok: true, result });
+          log("call_finished", { ...who, ok: true, durationMs: Date.now() - started });
+          trace("call_finished", { ...who, ok: true, durationMs: Date.now() - started, result: clipForTrace(result) }, target);
+          return json2(res, 200, { ok: true, result });
         } catch (e) {
-          log("call", { ...who, ok: false, code: toWireError(e).code, ms: Date.now() - started });
-          throw e;
+          log("call_finished", { ...who, ok: false, code: toWireError(e).code, durationMs: Date.now() - started });
+          trace("call_finished", { ...who, ok: false, durationMs: Date.now() - started, error: clipForTrace(toWireError(e)) }, target);
+          const wire = wireWithCallId(e, callId);
+          const dump = debugOf(config2, target).on && !wire.data?.dump ? dumps.pathOf(callId) : void 0;
+          throw new RemoteError(dump ? { ...wire, message: `${wire.message}; debug dump: ${dump}`, data: { ...wire.data, dump } } : wire);
         }
       }
-      json(res, 404, { ok: false, error: { code: "NOT_FOUND", message: "no such route" } });
+      json2(res, 404, { ok: false, error: { code: "NOT_FOUND", message: "no such route" } });
     } catch (e) {
       fail(res, e);
     }
@@ -25113,7 +25528,9 @@ async function startDaemon(opts) {
           previous.ws.close(CLOSE_REPLACED, "replaced by a new connection");
         }
         conn = mine;
-        const { brand, capabilities, extensionVersion } = current();
+        const latest = current();
+        const { brand, extensionVersion } = latest;
+        const capabilities = capabilitiesFor(latest, mine);
         mine.send({
           t: "welcome",
           ...brand ? { brand } : {},
@@ -25130,8 +25547,46 @@ async function startDaemon(opts) {
       }
       if (msg.t === "resume") return resume({ browser: conn.info.id });
       if (msg.t === "ping") return conn.send({ t: "pong" });
+      if (msg.t === "dump") {
+        if (typeof msg.call === "string" && msg.pieces && typeof msg.pieces === "object" && debugOf(current(), conn).on) {
+          const dir = dumps.write(msg.call, msg.pieces);
+          if (dir) trace("dump", { callId: msg.call, browser: conn.info.id, dir }, conn);
+        }
+        return;
+      }
+      if (msg.t === "debug") {
+        const before = debugOf(current(), conn).on;
+        conn.debugRequest = debugRequestFrom(msg);
+        const after = debugOf(config2, conn);
+        conn.send(configMessageFor(conn));
+        if (before !== after.on) log("debug_request", { browser: conn.info.id, on: after.on });
+        return;
+      }
+      if (msg.t === "trace") {
+        if (!Array.isArray(msg.events) || !debugOf(current(), conn).on) return;
+        for (const ev of msg.events.slice(0, TRACE_BATCH_MAX)) {
+          if (!isTraceEvent(ev)) continue;
+          const { event, ...fields } = ev;
+          traceLog.write(event, { ...fields, browser: conn.info.id });
+        }
+        return;
+      }
       if (msg.t === "result" && typeof msg.rid === "string") {
-        registry2.settle(conn, msg.rid, msg.ok ? { ok: true, value: msg.value } : { ok: false, error: msg.error });
+        const outcome = msg.ok ? { ok: true, value: msg.value } : { ok: false, error: msg.error };
+        if (!registry2.settle(conn, msg.rid, outcome)) {
+          const late = registry2.takeExpired(conn, msg.rid);
+          if (late) {
+            log("late_result", {
+              callId: msg.rid,
+              ...late.client ? { client: late.client } : {},
+              browser: conn.info.id,
+              tool: late.what,
+              ok: msg.ok === true,
+              ...msg.ok ? {} : { code: toWireError(msg.error).code },
+              lateMs: late.lateMs
+            });
+          }
+        }
         return;
       }
       if (msg.t === "tabs") {
@@ -25193,7 +25648,7 @@ async function startDaemon(opts) {
     }
   };
 }
-var HELLO_TIMEOUT_MS, EXTENSION_ORIGIN_PREFIX, MAX_BODY, DEFAULT_CALL_TIMEOUT_MS, MAX_FRAME, defaultLog;
+var HELLO_TIMEOUT_MS, EXTENSION_ORIGIN_PREFIX, MAX_BODY, DEFAULT_CALL_TIMEOUT_MS, DIAGNOSE_TIMEOUT_MS, MAX_FRAME, TRACE_BATCH_MAX, DUMP_REQUEST_TIMEOUT_MS, defaultLog;
 var init_server3 = __esm({
   "daemon/src/server.ts"() {
     "use strict";
@@ -25203,15 +25658,22 @@ var init_server3 = __esm({
     init_protocol();
     init_approval_page();
     init_config();
+    init_trace_log();
+    init_dumps();
+    init_client();
     init_embedded();
     init_files();
     init_registry();
+    init_trace();
     init_secrets();
     HELLO_TIMEOUT_MS = 5e3;
     EXTENSION_ORIGIN_PREFIX = "chrome-extension://";
     MAX_BODY = 1024 * 1024;
     DEFAULT_CALL_TIMEOUT_MS = 6e4;
+    DIAGNOSE_TIMEOUT_MS = 5e3;
     MAX_FRAME = 64 * 1024 * 1024;
+    TRACE_BATCH_MAX = 500;
+    DUMP_REQUEST_TIMEOUT_MS = 6e3;
     defaultLog = (event, fields = {}) => {
       process.stderr.write(JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
     };
@@ -25237,6 +25699,8 @@ var init_cli = __esm({
   start [--port N] [--embedded [--supervisor-env-file PATH]]
                             start the daemon (WebSocket + HTTP on 127.0.0.1). --embedded (or "embedded": true in
                             config.json) also hosts the Atrium supervisor on 127.0.0.1:<port+1> for the Assistant
+        [--call-timeout-ms N] the ceiling of a call to the browser (default 60000)
+                            (debug mode is turned on only by the person, in the extension options page)
   token pairing|api [--copy] show a secret on request (pairing: typed into the extension options; api: the local
                             API key in api.key, the one the MCP server uses when no key is given to it)
   key create <name> [--scope use|admin|upload] [--replace] [--json]
@@ -25269,11 +25733,28 @@ Files in that folder: daemon.pid (pid of the process that listens; written once 
         process.stderr.write("--supervisor-env-file needs a path\n");
         process.exit(2);
       }
+      const msFlag = (name) => {
+        const raw = flag(rest, name);
+        if (raw === void 0) return void 0;
+        const n = Number(raw);
+        if (!/^\d{1,10}$/.test(raw) || !Number.isSafeInteger(n)) {
+          process.stderr.write(`${name} needs a number of milliseconds (0 or more)
+`);
+          process.exit(2);
+        }
+        return n;
+      };
+      const callTimeoutMs = msFlag("--call-timeout-ms");
+      if (callTimeoutMs === 0) {
+        process.stderr.write("--call-timeout-ms must be more than 0\n");
+        process.exit(2);
+      }
       const daemon = await startDaemon({
         home,
         port,
         ...embedded ? { embedded } : {},
-        ...supervisorEnvFile !== void 0 ? { supervisorEnvFile } : {}
+        ...supervisorEnvFile !== void 0 ? { supervisorEnvFile } : {},
+        ...callTimeoutMs !== void 0 ? { callTimeoutMs } : {}
       }).catch((e) => {
         process.stderr.write(`atrium-bridge daemon: ${e instanceof Error ? e.message : String(e)}
 `);
@@ -25317,7 +25798,7 @@ Files in that folder: daemon.pid (pid of the process that listens; written once 
       }
     } else if (command === "key") {
       const [sub, name] = rest;
-      const json = rest.includes("--json");
+      const json2 = rest.includes("--json");
       const fail = (message, code = 1) => {
         process.stderr.write(`${message}
 `);
@@ -25334,7 +25815,7 @@ ${USAGE}`, 2);
             ...scopeArg ? { scope: scopeArg } : {},
             ...rest.includes("--replace") ? { replace: true } : {}
           });
-          if (json) process.stdout.write(`${JSON.stringify(created)}
+          if (json2) process.stdout.write(`${JSON.stringify(created)}
 `);
           else {
             process.stdout.write(`${created.value}
@@ -25349,7 +25830,7 @@ ${USAGE}`, 2);
           }
         } else if (sub === "list") {
           const keys = listKeys(home);
-          if (json) process.stdout.write(`${JSON.stringify(keys)}
+          if (json2) process.stdout.write(`${JSON.stringify(keys)}
 `);
           else if (keys.length === 0) process.stdout.write("no API keys\n");
           else for (const k of keys) process.stdout.write(`${k.name}	${k.createdAt}	${k.scope ?? "full"}

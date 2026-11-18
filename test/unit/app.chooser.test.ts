@@ -46,6 +46,9 @@ describe('items', () => {
   })
 
   test('a profile item: args line, the shell executable\'s args, unsafe and default marks, its own folder', () => {
+    const yolo = profileItem({ ...PROFILES[1]!, agent: 'codex', args: ['--yolo'] })
+    assert.equal(yolo.unsafe, true)
+    assert.equal(profileItem({ ...PROFILES[1]!, agent: 'codex', args: ['--dangerously-bypass-approvals-and-sandbox'] }).unsafe, true)
     const dev = profileItem(PROFILES[1]!)
     assert.deepEqual([dev.hint, dev.unsafe, dev.default, dev.hintNone], [UNSAFE, true, false, false])
     const bash = profileItem(PROFILES[4]!)

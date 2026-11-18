@@ -2,8 +2,12 @@
 // entry wires and the unit test drives:
 //   - the launch middleware: every AI agent launch (never a plain shell) gets the --mcp-config file C2 wrote
 //     (<TETHER_HOME>/mcp/tether-bridge.json) through the agent's own AgentContribution.mcp.inject, plus its identity for
-//     the bridge in the env: ATRIUM_BRIDGE_CLIENT_ID=tether:<slotId> and ATRIUM_BRIDGE_CLIENT_NAME="<Agent> · <slot name
-//     or folder>". The MCP shell turns them into the X-Bridge-Client headers (bridge A5); an older shell ignores them.
+//     the bridge in the env: ATRIUM_BRIDGE_CLIENT_ID=tether:<slotId> and ATRIUM_BRIDGE_CLIENT_NAME = the text of the pane's
+//     tab (slot name, else session title, else folder; app/shared/agent-info.ts slotTitle), unique among the agents the
+//     bridge serves ("atrium", "atrium 2"). The MCP shell turns them into the X-Bridge-Client headers (bridge A5); an older
+//     shell ignores them. The name is a label for the person to read at the browser and authorizes nothing (the tabs are
+//     owned by the id). Over HTTP the shell reads the env at every request, so a renamed tab renames the agent at its next
+//     call (BridgeIdentities.follow); over stdio (soul) the name is the one of the launch.
 //     The switch `extensions.web-bridge.serveToAgents` (D8, default on) leaves the plan untouched when off, and so does a
 //     missing MCP file (the setup failed: no half-wired agent) or an agent without `mcp` (it would not know the flag);
 //   - the release: when an agent slot exits, POST /clients/<id>/release on the bridge daemon (bearer = the home's api.key,
@@ -17,13 +21,15 @@
 //     The upload authorizations are kept with the slot (grant-store.ts), not in the shell's memory.
 import { randomBytes } from 'node:crypto'
 import { readFileSync, rmSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { join } from 'node:path'
+import { folderNameOf, slotTitle } from '../../app/shared/agent-info.ts'
 import { httpMcpConfigOf } from '../../src/agents/mcp.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
 import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
+import type { SlotState } from '../../src/daemon/protocol.ts'
 import { writeFileAtomic } from './bridge-home.ts'
 import { MCP_SERVER_NAME } from './paths.ts'
 
@@ -58,12 +64,73 @@ export const CLIENT_NAME_MAX = 80
 /** `tether:<slotId>`: the agent's identity at the bridge, one per slot, stable across the slot's restarts. */
 export const clientIdOf = (slotId: string): string => `tether:${slotId}`
 
-/** "Claude · <slot name>" or "Claude · <folder name>", within the bridge's limit. */
-export function clientNameOf(agent: string, slot: Pick<SlotMeta, 'name' | 'cwd'>): string {
-  const who = agent.charAt(0).toUpperCase() + agent.slice(1)
-  const where = slot.name?.trim() || basename(slot.cwd.replace(/[\\/]+$/, '')) || slot.cwd
-  const name = `${who} · ${where}`
-  return name.length > CLIENT_NAME_MAX ? `${name.slice(0, CLIENT_NAME_MAX - 1)}…` : name
+/**
+ * A name as the bridge keeps it (its cleanClientName): control characters become spaces, the invisible format ones (bidi
+ * overrides, zero-width) go, spaces collapse. Done here too, so two tabs that differ only by what the bridge strips are
+ * told apart before they reach the browser.
+ */
+export function cleanName(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  return raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim()
+}
+
+/** The text of the pane's tab, clean: the slot's name, else its session title, else its folder. */
+export function clientNameOf(slot: Pick<SlotState, 'name' | 'title' | 'cwd'>): string {
+  return cleanName(slotTitle(slot)) || cleanName(folderNameOf(slot.cwd)) || cleanName(slot.cwd) || 'agent'
+}
+
+/** `base` and then `suffix` (" 2"), `base` cut with "…" so the whole fits the bridge's limit, never splitting a character. */
+function fitName(base: string, suffix: string): string {
+  const chars = [...base]
+  const room = CLIENT_NAME_MAX - suffix.length
+  return (chars.length > room ? `${chars.slice(0, room - 1).join('')}…` : base) + suffix
+}
+
+/** What a launch without the slot's state (an older host) knows of the tab: the slot's name, else its folder. */
+const tabOfMeta = (meta: SlotMeta): Pick<SlotState, 'name' | 'cwd'> => ({ ...(meta.name ? { name: meta.name } : {}), cwd: meta.cwd })
+
+/**
+ * Who each agent is at the bridge while it runs: its name (the tab's text, numbered when another running agent already has
+ * that text; the first keeps it plain) and, for an agent served over HTTP, the env its shell reads at every request. A name
+ * stays while the tab's text stays: another agent starting or ending never renumbers it.
+ */
+export class BridgeIdentities {
+  private readonly names = new Map<string, { base: string; name: string }>()
+  private readonly envs = new Map<string, Record<string, string>>()
+
+  /** The slot's name for the tab text `base`: the one it has while the text is the same, else the first free one. */
+  nameFor(slotId: string, base: string): string {
+    const had = this.names.get(slotId)
+    if (had?.base === base) return had.name
+    const taken = new Set([...this.names].filter(([id]) => id !== slotId).map(([, n]) => n.name.toLowerCase()))
+    let name = fitName(base, '')
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = fitName(base, ` ${n}`)
+    this.names.set(slotId, { base, name })
+    return name
+  }
+
+  /** The env object of the slot's HTTP shell (read at every request): a new name is written into it. */
+  attach(slotId: string, env: Record<string, string>): void {
+    this.envs.set(slotId, env)
+  }
+
+  /** The slot's tab (or binding) changed: an agent served over HTTP takes the new name at its next call. */
+  follow(slot: SlotState): void {
+    const env = this.envs.get(slot.slotId)
+    if (!env) return
+    env[ENV_CLIENT_NAME] = this.nameFor(slot.slotId, clientNameOf(slot))
+  }
+
+  /** The agent ended: its name is free again and its shell's env is let go. */
+  drop(slotId: string): void {
+    this.names.delete(slotId)
+    this.envs.delete(slotId)
+  }
+
+  /** The name a running agent has now. */
+  nameOf(slotId: string): string | undefined {
+    return this.names.get(slotId)?.name
+  }
 }
 
 export interface InjectDeps {
@@ -86,6 +153,8 @@ export interface InjectDeps {
   backend?(input: BridgeBackendInput): McpBackend | Promise<McpBackend>
   /** Injected in the unit test. */
   key?(): string
+  /** The names of the running agents and the env of their HTTP shells (daemon.ts shares it with the slot events). */
+  identities?: BridgeIdentities
 }
 
 /** The slot's bridge over HTTP ends: the key stops working, the slot's shell is closed, the per-slot file goes. Never throws. */
@@ -98,9 +167,10 @@ export function releaseHttp(deps: Pick<InjectDeps, 'http' | 'httpConfigFile'>, s
  * The launch middleware (TetherDaemon.launch.use). Returns the plan given (same object) whenever nothing applies, so a
  * test and a reader can tell "untouched" from "rewritten".
  */
-export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan {
+export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan {
   let warnedMissing = false
-  return (plan, slot) => {
+  const identities = deps.identities ?? new BridgeIdentities()
+  return (plan, slot, state) => {
     if (slot.agent === 'shell') return plan
     if (!deps.serve()) return plan
     const agent = deps.agent(slot.agent)
@@ -112,8 +182,8 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
     warnedMissing = false
     const id = clientIdOf(slot.slotId)
     if (!CLIENT_ID_PATTERN.test(id)) { deps.log(`slot ${slot.slotId}: id de cliente inválido para o bridge; lançado sem identidade`); return agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME]) }
-    const identity = { [ENV_CLIENT_ID]: id, [ENV_CLIENT_NAME]: clientNameOf(slot.agent, slot) }
-    const viaHttp = agent.mcp.http ? injectHttp(deps, agent, plan, slot, identity) : undefined
+    const identity = { [ENV_CLIENT_ID]: id, [ENV_CLIENT_NAME]: identities.nameFor(slot.slotId, clientNameOf(state ?? tabOfMeta(slot))) }
+    const viaHttp = agent.mcp.http ? injectHttp(deps, agent, plan, slot, identity, identities) : undefined
     if (viaHttp) return viaHttp
     const out = agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME])
     return { ...out, env: { ...out.env, ...identity } }
@@ -121,7 +191,7 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
 }
 
 /** The HTTP injection, or undefined when it does not apply (no host listening, no node, an unreadable stdio file, a failed write). */
-function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan, slot: SlotMeta, identity: Record<string, string>): LaunchPlan | undefined {
+function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan, slot: SlotMeta, identity: Record<string, string>, identities: BridgeIdentities): LaunchPlan | undefined {
   const url = deps.http?.urlOf(slot.slotId)
   const backend = deps.backend
   if (!url || !deps.http || !backend || !deps.httpConfigFile || !SLOT_ID_RE.test(slot.slotId)) return undefined
@@ -139,6 +209,8 @@ function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan
     return undefined
   }
   const { [ENV_BRIDGE_MCP_KEY]: _, ...env } = { ...out.env, ...entry.env, ...identity }
+  // The one object every shell of this run gets: a renamed tab writes the new name into it (BridgeIdentities.follow).
+  identities.attach(slot.slotId, env)
   deps.http.grant(slot.slotId, key, { create: () => backend({ slotId: slot.slotId, env, node }) })
   return { ...out, env: { ...out.env, ...identity, [ENV_BRIDGE_MCP_KEY]: key } }
 }

@@ -32,7 +32,7 @@ export function noteConflictSituation(path: string): DialogSpec {
     situation: 'note-conflict',
     tone: 'warn',
     icon: 'warning',
-    title: 'Esta nota mudou fora do tether',
+    title: 'Esta nota mudou fora do Tether',
     message: 'O arquivo foi alterado por outro programa enquanto você editava aqui. As duas versões são diferentes.',
     context: { icon: 'note-pencil', name: folderName(path), lines: [path] },
     choices: [

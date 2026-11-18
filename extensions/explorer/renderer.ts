@@ -7,6 +7,7 @@ import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { ExplorerChannels } from './ipc.ts'
 import { manifest } from './manifest.ts'
 import { ExplorerView, type FileOp } from './renderer/view.ts'
+import { ActivityGate } from './renderer/rules.ts'
 
 export { manifest }
 
@@ -30,19 +31,26 @@ export function activate(ui: TetherUi): IDisposable[] {
   ui.test.expose('explorerWatch', () => view?.watchStats())
   // The e2e calls the write channels directly to prove main's guard refuses what the view would never ask.
   const ipc = ui.ipc<ExplorerChannels>()
+  // Main holds disk watchers only while a view of the explorer is shown and the window is not hidden.
+  const gate = new ActivityGate(active => ipc.send('setActive', active), document.visibilityState !== 'hidden')
+  const onDocumentVisibility = (): void => gate.setDocument(document.visibilityState !== 'hidden')
+  document.addEventListener('visibilitychange', onDocumentVisibility)
   ui.test.expose('explorerWrite', {
     create: (path: string, kind: 'file' | 'dir') => ipc.invoke('create', path, kind),
     rename: (from: string, to: string) => ipc.invoke('rename', from, to),
     trash: (path: string) => ipc.invoke('trash', path),
   })
   return [
+    { dispose: () => document.removeEventListener('visibilitychange', onDocumentVisibility) },
     ui.pads.register({
       id: PAD,
       create: host => (view = new ExplorerView(ui, host, {
         isOn: on,
         toggle,
         set: (key, value) => ui.settings.set(key, value),
+        onChange: (key, listener) => ui.settings.onChange(key, listener),
         reveal: () => { void reveal() },
+        visible: shown => gate.setView(host, shown),
       })),
     }),
     // "Seguir": only an agent's pane moves the current project; a shell, a note, a preview do not.

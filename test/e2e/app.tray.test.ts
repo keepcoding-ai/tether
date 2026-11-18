@@ -131,7 +131,7 @@ test('tray: close hides to the tray (app + daemon alive), Abrir restores, restar
     await waitUntil(async () => (await tray.model(app!)).running === 2, 10_000, 'the tray to count 2 running')
     const model = await tray.model(app)
     assert.equal(model.badge, 'active')
-    assert.equal(model.tooltip, 'tether: 2 agentes rodando')
+    assert.equal(model.tooltip, 'Tether: 2 agentes rodando')
     assert.deepEqual(model.items.filter(i => i.kind === 'pane').map(i => i.slotId).sort(), [...ids].sort())
     const shellPids = new Map((await slotsOf(page)).map(s => [s.slotId, s.pid]))
     await page.evaluate(id => window.__tether.activate(id), ids[1]!)

@@ -1,5 +1,5 @@
 // Stepping the terminal font size from the keyboard and the menu (Cmd +/-/0 on macOS, Ctrl+Shift +/-/0 elsewhere).
-// The size itself is the terminal appearance's fontSize ("Tema do terminal", settings.json `terminal`): same
+// The size itself is the terminal appearance's fontSize ("Tema do tether", settings.json `terminal`): same
 // default and bounds, one size for all panels; a step is 1 px, "default" puts the appearance's default back.
 import { DEFAULT_APPEARANCE, FONT_SIZE_RANGE } from './terminal-theme.ts'
 

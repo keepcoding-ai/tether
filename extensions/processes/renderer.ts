@@ -13,9 +13,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import type { Terminal } from '@xterm/xterm'
 import type { ContextMenuEntry, Disposable, PadView, ProcAttachment, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon } from '../../app/renderer/icons.ts'
-import { createTerminal, loadTerminalRenderer } from '../../app/renderer/panel.ts'
+import { createTerminal } from '../../app/renderer/panel.ts'
 import { terminalLinkProvider } from '../../app/renderer/terminal-links.ts'
-import { applyAppearance } from '../../app/renderer/terminal-theme.ts'
+import { applyAppearance, TerminalAddons } from '../../app/renderer/terminal-theme.ts'
 import { openLink } from '../../app/renderer/link-open.ts'
 import type { Reply } from '../../src/daemon/protocol.ts'
 import type { PortRow } from '../../src/daemon/ports.ts'
@@ -380,6 +380,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     private readonly timeline = el('aside', 'pr-timeline')
     private readonly fit = new FitAddon()
     private term: Terminal | undefined
+    /** WebGL and ligatures, the same as the slot panes (follow the appearance live). */
+    private addons: TerminalAddons | undefined
     private name = ''
     private paneId = ''
     private api: GroupPanelPartInitParameters['api'] | undefined
@@ -415,7 +417,8 @@ export function activate(ui: TetherUi): IDisposable[] {
         open: target => openLink(target, { baseDir: ui.procs.get(this.name)?.card.cwd }),
       }))
       term.open(this.termHost)
-      loadTerminalRenderer(term, () => {})
+      this.addons = new TerminalAddons(term)
+      this.addons.start(ui.theme.appearance())
       this.ro = new ResizeObserver(() => this.scheduleFit())
       this.ro.observe(this.termHost)
       this.subs.push(
@@ -431,6 +434,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     private repaintTerm(scheme: ReturnType<TetherUi['theme']['scheme']>): void {
       if (!this.term) return
       applyAppearance(this.term, ui.theme.appearance(), scheme)
+      this.addons?.update(ui.theme.appearance())
       this.term.refresh(0, this.term.rows - 1)
       this.scheduleFit()
     }
@@ -579,7 +583,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     init(p: GroupPanelPartInitParameters): void {
       this.paneId = p.api.id
       this.name = String((p.params as { name?: string }).name ?? this.paneId.slice(PROCESS_PANE_PREFIX.length))
-      this.element.append(icon('pulse'), el('span', 'pr-tab-title', this.name), this.mark)
+      const close = el('button', 'close')
+      close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
+      close.append(icon('x'))
+      close.addEventListener('pointerdown', ev => ev.stopPropagation())
+      close.addEventListener('click', ev => { ev.stopPropagation(); ui.panes.close(this.paneId) })
+      this.element.append(icon('pulse'), el('span', 'pr-tab-title', this.name), this.mark, close)
+      this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.panes.showTabMenu(this.paneId, ev.clientX, ev.clientY) })
       tabs.set(this.paneId, this)
       this.paint()
     }
@@ -632,6 +642,18 @@ export function activate(ui: TetherUi): IDisposable[] {
       id: 'process', idPrefix: PROCESS_PANE_PREFIX, component: PROCESS_COMPONENT, tabComponent: PROCESS_TAB, hasSlot: false, icon: 'pulse',
       optionsOf: p => ({ id: p.id, component: PROCESS_COMPONENT, tabComponent: PROCESS_TAB, title: p.title ?? p.id.slice(PROCESS_PANE_PREFIX.length), params: p.params ?? {} }),
       create: () => new OutputPanel(), createTab: () => new OutputTab() as unknown as ITabRenderer, has: id => outputs.has(id),
+      // The process' own actions, then the minimum every tab has (hiding the tabs' × never leaves a tab without a close).
+      tabMenu: (id, x, y) => {
+        const name = id.slice(PROCESS_PANE_PREFIX.length)
+        const p = ui.procs.get(name)
+        ui.menus.context(x, y, [
+          ...(p ? [...menuEntries(p, { inPane: true }), 'sep' as const] : []),
+          { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
+          { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(id) },
+          'sep',
+          { icon: 'x', label: 'Fechar painel', run: () => ui.panes.close(id) },
+        ])
+      },
     }),
     ui.commands.registerCommand(OPEN_COMMAND, () => ui.pads.open(PAD_ID)),
     ui.procs.onDidChange(e => {

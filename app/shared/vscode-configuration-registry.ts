@@ -87,6 +87,24 @@ export function normalizeSetting(schema: SettingSchema, value: unknown): Setting
   return isValidSetting(schema, value) ? value : schema.default
 }
 
+/**
+ * One extension's settings as a consumer reads them: the value in force (normalized by the schema) and whether the person
+ * set it (settings.json holds a valid value; a missing or invalid one means "the default", which for some settings is
+ * "let the other side decide" rather than the default's number).
+ */
+export interface SettingReader {
+  get(key: string): SettingValue | undefined
+  isSet(key: string): boolean
+}
+
+/** A SettingReader over the stored values of one extension (settings.json `extensions.<id>`), by its manifest's schemas. */
+export function settingReaderOf(schemas: Readonly<Record<string, SettingSchema>>, values: Readonly<Record<string, unknown>> | undefined): SettingReader {
+  return {
+    get: key => { const s = schemas[key]; return s ? normalizeSetting(s, values?.[key]) : undefined },
+    isSet: key => { const s = schemas[key]; return !!s && isValidSetting(s, values?.[key]) },
+  }
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 
 /** The storage path of a full key (`ui.deskLine` → ['ui', 'deskLine']). */

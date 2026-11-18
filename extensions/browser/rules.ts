@@ -10,7 +10,7 @@ export const SERVE_MODES: readonly ServeMode[] = ['perProfile', 'all', 'off']
 /** The profile option (`profile.extensions.browser.serve`) that marks a profile under `perProfile`. */
 export const PROFILE_OPTION = 'serve'
 export const PROFILE_OPTION_LABEL = 'Navegador para os agentes'
-export const PROFILE_OPTION_HINT = 'Os agentes do tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias. Os logins são os mesmos para todos os perfis: ligar aqui não separa contas.'
+export const PROFILE_OPTION_HINT = 'Os agentes do Tether recebem as ferramentas do navegador e podem usar todas as contas logadas nas guias. Os logins são os mesmos para todos os perfis: ligar aqui não separa contas.'
 
 /** A stored value as a mode: the old boolean `true` is `all`; `false`, absent or anything else is `perProfile`. */
 export function serveModeOf(raw: unknown): ServeMode {
@@ -30,12 +30,18 @@ export function offHelpFor(mode: ServeMode): string | undefined {
   return 'Só os agentes lançados com um perfil marcado recebem o navegador. Agentes sem perfil não recebem.'
 }
 export const WEB_EMPTY = 'Esta guia ainda não tem página.'
-export const NOT_LOADED = 'Não carregada desde que o tether reabriu'
+export const NOT_LOADED = 'Não carregada desde que o Tether reabriu'
 export const CRED_NOT_KEPT = 'Endereço não guardado: ele levava uma credencial'
 export const LOADING = 'Carregando…'
+/** The crash state of a tab (its pane shows one of these with REOPEN). */
+export const CRASH_GONE = 'A página parou'
+export const CRASH_HUNG = 'A página não responde'
+export const CRASH_BROWSER = 'O navegador parou'
+export const CRASH_PAUSED = 'Pausada: o navegador caiu duas vezes com esta guia aberta'
+export const REOPEN = 'Reabrir'
 /** E7c (H3): the tab's seal when its page tried to open too many windows. */
 export const POPUPS_REFUSED = 'Esta página tentou abrir janelas demais; as que passaram do limite foram recusadas.'
-export const LOGINS_NOT_KEPT = 'Logins não são guardados: as guias usam uma sessão em memória, que acaba quando o tether fecha.'
+export const LOGINS_NOT_KEPT = 'Logins não são guardados: as guias usam uma sessão em memória, que acaba quando o Tether fecha.'
 
 export const BACK = 'Voltar'
 export const FORWARD = 'Avançar'
@@ -44,6 +50,11 @@ export const READ_ONLY_ADDRESS = 'Endereço da página (só leitura)'
 export const COOKIES_HERE = 'Esta partição guarda cookies deste site: pode haver uma conta logada'
 export const COOKIES_HERE_SHORT = 'Com cookies'
 export const BAR_LOGINS_NOT_KEPT = 'Logins não guardados'
+/** The bar's pill while the debug mode is on (`extensions.browser.debug`, debug-file.ts). */
+export const DEBUG_PILL = 'Depuração'
+export const DEBUG_PILL_HINT = 'Modo de depuração ligado: o registro guarda mais detalhes de cada ação do agente e valem os prazos de depuração. Desligue em Configurações > Browser > Depuração.'
+/** Whether the debug mode is on: the setting alone decides (the bar's pill, the doctor's line, debug.json). */
+export const debugOn = (s: { get(key: string): unknown }): boolean => s.get('debug') === true
 export const ADDRESS_MAX = 90
 export const SHORT_NAME_MAX = 16
 

@@ -12,6 +12,7 @@ Valem os acordos do Guga em `d:\atrium\mind\atlas\self\AGREEMENTS.md` (a cláusu
 - **Não paro entre fases.** Decisão de engenharia é minha; produto com default razoável eu decido, registro em PROGRESS.md em "Decisões para validar" e sigo.
 - **Caixa destacada só para o que é ação ou resposta do Guga.** Relato curto: o que está rodando, o que ficou pronto, o que é dele.
 - **Commit frequente e temático, sem perguntar**, só de código provado; nunca `git add -A` (adiciono os arquivos pelo nome e confiro `git diff --cached --stat`). Mensagens em português. Push e merge em branch sensível só com OK explícito. Force push proibido. Antes de remover worktree/pasta, procuro links simbólicos que apontem para fora.
+- **Pronto = no `develop`.** O Guga trabalha no `develop`. Uma entrega só conta quando o trabalho provado está no `develop` local do checkout principal e o `npm run app:build` foi feito ali; branch e worktree são andaime meu, nunca o lugar da entrega. Avanço o `develop` local (fast-forward, sem push) ao terminar, sem pedir. Push continua pedindo OK. (Guga, 15/11: "eu trabalho no develop. se não tá no develop não tá pronto".)
 - **Falta de ferramenta/toolchain:** levanto opções, recomendo uma e peço autorização antes de instalar. Nada de Visual Studio.
 - **Valido uma etapa por vez com o Guga usando de verdade**: entrego cedo algo utilizável e corrijo antes de empilhar a próxima.
 - **Investigo em vez de perguntar** quando o objetivo está claro.

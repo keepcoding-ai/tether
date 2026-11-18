@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { HostClient } from '../../src/procd/client.ts'
+import { claim, killOwned } from '../kill.ts'
 import { pidAlive, SuiteDaemon } from './daemon-driver.ts'
 import { LocalPtyTransport, Screen, type ExitInfo } from './harness.ts'
 
@@ -20,6 +22,11 @@ const home = join(base, 'home')
 const work = join(base, 'work')
 mkdirSync(home); mkdirSync(work)
 const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\tether-attach-${randomBytes(4).toString('hex')}` : join(home, 'd.sock')
+const ptydPipe = process.platform === 'win32' ? `\\\\.\\pipe\\tether-attach-ptyd-${randomBytes(4).toString('hex')}` : join(home, 'ptyd.sock')
+// TETHER_PANEL_HOST=0|1 picks the mode (default: on, like tetherd); the host gets a private pipe so nothing real is touched.
+const hostOn = process.env.TETHER_PANEL_HOST?.trim() !== '0'
+process.env.TETHER_PANEL_HOST = hostOn ? '1' : '0'
+process.env.TETHER_PTYD_PIPE = ptydPipe
 
 /** The CLI running in a pseudo-terminal, with a virtual screen to read what it prints. */
 class CliTerminal {
@@ -66,6 +73,7 @@ test('tether attach: keys in, output out, resize survives, Ctrl+] detaches with 
     assert.equal(before.status, 'running')
     const shellPid = before.pid!
     assert.ok(shellPid > 0)
+    assert.equal(before.ptyHost === true, hostOn, 'pane runs where the mode says')
 
     const env: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
@@ -101,7 +109,13 @@ test('tether attach: keys in, output out, resize survives, Ctrl+] detaches with 
     assert.ok(pidAlive(shellPid))
   } finally {
     cli?.dispose()
+    const host = await HostClient.ping(ptydPipe)
     await suite.shutdown().catch(e => t.diagnostic(String(e)))
+    if (host && pidAlive(host.pid)) { // the host outlives tetherd: kill it (and its panes) by identity
+      const owned = await claim(host.pid, { what: 'tether-ptyd' }).catch(() => undefined)
+      if (owned) await killOwned(owned, { tree: true })
+      t.diagnostic(`tether-ptyd ${host.pid} killed`)
+    }
     for (let i = 0; i < 5; i++) { try { rmSync(base, { recursive: true, force: true }); break } catch { await sleep(300) } }
   }
 })

@@ -1,7 +1,7 @@
 {
   "v": 1,
   "slotId": "e5f6a7b8",
-  "agent": "codex",
+  "agent": "aider",
   "cwd": "__CWD__",
   "args": ["--model", "x"],
   "createdAt": "2026-10-01T12:00:00.000Z",

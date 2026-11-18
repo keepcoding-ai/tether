@@ -15,6 +15,7 @@ import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { ControlHub, type ControlView } from './control.ts'
 import { helpLine } from './control-rules.ts'
 import { type Gate, startGate } from './gate.ts'
+import { createDebugWriter, DEBUG_KEYS } from './debug-file.ts'
 import { DownloadStore } from './downloads.ts'
 import { UploadConsent } from './upload-consent.ts'
 import { AGENT_TABS_FILE, AgentTabs } from './agent-tabs.ts'
@@ -26,6 +27,8 @@ import { prepareDiskPartition } from './disk-partition.ts'
 import { scrubLogLine } from './log-scrub.ts'
 import { isId, isWebUrl, savedTabOf } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
+
+import { activateRemote, wantsBrowserProcess } from './process-host.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -55,7 +58,15 @@ function reloadAndWait(wc: WebContents, ticket: (url: string) => Promise<unknown
 // Defined by app/build.mjs: true only in a build made with TETHER_TEST_EXTENSIONS=1 (the E2E).
 declare const __TETHER_TEST_EXTENSIONS__: boolean | undefined
 
+/**
+ * On Windows the browser runs in a process of its own (process-host.ts starts it; process-child.ts runs `activateLocal` there),
+ * so nothing a page or the debugger does can take the app. Elsewhere it runs here, in the app's process, as before.
+ */
 export function activate(main: TetherMain): IDisposable[] {
+  return wantsBrowserProcess(main) ? activateRemote(main) : activateLocal(main)
+}
+
+export function activateLocal(main: TetherMain): IDisposable[] {
   const ipc = main.ipc<BrowserChannels>()
   // E15: no page address, key or endpoint content reaches the log (log-scrub.ts).
   const log = (msg: string): void => main.log(scrubLogLine(msg))
@@ -195,6 +206,9 @@ export function activate(main: TetherMain): IDisposable[] {
     else gate = g
     return g
   }, e => { log(`porteiro não abriu (${(e as Error).message})`); return undefined })
+  // The debug mode (debug-file.ts): <home>/browser/debug.json follows the settings live, from this start on.
+  const debugWriter = createDebugWriter({ home: main.home, settings: main.settings, log })
+  void debugWriter.sync()
   // An agent that exits keeps its tabs: only its open help requests are dismissed; the interface marks them "encerrado".
   const subs: IDisposable[] = [
     ipc.handle('list', () => registry.list()),
@@ -205,6 +219,7 @@ export function activate(main: TetherMain): IDisposable[] {
     }),
     // The person closed the tab: what the agent's tool knew it by goes with it (a tab that merely went away with the window keeps it).
     ipc.handle('close', tabId => { if (typeof tabId === 'string') { agentTabs.forget(tabId); registry.close(tabId); control.closed(tabId) } }),
+    ipc.handle('reopen', async tabId => (isId(tabId) ? (await registry.reopen(tabId).catch(e => { log(`guia ${tabId}: não reabriu (${(e as Error).message})`); return undefined })) ?? null : null)),
     ipc.handle('agents', () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive }))),
     ipc.handle('logoutAll', async () => {
       const ses = await session
@@ -247,6 +262,7 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('pauseTabs', ids => control.pauseMany(tabIdsOf(ids))),
     ipc.handle('resumeTabs', ids => control.resumeMany(tabIdsOf(ids))),
     ...controlSubs,
+    ...DEBUG_KEYS.map(k => main.settings.onChange(k, () => { void debugWriter.sync() })),
     { dispose: () => { gateDisposed = true; gate?.dispose(); uploads.dispose(); downloads.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
   ]
   if (typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__) {
@@ -260,6 +276,9 @@ export function activate(main: TetherMain): IDisposable[] {
       create: (owner: string, url: string, ticket = true) => registry.create(owner, url, { ticket }),
       allowOnce: (tabId: string, url: string) => registry.allowOnce(tabId, url),
       requestLocalNetwork: (tabId: string, owner: string, url: string) => registry.requestLocalNetwork(tabId, owner, url),
+      /** Crash probes: the tab's renderer killed, or its main thread hung for `ms`. */
+      crashRenderer: (tabId: string) => { registry.webContents(tabId)?.forcefullyCrashRenderer() },
+      hangRenderer: (tabId: string, ms: number) => { void registry.webContents(tabId)?.executeJavaScript(`{ const t = Date.now() + ${Number(ms) || 0}; while (Date.now() < t) {} }`).catch(() => {}) },
       /** Names the proxy resolves from this map instead of the system (no lookup leaves the machine); unknown names fail. */
       setTestHosts: async (hosts: Record<string, string[]>) => (await session).egress.setTestResolver(async host => {
         if (Object.hasOwn(hosts, host)) return hosts[host]!
@@ -294,7 +313,14 @@ export function activate(main: TetherMain): IDisposable[] {
         for (const ch of text) wc.sendInputEvent({ type: 'char', keyCode: ch })
       },
     }
-    subs.push({ dispose: () => { delete g.__browserTabs } })
+    // The E2E runs its functions against these hooks through `__browserRun` wherever the browser lives (here, or its process).
+    const run = globalThis as { __browserRun?: unknown }
+    const evalHook = globalThis as { __browserEval?: unknown }
+    if (!process.env.TETHER_BROWSER_PIPE) {
+      run.__browserRun = async (src: string, arg: unknown) => (new Function('t', 'a', `return (${src})(t, a)`))(g.__browserTabs, arg)
+      evalHook.__browserEval = async (src: string, arg: unknown) => (new Function('a', `return (${src})(undefined, a)`))(arg)
+    }
+    subs.push({ dispose: () => { delete g.__browserTabs; if (!process.env.TETHER_BROWSER_PIPE) { delete run.__browserRun; delete evalHook.__browserEval } } })
   }
   return subs
 }

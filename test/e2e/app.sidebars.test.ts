@@ -115,7 +115,7 @@ test('side bars core: a v2 layout restores intact under v3; no pads, no strips',
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-sidebars-'))
   // Part 2 is the window with no pad at all: the frame pads extension is off.
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads', 'explorer', 'browser'] } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['frame-pads', 'explorer', 'browser', 'search'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -208,7 +208,7 @@ test('frame pads (F10b): toggles, one per side, moving, desk swap, global, relau
   mkdirSync(artifacts, { recursive: true })
   const home = mkdtempSync(join(tmpBase, 'tether-pads-'))
   // The explorer (left strip) has its own e2e; this one is about the frame pads' sides.
-  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer', 'browser'] } }))
+  writeFileSync(join(home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['explorer', 'browser', 'search'] } }))
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   const bars = (page: Page) => page.evaluate(() => window.__tether.sidebars()!)

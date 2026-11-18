@@ -3,7 +3,8 @@
 // `localhost` opens with her permission, and two tools are not offered. The proxy (mcp-proxy.mjs) runs between the agent's CLI and
 // the server and applies these rules to the server's answers, as pure functions of the JSON-RPC messages:
 //   - `initialize`: the server's `instructions` (the CLI puts them in the agent's context) say whose browser this is, how the local
-//     network works, and why WebEvaluate / WebSavePdf answer "Tool not found";
+//     network works, why WebEvaluate / WebSavePdf answer "Tool not found", and what to do with a failed call (its id,
+//     WebDiagnose, `tether trace`, the debug mode);
 //   - `tools/list`: the one description that is wrong here (WebNavigate: "addresses inside the machine ... are refused").
 // Nothing else is touched. A message that is not JSON, or an answer in a shape that is not the expected, goes through as it came.
 
@@ -17,7 +18,10 @@ export interface McpTextsOptions {
   evaluate: boolean
 }
 
-/** The server's `instructions`: whose browser this is, the local network, and what is not offered and why. */
+/** What to do when a call fails: keep its id, look with WebDiagnose and `tether trace`, ask for the debug mode. */
+export const FAILED_CALL = 'When a call fails, keep the call id that ends the first line of the error ("(call <id>, ..."), run WebDiagnose, and run `node "$TETHER_CLI" trace <id>` in your shell: it prints the whole timeline of that call from the logs. If that is not enough and the debug mode is off, ask the person to turn on "Modo de depuração" in the tether\'s Settings (Browser > Depuração): it takes effect at once, with no restart, and the next failure is recorded step by step.'
+
+/** The server's `instructions`: whose browser this is, the local network, what is not offered and why, a failed call. */
 export function serverInstructions(o: McpTextsOptions): string {
   return [
     'These tools drive browser tabs inside the tether (the app the person is working in), not the person\'s own Chrome. The tabs are panes she sees on her screen, in a Browser desk, each marked with your name; she can take a tab from you, pause it or close it. They start without her logins: when a site needs one, use WebAskUser to ask her to log in; never ask her for a password.',
@@ -25,6 +29,7 @@ export function serverInstructions(o: McpTextsOptions): string {
     o.evaluate
       ? 'WebSavePdf is not offered in the tether. A call to a tool that is not in your list fails with "Tool not found": that is because it does not exist here, not a mistake of yours.'
       : 'WebEvaluate (run JavaScript in the page) is off: the person has not turned on "extensions.browser.evaluate" in the tether\'s settings. WebSavePdf is never offered in the tether. A call to either fails with "Tool not found" because they are not offered here, not because of a mistake of yours; to read the page use WebSnapshot, WebRead, WebFind and WebScreenshot.',
+    FAILED_CALL,
   ].join('\n\n')
 }
 

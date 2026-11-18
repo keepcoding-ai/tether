@@ -272,10 +272,10 @@ describe('claude-hook: notices from tetherd', () => {
 
   test('PostToolUse takes every notice once (the file is consumed), one per line', () => {
     const home = tmpHome()
-    leave(home, '[tether] processos: um', '[tether] processos: dois')
+    leave(home, '[tether] processes: um', '[tether] processes: dois')
     const r = run(home, 'PostToolUse')
     assert.equal(r.status, 0)
-    assert.equal(context(r.stdout), '[tether] processos: um\n[tether] processos: dois')
+    assert.equal(context(r.stdout), '[tether] processes: um\n[tether] processes: dois')
     assert.equal(existsSync(file(home)), false, 'consumed')
     assert.equal(run(home, 'PostToolUse').stdout, '', 'never delivered twice')
   })

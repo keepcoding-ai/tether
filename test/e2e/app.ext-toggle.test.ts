@@ -16,6 +16,7 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { FAKE_SOUL_CMD } from './browser-kit.ts'
 
 type SavedPanel = { id: string; contentComponent: string; tabComponent: string; params?: Record<string, unknown> }
 type Hooks = {
@@ -288,7 +289,7 @@ test('app soul extension (F9 slice 4): off → restart → the soul pane says "A
   assert.equal(build.status, 0, 'app build failed')
   const home = mkdtempSync(join(tmpdir(), 'tether-ext-toggle-soul-'))
   // An inert stand-in for the soul: the slot may start on restore, and no real soul should run in a test.
-  const fakeSoul = { TETHER_SOUL_CMD: `"${process.execPath}" -e "setInterval(()=>{},1000)"` }
+  const fakeSoul = { TETHER_SOUL_CMD: FAKE_SOUL_CMD }
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   type T = Hooks & { slots(): { slotId: string; kind: string }[]; openSlot(id: string): Promise<void> }

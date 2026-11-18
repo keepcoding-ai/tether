@@ -137,12 +137,12 @@ test('app menu layer: the app menu stays above the editor minimap and scrollbar'
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
     const root = await page.evaluate(() => Array.from(document.querySelectorAll('#app-menu > li')).map(li => li.getAttribute('data-command') ?? (li.getAttribute('role') === 'separator' ? '---' : `sub:${li.getAttribute('data-submenu')}`)))
-    assert.deepEqual(root, ['palette.show', '---', 'pane.new', 'explorer.open-folder', 'drawer.toggle', '---', 'sub:pane', 'sub:note', 'sub:desk', 'sub:tools', '---', 'settings.show', '---', 'window.close', 'app.quit-all'])
+    assert.deepEqual(root, ['palette.show', '---', 'pane.new', 'explorer.open-folder', 'drawer.toggle', '---', 'sub:pane', 'sub:note', 'sub:desk', 'sub:tools', '---', 'terminal.theme', 'settings.show', '---', 'window.close', 'app.quit-all'])
     const cmds = await page.evaluate(() => Array.from(document.querySelectorAll('#app-menu li[data-command]')).map(li => li.getAttribute('data-command')!))
-    for (const gone of ['theme.light', 'ui.desk-line', 'ui.dim-weak', 'ui.word-wrap', 'terminal.theme', 'confirmations.restore']) assert.ok(!cmds.includes(gone), `${gone} left the menu`)
+    for (const gone of ['theme.light', 'ui.desk-line', 'ui.dim-weak', 'ui.word-wrap', 'confirmations.restore']) assert.ok(!cmds.includes(gone), `${gone} left the menu`)
     const palette = new Set((await page.evaluate(() => window.__tether.commands())).map(c => c.id))
     for (const c of cmds) assert.ok(palette.has(c), `${c} is in the palette`)
-    assert.equal(cmds.length, 24)
+    assert.equal(cmds.length, 27)
 
     // The root fits without scrolling at the default size (1280x800) and in a modest window (1024x560).
     const fits = (): Promise<{ scrollHeight: number; clientHeight: number; top: number; bottom: number; inner: number }> => page.evaluate(() => {

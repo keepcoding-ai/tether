@@ -131,7 +131,7 @@ describe('tray attention', () => {
     const m = trayModel([slot('a', 'running', { attention: 'done', title: 'Login' }), slot('b', 'running', { attention: 'waiting' }), slot('c', 'running')])
     assert.equal(m.badge, 'attention')
     assert.equal(m.attention, 2)
-    assert.equal(m.tooltip, 'tether: 3 agentes rodando · 2 esperando você')
+    assert.equal(m.tooltip, 'Tether: 3 agentes rodando · 2 esperando você')
     const labels = m.items.flatMap(i => (i.kind === 'pane' ? [i.label] : []))
     assert.deepEqual(labels, ['Login (terminou)', 'b (espera você)', 'c (rodando)'])
     assert.equal(trayModel([slot('a', 'running')]).badge, 'active')

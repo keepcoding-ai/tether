@@ -52,9 +52,10 @@ export const CORE_APP_MENU: readonly Item[] = [
   ...items('tools', [
     { command: 'profiles.manage', icon: 'sliders-horizontal', label: 'Perfis de lançamento…' },
     { command: 'extensions.show', icon: 'puzzle-piece', label: 'Extensões', order: 30 },
-    { command: 'links.associate', icon: 'link', label: 'Associar links tether:// a este tether…', order: 45 },
+    { command: 'links.associate', icon: 'link', label: 'Associar links tether:// a este Tether…', order: 45 },
   ]),
-  // The settings screen's "Configurações…" (group 'settings').
+  // The settings screen's "Configurações…" (group 'settings', order 10) comes after the core's "Tema do Tether…".
+  ...items('settings', [{ command: 'terminal.theme', icon: 'palette', label: 'Tema do Tether…', order: 5 }]),
   ...items('exit', [
     { command: 'window.close', icon: 'app-window', label: 'Fechar a janela' },
     { command: 'app.quit-all', icon: 'power', danger: true, label: 'Sair e encerrar tudo…' },

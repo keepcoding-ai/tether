@@ -46,7 +46,7 @@ export function forgetEndedSituation(count: number): DialogSpec {
     tone: 'warn',
     icon: 'trash',
     title: `Esquecer ${many}?`,
-    message: 'Elas somem do tether. Nenhuma está rodando; as conversas continuam no histórico do agente e podem ser retomadas por lá.',
+    message: 'Elas somem do Tether. Nenhuma está rodando; as conversas continuam no histórico do agente e podem ser retomadas por lá.',
     choices: [{ id: 'forget', icon: 'trash', label: count === 1 ? 'Esquecer a sessão' : `Esquecer as ${count} sessões`, consequence: 'Remove da lista de Encerradas. Não dá para desfazer.', tone: 'destructive' }],
     cancelLabel: 'Cancelar',
   }
