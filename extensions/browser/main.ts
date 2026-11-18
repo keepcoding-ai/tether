@@ -14,18 +14,19 @@ import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { ControlHub, type ControlView } from './control.ts'
 import { helpLine } from './control-rules.ts'
-import { type Gate, startGate } from './gate.ts'
+import { type Gate, type GateTabs, startGate } from './gate.ts'
 import { createDebugWriter, DEBUG_KEYS } from './debug-file.ts'
 import { DownloadStore } from './downloads.ts'
 import { UploadConsent } from './upload-consent.ts'
 import { AGENT_TABS_FILE, AgentTabs } from './agent-tabs.ts'
+import { CLOSED_HISTORY_FILE, type ClosedBy, ClosedHistory, closedEntryOf, keepOf } from './closed-history.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LocalNetworkGate } from './local-network.ts'
 import { type ActionKind, hostOf } from './pad-rules.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
 import { prepareDiskPartition } from './disk-partition.ts'
 import { scrubLogLine } from './log-scrub.ts'
-import { isId, isWebUrl, savedTabOf } from './tab-rules.ts'
+import { isId, isWebUrl, type SavedTab, savedTabOf } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 
 import { activateRemote, wantsBrowserProcess } from './process-host.ts'
@@ -201,7 +202,35 @@ export function activateLocal(main: TetherMain): IDisposable[] {
   // What each agent's tool calls its tabs, kept with the tabs (the gate creates `<home>/browser` owner-only before serving).
   const agentTabs = new AgentTabs(join(main.home, 'browser', AGENT_TABS_FILE), log)
   const tabIdsOf = (ids: unknown): string[] => (Array.isArray(ids) ? ids.filter(isId).slice(0, 512) : [])
-  const gateReady = startGate({ home: main.home, tabs: registry, control, confirmUpload, agentTabs, activity: pulse, log, ...(trace ? { trace } : {}) }).then(g => {
+  // The closed history (closed-history.ts), next to the agents' tab ids; its expiry follows the setting at every read.
+  const closedTabs = new ClosedHistory({ file: join(main.home, 'browser', CLOSED_HISTORY_FILE), keep: () => keepOf(main.settings.get('closedHistory')), log })
+  /**
+   * A tab is closing on purpose: it enters the history before it goes (the live tab's address, else the pane's saved one for a
+   * tab main never loaded). A tab that goes with the window, or is recreated after a crash, never passes here.
+   */
+  const recordClose = (tabId: string, by: ClosedBy, saved?: SavedTab): void => {
+    const live = registry.get(tabId)
+    const from = live ?? (saved && saved.tabId === tabId ? saved : undefined)
+    if (!from) return
+    const ownerName = main.agents.get(from.ownerSlotId)?.name ?? ''
+    if (closedTabs.record(closedEntryOf({ tabId, ownerSlotId: from.ownerSlotId, ownerName, title: from.title, url: from.url, closedAt: Date.now(), by }))) {
+      ipc.send('closedHistory', closedTabs.list())
+    }
+  }
+  // The gate's way to the tabs: the registry, with the agent's own close (WebCloseTab) entering the history first.
+  const gateTabs: GateTabs = {
+    list: () => registry.list(),
+    surface: tabId => registry.surface(tabId),
+    opener: tabId => registry.opener(tabId),
+    create: (owner, url, opts) => registry.create(owner, url, opts),
+    close: tabId => { recordClose(tabId, 'agent'); registry.close(tabId) },
+    requestLocalNetwork: (tabId, owner, url) => registry.requestLocalNetwork(tabId, owner, url),
+    requestLocalNetworkNoTab: (key, owner, url) => registry.requestLocalNetworkNoTab(key, owner, url),
+    cancelQuestions: key => registry.cancelQuestions(key),
+    grantLocal: (tabId, url) => registry.grantLocal(tabId, url),
+    watch: w => registry.watch(w),
+  }
+  const gateReady = startGate({ home: main.home, tabs: gateTabs, control, confirmUpload, agentTabs, activity: pulse, log, ...(trace ? { trace } : {}) }).then(g => {
     if (gateDisposed) g.dispose()
     else gate = g
     return g
@@ -218,7 +247,26 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       return saved ? (await registry.restore(saved)) ?? null : null
     }),
     // The person closed the tab: what the agent's tool knew it by goes with it (a tab that merely went away with the window keeps it).
-    ipc.handle('close', tabId => { if (typeof tabId === 'string') { agentTabs.forget(tabId); registry.close(tabId); control.closed(tabId) } }),
+    ipc.handle('close', (tabId, by, saved) => {
+      if (typeof tabId !== 'string') return
+      recordClose(tabId, by === 'cleanup' ? 'cleanup' : 'user', savedTabOf(saved))
+      agentTabs.forget(tabId); registry.close(tabId); control.closed(tabId)
+    }),
+    ipc.handle('closedList', () => closedTabs.list()),
+    ipc.handle('clearClosed', () => { closedTabs.clear(); ipc.send('closedHistory', []) }),
+    // "Reabrir": a new tab with the address, under the same owner (a tab always has one), held by the person: she asked for it,
+    // whether the agent is alive or not; she hands it to a live agent with "Devolver". Her click is the consent a local address needs.
+    ipc.handle('reopenClosed', async id => {
+      const entry = typeof id === 'string' ? closedTabs.get(id) : undefined
+      if (!entry) return null
+      const info = await registry.create(entry.ownerSlotId, entry.url, { ...(entry.title ? { title: entry.title } : {}), ticket: 'granted' })
+        .catch(e => { log(`guia fechada não reaberta (${(e as Error).message})`); return undefined })
+      if (!info) return null
+      control.take(info.tabId)
+      closedTabs.remove(entry.id)
+      ipc.send('closedHistory', closedTabs.list())
+      return info
+    }),
     ipc.handle('reopen', async tabId => (isId(tabId) ? (await registry.reopen(tabId).catch(e => { log(`guia ${tabId}: não reabriu (${(e as Error).message})`); return undefined })) ?? null : null)),
     ipc.handle('agents', () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive }))),
     ipc.handle('logoutAll', async () => {
@@ -264,6 +312,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     ipc.handle('resumeTabs', ids => control.resumeMany(tabIdsOf(ids))),
     ...controlSubs,
     ...DEBUG_KEYS.map(k => main.settings.onChange(k, () => { void debugWriter.sync() })),
+    main.settings.onChange('closedHistory', () => { ipc.send('closedHistory', closedTabs.list()) }),
     { dispose: () => { gateDisposed = true; gate?.dispose(); uploads.dispose(); downloads.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
   ]
   if (typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__) {

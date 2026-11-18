@@ -45,7 +45,10 @@ describe('browser extension manifest', () => {
 
   test('settings follow design §10: serve per profile, evaluate off, local network asks', () => {
     const s = manifest.contributes!.settings!
-    assert.deepEqual(Object.keys(s).sort(), ['debug', 'debugActionTimeoutSec', 'debugSnapshotTimeoutSec', 'evaluate', 'localNetwork', 'serveToAgents'])
+    assert.deepEqual(Object.keys(s).sort(), ['closedHistory', 'debug', 'debugActionTimeoutSec', 'debugSnapshotTimeoutSec', 'evaluate', 'localNetwork', 'serveToAgents'])
+    assert.equal(normalizeSetting(s.closedHistory!, undefined), '7d', 'closed tabs are kept 7 days by default')
+    assert.equal(normalizeSetting(s.closedHistory!, 'never'), 'never')
+    assert.equal(normalizeSetting(s.closedHistory!, '2d'), '7d', 'an unknown value reads as the default')
     assert.equal(normalizeSetting(s.debug!, undefined), false, 'the debug mode is off by default')
     assert.equal(normalizeSetting(s.debugActionTimeoutSec!, -1), 15, 'a negative timeout reads as the default')
     assert.equal(normalizeSetting(s.debugSnapshotTimeoutSec!, 0), 0, '0 = no deadline is valid')
