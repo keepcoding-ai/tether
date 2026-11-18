@@ -5,9 +5,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ASK_MESSAGE_MAX, ASK_NOTE_MAX, ASK_TIMEOUT_DEFAULT_MS, ASK_TIMEOUT_MAX_MS, ASK_TIMEOUT_MIN_MS, ASKS_PER_AGENT, checkAsk, cleanAskMessage, cleanAskNote, controlOf,
-  controlTexts, heldError, helpLine, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack, type TabControl, transition,
+  controlTexts, handoffKeepsScript, heldError, helpLine, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack, type TabControl, transition,
 } from '../../extensions/browser/control-rules.ts'
 import { ControlHub, type ControlView } from '../../extensions/browser/control.ts'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const VENDOR = join(fileURLToPath(new URL('.', import.meta.url)), '../../extensions/browser/vendor/tether-browser')
 
 const ask = (id: string, kind: 'login' | 'other' = 'other') => ({ type: 'ask' as const, ask: { id, message: 'faça login', kind } })
 
@@ -98,6 +103,21 @@ test('control: the clean hand-off runs from the agent to the person for EVERY he
   assert.equal(needsCleanHandoff(INITIAL, transition(INITIAL, { type: 'take' }).state), false)
   const held = transition(INITIAL, { type: 'take' }).state
   assert.equal(needsCleanHandoff(held, transition(held, ask('a', 'login')).state), false, 'already with the person')
+})
+
+test('control: the clean hand-off keeps a script with no code (the client\'s own world) and removes every script with code', () => {
+  // The vendored playwright-core registers its utility world exactly so, once per page session, and never again: removed by a
+  // hand-off, every later document lacks the world and the page's title (read in it, with no deadline) waits forever.
+  const core = readFileSync(join(VENDOR, 'node_modules/playwright-core/lib/coreBundle.js'), 'utf8')
+  assert.match(core, /"Page\.addScriptToEvaluateOnNewDocument", \{\s*source: "",\s*worldName: this\._crPage\.utilityWorldName/, 'the shape the rule protects')
+  assert.match(core, /const context = await this\.utilityContext\(\);\s*return await context\.evaluate\(\(\) => document\.title\);/, 'title() reads in that world')
+  assert.equal(handoffKeepsScript({ source: '', worldName: '__playwright_utility_world_page@1' }), true)
+  assert.equal(handoffKeepsScript({ source: '  \n\t', worldName: 'w' }), true, 'whitespace runs nothing')
+  assert.equal(handoffKeepsScript({ source: '' }), true)
+  assert.equal(handoffKeepsScript({ source: 'document.addEventListener("keydown", e => steal(e.key))' }), false)
+  assert.equal(handoffKeepsScript({ source: ' x', worldName: 'w' }), false, 'code in an isolated world still runs in her turn')
+  assert.equal(handoffKeepsScript({}), false, 'no source: removed (fails closed)')
+  assert.equal(handoffKeepsScript({ source: 42 }), false)
 })
 
 test('control: every help request hand-back reloads; a manual take does not (H1, M1)', () => {

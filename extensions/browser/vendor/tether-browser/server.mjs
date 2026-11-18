@@ -38103,7 +38103,9 @@ var init_errors4 = __esm({
       "TAB_WITH_USER",
       "TAB_PAUSED",
       "NO_CONTROL_CHANNEL",
-      "LOCAL_NETWORK_DENIED"
+      "LOCAL_NETWORK_DENIED",
+      // Uma leitura da página que espera o contexto de script da ferramenta e ele não vem no prazo de ação.
+      "PAGE_NOT_READABLE"
     ];
     BrowserError = class extends Error {
       code;
@@ -43406,6 +43408,18 @@ async function openSession(context, params) {
     }
     return t;
   };
+  const titleWithin = async (t, ms) => {
+    stage("title");
+    let timer;
+    const late = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new BrowserError("PAGE_NOT_READABLE", `The page at ${t.page.url()} loaded, but its title was not read within ${ms} ms: the tab lost the script context the tools read it through. Open a new tab with WebNewTab and continue there.`)), ms);
+    });
+    try {
+      return await Promise.race([inFlight("Runtime.callFunctionOn", () => t.page.title()), late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const infoOf = async (t) => {
     const base = { id: t.id, url: t.page.url(), active: t.id === activeId };
     const dialog = t.dialogs.info();
@@ -43484,6 +43498,7 @@ async function openSession(context, params) {
       const endLlmNavigation = llmNavigations.begin(url2);
       try {
         const navTimeout = debugActionTimeout();
+        stage("navigate");
         await t.page.goto(url2, { waitUntil: "load", ...navTimeout !== void 0 ? { timeout: navTimeout } : {} });
       } catch (err) {
         const block = egress.blocksSince(mark)[0];
@@ -43492,7 +43507,7 @@ async function openSession(context, params) {
       } finally {
         endLlmNavigation();
       }
-      return { url: t.page.url(), title: await t.page.title() };
+      return { url: t.page.url(), title: await titleWithin(t, timeoutNow()) };
     },
     async screenshot(opts) {
       const t = await active();

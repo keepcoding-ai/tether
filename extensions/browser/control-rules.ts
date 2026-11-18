@@ -118,6 +118,16 @@ export function needsCleanHandoff(before: TabControl, after: TabControl): boolea
 }
 
 /**
+ * Does the clean hand-off leave this `Page.addScriptToEvaluateOnNewDocument` in place? Only a script with no code: it runs
+ * nothing in the person's turn and only makes its named world exist in every new document. The client's own machinery needs
+ * it (playwright-core registers `source: ''` with its utility world once per session, at attach, and never again): removed,
+ * every later document lacks the world and whatever waits for it (the page's title, a read) waits forever.
+ */
+export function handoffKeepsScript(params: { source?: unknown; [key: string]: unknown }): boolean {
+  return typeof params.source === 'string' && params.source.trim() === ''
+}
+
+/**
  * Does handing the tab back reload it first? Every hand-back of a help request (rule 16, widened): whatever the person typed and
  * did not send (a 2FA code, a card) would be read by the agent's next snapshot. A manual take keeps the page as she left it
  * (she was warned, with "Recarregar limpo").
