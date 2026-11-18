@@ -46,7 +46,7 @@ import { Scrollback } from './scrollback.ts'
 import { HostClient } from '../procd/client.ts'
 import { PanelHost, type PanelCallbacks } from './panel-host.ts'
 import { PTYD_TARGET, ptydPipePath } from '../ptyd/paths.ts'
-import { readUserSettings } from '../core/user-settings.ts'
+import { readUserSettings, UserSettings } from '../core/user-settings.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
 import { limiter, mapLimit } from '../core/limit.ts'
 import { perf } from '../core/perf.ts'
@@ -166,6 +166,9 @@ export interface DaemonOptions {
    * TETHER_EXECUTOR=worker, closed by `close`/`abandon`.
    */
   executor?: Executor
+  /** tetherd's snapshots of profiles.json and settings.json, shared with its extension host. Default: the daemon's own, on its executor. */
+  profileStore?: ProfileStore
+  userSettings?: UserSettings
 }
 
 /** The disk reads `fsProbe` reports: the boot scan of slots/, an events file (whole or from an offset), a slot's marker listing and stats, a run file, the hook's attention and pause reports, a start's folder check. */
@@ -379,6 +382,8 @@ class DaemonImpl implements Daemon {
   private memoryKick: NodeJS.Timeout | undefined
   /** <home>/profiles.json, re-read when it changes on disk (the CLI edits it while tetherd runs). */
   private readonly profileStore: ProfileStore
+  /** settings.json, in memory like the profiles: reloaded by the executor, awaited fresh at every launch. */
+  private readonly userSettings: UserSettings
   /** Slots waiting for a 'starting' seat, in request order. */
   private readonly queue: Slot[] = []
   private closing = false
@@ -434,7 +439,9 @@ class DaemonImpl implements Daemon {
         this.broadcastState(slot)
       },
     })
-    this.profileStore = new ProfileStore(opts.home)
+    this.profileStore = opts.profileStore ?? new ProfileStore(opts.home, this.executor, this.log)
+    this.profileStore.attachWriter({ put: (p, t) => this.store.put(p, t), flush: (p) => this.store.flush(p) })
+    this.userSettings = opts.userSettings ?? new UserSettings(opts.home, this.executor, process.env, this.log)
     this.panelHostOn = opts.panelHost ?? panelHostEnabled(opts.home)
     this.connectPanelHost = opts.connectPanelHost ?? ((launch) => {
       const pipe = ptydPipePath(opts.pipe, opts.home)
@@ -501,6 +508,9 @@ class DaemonImpl implements Daemon {
     // once this daemon owns the pipe (a loser of the race never touches them).
     const hostRuns = metas.length > 0 ? await this.hostRunsAtBoot() : undefined
     const ownedElsewhere = await perf.timedAsync('boot:reap', () => this.reapOrphans(new Set((hostRuns ?? []).map((r) => r.pid)), scan))
+    await Promise.all([this.profileStore.fresh(), this.userSettings.fresh()])
+    this.profileStore.start()
+    this.userSettings.start()
     const profiles = this.profileStore.read()
     if (profiles.problem) this.log(`profiles: ${profiles.problem}`)
     perf.timed('boot:load', () => { for (const meta of metas) this.load(meta) })
@@ -991,6 +1001,8 @@ class DaemonImpl implements Daemon {
       }
     }
     this.watcher?.close()
+    this.profileStore.stop()
+    this.userSettings.stop()
     this.eventsDirty.clear()
     for (const t of this.pending.values()) clearTimeout(t)
     await this.rondaChannel.close()
@@ -1269,7 +1281,7 @@ class DaemonImpl implements Daemon {
     const unavailable = this.unavailableError(slot.meta)
     if (unavailable) throw this.fail(slot, unavailable.code, unavailable.message)
     let resume = this.resumeFor(slot, choice)
-    await this.checkCwd(slot, resume)
+    await Promise.all([this.checkCwd(slot, resume), this.freshLaunchConfig()])
     if (slot.launching || (slot.pty && !slot.pty.exit) || this.isQueued(slot)) return // another request started it while we checked
     resume = this.resumeFor(slot, choice) // what the wait may have changed (another slot opened the session)
     if (resume) {
@@ -1288,6 +1300,11 @@ class DaemonImpl implements Daemon {
       return
     }
     await this.launch(slot, resume)
+  }
+
+  /** The newest profiles and settings, awaited before a plan is made (the snapshots may lag the file by a watcher tick). */
+  private async freshLaunchConfig(): Promise<void> {
+    await Promise.all([this.profileStore.fresh(), this.userSettings.fresh()])
   }
 
   /** Launches queued slots while seats are free. A start that fails now is reported through the slot's state. */
@@ -1313,7 +1330,7 @@ class DaemonImpl implements Daemon {
         const token = Symbol('pre-launch')
         slot.preLaunch = token
         slot.status = 'starting'
-        void this.checkCwd(slot, resume).then(() => {
+        void Promise.all([this.checkCwd(slot, resume), this.freshLaunchConfig()]).then(() => {
           if (slot.preLaunch !== token) return // stopped or forgotten meanwhile
           slot.preLaunch = undefined
           return this.launch(slot, resume)
@@ -1809,6 +1826,8 @@ class DaemonImpl implements Daemon {
         if (!isKind(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${String(req.kind)}`)
         if (req.kind !== 'shell' && !this.adapterOf(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${req.kind} (use ${agentChoices()})`)
         if (typeof req.cwd !== 'string' || !req.cwd) throw new RequestError('bad-request', 'cwd obrigatório')
+        // Before the id is drawn: nothing awaits between the new slot's id and its entry in the map.
+        const profile = req.profileId !== undefined ? await this.requireProfile(req.profileId) : undefined
         const meta: SlotMeta = {
           v: 1,
           slotId: this.newSlotId(),
@@ -1818,8 +1837,7 @@ class DaemonImpl implements Daemon {
           createdAt: new Date().toISOString(),
         }
         if (typeof req.name === 'string' && req.name) meta.name = req.name
-        if (req.profileId !== undefined) {
-          const profile = this.requireProfile(req.profileId)
+        if (profile) {
           if (profile.agent !== req.kind) throw new RequestError('bad-request', `o perfil "${profile.name}" é de ${profile.agent}, não de ${req.kind}`)
           snapshotProfile(meta, profile)
         }
@@ -1900,6 +1918,7 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id }
       }
       case 'profiles-list': {
+        await this.profileStore.fresh() // an answer to the person: whatever the CLI wrote a moment ago is in it
         const read = this.profileStore.read()
         return { t: 'ok', id, profiles: read.profiles, ...(read.problem ? { problem: read.problem } : {}) }
       }
@@ -1914,13 +1933,15 @@ class DaemonImpl implements Daemon {
           if (e instanceof ProfileError) throw new RequestError('invalid-profile', e.message)
           throw e
         }
+        await this.profileStore.flush()
         this.log(`profile ${saved.profile.id} saved (${saved.profile.agent} "${saved.profile.name}")`)
         this.broadcastProfiles()
         return { t: 'ok', id, profile: saved.profile, warnings: saved.warnings }
       }
       case 'profile-delete': {
-        const profile = this.requireProfile(req.profileId)
+        const profile = await this.requireProfile(req.profileId)
         this.profileStore.delete(profile.id)
+        await this.profileStore.flush()
         this.log(`profile ${profile.id} deleted`)
         this.broadcastProfiles()
         return { t: 'ok', id }
@@ -1986,7 +2007,7 @@ class DaemonImpl implements Daemon {
       case 'set-profile': {
         const slot = this.slot(req.slotId)
         if (req.profileId !== null && typeof req.profileId !== 'string') throw new RequestError('bad-request', 'profileId obrigatório (ou null para nenhum perfil)')
-        const profile = req.profileId === null ? undefined : this.requireProfile(req.profileId)
+        const profile = req.profileId === null ? undefined : await this.requireProfile(req.profileId)
         if (profile && profile.agent !== slot.meta.agent) throw new RequestError('bad-request', `o perfil "${profile.name}" é de ${profile.agent}, não de ${slot.meta.agent}`)
         const live = isAlive(slot)
         // The refusal comes before anything is written: a slot whose agent never reported is left exactly as it was.
@@ -2069,8 +2090,10 @@ class DaemonImpl implements Daemon {
     }
   }
 
-  private requireProfile(profileId: unknown): Profile {
-    const p = typeof profileId === 'string' ? this.profileStore.profiles().find((x) => x.id === profileId) : undefined
+  /** A profile the memory does not know is looked up again on disk before the request fails (the CLI may have just written it). */
+  private async requireProfile(profileId: unknown): Promise<Profile> {
+    const byId = (list: Profile[]): Profile | undefined => (typeof profileId === 'string' ? list.find((x) => x.id === profileId) : undefined)
+    const p = byId(this.profileStore.profiles()) ?? byId(await this.profileStore.fresh())
     if (!p) throw new RequestError('unknown-profile', `perfil desconhecido: ${String(profileId)}`)
     return p
   }

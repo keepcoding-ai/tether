@@ -16,6 +16,8 @@ import { tetherHome } from '../core/paths.ts'
 import { pingDaemon } from './client.ts'
 import { disabledExtensions } from '../agents/load.ts'
 import { DaemonExtensionHost } from './ext-host.ts'
+import { ProfileStore } from '../core/profile.ts'
+import { UserSettings } from '../core/user-settings.ts'
 import { createGuard } from './guard.ts'
 import { pipePath } from './protocol.ts'
 import { startDaemon, type Daemon } from './server.ts'
@@ -82,12 +84,16 @@ async function main(): Promise<void> {
   // Extensions activate before the slots load: an agent they register must be known when slot metas are read. One the
   // person turned off (settings.json `extensions.disabled`) stays off until the next tetherd start: its slots are kept,
   // listed as agent-unavailable.
-  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home) })
+  // The snapshots the extensions read (settings, profiles) are loaded by the executor (the daemon's start loads the profiles); the daemon shares them.
+  const profileStore = new ProfileStore(home, executor, log)
+  const userSettings = new UserSettings(home, executor, process.env, log)
+  await userSettings.fresh() // the profiles load after the activation: reading them consults the agent registry the extensions fill
+  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home), profileStore, settings: userSettings })
   extHost.activate()
 
   let daemon: Daemon
   try {
-    daemon = await startDaemon({ home, pipe, log, backgroundBoot: true, executor, onShutdown: () => exit('shutdown request'), transformPlan: extHost.transformPlan, onSlot: extHost.emitSlot })
+    daemon = await startDaemon({ home, pipe, log, backgroundBoot: true, executor, profileStore, userSettings, onShutdown: () => exit('shutdown request'), transformPlan: extHost.transformPlan, onSlot: extHost.emitSlot })
   } catch (e) {
     const err = e as NodeJS.ErrnoException
     if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {

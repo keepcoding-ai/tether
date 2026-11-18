@@ -12,7 +12,7 @@ import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
 import { perf } from '../core/perf.ts'
 import { ProfileStore } from '../core/profile.ts'
-import { readUserSettings } from '../core/user-settings.ts'
+import { UserSettings } from '../core/user-settings.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
 import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
@@ -29,6 +29,9 @@ export interface DaemonHostOptions {
   extensions?: readonly ExtensionEntry<TetherDaemon>[]
   /** Extension ids the person turned off. */
   disabled?: readonly string[]
+  /** tetherd's snapshots (memory, reloaded by the executor), shared with the daemon. Default: read from disk when asked (the CLI and Electron main). */
+  profileStore?: ProfileStore
+  settings?: UserSettings
 }
 
 export class DaemonExtensionHost implements IDisposable {
@@ -118,7 +121,9 @@ export class DaemonExtensionHost implements IDisposable {
   }
 
   private profileStoreCache: ProfileStore | undefined
-  private get profileStore(): ProfileStore { return (this.profileStoreCache ??= new ProfileStore(this.opts.home)) }
+  private get profileStore(): ProfileStore { return (this.profileStoreCache ??= this.opts.profileStore ?? new ProfileStore(this.opts.home)) }
+  private settingsCache: UserSettings | undefined
+  private get userSettings(): UserSettings { return (this.settingsCache ??= this.opts.settings ?? new UserSettings(this.opts.home)) }
 
   private apiFor(id: string, own: DisposableStore): TetherDaemon {
     const { home, log } = this.opts
@@ -140,7 +145,7 @@ export class DaemonExtensionHost implements IDisposable {
       launch: { use: (mw) => { const timed: Middleware = perf.wrap(`ext:${id}:plan`, mw); this.middlewares.push(timed); return own.add(removing(this.middlewares, timed)) } },
       doctor: { register: (check) => { this.checks.push(check); return own.add(removing(this.checks, check)) } },
       traces: { register: (source) => { this.traceSources.push(source); return own.add(removing(this.traceSources, source)) } },
-      settings: { get: <T>(key: string): T | undefined => readSetting<T>(home, key) },
+      settings: { get: <T>(key: string): T | undefined => treeValueAt(this.userSettings.get(), key) as T | undefined },
       profiles: { get: (pid) => this.profileStore.profiles().find((p) => p.id === pid) },
       log: (msg) => log(`[${id}] ${msg}`),
       onSlot: (l) => {
@@ -150,8 +155,4 @@ export class DaemonExtensionHost implements IDisposable {
       },
     }
   }
-}
-
-function readSetting<T>(home: string, key: string): T | undefined {
-  return treeValueAt(readUserSettings(home), key) as T | undefined
 }

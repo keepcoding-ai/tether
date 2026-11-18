@@ -6,6 +6,7 @@
 // env vars that carry the slot's identity. Reads are tolerant: a corrupt file is copied aside, never lost.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { FileSnapshot, type SnapshotIo } from './file-snapshot.ts'
 import { defaultShell } from '../agents/shell.ts'
 import type { AgentName, SlotMeta } from './event.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
@@ -157,6 +158,11 @@ export function parseProfilesFile(text: string): { ok: true; profiles: Profile[]
   return { ok: true, profiles, skipped }
 }
 
+function profilesText(profiles: Profile[]): string {
+  const file: ProfilesFile = { v: 1, profiles }
+  return JSON.stringify(file, null, 2) + '\n'
+}
+
 /** Atomic: the whole file goes to a temp name first, then replaces the old one. */
 export function writeProfiles(home: string, profiles: Profile[]): void {
   const path = profilesPath(home)
@@ -202,6 +208,33 @@ export function readProfiles(home: string): ProfilesRead {
   }
   const profiles = defaultProfiles()
   writeProfiles(home, profiles)
+  return { profiles, backup, problem: `${path} estava inválido (${parsed.error}); cópia guardada em ${backup}; perfis padrão recriados` }
+}
+
+/**
+ * `readProfiles` for tetherd: the same decisions (defaults created when the file is missing, a corrupt file copied aside),
+ * every disk access through the executor. `text` is the file's content, undefined when it does not exist.
+ */
+async function readProfilesVia(home: string, io: SnapshotIo, text: string | undefined): Promise<ProfilesRead> {
+  const path = profilesPath(home)
+  if (text === undefined) {
+    const profiles = defaultProfiles()
+    try { await io.run('writeTextAtomic', [path, profilesText(profiles)]) } catch { /* read-only home: the defaults still work in memory */ }
+    return { profiles }
+  }
+  const parsed = parseProfilesFile(text)
+  if (parsed.ok) {
+    if (parsed.skipped === 0) return { profiles: parsed.profiles }
+    return { profiles: parsed.profiles, problem: `${path}: ${parsed.skipped} perfil(is) malformado(s) ignorado(s)` }
+  }
+  const backup = `${path}.corrompido-${stamp()}`
+  try {
+    await io.run('writeTextAtomic', [backup, text])
+  } catch (e) {
+    return { profiles: defaultProfiles(), problem: `${path} está inválido (${parsed.error}) e não consegui guardar uma cópia (${(e as Error).message}); usando os perfis padrão sem gravar` }
+  }
+  const profiles = defaultProfiles()
+  await io.run('writeTextAtomic', [path, profilesText(profiles)])
   return { profiles, backup, problem: `${path} estava inválido (${parsed.error}); cópia guardada em ${backup}; perfis padrão recriados` }
 }
 
@@ -381,7 +414,7 @@ export function snapshotProfile(meta: SlotMeta, p: Profile): boolean {
 }
 
 
-// ---- a store with a cache keyed on the file's stat --------------------------
+// ---- the store ---------------------------------------------------------------
 
 function statKey(path: string): string {
   try {
@@ -392,16 +425,44 @@ function statKey(path: string): string {
   }
 }
 
-/** The profiles file as tetherd sees it: re-read whenever it changed on disk (the CLI may edit it while tetherd runs). */
+/** Where the store's own writes go in snapshot mode (tetherd: its SlotStore, so they are queued, coalesced and ordered). */
+export interface ProfileWriter {
+  put(path: string, text: string): void
+  flush(path: string): Promise<void>
+}
+
+/**
+ * The profiles file as tetherd sees it. With an executor (`io`) it is a snapshot in memory: `profiles()` and `read()` never
+ * touch the disk; the executor reloads it when the file changes (watcher, a check every few seconds) or on `fresh()`, and
+ * `save`/`delete` update the memory first and write behind it. Without an executor (the CLI, Electron main, tests) it
+ * re-reads whenever the file's stat changed, as before.
+ */
 export class ProfileStore {
   readonly home: string
   private cache: { key: string; read: ProfilesRead } | undefined
+  private readonly snap: FileSnapshot<ProfilesRead> | undefined
+  private writer: ProfileWriter | undefined
+  private readonly io: SnapshotIo | undefined
 
-  constructor(home: string) {
+  constructor(home: string, io?: SnapshotIo, log?: (msg: string) => void) {
     this.home = home
+    this.io = io
+    this.snap = io
+      ? new FileSnapshot<ProfilesRead>(profilesPath(home), io, {
+        decode: (text) => readProfilesVia(home, io, text),
+        // Empty, not the defaults: building the defaults reads the agent registry, which must not load before tetherd's own host does.
+        initial: { profiles: [] },
+        before: () => this.writer?.flush(profilesPath(home)) ?? Promise.resolve(),
+        ...(log ? { log } : {}),
+      })
+      : undefined
   }
 
+  /** Snapshot mode: route the store's writes through the daemon's SlotStore. */
+  attachWriter(w: ProfileWriter): void { this.writer = w }
+
   read(): ProfilesRead {
+    if (this.snap) return this.snap.get()
     const path = profilesPath(this.home)
     const key = statKey(path)
     if (this.cache && this.cache.key === key) return this.cache.read
@@ -414,15 +475,39 @@ export class ProfileStore {
     return this.read().profiles
   }
 
+  /** The newest profiles (snapshot mode: reloads through the executor when the file changed). */
+  async fresh(): Promise<Profile[]> {
+    if (!this.snap) return this.profiles()
+    return (await this.snap.fresh()).profiles
+  }
+
+  /** Snapshot mode: the file watcher and the periodic check. */
+  start(): void { this.snap?.start() }
+  stop(): void { this.snap?.stop() }
+
+  /** Resolves when what `save`/`delete` wrote is on disk. */
+  async flush(): Promise<void> { await this.writer?.flush(profilesPath(this.home)) }
+
+  private write(profiles: Profile[]): void {
+    if (!this.snap) {
+      writeProfiles(this.home, profiles)
+      this.cache = undefined
+      return
+    }
+    const path = profilesPath(this.home)
+    this.snap.set({ profiles })
+    const text = profilesText(profiles)
+    if (this.writer) this.writer.put(path, text)
+    else void this.io!.run('writeTextAtomic', [path, text]).catch(() => { /* the memory keeps the value */ })
+  }
+
   save(input: ProfileInput): { profile: Profile; warnings: string[] } {
     const { profiles, profile, warnings } = upsertProfile(this.profiles(), input)
-    writeProfiles(this.home, profiles)
-    this.cache = undefined
+    this.write(profiles)
     return { profile, warnings }
   }
 
   delete(id: string): void {
-    writeProfiles(this.home, removeProfile(this.profiles(), id))
-    this.cache = undefined
+    this.write(removeProfile(this.profiles(), id))
   }
 }
