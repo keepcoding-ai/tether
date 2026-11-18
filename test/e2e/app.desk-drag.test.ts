@@ -19,6 +19,7 @@ import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { stopPtyd } from './ptyd-driver.ts'
 
 type Hooks = {
   desks(): { id: string; name: string }[]
@@ -235,6 +236,7 @@ test('desk drag: reorder by dragging a capsule segment, cancel, threshold, keybo
     console.log('teardown')
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })
+    await stopPtyd(home)
     for (let i = 0; i < 20 && daemons.some(d => pidAlive(d.pid)); i++) await sleep(500)
     for (let i = 0; i < 5; i++) {
       try { rmSync(home, { recursive: true, force: true }); break } catch { await sleep(300) }

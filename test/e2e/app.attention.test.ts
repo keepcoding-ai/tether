@@ -14,6 +14,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { stopPtyd } from './ptyd-driver.ts'
 import { CLAUDE_DIALECT } from './harness.ts'
 
 type Hooks = {
@@ -176,6 +177,7 @@ test('attention: a finished Claude turn badges its hidden desk, its tab and the 
     if (wait > 0) await sleep(wait)
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })
+    await stopPtyd(home)
     for (let i = 0; i < 20 && daemons.some(d => pidAlive(d.pid)); i++) await sleep(500)
     for (const dir of [home, work]) for (let i = 0; i < 5; i++) { try { rmSync(dir, { recursive: true, force: true }); break } catch { await sleep(300) } }
   }

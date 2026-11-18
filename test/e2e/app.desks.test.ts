@@ -19,6 +19,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { stopPtyd } from './ptyd-driver.ts'
 
 type DeskRow = { id: string; name: string; color: string; panes: string[]; attention: { done: number; waiting: number } }
 type Hooks = {
@@ -289,6 +290,7 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     if (app) await killElectron(app, root).catch(() => {})
     console.log('teardown: electron gone')
     for (const d of daemons) await killOwned(d, { tree: true })
+    await stopPtyd(home)
     console.log('teardown: daemon gone')
     for (let i = 0; i < 20 && daemons.some(d => pidAlive(d.pid)); i++) await sleep(500)
     for (let i = 0; i < 5; i++) {

@@ -64,7 +64,8 @@ export class Drawer {
    * The desk is `inert` meanwhile: nothing in it is worth a Tab stop.
    */
   setEmpty(empty: boolean): void {
-    this.root.dataset.empty = String(empty)
+    // Called on every strip repaint: an unchanged value writes nothing (toggleAttribute to the state it has is a no-op).
+    if (this.root.dataset.empty !== String(empty)) this.root.dataset.empty = String(empty)
     this.body.querySelector('.drawer-desk')?.toggleAttribute('inert', empty)
   }
 

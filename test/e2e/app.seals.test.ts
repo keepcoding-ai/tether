@@ -18,6 +18,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
+import { stopPtyd } from './ptyd-driver.ts'
 
 type Hooks = {
   panelIds(): string[]
@@ -200,6 +201,7 @@ test('seals: badges on pads and system desk pills, attention seals on panes', { 
     if (app) await killElectron(app, root).catch(() => {})
     for (const pid of pids) if (pidAlive(pid)) { try { process.kill(pid) } catch { /* gone */ } }
     for (const d of daemons) await killOwned(d, { tree: true })
+    await stopPtyd(home)
     rmSync(home, { recursive: true, force: true })
   }
 })

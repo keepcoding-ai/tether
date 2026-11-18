@@ -21,7 +21,7 @@
 // (the "+N" swapping who is visible) slides the surviving segments to their new places (FLIP, 320 ms) unless
 // the person asked for reduced motion.
 import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
-import { fitDesks, overflowDesks, pickFromOverflow, touchUsed, type LastUsed } from './desk-switch-rules.ts'
+import { fitDesks, measureKey, overflowDesks, paintKey, pickFromOverflow, structureKey, touchUsed, type LastUsed, type SegView } from './desk-switch-rules.ts'
 import { icon, type IconName } from './icons.ts'
 import { pillMark, type Badge } from './seal-rules.ts'
 import { clampDragX, dragTargetIndex, fullIndexAfterDrop, passedThreshold } from './desk-drag-rules.ts'
@@ -91,6 +91,13 @@ export class DeskSwitch {
   private press: Press | undefined
   private swallowClick = false
   private frame = 0
+  /** Keys of what the last passes left on screen (desk-switch-rules.ts): equal keys skip the reads and the writes. */
+  private sKey: string | undefined
+  private mKey: string | undefined
+  private pKey: string | undefined
+  private moreKey: string | undefined
+  private sleepKey: string | undefined
+  private sysKey: string | undefined
 
   constructor(element: HTMLElement, bar: HTMLElement, sides: readonly HTMLElement[], host: DeskSwitchHost) {
     this.element = element
@@ -155,13 +162,40 @@ export class DeskSwitch {
     this.active = active
     this.mark = mark
     if (this.renaming || this.dragging) return // the input in a segment is being edited: repainting would drop it
+    const sKey = structureKey(desks, active)
+    // Same desks, same active one: only the marks may have changed (a daemon state event, a seal).
+    if (sKey === this.sKey && this.mKey !== undefined) { this.refreshMarks(); return }
+    this.sKey = sKey
     this.layout()
+  }
+
+  /** The capsule's chrome changed outside it (a CSS toggle): the next pass measures and fits again. */
+  invalidate(): void {
+    this.sKey = undefined
+    this.mKey = undefined
+    this.pKey = undefined
+  }
+
+  /**
+   * Marks only. Same widths: the fit cannot change, so the segments are repainted only when what they show changed, and
+   * nothing is read (reading geometry here would force a synchronous layout of the whole window on every state event).
+   * Different widths (a badge or busy dot came or went): fitted again in the next frame, once for every change in it.
+   */
+  private refreshMarks(): void {
+    const views = this.views()
+    if (measureKey(views) !== this.mKey) { this.schedule(); return }
+    this.paintSegs(views)
+    this.paintMore(views)
   }
 
   /** Paints the system desks' pills after the Gaveta's. Without any, the capsule is exactly what it was. */
   renderSystem(pills: readonly SystemPill[]): void {
-    this.element.querySelectorAll('.seg.sys').forEach(el => el.remove())
     const anchor = this.element.querySelector('#btn-drawer')
+    const sysKey = JSON.stringify([!!anchor, pills])
+    // The same pills (the common case: a state event repaints the whole strip): nothing to rebuild, no room to re-measure.
+    if (sysKey === this.sysKey) return
+    this.sysKey = sysKey
+    this.element.querySelectorAll('.seg.sys').forEach(el => el.remove())
     if (!anchor) return
     let after: Element = anchor
     for (const p of pills) {
@@ -202,11 +236,28 @@ export class DeskSwitch {
     this.frame = requestAnimationFrame(() => { this.frame = 0; if (!this.renaming && !this.dragging) this.layout() })
   }
 
-  /** Measures every segment's natural width, decides who is visible, and paints. */
+  /** Each awake desk with its mark, read once per pass (the host's mark walks every pane of the desk). */
+  private views(): SegView[] {
+    return this.awake.map(d => {
+      const m = this.mark(d.id)
+      const a: DeskAttention = typeof m === 'object' ? m.attention : { done: 0, waiting: 0 }
+      return { id: d.id, name: d.name, color: d.color, active: d.id === this.active, done: a.done, waiting: a.waiting, busy: m === 'busy', lines: a.lines ?? [] }
+    })
+  }
+
+  /**
+   * Measures every segment's natural width, decides who is visible, and paints. Every geometry read comes before this
+   * pass writes anything but the hidden measuring copy, so the pass costs two layouts (three when the row moved), not one
+   * per read.
+   */
   private layout(): void {
+    this.sKey = structureKey(this.desks, this.active)
     const order = this.awake.map(d => d.id)
+    const views = this.views()
     this.paintSleep()
-    this.measure.replaceChildren(...this.awake.map((d, i) => this.segment(d, i, true)))
+    const before = this.segRects()
+    const avail = this.room()
+    this.measure.replaceChildren(...this.awake.map((d, i) => this.segment(d, i, true, views[i]!)))
     const probe = document.createElement('span')
     probe.className = 'seg desk-more'
     probe.textContent = `+${Math.max(order.length, 10)}`
@@ -214,21 +265,39 @@ export class DeskSwitch {
     const widths: Record<string, number> = {}
     for (const el of this.measure.querySelectorAll<HTMLElement>('.seg[data-desk]')) widths[el.dataset.desk!] = Math.ceil(el.getBoundingClientRect().width)
     const plusWidth = Math.ceil(probe.getBoundingClientRect().width)
-    const avail = this.room()
+    // Hidden window (nothing laid out): the widths are not real, so the next pass measures again.
+    this.mKey = avail === undefined ? undefined : measureKey(views)
     this.visible = avail === undefined
       ? order.filter(id => this.visible.includes(id) || id === this.active)
       : fitDesks({ order, active: this.active, visible: this.visible.filter(id => order.includes(id)), widths, avail, plusWidth, gap: this.gap(), lastUsed: this.lastUsed })
     if (this.visible.length === 0) this.visible = [...order]
     this.measure.replaceChildren()
+    if (this.paintSegs(views)) this.flip(before)
+    this.paintMore(views)
+  }
+
+  /** Repaints the visible segments when what they show changed; true when it wrote. */
+  private paintSegs(views: readonly SegView[]): boolean {
+    const hints = views.map((_, i) => i < 9 ? this.host.hint(i + 1) : '')
+    const pKey = paintKey(this.visible, views, hints)
+    if (pKey === this.pKey && this.segs.childElementCount === this.visible.length) return false
+    this.pKey = pKey
     const shown = new Set(this.visible)
-    const before = this.segRects()
     const focused = this.segs.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.desk : undefined
-    this.segs.replaceChildren(...this.awake.flatMap((d, i) => shown.has(d.id) ? [this.segment(d, i, false)] : []))
+    this.segs.replaceChildren(...this.awake.flatMap((d, i) => shown.has(d.id) ? [this.segment(d, i, false, views[i]!, hints[i]!)] : []))
     if (focused) this.segs.querySelector<HTMLElement>(`.seg[data-desk="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true })
-    this.flip(before)
-    const hidden = overflowDesks(order, this.visible)
+    return true
+  }
+
+  /** The "+N": how many desks it lists and whether one of them asks for attention. Writes only on a change. */
+  private paintMore(views: readonly SegView[]): void {
+    const hidden = overflowDesks(views.map(v => v.id), this.visible)
+    const byId = new Map(views.map(v => [v.id, v]))
+    const waiting = hidden.reduce((n, id) => { const v = byId.get(id); return n + (v ? v.done + v.waiting : 0) }, 0)
+    const moreKey = `${hidden.length}/${waiting}`
+    if (moreKey === this.moreKey) return
+    this.moreKey = moreKey
     this.more.hidden = hidden.length === 0
-    const waiting = hidden.reduce((n, id) => { const a = this.attention(id); return n + a.done + a.waiting }, 0)
     this.more.replaceChildren(document.createTextNode(`+${hidden.length}`))
     if (waiting > 0) { const dot = document.createElement('span'); dot.className = 'more-dot'; this.more.append(dot) }
     this.more.title = `Mais ${hidden.length === 1 ? '1 mesa' : `${hidden.length} mesas`}${waiting > 0 ? ` (${waiting} com atenção)` : ''}`
@@ -257,7 +326,7 @@ export class DeskSwitch {
     return parseFloat(getComputedStyle(this.element).columnGap) || 0
   }
 
-  private segment(d: DeskInfo, index: number, measuring: boolean): HTMLElement {
+  private segment(d: DeskInfo, index: number, measuring: boolean, v: SegView, hint = ''): HTMLElement {
     const active = d.id === this.active
     const seg = document.createElement('div')
     seg.className = 'seg'
@@ -269,14 +338,14 @@ export class DeskSwitch {
     seg.style.setProperty('--seg-text', t.text)
     const name = document.createElement('span'); name.className = 'seg-name'; name.textContent = d.name
     seg.append(name)
-    const att = this.attention(d.id)
+    const att = v
     const total = att.done + att.waiting
     if (total > 0) {
       const badge = document.createElement('span')
       badge.className = `cnt desk-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
       badge.textContent = String(total)
       seg.append(badge)
-    } else if (this.mark(d.id) === 'busy') {
+    } else if (v.busy) {
       const dot = document.createElement('span')
       dot.className = 'busy-dot'
       dot.setAttribute('aria-label', 'em andamento')
@@ -287,8 +356,8 @@ export class DeskSwitch {
     seg.setAttribute('aria-selected', String(active))
     seg.tabIndex = active ? 0 : -1
     seg.setAttribute('aria-label', `${d.name}${total === 0 ? '' : `, ${total} com atenção`}`)
-    const go = index < 9 ? ` (${this.host.hint(index + 1)})` : ''
-    const what = total === 0 ? (this.mark(d.id) === 'busy' ? '\nEm andamento' : '') : `${(att.lines ?? []).map(l => `\n${l}`).join('')}\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
+    const go = index < 9 ? ` (${hint})` : ''
+    const what = total === 0 ? (v.busy ? '\nEm andamento' : '') : `${att.lines.map(l => `\n${l}`).join('')}\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
     seg.title = `${d.name}${go}${what}\nDuplo clique renomeia; clique direito: mais opções. Arraste para reordenar.`
     seg.addEventListener('mousedown', ev => { if (ev.button === 0 && !(ev.target as Element).closest('input')) ev.preventDefault() })
     seg.addEventListener('click', () => { if (this.swallowClick) return; this.host.switchTo(d.id) })
@@ -308,6 +377,8 @@ export class DeskSwitch {
 
   private paintSleep(): void {
     const n = this.asleep.length
+    if (this.sleepKey === String(n)) return // unchanged: no write (it would dirty the layout this pass reads next)
+    this.sleepKey = String(n)
     this.sleep.hidden = n === 0
     this.sleep.replaceChildren(icon('moon'), document.createTextNode(String(n)))
     this.sleep.title = n === 1 ? '1 mesa hibernada' : `${n} mesas hibernadas`
@@ -443,7 +514,10 @@ export class DeskSwitch {
       for (const el of d.els) el.style.transform = ''
     } else {
       for (const el of d.els) el.style.transform = ''
-      this.layout() // repaint what was held back while dragging
+      // Repaint what was held back while dragging, always with new segments: the pressed one leaves the DOM, so the
+      // release that follows an Esc lands on another element and makes no click (no switch).
+      this.pKey = undefined
+      this.layout()
     }
   }
 
@@ -488,6 +562,7 @@ export class DeskSwitch {
     const name = seg?.querySelector<HTMLElement>('.seg-name')
     if (!seg || !name || this.renaming) return
     this.renaming = id
+    this.pKey = undefined // the segment now holds an input: the next paint must rebuild the row whatever the keys say
     const input = document.createElement('input')
     input.className = 'desk-rename'
     input.value = name.textContent ?? ''

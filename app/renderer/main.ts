@@ -353,9 +353,17 @@ const THEME_LABEL: Record<ThemeState['setting'], string> = { light: 'Claro', aut
 function trackDpr(): void {
   const dpr = window.devicePixelRatio || 1
   document.documentElement.style.setProperty('--dpr', String(dpr))
-  window.matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', trackDpr, { once: true })
+  window.matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', () => { trackDpr(); refitStrip() }, { once: true })
 }
 trackDpr()
+
+/** The capsule's chrome changed outside it (zoom, fonts): its skip-if-unchanged keys no longer hold, so it measures again. */
+function refitStrip(): void {
+  if (!strip || !desks) return
+  strip.invalidate()
+  renderStrip()
+}
+void document.fonts?.ready.then(refitStrip)
 
 /** Applies the chrome preferences: the desk colour line, the tab × and the checks in the ≡ menu. */
 function applyUi(next: UiSettings): void {
@@ -368,7 +376,7 @@ function applyUi(next: UiSettings): void {
   const iconOnly = document.body.classList.contains('fixed-icon-only')
   document.body.classList.toggle('fixed-icon-only', ui.fixedDeskLabel === 'icon')
   // The capsule's chrome changed width: fit the desks again.
-  if (iconOnly !== (ui.fixedDeskLabel === 'icon') && strip && desks) renderStrip()
+  if (iconOnly !== (ui.fixedDeskLabel === 'icon') && strip && desks) refitStrip()
   document.body.classList.toggle('dim-unfocused', ui.dimUnfocused)
   for (const level of DIM_LEVELS) document.body.classList.toggle(`dim-${level}`, ui.dimLevel === level)
   // The radios show the level only while the dim is on.
@@ -951,7 +959,9 @@ function renderStrip(): void {
   // On the workbench: the line spans the window (over the side bars) and the pads' frames take the colour for the F6 outline.
   // A system desk showing tints the line with its own colour, not with the last queue desk's.
   const tinted = active ?? desks.systemDesks.find(d => d.id === desks.activeDeskId)
-  if (tinted) $('workbench').style.setProperty('--desk-line-color', deskTokens(tinted.color).fill)
+  // Written only on a change: an inherited custom property on the workbench restyles everything under it.
+  const line = tinted ? deskTokens(tinted.color).fill : undefined
+  if (line !== undefined && $('workbench').style.getPropertyValue('--desk-line-color') !== line) $('workbench').style.setProperty('--desk-line-color', line)
   renderDrawerButton()
 }
 
@@ -1222,19 +1232,24 @@ function renderDrawerButton(): void {
   const att = drawerAttention()
   const mark = markWith(att, drawer.desk.panels)
   const total = att.done + att.waiting
-  badge.hidden = total === 0
-  badge.className = `cnt desk-badge drawer-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
-  badge.textContent = String(total)
-  btn.querySelector('.busy-dot')?.remove()
-  if (mark === 'busy') { const dot = document.createElement('span'); dot.className = 'busy-dot'; dot.setAttribute('aria-label', 'em andamento'); btn.append(dot) }
-  btn.setAttribute('aria-expanded', String(drawer.isOpen))
+  // Every write is skipped when the value is already there: this runs on every daemon state event, and a write dirties
+  // the layout that the next geometry read (anywhere) then pays for synchronously.
+  if (badge.hidden !== (total === 0)) badge.hidden = total === 0
+  const badgeClass = `cnt desk-badge drawer-badge ${att.waiting > 0 ? 'waiting' : 'done'}`
+  if (badge.className !== badgeClass) badge.className = badgeClass
+  if (badge.textContent !== String(total)) badge.textContent = String(total)
+  const dot = btn.querySelector('.busy-dot')
+  if (mark === 'busy' && !dot) { const el = document.createElement('span'); el.className = 'busy-dot'; el.setAttribute('aria-label', 'em andamento'); btn.append(el) }
+  else if (mark !== 'busy' && dot) dot.remove()
+  if (btn.getAttribute('aria-expanded') !== String(drawer.isOpen)) btn.setAttribute('aria-expanded', String(drawer.isOpen))
   const n = drawer.desk.panels.length
   // The invitation shows when nothing is in the drawer and no quick shell is on its way (that one has the stage).
   drawer.setEmpty(n === 0 && !quickShellBusy)
   const what = n === 0 ? 'vazia' : n === 1 ? '1 painel' : `${n} painéis`
   const waiting = att.waiting > 0 ? ` · ${att.waiting} esperando você` : ''
   const done = att.done > 0 ? ` · ${att.done} terminou` : ''
-  btn.title = `Gaveta (${shortcutHint('drawer.toggle')}): ${what}${waiting}${done}. Um espaço rápido, compartilhado por todas as mesas; fechada, os agentes dela seguem rodando.`
+  const title = `Gaveta (${shortcutHint('drawer.toggle')}): ${what}${waiting}${done}. Um espaço rápido, compartilhado por todas as mesas; fechada, os agentes dela seguem rodando.`
+  if (btn.title !== title) btn.title = title
 }
 
 /** The pane that has the keyboard now, if it is one of the desks'. */
@@ -2206,8 +2221,14 @@ let agentPaneQueued = false
 /** Every pane that shows an agent's slot, with where it lives now. */
 function agentPanes(): AgentPane[] {
   const out: AgentPane[] = []
-  for (const slot of slots.values()) {
-    if (slot.kind === 'shell' || !findPanel(slot.slotId)) continue
+  // Walks the open panes, not every slot on disk (hundreds of closed ones): each findPanel of a slot without a pane
+  // searched every desk, the drawer and every pad, on every state event.
+  const seen = new Set<string>()
+  for (const panel of allPanels()) {
+    if (seen.has(panel.id)) continue
+    seen.add(panel.id)
+    const slot = slots.get(panel.id)
+    if (!slot || slot.kind === 'shell') continue
     const pad = framePadOf(slot.slotId)
     const drawerPane = inDrawer(slot.slotId)
     const deskId = drawerPane ? undefined : pad ? pad.deskId : desks.deskOf(slot.slotId)

@@ -74,3 +74,48 @@ export function touchUsed(lastUsed: LastUsed, id: string): Record<string, number
   const top = Math.max(0, ...Object.values(lastUsed))
   return { ...lastUsed, [id]: top + 1 }
 }
+
+// ---------- skip-if-unchanged keys ----------
+//
+// A daemon `state` event repaints the capsule (its marks may have changed), and most of them change nothing the capsule
+// shows. Measuring the row forces the browser to lay out the whole window synchronously, several times per pass, so the
+// capsule compares these keys first: the same structure and the same widths keep the fit (no reads at all), and the same
+// paint key writes nothing.
+
+/** What one desk's segment shows: the desk and its mark, read once per pass. */
+export interface SegView {
+  id: string
+  name: string
+  color: string
+  active: boolean
+  done: number
+  waiting: number
+  /** A pane of the desk is mid-turn (the quiet green dot, shown only without attention). */
+  busy: boolean
+  /** The seals' lines, listed in the tooltip. */
+  lines: readonly string[]
+}
+
+/** The row's structure: desks (order, names, colours, sleep) and the active one. A change re-fits right away. */
+export function structureKey(desks: readonly { id: string; name: string; color: string; asleep?: boolean }[], active: string): string {
+  return JSON.stringify([active, desks.map(d => [d.id, d.name, d.color, d.asleep === true])])
+}
+
+/** What changes a segment's natural width or the fit: names, the active desk, the badge's text, the busy dot. */
+export function measureKey(views: readonly SegView[]): string {
+  return JSON.stringify(views.map(v => {
+    const total = v.done + v.waiting
+    return [v.id, v.name, v.active, total > 0 ? String(total) : v.busy ? '•' : '']
+  }))
+}
+
+/**
+ * Everything the visible segments paint, in order: text, colours, badge tone, tooltip lines and the shortcut hint of
+ * each position (`hints[i]` for the i-th desk of `views`). Equal keys mean the row on screen is already right.
+ */
+export function paintKey(visible: readonly string[], views: readonly SegView[], hints: readonly string[]): string {
+  const shown = new Set(visible)
+  return JSON.stringify(views.flatMap((v, i) => shown.has(v.id)
+    ? [[v.id, v.name, v.color, v.active, v.done, v.waiting, v.busy, v.lines, hints[i] ?? '']]
+    : []))
+}
