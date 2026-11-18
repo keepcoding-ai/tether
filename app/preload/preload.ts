@@ -29,6 +29,7 @@ const api: TetherApi = {
   notice: (notice: Notice) => ipcRenderer.send('tether:notice', notice),
   onEvent: listener => on<DaemonEvent>('tether:event', listener),
   onConnection: listener => on<ConnectionState>('tether:connection', listener),
+  panelVisible: (slotId, visible) => ipcRenderer.send('panel:visible', slotId, visible),
   reconnect: () => ipcRenderer.send('tether:reconnect'),
   loadLayout: () => ipcRenderer.invoke('layout:load'),
   saveLayout: layout => ipcRenderer.invoke('layout:save', layout),

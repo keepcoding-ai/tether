@@ -77,6 +77,8 @@ export class PanelLink {
   private readonly counters: PanelLinkStats = { writesDropped: 0, writesQueued: 0, reconnects: 0, resyncs: 0, resets: 0 }
   /** Input waiting for the link, per slot, in order. */
   private readonly queues = new Map<string, { chunks: string[]; size: number }>()
+  /** Slots whose output nobody looks at: nothing is delivered and `next` stays put, so the resume reads what is missing from the host. */
+  private readonly paused = new Set<string>()
   private conn: PanelConn | undefined
   private delay: number
   private cancelRetry: (() => void) | undefined
@@ -119,6 +121,7 @@ export class PanelLink {
     this.conn = undefined
     c?.close()
     this.queues.clear()
+    this.paused.clear()
   }
 
   /**
@@ -145,8 +148,23 @@ export class PanelLink {
     return res
   }
 
+  /**
+   * A paused slot stays attached but its output is not delivered (the window's terminal is off screen and need not parse it);
+   * the offset stops where it was. Resuming re-attaches from that offset with the host's epoch: the host answers only what is
+   * missing (delivered through `onData`) or, when the offset left its ring, the whole ring (`onReset`). No-op for a slot not attached.
+   */
+  setPaused(slotId: string, paused: boolean): void {
+    if (paused) { if (this.slots.has(slotId)) this.paused.add(slotId); return }
+    if (this.paused.delete(slotId)) this.resync(slotId)
+  }
+
+  isPaused(slotId: string): boolean {
+    return this.paused.has(slotId)
+  }
+
   async detach(slotId: string): Promise<void> {
     this.queues.delete(slotId)
+    this.paused.delete(slotId)
     if (!this.slots.delete(slotId)) return
     if (this.connected) await this.conn!.request({ t: 'detach', name: slotId }).catch(() => undefined)
   }
@@ -243,13 +261,14 @@ export class PanelLink {
   private onHostData(c: PanelConn, name: string, data: string, off: number | undefined): void {
     if (c !== this.conn) return
     const s = this.slots.get(name)
-    if (!s) return
+    if (!s || this.paused.has(name)) return
     if (s.held) { s.held.push({ data, off }); return }
     this.deliver(name, s, data, off)
   }
 
   /** `off` is the offset after the chunk: bytes already delivered are trimmed, a hole forces a resync. */
   private deliver(name: string, s: Slot, data: string, off: number | undefined): void {
+    if (this.paused.has(name)) return // events held from before the pause too: the resume reads them from the host
     if (off === undefined) { this.o.onData(name, data); s.next += data.length; return }
     const start = off - data.length
     if (off <= s.next) return
@@ -273,7 +292,7 @@ export class PanelLink {
   private resync(name: string): void {
     const s = this.slots.get(name)
     const c = this.conn
-    if (!s || !c || c.isClosed) return
+    if (!s || !c || c.isClosed || this.paused.has(name)) return
     if (s.held && s.epoch !== '' && s.held.length >= 0 && this.inflight.has(s)) { s.again = true; return }
     this.inflight.add(s)
     s.held = []
@@ -281,7 +300,7 @@ export class PanelLink {
     void (async () => {
       try {
         const r = await c.request({ t: 'attach', name, from: s.next, epoch: s.epoch })
-        if (this.slots.get(name) !== s || c !== this.conn) return
+        if (this.slots.get(name) !== s || c !== this.conn || this.paused.has(name)) return
         const text = r.scrollback ?? ''
         const off = r.off ?? s.next
         const delta = r.epoch === s.epoch && text.length === off - s.next

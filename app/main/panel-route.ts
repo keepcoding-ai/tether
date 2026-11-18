@@ -13,6 +13,8 @@ export interface RouteLink {
   detach(slotId: string): Promise<void>
   write(slotId: string, data: string): boolean
   resize(slotId: string, cols: number, rows: number): void
+  /** Stops (or resumes) delivering the slot's output; resuming reads what was missed from the host. */
+  setPaused(slotId: string, paused: boolean): void
 }
 
 /** What the router needs from the tetherd connection (DaemonClient satisfies it). */
@@ -32,6 +34,8 @@ export interface PanelRouterOptions {
   schedule?: (fn: () => void, ms: number) => () => void
   /** How long a hosted pane that exited stays attached, so output the host sent just before the exit still lands. */
   exitGraceMs?: number
+  /** `performance.hiddenPanes`: when false, hidden panes keep receiving output as before. Read at each change. Default: on. */
+  hiddenPanes?: () => boolean
 }
 
 /** Where a keystroke went: the link (sent or queued for the host), nowhere (the link queue is full), or tetherd (the caller sends it). */
@@ -59,6 +63,10 @@ export class PanelRouter {
   /** Attach requests of the window in flight: the router does not follow these slots meanwhile. */
   private readonly windowAttaching = new Set<string>()
   private readonly exitTimers = new Map<string, () => void>()
+  /** Slots the window reported as not on screen (inactive tab, another desk). */
+  private readonly hidden = new Set<string>()
+  /** The window itself is minimized or hidden to the tray: no pane is on screen. */
+  private windowHidden = false
   private dropLogged = false
 
   constructor(opts: PanelRouterOptions) {
@@ -85,6 +93,7 @@ export class PanelRouter {
       case 'attach': return this.attach(body)
       case 'detach':
         this.viewed.delete(body.slotId)
+        this.hidden.delete(body.slotId)
         this.unlink(body.slotId)
         return this.o.request(body)
       case 'resize':
@@ -118,6 +127,31 @@ export class PanelRouter {
     }
   }
 
+  /** The window reports whether a pane's terminal is on screen. Hosted panes stop receiving output while off screen. */
+  setVisible(slotId: string, visible: boolean): void {
+    if (visible) this.hidden.delete(slotId)
+    else this.hidden.add(slotId)
+    this.applyPause(slotId)
+  }
+
+  /** The window was minimized / hidden (false) or came back (true): minimized counts as hidden, since nothing is drawn. */
+  setWindowVisible(visible: boolean): void {
+    if (this.windowHidden === !visible) return
+    this.windowHidden = !visible
+    for (const id of this.runs.keys()) this.applyPause(id)
+  }
+
+  /** Re-applies the policy to every attached slot (the `performance.hiddenPanes` setting changed). */
+  refresh(): void {
+    for (const id of this.runs.keys()) this.applyPause(id)
+  }
+
+  private applyPause(id: string): void {
+    if (!this.o.link.has(id)) return
+    const enabled = this.o.hiddenPanes?.() ?? true
+    this.o.link.setPaused(id, enabled && (this.windowHidden || this.hidden.has(id)))
+  }
+
   // ---- tetherd -> router ---------------------------------------------------------------------
 
   /** A slot state (event, list or attach reply): a launch in the host with the window attached is followed in the link. */
@@ -138,6 +172,7 @@ export class PanelRouter {
   onRemoved(slotId: string): void {
     this.viewed.delete(slotId)
     this.hosted.delete(slotId)
+    this.hidden.delete(slotId)
     this.unlink(slotId)
   }
 
@@ -145,6 +180,7 @@ export class PanelRouter {
   reset(): void {
     for (const id of [...this.runs.keys()]) this.unlink(id)
     this.viewed.clear()
+    this.hidden.clear() // the window reports again when it attaches
     this.hosted.clear()
     this.holding.clear()
   }
@@ -198,6 +234,7 @@ export class PanelRouter {
       const r = await this.o.link.attach(id, from)
       this.runs.set(id, pid)
       this.cancelExit(id)
+      this.applyPause(id) // a pane attached while off screen: its later output waits for it to show
       return r.scrollback + held.join('')
     } catch (e) {
       this.runs.delete(id)

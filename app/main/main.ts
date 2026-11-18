@@ -139,6 +139,7 @@ const panelRouter: PanelRouter = new PanelRouter({
   request: body => request(body),
   emit: (slotId, data) => { perfEchoData(slotId); win?.webContents.send('tether:event', { t: 'data', slotId, data }) },
   log: msg => appLog(msg),
+  hiddenPanes: () => (settings() as { performance?: { hiddenPanes?: unknown } }).performance?.hiddenPanes !== false,
 })
 
 function readJson<T>(path: string, fallback: T): T {
@@ -514,6 +515,7 @@ function replaySettings(keys: readonly string[]): void {
   if (roots.has('ui')) win?.webContents.send('tether:ui', normalizeUi(settings().ui))
   if (roots.has('confirmations')) win?.webContents.send('tether:confirmations', readConfirmations())
   if (roots.has('extensions')) extensionHost.settingsChangedOnDisk(keys)
+  if (roots.has('performance')) panelRouter.refresh()
 }
 type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; trayNoticeShown?: unknown; ui?: unknown; notes?: unknown; window?: unknown; extensions?: unknown; notifications?: { os?: unknown } }
 
@@ -775,6 +777,10 @@ function createWindow(): void {
   created.on('focus', () => created.flashFrame(false))
   // A <webview> is only ever an extension's isolated page (the note's HTML preview): with no extension guarding, none attaches.
   extensionHost.guardWebviews(created.webContents, () => created.webContents.on('will-attach-webview', event => event.preventDefault()))
+  // A minimized (or tray-hidden) window draws nothing: its hosted panes stop receiving output until it is back.
+  const windowShown = (): boolean => !created.isMinimized() && created.isVisible()
+  const windowMoved = (): void => { if (win === created) panelRouter.setWindowVisible(windowShown()) }
+  created.on('minimize', windowMoved); created.on('restore', windowMoved); created.on('show', windowMoved); created.on('hide', windowMoved)
   created.on('close', e => {
     if (quitting || !tray) return
     e.preventDefault()
@@ -1000,6 +1006,8 @@ ipcMain.on('tether:notice', (_e, notice: Notice | { t: 'probe-result' }) => {
   }
   if (notice.t === 'input' && panelRouter.input(notice.slotId, notice.data) === 'daemon') daemon?.input(notice.slotId, notice.data)
 })
+// The window says which terminals are on screen (app/renderer/panel.ts); hidden hosted panes stop receiving output.
+ipcMain.on('panel:visible', (_e, slotId: unknown, visible: unknown) => { if (typeof slotId === 'string' && typeof visible === 'boolean') panelRouter.setVisible(slotId, visible) })
 ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 

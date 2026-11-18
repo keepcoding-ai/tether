@@ -23,6 +23,9 @@ class FakeLink implements RouteLink {
   /** Called after the attach is answered and before it resolves (output arriving meanwhile). */
   during: (() => void) | undefined
   writeOk = true
+  paused = new Set<string>()
+  pauses: [string, boolean][] = []
+  setPaused(id: string, paused: boolean): void { this.pauses.push([id, paused]); if (paused) this.paused.add(id); else this.paused.delete(id) }
   has(id: string): boolean { return this.attached.has(id) }
   async attach(id: string, from?: number): Promise<{ scrollback: string }> {
     if (!this.connected) throw new Error('down')
@@ -36,7 +39,7 @@ class FakeLink implements RouteLink {
   resize(id: string, cols: number, rows: number): void { this.resizes.push([id, cols, rows]) }
 }
 
-function setup(attachReply: (body: RequestBody) => Reply) {
+function setup(attachReply: (body: RequestBody) => Reply, hiddenPanes?: () => boolean) {
   const link = new FakeLink()
   const out: [string, string][] = []
   const typed: [string, string][] = []
@@ -49,6 +52,7 @@ function setup(attachReply: (body: RequestBody) => Reply) {
     request: async (body) => { requests.push(body); return body.t === 'attach' ? attachReply(body) : { t: 'ok', id: 1 } },
     emit: (id, d) => out.push([id, d]),
     log: (m) => logs.push(m),
+    ...(hiddenPanes ? { hiddenPanes } : {}),
     schedule: (fn) => { timers.push(fn); return () => { const i = timers.indexOf(fn); if (i >= 0) timers.splice(i, 1) } },
   })
   return { link, out, typed, requests, timers, logs, router }
@@ -165,5 +169,77 @@ describe('PanelRouter', () => {
     await tick()
     assert.equal(t.link.has('s1'), false)
     assert.equal(t.router.input('s1', 'a'), 'daemon')
+  })
+
+  describe('hidden panes (performance.hiddenPanes)', () => {
+    const attach = (t: ReturnType<typeof setup>) => t.router.request({ t: 'attach', slotId: 's1', cols: 80, rows: 24 })
+
+    test('a hidden hosted pane is paused in the link; showing it resumes (the link reads what is missing from the host)', async () => {
+      const t = setup(() => hostedReply())
+      await attach(t)
+      t.router.setVisible('s1', false)
+      assert.equal(t.link.paused.has('s1'), true)
+      t.router.setVisible('s1', true)
+      assert.equal(t.link.paused.has('s1'), false)
+      assert.deepEqual(t.link.pauses.filter((p) => p[1]), [['s1', true]])
+      assert.deepEqual(t.link.pauses.at(-1), ['s1', false])
+    })
+
+    test('a reset the link hands over (the offset left the ring) reaches the window as RIS plus the ring', async () => {
+      const t = setup(() => hostedReply())
+      await attach(t)
+      t.router.setVisible('s1', false)
+      t.router.setVisible('s1', true)
+      t.router.onLinkReset('s1', 'RING2')
+      assert.deepEqual(t.out, [['s1', TERMINAL_RESET + 'RING2']])
+    })
+
+    test('a pane hidden before it attaches is paused as soon as it is attached; a pane never reported is not paused', async () => {
+      const t = setup(() => hostedReply())
+      t.router.setVisible('s1', false)
+      assert.deepEqual(t.link.pauses, [], 'not attached yet: nothing to pause')
+      await attach(t)
+      assert.equal(t.link.paused.has('s1'), true)
+      const u = setup(() => hostedReply())
+      await attach(u)
+      assert.equal(u.link.paused.size, 0)
+    })
+
+    test('minimizing the window pauses every attached pane; restoring resumes only the visible ones', async () => {
+      const t = setup(() => hostedReply())
+      await attach(t)
+      await t.router.request({ t: 'attach', slotId: 's2', cols: 80, rows: 24 })
+      t.router.setVisible('s2', false)
+      t.router.setWindowVisible(false)
+      assert.deepEqual([...t.link.paused].sort(), ['s1', 's2'])
+      t.router.setWindowVisible(true)
+      assert.deepEqual([...t.link.paused], ['s2'])
+    })
+
+    test('hiddenPanes off: nothing is paused, and turning it off resumes what was paused', async () => {
+      let on = true
+      const t = setup(() => hostedReply(), () => on)
+      await attach(t)
+      t.router.setVisible('s1', false)
+      assert.equal(t.link.paused.has('s1'), true)
+      on = false
+      t.router.refresh()
+      assert.equal(t.link.paused.has('s1'), false)
+      t.router.setVisible('s1', true)
+      t.router.setVisible('s1', false)
+      assert.equal(t.link.paused.has('s1'), false)
+    })
+
+    test('an in-process pane is never touched by visibility; detach forgets the hidden mark', async () => {
+      const p = setup(() => plainReply())
+      await attach(p)
+      p.router.setVisible('s1', false)
+      assert.equal(p.link.paused.size, 0)
+      const t = setup(() => hostedReply())
+      t.router.setVisible('s1', false)
+      await t.router.request({ t: 'detach', slotId: 's1' })
+      await attach(t)
+      assert.equal(t.link.paused.has('s1'), false)
+    })
   })
 })

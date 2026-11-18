@@ -82,6 +82,8 @@ export interface TetherApi {
   onEvent(listener: (ev: DaemonEvent) => void): () => void
   onConnection(listener: (state: ConnectionState) => void): () => void
   /** Asks main to (re)connect to the daemon; the result arrives through onConnection. */
+  /** A terminal went off screen (inactive tab, another desk) or came back: the main stops (resumes) its hosted output. */
+  panelVisible(slotId: string, visible: boolean): void
   reconnect(): void
   loadLayout(): Promise<unknown | null>
   saveLayout(layout: unknown): Promise<void>

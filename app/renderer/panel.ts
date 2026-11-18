@@ -272,6 +272,82 @@ export const SWITCH_PROFILE_TOOLTIP = 'Trocar perfil…'
 export const OPEN_FOLDER_TOOLTIP = 'Abrir pasta no Explorer'
 export const COPY_FOLDER_TOOLTIP = 'Copiar pasta'
 
+/** How long a terminal must stay off screen before the main is told (a panel moved between groups is off screen for a moment). */
+export const HIDE_DELAY_MS = 300
+
+/**
+ * Reports whether `el` is on screen: laid out, intersecting the viewport and not `visibility:hidden` (an inactive dockview
+ * tab is display:none; another desk, the closed drawer and a hidden pad are visibility:hidden, which IntersectionObserver
+ * ignores, so a MutationObserver on the nearest layer re-reads the computed visibility when its class or data-open flips).
+ * Showing is reported at once, hiding after HIDE_DELAY_MS.
+ */
+export class VisibilityReporter {
+  private visible = true
+  private told: boolean | undefined
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private intersecting = true
+  private readonly io: IntersectionObserver | undefined
+  private readonly mo: MutationObserver | undefined
+  private watched: Element | null = null
+  private readonly el: Element
+  private readonly send: (visible: boolean) => void
+
+  constructor(el: Element, send: (visible: boolean) => void) {
+    this.el = el
+    this.send = send
+    if (typeof IntersectionObserver === 'undefined') return
+    this.io = new IntersectionObserver(entries => {
+      const e = entries[entries.length - 1]
+      if (!e) return
+      this.intersecting = e.isIntersecting && e.boundingClientRect.width > 0 && e.boundingClientRect.height > 0
+      this.rewatch()
+      this.recompute()
+    })
+    this.io.observe(el)
+    this.mo = new MutationObserver(() => this.recompute())
+    this.rewatch()
+  }
+
+  /** The layer that hides this terminal as a whole (desk, drawer, pad) is the one whose class flips are watched. */
+  private rewatch(): void {
+    const layer = this.el.closest('.desk-layer, .drawer, .pad')
+    if (layer === this.watched) return
+    this.mo?.disconnect()
+    this.watched = layer
+    if (layer) this.mo?.observe(layer, { attributes: true, attributeFilter: ['class', 'data-open'] })
+  }
+
+  private recompute(): void {
+    const shown = (this.el as Element & { checkVisibility?: (o: { visibilityProperty: boolean }) => boolean }).checkVisibility?.({ visibilityProperty: true }) ?? true
+    this.set(this.intersecting && shown)
+  }
+
+  private set(visible: boolean): void {
+    this.visible = visible
+    if (visible && this.timer) { clearTimeout(this.timer); this.timer = undefined }
+    if (visible) { this.tell(true); return }
+    if (this.timer) return
+    this.timer = setTimeout(() => { this.timer = undefined; if (!this.visible) this.tell(false) }, HIDE_DELAY_MS)
+  }
+
+  private tell(visible: boolean): void {
+    if (this.told === visible) return
+    this.told = visible
+    this.send(visible)
+  }
+
+  /** Says the current state again when it is hidden (the main starts a pane visible; on a fresh attach it must hear "hidden" again). */
+  resend(): void {
+    if (!this.visible && !this.timer) { this.told = undefined; this.tell(false) }
+  }
+
+  dispose(): void {
+    this.io?.disconnect()
+    this.mo?.disconnect()
+    if (this.timer) clearTimeout(this.timer)
+  }
+}
+
 export class TerminalPanel implements IContentRenderer {
   readonly element: HTMLElement
   readonly term: Terminal
@@ -291,6 +367,8 @@ export class TerminalPanel implements IContentRenderer {
   private fadeTimer: ReturnType<typeof setTimeout> | undefined
   private loadingKey = ''
   private observer: ResizeObserver | undefined
+  /** Tells the main when the terminal is on screen (hosted panes stop receiving output while off screen). */
+  private visibility: VisibilityReporter | undefined
   private attached = false
   private attaching: Promise<void> | undefined
   private lastSize = { cols: 0, rows: 0 }
@@ -435,6 +513,7 @@ export class TerminalPanel implements IContentRenderer {
     this.ensureFont()
     this.observer = new ResizeObserver(() => this.scheduleFit())
     this.observer.observe(this.termHost)
+    this.visibility = new VisibilityReporter(this.termHost, visible => window.tether.panelVisible?.(this.slotId, visible))
     this.scheduleFit()
     if (api.isActive) focusIfStillActive(api, () => this.term.focus())
     await this.host.daemonReady()
@@ -703,6 +782,7 @@ export class TerminalPanel implements IContentRenderer {
     if (this.attaching) return this.attaching
     const { cols, rows } = this.term
     this.lastSize = { cols, rows }
+    this.visibility?.resend() // the main forgets visibility on a reload or reconnect: it must know before the attach
     this.attaching = window.tether.request({ t: 'attach', slotId: this.slotId, cols, rows }).then(reply => {
       this.attaching = undefined
       if (reply.t === 'error') {
@@ -727,6 +807,7 @@ export class TerminalPanel implements IContentRenderer {
   dispose(): void {
     this.disposed = true
     this.observer?.disconnect()
+    this.visibility?.dispose()
     if (this.fitTimer) clearTimeout(this.fitTimer)
     if (this.graceTimer) clearTimeout(this.graceTimer)
     if (this.fadeTimer) clearTimeout(this.fadeTimer)
