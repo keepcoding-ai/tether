@@ -6,6 +6,7 @@ import type { Reply } from '../../src/daemon/protocol.ts'
 import { perf, type PerfSnapshot } from '../../src/core/perf.ts'
 import type { PerfGet, RequestBody } from '../shared/api.ts'
 import { isRendererReport, RendererPerfStore, type PaneKind, type RendererPerf } from '../shared/perf-renderer.ts'
+import { priorityStats } from './priority.ts'
 import { probeResult, ProbeRing, type ProbeResultNotice } from '../shared/probe-app.ts'
 
 /** Totals of the key->echo probe (only fed when the probe is on). */
@@ -86,7 +87,7 @@ export function registerPerf(ipc: IpcMain, request: (body: RequestBody) => Promi
   ipc.handle('perf:get', async (_e, since?: unknown): Promise<PerfGet> => {
     const got = await buildPerfGet(perf.snapshot(typeof since === 'number' && Number.isFinite(since) ? since : undefined), request, typeof since === 'number' ? since : undefined)
     const pid = pidOf()
-    const withRenderer: PerfGet = { ...got, renderer: rendererPerf.view(pid, priorityOf(pid), Date.now()) satisfies RendererPerf }
+    const withRenderer: PerfGet = { ...got, renderer: { ...rendererPerf.view(pid, priorityOf(pid), Date.now()), priorityDrops: priorityStats.drops } satisfies RendererPerf }
     return probe ? { ...withRenderer, probe: probeRing.summary() } : withRenderer
   })
 }

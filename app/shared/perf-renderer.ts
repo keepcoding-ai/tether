@@ -274,6 +274,8 @@ export interface RendererPerf {
   /** How many samples were not ABOVE_NORMAL, of all taken. */
   prioritySamples: number
   priorityBelowRaised: number
+  /** Times the keeper found a raised process back below ABOVE_NORMAL and put it back (E4.1). */
+  priorityDrops?: number
   heartbeat: HeartbeatView
   summaries: RendererSummary[]
   incidents: RendererIncident[]

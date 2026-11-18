@@ -1354,6 +1354,7 @@ async function start(): Promise<void> {
   createMenu()
   extensionHost.activate()
   createWindow()
+  startPriorities()
   setupTray()
   closeStandalone?.() // only now: with the main window up, closing it does not quit the app
   // The window of a relaunch must be the one in front, as the one it replaces was: a process started by another
