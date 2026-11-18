@@ -18,7 +18,7 @@
 // agent on that tab is refused with a named error (TAB_WITH_USER, TAB_PAUSED) and every event of it is dropped (rule 14:
 // refusing commands alone lets the form's POST with the password reach the agent); `Tether.tabStateChanged` goes to the owner's
 // browser sessions at each change. `cleanTab` removes the scripts the agents registered on a tab (the clean hand-off), but a
-// script with no code (the client's own world).
+// script with no code (the client's own world). `Tether.cancelAsk` ends the connection's open request on a tab (`dismissed`).
 // MCP inside the daemon: `Tether.tabHandle` / `Tether.setActiveTab` give the agent's tool the id it calls each tab by and which
 // one is active, kept with the tab (agent-tabs.ts), so a new server over the same tabs names them as before.
 // E7b: auto-attach forwarded with the gate's filter (frames and dedicated workers only): a page's service worker is never
@@ -290,8 +290,8 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
      */
     readonly scripts = new Map<string, Map<string, boolean>>()
     readonly touched = new Set<string>()
-    /** Open `Tether.askUser` requests: the agent leaving gives them up. */
-    readonly asks = new Set<() => void>()
+    /** Open `Tether.askUser` requests, by tab (one per tab): the agent leaving gives them up; `Tether.cancelAsk` gives one up. */
+    readonly asks = new Map<string, () => void>()
     /** Local addresses the person allowed through `Tether.requestLocalNetwork`, waiting for their navigation (url → until). */
     readonly preAllowed = new Map<string, number>()
     /** H1b: page commands not answered yet, by tab; leaving `agent` answers them with the held error. */
@@ -605,8 +605,15 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           const input = checkAsk(params, control.openAsks(t.tabId, this.slotId))
           if (typeof input === 'string') throw new GateError(`Tether.askUser: ${input}`, -32602)
           const req = control.ask(t.tabId, this.slotId, input)
-          this.asks.add(req.cancel)
-          try { return await req.answer } finally { this.asks.delete(req.cancel) }
+          this.asks.set(t.tabId, req.cancel)
+          try { return await req.answer } finally { if (this.asks.get(t.tabId) === req.cancel) this.asks.delete(t.tabId) }
+        }
+        case 'Tether.cancelAsk': {
+          // The agent's client gave up the call that asked (MCP `notifications/cancelled`): this connection's request on the
+          // tab ends `dismissed`, as when the agent leaves. No open request is not an error (it may have just been answered).
+          const cancel = this.asks.get((await tabOf()).tabId)
+          cancel?.()
+          return { cancelled: cancel !== undefined }
         }
         case 'Tether.confirmUpload': {
           const t = await tabOf()
@@ -769,7 +776,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       if (this.closed) return
       this.closed = true
       conns.delete(this)
-      for (const cancel of [...this.asks]) cancel() // the agent gave up its requests
+      for (const cancel of [...this.asks.values()]) cancel() // the agent gave up its requests
       opts.tabs.cancelQuestions(this.questionKey)
       for (const s of sessions.of(this)) {
         sessions.remove(s)

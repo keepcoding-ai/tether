@@ -44969,8 +44969,14 @@ function createAdoptedMcp(opts) {
         timer = setTimeout(() => r("timeout"), askTimeoutMs);
       });
       stage("ask-user");
+      const cancelled = () => {
+        void control.cancelAsk(targetId);
+      };
+      ctx?.signal?.addEventListener("abort", cancelled, { once: true });
       try {
-        const answer = await Promise.race([control.askUser({ targetId, message, kind, timeoutMs: askTimeoutMs }), expired]);
+        const asked = control.askUser({ targetId, message, kind, timeoutMs: askTimeoutMs });
+        if (ctx?.signal?.aborted) cancelled();
+        const answer = await Promise.race([asked, expired]);
         control.invalidate(targetId);
         if (answer === void 0) throw new BrowserError("NO_CONTROL_CHANNEL", CONTROL_TEXTS.noChannel);
         const text = answer === "timeout" || answer.outcome === "timeout" ? CONTROL_TEXTS.timeout(askTimeoutMs) : answer.outcome === "returned" ? CONTROL_TEXTS.returned(answer.note) : answer.outcome === "declined" ? CONTROL_TEXTS.declined(answer.note) : CONTROL_TEXTS.dismissed(answer.note);
@@ -44978,6 +44984,7 @@ function createAdoptedMcp(opts) {
       } catch (err) {
         throw describeFailure(err);
       } finally {
+        ctx?.signal?.removeEventListener("abort", cancelled);
         clearInterval(beat);
         clearTimeout(timer);
       }
@@ -45060,7 +45067,7 @@ function parseState(raw) {
   const reason = shortReason(r.reason);
   return { control, ...reason ? { reason } : {} };
 }
-var GET_STATE, ASK_USER, CONFIRM_UPLOAD, LOCAL_NETWORK, STATE_CHANGED, TAB_HANDLE, SET_ACTIVE, isUnknownMethod, CONTROLS, shortReason, TabControl;
+var GET_STATE, ASK_USER, CANCEL_ASK, CONFIRM_UPLOAD, LOCAL_NETWORK, STATE_CHANGED, TAB_HANDLE, SET_ACTIVE, isUnknownMethod, CONTROLS, shortReason, TabControl;
 var init_tab_control = __esm({
   "src/host/tab-control.ts"() {
     "use strict";
@@ -45069,6 +45076,7 @@ var init_tab_control = __esm({
     init_errors5();
     GET_STATE = "Tether.getTabState";
     ASK_USER = "Tether.askUser";
+    CANCEL_ASK = "Tether.cancelAsk";
     CONFIRM_UPLOAD = "Tether.confirmUpload";
     LOCAL_NETWORK = "Tether.requestLocalNetwork";
     STATE_CHANGED = "Tether.tabStateChanged";
@@ -45127,6 +45135,11 @@ var init_tab_control = __esm({
         const outcome = r.outcome === "returned" || r.outcome === "declined" || r.outcome === "timeout" || r.outcome === "dismissed" ? r.outcome : "dismissed";
         const note = typeof r.note === "string" && r.note !== "" ? r.note.slice(0, 500) : void 0;
         return { outcome, ...note ? { note } : {} };
+      }
+      /** `Tether.cancelAsk`: the client gave up the call that asked; the host ends the request `dismissed`. Never throws. */
+      async cancelAsk(targetId) {
+        await this.call(CANCEL_ASK, { targetId }).catch(() => {
+        });
       }
       /** `Tether.confirmUpload`: `true`/`false` = a resposta da pessoa; `null` = sem canal (vale a regra local). */
       async confirmUpload(p) {
@@ -45212,7 +45225,7 @@ function registerBrowserTools(server, tools, log2, opts = {}) {
           void extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress: value, ...message ? { message } : {} } }).catch(() => {
           });
         };
-        const { content, _meta } = await tool.handler(args, { ...progress ? { progress } : {} });
+        const { content, _meta } = await tool.handler(args, { ...progress ? { progress } : {}, ...extra?.signal ? { signal: extra.signal } : {} });
         if (call) tracer?.finish(call, { ok: true, ...call.debug ? { result: content } : {} });
         return { content, ..._meta ? { _meta } : {} };
       } catch (err) {
