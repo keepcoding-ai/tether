@@ -817,10 +817,18 @@ export class TerminalPanel implements IContentRenderer {
   }
 }
 
+/** Writes that skip an unchanged value (see SlotTab). */
+function setIfChanged(el: HTMLElement, text: string): void { if (el.textContent !== text) el.textContent = text }
+function setClass(el: HTMLElement, value: string): void { if (el.className !== value) el.className = value }
+function setAttr(el: HTMLElement, name: 'title', value: string): void { if (el.getAttribute(name) !== value) el.setAttribute(name, value) }
+
 /**
  * Tab: agent icon + title + unsafe shield + attention dot + status dot (not shown while running) + close button
  * (active tab and hover only); tooltip with folder, session id and status. The status-bar toggle and the pane
  * menu live at the strip's fixed right end (tab-strip.ts).
+ *
+ * Every DOM write skips an unchanged value: a write of the same value still queues a MutationObserver record, and the
+ * tab strip re-measures its tabs (a forced layout) on any record of its header.
  */
 export class SlotTab implements ITabRenderer {
   readonly element: HTMLElement
@@ -873,34 +881,34 @@ export class SlotTab implements ITabRenderer {
       // Before the daemon answers: the layout's hint and a "starting" dot.
       const hint = this.hint
       setIcon(this.kind, hint ? KIND_ICON[hint.kind] ?? 'terminal-window' : 'question')
-      this.text.textContent = this.api.title ?? this.api.id
-      this.dot.className = 'dot starting'
-      this.unsafe.hidden = !hint?.unsafe
-      this.ronda.hidden = true
-      this.element.title = `${this.api.title ?? this.api.id}\nConectando ao serviço…`
+      setIfChanged(this.text, this.api.title ?? this.api.id)
+      setClass(this.dot, 'dot starting')
+      if (this.unsafe.hidden !== !hint?.unsafe) this.unsafe.hidden = !hint?.unsafe
+      if (!this.ronda.hidden) this.ronda.hidden = true
+      setAttr(this.element, 'title', `${this.api.title ?? this.api.id}\nConectando ao serviço…`)
       return
     }
     setIcon(this.kind, s ? KIND_ICON[s.kind] ?? 'terminal-window' : 'question')
-    this.text.textContent = this.api.title ?? this.api.id
+    setIfChanged(this.text, this.api.title ?? this.api.id)
     // A hibernated pane: a closed eye instead of the "ended" dot.
     const asleep = !!s && effectiveStatus(s) === 'exited' && !!this.host.isAsleep?.(this.api.id)
     if (asleep !== (this.dot.dataset.glyph === 'eye-closed')) {
       this.dot.dataset.glyph = asleep ? 'eye-closed' : ''
       this.dot.replaceChildren(icon(asleep ? 'eye-closed' : 'circle-fill'))
     }
-    this.dot.className = `dot ${asleep ? 'asleep' : s ? effectiveStatus(s) : 'error'}`
-    this.dot.title = asleep ? 'Guia hibernada' : ''
-    this.unsafe.hidden = !s?.unsafe
-    this.ronda.hidden = !s?.ronda
-    if (s?.ronda) this.ronda.title = rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, '')
+    setClass(this.dot, `dot ${asleep ? 'asleep' : s ? effectiveStatus(s) : 'error'}`)
+    if (this.dot.title !== (asleep ? 'Guia hibernada' : '')) this.dot.title = asleep ? 'Guia hibernada' : ''
+    if (this.unsafe.hidden !== !s?.unsafe) this.unsafe.hidden = !s?.unsafe
+    if (this.ronda.hidden !== !s?.ronda) this.ronda.hidden = !s?.ronda
+    if (s?.ronda) setAttr(this.ronda, 'title', rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, ''))
     const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
     // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
     const mark = att.level ? 'attention' : tabMark(s)
-    this.attn.className = `attn${att.level ? ` ${att.level}` : mark ? ` ${mark}` : ''}`
-    this.attn.dataset.mark = mark
-    this.attn.title = att.level ? att.lines.join('\n') : tabMarkTip(s)
-    this.element.dataset.attention = att.level ?? ''
-    this.element.title = s ? panelTooltip(s) + att.lines.map(l => `\n${l}`).join('') : `Slot ${this.api.id} (desconhecido)`
+    setClass(this.attn, `attn${att.level ? ` ${att.level}` : mark ? ` ${mark}` : ''}`)
+    if (this.attn.dataset.mark !== mark) this.attn.dataset.mark = mark
+    setAttr(this.attn, 'title', att.level ? att.lines.join('\n') : tabMarkTip(s))
+    if (this.element.dataset.attention !== (att.level ?? '')) this.element.dataset.attention = att.level ?? ''
+    setAttr(this.element, 'title', s ? panelTooltip(s) + att.lines.map(l => `\n${l}`).join('') : `Slot ${this.api.id} (desconhecido)`)
   }
 
   /**

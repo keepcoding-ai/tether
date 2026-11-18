@@ -261,10 +261,16 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     const name: IconName = batch ? 'pause' : 'tray'
     if (glyph.dataset.icon !== name) { glyph.dataset.icon = name; glyph.replaceChildren(icon(name)) }
     btn.classList.toggle('active', batch !== null)
-    btn.title = summary.tooltip
-    btn.setAttribute('aria-label', summary.tooltip)
-    count.replaceChildren(...sessionsCounter(slots, host.hasTab, batch).map(seg => el('b', `c-${seg.tone}`, seg.text)))
-    count.hidden = count.childElementCount === 0
+    // Writes only what changed: a same-value write still queues a MutationObserver record, and the toolbar re-measures
+    // itself (a forced layout) on every one.
+    if (btn.title !== summary.tooltip) { btn.title = summary.tooltip; btn.setAttribute('aria-label', summary.tooltip) }
+    const counter = sessionsCounter(slots, host.hasTab, batch)
+    const counterKey = JSON.stringify(counter)
+    if (count.dataset.key !== counterKey) {
+      count.dataset.key = counterKey
+      count.replaceChildren(...counter.map(seg => el('b', `c-${seg.tone}`, seg.text)))
+      count.hidden = counter.length === 0
+    }
     if (!isOpen()) return
 
     // Keep the scroll of the lists across the live re-renders.
