@@ -212,7 +212,7 @@ test('browser pad: list by agent, filter, taken on top, moved tab, pause, reopen
     v = await until('all again', async () => { const x = await pad(); return x.filter === '' && x.groups.length === 3 ? x : undefined })
 
     // ---- 3. taken: on top, counted, moved to another desk ----
-    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), a1) // "Assumir o controle"
+    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), a1) // "Assumir"
     await until('taken', async () => (await control(a1)) === 'user')
     v = await until('a1 on top', async () => { const x = await pad(); return x.withPerson.length === 1 ? x : undefined })
     assert.deepEqual(v.withPerson.map(r => [r.tabId, r.state]), [[a1, 'com você, do Sonda']])

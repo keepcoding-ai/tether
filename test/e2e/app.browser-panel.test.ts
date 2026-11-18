@@ -4,7 +4,7 @@
 //      the "logins not kept" notice, history and reload disabled while the agent has the tab; the tab: icon, title, chip, activity;
 //   2. the agent acts → the tab's dot lights;
 //   3. the letterbox: the fitted page is centred in the page area, never enlarged;
-//   4. "Assumir o controle" maximizes the pane; back, forward and reload work; "Devolver ao ‹agente›" restores the size;
+//   4. "Assumir" maximizes the pane; back, forward and reload work; "Devolver ao ‹agente›" restores the size;
 //   5. the agent ends → "Sonda encerrado" (bar and tab), the chip dimmed.
 // Prints in both themes: test/e2e/artifacts/browser-panel-*.png.
 import { test } from 'node:test'
@@ -148,7 +148,7 @@ test('browser panel: bar, tab, letterbox, take maximizes and give back restores,
     assert.deepEqual(p.nav, { back: false, forward: false, reload: false }, 'history and reload wait for the person')
     assert.equal(p.loadingShown, false)
     await until('cookies of the site shown', async () => (await pane()).cookiesShown)
-    if (p.memoryShown) assert.equal(p.memoryText, 'Logins não guardados')
+    if (p.memoryShown) assert.equal(p.memoryText, 'Logins em memória')
     console.log(`logins not kept notice shown: ${p.memoryShown}`)
     await until('the tab strip shows icon, title and chip', async () => { const t = (await pane()).tab; return !!t && t.icon && t.title === 'Página A' && t.owner === 'Sonda' })
     p = await pane()
@@ -176,7 +176,7 @@ test('browser panel: bar, tab, letterbox, take maximizes and give back restores,
 
     // ---- 4. take: maximizes; history; give back: restores ----
     assert.equal(p.maximized, false)
-    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), tabId) // "Assumir o controle"
+    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), tabId) // "Assumir"
     await until('taken', async () => (await control()) === 'user')
     p = await until('the pane is maximized', async () => { const x = await pane(); return x.maximized ? x : undefined })
     assert.equal(p.controlText, 'Com você')
