@@ -134,7 +134,8 @@ body { display: flex; flex-direction: column; }
 #toolbar:has(#session-search.compact.expanded) #desk-switch { visibility: hidden; }
 /* Left actions that did not fit (toolbar-overflow.ts) leave the bar; they stay in the ☰ menu. The sessions list keeps its anchor so the menu's "Sessões…" still opens it. */
 #toolbar .tb-left { position: relative; }
-#toolbar .tb-left > [data-tb-collapsed] { display: none; }
+#toolbar .tb-left > [data-tb-collapsed], #toolbar .tb-right > [data-tb-collapsed] { display: none; }
+#toolbar .tb-right > #session-search.expanded[data-tb-collapsed] { display: flex; }
 #toolbar .tb-left > .dropdown[data-tb-collapsed]:has(#sessions-list) { display: block; position: absolute; left: 0; top: 0; width: 0; height: 0; }
 #toolbar .tb-left > .dropdown[data-tb-collapsed] > button { visibility: hidden; }
 #session-search:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }

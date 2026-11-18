@@ -51,8 +51,11 @@ export const CORE_APP_MENU: readonly Item[] = [
   // order 20: keybindings-screen "Atalhos de teclado"; 30: "Extensões"; 40: web-bridge install; 45: the tether:// links.
   ...items('tools', [
     { command: 'profiles.manage', icon: 'sliders-horizontal', label: 'Perfis de lançamento…' },
+    { command: 'sessions.search', icon: 'magnifying-glass', label: 'Buscar sessão…', order: 12 },
     { command: 'sessions.menu', icon: 'tray', label: 'Sessões…', order: 15 },
     { command: 'extensions.show', icon: 'puzzle-piece', label: 'Extensões', order: 30 },
+    { command: 'daemon.restart', icon: 'plugs', label: 'Reiniciar o tetherd…', order: 35 },
+    { command: 'theme.pick', icon: 'circle-half', label: 'Tema: claro, escuro ou automático…', order: 36 },
     { command: 'links.associate', icon: 'link', label: 'Associar links tether:// a este Tether…', order: 45 },
   ]),
   // The settings screen's "Configurações…" (group 'settings', order 10) comes after the core's "Tema do Tether…".
