@@ -21,6 +21,7 @@ import { UploadConsent } from './upload-consent.ts'
 import { AGENT_TABS_FILE, AgentTabs } from './agent-tabs.ts'
 import { CLOSED_HISTORY_FILE, ClosedHistory } from './closed-history.ts'
 import { type ClosedBy, closedEntryOf, keepOf } from './closed-rules.ts'
+import { closeTabsOnAgentRemoved } from './agent-end.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LocalNetworkGate } from './local-network.ts'
 import { type ActionKind, hostOf } from './pad-rules.ts'
@@ -209,11 +210,11 @@ export function activateLocal(main: TetherMain): IDisposable[] {
    * A tab is closing on purpose: it enters the history before it goes (the live tab's address, else the pane's saved one for a
    * tab main never loaded). A tab that goes with the window, or is recreated after a crash, never passes here.
    */
-  const recordClose = (tabId: string, by: ClosedBy, saved?: SavedTab): void => {
+  const recordClose = (tabId: string, by: ClosedBy, saved?: SavedTab, ownerNameWas?: string): void => {
     const live = registry.get(tabId)
     const from = live ?? (saved && saved.tabId === tabId ? saved : undefined)
     if (!from) return
-    const ownerName = main.agents.get(from.ownerSlotId)?.name ?? ''
+    const ownerName = main.agents.get(from.ownerSlotId)?.name || ownerNameWas || ''
     const entry = closedEntryOf({ tabId, ownerSlotId: from.ownerSlotId, ownerName, title: from.title, url: from.url, closedAt: Date.now(), by })
     if (!entry) return
     void closedReady.then(h => { if (h.record(entry)) ipc.send('closedHistory', h.list()) })
@@ -241,6 +242,12 @@ export function activateLocal(main: TetherMain): IDisposable[] {
   void debugWriter.sync()
   // An agent that exits keeps its tabs: only its open help requests are dismissed; the interface marks them "encerrado".
   const subs: IDisposable[] = [
+    // The slot was removed for good: its tabs go with it, except those with the person (agent-end.ts).
+    closeTabsOnAgentRemoved(main.agents, {
+      list: () => registry.list(),
+      controlOf: tabId => { const v = control.view(tabId); return { holder: v.holder, asking: !!v.ask } },
+      close: (tabId, removal) => { recordClose(tabId, 'ended', undefined, removal.name); agentTabs.forget(tabId); registry.close(tabId); control.closed(tabId) },
+    }),
     ipc.handle('list', () => registry.list()),
     ipc.handle('get', tabId => (typeof tabId === 'string' ? registry.get(tabId) ?? null : null)),
     ipc.handle('restore', async raw => {
