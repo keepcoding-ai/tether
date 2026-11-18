@@ -199,6 +199,7 @@ export function activateRemote(main: TetherMain): IDisposable[] {
 
   subs.push(main.agents.onDidChange(a => wire?.post('agentChange', a, false)))
   subs.push(main.agents.onDidExit(e => wire?.post('agentExit', e)))
+  subs.push(main.agents.onDidRemove(e => wire?.post('agentRemove', e)))
 
   const resolveNotices = (): void => { for (const n of notices.values()) n.resolve(); notices.clear() }
 

@@ -17,7 +17,7 @@ import { startCrashReports } from '../../app/main/crash-report.ts'
 import { type SurfaceStage, SurfaceManager } from '../../app/main/surfaces.ts'
 import { SurfaceBridge } from '../../app/main/surface-bridge.ts'
 import type { Rect, Size } from '../../app/main/surface-rules.ts'
-import type { AgentExit, AgentInfo, MainAgents, TetherMain } from '../../app/main/ext-api.ts'
+import type { AgentExit, AgentInfo, AgentRemoval, MainAgents, TetherMain } from '../../app/main/ext-api.ts'
 import { canEmbed, embed, focus, hwndOf, place, raise } from '../../app/main/win32-embed.ts'
 import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { SettingValue } from '../../app/shared/vscode-configuration-registry.ts'
@@ -162,13 +162,16 @@ class MirroredAgents implements MainAgents {
   private readonly agents = new Map<string, AgentInfo>()
   private readonly changed = new Listeners<[AgentInfo]>()
   private readonly exited = new Listeners<[AgentExit]>()
+  private readonly removed = new Listeners<[AgentRemoval]>()
   constructor(list: AgentInfo[]) { for (const a of list) this.agents.set(a.slotId, a) }
   list(): AgentInfo[] { return [...this.agents.values()] }
   get(slotId: string): AgentInfo | undefined { return this.agents.get(slotId) }
   onDidChange(l: (a: AgentInfo) => void): IDisposable { return this.changed.add(l) }
   onDidExit(l: (e: AgentExit) => void): IDisposable { return this.exited.add(l) }
   change(a: AgentInfo, gone: boolean): void { if (gone) this.agents.delete(a.slotId); else this.agents.set(a.slotId, a); this.changed.fire(a) }
+  onDidRemove(l: (e: AgentRemoval) => void): IDisposable { return this.removed.add(l) }
   exit(e: AgentExit): void { this.exited.fire(e) }
+  remove(e: AgentRemoval): void { this.agents.delete(e.slotId); this.removed.fire(e) }
 }
 
 async function start(): Promise<void> {
@@ -240,6 +243,7 @@ async function start(): Promise<void> {
   const agents = new MirroredAgents(hello.agents)
   w.handle('agentChange', (a: unknown, gone: unknown) => agents.change(a as AgentInfo, gone === true))
   w.handle('agentExit', (e: unknown) => agents.exit(e as AgentExit))
+  w.handle('agentRemove', (e: unknown) => agents.remove(e as AgentRemoval))
   const state = new Map<string, unknown>()
   let noticeIds = 0
 

@@ -13,6 +13,12 @@ export interface AgentExit extends AgentInfo {
   reason: AgentExitReason
 }
 
+/** A slot that is gone for good, with the name it had when it went (empty when it was never known as an agent). */
+export interface AgentRemoval {
+  slotId: string
+  name: string
+}
+
 export interface MainAgents {
   list(): AgentInfo[]
   get(slotId: string): AgentInfo | undefined
@@ -20,12 +26,18 @@ export interface MainAgents {
   onDidChange(listener: (agent: AgentInfo) => void): IDisposable
   /** An agent that was alive is not any more: its process ended, its slot was removed, or the daemon connection was lost. */
   onDidExit(listener: (e: AgentExit) => void): IDisposable
+  /**
+   * The daemon removed the slot for good (the pane closed, the slot forgotten), once per slot, alive or not. Unlike `onDidExit`,
+   * a restart in place, a stop to resume later or a lost daemon never fire it.
+   */
+  onDidRemove(listener: (e: AgentRemoval) => void): IDisposable
 }
 
 export class AgentTracker implements MainAgents {
   private agents = new Map<string, AgentInfo>()
   private readonly changeListeners = new Set<(agent: AgentInfo) => void>()
   private readonly exitListeners = new Set<(e: AgentExit) => void>()
+  private readonly removeListeners = new Set<(e: AgentRemoval) => void>()
 
   list(): AgentInfo[] { return [...this.agents.values()] }
   get(slotId: string): AgentInfo | undefined { return this.agents.get(slotId) }
@@ -40,6 +52,11 @@ export class AgentTracker implements MainAgents {
     return toDisposable(() => { this.exitListeners.delete(listener) })
   }
 
+  onDidRemove(listener: (e: AgentRemoval) => void): IDisposable {
+    this.removeListeners.add(listener)
+    return toDisposable(() => { this.removeListeners.delete(listener) })
+  }
+
   /** A state event from the daemon. */
   apply(slot: SlotState): void {
     const info = agentInfoOf(slot)
@@ -51,9 +68,11 @@ export class AgentTracker implements MainAgents {
 
   /** The daemon removed the slot. */
   remove(slotId: string): void {
+    const name = this.agents.get(slotId)?.name ?? ''
     const next = new Map(this.agents)
     next.delete(slotId)
     this.commit(next, 'removed')
+    this.fire(this.removeListeners, { slotId, name }, 'onDidRemove')
   }
 
   /**

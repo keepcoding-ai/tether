@@ -14,7 +14,7 @@ import type { RemoteSurfaceBridge } from './surface-bridge.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { RemoteSurfaceBridge } from './surface-bridge.ts'
 export type { Rect, Size, Visibility } from './surface-rules.ts'
-export type { AgentExit, AgentExitReason, AgentInfo, MainAgents } from './agents.ts'
+export type { AgentExit, AgentExitReason, AgentInfo, AgentRemoval, MainAgents } from './agents.ts'
 
 export type { IDisposable as Disposable } from '../shared/vscode-lifecycle.ts'
 
