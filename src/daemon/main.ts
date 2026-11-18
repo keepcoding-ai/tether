@@ -68,7 +68,7 @@ async function main(): Promise<void> {
 
   let daemon: Daemon
   try {
-    daemon = await startDaemon({ home, pipe, log, onShutdown: () => exit('shutdown request'), transformPlan: extHost.transformPlan, onSlot: extHost.emitSlot })
+    daemon = await startDaemon({ home, pipe, log, backgroundBoot: true, onShutdown: () => exit('shutdown request'), transformPlan: extHost.transformPlan, onSlot: extHost.emitSlot })
   } catch (e) {
     const err = e as NodeJS.ErrnoException
     if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {

@@ -4,6 +4,7 @@
 // (ronda-channel.ts): a message the agent's CLI takes as a turn of its own, never keys typed into the terminal, so the user's
 // draft is never touched. Pure model and persistence here; the timer lives in server.ts.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { slotRondaPath } from '../core/paths.ts'
 
@@ -117,6 +118,14 @@ export function isRonda(x: unknown): x is Ronda {
 export function readRonda(home: string, slotId: string): Ronda | undefined {
   try {
     const x: unknown = JSON.parse(readFileSync(slotRondaPath(home, slotId), 'utf8'))
+    return isRonda(x) ? x : undefined
+  } catch { return undefined }
+}
+
+/** `readRonda` off the event loop (boot reads it for every slot). */
+export async function readRondaAsync(home: string, slotId: string): Promise<Ronda | undefined> {
+  try {
+    const x: unknown = JSON.parse(await readFile(slotRondaPath(home, slotId), 'utf8'))
     return isRonda(x) ? x : undefined
   } catch { return undefined }
 }

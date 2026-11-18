@@ -19,10 +19,10 @@ import { canonicalDir, slotAttentionPath, slotMetaPath, slotPauseReportPath, slo
 import { cliScript } from '../core/tab-env.ts'
 import { RONDA_MCP_SERVER as RONDA_SERVER_NAME, RondaChannel, showsConfirm, type RondaChannelAgent } from './ronda-channel.ts'
 import type { ChannelConfirm } from '../agents/registry.ts'
-import { applyChange, buildChannelText, clearRonda, criterionStimulus, ENV_RONDA_TEST_SECONDS, flatText, readRonda, RondaError, writeRonda, type Ronda } from './ronda.ts'
+import { applyChange, buildChannelText, clearRonda, criterionStimulus, ENV_RONDA_TEST_SECONDS, flatText, readRondaAsync, RondaError, writeRonda, type Ronda } from './ronda.ts'
 import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
-import { clearRun, createSlot, currentBinding, newSlotId, parseEventLine, parseEvents, readEventsFile, readEventsFrom, readRun, readSlot, removeSlot, scanSlots, SLOT_ID_RE, writeRun, writeSlotMeta, type EventsRead, type SlotsScan } from '../core/store.ts'
+import { clearRun, createSlot, currentBinding, newSlotId, parseEventLine, parseEvents, readEventsFile, readEventsFrom, readRun, readSlot, removeSlot, scanSlotsAsync, SLOT_ID_RE, writeRun, writeSlotMeta, type EventsRead, type SlotsScan } from '../core/store.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import {
   KILL_WAIT_CAP_MS,
@@ -44,6 +44,7 @@ import { PanelHost, type PanelCallbacks } from './panel-host.ts'
 import { PTYD_TARGET, ptydPipePath } from '../ptyd/paths.ts'
 import { readUserSettings } from '../core/user-settings.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
+import { limiter, mapLimit } from '../core/limit.ts'
 import { perf } from '../core/perf.ts'
 import { ECHO_INCIDENT_MS, PROBE_TTL_MS, extendProbe, isSlow, parseProbe, stamp, type Probe } from '../core/perf-probe.ts'
 import { busyWait, DEBUG_BLOCK_MAX_MS } from './debug-block.ts'
@@ -71,6 +72,10 @@ export function defaultAgentArgs(agent: AgentName, env: NodeJS.ProcessEnv = proc
   return raw ? raw.split(/\s+/) : []
 }
 const WATCH_DEBOUNCE_MS = 100
+/** Boot: slots whose files load at once (each read is async; the sync fold of one slot is well under a millisecond). */
+const HYDRATE_CONCURRENCY = 6
+/** Boot: transcript lookups for titles in flight at once (each may list the projects directory). */
+const TITLE_LOOKUPS = 4
 /** A subagent marker older than this no longer counts (its SubagentStop was lost: a crash, a kill). */
 const BG_MAX_AGE_MS = 6 * 60 * 60_000
 /** Pause resume: slots typed into at once, and the gap between the text and the Enter (else the TUI sees a paste). */
@@ -146,10 +151,16 @@ export interface DaemonOptions {
   connectPanelHost?: (launch: boolean) => Promise<HostClient | undefined>
   /** Tests: told about every disk read the daemon makes to follow the slots' files (what was read, and for which slot). */
   fsProbe?: (op: FsProbeOp, slotId?: string) => void
+  /**
+   * Boot: `startDaemon` returns once the daemon listens (slots known by their meta, status and run), while each slot's events,
+   * binding, title and ronda load in the background (`Daemon.hydrated()` settles when all are in). Default false: `startDaemon`
+   * also waits for that, so a test sees the settled state; tetherd itself passes true.
+   */
+  backgroundBoot?: boolean
 }
 
 /** The disk reads `fsProbe` reports: the boot scan of slots/, an events file (whole or from an offset), a slot's marker listing, a run file. */
-export type FsProbeOp = 'slots:scan' | 'events:full' | 'events:tail' | 'markers:list' | 'run:read'
+export type FsProbeOp = 'slots:scan' | 'events:full' | 'events:tail' | 'markers:list' | 'run:read' | 'ronda:read'
 
 export interface Daemon {
   readonly home: string
@@ -158,6 +169,8 @@ export interface Daemon {
   slots(): SlotState[]
   /** The server still accepts connections and is not closing (the state can be trusted). */
   listening(): boolean
+  /** Settles when every slot known at boot has its events, binding, title and ronda loaded (a slot is also loaded on demand, ahead of this, when a request needs it). */
+  hydrated(): Promise<void>
   /** Kills every PTY tree, drops the clients and closes the server. */
   close(): Promise<void>
   /** Tests: closes like a hard death would (server, clients, host connection) WITHOUT stopping any slot. */
@@ -235,6 +248,8 @@ interface Slot {
   events?: EventsView
   /** `turn` reports read but not yet applied (see applyTurnReports). */
   turnPending?: TurnReport[]
+  /** The slot's boot load (events, binding, ronda) in flight or done; undefined until something asks for it. */
+  hydrating?: Promise<void>
   /** An incremental read of the events file in flight; `pullAgain`: the file changed meanwhile, read once more. */
   pulling?: Promise<void>
   pullAgain?: true
@@ -291,6 +306,7 @@ interface Client {
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const d = new DaemonImpl(opts)
   await d.listen()
+  if (!opts.backgroundBoot) await d.hydrated()
   return d
 }
 
@@ -305,6 +321,9 @@ class DaemonImpl implements Daemon {
   private readonly slotMap = new Map<string, Slot>()
   private watcher: FSWatcher | undefined
   private readonly pending = new Map<string, NodeJS.Timeout>()
+  /** The background load of the slots known at boot (see hydrateAll). */
+  private booting: Promise<void> = Promise.resolve()
+  private readonly titleLookups = limiter(TITLE_LOOKUPS)
   /** Slots whose events file changed since their debounce timer was armed (a change of the slot's .json alone needs no read). */
   private readonly eventsDirty = new Set<string>()
   /** Per slot, its subagent markers (`<slot>.bg.<id>` -> mtime) as the watcher reported them; a slot with no entry is unknown and gets listed once. */
@@ -443,7 +462,7 @@ class DaemonImpl implements Daemon {
     mkdirSync(slotsDir(this.home), { recursive: true })
     this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
     this.fsProbe?.('slots:scan')
-    const scan = scanSlots(this.home)
+    const scan = await scanSlotsAsync(this.home)
     const metas = scan.metas
     // Panes a previous tetherd left alive in tether-ptyd: listed now (read only), so the reaper spares them, and adopted
     // once this daemon owns the pipe (a loser of the race never touches them).
@@ -454,6 +473,7 @@ class DaemonImpl implements Daemon {
     perf.timed('boot:load', () => { for (const meta of metas) this.load(meta) })
     this.seedMarkers(scan)
     const adoptions = this.holdAdoptions(hostRuns ?? [], ownedElsewhere)
+    this.booting = this.hydrateAll(adoptions.map((a) => a.slot), metas)
     this.loadPause()
     await this.procs.init()
     perf.start()
@@ -474,7 +494,6 @@ class DaemonImpl implements Daemon {
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
     await perf.timedAsync('boot:adopt', () => Promise.all(adoptions.map((a) => this.adoptSlot(a))))
     if (adoptions.length > 0) this.pump()
-    for (const slot of this.slotMap.values()) if (!isAlive(slot)) slot.turnPending = undefined // history of a dead process: nothing to apply
     // Only the owner of the pipe serves the channel (a loser of the race never gets here).
     try { this.log(`ronda channel served on 127.0.0.1:${await this.rondaChannel.listen()}`) }
     catch (e) { this.log(`ronda channel not served (${(e as Error).message}); the ronda is unavailable this run`) }
@@ -484,6 +503,10 @@ class DaemonImpl implements Daemon {
     }
     this.log(`listening on ${this.pipe} (${this.slotMap.size} slots)`)
     if (this.panelHostOn) this.log('new panes launch in the terminal-pane host (tether-ptyd)')
+  }
+
+  hydrated(): Promise<void> {
+    return this.booting
   }
 
   slots(): SlotState[] {
@@ -918,10 +941,42 @@ class DaemonImpl implements Daemon {
       rows: DEFAULT_ROWS,
     }
     this.slotMap.set(meta.slotId, slot)
-    this.refreshBinding(slot, false)
-    const ronda = readRonda(this.home, meta.slotId)
-    if (ronda) { slot.ronda = ronda; this.armRonda(slot) }
     return slot
+  }
+
+  /**
+   * Loads what the slot's files hold beyond its meta: the events (binding, last event time), the title and the ronda. The boot
+   * does not wait for it: until it lands the slot's state lacks those fields (nothing is guessed), and clients get the state
+   * again when it changes. One call per slot; a request that needs the binding awaits it.
+   */
+  private hydrate(slot: Slot): Promise<void> {
+    slot.hydrating ??= this.hydrateNow(slot).catch((e: Error) => this.log(`slot ${slot.meta.slotId}: cannot load its files: ${e.message}`))
+    return slot.hydrating
+  }
+
+  private async hydrateNow(slot: Slot): Promise<void> {
+    const slotId = slot.meta.slotId
+    const before = JSON.stringify(this.stateOf(slot))
+    await this.pullEvents(slot, false)
+    this.fsProbe?.('ronda:read', slotId)
+    const ronda = await readRondaAsync(this.home, slotId)
+    if (this.slotMap.get(slotId) !== slot) return
+    if (ronda && !slot.ronda) { slot.ronda = ronda; this.armRonda(slot) }
+    if (JSON.stringify(this.stateOf(slot)) !== before) this.broadcastState(slot)
+  }
+
+  /** Loads every known slot's files in the background: the live (adopted) ones first, then the newest, a few at a time. */
+  private async hydrateAll(live: Slot[], metas: SlotMeta[]): Promise<void> {
+    const order = [...live]
+    const seen = new Set(live)
+    for (let i = metas.length - 1; i >= 0; i--) {
+      const slot = this.slotMap.get(metas[i]!.slotId)
+      if (slot && !seen.has(slot)) order.push(slot)
+    }
+    await perf.timedAsync('boot:hydrate', () => mapLimit(order, HYDRATE_CONCURRENCY, async (slot) => {
+      await this.hydrate(slot)
+      await new Promise<void>((resolve) => setImmediate(resolve)) // the loop serves its clients between slots
+    }))
   }
 
   private slot(slotId: unknown): Slot {
@@ -967,19 +1022,19 @@ class DaemonImpl implements Daemon {
    * The same read, off the event loop, from where the last one stopped: the debounced watcher path. A synchronous refresh
    * that lands meanwhile moves the offset, and the read that lost the race is dropped and repeated.
    */
-  private pullEvents(slot: Slot): Promise<void> {
+  private pullEvents(slot: Slot, broadcast = true): Promise<void> {
     if (slot.pulling) { slot.pullAgain = true; return slot.pulling }
     const slotId = slot.meta.slotId
     const run = async (): Promise<void> => {
       do {
         slot.pullAgain = undefined
         const from = slot.events?.resume ?? 0
-        this.fsProbe?.('events:tail', slotId)
+        this.fsProbe?.(from === 0 ? 'events:full' : 'events:tail', slotId)
         const r = await readEventsFrom(this.home, slotId, from)
         if (this.slotMap.get(slotId) !== slot) return
         if ((slot.events?.resume ?? 0) !== from) { slot.pullAgain = true; continue }
         if (this.foldEvents(slot, r)) {
-          this.applyBinding(slot, true)
+          this.applyBinding(slot, broadcast)
           this.applyTurnReports(slot)
         }
       } while (slot.pullAgain)
@@ -1004,7 +1059,7 @@ class DaemonImpl implements Daemon {
     this.emitSlot('bound', slot)
     const titleAdapter = binding && !binding.title ? this.adapterOf(binding.agent) : undefined
     if (binding && titleAdapter) {
-      void titleAdapter.title(binding, this.lookupOf(slot)).then((title) => {
+      void this.titleLookups(() => titleAdapter.title(binding, this.lookupOf(slot))).then((title) => {
         if (!title || slot.binding !== binding || slot.title === title) return
         slot.title = title
         this.broadcastState(slot)
@@ -1082,6 +1137,9 @@ class DaemonImpl implements Daemon {
     if (slot.launching) { await slot.launching; return } // idempotent: already being launched
     if (slot.pty && !slot.pty.exit) return // idempotent: already up
     if (slot.status === 'queued') return // already waiting its turn
+    await this.hydrate(slot) // the binding to resume comes from the events file
+    if (slot.launching) { await slot.launching; return }
+    if (slot.pty && !slot.pty.exit) return
     const unavailable = this.unavailableError(slot.meta)
     if (unavailable) throw this.fail(slot, unavailable.code, unavailable.message)
     const resume = this.resumeFor(slot, choice)
@@ -1613,6 +1671,7 @@ class DaemonImpl implements Daemon {
         }
         createSlot(this.home, meta)
         const slot = this.load(meta)
+        slot.hydrating = Promise.resolve() // brand new: no files yet
         this.broadcastState(slot)
         if (req.start) await this.startSlot(slot, undefined)
         return { t: 'ok', id, slot: this.stateOf(slot) }
@@ -2328,8 +2387,8 @@ class DaemonImpl implements Daemon {
       const meta = readSlot(this.home, slotId)
       if (meta) {
         const adopted = this.load(meta)
-        adopted.turnPending = undefined
         this.broadcastState(adopted)
+        void this.hydrate(adopted)
       }
     }), WATCH_DEBOUNCE_MS)
     this.pending.set(slotId, t)

@@ -1,7 +1,7 @@
 // Slot state on disk: metadata, append-only events, run info, and the binding derived from the events.
 // No locks and nothing in memory: one slot = its own files, events are appended one line at a time.
 import { randomBytes } from 'node:crypto'
-import { open, type FileHandle } from 'node:fs/promises'
+import { open, readdir, readFile, type FileHandle } from 'node:fs/promises'
 import {
   appendFileSync,
   existsSync,
@@ -14,6 +14,7 @@ import {
 } from 'node:fs'
 import type { Binding, RunInfo, SlotMeta, TetherEvent } from './event.ts'
 import { isAgentName } from '../agents/registry.ts'
+import { mapLimit } from './limit.ts'
 import { slotAttentionPath, slotEventsPath, slotMetaPath, slotRondaPath, slotRunPath, slotsDir } from './paths.ts'
 
 export const SLOT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
@@ -51,6 +52,21 @@ export function readSlot(home: string, slotId: string): SlotMeta | undefined {
   return isSlotMeta(parsed) && parsed.slotId === slotId ? parsed : undefined
 }
 
+/** Names in the slots directory that are slot metas (`<id>.json`, not a run file): their ids. */
+function metaIds(names: string[]): string[] {
+  const ids: string[] = []
+  for (const name of names) {
+    if (!name.endsWith('.json') || name.endsWith('.run.json')) continue
+    const id = name.slice(0, -'.json'.length)
+    if (SLOT_ID_RE.test(id)) ids.push(id)
+  }
+  return ids
+}
+
+function byAge(a: SlotMeta, b: SlotMeta): number {
+  return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.slotId < b.slotId ? -1 : a.slotId > b.slotId ? 1 : 0
+}
+
 /** What one pass over the slots directory found: the readable slots (oldest first) and every file name in it. */
 export interface SlotsScan {
   metas: SlotMeta[]
@@ -63,14 +79,25 @@ export function scanSlots(home: string): SlotsScan {
   if (!existsSync(dir)) return { metas: [], names: [] }
   const names = readdirSync(dir)
   const metas: SlotMeta[] = []
-  for (const name of names) {
-    if (!name.endsWith('.json') || name.endsWith('.run.json')) continue
-    const id = name.slice(0, -'.json'.length)
-    if (!SLOT_ID_RE.test(id)) continue
+  for (const id of metaIds(names)) {
     const meta = readSlot(home, id)
     if (meta) metas.push(meta)
   }
-  metas.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slotId.localeCompare(b.slotId))
+  metas.sort(byAge)
+  return { metas, names }
+}
+
+/** `scanSlots` off the event loop: the directory listing and the metas are read with a few reads in flight at once. */
+export async function scanSlotsAsync(home: string, concurrency = 16): Promise<SlotsScan> {
+  let names: string[]
+  try { names = await readdir(slotsDir(home)) } catch { return { metas: [], names: [] } }
+  const read = await mapLimit(metaIds(names), concurrency, async (id): Promise<SlotMeta | undefined> => {
+    let parsed: unknown
+    try { parsed = JSON.parse(await readFile(slotMetaPath(home, id), 'utf8')) } catch { return undefined }
+    return isSlotMeta(parsed) && parsed.slotId === id ? parsed : undefined
+  })
+  const metas = read.filter((m): m is SlotMeta => m !== undefined)
+  metas.sort(byAge)
   return { metas, names }
 }
 
