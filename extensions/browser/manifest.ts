@@ -33,6 +33,12 @@ export const manifest: ExtensionManifest = {
       },
       evaluate: { type: 'boolean', default: false, title: 'Permitir que o agente execute JavaScript na página', description: 'Desligado, o agente lê e age na página, mas não roda código nela.', order: 1 },
       localNetwork: { type: 'string', default: 'ask', enum: ['ask', 'allow', 'deny'], enumLabels: ['Perguntar na primeira vez', 'Sempre permitir neste perfil', 'Nunca permitir'], title: 'Abrir localhost e a rede local', description: 'Se o agente pode abrir localhost e endereços da rede local nas guias.', order: 2 },
+      // The history of closed tabs (closed-history.ts): expired when read and at start, never by a timer.
+      closedHistory: {
+        type: 'string', default: '7d', enum: ['1d', '7d', '30d', 'never'], enumLabels: ['1 dia', '7 dias', '30 dias', 'Para sempre'], order: 4,
+        title: 'Guardar as guias fechadas',
+        description: 'Por quanto tempo as guias fechadas ficam em "Fechadas", no painel Guias, para reabrir. Em "Para sempre", ficam as 500 mais recentes. Endereço que levava uma credencial nunca é guardado.',
+      },
       // The debug mode (debug-file.ts): written live to <home>/browser/debug.json, read by the vendored server at every call.
       // The timeouts' defaults are the server's own (ACTION_TIMEOUT_MS, SNAPSHOT_TIMEOUT_MS), shown for reference: a key
       // left unset is left out of the file, so the server keeps its own value.

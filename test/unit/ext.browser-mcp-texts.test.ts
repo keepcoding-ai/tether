@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  McpRewriter, NAVIGATE_NEW, NAVIGATE_OLD, patchInitializeResult, patchToolsListResult, serverInstructions,
+  McpRewriter, NAVIGATE_NEW, NAVIGATE_OLD, OWN_TABS, patchInitializeResult, patchToolsListResult, serverInstructions,
 } from '../../extensions/browser/mcp-texts.ts'
 
 const BROWSER = join(import.meta.dirname, '..', '..', 'extensions', 'browser')
@@ -31,6 +31,16 @@ describe('browser: the texts the agent reads', () => {
     assert.ok(!/WebEvaluate/.test(on), 'evaluate on: nothing to explain about it')
     assert.match(on, /WebSavePdf is not offered/)
     assert.match(on, /Tool not found/)
+  })
+
+  test('instructions: the tabs the agent opens are its own to close; a tab left open is explained; closing is safe', () => {
+    for (const evaluate of [false, true]) {
+      const text = serverInstructions({ evaluate })
+      assert.ok(text.includes(OWN_TABS), `evaluate ${evaluate}`)
+    }
+    assert.match(OWN_TABS, /close each one with WebCloseTab when you finish/)
+    assert.match(OWN_TABS, /say why in the conversation/)
+    assert.match(OWN_TABS, /Closing is safe[^.]*history of closed tabs/)
   })
 
   test('initialize gets the instructions; any other shape comes back as given', () => {

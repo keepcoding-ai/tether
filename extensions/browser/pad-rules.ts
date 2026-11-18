@@ -32,6 +32,8 @@ export interface PadGroup {
   /** Every tab of the agent, the top ones too (what "Pausar as guias do ‹agente›" and "Fechar as guias do ‹agente›" act on). */
   total: number
   paused: number
+  /** Tabs of the agent with a help request open (on top or not): a collapsed group still shows the attention sign. */
+  asking: number
 }
 
 export interface PadModel {
@@ -88,7 +90,7 @@ export function buildPad(tabs: readonly PadTab[], agentOf: (slotId: string) => P
     const agent = agentOf(slotId)
     return {
       slotId, name: shortName(agent?.name), ended: isEnded(agent), tabs: all.filter(t => !withPerson(t)),
-      total: all.length, paused: all.filter(t => t.control === 'paused').length,
+      total: all.length, paused: all.filter(t => t.control === 'paused').length, asking: all.filter(t => t.asking).length,
     }
   })
   const top = kept.filter(withPerson)
@@ -290,4 +292,36 @@ export function rowStateText(section: PadSectionId, i: Parameters<typeof lastAct
     return `com você, do ${i.name}`
   }
   return lastActionText(i)
+}
+
+// ---- collapsing a group (the open tabs by agent, and the closed history by agent) ----
+
+/** How many collapsed groups are kept: the oldest choices go first (agents come and go). */
+export const COLLAPSED_MAX = 200
+/** The key of the "Fechadas" section itself among the collapsed ones of the closed history. */
+export const CLOSED_SECTION_KEY = '*'
+
+/** What the pad keeps of its own view (PadView.serialize, in layout.json): the collapsed groups, open tabs and closed history apart. */
+export interface PadViewState { collapsed: string[]; closedCollapsed: string[] }
+
+const keysOf = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.filter((k): k is string => typeof k === 'string' && k.length > 0 && k.length <= 80))].slice(-COLLAPSED_MAX) : [])
+
+/** The pad's view state read back (anything may be there). */
+export function padViewStateOf(raw: unknown): PadViewState {
+  const o = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+  return { collapsed: keysOf(o.collapsed), closedCollapsed: keysOf(o.closedCollapsed) }
+}
+
+/** The collapsed keys after a click on `key`'s header: in goes out, out goes in (last), at most COLLAPSED_MAX. */
+export function toggleCollapsed(keys: readonly string[], key: string): string[] {
+  return keys.includes(key) ? keys.filter(k => k !== key) : [...keys, key].slice(-COLLAPSED_MAX)
+}
+
+/**
+ * The header of an agent's group: collapsed, its rows are hidden and it shows the count; the attention sign whenever one of the
+ * agent's tabs asks for help and the group is collapsed (the request's row is on top, under "Com você", but the folded group still
+ * says it). A new request never unfolds the group: only the person's click does.
+ */
+export function groupHead(g: Pick<PadGroup, 'tabs' | 'asking'>, collapsed: boolean): { collapsed: boolean; count: number; attention: boolean } {
+  return { collapsed, count: g.tabs.length, attention: collapsed && g.asking > 0 }
 }

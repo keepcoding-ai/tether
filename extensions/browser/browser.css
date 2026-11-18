@@ -150,6 +150,16 @@
 .br-pad-ghead { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .br-pad-ghead > .br-pad-agent, .br-pad-ghead > .br-pad-count { flex: none; }
 .br-pad-agent { cursor: pointer; }
+/* A group folds: the caret and the header's free area toggle it; folded, the count stays and an open request shows the dot. */
+.br-pad-ghead[data-fold="true"], .br-pad-sechead[data-fold="true"] { cursor: pointer; }
+.br-pad-caret { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-left: -2px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--fg-dim); cursor: pointer; }
+.br-pad-caret svg { width: 12px; height: 12px; }
+.br-pad-caret:hover { background: var(--bg-hover); color: var(--fg); }
+.br-pad-caret:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.br-pad-attn { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.br-pad-ghead > .action-bar, .br-pad-sechead > .action-bar { margin-left: auto; }
+.br-pad-closed { margin-top: 8px; }
+.br-pad-closed .br-pad-ghead > .br-pad-dagent { margin-top: 0; }
 .br-pad-count { color: var(--fg-dim); font-size: 11px; }
 .br-pad-group[data-ended="true"] .br-pad-agent { opacity: .65; }
 .br-pad-group[data-ended="true"] .br-pad-row { opacity: .8; }

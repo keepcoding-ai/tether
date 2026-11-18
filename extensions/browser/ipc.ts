@@ -1,4 +1,5 @@
 // The browser extension's channels between its renderer and main sides (E2: the tab registry; E4: the local-network question).
+import type { ClosedTab } from './closed-history.ts'
 import type { ControlView } from './control.ts'
 import type { DownloadEntry, UploadAsk } from './files-rules.ts'
 import type { LocalNetworkAsk } from './local-network-rules.ts'
@@ -17,7 +18,17 @@ export interface BrowserChannels {
     get: (tabId: string) => TabInfo | null
     /** Brings back a tab saved in layout.json (the person showed it): created again with its id and owner, its address loaded. */
     restore: (saved: SavedTab) => TabInfo | null
-    close: (tabId: string) => void
+    /**
+     * The person closed the tab (`by` 'cleanup': the ended agents' "Fechar todas"); it enters the closed history. `saved` is the
+     * pane's saved tab, for a tab back from layout.json that main never loaded.
+     */
+    close: (tabId: string, by?: 'user' | 'cleanup', saved?: SavedTab) => void
+    /** The closed history ("Fechadas"), newest first, the expiry applied. */
+    closedList: () => ClosedTab[]
+    /** "Reabrir": a new tab with the entry's address, held by the person; the entry leaves the history. */
+    reopenClosed: (id: string) => TabInfo | null
+    /** "Limpar histórico". */
+    clearClosed: () => void
     /** "Reabrir" of a tab in the crash state: created again with its id, owner and address. */
     reopen: (tabId: string) => TabInfo | null
     status: () => BrowserStatus
@@ -58,6 +69,8 @@ export interface BrowserChannels {
     /** A tab was created or changed (title, address, loading). */
     tab: (info: TabInfo) => void
     closed: (tabId: string) => void
+    /** The closed history changed: the whole list again. */
+    closedHistory: (list: ClosedTab[]) => void
     /** A request of the tab was refused by the network filter (reason and destination origin only). */
     blocked: (event: TabBlocked) => void
     /** An agent asks to open a local address: ask the person (one question at a time). */
@@ -86,7 +99,7 @@ export interface BrowserChannels {
 export const BROWSER_INVOKES = [
   'list', 'get', 'restore', 'close', 'reopen', 'status', 'localNetworkOpen', 'localNetworkAnswer', 'controls', 'take', 'giveBack', 'decline',
   'cleanReload', 'pause', 'resume', 'back', 'forward', 'reload', 'pauseTabs', 'resumeTabs', 'agents', 'logoutAll', 'downloads',
-  'showDownload', 'uploadOpen', 'uploadAnswer',
+  'showDownload', 'uploadOpen', 'uploadAnswer', 'closedList', 'reopenClosed', 'clearClosed',
 ] as const satisfies readonly (keyof BrowserChannels['invoke'])[]
 type Missing = Exclude<keyof BrowserChannels['invoke'], (typeof BROWSER_INVOKES)[number]>
 const whole: [Missing] extends [never] ? true : Missing = true

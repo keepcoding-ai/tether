@@ -108,6 +108,7 @@ export function activateRemote(main: TetherMain): IDisposable[] {
     agents: () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive })),
     downloads: () => [],
     uploadOpen: () => [],
+    closedList: () => [],
   }
   for (const channel of BROWSER_INVOKES) {
     if (channel === 'reopen') continue
