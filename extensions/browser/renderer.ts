@@ -19,7 +19,8 @@
 // The bar now has three zones (bar-rules.ts decides what each shows): navigation; the owner pill (the owner's colour and what
 // goes on, in one phrase; a click goes to the agent) with the address, whose ⓘ opens a popover with the tab's facts (cookies,
 // logins in memory, debug mode, an address not kept); and the action bar, fed by the tab menu with the bar's pins. The notices
-// stack under it, one discreet line each. An open help request shows the "Sua vez" card between the bar and the page (the page
+// stack under it, one discreet line each. An open help request shows the "Sua vez" card in a dock (a band with the bar's
+// background, pointing at the owner pill) between the bar and the page (the page
 // is a native view: nothing in the interface can draw over it), with the agent's message, an optional note for the agent, and
 // "Não consigo ajudar" / "Pronto, devolver"; the pane gets a frame in the attention colour. Collapsed (per request), the card
 // disappears and the owner pill ("▾ ver pedido" / "▴") brings it back.
@@ -487,6 +488,12 @@ export function activate(ui: TetherUi): IDisposable[] {
     private notesDrawn = ''
     /** The "Sua vez" card of an open help request, between the bar and the page (the page is a native view: nothing draws over it). */
     private readonly turnEl = el('section', 'br-web-turn')
+    /**
+     * The dock that holds the card: a band with the bar's background between the bar (and notices) and the page. It owns its
+     * height and pushes the page down; collapsed, the whole band goes. The card's arrow points at the owner pill.
+     */
+    private readonly dockEl = el('div', 'br-web-dock')
+    private readonly dockRo = new ResizeObserver(() => this.placeTip())
     private turnAsk = ''
     private noteEl: HTMLTextAreaElement | undefined
     /** The request whose card the person collapsed (a new request opens expanded). */
@@ -573,8 +580,12 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.popEl.append(el('h4', 'br-web-pop-title', TAB_INFO_TITLE), list, this.popNone)
       this.notesEl.dataset.role = 'notices'
       this.turnEl.dataset.role = 'turn'
-      this.turnEl.hidden = true
-      this.element.append(this.bar, this.notesEl, this.turnEl, this.page, this.popEl)
+      this.dockEl.hidden = true
+      this.dockEl.append(this.turnEl)
+      this.element.append(this.bar, this.notesEl, this.dockEl, this.page, this.popEl)
+      // The pill moves when the bar reflows (pane resized, narrow layout, phrase changed): the arrow follows it.
+      this.dockRo.observe(this.bar)
+      this.dockRo.observe(this.ownerEl)
       this.crashEl.dataset.role = 'crash'
       this.crashEl.hidden = true
       this.crashBtn.type = 'button'
@@ -733,7 +744,7 @@ export function activate(ui: TetherUi): IDisposable[] {
      * per request, so her note survives repaints; collapsed, it disappears entirely (kept, with the note) and the pill brings it back.
      */
     private paintTurn(ask: AskCard | undefined): void {
-      this.turnEl.hidden = !ask || ask.collapsed
+      this.dockEl.hidden = !ask || ask.collapsed
       if (!ask) {
         if (this.turnAsk) { this.turnAsk = ''; this.noteEl = undefined; this.turnEl.replaceChildren() }
         return
@@ -775,6 +786,17 @@ export function activate(ui: TetherUi): IDisposable[] {
         this.turnEl.replaceChildren(head, body)
       }
       this.turnEl.dataset.collapsed = ask.collapsed ? 'true' : 'false'
+      if (!ask.collapsed) this.placeTip()
+    }
+
+    /** The card's arrow sits under the owner pill: its offset from the card's left edge, kept inside the card. */
+    private placeTip(): void {
+      if (this.dockEl.hidden) return
+      const pill = this.ownerEl.getBoundingClientRect()
+      const card = this.turnEl.getBoundingClientRect()
+      if (card.width === 0) return
+      const tip = Math.min(Math.max(16, pill.left - card.left + 24), Math.max(16, card.width - 28))
+      this.turnEl.style.setProperty('--br-tip', `${Math.round(tip)}px`)
     }
 
     /** Opens or closes the ⓘ popover. It lies over the page area, so the surfaces freeze while it is open (the person opened it). */
@@ -897,6 +919,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.actionBar.dispose()
       this.binding?.dispose()
       this.ro?.disconnect()
+      this.dockRo.disconnect()
       for (const s of this.subs) s.dispose()
       if (panels.get(this.paneId) === this) { panels.delete(this.paneId); refreshPad() }
       // The person closed the pane (a move re-creates it at once under the same id): closing the pane closes the tab.

@@ -47,8 +47,20 @@
 /* A help request open: the pane's frame in the attention colour, the bar's highlighted action in it too, and the "Sua vez" card. */
 .br-web[data-attn="true"] { border: 2px solid var(--warn); box-sizing: border-box; }
 .br-web[data-attn="true"] .br-web-actions .ab-highlight { color: var(--warn); }
-.br-web-turn { flex: none; display: grid; gap: 8px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--bg-2)); color: var(--fg); font-size: 12.5px; }
-.br-web-turn[hidden], .br-web-turn-body[hidden], .br-web-turn-say[hidden], .br-web-turn-write[hidden] { display: none; }
+/* The dock: the bar's background, owns its height and pushes the page down (the page is a native view: nothing covers it). */
+.br-web-dock { flex: none; display: flex; justify-content: flex-start; padding: 4px 12px 14px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.br-web-dock[hidden] { display: none; }
+/* The card looks like a popup out of the owner pill: rounded, shadowed, left-aligned, with an arrow under the pill (--br-tip). */
+.br-web-turn {
+  position: relative; display: grid; gap: 8px; width: 100%; max-width: 560px; margin: 0; padding: 12px 14px; box-sizing: border-box;
+  border: 1px solid var(--warn); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / .35);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg)); color: var(--fg); font-size: 12.5px;
+}
+.br-web-turn::before {
+  content: ""; position: absolute; top: -7px; left: var(--br-tip, 120px); width: 12px; height: 12px;
+  background: inherit; border-left: 1px solid var(--warn); border-top: 1px solid var(--warn); transform: rotate(45deg);
+}
+.br-web-turn-body[hidden],.br-web-turn-body[hidden], .br-web-turn-say[hidden], .br-web-turn-write[hidden] { display: none; }
 .br-web-owner-toggle { flex: none; font-size: 11px; opacity: .8; }
 .br-web-owner-toggle[hidden] { display: none; }
 .br-web-turn-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -184,6 +196,7 @@
   .br-web-addr { order: 9; flex-basis: 100%; }
   .br-web-bar .br-web-owner { min-width: 0; flex-shrink: 1; }
   .br-web-actions { margin-left: auto; max-width: none; }
+  .br-web-dock { padding: 4px 8px 10px; }
   .br-web-turn-foot { flex-direction: column; align-items: stretch; }
   .br-web-turn-write { margin: 0 0 4px; align-self: flex-start; }
   .br-web-turn-btn { text-align: center; }
