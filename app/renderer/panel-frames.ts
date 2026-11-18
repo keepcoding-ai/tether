@@ -107,6 +107,26 @@ export function panesOf(state: unknown): FramePane[] {
   return out
 }
 
+/** A pane kept only in a frame's saved state (its frame view was never mounted), with the frame that holds it. */
+export interface SavedFramePane extends FramePane { key: string }
+
+/**
+ * The panes of the frames whose view is not mounted: those only the saved state knows (`isLive` tells the panes that
+ * already live somewhere, which a mounted frame's are). The first frame that names an id wins.
+ */
+export function savedFramePanes(sources: readonly FrameSource[], isLive: (id: string) => boolean): SavedFramePane[] {
+  const out: SavedFramePane[] = []
+  const seen = new Set<string>()
+  for (const src of sources) {
+    for (const p of panesOf(src.state)) {
+      if (seen.has(p.id) || isLive(p.id)) continue
+      seen.add(p.id)
+      out.push({ ...p, key: src.key })
+    }
+  }
+  return out
+}
+
 /** A frame has content when one of its panes is not an empty pane. */
 export function hasContent(state: unknown): boolean {
   return panesOf(state).some(p => p.component !== EMPTY_COMPONENT)

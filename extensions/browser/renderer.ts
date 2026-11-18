@@ -992,6 +992,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       optionsOf: p => ({ id: p.id, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: p.title ?? 'Guia', params: p.params ?? {} }),
       create: () => new Panel(), createTab: () => new Tab() as unknown as ITabRenderer, has: id => panels.has(id),
       tabMenu: showWebMenu,
+      searchTextOf: id => panels.get(id)?.padTab()?.url || undefined,
     }),
     ipc.on('tab', info => {
       const p = panels.get(paneIdOf(info.tabId))

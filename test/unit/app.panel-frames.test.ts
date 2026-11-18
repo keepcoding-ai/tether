@@ -4,7 +4,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  allRows, buildFrameTree, cleanEmptyFrames, closeFrames, emptyLooseKeys, forDesk, frameCounts, guideGroups, hasContent, panesOf, pruneMeta, readFrameMeta, restoreFrames,
+  allRows, buildFrameTree, cleanEmptyFrames, closeFrames, emptyLooseKeys, forDesk, frameCounts, guideGroups, hasContent, panesOf, pruneMeta, readFrameMeta, restoreFrames, savedFramePanes,
   visibleRows, whenLabel, type FrameSource, type FrameStore, type PanelFrameTreeInput,
 } from '../../app/renderer/panel-frames.ts'
 
@@ -144,5 +144,19 @@ describe('panel frames: records', () => {
     assert.equal(whenLabel(new Date(2026, 10, 3, 13, 5).getTime(), now), 'ter')
     assert.equal(whenLabel(new Date(2026, 9, 20).getTime(), now), '20/10')
     assert.equal(whenLabel(undefined, now), '')
+  })
+})
+
+describe('panel frames: panes only the saved state knows', () => {
+  test('lists the panes of unmounted frames with their frame key, skipping live ids and repeats', () => {
+    const sources: FrameSource[] = [
+      { key: pk('a'), padId: PANEL, panelId: 'a', state: frame({ id: 'note:1', title: 'n', path: 'C:/n.md' }, { id: 'sh-1', component: 'terminal' }) },
+      { key: pk('b'), padId: PANEL, panelId: 'b', state: frame({ id: 'web-1', component: 'browser-web', title: 'Docs', url: 'https://x.test' }, { id: 'note:1' }) },
+    ]
+    const r = savedFramePanes(sources, id => id === 'sh-1')
+    assert.deepEqual(r.map(p => [p.id, p.key]), [['note:1', pk('a')], ['web-1', pk('b')]])
+    assert.equal(r[0]!.file, 'C:/n.md')
+    assert.equal(r[1]!.url, 'https://x.test')
+    assert.deepEqual(savedFramePanes([], () => false), [])
   })
 })

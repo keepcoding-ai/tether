@@ -209,7 +209,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'sessions.menu', title: 'Sessões…', group: GROUP.app, icon: 'tray', run: () => host.sessionsMenu(false) },
     { id: 'pause.start', title: 'Pedir pausa aos agentes…', group: GROUP.app, icon: 'pause', run: () => host.sessionsMenu(true) },
     { id: 'sessions.manage', title: 'Sessões em andamento…', group: GROUP.app, icon: 'tray', run: () => host.sessionsManage() },
-    { id: 'sessions.search', title: 'Buscar sessão…', group: GROUP.app, icon: 'magnifying-glass', run: () => host.sessionSearch() },
+    { id: 'sessions.search', title: 'Buscar guia…', group: GROUP.app, icon: 'magnifying-glass', run: () => host.sessionSearch() },
     { id: 'links.associate', title: 'Associar links tether:// a este Tether…', group: GROUP.app, icon: 'link', run: () => host.associateLinks() },
     { id: 'confirmations.restore', title: 'Voltar a perguntar antes de fechar painéis', group: GROUP.app, icon: 'arrow-clockwise', run: () => host.restoreConfirmations() },
     { id: 'daemon.restart', title: 'Reiniciar o tetherd… (encerra os agentes e retoma as sessões)', group: GROUP.app, icon: 'plugs', run: () => host.restartDaemon() },

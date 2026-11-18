@@ -41,6 +41,8 @@ import type { PauseBatch } from '../../src/daemon/pause.ts'
 import { bulkCloseSituation, forgetEndedSituation } from './sessions-rules.ts'
 import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
 import { setupToolbarOverflow } from './toolbar-overflow.ts'
+import { CLOSE_LABEL, LINK_LABEL, withTabMenuBasics } from './tab-menu-basics.ts'
+import type { SearchTab } from './session-search-rules.ts'
 import { setupSessionSearch, type SessionSearch } from './session-search.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
@@ -55,7 +57,7 @@ import { SystemDeskRegistry, type SystemDeskDescriptor } from './system-desk-rul
 import { SideBars } from './sidebars.ts'
 import { otherSide, PadRegistry, panelIdsOfPad, padToggleCommand, SIDE_LABEL } from './sidebar-rules.ts'
 import { planPadLink } from './pad-link-rules.ts'
-import { buildFrameTree, closeFrames, hasContent, panesOf, pruneMeta, readFrameMeta, type FrameSnapshot, type FrameSource, type PanelFrameMeta, type PanelFrameTree } from './panel-frames.ts'
+import { buildFrameTree, closeFrames, hasContent, panesOf, pruneMeta, readFrameMeta, savedFramePanes, type FrameSnapshot, type SavedFramePane, type FrameSource, type PanelFrameMeta, type PanelFrameTree } from './panel-frames.ts'
 import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
@@ -1162,6 +1164,54 @@ function padInFocus(): FramesPad | undefined {
 /** A pane lives in one place: a desk, the drawer or a pad's frames. */
 function findPanel(slotId: string): IDockviewPanel | undefined {
   return desks.getPanel(slotId) ?? drawer?.desk.getPanel(slotId) ?? framePadOf(slotId)?.desk.getPanel(slotId) // the drawer does not exist yet while the first desk is built
+}
+
+/**
+ * Every tab the toolbar's search finds: any kind of pane, in any place (desks, drawer, live pads), with its title (a
+ * slot's as its tab shows it) and the extra text its type offers (a browser's URL, a note's or preview's file).
+ */
+function searchableTabs(): SearchTab[] {
+  const saved = savedFrameTabs().map(p => ({ id: p.id, title: p.title, extra: p.url ?? p.file }))
+  return [...liveSearchableTabs(), ...saved]
+}
+
+/** The panes kept in pad frames whose view was never mounted (only the saved layout knows them). */
+function savedFrameTabs(): SavedFramePane[] {
+  try { return savedFramePanes(frameSourcesOf(layoutJSON()), id => !!findPanel(id)) } catch (err) { console.error('savedFrameTabs', err); return [] }
+}
+
+/**
+ * A pane that lives in a pad frame never mounted: the frame is mounted (its panes become live) and the pane comes to the
+ * front as "Focar guia" brings it (a closed owner is reopened). False when no saved frame names the id.
+ */
+function revealSavedFramePane(id: string): boolean {
+  const pane = savedFrameTabs().find(p => p.id === id)
+  if (!pane || !mountFrame(pane.key) || !findPanel(id)) return false
+  focusGuide(id)
+  return true
+}
+
+/** Where a pane of an unmounted pad frame is: the pad's title. */
+function savedFramePlace(id: string): string | undefined {
+  const pane = savedFrameTabs().find(p => p.id === id)
+  const owner = pane ? frameOwnerOf(pane.key) : undefined
+  return owner ? padRegistry.get(owner.padId)?.title ?? 'Prancheta' : undefined
+}
+
+/** The search's jump: a live pane is revealed; one in an unmounted pad frame mounts its frame first. */
+function jumpToTab(id: string): void {
+  if (findPanel(id)) revealPane(id)
+  else revealSavedFramePane(id)
+}
+
+function liveSearchableTabs(): SearchTab[] {
+  return allPanels().map(p => {
+    const slot = slots.get(p.id)
+    const type = liveTypeOf(paneTypes, p.id)
+    let extra: string | undefined
+    try { extra = type?.searchTextOf?.(p.id) ?? type?.fileOf?.(p.id) } catch (err) { console.error('searchTextOf', err) }
+    return { id: p.id, title: slot ? panelTitle(slot) : (p.title ?? ''), extra }
+  })
 }
 
 function allPanels(): IDockviewPanel[] {
@@ -2337,6 +2387,7 @@ async function followTetherLink(url: string): Promise<void> {
     return
   }
   if (findPanel(link.id)) { revealPane(link.id); drawAttention(link.id); return }
+  if (revealSavedFramePane(link.id)) { drawAttention(link.id); return }
   const slot = slots.get(link.id)
   if (slot) {
     const answer = await askDialog(closedTabSituation(slot.name ?? folderName(slot.cwd)))
@@ -2593,12 +2644,11 @@ function showTabMenuOf(slotId: string, x: number, y: number, opener?: HTMLElemen
   const panel = findPanel(slotId)
   if (!slot) {
     if (empties.has(slotId)) { panel?.api.setActive(); showContextMenu(x, y, emptyMenuEntries(slotId), opener); return }
-    // Any other kind of pane shows its type's own menu (an extension's: the note, the previews, a placeholder).
-    const type = liveTypeOf(paneTypes, slotId)
-    if (!type?.tabMenu) return
-    panel?.api.setActive()
-    if (opener) menuOpener = opener
-    type.tabMenu(slotId, x, y)
+    // Any other kind of pane shows its type's own menu (an extension's: the note, the previews, a placeholder), read as
+    // data and completed with the core's floor (link, close); a type without a menu shows only the floor.
+    if (!panel) return
+    panel.api.setActive()
+    showContextMenu(x, y, typeMenuEntries(slotId), opener)
     return
   }
   panel?.api.setActive()
@@ -2607,21 +2657,26 @@ function showTabMenuOf(slotId: string, x: number, y: number, opener?: HTMLElemen
 
 /** Labels shared by the core's menus and the pins read off menus drawn by pane types (which declare no pins). */
 const MOVE_LABEL = 'Mover…'
-const LINK_LABEL = 'Copiar link do painel'
 const CLOSE_PANEL_LABEL = 'Fechar painel…'
 /** The pins of the actions every pane menu has, for the menus pane types draw themselves. */
-const COMMON_PINS: Readonly<Record<string, MenuPin>> = { [MOVE_LABEL]: 'icon', [LINK_LABEL]: 'icon', [CLOSE_PANEL_LABEL]: 'primary' }
+const COMMON_PINS: Readonly<Record<string, MenuPin>> = { [MOVE_LABEL]: 'icon', [LINK_LABEL]: 'icon', [CLOSE_PANEL_LABEL]: 'primary', [CLOSE_LABEL]: 'primary' }
 
 /** A pane type's own menu (the note's, the previews', a placeholder's) as data, read through showContextMenu. */
 function typeMenuEntries(id: string): MenuEntry[] {
+  if (!findPanel(id)) return []
   const type = liveTypeOf(paneTypes, id)
-  if (!type?.tabMenu || !findPanel(id)) return []
   const out: MenuEntry[] = []
-  const section = padSection
-  padSection = undefined
-  menuCapture = out
-  try { type.tabMenu(id, 0, 0) } catch (err) { console.error('tabMenu', err) } finally { menuCapture = undefined; padSection = section }
-  return out.map(e => e === SEP || 'heading' in e || e.pin || !COMMON_PINS[e.label] ? e : { ...e, pin: COMMON_PINS[e.label] })
+  if (type?.tabMenu) {
+    const section = padSection
+    padSection = undefined
+    menuCapture = out
+    try { type.tabMenu(id, 0, 0) } catch (err) { console.error('tabMenu', err) } finally { menuCapture = undefined; padSection = section }
+  }
+  const pinned = out.map(e => e === SEP || 'heading' in e || e.pin || !COMMON_PINS[e.label] ? e : { ...e, pin: COMMON_PINS[e.label] })
+  return withTabMenuBasics<MenuEntry>(pinned, SEP, {
+    link: { icon: 'link', label: LINK_LABEL, pin: 'icon', run: () => copyPaneLink(id) },
+    close: { icon: 'x', label: CLOSE_LABEL, pin: 'primary', run: () => closeGuide(id) },
+  })
 }
 
 /** The manager's primaries on a pane's menu. */
@@ -3510,9 +3565,9 @@ function setupUi(): void {
   // Static icons: <span data-icon="name"> in index.html becomes the inline SVG.
   for (const el of document.querySelectorAll<HTMLElement>('[data-icon]')) el.replaceChildren(icon(el.dataset.icon as IconName))
   sessionSearch = setupSessionSearch($('session-search'), {
-    sessions: () => { const out: { slotId: string; title: string }[] = []; for (const s of slots.values()) if (findPanel(s.slotId)) out.push({ slotId: s.slotId, title: panelTitle(s) }); return out },
-    placeOf,
-    jump: revealPane,
+    sessions: searchableTabs,
+    placeOf: id => placeOf(id) ?? savedFramePlace(id),
+    jump: jumpToTab,
   })
   setupToolbarOverflow($('toolbar'))
   bell = setupBell({

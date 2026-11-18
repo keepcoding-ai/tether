@@ -1,16 +1,16 @@
-// The toolbar's session search (DOM): a compact input at the start of .tb-right; typing lists the matching sessions
-// of every desk under it, Enter or a click jumps to one. The ranking is session-search-rules.ts; main.ts feeds the
-// sessions, snapshotted when the box gains focus (keystrokes filter the snapshot), and does the jump.
+// The toolbar's tab search (DOM): a compact input at the start of .tb-right; typing lists the matching tabs of
+// every kind and place under it, Enter or a click jumps to one. The ranking is session-search-rules.ts; main.ts feeds
+// the tabs, snapshotted when the box gains focus (keystrokes filter the snapshot), and does the jump.
 import { highlightRuns } from './fuzzy.ts'
-import { moveSelection, searchSessions, type SearchHit, type SearchSession } from './session-search-rules.ts'
+import { moveSelection, searchTabs, type SearchHit, type SearchTab } from './session-search-rules.ts'
 
 export interface SessionSearchHost {
-  /** The sessions that have a tab, in the desks' order. */
-  sessions(): SearchSession[]
-  /** Where the session's tab is ("Mesa 1", "Gaveta"); asked only for the rows shown. */
-  placeOf(slotId: string): string | undefined
-  /** Brings the session's pane to the front and focuses it. */
-  jump(slotId: string): void
+  /** Every tab (desks, drawer, pads), in the desks' order. */
+  sessions(): SearchTab[]
+  /** Where the tab is ("Mesa 1", "Gaveta"); asked only for the rows shown. */
+  placeOf(id: string): string | undefined
+  /** Brings the pane to the front and focuses it. */
+  jump(id: string): void
 }
 
 export interface SessionSearch {
@@ -21,7 +21,7 @@ export interface SessionSearch {
 export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): SessionSearch {
   const input = wrap.querySelector<HTMLInputElement>('input')!
   const list = wrap.querySelector<HTMLElement>('.ss-list')!
-  let snapshot: SearchSession[] = []
+  let snapshot: SearchTab[] = []
   let hits: SearchHit[] = []
   let selected = -1
   let rows: HTMLElement[] = []
@@ -60,7 +60,7 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
       }
       const place = document.createElement('span')
       place.className = 'ss-place'
-      place.textContent = host.placeOf(h.slotId) ?? ''
+      place.textContent = host.placeOf(h.id) ?? ''
       row.append(title, place)
       // mousedown, not click: the input's blur would close the list before the click lands.
       row.addEventListener('mousedown', e => { e.preventDefault(); go(i) })
@@ -70,7 +70,7 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
     if (hits.length === 0 && input.value.trim() !== '') {
       const empty = document.createElement('div')
       empty.className = 'ss-empty'
-      empty.textContent = 'Nenhuma sessão encontrada'
+      empty.textContent = 'Nenhuma guia encontrada'
       list.append(empty)
     }
     const show = input.value.trim() !== ''
@@ -92,7 +92,7 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
   }
 
   const update = (): void => {
-    hits = searchSessions(input.value, snapshot)
+    hits = searchTabs(input.value, snapshot)
     selected = hits.length > 0 ? 0 : -1
     render()
   }
@@ -104,7 +104,7 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
     if (!h) return
     clear()
     input.blur()
-    host.jump(h.slotId)
+    host.jump(h.id)
   }
 
   input.addEventListener('input', update)

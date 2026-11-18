@@ -74,6 +74,8 @@ export interface PaneType extends PaneLayout {
   fileOf?(id: string): string | undefined
   /** The file a link to this pane names instead of its id (a note: the link reopens it after it is closed). */
   linkFileOf?(id: string): string | undefined
+  /** More text the toolbar's tab search matches besides the title (a browser's URL); default: `fileOf`. */
+  searchTextOf?(id: string): string | undefined
   /** The tab's menu (right-click, the strip's "⋯"); the core activates the pane first. */
   tabMenu?(id: string, x: number, y: number): void
   /** The tab strip's "prévia ao lado" button: shown while `canPreviewSide` holds. */
