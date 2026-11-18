@@ -45,7 +45,8 @@
     <div class="tb-right">
       <!-- The session search (app/renderer/session-search.ts): find a session of any desk by name and jump to it. -->
       <div id="session-search" class="session-search">
-        <span class="i" data-icon="magnifying-glass"></span>
+        <span class="i ss-glyph" data-icon="magnifying-glass"></span>
+        <button id="ss-open" class="ib ss-open" type="button" title="Buscar sessão…" aria-label="Buscar sessão"><span class="i" data-icon="magnifying-glass"></span></button>
         <input type="text" placeholder="Buscar sessão…" aria-label="Buscar sessão" role="combobox" aria-expanded="false" aria-controls="ss-list" spellcheck="false" autocomplete="off">
         <div id="ss-list" class="ss-list" role="listbox" hidden></div>
       </div>
@@ -100,6 +101,7 @@
       <div class="sb-slot"></div>
       <nav class="sb-strip" aria-label="Barra lateral direita"></nav>
     </aside>
+    <div id="pads-scrim" hidden></div>
     <div id="pads"></div>
   </div>
 

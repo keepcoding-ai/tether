@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { RemoteSurfaceBridge } from './surface-bridge.ts'
 import type { ExtSurfaces, Surface, SurfaceOptions, SurfaceShieldInput, SurfaceState } from './ext-api.ts'
-import { canMove, fitRect, hiddenBounds, isCoreDebuggerMethod, isPageSize, isRect, metricsOverride, parkedBounds, type Rect, shieldVisible, type Size, surfacePreferences, type Visibility } from './surface-rules.ts'
+import { canMove, fitRect, focusOnPress, hiddenBounds, isCoreDebuggerMethod, isPageSize, isRect, metricsOverride, parkedBounds, type Rect, shieldVisible, type Size, surfacePreferences, type Visibility } from './surface-rules.ts'
 import { type IDisposable, toDisposable } from '../shared/vscode-lifecycle.ts'
 
 /** The channel the shield's preload (app/preload/surface-shield.ts) sends on. */
@@ -42,6 +42,8 @@ export interface SurfaceStage {
   setVisible(view: WebContentsView, on: boolean): void
   /** Keyboard focus back on the app's interface (the shield went up). */
   focusInterface(): void
+  /** The OS keyboard focus on the surface's own window, when the stage has one that a click does not focus (an embedded child window). */
+  focusSurface?(): void
   onResize(fn: () => void): void
   onClosed(fn: () => void): void
   /** The surface using this stage was destroyed (a stage of its own lets its window go). */
@@ -173,6 +175,8 @@ export class SurfaceManager {
     win.add(view)
     this.place(r)
     wc.on('destroyed', () => this.destroy(r))
+    // The person's press on the page she holds gives it the keyboard (an embedded child window does not take it by itself).
+    wc.on('input-event', (_e, input) => { if (!r.destroyed && focusOnPress(input.type, r.visibility, r.shieldOn)) this.focusPage(r) })
     try {
       // A debugger command sent before the first navigation may never answer: the page starts blank.
       await wc.loadURL('about:blank')
@@ -257,6 +261,14 @@ export class SurfaceManager {
       destroy: () => this.destroy(r),
       onDidDestroy: l => r.destroyedL.add(l),
     }
+  }
+
+  /** The keyboard on the page: the stage's window first (an embedded one is never focused by Windows), then the page in it. */
+  private focusPage(r: SurfaceRecord): void {
+    if (r.win.destroyed()) return
+    try { r.win.focusSurface?.() } catch { /* the stage's window is going away */ }
+    const wc = r.view.webContents
+    if (!wc.isDestroyed() && !wc.isFocused()) wc.focus()
   }
 
   private fit(r: SurfaceRecord): { rect: Rect; scale: number } | undefined {

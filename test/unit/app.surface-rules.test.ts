@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canMove, fitRect, hiddenBounds, isCoreDebuggerMethod, isPageSize, isRect, LOCKED_PREFERENCES, metricsOverride, parkedBounds, shieldVisible, surfacePreferences } from '../../app/main/surface-rules.ts'
+import { canMove, fitRect, focusOnPress, hiddenBounds, isCoreDebuggerMethod, isPageSize, isRect, LOCKED_PREFERENCES, metricsOverride, parkedBounds, shieldVisible, surfacePreferences } from '../../app/main/surface-rules.ts'
 
 const PAGE = { width: 1280, height: 800 }
 
@@ -55,6 +55,15 @@ test('shieldVisible: only over a shown surface with the shield on', () => {
   assert.equal(shieldVisible('shown', false), false)
   assert.equal(shieldVisible('hidden', true), false)
   assert.equal(shieldVisible('parked', true), false)
+})
+
+test('focusOnPress: only a press by the person on a shown page with the shield down', () => {
+  assert.equal(focusOnPress('mouseDown', 'shown', false), true)
+  assert.equal(focusOnPress('mouseDown', 'shown', true), false, 'the agent holds the page: the keyboard stays with the interface')
+  assert.equal(focusOnPress('mouseDown', 'hidden', false), false)
+  assert.equal(focusOnPress('mouseDown', 'parked', false), false)
+  assert.equal(focusOnPress('mouseMove', 'shown', false), false)
+  assert.equal(focusOnPress('keyDown', 'shown', false), false)
 })
 
 test('surfacePreferences: locked defaults always win; open keys pass', () => {

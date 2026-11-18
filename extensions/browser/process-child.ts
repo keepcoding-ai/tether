@@ -18,7 +18,7 @@ import { type SurfaceStage, SurfaceManager } from '../../app/main/surfaces.ts'
 import { SurfaceBridge } from '../../app/main/surface-bridge.ts'
 import type { Rect, Size } from '../../app/main/surface-rules.ts'
 import type { AgentExit, AgentInfo, MainAgents, TetherMain } from '../../app/main/ext-api.ts'
-import { canEmbed, embed, hwndOf, place, raise } from '../../app/main/win32-embed.ts'
+import { canEmbed, embed, focus, hwndOf, place, raise } from '../../app/main/win32-embed.ts'
 import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { SettingValue } from '../../app/shared/vscode-configuration-registry.ts'
 import type { MainIpc } from '../../app/shared/ext-ipc.ts'
@@ -149,6 +149,7 @@ class EmbeddedStage implements SurfaceStage {
     }
   }
   focusInterface(): void { this.host.webContents.focus() }
+  focusSurface(): void { if (this.embedded && !this.gone) focus(this.hwnd) }
   onResize(fn: () => void): void { this.resize.add(fn) }
   onClosed(fn: () => void): void { this.closed.add(fn) }
   /** The scale changed: the child window is placed again at the page's rectangle. */

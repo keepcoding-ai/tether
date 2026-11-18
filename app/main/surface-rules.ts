@@ -85,6 +85,15 @@ export function shieldVisible(visibility: Visibility, shieldOn: boolean): boolea
 }
 
 /**
+ * Does a pointer press on the page hand it the keyboard? Only the person's own press: the shield is down (she holds the page)
+ * and the surface is shown. A page embedded as a child window of another process never gets the keyboard from a click
+ * (Windows gives focus by activation, which a child window never has, and Chromium does not take it on mouse down).
+ */
+export function focusOnPress(inputType: string, visibility: Visibility, shieldOn: boolean): boolean {
+  return inputType === 'mouseDown' && visibility === 'shown' && !shieldOn
+}
+
+/**
  * What a surface's page always gets, whatever its owner asks: no Node anywhere, its own isolated world, the OS sandbox, web
  * security on, no `<webview>`, no experimental features, no navigation by dropping a file. (Preload and the like are in NEVER.)
  */

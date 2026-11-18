@@ -1,5 +1,9 @@
 // What an action bar shows of a menu (app/renderer/action-bar.ts): pure, no DOM, so every view can reuse it.
 // The menu always holds every item; pinning only promotes an item out of it, never removes it.
+// Pinning is a recommendation, not a limit. The bar is here to give the panes a cohesive look and feel. In the
+// tether it is often the person's main line of interaction, so several items may be pinned with text, and one may take the
+// accent. The core-ui's "one action with text" is a recommendation for secondary bars. A pane's content area is free and
+// takes the structure its content asks for.
 import type { ContextMenuEntry, MenuPin } from './ext-api.ts'
 
 export type MenuItem = Exclude<ContextMenuEntry, 'sep'>

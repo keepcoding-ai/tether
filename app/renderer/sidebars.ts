@@ -16,7 +16,7 @@ import { createBlankView } from './blank-view.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
 import { createActionBar, type ActionBar } from './action-bar.ts'
 import {
-  DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, movePad, openPad, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, restorePad, setWidth, SIDES, sideOf,
+  DEFAULT_SIDEBAR_WIDTH, emptySideBars, fitWidth, isMoved, isNarrowWorkbench, keepOneOpen, movePad, openPad, padsOn, padToggleCommand, panelIdsOfPad, panelPadKey, restorePad, setWidth, SIDES, sideOf,
   togglePad, toggleSideBar, shownPadOn, togglePadFollowing, openPadFollowing, toggleSideBarFollowing, type PadOwners, type PadDescriptor, type Side, type SideBarsLayout,
 } from './sidebar-rules.ts'
 
@@ -80,12 +80,26 @@ export class SideBars {
   private readonly noTarget = new Map<string, HTMLElement>()
   /** Pads by how recently they were opened or focused (the palette's "Mover prancheta…" acts on the first one still open). */
   private mru: string[] = []
+  /** The workbench is narrow (sidebar-rules.ts NARROW_BELOW): the open pad is a drawer over the desks, one at a time. */
+  private narrow = false
+  private readonly scrim: HTMLElement
 
   constructor(workbench: HTMLElement, host: SideBarsHost) {
     this.workbench = workbench
     this.host = host
     this.layer = workbench.querySelector<HTMLElement>('#pads')!
     this.asides = { left: workbench.querySelector<HTMLElement>('#sidebar-left')!, right: workbench.querySelector<HTMLElement>('#sidebar-right')! }
+    this.scrim = workbench.querySelector<HTMLElement>('#pads-scrim')!
+    // Narrow mode: a click outside the drawer (the scrim over the desks) closes it, and so does Esc.
+    this.scrim.addEventListener('mousedown', ev => { ev.preventDefault(); this.closeDrawer() })
+    document.addEventListener('keydown', ev => {
+      if (ev.key !== 'Escape' || ev.defaultPrevented || !this.narrow || (!this.openOn('left') && !this.openOn('right'))) return
+      // Esc belongs to what is being typed in or run (terminal, editor, inputs, open dialogs): the drawer takes it only from its chrome.
+      const t = ev.target as Element | null
+      if (t?.closest?.('input, textarea, select, [contenteditable="true"], .xterm, .monaco-editor, dialog[open], [role="dialog"]:not([hidden])')) return
+      ev.preventDefault()
+      this.closeDrawer()
+    })
     for (const side of SIDES) this.wireSash(side)
     this.layer.addEventListener('focusin', ev => {
       const id = (ev.target as Element | null)?.closest?.<HTMLElement>('.pad')?.dataset.pad
@@ -247,7 +261,26 @@ export class SideBars {
 
   private touch(id: string): void { this.mru = [id, ...this.mru.filter(x => x !== id)].slice(0, 16) }
 
+  /** Closes whichever pad is open as a drawer (the scrim, Esc). */
+  private closeDrawer(): void {
+    let next = this.state
+    for (const side of SIDES) if (next[side].open) { const { open: _o, ...rest } = next[side]; next = { ...next, [side]: rest } }
+    this.apply(next, undefined)
+  }
+
+  /** The side a pad is on in `layout`. */
+  private padSide(layout: SideBarsLayout, padId: string): Side | undefined {
+    const p = this.pad(padId)
+    return p ? sideOf(layout, p) : undefined
+  }
+
   private apply(next: SideBarsLayout, focus: string | undefined): void {
+    // Narrow: one drawer at a time; the pad just opened (else the most recent one) keeps its side.
+    if (this.narrow && next.left.open && next.right.open) {
+      const recent = this.mru.find(id => next.left.open === id || next.right.open === id)
+      const keep = (focus && this.padSide(next, focus)) || (recent && this.padSide(next, recent)) || 'left'
+      next = keepOneOpen(next, keep)
+    }
     if (next === this.state) return
     const hadFocus = this.layer.contains(document.activeElement)
     this.state = next
@@ -309,10 +342,19 @@ export class SideBars {
 
   /** Each side's width, fitted to the window: on the slot (the room an open pad takes) and on that side's views. */
   private applyWidths(): void {
+    const narrow = isNarrowWorkbench(this.workbench.clientWidth)
+    if (narrow !== this.narrow) {
+      this.narrow = narrow
+      this.workbench.classList.toggle('narrow', narrow)
+      // Entering the narrow mode with both pads open: the most recent one stays (after this pass, apply() re-renders).
+      if (narrow && this.state.left.open && this.state.right.open) queueMicrotask(() => this.apply({ ...this.state }, undefined))
+    }
+    this.scrim.hidden = !(narrow && (this.state.left.open || this.state.right.open))
     const room = this.workbench.clientWidth - SIDES.reduce((n, s) => n + (this.asides[s].hidden ? 0 : this.asides[s].querySelector<HTMLElement>(STRIP)!.offsetWidth), 0)
     const open = { left: !!this.openOn('left'), right: !!this.openOn('right') }
-    const left = fitWidth(this.state.left.width, room, open.right ? this.state.right.width : 0)
-    const right = fitWidth(this.state.right.width, room, open.left ? left : 0)
+    // Narrow: a drawer takes no room from the desks and the other side is closed, so only the desks' minimum is kept.
+    const left = fitWidth(this.state.left.width, room, !narrow && open.right ? this.state.right.width : 0)
+    const right = fitWidth(this.state.right.width, room, !narrow && open.left ? left : 0)
     this.workbench.style.setProperty('--sb-left-w', `${left}px`)
     this.workbench.style.setProperty('--sb-right-w', `${right}px`)
     for (const s of SIDES) this.workbench.style.setProperty(`--sb-${s}-strip`, `${this.asides[s].hidden ? 0 : this.asides[s].querySelector<HTMLElement>(STRIP)!.offsetWidth}px`)

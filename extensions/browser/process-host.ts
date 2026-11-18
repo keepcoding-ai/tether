@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { app, type BrowserWindow, screen } from 'electron'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import { BROWSER_CRASHED, Wire } from '../../app/main/browser-wire.ts'
-import { hwndOf } from '../../app/main/win32-embed.ts'
+import { focus, hwndOf } from '../../app/main/win32-embed.ts'
 import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { NoticeHandle } from '../../app/main/tray-notices.ts'
 import type { SettingValue } from '../../app/shared/vscode-configuration-registry.ts'
@@ -78,6 +78,10 @@ export function activateRemote(main: TetherMain): IDisposable[] {
     if (win === w) return
     win = w
     for (const ev of ['resize', 'minimize', 'restore', 'move', 'maximize', 'unmaximize'] as const) w.on(ev as 'resize', () => pushWindow(ev === 'move' || ev === 'maximize' || ev === 'unmaximize' ? 'resize' : ev))
+    // A tab's page is a child window of another process: once it has the keyboard, a press on the app's own interface does not
+    // take it back (the window is active already, so Windows does not refocus it, and Chromium does not on mouse down).
+    const hwnd = hwndOf(w.getNativeWindowHandle())
+    w.webContents.on('input-event', (_e, input) => { if (input.type === 'mouseDown') focus(hwnd) })
     w.on('closed', () => {
       if (win === w) win = undefined
       wire?.post('window', { hwnd: 0, content: { width: 0, height: 0 }, minimized: true, scale: 1 }, 'closed')
@@ -166,7 +170,7 @@ export function activateRemote(main: TetherMain): IDisposable[] {
       const cur = main.window.current()
       if (cur && !cur.isDestroyed() && typeof channel === 'string') cur.webContents.send(channel, ...(Array.isArray(args) ? args : []))
     })
-    w.handle('focusInterface', () => { const cur = main.window.current(); if (cur && !cur.isDestroyed()) cur.webContents.focus() })
+    w.handle('focusInterface', () => { const cur = main.window.current(); if (cur && !cur.isDestroyed()) { focus(hwndOf(cur.getNativeWindowHandle())); cur.webContents.focus() } })
     w.handle('ipcHandle', () => { /* every invoke channel is registered by the app already */ })
     w.handle('ipcOn', () => { /* the extension's renderer sends nothing on its own channels */ })
     w.handle('ipcEvent', (channel: unknown, args: unknown) => {

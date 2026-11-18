@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 
 type Fn = (...args: unknown[]) => unknown
 interface User32 {
-  SetParent: Fn; SetWindowPos: Fn; GetWindowLongPtrW: Fn; SetWindowLongPtrW: Fn; IsWindow: Fn; GetParent: Fn
+  SetParent: Fn; SetWindowPos: Fn; GetWindowLongPtrW: Fn; SetWindowLongPtrW: Fn; IsWindow: Fn; GetParent: Fn; SetFocus: Fn; GetFocus: Fn
 }
 
 const GWL_STYLE = -16
@@ -32,6 +32,8 @@ function load(): User32 | undefined {
       SetWindowLongPtrW: u.func('intptr_t __stdcall SetWindowLongPtrW(intptr_t, int, intptr_t)'),
       IsWindow: u.func('int __stdcall IsWindow(intptr_t)'),
       GetParent: u.func('intptr_t __stdcall GetParent(intptr_t)'),
+      SetFocus: u.func('intptr_t __stdcall SetFocus(intptr_t)'),
+      GetFocus: u.func('intptr_t __stdcall GetFocus()'),
     }
   } catch {
     user32 = null
@@ -70,6 +72,16 @@ export function raise(child: number): void {
   const u = load()
   if (!u) return
   u.SetWindowPos(child, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
+}
+
+/**
+ * Gives `child` the keyboard. An embedded child window is never activated, so neither Windows nor Chromium focuses it on a
+ * click; its own thread calls this (the parent's and the child's input queues are joined by SetParent, so it is allowed).
+ */
+export function focus(child: number): void {
+  const u = load()
+  if (!u || Number(u.GetFocus()) === child) return
+  u.SetFocus(child)
 }
 
 export function isWindow(hwnd: number): boolean { const u = load(); return !!u && Number(u.IsWindow(hwnd)) !== 0 }

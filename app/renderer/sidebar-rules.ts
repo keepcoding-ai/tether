@@ -156,6 +156,23 @@ export function clampWidth(w: number): number {
   return Math.round(Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, w)))
 }
 
+/** Below this workbench width (px) the open pad is a drawer over the desks, not a column that takes their room. */
+export const NARROW_BELOW = 1100
+
+/** Whether a workbench `width` px wide is narrow: the pads overlay the desks instead of pushing them. */
+export function isNarrowWorkbench(width: number): boolean { return width > 0 && width < NARROW_BELOW }
+
+/**
+ * Narrow workbench: one drawer at a time. Keeps `keep`'s side open and closes the other (the same object when the other
+ * is already closed, so `apply` sees no change). `keep` is the side just opened, or the most recent one.
+ */
+export function keepOneOpen(layout: SideBarsLayout, keep: Side): SideBarsLayout {
+  const other: Side = keep === 'left' ? 'right' : 'left'
+  if (!layout[other].open) return layout
+  const { open: _closed, ...rest } = layout[other]
+  return { ...layout, [other]: rest }
+}
+
 /** The width shown in a workbench `room` px wide, leaving the desks MIN_DOCK_WIDTH and the other side what it takes. */
 export function fitWidth(width: number, room: number, other = 0): number {
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(clampWidth(width), room - MIN_DOCK_WIDTH - other))

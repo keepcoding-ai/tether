@@ -14,7 +14,7 @@ export interface SessionSearchHost {
 }
 
 export interface SessionSearch {
-  /** Puts the caret in the box (the chord). */
+  /** Puts the caret in the box (the chord); in the compact toolbar it first expands over the desk switcher. */
   focus(): void
 }
 
@@ -25,6 +25,22 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
   let hits: SearchHit[] = []
   let selected = -1
   let rows: HTMLElement[] = []
+
+  const bar = wrap.closest<HTMLElement>('#toolbar')
+  // Compact toolbar (toolbar-overflow.ts adds `.compact`): the box is a magnifier icon; expanded it takes the place of the desk switcher until blur or Esc.
+  const expand = (): void => {
+    if (!wrap.classList.contains('compact') || wrap.classList.contains('expanded')) return
+    const sw = bar?.querySelector<HTMLElement>('#desk-switch')
+    if (bar && sw) {
+      const b = bar.getBoundingClientRect(), r = sw.getBoundingClientRect()
+      const width = Math.max(r.width, 240)
+      wrap.style.width = `${width}px`
+      wrap.style.left = `${r.left - b.left + (r.width - width) / 2}px`
+    }
+    wrap.classList.add('expanded')
+  }
+  const collapse = (): void => { wrap.classList.remove('expanded'); wrap.style.left = ''; wrap.style.width = '' }
+  wrap.querySelector<HTMLElement>('.ss-open')?.addEventListener('click', () => { expand(); input.focus() })
 
   const close = (): void => { list.hidden = true; input.setAttribute('aria-expanded', 'false') }
 
@@ -93,7 +109,7 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
 
   input.addEventListener('input', update)
   input.addEventListener('focus', () => { snapshot = host.sessions(); if (input.value.trim() !== '') update() })
-  input.addEventListener('blur', close)
+  input.addEventListener('blur', () => { close(); collapse() })
   input.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
@@ -110,5 +126,5 @@ export function setupSessionSearch(wrap: HTMLElement, host: SessionSearchHost): 
   })
 
   // The chord on a box that already has the caret: focus does not fire again, so the snapshot is taken here.
-  return { focus: () => { if (document.activeElement === input) snapshot = host.sessions(); else input.focus(); input.select() } }
+  return { focus: () => { expand(); if (document.activeElement === input) snapshot = host.sessions(); else input.focus(); input.select() } }
 }

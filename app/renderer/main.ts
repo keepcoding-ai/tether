@@ -40,6 +40,7 @@ import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDr
 import type { PauseBatch } from '../../src/daemon/pause.ts'
 import { bulkCloseSituation, forgetEndedSituation } from './sessions-rules.ts'
 import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
+import { setupToolbarOverflow } from './toolbar-overflow.ts'
 import { setupSessionSearch, type SessionSearch } from './session-search.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
@@ -3513,6 +3514,7 @@ function setupUi(): void {
     placeOf,
     jump: revealPane,
   })
+  setupToolbarOverflow($('toolbar'))
   bell = setupBell({
     openSlot: slotId => openSlot(slotId),
     showSettings: key => { if (settingsRevealer) settingsRevealer(key); else void commands.run('settings.show', 'menu') },

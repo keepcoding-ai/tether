@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Barra da guia do navegador — maquete</title>
+<style>
+  :root {
+    --bg: #0f1115; --pane: #15181e; --bar: #1b1f26; --line: #2a2f38; --text: #e6e8eb; --muted: #8b929c;
+    --accent: #3b82f6; --attn: #f5a524; --attn-soft: rgba(245,165,36,.12); --hue: 150;
+    --agent: hsl(var(--hue) 55% 45%); --agent-soft: hsl(var(--hue) 55% 45% / .16);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, "Segoe UI", sans-serif; padding: 20px; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 14px; max-width: 900px; }
+  .states { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .states button { background: var(--bar); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
+  .states button[aria-pressed="true"] { border-color: var(--accent); background: rgba(59,130,246,.15); }
+
+  .pane { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--pane); max-width: 1180px; transition: box-shadow .2s, border-color .2s; }
+  .pane[data-state="ask"] { border-color: var(--attn); box-shadow: 0 0 0 2px var(--attn-soft); }
+
+  .bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--bar); border-bottom: 1px solid var(--line); min-height: 40px; }
+  .nav { display: flex; gap: 2px; }
+  .ib { width: 28px; height: 28px; display: grid; place-items: center; border: 0; background: transparent; color: var(--text); border-radius: 6px; cursor: pointer; font-size: 15px; }
+  .ib:hover:not(:disabled) { background: rgba(255,255,255,.07); }
+  .ib:disabled { color: #4a505a; cursor: default; }
+
+  .owner { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 999px; background: var(--agent-soft); color: var(--text); white-space: nowrap; border: 0; font: inherit; cursor: pointer; }
+  .owner .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent); }
+  .owner[data-tone="you"] { background: rgba(255,255,255,.08); }
+  .owner[data-tone="you"] .dot { background: var(--text); }
+  .owner[data-tone="ask"] { background: var(--attn-soft); }
+  .owner[data-tone="ask"] .dot { background: var(--attn); }
+  .owner[data-tone="paused"] { background: rgba(255,255,255,.06); color: var(--muted); }
+  .owner[data-tone="paused"] .dot { background: var(--muted); }
+  .owner[data-tone="ended"] { background: transparent; color: var(--muted); outline: 1px dashed var(--line); }
+  .owner[data-tone="ended"] .dot { background: transparent; outline: 1px solid var(--muted); }
+  .owner .chev { color: var(--attn); font-size: 12px; margin-left: 2px; }
+  .owner .live { width: 6px; height: 6px; border-radius: 50%; background: var(--agent); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .2; } }
+
+  .addr { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 0 4px 0 2px; height: 28px; position: relative; }
+  .addr .url { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .addr .url b { color: var(--text); font-weight: 400; }
+  .info { position: relative; }
+  .info .ib { width: 24px; height: 24px; font-size: 13px; color: var(--muted); }
+  .info .ib[data-flag="true"]::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--attn); }
+  .pop { position: absolute; top: 30px; left: 0; z-index: 5; width: 320px; background: var(--bar); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .pop h4 { margin: 0 0 8px; font-size: 13px; }
+  .pop ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .pop li { display: grid; grid-template-columns: 18px 1fr; gap: 6px; color: var(--muted); }
+  .pop li strong { color: var(--text); font-weight: 500; display: block; }
+
+  .actions { display: flex; align-items: center; gap: 4px; }
+  .btn { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; }
+  .btn:hover { background: rgba(255,255,255,.06); }
+  .btn.hl { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.hl.attn { background: var(--attn); border-color: var(--attn); color: #1a1200; }
+  .menu { position: relative; }
+  .menu .list { position: absolute; right: 0; top: 32px; z-index: 5; min-width: 240px; background: var(--bar); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .menu .list div { padding: 6px 8px; border-radius: 5px; display: flex; gap: 8px; cursor: pointer; }
+  .menu .list div:hover { background: rgba(255,255,255,.07); }
+  .menu .list hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+  .menu .list .danger { color: #f87171; }
+
+  .notes { display: grid; gap: 0; }
+  .note { display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--bar); }
+  .note button { margin-left: auto; }
+
+  .page { position: relative; min-height: 420px; background: #f4f2ee; color: #222; }
+  .page .fake { padding: 22px 28px; opacity: .9; }
+  .page .fake .row { height: 12px; background: #e3e0da; border-radius: 4px; margin: 10px 0; }
+  .page .fake .circles { display: flex; gap: 10px; margin: 18px 0; }
+  .page .fake .circles span { width: 44px; height: 44px; border-radius: 50%; }
+  .page .fake .field { width: 300px; height: 34px; border: 1px solid #ccc; border-radius: 6px; background: #fff; margin: 8px 0; }
+  .page[data-shield="true"] { cursor: not-allowed; }
+
+  .turn { position: absolute; top: 14px; left: 14px; z-index: 2; max-width: 760px; width: calc(100% - 28px); background: #fffaf0; color: #2b2112; border: 1px solid #f1c76b; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 14px 16px; display: grid; gap: 10px; }
+  .turn header { display: flex; align-items: center; gap: 8px; }
+  .turn header .tag { background: var(--attn); color: #1a1200; font-weight: 600; font-size: 11px; padding: 2px 8px; border-radius: 999px; letter-spacing: .02em; }
+  .turn header h3 { margin: 0; font-size: 15px; }
+  .turn header .x { margin-left: auto; background: transparent; border: 0; color: #7a6a4a; cursor: pointer; font-size: 12px; }
+  .turn blockquote { margin: 0; padding: 8px 12px; border-left: 3px solid #f1c76b; background: #fff3d9; border-radius: 4px; white-space: pre-wrap; }
+  .turn .hint { color: #6b5a38; font-size: 12px; }
+  .turn footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .turn footer .after { color: #6b5a38; font-size: 12px; margin-right: auto; }
+  .turn .btn { border-color: #e2c487; color: #2b2112; }
+  .turn .btn.hl.attn { color: #1a1200; }
+  .turn .say { display: grid; gap: 4px; font-size: 12px; color: #6b5a38; }
+  .turn .say i { font-style: normal; opacity: .7; }
+  .turn textarea { font: inherit; font-size: 13px; color: #2b2112; background: #fff; border: 1px solid #e2c487; border-radius: 6px; padding: 6px 8px; resize: vertical; }
+  .turn textarea:focus { outline: 2px solid var(--attn); outline-offset: 0; }
+  .turn .link { background: none; border: 0; padding: 0; margin-left: 0; color: #8a5a00; text-decoration: underline; cursor: pointer; font: inherit; }
+  .turn.slim { padding: 6px 12px; grid-template-columns: 1fr auto; align-items: center; }
+  .turn.slim .body { display: none; }
+
+  .legend { max-width: 1180px; margin-top: 14px; color: var(--muted); font-size: 12px; }
+  .legend b { color: var(--text); font-weight: 500; }
+
+  /* narrow panes: the bar measures the pane, not the window */
+  .pane { container-type: inline-size; }
+  .owner .short { display: none; }
+  @container (max-width: 760px) {
+    .owner .long { display: none; }
+    .owner .short { display: inline; }
+    .owner .chev .word { display: none; }
+    .actions .btn:not(.hl) { display: none; }
+    .menu .list .narrow-only { display: flex; }
+  }
+  @container (max-width: 520px) {
+    .bar { flex-wrap: wrap; row-gap: 6px; }
+    .addr { order: 9; flex-basis: 100%; }
+    .owner { min-width: 0; overflow: hidden; }
+    .actions { margin-left: auto; }
+    .turn { padding: 12px; }
+    .turn footer { flex-direction: column; align-items: stretch; }
+    .turn footer .after { margin: 0 0 4px; }
+    .turn footer .btn { justify-content: center; }
+  }
+  .menu .list .narrow-only { display: none; }
+</style>
+</head>
+<body>
+<h1>Barra da guia do navegador · maquete</h1>
+<p class="lead">Escolha um estado. A barra tem três zonas: navegação, a posse junto com o endereço (o ⓘ guarda os fatos do site) e as ações. O pedido do agente aparece como um cartão na área útil da guia.</p>
+<div class="states" id="states"></div>
+
+<div class="pane" id="pane">
+  <div class="bar">
+    <div class="nav">
+      <button class="ib" id="back" title="Voltar">←</button>
+      <button class="ib" id="fwd" title="Avançar">→</button>
+      <button class="ib" id="reload" title="Recarregar">⟳</button>
+    </div>
+    <button class="owner" id="owner" title="Ver o agente"></button>
+    <div class="addr">
+      <div class="info">
+        <button class="ib" id="infoBtn" title="Sobre este site">ⓘ</button>
+        <div class="pop" id="pop" hidden>
+          <h4>Sobre esta guia</h4>
+          <ul>
+            <li><span>🍪</span><span><strong>Há cookies deste site</strong>Pode haver uma conta logada nesta guia.</span></li>
+            <li><span>🕘</span><span><strong>Logins em memória</strong>Eles acabam quando o Tether fecha.</span></li>
+            <li id="popDebug"><span>🐞</span><span><strong>Depuração ligada</strong>O registro guarda mais detalhes. Desligue em Configurações › Browser.</span></li>
+          </ul>
+        </div>
+      </div>
+      <span class="url"><b>localhost:5199</b>/sandbox/cores</span>
+    </div>
+    <div class="actions" id="actions"></div>
+    <div class="menu">
+      <button class="ib" id="menuBtn" title="Ações da guia">⋯</button>
+      <div class="list" id="menu" hidden></div>
+    </div>
+  </div>
+  <div class="notes" id="notes"></div>
+  <div class="page" id="page">
+    <div id="turnSlot"></div>
+    <div class="fake">
+      <div style="font-weight:600">Estúdio de cor</div>
+      <div class="row" style="width:40%"></div>
+      <div class="circles">
+        <span style="background:#ef4444"></span><span style="background:#f97316"></span><span style="background:#eab308"></span><span style="background:#84cc16"></span><span style="background:#22c55e"></span><span style="background:#14b8a6"></span><span style="background:#06b6d4"></span><span style="background:#3b82f6"></span><span style="background:#8b5cf6"></span><span style="background:#d946ef"></span>
+      </div>
+      <div class="field"></div><div class="field"></div>
+      <div class="row" style="width:60%"></div><div class="row" style="width:50%"></div>
+    </div>
+  </div>
+</div>
+
+<div class="legend" id="legend"></div>
+
+<script>
+const A = 'color-space'
+const MSG = 'Teste do conserto de foco: faça login no Sandbox nesta guia, clicando no campo e digitando/colando. Depois devolva a guia.'
+const S = {
+  agent:   { label: 'Agente usando', owner: ['agent', `${A} usando`, true], nav: false, shield: true,
+             act: [['Assumir', 'hl'], ['⏸', 'icon', 'Pausar']], menu: ['⏸ Pausar', `⏸ Pausar as guias do ${A}`, '—', '🌐 Ver o agente', '🔗 Copiar link do painel', '⧉ Copiar endereço', '—', '↗ Mover…', '—', '✕ Fechar guia!'],
+             legend: '<b>H1</b>: a posse mostra dono e controle numa frase, na cor do agente, e o ponto pulsa quando ele age. <b>H5</b>: Pausar é um ícone pinado.' },
+  ignored: { label: 'Clicou na página do agente', owner: ['agent', `${A} usando`, true], nav: false, shield: true,
+             act: [['Assumir', 'hl'], ['⏸', 'icon', 'Pausar']], notes: [[`O ${A} está usando esta página, por isso o seu clique não chegou.`, 'Assumir']], menu: ['⏸ Pausar', '—', '✕ Fechar guia!'],
+             legend: '<b>H7</b>: a linha explica por que o clique não chegou e oferece a saída. Ela some sozinha depois de alguns segundos.' },
+  ask:     { label: 'Pedido do agente', owner: ['ask', `Com você · pedido do ${A}`], nav: true, turn: true,
+             act: [['Não consigo ajudar', ''], ['Pronto, devolver', 'hl attn']], menu: ['✓ Pronto, devolver', '✋ Não consigo ajudar', '⟳ Recarregar limpo', '—', '🌐 Ver o agente', '🔗 Copiar link do painel', '—', '✕ Fechar guia!'],
+             legend: '<b>H2/H3</b>: a guia ganha uma moldura de atenção e o cartão "Sua vez" fica na área útil. A barra repete as duas saídas, para quem recolher o cartão. Clique em "recolher" no cartão.' },
+  taken:   { label: 'Você assumiu', owner: ['you', 'Com você'], nav: true,
+             act: [['Recarregar limpo', ''], [`Devolver ao ${A}`, 'hl']], notes: [[`O ${A} pode ter deixado scripts nesta página. Antes de digitar uma senha, use Recarregar limpo.`, '']], menu: [`↩ Devolver ao ${A}`, '⟳ Recarregar limpo', '—', '✕ Fechar guia!'],
+             legend: '<b>H4</b>: o risco aparece numa linha discreta e a saída fica pinada com texto.' },
+  expired: { label: 'Agente desistiu', owner: ['you', `Com você · ${A} desistiu de esperar`], nav: true,
+             act: [['Devolver mesmo assim', 'hl']], menu: ['↩ Devolver mesmo assim', '—', '✕ Fechar guia!'],
+             legend: '<b>H9</b>: a frase da posse conta o que aconteceu e a ação continua disponível.' },
+  paused:  { label: 'Pausada', owner: ['paused', 'Pausada'], nav: false, shield: true,
+             act: [['Retomar', 'hl']], menu: ['▶ Retomar', 'Assumir', '—', '✕ Fechar guia!'],
+             legend: '<b>H5</b>: o agente não age e a página continua aqui. Retomar fica em destaque.' },
+  ended:   { label: 'Agente encerrado', owner: ['ended', `${A} encerrado`], nav: true,
+             act: [], menu: ['⧉ Copiar endereço', '—', '✕ Fechar guia!'],
+             legend: 'Com o agente encerrado não há o que assumir: sobram o endereço e Fechar, no menu.' },
+}
+let cur = 'ask', slim = false, debug = true
+const $ = id => document.getElementById(id)
+const states = $('states')
+for (const [k, v] of Object.entries(S)) {
+  const b = document.createElement('button'); b.textContent = v.label; b.onclick = () => { cur = k; slim = false; render() }; b.dataset.k = k; states.append(b)
+}
+function render() {
+  const v = S[cur]
+  for (const b of states.children) b.setAttribute('aria-pressed', String(b.dataset.k === cur))
+  $('pane').dataset.state = cur === 'ask' ? 'ask' : ''
+  const [tone, text, live] = v.owner
+  $('owner').dataset.tone = tone
+  const short = { agent: A, ask: 'Com você', you: 'Com você', paused: 'Pausada', ended: 'Encerrado' }[tone]
+  $('owner').innerHTML = `<span class="dot"></span><span class="long">${text}</span><span class="short">${short}</span>${live ? '<span class="live" title="agindo agora"></span>' : ''}${v.turn ? `<span class="chev">${slim ? '▾<span class="word"> ver pedido</span>' : '▴'}</span>` : ''}`
+  $('owner').title = v.turn ? (slim ? 'Ver o pedido' : 'Recolher o pedido') : 'Ver o agente'
+  $('owner').onclick = v.turn ? (e => { e.stopPropagation(); slim = !slim; render() }) : null
+  for (const id of ['back', 'fwd', 'reload']) $(id).disabled = !v.nav
+  $('infoBtn').dataset.flag = 'true'
+  $('popDebug').hidden = !debug
+  const acts = $('actions'); acts.innerHTML = ''
+  for (const [t, cls, tip] of v.act) {
+    const b = document.createElement('button')
+    if (cls === 'icon') { b.className = 'ib'; b.textContent = t; b.title = tip }
+    else { b.className = 'btn ' + cls; b.textContent = t }
+    acts.append(b)
+  }
+  const m = $('menu'); m.innerHTML = ''
+  for (const it of v.menu) {
+    if (it === '—') { m.append(document.createElement('hr')); continue }
+    const d = document.createElement('div'); const danger = it.endsWith('!'); d.textContent = danger ? it.slice(0, -1) : it; if (danger) d.className = 'danger'; m.append(d)
+  }
+  const n = $('notes'); n.innerHTML = ''
+  for (const [t, a] of v.notes ?? []) {
+    const d = document.createElement('div'); d.className = 'note'; d.innerHTML = `<span>ⓘ</span><span>${t}</span>`
+    if (a) { const b = document.createElement('button'); b.className = 'btn'; b.textContent = a; d.append(b) }
+    n.append(d)
+  }
+  $('page').dataset.shield = String(!!v.shield)
+  const slot = $('turnSlot'); slot.innerHTML = ''
+  if (v.turn && !slim) {
+    slot.innerHTML = `<section class="turn ${slim ? 'slim' : ''}">
+      <header><span class="tag">SUA VEZ</span><h3>O ${A} precisa de você</h3><button class="x" id="slim">recolher</button></header>
+      <div class="body" style="display:${slim ? 'none' : 'grid'};gap:10px">
+        <blockquote>${MSG}</blockquote>
+        <div class="hint">Faça isto aqui mesmo, nesta guia. Enquanto ela está com você, o agente não vê nem mexe em nada.</div>
+        <label class="say" id="say" hidden><span>Mensagem ao ${A}</span>
+          <textarea rows="2" placeholder="Ex.: não tenho acesso a essa conta · entrei, mas pediu 2FA"></textarea></label>
+        <footer><span class="after"><button class="link" id="sayBtn">Escrever ao ${A}</button></span>
+          <button class="btn">Não consigo ajudar</button><button class="btn hl attn">Pronto, devolver</button></footer>
+      </div></section>`
+    $('sayBtn').onclick = () => { const l = $('say'); l.hidden = false; $('sayBtn').hidden = true; l.querySelector('textarea').focus() }
+    $('slim').onclick = () => { slim = !slim; render() }
+  }
+  $('legend').innerHTML = v.legend
+}
+$('infoBtn').onclick = e => { e.stopPropagation(); $('pop').hidden = !$('pop').hidden }
+$('menuBtn').onclick = e => { e.stopPropagation(); $('menu').hidden = !$('menu').hidden }
+document.addEventListener('click', () => { $('pop').hidden = true; $('menu').hidden = true })
+render()
+</script>
+</body>
+</html>
