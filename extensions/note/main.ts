@@ -7,7 +7,7 @@
 import { dialog } from 'electron'
 import { join } from 'node:path'
 import type { TetherMain } from '../../app/main/ext-api.ts'
-import { existsSync, statSync } from 'node:fs'
+import { mainExecutor } from '../../app/main/main-executor.ts'
 import { addTetherToGitignore, isDestinationId, NoteWatchers, notesDirFor, personalNotesDir, prepareNote, readNote, renameNote, writeNote, type NoteDestinationId } from '../../app/main/note-files.ts'
 import { guardHtmlPreviews, openHtmlInBrowser } from '../../app/main/html-preview-main.ts'
 import { NOTE_EXTENSION } from '../../app/shared/notes.ts'
@@ -28,24 +28,24 @@ export function activate(main: TetherMain): IDisposable[] {
   }
   const personal = (): string => personalNotesDir(main.settings.get<string>('personalFolder'))
   /** The destination the chooser starts on: the last one used; a remembered "Outro" folder that is gone falls back to the project's, with a warning. */
-  const lastDestination = (): { id: NoteDestinationId; folder?: string; warning?: string } => {
+  const lastDestination = async (): Promise<{ id: NoteDestinationId; folder?: string; warning?: string }> => {
     const last = main.state.get<{ id?: unknown; folder?: unknown }>('lastDestination')
     const id = isDestinationId(last?.id) ? last.id : 'project'
     if (id !== 'other') return { id }
     const folder = typeof last?.folder === 'string' ? last.folder : ''
     let exists = false
-    try { exists = !!folder && existsSync(folder) && statSync(folder).isDirectory() } catch { /* unreachable drive */ }
+    try { exists = !!folder && (await mainExecutor().run('stat', [folder])).isDirectory } catch { /* missing folder or unreachable drive */ }
     return exists ? { id, folder } : { id: 'project', warning: 'A pasta usada da última vez não foi encontrada.' }
   }
   return [
     // A new note's file. With a destination (the chooser, "Nova nota" of the menu), the destination is remembered once
     // the file exists: the chooser offers it next time.
-    ipc.handle('prepare', (paneCwd, destination) => {
+    ipc.handle('prepare', async (paneCwd, destination) => {
       const cwd = isPath(paneCwd) ? canonicalDir(paneCwd) : undefined
-      if (!isDestinationId(destination)) return prepareNote(cwd, { declined: declined() })
-      const prepared = destination === 'home' ? prepareNote(undefined, { dir: personal() })
-        : destination === 'other' ? prepareNote(undefined, { dir: cwd ?? personal() })
-        : prepareNote(cwd, { declined: declined() })
+      if (!isDestinationId(destination)) return await prepareNote(cwd, { declined: declined() })
+      const prepared = destination === 'home' ? await prepareNote(undefined, { dir: personal() })
+        : destination === 'other' ? await prepareNote(undefined, { dir: cwd ?? personal() })
+        : await prepareNote(cwd, { declined: declined() })
       main.state.update('lastDestination', destination === 'other' && cwd ? { id: destination, folder: cwd } : { id: destination })
       return prepared
     }),
@@ -53,7 +53,7 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('personalFolder', () => personal()),
     ipc.handle('read', path => isPath(path) ? readNote(path) : { ok: false, missing: false, message: 'Caminho inválido.' }),
     ipc.handle('write', (path, text) => isPath(path) && typeof text === 'string' ? writeNote(path, text) : { ok: false, message: 'Caminho inválido.' }),
-    ipc.on('flush', (path, text) => { if (isPath(path) && typeof text === 'string') writeNote(path, text) }),
+    ipc.on('flush', (path, text) => { if (isPath(path) && typeof text === 'string') void writeNote(path, text) }),
     // The watches follow in the renderer (the note's `setPath`, a preview's retarget): each holder moves its own.
     ipc.handle('rename', (from, to) => isPath(from) && isPath(to) ? renameNote(from, to) : { ok: false, message: 'Caminho inválido.' }),
     ipc.on('watch', path => { if (isPath(path)) watchers.watch(path) }),
@@ -80,9 +80,9 @@ export function activate(main: TetherMain): IDisposable[] {
       })
       return r.canceled || !r.filePath ? null : r.filePath
     }),
-    ipc.handle('gitignore', (repoRoot, add) => {
+    ipc.handle('gitignore', async (repoRoot, add) => {
       if (!isPath(repoRoot)) return
-      if (add === true) { addTetherToGitignore(repoRoot); return }
+      if (add === true) { await addTetherToGitignore(repoRoot); return }
       const list = declined()
       if (!list.includes(repoRoot)) main.state.update('gitignoreDeclined', [...list, repoRoot])
     }),

@@ -63,6 +63,9 @@ await Promise.all([
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-worker.ts')], outfile: join(out, 'file-index-worker.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'file-index-shard-worker.ts')], outfile: join(out, 'file-index-shard-worker.cjs') }),
   build({ ...common, ...node, entryPoints: [join(here, 'main', 'text-search-worker.ts')], outfile: join(out, 'text-search-worker.cjs') }),
+  // The main process' executor (src/exec): the worker is started by path, the table is loaded by file URL in the TETHER_EXECUTOR=inline fallback.
+  build({ ...common, ...node, entryPoints: [join(root, 'src', 'exec', 'worker.ts')], outfile: join(out, 'exec-worker.cjs') }),
+  build({ ...common, ...node, entryPoints: [join(root, 'src', 'exec', 'table.ts')], outfile: join(out, 'exec-table.cjs') }),
   // TETHER_TEST_EXTENSIONS=1 (E2E only) builds in the probes of extensions/index.renderer.ts; every other build drops them.
   build({ ...common, ...browser, define: { __TETHER_TEST_EXTENSIONS__: String(process.env.TETHER_TEST_EXTENSIONS === '1') }, entryPoints: [join(here, 'renderer', 'main.ts')], outfile: join(out, 'renderer.js') }),
   build({ ...common, platform: 'browser', format: 'iife', entryPoints: [join(here, '..', 'node_modules', 'monaco-editor', 'esm', 'vs', 'editor', 'editor.worker.js')], outfile: join(out, 'editor.worker.js') }),

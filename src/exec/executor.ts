@@ -28,6 +28,8 @@ export interface ExecutorOptions {
   mode?: ExecutorMode
   /** Worker entry file. Default: ./worker.ts beside this file, resolved lazily (import.meta.url is empty in the CJS bundle: pass it there). */
   workerPath?: string
+  /** Inline mode only: file URL of the table module. Default: ./table.ts beside inline.ts (import.meta.url is empty in a CJS bundle: pass it there). */
+  tableUrl?: string
   /** Extra execArgv for the workers (default: the parent's own). */
   execArgv?: string[]
   /** Test hook: every operation sleeps this long in its worker. Default: TETHER_TEST_IO_DELAY_MS. */
@@ -155,7 +157,7 @@ export class Executor {
   constructor(opts: ExecutorOptions = {}) {
     this.mode = opts.mode ?? modeFromEnv()
     this.perf = opts.perf ?? globalPerf
-    this.transport = this.mode === 'inline' ? new InlineTransport() : new WorkerTransport(opts)
+    this.transport = this.mode === 'inline' ? new InlineTransport({ tableUrl: opts.tableUrl }) : new WorkerTransport(opts)
   }
 
   /** Runs one operation of the closed table. Rejects with ExecError (original name/code kept), ExecTimeout or ExecutorDown. */

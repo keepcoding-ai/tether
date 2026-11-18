@@ -13,13 +13,17 @@ import { emptyLayout, orphanedPanels, planRestore, type Layout } from '../../app
 import { chordFromLabel, editorCommandId, paneCwdOfNote } from '../../app/renderer/note-rules.ts'
 import { chordLabel, type KeyLike } from '../../app/renderer/shortcuts.ts'
 import { cleanNoteName, externalChangeAction, gitignoreCovers, gitignoreWithTether, isNotePanelId, newNotePanelId, noteDirOf, noteFileName, noteParams, noteTitle, uniqueFileName, withNote } from '../../app/shared/notes.ts'
+import { setMainExecutor } from '../../app/main/main-executor.ts'
+import { Executor } from '../../src/exec/executor.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
 const tmp = tempDirs('tether-notes-')
-after(() => tmp.cleanup())
+const ex = new Executor({ mode: 'inline' })
+setMainExecutor(ex)
+after(async () => { setMainExecutor(undefined); await ex.close(); tmp.cleanup() })
 
 describe('note pane identity and params', () => {
-  test('ids carry the note prefix, sort by time, and never collide with slot ids', () => {
+  test('ids carry the note prefix, sort by time, and never collide with slot ids', async () => {
     const a = newNotePanelId(1000, 0.1)
     const b = newNotePanelId(2000, 0.1)
     assert.ok(isNotePanelId(a) && isNotePanelId(b))
@@ -28,7 +32,7 @@ describe('note pane identity and params', () => {
     assert.ok(!isNotePanelId('slot-1') && !isNotePanelId('3f2a9c') && !isNotePanelId(''))
   })
 
-  test('noteParams reads only a well-formed note; withNote keeps the other params', () => {
+  test('noteParams reads only a well-formed note; withNote keeps the other params', async () => {
     assert.equal(noteParams(undefined), undefined)
     assert.equal(noteParams({ slotId: 'x' }), undefined)
     assert.equal(noteParams({ note: { path: 7 } }), undefined)
@@ -37,7 +41,7 @@ describe('note pane identity and params', () => {
     assert.deepEqual(withNote({ details: true, note: { path: 'old', view: { x: 1 } } }, { path: 'new' }), { details: true, note: { path: 'new' } })
   })
 
-  test('title and folder of a path, both separators', () => {
+  test('title and folder of a path, both separators', async () => {
     assert.equal(noteTitle('C:\\repo\\.tether\\notes\\2026-11-04-1530.md'), '2026-11-04-1530.md')
     assert.equal(noteTitle('/home/u/.tether/notes/a.md'), 'a.md')
     assert.equal(noteDirOf('C:\\repo\\.tether\\notes\\a.md'), 'C:\\repo\\.tether\\notes')
@@ -50,7 +54,7 @@ describe('note pane identity and params', () => {
 })
 
 describe('note file names', () => {
-  test('AAAA-MM-DD-HHmm.md in local time, made unique with -2, -3…', () => {
+  test('AAAA-MM-DD-HHmm.md in local time, made unique with -2, -3…', async () => {
     assert.equal(noteFileName(new Date(2026, 10, 4, 9, 7)), '2026-11-04-0907.md')
     const taken = new Set(['2026-11-04-0907.md', '2026-11-04-0907-2.md'])
     assert.equal(uniqueFileName('2026-11-04-0907.md', n => taken.has(n)), '2026-11-04-0907-3.md')
@@ -58,7 +62,7 @@ describe('note file names', () => {
     assert.equal(uniqueFileName('noext', n => n === 'noext'), 'noext-2')
   })
 
-  test('a typed name becomes a file name: trimmed, separators and illegal characters out, .md when missing', () => {
+  test('a typed name becomes a file name: trimmed, separators and illegal characters out, .md when missing', async () => {
     assert.equal(cleanNoteName('  ideias  '), 'ideias.md')
     assert.equal(cleanNoteName('plano.md'), 'plano.md')
     assert.equal(cleanNoteName('a/b\\c:d*e?f"g<h>i|j'), 'abcdefghij.md')
@@ -70,46 +74,46 @@ describe('note file names', () => {
 })
 
 describe('where a note goes', () => {
-  test('with a pane: <cwd>/.tether/notes; without: ~/.tether/notes, or <TETHER_HOME>/notes when the home is set (tests never touch the real one)', () => {
+  test('with a pane: <cwd>/.tether/notes; without: ~/.tether/notes, or <TETHER_HOME>/notes when the home is set (tests never touch the real one)', async () => {
     assert.equal(notesDirFor('D:\\repo', {}), join('D:\\repo', '.tether', 'notes'))
     assert.equal(userNotesDir({}, 'C:\\Users\\u'), join('C:\\Users\\u', '.tether', 'notes'))
     assert.equal(userNotesDir({ TETHER_HOME: 'C:\\tmp\\home' }, 'C:\\Users\\u'), join('C:\\tmp\\home', 'notes'))
     assert.equal(notesDirFor(undefined, { TETHER_HOME: 'C:\\tmp\\home' }), join('C:\\tmp\\home', 'notes'))
   })
 
-  test('prepareNote creates the folder and an empty, uniquely named file; outside a repository nothing is asked', () => {
+  test('prepareNote creates the folder and an empty, uniquely named file; outside a repository nothing is asked', async () => {
     const cwd = tmp.make()
     const now = new Date(2026, 10, 4, 15, 30)
-    const a = prepareNote(cwd, { now })
+    const a = await prepareNote(cwd, { now })
     assert.equal(a.path, join(cwd, '.tether', 'notes', '2026-11-04-1530.md'))
     assert.ok(existsSync(a.path) && readFileSync(a.path, 'utf8') === '')
     assert.equal(a.askGitignore, undefined)
-    const b = prepareNote(cwd, { now })
+    const b = await prepareNote(cwd, { now })
     assert.equal(b.path, join(cwd, '.tether', 'notes', '2026-11-04-1530-2.md'))
     const home = tmp.make()
-    const c = prepareNote(undefined, { now, env: { TETHER_HOME: home } })
+    const c = await prepareNote(undefined, { now, env: { TETHER_HOME: home } })
     assert.equal(c.path, join(home, 'notes', '2026-11-04-1530.md'))
   })
 
-  test('in a repository without .tether/ in .gitignore the repository is named once; declined or covered, nothing is asked', () => {
+  test('in a repository without .tether/ in .gitignore the repository is named once; declined or covered, nothing is asked', async () => {
     const repo = tmp.make()
     mkdirSync(join(repo, '.git'))
     const sub = join(repo, 'packages', 'app')
     mkdirSync(sub, { recursive: true })
-    assert.equal(findGitRoot(sub), repo)
-    assert.equal(findGitRoot(tmp.make()), undefined)
-    assert.equal(gitignoreStatus(repo), 'missing', 'no .gitignore at all')
-    assert.equal(prepareNote(sub, { now: new Date(2026, 0, 1) }).askGitignore, repo)
-    assert.equal(prepareNote(sub, { now: new Date(2026, 0, 1), declined: [repo.toUpperCase()] }).askGitignore, undefined, 'declined (case-insensitively)')
+    assert.equal(await findGitRoot(sub), repo)
+    assert.equal(await findGitRoot(tmp.make()), undefined)
+    assert.equal(await gitignoreStatus(repo), 'missing', 'no .gitignore at all')
+    assert.equal((await prepareNote(sub, { now: new Date(2026, 0, 1) })).askGitignore, repo)
+    assert.equal((await prepareNote(sub, { now: new Date(2026, 0, 1), declined: [repo.toUpperCase()] })).askGitignore, undefined, 'declined (case-insensitively)')
     writeFileSync(join(repo, '.gitignore'), 'node_modules/\n')
-    assert.equal(gitignoreStatus(repo), 'missing')
-    addTetherToGitignore(repo)
+    assert.equal(await gitignoreStatus(repo), 'missing')
+    await addTetherToGitignore(repo)
     assert.equal(readFileSync(join(repo, '.gitignore'), 'utf8'), 'node_modules/\n.tether/\n')
-    assert.equal(gitignoreStatus(repo), 'covered')
-    assert.equal(prepareNote(sub, { now: new Date(2026, 0, 1) }).askGitignore, undefined)
+    assert.equal(await gitignoreStatus(repo), 'covered')
+    assert.equal((await prepareNote(sub, { now: new Date(2026, 0, 1) })).askGitignore, undefined)
   })
 
-  test('gitignoreCovers accepts the usual spellings and refuses a negation; gitignoreWithTether appends with the file\'s line ending', () => {
+  test('gitignoreCovers accepts the usual spellings and refuses a negation; gitignoreWithTether appends with the file\'s line ending', async () => {
     for (const line of ['.tether', '.tether/', '/.tether', '/.tether/', '**/.tether/', '  .tether/  ']) assert.ok(gitignoreCovers(`dist/\n${line}\n`), line)
     assert.ok(!gitignoreCovers('!.tether/\n'))
     assert.ok(!gitignoreCovers('.tether/notes/\n'), 'a deeper rule is not the folder')
@@ -121,34 +125,35 @@ describe('where a note goes', () => {
 })
 
 describe('reading, writing, renaming', () => {
-  test('writeTextAtomic leaves no temp file behind and replaces the content whole; readNote tells a missing file apart', () => {
+  test('writeTextAtomic leaves no temp file behind and replaces the content whole; readNote tells a missing file apart', async () => {
     const dir = tmp.make()
     const path = join(dir, 'n.md')
-    assert.deepEqual(readNote(path), { ok: false, missing: true, message: readNote(path).ok ? '' : (readNote(path) as { message: string }).message })
-    writeTextAtomic(path, 'um')
-    writeTextAtomic(path, 'dois três')
+    const missing = await readNote(path)
+    assert.deepEqual(missing, { ok: false, missing: true, message: missing.ok ? '' : missing.message })
+    await writeTextAtomic(path, 'um')
+    await writeTextAtomic(path, 'dois três')
     assert.deepEqual(readdirSync(dir), ['n.md'], 'no .tmp left')
-    const r = readNote(path)
+    const r = await readNote(path)
     assert.ok(r.ok && r.text === 'dois três' && r.mtimeMs > 0)
-    const w = writeNote(join(dir, 'sub', 'deep', 'x.md'), 'y')
+    const w = await writeNote(join(dir, 'sub', 'deep', 'x.md'), 'y')
     assert.ok(w.ok, 'creates the folders')
-    assert.ok(!writeNote(join(dir, 'n.md', 'impossible.md'), 'z').ok, 'a file is not a folder: an error, not a throw')
+    assert.ok(!(await writeNote(join(dir, 'n.md', 'impossible.md'), 'z')).ok, 'a file is not a folder: an error, not a throw')
   })
 
-  test('writeTextAtomic removes its temp file and rethrows when the rename fails; the target stays intact', () => {
+  test('writeTextAtomic removes its temp file and rethrows when the rename fails; the target stays intact', async () => {
     const dir = tmp.make()
     const path = join(dir, 'ro.txt')
-    writeTextAtomic(path, 'original')
+    await writeTextAtomic(path, 'original')
     chmodSync(path, 0o444)
     let threw = false
-    try { writeTextAtomic(path, 'novo') } catch { threw = true }
+    try { await writeTextAtomic(path, 'novo') } catch { threw = true }
     if (!threw) {
       // Platform lets a read-only file be replaced (POSIX): force the failure with a non-empty directory as target.
       chmodSync(path, 0o644)
       rmSync(path)
       mkdirSync(path)
       writeFileSync(join(path, 'keep'), 'x')
-      assert.throws(() => writeTextAtomic(path, 'novo'))
+      await assert.rejects(writeTextAtomic(path, 'novo'))
       assert.deepEqual(readdirSync(path), ['keep'])
     } else {
       assert.equal(readFileSync(path, 'utf8'), 'original')
@@ -157,40 +162,40 @@ describe('reading, writing, renaming', () => {
     assert.deepEqual(readdirSync(dir).filter(f => f.endsWith('.tmp')), [], 'no .tmp left')
   })
 
-  test('renameNote moves the file and refuses to overwrite', () => {
+  test('renameNote moves the file and refuses to overwrite', async () => {
     const dir = tmp.make()
-    writeTextAtomic(join(dir, 'a.md'), 'A')
-    writeTextAtomic(join(dir, 'b.md'), 'B')
-    assert.deepEqual(renameNote(join(dir, 'a.md'), join(dir, 'b.md')), { ok: false, message: 'Já existe um arquivo com esse nome.' })
-    assert.deepEqual(renameNote(join(dir, 'a.md'), join(dir, 'c.md')), { ok: true })
+    await writeTextAtomic(join(dir, 'a.md'), 'A')
+    await writeTextAtomic(join(dir, 'b.md'), 'B')
+    assert.deepEqual(await renameNote(join(dir, 'a.md'), join(dir, 'b.md')), { ok: false, message: 'Já existe um arquivo com esse nome.' })
+    assert.deepEqual(await renameNote(join(dir, 'a.md'), join(dir, 'c.md')), { ok: true })
     assert.equal(readFileSync(join(dir, 'c.md'), 'utf8'), 'A')
     assert.ok(!existsSync(join(dir, 'a.md')))
   })
 })
 
 describe('an outside change of the file', () => {
-  test('same text as the editor: keep (our own save echoed); editor clean: reload; both changed: ask', () => {
+  test('same text as the editor: keep (our own save echoed); editor clean: reload; both changed: ask', async () => {
     assert.equal(externalChangeAction({ diskText: 'x', editorText: 'x', savedText: 'w' }), 'keep')
     assert.equal(externalChangeAction({ diskText: 'y', editorText: 'x', savedText: 'x' }), 'reload')
     assert.equal(externalChangeAction({ diskText: 'y', editorText: 'x2', savedText: 'x' }), 'ask')
   })
 
-  test('our own save echoed while the person kept typing: never ask (disk = what we wrote, editor ahead of it)', () => {
+  test('our own save echoed while the person kept typing: never ask (disk = what we wrote, editor ahead of it)', async () => {
     assert.equal(externalChangeAction({ diskText: 'abc', editorText: 'abcd', savedText: 'abc' }), 'keep')
   })
 
-  test('an older write of ours read back after a newer one landed: ours, not an outside change', () => {
+  test('an older write of ours read back after a newer one landed: ours, not an outside change', async () => {
     assert.equal(externalChangeAction({ diskText: 'ab', editorText: 'abcd', savedText: 'abc', ownTexts: ['a', 'ab', 'abc'] }), 'keep')
   })
 
-  test('a genuine outside change is still caught, with or without pending edits', () => {
+  test('a genuine outside change is still caught, with or without pending edits', async () => {
     assert.equal(externalChangeAction({ diskText: 'other', editorText: 'abcd', savedText: 'abc', ownTexts: ['ab', 'abc'] }), 'ask')
     assert.equal(externalChangeAction({ diskText: 'other', editorText: 'abc', savedText: 'abc', ownTexts: ['ab', 'abc'] }), 'reload')
   })
 })
 
 describe('the editor\'s actions as commands', () => {
-  test('ids are the registry\'s shape: lowercase dotted kebab under editor.', () => {
+  test('ids are the registry\'s shape: lowercase dotted kebab under editor.', async () => {
     assert.equal(editorCommandId('editor.action.insertCursorBelow'), 'editor.action.insert-cursor-below')
     assert.equal(editorCommandId('editor.action.addSelectionToNextFindMatch'), 'editor.action.add-selection-to-next-find-match')
     assert.equal(editorCommandId('actions.find'), 'editor.actions.find')
@@ -201,7 +206,7 @@ describe('the editor\'s actions as commands', () => {
     assert.match(editorCommandId('editor.unfold-All_x'), /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/)
   })
 
-  test('Monaco\'s keybinding labels become chords the hints print; two-step chords and unknown keys give none', () => {
+  test('Monaco\'s keybinding labels become chords the hints print; two-step chords and unknown keys give none', async () => {
     const win = (label: string): string | undefined => { const c = chordFromLabel(label); return c ? chordLabel(c, false) : undefined }
     assert.equal(win('Ctrl+Shift+L'), 'Ctrl+Shift+L')
     assert.equal(win('Ctrl+Alt+DownArrow'), 'Ctrl+Alt+↓')
@@ -233,7 +238,7 @@ describe('the layout keeps notes', () => {
     return l
   }
 
-  test('a note pane is never an orphan, and pruning the slots the daemon lost keeps it', () => {
+  test('a note pane is never an orphan, and pruning the slots the daemon lost keeps it', async () => {
     assert.deepEqual(orphanedPanels(['slot-a', 'note:1', 'slot-b'], new Set(['slot-a'])), ['slot-b'])
     const saved = layoutWith(['slot-a', 'note:1', 'slot-b'])
     const plan = planRestore(saved, new Set(['slot-a']))
@@ -251,7 +256,7 @@ describe('chords inside the editor', () => {
   const key = (code: string, m: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {}): KeyLike =>
     ({ code, ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta })
 
-  test('every Alt+arrow chord is the editor\'s (cursors, column selection, copy and move line, smart select)', () => {
+  test('every Alt+arrow chord is the editor\'s (cursors, column selection, copy and move line, smart select)', async () => {
     for (const code of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
       assert.deepEqual(editorKeyOwner(key(code, { ctrl: true, alt: true }), false), { owner: 'editor' }, `Ctrl+Alt+${code}`)
       assert.deepEqual(editorKeyOwner(key(code, { ctrl: true, alt: true, shift: true }), false), { owner: 'editor' }, `Ctrl+Shift+Alt+${code}`)
@@ -260,7 +265,7 @@ describe('chords inside the editor', () => {
     }
   })
 
-  test('the workbench chords stay the app\'s: palette, quick open, chooser, desks, drawer, font size, status bar', () => {
+  test('the workbench chords stay the app\'s: palette, quick open, chooser, desks, drawer, font size, status bar', async () => {
     assert.deepEqual(editorKeyOwner(key('KeyP', { ctrl: true, shift: true }), false), { owner: 'app', command: 'palette.show' })
     withQuickOpenKeybindings() // Ctrl+P comes from the quick-open extension
     assert.deepEqual(editorKeyOwner(key('KeyP', { ctrl: true }), false), { owner: 'app', command: 'palette.quick-open' })
@@ -276,7 +281,7 @@ describe('chords inside the editor', () => {
   })
 })
 
-test('note params: the per-editor minimap choice is read, kept by withNote, set and cleared', () => {
+test('note params: the per-editor minimap choice is read, kept by withNote, set and cleared', async () => {
   assert.equal(noteParams({ note: { path: 'a.md' } })?.minimap, undefined)
   assert.equal(noteParams({ note: { path: 'a.md', minimap: 'off' } })?.minimap, undefined, 'malformed reads as no choice')
   assert.equal(noteParams({ note: { path: 'a.md', minimap: false } })?.minimap, false)
@@ -287,7 +292,7 @@ test('note params: the per-editor minimap choice is read, kept by withNote, set 
   assert.equal(noteParams(withNote(own, { path: 'a.md', minimap: null }))?.minimap, undefined, 'null clears it')
 })
 
-test('note params: the per-editor line-numbers choice is read, kept by withNote, set and cleared', () => {
+test('note params: the per-editor line-numbers choice is read, kept by withNote, set and cleared', async () => {
   assert.equal(noteParams({ note: { path: 'a.md' } })?.lineNumbers, undefined)
   assert.equal(noteParams({ note: { path: 'a.md', lineNumbers: 'off' } })?.lineNumbers, undefined, 'malformed reads as no choice')
   const own = withNote(undefined, { path: 'a.md', lineNumbers: false, minimap: true })

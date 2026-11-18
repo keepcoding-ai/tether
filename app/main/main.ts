@@ -6,7 +6,11 @@
 // Built by app/build.mjs into app/dist/main.cjs (CommonJS: __dirname is available).
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, Notification, screen, shell } from 'electron'
 import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+import { Executor } from '../../src/exec/executor.ts'
+import type { OpTable } from '../../src/exec/table.ts'
+import { setMainExecutor } from './main-executor.ts'
 import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
 import { createAppLog } from './app-log.ts'
 import { startCrashReports } from './crash-report.ts'
@@ -87,12 +91,28 @@ const daemonMain = join(__dirname, '..', '..', 'src', 'daemon', 'main.ts')
 /** The pid this process replaces when "Reiniciar o app" started it (app/main/relaunch.ts). */
 const replacedPid = relaunchedFrom(process.argv)
 /** What this launch decides, on disk (<home>/tether-app.log) and on stderr: a Start Menu launch has no console. */
-const appLog = createAppLog(join(home, 'tether-app.log'))
+/**
+ * The executor of this process: log, layout, settings and notes reach the disk through its worker (app/dist/exec-worker.cjs, its own
+ * bundle entry: the path is passed because import.meta.url is empty in this CJS bundle). TETHER_EXECUTOR=inline falls back to the
+ * same table in this loop (app/dist/exec-table.cjs, loaded by file URL).
+ */
+const mainExec = new Executor({
+  workerPath: join(__dirname, 'exec-worker.cjs'),
+  tableUrl: pathToFileURL(join(__dirname, 'exec-table.cjs')).href,
+  log: msg => console.error(`tether: ${msg}`),
+})
+setMainExecutor(mainExec)
+const appLog = createAppLog(join(home, 'tether-app.log'), mainExec, {
+  // The fatal-exit writer only: loaded when needed, synchronously (the table bundle is CJS).
+  emergency: (path, text) => (require(join(__dirname, 'exec-table.cjs')) as { table: OpTable }).table.appendText(path, text),
+})
+process.on('exit', () => appLog.emergencySync())
+appLog(`executor: ${mainExec.mode}`)
 appLog(`start: ppid ${process.ppid}, exec ${process.execPath}, cwd ${process.cwd()}, args ${JSON.stringify(process.argv.slice(1))}${replacedPid ? `, replaces pid ${replacedPid} (Reiniciar o app)` : ''}`)
 // The Start Menu launch prefers the runtime copy with the cookie fuse on (app/shared/cookie-runtime.ts): handed over, this
 // process leaves before taking the single-instance lock or touching any state.
 startCrashReports(home, 'tether', appLog)
-if (handOffToCookieRuntime({ home, argv: process.argv, execPath: process.execPath, electronVersion: process.versions.electron, log: appLog })) process.exit(0)
+if (handOffToCookieRuntime({ home, argv: process.argv, execPath: process.execPath, electronVersion: process.versions.electron, log: appLog })) process.exit(0) // the 'exit' hook above writes what the log still holds
 
 let daemon: DaemonClient | undefined
 let connecting: Promise<void> | undefined
@@ -146,13 +166,24 @@ function readJson<T>(path: string, fallback: T): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
 }
 
-/** Atomic: temp + rename, so a crash mid-write never leaves a half file behind. */
-function writeJson(path: string, value: unknown): void {
-  mkdirSync(home, { recursive: true })
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(value, null, 2))
-  renameSync(tmp, path)
+/** Atomic (temp + rename, in the executor's worker), so a crash mid-write never leaves a half file behind. A failure is logged, never thrown. */
+async function writeJson(path: string, value: unknown): Promise<void> {
+  const text = JSON.stringify(value, null, 2)
+  try { await mainExec.run('mkdirp', [home]); await mainExec.run('writeTextAtomic', [path, text]) } catch (err) { appLog(`write of ${path} failed: ${err instanceof Error ? err.message : String(err)}`) }
 }
+
+/** The same, read through the executor: for the handlers that run with a window open. readJson stays for boot and the lock loop (sync on purpose). */
+async function readJsonAsync<T>(path: string, fallback: T): Promise<T> {
+  try { return JSON.parse(await mainExec.run('readText', [path])) as T } catch { return fallback }
+}
+
+/** Waits (at most ms) for the log, the settings file and every executor request in flight: before the process leaves. */
+async function drainDisk(ms = 2000): Promise<void> {
+  const settled = Promise.allSettled([appLog.flush(), settingsStore.flush(), mainExec.drain()])
+  await Promise.race([settled, sleep(ms)])
+}
+/** app.exit skips before-quit and will-quit: the disk work still in flight is drained first (bounded). */
+function exitApp(): void { void drainDisk().finally(() => app.exit(0)) }
 
 // ---------- daemon ----------
 
@@ -430,7 +461,7 @@ async function relaunchApp(): Promise<void> {
   quitting = true
   tray?.destroy() // app.exit skips before-quit, where the tray is normally removed
   tray = undefined
-  app.exit(0)
+  exitApp()
 }
 
 /** "Sair e encerrar tudo": stops every slot, shuts the daemon down and quits (after the in-app dialog). */
@@ -440,7 +471,7 @@ async function relaunchApp(): Promise<void> {
  * regardless, taking its tray icon with it (app.exit skips before-quit, so the icon is destroyed here).
  */
 function leaveWithin(ms: number): void {
-  setTimeout(() => { tray?.destroy(); tray = undefined; app.exit(0) }, ms).unref()
+  setTimeout(() => { tray?.destroy(); tray = undefined; exitApp() }, ms).unref()
 }
 
 async function quitAll(): Promise<void> {
@@ -473,6 +504,7 @@ const userHome = userDir()
 migrateUserFiles(home, userHome, ['settings.json', KEYBINDINGS_FILE], msg => appLog(msg))
 const settingsStore = new SettingsStore({
   path: join(userHome, 'settings.json'),
+  executor: mainExec,
   log: msg => appLog(msg),
   onChange: (keys, source) => onSettingsChanged(keys, source),
   onErrors: errors => win?.webContents.send('tether:settings-errors', errors),
@@ -576,9 +608,9 @@ function writeSettingKey(key: unknown, value: unknown, reset: boolean): SettingW
 ipcMain.handle('settings:set', (_e, key: unknown, value: unknown): SettingWriteResult => writeSettingKey(key, value, false))
 ipcMain.handle('settings:reset', (_e, key: unknown): SettingWriteResult => writeSettingKey(key, undefined, true))
 ipcMain.handle('settings:file', (): SettingsFileState => ({ path: settingsPath, text: existsSync(settingsPath) ? settingsStore.fileText : null, errors: [...settingsStore.errors] }))
-ipcMain.handle('settings:open', (): { ok: true; path: string } | { ok: false; message: string } => {
+ipcMain.handle('settings:open', async (): Promise<{ ok: true; path: string } | { ok: false; message: string }> => {
   try {
-    if (!existsSync(settingsPath)) { mkdirSync(userHome, { recursive: true }); writeTextAtomic(settingsPath, '{\n}\n'); settingsStore.reload() }
+    if (!existsSync(settingsPath)) { mkdirSync(userHome, { recursive: true }); await writeTextAtomic(settingsPath, '{\n}\n'); await settingsStore.reload() }
     return { ok: true, path: settingsPath }
   } catch (err) { return { ok: false, message: err instanceof Error ? err.message : String(err) } }
 })
@@ -994,6 +1026,9 @@ ipcMain.handle('tether:request', (_e, body: RequestBody) => panelRouter.request(
 registerPerf(ipcMain, request, probe, () => win?.webContents)
 app.on('will-quit', stopPerf)
 app.on('will-quit', () => panelLink.stop())
+// Last chance for the disk work still in flight (the log, a settings or layout write queued while the windows closed): quit is held
+// until it is drained (bounded), then the app exits (the other will-quit handlers have run by then).
+app.on('will-quit', e => { e.preventDefault(); exitApp() })
 ipcMain.on('tether:notice', (_e, notice: Notice | { t: 'probe-result' }) => {
   if (notice.t === 'input') perfEchoKey(notice.slotId, slotStates.get(notice.slotId)?.kind === 'shell' ? 'shell' : 'agent')
   if (probe) {
@@ -1012,31 +1047,33 @@ ipcMain.on('tether:reconnect', () => { void connectDaemon() })
 ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 
 // layout.json keeps its previous content in layout.json.bak on every save and falls back to it (layout-file.ts).
-ipcMain.handle('layout:load', () => loadLayoutFile(layoutPath))
-ipcMain.handle('layout:save', (_e, layout: unknown) => { saveLayoutFile(layoutPath, layout) })
+ipcMain.handle('layout:load', () => loadLayoutFile(mainExec, layoutPath))
+ipcMain.handle('layout:save', (_e, layout: unknown) => saveLayoutFile(mainExec, layoutPath, layout))
 // The renderer asks for this when it reads an older file (v1, v2, v3): layout.json.bak rotates on every save, layout.v<n>.bak
 // keeps the last content of that version for good (a copy: layout.json itself is not touched until the person changes
 // something), so an older build can be given its file back by hand.
-ipcMain.handle('layout:backup', (_e, version: unknown) => {
+ipcMain.handle('layout:backup', async (_e, version: unknown) => {
   const n = version === 2 || version === 3 ? version : 1
-  if (existsSync(layoutPath)) copyFileSync(layoutPath, join(home, `layout.v${n}.bak`))
+  let text: string
+  try { text = await mainExec.run('readText', [layoutPath]) } catch { return } // no layout yet: nothing to keep
+  await mainExec.run('writeTextAtomic', [join(home, `layout.v${n}.bak`), text])
 })
 
 /** Recent folders in canonical form, deduped case-insensitively (entries saved before the fix may differ only in casing). */
-function recentFolders(): string[] {
+async function recentFolders(): Promise<string[]> {
   const out: string[] = []
-  for (const f of readJson<string[]>(recentPath, [])) {
+  for (const f of await readJsonAsync<string[]>(recentPath, [])) {
     const dir = canonicalDir(f)
     if (!out.some(o => o.toLowerCase() === dir.toLowerCase())) out.push(dir)
   }
   return out
 }
 ipcMain.handle('recent:list', () => recentFolders())
-ipcMain.handle('recent:remember', (_e, folder: string) => {
+ipcMain.handle('recent:remember', async (_e, folder: string) => {
   const dir = canonicalDir(folder)
-  const list = recentFolders().filter(f => f.toLowerCase() !== dir.toLowerCase())
+  const list = (await recentFolders()).filter(f => f.toLowerCase() !== dir.toLowerCase())
   list.unshift(dir)
-  writeJson(recentPath, list.slice(0, RECENT_LIMIT))
+  await writeJson(recentPath, list.slice(0, RECENT_LIMIT))
 })
 
 ipcMain.handle('folder:pick', async (_e, initial?: string) => {
@@ -1097,7 +1134,7 @@ ipcMain.on('shell:open-external', (_e, url: string) => {
 ipcMain.handle('shell:open-path', async (_e, path: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
   if (typeof path !== 'string' || path.trim() === '') return { ok: false, message: 'Caminho inválido.' }
   let isDir = false
-  try { isDir = statSync(path).isDirectory() } catch { return { ok: false, message: 'A pasta não existe.' } }
+  try { isDir = (await mainExec.run('stat', [path])).isDirectory } catch { return { ok: false, message: 'A pasta não existe.' } }
   if (!isDir) return { ok: false, message: 'O caminho não é uma pasta.' }
   const err = await shell.openPath(path)
   return err ? { ok: false, message: err } : { ok: true }
@@ -1175,7 +1212,7 @@ async function acquireSingleInstance(): Promise<'acquired' | 'focused-other' | '
 
 function bringToFront(_event?: unknown, argv?: string[]): void {
   appLog('second launch poked this instance; bringing the window up')
-  writeJson(ackPath, { at: Date.now(), pid: process.pid })
+  void writeJson(ackPath, { at: Date.now(), pid: process.pid })
   const link = argv ? tetherUrlInArgv(argv) : undefined
   if (link) queueTetherLink(link)
   if (!app.isReady()) return

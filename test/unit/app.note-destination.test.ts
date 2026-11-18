@@ -8,10 +8,14 @@ import { dirname, join } from 'node:path'
 import { folderSuffix, stripTether } from '../../app/shared/tether-folder.ts'
 import { effectiveFolder, type ChooserItem } from '../../app/renderer/chooser-rules.ts'
 import { personalNotesDir, prepareNote, PERSONAL_FOLDER_DEFAULT, userNotesDir } from '../../app/main/note-files.ts'
+import { setMainExecutor } from '../../app/main/main-executor.ts'
+import { Executor } from '../../src/exec/executor.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
 const tmp = tempDirs('tether-note-dest-')
-after(() => tmp.cleanup())
+const ex = new Executor({ mode: 'inline' })
+setMainExecutor(ex)
+after(async () => { setMainExecutor(undefined); await ex.close(); tmp.cleanup() })
 
 describe('a suggested folder is cut at .tether', () => {
   test('the part from .tether on goes away', () => {
@@ -65,9 +69,9 @@ describe('"Minhas notas" and a chosen folder', () => {
     assert.equal(personalNotesDir('~/notas', {}, 'C:\\Users\\a'), join('C:\\Users\\a', 'notas'))
     assert.equal(personalNotesDir('D:\\notas', {}, 'C:\\Users\\a'), 'D:\\notas')
   })
-  test('a note in a chosen folder lands right there, without .tether/notes nor the .gitignore question', () => {
+  test('a note in a chosen folder lands right there, without .tether/notes nor the .gitignore question', async () => {
     const dir = join(tmp.make(), 'escolhida')
-    const p = prepareNote(dir, { dir })
+    const p = await prepareNote(dir, { dir })
     assert.equal(dirname(p.path), dir)
     assert.ok(existsSync(p.path))
     assert.equal(p.askGitignore, undefined)

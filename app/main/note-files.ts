@@ -6,9 +6,11 @@
 //   - reading and writing: UTF-8, atomic write (temp file + rename) so a kill mid-write never leaves half a note;
 //   - watching: one `fs.watch` on the note's folder per open path (a replaced file keeps its name; watching the
 //     file itself breaks across the rename our own save makes), debounced, reported to the renderer by path.
-import { existsSync, type FSWatcher, mkdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
+// Every disk access except the watchers goes through the main executor (app/main/main-executor.ts), so it is async.
+import { type FSWatcher, watch } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
+import { isNotFound, mainExecutor } from './main-executor.ts'
 import { gitignoreCovers, gitignoreWithTether, noteFileName, NOTES_SUBDIR, uniqueFileName } from '../shared/notes.ts'
 
 /** The notes folder without a pane: the person's own, or the test home's. */
@@ -40,10 +42,11 @@ export function notesDirFor(paneCwd: string | undefined, env: NodeJS.ProcessEnv 
 }
 
 /** The repository root `dir` is in (the nearest ancestor with a `.git`), or undefined outside any repository. */
-export function findGitRoot(dir: string): string | undefined {
+export async function findGitRoot(dir: string): Promise<string | undefined> {
+  const ex = mainExecutor()
   let current = resolve(dir)
   for (;;) {
-    if (existsSync(join(current, '.git'))) return current
+    if (await ex.run('exists', [join(current, '.git')])) return current
     const parent = dirname(current)
     if (parent === current) return undefined
     current = parent
@@ -53,54 +56,53 @@ export function findGitRoot(dir: string): string | undefined {
 export type GitignoreStatus = 'covered' | 'missing'
 
 /** Whether the repository's `.gitignore` keeps `.tether/` out (a missing file counts as not covering). */
-export function gitignoreStatus(repoRoot: string): GitignoreStatus {
+export async function gitignoreStatus(repoRoot: string): Promise<GitignoreStatus> {
   const path = join(repoRoot, '.gitignore')
   let text = ''
-  try { text = readFileSync(path, 'utf8') } catch { return 'missing' }
+  try { text = await mainExecutor().run('readText', [path]) } catch { return 'missing' }
   return gitignoreCovers(text) ? 'covered' : 'missing'
 }
 
 /** Adds the `.tether/` line to the repository's `.gitignore` (created when absent), atomically. */
-export function addTetherToGitignore(repoRoot: string): void {
+export async function addTetherToGitignore(repoRoot: string): Promise<void> {
   const path = join(repoRoot, '.gitignore')
   let text = ''
-  try { text = readFileSync(path, 'utf8') } catch { /* no file yet */ }
-  writeTextAtomic(path, gitignoreWithTether(text))
+  try { text = await mainExecutor().run('readText', [path]) } catch { /* no file yet */ }
+  await writeTextAtomic(path, gitignoreWithTether(text))
 }
 
 export type NoteRead = { ok: true; text: string; mtimeMs: number } | { ok: false; missing: boolean; message: string }
 
-export function readNote(path: string): NoteRead {
+export async function readNote(path: string): Promise<NoteRead> {
+  const ex = mainExecutor()
   try {
-    const text = readFileSync(path, 'utf8')
-    const mtimeMs = statSync(path).mtimeMs
+    const text = await ex.run('readText', [path])
+    const mtimeMs = (await ex.run('stat', [path])).mtimeMs
     return { ok: true, text, mtimeMs }
   } catch (err) {
     const e = err as NodeJS.ErrnoException
-    return { ok: false, missing: e.code === 'ENOENT', message: e.message }
+    return { ok: false, missing: isNotFound(e), message: e.message }
   }
 }
 
 /** Temp file in the same folder + rename: the file on disk is always a whole note (the last one written). */
-export function writeTextAtomic(path: string, text: string): void {
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.${process.pid}.tmp`
-  try {
-    writeFileSync(tmp, text, 'utf8')
-    renameSync(tmp, path)
-  } catch (err) {
-    // A failed write or rename (read-only target, file in use) must not leave the temp file next to the user's file.
-    try { rmSync(tmp, { force: true }) } catch { /* best effort */ }
-    throw err
+export async function writeTextAtomic(path: string, text: string): Promise<void> {
+  const ex = mainExecutor()
+  // The common case is a folder that exists: one request; the folder is created only when the write says it is missing.
+  // A failed write or rename (read-only target, file in use) leaves no temp file behind (the operation removes it).
+  try { await ex.run('writeTextAtomic', [path, text]) } catch (err) {
+    if (!isNotFound(err)) throw err
+    await ex.run('mkdirp', [dirname(path)])
+    await ex.run('writeTextAtomic', [path, text])
   }
 }
 
 export type NoteWrite = { ok: true; mtimeMs: number } | { ok: false; message: string }
 
-export function writeNote(path: string, text: string): NoteWrite {
+export async function writeNote(path: string, text: string): Promise<NoteWrite> {
   try {
-    writeTextAtomic(path, text)
-    return { ok: true, mtimeMs: statSync(path).mtimeMs }
+    await writeTextAtomic(path, text)
+    return { ok: true, mtimeMs: (await mainExecutor().run('stat', [path])).mtimeMs }
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) }
   }
@@ -118,17 +120,19 @@ export interface PreparedNote {
  * unique, the empty file is written (the tab has a name and the watcher a file from the first moment). In a
  * repository without `.tether/` in `.gitignore`, says which repository, unless `declined` has it.
  */
-export function prepareNote(paneCwd: string | undefined, opts: { env?: NodeJS.ProcessEnv; now?: Date; declined?: readonly string[]; dir?: string } = {}): PreparedNote {
+export async function prepareNote(paneCwd: string | undefined, opts: { env?: NodeJS.ProcessEnv; now?: Date; declined?: readonly string[]; dir?: string } = {}): Promise<PreparedNote> {
+  const ex = mainExecutor()
   // `dir`: the folder exactly ("Minhas notas", "Outro"); the `.gitignore` question is only for a project's own `.tether/`.
   const dir = opts.dir ?? notesDirFor(paneCwd, opts.env)
-  mkdirSync(dir, { recursive: true })
-  const name = uniqueFileName(noteFileName(opts.now), candidate => existsSync(join(dir, candidate)))
+  await ex.run('mkdirp', [dir])
+  const taken = new Set((await ex.run('readdir', [dir])).map(e => e.name.toLowerCase())) // case-insensitive, like the volume
+  const name = uniqueFileName(noteFileName(opts.now), candidate => taken.has(candidate.toLowerCase()))
   const path = join(dir, name)
-  writeTextAtomic(path, '')
+  await writeTextAtomic(path, '')
   const out: PreparedNote = { path }
   if (paneCwd && !opts.dir) {
-    const root = findGitRoot(paneCwd)
-    if (root && gitignoreStatus(root) === 'missing' && !(opts.declined ?? []).some(d => sameDir(d, root))) out.askGitignore = root
+    const root = await findGitRoot(paneCwd)
+    if (root && (await gitignoreStatus(root)) === 'missing' && !(opts.declined ?? []).some(d => sameDir(d, root))) out.askGitignore = root
   }
   return out
 }
@@ -140,11 +144,12 @@ function sameDir(a: string, b: string): boolean {
 }
 
 /** Renames a note within its folder or to another; refuses to overwrite. */
-export function renameNote(from: string, to: string): { ok: true } | { ok: false; message: string } {
+export async function renameNote(from: string, to: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const ex = mainExecutor()
   try {
-    if (existsSync(to)) return { ok: false, message: 'Já existe um arquivo com esse nome.' }
-    mkdirSync(dirname(to), { recursive: true })
-    renameSync(from, to)
+    if (await ex.run('exists', [to])) return { ok: false, message: 'Já existe um arquivo com esse nome.' }
+    await ex.run('mkdirp', [dirname(to)])
+    await ex.run('rename', [from, to])
     return { ok: true }
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) }

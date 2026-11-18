@@ -11,16 +11,21 @@
 // Adapted: the text is kept in memory (the last read or written one), edits go through settings-file.ts (comments and layout
 // survive), a write is temp file + rename, and a watcher (the notes' NoteWatchers) re-reads the file after an outside edit and
 // reports the dotted keys that changed. While the file does not parse the last good values stay in force and writes are refused.
+// Disk work: the first read (constructor) and `migrateUserFiles` stay synchronous on purpose: they run once at boot, before the
+// window exists. Every later read (`reload`) and every write goes through the executor; a write is memory first (the values and
+// the text change at once, `set` still answers synchronously) and the file follows, the latest text only (`flush()` awaits it).
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import type { Executor } from '../../src/exec/executor.ts'
 import { diffSettings, parseSettings, setSettingText, type SettingsError } from '../shared/settings-file.ts'
-import { NoteWatchers, writeTextAtomic } from './note-files.ts'
+import { NoteWatchers } from './note-files.ts'
 
 export type SettingsPath = readonly (string | number)[]
 export type SetResult = { ok: true } | { ok: false; errors: SettingsError[] }
 
 export interface SettingsStoreOptions {
   path: string
+  executor: Executor
   /** The keys that changed after a write of ours (`self`) or an edit of the file by someone else (`disk`). */
   onChange?(keys: string[], source: 'self' | 'disk'): void
   /** The file's parse state changed: errors when it does not parse, an empty list once it does again. */
@@ -42,6 +47,8 @@ export class SettingsStore {
   private text = ''
   private good: Record<string, unknown> = {}
   private errs: SettingsError[] = []
+  private dirty = false
+  private writer: Promise<void> | undefined
 
   constructor(opts: SettingsStoreOptions) {
     this.path = opts.path
@@ -56,12 +63,39 @@ export class SettingsStore {
   /** Parse errors of the file now; empty when it is valid (or absent). */
   get errors(): readonly SettingsError[] { return this.errs }
 
-  private readDisk(): string {
+  /** Boot only (the constructor): later reads go through the executor. */
+  private readDiskBoot(): string {
     try { return readFileSync(this.path, 'utf8') } catch { return '' }
   }
 
+  private async readDisk(): Promise<string> {
+    try { return await this.opts.executor.run('readText', [this.path]) } catch { return '' }
+  }
+
+  /** Resolves when the file holds what the store holds (no write pending). */
+  flush(): Promise<void> { return this.writer ?? Promise.resolve() }
+
+  /** Memory is ahead of the file: one writer drains the latest text, however many edits piled up. */
+  private persist(): void {
+    this.dirty = true
+    if (this.writer) return
+    const ex = this.opts.executor
+    this.writer = (async () => {
+      while (this.dirty) {
+        this.dirty = false
+        try {
+          await ex.run('mkdirp', [dirname(this.path)])
+          await ex.run('writeTextAtomic', [this.path, this.text])
+        } catch (err) {
+          this.opts.log?.(`configurações: não foi possível gravar ${this.path}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      this.writer = undefined
+    })()
+  }
+
   private load(): void {
-    this.text = this.readDisk()
+    this.text = this.readDiskBoot()
     const parsed = parseSettings(this.text)
     this.errs = parsed.errors
     if (!parsed.errors.length) this.good = parsed.value
@@ -82,9 +116,10 @@ export class SettingsStore {
   close(): void { this.watchers?.close(); this.watchers = undefined }
 
   /** Re-reads the file; reports what changed (the last good values against the new ones). Our own writes read back equal: no event. */
-  reload(): void {
-    const text = this.readDisk()
-    if (text === this.text) return
+  async reload(): Promise<void> {
+    if (this.writer) return // the file is behind the memory: our own write will land, and its echo reads back equal
+    const text = await this.readDisk()
+    if (this.writer || text === this.text) return
     const before = this.good
     const hadErrors = this.errs.length > 0
     this.text = text
@@ -128,10 +163,10 @@ export class SettingsStore {
     if (text === this.text) return { ok: true }
     const parsed = parseSettings(text)
     if (parsed.errors.length) return { ok: false, errors: parsed.errors }
-    writeTextAtomic(this.path, text)
     const keys = diffSettings(this.good, parsed.value)
     this.text = text
     this.good = parsed.value
+    this.persist()
     if (keys.length) this.opts.onChange?.(keys, 'self')
     return { ok: true }
   }

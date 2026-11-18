@@ -13,7 +13,7 @@ function loadTable(url?: string): Promise<OpTable> {
 }
 
 /** The closed table, loaded on demand (also used at boot to keep a synchronous writer for the fatal-exit path). */
-export function loadOpTable(): Promise<OpTable> { return loadTable() }
+export function loadOpTable(tableUrl?: string): Promise<OpTable> { return loadTable(tableUrl) }
 
 export class InlineTransport {
   private readonly tableUrl: string | undefined

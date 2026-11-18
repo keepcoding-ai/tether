@@ -1,7 +1,11 @@
-// Ratchet: the tetherd loop must not touch synchronous fs / child_process. Walks the static import graph from the
-// daemon entries (src/daemon/main.ts, the extensions' daemon.ts that ext-host loads, src/ptyd/main.ts when present)
-// and counts uses of identifiers really imported from node:fs / node:child_process. The count per file may only
-// go down: baseline in arch.sync-ratchet.baseline.json. TETHER_RATCHET_UPDATE=1 rewrites it, lowering only.
+// Ratchet: the tetherd loop and the Electron main loop must not touch synchronous fs / child_process. Walks the static
+// import graph from the entries of each loop and counts uses of identifiers really imported from node:fs / node:child_process.
+// The count per file may only go down. Two roots, two baselines:
+//   tetherd: src/daemon/main.ts, the extensions' daemon.ts that ext-host loads, src/ptyd/main.ts when present
+//            -> arch.sync-ratchet.baseline.json
+//   main:    app/main/main.ts and every extensions/<id>/main.ts (the Electron main process)
+//            -> arch.sync-ratchet.main.baseline.json
+// TETHER_RATCHET_UPDATE=1 rewrites the baselines, lowering only (a missing baseline is created).
 import assert from 'node:assert/strict'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -10,7 +14,6 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..', '..')
-const BASELINE_PATH = join(HERE, 'arch.sync-ratchet.baseline.json')
 const FS_MODULES = new Set(['node:fs', 'fs'])
 const CP_MODULES = new Set(['node:child_process', 'child_process'])
 const CP_NAMES = new Set(['execFileSync', 'execSync', 'spawnSync'])
@@ -134,14 +137,24 @@ function resolveSpec(from: string, spec: string): string | null {
   return null
 }
 
-// Roots: the daemon main plus every extensions/<id>/daemon.ts (ext-host loads them through extensions/index.daemon.ts).
-function entries(): string[] {
-  const roots = [join(ROOT, 'src/daemon/main.ts'), join(ROOT, 'src/ptyd/main.ts')]
+interface Loop { name: string; baseline: string; entries(): string[] }
+
+function extensionEntries(file: string): string[] {
   const extDir = join(ROOT, 'extensions')
-  for (const d of readdirSync(extDir, { withFileTypes: true })) {
-    if (d.isDirectory()) roots.push(join(extDir, d.name, 'daemon.ts'))
-  }
-  return roots.filter((f) => existsSync(f))
+  return readdirSync(extDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => join(extDir, d.name, file))
+}
+
+// Roots: the daemon main plus every extensions/<id>/daemon.ts (ext-host loads them through extensions/index.daemon.ts).
+const TETHERD: Loop = {
+  name: 'tetherd',
+  baseline: join(HERE, 'arch.sync-ratchet.baseline.json'),
+  entries: () => [join(ROOT, 'src/daemon/main.ts'), join(ROOT, 'src/ptyd/main.ts'), ...extensionEntries('daemon.ts')].filter((f) => existsSync(f)),
+}
+// Roots: the Electron main process plus every extensions/<id>/main.ts (index.main.ts loads them in that process).
+const MAIN: Loop = {
+  name: 'main',
+  baseline: join(HERE, 'arch.sync-ratchet.main.baseline.json'),
+  entries: () => [join(ROOT, 'app/main/main.ts'), ...extensionEntries('main.ts')].filter((f) => existsSync(f)),
 }
 
 const rel = (f: string): string => relative(ROOT, f).split('\\').join('/')
@@ -150,10 +163,10 @@ const isVendor = (f: string): boolean => rel(f).split('/').includes('vendor')
 // The coordinator graph must never reach them (see the guard test below); they are neither counted nor traversed.
 const isExempt = (f: string): boolean => /^src\/exec\/(ops-[^/]+|worker|table)\.ts$/.test(rel(f))
 
-function measure(): { counts: Record<string, number>; vendor: Record<string, number>; ids: Record<string, string[]>; reached: number; exempt: string[] } {
+function measure(loop: Loop): { counts: Record<string, number>; vendor: Record<string, number>; ids: Record<string, string[]>; reached: number; exempt: string[] } {
   const seen = new Set<string>()
   const exempt: string[] = []
-  const queue = entries()
+  const queue = loop.entries()
   const counts: Record<string, number> = {}
   const vendor: Record<string, number> = {}
   const ids: Record<string, string[]> = {}
@@ -175,44 +188,48 @@ function measure(): { counts: Record<string, number>; vendor: Record<string, num
   return { counts: sort(counts), vendor: sort(vendor), ids, reached: seen.size, exempt }
 }
 
-test('the tetherd import graph does not grow its synchronous fs / child_process use', () => {
-  const { counts, vendor, ids, reached } = measure()
-  assert.ok(reached > 20, `import graph looks too small (${reached} files): entries or resolution broke`)
-  const update = process.env.TETHER_RATCHET_UPDATE === '1'
-  const hasBaseline = existsSync(BASELINE_PATH)
-  const base: { files: Record<string, number>; vendor?: Record<string, number> } = hasBaseline
-    ? JSON.parse(readFileSync(BASELINE_PATH, 'utf8'))
-    : { files: {} }
-  if (!hasBaseline && !update) assert.fail(`missing ${rel(BASELINE_PATH)}: create it with TETHER_RATCHET_UPDATE=1`)
+for (const loop of [TETHERD, MAIN]) {
+  test(`the ${loop.name} import graph does not grow its synchronous fs / child_process use`, () => {
+    const { counts, vendor, ids, reached } = measure(loop)
+    assert.ok(reached > 20, `import graph looks too small (${reached} files): entries or resolution broke`)
+    const update = process.env.TETHER_RATCHET_UPDATE === '1'
+    const hasBaseline = existsSync(loop.baseline)
+    const base: { files: Record<string, number>; vendor?: Record<string, number> } = hasBaseline
+      ? JSON.parse(readFileSync(loop.baseline, 'utf8'))
+      : { files: {} }
+    if (!hasBaseline && !update) assert.fail(`missing ${rel(loop.baseline)}: create it with TETHER_RATCHET_UPDATE=1`)
 
-  const grew: string[] = []
-  const shrank: string[] = []
-  if (hasBaseline) {
-    for (const [f, n] of Object.entries(counts)) {
-      const b = base.files[f] ?? 0
-      if (n > b) grew.push(`${f}: ${n} sync use(s), baseline ${b} [${ids[f]!.join(', ')}]`)
-      else if (n < b) shrank.push(`${f}: ${n}, baseline ${b}`)
+    const grew: string[] = []
+    const shrank: string[] = []
+    if (hasBaseline) {
+      for (const [f, n] of Object.entries(counts)) {
+        const b = base.files[f] ?? 0
+        if (n > b) grew.push(`${f}: ${n} sync use(s), baseline ${b} [${ids[f]!.join(', ')}]`)
+        else if (n < b) shrank.push(`${f}: ${n}, baseline ${b}`)
+      }
+      for (const [f, b] of Object.entries(base.files)) if (!(f in counts)) shrank.push(`${f}: 0 (or no longer reached), baseline ${b}`)
     }
-    for (const [f, b] of Object.entries(base.files)) if (!(f in counts)) shrank.push(`${f}: 0 (or no longer reached), baseline ${b}`)
-  }
 
-  if (grew.length) {
-    assert.fail(`synchronous fs/child_process use grew in the tetherd loop (the baseline only goes down; use async APIs or move the work off the loop):\n  ${grew.join('\n  ')}`)
-  }
-  if (update) {
-    writeFileSync(BASELINE_PATH, JSON.stringify({ files: counts, vendor }, null, 2) + '\n')
-    return
-  }
-  if (shrank.length) {
-    assert.fail(`sync use went down: lower the baseline with TETHER_RATCHET_UPDATE=1 (the ratchet only moves down):\n  ${shrank.join('\n  ')}`)
-  }
-})
+    if (grew.length) {
+      assert.fail(`synchronous fs/child_process use grew in the ${loop.name} loop (the baseline only goes down; use async APIs or move the work off the loop):\n  ${grew.join('\n  ')}`)
+    }
+    if (update) {
+      writeFileSync(loop.baseline, JSON.stringify({ files: counts, vendor }, null, 2) + '\n')
+      return
+    }
+    if (shrank.length) {
+      assert.fail(`sync use went down: lower the baseline with TETHER_RATCHET_UPDATE=1 (the ratchet only moves down):\n  ${shrank.join('\n  ')}`)
+    }
+  })
 
-test('the coordinator graph (daemon main and extension daemons) never imports the executor operations', () => {
-  const { exempt, reached } = measure()
-  assert.ok(reached > 20, `import graph looks too small (${reached} files)`)
-  assert.deepEqual(exempt, [], `the loop must reach src/exec/ops-*.ts, worker.ts and table.ts only through a worker, never by import: ${exempt.join(', ')}`)
-  // The guard is only worth something when the exempt pattern really matches the files.
+  test(`the ${loop.name} graph never imports the executor operations`, () => {
+    const { exempt, reached } = measure(loop)
+    assert.ok(reached > 20, `import graph looks too small (${reached} files)`)
+    assert.deepEqual(exempt, [], `the loop must reach src/exec/ops-*.ts, worker.ts and table.ts only through a worker (or a computed path), never by import: ${exempt.join(', ')}`)
+  })
+}
+
+test('the exempt pattern matches the executor operation files', () => {
   for (const name of ['ops-fs.ts', 'worker.ts', 'table.ts']) assert.ok(isExempt(join(ROOT, 'src/exec', name)), name)
   assert.ok(!isExempt(join(ROOT, 'src/exec/executor.ts')))
 })
