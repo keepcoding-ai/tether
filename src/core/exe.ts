@@ -43,12 +43,18 @@ export interface ExeResult {
   argv0?: ExeName
 }
 
+let logSink: ((line: string) => void) | undefined
+/** The tetherd routes every `exeLog` line (already formatted, newline included) into its append batch; other processes keep appending directly. */
+export function setExeLogSink(sink: ((line: string) => void) | undefined): void { logSink = sink }
+
 /** A logger for callers that have none: one line per message in <home>/tetherd.log, tagged with pid and `tag`. */
 export function exeLog(home: string, tag: string): (msg: string) => void {
   return (msg) => {
+    const line = `${new Date().toISOString()} [${process.pid} ${tag}] ${msg}\n`
+    if (logSink) { logSink(line); return }
     try {
       mkdirSync(home, { recursive: true })
-      appendFileSync(join(home, 'tetherd.log'), `${new Date().toISOString()} [${process.pid} ${tag}] ${msg}\n`)
+      appendFileSync(join(home, 'tetherd.log'), line)
     } catch { /* best effort */ }
   }
 }

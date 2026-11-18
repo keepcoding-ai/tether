@@ -13,6 +13,7 @@ export interface OpTypes {
   readText: { args: [path: string]; value: string }
   writeTextAtomic: { args: [path: string, text: string]; value: null }
   appendText: { args: [path: string, text: string]; value: null }
+  rename: { args: [from: string, to: string]; value: null }
   rm: { args: [path: string]; value: null }
   mkdirp: { args: [path: string]; value: null }
   stat: { args: [path: string]; value: FileStat }
@@ -30,6 +31,7 @@ export const OP_META = {
   readText: { lane: 'io', idempotent: true },
   writeTextAtomic: { lane: 'io', idempotent: true },
   appendText: { lane: 'io', idempotent: false },
+  rename: { lane: 'io', idempotent: false },
   rm: { lane: 'io', idempotent: true },
   mkdirp: { lane: 'io', idempotent: true },
   stat: { lane: 'io', idempotent: true },

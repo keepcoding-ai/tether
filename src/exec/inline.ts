@@ -12,6 +12,9 @@ function loadTable(url?: string): Promise<OpTable> {
   return loaded
 }
 
+/** The closed table, loaded on demand (also used at boot to keep a synchronous writer for the fatal-exit path). */
+export function loadOpTable(): Promise<OpTable> { return loadTable() }
+
 export class InlineTransport {
   private readonly tableUrl: string | undefined
   constructor(opts: { tableUrl?: string } = {}) { this.tableUrl = opts.tableUrl }

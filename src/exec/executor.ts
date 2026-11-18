@@ -163,7 +163,9 @@ export class Executor {
     const meta = OP_META[op]
     if (!meta) return Promise.reject(new Error(`unknown operation: ${String(op)}`))
     const req: ExecRequest = { id: this.nextId++, op, args }
-    const p = this.perf.timedAsync(`exec:${op}`, async () => {
+    // Own counters (n, total, max per op) in the ruler's label table: the wall time is spent in the worker, not in the loop,
+    // so it must not raise `slow`. Only a stuck io lane raises `slow-io`.
+    const p = (async (): Promise<OpValue<K>> => {
       const t0 = performance.now()
       let timer: NodeJS.Timeout | undefined
       const call = this.transport.call(meta.lane, req)
@@ -184,8 +186,9 @@ export class Executor {
         return reply.value as OpValue<K>
       } finally {
         if (timer) clearTimeout(timer)
+        this.perf.count(`exec:${op}`, performance.now() - t0)
       }
-    })
+    })()
     this.inflight.add(p)
     const done = (): void => { this.inflight.delete(p) }
     p.then(done, done)

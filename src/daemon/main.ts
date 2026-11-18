@@ -2,10 +2,16 @@
 // first listener owns it; a second one gets EADDRINUSE and leaves). Writes <home>/tetherd.pid, logs to
 // <home>/tetherd.log. Keeps serving through uncaught errors while the server is up; goes down cleanly
 // (PTY trees killed, pid file removed) on SIGINT/SIGTERM/SIGHUP(console closed)/SIGBREAK and on `shutdown`.
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { join } from 'node:path'
+import { setExeLogSink } from '../core/exe.ts'
+import { perf } from '../core/perf.ts'
 import { pidExists } from '../core/liveness.ts'
+import { AppendBatch } from '../exec/append-batch.ts'
+import { createExecutor } from '../exec/executor.ts'
+import { loadOpTable } from '../exec/inline.ts'
+import { PerfLog } from '../exec/perf-log.ts'
 import { tetherHome } from '../core/paths.ts'
 import { pingDaemon } from './client.ts'
 import { disabledExtensions } from '../agents/load.ts'
@@ -35,15 +41,28 @@ async function main(): Promise<void> {
   const home = tetherHome()
   const pipe = pipePath(home, userInfo().username)
   mkdirSync(home, { recursive: true })
-  const log = (msg: string): void => {
-    try { appendFileSync(daemonLogPath(home), `${new Date().toISOString()} [${process.pid}] ${msg}\n`) } catch { /* disk full or gone */ }
+  // The one executor of this process: the log (and the persisted ruler) are its first clients. Lines are batched in memory and
+  // appended by the io worker; the loop never touches the disk for them.
+  const executor = createExecutor()
+  const emergency = (await loadOpTable()).appendText // sync writer for the fatal path only (see AppendBatch.emergencySync)
+  const logBatch = new AppendBatch(executor, daemonLogPath(home), { emergency })
+  const log = (msg: string): void => logBatch.write(`${new Date().toISOString()} [${process.pid}] ${msg}\n`)
+  setExeLogSink((line) => logBatch.write(line))
+  const perfLog = new PerfLog(executor, perf, home, { everyMs: Number(process.env.TETHER_PERF_PERSIST_MS) || 60_000, emergency })
+  // Flushes both batches and stops the workers, never waiting more than 2 s (a stuck disk must not hold the exit).
+  const finish = async (code: number): Promise<never> => {
+    await Promise.race([
+      perfLog.stop().then(() => logBatch.close()).then(() => executor.close()),
+      new Promise((r) => setTimeout(r, 2000)),
+    ]).catch(() => {})
+    return process.exit(code)
   }
 
   const running = await pingDaemon(pipe)
   if (running) {
     log(`another tetherd (pid ${running.pid}) is already running on ${pipe}; exiting`)
     process.stdout.write(`tetherd já está em execução (pid ${running.pid}) em ${pipe}\n`)
-    process.exit(0)
+    return void await finish(0)
   }
   const stale = readPidFile(home)
   if (stale !== undefined && stale !== process.pid) {
@@ -57,7 +76,7 @@ async function main(): Promise<void> {
     exiting = true
     log(`exiting: ${reason}`)
     if (readPidFile(home) === process.pid) rmSync(pidFilePath(home), { force: true }) // never a successor's file
-    process.exit(code)
+    void finish(code)
   }
 
   // Extensions activate before the slots load: an agent they register must be known when slot metas are read. One the
@@ -77,19 +96,20 @@ async function main(): Promise<void> {
       if (winner) {
         log(`pipe ${pipe} taken by tetherd pid ${winner.pid} (started at the same time); leaving`)
         process.stdout.write(`tetherd já está em execução (pid ${winner.pid}) em ${pipe}\n`)
-        process.exit(0)
+        return void await finish(0)
       }
       log(`pipe ${pipe} is taken by a process that is not a tetherd (${err.message}); leaving`)
       process.stderr.write(`tetherd: o canal ${pipe} está ocupado por um programa que não é o tetherd; feche-o ou use outro TETHER_PIPE\n`)
-      process.exit(2)
+      return void await finish(2)
     }
     throw e
   }
   writeFileSync(pidFilePath(home), `${process.pid}\n`)
-  log(`started pid ${process.pid}, home ${home}`)
+  log(`started pid ${process.pid}, home ${home}, executor ${executor.mode}`)
   log(`extensions: ${extHost.activated.length} active${extHost.failed.length ? `, ${extHost.failed.length} failed` : ''}`)
   // Only the owner of the pipe gets here: the extensions' startup side effects (files, helper processes) run now.
   extHost.emitStarted()
+  perfLog.start()
 
   const shutdown = (reason: string, code = 0): void => {
     log(`shutting down: ${reason}`)
@@ -104,7 +124,7 @@ async function main(): Promise<void> {
   const guard = createGuard({ log, healthy: () => daemon.listening() })
   process.on('uncaughtException', (e) => { if (guard.uncaught(e)) shutdown('uncaught exception with inconsistent state', 1) })
   process.on('unhandledRejection', (r) => guard.unhandled(r))
-  process.on('exit', (code) => log(`process exit ${code}`))
+  process.on('exit', (code) => { log(`process exit ${code}`); logBatch.emergencySync(); perfLog.batch.emergencySync() })
 }
 
 void main().catch((e: Error) => {

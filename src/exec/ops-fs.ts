@@ -20,6 +20,7 @@ export const fsOps = {
     return null
   },
   appendText: (path: string, text: string): null => { appendFileSync(path, text); return null },
+  rename: (from: string, to: string): null => { renameSync(from, to); return null },
   rm: (path: string): null => { rmSync(path, { recursive: true, force: true }); return null },
   mkdirp: (path: string): null => { mkdirSync(path, { recursive: true }); return null },
   stat: (path: string) => {

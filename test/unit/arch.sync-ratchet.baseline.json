@@ -23,7 +23,7 @@
     "src/core/profile.ts": 7,
     "src/core/store.ts": 15,
     "src/core/user-settings.ts": 1,
-    "src/daemon/main.ts": 5,
+    "src/daemon/main.ts": 4,
     "src/daemon/notices.ts": 3,
     "src/daemon/pause.ts": 4,
     "src/daemon/proc-launch.ts": 2,

@@ -235,6 +235,19 @@ export class Perf {
     }
   }
 
+  /** Charges `ms` to `label` in the label table only: no `slow` incident, no part in the `loop-lag` culprit. For work done off the loop (executor ops). */
+  count(label: string, ms: number): void {
+    let key = label
+    let st = this.stats.get(key)
+    if (!st) {
+      if (this.stats.size >= MAX_TRACKED_KINDS) { key = OVERFLOW_KIND; st = this.stats.get(key) }
+      if (!st) { st = { n: 0, totalMs: 0, maxMs: 0 }; this.stats.set(key, st) }
+    }
+    st.n++
+    st.totalMs += ms
+    if (ms > st.maxMs) st.maxMs = ms
+  }
+
   private account(label: string, ms: number, wall = false): void {
     let key = label
     let st = this.stats.get(key)
