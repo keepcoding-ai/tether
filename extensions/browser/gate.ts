@@ -602,7 +602,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           if (typeof input === 'string') throw new GateError(`Tether.askUser: ${input}`, -32602)
           const req = control.ask(t.tabId, this.slotId, input)
           this.asks.add(req.cancel)
-          try { return { outcome: await req.outcome } } finally { this.asks.delete(req.cancel) }
+          try { return await req.answer } finally { this.asks.delete(req.cancel) }
         }
         case 'Tether.confirmUpload': {
           const t = await tabOf()

@@ -6,7 +6,7 @@
 // so the gate holds the page's events from the first instant.
 import { randomUUID } from 'node:crypto'
 import {
-  type AskInput, type AskOutcome, controlOf, type Control, type ControlEvent, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack,
+  type AskAnswer, type AskInput, controlOf, type Control, type ControlEvent, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack,
   type TabControl, transition,
 } from './control-rules.ts'
 
@@ -18,7 +18,8 @@ export interface ControlView {
   holder: 'agent' | 'user'
   paused: boolean
   why?: TabControl['why']
-  ask?: { message: string; kind: 'login' | 'other' }
+  /** The open request: its id (the card's collapsed state is kept per request), the agent's message and kind. */
+  ask?: { id: string; message: string; kind: 'login' | 'other' }
   askExpired?: boolean
 }
 
@@ -32,7 +33,7 @@ export interface ControlHooks {
   log(msg: string): void
 }
 
-interface Waiting { tabId: string; owner: string; resolve(o: AskOutcome): void; timer: NodeJS.Timeout }
+interface Waiting { tabId: string; owner: string; resolve(a: AskAnswer): void; timer: NodeJS.Timeout }
 
 export class ControlHub {
   private readonly tabs = new Map<string, TabControl>()
@@ -55,7 +56,7 @@ export class ControlHub {
     return {
       tabId, control: controlOf(t), holder: t.holder, paused: t.paused,
       ...(reason ? { reason } : {}), ...(t.why ? { why: t.why } : {}),
-      ...(t.ask ? { ask: { message: t.ask.message, kind: t.ask.kind } } : {}), ...(t.askExpired ? { askExpired: true } : {}),
+      ...(t.ask ? { ask: { id: t.ask.id, message: t.ask.message, kind: t.ask.kind } } : {}), ...(t.askExpired ? { askExpired: true } : {}),
     }
   }
   views(): ControlView[] { return [...this.tabs.keys()].map(id => this.view(id)) }
@@ -64,7 +65,7 @@ export class ControlHub {
     const before = this.state(tabId)
     const { state: after, settle } = transition(before, e)
     if (after !== before) this.tabs.set(tabId, after)
-    if (settle) this.settle(settle.id, settle.outcome)
+    if (settle) { const { id, ...answer } = settle; this.settle(id, answer) }
     if (after !== before) {
       const v = this.view(tabId)
       for (const l of [...this.listeners]) { try { l(v) } catch (err) { this.hooks.log(`controle: ouvinte falhou (${(err as Error).message})`) } }
@@ -72,12 +73,12 @@ export class ControlHub {
     return { before, after }
   }
 
-  private settle(id: string, outcome: AskOutcome): void {
+  private settle(id: string, answer: AskAnswer): void {
     const w = this.waiting.get(id)
     if (!w) return
     this.waiting.delete(id)
     clearTimeout(w.timer)
-    w.resolve(outcome)
+    w.resolve(answer)
   }
 
   /** A new tab: a popup of a tab the person holds is hers from birth. */
@@ -85,7 +86,7 @@ export class ControlHub {
     if (openerTabId !== undefined) this.apply(tabId, { type: 'popupOf', opener: this.state(openerTabId) })
   }
 
-  /** The person takes the tab ("Assumir o controle"). */
+  /** The person takes the tab ("Assumir"). */
   take(tabId: string): void { this.apply(tabId, { type: 'take' }) }
 
   /** "Recarregar limpo": the person holds the tab and the clean hand-off runs, whatever the state. */
@@ -94,12 +95,20 @@ export class ControlHub {
     await this.hooks.cleanHandoff(tabId).catch(e => this.hooks.log(`controle: entrega limpa falhou (${(e as Error).message})`))
   }
 
-  /** The person hands the tab back: the hand-back of a help request (any kind) first reloads the page (rule 16). */
-  async giveBack(tabId: string): Promise<void> {
+  /**
+   * The person hands the tab back, with an optional note to the agent: the hand-back of a help request (any kind) first reloads
+   * the page (rule 16).
+   */
+  giveBack(tabId: string, note?: unknown): Promise<void> { return this.handBack(tabId, { type: 'giveBack', note }) }
+
+  /** "Não consigo ajudar": the request ends `declined` and the tab goes back to the agent, reloaded as on a hand-back. */
+  decline(tabId: string, note?: unknown): Promise<void> { return this.handBack(tabId, { type: 'decline', note }) }
+
+  private async handBack(tabId: string, e: { type: 'giveBack' | 'decline'; note?: unknown }): Promise<void> {
     const t = this.state(tabId)
     if (t.holder !== 'user') return
-    if (reloadsOnGiveBack(t)) await this.hooks.beforeGiveBack(tabId).catch(e => this.hooks.log(`controle: recarga da devolução falhou (${(e as Error).message})`))
-    this.apply(tabId, { type: 'giveBack' })
+    if (reloadsOnGiveBack(t)) await this.hooks.beforeGiveBack(tabId).catch(err => this.hooks.log(`controle: recarga da devolução falhou (${(err as Error).message})`))
+    this.apply(tabId, e)
   }
 
   pause(tabId: string): void { this.apply(tabId, { type: 'pause' }) }
@@ -116,12 +125,13 @@ export class ControlHub {
 
   /**
    * The agent's help request (already checked by `checkAsk`): the tab goes to the person now (with the clean hand-off, whatever
-   * the kind) and the promise settles when she hands it back, the time runs out, the tab closes or the agent gives up (`cancel`).
+   * the kind) and the promise settles when she hands it back or declines (with her note, if any), the time runs out, the tab
+   * closes or the agent gives up (`cancel`).
    */
-  ask(tabId: string, owner: string, input: AskInput): { outcome: Promise<AskOutcome>; cancel(): void } {
+  ask(tabId: string, owner: string, input: AskInput): { answer: Promise<AskAnswer>; cancel(): void } {
     const id = randomUUID()
-    let resolve!: (o: AskOutcome) => void
-    const outcome = new Promise<AskOutcome>(r => { resolve = r })
+    let resolve!: (a: AskAnswer) => void
+    const answer = new Promise<AskAnswer>(r => { resolve = r })
     const timer = setTimeout(() => this.apply(tabId, { type: 'askTimeout', id }), input.timeoutMs)
     timer.unref?.()
     this.waiting.set(id, { tabId, owner, resolve, timer })
@@ -130,13 +140,13 @@ export class ControlHub {
       void this.hooks.cleanHandoff(tabId).catch(e => this.hooks.log(`controle: entrega limpa falhou (${(e as Error).message})`))
     }
     this.hooks.log(`controle: guia ${tabId} pede ajuda (${input.kind})`)
-    return { outcome, cancel: () => this.apply(tabId, { type: 'askDismissed', id }) }
+    return { answer, cancel: () => this.apply(tabId, { type: 'askDismissed', id }) }
   }
 
   /** The tab closed: its request is dismissed, its state forgotten. */
   closed(tabId: string): void {
     const ask = this.state(tabId).ask
-    if (ask) this.settle(ask.id, 'dismissed')
+    if (ask) this.settle(ask.id, { outcome: 'dismissed' })
     this.tabs.delete(tabId)
   }
 
@@ -146,7 +156,7 @@ export class ControlHub {
   }
 
   dispose(): void {
-    for (const id of [...this.waiting.keys()]) this.settle(id, 'dismissed')
+    for (const id of [...this.waiting.keys()]) this.settle(id, { outcome: 'dismissed' })
     this.listeners.clear()
   }
 }

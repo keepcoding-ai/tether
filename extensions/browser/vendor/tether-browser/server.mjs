@@ -44503,7 +44503,7 @@ var init_tool_texts = __esm({
     ADOPT_TOOL_TEXTS = {
       ask_user: {
         name: "WebAskUser",
-        description: 'Ask the person to do something in the active tab that only they can do, and wait until they hand the tab back. Use it when you are blocked by a login (a password, a two-factor code, a passkey), a captcha or a check that says you are a robot, or when the next step is a decision that belongs to the person (a purchase, sending a message in their name, accepting terms). Do not use it for things you can do yourself, and do not ask twice for the same thing. The tab goes to the person at once and this call WAITS for them, possibly many minutes: you cannot use the tab meanwhile, and the call ends when the person hands the tab back, dismisses the request, or when the wait runs out. Write the message as a short plain sentence that says what you need and why ("Log in to github.com so I can open the repository"); it is shown to the person as plain text and is cut at 500 characters. The answer says how it ended. After the tab comes back the page may have changed: take a new WebSnapshot before acting. Never ask the person to type a secret in the chat; this tool is how they enter it, in the page itself.',
+        description: 'Ask the person to do something in the active tab that only they can do, and wait until they hand the tab back. Use it when you are blocked by a login (a password, a two-factor code, a passkey), a captcha or a check that says you are a robot, or when the next step is a decision that belongs to the person (a purchase, sending a message in their name, accepting terms). Do not use it for things you can do yourself, and do not ask twice for the same thing. The tab goes to the person at once and this call WAITS for them, possibly many minutes: you cannot use the tab meanwhile, and the call ends when the person hands the tab back, dismisses the request, or when the wait runs out. Write the message as a short plain sentence that says what you need and why ("Log in to github.com so I can open the repository"); it is shown to the person as plain text and is cut at 500 characters. The answer says how it ended: "returned" (the person handed the tab back), "declined" (the person said they cannot help; the tab is back with you), "dismissed" or "timeout". On "returned" and "declined" the person may add a short note for you (plain text); read it, it may say what happened or what to do next. After the tab comes back the page may have changed: take a new WebSnapshot before acting. Never ask the person to type a secret in the chat; this tool is how they enter it, in the page itself.',
         params: {
           message: "What you need from the person, in one or two plain sentences (text only, cut at 500 characters).",
           kind: '"login" when you need the person to sign in (the host hands the tab over clean of scripts), "other" for anything else. Default "other".'
@@ -44517,6 +44517,7 @@ var init_tool_texts = __esm({
       paused: (reason) => "This tab is paused by the person." + (reason ? ` (${reason})` : ""),
       noChannel: "This host did not offer a way to ask the person for help (no control channel); nothing was done. Tell the user in your answer what you need from them.",
       returned: (note) => "outcome: returned. The person handed the tab back. The page may have changed; take a new snapshot." + (note ? ` The person left this note: ${JSON.stringify(note)}` : ""),
+      declined: (note) => "outcome: declined. The person said they cannot help with this request and handed the tab back. Do not ask again for the same thing; carry on without it or tell the user what is missing. The page may have changed; take a new snapshot." + (note ? ` The person left this note: ${JSON.stringify(note)}` : ""),
       dismissed: (note) => "outcome: dismissed. The person dismissed the request without handing the tab back. Do not ask again for the same thing; carry on without it or tell the user." + (note ? ` Note: ${JSON.stringify(note)}` : ""),
       timeout: (waitedMs) => `outcome: timeout. The person did not hand the tab back in ${waitedMs < 6e4 ? `${Math.max(1, Math.round(waitedMs / 1e3))} seconds` : `${Math.round(waitedMs / 6e4)} minutes`}. The request may still be open on their side. Do not wait again in a loop; tell the user what you need, or carry on without it. The page may have changed; take a new snapshot before acting.`,
       uploadDeclined: (path) => `The person did not allow sending ${path} to the page; nothing was sent. Do not try again or work around this; ask the user.`,
@@ -44957,7 +44958,7 @@ function createAdoptedMcp(opts) {
         const answer = await Promise.race([control.askUser({ targetId, message, kind, timeoutMs: askTimeoutMs }), expired]);
         control.invalidate(targetId);
         if (answer === void 0) throw new BrowserError("NO_CONTROL_CHANNEL", CONTROL_TEXTS.noChannel);
-        const text = answer === "timeout" || answer.outcome === "timeout" ? CONTROL_TEXTS.timeout(askTimeoutMs) : answer.outcome === "returned" ? CONTROL_TEXTS.returned(answer.note) : CONTROL_TEXTS.dismissed(answer.note);
+        const text = answer === "timeout" || answer.outcome === "timeout" ? CONTROL_TEXTS.timeout(askTimeoutMs) : answer.outcome === "returned" ? CONTROL_TEXTS.returned(answer.note) : answer.outcome === "declined" ? CONTROL_TEXTS.declined(answer.note) : CONTROL_TEXTS.dismissed(answer.note);
         return { content: [{ type: "text", text }] };
       } catch (err) {
         throw describeFailure(err);
@@ -45108,7 +45109,7 @@ var init_tab_control = __esm({
         const raw = await this.call(ASK_USER, { targetId: p.targetId, message: p.message.slice(0, ASK_USER_MESSAGE_MAX), kind: p.kind, timeoutMs: p.timeoutMs });
         if (raw === void 0) return void 0;
         const r = raw;
-        const outcome = r.outcome === "returned" || r.outcome === "timeout" || r.outcome === "dismissed" ? r.outcome : "dismissed";
+        const outcome = r.outcome === "returned" || r.outcome === "declined" || r.outcome === "timeout" || r.outcome === "dismissed" ? r.outcome : "dismissed";
         const note = typeof r.note === "string" && r.note !== "" ? r.note.slice(0, 500) : void 0;
         return { outcome, ...note ? { note } : {} };
       }

@@ -2,12 +2,14 @@
 // of the pad "Guias" read, so the same action has the same name, icon and rule everywhere. The renderer runs them through one
 // function (renderer.ts `runTabAction`). Who has the tab decides what is offered: the person takes a tab the agent holds and
 // hands back one she holds; the brake (pause/resume) is a separate bit and works on a tab not loaded yet (E12); "Recarregar
-// limpo" only on a tab she holds. Closing a tab the agent is using asks first, in the app's own dialog.
+// limpo" only on a tab she holds. Closing a tab the agent is using asks first, in the app's own dialog. While a help request is
+// open the hand-back reads "Pronto, devolver" and "Não consigo ajudar" (decline) follows it; after the request ran out the
+// hand-back reads "Devolver mesmo assim".
 import type { DialogSpec } from '../../app/shared/dialog.ts'
 import type { MenuPin } from '../../app/renderer/ext-api.ts'
 import { controlTexts } from './control-rules.ts'
 
-export type TabActionId = 'take' | 'give-back' | 'pause' | 'resume' | 'clean-reload' | 'close'
+export type TabActionId = 'take' | 'give-back' | 'decline' | 'pause' | 'resume' | 'clean-reload' | 'close'
 
 /** What the actions depend on: who holds the tab, the brake, whether main has it loaded, whether its agent lives. */
 export interface TabActionState {
@@ -16,6 +18,10 @@ export interface TabActionState {
   /** Main has the tab (a pane back from layout.json has none until it is shown). */
   loaded: boolean
   agentAlive: boolean
+  /** A help request of the agent is open on the tab (the person holds it on request). */
+  asking?: boolean
+  /** The last help request ran out and the tab was not handed back yet. */
+  expired?: boolean
 }
 
 export interface TabAction {
@@ -29,7 +35,7 @@ export interface TabAction {
 
 /** One icon per action, the same in the menu and the pad. */
 export const TAB_ACTION_ICON: Record<TabActionId, string> = {
-  take: 'hand-grabbing', 'give-back': 'arrow-u-up-left', pause: 'pause', resume: 'play', 'clean-reload': 'arrow-clockwise', close: 'x',
+  take: 'hand-grabbing', 'give-back': 'arrow-u-up-left', decline: 'x-circle', pause: 'pause', resume: 'play', 'clean-reload': 'arrow-clockwise', close: 'x',
 }
 
 export const CLOSE_TAB = 'Fechar guia'
@@ -48,8 +54,11 @@ export function tabActions(s: TabActionState, agent: string): TabAction[] {
   const t = controlTexts(agent)
   const out: TabAction[] = []
   const add = (id: TabActionId, label: string, danger?: boolean, pin?: MenuPin): void => { out.push({ id, icon: TAB_ACTION_ICON[id], label, ...(danger ? { danger } : {}), ...(pin ? { pin } : {}) }) }
-  if (s.holder === 'user') add('give-back', t.giveBack, false, s.agentAlive ? 'highlight' : undefined)
-  else if (s.loaded) add('take', t.take, false, s.agentAlive ? 'icon' : undefined)
+  if (s.holder === 'user') {
+    const asking = !!s.asking && s.agentAlive
+    add('give-back', asking ? t.done : s.expired ? t.giveBackAnyway : t.giveBack, false, s.agentAlive ? 'highlight' : undefined)
+    if (asking) add('decline', t.decline)
+  } else if (s.loaded) add('take', t.take, false, s.agentAlive ? 'icon' : undefined)
   // An ended agent has no brake: nobody answers on its tabs.
   // Held by the person, the brake stays in the menu only (the bar keeps the hand back and ×).
   if (s.agentAlive) add(s.paused ? 'resume' : 'pause', s.paused ? t.resume : t.pause, false, s.holder === 'user' ? undefined : 'icon')

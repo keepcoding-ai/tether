@@ -7,6 +7,11 @@
 // The bundle comes from "npm run build:tether" in packages/browser (workspace/atrium). --from defaults to
 // ../../../atrium/packages/browser/dist/tether-browser relative to this repository (the atrium monorepo layout). The
 // copy is refused when the folder disagrees with its own manifest.
+//
+// LOCAL PATCH in the vendored server.mjs (both manifests rehashed by hand): WebAskUser knows the `declined` outcome ("Não
+// consigo ajudar") and says so in its description and answer text. The source still lacks it: before vendoring again, carry the
+// same change into packages/browser/src/core/tool-texts.ts (ask_user description, CONTROL_TEXTS.declined),
+// src/host/tab-control.ts (askUser's outcome check) and src/host/adopt-mcp.ts (the answer text), or a new copy drops it.
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'

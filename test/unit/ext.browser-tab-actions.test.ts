@@ -16,7 +16,14 @@ describe('browser tab actions: what each state offers', () => {
   test('the agent has it: take, pause, close (close asks)', () => {
     assert.deepEqual(ids(st()), ['take', 'pause', 'close'])
     const acts = tabActions(st(), 'Sonda')
-    assert.deepEqual(acts.map(a => a.label), ['Assumir o controle', 'Pausar', `${CLOSE_TAB}…`])
+    assert.deepEqual(acts.map(a => a.label), ['Assumir', 'Pausar', `${CLOSE_TAB}…`])
+  })
+
+  test('a help request open: "Pronto, devolver", then "Não consigo ajudar"; after it ran out: "Devolver mesmo assim"', () => {
+    const acts = tabActions(st({ holder: 'user', asking: true }), 'Sonda')
+    assert.deepEqual(acts.map(a => [a.id, a.label]), [['give-back', 'Pronto, devolver'], ['decline', 'Não consigo ajudar'], ['pause', 'Pausar'], ['clean-reload', 'Recarregar limpo'], ['close', CLOSE_TAB]])
+    assert.equal(tabActions(st({ holder: 'user', expired: true }), 'Sonda')[0]!.label, 'Devolver mesmo assim')
+    assert.deepEqual(ids(st({ holder: 'user', asking: true, agentAlive: false })), ['give-back', 'clean-reload', 'close'], 'an ended agent waits for nothing')
   })
 
   test('the person has it: give back to the agent, pause, the clean reload, close (no question)', () => {

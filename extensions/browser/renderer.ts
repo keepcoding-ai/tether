@@ -16,6 +16,14 @@
 // E9: the bar (history buttons, the real address read-only and cut, loading, the owner chip with a colour derived from the slot id,
 // cookies of the site, logins not kept) and the tab (icon, title, owner chip, activity); the page area is the letterbox (the native
 // view sits at the fitted rectangle, the bands show the interface).
+// The bar now has three zones (bar-rules.ts decides what each shows): navigation; the owner pill (the owner's colour and what
+// goes on, in one phrase; a click goes to the agent) with the address, whose ⓘ opens a popover with the tab's facts (cookies,
+// logins in memory, debug mode, an address not kept); and the action bar, fed by the tab menu with the bar's pins. The notices
+// stack under it, one discreet line each. An open help request shows the "Sua vez" card in a dock (a band with the bar's
+// background, pointing at the owner pill) between the bar and the page (the page
+// is a native view: nothing in the interface can draw over it), with the agent's message, an optional note for the agent, and
+// "Não consigo ajudar" / "Pronto, devolver"; the pane gets a frame in the attention colour. Collapsed (per request), the card
+// disappears and the owner pill ("▾ ver pedido" / "▴") brings it back.
 // E11: the pad "Guias" (pad-rules.ts): every tab by agent, the ones with the person on top, a click goes to where the tab is (its
 // desk), the controls (pause / resume / close, all or one agent's, the ended agents'), the number on the icon, and "Ver guias do
 // ‹agente›" in the agent pane's tab menu.
@@ -24,13 +32,14 @@
 import type { GroupPanelPartInitParameters, IContentRenderer, IDockviewPanel, ITabRenderer } from 'dockview-core'
 import { type ActionBar, createActionBar } from '../../app/renderer/action-bar.ts'
 import type { AttentionHandle, ContextMenuEntry, PadHost, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
-import { icon } from '../../app/renderer/icons.ts'
+import { icon, type IconName } from '../../app/renderer/icons.ts'
 import { createTabHeader } from '../../app/renderer/tab-header.ts'
 import { factsOf } from '../../app/renderer/surface-host.ts'
 import { hostVisible } from '../../app/shared/surface-panel-rules.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { ControlView } from './control.ts'
-import { controlTexts, helpLine } from './control-rules.ts'
+import { ASK_NOTE_MAX, helpLine } from './control-rules.ts'
+import { type AskCard, type TabNotice, type TabView, tabFacts, tabView } from './bar-rules.ts'
 import type { BrowserChannels } from './ipc.ts'
 import { LOCAL_NETWORK_SITUATION, localNetworkDialog, type LocalNetworkAsk } from './local-network-rules.ts'
 import {
@@ -44,7 +53,7 @@ import {
   rowStateText, shortAddress,
 } from './pad-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { BACK, BAR_LOGINS_NOT_KEPT, COOKIES_HERE, COOKIES_HERE_SHORT, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, DEBUG_PILL, DEBUG_PILL_HINT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, POPUPS_REFUSED, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode } from './rules.ts'
+import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
 
@@ -164,13 +173,21 @@ export function activate(ui: TetherUi): IDisposable[] {
     const p = panels.get(paneIdOf(tabId))
     const v = controls.get(tabId)
     const owner = p?.saved?.ownerSlotId
-    return { holder: v?.holder ?? 'agent', paused: v?.paused ?? false, loaded: !!p?.loaded(), agentAlive: owner ? agentOf(owner)?.alive ?? false : false }
+    return {
+      holder: v?.holder ?? 'agent', paused: v?.paused ?? false, loaded: !!p?.loaded(), agentAlive: owner ? agentOf(owner)?.alive ?? false : false,
+      asking: v?.holder === 'user' && !!v.ask, expired: v?.holder === 'user' && !v.ask && !!v.askExpired,
+    }
   }
   const ownerName = (tabId: string): string => agentName(panels.get(paneIdOf(tabId))?.saved?.ownerSlotId)
-  /** Runs one action on one tab: the tab menu, the tab's ×, the pad's rows and the bar all come here. */
+  /**
+   * Runs one action on one tab: the tab menu, the tab's ×, the pad's rows, the bar, its notices and the card all come here. A
+   * hand-back or a decline carries the note the person wrote on the card, wherever it was clicked.
+   */
   const runTabAction = async (id: TabActionId, tabId: string): Promise<void> => {
+    const note = (): string | undefined => panels.get(paneIdOf(tabId))?.askNote() || undefined
     if (id === 'take') void ipc.invoke('take', tabId)
-    else if (id === 'give-back') void ipc.invoke('giveBack', tabId)
+    else if (id === 'give-back') void ipc.invoke('giveBack', tabId, note())
+    else if (id === 'decline') void ipc.invoke('decline', tabId, note())
     else if (id === 'pause') void ipc.invoke('pause', tabId)
     else if (id === 'resume') void ipc.invoke('resume', tabId)
     else if (id === 'clean-reload') void ipc.invoke('cleanReload', tabId)
@@ -183,14 +200,18 @@ export function activate(ui: TetherUi): IDisposable[] {
       closeTabs([tabId])
     }
   }
-  /** The tab's menu: who has it, the brake, the clean reload; the link and the address; where it lives; close (the core's order). The tab's right-click, the strip's "⋯" and the pad's row bar all read it. */
-  const tabMenuEntries = (paneId: string): ContextMenuEntry[] => {
+  /**
+   * The tab's menu: who has it, the brake, the clean reload; the link and the address; where it lives; close (the core's order).
+   * The tab's right-click, the strip's "⋯", the pad's row bar and the tab's own bar all read it; the bar passes its actions with
+   * the bar's pins (bar-rules.ts), the others take tab-actions.ts's.
+   */
+  const tabMenuEntries = (paneId: string, barActions?: TabAction[]): ContextMenuEntry[] => {
     const p = panels.get(paneId)
     const tabId = p?.saved?.tabId
     if (!p || !tabId) {
       return [{ icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(paneId) }, { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(paneId) }, 'sep', { icon: 'x', label: CLOSE_TAB, run: () => ui.panes.close(paneId) }]
     }
-    const acts = tabActions(actionState(tabId), ownerName(tabId))
+    const acts = barActions ?? tabActions(actionState(tabId), ownerName(tabId))
     const entry = (a: TabAction): ContextMenuEntry => ({ icon: a.icon, label: a.label, ...(a.danger ? { danger: true } : {}), ...(a.pin ? { pin: a.pin } : {}), run: () => { void runTabAction(a.id, tabId) } })
     const url = p.padTab()?.url ?? ''
     const owner = p.saved?.ownerSlotId
@@ -439,26 +460,47 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   class Panel implements IContentRenderer {
     readonly element = el('div', 'br-web')
+    // The bar has three zones: navigation; the owner pill and the address (its ⓘ keeps the tab's facts); the actions.
     private readonly bar = el('div', 'br-web-bar')
-    private readonly titleEl = el('span', 'br-web-title')
-    private readonly urlEl = el('span', 'br-web-url')
-    private readonly ownerEl = el('button', 'br-web-owner')
+    private readonly navEl = el('div', 'br-web-navs')
     private readonly backBtn = el('button', 'br-web-nav')
     private readonly fwdBtn = el('button', 'br-web-nav')
     private readonly reloadBtn = el('button', 'br-web-nav')
+    private readonly ownerEl = el('button', 'br-web-owner')
+    private readonly ownerText = el('span', 'br-web-owner-text')
+    private readonly ownerLive = el('span', 'br-web-owner-live')
+    private readonly ownerShort = el('span', 'br-web-owner-short')
+    private readonly ownerToggle = el('span', 'br-web-owner-toggle')
+    private readonly addrEl = el('div', 'br-web-addr')
+    private readonly infoBtn = el('button', 'br-web-info')
+    private readonly urlEl = el('span', 'br-web-url')
+    private readonly stateEl = el('span', 'br-web-state')
     private readonly spinner = el('span', 'br-web-spin')
-    private readonly cookiesEl = el('span', 'br-web-cookies', COOKIES_HERE_SHORT)
-    private readonly memoryEl = el('span', 'br-web-memory', BAR_LOGINS_NOT_KEPT)
-    private readonly debugEl = el('span', 'br-web-debug', DEBUG_PILL)
+    private readonly actionBar: ActionBar
+    /** The tab's facts, behind the ⓘ (a popover over the page: the surfaces freeze while it is open). */
+    private readonly popEl = el('div', 'br-web-pop')
+    private readonly popFacts = new Map<TabFactId, HTMLElement>()
+    private readonly popNone = el('p', 'br-web-pop-none', TAB_INFO_NONE)
+    private popHold: IDisposable | undefined
+    private popOff: (() => void) | undefined
+    /** The notices under the bar, one line each. */
+    private readonly notesEl = el('div', 'br-web-notes')
+    private notesDrawn = ''
+    /** The "Sua vez" card of an open help request, between the bar and the page (the page is a native view: nothing draws over it). */
+    private readonly turnEl = el('section', 'br-web-turn')
+    /**
+     * The dock that holds the card: a band with the bar's background between the bar (and notices) and the page. It owns its
+     * height and pushes the page down; collapsed, the whole band goes. The card's arrow points at the owner pill.
+     */
+    private readonly dockEl = el('div', 'br-web-dock')
+    private readonly dockRo = new ResizeObserver(() => this.placeTip())
+    private turnAsk = ''
+    private noteEl: HTMLTextAreaElement | undefined
+    /** The request whose card the person collapsed (a new request opens expanded). */
+    private collapsedAsk: string | undefined
     private actedAt = 0
     /** Set when this pane was maximized by taking the tab (so handing back restores only what we did). */
     maximizedByTake = false
-    private readonly stateEl = el('span', 'br-web-state')
-    private readonly ctlEl = el('span', 'br-web-control')
-    private readonly actBtn = el('button', 'br-web-act')
-    private readonly notice = el('div', 'br-web-notice')
-    private readonly noticeText = el('span', 'br-web-notice-text')
-    private readonly noticeBtn = el('button', 'br-web-notice-act')
     private ignoredUntil = 0
     private ignoredTimer: ReturnType<typeof setTimeout> | undefined
     readonly page = el('div', 'br-web-page')
@@ -478,11 +520,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     private checkQueued = false
 
     constructor() {
-      this.actBtn.type = 'button'
-      this.noticeBtn.type = 'button'
-      this.ctlEl.dataset.role = 'control'
-      this.notice.dataset.role = 'notice'
-      this.notice.append(this.noticeText, this.noticeBtn)
       for (const [b, name, label, action] of [[this.backBtn, 'arrow-left', BACK, 'back'], [this.fwdBtn, 'arrow-right', FORWARD, 'forward'], [this.reloadBtn, 'arrow-clockwise', RELOAD, 'reload']] as const) {
         b.type = 'button'
         b.dataset.nav = action
@@ -491,24 +528,64 @@ export function activate(ui: TetherUi): IDisposable[] {
         b.append(icon(name))
         b.addEventListener('click', () => { const id = this.info?.tabId; if (id && !b.disabled) void ipc.invoke(action, id) })
       }
+      this.navEl.append(this.backBtn, this.fwdBtn, this.reloadBtn)
       this.ownerEl.type = 'button'
       this.ownerEl.dataset.role = 'owner'
-      this.ownerEl.addEventListener('click', () => { const o = this.saved?.ownerSlotId; if (o) ui.agents.focus(o) })
+      this.ownerLive.hidden = true
+      this.ownerLive.title = 'O agente está agindo'
+      this.ownerToggle.hidden = true
+      // The long phrase and the short one are both in the pill; the pane's width (a container query) shows one.
+      this.ownerEl.append(el('span', 'br-web-owner-dot'), this.ownerText, this.ownerShort, this.ownerLive, this.ownerToggle)
+      // During a help request the pill opens and collapses the card; otherwise it goes to the agent.
+      this.ownerEl.addEventListener('click', () => {
+        if (this.turnAsk) { this.toggleTurn(); return }
+        const o = this.saved?.ownerSlotId
+        if (o) ui.agents.focus(o)
+      })
+      this.infoBtn.type = 'button'
+      this.infoBtn.dataset.role = 'info'
+      this.infoBtn.title = TAB_INFO_BUTTON
+      this.infoBtn.setAttribute('aria-label', TAB_INFO_BUTTON)
+      this.infoBtn.setAttribute('aria-haspopup', 'dialog')
+      this.infoBtn.setAttribute('aria-expanded', 'false')
+      this.infoBtn.append(icon('info'))
+      this.infoBtn.addEventListener('click', ev => { ev.stopPropagation(); this.togglePop() })
       this.urlEl.dataset.role = 'address'
       this.urlEl.setAttribute('aria-label', READ_ONLY_ADDRESS)
       this.spinner.dataset.role = 'loading'
       this.spinner.hidden = true
-      this.cookiesEl.dataset.role = 'cookies'
-      this.cookiesEl.title = COOKIES_HERE
-      this.cookiesEl.hidden = true
-      this.memoryEl.dataset.role = 'memory'
-      this.memoryEl.title = LOGINS_NOT_KEPT
-      this.memoryEl.hidden = true
-      this.debugEl.dataset.role = 'debug'
-      this.debugEl.title = DEBUG_PILL_HINT
-      this.debugEl.hidden = !debugOn(ui.settings)
-      this.bar.append(this.backBtn, this.fwdBtn, this.reloadBtn, this.ownerEl, this.titleEl, this.urlEl, this.spinner, this.cookiesEl, this.memoryEl, this.debugEl, this.stateEl, this.ctlEl, this.actBtn)
-      this.element.append(this.bar, this.notice, this.page)
+      this.addrEl.append(this.infoBtn, this.urlEl, this.stateEl, this.spinner)
+      this.actionBar = createActionBar({
+        label: 'Ações da guia', align: 'end', moreClass: 'br-web-more',
+        entries: () => this.barEntries(),
+        openMenu: (x, y) => ui.menus.context(x, y, this.barEntries()),
+      })
+      this.actionBar.element.classList.add('br-web-actions')
+      this.bar.append(this.navEl, this.ownerEl, this.addrEl, this.actionBar.element)
+      this.popEl.hidden = true
+      this.popEl.setAttribute('role', 'dialog')
+      this.popEl.setAttribute('aria-label', TAB_INFO_TITLE)
+      const list = el('ul', 'br-web-pop-list')
+      for (const id of Object.keys(TAB_FACTS) as TabFactId[]) {
+        const f = TAB_FACTS[id]
+        const li = el('li', 'br-web-pop-fact')
+        li.dataset.fact = id
+        li.hidden = true
+        const text = el('span', 'br-web-pop-text')
+        text.append(el('strong', 'br-web-pop-head', f.title), el('span', 'br-web-pop-body', f.text))
+        li.append(icon(f.icon as IconName), text)
+        this.popFacts.set(id, li)
+        list.append(li)
+      }
+      this.popEl.append(el('h4', 'br-web-pop-title', TAB_INFO_TITLE), list, this.popNone)
+      this.notesEl.dataset.role = 'notices'
+      this.turnEl.dataset.role = 'turn'
+      this.dockEl.hidden = true
+      this.dockEl.append(this.turnEl)
+      this.element.append(this.bar, this.notesEl, this.dockEl, this.page, this.popEl)
+      // The pill moves when the bar reflows (pane resized, narrow layout, phrase changed): the arrow follows it.
+      this.dockRo.observe(this.bar)
+      this.dockRo.observe(this.ownerEl)
       this.crashEl.dataset.role = 'crash'
       this.crashEl.hidden = true
       this.crashBtn.type = 'button'
@@ -523,13 +600,30 @@ export function activate(ui: TetherUi): IDisposable[] {
         void ipc.invoke('reopen', tabId).then(info => { if (info && panels.get(this.paneId) === this) this.bind(info) })
           .finally(() => { this.reopening = false; this.crashBtn.disabled = false })
       })
-      const run = (action: string | undefined): void => {
-        const tabId = this.info?.tabId ?? this.saved?.tabId
-        if (tabId && (action === 'take' || action === 'give-back' || action === 'resume' || action === 'clean-reload')) void runTabAction(action, tabId)
-      }
-      this.actBtn.addEventListener('click', () => run(this.actBtn.dataset.action))
-      this.noticeBtn.addEventListener('click', () => run(this.noticeBtn.dataset.action))
     }
+
+    private tabId(): string | undefined { return this.info?.tabId ?? this.saved?.tabId }
+
+    /** The bar's actions: the tab menu, with the pins of the bar's state (bar-rules.ts). */
+    private barEntries(): ContextMenuEntry[] { return tabMenuEntries(this.paneId, this.view().actions) }
+
+    /** What the bar shows now, from main's control view, the pane and the agent's life (bar-rules.ts). */
+    view(): TabView {
+      const tabId = this.tabId()
+      const owner = this.saved ? agentOf(this.saved.ownerSlotId) : undefined
+      return tabView({
+        ...(tabId && controls.get(tabId) ? { control: controls.get(tabId)! } : {}),
+        loaded: !!this.info,
+        agent: { name: agentName(this.saved?.ownerSlotId), alive: owner?.alive ?? false },
+        ignored: Date.now() < this.ignoredUntil,
+        popupsRefused: this.info?.popupsRefused ?? 0,
+        ...(this.collapsedAsk ? { collapsedAsk: this.collapsedAsk } : {}),
+        acting: this.activity() === 'agent',
+      })
+    }
+
+    /** The person's note on the open request's card ('' when none). */
+    askNote(): string { return this.noteEl?.value ?? '' }
 
     init(p: GroupPanelPartInitParameters): void {
       this.paneId = p.api.id
@@ -559,7 +653,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       if (!this.binding && !info.crashed) {
         this.boundSurface = info.surfaceId
         this.binding = ui.surfaces.attach(info.surfaceId, this.page)
-        // The person's click or key on the shield (the agent has the tab): the bar answers, with the way to take it.
+        // The person's click or key on the shield (the agent has the tab): a notice answers, with the way to take it.
         this.subs.push(this.binding.onShieldInput(i => { if (i.kind === 'down' || i.kind === 'key' || i.kind === 'wheel') this.ignored() }))
       }
       this.show(info)
@@ -582,45 +676,157 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.paintControl()
     }
 
-    /** The control, its action and the strip under the bar (design §12a). */
+    /** The owner pill, the actions, the notices and the card, from tabView (design §12a). */
     paintControl(): void {
-      const tabId = this.info?.tabId ?? this.saved?.tabId
+      const tabId = this.tabId()
       const v = tabId ? controls.get(tabId) : undefined
-      const t = controlTexts(agentName(this.saved?.ownerSlotId))
       // A tab not loaded yet can be paused (E12): its state waits in main and applies when it loads.
       const control = this.info ? (v?.control ?? 'agent') : v?.paused ? 'paused' : undefined
-      this.paintNav()
+      const view = this.view()
       this.element.dataset.control = control ?? ''
-      // E9: with the agent gone, the bar does not say it is using the tab (the chip says "encerrado" too).
-      const owner = this.saved ? agentOf(this.saved.ownerSlotId) : undefined
-      this.ctlEl.textContent = control === 'agent' && owner && !owner.alive ? t.ended : control ? t[control] : ''
-      const act = control === 'agent' ? ['take', t.take] : control === 'user' ? ['give-back', t.giveBack] : control === 'paused' ? ['resume', t.resume] : undefined
-      this.actBtn.hidden = !act
-      this.actBtn.dataset.action = act?.[0] ?? ''
-      this.actBtn.textContent = act?.[1] ?? ''
-      let strip: [string, string, string, string] | undefined // kind, text, action, button
-      if (v?.ask) strip = ['ask', t.ask(v.ask.message), 'give-back', t.done]
-      else if (v?.askExpired && v.holder === 'user') strip = ['expired', t.expired, 'give-back', t.giveBack]
-      else if (control === 'agent' && Date.now() < this.ignoredUntil) strip = ['ignored', t.ignored, 'take', t.take]
-      else if (v?.holder === 'user' && v.why === 'taken') strip = ['scripts', t.scripts, 'clean-reload', t.cleanReload]
-      else if ((this.info?.popupsRefused ?? 0) > 0) strip = ['popups', POPUPS_REFUSED, '', '']
-      this.notice.hidden = !strip
-      this.noticeBtn.hidden = !strip?.[3]
-      this.notice.dataset.kind = strip?.[0] ?? ''
-      this.noticeText.textContent = strip?.[1] ?? ''
-      this.noticeBtn.dataset.action = strip?.[2] ?? ''
-      this.noticeBtn.textContent = strip?.[3] ?? ''
+      this.element.dataset.attn = view.ask ? 'true' : 'false'
+      this.paintOwner(view)
+      this.paintNav(view.nav)
+      this.actionBar.refresh()
+      this.paintNotices(view.notices)
+      this.paintTurn(view.ask)
+    }
+
+    /** The pill: the owner's colour and name, and what goes on, in one phrase; a click goes to the agent (or toggles the card). */
+    private paintOwner(view: TabView): void {
+      const slotId = this.saved?.ownerSlotId
+      const agent = slotId ? agentOf(slotId) : undefined
+      const c = ownerChip(agent)
+      this.ownerEl.hidden = !slotId
+      this.ownerEl.dataset.tone = view.owner.tone
+      this.ownerEl.dataset.chip = slotId ? c.text : ''
+      this.ownerEl.dataset.ended = c.ended ? 'true' : 'false'
+      this.ownerEl.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
+      const toggle = view.owner.toggle
+      this.ownerEl.title = toggle ? toggle.title : agent ? `Ver o agente: ${agent.name}` : ''
+      if (toggle) this.ownerEl.setAttribute('aria-expanded', String(!view.ask?.collapsed)); else this.ownerEl.removeAttribute('aria-expanded')
+      this.ownerText.textContent = view.owner.text
+      this.ownerShort.textContent = view.owner.short
+      this.ownerLive.hidden = !view.owner.live
+      this.ownerToggle.hidden = !toggle
+      this.ownerToggle.replaceChildren(toggle?.mark ?? '', ...(toggle?.word ? [el('span', 'br-web-owner-word', ` ${toggle.word}`)] : []))
+    }
+
+    /** Collapses the open request's card (it disappears) or brings it back. */
+    private toggleTurn(): void {
+      this.collapsedAsk = this.collapsedAsk === this.turnAsk ? undefined : this.turnAsk
+      this.paintControl()
+    }
+
+    private paintNotices(notices: TabNotice[]): void {
+      const sig = JSON.stringify(notices)
+      if (sig === this.notesDrawn) return
+      this.notesDrawn = sig
+      this.notesEl.replaceChildren(...notices.map(n => {
+        const line = el('div', 'br-web-note')
+        line.dataset.kind = n.kind
+        line.append(icon('info'), el('span', 'br-web-note-text', n.text))
+        if (n.action) {
+          const b = el('button', 'br-web-note-act', n.action.label)
+          b.type = 'button'
+          b.dataset.action = n.action.id
+          const id = n.action.id
+          b.addEventListener('click', () => { const t = this.tabId(); if (t) void runTabAction(id, t) })
+          line.append(b)
+        }
+        return line
+      }))
+      this.notesEl.hidden = notices.length === 0
+    }
+
+    /**
+     * The "Sua vez" card, in the flow between the bar and the page (the page area shrinks; nothing covers the page). Built once
+     * per request, so her note survives repaints; collapsed, it disappears entirely (kept, with the note) and the pill brings it back.
+     */
+    private paintTurn(ask: AskCard | undefined): void {
+      this.dockEl.hidden = !ask || ask.collapsed
+      if (!ask) {
+        if (this.turnAsk) { this.turnAsk = ''; this.noteEl = undefined; this.turnEl.replaceChildren() }
+        return
+      }
+      if (this.turnAsk !== ask.id) {
+        this.turnAsk = ask.id
+        const head = el('header', 'br-web-turn-head')
+        const toggle = el('button', 'br-web-turn-toggle')
+        toggle.type = 'button'
+        toggle.dataset.action = 'toggle'
+        toggle.textContent = ask.collapse
+        toggle.addEventListener('click', () => this.toggleTurn())
+        head.append(el('span', 'br-web-turn-tag', ask.tag), el('h3', 'br-web-turn-title', ask.title), toggle)
+        const body = el('div', 'br-web-turn-body')
+        const quote = el('blockquote', 'br-web-turn-msg', ask.message)
+        // The note box stays closed: writing to the agent is secondary, opened by the footer's discreet link.
+        const say = el('label', 'br-web-turn-say')
+        say.hidden = true
+        const note = el('textarea', 'br-web-turn-note')
+        note.rows = 2
+        note.maxLength = ASK_NOTE_MAX
+        note.placeholder = ask.placeholder
+        this.noteEl = note
+        say.append(el('span', 'br-web-turn-say-text', ask.say), note)
+        const write = el('button', 'br-web-turn-write', ask.write)
+        write.type = 'button'
+        write.dataset.action = 'write'
+        write.addEventListener('click', () => { say.hidden = false; write.hidden = true; note.focus() })
+        const foot = el('footer', 'br-web-turn-foot')
+        const button = (id: 'decline' | 'give-back', label: string): HTMLButtonElement => {
+          const b = el('button', `br-web-turn-btn${id === 'give-back' ? ' br-web-turn-done' : ''}`, label)
+          b.type = 'button'
+          b.dataset.action = id
+          b.addEventListener('click', () => { const t = this.tabId(); if (t) void runTabAction(id, t) })
+          return b
+        }
+        foot.append(write, button('decline', ask.decline), button('give-back', ask.done))
+        body.append(quote, el('p', 'br-web-turn-hint', ask.hint), say, foot)
+        this.turnEl.replaceChildren(head, body)
+      }
+      this.turnEl.dataset.collapsed = ask.collapsed ? 'true' : 'false'
+      if (!ask.collapsed) this.placeTip()
+    }
+
+    /** The card's arrow sits under the owner pill: its offset from the card's left edge, kept inside the card. */
+    private placeTip(): void {
+      if (this.dockEl.hidden) return
+      const pill = this.ownerEl.getBoundingClientRect()
+      const card = this.turnEl.getBoundingClientRect()
+      if (card.width === 0) return
+      const tip = Math.min(Math.max(16, pill.left - card.left + 24), Math.max(16, card.width - 28))
+      this.turnEl.style.setProperty('--br-tip', `${Math.round(tip)}px`)
+    }
+
+    /** Opens or closes the ⓘ popover. It lies over the page area, so the surfaces freeze while it is open (the person opened it). */
+    private togglePop(open = this.popEl.hidden): void {
+      if (open === !this.popEl.hidden) return
+      this.popEl.hidden = !open
+      this.infoBtn.setAttribute('aria-expanded', String(open))
+      if (!open) {
+        this.popOff?.(); this.popOff = undefined
+        this.popHold?.dispose(); this.popHold = undefined
+        return
+      }
+      const r = this.infoBtn.getBoundingClientRect()
+      const host = this.element.getBoundingClientRect()
+      this.popEl.style.left = `${Math.max(4, r.left - host.left)}px`
+      this.popEl.style.top = `${r.bottom - host.top + 4}px`
+      this.popHold = ui.surfaces.freezeWhile('browser-tab-info')
+      const down = (ev: PointerEvent): void => { if (!this.popEl.contains(ev.target as Node) && !this.infoBtn.contains(ev.target as Node)) this.togglePop(false) }
+      const key = (ev: KeyboardEvent): void => { if (ev.key === 'Escape') { this.togglePop(false); this.infoBtn.focus() } }
+      document.addEventListener('pointerdown', down, true)
+      document.addEventListener('keydown', key, true)
+      this.popOff = () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key, true) }
     }
 
     private paint(): void {
       this.paintControl()
       const s = this.saved
-      const title = this.info?.title || s?.title || ''
       const url = this.info?.url ?? s?.url ?? ''
-      this.titleEl.textContent = title
       this.urlEl.textContent = displayUrl(url)
       this.urlEl.title = url.length <= 2048 && !/^data:/i.test(url) ? url : ''
-      dressChip(this.ownerEl, s?.ownerSlotId, s ? agentOf(s.ownerSlotId) : undefined)
       const crash = this.info?.crashed
       this.crashEl.hidden = !crash
       this.crashText.textContent = crash === 'suspect' ? CRASH_PAUSED : crash === 'browser' ? CRASH_BROWSER : crash === 'unresponsive' ? CRASH_HUNG : crash ? CRASH_GONE : ''
@@ -628,31 +834,29 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.element.dataset.state = state
       this.stateEl.textContent = state === 'loading' ? LOADING : state === 'not-loaded' ? NOT_LOADED : state === 'no-address' ? CRED_NOT_KEPT : ''
       this.spinner.hidden = state !== 'loading'
-      this.cookiesEl.hidden = !(this.info?.cookies && this.info.cookies > 0)
-      this.memoryEl.hidden = persistentLogins
-      this.paintDebug()
-      this.paintNav()
+      this.paintFacts()
       paintTabs()
       refreshPad()
     }
 
     /** History and reload answer only while the person holds the tab (U16). */
-    private paintNav(): void {
-      const tabId = this.info?.tabId
-      const mine = !!tabId && controls.get(tabId)?.control === 'user'
-      this.backBtn.disabled = !(mine && this.info?.canGoBack)
-      this.fwdBtn.disabled = !(mine && this.info?.canGoForward)
-      this.reloadBtn.disabled = !mine
+    private paintNav(on: boolean): void {
+      this.backBtn.disabled = !(on && this.info?.canGoBack)
+      this.fwdBtn.disabled = !(on && this.info?.canGoForward)
+      this.reloadBtn.disabled = !on
     }
 
-    /** The owner's chip follows the agent (name, ended). */
-    /** The "Depuração" pill: on the bar of every tab while the debug mode is on (debug-file.ts). */
-    paintDebug(): void { this.debugEl.hidden = !debugOn(ui.settings) }
-
-    repaintOwner(): void {
-      dressChip(this.ownerEl, this.saved?.ownerSlotId, this.saved ? agentOf(this.saved.ownerSlotId) : undefined)
-      this.paintControl()
+    /** The facts behind the ⓘ, and its dot while any of them applies. */
+    paintFacts(): void {
+      const facts = tabFacts({
+        cookies: this.info?.cookies ?? 0, persistentLogins, debug: debugOn(ui.settings), addressLost: this.element.dataset.state === 'no-address',
+      })
+      for (const [id, li] of this.popFacts) li.hidden = !facts.includes(id)
+      this.popNone.hidden = facts.length > 0
+      this.infoBtn.dataset.flag = facts.length > 0 ? 'true' : 'false'
     }
+
+    repaintOwner(): void { this.paintControl() }
 
     /** What the pad knows of this tab. */
     padTab(): PadTab | undefined {
@@ -679,9 +883,13 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     acted(): void {
       this.actedAt = Date.now()
+      this.paintLive()
       paintTabs()
-      setTimeout(paintTabs, ACTIVE_MS + 50)
+      setTimeout(() => { paintTabs(); this.paintLive() }, ACTIVE_MS + 50)
     }
+
+    /** The pill's live dot follows the agent's last command without redrawing the rest of the bar. */
+    private paintLive(): void { this.ownerLive.hidden = !this.view().owner.live }
 
     /** The letterbox: what main reports of the fitted page (the bands are the page area's own background). */
     letterbox(): { host: { width: number; height: number }; effective: { x: number; y: number; width: number; height: number } | undefined; scale: number; visibility: string } | undefined {
@@ -704,11 +912,14 @@ export function activate(ui: TetherUi): IDisposable[] {
       }, 0)
     }
 
-    closed(): void { this.binding?.dispose(); this.binding = undefined; clearTimeout(this.ignoredTimer) }
+    closed(): void { this.binding?.dispose(); this.binding = undefined; clearTimeout(this.ignoredTimer); this.togglePop(false) }
 
     dispose(): void {
+      this.togglePop(false)
+      this.actionBar.dispose()
       this.binding?.dispose()
       this.ro?.disconnect()
+      this.dockRo.disconnect()
       for (const s of this.subs) s.dispose()
       if (panels.get(this.paneId) === this) { panels.delete(this.paneId); refreshPad() }
       // The person closed the pane (a move re-creates it at once under the same id): closing the pane closes the tab.
@@ -831,7 +1042,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   }
   /**
    * Taking the tab maximizes its pane and handing it back restores the earlier size (design §6.1). Only a take by the person
-   * ("Assumir o controle") does it: a help request does not rearrange her screen. Only what we maximized is restored.
+   * ("Assumir") does it: a help request does not rearrange her screen. Only what we maximized is restored.
    */
   const followMaximize = (v: ControlView): void => {
     const p = panels.get(paneIdOf(v.tabId))
@@ -894,32 +1105,53 @@ export function activate(ui: TetherUi): IDisposable[] {
   void ipc.invoke('uploadOpen').then(list => { for (const a of list) enqueueUpload(a) }).catch(() => {})
   void ipc.invoke('downloads').then(list => { downloadsList = list; refreshPad() }).catch(() => {})
 
-  void ipc.invoke('status').then(s => { persistentLogins = s.persistentLogins; for (const p of pads) p.redraw() })
-  ui.test.expose('browserPanes', () => [...panels].map(([id, p]) => ({
+  void ipc.invoke('status').then(s => { persistentLogins = s.persistentLogins; for (const p of pads) p.redraw(); for (const p of panels.values()) p.paintFacts() })
+  ui.test.expose('browserPanes', () => [...panels].map(([id, p]) => {
+    const q = <T extends HTMLElement = HTMLElement>(sel: string): T | null => p.element.querySelector<T>(sel)
+    const owner = q('.br-web-owner')
+    const notes = [...p.element.querySelectorAll<HTMLElement>('.br-web-note')].map(n => ({
+      kind: n.dataset.kind ?? '', text: n.querySelector('.br-web-note-text')?.textContent ?? '', action: n.querySelector('.br-web-note-act')?.textContent ?? '',
+    }))
+    const turn = q('.br-web-turn')
+    const fact = (id: TabFactId): HTMLElement | null => q(`.br-web-pop-fact[data-fact="${id}"]`)
+    return {
     id, tabId: p.saved?.tabId, owner: p.saved?.ownerSlotId, state: p.element.dataset.state,
-    title: p.element.querySelector('.br-web-title')?.textContent ?? '', url: p.element.querySelector('.br-web-url')?.textContent ?? '',
-    stateText: p.element.querySelector('.br-web-state')?.textContent ?? '',
-    control: p.element.dataset.control ?? '', controlText: p.element.querySelector('.br-web-control')?.textContent ?? '',
-    action: (p.element.querySelector('.br-web-act') as HTMLElement | null)?.hidden ? '' : p.element.querySelector('.br-web-act')?.textContent ?? '',
-    notice: (p.element.querySelector('.br-web-notice') as HTMLElement | null)?.hidden ? '' : p.element.querySelector('.br-web-notice-text')?.textContent ?? '',
-    noticeKind: (p.element.querySelector('.br-web-notice') as HTMLElement | null)?.dataset.kind ?? '',
-    noticeAction: p.element.querySelector('.br-web-notice-act')?.textContent ?? '',
+    title: p.padTab()?.title ?? '', url: q('.br-web-url')?.textContent ?? '',
+    stateText: q('.br-web-state')?.textContent ?? '',
+    // The owner pill: its tone and phrase ("‹Agente› usando", "Com você · pedido do ‹agente›", "Pausada"...).
+    control: p.element.dataset.control ?? '', controlText: owner?.hidden ? '' : q('.br-web-owner-text')?.textContent ?? '', tone: owner?.dataset.tone ?? '',
+    // The bar's highlighted action, and every action shown on the bar.
+    action: q('.br-web-actions .ab-highlight')?.dataset.label ?? '',
+    actions: [...p.element.querySelectorAll<HTMLButtonElement>('.br-web-actions .ab-act[data-label]')].map(b => ({ pin: b.dataset.pin ?? '', label: b.dataset.label ?? '' })),
+    notices: notes,
+    notice: notes[0]?.text ?? '', noticeKind: notes[0]?.kind ?? '', noticeAction: notes[0]?.action ?? '',
+    attention: p.element.dataset.attn === 'true',
+    // The open request's card, also while collapsed (then hidden: `collapsed` says so); the pill's toggle text.
+    ownerToggle: (q('.br-web-owner-toggle')?.hidden ? '' : q('.br-web-owner-toggle')?.textContent) ?? '',
+    ask: turn && turn.childElementCount > 0 ? {
+      title: turn.querySelector('.br-web-turn-title')?.textContent ?? '', message: turn.querySelector('.br-web-turn-msg')?.textContent ?? '',
+      collapsed: turn.dataset.collapsed === 'true', buttons: [...turn.querySelectorAll<HTMLButtonElement>('.br-web-turn-btn')].map(b => b.textContent ?? ''),
+    } : null,
     group: ui.panes.find(id)?.group.panels.map(x => x.id) ?? [], front: ui.panes.find(id)?.group.activePanel?.id === id,
     place: ui.panes.describe(id)?.place,
     // E9: the bar and the tab
-    chip: p.element.querySelector('.br-web-owner')?.textContent ?? '',
-    ownerEnded: (p.element.querySelector('.br-web-owner') as HTMLElement | null)?.dataset.ended === 'true',
-    ownerHue: (p.element.querySelector('.br-web-owner') as HTMLElement | null)?.style.getPropertyValue('--br-hue') ?? '',
-    address: p.element.querySelector('.br-web-url')?.textContent ?? '',
+    chip: owner?.dataset.chip ?? '',
+    ownerEnded: owner?.dataset.ended === 'true',
+    ownerHue: owner?.style.getPropertyValue('--br-hue') ?? '',
+    address: q('.br-web-url')?.textContent ?? '',
     nav: Object.fromEntries([...p.element.querySelectorAll<HTMLButtonElement>('.br-web-nav')].map(b => [b.dataset.nav, !b.disabled])),
-    loadingShown: (p.element.querySelector('.br-web-spin') as HTMLElement | null)?.hidden === false,
-    cookiesShown: (p.element.querySelector('.br-web-cookies') as HTMLElement | null)?.hidden === false,
-    memoryShown: (p.element.querySelector('.br-web-memory') as HTMLElement | null)?.hidden === false,
-    memoryText: p.element.querySelector('.br-web-memory')?.textContent ?? '',
+    loadingShown: q('.br-web-spin')?.hidden === false,
+    // The ⓘ's facts (shown in its popover) and its dot.
+    infoFlag: q('.br-web-info')?.dataset.flag === 'true',
+    cookiesShown: fact('cookies')?.hidden === false,
+    memoryShown: fact('memory')?.hidden === false,
+    memoryText: fact('memory')?.querySelector('.br-web-pop-head')?.textContent ?? '',
+    debugShown: fact('debug')?.hidden === false,
     tab: tabInfoOf(id),
     maximized: ui.panes.find(id)?.api.isMaximized() ?? false,
     letterbox: p.letterbox(),
-  })))
+  }
+  }))
   /** The pane's tab strip element as the person sees it. */
   const tabInfoOf = (paneId: string): { title: string; owner: string; ownerHue: string; ownerEnded: boolean; icon: boolean; activity: string } | undefined => {
     const t = [...tabs].find(x => x.element.isConnected && x.paneId === paneId)
@@ -932,11 +1164,26 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
   }
   ui.test.expose('browserReveal', (id: string) => { ui.panes.reveal(id) })
-  /** Clicks a control button of a tab's pane the way the person would ('bar' or 'notice'). */
+  /**
+   * Clicks a control of a tab's pane the way the person would: 'bar' (the bar's highlighted action), 'notice' (the first notice's
+   * action), 'done' / 'decline' / 'toggle' (the card), 'owner', 'info', or a history button.
+   */
   ui.test.expose('browserClick', (tabId: string, where: string) => {
     const p = panels.get(paneIdOf(tabId))
-    const sel = where === 'notice' ? '.br-web-notice-act' : where === 'back' || where === 'forward' || where === 'reload' ? `.br-web-nav[data-nav="${where}"]` : where === 'owner' ? '.br-web-owner' : '.br-web-act'
+    const sel = where === 'notice' ? '.br-web-note-act'
+      : where === 'back' || where === 'forward' || where === 'reload' ? `.br-web-nav[data-nav="${where}"]`
+        : where === 'owner' ? '.br-web-owner' : where === 'info' ? '.br-web-info'
+          : where === 'done' ? '.br-web-turn [data-action="give-back"]' : where === 'decline' ? '.br-web-turn [data-action="decline"]'
+            : where === 'toggle' ? '.br-web-turn-toggle' : '.br-web-actions .ab-highlight'
     p?.element.querySelector<HTMLButtonElement>(sel)?.click()
+  })
+  /** Opens the note box of a tab's open request ("Escrever ao ‹agente›") and types the person's note. */
+  ui.test.expose('browserAskNote', (tabId: string, text: string) => {
+    const root = panels.get(paneIdOf(tabId))?.element
+    root?.querySelector<HTMLButtonElement>('.br-web-turn-write')?.click()
+    const note = root?.querySelector<HTMLTextAreaElement>('.br-web-turn-note')
+    if (note) note.value = text
+    return !!note
   })
   ui.test.expose('browserPad', () => {
     const pad = [...pads].find(p => p.element.isConnected)
@@ -1017,7 +1264,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     // The agent's name or life changed (it exited): every chip is dressed again.
     ipc.on('agent', a => { slots.set(a.slotId, a); for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
     ui.agents.onDidChange(() => { for (const p of panels.values()) p.repaintOwner(); paintTabs(); refreshPad() }),
-    ui.settings.onChange('debug', () => { for (const p of panels.values()) p.paintDebug() }),
+    ui.settings.onChange('debug', () => { for (const p of panels.values()) p.paintFacts() }),
     ipc.on('localNetworkCancelled', withdraw),
     ipc.on('uploadAsk', enqueueUpload),
     ipc.on('uploadCancelled', withdraw),

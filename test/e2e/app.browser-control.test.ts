@@ -38,7 +38,10 @@ import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 import { FAKE_SOUL_CMD as FAKE_SOUL, cleanEnv, daemonMain, electronPath, launchHidden, pidAlive, rawCdp, root, serverMjs, sleep, inBrowser } from './browser-kit.ts'
 
-type Pane = { id: string; tabId?: string; control: string; controlText: string; action: string; notice: string; noticeKind: string; noticeAction: string; front?: boolean }
+type Pane = {
+  id: string; tabId?: string; control: string; controlText: string; tone: string; action: string; notice: string; noticeKind: string; noticeAction: string; front?: boolean
+  attention: boolean; ask: { title: string; message: string; collapsed: boolean; buttons: string[] } | null
+}
 declare const window: {
   __tether: {
     connection(): { connected: boolean; pid?: number } | undefined
@@ -208,7 +211,7 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     assert.equal(await B((t, a) => t.shield(a), tabId), true, 'the shield is on while the agent has the tab')
     assert.equal((await pane()).controlText.endsWith(' usando'), true, 'the bar: "‹Agente› usando"')
 
-    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), tabId) // "Assumir o controle"
+    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), tabId) // "Assumir"
     await until('taken', async () => (await control()) === 'user')
     await until('tabStateChanged user', async () => states().includes('user'))
     assert.equal(await B((t, a) => t.shield(a), tabId), false, 'the shield is off while the person has it')
@@ -225,7 +228,7 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     assert.equal(p.controlText, 'Com você')
     assert.match(p.action, /^Devolver ao /)
     assert.equal(p.noticeKind, 'scripts')
-    assert.equal(p.noticeAction, 'Recarregar limpo')
+    assert.equal(p.noticeAction, '', 'the clean reload is pinned on the bar, not on the notice')
     await win.evaluate(id => window.__tether.browserClick(id, 'bar'), tabId) // "Devolver ao ‹agente›"
     await until('given back', async () => (await control()) === 'agent')
     const back = await tool('WebSnapshot')
@@ -250,8 +253,8 @@ test('browser control: take, pause, shield, help request with the clean hand-off
       }
     })
     p = await until('ignored-click notice', async () => { const x = await pane(); return x.noticeKind === 'ignored' && x })
-    assert.match(p.notice, /^O .+ está usando esta página\. Assumir o controle\?$/)
-    assert.equal(p.noticeAction, 'Assumir o controle')
+    assert.match(p.notice, /^O .+ está usando esta página, por isso o seu clique não chegou\.$/)
+    assert.equal(p.noticeAction, 'Assumir')
 
     // ---- 4. help request for a login: the clean hand-off ----
     // What the agent leaves behind: an init script (Playwright's addInitScript is this method).
@@ -275,9 +278,12 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     await until('clean hand-off: init script gone after reload', async () => (await hostEval(`document.readyState === 'complete' && !!document.getElementById('pw') && window.__agentScript === undefined`)) === true)
     await until('clean hand-off: service worker gone', async () => (await regs()) === 0)
     p = await pane()
-    assert.equal(p.noticeKind, 'ask')
-    assert.match(p.notice, /pede sua ajuda: Entre na sua conta, por favor$/)
-    assert.match(p.noticeAction, /^Pronto, devolver ao /)
+    assert.equal(p.tone, 'ask')
+    assert.equal(p.attention, true, 'the pane carries the attention frame')
+    assert.equal(p.ask?.message, 'Entre na sua conta, por favor')
+    assert.match(p.ask?.title ?? '', /^O .+ precisa de você$/)
+    assert.deepEqual(p.ask?.buttons, ['Não consigo ajudar', 'Pronto, devolver'])
+    assert.equal(p.action, 'Pronto, devolver')
     await win.waitForFunction(id => document.querySelector(`.tether-tab[data-slot="${id}"] .attn`)?.className.includes('waiting') === true, slot)
     assert.equal((await win.evaluate(() => window.__tether.browserSeals())).find(s => s.tabId === tabId)?.count, 2, "the agent's pane and the tab's pane")
     await win.evaluate(id => window.__tether.activate(id), slot)
@@ -296,7 +302,7 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     assert.deepEqual(leaked.map(e => e.method), [], 'nothing of the page reaches the agent while the person has it')
     assert.ok(!JSON.stringify(spy.events).includes(PASSWORD), 'the password is in no event the agent got')
 
-    await win.evaluate(id => window.__tether.browserClick(id, 'notice'), tabId) // "Pronto, devolver ao ‹agente›"
+    await win.evaluate(id => window.__tether.browserClick(id, 'done'), tabId) // the card's "Pronto, devolver"
     const answer = await asking
     assert.equal(answer.isError, false, answer.text)
     assert.match(answer.text, /handed the tab back/i)
@@ -311,9 +317,11 @@ test('browser control: take, pause, shield, help request with the clean hand-off
     const short = await spy.call('Tether.askUser', { targetId: target, message: 'olhe aqui', kind: 'other', timeoutMs: 1500 }, bs, 20_000)
     assert.deepEqual(short.result, { outcome: 'timeout' })
     assert.equal(await control(), 'user', 'the tab stays with the person')
-    p = await until('expired notice', async () => { const x = await pane(); return x.noticeKind === 'expired' && x })
-    assert.match(p.notice, /^O .+ desistiu de esperar\. Devolver mesmo assim\?$/)
-    await win.evaluate(id => window.__tether.browserClick(id, 'notice'), tabId)
+    p = await until('expired pill', async () => { const x = await pane(); return / desistiu de esperar$/.test(x.controlText) && x })
+    assert.match(p.controlText, /^Com você · .+ desistiu de esperar$/)
+    assert.equal(p.action, 'Devolver mesmo assim')
+    assert.equal(p.ask, null, 'no card once the request ran out')
+    await win.evaluate(id => window.__tether.browserClick(id, 'bar'), tabId)
     await until('given back after timeout', async () => (await control()) === 'agent')
     assert.equal((await win.evaluate(() => window.__tether.browserSeals())).length, 0)
 

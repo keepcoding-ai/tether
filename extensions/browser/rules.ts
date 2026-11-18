@@ -47,13 +47,21 @@ export const BACK = 'Voltar'
 export const FORWARD = 'Avançar'
 export const RELOAD = 'Recarregar'
 export const READ_ONLY_ADDRESS = 'Endereço da página (só leitura)'
-export const COOKIES_HERE = 'Esta partição guarda cookies deste site: pode haver uma conta logada'
-export const COOKIES_HERE_SHORT = 'Com cookies'
-export const BAR_LOGINS_NOT_KEPT = 'Logins não guardados'
-/** The bar's pill while the debug mode is on (`extensions.browser.debug`, debug-file.ts). */
-export const DEBUG_PILL = 'Depuração'
-export const DEBUG_PILL_HINT = 'Modo de depuração ligado: o registro guarda mais detalhes de cada ação do agente e valem os prazos de depuração. Desligue em Configurações > Browser > Depuração.'
-/** Whether the debug mode is on: the setting alone decides (the bar's pill, the doctor's line, debug.json). */
+/**
+ * The facts of the tab behind the ⓘ of the address (a popover): cookies of the site, logins kept in memory only, the debug mode
+ * (`extensions.browser.debug`, debug-file.ts) and an address that was not kept. The ⓘ carries a dot while any of them applies.
+ */
+export type TabFactId = 'cookies' | 'memory' | 'debug' | 'address'
+export const TAB_INFO_BUTTON = 'Sobre esta guia'
+export const TAB_INFO_TITLE = 'Sobre esta guia'
+export const TAB_INFO_NONE = 'Nada a avisar sobre esta guia.'
+export const TAB_FACTS: Record<TabFactId, { icon: string; title: string; text: string }> = {
+  cookies: { icon: 'shield-warning', title: 'Há cookies deste site', text: 'Pode haver uma conta logada nesta guia.' },
+  memory: { icon: 'clock', title: 'Logins em memória', text: 'Eles acabam quando o Tether fecha.' },
+  debug: { icon: 'bug', title: 'Depuração ligada', text: 'O registro guarda mais detalhes. Desligue em Configurações › Browser › Depuração.' },
+  address: { icon: 'link-break', title: 'Endereço não guardado', text: 'Ele levava uma credencial, por isso a guia não volta sozinha.' },
+}
+/** Whether the debug mode is on: the setting alone decides (the tab's ⓘ, the doctor's line, debug.json). */
 export const debugOn = (s: { get(key: string): unknown }): boolean => s.get('debug') === true
 export const ADDRESS_MAX = 90
 export const SHORT_NAME_MAX = 16

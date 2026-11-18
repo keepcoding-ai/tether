@@ -28,7 +28,10 @@ export interface BrowserChannels {
     /** E7: who has each tab, and the person's actions on it. */
     controls: () => ControlView[]
     take: (tabId: string) => void
-    giveBack: (tabId: string) => void
+    /** The person hands the tab back; on a help request her optional note goes to the agent with the answer. */
+    giveBack: (tabId: string, note?: string) => void
+    /** "Não consigo ajudar": the help request ends declined (with her optional note) and the tab goes back to the agent. */
+    decline: (tabId: string, note?: string) => void
     cleanReload: (tabId: string) => void
     pause: (tabId: string) => void
     resume: (tabId: string) => void
@@ -81,7 +84,7 @@ export interface BrowserChannels {
  * the renderer's first calls wait for it instead of finding no handler. The type keeps the list whole.
  */
 export const BROWSER_INVOKES = [
-  'list', 'get', 'restore', 'close', 'reopen', 'status', 'localNetworkOpen', 'localNetworkAnswer', 'controls', 'take', 'giveBack',
+  'list', 'get', 'restore', 'close', 'reopen', 'status', 'localNetworkOpen', 'localNetworkAnswer', 'controls', 'take', 'giveBack', 'decline',
   'cleanReload', 'pause', 'resume', 'back', 'forward', 'reload', 'pauseTabs', 'resumeTabs', 'agents', 'logoutAll', 'downloads',
   'showDownload', 'uploadOpen', 'uploadAnswer',
 ] as const satisfies readonly (keyof BrowserChannels['invoke'])[]
