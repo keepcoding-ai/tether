@@ -17,7 +17,8 @@
 // E7: the control channel `Tether.*` (browser level, design §3.3) and the control state: outside `agent` every command of the
 // agent on that tab is refused with a named error (TAB_WITH_USER, TAB_PAUSED) and every event of it is dropped (rule 14:
 // refusing commands alone lets the form's POST with the password reach the agent); `Tether.tabStateChanged` goes to the owner's
-// browser sessions at each change. `cleanTab` removes the scripts the agents registered on a tab (the clean hand-off).
+// browser sessions at each change. `cleanTab` removes the scripts the agents registered on a tab (the clean hand-off), but a
+// script with no code (the client's own world). `Tether.cancelAsk` ends the connection's open request on a tab (`dismissed`).
 // MCP inside the daemon: `Tether.tabHandle` / `Tether.setActiveTab` give the agent's tool the id it calls each tab by and which
 // one is active, kept with the tab (agent-tabs.ts), so a new server over the same tabs names them as before.
 // E7b: auto-attach forwarded with the gate's filter (frames and dedicated workers only): a page's service worker is never
@@ -53,7 +54,7 @@ import {
 import { ensurePrivateDir } from './private-dir.ts'
 import type { FirstTicket } from './tabs.ts'
 import type { TabInfo } from './tab-rules.ts'
-import { checkAsk, type Control, heldError } from './control-rules.ts'
+import { checkAsk, type Control, handoffKeepsScript, heldError } from './control-rules.ts'
 import type { ControlHub } from './control.ts'
 import { acceptOf, frame, FrameParser, OP_CLOSE, OP_PONG, OP_TEXT } from './ws-frames.ts'
 import { actionKindOf, type ActionKind } from './pad-rules.ts'
@@ -283,11 +284,14 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
     readonly browserTargetId = randomBytes(8).toString('hex').toUpperCase()
     readonly browserSessions = new Set<string>()
     readonly attaching = new Map<string, Promise<GateSession<Conn>>>()
-    /** Script identifiers this connection registered, by tab (only those it may remove). */
-    readonly scripts = new Map<string, Set<string>>()
+    /**
+     * Script identifiers this connection registered, by tab (only those it may remove), each with whether the clean hand-off
+     * removes it (a script with no code stays: control-rules `handoffKeepsScript`).
+     */
+    readonly scripts = new Map<string, Map<string, boolean>>()
     readonly touched = new Set<string>()
-    /** Open `Tether.askUser` requests: the agent leaving gives them up. */
-    readonly asks = new Set<() => void>()
+    /** Open `Tether.askUser` requests, by tab (one per tab): the agent leaving gives them up; `Tether.cancelAsk` gives one up. */
+    readonly asks = new Map<string, () => void>()
     /** Local addresses the person allowed through `Tether.requestLocalNetwork`, waiting for their navigation (url → until). */
     readonly preAllowed = new Map<string, number>()
     /** H1b: page commands not answered yet, by tab; leaving `agent` answers them with the held error. */
@@ -491,8 +495,8 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           send(method, params).then(r => {
             const ident = (r as { identifier?: unknown })?.identifier
             if (typeof ident === 'string') {
-              const set = this.scripts.get(s.tabId) ?? new Set<string>()
-              set.add(ident)
+              const set = this.scripts.get(s.tabId) ?? new Map<string, boolean>()
+              set.set(ident, !handoffKeepsScript(params))
               this.scripts.set(s.tabId, set)
             }
             reply(r)
@@ -601,8 +605,15 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
           const input = checkAsk(params, control.openAsks(t.tabId, this.slotId))
           if (typeof input === 'string') throw new GateError(`Tether.askUser: ${input}`, -32602)
           const req = control.ask(t.tabId, this.slotId, input)
-          this.asks.add(req.cancel)
-          try { return await req.answer } finally { this.asks.delete(req.cancel) }
+          this.asks.set(t.tabId, req.cancel)
+          try { return await req.answer } finally { if (this.asks.get(t.tabId) === req.cancel) this.asks.delete(t.tabId) }
+        }
+        case 'Tether.cancelAsk': {
+          // The agent's client gave up the call that asked (MCP `notifications/cancelled`): this connection's request on the
+          // tab ends `dismissed`, as when the agent leaves. No open request is not an error (it may have just been answered).
+          const cancel = this.asks.get((await tabOf()).tabId)
+          cancel?.()
+          return { cancelled: cancel !== undefined }
         }
         case 'Tether.confirmUpload': {
           const t = await tabOf()
@@ -765,7 +776,7 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       if (this.closed) return
       this.closed = true
       conns.delete(this)
-      for (const cancel of [...this.asks]) cancel() // the agent gave up its requests
+      for (const cancel of [...this.asks.values()]) cancel() // the agent gave up its requests
       opts.tabs.cancelQuestions(this.questionKey)
       for (const s of sessions.of(this)) {
         sessions.remove(s)
@@ -888,14 +899,19 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
       if (!surface) return 0
       let removed = 0
       for (const c of [...conns]) {
-        const ids = [...(c.scripts.get(tabId) ?? [])]
+        // A script with no code (the client's own world: playwright-core's utility world) stays. It runs nothing in the
+        // person's turn, and without it every later document lacks the world the client waits for (its reads hang).
+        const registered = [...(c.scripts.get(tabId) ?? [])]
         for (const s of sessions.of(c, tabId)) {
           if (s.kind !== 'page') continue
-          for (const identifier of ids) {
+          for (const [identifier, removes] of registered) {
+            if (!removes) continue
             await surface.debugger.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }, s.inner).then(() => { removed++ }, () => {})
           }
         }
-        c.scripts.delete(tabId)
+        const kept = new Map(registered.filter(([, removes]) => !removes))
+        if (kept.size) c.scripts.set(tabId, kept)
+        else c.scripts.delete(tabId)
       }
       return removed
     },

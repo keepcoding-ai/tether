@@ -12,6 +12,20 @@
 // consigo ajudar") and says so in its description and answer text. The source still lacks it: before vendoring again, carry the
 // same change into packages/browser/src/core/tool-texts.ts (ask_user description, CONTROL_TEXTS.declined),
 // src/host/tab-control.ts (askUser's outcome check) and src/host/adopt-mcp.ts (the answer text), or a new copy drops it.
+//
+// LOCAL PATCH 2 (both manifests rehashed; test/unit/ext.browser-vendor-patches.test.ts says which part a new copy lost):
+//   - src/host/register-tools.ts: `tool.handler(args, { progress, signal: extra.signal })`, the MCP SDK's abort signal (aborted
+//     on the client's `notifications/cancelled`); BrowserMcpTool's handler context gains `signal?: AbortSignal`.
+//   - src/host/tab-control.ts: `CANCEL_ASK = 'Tether.cancelAsk'` and `cancelAsk(targetId)` (`call(...)`, errors swallowed; an
+//     unknown method only marks it missing).
+//   - src/host/adopt-mcp.ts (askUser): on `ctx.signal` abort, or already aborted when the request goes out, `control.cancelAsk
+//     (targetId)`; the listener is removed in the `finally`. The host then answers the pending `Tether.askUser` `dismissed`.
+//   - src/browser.ts (navigate): `stage('navigate')` before `goto`; the title read goes through `titleWithin(t, timeoutNow())`
+//     (`stage('title')`, `inFlight('Runtime.callFunctionOn', () => page.title())` raced with the action timeout), which fails
+//     `PAGE_NOT_READABLE`. playwright-core's `title()` waits for its utility world with no deadline.
+//   - src/core/catalog.ts: `PAGE_NOT_READABLE` in BROWSER_ERROR_CODES (and its README entry).
+//   Worth carrying too (not patched here): the same bounded read in `infoOf` (WebTabs) and `readPage` (title and
+//   `locator.count()`), which also wait for the utility world without a deadline.
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
