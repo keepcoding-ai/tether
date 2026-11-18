@@ -72,39 +72,44 @@ describe('browser closed history: the file', () => {
     assert.deepEqual(parseClosed('junk'), [])
   })
 
-  test('the store: records, expires at read with the setting of now, reopens and clears', () => {
+  test('the store: records, expires at read with the setting of now, reopens and clears', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tether-closed-'))
     try {
       const file = join(dir, 'browser', 'closed-tabs.json')
       let now = NOW
       let keep: '1d' | '7d' = '7d'
-      const h = new ClosedHistory({ file, keep: () => keep, now: () => now })
+      const h = await ClosedHistory.open({ file, keep: () => keep, now: () => now })
       assert.equal(h.record(entry('a', NOW - 2 * DAY)), true)
       assert.equal(h.record(entry('b', NOW)), true)
       assert.equal(h.record(entry('b', NOW)), false, 'twice: once')
       assert.equal(h.record(undefined), false)
       assert.deepEqual(h.list().map(e => e.id), ['b', 'a'])
+      await h.flush()
       if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600)
       keep = '1d'
       assert.deepEqual(h.list().map(e => e.id), ['b'], 'the setting changed: expired at the next read')
+      await h.flush()
       assert.deepEqual(parseClosed(JSON.parse(readFileSync(file, 'utf8'))).map(e => e.id), ['b'], 'and written back')
       now = NOW + 2 * DAY
-      const again = new ClosedHistory({ file, keep: () => '7d', now: () => now })
+      const again = await ClosedHistory.open({ file, keep: () => '7d', now: () => now })
       assert.deepEqual(again.list().map(e => e.id), ['b'], 'a new opening reads the file')
       again.remove('b')
       assert.deepEqual(again.list(), [])
       again.record(entry('c', now))
       again.clear()
-      assert.deepEqual(new ClosedHistory({ file, keep: () => '7d', now: () => now }).list(), [])
+      await again.flush()
+      assert.deepEqual((await ClosedHistory.open({ file, keep: () => '7d', now: () => now })).list(), [])
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
-  test('expired at start: the file is rewritten without them', () => {
+  test('expired at start: the file is rewritten without them', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tether-closed-'))
     try {
       const file = join(dir, 'closed-tabs.json')
-      new ClosedHistory({ file, keep: () => '30d', now: () => NOW }).record(entry('old', NOW - 10 * DAY))
-      new ClosedHistory({ file, keep: () => '7d', now: () => NOW })
+      const first = await ClosedHistory.open({ file, keep: () => '30d', now: () => NOW })
+      first.record(entry('old', NOW - 10 * DAY))
+      await first.flush()
+      await (await ClosedHistory.open({ file, keep: () => '7d', now: () => NOW })).flush()
       assert.deepEqual(parseClosed(JSON.parse(readFileSync(file, 'utf8'))), [])
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })

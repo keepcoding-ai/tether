@@ -203,7 +203,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
   const agentTabs = new AgentTabs(join(main.home, 'browser', AGENT_TABS_FILE), log)
   const tabIdsOf = (ids: unknown): string[] => (Array.isArray(ids) ? ids.filter(isId).slice(0, 512) : [])
   // The closed history (closed-history.ts), next to the agents' tab ids; its expiry follows the setting at every read.
-  const closedTabs = new ClosedHistory({ file: join(main.home, 'browser', CLOSED_HISTORY_FILE), keep: () => keepOf(main.settings.get('closedHistory')), log })
+  const closedReady = ClosedHistory.open({ file: join(main.home, 'browser', CLOSED_HISTORY_FILE), keep: () => keepOf(main.settings.get('closedHistory')), log })
   /**
    * A tab is closing on purpose: it enters the history before it goes (the live tab's address, else the pane's saved one for a
    * tab main never loaded). A tab that goes with the window, or is recreated after a crash, never passes here.
@@ -213,9 +213,9 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     const from = live ?? (saved && saved.tabId === tabId ? saved : undefined)
     if (!from) return
     const ownerName = main.agents.get(from.ownerSlotId)?.name ?? ''
-    if (closedTabs.record(closedEntryOf({ tabId, ownerSlotId: from.ownerSlotId, ownerName, title: from.title, url: from.url, closedAt: Date.now(), by }))) {
-      ipc.send('closedHistory', closedTabs.list())
-    }
+    const entry = closedEntryOf({ tabId, ownerSlotId: from.ownerSlotId, ownerName, title: from.title, url: from.url, closedAt: Date.now(), by })
+    if (!entry) return
+    void closedReady.then(h => { if (h.record(entry)) ipc.send('closedHistory', h.list()) })
   }
   // The gate's way to the tabs: the registry, with the agent's own close (WebCloseTab) entering the history first.
   const gateTabs: GateTabs = {
@@ -252,11 +252,12 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       recordClose(tabId, by === 'cleanup' ? 'cleanup' : 'user', savedTabOf(saved))
       agentTabs.forget(tabId); registry.close(tabId); control.closed(tabId)
     }),
-    ipc.handle('closedList', () => closedTabs.list()),
-    ipc.handle('clearClosed', () => { closedTabs.clear(); ipc.send('closedHistory', []) }),
+    ipc.handle('closedList', async () => (await closedReady).list()),
+    ipc.handle('clearClosed', async () => { (await closedReady).clear(); ipc.send('closedHistory', []) }),
     // "Reabrir": a new tab with the address, under the same owner (a tab always has one), held by the person: she asked for it,
     // whether the agent is alive or not; she hands it to a live agent with "Devolver". Her click is the consent a local address needs.
     ipc.handle('reopenClosed', async id => {
+      const closedTabs = await closedReady
       const entry = typeof id === 'string' ? closedTabs.get(id) : undefined
       if (!entry) return null
       const info = await registry.create(entry.ownerSlotId, entry.url, { ...(entry.title ? { title: entry.title } : {}), ticket: 'granted' })
@@ -312,7 +313,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     ipc.handle('resumeTabs', ids => control.resumeMany(tabIdsOf(ids))),
     ...controlSubs,
     ...DEBUG_KEYS.map(k => main.settings.onChange(k, () => { void debugWriter.sync() })),
-    main.settings.onChange('closedHistory', () => { ipc.send('closedHistory', closedTabs.list()) }),
+    main.settings.onChange('closedHistory', () => { void closedReady.then(h => ipc.send('closedHistory', h.list())) }),
     { dispose: () => { gateDisposed = true; gate?.dispose(); uploads.dispose(); downloads.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
   ]
   if (typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__) {
