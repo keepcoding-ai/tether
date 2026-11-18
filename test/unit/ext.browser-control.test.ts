@@ -1,10 +1,10 @@
 // Who has a tab (Tether Browser E7): the pure control machine (take, give back, ask, time out, dismiss, pause, popup), the clean
-// hand-off trigger, the help request's limits, and the hub's settling of requests (returned, timeout, dismissed by close, by the
-// agent leaving, by the agent exiting) with its listeners.
+// hand-off trigger, the help request's limits, and the hub's settling of requests (returned, declined, timeout, dismissed by
+// close, by the agent leaving, by the agent exiting), the person's note on a hand-back or a decline, and the hub's listeners.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ASK_MESSAGE_MAX, ASK_TIMEOUT_DEFAULT_MS, ASK_TIMEOUT_MAX_MS, ASK_TIMEOUT_MIN_MS, ASKS_PER_AGENT, checkAsk, cleanAskMessage, controlOf,
+  ASK_MESSAGE_MAX, ASK_NOTE_MAX, ASK_TIMEOUT_DEFAULT_MS, ASK_TIMEOUT_MAX_MS, ASK_TIMEOUT_MIN_MS, ASKS_PER_AGENT, checkAsk, cleanAskMessage, cleanAskNote, controlOf,
   controlTexts, heldError, helpLine, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack, type TabControl, transition,
 } from '../../extensions/browser/control-rules.ts'
 import { ControlHub, type ControlView } from '../../extensions/browser/control.ts'
@@ -42,6 +42,30 @@ test('control: a help request puts the tab with the person at once; giving back 
   assert.deepEqual(back.settle, { id: 'a1', outcome: 'returned' })
   assert.equal(back.state.ask, undefined)
   assert.equal(controlOf(back.state), 'agent')
+})
+
+test('control: "Não consigo ajudar" hands the tab back and settles the request declined; a note rides on either answer', () => {
+  const asked = transition(INITIAL, ask('a1')).state
+  const declined = transition(asked, { type: 'decline' })
+  assert.deepEqual(declined.settle, { id: 'a1', outcome: 'declined' })
+  assert.equal(controlOf(declined.state), 'agent')
+  assert.equal(declined.state.ask, undefined)
+  assert.deepEqual(transition(asked, { type: 'decline', note: '  sem acesso\u0000 a essa conta ' }).settle, { id: 'a1', outcome: 'declined', note: 'sem acesso a essa conta' })
+  assert.deepEqual(transition(asked, { type: 'giveBack', note: 'feito, usei a conta de teste' }).settle, { id: 'a1', outcome: 'returned', note: 'feito, usei a conta de teste' })
+  assert.deepEqual(transition(asked, { type: 'giveBack', note: '   ' }).settle, { id: 'a1', outcome: 'returned' }, 'a blank note is no note')
+  assert.deepEqual(transition(asked, { type: 'giveBack', note: 42 }).settle, { id: 'a1', outcome: 'returned' }, 'only text is a note')
+  // Without an open request a decline is a plain hand-back: nothing to settle.
+  const taken = transition(INITIAL, { type: 'take' }).state
+  const plain = transition(taken, { type: 'decline', note: 'x' })
+  assert.equal(controlOf(plain.state), 'agent')
+  assert.equal(plain.settle, undefined)
+})
+
+test('askUser note: plain text, cleaned as the message, cut at its ceiling', () => {
+  assert.equal(cleanAskNote('<b>entrei</b>, mas\tpediu   2FA'), '<b>entrei</b>, mas pediu 2FA')
+  assert.equal(cleanAskNote('x'.repeat(900)).length, ASK_NOTE_MAX)
+  assert.equal(ASK_NOTE_MAX, 500)
+  assert.equal(cleanAskNote(undefined), '')
 })
 
 test('control: time out keeps the tab with the person and marks it expired; dismiss keeps it too', () => {
@@ -102,9 +126,9 @@ test('control: reasons and named errors', () => {
   const t = controlTexts('Claude')
   assert.equal(t.agent, 'Claude usando')
   assert.equal(t.giveBack, 'Devolver ao Claude')
-  assert.equal(t.ignored, 'O Claude está usando esta página. Assumir o controle?')
-  assert.equal(t.ask('fazer login'), 'Claude pede sua ajuda: fazer login')
-  assert.equal(t.expired, 'O Claude desistiu de esperar. Devolver mesmo assim?')
+  assert.equal(t.ignored, 'O Claude está usando esta página, por isso o seu clique não chegou.')
+  assert.equal(t.userAsked, 'Com você · pedido do Claude')
+  assert.equal(t.userExpired, 'Com você · Claude desistiu de esperar')
 })
 
 test('askUser limits: plain text, ceiling, one per tab, a few per agent, timeout clamped', () => {
@@ -144,8 +168,8 @@ test('control hub: ask → returned on give back, with the login clean hand-off 
   assert.deepEqual(cleaned, ['t1'])
   assert.equal(seen.at(-1)?.ask?.message, 'login')
   assert.deepEqual(h.openAsks('t1', 'agent-a'), { tab: true, agent: 1 })
-  await h.giveBack('t1')
-  assert.equal(await req.outcome, 'returned')
+  await h.giveBack('t1', 'feito')
+  assert.deepEqual(await req.answer, { outcome: 'returned', note: 'feito' })
   assert.deepEqual(reloaded, ['t1'], 'a login hand-back reloads')
   assert.equal(h.control('t1'), 'agent')
   assert.deepEqual(h.openAsks('t1', 'agent-a'), { tab: false, agent: 0 })
@@ -156,22 +180,34 @@ test('control hub: timeout, dismissed by close, by the agent giving up, by the a
   const other = h.ask('t0', 'agent-a', { message: 'entre na sua conta', kind: 'other', timeoutMs: 60_000 })
   assert.deepEqual(cleaned, ['t0'], "kind 'other': the clean hand-off runs")
   await h.giveBack('t0')
-  assert.equal(await other.outcome, 'returned')
+  assert.deepEqual(await other.answer, { outcome: 'returned' })
   assert.deepEqual(reloaded, ['t0'], "kind 'other': the hand-back reloads")
   const short = h.ask('t1', 'agent-a', { message: 'x', kind: 'other', timeoutMs: 20 })
-  assert.equal(await short.outcome, 'timeout')
+  assert.deepEqual(await short.answer, { outcome: 'timeout' })
   assert.equal(h.view('t1').askExpired, true)
   assert.equal(h.control('t1'), 'user')
   const closed = h.ask('t2', 'agent-a', { message: 'x', kind: 'other', timeoutMs: 60_000 })
   h.closed('t2')
-  assert.equal(await closed.outcome, 'dismissed')
+  assert.deepEqual(await closed.answer, { outcome: 'dismissed' })
   const gaveUp = h.ask('t3', 'agent-a', { message: 'x', kind: 'other', timeoutMs: 60_000 })
   gaveUp.cancel()
-  assert.equal(await gaveUp.outcome, 'dismissed')
+  assert.deepEqual(await gaveUp.answer, { outcome: 'dismissed' })
   const exited = h.ask('t4', 'agent-a', { message: 'x', kind: 'other', timeoutMs: 60_000 })
   h.agentExited('agent-a')
-  assert.equal(await exited.outcome, 'dismissed')
+  assert.deepEqual(await exited.answer, { outcome: 'dismissed' })
   assert.equal(h.control('t4'), 'user', 'the tab stays with the person')
+})
+
+test('control hub: decline reloads like a hand-back, gives the tab back and settles declined with the note', async () => {
+  const { h, seen, reloaded } = hub()
+  const req = h.ask('t1', 'agent-a', { message: 'login', kind: 'login', timeoutMs: 60_000 })
+  assert.equal(typeof seen.at(-1)?.ask?.id, 'string', 'the view carries the request id (the card collapses per request)')
+  await h.decline('t1', 'não tenho acesso a essa conta')
+  assert.deepEqual(await req.answer, { outcome: 'declined', note: 'não tenho acesso a essa conta' })
+  assert.deepEqual(reloaded, ['t1'])
+  assert.equal(h.control('t1'), 'agent')
+  await h.decline('t1')
+  assert.deepEqual(reloaded, ['t1'], 'a tab the agent already has: nothing happens')
 })
 
 test('control hub: pause many, resume many, popup inherits, listeners hear only changes', () => {

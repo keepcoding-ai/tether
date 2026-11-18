@@ -4,12 +4,19 @@
 // (pausing does not take a tab from her hands), else `paused` while paused, else `agent`. Outside `agent` the gate refuses
 // every command of the agent on that tab and holds (drops) every event of it; only the `Tether.*` methods answer.
 // A help request (`Tether.askUser`) puts the tab in the person's hands at once and waits until she hands it back (`returned`),
-// until its time runs out (`timeout`: the tab stays with her, the bar says the agent gave up), or until the tab closes or the
-// agent gives up (`dismissed`).
+// until its time runs out (`timeout`: the tab stays with her, the bar says the agent gave up), until she says she cannot help
+// (`declined`: the tab goes back to the agent, as on a hand-back), or until the tab closes or the agent gives up (`dismissed`).
+// A hand-back or a decline may carry a short note of hers to the agent (plain text, cleaned as the request's message).
 
 export type Control = 'agent' | 'user' | 'paused'
 export type AskKind = 'login' | 'other'
-export type AskOutcome = 'returned' | 'timeout' | 'dismissed'
+export type AskOutcome = 'returned' | 'declined' | 'timeout' | 'dismissed'
+
+/** How a help request ended, and the person's note when she wrote one (only on `returned` and `declined`). */
+export interface AskAnswer {
+  outcome: AskOutcome
+  note?: string
+}
 
 /** The open help request of a tab (at most one). */
 export interface TabAsk {
@@ -43,7 +50,8 @@ export function reasonOf(t: TabControl): string | undefined {
 
 export type ControlEvent =
   | { type: 'take' }
-  | { type: 'giveBack' }
+  | { type: 'giveBack'; note?: unknown }
+  | { type: 'decline'; note?: unknown }
   | { type: 'ask'; ask: TabAsk }
   | { type: 'askTimeout'; id: string }
   | { type: 'askDismissed'; id: string }
@@ -54,16 +62,20 @@ export type ControlEvent =
 /** What a transition settles besides the new state: the help request it ends, and how. */
 export interface Transition {
   state: TabControl
-  settle?: { id: string; outcome: AskOutcome }
+  settle?: { id: string } & AskAnswer
 }
 
 export function transition(t: TabControl, e: ControlEvent): Transition {
   switch (e.type) {
     case 'take':
       return { state: t.holder === 'user' ? t : { ...t, holder: 'user', why: 'taken' } }
-    case 'giveBack': {
+    case 'giveBack':
+    case 'decline': {
+      // "Não consigo ajudar" hands the tab back too; without an open request it is a plain hand-back.
       const state: TabControl = { holder: 'agent', paused: t.paused }
-      return t.ask ? { state, settle: { id: t.ask.id, outcome: 'returned' } } : { state }
+      if (!t.ask) return { state }
+      const note = cleanAskNote(e.note)
+      return { state, settle: { id: t.ask.id, outcome: e.type === 'decline' ? 'declined' : 'returned', ...(note ? { note } : {}) } }
     }
     case 'ask': {
       // Already held by the person (she took it first): the request rides on her hold; the why becomes the request's.
@@ -124,16 +136,23 @@ export const ASK_TIMEOUT_DEFAULT_MS = 30 * 60_000
 export const ASK_TIMEOUT_MIN_MS = 1_000
 export const ASK_TIMEOUT_MAX_MS = 2 * 60 * 60_000
 
+/** The ceiling of the person's note on a hand-back or a decline (the package cuts at the same size). */
+export const ASK_NOTE_MAX = 500
+
 export interface AskInput { message: string; kind: AskKind; timeoutMs: number }
+
+export const cleanAskMessage = (v: unknown): string => cleanPlainText(v, ASK_MESSAGE_MAX)
+/** The person's note to the agent, cleaned the same way as the agent's message; '' when there is none. */
+export const cleanAskNote = (v: unknown): string => cleanPlainText(v, ASK_NOTE_MAX)
 
 /**
  * Plain text: control characters (but the line break) out, whitespace runs folded, trimmed, cut at the ceiling. Markup is
  * never interpreted downstream (the interface writes it as text), so `<b>` stays the four characters it is.
  */
-export function cleanAskMessage(v: unknown): string {
+function cleanPlainText(v: unknown, max: number): string {
   if (typeof v !== 'string') return ''
   return v.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]+/g, ' ')
-    .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, ASK_MESSAGE_MAX)
+    .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, max)
 }
 
 /** The request's parameters checked against the limits; a string is the refusal's reason. */
@@ -161,22 +180,47 @@ export const controlTexts = (agent: string) => ({
   agent: `${agent} usando`,
   /** The bar of a tab whose agent exited (its chip says the same). */
   ended: `${agent} encerrado`,
+  /** The pill of an ended agent on a narrow pane. */
+  endedShort: 'Encerrado',
   user: 'Com você',
+  /** The owner pill while a help request is open, and after it ran out. */
+  userAsked: `Com você · pedido do ${agent}`,
+  userExpired: `Com você · ${agent} desistiu de esperar`,
+  userEnded: `Com você · ${agent} encerrado`,
   paused: 'Pausada',
-  take: 'Assumir o controle',
+  take: 'Assumir',
   giveBack: `Devolver ao ${agent}`,
-  ignored: `O ${agent} está usando esta página. Assumir o controle?`,
-  ask: (message: string) => `${agent} pede sua ajuda: ${message}`,
-  done: `Pronto, devolver ao ${agent}`,
+  ignored: `O ${agent} está usando esta página, por isso o seu clique não chegou.`,
+  done: 'Pronto, devolver',
+  decline: 'Não consigo ajudar',
+  giveBackAnyway: 'Devolver mesmo assim',
   waiting: `${agent} espera você devolver a página`,
-  expired: `O ${agent} desistiu de esperar. Devolver mesmo assim?`,
-  scripts: `O ${agent} pode ter deixado scripts nesta página. Para digitar senha, use Recarregar limpo.`,
+  scripts: `O ${agent} pode ter deixado scripts nesta página. Antes de digitar uma senha, use Recarregar limpo.`,
   cleanReload: 'Recarregar limpo',
   pauseAll: 'Pausar todas as guias',
   resumeAll: 'Retomar todas',
   pauseAgent: `Pausar as guias do ${agent}`,
   pause: 'Pausar',
   resume: 'Retomar',
+})
+
+/** The texts of the "Sua vez" card (a help request open on the tab). */
+export const askCardTexts = (agent: string) => ({
+  tag: 'SUA VEZ',
+  title: `O ${agent} precisa de você`,
+  hint: 'Faça isto aqui mesmo, nesta guia. Enquanto ela está com você, o agente não vê nem mexe em nada.',
+  /** Writing to the agent is secondary: a discreet link opens the note box, whose text rides on either answer. */
+  write: `Escrever ao ${agent}`,
+  say: `Mensagem ao ${agent}`,
+  placeholder: 'Ex.: não tenho acesso a essa conta · entrei, mas pediu 2FA',
+  collapse: 'recolher',
+  /** The owner pill's toggle while a request is open: the collapsed card disappears and the pill brings it back. */
+  showAsk: '▾',
+  /** Dropped on a narrow pane, where the pill keeps the mark alone. */
+  showAskWord: 'ver pedido',
+  showAskTitle: 'Ver o pedido',
+  hideAsk: '▴',
+  hideAskTitle: 'Recolher o pedido',
 })
 
 /**
