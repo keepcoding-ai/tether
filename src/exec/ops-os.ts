@@ -285,6 +285,47 @@ function procPlan(recipe: ProcPlanRecipe, base: EnvMap, platform: NodeJS.Platfor
   return planFor(recipe, base as NodeJS.ProcessEnv, platform)
 }
 
+// ---- who is this pid / who listens on this port (web-bridge's daemon update) ----
+
+/** What the OS says about a process: pid, image name and full command line (cmd absent when the OS refuses). */
+export interface ProcessInfo { pid: number; name?: string; cmd?: string }
+
+function runFile(file: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { maxBuffer: 1 << 24, windowsHide: true }, (err, stdout) => (err ? reject(err) : resolve(stdout)))
+  })
+}
+const powershell = (script: string): Promise<string> => runFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', script])
+
+/** The process with this pid right now, or null when there is none. Windows: one Get-CimInstance; POSIX: ps. */
+export async function identifyProcess(pid: number): Promise<ProcessInfo | null> {
+  if (!Number.isInteger(pid) || pid <= 0) return null
+  try {
+    if (process.platform === 'win32') {
+      const out = await powershell(`Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress`)
+      if (!out.trim()) return null
+      const p = JSON.parse(out) as { ProcessId: number; Name: string; CommandLine: string | null }
+      return { pid: p.ProcessId, name: p.Name, ...(p.CommandLine ? { cmd: p.CommandLine } : {}) }
+    }
+    const cmd = (await runFile('ps', ['-o', 'args=', '-p', String(pid)])).trim()
+    return cmd ? { pid, name: cmd.split(' ')[0]!.split('/').pop(), cmd } : null
+  } catch { return null }
+}
+
+/** The pid listening on `port` (TCP), or null when nothing is or the OS will not say. */
+export async function listeningOwner(port: number): Promise<number | null> {
+  try {
+    if (process.platform === 'win32') {
+      const out = await powershell(`@(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess) | ConvertTo-Json -Compress`)
+      const raw = out.trim() ? (JSON.parse(out) as number | number[]) : []
+      const pids = (Array.isArray(raw) ? raw : [raw]).filter((n) => Number.isInteger(n) && n > 0)
+      return pids[0] ?? null
+    }
+    const n = Number((await runFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'])).trim().split(/\r?\n/)[0])
+    return Number.isInteger(n) && n > 0 ? n : null
+  } catch { return null }
+}
+
 export const osOps = {
   killTree,
   sampleProcessTable,
@@ -294,4 +335,6 @@ export const osOps = {
   stopStartTimeHelper: (): null => { stopStartTimeHelper(); return null },
   ensurePrivateDir: ensurePrivateDirOp,
   procPlan,
+  identifyProcess,
+  listeningOwner,
 }

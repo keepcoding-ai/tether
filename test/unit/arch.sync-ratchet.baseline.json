@@ -1,15 +1,37 @@
 {
-  "files": {
-    "extensions/browser/doctor.ts": 5,
-    "src/core/exe-sync.ts": 19,
-    "src/daemon/main.ts": 4,
-    "src/doctor.ts": 25,
-    "src/trace/timeline.ts": 7
+  "boot": {
+    "src/daemon/main.ts": {
+      "max": 4,
+      "reason": "runs once before tetherd serves: mkdir of the home, pid file read / write / remove"
+    }
+  },
+  "cliOnly": {
+    "src/doctor.ts": {
+      "max": 25,
+      "reason": "only `tether doctor` calls it; tetherd imports it statically through the extensions' daemon.ts but never runs it"
+    },
+    "src/core/exe-sync.ts": {
+      "max": 19,
+      "reason": "reached only through src/doctor.ts (`tether doctor`); never called by tetherd"
+    },
+    "src/trace/timeline.ts": {
+      "max": 7,
+      "reason": "`tether trace` timeline reader (CLI); tetherd imports it statically but never calls it"
+    },
+    "extensions/browser/doctor.ts": {
+      "max": 5,
+      "reason": "the browser extension's checks for `tether doctor` only"
+    }
   },
   "vendor": {},
   "spawn": {
-    "extensions/web-bridge/process-info.ts": 1,
-    "extensions/web-bridge/warmup.ts": 1,
-    "src/daemon/client.ts": 2
+    "src/daemon/client.ts": {
+      "max": 2,
+      "reason": "detached launch of ptyd / procd (spawnDaemon helpers): the child must outlive tetherd, so it cannot live in a worker"
+    },
+    "extensions/web-bridge/warmup.ts": {
+      "max": 1,
+      "reason": "detached launch of the bridge daemon (stdio to a log fd, own process tree): same shape as the ptyd / procd launch"
+    }
   }
 }

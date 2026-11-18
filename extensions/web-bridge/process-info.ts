@@ -3,9 +3,9 @@
 // are reused within seconds on Windows, and a stale daemon.pid can land on anything): the daemon is ended only when the
 // pid is alive, its command line names the bridge bundle and the `start` command, AND it is the process listening on
 // the bridge's port. Windows answers through one PowerShell call per question (Get-CimInstance for the process,
-// Get-NetTCPConnection for the port); POSIX through ps and lsof. Everything is injectable, so the unit test never
+// Get-NetTCPConnection for the port); POSIX through ps and lsof (src/exec/ops-os.ts). Everything is injectable, so the unit test never
 // spawns a shell.
-import { execFile } from 'node:child_process'
+import { agentExecutor } from '../../src/agents/agent-exec.ts'
 
 export interface ProcessInfo {
   pid: number
@@ -14,43 +14,17 @@ export interface ProcessInfo {
   cmd?: string
 }
 
-function run(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { maxBuffer: 1 << 24, windowsHide: true }, (err, stdout) => (err ? reject(err) : resolve(stdout)))
-  })
-}
-
-const ps = (script: string): Promise<string> => run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script])
+// Both questions create a process (PowerShell, ps, lsof) and `CreateProcess` runs on the calling thread, so they are executor
+// operations (src/exec/ops-os.ts); this file only awaits the answer.
 
 /** The process with this pid right now, or undefined when there is none. */
 export async function identifyProcess(pid: number): Promise<ProcessInfo | undefined> {
-  if (!Number.isInteger(pid) || pid <= 0) return undefined
-  try {
-    if (process.platform === 'win32') {
-      const out = await ps(`Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress`)
-      if (!out.trim()) return undefined
-      const p = JSON.parse(out) as { ProcessId: number; Name: string; CommandLine: string | null }
-      return { pid: p.ProcessId, name: p.Name, cmd: p.CommandLine ?? undefined }
-    }
-    const out = await run('ps', ['-o', 'args=', '-p', String(pid)])
-    const cmd = out.trim()
-    return cmd ? { pid, name: cmd.split(' ')[0]!.split('/').pop(), cmd } : undefined
-  } catch { return undefined }
+  try { return (await agentExecutor().run('identifyProcess', [pid])) ?? undefined } catch { return undefined }
 }
 
-/** The pid listening on 127.0.0.1:`port` (TCP), or undefined when nothing is or the OS will not say. */
+/** The pid listening on `port` (TCP), or undefined when nothing is or the OS will not say. */
 export async function listeningOwner(port: number): Promise<number | undefined> {
-  try {
-    if (process.platform === 'win32') {
-      const out = await ps(`@(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess) | ConvertTo-Json -Compress`)
-      const raw = out.trim() ? (JSON.parse(out) as number | number[]) : []
-      const pids = (Array.isArray(raw) ? raw : [raw]).filter(n => Number.isInteger(n) && n > 0)
-      return pids[0]
-    }
-    const out = await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'])
-    const n = Number(out.trim().split('\n')[0])
-    return Number.isInteger(n) && n > 0 ? n : undefined
-  } catch { return undefined }
+  try { return (await agentExecutor().run('listeningOwner', [port])) ?? undefined } catch { return undefined }
 }
 
 /** Ends the process (TerminateProcess on Windows, SIGTERM then SIGKILL elsewhere). Silent when it is already gone. */

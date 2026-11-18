@@ -19,7 +19,7 @@ const loaders = {
 export const lazyNames = {
   agents: ['resolveClaude', 'resolveCodex', 'ensureSettingsFile', 'hasStatusLine', 'userNotify', 'resolveShell', 'resolveSoul', 'soulLaunch', 'renamedNode', 'loadSkills', 'materializeSkills'],
   ext: ['writeTextAtomicDir'],
-  os: ['killTree', 'sampleProcessTable', 'listListeners', 'startTime', 'startTimeInfo', 'stopStartTimeHelper', 'ensurePrivateDir', 'procPlan'],
+  os: ['killTree', 'sampleProcessTable', 'listListeners', 'startTime', 'startTimeInfo', 'stopStartTimeHelper', 'ensurePrivateDir', 'procPlan', 'identifyProcess', 'listeningOwner'],
 } as const
 
 const lazy: Record<string, (...a: unknown[]) => Promise<unknown>> = {}

@@ -58,6 +58,8 @@ export interface OpTypes {
   stopStartTimeHelper: { args: []; value: null }
   ensurePrivateDir: { args: [dir: string]; value: null }
   procPlan: { args: [recipe: ProcPlanRecipe, base: EnvMap, platform: NodeJS.Platform]; value: ProcPlan }
+  identifyProcess: { args: [pid: number]; value: { pid: number; name?: string; cmd?: string } | null }
+  listeningOwner: { args: [port: number]; value: number | null }
 }
 
 export type OpName = keyof OpTypes
@@ -96,6 +98,8 @@ export const OP_META = {
   stopStartTimeHelper: { lane: 'work', idempotent: true },
   ensurePrivateDir: { lane: 'work', idempotent: true },
   procPlan: { lane: 'work', idempotent: true },
+  identifyProcess: { lane: 'work', idempotent: true },
+  listeningOwner: { lane: 'work', idempotent: true },
 } as const satisfies Record<OpName, { lane: Lane; idempotent: boolean }>
 
 export interface ExecRequest { id: number; op: string; args: unknown[] }
