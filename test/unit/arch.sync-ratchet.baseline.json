@@ -21,7 +21,7 @@
     "src/core/exe.ts": 21,
     "src/core/paths.ts": 1,
     "src/core/profile.ts": 7,
-    "src/core/store.ts": 15,
+    "src/core/store-sync.ts": 15,
     "src/core/user-settings.ts": 1,
     "src/daemon/main.ts": 4,
     "src/daemon/notices.ts": 3,

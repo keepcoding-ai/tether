@@ -11,7 +11,7 @@ import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { Binding, SlotMeta } from '../core/event.ts'
 import { processStartTime } from '../core/liveness.ts'
 import { readProfiles, slotProfile, snapshotProfile, type SlotProfile } from '../core/profile.ts'
-import { clearRun, writeRun, writeSlotMeta } from '../core/store.ts'
+import { clearRun, writeRun, writeSlotMeta } from '../core/store-sync.ts'
 
 /** The agent's adapter from the registry; throws (Portuguese) when the agent is not registered. */
 export function adapterOf(agent: string): AgentAdapter {
