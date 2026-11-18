@@ -14,7 +14,8 @@ import type { SlotMeta } from '../../src/core/event.ts'
 import { profileOption } from '../../src/core/profile.ts'
 import { findNode } from '../web-bridge/warmup.ts'
 import { McpHttpHost, type McpBackend } from '../../src/daemon/mcp-http.ts'
-import { type BrowserBackendInput, createBrowserLaunchMiddleware, MCP_SERVER_NAME, releaseSlot, sweepStale } from './agents.ts'
+import { type BrowserBackendInput, browserDirOf, createBrowserLaunchMiddleware, keysDirOf, MCP_SERVER_NAME, releaseSlot, sweepStale } from './agents.ts'
+import { warmPrivateDirs } from './private-dir.ts'
 import { debugStateOf, debugSummary } from './debug-file.ts'
 import { browserChecks } from './doctor.ts'
 import { browserTraceSource } from './trace-source.ts'
@@ -127,6 +128,8 @@ export function activate(api: TetherDaemon): IDisposable[] {
   })
   return [
     api.onStarted(() => {
+      // The owner-only check of the key folders (whoami + icacls) off the loop, so the first launch does not spawn them synchronously.
+      void warmPrivateDirs([browserDirOf(api.home), keysDirOf(api.home)], log)
       void sweepStale(api.home).then(
         n => { if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`) },
         e => api.log(`limpeza de chaves do navegador falhou: ${e instanceof Error ? e.message : String(e)}`),

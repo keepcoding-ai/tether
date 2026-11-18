@@ -44,3 +44,27 @@ test('private dir: <home>/browser and keys/ end protected, owner only, outside t
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+test('private dir: the async warm-up reaches the same state and the launch-time check then spawns nothing', async () => {
+  const { ensurePrivateDirAsync, resetPrivateDirMemory, warmPrivateDirs } = await import('../../extensions/browser/private-dir.ts')
+  resetPrivateDirMemory()
+  const home = mkdtempSync(join(tmpdir(), 'tether-warm-'))
+  try {
+    const browser = join(home, 'browser')
+    const keys = join(browser, 'keys')
+    const logs: string[] = []
+    await warmPrivateDirs([browser, keys], m => logs.push(m))
+    assert.deepEqual(logs, [])
+    if (process.platform === 'win32') {
+      const me = currentUserSid()
+      assert.deepEqual(checkDacl(daclOf(browser), me), { protected: true, others: [] })
+    }
+    const t0 = performance.now()
+    ensurePrivateDir(browser)
+    ensurePrivateDir(keys)
+    assert.ok(performance.now() - t0 < 50, 'a warmed folder is a set lookup, not a spawn')
+    await ensurePrivateDirAsync(browser) // idempotent
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})

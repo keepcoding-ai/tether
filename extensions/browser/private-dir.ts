@@ -8,8 +8,10 @@
 //     protected, and every allow entry is the owner's. Anything else throws, and the caller does not serve.
 //   - Elsewhere: mode 0700, checked the same way.
 // The check runs once per folder per process (a folder found right is not touched).
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -98,3 +100,69 @@ export function ensurePrivateDir(dir: string): void {
   }
   done.add(dir)
 }
+
+// ---- warm-up: the same check, without blocking the loop ----
+// The first ensurePrivateDir of a folder costs a `whoami` and several `icacls` as synchronous spawns (hundreds of ms on
+// Windows) inside the launch of an agent. warmPrivateDirs does that work off the loop at boot and fills the same `done` set,
+// so a launch finds the folder checked. A launch that comes before the warm-up ends keeps the synchronous path above.
+
+const execFileAsync = promisify(execFile)
+const runAsync = async (args: string[]): Promise<string> => (await execFileAsync(system32('icacls.exe'), args, { windowsHide: true, encoding: 'utf8' })).stdout
+let sidPending: Promise<string> | undefined
+
+async function currentUserSidAsync(): Promise<string> {
+  if (sid) return sid
+  sidPending ??= (async () => {
+    const { stdout } = await execFileAsync(system32('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true, encoding: 'utf8' })
+    const m = /"(S-1-[\d-]+)"/.exec(stdout)
+    if (!m) throw new Error('não consegui ler o SID do usuário atual')
+    sid = m[1]!
+    return sid
+  })().finally(() => { sidPending = undefined })
+  return sidPending
+}
+
+async function daclOfAsync(dir: string): Promise<string> {
+  const tmp = await mkdtemp(join(tmpdir(), 'tether-acl-'))
+  try {
+    const file = join(tmp, 'acl')
+    await runAsync([dir, '/save', file, '/q'])
+    const text = (await readFile(file)).toString('utf16le').replace(/^﻿/, '')
+    const sddl = text.split(/\r?\n/).map(l => l.trim()).find(l => l.startsWith('D:'))
+    if (!sddl) throw new Error('ACL ilegível')
+    return sddl
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+}
+
+/** ensurePrivateDir without blocking the event loop; same checks and repairs, same `done` memory. Throws like it. */
+export async function ensurePrivateDirAsync(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true })
+  if (done.has(dir)) return
+  if (process.platform !== 'win32') {
+    await chmod(dir, 0o700)
+    if (((await stat(dir)).mode & 0o077) !== 0) throw new Error(`${basename(dir)}: a pasta continua aberta a outros usuários`)
+    done.add(dir)
+    return
+  }
+  const owner = await currentUserSidAsync()
+  let c = checkDacl(await daclOfAsync(dir), owner)
+  if (!c.protected || c.others.length > 0) {
+    await runAsync([dir, '/inheritance:r', '/grant:r', `*${owner}:(OI)(CI)F`, '/q'])
+    for (const other of checkDacl(await daclOfAsync(dir), owner).others) await runAsync([dir, '/remove:g', `*${WELL_KNOWN[other] ?? other}`, '/q'])
+    c = checkDacl(await daclOfAsync(dir), owner)
+    if (!c.protected || c.others.length > 0) throw new Error(`${basename(dir)}: a pasta concede acesso a outros (${c.others.join(', ')}); o navegador não serve`)
+  }
+  done.add(dir)
+}
+
+/** Checks the folders one after another at boot; a failure is reported to `log` and left for the launch's own check to raise. */
+export async function warmPrivateDirs(dirs: readonly string[], log: (msg: string) => void = () => {}): Promise<void> {
+  for (const dir of dirs) {
+    try { await ensurePrivateDirAsync(dir) } catch (e) { log(`aquecimento de ${basename(dir)}: ${(e as Error).message}`) }
+  }
+}
+
+/** Test seam: forgets what was checked. */
+export function resetPrivateDirMemory(): void { done.clear(); sid = undefined }

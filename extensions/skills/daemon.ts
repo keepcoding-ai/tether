@@ -3,9 +3,9 @@
 // at every launch (a few small files): an edited skill applies to the next agent started, and each adapter rewrites its
 // copy under <TETHER_HOME>/skills/<agent>/ only when the library changed.
 import { resolve } from 'node:path'
-import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
-import { loadSkills, skillsVersion } from '../../src/agents/skills.ts'
+import { SkillsCache } from '../../src/agents/skills.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
@@ -25,15 +25,15 @@ export interface SkillsDeps {
 }
 
 /** The launch middleware: the plan given (same object) when nothing applies; a failing adapter is logged, never fatal. */
-export function createSkillsMiddleware(deps: SkillsDeps): (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan {
+export function createSkillsMiddleware(deps: SkillsDeps, cache: SkillsCache = new SkillsCache(deps.library, deps.log)): (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan {
   return (plan, slot) => {
     if (slot.agent === 'shell') return plan
     const agent = deps.agent(slot.agent)
     if (!agent?.skills) return plan
     try {
-      const skills = loadSkills(deps.library, deps.log)
+      const { skills, version } = cache.get()
       if (!skills.length) return plan
-      return agent.skills.inject(plan, { skills, home: deps.home, version: skillsVersion(skills) })
+      return agent.skills.inject(plan, { skills, home: deps.home, version })
     } catch (e) {
       deps.log(`skills não entregues a ${slot.agent} (${slot.slotId}): ${e instanceof Error ? e.message : String(e)}`)
       return plan
@@ -42,5 +42,10 @@ export function createSkillsMiddleware(deps: SkillsDeps): (plan: LaunchPlan, slo
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {
-  return [api.launch.use(createSkillsMiddleware({ agent: n => api.agents.get(n), home: api.home, library: libraryDir(), log: m => api.log(m) }))]
+  const library = libraryDir()
+  const cache = new SkillsCache(library, m => api.log(m))
+  return [
+    api.launch.use(createSkillsMiddleware({ agent: n => api.agents.get(n), home: api.home, library, log: m => api.log(m) }, cache)),
+    toDisposable(() => cache.dispose()),
+  ]
 }

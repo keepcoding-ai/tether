@@ -18,7 +18,7 @@
     "src/agents/shell.ts": 2,
     "src/agents/skills.ts": 15,
     "src/agents/soul.ts": 10,
-    "src/core/exe.ts": 23,
+    "src/core/exe.ts": 21,
     "src/core/paths.ts": 1,
     "src/core/profile.ts": 7,
     "src/core/store.ts": 15,

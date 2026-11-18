@@ -13,6 +13,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Binding } from '../core/event.ts'
+import { fileSig } from '../core/exe.ts'
 import { canonicalDir } from '../core/paths.ts'
 import { cleanEnv } from './claude.ts'
 import { McpNameCollisionError } from './mcp.ts'
@@ -90,8 +91,20 @@ export function parseTopLevelNotify(text: string): string[] | undefined {
 
 /** The user's notify program from <CODEX_HOME>/config.toml, or undefined. */
 export function userNotify(home: string): string[] | undefined {
-  try { return parseTopLevelNotify(readFileSync(join(home, 'config.toml'), 'utf8')) } catch { return undefined }
+  const file = join(home, 'config.toml')
+  const sig = fileSig(file)
+  if (sig === undefined) { notifyCache.delete(file); return undefined }
+  const hit = notifyCache.get(file)
+  if (hit?.sig === sig) return hit.value
+  let value: string[] | undefined
+  try { value = parseTopLevelNotify(readFileSync(file, 'utf8')) } catch { return undefined }
+  if (notifyCache.size >= 16) notifyCache.clear()
+  notifyCache.set(file, { sig, value })
+  return value
 }
+
+/** The parsed notify of each config.toml, kept while its size and mtime stay what they were. */
+const notifyCache = new Map<string, { sig: string; value: string[] | undefined }>()
 
 // ---- finding the executable ----
 
@@ -113,6 +126,27 @@ export interface CodexResolveDeps {
  * target, `node <dir>/node_modules/@openai/codex/bin/codex.js`, runs instead (with the node next to it when there is one).
  */
 export function resolveCodexCommand(env: Record<string, string | undefined> = process.env, deps: CodexResolveDeps = {}): CodexCommand {
+  // Memoized only on the real file system: a hit costs a stat of the command found for this same PATH (and of its script).
+  if (deps.exists) return resolveCodexUncached(env, deps)
+  const key = `${deps.platform ?? process.platform}|${deps.home ?? ''}|${env.PATH ?? env.Path ?? ''}`
+  const hit = resolvedCodex.get(key)
+  const now = Date.now()
+  const sigs = (c: CodexCommand): (string | undefined)[] => [fileSig(c.command), ...c.prefix.map((p) => fileSig(p))]
+  if (hit && now - hit.at < RESOLVE_TTL_MS && sigs(hit.value).every((s, i) => s !== undefined && s === hit.sigs[i])) return hit.value
+  const found = resolveCodexUncached(env, deps)
+  const foundSigs = sigs(found)
+  if (isAbsolute(found.command) && foundSigs.every((s) => s !== undefined)) {
+    if (resolvedCodex.size >= 16) resolvedCodex.clear()
+    resolvedCodex.set(key, { value: found, sigs: foundSigs, at: now })
+  } else resolvedCodex.delete(key)
+  return found
+}
+
+/** A hit is re-resolved after this long anyway, so a codex installed earlier on the PATH is eventually preferred. */
+const RESOLVE_TTL_MS = 60_000
+const resolvedCodex = new Map<string, { value: CodexCommand; sigs: (string | undefined)[]; at: number }>()
+
+function resolveCodexUncached(env: Record<string, string | undefined>, deps: CodexResolveDeps): CodexCommand {
   const platform = deps.platform ?? process.platform
   const exists = deps.exists ?? existsSync
   const dirs = (env.PATH ?? env.Path ?? '').split(delimiter).filter(Boolean)

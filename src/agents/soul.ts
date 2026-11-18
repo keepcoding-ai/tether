@@ -28,7 +28,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
-import { ensureRenamedNode, exeLog, isNodeExecutable, isRenamedNode } from '../core/exe.ts'
+import { ensureRenamedNode, exeLog, fileSig, isNodeExecutable, isRenamedNode } from '../core/exe.ts'
 import { canonicalDir, slotEventsPath } from '../core/paths.ts'
 import { findOnPath } from './shell.ts'
 import { ENV_AGENT, ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type PlanInput } from './types.ts'
@@ -164,6 +164,28 @@ function askLoginShell(shell: string, env: Record<string, string | undefined>): 
 }
 
 export function resolveSoulCommand(env: Record<string, string | undefined> = process.env): Command {
+  // Memoized by the inputs that decide it; a hit costs one stat per absolute path of the command (the program and a script it runs).
+  const key = [process.platform, env[ENV_SOUL_CMD] ?? '', env.PATH ?? env.Path ?? '', env.USERPROFILE ?? '', env.HOME ?? '', env.SHELL ?? ''].join('|')
+  const hit = resolvedSoul.get(key)
+  const now = Date.now()
+  const pathsOf = (c: Command): string[] => [c.command, ...c.args].filter((a) => isAbsolute(a))
+  if (hit && now - hit.at < SOUL_RESOLVE_TTL_MS && hit.sigs.every((s, i) => s !== undefined && s === fileSig(hit.paths[i]!))) return { command: hit.value.command, args: [...hit.value.args] }
+  const found = resolveSoulUncached(env)
+  const paths = pathsOf(found)
+  const sigs = paths.map((p) => fileSig(p))
+  if (paths.length && isAbsolute(found.command) && sigs.every((s) => s !== undefined)) {
+    if (resolvedSoul.size >= 16) resolvedSoul.clear()
+    resolvedSoul.set(key, { value: found, paths, sigs, at: now })
+  } else resolvedSoul.delete(key)
+  return found
+}
+
+const SOUL_RESOLVE_TTL_MS = 60_000
+const resolvedSoul = new Map<string, { value: Command; paths: string[]; sigs: (string | undefined)[]; at: number }>()
+/** Drops the memoized resolution (tests). */
+export function clearSoulResolveCache(): void { resolvedSoul.clear() }
+
+function resolveSoulUncached(env: Record<string, string | undefined>): Command {
   const custom = env[ENV_SOUL_CMD]?.trim()
   if (custom) {
     const [first, ...rest] = splitCommandLine(custom)

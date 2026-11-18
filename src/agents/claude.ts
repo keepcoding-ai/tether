@@ -2,7 +2,7 @@
 // tether (hooks injected via --settings, never the user's global settings), and how to read
 // what Claude keeps on disk (transcript exists? current title?).
 import { access, open, readdir, stat } from 'node:fs/promises'
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, mkdirSync, writeFileSync } from 'node:fs'
 import path, { dirname, join, resolve, isAbsolute } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
+import { fileSig } from '../core/exe.ts'
 import { canonicalDir } from '../core/paths.ts'
 import { ENV_AGENT, ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
 
@@ -73,7 +74,15 @@ export function hookSettings(hookPath: string = defaultHookPath(), statusLinePat
  */
 export function ensureSettingsFile(home: string, withStatusLine = true): string {
   const path = join(home, withStatusLine ? 'claude-settings.json' : 'claude-settings.no-statusline.json')
-  const content = JSON.stringify(hookSettings(defaultHookPath(), withStatusLine ? defaultStatusLinePath() : null), null, 2) + '\n'
+  // The content is a pure function of this module's location: built once per path. A file whose size and mtime are
+  // what this process last saw (written or verified) is the same file: one stat instead of a read.
+  let known = settingsFileCache.get(path)
+  if (!known) {
+    known = { content: JSON.stringify(hookSettings(defaultHookPath(), withStatusLine ? defaultStatusLinePath() : null), null, 2) + '\n', sig: undefined }
+    settingsFileCache.set(path, known)
+  }
+  const { content } = known
+  if (known.sig !== undefined && fileSig(path) === known.sig) return path
   let current: string | undefined
   try { current = readFileSync(path, 'utf8') } catch { /* missing */ }
   if (current !== content) {
@@ -82,8 +91,11 @@ export function ensureSettingsFile(home: string, withStatusLine = true): string 
     writeFileSync(tmp, content)
     renameSync(tmp, path)
   }
+  known.sig = fileSig(path)
   return path
 }
+
+const settingsFileCache = new Map<string, { content: string; sig: string | undefined }>()
 
 /** True when a settings file defines a statusLine. Missing or malformed JSON counts as none. */
 function definesStatusLine(path: string, read: (path: string) => string): boolean {
@@ -99,9 +111,23 @@ function definesStatusLine(path: string, read: (path: string) => string): boolea
  * Whether the user already has a status line for a launch in `cwd`: user settings (<configDir>/settings.json) or the
  * project's .claude/settings.json / settings.local.json. Then tether leaves theirs alone.
  */
-export function userHasStatusLine(cwd: string, configDir: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): boolean {
+export function userHasStatusLine(cwd: string, configDir: string, read?: (path: string) => string): boolean {
   return [join(configDir, 'settings.json'), join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]
-    .some((p) => definesStatusLine(p, read))
+    .some((p) => read ? definesStatusLine(p, read) : definesStatusLineCached(p))
+}
+
+const statusLineCache = new Map<string, { sig: string; value: boolean }>()
+
+/** definesStatusLine on the real file system, parsed again only when the file's size or mtime changed (a missing file is not cached). */
+function definesStatusLineCached(path: string): boolean {
+  const sig = fileSig(path)
+  if (sig === undefined) { statusLineCache.delete(path); return false }
+  const hit = statusLineCache.get(path)
+  if (hit?.sig === sig) return hit.value
+  const value = definesStatusLine(path, (p) => readFileSync(p, 'utf8'))
+  if (statusLineCache.size >= 256) statusLineCache.clear() // per-project files: bounded
+  statusLineCache.set(path, { sig, value })
+  return value
 }
 
 /** Seams of the resolver, so tests can fake the platform, the home, the file system and the login shell. */
@@ -134,6 +160,28 @@ const loginShellCache = new Map<string, string>() // keyed by $SHELL; a miss is 
  * Order: env PATH, known install dirs, the user's login shell. Falls back to the bare name.
  */
 export function resolveClaudeCommand(env: Record<string, string | undefined> = process.env, deps: ClaudeResolveDeps = {}): string {
+  // Memoized only on the real file system: a hit costs one stat of the binary found earlier for this same PATH.
+  if (deps.exists || deps.loginShell) return resolveClaudeUncached(env, deps)
+  const key = `${deps.platform ?? process.platform}\0${deps.home ?? ''}\0${env.SHELL ?? ''}\0${env.PATH ?? env.Path ?? ''}`
+  const hit = resolvedClaude.get(key)
+  const now = Date.now()
+  if (hit && now - hit.at < RESOLVE_TTL_MS && fileSig(hit.path) === hit.sig) return hit.path
+  const found = resolveClaudeUncached(env, deps)
+  const sig = path.isAbsolute(found) ? fileSig(found) : undefined
+  if (sig !== undefined) {
+    if (resolvedClaude.size >= 16) resolvedClaude.clear()
+    resolvedClaude.set(key, { path: found, sig, at: now })
+  } else resolvedClaude.delete(key)
+  return found
+}
+
+/** A hit is re-resolved after this long anyway, so a `claude` installed earlier on the PATH is eventually preferred. */
+export const RESOLVE_TTL_MS = 60_000
+const resolvedClaude = new Map<string, { path: string; sig: string; at: number }>()
+/** Drops the memoized resolution (tests; a changed PATH already misses by key). */
+export function clearClaudeResolveCache(): void { resolvedClaude.clear() }
+
+function resolveClaudeUncached(env: Record<string, string | undefined>, deps: ClaudeResolveDeps): string {
   const platform = deps.platform ?? process.platform
   const exists = deps.exists ?? existsSync
   const pathVar = env.PATH ?? env.Path ?? ''

@@ -15,7 +15,7 @@
 // anywhere else aborts in dyld at launch ("Library not loaded"). The process runs the real node and gets its
 // name through argv[0] instead (`argv0` of child_process.spawn; `exec -a` for a pty), which is what `ps`
 // shows. Processes are killed by pid there, so the killall motive does not apply.
-import { appendFileSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { type Stats, appendFileSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 export type ExeName = 'tetherd' | 'tether-soul' | 'tether-procd' | 'tether-ptyd'
@@ -146,13 +146,43 @@ export function argv0Reason(source: string): string {
  */
 export function ensureRenamedNode(home: string, name: ExeName, source: string, log: (msg: string) => void = () => {}, platform: NodeJS.Platform = process.platform): ExeResult {
   const target = exePath(home, name)
-  sweepOrphanTemps(home, log)
-  let src: ReturnType<typeof statSync>
-  try {
-    src = statSync(source)
-  } catch (e) {
-    return fallback(`${source} não existe ou não pode ser lido: ${(e as Error).message}`)
+  const found = statOrError(source)
+  const src = found instanceof Error ? undefined : found
+  // A copy this process already made or verified, with the source unchanged and the copy still there: two stats, no
+  // directory sweep and no stamp read. Anything else (first call, changed source, missing copy) takes the full path below.
+  const memoKey = `${home}|${name}|${source}|${platform}`
+  const memo = settled.get(memoKey)
+  if (memo && src && memo.size === src.size && memo.mtimeMs === src.mtimeMs && memo.stamp === fileSig(stampPath(home, name)) && (memo.result.method === 'argv0' || fileSig(target) !== undefined)) {
+    return { ...memo.result, state: 'current' }
   }
+  sweepOrphanTemps(home, log)
+  const result = ensureRenamedNodeSlow(home, name, source, found, target, log, platform)
+  if (src && (result.state === 'fresh' || result.state === 'current') && result.method !== 'fallback') {
+    if (settled.size >= 32) settled.clear()
+    settled.set(memoKey, { size: src.size, mtimeMs: src.mtimeMs, stamp: fileSig(stampPath(home, name)), result })
+  } else settled.delete(memoKey)
+  return result
+}
+
+const settled = new Map<string, { size: number; mtimeMs: number; stamp: string | undefined; result: ExeResult }>()
+
+/** The one synchronous stat of this file: the file's stats, or the error that stopped it. */
+function statOrError(path: string): Stats | Error {
+  try { return statSync(path) } catch (e) { return e as Error }
+}
+
+/**
+ * Size and mtime of a file as one comparable string; undefined when it is not there. What the launch-path caches
+ * (claude settings, user settings, skills stamp, renamed node) compare instead of reading the file again.
+ */
+export function fileSig(path: string): string | undefined {
+  const st = statOrError(path)
+  return st instanceof Error ? undefined : `${st.size}:${st.mtimeMs}`
+}
+
+function ensureRenamedNodeSlow(home: string, name: ExeName, source: string, found: Stats | Error, target: string, log: (msg: string) => void, platform: NodeJS.Platform): ExeResult {
+  if (found instanceof Error) return fallback(`${source} não existe ou não pode ser lido: ${found.message}`)
+  const src = found
   const stamp = readStamp(home, name)
   if (platform === 'darwin') {
     const reason = argv0Reason(source)
@@ -235,12 +265,8 @@ export function inspectRenamedNode(home: string, name: ExeName, platform: NodeJS
   const argv0 = platform === 'darwin' || stamp?.method === 'argv0'
   let outdated = !stamp || stamp.method === 'fallback'
   if (stamp && stamp.method !== 'fallback') {
-    try {
-      const s = statSync(stamp.source)
-      outdated = s.size !== stamp.size || s.mtimeMs !== stamp.mtimeMs || (!present && !argv0)
-    } catch {
-      outdated = true
-    }
+    const s = statOrError(stamp.source)
+    outdated = s instanceof Error ? true : s.size !== stamp.size || s.mtimeMs !== stamp.mtimeMs || (!present && !argv0)
   }
   return { name, path, present, stamp, outdated, residue: argv0 && present }
 }

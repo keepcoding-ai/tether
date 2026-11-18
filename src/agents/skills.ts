@@ -7,8 +7,9 @@
 //   - soul-cli: a shared folder (`<dir>/skills/<name>/SKILL.md`) through `-S <dir>`;
 //   - an agent with no skills of its own but a system prompt flag: `systemPromptSkills(flag)`, the skills' text appended.
 // A new agent writes its own AgentSkills; nothing else changes.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { delimiter, join } from 'node:path'
+import { fileSig } from '../core/exe.ts'
 import type { LaunchPlan } from './types.ts'
 
 export interface TetherSkill {
@@ -86,13 +87,77 @@ export function skillsVersion(skills: readonly TetherSkill[]): string {
   return parts.join('|')
 }
 
+export interface SkillsSnapshot {
+  skills: TetherSkill[]
+  version: string
+}
+
+/**
+ * The library read once and kept until something under it changes (an `fs.watch` marks it dirty), so a launch costs no
+ * directory walk. Without a working watcher (the folder is missing, the platform refuses) every `get` reads afresh, as before.
+ * Starting a read clears the mark first: a change landing during the read leaves it dirty for the next `get`.
+ */
+export class SkillsCache {
+  private snapshot: SkillsSnapshot | undefined
+  private dirty = true
+  private watcher: FSWatcher | undefined
+  private watchTried = false
+
+  private readonly library: string
+  private readonly log: (msg: string) => void
+  private readonly watchFn: typeof watch
+
+  constructor(library: string, log: (msg: string) => void = () => {}, watchFn: typeof watch = watch) {
+    this.library = library
+    this.log = log
+    this.watchFn = watchFn
+  }
+
+  get(): SkillsSnapshot {
+    this.startWatch()
+    if (this.snapshot && !this.dirty && this.watcher) return this.snapshot
+    this.dirty = false
+    const skills = loadSkills(this.library, this.log)
+    this.snapshot = { skills, version: skillsVersion(skills) }
+    return this.snapshot
+  }
+
+  dispose(): void {
+    this.watcher?.close()
+    this.watcher = undefined
+    this.snapshot = undefined
+  }
+
+  private startWatch(): void {
+    if (this.watcher || this.watchTried) return
+    this.watchTried = true
+    try {
+      const w = this.watchFn(this.library, { recursive: true, persistent: false }, () => { this.dirty = true })
+      w.on('error', () => { this.dirty = true; w.close(); this.watcher = undefined })
+      this.watcher = w
+    } catch { /* no watcher: read every time */ }
+  }
+}
+
+/** What each target's stamp looked like when this process last saw it right: the version, and the stamp file's size and mtime. */
+const materialized = new Map<string, { version: string; sig: string }>()
+
 /**
  * Writes an agent's copy of the skills at `target` by `build(stagingDir)` when the bundle's version differs from the one
  * recorded there (staging + rename: an agent starting meanwhile never sees half a folder). Returns `target`.
+ * A stamp this process already verified (same version, same size and mtime) is trusted with one stat instead of a read.
  */
 export function materialize(target: string, bundle: SkillBundle, build: (dir: string) => void): string {
   const stamp = join(target, '.tether-version')
-  try { if (readFileSync(stamp, 'utf8') === bundle.version) return target } catch { /* first time or changed */ }
+  const known = materialized.get(target)
+  if (known?.version === bundle.version && known.sig === fileSig(stamp)) return target
+  try {
+    if (readFileSync(stamp, 'utf8') === bundle.version) {
+      const sig = fileSig(stamp)
+      if (sig) materialized.set(target, { version: bundle.version, sig })
+      return target
+    }
+  } catch { /* first time or changed */ }
   const staging = `${target}.${process.pid}.tmp`
   rmSync(staging, { recursive: true, force: true })
   mkdirSync(staging, { recursive: true })
@@ -100,6 +165,8 @@ export function materialize(target: string, bundle: SkillBundle, build: (dir: st
   writeFileSync(join(staging, '.tether-version'), bundle.version)
   rmSync(target, { recursive: true, force: true })
   renameSync(staging, target)
+  const sig = fileSig(stamp)
+  if (sig) materialized.set(target, { version: bundle.version, sig })
   return target
 }
 
