@@ -166,10 +166,17 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     const sizeA = await sizeOf(a)
     await typeInto(page, a, '1..40 | % { Write-Host "tick-$_"; Start-Sleep -Milliseconds 150 }\r')
     await page.keyboard.press('Control+3'); await expectActive(page, 'desk-3')
-    await page.waitForFunction(id => window.__tether.text(id).includes('tick-40'), a, { timeout: 30_000 })
+    // A hidden terminal receives no output (performance.hiddenPanes, on by default): the shell keeps running and
+    // the missing output is delivered, complete and in order, when the desk is shown again.
+    await sleep(8_000) // the loop runs ~6 s
     assert.equal(await h.deskOf(page, a), 'desk-1')
     assert.deepEqual(await sizeOf(a), sizeA, 'the hidden pane keeps its size (no resize sent to the shell)')
     assert.equal((await pidsOf(page, [a]))[a], pids[a], 'same shell')
+    await page.keyboard.press('Control+1'); await expectActive(page, 'desk-1')
+    await page.waitForFunction(id => window.__tether.text(id).includes('tick-40'), a, { timeout: 30_000 })
+    const shown = await h.text(page, a)
+    assert.ok(shown.includes('tick-2') && shown.indexOf('tick-2') < shown.lastIndexOf('tick-40'), 'the output arrives from the start, in order')
+    await page.keyboard.press('Control+3'); await expectActive(page, 'desk-3')
 
     // ---- 4. "Mover…" from the tab's menu: a tab of desk 1's frame ----
     console.log('step 4')

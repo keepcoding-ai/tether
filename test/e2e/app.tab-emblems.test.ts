@@ -182,8 +182,8 @@ test('tab emblems: menu, popover, editor, search, new/delete, relaunch, close', 
     await page.waitForFunction(sel => /--x-red\)/.test((globalThis as unknown as { document: { querySelector(s: string): { getAttribute(n: string): string | null } | null } }).document.querySelector(sel)?.getAttribute('style') ?? ''), chip(a))
     const expected = searchIcons(buildIconIndex(EMBLEM_ICONS), 'foguete')![0]!
     await page.fill('dialog.emb-dlg .emb-pk-s input', 'foguete')
-    await page.waitForSelector('dialog.emb-dlg .emb-grid:not([hidden]) .emb-sec h4')
-    assert.match(await page.locator('dialog.emb-dlg .emb-grid:not([hidden]) h4').innerText(), /resultado/i)
+    await page.waitForSelector('dialog.emb-dlg .emb-grid[aria-label="Resultados"]:not([hidden]) .emb-sec h4')
+    assert.match(await page.locator('dialog.emb-dlg .emb-grid[aria-label="Resultados"]:not([hidden]) h4').innerText(), /resultado/i)
     await shot(page, 'search-dark')
     await page.press('dialog.emb-dlg .emb-pk-s input', 'Enter')
     await page.waitForFunction(([sel, href]) => (globalThis as unknown as { document: { querySelector(s: string): { getAttribute(n: string): string | null } | null } }).document.querySelector(sel)?.getAttribute('href') === href, [`${chip(a)} use`, `#emb-${expected}`] as const)
