@@ -6,7 +6,9 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { LinkTarget } from '../shared/links.ts'
-import { terminalLinkProvider } from './terminal-links.ts'
+import { FOLLOW_LINK_TIP, terminalLinkProvider } from './terminal-links.ts'
+import { isModifierDown } from './link-open.ts'
+import { linkTargetOfUrl } from '../shared/links.ts'
 import { tabMark, tabMarkTip } from './turn-rules.ts'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
@@ -449,6 +451,19 @@ export class TerminalPanel implements IContentRenderer {
       openingCwd: () => this.host.getSlot(this.slotId)?.cwd ?? this.hint?.cwd,
       open: target => this.host.onOpenLink(this.slotId, target),
     }))
+    // OSC 8 hyperlinks (the ones agents print, e.g. Claude Code): without a handler xterm falls back to a native
+    // window.confirm ("This link could potentially be dangerous"). They follow the same path as every other link:
+    // underlined with the pane's tip, followed only by Ctrl (Cmd) + click, opened by the app — no dialog.
+    {
+      const term = this.term
+      const tip = (text: string | undefined): void => { if (text) term.element?.setAttribute('title', text); else term.element?.removeAttribute('title') }
+      term.options.linkHandler = {
+        activate: (event, text) => { if (isModifierDown(event)) this.host.onOpenLink(this.slotId, linkTargetOfUrl(text)) },
+        hover: () => tip(FOLLOW_LINK_TIP),
+        leave: () => tip(undefined),
+        allowNonHttpProtocols: true,
+      }
+    }
     this.term.onData(data => {
       if (!this.slotId) return
       perfKey(this.slotId)

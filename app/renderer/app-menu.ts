@@ -39,6 +39,7 @@ export const CORE_APP_MENU: readonly Item[] = [
     { command: 'pane.new-at-frame-edge', icon: 'square-half', label: 'Novo painel na borda do quadro…' },
     { command: 'frame.new', icon: 'columns', label: 'Novo quadro…' },
     { command: 'pane.switch-profile', icon: 'arrow-clockwise', label: 'Trocar perfil do painel…' },
+    { command: 'pane.asleep', icon: 'moon', label: 'Guias hibernadas…' },
   ]),
   // The 'note' group is the note extension's (extensions/note/manifest.ts: Nova nota, Abrir nota…, Salvar nota como…).
   ...items('desk', [

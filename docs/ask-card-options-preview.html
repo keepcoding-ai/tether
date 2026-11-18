@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Cartão "Sua vez" — três opções</title>
+<style>
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; padding: 20px; background: #0f1115; color: #e6e8eb; font: 13px/1.45 system-ui, "Segoe UI", sans-serif; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  .lead { color: #8b929c; margin: 0 0 16px; max-width: 980px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; }
+  .opt h2 { font-size: 14px; margin: 0 0 4px; }
+  .opt .sum { color: #8b929c; margin: 0 0 8px; min-height: 38px; }
+  .opt ul { margin: 8px 0 0; padding-left: 18px; color: #b7bcc4; }
+  .opt li.good::marker { content: "✓  "; color: #4ade80; }
+  .opt li.bad::marker { content: "✕  "; color: #f87171; }
+  .opt li.mid::marker { content: "~  "; color: #f5a524; }
+
+  .pane { border: 2px solid #f5a524; border-radius: 8px; overflow: hidden; background: #15181e; height: 360px; display: flex; flex-direction: column; }
+  .bar { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: #1b1f26; border-bottom: 1px solid #2a2f38; flex: none; }
+  .pill { background: rgba(245,165,36,.14); border-radius: 999px; padding: 2px 9px; font-size: 12px; white-space: nowrap; border: 0; color: inherit; cursor: pointer; }
+  .pill b { color: #f5a524; font-weight: 500; }
+  .addr { flex: 1; background: #0f1115; border: 1px solid #2a2f38; border-radius: 5px; height: 24px; font: 11px ui-monospace, Consolas, monospace; color: #8b929c; padding: 4px 6px; overflow: hidden; white-space: nowrap; }
+  .btn { border: 1px solid #2a2f38; background: transparent; color: inherit; border-radius: 5px; padding: 3px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .btn.hl { background: #f5a524; border-color: #f5a524; color: #1a1200; }
+
+  .body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .site { flex: 1; min-height: 0; overflow: auto; background: #f4f2ee; color: #222; padding: 14px 16px; position: relative; }
+  .site h3 { margin: 0 0 8px; font-size: 14px; }
+  .site label { display: block; font-size: 12px; color: #555; margin-top: 8px; }
+  .site input { width: 100%; max-width: 240px; padding: 6px 8px; border: 1px solid #bbb; border-radius: 5px; font: inherit; }
+  .site .go { margin-top: 10px; padding: 6px 12px; border: 0; border-radius: 5px; background: #2563eb; color: #fff; font: inherit; cursor: pointer; }
+  .site .ok { color: #15803d; font-weight: 600; margin-top: 8px; }
+
+  .card { background: #fffaf0; color: #2b2112; border: 1px solid #f1c76b; padding: 10px 12px; display: grid; gap: 8px; }
+  .card header { display: flex; align-items: center; gap: 6px; }
+  .card .tag { background: #f5a524; color: #1a1200; font-weight: 600; font-size: 10px; padding: 1px 7px; border-radius: 999px; }
+  .card h4 { margin: 0; font-size: 13px; }
+  .card .x { margin-left: auto; background: none; border: 0; color: #7a6a4a; cursor: pointer; font-size: 12px; }
+  .card blockquote { margin: 0; padding: 6px 9px; border-left: 3px solid #f1c76b; background: #fff3d9; border-radius: 3px; font-size: 12px; }
+  .card footer { display: flex; gap: 6px; justify-content: flex-end; }
+  .card .btn { border-color: #e2c487; }
+  .card.flow { border-width: 0 0 1px; flex: none; }
+  .card.float { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 3; border-radius: 9px; box-shadow: 0 8px 22px rgba(0,0,0,.22); }
+
+  .frozen { filter: grayscale(.6) brightness(.92); pointer-events: none; user-select: none; }
+  .frozen::after { content: ""; }
+  .freeze-tag { position: absolute; bottom: 8px; right: 8px; z-index: 2; background: rgba(0,0,0,.65); color: #fff; font-size: 11px; padding: 3px 8px; border-radius: 999px; }
+  .note { margin-top: 8px; font-size: 12px; color: #8b929c; }
+</style>
+</head>
+<body>
+<h1>Cartão "Sua vez" · três opções</h1>
+<p class="lead">As três guias simulam o mesmo pedido: o agente quer que você faça login no site. Tente de verdade em cada uma: clique no campo, digite e aperte "Entrar". Depois recolha e reabra o cartão pela pílula. A diferença aparece nas mãos, não nos olhos.</p>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const OPTS = [
+  { id: 'A', title: 'A · O cartão empurra o site', sum: 'Aberto, o cartão fica entre a barra e o site, e o site desce. Recolhido, ele some.',
+    mode: 'flow', pros: [['good', 'Dá para fazer o login com o cartão aberto'], ['good', 'Pronto: já está implementado'], ['mid', 'O site perde altura enquanto o cartão está aberto'], ['bad', 'Não flutua: o site "pula" ao abrir e recolher']] },
+  { id: 'B', title: 'B · Flutua, mas o site congela', sum: 'Aberto, o cartão fica por cima, e o site vira uma foto parada que não aceita clique.',
+    mode: 'freeze', pros: [['good', 'Fica igual à maquete'], ['bad', 'Com o cartão aberto não dá para digitar nada: é preciso recolher antes'], ['mid', 'Pouco trabalho a mais']] },
+  { id: 'C', title: 'C · Flutua de verdade', sum: 'Aberto, o cartão fica por cima e o site continua vivo embaixo, com o que não está coberto clicável.',
+    mode: 'float', pros: [['good', 'Fica igual à maquete'], ['good', 'Dá para fazer o login com o cartão aberto, se o campo não estiver embaixo dele'], ['bad', 'Mexe no núcleo das superfícies do tether, onde já há trabalho em curso'], ['mid', 'Mais tempo para ficar pronto']] },
+]
+const grid = document.getElementById('grid')
+for (const o of OPTS) {
+  const st = { open: true, done: false }
+  const wrap = document.createElement('section'); wrap.className = 'opt'
+  grid.append(wrap)
+  const render = () => {
+    const frozen = o.mode === 'freeze' && st.open
+    const card = st.open ? `<div class="card ${o.mode === 'flow' ? 'flow' : 'float'}">
+        <header><span class="tag">SUA VEZ</span><h4>O color-space precisa de você</h4><button class="x" data-a="toggle">recolher</button></header>
+        <blockquote>Faça login no Sandbox nesta guia e depois devolva.</blockquote>
+        <footer><button class="btn">Não consigo ajudar</button><button class="btn hl">Pronto, devolver</button></footer>
+      </div>` : ''
+    wrap.innerHTML = `<h2>${o.title}</h2><p class="sum">${o.sum}</p>
+      <div class="pane">
+        <div class="bar"><button class="pill" data-a="toggle">● Com você <b>${st.open ? '▴' : '▾ ver pedido'}</b></button><span class="addr">localhost:5199/sandbox</span><button class="btn hl">Pronto, devolver</button></div>
+        <div class="body">
+          ${o.mode === 'flow' ? card : ''}
+          <div class="site ${frozen ? 'frozen' : ''}">
+            <div style="height:${o.mode === 'flow' ? 0 : 120}px"></div>
+            <h3>Sandbox · Entrar</h3>
+            <label>E-mail</label><input placeholder="voce@exemplo.com">
+            <label>Senha</label><input type="password" placeholder="••••••">
+            <div><button class="go" data-a="login">Entrar</button></div>
+            ${st.done ? '<div class="ok">✓ Login feito</div>' : ''}
+          </div>
+          ${o.mode !== 'flow' ? card : ''}
+          ${frozen ? '<span class="freeze-tag">site congelado · recolha para usar</span>' : ''}
+        </div>
+      </div>
+      <ul>${o.pros.map(([k, t]) => `<li class="${k}">${t}</li>`).join('')}</ul>`
+    wrap.querySelectorAll('[data-a="toggle"]').forEach(b => b.onclick = () => { st.open = !st.open; render() })
+    const go = wrap.querySelector('[data-a="login"]'); if (go) go.onclick = () => { st.done = true; render() }
+  }
+  render()
+}
+</script>
+<p class="note">Em B e C, o espaço em branco no topo do site simula a área que o cartão cobre. Em A, o site começa logo abaixo do cartão.</p>
+</body>
+</html>

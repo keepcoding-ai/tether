@@ -94,6 +94,16 @@ function paint(el: Chip, e: Emblem | undefined): void {
   el.hidden = false
 }
 
+/** A detached chip with the emblem a tab wears (a menu row's right end), or undefined when it wears none. */
+export function emblemChip(panelId: string): HTMLElement | undefined {
+  const e = shownEmblem(lib, worn.get(panelId))
+  if (!e) return undefined
+  const el = newChip()
+  paint(el, e)
+  el.classList.add('menu-emblem')
+  return el
+}
+
 function repaintPanel(panelId: string): void {
   const set = chips.get(panelId)
   if (!set) return

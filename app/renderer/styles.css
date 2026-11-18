@@ -786,7 +786,7 @@ body.no-tab-close :is(.tether-tab, .br-web-tab, .pr-tab) .close { display: none;
 .tab-more.busy:not(.attention)::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: var(--ok); opacity: .7; }
 .tab-more .more-dot, .menu .attn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--x-alert); flex: none; }
 .menu .attn-dot { margin-left: auto; }
-#ctx-menu li.hd { padding: 4px 10px 2px; font-size: 11px; font-weight: 600; color: var(--fg-dim); cursor: default; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ctx-menu li.hd { padding: 6px 10px 6px; font-size: 11px; font-weight: 600; color: var(--fg-dim); cursor: default; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ctx-menu li.hd:hover { background: none; }
 #ctx-menu li.sep { height: 1px; padding: 0; margin: 4px 2px; background: var(--border); cursor: default; }
 
@@ -1857,3 +1857,6 @@ dialog.ask.emb-dlg { width: min(860px, 96vw); max-width: 96vw; height: min(600px
   .emb-li { width: auto; flex: none; }
   .emb-meta, .emb-pv { display: none; }
 }
+
+/* The moon menu: a hibernated tab's emblem at the row's right end. */
+.menu li .emb-chip.menu-emblem { margin-left: auto; }

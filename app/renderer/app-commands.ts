@@ -32,6 +32,8 @@ export interface CommandHost {
   restartAgent(id: string): void
   /** "Hibernar guia": stop the pane's process and keep it asleep (not started on launch) until woken. */
   hibernatePane(id: string): void
+  /** "Guias hibernadas…": the same list as the tab strip's moon, for the current desk; picking one wakes it. */
+  asleepMenu(): void
   toggleDetails(id: string): void
   /** "Copiar link do painel": a tether:// link to the pane (app/shared/tether-url.ts). */
   copyLink(id: string): void
@@ -151,6 +153,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.rename', title: 'Renomear painel…', group: GROUP.pane, icon: 'pencil-simple', ...pane, run: withPane(id => host.renamePane(id)) },
     { id: 'pane.switch-profile', title: 'Trocar perfil do painel…', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.switchProfile(id)) },
     { id: 'pane.restart', title: 'Reiniciar agente do painel', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.restartAgent(id)) },
+    { id: 'pane.asleep', title: 'Guias hibernadas…', group: GROUP.pane, icon: 'moon', run: () => host.asleepMenu() },
     { id: 'pane.hibernate', title: 'Hibernar guia', group: GROUP.pane, icon: 'moon', ...pane, run: withPane(id => host.hibernatePane(id)) },
     { id: 'pane.details', title: 'Mostrar ou ocultar a barra de status do painel', group: GROUP.pane, icon: 'rows', ...pane, run: withPane(id => host.toggleDetails(id)) },
     { id: 'pane.copy-link', title: 'Copiar link do painel', group: GROUP.pane, icon: 'link', ...pane, run: withPane(id => host.copyLink(id)) },

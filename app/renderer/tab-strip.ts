@@ -21,6 +21,10 @@ export interface TabStripHost {
   describe(id: string): { icon: IconName; label: string; attention: boolean; busy?: boolean }
   /** The "+N" list at (x, y); `pick` brings one back. `opener` is the "+N" button (aria-expanded, focus return). */
   showHidden(x: number, y: number, tabs: HiddenTab[], pick: (id: string) => void, opener: HTMLElement): void
+  /** Whether the pane is hibernated: it leaves the strip for the moon menu (unless it is the active tab). */
+  isAsleep(id: string): boolean
+  /** The moon menu at (x, y): one entry per hibernated tab; `wake` wakes it and makes it active. */
+  showAsleep(x: number, y: number, tabs: HiddenTab[], wake: (id: string) => void, opener: HTMLElement): void
   /** "⋯": the pane menu (the same one as a right-click on the tab). `opener` is the "⋯" button. */
   paneMenu(id: string, x: number, y: number, opener: HTMLElement): void
   toggleDetails(id: string): void
@@ -45,6 +49,10 @@ export class TabStripActions implements IHeaderActionsRenderer {
   readonly element: HTMLElement
   private readonly add: HTMLButtonElement
   private readonly more: HTMLButtonElement
+  /** The moon: the hibernated tabs, out of the strip (the same as the desk capsule's moon). */
+  private readonly sleep: HTMLButtonElement
+  private readonly sleepCount = document.createTextNode('')
+  private asleep: string[] = []
   private readonly toggle: HTMLButtonElement
   private readonly preview: HTMLButtonElement
   private readonly dots: HTMLButtonElement
@@ -75,6 +83,10 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.more.className = 'tab-more'; this.more.dataset.action = 'more'; this.more.hidden = true
     this.more.type = 'button'; this.more.setAttribute('aria-haspopup', 'menu'); this.more.setAttribute('aria-expanded', 'false')
     this.more.append(this.moreCount)
+    this.sleep = document.createElement('button')
+    this.sleep.className = 'tab-more tab-sleep'; this.sleep.dataset.action = 'asleep'; this.sleep.hidden = true
+    this.sleep.type = 'button'; this.sleep.setAttribute('aria-haspopup', 'menu'); this.sleep.setAttribute('aria-expanded', 'false')
+    this.sleep.append(icon('moon'), this.sleepCount)
     this.preview = document.createElement('button')
     this.preview.className = 'tab-act'; this.preview.dataset.action = 'md-preview-side'; this.preview.type = 'button'; this.preview.hidden = true
     this.preview.title = PREVIEW_SIDE_LABEL; this.preview.setAttribute('aria-label', PREVIEW_SIDE_LABEL)
@@ -89,6 +101,9 @@ export class TabStripActions implements IHeaderActionsRenderer {
     this.element.append(this.preview, this.toggle, this.dots)
     // The "+N" is not one of the actions: it lives in the tab row right after the last visible tab (placed by measure).
     this.more.addEventListener('pointerdown', ev => ev.stopPropagation())
+    this.sleep.addEventListener('pointerdown', ev => ev.stopPropagation())
+    this.sleep.addEventListener('click', ev => { ev.stopPropagation(); this.openAsleep() })
+    this.sleep.addEventListener('keydown', ev => { if (ev.key === 'ArrowDown') { ev.preventDefault(); this.openAsleep() } })
     // The "+" sits outside .tab-actions (right after the "+N"), so it needs its own guard against dockview's group drag.
     this.add.addEventListener('pointerdown', ev => ev.stopPropagation())
     // Buttons, not drag handles: dockview must not start a group drag from here.
@@ -130,7 +145,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
     queueMicrotask(() => {
       const head = this.header()
       if (!head) return
-      mo.observe(head, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-attention', 'data-mark', 'data-slot'] })
+      mo.observe(head, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-attention', 'data-mark', 'data-slot', 'data-glyph'] })
       ro.observe(head)
       this.measure()
     })
@@ -162,7 +177,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
 
   /** Whether a mutation record is this strip's own doing: inside its buttons, or the placing of "+N" and "+". */
   private ownMutation(r: MutationRecord): boolean {
-    const own = (n: Node): boolean => this.more.contains(n) || this.add.contains(n) || this.element.contains(n)
+    const own = (n: Node): boolean => this.more.contains(n) || this.sleep.contains(n) || this.add.contains(n) || this.element.contains(n)
     if (own(r.target)) return true
     if (r.type !== 'childList') return false
     for (const n of r.addedNodes) if (!own(n)) return false
@@ -192,14 +207,18 @@ export class TabStripActions implements IHeaderActionsRenderer {
     // Right after the tabs, before dockview's void and the actions: the "+N" and the "+" read as the end of the tab row.
     // dockview may wrap the tab list in a scroller (.dv-scrollable): the "+N" goes after the wrapper, never inside it.
     const row = list.parentElement?.classList.contains('dv-scrollable') ? list.parentElement : list
-    if (this.more.previousElementSibling !== row || this.add.previousElementSibling !== this.more) row.after(this.more, this.add)
+    if (this.more.previousElementSibling !== row || this.sleep.previousElementSibling !== this.more || this.add.previousElementSibling !== this.sleep) row.after(this.more, this.sleep, this.add)
     const els = this.tabs(head)
-    const order = [...els.keys()]
+    // Hibernated tabs leave the strip for the moon (the active one always shows); the rest share the room.
+    const active = this.activeId()
+    this.asleep = [...els.keys()].filter(id => id !== active && this.host.isAsleep(id))
+    const sleeping = new Set(this.asleep)
+    const order = [...els.keys()].filter(id => !sleeping.has(id))
     // Writes only what changed: an unchanged pass must leave the DOM (and the layout) untouched.
     const apply = (vis: readonly string[]): void => {
       const v = new Set(vis)
       for (const [id, el] of els) {
-        const hide = !v.has(id)
+        const hide = !v.has(id) || sleeping.has(id)
         if (el.classList.contains('tab-hidden') !== hide) el.classList.toggle('tab-hidden', hide)
       }
       const none = vis.length === order.length
@@ -216,6 +235,7 @@ export class TabStripActions implements IHeaderActionsRenderer {
     if (hadFocus && !this.more.hidden && document.activeElement !== this.more) this.more.focus({ preventScroll: true })
     this.hidden = hiddenTabs(order, vis)
     this.paintMore()
+    this.paintSleep()
     // Everything queued up to here is either this pass's own writes or a change this pass has already read.
     this.observer?.takeRecords()
   }
@@ -234,6 +254,31 @@ export class TabStripActions implements IHeaderActionsRenderer {
     const label = n === 1 ? '1 aba escondida' : `${n} abas escondidas`
     if (this.more.title !== label) this.more.title = label
     if (this.more.getAttribute('aria-label') !== label) this.more.setAttribute('aria-label', label)
+  }
+
+  private paintSleep(): void {
+    const n = this.asleep.length
+    if (this.sleep.hidden !== (n === 0)) this.sleep.hidden = n === 0
+    if (this.sleepCount.data !== String(n)) this.sleepCount.data = String(n)
+    const label = n === 1 ? '1 guia hibernada' : `${n} guias hibernadas`
+    if (this.sleep.title !== label) this.sleep.title = label
+    if (this.sleep.getAttribute('aria-label') !== label) this.sleep.setAttribute('aria-label', label)
+  }
+
+  private openAsleep(): void {
+    if (this.asleep.length === 0) return
+    const r = this.sleep.getBoundingClientRect()
+    const list = this.asleep.map(id => ({ id, ...this.host.describe(id) }))
+    this.host.showAsleep(r.left, r.bottom + 2, list, id => this.wake(id), this.sleep)
+  }
+
+  /** Waking from the moon: the tab comes back to its place in the strip and becomes active (the host starts it). */
+  private wake(id: string): void {
+    const panel = this.group?.panels.find(p => p.id === id)
+    if (!panel) return
+    touchTab(this.used, id)
+    panel.api.setActive()
+    this.measure()
   }
 
   private openHidden(): void {

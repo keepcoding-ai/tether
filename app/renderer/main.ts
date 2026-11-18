@@ -86,7 +86,7 @@ import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
 import type { PaneInfo } from './ext-api.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
-import { type EmblemHost, initEmblems, openEmblemMenu } from './tab-emblems.ts'
+import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
@@ -443,6 +443,8 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
           return { icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (liveTypeOf(paneTypes, id)?.icon as IconName | undefined) ?? 'question', label: findPanel(id)?.api.title ?? id, attention: !!paneAttention(id), busy: s?.turn === 'busy' }
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
+        isAsleep: id => asleepPanes.has(id),
+        showAsleep: (x, y, list, wake, opener) => showContextMenu(x, y, [{ heading: 'Guias hibernadas' }, ...list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, trail: emblemChip(t.id), run: () => { wake(t.id); void startSlot(t.id) } }))], opener),
         paneMenu: (id, x, y, opener) => {
           menuOpener = opener
           // A pad that absorbs its header: its frame's "⋯" is the pad's menu too (the pad's items after the pane's).
@@ -501,7 +503,7 @@ function setupDock(): void {
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
-    sleepMenu: (entries, x, y, wake, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'sun' as const, label: `Acordar ${e.name}`, run: () => wake(e.id) })), opener),
+    sleepMenu: (entries, x, y, wake, opener) => showContextMenu(x, y, [{ heading: 'Mesas hibernadas' }, ...entries.map(e => ({ icon: 'sun' as const, label: `Acordar ${e.name}`, run: () => wake(e.id) }))], opener),
     overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
     hint: position => shortcutHint(`desk.go.${position}`),
     move: (id, to) => desks.move(id, to),
@@ -2539,7 +2541,7 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 // ---------- tab context menu ----------
 
 /** `pin`: how the item also shows outside the menu (ext-api MenuPin). `standalone`: it acts without the pane on screen (a closed tab's menu runs it as is). `tip`: tooltip. */
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean; tip?: string }
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean; tip?: string; trail?: HTMLElement }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
 /** A line naming what the items under it act on (a pad's title over its items); not an item. */
@@ -2610,6 +2612,7 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     if (item.tip) li.title = item.tip
     li.append(icon(item.icon), document.createTextNode(item.label))
     if (item.checked) li.append(icon('check', 'ctx-check'))
+    if (item.trail) li.append(item.trail)
     if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
     li.addEventListener('click', ev => {
       ev.stopPropagation()
@@ -3199,6 +3202,13 @@ const commandHost: CommandHost = {
   renamePane: id => { const type = liveTypeOf(paneTypes, id); if (type?.rename) type.rename(id); else tabs.get(id)?.startRename() },
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   restartAgent: id => { if (slots.has(id)) void restartAgent(id) },
+  asleepMenu: () => {
+    const ids = deskPanes(desks.activeDeskId).map(p => p.id).filter(id => asleepPanes.has(id))
+    const items: MenuEntry[] = ids.length
+      ? ids.map(id => ({ icon: (slots.get(id) ? KIND_ICON[slots.get(id)!.kind] : undefined) ?? 'terminal-window', label: findPanel(id)?.api.title ?? id, trail: emblemChip(id), run: () => { findPanel(id)?.api.setActive(); void startSlot(id) } }))
+      : [{ icon: 'moon' as const, label: 'Nenhuma guia hibernada nesta mesa', run: () => {} }]
+    showContextMenu(Math.round(innerWidth / 2) - 120, 80, [{ heading: 'Guias hibernadas' }, ...items])
+  },
   hibernatePane: id => { const s = slots.get(id); if (s && isLiveSlot(s)) void hibernatePanes([id], `da guia "${panelTitle(s)}"`) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
   copyLink: id => copyPaneLink(id),
