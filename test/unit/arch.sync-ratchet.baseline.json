@@ -30,7 +30,7 @@
     "src/daemon/procs.ts": 12,
     "src/daemon/ronda-channel.ts": 4,
     "src/daemon/ronda.ts": 5,
-    "src/daemon/server.ts": 14,
+    "src/daemon/server.ts": 7,
     "src/doctor.ts": 25,
     "src/procd/host.ts": 12,
     "src/procd/protocol.ts": 4,

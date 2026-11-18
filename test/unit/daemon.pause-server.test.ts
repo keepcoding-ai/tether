@@ -70,7 +70,8 @@ describe('pause in the daemon', () => {
     const ea = last.entries.find((e) => e.slotId === a)!
     assert.equal(ea.phrase, 'terminando o teste')
     assert.equal(ea.note, 'continuar do passo 3')
-    assert.ok(!existsSync(slotPauseRequestPath(home, a)), 'request cleared once stopped')
+    // A fold from a hook report is written behind the broadcast: the removal reaches the disk shortly after.
+    await waitUntil(() => !existsSync(slotPauseRequestPath(home, a)), 5_000, 'request cleared once stopped')
     assert.ok(existsSync(slotPauseRequestPath(home, b)), 'other slot keeps listening')
     assert.equal(last.state, 'pausing')
 
@@ -81,9 +82,10 @@ describe('pause in the daemon', () => {
     const eb = events.at(-1)!.entries.find((e) => e.slotId === b)!
     assert.equal(eb.state, 'stopped-silent')
     assert.equal(eb.note, 'última mensagem')
-    assert.ok(!existsSync(slotPauseRequestPath(home, b)))
+    await waitUntil(() => !existsSync(slotPauseRequestPath(home, b)), 5_000, 'request of b cleared')
     assert.equal((await rec.client.request({ t: 'pause-get' })).pause!.state, 'paused')
-    assert.equal(JSON.parse(readFileSync(pausePath(home), 'utf8')).state, 'paused')
+    // Folded from a hook report, so written behind the broadcast: it reaches the disk shortly after.
+    await waitUntil(() => JSON.parse(readFileSync(pausePath(home), 'utf8')).state === 'paused', 5_000, 'pause.json paused')
   })
 
   test('lines of another batch or before the request are ignored', async () => {
@@ -105,8 +107,9 @@ describe('pause in the daemon', () => {
     report(first.home, b, batch.id, 'delivered')
     report(first.home, b, batch.id, 'done', 'nota')
     await waitUntil(() => first.events.some((x) => x.entries.find((e) => e.slotId === b)!.state === 'stopped'), 5_000, 'b stopped')
-    const before = JSON.parse(readFileSync(pausePath(first.home), 'utf8')) as PauseBatch
+    // A report's fold is written behind the broadcast (no client waits on it): read the file once close has drained the store.
     await first.daemon.close()
+    const before = JSON.parse(readFileSync(pausePath(first.home), 'utf8')) as PauseBatch
     rmSync(slotPauseRequestPath(first.home, a), { force: true })
 
     const second = await boot(first.home)

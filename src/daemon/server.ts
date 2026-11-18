@@ -4,8 +4,8 @@
 import { withTabEnv } from '../core/tab-env.ts'
 import { slotTitle } from '../../app/shared/agent-info.ts'
 import type { SlotEventKind } from './ext-api.ts'
-import { stat as statAsync } from 'node:fs/promises'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { mkdir, readFile, stat as statAsync } from 'node:fs/promises'
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { isAbsolute, join } from 'node:path'
 import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports, type TurnReport } from './attention.ts'
@@ -16,14 +16,17 @@ import { shellAdapter } from '../agents/shell.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { AgentName, Binding, RunInfo, SlotMeta, TetherEvent } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
-import { canonicalDir, slotAttentionPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotsDir } from '../core/paths.ts'
+import { canonicalDir, pausePath, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotRondaPath, slotRunPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
 import { RONDA_MCP_SERVER as RONDA_SERVER_NAME, RondaChannel, showsConfirm, type RondaChannelAgent } from './ronda-channel.ts'
 import type { ChannelConfirm } from '../agents/registry.ts'
-import { applyChange, buildChannelText, clearRonda, criterionStimulus, ENV_RONDA_TEST_SECONDS, flatText, readRondaAsync, RondaError, writeRonda, type Ronda } from './ronda.ts'
-import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, writePauseFile, type PauseBatch, type PauseEntry } from './pause.ts'
+import { applyChange, buildChannelText, criterionStimulus, ENV_RONDA_TEST_SECONDS, flatText, readRondaAsync, RondaError, type Ronda } from './ronda.ts'
+import { applyReportLine, buildRequestText, buildResumeText, canTransition, newEntry, readPauseFile, transition, type PauseBatch, type PauseEntry } from './pause.ts'
 import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snapshotProfile, type Profile, type ProfileInput, type SlotProfile } from '../core/profile.ts'
-import { clearRun, createSlot, currentBinding, newSlotId, parseEventLine, parseEvents, readEventsFile, readEventsFrom, readRun, readSlot, removeSlot, scanSlotsAsync, SLOT_ID_RE, writeRun, writeSlotMeta, type EventsRead, type SlotsScan } from '../core/store.ts'
+import { currentBinding, parseEventLine, parseEvents, readEventsFile, readEventsFrom, readRun, scanSlotsAsync, SLOT_ID_RE, type EventsRead, type SlotsScan } from '../core/store.ts'
+import { assertSlotId, parseSlotMeta, randomSlotId, serializeMeta, serializeRun } from '../core/store-model.ts'
+import { SlotStore } from '../core/slot-store.ts'
+import { createExecutor, type Executor } from '../exec/executor.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import {
   KILL_WAIT_CAP_MS,
@@ -158,6 +161,11 @@ export interface DaemonOptions {
    * also waits for that, so a test sees the settled state; tetherd itself passes true.
    */
   backgroundBoot?: boolean
+  /**
+   * The process' executor (tetherd passes its own and closes it itself). Default: one of the daemon's own, inline unless
+   * TETHER_EXECUTOR=worker, closed by `close`/`abandon`.
+   */
+  executor?: Executor
 }
 
 /** The disk reads `fsProbe` reports: the boot scan of slots/, an events file (whole or from an offset), a slot's marker listing, a run file. */
@@ -332,6 +340,14 @@ class DaemonImpl implements Daemon {
   /** Marker files the watcher reported since the slot's last debounce. */
   private readonly bgTouched = new Map<string, Set<string>>()
   private readonly fsProbe: ((op: FsProbeOp, slotId?: string) => void) | undefined
+  /** The door to the disk: every file this daemon writes by itself goes through the store (memory first, the io lane behind). */
+  private readonly executor: Executor
+  private readonly ownExecutor: boolean
+  private readonly store: SlotStore
+  /** Slots forgotten by this daemon: none of their files is written again, and the watcher never adopts them back. */
+  private readonly forgotten = new Set<string>()
+  /** Slots whose run file this daemon wrote (dropping it then needs no read). */
+  private readonly ownRuns = new Set<string>()
   /** Test overrides; everything else comes from the agent registry at the time of use. */
   private readonly adapterOverrides: Partial<Record<AgentName, AgentAdapter>>
   private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan) | undefined
@@ -380,6 +396,9 @@ class DaemonImpl implements Daemon {
     this.transformPlan = opts.transformPlan
     this.onSlot = opts.onSlot
     this.fsProbe = opts.fsProbe
+    this.ownExecutor = opts.executor === undefined
+    this.executor = opts.executor ?? createExecutor({ mode: process.env.TETHER_EXECUTOR === 'worker' ? 'worker' : 'inline', log: this.log })
+    this.store = new SlotStore(this.executor, { log: this.log })
     this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
     this.minAgentAgeMs = opts.minAgentAgeMs ?? MIN_AGENT_AGE_MS
     this.killWaitCapMs = opts.killWaitCapMs ?? KILL_WAIT_CAP_MS
@@ -461,7 +480,7 @@ class DaemonImpl implements Daemon {
   }
 
   async listen(): Promise<void> {
-    mkdirSync(slotsDir(this.home), { recursive: true })
+    await mkdir(slotsDir(this.home), { recursive: true })
     this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
     this.fsProbe?.('slots:scan')
     const scan = await scanSlotsAsync(this.home)
@@ -474,10 +493,13 @@ class DaemonImpl implements Daemon {
     if (profiles.problem) this.log(`profiles: ${profiles.problem}`)
     perf.timed('boot:load', () => { for (const meta of metas) this.load(meta) })
     this.seedMarkers(scan)
+    this.dropDeadTemps(scan.names)
     const adoptions = this.holdAdoptions(hostRuns ?? [], ownedElsewhere)
     this.booting = this.hydrateAll(adoptions.map((a) => a.slot), metas)
     this.loadPause()
     await this.procs.init()
+    // Boot barrier: what the boot rewrote (reaped run files, the pause requests of listening entries) is on disk before serving.
+    await this.store.flush()
     perf.start()
     this.startWatching()
     if (process.platform !== 'win32' && existsSync(this.pipe)) rmSync(this.pipe, { force: true })
@@ -629,7 +651,7 @@ class DaemonImpl implements Daemon {
       delete meta.profileArgs
       delete meta.profileEnv
     }
-    if (changed) perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta))
+    if (changed) this.saveMeta(meta)
     this.broadcastState(slot)
     return changed
   }
@@ -640,7 +662,7 @@ class DaemonImpl implements Daemon {
     if (saved.profileId === undefined) delete meta.profileId; else meta.profileId = saved.profileId
     if (saved.profileArgs === undefined) delete meta.profileArgs; else meta.profileArgs = saved.profileArgs
     if (saved.profileEnv === undefined) delete meta.profileEnv; else meta.profileEnv = saved.profileEnv
-    try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta)) } catch (e) { this.log(`slot ${meta.slotId}: cannot restore the profile fields: ${(e as Error).message}`) }
+    this.saveMeta(meta)
     this.broadcastState(slot)
   }
 
@@ -692,13 +714,78 @@ class DaemonImpl implements Daemon {
     const agentStartedAt = await processStartTime(pty.pid)
     if (agentStartedAt === undefined || slot.pty !== pty || pty.exit) return
     const run: RunInfo = { pid: this.pid, startedAt: this.startedAt, agentPid: pty.pid, agentStartedAt, by: 'tetherd' }
-    try { writeRun(this.home, slot.meta.slotId, run) } catch (e) { this.log(`slot ${slot.meta.slotId}: cannot write run file: ${(e as Error).message}`) }
+    const slotId = slot.meta.slotId
+    if (this.forgotten.has(slotId)) return
+    this.ownRuns.add(slotId)
+    this.store.put(slotRunPath(this.home, slotId), serializeRun(run))
   }
 
   /** Drops the slot's run file when it is this daemon's (a CLI `--here` launcher's file is left alone). */
   private forgetRun(slotId: string): void {
+    if (this.ownRuns.delete(slotId)) { this.store.remove(slotRunPath(this.home, slotId)); return }
+    // Not written by this daemon (a previous tetherd's): the file tells whose it is.
     const run = readRun(this.home, slotId)
-    if (run && run.by === 'tetherd') clearRun(this.home, slotId)
+    if (run && run.by === 'tetherd') this.store.remove(slotRunPath(this.home, slotId))
+  }
+
+  // ---- slot files: memory is the truth, the store puts it on disk behind the loop ------------------
+
+  /** Queues the slot's meta. Never for a forgotten slot (a late write must not bring its file back). */
+  private saveMeta(meta: SlotMeta): void {
+    if (this.forgotten.has(meta.slotId)) return
+    perf.timed('store:slot-write', () => this.store.put(slotMetaPath(this.home, meta.slotId), serializeMeta(meta)))
+  }
+
+  /** Queues the slot's ronda, or its removal when the slot has none. */
+  private saveRonda(slot: Slot): void {
+    const id = slot.meta.slotId
+    if (this.forgotten.has(id)) return
+    const path = slotRondaPath(this.home, id)
+    if (slot.ronda) perf.timed('store:ronda-write', () => this.store.put(path, JSON.stringify(slot.ronda, null, 2) + '\n'))
+    else this.store.remove(path)
+  }
+
+  /** Forgets the slot's files (tether's own, never the agent's session): queued behind their writes, awaited as a barrier. */
+  private async removeSlotFiles(slotId: string): Promise<void> {
+    this.forgotten.add(slotId)
+    this.ownRuns.delete(slotId)
+    const paths = [slotMetaPath(this.home, slotId), slotEventsPath(this.home, slotId), slotRunPath(this.home, slotId), slotAttentionPath(this.home, slotId), slotRondaPath(this.home, slotId)]
+    for (const p of paths) this.store.remove(p)
+    await Promise.all(paths.map((p) => this.store.flush(p)))
+  }
+
+  /**
+   * An atomic write cut short by a hard death leaves its temp file (`<file>.<pid>.<n>.tmp`, or `<file>.<pid>.tmp` from the CLI)
+   * behind. Removed at boot when its writer is gone; a live writer's temp is left alone (its rename is still coming).
+   */
+  private dropDeadTemps(names: string[]): void {
+    for (const name of names) {
+      const m = /\.(\d+)(?:\.\d+)?\.tmp$/.exec(name)
+      if (!m || pidExists(Number(m[1]))) continue
+      this.executor.run('rm', [join(slotsDir(this.home), name)]).catch(() => { /* gone */ })
+    }
+  }
+
+  /** A fresh slot id: unique among the slots this daemon knows (memory, not the disk) and never one it forgot. */
+  private newSlotId(): string {
+    for (let i = 0; i < 100; i++) {
+      const id = randomSlotId()
+      if (!this.slotMap.has(id) && !this.forgotten.has(id)) return id
+    }
+    throw new Error('could not find a free slot id')
+  }
+
+  /** A meta the watcher reported for a slot this daemon does not know (the CLI created it): read off the loop and adopted. */
+  private async adoptForeign(slotId: string): Promise<void> {
+    const path = slotMetaPath(this.home, slotId)
+    let text: string
+    try { text = await readFile(path, 'utf8') } catch { return }
+    if (this.closing || this.slotMap.has(slotId) || this.forgotten.has(slotId) || this.store.isEcho(path, text)) return
+    const meta = parseSlotMeta(text, slotId)
+    if (!meta) return
+    const adopted = this.load(meta)
+    this.broadcastState(adopted)
+    void this.hydrate(adopted)
   }
 
   /**
@@ -717,7 +804,7 @@ class DaemonImpl implements Daemon {
       this.fsProbe?.('run:read', id)
       const run = readRun(this.home, id)
       if (!run || run.by !== 'tetherd' || run.pid === this.pid) continue
-      if (run.agentPid === undefined || run.agentStartedAt === undefined) { clearRun(this.home, id); continue }
+      if (run.agentPid === undefined || run.agentStartedAt === undefined) { this.store.remove(slotRunPath(this.home, id)); continue }
       if (await isSameProcess(run.pid, run.startedAt)) {
         this.log(`slot ${id}: run owned by live tetherd pid ${run.pid}; leaving it`)
         ownedElsewhere.add(id)
@@ -736,7 +823,7 @@ class DaemonImpl implements Daemon {
       } else {
         this.log(`slot ${id}: agent pid ${run.agentPid} of dead tetherd pid ${run.pid} is already gone`)
       }
-      clearRun(this.home, id)
+      this.store.remove(slotRunPath(this.home, id))
     }
     return ownedElsewhere
   }
@@ -840,7 +927,7 @@ class DaemonImpl implements Daemon {
       slot.error = undefined
       if (meta.endedAt) {
         delete meta.endedAt
-        try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta)) } catch (e) { this.log(`slot ${meta.slotId}: cannot clear endedAt: ${(e as Error).message}`) }
+        this.saveMeta(meta)
       }
       this.log(`slot ${meta.slotId}: adopted pid ${mine.pid} from the terminal-pane host (spawned ${adopted.spawnedAt})`)
       void this.recordRun(slot, mine)
@@ -897,6 +984,11 @@ class DaemonImpl implements Daemon {
     this.panelHost?.close() // the host outlives tetherd: only the connection closes
     for (const c of this.clients) c.socket.destroy()
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
+    // What is queued for the disk lands before `closed` (a hard death loses only this queue). The executor is closed here
+    // only when it is the daemon's own; tetherd's main closes the process' one after the log is flushed.
+    await this.store.drain()
+    await this.executor.drain()
+    if (this.ownExecutor) await this.executor.close()
     this.log('closed')
   }
 
@@ -1225,7 +1317,7 @@ class DaemonImpl implements Daemon {
     slot.memoryMB = undefined
     if (meta.endedAt) {
       delete meta.endedAt
-      try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta)) } catch (e) { this.log(`slot ${meta.slotId}: cannot clear endedAt: ${(e as Error).message}`) }
+      this.saveMeta(meta)
     }
     slot.spawnedAt = new Date().toISOString()
     slot.runUnsafe = isUnsafe(plan.args)
@@ -1379,7 +1471,7 @@ class DaemonImpl implements Daemon {
     const profiles = this.profileStore.profiles()
     const current = profiles.find((p) => p.id === meta.profileId)
     if (current && snapshotProfile(meta, current)) {
-      try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, meta)) } catch (e) { this.log(`slot ${meta.slotId}: cannot refresh the profile snapshot: ${(e as Error).message}`) }
+      this.saveMeta(meta)
     }
     const profile = this.profileOf(meta, profiles).launch
     let plan: LaunchPlan
@@ -1420,7 +1512,7 @@ class DaemonImpl implements Daemon {
   /** Records when the run ended (in the meta, so a restarted daemon still knows). */
   private markEnded(slot: Slot): void {
     slot.meta.endedAt = new Date().toISOString()
-    try { perf.timed('store:slot-write', () => writeSlotMeta(this.home, slot.meta)) } catch (e) { this.log(`slot ${slot.meta.slotId}: cannot record endedAt: ${(e as Error).message}`) }
+    this.saveMeta(slot.meta)
   }
 
   private fail(slot: Slot, code: ErrorCode, message: string): RequestError {
@@ -1661,7 +1753,7 @@ class DaemonImpl implements Daemon {
         if (typeof req.cwd !== 'string' || !req.cwd) throw new RequestError('bad-request', 'cwd obrigatório')
         const meta: SlotMeta = {
           v: 1,
-          slotId: newSlotId(this.home),
+          slotId: this.newSlotId(),
           agent: req.kind,
           cwd: canonicalDir(req.cwd),
           args: Array.isArray(req.args) ? req.args.filter((a): a is string => typeof a === 'string') : [],
@@ -1673,10 +1765,12 @@ class DaemonImpl implements Daemon {
           if (profile.agent !== req.kind) throw new RequestError('bad-request', `o perfil "${profile.name}" é de ${profile.agent}, não de ${req.kind}`)
           snapshotProfile(meta, profile)
         }
-        createSlot(this.home, meta)
+        assertSlotId(meta.slotId)
         const slot = this.load(meta)
         slot.hydrating = Promise.resolve() // brand new: no files yet
+        this.saveMeta(meta)
         this.broadcastState(slot)
+        await this.store.flush(slotMetaPath(this.home, meta.slotId)) // barrier: on disk before the reply (and before any launch)
         if (req.start) await this.startSlot(slot, undefined)
         return { t: 'ok', id, slot: this.stateOf(slot) }
       }
@@ -1725,7 +1819,7 @@ class DaemonImpl implements Daemon {
         if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
         slot.ronda = undefined
         for (const c of slot.attached) c.attached.delete(slot.meta.slotId)
-        removeSlot(this.home, slot.meta.slotId)
+        await this.removeSlotFiles(slot.meta.slotId) // barrier: the files are gone before the reply
         // The slot is gone for good (its pane was closed): extensions drop what they kept with it.
         this.emitSlot('removed', slot)
         this.procs.slotGone(slot.meta.slotId)
@@ -1737,8 +1831,9 @@ class DaemonImpl implements Daemon {
         if (typeof req.name !== 'string') throw new RequestError('bad-request', 'nome obrigatório')
         if (req.name) slot.meta.name = req.name
         else delete slot.meta.name
-        writeFileSync(slotMetaPath(this.home, slot.meta.slotId), JSON.stringify(slot.meta, null, 2) + '\n')
+        this.saveMeta(slot.meta)
         this.broadcastState(slot)
+        await this.store.flush(slotMetaPath(this.home, slot.meta.slotId)) // barrier: renamed on disk before the reply
         return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'shutdown': {
@@ -1773,15 +1868,15 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id }
       }
       case 'pause-start':
-        return { t: 'ok', id, pause: this.pauseStart(req.slotIds) }
+        { const pause = this.pauseStart(req.slotIds); await this.flushPause(); return { t: 'ok', id, pause } }
       case 'pause-get':
         return { t: 'ok', id, pause: this.batch ?? null }
       case 'pause-remove':
-        return { t: 'ok', id, pause: this.pauseRemove(req.slotId) }
+        { const pause = this.pauseRemove(req.slotId); await this.flushPause(); return { t: 'ok', id, pause } }
       case 'pause-cancel':
-        return { t: 'ok', id, pause: this.pauseCancel() }
+        { const pause = this.pauseCancel(); await this.flushPause(); return { t: 'ok', id, pause } }
       case 'pause-resume':
-        return { t: 'ok', id, pause: this.pauseResume(req.slotIds) }
+        { const pause = this.pauseResume(req.slotIds); await this.flushPause(); return { t: 'ok', id, pause } }
       case 'ronda-set': {
         const slot = this.slot(req.slotId)
         const unavailable = this.rondaUnavailable(slot)
@@ -1799,10 +1894,11 @@ class DaemonImpl implements Daemon {
         if (r.outcome !== 'unchanged') {
           if (r.outcome === 'created' || r.ronda.nextAt !== slot.ronda?.nextAt) slot.rondaDue = false
           slot.ronda = r.ronda
-          perf.timed('store:ronda-write', () => writeRonda(this.home, slot.meta.slotId, r.ronda))
+          this.saveRonda(slot)
           this.log(`slot ${slot.meta.slotId}: ronda ${r.outcome} (${r.ronda.intervalMs} ms${r.ronda.criterion ? ', com critério' : ''})`)
           this.armRonda(slot)
           this.broadcastState(slot)
+          await this.store.flush(slotRondaPath(this.home, slot.meta.slotId)) // barrier: on disk before the reply
         }
         return { t: 'ok', id, ronda: this.stateOf(slot).ronda ?? null, rondaOutcome: r.outcome }
       }
@@ -1815,6 +1911,7 @@ class DaemonImpl implements Daemon {
         if (!slot.ronda) return { t: 'ok', id, ronda: null, rondaOutcome: 'was-off' }
         if (slot.ronda.criterion && req.force !== true) throw new RequestError('ronda-criterion', criterionStimulus(slot.ronda.criterion))
         this.rondaOff(slot)
+        await this.store.flush(slotRondaPath(this.home, slot.meta.slotId)) // barrier: removed before the reply
         return { t: 'ok', id, ronda: null, rondaOutcome: 'off' }
       }
       case 'restart': {
@@ -1847,9 +1944,11 @@ class DaemonImpl implements Daemon {
           } catch (e) {
             // A refusal (the agent turned out not to have reported) leaves the slot as it was, like the pre-flight one.
             if (e instanceof RequestError && e.code === 'unconfirmed' && changed) this.restoreProfileFields(slot, before)
+            await this.store.flush(slotMetaPath(this.home, slot.meta.slotId))
             throw e
           }
         }
+        await this.store.flush(slotMetaPath(this.home, slot.meta.slotId)) // barrier: the profile is on disk before the reply
         return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'proc-list':
@@ -2067,7 +2166,9 @@ class DaemonImpl implements Daemon {
   /** Removes the slot's subagent markers (a launch or exit: whatever ran belonged to the old process). */
   private clearBackground(slotId: string): void {
     const markers = this.markersOf(slotId)
-    for (const name of markers.keys()) { try { unlinkSync(join(slotsDir(this.home), name)) } catch { /* gone */ } }
+    // Straight to the executor, not the store: marker names are one per subagent (the store keeps state per path) and the
+    // daemon never writes a marker, so there is nothing to order them behind.
+    for (const name of markers.keys()) this.executor.run('rm', [join(slotsDir(this.home), name)]).catch((e: Error) => this.log(`slot ${slotId}: cannot remove marker ${name}: ${e.message}`))
     markers.clear()
   }
 
@@ -2173,7 +2274,7 @@ class DaemonImpl implements Daemon {
     }
     slot.ronda = { ...ronda, lastAt: new Date().toISOString(), nextAt: new Date(Date.now() + ronda.intervalMs).toISOString() }
     slot.rondaDue = false
-    try { perf.timed('store:ronda-write', () => writeRonda(this.home, slot.meta.slotId, slot.ronda!)) } catch (e) { this.log(`ronda: cannot save ${slot.meta.slotId}: ${(e as Error).message}`) }
+    this.saveRonda(slot)
     this.log(`slot ${slot.meta.slotId}: ronda sent through the channel`)
     this.armRonda(slot)
     this.broadcastState(slot)
@@ -2184,7 +2285,7 @@ class DaemonImpl implements Daemon {
     slot.rondaTimer = undefined
     slot.ronda = undefined
     slot.rondaDue = false
-    clearRonda(this.home, slot.meta.slotId)
+    this.saveRonda(slot)
     this.log(`slot ${slot.meta.slotId}: ronda off`)
     this.broadcastState(slot)
   }
@@ -2324,26 +2425,26 @@ class DaemonImpl implements Daemon {
 
   /** Atomic (temp + rename): the hook may read the file at any moment. */
   private writePauseRequest(batch: PauseBatch, entry: PauseEntry): void {
-    try {
-      const path = slotPauseRequestPath(this.home, entry.slotId)
-      const cli = `node "${cliScript().replaceAll('\\', '/')}"`
-      mkdirSync(slotsDir(this.home), { recursive: true })
-      const tmp = `${path}.${process.pid}.tmp`
-      writeFileSync(tmp, JSON.stringify({ batchId: batch.id, text: buildRequestText(cli) }) + '\n')
-      renameSync(tmp, path)
-    } catch (e) { this.log(`pause: cannot write the request of ${entry.slotId}: ${(e as Error).message}`) }
+    const cli = `node "${cliScript().replaceAll('\\', '/')}"`
+    this.store.put(slotPauseRequestPath(this.home, entry.slotId), JSON.stringify({ batchId: batch.id, text: buildRequestText(cli) }) + '\n')
   }
 
   private clearPauseRequest(slotId: string): void {
-    rmSync(slotPauseRequestPath(this.home, slotId), { force: true })
+    this.store.remove(slotPauseRequestPath(this.home, slotId))
   }
 
   /** Persists and tells every client. */
   private savePause(): void {
     const batch = this.batch
     if (!batch) return
-    try { perf.timed('store:pause-write', () => writePauseFile(this.home, batch)) } catch (e) { this.log(`pause: cannot write pause.json: ${(e as Error).message}`) }
+    perf.timed('store:pause-write', () => this.store.put(pausePath(this.home), JSON.stringify(batch, null, 2) + '\n'))
     this.broadcast({ t: 'pause', batch })
+  }
+
+  /** Barrier of the pause requests: pause.json and the request files are on disk before the reply. */
+  private async flushPause(): Promise<void> {
+    const paths = [pausePath(this.home), ...(this.batch?.entries ?? []).map((e) => slotPauseRequestPath(this.home, e.slotId))]
+    await Promise.all(paths.map((p) => this.store.flush(p)))
   }
 
   private loadPause(): void {
@@ -2413,13 +2514,10 @@ class DaemonImpl implements Daemon {
         if (dirty) void this.pullEvents(slot)
         return
       }
-      // A slot created by another process (the CLI): adopt it.
-      const meta = readSlot(this.home, slotId)
-      if (meta) {
-        const adopted = this.load(meta)
-        this.broadcastState(adopted)
-        void this.hydrate(adopted)
-      }
+      // A slot created by another process (the CLI): adopt it. Never one this daemon forgot (a late event of its own removal),
+      // and never on its own echo (the text it last wrote there).
+      if (this.forgotten.has(slotId)) return
+      void this.adoptForeign(slotId)
     }), WATCH_DEBOUNCE_MS)
     this.pending.set(slotId, t)
   }
