@@ -24,16 +24,20 @@ export class InlineTransport {
       setImmediate(() => {
         void loadTable(this.tableUrl).then((table) => {
           const t0 = performance.now()
-          let reply: ExecReply
+          const done = (reply: ExecReply): void => {
+            reply.ms = Math.round((performance.now() - t0) * 10) / 10
+            resolve(reply)
+          }
           try {
             const fn = (table as unknown as Record<string, ((...a: unknown[]) => unknown) | undefined>)[req.op]
             if (!fn) throw new Error(`unknown operation: ${req.op}`)
-            reply = { id: req.id, ok: true, value: fn(...req.args), ms: 0 }
+            const value = fn(...req.args)
+            if (value instanceof Promise) {
+              value.then((v) => done({ id: req.id, ok: true, value: v, ms: 0 }), (e) => done({ id: req.id, ok: false, error: serializeError(e), ms: 0 }))
+            } else done({ id: req.id, ok: true, value, ms: 0 })
           } catch (e) {
-            reply = { id: req.id, ok: false, error: serializeError(e), ms: 0 }
+            done({ id: req.id, ok: false, error: serializeError(e), ms: 0 })
           }
-          reply.ms = Math.round((performance.now() - t0) * 10) / 10
-          resolve(reply)
         })
       })
     })

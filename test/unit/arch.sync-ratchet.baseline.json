@@ -13,12 +13,16 @@
     "src/daemon/notices.ts": 2,
     "src/daemon/pause.ts": 3,
     "src/daemon/proc-launch.ts": 2,
-    "src/daemon/procs.ts": 12,
     "src/daemon/ronda.ts": 4,
     "src/doctor.ts": 25,
     "src/procd/host.ts": 12,
     "src/procd/protocol.ts": 4,
     "src/trace/timeline.ts": 7
   },
-  "vendor": {}
+  "vendor": {},
+  "spawn": {
+    "extensions/web-bridge/process-info.ts": 1,
+    "extensions/web-bridge/warmup.ts": 1,
+    "src/daemon/client.ts": 2
+  }
 }

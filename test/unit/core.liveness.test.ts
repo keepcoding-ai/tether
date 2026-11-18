@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { test } from 'node:test'
-import { isAlive, pidExists, processStartTime, startTimeHelperPid, startTimeMethod, startTimeStats, stopStartTimeHelper } from '../../src/core/liveness.ts'
+import { isAlive, pidExists, processStartTime } from '../../src/core/liveness.ts'
+// The helper lives in the executor's operations; the unit tests run inline, so it is this very module instance.
+import { startTimeHelperPid, startTimeMethod, startTimeStats, stopStartTimeHelper } from '../../src/exec/ops-os.ts'
 
 const isWin = process.platform === 'win32'
 

@@ -12,6 +12,9 @@ export function setAgentExecutor(ex: Executor | undefined): void { current = ex 
 /** True when `ex` is the registered executor (so its owner unregisters only its own). */
 export function isAgentExecutor(ex: Executor): boolean { return current === ex }
 
+/** The executor tetherd registered, or undefined (the CLI and Electron main have none and keep their synchronous paths). */
+export function registeredAgentExecutor(): Executor | undefined { return current }
+
 export function agentExecutor(): Executor {
   return current ?? (fallback ??= createExecutor({ mode: 'inline' }))
 }

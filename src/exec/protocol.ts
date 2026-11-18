@@ -3,6 +3,9 @@
 // implementations live in ops-*.ts (the only place where `*Sync` is allowed) and are never imported by the loop.
 
 import type { ExeName, ExeResult } from '../core/exe.ts'
+import type { ProcRow } from '../daemon/memory.ts'
+import type { Listener } from '../daemon/ports.ts'
+import type { ProcPlan } from '../procd/protocol.ts'
 
 /** `io`: short, ordered operations (state, log, config), strictly FIFO. `work`: long ones (hashing, scans), no ordering promise. */
 export type Lane = 'io' | 'work'
@@ -15,6 +18,9 @@ export interface SkillRef { name: string; description: string; dir: string; text
 export interface SkillsLoad { skills: SkillRef[]; version: string; logs: string[] }
 /** How to write an agent's copy of the skills: a Claude plugin (plugin.json + skills/) or a plain shared folder (skills/). */
 export interface MaterializeSpec { target: string; version: string; layout: 'claude-plugin' | 'shared'; skills: { name: string; dir: string }[]; pluginJson?: string }
+export type StartTimeMethod = 'helper' | 'one-shot' | 'ps' | 'none'
+export interface StartTimeInfo { method: StartTimeMethod; stats: { helper: number; oneShot: number; helperRestarts: number }; helperPid: number | null }
+export interface ProcPlanRecipe { command: string; args: string[]; cwd: string; env: Record<string, string> }
 export interface RenamedNodeReply { result: ExeResult; logs: string[] }
 
 export interface FileStat { size: number; mtimeMs: number; isFile: boolean; isDirectory: boolean }
@@ -44,6 +50,14 @@ export interface OpTypes {
   loadSkills: { args: [library: string]; value: SkillsLoad }
   materializeSkills: { args: [spec: MaterializeSpec]; value: string }
   writeTextAtomicDir: { args: [path: string, text: string]; value: null }
+  killTree: { args: [pid: number]; value: null }
+  sampleProcessTable: { args: []; value: ProcRow[] }
+  listListeners: { args: []; value: Listener[] }
+  startTime: { args: [pid: number]; value: string | null }
+  startTimeInfo: { args: []; value: StartTimeInfo }
+  stopStartTimeHelper: { args: []; value: null }
+  ensurePrivateDir: { args: [dir: string]; value: null }
+  procPlan: { args: [recipe: ProcPlanRecipe, base: EnvMap, platform: NodeJS.Platform]; value: ProcPlan }
 }
 
 export type OpName = keyof OpTypes
@@ -74,6 +88,14 @@ export const OP_META = {
   loadSkills: { lane: 'work', idempotent: true },
   materializeSkills: { lane: 'work', idempotent: true },
   writeTextAtomicDir: { lane: 'io', idempotent: true },
+  killTree: { lane: 'work', idempotent: true },
+  sampleProcessTable: { lane: 'work', idempotent: true },
+  listListeners: { lane: 'work', idempotent: true },
+  startTime: { lane: 'work', idempotent: true },
+  startTimeInfo: { lane: 'work', idempotent: true },
+  stopStartTimeHelper: { lane: 'work', idempotent: true },
+  ensurePrivateDir: { lane: 'work', idempotent: true },
+  procPlan: { lane: 'work', idempotent: true },
 } as const satisfies Record<OpName, { lane: Lane; idempotent: boolean }>
 
 export interface ExecRequest { id: number; op: string; args: unknown[] }

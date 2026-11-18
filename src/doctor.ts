@@ -12,7 +12,8 @@ import { resolveCodexCommand } from './agents/codex.ts'
 import { ENV_SOUL_REPORT, resolveSoulCommand } from './agents/soul.ts'
 import { contributedChecks } from './agents/load.ts'
 import { inspectRenamedNode, isNodeExecutable, type ExeStatus } from './core/exe.ts'
-import { processStartTime, startTimeMethod, type StartTimeMethod } from './core/liveness.ts'
+import { agentExecutor } from './agents/agent-exec.ts'
+import { processStartTime, type StartTimeMethod } from './core/liveness.ts'
 import { parseEventLine } from './core/store-model.ts'
 import { tetherHome } from './core/paths.ts'
 import { DaemonClient, pingDaemon, type Hello } from './daemon/client.ts'
@@ -419,7 +420,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
   await processStartTime(process.pid) // the first query starts the helper
   const t0 = performance.now()
   const answered = (await processStartTime(process.pid)) !== undefined
-  results.push(checkStartTime({ method: startTimeMethod(), ms: Math.round(performance.now() - t0), answered }))
+  results.push(checkStartTime({ method: (await agentExecutor().run('startTimeInfo', [])).method, ms: Math.round(performance.now() - t0), answered }))
 
   // The active agent extensions' checks (claude, its hook and CLAUDE* vars; soul), in activation order.
   for (const check of contributedChecks()) {

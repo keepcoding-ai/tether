@@ -5,17 +5,18 @@
 // that the host lost but somehow survived), never by name.
 import { userInfo } from 'node:os'
 import { perf } from '../core/perf.ts'
+import type { SlotStore } from '../core/slot-store.ts'
+import type { Executor } from '../exec/executor.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { HostClient, HostRequestError } from '../procd/client.ts'
-import { readRunFile, type HostRun, type RunExit } from '../procd/protocol.ts'
+import type { HostRun, RunExit } from '../procd/protocol.ts'
 import { relativeTime } from '../cli/format.ts'
 import { sampleProcessTable } from './memory.ts'
 import { leaveNotice, quoted } from './notices.ts'
 import { buildPortRows, listListeners, ownerText, probePort, treeOwners, type PortRow } from './ports.ts'
-import { LaunchError, planFor } from './proc-launch.ts'
+import { LaunchError, planForAsync } from './proc-launch.ts'
 import {
   actionText,
-  appendProcEvent,
   authorText,
   checkName,
   clockTime,
@@ -23,29 +24,21 @@ import {
   hasEnded,
   INFO_EVENTS,
   inUseBoard,
-  listCards,
   liveUses,
   normalizeRecipe,
   othersUses,
   pendingRequest,
   ProcError,
+  ProcFiles,
   PURPOSE_MAX,
-  readAdopt,
-  readProcEvents,
-  readUses,
   recipeDiff,
   recipeOf,
-  removeAdopt,
-  removeProcFiles,
   replay,
   statusText,
   USE_DEFAULT,
   USE_MAX_MS,
   useKey,
   useView,
-  writeAdopt,
-  writeCard,
-  writeUses,
   type AdoptFile,
   type GuardedAction,
   type ProcAuthor,
@@ -79,6 +72,9 @@ export interface GuardOptions {
 
 export interface ProcManagerOptions {
   home: string
+  /** The daemon's executor and snapshot store: every file of the model goes through them. */
+  exec: Executor
+  store: SlotStore
   log: (msg: string) => void
   broadcast: (msg: DaemonMessage) => void
   /** Pids tetherd must never adopt: every panel's agent or shell (its own pid and the host's are known here). */
@@ -120,12 +116,15 @@ interface Entry {
   /** Declared ports probed for the last state. */
   listening?: Map<number, boolean>
   memoryMB?: number
+  /** The run's identity as the host reported it (spawn reply, host list or run.json): `startedAt` of the live run. */
+  hostRun?: { run: number; startedAt: string }
   /** Guards out-of-order broadcasts (each emit probes the ports first). */
   emitSeq: number
 }
 
 export class ProcManager {
   private readonly home: string
+  private readonly files: ProcFiles
   private readonly log: (msg: string) => void
   private readonly broadcast: (msg: DaemonMessage) => void
   private readonly author: ProcManagerOptions['author']
@@ -149,6 +148,7 @@ export class ProcManager {
 
   constructor(opts: ProcManagerOptions) {
     this.home = opts.home
+    this.files = new ProcFiles(opts.home, opts.exec, opts.store)
     this.log = opts.log
     this.broadcast = opts.broadcast
     this.author = opts.author
@@ -164,9 +164,9 @@ export class ProcManager {
 
   /** Loads the cards; with any, only TRIES the host (never launches it) and reconciles. */
   async init(): Promise<void> {
-    for (const card of listCards(this.home)) {
-      const e = newEntry(card, readProcEvents(this.home, card.name))
-      e.uses = readUses(this.home, card.name)
+    for (const { card, events, uses } of await this.files.loadAll()) {
+      const e = newEntry(card, events)
+      e.uses = uses
       this.entries.set(card.name, e)
       // Uses of panels that no longer exist end now; the ones that ran out while tetherd was down expire at their time.
       const gone = e.uses.filter((u) => u.by.slotId && u.key.startsWith('slot:') && this.slotExists && !this.slotExists(u.by.slotId))
@@ -174,11 +174,9 @@ export class ProcManager {
       if (gone.length) e.uses = e.uses.filter((u) => !gone.includes(u))
       this.expireUses(e)
     }
-    for (const e of this.entries.values()) {
-      if (!isExternalLive(e)) continue
-      e.adopt = readAdopt(this.home, e.card.name)
-      await this.checkExternal(e, true)
-    }
+    const external = [...this.entries.values()].filter(isExternalLive)
+    await Promise.all(external.map(async (e) => { e.adopt = await this.files.readAdopt(e.card.name) }))
+    for (const e of external) await this.checkExternal(e, true)
     if (!this.entries.size) return
     const host = await this.retryConnect(1_000)
     await this.reconcile(host ? (await host.request({ t: 'list' })).runs ?? [] : [], host !== undefined)
@@ -210,6 +208,7 @@ export class ProcManager {
     const e = this.require(name)
     await this.checkExternal(e)
     await this.probe(e)
+    await this.files.flush(name)
     return { proc: this.state(e), events: e.events.slice(-INFO_EVENTS) }
   }
 
@@ -307,7 +306,7 @@ export class ProcManager {
       if (fields) {
         if (!e) {
           const card: ProcCard = { v: 1, name, ...fields, registeredBy: author, createdAt: new Date().toISOString() }
-          writeCard(this.home, card)
+          this.files.writeCard(card)
           e = newEntry(card, [])
           this.entries.set(name, e)
           this.append(e, { kind: 'registered', by: author })
@@ -316,7 +315,7 @@ export class ProcManager {
           if (diff) {
             const card: ProcCard = { ...e.card, ...fields }
             if (fields.description === undefined) delete card.description
-            writeCard(this.home, card)
+            this.files.writeCard(card)
             e.card = card
             this.append(e, { kind: 'recipe-changed', by: author, before: diff.before, after: diff.after })
           }
@@ -375,7 +374,7 @@ export class ProcManager {
       this.tellUsers(e, author, `${name} foi esquecido por ${authorText(author)}${guard.force ? `, motivo: ${quoted(guard.force)}` : ''}; seu uso acabou com ele`)
       try { await this.host?.request({ t: 'forget', name }) } catch { /* the host may not know it */ }
       if (e.useTimer) clearTimeout(e.useTimer)
-      removeProcFiles(this.home, name)
+      this.files.removeAll(name)
       this.entries.delete(name)
       this.log(`proc ${name}: forgotten`)
       this.broadcast({ t: 'proc-removed', name })
@@ -384,7 +383,7 @@ export class ProcManager {
   }
 
   /** Declares (or renews) the caller's use: default 15m, at most 60m, a purpose is required. */
-  use(name: string, duration: string | undefined, purpose: string | undefined, by: ProcBy | undefined, client: string | undefined): ProcState {
+  async use(name: string, duration: string | undefined, purpose: string | undefined, by: ProcBy | undefined, client: string | undefined): Promise<ProcState> {
     const e = this.require(name)
     let ms: number
     try { ms = parseInterval(duration ?? USE_DEFAULT, this.allowSeconds) } catch (err) {
@@ -402,11 +401,12 @@ export class ProcManager {
     e.uses = [...e.uses.filter((u) => u.key !== key), use]
     this.append(e, { kind: 'use-declared', by: author, until: use.until, purpose: text })
     this.usesChanged(e)
+    await this.files.flush(name)
     return this.state(e)
   }
 
   /** Ends the caller's use (no use: nothing changes). */
-  release(name: string, by: ProcBy | undefined, client: string | undefined): { proc: ProcState; released: boolean } {
+  async release(name: string, by: ProcBy | undefined, client: string | undefined): Promise<{ proc: ProcState; released: boolean }> {
     const e = this.require(name)
     const author = this.author(by, client)
     const key = useKey(author)
@@ -415,6 +415,7 @@ export class ProcManager {
     e.uses = e.uses.filter((u) => u !== mine)
     this.append(e, { kind: 'use-released', by: author, cause: 'released' })
     this.usesChanged(e)
+    await this.files.flush(name)
     return { proc: this.state(e), released: true }
   }
 
@@ -454,6 +455,7 @@ export class ProcManager {
       const e = this.entries.get(r.name)
       if (e && isLive(e) && replay(e.events).started?.run === r.run) this.append(e, { kind: 'stop-requested', by: author, run: r.run, reason: 'anfitrião encerrado à força' })
     }
+    await Promise.all(live.map((r) => this.files.flush(r.name)))
     this.hostStopping = true
     const closed = new Promise<void>((resolve) => { if (host.isClosed) resolve(); else host.once('close', () => resolve()) })
     try {
@@ -474,7 +476,7 @@ export class ProcManager {
   }
 
   private state(e: Entry): ProcState {
-    const s = deriveState(e.card, e.events, { runFile: readRunFile(this.home, e.card.name), ...(e.stopping ? { stopping: true } : {}), ...(e.adopt ? { adoptedStartedAt: e.adopt.startedAt } : {}), ...(e.seenRun !== undefined ? { seenRun: e.seenRun } : {}) })
+    const s = deriveState(e.card, e.events, { ...(e.hostRun ? { runFile: e.hostRun } : {}), ...(e.stopping ? { stopping: true } : {}), ...(e.adopt ? { adoptedStartedAt: e.adopt.startedAt } : {}), ...(e.seenRun !== undefined ? { seenRun: e.seenRun } : {}) })
     if (e.card.ports.length) s.ports = e.card.ports.map((port) => ({ port, listening: e.listening?.get(port) ?? false }))
     if (e.memoryMB !== undefined && (s.status === 'running' || s.status === 'stopping')) s.memoryMB = e.memoryMB
     const uses = liveUses(e.uses)
@@ -499,7 +501,7 @@ export class ProcManager {
 
   private append(e: Entry, ev: Omit<ProcEvent, 'v' | 'ts'>): void {
     const full: ProcEvent = { v: 1, ts: new Date().toISOString(), ...ev }
-    try { appendProcEvent(this.home, e.card.name, full) } catch (err) { this.log(`proc ${e.card.name}: cannot append history: ${(err as Error).message}`) }
+    this.files.appendEvent(e.card.name, full)
     e.events.push(full)
     this.emit(e)
     if (full.kind === 'ended' && full.cause === 'own') {
@@ -576,7 +578,7 @@ export class ProcManager {
 
   /** After any change of the uses: persist, re-arm the expiry timer, wake the waiting acts, tell refused panels. */
   private usesChanged(e: Entry): void {
-    try { writeUses(this.home, e.card.name, e.uses) } catch (err) { this.log(`proc ${e.card.name}: cannot write uses: ${(err as Error).message}`) }
+    this.files.writeUses(e.card.name, e.uses)
     if (e.useTimer) clearTimeout(e.useTimer)
     e.useTimer = undefined
     if (e.uses.length && !this.closing) {
@@ -646,7 +648,9 @@ export class ProcManager {
   /** One act at a time per name (a second start waits and then sees the first one running). */
   private async locked<T>(name: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(name) ?? Promise.resolve()
-    const run = prev.then(fn)
+    const run = prev.then(async () => {
+      try { return await fn() } finally { await this.files.flush(name) } // barrier: the files of the act are on disk before it answers
+    })
     const tail = run.then(() => {}, () => {})
     this.locks.set(name, tail)
     try {
@@ -661,7 +665,7 @@ export class ProcManager {
     const run = replay(e.events).lastRun + 1
     let plan
     try {
-      plan = planFor(e.card, this.env)
+      plan = await planForAsync(e.card, this.env)
     } catch (err) {
       if (!(err instanceof LaunchError)) throw err
       this.append(e, { kind: 'start-failed', by: author, run, message: err.message })
@@ -681,6 +685,7 @@ export class ProcManager {
       throw new ProcError('proc-host', `o anfitrião falhou ao iniciar: ${(err as Error).message}`)
     }
     e.memoryMB = undefined
+    e.hostRun = reply.startedAt ? { run, startedAt: reply.startedAt } : undefined
     this.append(e, { kind: 'started', by: author, run, pid: reply.pid! })
     this.log(`proc ${name}: run ${run} started pid ${reply.pid} by ${authorText(author)}`)
     this.sampleSoon?.()
@@ -712,8 +717,8 @@ export class ProcManager {
       if (startedAt === undefined) throw new ProcError('bad-adopt', `não consegui ler a identidade do pid ${pid} (hora de criação); sem ela não adoto`)
       const card: ProcCard = { v: 1, name, ...fields, registeredBy: author, createdAt: new Date().toISOString() }
       const adopt: AdoptFile = { v: 1, pid, startedAt, adoptedAt: new Date().toISOString() }
-      writeCard(this.home, card)
-      writeAdopt(this.home, name, adopt)
+      this.files.writeCard(card)
+      this.files.writeAdopt(name, adopt)
       const e = newEntry(card, [])
       e.adopt = adopt
       this.entries.set(name, e)
@@ -773,7 +778,7 @@ export class ProcManager {
     if (!r.started || r.ended) return
     const pid = e.adopt?.pid ?? r.started.pid
     e.adopt = undefined
-    removeAdopt(this.home, e.card.name)
+    this.files.removeAdopt(e.card.name)
     this.append(e, { kind: 'ended', run: r.started.run!, ...(pid !== undefined ? { pid } : {}), at: new Date().toISOString(), cause: 'external' })
     this.log(`proc ${e.card.name}: adopted pid ${pid} is gone; ended (external)`)
   }
@@ -789,7 +794,7 @@ export class ProcManager {
         const deadline = Date.now() + EXTERNAL_GONE_MS
         while (pidExists(ad.pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100))
         e.adopt = undefined
-        removeAdopt(this.home, e.card.name)
+        this.files.removeAdopt(e.card.name)
         this.append(e, { kind: 'ended', run, pid: ad.pid, at: new Date().toISOString(), cause: 'requested' })
       } else {
         this.endExternal(e)
@@ -922,11 +927,12 @@ export class ProcManager {
       if (r.started.kind === 'adopted') continue
       const run = r.started.run!
       const name = e.card.name
-      const file = readRunFile(this.home, name)
+      const file = await this.files.readRun(name)
+      if (file?.run === run) e.hostRun = { run, startedAt: file.startedAt }
       if (file?.run === run && file.exit) { this.recordEnd(e, run, file.exit); continue }
       const listed = runs.find((x) => x.name === name && x.run === run)
       if (listed?.exit) { this.recordEnd(e, run, listed.exit); continue }
-      if (listed) continue
+      if (listed) { e.hostRun = { run, startedAt: listed.startedAt }; continue }
       if (!hostAnswered && file && await isSameProcess(file.hostPid, file.hostStartedAt)) {
         this.log(`proc ${name}: host pid ${file.hostPid} is alive but does not answer; leaving run ${run} as running`)
         continue

@@ -5,6 +5,9 @@
 //            -> arch.sync-ratchet.baseline.json
 //   main:    app/main/main.ts and every extensions/<id>/main.ts (the Electron main process)
 //            -> arch.sync-ratchet.main.baseline.json
+// A second counter, on the tetherd graph only, counts the asynchronous process creators of node:child_process (execFile, exec,
+// spawn, fork): `CreateProcess` runs on the calling thread, so even an async call stalls the loop for its duration on Windows.
+// The goal is that only the detached launches (ptyd / procd / tetherd itself) and the executor's Worker remain. Baseline key `spawn`.
 // TETHER_RATCHET_UPDATE=1 rewrites the baselines, lowering only (a missing baseline is created).
 import assert from 'node:assert/strict'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
@@ -17,6 +20,7 @@ const ROOT = resolve(HERE, '..', '..')
 const FS_MODULES = new Set(['node:fs', 'fs'])
 const CP_MODULES = new Set(['node:child_process', 'child_process'])
 const CP_NAMES = new Set(['execFileSync', 'execSync', 'spawnSync'])
+const SPAWN_NAMES = new Set(['execFile', 'exec', 'spawn', 'fork'])
 const CODE_EXT = ['.ts', '.mts', '.js', '.mjs', '.cjs']
 
 const isSyncName = (module: string, name: string): boolean =>
@@ -78,7 +82,7 @@ function parseClause(clause: string, module: string): Binding[] {
   return out
 }
 
-interface Analysis { specs: string[]; uses: Map<string, number> }
+interface Analysis { specs: string[]; uses: Map<string, number>; spawns: Map<string, number> }
 
 function analyze(file: string): Analysis {
   const src = readFileSync(file, 'utf8')
@@ -101,30 +105,36 @@ function analyze(file: string): Analysis {
   each(/\bimport\s*\(\s*(['"])/g, (m) => { const q = m.index + m[0].length; const e = code.indexOf(m[1]!, q); if (e > 0) specs.push(src.slice(q, e)) })
 
   const uses = new Map<string, number>()
+  const spawns = new Map<string, number>()
   if (bindings.length) {
     // Blank the import statements themselves so only real uses remain.
     const chars = code.split('')
     for (const [a, b] of stmts) for (let k = a; k < b; k++) if (chars[k] !== '\n') chars[k] = ' '
     const body = chars.join('')
-    const bump = (id: string): void => { uses.set(id, (uses.get(id) ?? 0) + 1) }
+    const bump = (id: string, into = uses): void => { into.set(id, (into.get(id) ?? 0) + 1) }
+    const isSpawn = (module: string, name: string): boolean => CP_MODULES.has(module) && SPAWN_NAMES.has(name)
     const esc = (s: string): string => s.replace(/\$/g, '\\$')
     for (const b of bindings) {
       if (b.kind === 'named') {
-        if (!isSyncName(b.module, b.imported)) continue
+        const spawn = isSpawn(b.module, b.imported)
+        if (!spawn && !isSyncName(b.module, b.imported)) continue
         const re = new RegExp(`(?<![\\w$.])${esc(b.local)}(?![\\w$])`, 'g')
         for (let m; (m = re.exec(body));) {
           // `{ readFileSync: x }` is an object key, not a use.
           const after = body.slice(m.index + m[0].length, m.index + m[0].length + 3)
           if (/^\s*:/.test(after) && /[{,]\s*$/.test(body.slice(Math.max(0, m.index - 40), m.index))) continue
-          bump(b.imported)
+          bump(b.imported, spawn ? spawns : uses)
         }
       } else {
         const re = new RegExp(`(?<![\\w$.])${esc(b.local)}\\s*\\.\\s*([\\w$]+)`, 'g')
-        for (let m; (m = re.exec(body));) if (isSyncName(b.module, m[1]!)) bump(`${b.local}.${m[1]}`)
+        for (let m; (m = re.exec(body));) {
+          if (isSyncName(b.module, m[1]!)) bump(`${b.local}.${m[1]}`)
+          else if (isSpawn(b.module, m[1]!)) bump(`${b.local}.${m[1]}`, spawns)
+        }
       }
     }
   }
-  return { specs, uses }
+  return { specs, uses, spawns }
 }
 
 function resolveSpec(from: string, spec: string): string | null {
@@ -137,7 +147,7 @@ function resolveSpec(from: string, spec: string): string | null {
   return null
 }
 
-interface Loop { name: string; baseline: string; entries(): string[] }
+interface Loop { name: string; baseline: string; entries(): string[]; spawnRatchet?: boolean }
 
 function extensionEntries(file: string): string[] {
   const extDir = join(ROOT, 'extensions')
@@ -148,6 +158,7 @@ function extensionEntries(file: string): string[] {
 const TETHERD: Loop = {
   name: 'tetherd',
   baseline: join(HERE, 'arch.sync-ratchet.baseline.json'),
+  spawnRatchet: true,
   entries: () => [join(ROOT, 'src/daemon/main.ts'), join(ROOT, 'src/ptyd/main.ts'), ...extensionEntries('daemon.ts')].filter((f) => existsSync(f)),
 }
 // Roots: the Electron main process plus every extensions/<id>/main.ts (index.main.ts loads them in that process).
@@ -163,13 +174,15 @@ const isVendor = (f: string): boolean => rel(f).split('/').includes('vendor')
 // The coordinator graph must never reach them (see the guard test below); they are neither counted nor traversed.
 const isExempt = (f: string): boolean => /^src\/exec\/(ops-[^/]+|worker|table)\.ts$/.test(rel(f))
 
-function measure(loop: Loop): { counts: Record<string, number>; vendor: Record<string, number>; ids: Record<string, string[]>; reached: number; exempt: string[] } {
+function measure(loop: Loop): { counts: Record<string, number>; vendor: Record<string, number>; spawns: Record<string, number>; spawnIds: Record<string, string[]>; ids: Record<string, string[]>; reached: number; exempt: string[] } {
   const seen = new Set<string>()
   const exempt: string[] = []
   const queue = loop.entries()
   const counts: Record<string, number> = {}
   const vendor: Record<string, number> = {}
   const ids: Record<string, string[]> = {}
+  const spawns: Record<string, number> = {}
+  const spawnIds: Record<string, string[]> = {}
   while (queue.length) {
     const f = queue.pop()!
     if (seen.has(f)) continue
@@ -181,20 +194,25 @@ function measure(loop: Loop): { counts: Record<string, number>; vendor: Record<s
       ;(isVendor(f) ? vendor : counts)[rel(f)] = total
       ids[rel(f)] = [...a.uses].sort(([x], [y]) => (x < y ? -1 : 1)).map(([k, v]) => `${k} x${v}`)
     }
+    const sp = [...a.spawns.values()].reduce((x, y) => x + y, 0)
+    if (sp && !isVendor(f)) {
+      spawns[rel(f)] = sp
+      spawnIds[rel(f)] = [...a.spawns].sort(([x], [y]) => (x < y ? -1 : 1)).map(([k, v]) => `${k} x${v}`)
+    }
     if (isVendor(f)) continue // vendored code is known debt: counted aside, never traversed
     for (const s of a.specs) { const r = resolveSpec(f, s); if (r && !seen.has(r)) queue.push(r) }
   }
   const sort = (o: Record<string, number>): Record<string, number> => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)))
-  return { counts: sort(counts), vendor: sort(vendor), ids, reached: seen.size, exempt }
+  return { counts: sort(counts), vendor: sort(vendor), spawns: sort(spawns), spawnIds, ids, reached: seen.size, exempt }
 }
 
 for (const loop of [TETHERD, MAIN]) {
   test(`the ${loop.name} import graph does not grow its synchronous fs / child_process use`, () => {
-    const { counts, vendor, ids, reached } = measure(loop)
+    const { counts, vendor, spawns, spawnIds, ids, reached } = measure(loop)
     assert.ok(reached > 20, `import graph looks too small (${reached} files): entries or resolution broke`)
     const update = process.env.TETHER_RATCHET_UPDATE === '1'
     const hasBaseline = existsSync(loop.baseline)
-    const base: { files: Record<string, number>; vendor?: Record<string, number> } = hasBaseline
+    const base: { files: Record<string, number>; vendor?: Record<string, number>; spawn?: Record<string, number> } = hasBaseline
       ? JSON.parse(readFileSync(loop.baseline, 'utf8'))
       : { files: {} }
     if (!hasBaseline && !update) assert.fail(`missing ${rel(loop.baseline)}: create it with TETHER_RATCHET_UPDATE=1`)
@@ -210,11 +228,21 @@ for (const loop of [TETHERD, MAIN]) {
       for (const [f, b] of Object.entries(base.files)) if (!(f in counts)) shrank.push(`${f}: 0 (or no longer reached), baseline ${b}`)
     }
 
+    if (loop.spawnRatchet && hasBaseline && base.spawn) {
+      for (const [f, n] of Object.entries(spawns)) {
+        const b = base.spawn[f] ?? 0
+        if (n > b) grew.push(`${f}: ${n} async process creator(s), baseline ${b} [${spawnIds[f]!.join(', ')}] (CreateProcess runs on the calling thread: send it to an executor operation)`)
+        else if (n < b) shrank.push(`${f}: ${n} async process creator(s), baseline ${b}`)
+      }
+      for (const [f, b] of Object.entries(base.spawn)) if (!(f in spawns)) shrank.push(`${f}: 0 async process creators (or no longer reached), baseline ${b}`)
+    }
+    if (loop.spawnRatchet && hasBaseline && !base.spawn && !update) assert.fail(`${rel(loop.baseline)} has no spawn section: create it with TETHER_RATCHET_UPDATE=1`)
+
     if (grew.length) {
       assert.fail(`synchronous fs/child_process use grew in the ${loop.name} loop (the baseline only goes down; use async APIs or move the work off the loop):\n  ${grew.join('\n  ')}`)
     }
     if (update) {
-      writeFileSync(loop.baseline, JSON.stringify({ files: counts, vendor }, null, 2) + '\n')
+      writeFileSync(loop.baseline, JSON.stringify(loop.spawnRatchet ? { files: counts, vendor, spawn: spawns } : { files: counts, vendor }, null, 2) + '\n')
       return
     }
     if (shrank.length) {

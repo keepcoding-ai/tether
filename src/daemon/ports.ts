@@ -2,8 +2,8 @@
 // IPv6-only listeners alike; the OS listener table through netstat / lsof) and pure parts: the parsers, the owner of
 // a pid (the managed process whose tree holds it, else "outside tether" with its executable) and the rows of the view.
 // Docker and system services fall in "outside tether" naturally: tether knows no domain.
-import { execFile } from 'node:child_process'
 import { connect } from 'node:net'
+import { agentExecutor } from '../agents/agent-exec.ts'
 import type { ProcRow } from './memory.ts'
 import type { ProcStatus } from './procs.ts'
 import { ownerText } from './proc-texts.ts'
@@ -24,8 +24,6 @@ export interface PortRow {
   /** Managed processes that declare this port. */
   declaredBy?: { name: string; status: ProcStatus }[]
 }
-
-const TIMEOUT_MS = 10_000
 
 /** Does something accept connections on localhost:port? (~1 ms when nothing listens.) */
 export function probePort(port: number, timeoutMs = 500): Promise<boolean> {
@@ -82,23 +80,9 @@ export function parseLsof(text: string): Listener[] {
   return dedupe(out)
 }
 
-function run(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024, encoding: 'latin1' }, (err, stdout) => {
-      // lsof exits 1 when nothing listens: its (empty) output is still the answer.
-      if (err && !stdout) return reject(err)
-      resolve(stdout)
-    })
-  })
-}
-
-/** Every TCP listener of the machine, one per port and pid. */
-export async function listListeners(): Promise<Listener[]> {
-  if (process.platform === 'win32') {
-    const [v4, v6] = await Promise.all([run('netstat', ['-ano', '-p', 'TCP']), run('netstat', ['-ano', '-p', 'TCPv6'])])
-    return dedupe([...parseNetstat(v4), ...parseNetstat(v6)])
-  }
-  return parseLsof(await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN']))
+/** Every TCP listener of the machine, one per port and pid. netstat / lsof run on the executor (see src/exec/ops-os.ts). */
+export function listListeners(): Promise<Listener[]> {
+  return agentExecutor().run('listListeners', [])
 }
 
 /** pid → name of the managed process whose tree (root pid plus every descendant, by ppid) holds it. */

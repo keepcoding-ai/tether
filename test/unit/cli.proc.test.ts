@@ -7,8 +7,8 @@ import { procLogPath, procLogsDir } from '../../src/core/paths.ts'
 import { UsageError } from '../../src/cli/args.ts'
 import { cmdProc, type ProcIo } from '../../src/cli/proc.ts'
 import { DaemonError, type DaemonClient } from '../../src/daemon/client.ts'
-import { appendProcEvent } from '../../src/daemon/procs.ts'
 import { removeHome, tempHome } from './daemon.helpers.ts'
+import { appendProcEvent } from './daemon.proc-disk.ts'
 
 function io(home: string): ProcIo & { stdout: string; stderr: string } {
   const r = {

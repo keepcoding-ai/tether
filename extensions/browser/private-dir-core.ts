@@ -1,11 +1,10 @@
 // The private-folder check without any synchronous disk or process call (the tetherd-side half of private-dir.ts): the pure
-// SDDL rules, the memory of what was checked, and the asynchronous check that the launch path and the boot warm-up use.
+// SDDL rules, the memory of what was checked, and the asynchronous check that the launch path and the boot warm-up use. The
+// `whoami` and `icacls` children are created by the executor's worker (ensurePrivateDir in src/exec/ops-os.ts), never by this loop.
 // private-dir.ts keeps the synchronous twin for the CLI, the installer and Electron main.
-import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
-import { promisify } from 'node:util'
-import { tmpdir } from 'node:os'
+import { mkdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { agentExecutor } from '../../src/agents/agent-exec.ts'
 
 /** Folders found right in this process (both the synchronous and the asynchronous check fill it). */
 export const done = new Set<string>()
@@ -37,58 +36,15 @@ export function checkDacl(sddl: string, owner: string): DaclCheck {
 }
 
 // ---- warm-up: the same check, without blocking the loop ----
-// The first ensurePrivateDir of a folder costs a `whoami` and several `icacls` as synchronous spawns (hundreds of ms on
-// Windows) inside the launch of an agent. warmPrivateDirs does that work off the loop at boot and fills the same `done` set,
-// so a launch finds the folder checked. A launch that comes before the warm-up ends keeps the synchronous path above.
+// The first ensurePrivateDir of a folder costs a `whoami` and several `icacls` (hundreds of ms on Windows) inside the launch of
+// an agent. warmPrivateDirs does that work on the executor at boot and fills the same `done` set, so a launch finds the
+// folder checked. A launch that comes before the warm-up ends keeps the synchronous path of private-dir.ts.
 
-const execFileAsync = promisify(execFile)
-const runAsync = async (args: string[]): Promise<string> => (await execFileAsync(system32('icacls.exe'), args, { windowsHide: true, encoding: 'utf8' })).stdout
-let sidPending: Promise<string> | undefined
-
-async function currentUserSidAsync(): Promise<string> {
-  if (sidMemory.sid) return sidMemory.sid
-  sidPending ??= (async () => {
-    const { stdout } = await execFileAsync(system32('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true, encoding: 'utf8' })
-    const m = /"(S-1-[\d-]+)"/.exec(stdout)
-    if (!m) throw new Error('não consegui ler o SID do usuário atual')
-    sidMemory.sid = m[1]!
-    return sidMemory.sid
-  })().finally(() => { sidPending = undefined })
-  return sidPending
-}
-
-async function daclOfAsync(dir: string): Promise<string> {
-  const tmp = await mkdtemp(join(tmpdir(), 'tether-acl-'))
-  try {
-    const file = join(tmp, 'acl')
-    await runAsync([dir, '/save', file, '/q'])
-    const text = (await readFile(file)).toString('utf16le').replace(/^﻿/, '')
-    const sddl = text.split(/\r?\n/).map(l => l.trim()).find(l => l.startsWith('D:'))
-    if (!sddl) throw new Error('ACL ilegível')
-    return sddl
-  } finally {
-    await rm(tmp, { recursive: true, force: true })
-  }
-}
-
-/** ensurePrivateDir without blocking the event loop; same checks and repairs, same `done` memory. Throws like it. */
+/** ensurePrivateDir on the executor: same checks and repairs, same `done` memory (the worker keeps its own too). Throws like it. */
 export async function ensurePrivateDirAsync(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true })
   if (done.has(dir)) return
-  if (process.platform !== 'win32') {
-    await chmod(dir, 0o700)
-    if (((await stat(dir)).mode & 0o077) !== 0) throw new Error(`${basename(dir)}: a pasta continua aberta a outros usuários`)
-    done.add(dir)
-    return
-  }
-  const owner = await currentUserSidAsync()
-  let c = checkDacl(await daclOfAsync(dir), owner)
-  if (!c.protected || c.others.length > 0) {
-    await runAsync([dir, '/inheritance:r', '/grant:r', `*${owner}:(OI)(CI)F`, '/q'])
-    for (const other of checkDacl(await daclOfAsync(dir), owner).others) await runAsync([dir, '/remove:g', `*${WELL_KNOWN[other] ?? other}`, '/q'])
-    c = checkDacl(await daclOfAsync(dir), owner)
-    if (!c.protected || c.others.length > 0) throw new Error(`${basename(dir)}: a pasta concede acesso a outros (${c.others.join(', ')}); o navegador não serve`)
-  }
+  await agentExecutor().run('ensurePrivateDir', [dir])
   done.add(dir)
 }
 

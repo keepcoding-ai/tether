@@ -3,25 +3,24 @@ import assert from 'node:assert/strict'
 import { appendFileSync } from 'node:fs'
 import { describe, test } from 'node:test'
 import { procEventsPath } from '../../src/core/paths.ts'
+import { SlotStore } from '../../src/core/slot-store.ts'
+import { createExecutor, type ExecutorMode } from '../../src/exec/executor.ts'
 import {
-  appendProcEvent,
   authorText,
   checkName,
   deriveState,
   historyLine,
-  listCards,
   maskEnv,
   normalizeRecipe,
   ProcError,
-  readProcEvents,
+  ProcFiles,
   recipeDiff,
-  removeProcFiles,
   statusText,
-  writeCard,
   type ProcCard,
   type ProcEvent,
 } from '../../src/daemon/procs.ts'
 import { removeHome, tempHome } from './daemon.helpers.ts'
+import { readProcEvents } from './daemon.proc-disk.ts'
 
 const cwd = process.platform === 'win32' ? 'C:\\work' : '/work'
 const card = (over: Partial<ProcCard> = {}): ProcCard => ({
@@ -100,19 +99,42 @@ describe('procs: model', () => {
     assert.match(historyLine(ev({ kind: 'restart-requested', by: { kind: 'external', user: 'guga', label: 'kai' }, run: 3, reason: 'corrigi o parser' })), /kai \(guga\)  pediu o reinício \(execução 3\)  motivo: corrigi o parser$/)
   })
 
-  test('files: cards listed, a corrupt history line skipped, forget removes everything', async () => {
-    const home = tempHome()
-    try {
-      writeCard(home, card())
-      writeCard(home, card({ name: 'api' }))
-      appendProcEvent(home, 'web', ev({ kind: 'registered' }))
-      appendFileSync(procEventsPath(home, 'web'), '{"meio linha\n')
-      appendProcEvent(home, 'web', ev({ kind: 'started', run: 1, pid: 1 }))
-      assert.deepEqual(listCards(home).map((c) => c.name), ['api', 'web'])
-      assert.deepEqual(readProcEvents(home, 'web').map((e) => e.kind), ['registered', 'started'])
-      removeProcFiles(home, 'web')
-      assert.deepEqual(listCards(home).map((c) => c.name), ['api'])
-      assert.deepEqual(readProcEvents(home, 'web'), [])
-    } finally { await removeHome(home) }
-  })
+  for (const mode of ['inline', 'worker'] as ExecutorMode[]) {
+    test(`files (${mode}): cards listed, a corrupt history line skipped, uses and adoption, forget removes everything`, async () => {
+      const home = tempHome()
+      const ex = createExecutor({ mode })
+      const store = new SlotStore(ex)
+      const files = new ProcFiles(home, ex, store)
+      try {
+        files.writeCard(card())
+        files.writeCard(card({ name: 'api' }))
+        files.appendEvent('web', ev({ kind: 'registered' }))
+        files.appendEvent('web', ev({ kind: 'started', run: 1, pid: 1 }))
+        await files.flush('web')
+        appendFileSync(procEventsPath(home, 'web'), '{"meio linha\n')
+        files.appendEvent('web', ev({ kind: 'ended', run: 1, cause: 'own', code: 0 }))
+        files.writeUses('web', [{ key: 'app', by: { kind: 'app' }, until: '2999-01-01T00:00:00.000Z', purpose: 'p', declaredAt: '2026-11-11T10:00:00.000Z' }])
+        files.writeAdopt('api', { v: 1, pid: 9, startedAt: 'S', adoptedAt: 'A' })
+        await Promise.all([files.flush('web'), files.flush('api')])
+        const all = await files.loadAll()
+        assert.deepEqual(all.map((l) => l.card.name), ['api', 'web'])
+        const web = all.find((l) => l.card.name === 'web')!
+        assert.deepEqual(web.events.map((e) => e.kind), ['registered', 'started', 'ended'])
+        assert.equal(web.uses.length, 1)
+        assert.equal((await files.readAdopt('api'))?.pid, 9)
+        assert.equal(await files.readAdopt('web'), undefined)
+        files.writeUses('web', [])
+        files.removeAdopt('api')
+        files.removeAll('web')
+        await Promise.all([files.flush('web'), files.flush('api')])
+        assert.deepEqual((await files.loadAll()).map((l) => l.card.name), ['api'])
+        assert.equal(await files.readAdopt('api'), undefined)
+        assert.deepEqual(readProcEvents(home, 'web'), [])
+      } finally {
+        await store.drain()
+        await ex.close()
+        await removeHome(home)
+      }
+    })
+  }
 })

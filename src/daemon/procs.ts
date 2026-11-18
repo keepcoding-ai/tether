@@ -1,10 +1,11 @@
 // Background processes (tether proc): the model, apart from the wire. Card (the recipe), history (append-only
 // events, tetherd its only writer), state derived from history + run.json + what the host lists, the secret mask
 // and the Portuguese texts. tether never restarts anything by itself and never kills by name: see proc-manager.ts.
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
+import type { Executor } from '../exec/executor.ts'
 import { procAdoptPath, procCardPath, procEventsPath, procRunPath, procsDir, procUsesPath } from '../core/paths.ts'
-import { writeJsonAtomic, type RunFile } from '../procd/protocol.ts'
+import type { SlotStore } from '../core/slot-store.ts'
+import type { RunFile } from '../procd/protocol.ts'
 import { actionText, useText } from './proc-texts.ts'
 
 /** Lower case only: the name is a file name, and Windows would fold `Web` and `web` into one card. */
@@ -263,7 +264,7 @@ export function pendingRequest(events: ProcEvent[], run: number): ProcEvent | un
   return r.started?.run === run && !r.ended ? r.request : undefined
 }
 
-export function deriveState(card: ProcCard, events: ProcEvent[], live: { runFile?: RunFile; stopping?: boolean; seenRun?: number; adoptedStartedAt?: string }): ProcState {
+export function deriveState(card: ProcCard, events: ProcEvent[], live: { runFile?: Pick<RunFile, 'run' | 'startedAt'> & Partial<RunFile>; stopping?: boolean; seenRun?: number; adoptedStartedAt?: string }): ProcState {
   const r = replay(events)
   const s: ProcState = { name: card.name, card: maskCard(card), status: 'stopped' }
   if (r.failed) {
@@ -352,52 +353,29 @@ export function inUseBoard(name: string, action: GuardedAction, uses: UseView[],
   return lines.join('\n')
 }
 
-export function readUses(home: string, name: string): ProcUse[] {
+/** The uses file's text; a malformed entry is skipped, a malformed file is empty. */
+export function parseUses(text: string): ProcUse[] {
   try {
-    const list = JSON.parse(readFileSync(procUsesPath(home, name), 'utf8')) as ProcUse[]
+    const list = JSON.parse(text) as ProcUse[]
     return Array.isArray(list) ? list.filter((u) => u && typeof u.key === 'string' && typeof u.until === 'string' && u.by && typeof u.purpose === 'string') : []
   } catch {
     return []
   }
 }
 
-export function writeUses(home: string, name: string, uses: ProcUse[]): void {
-  if (!uses.length) { rmSync(procUsesPath(home, name), { force: true }); return }
-  writeJsonAtomic(procUsesPath(home, name), uses)
-}
-
 // ---- files --------------------------------------------------------------------------------------
 
-export function readCard(home: string, name: string): ProcCard | undefined {
+export function parseCard(text: string, name: string): ProcCard | undefined {
   try {
-    const c = JSON.parse(readFileSync(procCardPath(home, name), 'utf8')) as ProcCard
+    const c = JSON.parse(text) as ProcCard
     return c && c.v === 1 && c.name === name && typeof c.command === 'string' && Array.isArray(c.args) ? c : undefined
   } catch {
     return undefined
   }
 }
 
-export function writeCard(home: string, card: ProcCard): void {
-  writeJsonAtomic(procCardPath(home, card.name), card)
-}
-
-export function listCards(home: string): ProcCard[] {
-  let files: string[]
-  try { files = readdirSync(procsDir(home)) } catch { return [] }
-  const out: ProcCard[] = []
-  for (const f of files) {
-    const m = /^(.+)\.json$/.exec(f)
-    if (!m || f.endsWith('.run.json') || !PROC_NAME_RE.test(m[1]!)) continue
-    const card = readCard(home, m[1]!)
-    if (card) out.push(card)
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name))
-}
-
 /** Every event in order; a corrupt line is skipped. */
-export function readProcEvents(home: string, name: string): ProcEvent[] {
-  let text: string
-  try { text = readFileSync(procEventsPath(home, name), 'utf8') } catch { return [] }
+export function parseProcEvents(text: string): ProcEvent[] {
   const out: ProcEvent[] = []
   for (const line of text.split('\n')) {
     if (!line.trim()) continue
@@ -409,12 +387,6 @@ export function readProcEvents(home: string, name: string): ProcEvent[] {
   return out
 }
 
-export function appendProcEvent(home: string, name: string, e: ProcEvent): void {
-  const path = procEventsPath(home, name)
-  mkdirSync(dirname(path), { recursive: true })
-  appendFileSync(path, JSON.stringify(e) + '\n')
-}
-
 /** The identity of an adopted process, written when it was adopted: pid + creation time. */
 export interface AdoptFile {
   v: 1
@@ -423,26 +395,102 @@ export interface AdoptFile {
   adoptedAt: string
 }
 
-export function readAdopt(home: string, name: string): AdoptFile | undefined {
+export function parseAdopt(text: string): AdoptFile | undefined {
   try {
-    const a = JSON.parse(readFileSync(procAdoptPath(home, name), 'utf8')) as AdoptFile
+    const a = JSON.parse(text) as AdoptFile
     return a && a.v === 1 && Number.isInteger(a.pid) && typeof a.startedAt === 'string' ? a : undefined
   } catch {
     return undefined
   }
 }
 
-export function writeAdopt(home: string, name: string, a: AdoptFile): void {
-  writeJsonAtomic(procAdoptPath(home, name), a)
+/** run.json, written by the host (tether-procd): same validation as the host's own reader. */
+export function parseRunFile(text: string): RunFile | undefined {
+  try {
+    const r = JSON.parse(text) as RunFile
+    return r && r.v === 1 && typeof r.run === 'number' && typeof r.pid === 'number' ? r : undefined
+  } catch {
+    return undefined
+  }
 }
 
-export function removeAdopt(home: string, name: string): void {
-  rmSync(procAdoptPath(home, name), { force: true })
+const json = (value: unknown): string => JSON.stringify(value, null, 2) + '\n'
+
+/** A process' loaded files: the card, its history and its uses. */
+export interface LoadedProc {
+  card: ProcCard
+  events: ProcEvent[]
+  uses: ProcUse[]
 }
 
-/** Card, history, run file, uses, adoption and logs. */
-export function removeProcFiles(home: string, name: string): void {
-  for (const p of [procCardPath(home, name), procEventsPath(home, name), procRunPath(home, name), procUsesPath(home, name), procAdoptPath(home, name)]) rmSync(p, { force: true })
-  const dir = join(procsDir(home), name)
-  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+/**
+ * The model's files through the executor. Memory is the truth: writes are snapshots (`put`, last wins) or appends in
+ * batch, and `flush(name)` is the barrier before a reply that promises the disk. Reads never run in the loop.
+ */
+export class ProcFiles {
+  private readonly home: string
+  private readonly exec: Executor
+  private readonly store: SlotStore
+
+  constructor(home: string, exec: Executor, store: SlotStore) {
+    this.home = home
+    this.exec = exec
+    this.store = store
+  }
+
+  private text(path: string): Promise<string | undefined> {
+    return this.exec.run('readText', [path]).then((t) => t, () => undefined)
+  }
+
+  /** Every card with its history and uses, one read per file, all in flight at once; ordered by name. */
+  async loadAll(): Promise<LoadedProc[]> {
+    let names: string[]
+    try {
+      names = (await this.exec.run('readdir', [procsDir(this.home)])).filter((d) => d.isFile).map((d) => d.name)
+    } catch { return [] }
+    const cards = names.flatMap((f) => {
+      const m = /^(.+)\.json$/.exec(f)
+      return m && !f.endsWith('.run.json') && PROC_NAME_RE.test(m[1]!) ? [m[1]!] : []
+    })
+    const loaded = await Promise.all(cards.map(async (name): Promise<LoadedProc | undefined> => {
+      const [card, events, uses] = await Promise.all([this.text(procCardPath(this.home, name)), this.text(procEventsPath(this.home, name)), this.text(procUsesPath(this.home, name))])
+      const c = card === undefined ? undefined : parseCard(card, name)
+      return c ? { card: c, events: events === undefined ? [] : parseProcEvents(events), uses: uses === undefined ? [] : parseUses(uses) } : undefined
+    }))
+    return loaded.filter((x): x is LoadedProc => x !== undefined).sort((a, b) => a.card.name.localeCompare(b.card.name))
+  }
+
+  async readAdopt(name: string): Promise<AdoptFile | undefined> {
+    const t = await this.text(procAdoptPath(this.home, name))
+    return t === undefined ? undefined : parseAdopt(t)
+  }
+
+  async readRun(name: string): Promise<RunFile | undefined> {
+    const t = await this.text(procRunPath(this.home, name))
+    return t === undefined ? undefined : parseRunFile(t)
+  }
+
+  writeCard(card: ProcCard): void { this.store.put(procCardPath(this.home, card.name), json(card)) }
+  appendEvent(name: string, e: ProcEvent): void { this.store.append(procEventsPath(this.home, name), JSON.stringify(e) + '\n') }
+  writeUses(name: string, uses: ProcUse[]): void {
+    if (uses.length) this.store.put(procUsesPath(this.home, name), json(uses))
+    else this.store.remove(procUsesPath(this.home, name))
+  }
+  writeAdopt(name: string, a: AdoptFile): void { this.store.put(procAdoptPath(this.home, name), json(a)) }
+  removeAdopt(name: string): void { this.store.remove(procAdoptPath(this.home, name)) }
+
+  /** Card, history, run file, uses, adoption and logs. */
+  removeAll(name: string): void {
+    for (const p of this.paths(name)) this.store.remove(p)
+    this.store.remove(join(procsDir(this.home), name))
+  }
+
+  /** Barrier: what was handed so far for `name` is on disk (or failed). Never rejects. */
+  async flush(name: string): Promise<void> {
+    await Promise.all([...this.paths(name), join(procsDir(this.home), name)].map((p) => this.store.flush(p)))
+  }
+
+  private paths(name: string): string[] {
+    return [procCardPath(this.home, name), procEventsPath(this.home, name), procRunPath(this.home, name), procUsesPath(this.home, name), procAdoptPath(this.home, name)]
+  }
 }

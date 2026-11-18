@@ -6,7 +6,7 @@ import { userInfo } from 'node:os'
 import { procEventsPath, procLogPath, procLogsDir } from '../core/paths.ts'
 import { DaemonError, type DaemonClient } from '../daemon/client.ts'
 import { checkText, ownerText, type PortRow } from '../daemon/ports.ts'
-import { authorText, historyLine, readProcEvents, replay, statusText, useText, WAIT_DEFAULT_MS, WAIT_MAX_MS, type ProcBy, type ProcEvent, type ProcRecipe, type ProcState } from '../daemon/procs.ts'
+import { authorText, historyLine, parseProcEvents, replay, statusText, useText, WAIT_DEFAULT_MS, WAIT_MAX_MS, type ProcBy, type ProcEvent, type ProcRecipe, type ProcState } from '../daemon/procs.ts'
 import { formatInterval, parseInterval, RondaError } from '../daemon/ronda.ts'
 import { parseArgs, UsageError } from './args.ts'
 import { localTime, relativeTime, table, truncate } from './format.ts'
@@ -154,6 +154,11 @@ export function logRuns(home: string, name: string): number[] {
   let files: string[]
   try { files = readdirSync(procLogsDir(home, name)) } catch { return [] }
   return files.map((f) => /^run-(\d+)\.log$/.exec(f)).filter((m): m is RegExpExecArray => m !== null).map((m) => Number(m[1])).sort((a, b) => a - b)
+}
+
+/** The history file as it is on disk (the CLI is its own process: a synchronous read is fine here). */
+function readProcEvents(home: string, name: string): ProcEvent[] {
+  try { return parseProcEvents(readFileSync(procEventsPath(home, name), 'utf8')) } catch { return [] }
 }
 
 function cmdLogs(a: ReturnType<typeof parseArgs>, io: ProcIo): number {

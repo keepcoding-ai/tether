@@ -4,6 +4,7 @@
 // with ONE raw argument string (node-pty re-quotes an args array and breaks inner quotes).
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
+import { agentExecutor } from '../agents/agent-exec.ts'
 import { findOnPath } from '../agents/shell.ts'
 import { withColorSupport } from '../agents/termenv.ts'
 import { canonicalDir } from '../core/paths.ts'
@@ -56,4 +57,17 @@ export function planFor(recipe: Pick<RecipeFields, 'command' | 'args' | 'cwd' | 
     return { command: env.ComSpec ?? env.COMSPEC ?? 'cmd.exe', args: `/d /s /c "${line}"`, cwd, env }
   }
   return { command, args: [...recipe.args], cwd, env }
+}
+
+/**
+ * planFor on the executor: the PATH lookup and the folder check stat the disk, so a caller on the tetherd loop awaits this
+ * instead of the synchronous planFor above. A LaunchError raised in the worker comes back as a LaunchError.
+ */
+export async function planForAsync(recipe: Pick<RecipeFields, 'command' | 'args' | 'cwd' | 'env'>, base: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<ProcPlan> {
+  try {
+    return await agentExecutor().run('procPlan', [{ command: recipe.command, args: recipe.args, cwd: recipe.cwd, env: recipe.env }, { ...base }, platform])
+  } catch (e) {
+    if (e instanceof Error && e.name === 'LaunchError') throw new LaunchError(e.message)
+    throw e
+  }
 }

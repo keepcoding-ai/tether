@@ -1,7 +1,7 @@
 // One pseudo-terminal owned by the daemon: spawn, write, resize, kill the whole tree, release the console.
 // Wraps node-pty 1.1 with the Windows workarounds the E2E harness proved (test/e2e/harness.ts).
 import * as pty from 'node-pty'
-import { execFile } from 'node:child_process'
+import { agentExecutor } from '../agents/agent-exec.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 
 export interface PtyExit {
@@ -37,18 +37,9 @@ export interface SpawnOptions {
   onExit(exit: PtyExit): void
 }
 
-/** Kills a process tree by pid. Windows: taskkill /T /F; elsewhere: children by parent pid, then SIGKILL. */
+/** Kills a process tree by pid (taskkill /T /F on Windows). The executor creates the child, never this loop; never rejects. */
 export function killTree(pid: number): Promise<void> {
-  return new Promise((resolve) => {
-    if (process.platform === 'win32') {
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve())
-    } else {
-      execFile('pkill', ['-9', '-P', String(pid)], () => {
-        try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
-        resolve()
-      })
-    }
-  })
+  return agentExecutor().run('killTree', [pid]).then(() => undefined, () => undefined)
 }
 
 /**

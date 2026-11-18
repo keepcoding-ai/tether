@@ -2,8 +2,9 @@
 //
 // One process-table snapshot answers for ALL slots (a single command per sample, never a spawn per slot). On Windows it
 // is one `Get-CimInstance Win32_Process` through PowerShell (Node has no parent-pid API), on POSIX one `ps`. The command
-// is async, so it never blocks the daemon loop; about 0.9 s wall and CPU per sample on Windows, see MEMORY_INTERVAL_MS.
-import { execFile } from 'node:child_process'
+// runs on the executor's worker (src/exec/ops-os.ts), so neither the process creation nor the wait touches the daemon loop;
+// about 0.9 s wall and CPU per sample on Windows, see MEMORY_INTERVAL_MS.
+import { agentExecutor } from '../agents/agent-exec.ts'
 
 export interface ProcRow {
   pid: number
@@ -13,11 +14,6 @@ export interface ProcRow {
   /** The executable's name (who listens on a port outside tether), when the sample has it. */
   name?: string
 }
-
-const TIMEOUT_MS = 20_000
-
-const WIN_SCRIPT =
-  'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,WorkingSetSize,Name | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId),$($_.WorkingSetSize),$($_.Name)" }'
 
 /**
  * Parses the sample's output: one process per line, `pid,ppid,bytes[,name]` (whitespace separators work too).
@@ -67,17 +63,9 @@ export function treeBytes(rows: ProcRow[], roots: number[]): Map<number, number>
   return out
 }
 
-/** One snapshot of the machine's process table. Rejects when the command fails or times out. */
+/** One snapshot of the machine's process table, taken on the executor. Rejects when the command fails or times out. */
 export function sampleProcessTable(): Promise<ProcRow[]> {
-  return new Promise((resolve, reject) => {
-    const win = process.platform === 'win32'
-    const file = win ? 'powershell.exe' : 'ps'
-    const args = win ? ['-NoProfile', '-NonInteractive', '-Command', WIN_SCRIPT] : ['-A', '-o', 'pid=,ppid=,rss=,comm=']
-    execFile(file, args, { timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
-      if (err) return reject(err)
-      resolve(parseProcessTable(stdout, win ? 1 : 1024))
-    })
-  })
+  return agentExecutor().run('sampleProcessTable', [])
 }
 
 /** Should a new reading be broadcast? Only when it moved by more than 5 % or 20 MB (the first reading always). */

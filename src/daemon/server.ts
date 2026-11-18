@@ -78,6 +78,8 @@ export function defaultAgentArgs(agent: AgentName, env: NodeJS.ProcessEnv = proc
 }
 const WATCH_DEBOUNCE_MS = 100
 /** Boot: slots whose files load at once (each read is async; the sync fold of one slot is well under a millisecond). */
+/** Pause between listening and the first slot load, so the clients that reconnect at once hear the loads as state broadcasts. */
+const HYDRATE_GRACE_MS = 50
 const HYDRATE_CONCURRENCY = 6
 /** Boot: transcript lookups for titles in flight at once (each may list the projects directory). */
 const TITLE_LOOKUPS = 4
@@ -462,6 +464,8 @@ class DaemonImpl implements Daemon {
     const procdPipe = opts.procdPipe ?? procdPipePath(opts.pipe, opts.home)
     this.procs = new ProcManager({
       home: opts.home,
+      exec: this.executor,
+      store: this.store,
       log: this.log,
       broadcast: (msg) => this.broadcast(msg),
       author: (by, client) => this.procAuthor(by, client),
@@ -529,7 +533,7 @@ class DaemonImpl implements Daemon {
     await this.loadPause()
     if (process.platform !== 'win32' && await this.executor.run('exists', [this.pipe]).catch(() => false)) await this.executor.run('rm', [this.pipe]).catch(() => null)
     const adoptions = this.holdAdoptions(hostRuns ?? [], ownedElsewhere)
-    this.booting = this.hydrateAll(adoptions.map((a) => a.slot), metas)
+    // The procs' own files go first for the same reason: queued behind 200 slots, init (and so listening) would wait for the whole hydration.
     await this.procs.init()
     // Boot barrier: what the boot rewrote (reaped run files, the pause requests of listening entries) is on disk before serving.
     await this.store.flush()
@@ -548,6 +552,8 @@ class DaemonImpl implements Daemon {
       throw e
     }
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
+    // Hydration starts once the pipe is served, so the clients that connect first hear the loaded bindings.
+    this.booting = this.hydrateAll(adoptions.map((a) => a.slot), metas)
     await perf.timedAsync('boot:adopt', () => Promise.all(adoptions.map((a) => this.adoptSlot(a))))
     if (adoptions.length > 0) this.pump()
     // Only the owner of the pipe serves the channel (a loser of the race never gets here).
@@ -1096,6 +1102,7 @@ class DaemonImpl implements Daemon {
 
   /** Loads every known slot's files in the background: the live (adopted) ones first, then the newest, a few at a time. */
   private async hydrateAll(live: Slot[], metas: SlotMeta[]): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, HYDRATE_GRACE_MS)) // the clients that connect as the boot ends are there for the first loads
     const order = [...live]
     const seen = new Set(live)
     for (let i = metas.length - 1; i >= 0; i--) {

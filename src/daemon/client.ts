@@ -6,7 +6,8 @@ import { connect, type Socket } from 'node:net'
 import { userInfo } from 'node:os'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ensureRenamedNode, exeLog, type ExeName } from '../core/exe.ts'
+import { registeredAgentExecutor } from '../agents/agent-exec.ts'
+import { ensureRenamedNode, exeLog, type ExeName, type ExeResult } from '../core/exe.ts'
 import type { Probe } from '../core/perf-probe.ts'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
@@ -316,11 +317,24 @@ export interface DetachedNodeOptions {
 }
 
 /**
+ * The renamed node copy for a detached start. Inside tetherd (a registered executor) the stat/copy of the executable runs on
+ * the worker, so the loop does not wait for the disk; the CLI and Electron main have none and stay synchronous.
+ */
+async function renamedNodeFor(opts: DetachedNodeOptions): Promise<ExeResult> {
+  const log = opts.log ?? exeLog(opts.home, 'spawn')
+  const executor = registeredAgentExecutor()
+  if (!executor) return ensureRenamedNode(opts.home, opts.name, opts.node, log)
+  const reply = await executor.run('renamedNode', [opts.home, opts.name, opts.node, process.platform])
+  for (const line of reply.logs) log(line)
+  return reply.result
+}
+
+/**
  * Starts a long-lived tether node process (tetherd, tether-procd) outside the caller's tree, as described on
  * spawnDaemon. Resolves with its pid once created.
  */
-export function spawnDetachedNode(opts: DetachedNodeOptions): Promise<number | undefined> {
-  const exe = ensureRenamedNode(opts.home, opts.name, opts.node, opts.log ?? exeLog(opts.home, 'spawn'))
+export async function spawnDetachedNode(opts: DetachedNodeOptions): Promise<number | undefined> {
+  const exe = await renamedNodeFor(opts)
   const execPath = exe.path
   const mainPath = opts.mainPath
   const env: Record<string, string> = {}
