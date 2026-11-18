@@ -92,11 +92,13 @@ describe('claudeAdapter.plan', () => {
     assert.equal(plan.cwd, binding.cwd)
   })
 
-  test('env: every CLAUDE* var removed (any case), everything else kept, TETHER vars set', async () => {
+  test('env: every inherited CLAUDE* var removed (any case), everything else kept, TETHER vars set', async () => {
     const home = homes.make()
     const plan = await claudeAdapter.plan({ slot, home, extraArgs: [] })
     const claudeKeys = Object.keys(plan.env).filter(k => /^claude/i.test(k))
-    assert.deepEqual(claudeKeys, [])
+    // The only CLAUDE* var is tether's own: Bash starts back in the pane's folder (an agent's `cd` never sticks).
+    assert.deepEqual(claudeKeys, ['CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR'])
+    assert.equal(plan.env.CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR, '1')
     assert.equal(plan.env.NOT_CLAUDE_KEEP, 'yes')
     assert.equal(plan.env.TETHER_SLOT_ID, 'slot-1')
     assert.equal(plan.env.TETHER_HOME, home)

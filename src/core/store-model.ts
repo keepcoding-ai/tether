@@ -208,16 +208,26 @@ export function currentBinding(events: TetherEvent[], meta: SlotMeta): Binding |
     }
   }
 
+  // An agent's session keeps the folder it was opened in: a later start of the same session (compact, clear,
+  // resume) reports the agent's CURRENT folder, which a `cd` may have moved. Only a shell follows its `cd`.
+  let first = start
+  if (start.agent !== 'shell') {
+    for (let i = 0; i < startIdx; i++) {
+      const e = events[i]!
+      if (e.kind === 'start' && e.sessionId === start.sessionId) { first = e; break }
+    }
+  }
+  const cwd = first.cwd ?? first.resume?.cwd ?? meta.cwd
   const binding: Binding = {
     slotId: meta.slotId,
     agent: start.agent,
     sessionId: start.sessionId,
-    cwd: start.cwd ?? start.resume?.cwd ?? meta.cwd,
+    cwd,
     since: start.ts,
     confirmed: true,
     ended,
   }
-  if (start.resume) binding.resume = start.resume
+  if (start.resume) binding.resume = { ...start.resume, cwd }
   if (title !== undefined) binding.title = title
   return binding
 }

@@ -141,6 +141,9 @@ async function plan(input: PlanInput): Promise<LaunchPlan> {
   else if (!own.some((a) => PICKS_SESSION.has(a))) args.push('--session-id', randomUUID())
   args.push(...own)
   const env = withColorSupport(cleanEnv())
+  // Every Bash call starts back in the pane's folder: an agent's `cd` never moves the pane's origin (tether keys on it).
+  // Before the profile's env, so a profile can still turn it off.
+  env.CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR = '1'
   // The profile's env goes on AFTER the CLAUDE* strip: an explicit CLAUDE_CONFIG_DIR (a second account) must reach Claude.
   Object.assign(env, profile?.env ?? {})
   env[ENV_SLOT] = slot.slotId

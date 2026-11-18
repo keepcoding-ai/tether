@@ -26,6 +26,17 @@ const end = (reason: string, id: string) => e('end', reason, id)
 const rename = (id: string, title: string) => e('rename', 'rename', id, { title })
 
 describe('currentBinding', () => {
+  test('a `cd` before compact does not move the session: cwd stays the one it was opened in', () => {
+    const b = currentBinding([start('startup', A, { cwd: 'D:\\atrium' }), start('compact', A, { cwd: 'D:\\atrium\\wt' })], META)!
+    assert.equal(b.cwd, 'D:\\atrium')
+    assert.deepEqual(b.resume, { cwd: 'D:\\atrium', args: ['--resume', A] })
+  })
+
+  test('a new session in the slot takes its own cwd', () => {
+    const b = currentBinding([start('startup', A, { cwd: 'D:\\atrium' }), start('clear', B, { cwd: 'D:\\other' })], META)!
+    assert.equal(b.cwd, 'D:\\other')
+  })
+
   test('no start → undefined', () => {
     assert.equal(currentBinding([], META), undefined)
     assert.equal(currentBinding([rename(A, 'x'), end('other', A)], META), undefined)
