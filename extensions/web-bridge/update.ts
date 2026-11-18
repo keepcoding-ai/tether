@@ -18,7 +18,8 @@
 //      as outdated: the person's daemon predates the vendored bundle by definition.
 // Nothing here reads a secret out: the seed is left alone, config.json is read only to compare one field, and no log
 // line carries a token.
-import { existsSync, readFileSync } from 'node:fs'
+import type { DaemonIo } from '../../src/daemon/ext-api.ts'
+import { fsIo } from '../../src/daemon/ext-io.ts'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { identifyProcess, killProcess, listeningOwner, pidAlive } from './process-info.ts'
@@ -32,16 +33,16 @@ const KEEP = new Set([SEED_FILE])
 // ---- 1. the folder ---------------------------------------------------------------------------------------------------
 
 /** The manifest version of an extension folder (what chrome.runtime.getManifest().version returns for it). */
-export function extensionVersionOf(dir: string): string | undefined {
+export async function extensionVersionOf(dir: string, io: DaemonIo = fsIo): Promise<string | undefined> {
   try {
-    const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { version?: unknown }
+    const m = JSON.parse(await io.readText(join(dir, 'manifest.json'))) as { version?: unknown }
     return typeof m.version === 'string' ? m.version : undefined
   } catch { return undefined }
 }
 
 /** Whether the installed folder (seed left out) is a build other than the vendored one. A missing folder is not outdated: it is absent. */
-export async function extensionOutdated(currentDir: string, info: BuildInfo): Promise<boolean> {
-  if (!existsSync(join(currentDir, 'manifest.json'))) return false
+export async function extensionOutdated(currentDir: string, info: BuildInfo, io: DaemonIo = fsIo): Promise<boolean> {
+  if (!await io.exists(join(currentDir, 'manifest.json'))) return false
   return await hashTree(currentDir, KEEP) !== info.extension.sha256
 }
 
@@ -101,19 +102,19 @@ export const UPDATE_MARKER = 'update-pending.json'
 export interface UpdateMarker { version: string; at: string }
 export const updateMarkerPath = (home: string): string => join(home, 'web-bridge', UPDATE_MARKER)
 
-export function readUpdateMarker(home: string): UpdateMarker | undefined {
+export async function readUpdateMarker(home: string, io: DaemonIo = fsIo): Promise<UpdateMarker | undefined> {
   try {
-    const m = JSON.parse(readFileSync(updateMarkerPath(home), 'utf8')) as Partial<UpdateMarker>
+    const m = JSON.parse(await io.readText(updateMarkerPath(home))) as Partial<UpdateMarker>
     return typeof m.version === 'string' && typeof m.at === 'string' ? { version: m.version, at: m.at } : undefined
   } catch { return undefined }
 }
 
-export async function writeUpdateMarker(home: string, marker: UpdateMarker): Promise<void> {
-  await placeFile(updateMarkerPath(home), Buffer.from(`${JSON.stringify(marker, null, 2)}\n`))
+export async function writeUpdateMarker(home: string, marker: UpdateMarker, io: DaemonIo = fsIo): Promise<void> {
+  await io.writeTextAtomic(updateMarkerPath(home), `${JSON.stringify(marker, null, 2)}\n`)
 }
 
-export async function clearUpdateMarker(home: string): Promise<void> {
-  await rm(updateMarkerPath(home), { force: true })
+export async function clearUpdateMarker(home: string, io: DaemonIo = fsIo): Promise<void> {
+  await io.rm(updateMarkerPath(home))
 }
 
 // ---- 2. extensionVersion in config.json ------------------------------------------------------------------------------
@@ -122,9 +123,9 @@ export async function clearUpdateMarker(home: string): Promise<void> {
 export interface ExtensionVersionWriter { setExtensionVersion(home: string, version: string | null): void }
 
 /** What config.json says the installed extension's version is (undefined when absent or unreadable). Reads no secret out. */
-export function storedExtensionVersion(bridgeHome: string): string | undefined {
+export async function storedExtensionVersion(bridgeHome: string, io: DaemonIo = fsIo): Promise<string | undefined> {
   try {
-    const raw = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { extensionVersion?: unknown }
+    const raw = JSON.parse(await io.readText(join(bridgeHome, 'config.json'))) as { extensionVersion?: unknown }
     return typeof raw.extensionVersion === 'string' ? raw.extensionVersion : undefined
   } catch { return undefined }
 }
@@ -135,8 +136,8 @@ export function storedExtensionVersion(bridgeHome: string): string | undefined {
  * interleave and the host writes none of the bridge's files by hand). Only when it differs; returns whether it was
  * written. The daemon rereads its config by mtime and carries the field in its `welcome`.
  */
-export function syncExtensionVersion(b: ExtensionVersionWriter, bridgeHome: string, version: string): boolean {
-  if (storedExtensionVersion(bridgeHome) === version) return false
+export async function syncExtensionVersion(b: ExtensionVersionWriter, bridgeHome: string, version: string, io: DaemonIo = fsIo): Promise<boolean> {
+  if (await storedExtensionVersion(bridgeHome, io) === version) return false
   b.setExtensionVersion(bridgeHome, version)
   return true
 }
@@ -150,6 +151,8 @@ export interface RestartDeps {
   bridgeHome: string
   warmup: Warmup
   log(msg: string): void
+  /** The disk (`api.io`); default node's async file API. */
+  io?: DaemonIo
   /** Injected in the unit test. */
   identify?(pid: number): Promise<{ cmd?: string } | undefined>
   portOwner?(port: number): Promise<number | undefined>
@@ -172,13 +175,14 @@ export async function restartIfOutdated(deps: RestartDeps): Promise<RestartOutco
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)))
   const alive = deps.alive ?? pidAlive
   let pid: number | undefined
-  try { const n = Number(readFileSync(join(deps.bridgeHome, 'daemon.pid'), 'utf8').trim()); pid = Number.isInteger(n) && n > 0 ? n : undefined } catch { /* no daemon.pid */ }
+  const io = deps.io ?? fsIo
+  try { const n = Number((await io.readText(join(deps.bridgeHome, 'daemon.pid'))).trim()); pid = Number.isInteger(n) && n > 0 ? n : undefined } catch { /* no daemon.pid */ }
   if (pid === undefined || !alive(pid)) return 'current'
   // Nothing answering: there is no daemon to replace (a stale daemon.pid, a pid reused by another program); the warm-up decides.
   if (!(await deps.warmup.health())) return 'current'
   const vendored = deps.bundleSha256 ?? await bundleSha256Of(deps.bundlePath)
   if (!vendored) return 'current'
-  const record = readDaemonRecord(deps.bridgeHome)
+  const record = await readDaemonRecord(deps.bridgeHome, io)
   if (record && record.pid === pid && record.bundleSha256 === vendored) return 'current'
   const why = record && record.pid === pid ? 'o bundle vendorizado mudou desde que ele subiu' : 'não há registro do bundle com que ele subiu'
   // Identity, three ways, before any kill.

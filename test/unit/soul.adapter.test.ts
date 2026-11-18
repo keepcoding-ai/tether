@@ -6,15 +6,13 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  commandFromScript,
   ENV_SOUL_CMD,
   ENV_SOUL_REPORT,
   fromMsysPath,
-  resolveSoulCommand,
   soulAdapter,
   splitCommandLine,
-  withRenamedNode,
 } from '../../src/agents/soul.ts'
+import { commandFromScript, resolveSoulCommand, withRenamedNode } from '../../src/exec/ops-agents.ts'
 import { ENV_HOME, ENV_SLOT } from '../../src/agents/types.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
 import { exePath, readStamp } from '../../src/core/exe.ts'

@@ -25,7 +25,7 @@ import { _electron, chromium, type BrowserContext, type ElectronApplication, typ
 import { createInstaller } from '../../extensions/web-bridge/installer.ts'
 import { bridgeHomeOf, extensionDirOf } from '../../extensions/web-bridge/paths.ts'
 import { readUpdateMarker } from '../../extensions/web-bridge/update.ts'
-import { findNode } from '../../extensions/web-bridge/warmup.ts'
+import { findNode } from '../../extensions/web-bridge/find-node-sync.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 
@@ -186,7 +186,7 @@ test('web-bridge: Pausar no popover pausa o daemon real — a extensão solta as
     assert.equal(readPid(bridgeHome), owned[1]!.pid, 'same daemon pid')
     const config = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { pairingToken: string; extensionVersion?: string }
     assert.equal(config.extensionVersion, vendoredVersion, 'the install wrote the folder\'s version through the bundle')
-    assert.equal(readUpdateMarker(home), undefined)
+    assert.equal(await readUpdateMarker(home), undefined)
 
     context = await chromium.launchPersistentContext(profile, { executablePath: chromePath, headless: true, ignoreDefaultArgs: ['--disable-extensions'], args: ['--enable-unsafe-extension-debugging'] })
     const cdp = await context.browser()!.newBrowserCDPSession()

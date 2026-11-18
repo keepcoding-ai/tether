@@ -16,7 +16,7 @@ import { bridgeHomeOf, bridgePortOf, extensionDirOf } from './paths.ts'
 import { createStatusPoller } from './status-poll.ts'
 import type { StatusSnapshot } from './status.ts'
 import { extensionVersionOf, readUpdateMarker } from './update.ts'
-import { findNode } from './warmup.ts'
+import { findNode } from './find-node-sync.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -77,10 +77,13 @@ export function activate(main: TetherMain): IDisposable[] {
   // one chrome.runtime.getManifest().version reports): the vendored folder's (what the tether carries; the bridge version
   // of build-info as a fallback for a build without the stamp), the installed folder's, and C5's marker (the files under a
   // loaded extension changed).
-  const version = (): StatusSnapshot['version'] => {
-    const vendored = extensionVersionOf(join(vendorDir, 'extension')) ?? readBuildInfo(vendorDir)?.version
-    const installed = extensionVersionOf(currentDir)
-    return { ...(vendored ? { vendored } : {}), ...(installed ? { installed } : {}), pendingReload: !!readUpdateMarker(main.home) }
+  // The vendored build's contract, as of the last poll (the options below need it synchronously).
+  let buildInfo: Awaited<ReturnType<typeof readBuildInfo>>
+  const version = async (): Promise<StatusSnapshot['version']> => {
+    buildInfo = await readBuildInfo(vendorDir)
+    const vendored = await extensionVersionOf(join(vendorDir, 'extension')) ?? buildInfo?.version
+    const installed = await extensionVersionOf(currentDir)
+    return { ...(vendored ? { vendored } : {}), ...(installed ? { installed } : {}), pendingReload: !!await readUpdateMarker(main.home) }
   }
   const poller = createStatusPoller({
     port,
@@ -88,7 +91,7 @@ export function activate(main: TetherMain): IDisposable[] {
     version,
     options: () => {
       // Detected once the daemon is up (reg query costs ~100 ms; the list is cached for the session).
-      if (!readBuildInfo(vendorDir)) return undefined
+      if (!buildInfo) return undefined
       const b = optionsBrowser(detected(), poller.current().browsers)
       return b ? { browserId: b.id, browserName: b.name } : undefined
     },
@@ -98,7 +101,7 @@ export function activate(main: TetherMain): IDisposable[] {
   poller.start()
 
   const openOptions = async (): Promise<{ ok: true } | { ok: false; message: string }> => {
-    const info = readBuildInfo(vendorDir)
+    const info = await readBuildInfo(vendorDir)
     if (!info) return { ok: false, message: 'A cópia vendorizada do bridge está sem build-info.' }
     const target = poller.current().options
     const browser = target ? detected().find(b => b.id === target.browserId) : undefined

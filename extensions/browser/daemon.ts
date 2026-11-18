@@ -3,7 +3,6 @@
 // marks it (`extensions.browser.serveToAgents`: perProfile | all | off; the mark is `profile.extensions.browser.serve`). The key dies with the agent's run. The side effects wait for
 // `onStarted`: only the tetherd that owns the pipe sweeps what a killed one left (the CLI and Electron main, which activate
 // this entry for the doctor checks, never get there).
-import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { normalizeSetting, readExtensionsSettings, type SettingReader, settingReaderOf } from '../../app/shared/vscode-configuration-registry.ts'
@@ -12,10 +11,10 @@ import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 import { profileOption } from '../../src/core/profile.ts'
-import { findNode } from '../web-bridge/warmup.ts'
+import { findNodeAsync } from '../web-bridge/warmup.ts'
 import { McpHttpHost, type McpBackend } from '../../src/daemon/mcp-http.ts'
 import { type BrowserBackendInput, browserDirOf, createBrowserLaunchMiddleware, keysDirOf, MCP_SERVER_NAME, releaseSlot, sweepStale } from './agents.ts'
-import { warmPrivateDirs } from './private-dir.ts'
+import { warmPrivateDirs } from './private-dir-core.ts'
 import { debugStateOf, debugSummary } from './debug-file.ts'
 import { browserChecks } from './doctor.ts'
 import { browserTraceSource } from './trace-source.ts'
@@ -112,7 +111,14 @@ export function activate(api: TetherDaemon): IDisposable[] {
   const log = (msg: string): void => api.log(scrubLogLine(msg))
   const http = new McpHttpHost({ name: MCP_SERVER_NAME, log })
   const vendorDir = resolve(import.meta.dirname ?? '.', 'vendor')
+  // The system node, looked up through the executor once (a miss is asked again); the daemon's own binary is the last resort.
+  let nodeFound: Promise<string | undefined> | undefined
+  const nodeOf = (): Promise<string | undefined> => {
+    nodeFound ??= (async () => (await findNodeAsync(api.io)) ?? ((await api.io.exists(process.execPath)) ? process.execPath : undefined))().catch(() => undefined).then(n => { if (!n) nodeFound = undefined; return n })
+    return nodeFound
+  }
   const middleware = createBrowserLaunchMiddleware({
+    io: api.io,
     http,
     backend: createBrowserBackends(vendorDir, resolve(vendorDir, 'tether-browser', 'server.mjs'), log),
     home: api.home,
@@ -123,14 +129,14 @@ export function activate(api: TetherDaemon): IDisposable[] {
     server: resolve(import.meta.dirname ?? '.', 'vendor', 'tether-browser', 'server.mjs'),
     proxy: resolve(import.meta.dirname ?? '.', 'mcp-proxy.mjs'),
     // The system node, like the bridge's MCP shell and tetherd itself; the daemon's own binary (a renamed node) is the last resort.
-    node: () => findNode() ?? (existsSync(process.execPath) ? process.execPath : undefined),
+    node: nodeOf,
     log: msg => api.log(scrubLogLine(msg)),
   })
   return [
     api.onStarted(() => {
       // The owner-only check of the key folders (whoami + icacls) off the loop, so the first launch does not spawn them synchronously.
       void warmPrivateDirs([browserDirOf(api.home), keysDirOf(api.home)], log)
-      void sweepStale(api.home).then(
+      void sweepStale(api.home, api.io).then(
         n => { if (n) api.log(`${n} arquivo(s) de chave/MCP do navegador de um tetherd anterior removidos`) },
         e => api.log(`limpeza de chaves do navegador falhou: ${e instanceof Error ? e.message : String(e)}`),
       )
@@ -140,7 +146,7 @@ export function activate(api: TetherDaemon): IDisposable[] {
       )
     }),
     api.launch.use(middleware),
-    api.onSlot(ev => { if (ev.kind === 'exited' && ev.slot.kind !== 'shell') { http.revoke(ev.slot.slotId); releaseSlot(api.home, ev.slot.slotId) } }),
+    api.onSlot(ev => { if (ev.kind === 'exited' && ev.slot.kind !== 'shell') { http.revoke(ev.slot.slotId); void releaseSlot(api.home, ev.slot.slotId, api.io) } }),
     { dispose: () => { void http.close() } },
     ...browserChecks({ home: api.home }).map(check => api.doctor.register(check)),
     api.doctor.register(async () => debugCheck(browserSettings(api))),

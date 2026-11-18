@@ -81,10 +81,10 @@ describe('adapters launch in the canonical cwd', { skip: !win && 'case-sensitive
     assert.equal((await soulAdapter.plan({ slot: meta('soul', slot.typed), home, resume: bindingIn('soul', bare.typed), extraArgs: [] })).cwd, bare.onDisk)
   })
 
-  test('shell: slot cwd and the "resume here" cwd are canonical', () => {
+  test('shell: slot cwd and the "resume here" cwd are canonical', async () => {
     const slot = wrongCased()
-    assert.equal(shellAdapter.plan({ slot: meta('shell', slot.typed) }).cwd, slot.onDisk)
+    assert.equal((await shellAdapter.plan({ slot: meta('shell', slot.typed) })).cwd, slot.onDisk)
     const here = wrongCased()
-    assert.equal(shellAdapter.plan({ slot: meta('shell', slot.typed), cwd: here.typed }).cwd, here.onDisk)
+    assert.equal((await shellAdapter.plan({ slot: meta('shell', slot.typed), cwd: here.typed })).cwd, here.onDisk)
   })
 })

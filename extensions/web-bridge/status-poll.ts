@@ -2,7 +2,8 @@
 // every 2 s while the popover is open, plus the actions the popover offers (pause/resume, release every client). The
 // bearer is the home's api.key, read at every call (the key may rotate) and never logged, never put in the snapshot.
 // Electron-free and injectable (fetch, timers, the files), so the unit test drives it with a fake daemon.
-import { existsSync, readFileSync } from 'node:fs'
+import type { DaemonIo } from '../../src/daemon/ext-api.ts'
+import { fsIo } from '../../src/daemon/ext-io.ts'
 import { join } from 'node:path'
 import { releaseClient } from './agents.ts'
 import { folderCount } from '../../src/trace/timeline.ts'
@@ -20,7 +21,9 @@ export interface StatusPollerDeps {
   /** <TETHER_HOME>/bridge: api.key lives here. */
   bridgeHome: string
   /** The versions and the C5 marker, read at every poll (cheap; the files are small). */
-  version(): StatusSnapshot['version']
+  version(): StatusSnapshot['version'] | Promise<StatusSnapshot['version']>
+  /** The disk (`api.io`); default node's async file API. */
+  io?: DaemonIo
   /** The browser "Opções da extensão" opens in, if any. */
   options?(): StatusSnapshot['options']
   onChange(snapshot: StatusSnapshot): void
@@ -48,14 +51,14 @@ export interface StatusPoller {
 }
 
 /** api.key of the bridge home (never logged, never returned past the request). */
-const readApiKey = (bridgeHome: string): string | undefined => {
-  try { return readFileSync(join(bridgeHome, 'api.key'), 'utf8').trim() || undefined } catch { return undefined }
+const readApiKey = async (bridgeHome: string, io: DaemonIo = fsIo): Promise<string | undefined> => {
+  try { return (await io.readText(join(bridgeHome, 'api.key'))).trim() || undefined } catch { return undefined }
 }
 
 /** `tether doctor`: the calls in flight at the bridge daemon now (GET /status `pending`), with their ids and ages. */
-export async function bridgeInFlightCheck(deps: { port: number; bridgeHome: string; fetch?: typeof fetch }): Promise<DaemonCheck> {
+export async function bridgeInFlightCheck(deps: { port: number; bridgeHome: string; fetch?: typeof fetch; io?: DaemonIo }): Promise<DaemonCheck> {
   const name = 'chamadas em voo no bridge'
-  const key = readApiKey(deps.bridgeHome)
+  const key = await readApiKey(deps.bridgeHome, deps.io)
   if (!key) return { level: 'OK', name, detail: 'instalação sem api.key: nada a perguntar' }
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
@@ -73,12 +76,12 @@ export async function bridgeInFlightCheck(deps: { port: number; bridgeHome: stri
 }
 
 /** `tether doctor`: the debug mode as the bridge daemon reports it (GET /status `browsers[].debug`), set in the extension's options page. */
-export async function bridgeDebugStatusCheck(deps: { port: number; bridgeHome: string; displayName: string; dumpDir?: string; fetch?: typeof fetch }): Promise<DaemonCheck> {
+export async function bridgeDebugStatusCheck(deps: { port: number; bridgeHome: string; displayName: string; dumpDir?: string; fetch?: typeof fetch; io?: DaemonIo }): Promise<DaemonCheck> {
   const name = `depuração do ${deps.displayName}`
   const dumps = deps.dumpDir ? folderCount(deps.dumpDir) : 0
   const dumpNote = dumps ? `; ${dumps} despejo${dumps === 1 ? '' : 's'} de falha em ${deps.dumpDir}` : ''
   const off: DaemonCheck = { level: 'OK', name, detail: `desligada${dumpNote}` }
-  const key = readApiKey(deps.bridgeHome)
+  const key = await readApiKey(deps.bridgeHome, deps.io)
   if (!key) return off
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
@@ -100,7 +103,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   const now = deps.now ?? (() => Date.now())
   const setTimer = deps.setTimer ?? ((fn: () => void, ms: number): unknown => setTimeout(fn, ms))
   const clearTimer = deps.clearTimer ?? ((t: unknown): void => clearTimeout(t as ReturnType<typeof setTimeout>))
-  let snapshot: StatusSnapshot = { ...EMPTY_SNAPSHOT, version: deps.version() }
+  let snapshot: StatusSnapshot = { ...EMPTY_SNAPSHOT }
   let everUp = false
   let pauseSupported = true
   let open = false
@@ -108,7 +111,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   let timer: unknown
   let inflight: Promise<StatusSnapshot> | undefined
 
-  const readKey = (): string | undefined => readApiKey(deps.bridgeHome)
+  const readKey = (): Promise<string | undefined> => readApiKey(deps.bridgeHome, deps.io)
 
   const call = async (method: 'GET' | 'POST', path: string, key: string): Promise<Response> => {
     const ctl = new AbortController()
@@ -119,7 +122,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   }
 
   const take = async (): Promise<StatusSnapshot> => {
-    const key = readKey()
+    const key = await readKey()
     let daemon: DaemonReach = 'down'
     let reduced: ReturnType<typeof reduceStatus> = { paused: false, debug: false, browsers: [], agents: [] }
     if (!key) daemon = 'no-key'
@@ -132,7 +135,8 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
       } catch { daemon = 'down' }
     }
     if (daemon === 'up') everUp = true
-    const next: StatusSnapshot = { at: now(), daemon, everUp, pauseSupported, ...reduced, version: deps.version(), ...(deps.options?.() ? { options: deps.options() } : {}) }
+    const version = await deps.version()
+    const next: StatusSnapshot = { at: now(), daemon, everUp, pauseSupported, ...reduced, version, ...(deps.options?.() ? { options: deps.options() } : {}) }
     const changed = JSON.stringify({ ...snapshot, at: 0 }) !== JSON.stringify({ ...next, at: 0 })
     snapshot = next
     if (changed) deps.onChange(snapshot)
@@ -148,7 +152,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   const refresh = (): Promise<StatusSnapshot> => (inflight ??= take().finally(() => { inflight = undefined }))
 
   const act = async (what: string, path: string): Promise<ActionOutcome> => {
-    const key = readKey()
+    const key = await readKey()
     if (!key) return { ok: false, message: 'A instalação do bridge ainda não tem chave; abra o Tether de novo.' }
     try {
       const r = await call('POST', path, key)
@@ -191,4 +195,4 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
 }
 
 /** The installed folder exists (for the version line). */
-export const installedHere = (currentDir: string): boolean => existsSync(join(currentDir, 'manifest.json'))
+export const installedHere = (currentDir: string, io: DaemonIo = fsIo): Promise<boolean> => io.exists(join(currentDir, 'manifest.json'))

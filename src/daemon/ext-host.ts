@@ -16,6 +16,8 @@ import { UserSettings } from '../core/user-settings.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
 import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
+import type { Executor } from '../exec/executor.ts'
+import { createExecutorIo, fsIo } from './ext-io.ts'
 
 type Middleware = (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan | Promise<LaunchPlan>
 /** A middleware with the extension that registered it (for the ceiling's log). */
@@ -38,6 +40,8 @@ export interface DaemonHostOptions {
   /** tetherd's snapshots (memory, reloaded by the executor), shared with the daemon. Default: read from disk when asked (the CLI and Electron main). */
   profileStore?: ProfileStore
   settings?: UserSettings
+  /** tetherd's executor: `api.io` runs on it. Default: node's async file API (the CLI and Electron main, which never run the io-using code in earnest). */
+  executor?: Executor
   /** Ceiling per launch middleware (ms). Default PLAN_MIDDLEWARE_TIMEOUT_MS. */
   planTimeoutMs?: number
 }
@@ -150,6 +154,7 @@ export class DaemonExtensionHost implements IDisposable {
 
   private apiFor(id: string, own: DisposableStore): TetherDaemon {
     const { home, log } = this.opts
+    const io = this.opts.executor ? createExecutorIo(this.opts.executor) : fsIo
     const agents = this.opts.agents ?? agentRegistry
     const removing = <T>(list: T[], item: T): IDisposable => toDisposable(() => {
       const i = list.indexOf(item)
@@ -171,6 +176,7 @@ export class DaemonExtensionHost implements IDisposable {
       traces: { register: (source) => { this.traceSources.push(source); return own.add(removing(this.traceSources, source)) } },
       settings: { get: <T>(key: string): T | undefined => treeValueAt(this.userSettings.get(), key) as T | undefined },
       profiles: { get: (pid) => this.profileStore.profiles().find((p) => p.id === pid) },
+      io,
       log: (msg) => log(`[${id}] ${msg}`),
       onSlot: (l) => {
         const timed: SlotListener = perf.wrap(`ext:${id}:slot`, l)

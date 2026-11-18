@@ -10,7 +10,7 @@
 // Secrets: the pairing token and the api.key are read from files here and handed only to the bridge's functions or to
 // the HTTP bearer header; they never go in a log line, an error message or an IPC reply.
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { brandAndSeed, importBundleFromDisk, readBuildInfo, type BridgeBrand, type BridgeBundle, type ImportBundle } from './bridge-home.ts'
 import type { DetectedBrowser } from './browsers.ts'
@@ -21,7 +21,8 @@ import { auditVendor, VENDOR_BUNDLE, VENDOR_EXTENSION_DIR, type BuildInfo } from
 import { createWarmup, type WarmupDeps } from './warmup.ts'
 
 export type { BridgeBundle } from './bridge-home.ts'
-export { daemonEnv, findNode, spawnBridgeDaemon } from './warmup.ts'
+export { daemonEnv, spawnBridgeDaemon } from './warmup.ts'
+export { findNode } from './find-node-sync.ts'
 
 export interface InstallerDeps {
   /** TETHER_HOME. */
@@ -53,7 +54,7 @@ export interface Installer {
   install(browser: DetectedBrowser): Promise<InstallOutcome>
   connected(): Promise<ConnectedOutcome>
   /** The vendored build's contract (undefined when vendor/ is missing or corrupted). */
-  buildInfo(): BuildInfo | undefined
+  buildInfo(): Promise<BuildInfo | undefined>
 }
 
 export function createInstaller(deps: InstallerDeps): Installer {
@@ -66,14 +67,14 @@ export function createInstaller(deps: InstallerDeps): Installer {
   const loadBundle = (): Promise<BridgeBundle> => (bundle ??= importBundle(bundlePath).catch(e => { bundle = undefined; throw e }))
   const warmup = createWarmup({ port: deps.port, bundlePath, bridgeHome, nodeExe: deps.nodeExe, log: deps.log, fetch: deps.fetch, spawnDaemon: deps.spawnDaemon, sleep: deps.sleep })
 
-  const buildInfo = (): BuildInfo | undefined => readBuildInfo(deps.vendorDir)
+  const buildInfo = (): Promise<BuildInfo | undefined> => readBuildInfo(deps.vendorDir)
 
-  const readKey = (): string | undefined => {
-    try { return readFileSync(join(bridgeHome, 'api.key'), 'utf8').trim() || undefined } catch { return undefined }
+  const readKey = async (): Promise<string | undefined> => {
+    try { return (await readFile(join(bridgeHome, 'api.key'), 'utf8')).trim() || undefined } catch { return undefined }
   }
 
   const connected = async (): Promise<ConnectedOutcome> => {
-    const key = readKey()
+    const key = await readKey()
     if (!key) return { ok: false, reason: 'no-key' }
     try {
       const ctl = new AbortController()
@@ -105,11 +106,11 @@ export function createInstaller(deps: InstallerDeps): Installer {
     try {
       result = b.installExtension({ home: bridgeHome, dir: currentDir, source: join(deps.vendorDir, VENDOR_EXTENSION_DIR), pin: true, port: deps.port })
       // The brand, and the seed again with `host`: the extension names who it connects to before the daemon's welcome.
-      brandAndSeed(b, bridgeHome, currentDir, result.port, deps.brand)
+      await brandAndSeed(b, bridgeHome, currentDir, result.port, deps.brand)
       // C5: the folder is the vendored build now, and the daemon will say so in its welcome; a pending "reload" notice is
       // over (the person is at the browser's extensions page with this folder).
-      const version = extensionVersionOf(currentDir)
-      if (version) syncExtensionVersion(b, bridgeHome, version)
+      const version = await extensionVersionOf(currentDir)
+      if (version) await syncExtensionVersion(b, bridgeHome, version)
       await clearUpdateMarker(deps.home)
     } catch (e) {
       const code = (e as { code?: unknown } | undefined)?.code

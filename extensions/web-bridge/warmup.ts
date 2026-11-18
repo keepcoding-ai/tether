@@ -7,8 +7,10 @@
 // exits with EADDRINUSE. Electron's own binary cannot run the bundle (a Node program), hence `findNode`.
 // Nothing here reads or logs a secret: /health is public and the spawn carries only the port and the home.
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdir, open } from 'node:fs/promises'
 import { delimiter, join, resolve } from 'node:path'
+import type { DaemonIo } from '../../src/daemon/ext-api.ts'
+import { fsIo } from '../../src/daemon/ext-io.ts'
 import { healthUrl } from './paths.ts'
 import { sha256File } from './vendor-rules.ts'
 
@@ -21,19 +23,15 @@ export const DAEMON_RECORD = 'daemon.build.json'
 export interface DaemonRecord { pid: number; bundleSha256: string; startedAt: string }
 export const daemonRecordPath = (bridgeHome: string): string => join(bridgeHome, DAEMON_RECORD)
 
-export function readDaemonRecord(bridgeHome: string): DaemonRecord | undefined {
+export async function readDaemonRecord(bridgeHome: string, io: DaemonIo = fsIo): Promise<DaemonRecord | undefined> {
   try {
-    const r = JSON.parse(readFileSync(daemonRecordPath(bridgeHome), 'utf8')) as Partial<DaemonRecord>
+    const r = JSON.parse(await io.readText(daemonRecordPath(bridgeHome))) as Partial<DaemonRecord>
     return typeof r.pid === 'number' && typeof r.bundleSha256 === 'string' ? { pid: r.pid, bundleSha256: r.bundleSha256, startedAt: typeof r.startedAt === 'string' ? r.startedAt : '' } : undefined
   } catch { return undefined }
 }
 
-export function writeDaemonRecord(bridgeHome: string, record: DaemonRecord): void {
-  mkdirSync(bridgeHome, { recursive: true })
-  const path = daemonRecordPath(bridgeHome)
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`)
-  try { renameSync(tmp, path) } finally { rmSync(tmp, { force: true }) }
+export async function writeDaemonRecord(bridgeHome: string, record: DaemonRecord, io: DaemonIo = fsIo): Promise<void> {
+  await io.writeTextAtomic(daemonRecordPath(bridgeHome), `${JSON.stringify(record, null, 2)}\n`)
 }
 
 /** The sha256 of the bundle file, or undefined when it cannot be read. */
@@ -41,16 +39,26 @@ export async function bundleSha256Of(bundlePath: string): Promise<string | undef
   try { return await sha256File(bundlePath) } catch { return undefined }
 }
 
-/** `TETHER_NODE`, then npm's node, then the first `node` on PATH: the same rule app/main/main.ts uses for tetherd. */
-export function findNode(env: NodeJS.ProcessEnv = process.env, exists: (p: string) => boolean = existsSync): string | undefined {
-  if (env.TETHER_NODE && exists(env.TETHER_NODE)) return env.TETHER_NODE
-  if (env.npm_node_execpath && exists(env.npm_node_execpath)) return env.npm_node_execpath
+/** The places `findNode` looks, in order: `TETHER_NODE`, npm's node, then every `node` on PATH (the rule app/main/main.ts uses for tetherd). */
+export function nodeCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
+  const out: string[] = []
+  if (env.TETHER_NODE) out.push(env.TETHER_NODE)
+  if (env.npm_node_execpath) out.push(env.npm_node_execpath)
   const name = process.platform === 'win32' ? 'node.exe' : 'node'
   for (const dir of (env.PATH ?? env.Path ?? '').split(delimiter)) {
-    if (!dir) continue
-    const candidate = join(dir.replace(/^"|"$/g, ''), name)
-    if (exists(candidate)) return candidate
+    if (dir) out.push(join(dir.replace(/^"|"$/g, ''), name))
   }
+  return out
+}
+
+/** The first candidate `exists` accepts. The synchronous default (find-node-sync.ts) is for the CLI and Electron main. */
+export function findNode(env: NodeJS.ProcessEnv, exists: (p: string) => boolean): string | undefined {
+  return nodeCandidates(env).find(exists)
+}
+
+/** `findNode` through `api.io`, for tetherd: one probe at a time, in order. */
+export async function findNodeAsync(io: DaemonIo, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+  for (const c of nodeCandidates(env)) if (await io.exists(c).catch(() => false)) return c
   return undefined
 }
 
@@ -64,15 +72,15 @@ export function daemonEnv(bridgeHome: string, env: NodeJS.ProcessEnv = process.e
 }
 
 /** Starts the bridge daemon detached (survives the app and tetherd, no window), its output appended to <bridgeHome>/daemon.log. */
-export function spawnBridgeDaemon(node: string, bundle: string, port: number, bridgeHome: string): number | undefined {
-  mkdirSync(bridgeHome, { recursive: true })
-  const fd = openSync(join(bridgeHome, 'daemon.log'), 'a')
+export async function spawnBridgeDaemon(node: string, bundle: string, port: number, bridgeHome: string): Promise<number | undefined> {
+  await mkdir(bridgeHome, { recursive: true })
+  const log = await open(join(bridgeHome, 'daemon.log'), 'a')
   try {
-    const child = spawn(node, [bundle, 'start', '--port', String(port)], { cwd: resolve(bridgeHome), env: daemonEnv(bridgeHome), detached: true, windowsHide: true, stdio: ['ignore', fd, fd] })
+    const child = spawn(node, [bundle, 'start', '--port', String(port)], { cwd: resolve(bridgeHome), env: daemonEnv(bridgeHome), detached: true, windowsHide: true, stdio: ['ignore', log.fd, log.fd] })
     child.on('error', () => {})
     child.unref()
     return child.pid
-  } finally { closeSync(fd) }
+  } finally { await log.close() }
 }
 
 export interface WarmupDeps {
@@ -80,11 +88,13 @@ export interface WarmupDeps {
   /** vendor/atrium-bridge.mjs. */
   bundlePath: string
   bridgeHome: string
-  nodeExe(): string | undefined
+  nodeExe(): string | undefined | Promise<string | undefined>
   log(msg: string): void
+  /** The disk (`api.io`); default node's async file API. */
+  io?: DaemonIo
   /** Injected in the unit tests. */
   fetch?: typeof fetch
-  spawnDaemon?(node: string, bundle: string, port: number, bridgeHome: string): number | undefined
+  spawnDaemon?(node: string, bundle: string, port: number, bridgeHome: string): number | undefined | Promise<number | undefined>
   sleep?(ms: number): Promise<void>
 }
 
@@ -114,14 +124,14 @@ export function createWarmup(deps: WarmupDeps): Warmup {
 
   const ensure = async (): Promise<'running' | 'started' | 'failed'> => {
     if (await health()) return 'running'
-    const node = deps.nodeExe()
+    const node = await deps.nodeExe()
     if (!node) { deps.log('daemon do bridge: node não encontrado (TETHER_NODE ou PATH); não iniciado'); return 'failed' }
-    const pid = (deps.spawnDaemon ?? spawnBridgeDaemon)(node, deps.bundlePath, deps.port, deps.bridgeHome)
+    const pid = await (deps.spawnDaemon ?? spawnBridgeDaemon)(node, deps.bundlePath, deps.port, deps.bridgeHome)
     deps.log(`daemon do bridge iniciado (pid ${pid ?? '?'}, porta ${deps.port}, home ${deps.bridgeHome})`)
     // The record of what was started (C5 reads it at the next start); a failure to write it is not a failure to start.
     const sha = pid !== undefined ? await bundleSha256Of(deps.bundlePath) : undefined
     if (pid !== undefined && sha) {
-      try { writeDaemonRecord(deps.bridgeHome, { pid, bundleSha256: sha, startedAt: new Date().toISOString() }) } catch (e) { deps.log(`registro ${DAEMON_RECORD} não gravado: ${e instanceof Error ? e.message : String(e)}`) }
+      try { await writeDaemonRecord(deps.bridgeHome, { pid, bundleSha256: sha, startedAt: new Date().toISOString() }, deps.io) } catch (e) { deps.log(`registro ${DAEMON_RECORD} não gravado: ${e instanceof Error ? e.message : String(e)}`) }
     }
     const deadline = Date.now() + HEALTH_WAIT_MS
     while (Date.now() < deadline) {

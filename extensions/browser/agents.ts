@@ -18,8 +18,6 @@
 // with the same rewriting, mcp-texts.ts) for as long as the agent's run lives: no process for the browser, in the agent or in
 // the daemon, and nothing is stopped for being idle. What the tool knows the tabs by is kept with the tabs (agent-tabs.ts).
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { access, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { httpMcpConfigOf, McpNameCollisionError } from '../../src/agents/mcp.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
@@ -30,7 +28,9 @@ import { SLOT_ID_RE } from '../../src/core/store.ts'
 import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 import { slotOfKeyFile, validKeyShape } from './gate-rules.ts'
 import { McpRewriter } from './mcp-texts.ts'
-import { ensurePrivateDir } from './private-dir.ts'
+import { ensurePrivateDirAsync } from './private-dir-core.ts'
+import type { DaemonIo } from '../../src/daemon/ext-api.ts'
+import { fsIo } from '../../src/daemon/ext-io.ts'
 
 /** The env var of the agent's CLI that carries the slot's key to the HTTP server's bearer (never in a file but the key file). */
 export const ENV_BROWSER_MCP_KEY = 'TETHER_BROWSER_MCP_KEY'
@@ -77,19 +77,10 @@ export function mcpConfigOf(o: { node: string; server: string; proxy?: string; e
   }
 }
 
-/** Writes `text` to `path` in one move (temp + rename) with owner-only mode (a no-op on Windows: the folder's DACL rules, private-dir.ts). */
-function writeFileAtomic(path: string, text: string): void {
-  mkdirSync(join(path, '..'), { recursive: true })
-  const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, text, { mode: 0o600 })
-  try { renameSync(tmp, path) } finally { rmSync(tmp, { force: true }) }
-}
-
-/** Removes the key and the MCP file of a slot. Never throws. */
-export function releaseSlot(home: string, slotId: string): void {
+/** Removes the key and the MCP file of a slot (through `io`: on tetherd's executor). Never throws. */
+export async function releaseSlot(home: string, slotId: string, io: DaemonIo = fsIo): Promise<void> {
   if (!SLOT_ID_RE.test(slotId)) return
-  rmSync(keyFileOf(home, slotId), { force: true })
-  rmSync(mcpFileOf(home, slotId), { force: true })
+  await Promise.all([keyFileOf(home, slotId), mcpFileOf(home, slotId)].map(f => io.rm(f).catch(() => undefined)))
 }
 
 /**
@@ -97,20 +88,20 @@ export function releaseSlot(home: string, slotId: string): void {
  * slot that exists are left over from a daemon that was killed. Only files named after a slot of this home go (a key nobody's
  * slot owns is not ours to judge). Returns how many files went.
  */
-export async function sweepStale(home: string): Promise<number> {
+export async function sweepStale(home: string, io: DaemonIo = fsIo): Promise<number> {
   // The sweep runs beside the loop, so an agent may launch while it works: a file written since the sweep began is a live
   // agent's, never leftover (a killed daemon's files are older than this start).
   const since = Date.now()
   let n = 0
   const sweep = async (dir: string, slotOf: (name: string) => string | undefined): Promise<void> => {
     let names: string[] = []
-    try { names = await readdir(dir) } catch { /* no folder */ }
+    try { names = (await io.readdir(dir)).map(d => d.name) } catch { /* no folder */ }
     for (const f of names) {
       const slotId = slotOf(f)
-      if (f.endsWith('.tmp') || (slotId !== undefined && await access(slotMetaPath(home, slotId)).then(() => true, () => false))) {
-        const fresh = await stat(join(dir, f)).then(st => st.mtimeMs >= since, () => false)
+      if (f.endsWith('.tmp') || (slotId !== undefined && await io.exists(slotMetaPath(home, slotId)).catch(() => false))) {
+        const fresh = await io.stat(join(dir, f)).then(st => st.mtimeMs >= since, () => false)
         if (fresh) continue
-        await rm(join(dir, f), { force: true }); n++
+        await io.rm(join(dir, f)); n++
       }
     }
   }
@@ -132,29 +123,35 @@ export interface BrowserInjectDeps {
   /** The stdio proxy that runs the server and corrects what it tells the agent (mcp-proxy.mjs); without it (or when missing) the server runs bare. */
   proxy?: string
   /** The node that runs it (an absolute path), or undefined when there is none. */
-  node(): string | undefined
+  node(): string | undefined | Promise<string | undefined>
   log(msg: string): void
   /** The daemon's HTTP host, for agents with `mcp.http`; with it, `backend`. */
   http?: BrowserHttpHost
   /** Makes the slot's server inside the daemon (daemon.ts: the vendored bundle, imported once). Absent: the stdio path. */
   backend?(input: BrowserBackendInput): McpBackend | Promise<McpBackend>
+  /** The disk (`api.io`). Default: node's async file API (unit tests, CLI). */
+  io?: DaemonIo
   /** Injected in the unit test. */
-  exists?(path: string): boolean
+  exists?(path: string): boolean | Promise<boolean>
   key?(): string
 }
 
-/** The launch middleware (TetherDaemon.launch.use). Returns the plan given (same object) whenever nothing applies. */
-export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan {
-  const exists = deps.exists ?? existsSync
+/**
+ * The launch middleware (TetherDaemon.launch.use). Returns the plan given (same object) whenever nothing applies. The key and the MCP
+ * file are written through `io` and awaited: they are on disk when the promise resolves, before the agent is spawned.
+ */
+export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: LaunchPlan, slot: SlotMeta) => Promise<LaunchPlan> {
+  const io = deps.io ?? fsIo
+  const exists = deps.exists ?? ((p: string) => io.exists(p))
   const warned = new Set<string>()
   const warnOnce = (id: string, msg: string): void => { if (!warned.has(id)) { warned.add(id); deps.log(msg) } }
-  return (plan, slot) => {
+  return async (plan, slot) => {
     if (slot.agent === 'shell' || !deps.serve(slot)) return plan
     const agent = deps.agent(slot.agent)
     if (!agent?.mcp) return plan
     if (!SLOT_ID_RE.test(slot.slotId)) return plan
-    if (!exists(deps.server)) { warnOnce('server', `${deps.server} ausente: agentes lançados sem o navegador`); return plan }
-    const node = deps.node()
+    if (!await exists(deps.server)) { warnOnce('server', `${deps.server} ausente: agentes lançados sem o navegador`); return plan }
+    const node = await deps.node()
     if (!node) { warnOnce('node', 'node não encontrado: agentes lançados sem o navegador'); return plan }
     const keyFile = keyFileOf(deps.home, slot.slotId)
     const mcpFile = mcpFileOf(deps.home, slot.slotId)
@@ -171,11 +168,11 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
       if (!validKeyShape(key)) throw new Error('chave gerada com formato inválido')
       const evaluate = deps.evaluate()
       // M4: the folders are the owner's alone before a key lands in them (a home outside the profile inherits an open ACL).
-      ensurePrivateDir(browserDirOf(deps.home))
-      ensurePrivateDir(keysDirOf(deps.home))
+      await ensurePrivateDirAsync(browserDirOf(deps.home))
+      await ensurePrivateDirAsync(keysDirOf(deps.home))
       if (url && deps.http && backend) {
-        writeFileAtomic(mcpFile, JSON.stringify(httpMcpConfigOf(MCP_SERVER_NAME, url, ENV_BROWSER_MCP_KEY), null, 2) + '\n')
-        writeFileAtomic(keyFile, `${key}\n`)
+        await io.writeTextAtomic(mcpFile, JSON.stringify(httpMcpConfigOf(MCP_SERVER_NAME, url, ENV_BROWSER_MCP_KEY), null, 2) + '\n')
+        await io.writeTextAtomic(keyFile, `${key}\n`)
         const { [ENV_BROWSER_MCP_KEY]: _, ...childEnv } = out.env
         deps.http.grant(slot.slotId, key, {
           create: () => backend({ endpointFile: endpointFileOf(deps.home), keyFile, evaluate, env: childEnv }),
@@ -183,11 +180,12 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
         })
         return { ...out, env: { ...out.env, [ENV_BROWSER_MCP_KEY]: key } }
       }
-      writeFileAtomic(mcpFile, JSON.stringify(mcpConfigOf({ node, server: deps.server, ...(deps.proxy && exists(deps.proxy) ? { proxy: deps.proxy } : {}), endpointFile: endpointFileOf(deps.home), keyFile, evaluate }), null, 2) + '\n')
-      writeFileAtomic(keyFile, `${key}\n`)
+      const proxy = deps.proxy && await exists(deps.proxy) ? deps.proxy : undefined
+      await io.writeTextAtomic(mcpFile, JSON.stringify(mcpConfigOf({ node, server: deps.server, ...(proxy ? { proxy } : {}), endpointFile: endpointFileOf(deps.home), keyFile, evaluate }), null, 2) + '\n')
+      await io.writeTextAtomic(keyFile, `${key}\n`)
     } catch (e) {
       deps.http?.revoke(slot.slotId)
-      releaseSlot(deps.home, slot.slotId)
+      await releaseSlot(deps.home, slot.slotId, io)
       deps.log(`slot ${slot.slotId}: não consegui preparar a chave do navegador (${e instanceof Error ? e.message : String(e)}); lançado sem o navegador`)
       return plan
     }

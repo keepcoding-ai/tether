@@ -7,9 +7,9 @@
 //   - soul-cli: a shared folder (`<dir>/skills/<name>/SKILL.md`) through `-S <dir>`;
 //   - an agent with no skills of its own but a system prompt flag: `systemPromptSkills(flag)`, the skills' text appended.
 // A new agent writes its own AgentSkills; nothing else changes.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { watch, type FSWatcher } from 'node:fs'
 import { delimiter, join } from 'node:path'
-import { fileSig } from '../core/exe.ts'
+import type { Executor } from '../exec/executor.ts'
 import type { LaunchPlan } from './types.ts'
 
 export interface TetherSkill {
@@ -28,11 +28,13 @@ export interface SkillBundle {
   home: string
   /** Changes whenever any skill changes: an adapter rewrites its copy only when this differs. */
   version: string
+  /** Writes the adapter's copy (the executor's work lane). */
+  exec: Executor
 }
 
 /** How an agent's CLI takes the tether's skills. Returns a copy of the plan (or the same plan when there is nothing to do). */
 export interface AgentSkills {
-  inject(plan: LaunchPlan, bundle: SkillBundle): LaunchPlan
+  inject(plan: LaunchPlan, bundle: SkillBundle): LaunchPlan | Promise<LaunchPlan>
 }
 
 /** `name` and `description` from a SKILL.md's frontmatter (folded `>-` blocks joined); undefined without a frontmatter name. */
@@ -55,38 +57,6 @@ export function parseFrontmatter(text: string): { name: string; description: str
   return fields.name ? { name: fields.name, description: fields.description ?? '' } : undefined
 }
 
-/** The skills of a library folder (one subfolder per skill); a folder without a valid SKILL.md is skipped and reported. */
-export function loadSkills(libraryDir: string, log: (msg: string) => void = () => {}): TetherSkill[] {
-  let entries: string[]
-  try { entries = readdirSync(libraryDir).sort() } catch { return [] }
-  const out: TetherSkill[] = []
-  for (const entry of entries) {
-    const dir = join(libraryDir, entry)
-    const file = join(dir, 'SKILL.md')
-    if (!existsSync(file)) continue
-    const text = readFileSync(file, 'utf8')
-    const meta = parseFrontmatter(text)
-    if (!meta || meta.name !== entry) { log(`skill ${entry} ignorada: o SKILL.md precisa de "name: ${entry}" no cabeçalho`); continue }
-    out.push({ name: meta.name, description: meta.description, dir, text })
-  }
-  return out
-}
-
-/** A cheap fingerprint of the skills (names, sizes and mtimes of every file). */
-export function skillsVersion(skills: readonly TetherSkill[]): string {
-  const parts: string[] = []
-  const walk = (dir: string): void => {
-    for (const e of readdirSync(dir).sort()) {
-      const p = join(dir, e)
-      const st = statSync(p)
-      if (st.isDirectory()) walk(p)
-      else parts.push(`${p}:${st.size}:${st.mtimeMs}`)
-    }
-  }
-  for (const s of skills) walk(s.dir)
-  return parts.join('|')
-}
-
 export interface SkillsSnapshot {
   skills: TetherSkill[]
   version: string
@@ -102,6 +72,7 @@ export class SkillsCache {
   private dirty = true
   private watcher: FSWatcher | undefined
   private watchTried = false
+  private loading: Promise<SkillsSnapshot> | undefined
 
   private readonly library: string
   private readonly log: (msg: string) => void
@@ -113,13 +84,21 @@ export class SkillsCache {
     this.watchFn = watchFn
   }
 
-  get(): SkillsSnapshot {
+  /** The library as it is now: the kept snapshot while the watcher saw nothing, else read by the executor (one read at a time, shared). */
+  async get(exec: Executor): Promise<SkillsSnapshot> {
     this.startWatch()
     if (this.snapshot && !this.dirty && this.watcher) return this.snapshot
+    if (this.loading) return this.loading
     this.dirty = false
-    const skills = loadSkills(this.library, this.log)
-    this.snapshot = { skills, version: skillsVersion(skills) }
-    return this.snapshot
+    const load = exec.run('loadSkills', [this.library]).then((r) => {
+      for (const m of r.logs) this.log(m)
+      this.snapshot = { skills: r.skills, version: r.version }
+      return this.snapshot
+    })
+    this.loading = load
+    const done = (): void => { if (this.loading === load) this.loading = undefined }
+    load.then(done, done)
+    return load
   }
 
   dispose(): void {
@@ -139,43 +118,6 @@ export class SkillsCache {
   }
 }
 
-/** What each target's stamp looked like when this process last saw it right: the version, and the stamp file's size and mtime. */
-const materialized = new Map<string, { version: string; sig: string }>()
-
-/**
- * Writes an agent's copy of the skills at `target` by `build(stagingDir)` when the bundle's version differs from the one
- * recorded there (staging + rename: an agent starting meanwhile never sees half a folder). Returns `target`.
- * A stamp this process already verified (same version, same size and mtime) is trusted with one stat instead of a read.
- */
-export function materialize(target: string, bundle: SkillBundle, build: (dir: string) => void): string {
-  const stamp = join(target, '.tether-version')
-  const known = materialized.get(target)
-  if (known?.version === bundle.version && known.sig === fileSig(stamp)) return target
-  try {
-    if (readFileSync(stamp, 'utf8') === bundle.version) {
-      const sig = fileSig(stamp)
-      if (sig) materialized.set(target, { version: bundle.version, sig })
-      return target
-    }
-  } catch { /* first time or changed */ }
-  const staging = `${target}.${process.pid}.tmp`
-  rmSync(staging, { recursive: true, force: true })
-  mkdirSync(staging, { recursive: true })
-  build(staging)
-  writeFileSync(join(staging, '.tether-version'), bundle.version)
-  rmSync(target, { recursive: true, force: true })
-  renameSync(staging, target)
-  const sig = fileSig(stamp)
-  if (sig) materialized.set(target, { version: bundle.version, sig })
-  return target
-}
-
-/** Copies every skill folder into `dir/<name>/`. */
-export function copySkillFolders(skills: readonly TetherSkill[], dir: string): void {
-  mkdirSync(dir, { recursive: true })
-  for (const s of skills) cpSync(s.dir, join(dir, s.name), { recursive: true })
-}
-
 /** Flags go FIRST (right after the command's own leading args): a variadic option at the end (`--mcp-config`) would swallow them. */
 export function withLeadingArgs(plan: LaunchPlan, args: readonly string[], at = 0): LaunchPlan {
   return { ...plan, args: [...plan.args.slice(0, at), ...args, ...plan.args.slice(at)] }
@@ -186,17 +128,19 @@ export const CLAUDE_PLUGIN_NAME = 'tether'
 
 /** Claude Code: a `tether` plugin under <home>/skills/claude/tether, loaded for this session only with `--plugin-dir`. */
 export const claudeSkills: AgentSkills = {
-  inject(plan, bundle) {
+  async inject(plan, bundle) {
     if (!bundle.skills.length) return plan
-    const dir = materialize(join(bundle.home, 'skills', 'claude', CLAUDE_PLUGIN_NAME), bundle, staging => {
-      mkdirSync(join(staging, '.claude-plugin'), { recursive: true })
-      writeFileSync(join(staging, '.claude-plugin', 'plugin.json'), JSON.stringify({
+    const dir = await bundle.exec.run('materializeSkills', [{
+      target: join(bundle.home, 'skills', 'claude', CLAUDE_PLUGIN_NAME),
+      version: bundle.version,
+      layout: 'claude-plugin',
+      skills: bundle.skills.map(s => ({ name: s.name, dir: s.dir })),
+      pluginJson: JSON.stringify({
         name: CLAUDE_PLUGIN_NAME,
         description: 'Skills do tether, entregues a todo agente aberto num painel.',
         version: '1.0.0',
-      }, null, 2) + '\n')
-      copySkillFolders(bundle.skills, join(staging, 'skills'))
-    })
+      }, null, 2) + '\n',
+    }])
     return withLeadingArgs(plan, ['--plugin-dir', dir])
   },
 }
@@ -208,9 +152,9 @@ export const claudeSkills: AgentSkills = {
  */
 export const SOUL_SHARED_FOLDERS_ENV = 'SOUL_CLI_SHARED_FOLDERS'
 export const soulSkills: AgentSkills = {
-  inject(plan, bundle) {
+  async inject(plan, bundle) {
     if (!bundle.skills.length) return plan
-    const dir = materialize(join(bundle.home, 'skills', 'soul'), bundle, staging => copySkillFolders(bundle.skills, join(staging, 'skills')))
+    const dir = await bundle.exec.run('materializeSkills', [{ target: join(bundle.home, 'skills', 'soul'), version: bundle.version, layout: 'shared', skills: bundle.skills.map(s => ({ name: s.name, dir: s.dir })) }])
     const current = plan.env[SOUL_SHARED_FOLDERS_ENV]?.trim()
     const value = current ? `${current}${delimiter}${dir}` : dir
     return { ...plan, env: { ...plan.env, [SOUL_SHARED_FOLDERS_ENV]: value } }

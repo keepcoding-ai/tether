@@ -336,9 +336,9 @@ function soulSourceText(command: string, args: string[]): string | undefined {
   return parts.join('\n')
 }
 
-export function probeSoul(): CheckResult {
+export async function probeSoul(): Promise<CheckResult> {
   let command: string, args: string[]
-  try { ({ command, args } = resolveSoulCommand()) } catch (e) { return { level: 'ERRO', name: 'soul', detail: (e as Error).message, hint: 'corrija TETHER_SOUL_CMD' } }
+  try { ({ command, args } = await resolveSoulCommand()) } catch (e) { return { level: 'ERRO', name: 'soul', detail: (e as Error).message, hint: 'corrija TETHER_SOUL_CMD' } }
   const found = command !== 'soul' && (existsSync(command) || onPath(command) !== undefined)
   if (!found) return checkSoul({ command, found: false, versionOutput: undefined, sourceText: undefined })
   const env = cleanEnv()
@@ -348,8 +348,8 @@ export function probeSoul(): CheckResult {
 }
 
 /** `claude --version` through the resolved command (the claude extension's check). */
-export function probeClaude(): CheckResult {
-  const claudeCmd = resolveClaudeCommand()
+export async function probeClaude(): Promise<CheckResult> {
+  const claudeCmd = await resolveClaudeCommand()
   const claudeFound = existsSync(claudeCmd) || onPath('claude') !== undefined
   return checkClaude(claudeCmd, claudeFound, claudeFound ? run(claudeCmd, ['--version'], cleanEnv()).stdout : undefined)
 }
@@ -368,8 +368,8 @@ export function checkCodex(command: string, found: boolean, versionOutput: strin
 }
 
 /** `codex --version` through the resolved command (the codex extension's check). */
-export function probeCodex(): CheckResult {
-  const { command, prefix } = resolveCodexCommand()
+export async function probeCodex(): Promise<CheckResult> {
+  const { command, prefix } = await resolveCodexCommand()
   const found = prefix.length > 0 || existsSync(command) || onPath('codex') !== undefined
   return checkCodex(prefix[0] ?? command, found, found ? run(command, [...prefix, '--version'], cleanEnv()).stdout : undefined)
 }
@@ -413,7 +413,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
   results.push(checkProcHost(await probeProcHost(pipe, home, hello !== undefined)))
 
   let soulIsNode = false
-  try { soulIsNode = isNodeExecutable(resolveSoulCommand().command) } catch { /* reported by probeSoul */ }
+  try { soulIsNode = isNodeExecutable((await resolveSoulCommand()).command) } catch { /* reported by probeSoul */ }
   results.push(checkExecutables({ tetherd: inspectRenamedNode(home, 'tetherd'), soul: inspectRenamedNode(home, 'tether-soul'), daemonExec: hello?.exec, soulIsNode }))
 
   await processStartTime(process.pid) // the first query starts the helper

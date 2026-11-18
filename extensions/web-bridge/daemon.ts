@@ -5,7 +5,6 @@
 // src/agents/load.ts for the doctor checks, never get there). C3 (agents.ts): the launch middleware hands that file and
 // the slot's identity to every AI agent (off with `extensions.web-bridge.serveToAgents`), and an agent slot that exits
 // releases its tabs at the bridge daemon.
-import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { normalizeSetting, readExtensionsSettings } from '../../app/shared/vscode-configuration-registry.ts'
@@ -20,7 +19,7 @@ import { auditVendor, VENDOR_BUNDLE } from './vendor-rules.ts'
 import { createBridgeHost } from './bridge-home.ts'
 import { manifest } from './manifest.ts'
 import { bridgeHomeOf, bridgePortOf, httpMcpConfigPathOf, MCP_SERVER_NAME, mcpConfigPathOf, warmupAllowed } from './paths.ts'
-import { findNode } from './warmup.ts'
+import { findNodeAsync } from './warmup.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -48,7 +47,7 @@ interface BridgeMcpBundle {
  */
 export function createBridgeBackends(o: {
   vendorDir: string
-  grants(slotId: string): GrantStore
+  grants(slotId: string): GrantStore | Promise<GrantStore>
   importBundle?(path: string): Promise<unknown>
 }): (input: BridgeBackendInput) => Promise<McpBackend> {
   const bundlePath = join(o.vendorDir, VENDOR_BUNDLE)
@@ -65,7 +64,7 @@ export function createBridgeBackends(o: {
     bundle.catch(() => { bundle = undefined })
     const lib = await bundle
     // The shell's own log is <bridge home>/mcp.log, as in the stdio shell; nothing goes to the daemon's stderr.
-    const mcp = lib.createBridgeMcp({ env: input.env, daemonEntry: bundlePath, node: input.node, grantStore: o.grants(input.slotId), stderr: false })
+    const mcp = lib.createBridgeMcp({ env: input.env, daemonEntry: bundlePath, node: input.node, grantStore: await o.grants(input.slotId), stderr: false })
     // As the stdio shell does at its start: the bridge daemon comes up in the background when nobody listens.
     mcp.warmup()
     return mcp
@@ -74,20 +73,27 @@ export function createBridgeBackends(o: {
 
 export function activate(api: TetherDaemon): IDisposable[] {
   const port = bridgePortOf()
+  // The system node is looked up through the executor once (the answer holds for the process; a miss is asked again).
+  let nodeFound: Promise<string | undefined> | undefined
+  const nodeOf = (): Promise<string | undefined> => {
+    nodeFound ??= findNodeAsync(api.io).then(n => { if (!n) nodeFound = undefined; return n }, () => { nodeFound = undefined; return undefined })
+    return nodeFound
+  }
   // Read on use: Electron main bundles this module as CommonJS (import.meta.dirname is undefined there), and never runs it.
   const host = createBridgeHost({
     home: api.home,
     vendorDir: resolve(import.meta.dirname ?? '.', 'vendor'),
     port,
     brand: { name: api.brand.name, color: api.brand.accent, hostId: api.brand.appId },
-    nodeExe: () => findNode(),
+    nodeExe: nodeOf,
+    io: api.io,
     log: msg => api.log(msg),
     warm: warmupAllowed(),
   })
   // The bridge over HTTP for agents with `mcp.http` (agents.ts); it listens only in the tetherd that owns the pipe (onStarted).
   const http = new McpHttpHost({ name: MCP_SERVER_NAME, log: msg => api.log(msg) })
-  const backend = createBridgeBackends({ vendorDir: resolve(import.meta.dirname ?? '.', 'vendor'), grants: slotId => grantStoreOf(api.home, slotId, msg => api.log(msg)) })
-  const httpDeps = { http, httpConfigFile: (slotId: string) => httpMcpConfigPathOf(api.home, slotId) }
+  const backend = createBridgeBackends({ vendorDir: resolve(import.meta.dirname ?? '.', 'vendor'), grants: slotId => grantStoreOf(api.home, slotId, msg => api.log(msg), api.io) })
+  const httpDeps = { http, httpConfigFile: (slotId: string) => httpMcpConfigPathOf(api.home, slotId), io: api.io }
   // The agents' names at the bridge: given at launch, followed when the pane's tab changes, freed when the agent ends.
   const identities = new BridgeIdentities()
   const middleware = createLaunchMiddleware({
@@ -95,11 +101,11 @@ export function activate(api: TetherDaemon): IDisposable[] {
     agent: name => api.agents.get(name),
     serve: () => serveToAgents(api),
     configFile: mcpConfigPathOf(api.home),
-    exists: existsSync,
+    exists: p => api.io.exists(p),
     log: msg => api.log(msg),
     ...httpDeps,
     backend,
-    node: () => findNode(),
+    node: nodeOf,
   })
   return [
     api.onStarted(() => {
@@ -113,18 +119,18 @@ export function activate(api: TetherDaemon): IDisposable[] {
     { dispose: () => { void http.close() } },
     api.onSlot(ev => {
       // The pane was closed for good: the upload authorizations kept with it go.
-      if (ev.kind === 'removed') { identities.drop(ev.slot.slotId); dropGrants(api.home, ev.slot.slotId); return }
+      if (ev.kind === 'removed') { identities.drop(ev.slot.slotId); void dropGrants(api.home, ev.slot.slotId, api.io); return }
       if (ev.slot.kind === 'shell') return
       // A renamed tab (or a new session's title): the agent served over HTTP is renamed at the bridge at its next call.
       if (ev.kind === 'changed' || ev.kind === 'bound' || ev.kind === 'spawned') { identities.follow(ev.slot); return }
       if (ev.kind !== 'exited') return
       identities.drop(ev.slot.slotId)
-      releaseHttp(httpDeps, ev.slot.slotId)
-      void releaseClient({ port, bridgeHome: bridgeHomeOf(api.home), log: msg => api.log(msg) }, clientIdOf(ev.slot.slotId))
+      void releaseHttp(httpDeps, ev.slot.slotId)
+      void releaseClient({ port, bridgeHome: bridgeHomeOf(api.home), io: api.io, log: msg => api.log(msg) }, clientIdOf(ev.slot.slotId))
     }),
     ...host.checks().map(check => api.doctor.register(check)),
-    api.doctor.register(() => bridgeInFlightCheck({ port, bridgeHome: bridgeHomeOf(api.home) })),
-    api.doctor.register(() => bridgeDebugStatusCheck({ port, bridgeHome: bridgeHomeOf(api.home), displayName: manifest.displayName, dumpDir: join(bridgeHomeOf(api.home), 'debug') })),
+    api.doctor.register(() => bridgeInFlightCheck({ port, bridgeHome: bridgeHomeOf(api.home), io: api.io })),
+    api.doctor.register(() => bridgeDebugStatusCheck({ port, bridgeHome: bridgeHomeOf(api.home), io: api.io, displayName: manifest.displayName, dumpDir: join(bridgeHomeOf(api.home), 'debug') })),
     api.traces.register(bridgeTraceSource(api.home)),
   ]
 }

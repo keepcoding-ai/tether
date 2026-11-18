@@ -26,6 +26,25 @@ export interface DaemonCheck {
  */
 export type SlotEventKind = 'spawned' | 'exited' | 'bound' | 'removed' | 'changed'
 
+/**
+ * The disk, as an extension may touch it (`api.io`): every call is asynchronous and, inside tetherd, runs on the executor's
+ * worker, in order (one FIFO lane). Reads that find nothing reject with `code: 'ENOENT'`; `tryReadText` answers undefined.
+ * `writeTextAtomic` creates the parent folders and writes temp + rename with owner-only mode.
+ */
+export interface DaemonIo {
+  readText(path: string): Promise<string>
+  tryReadText(path: string): Promise<string | undefined>
+  writeTextAtomic(path: string, text: string): Promise<void>
+  appendText(path: string, text: string): Promise<void>
+  rename(from: string, to: string): Promise<void>
+  /** Recursive and forgiving: a missing path is not an error. */
+  rm(path: string): Promise<void>
+  mkdirp(path: string): Promise<void>
+  stat(path: string): Promise<{ size: number; mtimeMs: number; isFile: boolean; isDirectory: boolean }>
+  readdir(path: string): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>>
+  exists(path: string): Promise<boolean>
+}
+
 export interface TetherDaemon {
   /** The extension's id (manifest.id). */
   readonly id: string
@@ -60,6 +79,8 @@ export interface TetherDaemon {
   settings: { get<T>(key: string): T | undefined }
   /** The launch profiles (<home>/profiles.json, re-read when it changes on disk). */
   profiles: { get(id: string): Profile | undefined }
+  /** The disk facade: the only way a daemon extension reads or writes files. */
+  io: DaemonIo
   /** tetherd.log, prefixed with the extension's id. */
   log(msg: string): void
   onSlot(listener: (ev: { kind: SlotEventKind; slot: SlotState }) => void): IDisposable

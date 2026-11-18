@@ -137,33 +137,33 @@ describe('soul', () => {
 describe('shell', () => {
   const slot: SlotMeta = { v: 1, slotId: 'sh-1', agent: 'shell', cwd: process.cwd(), args: [], createdAt: '2026-10-29T00:00:00.000Z' }
 
-  test('no args, no profile: the default shell', () => {
-    const plan = shellAdapter.plan({ slot })
+  test('no args, no profile: the default shell', async () => {
+    const plan = await shellAdapter.plan({ slot })
     assert.deepEqual({ command: plan.command, args: plan.args }, defaultShell())
   })
 
-  test('a shell profile names the shell (its args after the shell\'s own) and adds its env', () => {
+  test('a shell profile names the shell (its args after the shell\'s own) and adds its env', async () => {
     const profile = launchOf({ id: 'node', name: 'Node', agent: 'shell', args: ['-e', '1'], shell: { command: process.execPath, args: ['--no-warnings'] }, env: { SH_PROFILE: 'yes' } })
-    const plan = shellAdapter.plan({ slot, profile })
+    const plan = await shellAdapter.plan({ slot, profile })
     assert.equal(plan.command, process.execPath)
     assert.deepEqual(plan.args, ['--no-warnings', '-e', '1'])
     assert.equal(plan.env.SH_PROFILE, 'yes')
   })
 
-  test('the slot\'s own args win over the profile; "resume" = the given cwd', () => {
+  test('the slot\'s own args win over the profile; "resume" = the given cwd', async () => {
     const profile = launchOf({ id: 'node', name: 'Node', agent: 'shell', args: [], shell: { command: process.execPath, args: ['--no-warnings'] } })
-    const plan = shellAdapter.plan({ slot: { ...slot, args: [process.execPath, '-v'] }, profile, cwd: process.cwd() })
+    const plan = await shellAdapter.plan({ slot: { ...slot, args: [process.execPath, '-v'] }, profile, cwd: process.cwd() })
     assert.deepEqual(plan.args, ['-v'])
   })
 
-  test('the default PowerShell profile launches exactly what the default shell would', { skip: process.platform !== 'win32' }, () => {
+  test('the default PowerShell profile launches exactly what the default shell would', { skip: process.platform !== 'win32' }, async () => {
     const ps = defaultProfiles().find((p) => p.id === 'powershell')!
-    const plan = shellAdapter.plan({ slot, profile: launchOf(ps) })
+    const plan = await shellAdapter.plan({ slot, profile: launchOf(ps) })
     assert.deepEqual({ command: plan.command, args: plan.args }, defaultShell())
   })
 
-  test('a profile whose shell is neither on disk nor on PATH falls back to the default shell', () => {
-    const plan = shellAdapter.plan({ slot, profile: { args: ['Z:\\nope\\shell.exe', '-x'] } })
+  test('a profile whose shell is neither on disk nor on PATH falls back to the default shell', async () => {
+    const plan = await shellAdapter.plan({ slot, profile: { args: ['Z:\\nope\\shell.exe', '-x'] } })
     assert.deepEqual({ command: plan.command, args: plan.args }, defaultShell())
   })
 })

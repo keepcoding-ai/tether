@@ -28,7 +28,8 @@ import { bridgeHomeOf, extensionDirOf } from '../../extensions/web-bridge/paths.
 import { readUpdateMarker } from '../../extensions/web-bridge/update.ts'
 import { auditVendor, hashTree as hashTreeAsync, type BuildInfo } from '../../extensions/web-bridge/vendor-rules.ts'
 import { hashTree, manifestOf, sha256, walk } from '../../extensions/web-bridge/vendor-rules-sync.ts'
-import { findNode, readDaemonRecord } from '../../extensions/web-bridge/warmup.ts'
+import { readDaemonRecord } from '../../extensions/web-bridge/warmup.ts'
+import { findNode } from '../../extensions/web-bridge/find-node-sync.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 
 /** The extension's own global inside its pages (popup.html), and chrome://extensions' private API (developer mode). */
@@ -145,7 +146,7 @@ test('an installed older build is updated in place at tetherd start, the daemon 
     await waitUntil(() => readPid(bridgeHome) !== undefined, 10_000, 'daemon.pid of the old daemon')
     const oldPid = readPid(bridgeHome)!
     owned.push(await claim(oldPid, { cmdIncludes: 'atrium-bridge.mjs', what: 'old bridge daemon' }))
-    assert.equal(readDaemonRecord(bridgeHome)?.bundleSha256, oldInfo.bundle.sha256, 'the record names the old bundle')
+    assert.equal((await readDaemonRecord(bridgeHome))?.bundleSha256, oldInfo.bundle.sha256, 'the record names the old bundle')
     assert.equal((JSON.parse(readFileSync(join(current, 'manifest.json'), 'utf8')) as { version: string }).version, '0.0.9')
     assert.ok(existsSync(join(current, 'old', 'stale.txt')))
     const seedBefore = JSON.parse(readFileSync(join(current, 'bridge.json'), 'utf8')) as { port: number; token: string; host?: string }
@@ -171,8 +172,8 @@ test('an installed older build is updated in place at tetherd start, the daemon 
     owned.push(await claim(newPid, { cmdIncludes: 'atrium-bridge.mjs', what: 'new bridge daemon' }))
     await waitUntil(() => health(port), 30_000, `/health of the new daemon on ${port}`)
     assert.ok(!pidAlive(oldPid), 'the old daemon is gone')
-    assert.equal(readDaemonRecord(bridgeHome)?.pid, newPid)
-    assert.equal(readDaemonRecord(bridgeHome)?.bundleSha256, newInfo.bundle.sha256, 'the record names the vendored bundle now')
+    assert.equal((await readDaemonRecord(bridgeHome))?.pid, newPid)
+    assert.equal((await readDaemonRecord(bridgeHome))?.bundleSha256, newInfo.bundle.sha256, 'the record names the vendored bundle now')
     // The folder: the new build exactly (seed left out), the seed as it was.
     assert.equal(await hashTreeAsync(current, new Set(['bridge.json'])), newInfo.extension.sha256, 'current/ is the vendored build')
     assert.equal((JSON.parse(readFileSync(join(current, 'manifest.json'), 'utf8')) as { version: string }).version, newVersion)
@@ -182,7 +183,7 @@ test('an installed older build is updated in place at tetherd start, the daemon 
     const configAfter = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as { pairingToken: string; extensionVersion?: string }
     assert.equal(configAfter.pairingToken, configBefore.pairingToken, 'the token did not rotate')
     assert.equal(configAfter.extensionVersion, newVersion, 'the welcome contract field')
-    assert.equal(readUpdateMarker(home)?.version, newVersion, 'the "reload" notice is pending')
+    assert.equal((await readUpdateMarker(home))?.version, newVersion, 'the "reload" notice is pending')
     // The log tells the story, without a secret.
     const tlog = readFileSync(join(home, 'tetherd.log'), 'utf8')
     assert.ok(tlog.includes(`atualizada em lugar (0.0.9 → ${newVersion}: `), tlog)

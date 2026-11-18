@@ -69,7 +69,7 @@ describe('web-bridge launch middleware (F7 C3)', () => {
     assert.notEqual(await host.transformPlan(input, meta('claude')), input)
   })
 
-  test('serveToAgents() reads the app\'s layout of settings.json and defaults to on', () => {
+  test('serveToAgents() reads the app\'s layout of settings.json and defaults to on', async () => {
     const api = (raw: unknown) => ({ settings: { get: <T>(key: string): T | undefined => (key === 'extensions' ? (raw as T) : undefined) } })
     assert.equal(serveToAgents(api(undefined)), true)
     assert.equal(serveToAgents(api({ 'web-bridge': { serveToAgents: false } })), false)
@@ -87,28 +87,28 @@ describe('createLaunchMiddleware rules', () => {
     return { mw, logs }
   }
 
-  test('an agent without mcp, an unknown agent and serve() false: the same object', () => {
+  test('an agent without mcp, an unknown agent and serve() false: the same object', async () => {
     const input = plan()
-    assert.equal(make().mw(input, meta('bare')), input)
-    assert.equal(make().mw(input, meta('codex')), input)
-    assert.equal(make({ serve: () => false }).mw(input, meta('claude')), input)
+    assert.equal(await make().mw(input, meta('bare')), input)
+    assert.equal(await make().mw(input, meta('codex')), input)
+    assert.equal(await make({ serve: () => false }).mw(input, meta('claude')), input)
   })
 
-  test('a missing MCP file: untouched, logged once until it is back', () => {
+  test('a missing MCP file: untouched, logged once until it is back', async () => {
     let there = false
     const { mw, logs } = make({ exists: () => there })
     const input = plan()
-    assert.equal(mw(input, meta('claude')), input)
-    assert.equal(mw(input, meta('claude')), input)
+    assert.equal(await mw(input, meta('claude')), input)
+    assert.equal(await mw(input, meta('claude')), input)
     assert.equal(logs.length, 1); assert.match(logs[0]!, /ausente/)
     there = true
-    assert.notEqual(mw(input, meta('claude')), input)
+    assert.notEqual(await mw(input, meta('claude')), input)
     there = false
-    assert.equal(mw(input, meta('claude')), input)
+    assert.equal(await mw(input, meta('claude')), input)
     assert.equal(logs.length, 2, 'warned again after the file came and went')
   })
 
-  test('identity: the id follows the bridge pattern; the name is the text of the pane\'s tab (name, else title, else folder), within the limit', () => {
+  test('identity: the id follows the bridge pattern; the name is the text of the pane\'s tab (name, else title, else folder), within the limit', async () => {
     assert.match(clientIdOf('a1b2c3d4'), CLIENT_ID_PATTERN)
     assert.equal(clientNameOf({ name: '  Pesquisa ', title: 'kai-thinking', cwd: 'D:\\x\\y' }), 'Pesquisa', 'the name the person gave wins')
     assert.equal(clientNameOf({ title: 'kai-thinking', cwd: 'D:\\x\\atrium' }), 'kai-thinking', 'then the session title')
@@ -121,28 +121,28 @@ describe('createLaunchMiddleware rules', () => {
     const long = ids.nameFor('s1', 'x'.repeat(200))
     assert.equal(long.length, CLIENT_NAME_MAX); assert.ok(long.endsWith('…'))
     assert.equal([...ids.nameFor('s2', '😀'.repeat(100))].length, CLIENT_NAME_MAX, 'cut by character, never inside a surrogate pair')
-    const out = make().mw(plan(), meta('claude', { name: 'Pesquisa' }))
+    const out = await make().mw(plan(), meta('claude', { name: 'Pesquisa' }))
     assert.equal(out.env[ENV_CLIENT_NAME], 'Pesquisa')
   })
 
-  test('the launch takes the tab\'s text from the slot\'s state (a resumed session\'s title); without it, the meta', () => {
+  test('the launch takes the tab\'s text from the slot\'s state (a resumed session\'s title); without it, the meta', async () => {
     const { mw } = make()
     const state = { slotId: 'a1b2c3d4', kind: 'claude', cwd: 'D:\\work\\atrium', folder: 'D:\\work\\atrium', status: 'starting', title: 'kai-thinking' } as const
-    assert.equal(mw(plan(), meta('claude'), state).env[ENV_CLIENT_NAME], 'kai-thinking')
-    assert.equal(make().mw(plan(), meta('claude')).env[ENV_CLIENT_NAME], 'proj', 'no state: the folder of the meta')
+    assert.equal((await mw(plan(), meta('claude'), state)).env[ENV_CLIENT_NAME], 'kai-thinking')
+    assert.equal((await make().mw(plan(), meta('claude'))).env[ENV_CLIENT_NAME], 'proj', 'no state: the folder of the meta')
   })
 
-  test('two running agents with the same tab text: the first keeps it, the next is numbered; nobody is renumbered', () => {
+  test('two running agents with the same tab text: the first keeps it, the next is numbered; nobody is renumbered', async () => {
     const identities = new BridgeIdentities()
     const { mw } = make({ identities })
-    const launch = (slotId: string, cwd: string) => mw(plan(), meta('claude', { slotId, cwd }), { slotId, kind: 'claude', cwd, folder: cwd, status: 'starting' }).env[ENV_CLIENT_NAME]
-    assert.equal(launch('s1', 'D:\\a\\atrium'), 'atrium')
-    assert.equal(launch('s2', 'D:\\b\\atrium'), 'atrium 2')
-    assert.equal(launch('s3', 'D:\\c\\Atrium'), 'Atrium 3', 'case does not make a different name for the person')
-    assert.equal(launch('s1', 'D:\\a\\atrium'), 'atrium', 'a relaunch with the same text keeps its name')
+    const launch = async (slotId: string, cwd: string) => (await mw(plan(), meta('claude', { slotId, cwd }), { slotId, kind: 'claude', cwd, folder: cwd, status: 'starting' })).env[ENV_CLIENT_NAME]
+    assert.equal(await launch('s1', 'D:\\a\\atrium'), 'atrium')
+    assert.equal(await launch('s2', 'D:\\b\\atrium'), 'atrium 2')
+    assert.equal(await launch('s3', 'D:\\c\\Atrium'), 'Atrium 3', 'case does not make a different name for the person')
+    assert.equal(await launch('s1', 'D:\\a\\atrium'), 'atrium', 'a relaunch with the same text keeps its name')
     identities.drop('s1')
     assert.equal(identities.nameOf('s2'), 'atrium 2', 'the first one ending does not renumber the others')
-    assert.equal(launch('s4', 'D:\\d\\atrium'), 'atrium', 'the plain name is free again')
+    assert.equal(await launch('s4', 'D:\\d\\atrium'), 'atrium', 'the plain name is free again')
     assert.equal(identities.nameFor('s2', 'kai'), 'kai', 'renamed: the new text, plain')
     assert.equal(identities.nameFor('s3', 'Atrium'), 'Atrium 3', 'same text: same name')
   })

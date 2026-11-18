@@ -2,8 +2,20 @@
 // operations. Pure types and constants: no node:fs here, so the coordinator may import this file freely. The
 // implementations live in ops-*.ts (the only place where `*Sync` is allowed) and are never imported by the loop.
 
+import type { ExeName, ExeResult } from '../core/exe.ts'
+
 /** `io`: short, ordered operations (state, log, config), strictly FIFO. `work`: long ones (hashing, scans), no ordering promise. */
 export type Lane = 'io' | 'work'
+
+/** An environment as the adapters see it (values may be missing). */
+export type EnvMap = Record<string, string | undefined>
+export interface CommandLine { command: string; args: string[] }
+export interface CodexCmd { command: string; prefix: string[] }
+export interface SkillRef { name: string; description: string; dir: string; text: string }
+export interface SkillsLoad { skills: SkillRef[]; version: string; logs: string[] }
+/** How to write an agent's copy of the skills: a Claude plugin (plugin.json + skills/) or a plain shared folder (skills/). */
+export interface MaterializeSpec { target: string; version: string; layout: 'claude-plugin' | 'shared'; skills: { name: string; dir: string }[]; pluginJson?: string }
+export interface RenamedNodeReply { result: ExeResult; logs: string[] }
 
 export interface FileStat { size: number; mtimeMs: number; isFile: boolean; isDirectory: boolean }
 export interface DirEntry { name: string; isFile: boolean; isDirectory: boolean }
@@ -20,6 +32,18 @@ export interface OpTypes {
   readdir: { args: [path: string]; value: DirEntry[] }
   exists: { args: [path: string]; value: boolean }
   hashFile: { args: [path: string]; value: string }
+  resolveClaude: { args: [env: EnvMap]; value: string }
+  resolveCodex: { args: [env: EnvMap]; value: CodexCmd }
+  ensureSettingsFile: { args: [file: string, content: string]; value: string }
+  hasStatusLine: { args: [files: string[]]; value: boolean }
+  userNotify: { args: [home: string]; value: string[] | undefined }
+  resolveShell: { args: [slotArgs: string[], profileArgs: string[] | undefined, env: EnvMap]; value: CommandLine }
+  resolveSoul: { args: [env: EnvMap]; value: CommandLine }
+  soulLaunch: { args: [env: EnvMap, home: string]; value: { command: CommandLine; logs: string[] } }
+  renamedNode: { args: [home: string, name: ExeName, source: string, platform: NodeJS.Platform]; value: RenamedNodeReply }
+  loadSkills: { args: [library: string]; value: SkillsLoad }
+  materializeSkills: { args: [spec: MaterializeSpec]; value: string }
+  writeTextAtomicDir: { args: [path: string, text: string]; value: null }
 }
 
 export type OpName = keyof OpTypes
@@ -38,6 +62,18 @@ export const OP_META = {
   readdir: { lane: 'io', idempotent: true },
   exists: { lane: 'io', idempotent: true },
   hashFile: { lane: 'work', idempotent: true },
+  resolveClaude: { lane: 'work', idempotent: true },
+  resolveCodex: { lane: 'io', idempotent: true },
+  ensureSettingsFile: { lane: 'io', idempotent: true },
+  hasStatusLine: { lane: 'io', idempotent: true },
+  userNotify: { lane: 'io', idempotent: true },
+  resolveShell: { lane: 'io', idempotent: true },
+  resolveSoul: { lane: 'work', idempotent: true },
+  soulLaunch: { lane: 'work', idempotent: true },
+  renamedNode: { lane: 'work', idempotent: true },
+  loadSkills: { lane: 'work', idempotent: true },
+  materializeSkills: { lane: 'work', idempotent: true },
+  writeTextAtomicDir: { lane: 'io', idempotent: true },
 } as const satisfies Record<OpName, { lane: Lane; idempotent: boolean }>
 
 export interface ExecRequest { id: number; op: string; args: unknown[] }

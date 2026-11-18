@@ -2,15 +2,15 @@
 // tether (hooks injected via --settings, never the user's global settings), and how to read
 // what Claude keeps on disk (transcript exists? current title?).
 import { access, open, readdir, stat } from 'node:fs/promises'
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, mkdirSync, writeFileSync } from 'node:fs'
-import path, { dirname, join, resolve, isAbsolute } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync } from 'node:fs'
+import path, { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { withColorSupport } from './termenv.ts'
 import type { Binding } from '../core/event.ts'
-import { fileSig } from '../core/exe.ts'
+import type { Executor } from '../exec/executor.ts'
+import { agentExecutor, plainEnv } from './agent-exec.ts'
 import { perf } from '../core/perf.ts'
 import { canonicalDir } from '../core/paths.ts'
 import { ENV_AGENT, ENV_HOME, ENV_SLOT, type AgentAdapter, type LaunchPlan, type LookupOptions, type PlanInput } from './types.ts'
@@ -68,152 +68,40 @@ export function hookSettings(hookPath: string = defaultHookPath(), statusLinePat
   return settings
 }
 
-/**
- * Writes the injected settings only when their content changed (atomic: temp + rename). Returns the path.
- * Two files: <home>/claude-settings.json (with our status line) and claude-settings.no-statusline.json (without),
- * because `--settings` wins over the user's own statusLine and the choice depends on each launch's cwd.
- */
-export function ensureSettingsFile(home: string, withStatusLine = true): string {
-  const path = join(home, withStatusLine ? 'claude-settings.json' : 'claude-settings.no-statusline.json')
-  // The content is a pure function of this module's location: built once per path. A file whose size and mtime are
-  // what this process last saw (written or verified) is the same file: one stat instead of a read.
-  let known = settingsFileCache.get(path)
-  if (!known) {
-    known = { content: JSON.stringify(hookSettings(defaultHookPath(), withStatusLine ? defaultStatusLinePath() : null), null, 2) + '\n', sig: undefined }
-    settingsFileCache.set(path, known)
-  }
-  const { content } = known
-  if (known.sig !== undefined && fileSig(path) === known.sig) return path
-  let current: string | undefined
-  try { current = readFileSync(path, 'utf8') } catch { /* missing */ }
-  if (current !== content) {
-    mkdirSync(home, { recursive: true })
-    const tmp = `${path}.${process.pid}.tmp`
-    writeFileSync(tmp, content)
-    renameSync(tmp, path)
-  }
-  known.sig = fileSig(path)
-  return path
-}
-
-const settingsFileCache = new Map<string, { content: string; sig: string | undefined }>()
-
-/** True when a settings file defines a statusLine. Missing or malformed JSON counts as none. */
-function definesStatusLine(path: string, read: (path: string) => string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(read(path))
-    return typeof parsed === 'object' && parsed !== null && (parsed as { statusLine?: unknown }).statusLine != null
-  } catch {
-    return false
-  }
-}
+/** Contents of the injected settings files, per path: a pure function of this module's location, built once. */
+const settingsContent = new Map<string, string>()
 
 /**
- * Whether the user already has a status line for a launch in `cwd`: user settings (<configDir>/settings.json) or the
- * project's .claude/settings.json / settings.local.json. Then tether leaves theirs alone.
+ * Makes sure the injected settings file exists with the right content (the executor writes it, atomic: temp + rename) and
+ * returns its path. Two files: <home>/claude-settings.json (with our status line) and claude-settings.no-statusline.json
+ * (without), because `--settings` wins over the user's own statusLine and the choice depends on each launch's cwd.
  */
-export function userHasStatusLine(cwd: string, configDir: string, read?: (path: string) => string): boolean {
+export async function ensureSettingsFile(home: string, withStatusLine = true, exec: Executor = agentExecutor()): Promise<string> {
+  const file = join(home, withStatusLine ? 'claude-settings.json' : 'claude-settings.no-statusline.json')
+  let content = settingsContent.get(file)
+  if (content === undefined) {
+    content = JSON.stringify(hookSettings(defaultHookPath(), withStatusLine ? defaultStatusLinePath() : null), null, 2) + '\n'
+    settingsContent.set(file, content)
+  }
+  return exec.run('ensureSettingsFile', [file, content])
+}
+
+/** The settings files whose statusLine the user already has for a launch in `cwd`: user settings, then the project's. */
+export function statusLineFiles(cwd: string, configDir: string): string[] {
   return [join(configDir, 'settings.json'), join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]
-    .some((p) => read ? definesStatusLine(p, read) : definesStatusLineCached(p))
 }
 
-const statusLineCache = new Map<string, { sig: string; value: boolean }>()
-
-/** definesStatusLine on the real file system, parsed again only when the file's size or mtime changed (a missing file is not cached). */
-function definesStatusLineCached(path: string): boolean {
-  const sig = fileSig(path)
-  if (sig === undefined) { statusLineCache.delete(path); return false }
-  const hit = statusLineCache.get(path)
-  if (hit?.sig === sig) return hit.value
-  const value = definesStatusLine(path, (p) => readFileSync(p, 'utf8'))
-  if (statusLineCache.size >= 256) statusLineCache.clear() // per-project files: bounded
-  statusLineCache.set(path, { sig, value })
-  return value
+/** Whether the user already has a status line for a launch in `cwd`. Then tether leaves theirs alone. */
+export function userHasStatusLine(cwd: string, configDir: string, exec: Executor = agentExecutor()): Promise<boolean> {
+  return exec.run('hasStatusLine', [statusLineFiles(cwd, configDir)])
 }
-
-/** Seams of the resolver, so tests can fake the platform, the home, the file system and the login shell. */
-export interface ClaudeResolveDeps {
-  platform?: NodeJS.Platform
-  home?: string
-  exists?: (path: string) => boolean
-  /** Absolute path of `claude` as the user's login shell sees it, or undefined. */
-  loginShell?: (env: Record<string, string | undefined>) => string | undefined
-}
-
-/** macOS/Linux: asks the user's interactive login shell where `claude` is (rc files add dirs launchd never sees). */
-function claudeFromLoginShell(env: Record<string, string | undefined>): string | undefined {
-  const shell = env.SHELL
-  if (!shell) return undefined
-  try {
-    const out = execFileSync(shell, ['-lic', 'command -v claude'], { env: env as NodeJS.ProcessEnv, encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] })
-    const line = out.trim().split('\n').pop()?.trim()
-    return line && isAbsolute(line) && existsSync(line) ? line : undefined
-  } catch {
-    return undefined
-  }
-}
-
-const loginShellCache = new Map<string, string>() // keyed by $SHELL; a miss is not cached (claude may get installed meanwhile)
 
 /**
- * Finds the `claude` executable so it can be spawned without a shell. Returns an absolute path whenever it can:
- * a daemon started from the Dock inherits launchd's minimal PATH, which lacks ~/.local/bin (the native install).
- * Order: env PATH, known install dirs, the user's login shell. Falls back to the bare name.
+ * Finds the `claude` executable so it can be spawned without a shell: PATH, known install dirs, the user's login shell
+ * (a `bash -lic` that can take seconds, so the executor runs it). Falls back to the bare name. See ops-agents.ts.
  */
-export function resolveClaudeCommand(env: Record<string, string | undefined> = process.env, deps: ClaudeResolveDeps = {}): string {
-  // Memoized only on the real file system: a hit costs one stat of the binary found earlier for this same PATH.
-  if (deps.exists || deps.loginShell) return resolveClaudeUncached(env, deps)
-  const key = `${deps.platform ?? process.platform}\0${deps.home ?? ''}\0${env.SHELL ?? ''}\0${env.PATH ?? env.Path ?? ''}`
-  const hit = resolvedClaude.get(key)
-  const now = Date.now()
-  if (hit && now - hit.at < RESOLVE_TTL_MS && fileSig(hit.path) === hit.sig) return hit.path
-  const found = resolveClaudeUncached(env, deps)
-  const sig = path.isAbsolute(found) ? fileSig(found) : undefined
-  if (sig !== undefined) {
-    if (resolvedClaude.size >= 16) resolvedClaude.clear()
-    resolvedClaude.set(key, { path: found, sig, at: now })
-  } else resolvedClaude.delete(key)
-  return found
-}
-
-/** A hit is re-resolved after this long anyway, so a `claude` installed earlier on the PATH is eventually preferred. */
-export const RESOLVE_TTL_MS = 60_000
-const resolvedClaude = new Map<string, { path: string; sig: string; at: number }>()
-/** Drops the memoized resolution (tests; a changed PATH already misses by key). */
-export function clearClaudeResolveCache(): void { resolvedClaude.clear() }
-
-function resolveClaudeUncached(env: Record<string, string | undefined>, deps: ClaudeResolveDeps): string {
-  const platform = deps.platform ?? process.platform
-  const exists = deps.exists ?? existsSync
-  const pathVar = env.PATH ?? env.Path ?? ''
-  // Path flavor follows the injected platform, not the host's.
-  const P = platform === 'win32' ? path.win32 : path.posix
-  if (platform === 'win32') {
-    for (const dir of pathVar.split(P.delimiter)) {
-      if (!dir) continue
-      for (const name of ['claude.exe', 'claude.cmd', 'claude']) {
-        const candidate = P.join(dir, name)
-        if (exists(candidate)) return candidate
-      }
-    }
-    return 'claude'
-  }
-  for (const dir of pathVar.split(P.delimiter)) {
-    if (dir && P.isAbsolute(dir) && exists(P.join(dir, 'claude'))) return P.join(dir, 'claude')
-  }
-  const home = deps.home ?? homedir()
-  for (const dir of [P.join(home, '.local', 'bin'), P.join(home, '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']) {
-    if (exists(P.join(dir, 'claude'))) return P.join(dir, 'claude')
-  }
-  const shell = env.SHELL ?? ''
-  const cached = loginShellCache.get(shell)
-  if (cached && exists(cached)) return cached
-  const found = (deps.loginShell ?? claudeFromLoginShell)(env)
-  if (found) {
-    if (!deps.loginShell) loginShellCache.set(shell, found)
-    return found
-  }
-  return 'claude'
+export function resolveClaudeCommand(env: Record<string, string | undefined> = process.env, exec: Executor = agentExecutor()): Promise<string> {
+  return exec.run('resolveClaude', [plainEnv(env)])
 }
 
 /** `env` with the directory of an absolute `command` prepended to PATH (when missing), keeping every other entry. */
@@ -241,11 +129,12 @@ export function cleanEnv(source: NodeJS.ProcessEnv = process.env): Record<string
 /** Args that make Claude pick the session itself; `--session-id` is refused next to them (unless forking). */
 const PICKS_SESSION = new Set(['-c', '--continue', '-r', '--resume'])
 
-function plan(input: PlanInput): LaunchPlan {
+async function plan(input: PlanInput): Promise<LaunchPlan> {
   const { slot, home, resume, extraArgs, profile } = input
   const cwd = canonicalDir(resume ? resume.cwd : slot.cwd)
   const configDir = profile?.env?.CLAUDE_CONFIG_DIR || claudeConfigDir()
-  const settings = ensureSettingsFile(home, !userHasStatusLine(cwd, configDir))
+  const ex = input.exec ?? agentExecutor()
+  const settings = await ensureSettingsFile(home, !(await userHasStatusLine(cwd, configDir, ex)), ex)
   const args = ['--settings', settings]
   // Profile args first (the baseline), the slot's own args, then this launch's: a repeated option takes its last value.
   const own = [...(profile?.args ?? []), ...slot.args, ...extraArgs]
@@ -258,7 +147,7 @@ function plan(input: PlanInput): LaunchPlan {
   env[ENV_SLOT] = slot.slotId
   env[ENV_AGENT] = 'claude'
   env[ENV_HOME] = home
-  const command = resolveClaudeCommand(env)
+  const command = await resolveClaudeCommand(env, ex)
   withCommandDirOnPath(env, command)
   return {
     command,

@@ -26,6 +26,7 @@ import { isProfileAgent, isUnsafe, ProfileError, ProfileStore, slotProfile, snap
 import { currentBinding, parseEventLine, parseEvents, readEventsFile, readEventsFrom, readRun, scanSlotsAsync, SLOT_ID_RE, type EventsRead, type SlotsScan } from '../core/store.ts'
 import { assertSlotId, parseSlotMeta, randomSlotId, serializeMeta, serializeRun } from '../core/store-model.ts'
 import { SlotStore } from '../core/slot-store.ts'
+import { isAgentExecutor, setAgentExecutor } from '../agents/agent-exec.ts'
 import { createExecutor, type Executor } from '../exec/executor.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import {
@@ -421,6 +422,7 @@ class DaemonImpl implements Daemon {
     this.fsProbe = opts.fsProbe
     this.ownExecutor = opts.executor === undefined
     this.executor = opts.executor ?? createExecutor({ mode: process.env.TETHER_EXECUTOR === 'worker' ? 'worker' : 'inline', log: this.log })
+    setAgentExecutor(this.executor) // the launch middlewares (skills) and the doctor's resolvers reach the adapters' operations through it
     this.store = new SlotStore(this.executor, { log: this.log })
     this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
     this.minAgentAgeMs = opts.minAgentAgeMs ?? MIN_AGENT_AGE_MS
@@ -1020,6 +1022,7 @@ class DaemonImpl implements Daemon {
     // only when it is the daemon's own; tetherd's main closes the process' one after the log is flushed.
     await this.store.drain()
     await this.executor.drain()
+    if (isAgentExecutor(this.executor)) setAgentExecutor(undefined)
     if (this.ownExecutor) await this.executor.close()
     this.log('closed')
   }
@@ -1590,11 +1593,11 @@ class DaemonImpl implements Daemon {
     }
     const profile = this.profileOf(meta, profiles).launch
     let plan: LaunchPlan
-    if (meta.agent === 'shell') plan = shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile })
+    if (meta.agent === 'shell') plan = await shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile, exec: this.executor })
     else {
       const adapter = this.adapterOf(meta.agent)
       if (!adapter) throw new RequestError('agent-unavailable', `o agente ${meta.agent} não está disponível`)
-      plan = await adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile })
+      plan = await adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile, exec: this.executor })
     }
     plan = withTabEnv(plan, meta)
     return this.transformPlan ? await this.transformPlan(plan, meta, this.stateOf(slot)) : plan

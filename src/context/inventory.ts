@@ -355,17 +355,17 @@ let versionPromise: Promise<string> | undefined
 
 export function claudeVersion(): Promise<string> {
   versionPromise ??= new Promise<string>((done) => {
-    try {
-      const env = cleanEnv()
-      execFile(resolveClaudeCommand(env), ['--version'], { env, timeout: 10_000, windowsHide: true, shell: false }, (err, stdout) => {
+    const env = cleanEnv()
+    resolveClaudeCommand(env).then((claude) => {
+      execFile(claude, ['--version'], { env, timeout: 10_000, windowsHide: true, shell: false }, (err, stdout) => {
         const v = err ? '' : /\d+\.\d+\.\d+\S*/.exec(String(stdout))?.[0]
         if (!v) versionPromise = undefined // a failure is not cached: claude may get installed later
         done(v || 'unknown')
       })
-    } catch {
+    }).catch(() => {
       versionPromise = undefined
       done('unknown')
-    }
+    })
   })
   return versionPromise
 }

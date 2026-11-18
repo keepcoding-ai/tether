@@ -5,8 +5,13 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { clearClaudeResolveCache, ensureSettingsFile, resolveClaudeCommand, userHasStatusLine } from '../../src/agents/claude.ts'
-import { SkillsCache, materialize } from '../../src/agents/skills.ts'
+import { ensureSettingsFile, statusLineFiles } from '../../src/agents/claude.ts'
+import { SkillsCache } from '../../src/agents/skills.ts'
+import { createExecutor } from '../../src/exec/executor.ts'
+import { anyDefinesStatusLine, clearClaudeResolveCache, clearSoulResolveCache, materializeSkills, resolveClaudeCommand, resolveCodexCommand, resolveSoulCommand, userNotify } from '../../src/exec/ops-agents.ts'
+import { ENV_SOUL_CMD } from '../../src/agents/soul.ts'
+
+const inline = createExecutor({ mode: 'inline' })
 import { readUserSettings } from '../../src/core/user-settings.ts'
 import { ensureRenamedNode } from '../../src/core/exe.ts'
 
@@ -51,38 +56,38 @@ test('resolveClaudeCommand: a touched binary is re-resolved; injected seams bypa
   assert.ok(calls >= 2, 'a test double is asked every time')
 })
 
-test('ensureSettingsFile: one write, then stat-only; a changed or deleted file is rewritten', () => {
+test('ensureSettingsFile: one write, then stat-only; a changed or deleted file is rewritten', async () => {
   const home = tmp()
-  const file = ensureSettingsFile(home)
+  const file = await ensureSettingsFile(home, true, inline)
   const text = readFileSync(file, 'utf8')
   const m1 = statSync(file).mtimeMs
-  assert.equal(ensureSettingsFile(home), file)
+  assert.equal(await ensureSettingsFile(home, true, inline), file)
   assert.equal(statSync(file).mtimeMs, m1)
   writeFileSync(file, '{"tampered":true}\n')
-  ensureSettingsFile(home)
+  await ensureSettingsFile(home, true, inline)
   assert.equal(readFileSync(file, 'utf8'), text)
   rmSync(file)
-  ensureSettingsFile(home)
+  await ensureSettingsFile(home, true, inline)
   assert.equal(readFileSync(file, 'utf8'), text)
-  const bare = ensureSettingsFile(home, false)
+  const bare = await ensureSettingsFile(home, false, inline)
   assert.notEqual(bare, file)
   assert.ok(!('statusLine' in JSON.parse(readFileSync(bare, 'utf8'))))
 })
 
 test('userHasStatusLine: parsed once per file version; edits, deletion and the injected reader are honoured', () => {
   const cfg = tmp(), cwd = tmp()
-  assert.equal(userHasStatusLine(cwd, cfg), false)
+  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), false)
   writeFileSync(join(cfg, 'settings.json'), '{"statusLine":{"type":"command","command":"x"}}')
-  assert.equal(userHasStatusLine(cwd, cfg), true)
-  assert.equal(userHasStatusLine(cwd, cfg), true)
+  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), true)
+  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), true)
   writeFileSync(join(cfg, 'settings.json'), '{}')
-  assert.equal(userHasStatusLine(cwd, cfg), false)
+  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), false)
   mkdirSync(join(cwd, '.claude'))
   writeFileSync(join(cwd, '.claude', 'settings.local.json'), '{"statusLine":{}}')
-  assert.equal(userHasStatusLine(cwd, cfg), true)
+  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), true)
   rmSync(join(cwd, '.claude', 'settings.local.json'))
-  assert.equal(userHasStatusLine(cwd, cfg), false)
-  assert.equal(userHasStatusLine(cwd, cfg, () => '{"statusLine":1}'), true)
+  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), false)
+  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg), () => '{"statusLine":1}'), true)
 })
 
 test('readUserSettings: an unchanged file is served from memory, a rewrite or removal shows at once', () => {
@@ -109,35 +114,36 @@ test('SkillsCache: one read while nothing changes, a fresh one after a change un
   writeFileSync(skill, '---\nname: one\ndescription: first\n---\nbody')
   const cache = new SkillsCache(lib)
   try {
-    const s1 = cache.get()
+    const s1 = await cache.get(inline)
     assert.equal(s1.skills.length, 1)
-    assert.equal(cache.get(), s1, 'same snapshot object: nothing was read')
+    assert.equal(await cache.get(inline), s1, 'same snapshot object: nothing was read')
     writeFileSync(skill, '---\nname: one\ndescription: second, longer\n---\nbody')
     const deadline = Date.now() + 5000
-    while (cache.get() === s1 && Date.now() < deadline) await new Promise(r => setTimeout(r, 25))
-    const s2 = cache.get()
+    while ((await cache.get(inline)) === s1 && Date.now() < deadline) await new Promise(r => setTimeout(r, 25))
+    const s2 = await cache.get(inline)
     assert.notEqual(s2, s1)
     assert.equal(s2.skills[0]!.description, 'second, longer')
     assert.notEqual(s2.version, s1.version)
   } finally { cache.dispose() }
   const noWatch = new SkillsCache(lib, () => {}, (() => { throw new Error('no watcher') }) as never)
-  assert.notEqual(noWatch.get(), noWatch.get(), 'without a watcher every get reads')
+  assert.notEqual(await noWatch.get(inline), await noWatch.get(inline), 'without a watcher every get reads')
 })
 
-test('materialize: a verified stamp is trusted by stat; a changed stamp or a removed target is rebuilt', () => {
+test('materializeSkills: a verified stamp is trusted by stat; a changed stamp or a removed target is rebuilt', () => {
   const root = tmp()
+  const lib = join(root, 'lib', 'a')
+  mkdirSync(lib, { recursive: true })
+  writeFileSync(join(lib, 'SKILL.md'), 'x')
   const target = join(root, 'skills', 'x')
-  let builds = 0
-  const bundle = { skills: [], home: root, version: 'v1' }
-  const build = (dir: string): void => { builds++; writeFileSync(join(dir, 'f'), 'x') }
-  materialize(target, bundle, build); assert.equal(builds, 1)
-  materialize(target, bundle, build); assert.equal(builds, 1)
+  const spec = { target, version: 'v1', layout: 'shared' as const, skills: [{ name: 'a', dir: lib }] }
+  const built = (): number => statSync(join(target, 'skills', 'a', 'SKILL.md')).ino
+  materializeSkills(spec); const first = built()
+  materializeSkills(spec); assert.equal(built(), first, 'a verified stamp is not rebuilt')
   writeFileSync(join(target, '.tether-version'), 'other-version')
-  materialize(target, bundle, build); assert.equal(builds, 2)
-  materialize(target, bundle, build); assert.equal(builds, 2)
+  materializeSkills(spec); assert.equal(readFileSync(join(target, '.tether-version'), 'utf8'), 'v1')
   rmSync(target, { recursive: true })
-  materialize(target, bundle, build); assert.equal(builds, 3)
-  materialize(target, { ...bundle, version: 'v2' }, build); assert.equal(builds, 4)
+  materializeSkills(spec); assert.ok(readFileSync(join(target, 'skills', 'a', 'SKILL.md'), 'utf8') === 'x')
+  materializeSkills({ ...spec, version: 'v2' }); assert.equal(readFileSync(join(target, '.tether-version'), 'utf8'), 'v2')
 })
 
 test('ensureRenamedNode: the second call is a hit that equals the first; a changed source or a deleted copy is remade', { skip: process.platform === 'darwin' }, () => {
@@ -166,7 +172,6 @@ test('ensureRenamedNode: the second call is a hit that equals the first; a chang
 })
 
 test('userNotify: parsed once per file version, edits and deletion are seen', async () => {
-  const { userNotify } = await import('../../src/agents/codex.ts')
   const home = tmp()
   assert.equal(userNotify(home), undefined)
   const file = join(home, 'config.toml')
@@ -180,8 +185,6 @@ test('userNotify: parsed once per file version, edits and deletion are seen', as
 })
 
 test('resolveCodexCommand and resolveSoulCommand: the memoized answer follows the file system', async () => {
-  const { resolveCodexCommand } = await import('../../src/agents/codex.ts')
-  const { resolveSoulCommand, clearSoulResolveCache, ENV_SOUL_CMD } = await import('../../src/agents/soul.ts')
   const a = tmp()
   const exe = process.platform === 'win32' ? '.exe' : ''
   const codex = join(a, `codex${exe}`)

@@ -3,14 +3,17 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { claudeSkills, loadSkills, parseFrontmatter, skillsVersion, soulSkills, systemPromptSkills, SOUL_SHARED_FOLDERS_ENV } from '../../src/agents/skills.ts'
+import { claudeSkills, parseFrontmatter, soulSkills, systemPromptSkills, SOUL_SHARED_FOLDERS_ENV } from '../../src/agents/skills.ts'
+import { createExecutor } from '../../src/exec/executor.ts'
+import { loadSkills, skillsVersion } from '../../src/exec/ops-agents.ts'
 import { createSkillsMiddleware, libraryDir } from '../../extensions/skills/daemon.ts'
 import { withMcpConfigFlag } from '../../src/agents/mcp.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 
 const plan = (): LaunchPlan => ({ command: 'agent', args: ['--settings', 's.json', 'hello'], cwd: '.', env: {} })
-const bundleOf = (home: string) => { const skills = loadSkills(libraryDir()); return { skills, home, version: skillsVersion(skills) } }
+const inline = createExecutor({ mode: 'inline' })
+const bundleOf = (home: string) => { const skills = loadSkills(libraryDir()); return { skills, home, version: skillsVersion(skills), exec: inline } }
 
 test('the library ships use-todo with a valid frontmatter', () => {
   const skills = loadSkills(libraryDir())
@@ -28,9 +31,9 @@ test('a folder whose name differs from its frontmatter is skipped', () => {
   assert.equal(logs.length, 1)
 })
 
-test('claude: a `tether` plugin under the home, first on the command line, never touching ~/.claude', () => {
+test('claude: a `tether` plugin under the home, first on the command line, never touching ~/.claude', async () => {
   const home = mkdtempSync(join(tmpdir(), 'home-'))
-  const out = claudeSkills.inject(plan(), bundleOf(home))
+  const out = await claudeSkills.inject(plan(), bundleOf(home))
   assert.equal(out.args[0], '--plugin-dir')
   const dir = out.args[1]!
   assert.ok(dir.startsWith(home))
@@ -41,38 +44,38 @@ test('claude: a `tether` plugin under the home, first on the command line, never
   assert.deepEqual(withMcpConfigFlag(out, 'm.json').args.slice(-2), ['--mcp-config', 'm.json'])
 })
 
-test('soul: a shared folder appended to SOUL_CLI_SHARED_FOLDERS, args untouched', () => {
+test('soul: a shared folder appended to SOUL_CLI_SHARED_FOLDERS, args untouched', async () => {
   const home = mkdtempSync(join(tmpdir(), 'home-'))
-  const out = soulSkills.inject(plan(), bundleOf(home))
+  const out = await soulSkills.inject(plan(), bundleOf(home))
   assert.deepEqual(out.args, plan().args)
   const dir = out.env[SOUL_SHARED_FOLDERS_ENV]!
   assert.ok(existsSync(join(dir, 'skills', 'use-todo', 'SKILL.md')))
-  const again = soulSkills.inject({ ...plan(), env: { [SOUL_SHARED_FOLDERS_ENV]: 'mine' } }, bundleOf(home))
+  const again = await soulSkills.inject({ ...plan(), env: { [SOUL_SHARED_FOLDERS_ENV]: 'mine' } }, bundleOf(home))
   assert.ok(again.env[SOUL_SHARED_FOLDERS_ENV]!.startsWith('mine'))
 })
 
-test('fallback: the skills text with the agent system prompt flag', () => {
-  const out = systemPromptSkills('--append-system-prompt').inject(plan(), bundleOf(mkdtempSync(join(tmpdir(), 'h-'))))
+test('fallback: the skills text with the agent system prompt flag', async () => {
+  const out = await systemPromptSkills('--append-system-prompt').inject(plan(), bundleOf(mkdtempSync(join(tmpdir(), 'h-'))))
   assert.equal(out.args.at(-2), '--append-system-prompt')
   assert.match(out.args.at(-1)!, /<skill name="use-todo">/)
 })
 
-test('middleware: shells and agents without skills are untouched', () => {
+test('middleware: shells and agents without skills are untouched', async () => {
   const home = mkdtempSync(join(tmpdir(), 'home-'))
-  const mw = createSkillsMiddleware({ agent: n => (n === 'claude' ? { skills: claudeSkills } as never : { } as never), home, library: libraryDir(), log: () => {} })
+  const mw = createSkillsMiddleware({ agent: n => (n === 'claude' ? { skills: claudeSkills } as never : { } as never), home, library: libraryDir(), log: () => {}, exec: () => inline })
   const p = plan()
-  assert.equal(mw(p, { agent: 'shell' } as SlotMeta), p)
-  assert.equal(mw(p, { agent: 'other', slotId: 'x' } as SlotMeta), p)
-  assert.equal(mw(p, { agent: 'claude', slotId: 'x' } as SlotMeta).args[0], '--plugin-dir')
+  assert.equal(await mw(p, { agent: 'shell' } as SlotMeta), p)
+  assert.equal(await mw(p, { agent: 'other', slotId: 'x' } as SlotMeta), p)
+  assert.equal((await mw(p, { agent: 'claude', slotId: 'x' } as SlotMeta)).args[0], '--plugin-dir')
 })
 
-test('the library ships processes (tether:processes for claude): when to use it, the CLI, exit 3, no domain words', () => {
+test('the library ships processes (tether:processes for claude): when to use it, the CLI, exit 3, no domain words', async () => {
   const skills = loadSkills(libraryDir())
   const proc = skills.find(s => s.name === 'processes')
   assert.ok(proc)
   assert.match(proc.description, /antes de subir/i)
   const home = mkdtempSync(join(tmpdir(), 'home-'))
-  const dir = claudeSkills.inject(plan(), bundleOf(home)).args[1]!
+  const dir = (await claudeSkills.inject(plan(), bundleOf(home))).args[1]!
   const text = readFileSync(join(dir, 'skills', 'processes', 'SKILL.md'), 'utf8')
   for (const must of [/node "\$TETHER_CLI" proc/, /código 3/, /--wait/, /--force "motivo"/, /proc use <nome>/, /nunca reinicia nada sozinho/, /dotenvx run --/]) assert.match(text, must)
   for (const never of [/atrium/i, /supervisor/i, /\bcasa\b/i]) assert.doesNotMatch(text, never)

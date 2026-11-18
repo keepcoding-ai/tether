@@ -3,11 +3,13 @@
 // at every launch (a few small files): an edited skill applies to the next agent started, and each adapter rewrites its
 // copy under <TETHER_HOME>/skills/<agent>/ only when the library changed.
 import { resolve } from 'node:path'
+import { agentExecutor } from '../../src/agents/agent-exec.ts'
 import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import { SkillsCache } from '../../src/agents/skills.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import type { Executor } from '../../src/exec/executor.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 
 export { manifest } from './manifest.ts'
@@ -22,18 +24,21 @@ export interface SkillsDeps {
   home: string
   library: string
   log(msg: string): void
+  /** The executor that reads the library and writes the agents' copies (default: the process-wide one). */
+  exec?: () => Executor
 }
 
 /** The launch middleware: the plan given (same object) when nothing applies; a failing adapter is logged, never fatal. */
-export function createSkillsMiddleware(deps: SkillsDeps, cache: SkillsCache = new SkillsCache(deps.library, deps.log)): (plan: LaunchPlan, slot: SlotMeta) => LaunchPlan {
-  return (plan, slot) => {
+export function createSkillsMiddleware(deps: SkillsDeps, cache: SkillsCache = new SkillsCache(deps.library, deps.log)): (plan: LaunchPlan, slot: SlotMeta) => Promise<LaunchPlan> {
+  return async (plan, slot) => {
     if (slot.agent === 'shell') return plan
     const agent = deps.agent(slot.agent)
     if (!agent?.skills) return plan
     try {
-      const { skills, version } = cache.get()
+      const exec = deps.exec?.() ?? agentExecutor()
+      const { skills, version } = await cache.get(exec)
       if (!skills.length) return plan
-      return agent.skills.inject(plan, { skills, home: deps.home, version })
+      return await agent.skills.inject(plan, { skills, home: deps.home, version, exec })
     } catch (e) {
       deps.log(`skills não entregues a ${slot.agent} (${slot.slotId}): ${e instanceof Error ? e.message : String(e)}`)
       return plan

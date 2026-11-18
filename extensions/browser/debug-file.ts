@@ -6,7 +6,7 @@
 // `0` = no deadline; a field left out = the server's own default (a setting the person never set, or reset); a missing
 // file = off. Turned off, the file says `{ "enabled": false }` alone. Written atomically, and only when its text changed.
 // The debug mode relaxes deadlines only: the consent gates (tab control, local network, upload, egress) stay as they are.
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SettingReader } from '../../app/shared/vscode-configuration-registry.ts'
 import { writeAtomicRetry } from './atomic-file.ts'
@@ -53,9 +53,9 @@ export async function writeDebugFile(home: string, state: BrowserDebugState): Pr
   const file = debugFileOf(home)
   const text = debugFileText(state)
   let current: string | undefined
-  try { current = readFileSync(file, 'utf8') } catch { /* missing */ }
+  try { current = await readFile(file, 'utf8') } catch { /* missing */ }
   if (current === text) return false
-  mkdirSync(join(home, 'browser'), { recursive: true })
+  await mkdir(join(home, 'browser'), { recursive: true })
   await writeAtomicRetry(file, text)
   return true
 }

@@ -20,7 +20,6 @@
 //     the slot's identity) for as long as the agent's run lives: no process for the bridge, in the agent or in the daemon.
 //     The upload authorizations are kept with the slot (grant-store.ts), not in the shell's memory.
 import { randomBytes } from 'node:crypto'
-import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { folderNameOf, slotTitle } from '../../app/shared/agent-info.ts'
 import { httpMcpConfigOf } from '../../src/agents/mcp.ts'
@@ -30,7 +29,8 @@ import type { SlotMeta } from '../../src/core/event.ts'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
 import type { McpBackend, McpSlotRoutes } from '../../src/daemon/mcp-http.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
-import { writeFileAtomic } from './bridge-home.ts'
+import type { DaemonIo } from '../../src/daemon/ext-api.ts'
+import { fsIo } from '../../src/daemon/ext-io.ts'
 import { MCP_SERVER_NAME } from './paths.ts'
 
 export const ENV_CLIENT_ID = 'ATRIUM_BRIDGE_CLIENT_ID'
@@ -47,9 +47,9 @@ export interface BridgeBackendInput {
 }
 
 /** The stdio entry of the bridge's --mcp-config (bridge-home.ts mcpConfigOf): its server name, args and env. */
-export function readStdioEntry(configFile: string): { name: string; args: string[]; env: Record<string, string> } | undefined {
+export async function readStdioEntry(configFile: string, io: DaemonIo = fsIo): Promise<{ name: string; args: string[]; env: Record<string, string> } | undefined> {
   try {
-    const cfg = JSON.parse(readFileSync(configFile, 'utf8')) as { mcpServers?: Record<string, { args?: unknown; env?: unknown }> }
+    const cfg = JSON.parse(await io.readText(configFile)) as { mcpServers?: Record<string, { args?: unknown; env?: unknown }> }
     const [name, e] = Object.entries(cfg.mcpServers ?? {})[0] ?? []
     if (!name || !e || !Array.isArray(e.args) || !e.args.every(a => typeof a === 'string')) return undefined
     const env = typeof e.env === 'object' && e.env !== null ? Object.fromEntries(Object.entries(e.env).filter(([, v]) => typeof v === 'string')) as Record<string, string> : {}
@@ -141,14 +141,16 @@ export interface InjectDeps {
   /** <TETHER_HOME>/mcp/tether-bridge.json. */
   configFile: string
   /** Whether that file is there now (the setup writes it at start; a failed setup leaves none). */
-  exists(path: string): boolean
+  exists(path: string): boolean | Promise<boolean>
+  /** The disk (`api.io`); default node's async file API (unit tests, CLI). */
+  io?: DaemonIo
   log(msg: string): void
   /** The daemon's HTTP host, for agents with `mcp.http`; with it, `httpConfigFile` and `node`. */
   http?: McpSlotRoutes
   /** <TETHER_HOME>/mcp/tether-bridge/<slotId>.json (paths.ts httpMcpConfigPathOf). */
   httpConfigFile?(slotId: string): string
   /** The node that starts the bridge daemon (an absolute path), or undefined: then the stdio path. */
-  node?(): string | undefined
+  node?(): string | undefined | Promise<string | undefined>
   /** Makes the slot's shell inside the daemon (daemon.ts: the vendored bundle, imported once). Absent: the stdio path. */
   backend?(input: BridgeBackendInput): McpBackend | Promise<McpBackend>
   /** Injected in the unit test. */
@@ -158,24 +160,24 @@ export interface InjectDeps {
 }
 
 /** The slot's bridge over HTTP ends: the key stops working, the slot's shell is closed, the per-slot file goes. Never throws. */
-export function releaseHttp(deps: Pick<InjectDeps, 'http' | 'httpConfigFile'>, slotId: string): void {
+export async function releaseHttp(deps: Pick<InjectDeps, 'http' | 'httpConfigFile' | 'io'>, slotId: string): Promise<void> {
   deps.http?.revoke(slotId)
-  if (deps.httpConfigFile && SLOT_ID_RE.test(slotId)) rmSync(deps.httpConfigFile(slotId), { force: true })
+  if (deps.httpConfigFile && SLOT_ID_RE.test(slotId)) await (deps.io ?? fsIo).rm(deps.httpConfigFile(slotId)).catch(() => undefined)
 }
 
 /**
  * The launch middleware (TetherDaemon.launch.use). Returns the plan given (same object) whenever nothing applies, so a
  * test and a reader can tell "untouched" from "rewritten".
  */
-export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan {
+export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => Promise<LaunchPlan> {
   let warnedMissing = false
   const identities = deps.identities ?? new BridgeIdentities()
-  return (plan, slot, state) => {
+  return async (plan, slot, state) => {
     if (slot.agent === 'shell') return plan
     if (!deps.serve()) return plan
     const agent = deps.agent(slot.agent)
     if (!agent?.mcp) return plan
-    if (!deps.exists(deps.configFile)) {
+    if (!await deps.exists(deps.configFile)) {
       if (!warnedMissing) { warnedMissing = true; deps.log(`${deps.configFile} ausente: agentes lançados sem o bridge até o próximo início do tetherd`) }
       return plan
     }
@@ -183,7 +185,7 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
     const id = clientIdOf(slot.slotId)
     if (!CLIENT_ID_PATTERN.test(id)) { deps.log(`slot ${slot.slotId}: id de cliente inválido para o bridge; lançado sem identidade`); return agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME]) }
     const identity = { [ENV_CLIENT_ID]: id, [ENV_CLIENT_NAME]: identities.nameFor(slot.slotId, clientNameOf(state ?? tabOfMeta(slot))) }
-    const viaHttp = agent.mcp.http ? injectHttp(deps, agent, plan, slot, identity, identities) : undefined
+    const viaHttp = agent.mcp.http ? await injectHttp(deps, agent, plan, slot, identity, identities) : undefined
     if (viaHttp) return viaHttp
     const out = agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME])
     return { ...out, env: { ...out.env, ...identity } }
@@ -191,19 +193,20 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
 }
 
 /** The HTTP injection, or undefined when it does not apply (no host listening, no node, an unreadable stdio file, a failed write). */
-function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan, slot: SlotMeta, identity: Record<string, string>, identities: BridgeIdentities): LaunchPlan | undefined {
+async function injectHttp(deps: InjectDeps, agent: AgentContribution, plan: LaunchPlan, slot: SlotMeta, identity: Record<string, string>, identities: BridgeIdentities): Promise<LaunchPlan | undefined> {
   const url = deps.http?.urlOf(slot.slotId)
   const backend = deps.backend
   if (!url || !deps.http || !backend || !deps.httpConfigFile || !SLOT_ID_RE.test(slot.slotId)) return undefined
-  const node = deps.node?.()
-  const entry = readStdioEntry(deps.configFile)
+  const io = deps.io ?? fsIo
+  const node = await deps.node?.()
+  const entry = await readStdioEntry(deps.configFile, io)
   if (!node || !entry) return undefined
   const file = deps.httpConfigFile(slot.slotId)
   // A name collision throws here, before anything is written or granted (the launch host logs it, as for the stdio file).
   const out = agent.mcp!.inject(plan, file, [MCP_SERVER_NAME])
   const key = (deps.key ?? (() => randomBytes(24).toString('base64url')))()
   try {
-    writeFileAtomic(file, JSON.stringify(httpMcpConfigOf(entry.name, url, ENV_BRIDGE_MCP_KEY), null, 2) + '\n')
+    await io.writeTextAtomic(file, JSON.stringify(httpMcpConfigOf(entry.name, url, ENV_BRIDGE_MCP_KEY), null, 2) + '\n')
   } catch (e) {
     deps.log(`slot ${slot.slotId}: não consegui gravar o MCP HTTP do bridge (${e instanceof Error ? e.message : String(e)}); vai por stdio`)
     return undefined
@@ -220,6 +223,8 @@ export interface ReleaseDeps {
   /** <TETHER_HOME>/bridge: api.key is read from here at each call (the key may have been rotated). */
   bridgeHome: string
   log(msg: string): void
+  /** The disk (`api.io`); default node's async file API. */
+  io?: DaemonIo
   /** Injected in the unit test. */
   fetch?: typeof fetch
   timeoutMs?: number
@@ -230,7 +235,7 @@ export type ReleaseOutcome = 'released' | 'rejected' | 'unreachable' | 'no-key'
 /** POST /clients/<id>/release, best effort: never throws, never logs the key. */
 export async function releaseClient(deps: ReleaseDeps, clientId: string): Promise<ReleaseOutcome> {
   let key: string
-  try { key = readFileSync(join(deps.bridgeHome, 'api.key'), 'utf8').trim() } catch { deps.log(`release de ${clientId} pulado: api.key ausente em ${deps.bridgeHome}`); return 'no-key' }
+  try { key = (await (deps.io ?? fsIo).readText(join(deps.bridgeHome, 'api.key'))).trim() } catch { deps.log(`release de ${clientId} pulado: api.key ausente em ${deps.bridgeHome}`); return 'no-key' }
   if (!key) { deps.log(`release de ${clientId} pulado: api.key vazia`); return 'no-key' }
   const doFetch = deps.fetch ?? fetch
   const ctl = new AbortController()

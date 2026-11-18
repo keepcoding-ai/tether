@@ -6,6 +6,8 @@ import { delimiter, join } from 'node:path'
 import { withColorSupport } from './termenv.ts'
 import type { SlotMeta } from '../core/event.ts'
 import { canonicalDir } from '../core/paths.ts'
+import type { Executor } from '../exec/executor.ts'
+import { agentExecutor, plainEnv } from './agent-exec.ts'
 import type { ProfileLaunch } from '../core/profile.ts'
 import type { LaunchPlan } from './types.ts'
 
@@ -15,6 +17,8 @@ export interface ShellPlanInput {
   cwd?: string
   /** The slot's profile: its args name the shell the same way SlotMeta.args do (the slot's own args win). */
   profile?: ProfileLaunch
+  /** Does the PATH walk (default: the process-wide executor, see agent-exec.ts). */
+  exec?: Executor
 }
 
 /** Finds an executable on PATH (Windows: tries the PATHEXT-like extensions). Returns undefined when absent. */
@@ -43,25 +47,16 @@ export function defaultShell(env: Record<string, string | undefined> = process.e
   return { command: env.SHELL || '/bin/sh', args: [] }
 }
 
-/** The slot's args name a shell when the first one is an executable path or a command found on PATH. */
-export function shellFromArgs(args: string[], env: Record<string, string | undefined> = process.env): { command: string; args: string[] } | undefined {
-  const first = args[0]
-  if (!first) return undefined
-  if (existsSync(first)) return { command: first, args: args.slice(1) }
-  const found = findOnPath(first, env)
-  if (found) return { command: found, args: args.slice(1) }
-  return undefined
-}
-
 function envWithoutUndefined(source: NodeJS.ProcessEnv): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(source)) if (v !== undefined) out[k] = v
   return out
 }
 
-export function plan(input: ShellPlanInput): LaunchPlan {
+export async function plan(input: ShellPlanInput): Promise<LaunchPlan> {
   const { slot, profile } = input
-  const shell = shellFromArgs(slot.args) ?? (profile ? shellFromArgs(profile.args) : undefined) ?? defaultShell()
+  // Which shell the slot's (or the profile's) args name is decided by the executor: it stats the paths and walks PATH.
+  const shell = await (input.exec ?? agentExecutor()).run('resolveShell', [slot.args, profile?.args, plainEnv()])
   const env = withColorSupport(envWithoutUndefined(process.env))
   Object.assign(env, profile?.env ?? {})
   return {

@@ -32,7 +32,7 @@ export function profileFor(home: string, meta: SlotMeta): SlotProfile {
 
 export async function planFor(home: string, meta: SlotMeta, resume: Binding | undefined, extraArgs: string[]): Promise<LaunchPlan> {
   const profile = profileFor(home, meta).launch
-  if (meta.agent === 'shell') return withTabEnv(shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile }), meta)
+  if (meta.agent === 'shell') return withTabEnv(await shellAdapter.plan({ slot: meta, cwd: resume?.cwd, profile }), meta)
   return withTabEnv(await adapterOf(meta.agent).plan({ slot: meta, home, resume, extraArgs, profile }), meta)
 }
 

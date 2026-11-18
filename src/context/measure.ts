@@ -35,9 +35,10 @@ const MESSAGES: Record<MeasureFailureReason, string> = {
 }
 
 /** Real runner: `claude -p /context --model <m>` in the folder, no shell, no CLAUDE* variables, killed by PID on timeout. */
-export const runClaudeContext: ContextRunner = ({ cwd, model, timeoutMs }) =>
-  new Promise<RunnerResult>((done) => {
-    const env = cleanEnv()
+export const runClaudeContext: ContextRunner = async ({ cwd, model, timeoutMs }) => {
+  const env = cleanEnv()
+  const command = await resolveClaudeCommand(env).catch(() => 'claude')
+  return new Promise<RunnerResult>((done) => {
     let settled = false
     const finish = (r: RunnerResult) => {
       if (settled) return
@@ -47,7 +48,7 @@ export const runClaudeContext: ContextRunner = ({ cwd, model, timeoutMs }) =>
     }
     let child
     try {
-      child = spawn(resolveClaudeCommand(env), ['-p', '/context', '--model', model], { cwd, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+      child = spawn(command, ['-p', '/context', '--model', model], { cwd, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
     } catch {
       done({ ok: false, reason: 'not-found' })
       return
@@ -62,6 +63,7 @@ export const runClaudeContext: ContextRunner = ({ cwd, model, timeoutMs }) =>
     child.on('error', (e: NodeJS.ErrnoException) => finish({ ok: false, reason: e.code === 'ENOENT' ? 'not-found' : 'failed' }))
     child.on('close', (code) => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'failed' }))
   })
+}
 
 export interface ContextMeterOptions {
   runner?: ContextRunner

@@ -3,7 +3,7 @@ import { chmodSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { soulFromLoginShell } from '../../src/agents/soul.ts'
+import { soulFromLoginShell } from '../../src/exec/ops-agents.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
 const dirs = tempDirs('tether-soul-login-')
@@ -42,7 +42,7 @@ describe('soulFromLoginShell', { skip }, () => {
 describe('soulFromGitBash', { skip: process.platform !== 'win32' }, () => {
   test('a launcher in %USERPROFILE%\bin is found and read like the one on PATH', async () => {
     const { mkdirSync } = await import('node:fs')
-    const { soulFromGitBash } = await import('../../src/agents/soul.ts')
+    const { soulFromGitBash } = await import('../../src/exec/ops-agents.ts')
     const home = dirs.make()
     mkdirSync(join(home, 'bin'))
     writeFileSync(join(home, 'bin', 'soul'), '#!/usr/bin/env bash\nCLI="D:/x/bin/soul"\nexec node "$CLI" "$@"\n')
@@ -50,7 +50,7 @@ describe('soulFromGitBash', { skip: process.platform !== 'win32' }, () => {
     assert.deepEqual(cmd, { command: process.execPath, args: ['D:/x/bin/soul'] })
   })
   test('findGitBash never returns WSL bash from System32', async () => {
-    const { findGitBash } = await import('../../src/agents/soul.ts')
+    const { findGitBash } = await import('../../src/exec/ops-agents.ts')
     const found = findGitBash({ PATH: 'C:\Windows\System32' })
     assert.ok(found === undefined || !/system32/i.test(found))
   })

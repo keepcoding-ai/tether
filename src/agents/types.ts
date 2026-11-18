@@ -1,5 +1,6 @@
 import type { AgentName, Binding, SlotMeta } from '../core/event.ts'
 import type { ProfileLaunch } from '../core/profile.ts'
+import type { Executor } from '../exec/executor.ts'
 
 /** Where to look for the agent's own files (claude: the slot's CLAUDE_CONFIG_DIR comes from its profile env). */
 export interface LookupOptions {
@@ -27,6 +28,8 @@ export interface PlanInput {
   extraArgs: string[]
   /** The slot's launch profile (args before the slot's own, env on top of the adapter's cleaned env). */
   profile?: ProfileLaunch
+  /** Does the adapter's disk and process work (tetherd passes its own; absent = the process-wide one, see agent-exec.ts). */
+  exec?: Executor
 }
 
 export interface AgentAdapter {

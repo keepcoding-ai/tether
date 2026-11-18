@@ -11,7 +11,9 @@ import { fileURLToPath } from 'node:url'
 // The doctor first: it reaches the daemon index (and this extension) through the agent loader, as in every real host.
 import '../../src/doctor.ts'
 import { codexAgent } from '../../extensions/codex/daemon.ts'
-import { codexAdapter, codexSkills, findRollout, indexTitle, mcpServerOverrides, parseTopLevelNotify, resolveCodexCommand, uuidV7Time, withCodexMcpOverrides } from '../../src/agents/codex.ts'
+import { codexAdapter, codexSkills, findRollout, indexTitle, mcpServerOverrides, parseTopLevelNotify, uuidV7Time, withCodexMcpOverrides } from '../../src/agents/codex.ts'
+import { resolveCodexCommand } from '../../src/exec/ops-agents.ts'
+import { createExecutor } from '../../src/exec/executor.ts'
 import { McpNameCollisionError, httpMcpConfigOf } from '../../src/agents/mcp.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
 // @ts-expect-error plain JS module without declarations
@@ -121,8 +123,8 @@ describe('codex MCP and skills', () => {
     assert.throws(() => withCodexMcpOverrides(p, 'b', undefined, (f) => files[f]!), McpNameCollisionError)
   })
 
-  test('skills go in developer_instructions as one TOML string', () => {
-    const p = codexSkills.inject({ command: 'c', args: [], cwd: dir, env: {} }, { home: dir, version: 'v', skills: [{ name: 'use-todo', description: 'd "q"', dir, text: '---\nname: use-todo\n---\nfaça\n' }] })
+  test('skills go in developer_instructions as one TOML string', async () => {
+    const p = await codexSkills.inject({ command: 'c', args: [], cwd: dir, env: {} }, { home: dir, version: 'v', exec: createExecutor({ mode: 'inline' }), skills: [{ name: 'use-todo', description: 'd "q"', dir, text: '---\nname: use-todo\n---\nfaça\n' }] })
     assert.equal(p.args[0], '-c')
     const [key, ...rest] = p.args[1]!.split('=')
     assert.equal(key, 'developer_instructions')

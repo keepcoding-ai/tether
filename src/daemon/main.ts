@@ -88,7 +88,7 @@ async function main(): Promise<void> {
   const profileStore = new ProfileStore(home, executor, log)
   const userSettings = new UserSettings(home, executor, process.env, log)
   await userSettings.fresh() // the profiles load after the activation: reading them consults the agent registry the extensions fill
-  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home), profileStore, settings: userSettings })
+  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledExtensions(home), profileStore, settings: userSettings, executor })
   extHost.activate()
 
   let daemon: Daemon

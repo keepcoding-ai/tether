@@ -47,10 +47,10 @@ function setup(listening = true, withBackend = true, identities?: BridgeIdentiti
 }
 
 describe('web-bridge over HTTP', () => {
-  test('claude: per-slot http file without the key, key in the env, the child runs the stdio command with its env and identity', () => {
+  test('claude: per-slot http file without the key, key in the env, the child runs the stdio command with its env and identity', async () => {
     const t = setup()
     try {
-      const out = t.mw(base(), slotOf('claude'))
+      const out = await t.mw(base(), slotOf('claude'))
       const file = httpMcpConfigPathOf(t.home, 's1')
       assert.deepEqual(out.args, [...base().args, MCP_CONFIG_FLAG, file])
       const text = readFileSync(file, 'utf8')
@@ -72,18 +72,18 @@ describe('web-bridge over HTTP', () => {
       assert.equal(input.env.PATH, 'p', 'the agent\'s launch env')
       assert.equal(input.env[ENV_BRIDGE_MCP_KEY], undefined)
       assert.equal('command' in g.spec, false, 'no process is described: the shell runs inside the daemon')
-      releaseHttp(t, 's1')
+      await releaseHttp(t, 's1')
       assert.deepEqual(t.revoked, ['s1'])
       assert.equal(existsSync(file), false)
     } finally { t.done() }
   })
 
-  test('a renamed tab renames the running agent: the env its shells read at every request takes the new name; soul keeps the launch name', () => {
+  test('a renamed tab renames the running agent: the env its shells read at every request takes the new name; soul keeps the launch name', async () => {
     const identities = new BridgeIdentities()
     const t = setup(true, true, identities)
     try {
       const state = (over: Partial<SlotState> = {}): SlotState => ({ slotId: 's1', kind: 'claude', cwd: 'D:/w/atrium', folder: 'D:/w/atrium', status: 'running', ...over })
-      const out = t.mw(base(), slotOf('claude'), state({ title: 'kai-thinking' }))
+      const out = await t.mw(base(), slotOf('claude'), state({ title: 'kai-thinking' }))
       assert.equal(out.env[ENV_CLIENT_NAME], 'kai-thinking', 'the tab\'s text at launch')
       void t.grants.get('s1')!.spec.create()
       void t.grants.get('s1')!.spec.create()
@@ -97,18 +97,18 @@ describe('web-bridge over HTTP', () => {
       identities.follow(state({ name: 'after the end' }))
       assert.equal(first!.env[ENV_CLIENT_NAME], 'kai-thinking', 'an ended run is not touched')
       // soul (stdio): named at launch, an event changes nothing (it has no shell inside the daemon)
-      const soul = t.mw(base(), { ...slotOf('soul'), slotId: 's2' }, state({ slotId: 's2', kind: 'soul', title: 'soul-env' }))
+      const soul = await t.mw(base(), { ...slotOf('soul'), slotId: 's2' }, state({ slotId: 's2', kind: 'soul', title: 'soul-env' }))
       assert.equal(soul.env[ENV_CLIENT_NAME], 'soul-env')
       identities.follow(state({ slotId: 's2', kind: 'soul', name: 'other' }))
       assert.equal(identities.nameOf('s2'), 'soul-env')
     } finally { t.done() }
   })
 
-  test('fallback: soul, and claude while the host is not listening, get the shared stdio file; nothing granted', () => {
+  test('fallback: soul, and claude while the host is not listening, get the shared stdio file; nothing granted', async () => {
     for (const [agent, listening, withBackend] of [['soul', true, true], ['claude', false, true], ['claude', true, false]] as const) {
       const t = setup(listening, withBackend)
       try {
-        const out = t.mw(base(), slotOf(agent))
+        const out = await t.mw(base(), slotOf(agent))
         assert.deepEqual(out.args, [...base().args, MCP_CONFIG_FLAG, mcpConfigPathOf(t.home)], agent)
         assert.equal(out.env[ENV_BRIDGE_MCP_KEY], undefined)
         assert.equal(out.env[ENV_CLIENT_ID], 'tether:s1')
@@ -117,24 +117,27 @@ describe('web-bridge over HTTP', () => {
     }
   })
 
-  test('the upload authorizations are kept with the slot: saved, read back by a new store, dropped with the slot', () => {
+  test('the upload authorizations are kept with the slot: saved, read back by a new store, dropped with the slot', async () => {
     const home = mkdtempSync(join(tmpdir(), 'tether-brgrants-'))
     try {
-      const store = grantStoreOf(home, 's1')
+      const store = await grantStoreOf(home, 's1')
       assert.deepEqual(store.load(), [], 'no file: nothing authorized')
       const grant = { folder: 'C:/Users/x/Downloads/send', origin: 'https://portal.example', grantedAt: '2026-11-11T00:00:00.000Z', via: 'WebAllowUploads' }
       store.save([grant])
+      await store.flush()
       assert.deepEqual(JSON.parse(readFileSync(grantsFileOf(home, 's1'), 'utf8')), { v: 1, grants: [grant] })
-      assert.deepEqual(grantStoreOf(home, 's1').load(), [grant], 'a new server of the same slot gets them back')
-      assert.deepEqual(grantStoreOf(home, 's2').load(), [], 'another slot does not')
+      assert.deepEqual((await grantStoreOf(home, 's1')).load(), [grant], 'a new server of the same slot gets them back')
+      assert.deepEqual((await grantStoreOf(home, 's2')).load(), [], 'another slot does not')
       writeFileSync(grantsFileOf(home, 's2'), 'not json')
-      assert.deepEqual(grantStoreOf(home, 's2').load(), [], 'a broken file is nothing authorized')
+      assert.deepEqual((await grantStoreOf(home, 's2')).load(), [], 'a broken file is nothing authorized')
       store.save([])
+      await store.flush()
       assert.equal(existsSync(grantsFileOf(home, 's1')), false, 'the last one revoked: no file')
       store.save([grant])
-      dropGrants(home, 's1')
+      await store.flush()
+      await dropGrants(home, 's1')
       assert.equal(existsSync(grantsFileOf(home, 's1')), false, 'the slot was forgotten')
-      assert.throws(() => grantStoreOf(home, '../x'))
+      await assert.rejects(() => grantStoreOf(home, '../x'))
       assert.match(store.lifetime, /panel/)
     } finally { rmSync(home, { recursive: true, force: true }) }
   })

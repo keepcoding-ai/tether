@@ -6,10 +6,11 @@
 // slot is forgotten (its pane closed for good) or the last authorization is revoked. What comes back from the disk is not
 // trusted as it is: the policy puts every pair through the rules of a new one (inside the allowed folders, not too broad, an
 // exact origin) and drops the rest.
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SLOT_ID_RE } from '../../src/core/store.ts'
-import { ensurePrivateDir } from '../browser/private-dir.ts'
+import { ensurePrivateDirAsync } from '../browser/private-dir-core.ts'
+import type { DaemonIo } from '../../src/daemon/ext-api.ts'
+import { fsIo } from '../../src/daemon/ext-io.ts'
 
 export const grantsDirOf = (home: string): string => join(home, 'web-bridge', 'grants')
 export const grantsFileOf = (home: string, slotId: string): string => join(grantsDirOf(home), `${slotId}.json`)
@@ -24,36 +25,48 @@ export interface GrantStore {
   lifetime: string
 }
 
-export function grantStoreOf(home: string, slotId: string, log: (msg: string) => void = () => {}): GrantStore {
+/**
+ * The bundle's contract is synchronous (`load()` / `save()`), the disk is not: the store is opened ASYNCHRONOUSLY (the file is
+ * read once, before the slot's server is made) and then answers from memory. `save` updates the memory at once and queues the
+ * write on `io` (one at a time, in order, so a burst ends with the last list on disk); a failed write is logged and the pairs
+ * stay in memory for this server. `flush()` resolves when what was saved is on disk.
+ */
+export interface OpenedGrantStore extends GrantStore { flush(): Promise<void> }
+
+export async function grantStoreOf(home: string, slotId: string, log: (msg: string) => void = () => {}, io: DaemonIo = fsIo): Promise<OpenedGrantStore> {
   if (!SLOT_ID_RE.test(slotId)) throw new Error('slot id inválido')
   const file = grantsFileOf(home, slotId)
+  let current: unknown[] = []
+  try {
+    const doc = JSON.parse(await io.readText(file)) as { v?: unknown; grants?: unknown }
+    if (doc.v === 1 && Array.isArray(doc.grants)) current = doc.grants
+  } catch { /* no file (or a broken one): nothing was authorized */ }
+  let chain: Promise<void> = Promise.resolve()
+  const persist = async (grants: unknown[]): Promise<void> => {
+    try {
+      if (grants.length === 0) { await io.rm(file); return }
+      // Owner-only before an authorization lands in it; a folder that cannot be made so holds none.
+      await ensurePrivateDirAsync(grantsDirOf(home))
+      await io.writeTextAtomic(file, `${JSON.stringify({ v: 1, grants })}\n`)
+      log(`autorizações de upload do slot ${slotId} guardadas (${grants.length})`)
+    } catch (e) {
+      log(`autorizações de upload do slot ${slotId} não gravadas (${(e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e))}); ficam só na memória deste servidor`)
+    }
+  }
   return {
     lifetime: GRANT_LIFETIME,
-    load() {
-      try {
-        const doc = JSON.parse(readFileSync(file, 'utf8')) as { v?: unknown; grants?: unknown }
-        return doc.v === 1 && Array.isArray(doc.grants) ? doc.grants : []
-      } catch { return [] } // no file: nothing was authorized
-    },
+    load: () => current,
     save(grants) {
-      if (grants.length === 0) { rmSync(file, { force: true }); return }
-      const dir = grantsDirOf(home)
-      mkdirSync(dir, { recursive: true })
-      // Owner-only before an authorization lands in it; a folder that cannot be made so holds none (the policy logs it and
-      // keeps the pair in memory for this server).
-      ensurePrivateDir(dir)
-      const tmp = `${file}.${process.pid}.tmp`
-      try {
-        writeFileSync(tmp, `${JSON.stringify({ v: 1, grants })}\n`, { mode: 0o600 })
-        renameSync(tmp, file)
-      } finally { rmSync(tmp, { force: true }) }
-      log(`autorizações de upload do slot ${slotId} guardadas (${grants.length})`)
+      current = [...grants]
+      const snapshot = current
+      chain = chain.then(() => persist(snapshot))
     },
+    flush: () => chain,
   }
 }
 
 /** The slot is gone for good: its authorizations go with it. Never throws. */
-export function dropGrants(home: string, slotId: string): void {
+export async function dropGrants(home: string, slotId: string, io: DaemonIo = fsIo): Promise<void> {
   if (!SLOT_ID_RE.test(slotId)) return
-  try { rmSync(grantsFileOf(home, slotId), { force: true }) } catch { /* best effort */ }
+  await io.rm(grantsFileOf(home, slotId)).catch(() => undefined)
 }

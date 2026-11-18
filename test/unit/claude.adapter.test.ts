@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { readdir as readdirP } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { claudeAdapter, cleanEnv, hookSettings, userHasStatusLine, encodeProjectDir, findTranscript, lastCustomTitle, watchTitleWith, resolveClaudeCommand, withCommandDirOnPath } from '../../src/agents/claude.ts'
+import { claudeAdapter, cleanEnv, hookSettings, statusLineFiles, encodeProjectDir, findTranscript, lastCustomTitle, watchTitleWith, withCommandDirOnPath } from '../../src/agents/claude.ts'
+import { anyDefinesStatusLine, resolveClaudeCommand } from '../../src/exec/ops-agents.ts'
 import type { Binding, SlotMeta } from '../../src/core/event.ts'
 import { tempDirs } from './tmp.helpers.ts'
 
@@ -414,7 +415,7 @@ describe('status line', () => {
         mkdirSync(join(cwd, '.claude'), { recursive: true })
         writeFileSync(join(cwd, '.claude', where), JSON.stringify({ statusLine: { type: 'command', command: 'x' } }))
       }
-      assert.equal(userHasStatusLine(cwd, config), true, where)
+      assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, config)), true, where)
       process.env.CLAUDE_CONFIG_DIR = config
       const home = homes.make()
       const plan = await claudeAdapter.plan({ slot: { ...slot, cwd }, home, extraArgs: [] })
@@ -431,7 +432,7 @@ describe('status line', () => {
     writeFileSync(join(config, 'settings.json'), '{ not json')
     mkdirSync(join(cwd, '.claude'), { recursive: true })
     writeFileSync(join(cwd, '.claude', 'settings.json'), JSON.stringify({ model: 'opus' }))
-    assert.equal(userHasStatusLine(cwd, config), false)
-    assert.equal(userHasStatusLine(cwd, config, () => { throw new Error('nope') }), false)
+    assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, config)), false)
+    assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, config), () => { throw new Error('nope') }), false)
   })
 })

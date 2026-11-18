@@ -23,9 +23,10 @@ import { browsersFromOverride, classifyExe, detectBrowsers, extensionsUrlOf, par
 import { activate as activateDaemon } from '../../extensions/web-bridge/daemon.ts'
 import { createInstaller } from '../../extensions/web-bridge/installer.ts'
 import { BRIDGE_PORT, bridgeHomeOf, bridgePortOf, extensionDirOf, MCP_SERVER_NAME, mcpConfigPathOf, warmupAllowed } from '../../extensions/web-bridge/paths.ts'
-import { daemonEnv, findNode, readDaemonRecord, writeDaemonRecord, type Warmup } from '../../extensions/web-bridge/warmup.ts'
+import { daemonEnv, findNode, findNodeAsync, readDaemonRecord, writeDaemonRecord, type Warmup } from '../../extensions/web-bridge/warmup.ts'
 import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutdated, storedExtensionVersion, syncExtensionVersion, updateExtensionDir, updateMarkerPath } from '../../extensions/web-bridge/update.ts'
 import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
+import { fsIo } from '../../src/daemon/ext-io.ts'
 import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 import { auditVendor, hashTree, sha256, VENDOR_MANIFEST, type BuildInfo } from '../../extensions/web-bridge/vendor-rules.ts'
@@ -36,7 +37,7 @@ import { tempDirs } from './tmp.helpers.ts'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const vendorDir = join(root, 'extensions', 'web-bridge', 'vendor')
 /** The vendored extension's manifest version (`<bridge>.<commits>`, stamped by the bridge's build): what the welcome carries. */
-const VENDORED_VERSION = extensionVersionOf(join(vendorDir, 'extension'))!
+const VENDORED_VERSION = (await extensionVersionOf(join(vendorDir, 'extension')))!
 const tmp = tempDirs('tether-web-bridge-')
 after(() => tmp.cleanup())
 
@@ -431,6 +432,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
       onStarted: l => { started.push(l); return toDisposable(() => {}) },
       settings: { get: () => undefined },
       profiles: { get: () => undefined },
+      io: fsIo,
       log: m => log.push(m),
       onSlot: () => toDisposable(() => {}),
     }
@@ -497,23 +499,23 @@ describe('web-bridge: update in place (F7 C5, real vendored build, temp home)', 
     b.setBrand(bridgeHome, { name: 'Tether', color: '#6aa6ff', hostId: 'studio.codr.tether' })
     const before = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as Record<string, unknown>
     assert.equal(before.extensionVersion, undefined)
-    assert.equal(storedExtensionVersion(bridgeHome), undefined)
+    assert.equal(await storedExtensionVersion(bridgeHome), undefined)
     const stale = join(bridgeHome, 'config.lock')
     writeFileSync(stale, '999999\n')
     const old = (Date.now() - 60_000) / 1000
     utimesSync(stale, old, old)
-    assert.equal(syncExtensionVersion(b, bridgeHome, '0.1.0.77'), true)
+    assert.equal(await syncExtensionVersion(b, bridgeHome, '0.1.0.77'), true)
     assert.ok(!existsSync(stale), 'the bridge took the stale lock over and released it')
     const after = JSON.parse(readFileSync(join(bridgeHome, 'config.json'), 'utf8')) as Record<string, unknown>
     assert.deepEqual(after, { ...before, extensionVersion: '0.1.0.77' }, 'one field added; port, token, keys, brand and ids as they were')
     assert.equal(before.pairingToken, created.pairingToken)
-    assert.equal(storedExtensionVersion(bridgeHome), '0.1.0.77')
+    assert.equal(await storedExtensionVersion(bridgeHome), '0.1.0.77')
     const mtime = statSync(join(bridgeHome, 'config.json')).mtimeMs
-    assert.equal(syncExtensionVersion(b, bridgeHome, '0.1.0.77'), false, 'same version: not written')
+    assert.equal(await syncExtensionVersion(b, bridgeHome, '0.1.0.77'), false, 'same version: not written')
     assert.equal(statSync(join(bridgeHome, 'config.json')).mtimeMs, mtime, 'the file was not touched')
-    assert.equal(syncExtensionVersion(b, bridgeHome, '0.2.0'), true)
-    assert.equal(storedExtensionVersion(bridgeHome), '0.2.0')
-    assert.throws(() => syncExtensionVersion(b, bridgeHome, 'not-a-version'), /INVALID_ARGUMENT|manifest version/, 'the bundle validates the form')
+    assert.equal(await syncExtensionVersion(b, bridgeHome, '0.2.0'), true)
+    assert.equal(await storedExtensionVersion(bridgeHome), '0.2.0')
+    await assert.rejects(() => syncExtensionVersion(b, bridgeHome, 'not-a-version'), /INVALID_ARGUMENT|manifest version/, 'the bundle validates the form')
   })
 
   test('the host updates an older installed folder in place: seed kept with the same token, extensionVersion in config, marker + doctor AVISO; a current folder is left alone', async () => {
@@ -531,7 +533,7 @@ describe('web-bridge: update in place (F7 C5, real vendored build, temp home)', 
     const config = JSON.parse(readFileSync(join(bridgeHomeOf(home), 'config.json'), 'utf8')) as { pairingToken: string; extensionVersion?: string }
     assert.equal(config.pairingToken, token, 'the token did not rotate')
     assert.equal(config.extensionVersion, VENDORED_VERSION)
-    assert.deepEqual(readUpdateMarker(home)?.version, VENDORED_VERSION)
+    assert.deepEqual((await readUpdateMarker(home))?.version, VENDORED_VERSION)
     assert.ok(log.some(l => l.includes(`atualizada em lugar (${VENDORED_VERSION} → ${VENDORED_VERSION}: 2 arquivo(s) gravado(s), 1 removido(s))`)), log.join('\n'))
     assert.ok(!log.join('\n').includes(token), 'token leaked')
     const checks = await Promise.all(host().checks().map(c => c()))
@@ -543,16 +545,16 @@ describe('web-bridge: update in place (F7 C5, real vendored build, temp home)', 
     const again = await host().setup()
     assert.equal(again.extension, 'current')
     assert.ok(!log.some(l => l.includes('atualizada')), log.join('\n'))
-    assert.ok(readUpdateMarker(home))
+    assert.ok(await readUpdateMarker(home))
   })
 
   test('restartIfOutdated: the daemon is ended only with pid + bridge command line + port owner proven, and only when its bundle is not the vendored one', async () => {
-    const mk = (opts: { record?: 'same' | 'old' | 'none'; cmd?: string; owner?: number; healthy?: boolean }) => {
+    const mk = async (opts: { record?: 'same' | 'old' | 'none'; cmd?: string; owner?: number; healthy?: boolean }) => {
       const home = tmp.make()
       const bridgeHome = bridgeHomeOf(home)
       mkdirSync(bridgeHome, { recursive: true })
       writeFileSync(join(bridgeHome, 'daemon.pid'), '4242\n')
-      if (opts.record !== 'none') writeDaemonRecord(bridgeHome, { pid: 4242, bundleSha256: opts.record === 'same' ? 'sha-new' : 'sha-old', startedAt: 't' })
+      if (opts.record !== 'none') await writeDaemonRecord(bridgeHome, { pid: 4242, bundleSha256: opts.record === 'same' ? 'sha-new' : 'sha-old', startedAt: 't' })
       const state = { alive: true, healthy: opts.healthy ?? true, ensured: 0, killed: [] as number[] }
       const log: string[] = []
       const warmup: Warmup = { health: async () => state.healthy, ensure: async () => { state.ensured++; state.healthy = true; return 'started' } }
@@ -566,36 +568,36 @@ describe('web-bridge: update in place (F7 C5, real vendored build, temp home)', 
       return { run, state, log }
     }
     // Same bundle: nothing happens.
-    let t = mk({ record: 'same' })
+    let t = await mk({ record: 'same' })
     assert.equal(await t.run(), 'current')
     assert.deepEqual(t.state.killed, [])
     // Older bundle, identity proven: killed, started again, said so.
-    t = mk({ record: 'old' })
+    t = await mk({ record: 'old' })
     assert.equal(await t.run(), 'restarted')
     assert.deepEqual(t.state.killed, [4242])
     assert.equal(t.state.ensured, 1)
     assert.ok(t.log.some(l => l.includes('encerrado para atualizar: o bundle vendorizado mudou')), t.log.join('\n'))
     // No record (a daemon from before this code): outdated by definition, same proof.
-    t = mk({ record: 'none' })
+    t = await mk({ record: 'none' })
     assert.equal(await t.run(), 'restarted')
     assert.ok(t.log.some(l => l.includes('não há registro')), t.log.join('\n'))
     // The command line is not a bridge daemon's: kept.
-    t = mk({ record: 'old', cmd: 'C:\\node.exe D:\\other\\server.mjs start' })
+    t = await mk({ record: 'old', cmd: 'C:\\node.exe D:\\other\\server.mjs start' })
     assert.equal(await t.run(), 'kept')
     assert.deepEqual(t.state.killed, [])
     assert.ok(t.log.some(l => l.includes('linha de comando')), t.log.join('\n'))
     // Another process owns the port: kept.
-    t = mk({ record: 'old', owner: 777 })
+    t = await mk({ record: 'old', owner: 777 })
     assert.equal(await t.run(), 'kept')
     assert.deepEqual(t.state.killed, [])
     assert.ok(t.log.some(l => l.includes('pertence ao pid 777')), t.log.join('\n'))
     // Nothing answers on the port: no daemon to replace (the warm-up starts one).
-    t = mk({ record: 'old', healthy: false })
+    t = await mk({ record: 'old', healthy: false })
     assert.equal(await t.run(), 'current')
     assert.deepEqual(t.state.killed, [])
     // The record survives a round trip.
     const home = tmp.make()
-    writeDaemonRecord(bridgeHomeOf(home), { pid: 1, bundleSha256: 'x', startedAt: 'now' })
-    assert.deepEqual(readDaemonRecord(bridgeHomeOf(home)), { pid: 1, bundleSha256: 'x', startedAt: 'now' })
+    await writeDaemonRecord(bridgeHomeOf(home), { pid: 1, bundleSha256: 'x', startedAt: 'now' })
+    assert.deepEqual(await readDaemonRecord(bridgeHomeOf(home)), { pid: 1, bundleSha256: 'x', startedAt: 'now' })
   })
 })

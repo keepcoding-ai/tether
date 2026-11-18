@@ -8,12 +8,13 @@
 // that is --dangerously-bypass-hook-trust, which would also run every other unreviewed hook: so notify, which needs no
 // trust. Consequence: a brand-new session binds to the slot when its first turn ends (a session with no turn has
 // nothing to resume). The user's own `notify` keeps working: the reporter chains to it (TETHER_CODEX_NOTIFY).
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
-import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Binding } from '../core/event.ts'
-import { fileSig } from '../core/exe.ts'
+import type { Executor } from '../exec/executor.ts'
+import { agentExecutor, plainEnv } from './agent-exec.ts'
 import { perf } from '../core/perf.ts'
 import { canonicalDir } from '../core/paths.ts'
 import { cleanEnv } from './claude.ts'
@@ -90,22 +91,10 @@ export function parseTopLevelNotify(text: string): string[] | undefined {
   return undefined
 }
 
-/** The user's notify program from <CODEX_HOME>/config.toml, or undefined. */
-export function userNotify(home: string): string[] | undefined {
-  const file = join(home, 'config.toml')
-  const sig = fileSig(file)
-  if (sig === undefined) { notifyCache.delete(file); return undefined }
-  const hit = notifyCache.get(file)
-  if (hit?.sig === sig) return hit.value
-  let value: string[] | undefined
-  try { value = parseTopLevelNotify(readFileSync(file, 'utf8')) } catch { return undefined }
-  if (notifyCache.size >= 16) notifyCache.clear()
-  notifyCache.set(file, { sig, value })
-  return value
+/** The user's notify program from <CODEX_HOME>/config.toml, or undefined (read by the executor, parsed again only when the file changed). */
+export function userNotify(home: string, exec: Executor = agentExecutor()): Promise<string[] | undefined> {
+  return exec.run('userNotify', [home])
 }
-
-/** The parsed notify of each config.toml, kept while its size and mtime stay what they were. */
-const notifyCache = new Map<string, { sig: string; value: string[] | undefined }>()
 
 // ---- finding the executable ----
 
@@ -115,59 +104,9 @@ export interface CodexCommand {
   prefix: string[]
 }
 
-export interface CodexResolveDeps {
-  platform?: NodeJS.Platform
-  home?: string
-  exists?: (path: string) => boolean
-}
-
-/**
- * Finds codex so it can be spawned without a shell. On Windows the npm install is a `codex.cmd` shim: running it would put
- * cmd.exe between us and Codex, and cmd mangles quotes and `%` in the `-c` values (the skills text). So the shim's own
- * target, `node <dir>/node_modules/@openai/codex/bin/codex.js`, runs instead (with the node next to it when there is one).
- */
-export function resolveCodexCommand(env: Record<string, string | undefined> = process.env, deps: CodexResolveDeps = {}): CodexCommand {
-  // Memoized only on the real file system: a hit costs a stat of the command found for this same PATH (and of its script).
-  if (deps.exists) return resolveCodexUncached(env, deps)
-  const key = `${deps.platform ?? process.platform}|${deps.home ?? ''}|${env.PATH ?? env.Path ?? ''}`
-  const hit = resolvedCodex.get(key)
-  const now = Date.now()
-  const sigs = (c: CodexCommand): (string | undefined)[] => [fileSig(c.command), ...c.prefix.map((p) => fileSig(p))]
-  if (hit && now - hit.at < RESOLVE_TTL_MS && sigs(hit.value).every((s, i) => s !== undefined && s === hit.sigs[i])) return hit.value
-  const found = resolveCodexUncached(env, deps)
-  const foundSigs = sigs(found)
-  if (isAbsolute(found.command) && foundSigs.every((s) => s !== undefined)) {
-    if (resolvedCodex.size >= 16) resolvedCodex.clear()
-    resolvedCodex.set(key, { value: found, sigs: foundSigs, at: now })
-  } else resolvedCodex.delete(key)
-  return found
-}
-
-/** A hit is re-resolved after this long anyway, so a codex installed earlier on the PATH is eventually preferred. */
-const RESOLVE_TTL_MS = 60_000
-const resolvedCodex = new Map<string, { value: CodexCommand; sigs: (string | undefined)[]; at: number }>()
-
-function resolveCodexUncached(env: Record<string, string | undefined>, deps: CodexResolveDeps): CodexCommand {
-  const platform = deps.platform ?? process.platform
-  const exists = deps.exists ?? existsSync
-  const dirs = (env.PATH ?? env.Path ?? '').split(delimiter).filter(Boolean)
-  if (platform === 'win32') {
-    for (const dir of dirs) {
-      const script = join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
-      if (exists(join(dir, 'codex.cmd')) && exists(script)) {
-        const node = join(dir, 'node.exe')
-        return { command: exists(node) ? node : 'node', prefix: [script] }
-      }
-      if (exists(join(dir, 'codex.exe'))) return { command: join(dir, 'codex.exe'), prefix: [] }
-    }
-    return { command: 'codex', prefix: [] }
-  }
-  for (const dir of dirs) if (isAbsolute(dir) && exists(join(dir, 'codex'))) return { command: join(dir, 'codex'), prefix: [] }
-  const home = deps.home ?? homedir()
-  for (const dir of [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin']) {
-    if (exists(join(dir, 'codex'))) return { command: join(dir, 'codex'), prefix: [] }
-  }
-  return { command: 'codex', prefix: [] }
+/** Finds codex so it can be spawned without a shell (the npm `codex.cmd` shim becomes `node <codex.js>`; see ops-agents.ts). */
+export function resolveCodexCommand(env: Record<string, string | undefined> = process.env, exec: Executor = agentExecutor()): Promise<CodexCommand> {
+  return exec.run('resolveCodex', [plainEnv(env)])
 }
 
 // ---- launch ----
@@ -177,7 +116,7 @@ export function notifyOverride(reporterPath: string = defaultReporterPath()): st
   return `notify=${tomlStringArray(['node', reporterPath.replace(/\\/g, '/'), 'notify'])}`
 }
 
-function plan(input: PlanInput): LaunchPlan {
+async function plan(input: PlanInput): Promise<LaunchPlan> {
   const { slot, home, resume, extraArgs, profile } = input
   const cwd = canonicalDir(resume ? resume.cwd : slot.cwd)
   // Inherited CLAUDE* vars belong to a Claude session that launched tether (or the app); Codex does not need them.
@@ -186,10 +125,10 @@ function plan(input: PlanInput): LaunchPlan {
   env[ENV_SLOT] = slot.slotId
   env[ENV_AGENT] = 'codex'
   env[ENV_HOME] = home
-  const chained = userNotify(codexHome({ env }))
+  const ex = input.exec ?? agentExecutor()
+  const [chained, { command, prefix }] = await Promise.all([userNotify(codexHome({ env }), ex), resolveCodexCommand(env, ex)])
   if (chained) env[ENV_CODEX_NOTIFY] = JSON.stringify(chained)
   else delete env[ENV_CODEX_NOTIFY]
-  const { command, prefix } = resolveCodexCommand(env)
   const own = [...(profile?.args ?? []), ...slot.args, ...extraArgs]
   const args = [...prefix, ...(resume ? ['resume', resume.sessionId] : []), '-c', notifyOverride(), ...own]
   return { command, args, cwd, env }
