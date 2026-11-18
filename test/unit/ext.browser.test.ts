@@ -67,7 +67,7 @@ describe('browser extension manifest', () => {
   })
 
   test('the empty state reads as design §5.3', () => {
-    assert.equal(EMPTY_HELP, 'Nenhuma guia aberta. Quando um agente abrir uma, ela aparece aqui.')
+    assert.equal(EMPTY_HELP, 'Quando um agente abrir uma guia, ela aparece aqui.')
   })
 
   test('listed in the three indexes without a test guard', () => {

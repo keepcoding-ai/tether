@@ -72,10 +72,10 @@ test('browser skeleton: pill, empty desk and the pad Guias with its empty state'
     await page.click(`#sidebar-left .sb-icon[data-pad="${PAD}"]`)
     await page.waitForSelector('.br-pad [data-state="empty"]', { state: 'visible' })
     const text = await page.evaluate(() => document.querySelector('.br-pad [data-state="empty"]')!.textContent)
-    assert.match(text ?? '', /Nenhuma guia aberta\. Quando um agente abrir uma, ela aparece aqui\./)
+    assert.match(text ?? '', /Quando um agente abrir uma guia, ela aparece aqui\./)
     assert.match(text ?? '', /perfil marcado/)
     await page.waitForSelector('.br-pad button[data-action="open-profiles"]', { state: 'visible' })
-    await page.waitForSelector('.br-pad button[data-action="open-settings"]', { state: 'visible' })
+    assert.equal(await page.locator('.br-pad [data-state="empty"] button[data-action="open-settings"]').count(), 0, 'settings button lives in the menu, not the empty state')
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })

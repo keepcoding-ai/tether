@@ -54,7 +54,7 @@ import {
 } from './pad-rules.ts'
 import { type ClosedTab, closedByText, closedGroups, PAD_CLEAR_CLOSED, PAD_CLOSED, PAD_REOPEN } from './closed-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, LOGINS_NOT_KEPT, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
+import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_LINK, SETTINGS_ENTRY, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
 
@@ -114,36 +114,38 @@ export function activate(ui: TetherUi): IDisposable[] {
   const controls = new Map<string, ControlView>()
   let persistentLogins = true
 
-  /** The pad's empty state; the off line and its button only while the browser is off for the profile. */
+  /**
+   * The pad's empty state: a compact block at the top. Mode `off` keeps its message and the one button that turns the browser on;
+   * `perProfile` adds a muted hint with an inline link to the profiles; `all` shows neither.
+   */
   const drawEmpty = (root: HTMLElement): void => {
     const box = el('div', 'br-empty')
-    const art = el('div', 'br-empty-art')
-    art.append(icon('globe-simple'))
     box.dataset.state = 'empty'
-    box.append(art, el('h3', 'br-empty-title', EMPTY_TITLE), el('p', 'br-empty-help', EMPTY_HELP))
+    const head = el('div', 'br-empty-head')
+    const art = el('span', 'br-empty-art')
+    art.append(icon('globe-simple'))
+    head.append(art, el('h3', 'br-empty-title', EMPTY_TITLE))
+    box.append(head, el('p', 'br-empty-help', EMPTY_HELP))
     const mode = serveMode()
     const offHelp = offHelpFor(mode)
     if (offHelp) {
       const off = el('p', 'br-empty-off', offHelp)
       off.dataset.role = 'off'
       off.dataset.mode = mode
-      const go = el('button', 'br-empty-go', OFF_ACTION)
-      go.type = 'button'
-      go.dataset.action = 'open-settings'
-      go.addEventListener('click', () => { void ui.commands.run('settings.show') })
-      box.append(off, go)
-      if (mode === 'perProfile') {
-        const profiles = el('button', 'br-empty-go', PROFILE_ACTION)
-        profiles.type = 'button'
-        profiles.dataset.action = 'open-profiles'
-        profiles.addEventListener('click', () => { void ui.commands.run('profiles.manage') })
-        box.append(profiles)
+      if (mode === 'off') {
+        const go = el('button', 'br-empty-go', OFF_ACTION)
+        go.type = 'button'
+        go.dataset.action = 'open-settings'
+        go.addEventListener('click', () => { void ui.commands.run('settings.show') })
+        box.append(off, go)
+      } else {
+        const link = el('button', 'br-empty-link', PROFILE_LINK)
+        link.type = 'button'
+        link.dataset.action = 'open-profiles'
+        link.addEventListener('click', () => { void ui.commands.run('profiles.manage') })
+        off.append(' ', link)
+        box.append(off)
       }
-    }
-    if (!persistentLogins) {
-      const mem = el('p', 'br-empty-off', LOGINS_NOT_KEPT)
-      mem.dataset.role = 'logins-not-kept'
-      box.append(mem)
     }
     root.replaceChildren(box)
   }
@@ -249,10 +251,17 @@ export function activate(ui: TetherUi): IDisposable[] {
       else if (id === 'resume-all') void ipc.invoke('resumeTabs', tabs.filter(t => t.control === 'paused').map(t => t.tabId))
       else void confirmLogout()
     }
-    return padMenu(buildPad(tabs, agentInfo), padFilter !== undefined).map((i): ContextMenuEntry => i === 'sep' ? i : {
+    const entries = padMenu(buildPad(tabs, agentInfo), padFilter !== undefined).map((i): ContextMenuEntry => i === 'sep' ? i : {
       icon: i.icon, label: i.label, run: () => run(i.id),
       ...(i.pin ? { pin: i.pin } : {}), ...(i.disabled ? { disabled: true } : {}), ...(i.danger ? { danger: true } : {}),
     })
+    // The empty state no longer carries these buttons: they live here.
+    entries.push(
+      'sep',
+      { icon: 'gear-six', label: SETTINGS_ENTRY, run: () => { void ui.commands.run('settings.show') } },
+      { icon: 'sliders-horizontal', label: PROFILE_ACTION, run: () => { void ui.commands.run('profiles.manage') } },
+    )
+    return entries
   }
   /** An agent group's menu: the brake and close act on every tab of the agent (the ones with the person included). */
   const groupMenuEntries = (g: PadGroup): ContextMenuEntry[] => {
