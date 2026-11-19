@@ -1,5 +1,5 @@
-// The local patches in the vendored server.mjs (extensions/browser/vendor.mjs lists them): a new copy from the source drops
-// them unless the source got them first, and these checks say which one went missing. They read the bundle as text: the
+// The local patches in the vendored server.mjs (they live in packages/browser now; vendor.mjs says so): a copy from a source that
+// lacks them drops them, and these checks say which one went missing. They read the bundle as text: the
 // server runs only against a live gatekeeper (adopt mode), out of reach of a unit test.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -26,12 +26,23 @@ test('vendor patch: the client\'s cancellation of WebAskUser reaches the host as
   assert.match(gate, /case 'Tether\.cancelAsk': \{/)
 })
 
-test('vendor patch: WebNavigate names its stages and reads the title within the action timeout, failing named', () => {
+test('vendor patch: WebNavigate, WebTabs and WebRead read the page within the action timeout, failing named', () => {
   assert.match(server, /stage\("navigate"\);\s*await t\.page\.goto\(url2,/)
-  assert.match(server, /return \{ url: t\.page\.url\(\), title: await titleWithin\(t, timeoutNow\(\)\) \};/)
-  assert.match(server, /const titleWithin = async \(t, ms\) => \{\s*stage\("title"\);/)
-  assert.match(server, /new BrowserError\("PAGE_NOT_READABLE", `The page at \$\{t\.page\.url\(\)\} loaded, but its title was not read within \$\{ms\} ms/)
+  assert.match(server, /return \{ url: t\.page\.url\(\), title: await titleWithin\(t\.page, timeoutNow\(\)\) \};/)
+  assert.match(server, /function titleWithin\(page, ms\) \{\s*stage\("title"\);/)
+  assert.match(server, /new BrowserError\(\s*"PAGE_NOT_READABLE",\s*`The page at \$\{page\.url\(\)\} loaded, but \$\{what\} was not read within \$\{ms\} ms/)
+  // WebTabs (infoOf) and WebRead (readPage: the region count and the title) go through the same bounded read.
+  assert.match(server, /const title = titleWithin\(t\.page, timeoutNow\(\)\);/)
+  assert.match(server, /title: await titleWithin\(page, timeout\),/)
+  assert.match(server, /readableWithin\(page, timeout, "its content", \(\) => page\.locator\(candidate\)\.count\(\)\)/)
   // A named code shows as `[PAGE_NOT_READABLE] ...` only when the catalog knows it (otherwise it would read as [INTERNAL]).
   const codes = /BROWSER_ERROR_CODES = \[([\s\S]*?)\];/.exec(server)?.[1] ?? ''
   assert.match(codes, /"PAGE_NOT_READABLE"/)
+})
+
+test('vendor patch: WebAskUser knows the declined outcome and the note', () => {
+  assert.match(server, /declined: \(note\) => "outcome: declined\./)
+  assert.match(server, /answer\.outcome === "declined" \? CONTROL_TEXTS\.declined\(answer\.note\)/)
+  assert.match(server, /r\.outcome === "returned" \|\| r\.outcome === "declined"/)
+  assert.match(server, /"declined" \(the person said they cannot help; the tab is back with you\)/)
 })

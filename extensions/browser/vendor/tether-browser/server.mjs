@@ -38509,6 +38509,38 @@ var init_aim2 = __esm({
   }
 });
 
+// src/page-readable.ts
+async function readableWithin(page, ms, what, op) {
+  let timer;
+  const late2 = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(
+        new BrowserError(
+          "PAGE_NOT_READABLE",
+          `The page at ${page.url()} loaded, but ${what} was not read within ${ms} ms: the tab lost the script context the tools read it through. Open a new tab with WebNewTab and continue there.`
+        )
+      ),
+      ms
+    );
+  });
+  try {
+    return await Promise.race([inFlight("Runtime.callFunctionOn", op), late2]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function titleWithin(page, ms) {
+  stage("title");
+  return readableWithin(page, ms, "its title", () => page.title());
+}
+var init_page_readable = __esm({
+  "src/page-readable.ts"() {
+    "use strict";
+    init_call_trace();
+    init_errors5();
+  }
+});
+
 // src/core/input.ts
 function buttonsMask(buttons) {
   let m = 0;
@@ -42882,7 +42914,7 @@ async function readPage(page, timeout, opts = {}) {
   const maxChars = opts.maxChars ?? 5e4;
   let source = "body";
   for (const candidate of ["main", "article"]) {
-    if (await page.locator(candidate).count() > 0) {
+    if (await readableWithin(page, timeout, "its content", () => page.locator(candidate).count()) > 0) {
       source = candidate;
       break;
     }
@@ -42891,7 +42923,7 @@ async function readPage(page, timeout, opts = {}) {
   const truncated = full.length > maxChars;
   return {
     url: page.url(),
-    title: await page.title(),
+    title: await titleWithin(page, timeout),
     text: truncated ? full.slice(0, maxChars) : full,
     truncated,
     source
@@ -42902,6 +42934,7 @@ var init_snapshot = __esm({
   "src/snapshot.ts"() {
     "use strict";
     init_errors5();
+    init_page_readable();
     REF_PATTERN = /\[ref=([a-z0-9]+)\]/g;
   }
 });
@@ -43408,23 +43441,11 @@ async function openSession(context, params) {
     }
     return t;
   };
-  const titleWithin = async (t, ms) => {
-    stage("title");
-    let timer;
-    const late = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new BrowserError("PAGE_NOT_READABLE", `The page at ${t.page.url()} loaded, but its title was not read within ${ms} ms: the tab lost the script context the tools read it through. Open a new tab with WebNewTab and continue there.`)), ms);
-    });
-    try {
-      return await Promise.race([inFlight("Runtime.callFunctionOn", () => t.page.title()), late]);
-    } finally {
-      clearTimeout(timer);
-    }
-  };
   const infoOf = async (t) => {
     const base = { id: t.id, url: t.page.url(), active: t.id === activeId };
     const dialog = t.dialogs.info();
     if (dialog) return { ...base, title: "", dialog: { type: dialog.type, message: dialog.message } };
-    const title = t.page.title();
+    const title = titleWithin(t.page, timeoutNow());
     title.catch(() => {
     });
     if (!await t.dialogs.race(title)) {
@@ -43507,7 +43528,7 @@ async function openSession(context, params) {
       } finally {
         endLlmNavigation();
       }
-      return { url: t.page.url(), title: await titleWithin(t, timeoutNow()) };
+      return { url: t.page.url(), title: await titleWithin(t.page, timeoutNow()) };
     },
     async screenshot(opts) {
       const t = await active();
@@ -43897,6 +43918,7 @@ var init_browser = __esm({
   "src/browser.ts"() {
     "use strict";
     init_aim2();
+    init_page_readable();
     init_call_trace();
     init_input();
     init_debug_probe();
@@ -45136,7 +45158,7 @@ var init_tab_control = __esm({
         const note = typeof r.note === "string" && r.note !== "" ? r.note.slice(0, 500) : void 0;
         return { outcome, ...note ? { note } : {} };
       }
-      /** `Tether.cancelAsk`: the client gave up the call that asked; the host ends the request `dismissed`. Never throws. */
+      /** `Tether.cancelAsk`: o cliente desistiu da chamada que pediu; o hospedeiro encerra o pedido como `dismissed`. Nunca lança. */
       async cancelAsk(targetId) {
         await this.call(CANCEL_ASK, { targetId }).catch(() => {
         });
