@@ -2,10 +2,10 @@
 export const EMPTY_TITLE = 'Nenhuma guia aberta'
 export const EMPTY_HELP = 'Quando um agente abrir uma guia, ela aparece aqui.'
 export const OFF_ACTION = 'Abrir as configurações do navegador'
-/** The panel menu's two entries (and the profile hint's inline link). */
+/** The panel menu's two entries (the empty state's profile button has its own, PROFILE_OPEN). */
 export const SETTINGS_ENTRY = 'Configurações do navegador'
 export const PROFILE_ACTION = 'Perfis'
-export const PROFILE_LINK = 'Ver perfis'
+export const PROFILE_OPEN = 'Abrir os perfis'
 
 /** `extensions.browser.serveToAgents`: who gets the browser's tools. */
 export type ServeMode = 'perProfile' | 'all' | 'off'
@@ -30,7 +30,7 @@ export function servesAgent(mode: ServeMode, profileMarked: boolean): boolean {
 export function offHelpFor(mode: ServeMode): string | undefined {
   if (mode === 'all') return undefined
   if (mode === 'off') return 'O navegador está desligado: nenhum agente recebe as ferramentas dele.'
-  return 'Só agentes com perfil marcado recebem o navegador.'
+  return 'Só os agentes lançados com um perfil marcado recebem o navegador.'
 }
 export const WEB_EMPTY = 'Esta guia ainda não tem página.'
 export const NOT_LOADED = 'Não carregada desde que o Tether reabriu'

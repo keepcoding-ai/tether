@@ -6,8 +6,6 @@
 .br-empty-art .ph { width: 26px; height: 26px; }
 .br-empty-title { margin: 6px 0 0; font-size: 14px; font-weight: 600; }
 .br-empty-help, .br-empty-off { margin: 0; max-width: 240px; font-size: 12.5px; line-height: 1.5; color: var(--fg-dim); }
-.br-empty-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
-.br-empty-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .br-empty-go { margin-top: 4px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg); font: inherit; font-size: 12.5px; cursor: pointer; }
 .br-empty-go:hover { background: var(--bg-3, var(--bg-2)); }
 .br-empty-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

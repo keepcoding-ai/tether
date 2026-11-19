@@ -54,7 +54,7 @@ import {
 } from './pad-rules.ts'
 import { type ClosedTab, closedByText, closedGroups, PAD_CLEAR_CLOSED, PAD_CLOSED, PAD_REOPEN } from './closed-rules.ts'
 import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
-import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_LINK, SETTINGS_ENTRY, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
+import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_OPEN, SETTINGS_ENTRY, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
 import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
 
@@ -116,7 +116,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   /**
    * The pad's empty state: the classic centered block (icon in a box, title, one line), shorter when "Fechadas" follow it. Mode `off` keeps its message and the one button that turns the browser on;
-   * `perProfile` adds a muted hint with an inline link to the profiles; `all` shows neither.
+   * `perProfile` adds the hint and a button that opens the profiles; `all` shows neither.
    */
   const drawEmpty = (root: HTMLElement, withClosed: boolean): void => {
     const box = el('div', 'br-empty')
@@ -131,20 +131,11 @@ export function activate(ui: TetherUi): IDisposable[] {
       const off = el('p', 'br-empty-off', offHelp)
       off.dataset.role = 'off'
       off.dataset.mode = mode
-      if (mode === 'off') {
-        const go = el('button', 'br-empty-go', OFF_ACTION)
-        go.type = 'button'
-        go.dataset.action = 'open-settings'
-        go.addEventListener('click', () => { void ui.commands.run('settings.show') })
-        box.append(off, go)
-      } else {
-        const link = el('button', 'br-empty-link', PROFILE_LINK)
-        link.type = 'button'
-        link.dataset.action = 'open-profiles'
-        link.addEventListener('click', () => { void ui.commands.run('profiles.manage') })
-        off.append(' ', link)
-        box.append(off)
-      }
+      const go = el('button', 'br-empty-go', mode === 'off' ? OFF_ACTION : PROFILE_OPEN)
+      go.type = 'button'
+      go.dataset.action = mode === 'off' ? 'open-settings' : 'open-profiles'
+      go.addEventListener('click', () => { void ui.commands.run(mode === 'off' ? 'settings.show' : 'profiles.manage') })
+      box.append(off, go)
     }
     root.replaceChildren(box)
   }
