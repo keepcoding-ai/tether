@@ -116,11 +116,12 @@ export class ControlHub {
   pauseMany(tabIds: Iterable<string>): void { for (const id of tabIds) this.pause(id) }
   resumeMany(tabIds: Iterable<string>): void { for (const id of tabIds) this.resume(id) }
 
-  /** Open requests: on the tab, and of the agent across its tabs. */
-  openAsks(tabId: string, owner: string): { tab: boolean; agent: number } {
+  /** Open requests: on the tab (and whether it is the owner's own), and of the agent across its tabs. */
+  openAsks(tabId: string, owner: string): { tab: boolean; agent: number; own?: boolean } {
     let agent = 0
     for (const w of this.waiting.values()) if (w.owner === owner) agent++
-    return { tab: !!this.state(tabId).ask, agent }
+    const open = this.state(tabId).ask
+    return open ? { tab: true, agent, own: this.waiting.get(open.id)?.owner === owner } : { tab: false, agent }
   }
 
   /**

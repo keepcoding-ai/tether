@@ -165,12 +165,18 @@ function cleanPlainText(v: unknown, max: number): string {
     .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, max)
 }
 
-/** The request's parameters checked against the limits; a string is the refusal's reason. */
-export function checkAsk(params: { message?: unknown; kind?: unknown; timeoutMs?: unknown }, open: { tab: boolean; agent: number }): AskInput | string {
+/**
+ * The request's parameters checked against the limits; a string is the refusal's reason. A request open on the tab that
+ * belongs to the same asker (`own`) is replaced by the new one (it ends `dismissed`): a client may drop a call without ever
+ * cancelling it, and the orphan would otherwise lock the tab. It no longer counts toward the asker's limit either. A request
+ * of another asker on the tab is refused.
+ */
+export function checkAsk(params: { message?: unknown; kind?: unknown; timeoutMs?: unknown }, open: { tab: boolean; agent: number; own?: boolean }): AskInput | string {
   const message = cleanAskMessage(params.message)
   if (message === '') return 'the message must say what you need'
-  if (open.tab) return 'this tab already has an open request'
-  if (open.agent >= ASKS_PER_AGENT) return `at most ${ASKS_PER_AGENT} open requests per agent`
+  const replaces = open.tab && open.own === true
+  if (open.tab && !replaces) return 'this tab already has an open request'
+  if (open.agent - (replaces ? 1 : 0) >= ASKS_PER_AGENT) return `at most ${ASKS_PER_AGENT} open requests per agent`
   const kind: AskKind = params.kind === 'login' ? 'login' : 'other'
   const raw = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) ? params.timeoutMs : ASK_TIMEOUT_DEFAULT_MS
   const timeoutMs = Math.min(ASK_TIMEOUT_MAX_MS, Math.max(ASK_TIMEOUT_MIN_MS, Math.floor(raw)))
