@@ -32,9 +32,11 @@ test('vendor patch: WebNavigate, WebTabs and WebRead read the page within the ac
   assert.match(server, /function titleWithin\(page, ms\) \{\s*stage\("title"\);/)
   assert.match(server, /new BrowserError\(\s*"PAGE_NOT_READABLE",\s*`The page at \$\{page\.url\(\)\} loaded, but \$\{what\} was not read within \$\{ms\} ms/)
   // WebTabs (infoOf) and WebRead (readPage: the region count and the title) go through the same bounded read.
-  assert.match(server, /const title = titleWithin\(t\.page, timeoutNow\(\)\);/)
+  assert.match(server, /const title = titleWithin\(t\.page, timeoutNow\(\)\)\.catch\(/)
   assert.match(server, /title: await titleWithin\(page, timeout\),/)
   assert.match(server, /readableWithin\(page, timeout, "its content", \(\) => page\.locator\(candidate\)\.count\(\)\)/)
+  // WebTabs lists a tab whose title is not read in time as unreadable instead of failing the whole list.
+  assert.match(server, /return read === null \? \{ \.\.\.base, title: "", readable: false \} : \{ \.\.\.base, title: read \};/)
   // A named code shows as `[PAGE_NOT_READABLE] ...` only when the catalog knows it (otherwise it would read as [INTERNAL]).
   const codes = /BROWSER_ERROR_CODES = \[([\s\S]*?)\];/.exec(server)?.[1] ?? ''
   assert.match(codes, /"PAGE_NOT_READABLE"/)

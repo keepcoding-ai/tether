@@ -1,9 +1,9 @@
 {
   "name": "tether-browser",
   "version": "0.2.0",
-  "contentSha256": "8074e6c739e9f51de90ae05f632bccabe8ef114a97bf6cbc9ae2f23ba7a3c729",
+  "contentSha256": "a879a42c41ddfd672a352ee11eee1d9d2d7f79e7bab7db8d8ede908bfefe55cf",
   "files": {
-    "tether-browser/manifest.json": "b81747b46acb74dfc5e2c18029a6a817d81ae50f2f85ce0386ea4530d0f0ad44",
+    "tether-browser/manifest.json": "32f49127c85b2a13467eb5ff2a9dd42dfa8da8b733fb7739e37289d6084f2cbb",
     "tether-browser/node_modules/playwright-core/LICENSE": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb",
     "tether-browser/node_modules/playwright-core/NOTICE": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d",
     "tether-browser/node_modules/playwright-core/README.md": "d16ff7f8e38fa1fc954f695ad551cdc118d9c9bdd5f3d83203901f4c317d7d7e",
@@ -114,6 +114,6 @@
     "tether-browser/node_modules/playwright-core/lib/webp_codec.wasm": "164cd9583a3e4d081f767d3b41ff0a730443dc7535fcc5caff83561463384b79",
     "tether-browser/node_modules/playwright-core/lib/xdg-open": "7d759d54f0d4ce1beeb34ee62c587985b5042374e8de237b0dcb8cd47aa698cf",
     "tether-browser/node_modules/playwright-core/package.json": "f061c58427e47e843e26d201f0a57076c734e57c734ecbbd87d4a23b7a20db9b",
-    "tether-browser/server.mjs": "000b22cca1a06eaf0eb3697eba8f66b95989cae5641e672ff46cc8c6cc7149f4"
+    "tether-browser/server.mjs": "dffcc2a3f0b854daa94961a6130b723592a4cb2c53fd2a2d80a2b770487109d7"
   }
 }

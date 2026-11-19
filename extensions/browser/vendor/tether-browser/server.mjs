@@ -43445,14 +43445,18 @@ async function openSession(context, params) {
     const base = { id: t.id, url: t.page.url(), active: t.id === activeId };
     const dialog = t.dialogs.info();
     if (dialog) return { ...base, title: "", dialog: { type: dialog.type, message: dialog.message } };
-    const title = titleWithin(t.page, timeoutNow());
+    const title = titleWithin(t.page, timeoutNow()).catch((err) => {
+      if (err?.code === "PAGE_NOT_READABLE") return null;
+      throw err;
+    });
     title.catch(() => {
     });
     if (!await t.dialogs.race(title)) {
       const d = t.dialogs.info();
       return { ...base, title: "", dialog: { type: d.type, message: d.message } };
     }
-    return { ...base, title: await title };
+    const read = await title;
+    return read === null ? { ...base, title: "", readable: false } : { ...base, title: read };
   };
   const shutdown = (reason) => {
     if (shutting) return shutting;
@@ -44422,7 +44426,7 @@ var init_tool_texts = __esm({
       },
       tabs: {
         name: "WebTabs",
-        description: "List your browser tabs with their id, address and title, and which one is active. Tabs opened by pages appear here with a new id.",
+        description: "List your browser tabs with their id, address and title, and which one is active. Tabs opened by pages appear here with a new id. A tab whose title could not be read in time is listed with an empty title and readable: false; open a new tab to replace it.",
         params: {}
       },
       new_tab: {
