@@ -1,11 +1,11 @@
 /* The browser extension: the pad "Guias" empty state and the `web` frame (bar with the real title and address, the page area). */
 .br-pad { height: 100%; overflow: auto; }
-.br-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px 12px 4px; text-align: left; }
-.br-empty-head { display: flex; align-items: center; gap: 8px; }
-.br-empty-art { display: grid; place-items: center; width: 22px; height: 22px; color: var(--fg-dim); }
-.br-empty-art .ph { width: 20px; height: 20px; }
-.br-empty-title { margin: 0; font-size: 13px; font-weight: 600; }
-.br-empty-help, .br-empty-off { margin: 0; font-size: 12px; line-height: 1.5; color: var(--fg-dim); }
+.br-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 36px 20px 20px; text-align: center; }
+.br-empty[data-with-closed] { padding-block: 40px; }
+.br-empty-art { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 14px; background: var(--bg-2); color: var(--fg-dim); border: 1px solid var(--border); }
+.br-empty-art .ph { width: 26px; height: 26px; }
+.br-empty-title { margin: 6px 0 0; font-size: 14px; font-weight: 600; }
+.br-empty-help, .br-empty-off { margin: 0; max-width: 240px; font-size: 12.5px; line-height: 1.5; color: var(--fg-dim); }
 .br-empty-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .br-empty-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .br-empty-go { margin-top: 4px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg); font: inherit; font-size: 12.5px; cursor: pointer; }

@@ -115,17 +115,16 @@ export function activate(ui: TetherUi): IDisposable[] {
   let persistentLogins = true
 
   /**
-   * The pad's empty state: a compact block at the top. Mode `off` keeps its message and the one button that turns the browser on;
+   * The pad's empty state: the classic centered block (icon in a box, title, one line), shorter when "Fechadas" follow it. Mode `off` keeps its message and the one button that turns the browser on;
    * `perProfile` adds a muted hint with an inline link to the profiles; `all` shows neither.
    */
-  const drawEmpty = (root: HTMLElement): void => {
+  const drawEmpty = (root: HTMLElement, withClosed: boolean): void => {
     const box = el('div', 'br-empty')
     box.dataset.state = 'empty'
-    const head = el('div', 'br-empty-head')
-    const art = el('span', 'br-empty-art')
+    if (withClosed) box.dataset.withClosed = ''
+    const art = el('div', 'br-empty-art')
     art.append(icon('globe-simple'))
-    head.append(art, el('h3', 'br-empty-title', EMPTY_TITLE))
-    box.append(head, el('p', 'br-empty-help', EMPTY_HELP))
+    box.append(art, el('h3', 'br-empty-title', EMPTY_TITLE), el('p', 'br-empty-help', EMPTY_HELP))
     const mode = serveMode()
     const offHelp = offHelpFor(mode)
     if (offHelp) {
@@ -514,7 +513,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   const drawPad = (root: HTMLElement): void => {
     disposeBars(root)
     const all = padModel()
-    if (all.total === 0) drawEmpty(root)
+    if (all.total === 0) drawEmpty(root, (padFilter === undefined ? closedList : closedList.filter(c => c.ownerSlotId === padFilter)).length > 0)
     else drawList(root, padFilter === undefined ? all : padModel(padFilter))
     drawClosed(root)
     drawDownloads(root)
