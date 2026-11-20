@@ -1,7 +1,7 @@
 // The note extension's channels between its renderer and main sides (the bus `ext:note:<channel>`,
 // app/shared/ext-ipc.ts). They replace the bespoke `note:*` and `htmlpreview:*` channels of the core. Main validates
 // every argument: they come from the renderer.
-import type { NotePrepared, NoteRead, NoteRenamed, NoteWritten, PreviewKey, PreviewReport } from '../../app/shared/api.ts'
+import type { ImageRead, NotePrepared, NoteRead, NoteRenamed, NoteWritten, PreviewKey, PreviewReport } from '../../app/shared/api.ts'
 
 export interface NoteChannels {
   invoke: {
@@ -16,6 +16,8 @@ export interface NoteChannels {
     /** The folder of "Minhas notas" (the setting, or `~/.tether/notes`). */
     personalFolder: () => string
     read: (path: string) => NoteRead
+    /** The bytes of an image file (the viewer draws them from a blob); main refuses any other extension and files above 100 MB. */
+    readImage: (path: string) => ImageRead
     /** Atomic write. */
     write: (path: string, text: string) => NoteWritten
     rename: (from: string, to: string) => NoteRenamed

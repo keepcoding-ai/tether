@@ -8,6 +8,8 @@ export const PREVIEW_COMPONENT = 'md-preview'
 export const PREVIEW_TAB = 'md-preview-tab'
 /** The HTML preview's component: the page runs in an isolated webview (same pane id prefix, same tab). */
 export const HTML_PREVIEW_COMPONENT = 'html-preview'
+/** The image viewer's component: the file's bytes drawn by the app in an <img> (same pane id prefix, same tab). */
+export const IMAGE_PREVIEW_COMPONENT = 'image-preview'
 export const PREVIEW_PANEL_PREFIX = 'preview:'
 
 export function isPreviewPanelId(id: string): boolean {
@@ -25,8 +27,8 @@ export interface PreviewParams {
     path: string
     /** The source line (0-based, fractional) at the top of the preview when last persisted (markdown). */
     line?: number
-    /** 'html': the pane runs the page in an isolated webview (app/renderer/html-preview-panel.ts); absent: markdown. */
-    kind?: 'html'
+    /** 'html': the pane runs the page in an isolated webview (app/renderer/html-preview-panel.ts); 'image': the image viewer (image-preview-panel.ts); absent: markdown. */
+    kind?: 'html' | 'image'
     /** HTML: where the page was scrolled when last persisted (px). */
     scroll?: { x: number; y: number }
   }
@@ -42,7 +44,7 @@ export function previewParams(params: unknown): PreviewParams['preview'] | undef
   return {
     path,
     ...(typeof line === 'number' && Number.isFinite(line) && line >= 0 ? { line } : {}),
-    ...(kind === 'html' ? { kind: 'html' as const } : {}),
+    ...(kind === 'html' ? { kind: 'html' as const } : kind === 'image' ? { kind: 'image' as const } : {}),
     ...(isScroll(scroll) ? { scroll: { x: scroll.x, y: scroll.y } } : {}),
   }
 }
@@ -84,12 +86,35 @@ export function isHtmlPath(path: string): boolean {
   return HTML_EXTENSION.test(path)
 }
 
-/** Whether a file has a preview of either kind. */
+const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i
+
+/** Whether a file is an image the viewer draws (SVG included: drawn through <img>, never injected in the DOM). */
+export function isImagePath(path: string): boolean {
+  return IMAGE_EXTENSION.test(path)
+}
+
+/** An SVG is also text: it opens in the viewer by default and as code in the editor on request. */
+export function isSvgPath(path: string): boolean {
+  return /\.svg$/i.test(path)
+}
+
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif', svg: 'image/svg+xml',
+}
+
+/** The MIME type of an image file by extension (a blob needs it to be decoded as the right format). */
+export function imageMime(path: string): string {
+  return IMAGE_MIME[path.slice(path.lastIndexOf('.') + 1).toLowerCase()] ?? 'application/octet-stream'
+}
+
+/** Whether a file has a preview of any kind (an SVG's is its picture; other images have no text to come back to). */
 export function isPreviewablePath(path: string): boolean {
-  return isMarkdownPath(path) || isHtmlPath(path)
+  return isMarkdownPath(path) || isHtmlPath(path) || isSvgPath(path)
 }
 
 /** The pane's kind from its params. */
-export function previewKindOf(params: unknown): 'md' | 'html' {
-  return previewParams(params)?.kind === 'html' ? 'html' : 'md'
+export function previewKindOf(params: unknown): 'md' | 'html' | 'image' {
+  const kind = previewParams(params)?.kind
+  return kind === 'html' ? 'html' : kind === 'image' ? 'image' : 'md'
 }

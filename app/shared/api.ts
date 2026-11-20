@@ -71,6 +71,8 @@ export type ProfileDeleted = { ok: true } | { ok: false; message: string }
 /** A new note file, created empty; `askGitignore` names the repository whose `.gitignore` lacks `.tether/`. */
 export type NotePrepared = { path: string; askGitignore?: string }
 export type NoteRead = { ok: true; text: string; mtimeMs: number } | { ok: false; missing: boolean; message: string }
+/** What the image viewer reads of a file: its bytes and size, or why not. */
+export type ImageRead = { ok: true; bytes: Uint8Array; size: number } | { ok: false; missing: boolean; message: string }
 export type NoteWritten = { ok: true; mtimeMs: number } | { ok: false; message: string }
 export type NoteRenamed = { ok: true } | { ok: false; message: string }
 

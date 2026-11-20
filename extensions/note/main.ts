@@ -11,6 +11,8 @@ import { mainExecutor } from '../../app/main/main-executor.ts'
 import { addTetherToGitignore, isDestinationId, NoteWatchers, notesDirFor, personalNotesDir, prepareNote, readNote, renameNote, writeNote, type NoteDestinationId } from '../../app/main/note-files.ts'
 import { guardHtmlPreviews, openHtmlInBrowser } from '../../app/main/html-preview-main.ts'
 import { NOTE_EXTENSION } from '../../app/shared/notes.ts'
+import { isImagePath } from '../../app/shared/preview.ts'
+import { readImage } from '../../app/main/image-files.ts'
 import { canonicalDir } from '../../src/core/paths-sync.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { NoteChannels } from './ipc.ts'
@@ -52,6 +54,7 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('destination', () => lastDestination()),
     ipc.handle('personalFolder', () => personal()),
     ipc.handle('read', path => isPath(path) ? readNote(path) : { ok: false, missing: false, message: 'Caminho inválido.' }),
+    ipc.handle('readImage', path => isPath(path) && isImagePath(path) ? readImage(path) : { ok: false, missing: false, message: 'Só abro arquivos de imagem.' }),
     ipc.handle('write', (path, text) => isPath(path) && typeof text === 'string' ? writeNote(path, text) : { ok: false, message: 'Caminho inválido.' }),
     ipc.on('flush', (path, text) => { if (isPath(path) && typeof text === 'string') void writeNote(path, text) }),
     // The watches follow in the renderer (the note's `setPath`, a preview's retarget): each holder moves its own.
