@@ -3635,6 +3635,9 @@ function setupUi(): void {
     // its row): the key is the widget's, unless a chord is pending or a modifier is held.
     const owner = target?.closest<HTMLElement>('[data-own-keys]')
     if (owner && !dispatcher.waiting && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.shiftKey && (owner.dataset.ownKeys ?? '').split(' ').includes(ev.key)) return
+    // A widget that owns Ctrl chords (data-own-chords="= + - 0": the image viewer's zoom) keeps them instead of the terminal font's.
+    const chordOwner = target?.closest<HTMLElement>('[data-own-chords]')
+    if (chordOwner && !dispatcher.waiting && ev.ctrlKey && !ev.altKey && !ev.metaKey && (chordOwner.dataset.ownChords ?? '').split(' ').includes(ev.key)) return
     // While a chord waits, the navigation keys scroll the pill's list (it is often taller than the window).
     if (dispatcher.waiting && pill.scrollKey(ev)) { ev.preventDefault(); ev.stopPropagation(); return }
     const where = keyScopeOf(target)

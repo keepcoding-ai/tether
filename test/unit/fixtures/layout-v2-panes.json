@@ -136,6 +136,7 @@
                     "data": {
                       "views": [
                         "preview:00mh1k2d0-3ghi",
+                        "preview:00mh1k2d1-3ghj",
                         "empty:00mh1k2e0-4jkl",
                         "empty:00mh1k2f0-5mno"
                       ],
@@ -163,6 +164,18 @@
                   }
                 },
                 "title": "Prévia: pagina.html"
+              },
+              "preview:00mh1k2d1-3ghj": {
+                "id": "preview:00mh1k2d1-3ghj",
+                "contentComponent": "image-preview",
+                "tabComponent": "md-preview-tab",
+                "params": {
+                  "preview": {
+                    "path": "C:\\exemplo\\icone.svg",
+                    "kind": "image"
+                  }
+                },
+                "title": "Prévia: icone.svg"
               },
               "empty:00mh1k2e0-4jkl": {
                 "id": "empty:00mh1k2e0-4jkl",

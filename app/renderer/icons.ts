@@ -100,6 +100,8 @@ import rows from '@phosphor-icons/core/assets/regular/rows.svg'
 import dotsThree from '@phosphor-icons/core/assets/regular/dots-three.svg'
 import textAa from '@phosphor-icons/core/assets/regular/text-aa.svg'
 import magnifyingGlass from '@phosphor-icons/core/assets/regular/magnifying-glass.svg'
+import magnifyingGlassPlus from '@phosphor-icons/core/assets/regular/magnifying-glass-plus.svg'
+import magnifyingGlassMinus from '@phosphor-icons/core/assets/regular/magnifying-glass-minus.svg'
 import broom from '@phosphor-icons/core/assets/regular/broom.svg'
 import fileMagnifyingGlass from '@phosphor-icons/core/assets/regular/file-magnifying-glass.svg'
 import treeView from '@phosphor-icons/core/assets/regular/tree-view.svg'
@@ -236,6 +238,8 @@ const SVG = {
   rows,
   'dots-three': dotsThree,
   'magnifying-glass': magnifyingGlass,
+  'magnifying-glass-plus': magnifyingGlassPlus,
+  'magnifying-glass-minus': magnifyingGlassMinus,
   broom,
   'file-magnifying-glass': fileMagnifyingGlass,
   'tree-view': treeView,

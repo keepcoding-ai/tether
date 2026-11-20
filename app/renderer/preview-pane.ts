@@ -5,7 +5,7 @@
 import type { NotePanel } from './note-panel.ts'
 
 export interface PreviewPane {
-  readonly kind: 'md' | 'html'
+  readonly kind: 'md' | 'html' | 'image'
   readonly id: string
   /** The file the pane was opened on. */
   readonly path: string

@@ -11,17 +11,18 @@ import { NotePanel, NoteTab, type NoteHost, type NoteIo } from '../../app/render
 import { paneCwdOfNote } from '../../app/renderer/note-rules.ts'
 import { PreviewPanel, PreviewTab, type PreviewHost } from '../../app/renderer/preview-panel.ts'
 import { HtmlPreviewPanel, type HtmlPreviewHost } from '../../app/renderer/html-preview-panel.ts'
+import { ImagePreviewPanel, type ImagePreviewHost } from '../../app/renderer/image-preview-panel.ts'
 import type { PreviewPane } from '../../app/renderer/preview-pane.ts'
 import { defineTheme, mirrorThemeVars, monaco, remeasureEditorFonts } from '../../app/renderer/monaco.ts'
 import { editorChordCommand, editorKeybindings, runEditorChord } from '../../app/renderer/monaco-chords.ts'
 import type { FixedBinding } from '../../app/renderer/keybindings-rules.ts'
 import { fileOpenFailedSituation, type OpenFileOptions } from '../../app/renderer/file-open.ts'
-import { isHtmlPath, isPreviewablePath, newPreviewPanelId, withPreview } from '../../app/shared/preview.ts'
+import { isHtmlPath, isImagePath, isPreviewablePath, isSvgPath, newPreviewPanelId, withPreview } from '../../app/shared/preview.ts'
 import { stripTether } from '../../app/shared/tether-folder.ts'
 import { cleanNoteName, newNotePanelId, NOTE_COMPONENT, NOTE_TAB, noteDirOf, noteTitle, rebasePath, withNote } from '../../app/shared/notes.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { noteConflictSituation, noteGitignoreSituation } from './situations.ts'
-import { htmlPreviewLayout, mdPreviewLayout, noteLayout, previewPaneOptions } from './layouts.ts'
+import { htmlPreviewLayout, imagePreviewLayout, mdPreviewLayout, noteLayout, previewPaneOptions } from './layouts.ts'
 import type { NoteChannels } from './ipc.ts'
 
 export { manifest } from './manifest.ts'
@@ -242,7 +243,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   /** The preview of `path`, in the group of `reference` or beside it; an existing one is brought forward instead. */
   function showPreview(path: string, opts: { side: boolean; reference: string }): IDockviewPanel | undefined {
-    const kind = isHtmlPath(path) ? 'html' : 'md'
+    const kind = isHtmlPath(path) ? 'html' : isImagePath(path) ? 'image' : 'md'
     const key = path.toLowerCase()
     const existing = [...previews.values()].find(p => p.kind === kind && p.path.toLowerCase() === key)
     if (existing) {
@@ -259,8 +260,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     return panel
   }
 
-  /** Ctrl+P / Ctrl+click on an .html: its preview, in the group of the pane that asked (or beside it). */
-  function openHtmlFile(path: string, opts: OpenFileOptions): void {
+  /** Ctrl+P / Ctrl+click on an .html or an image: its preview or viewer, in the group of the pane that asked (or beside it). */
+  function openPreviewFile(path: string, opts: OpenFileOptions): void {
     const reference = opts.reference ?? activeId()
     if (!reference) { addNotePanel(path); return } // no pane at all: nothing to put a tab next to
     showPreview(path, { side: opts.side, reference })
@@ -295,6 +296,20 @@ export function activate(ui: TetherUi): IDisposable[] {
     },
     viewSource: (panel, path) => openPreviewSource(panel.id, path),
     openInBrowser: path => openInBrowser(path),
+    activate: panel => { const p = ui.panes.find(panel.id); if (p && !p.api.isGroupActive) p.api.setActive() },
+    onTabMenu: (id, x, y) => ui.panes.showTabMenu(id, x, y),
+  }
+
+  const imagePreviewHost: ImagePreviewHost = {
+    io,
+    readImage: path => ipc.invoke('readImage', path),
+    onParamsChange: panel => {
+      const p = ui.panes.find(panel.id)
+      if (!p) return
+      p.api.updateParameters(withPreview(p.params, { path: panel.path, kind: 'image' }))
+      ui.layout.scheduleSave()
+    },
+    viewSource: (panel, path) => openPreviewSource(panel.id, path),
     activate: panel => { const p = ui.panes.find(panel.id); if (p && !p.api.isGroupActive) p.api.setActive() },
     onTabMenu: (id, x, y) => ui.panes.showTabMenu(id, x, y),
   }
@@ -339,7 +354,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     const preview = previews.get(id)
     if (!preview) return
     ui.menus.context(x, y, [
-      { icon: 'note-pencil', label: preview.kind === 'html' ? 'Ver código' : 'Abrir o arquivo-fonte', run: () => openPreviewSource(id) },
+      ...(preview.kind === 'image' && !isSvgPath(preview.path) ? [] : [{ icon: 'note-pencil', label: preview.kind === 'md' ? 'Abrir o arquivo-fonte' : 'Ver código', run: () => openPreviewSource(id) }]),
+      ...(preview instanceof ImagePreviewPanel ? [{ icon: 'arrow-clockwise', label: 'Recarregar a imagem', run: () => preview.reload() }] : []),
       ...(preview instanceof HtmlPreviewPanel ? [{ icon: 'arrow-square-out', label: 'Abrir no navegador', run: () => openInBrowser(preview.path) }, { icon: 'arrow-clockwise', label: 'Recarregar a página', run: () => preview.reload() }] : []),
       { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
       { icon: 'copy', label: 'Copiar caminho do arquivo', run: () => ui.shell.writeClipboard(preview.path) },
@@ -379,11 +395,22 @@ export function activate(ui: TetherUi): IDisposable[] {
     contextFlags: () => ['markdown.preview'],
     tabMenu: showPreviewMenu,
   }
+  const imageType: PaneType = {
+    ...imagePreviewLayout, hasSlot: false, icon: 'file-image',
+    create: () => tracked(new ImagePreviewPanel(imagePreviewHost), previews),
+    has: id => previews.get(id) instanceof ImagePreviewPanel,
+    cwdOf: previewCwd,
+    fileOf: previewFile,
+    folderOf: previewFolder,
+    focus: focusPreview,
+    contextFlags: id => { const p = previews.get(id); return p && isSvgPath(p.path) ? ['markdown.preview'] : [] },
+    tabMenu: showPreviewMenu,
+  }
   const mdType: PaneType = {
     ...mdPreviewLayout, hasSlot: false, icon: 'eye',
     create: () => tracked(new PreviewPanel(previewHost), previews),
     createTab: () => new PreviewTab(previewHost),
-    has: id => previews.has(id) && !(previews.get(id) instanceof HtmlPreviewPanel),
+    has: id => { const p = previews.get(id); return !!p && p.kind === 'md' },
     cwdOf: previewCwd,
     fileOf: previewFile,
     folderOf: previewFolder,
@@ -425,7 +452,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     editorChord: (id, first, second) => { const ed = notes.get(id)?.editor; return !!ed && !!editorChordCommand(ed, first, second) },
     runEditorChord: (id, first, ev) => { const ed = notes.get(id)?.editor; if (ed) runEditorChord(ed, first, ev) },
   }
-  subs.push(ui.panes.register(htmlType), ui.panes.register(mdType), ui.panes.register(noteType))
+  subs.push(ui.panes.register(htmlType), ui.panes.register(imageType), ui.panes.register(mdType), ui.panes.register(noteType))
   // A file renamed by another extension (the explorer): the notes showing it, or a file under a renamed folder, follow it.
   subs.push(ui.files.onDidRename(({ from, to }) => {
     for (const n of notes.values()) {
@@ -482,10 +509,12 @@ export function activate(ui: TetherUi): IDisposable[] {
   )
 
   // ---------- files from Ctrl+P, terminal links, "abrir keybindings.json" ----------
-  // An .html file opens as its running page (not for "ver código", nor at a line); every other text file as a note.
+  // An .html file opens as its running page (not for "ver código", nor at a line), an image in the viewer (an SVG still
+  // opens as code for "ver código"); every other text file as a note.
 
   subs.push(
-    ui.openers.register({ id: 'note.html-preview', canOpen: (path, opts) => isHtmlPath(path) && !opts.source && !opts.position, open: openHtmlFile }),
+    ui.openers.register({ id: 'note.image-preview', canOpen: (path, opts) => isImagePath(path) && !opts.source, open: openPreviewFile }),
+    ui.openers.register({ id: 'note.html-preview', canOpen: (path, opts) => isHtmlPath(path) && !opts.source && !opts.position, open: openPreviewFile }),
     ui.openers.register({ id: 'note.editor', canOpen: () => true, open: openTextFile }),
   )
 
@@ -559,6 +588,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   ui.test.expose('preview', (id: string) => { const p = previews.get(id); return p instanceof PreviewPanel ? p.snapshot() : undefined })
   ui.test.expose('previewRect', (id: string, selector: string) => { const p = previews.get(id); return p instanceof PreviewPanel ? p.rectOf(selector) : undefined })
   ui.test.expose('openPreview', (side: boolean) => openPreview({ side })?.id)
+  ui.test.expose('imagePreviews', () => [...previews.values()].flatMap(p => (p instanceof ImagePreviewPanel ? [p.snapshot()] : [])))
+  ui.test.expose('imagePreview', (id: string) => { const p = previews.get(id); return p instanceof ImagePreviewPanel ? p.snapshot() : undefined })
   ui.test.expose('htmlPreviews', () => [...previews.values()].flatMap(p => (p instanceof HtmlPreviewPanel ? [p.snapshot()] : [])))
   ui.test.expose('htmlPreview', (id: string) => { const p = previews.get(id); return p instanceof HtmlPreviewPanel ? p.snapshot() : undefined })
   ui.test.expose('htmlPreviewRect', (id: string) => { const p = previews.get(id); return p instanceof HtmlPreviewPanel ? p.viewRect() : undefined })

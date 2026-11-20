@@ -1,9 +1,10 @@
 // Opening a file (core, F9 slice 2): Ctrl+P (the quick-open extension), a Ctrl+click on a path in a terminal and the
 // extensions' "open the source file" all end here. Main inspects the path (app/main/file-open-main.ts): a text file goes
-// to the openers extensions register (the note's: an .html as its preview, any other text file as a note); a binary or
+// to the openers extensions register (the note's: an .html as its preview, an image in the viewer, any other text file as a note); a binary or
 // a file above 5 MB goes to the system's program (main refuses anything that would run); what cannot be opened is said.
 import type { DialogSpec } from '../shared/dialog.ts'
 import type { LineColumn } from '../shared/file-open.ts'
+import { isImagePath } from '../shared/preview.ts'
 
 /** Where and how a file opens (shared by Ctrl+P and a Ctrl+click on a path in a terminal). */
 export interface OpenFileOptions {
@@ -32,6 +33,8 @@ export interface FileOpenHost {
  */
 export async function openFile(host: FileOpenHost, path: string, opts: OpenFileOptions): Promise<void> {
   const target = await window.tether.inspectFile(path)
+  // An image has its viewer, binary or not (an SVG asked as source goes on to the editor like any text).
+  if (isImagePath(path) && !opts.source && target.kind !== 'missing' && target.kind !== 'folder') { host.opened(path); host.openText(path, opts); return }
   if (target.kind === 'text') { host.opened(path); host.openText(path, opts); return }
   if (target.kind === 'missing') { host.notify(`O arquivo não existe mais: ${path}`); return }
   if (target.kind === 'folder') { host.notify(`É uma pasta: ${path}`); return }
