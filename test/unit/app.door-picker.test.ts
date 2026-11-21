@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DoorHost } from '../../app/renderer/door/host.ts'
-import { moveSelection, rankPicks, reselect, runList, runSteps, PICK_PAGE, type Ask, type AskContext, type PickAnswer } from '../../app/renderer/door/picker-rules.ts'
+import { groupHeading, moveSelection, numberedRow, rankPicks, reselect, runList, runSteps, PICK_PAGE, type Ask, type AskContext, type PickAnswer } from '../../app/renderer/door/picker-rules.ts'
 import type { PickItem, PickSpec } from '../../app/renderer/ext-api.ts'
 
 const it = (value: string, label = value, detail?: string): PickItem<string> => ({ value, label, ...(detail ? { detail } : {}) })
@@ -117,5 +117,40 @@ describe('DoorHost without a document', () => {
     const door = new DoorHost()
     assert.equal(await door.pickList({ title: 't', items: [it('a')] }), undefined)
     assert.equal(await door.pickSteps({ title: 't', items: [it('a')] }, () => ({ title: 'u', items: [] })), undefined)
+  })
+})
+
+describe('K1.6: groups and the number keys', () => {
+  const g = (value: string, group?: string): PickItem<string> => ({ value, label: value, ...(group ? { group } : {}) })
+  const items = [g('atrium', 'Recentes'), g('kai', 'Nesta mesa'), g('soul', 'Nesta mesa'), g('codex', 'Outras mesas'), g('kaio', 'Recentes')]
+
+  test('rows of a group stay together, groups in the order they first appear; the heading opens each group once', () => {
+    const rows = rankPicks(undefined, items, '')
+    assert.deepEqual(labels(rows), ['atrium', 'kaio', 'kai', 'soul', 'codex'])
+    assert.deepEqual(rows.map((_, i) => groupHeading(rows, i) ?? ''), ['Recentes', '', 'Nesta mesa', '', 'Outras mesas'])
+  })
+
+  test('a query ranks inside each group and keeps the group order', () => {
+    const rows = rankPicks(undefined, items, 'kai')
+    assert.deepEqual(labels(rows), ['kaio', 'kai'], 'Recentes before Nesta mesa, whatever the score')
+    assert.deepEqual(rows.map((_, i) => groupHeading(rows, i) ?? ''), ['Recentes', 'Nesta mesa'])
+  })
+
+  test('no group anywhere: the order of today; the featured row has no heading', () => {
+    const plain = [g('a'), g('b')]
+    assert.deepEqual(labels(rankPicks(undefined, plain, '')), ['a', 'b'])
+    const rows = rankPicks({ value: 'top', label: 'top', group: 'Recentes' }, items, '')
+    assert.equal(groupHeading(rows, 0), undefined, 'the featured row has no heading')
+    assert.equal(groupHeading(rows, 1), 'Recentes', 'the group under it opens with its heading')
+  })
+
+  test('1 to 9 choose a row while the filter is empty; otherwise the key types', () => {
+    assert.equal(numberedRow('1', '', 5), 0)
+    assert.equal(numberedRow('5', '', 5), 4)
+    assert.equal(numberedRow('6', '', 5), undefined, 'no such row')
+    assert.equal(numberedRow('0', '', 5), undefined)
+    assert.equal(numberedRow('2', 'k', 5), undefined, 'with text in the filter the key types')
+    assert.equal(numberedRow('a', '', 5), undefined)
+    assert.equal(numberedRow('9', '', 20), 8)
   })
 })

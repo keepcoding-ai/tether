@@ -6,6 +6,8 @@
 //   3. two steps: Esc in the second goes back to the first (query and choice kept), Enter in the second resolves both;
 //   4. a list that loads late shows "Carregando…", one that fails says so; a newer picker takes the place of an open one;
 //   5. a command called with an argument skips the picker, one called without opens it.
+//   6. (K1.6) rows with a group go under its heading, groups in the order they first appear; 1 to 9 choose a row while the
+//      filter is empty and type otherwise. With TETHER_K1_PRINTS set to a folder, a print of the grouped picker (light theme).
 // With TETHER_PICKER_PRINTS set to a folder, two prints (light and dark theme, first step open) go there.
 // Every kill goes through test/kill.ts (pid + creation time); the daemon here is closed in-process.
 import { test, before } from 'node:test'
@@ -256,5 +258,62 @@ test('door picker: featured row, filter, keys, back and close, focus, argument c
     await waitResults(page, 15)
     assert.deepEqual((await results(page)).slice(13), ['picked:obras', 'command:ran'])
     assert.ok(await focusBack(), 'the focus went back after the command')
+  })
+})
+
+test('door picker K1.6: group headings and the number keys', { timeout: 300_000 }, async () => {
+  await withApp(async page => {
+    const groupResults = (): Promise<unknown[]> => probe(page, 'pickGroupResults')
+    const numbers = (): Promise<string[]> => rows(page).locator('kbd.pk-num').allInnerTexts()
+
+    // A picker without groups (the probe's R4 one) draws no heading.
+    await probe(page, 'pickStart', 'list')
+    await opened(page)
+    await page.waitForFunction(() => document.querySelectorAll('dialog.picker li.pk-item').length > 0)
+    assert.equal(await box(page).locator('li.pk-group').count(), 0, 'no group, no heading')
+    await page.keyboard.press('Escape')
+    await closed(page)
+
+    // ---- the groups: headings in the order they first appear, the rows under them ----
+    await probe(page, 'pickGroups')
+    await opened(page)
+    await page.waitForFunction(() => document.querySelectorAll('dialog.picker li.pk-item').length === 4)
+    assert.deepEqual(await box(page).locator('li.pk-group').evaluateAll(els => els.map(e => e.textContent)), ['Recentes', 'Nesta mesa', 'Outras mesas'])
+    assert.deepEqual(await rowTexts(page), ['Atrium · Claude', 'kai · Claude', 'soul · bancada', 'codex · revisão'])
+    assert.deepEqual(await box(page).locator('ul.pk-list > li').evaluateAll(els => els.map(e => e.classList.contains('pk-group') ? `# ${e.textContent}` : e.querySelector('.pk-label')?.textContent)),
+      ['# Recentes', 'Atrium · Claude', '# Nesta mesa', 'kai · Claude', 'soul · bancada', '# Outras mesas', 'codex · revisão'])
+    assert.deepEqual(await numbers(), ['1', '2', '3', '4'], 'each row shows its number key')
+    assert.equal(await selectedText(page), 'Atrium · Claude', 'the first row is selected')
+    const dir = process.env.TETHER_K1_PRINTS
+    if (dir) {
+      mkdirSync(dir, { recursive: true })
+      await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
+      await page.waitForTimeout(300)
+      await box(page).screenshot({ path: join(dir, 'k1.6-seletor-em-grupos-light.png') })
+    }
+    // A query ranks inside each group; the headings stay; the numbers go (a digit types).
+    await page.keyboard.type('c')
+    await page.waitForFunction(() => document.querySelectorAll('dialog.picker kbd.pk-num').length === 0)
+    await page.keyboard.press('2')
+    assert.equal(await box(page).locator('input').inputValue(), 'c2', 'with text in the filter a digit types')
+    await page.keyboard.press('Control+A')
+    await page.keyboard.press('Backspace')
+    await page.waitForFunction(() => document.querySelectorAll('dialog.picker kbd.pk-num').length === 4)
+    // 3 chooses the third row at once.
+    await page.keyboard.press('3')
+    await closed(page)
+    await page.waitForFunction(() => (window.__tether.ext['door-probe']!.pickGroupResults as () => unknown[])().length >= 1)
+    assert.deepEqual(await groupResults(), ['soul'], 'the key 3 chose the third row')
+
+    // A key past the last row chooses nothing and types.
+    await probe(page, 'pickGroups')
+    await opened(page)
+    await page.waitForFunction(() => document.querySelectorAll('dialog.picker li.pk-item').length === 4)
+    await page.keyboard.press('7')
+    assert.equal(await box(page).locator('input').inputValue(), '7')
+    await page.keyboard.press('Escape')
+    await closed(page)
+    await page.waitForFunction(() => (window.__tether.ext['door-probe']!.pickGroupResults as () => unknown[])().length >= 2)
+    assert.deepEqual(await groupResults(), ['soul', null])
   })
 })

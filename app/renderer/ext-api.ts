@@ -253,13 +253,21 @@ export interface PaneHeadItem {
   onActivate?: (anchor: HTMLElement) => void
 }
 
-/** One row of the list picker (`pick`). */
+/**
+ * One row of the list picker (`pick`). The first nine rows answer to the keys 1 to 9 while the filter is empty (the key
+ * chooses the row, as Enter does).
+ */
 export interface PickItem<T> {
   value: T
   label: string
   detail?: string
   icon?: string
   hue?: number
+  /**
+   * The heading of the group the row belongs to ("Recentes", "Nesta mesa", "Outras mesas"). Groups keep the order in which
+   * they first appear in `items`; a query ranks rows inside their group. Absent: no heading (the featured row never has one).
+   */
+  group?: string
 }
 
 export interface PickSpec<T> {

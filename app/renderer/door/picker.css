@@ -38,3 +38,7 @@ dialog.picker .pk-field input[type="text"]:focus { outline: none; }
 .pk-sep { height: 1px; margin: 4px 4px; padding: 0; background: var(--border); cursor: default; }
 .pk-empty { margin: 0; padding: 14px 16px; color: var(--fg-dim); font-size: 12.5px; line-height: 1.5; }
 .pk-empty[hidden] { display: none; }
+
+/* A group's heading (PickItem.group: "Recentes", "Nesta mesa"), and the number key of the first nine rows while the filter is empty. */
+.pk-group { padding: 8px 10px 3px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); cursor: default; }
+.pk-num { flex: none; min-width: 18px; text-align: center; }

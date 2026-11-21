@@ -1,12 +1,13 @@
 // The list picker (the `pick` block of TetherUi): a box at the top of the window, in the palette's language, that an extension's
 // command opens when the person asks for it and that resolves with what was chosen. One step (`list`) or two (`steps`); the
 // rules (rows, selection, back and close) are in picker-rules.ts. One modal <dialog>, made on first use and kept.
-// Keys: type to filter, ↑/↓ (wrapping) and PageUp/PageDown move, Enter chooses, Esc goes back (second step) or closes, a click
-// on a row chooses, a click outside closes. The row on top (`featured`) is selected when the box opens. When it closes, the
+// Keys: type to filter, ↑/↓ (wrapping) and PageUp/PageDown move, Enter chooses, 1 to 9 choose the row of that number while the
+// filter is empty, Esc goes back (second step) or closes, a click on a row chooses, a click outside closes. Rows with a group
+// are drawn under its heading. The row on top (`featured`) is selected when the box opens. When it closes, the
 // focus goes back to what had it before; nothing is shown unless a command asked.
 import type { PickItem, PickSpec } from '../ext-api.ts'
 import { normalizeHue } from './desk-seal-rules.ts'
-import { moveSelection, rankPicks, reselect, runList, runSteps, type Ask, type AskContext, type PickAnswer, type PickRow } from './picker-rules.ts'
+import { PICK_NUMBERED, groupHeading, moveSelection, numberedRow, rankPicks, reselect, runList, runSteps, type Ask, type AskContext, type PickAnswer, type PickRow } from './picker-rules.ts'
 
 /** The icon for a name the app has; undefined for one it does not (the row then draws without one). */
 type MakeIcon = (name: string) => SVGSVGElement | undefined
@@ -134,7 +135,10 @@ export class Picker {
           return
         }
         empty.hidden = true
+        const numbered = input.value === ''
         rows.forEach((row, i) => {
+          const heading = groupHeading(rows, i)
+          if (heading) { const hd = document.createElement('li'); hd.className = 'pk-group'; hd.setAttribute('role', 'presentation'); hd.textContent = heading; list.append(hd) }
           const li = document.createElement('li')
           li.id = `pk-opt-${i}`
           li.className = row.featured ? 'pk-item featured' : 'pk-item'
@@ -153,6 +157,7 @@ export class Picker {
           }
           text.append(label)
           if (row.item.detail) { const dt = document.createElement('span'); dt.className = 'pk-detail'; dt.textContent = row.item.detail; text.append(dt) }
+          if (numbered && i < PICK_NUMBERED) { const n = document.createElement('kbd'); n.className = 'pk-num'; n.textContent = String(i + 1); li.append(n) }
           li.append(ic, text)
           list.append(li)
           // The featured row is apart from the rest: a rule under it, when there is a rest.
@@ -169,6 +174,11 @@ export class Picker {
           case 'Enter': ev.preventDefault(); choose(selected); break
           case 'Escape': ev.preventDefault(); ev.stopPropagation(); settle(back()); break
           case 'Tab': ev.preventDefault(); break // the field is the only stop
+          default: {
+            if (ev.ctrlKey || ev.altKey || ev.metaKey || ev.isComposing) break
+            const n = numberedRow(ev.key, input.value, rows.length)
+            if (n !== undefined) { ev.preventDefault(); choose(n) }
+          }
         }
       }, { signal })
       // Esc raised by the browser itself (the keydown above normally takes it first).

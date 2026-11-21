@@ -18,7 +18,8 @@ export interface PickRow<T> {
 /**
  * The rows for a query: the featured item first (when it matches), then the others, the way fuzzy.ts ranks them (a match in the
  * label before one only in the detail; ties keep the list's order). An empty query keeps everything in the list's order. The
- * featured item is not repeated when the list holds it too.
+ * featured item is not repeated when the list holds it too. Rows with a `group` stay together: the groups keep the order in which
+ * they first appear in the list, and the ranking orders the rows inside each group.
  */
 export function rankPicks<T>(featured: PickItem<T> | undefined, items: readonly PickItem<T>[], query: string): PickRow<T>[] {
   const rows: PickRow<T>[] = []
@@ -34,8 +35,34 @@ export function rankPicks<T>(featured: PickItem<T> | undefined, items: readonly 
   if (top) rows.push(top.row)
   const ranked = rest.map((item, order) => ({ ...rank(item, false), order })).filter((r): r is { row: PickRow<T>; key: number; order: number } => r.row !== undefined)
   if (query.trim() !== '') ranked.sort((a, b) => b.key - a.key || a.order - b.order)
+  const groupAt = new Map<string | undefined, number>()
+  for (const item of rest) if (!groupAt.has(item.group)) groupAt.set(item.group, groupAt.size)
+  if (groupAt.size > 1) {
+    const at = ranked.map((r, i) => ({ r, i }))
+    at.sort((a, b) => groupAt.get(a.r.row.item.group)! - groupAt.get(b.r.row.item.group)! || a.i - b.i)
+    ranked.splice(0, ranked.length, ...at.map(x => x.r))
+  }
   for (const r of ranked) rows.push(r.row)
   return rows
+}
+
+/** The heading drawn above row `i`: its group's, when it opens that group (never above the featured row). */
+export function groupHeading<T>(rows: readonly PickRow<T>[], i: number): string | undefined {
+  const row = rows[i]
+  const group = row && !row.featured ? row.item.group : undefined
+  if (typeof group !== 'string' || group === '') return undefined
+  const before = rows[i - 1]
+  return before && !before.featured && before.item.group === group ? undefined : group
+}
+
+/** How many rows answer to a number key (1 to 9). */
+export const PICK_NUMBERED = 9
+
+/** The row a key chooses: '1' to '9' while the filter is empty, when that row exists; otherwise undefined (the key types). */
+export function numberedRow(key: string, query: string, count: number): number | undefined {
+  if (query !== '' || key.length !== 1 || key < '1' || key > '9') return undefined
+  const i = Number(key) - 1
+  return i < count ? i : undefined
 }
 
 /** The selected row after a navigation key; `current` when the key does not navigate or there are no rows. */
