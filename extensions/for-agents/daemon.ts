@@ -1,12 +1,56 @@
-// The for-agents extension in tetherd. Skeleton: nothing registered yet, so turned on and unused it changes no state.
-// The ownership (daemon/ownership.ts, reconcile.ts, guard.ts) and the verbs come in their own slices.
-import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+// The for-agents extension in tetherd: the ownership (daemon/ownership.ts), the one reconciler that turns it into the
+// door's `held` and rerouted attention (daemon/reconcile.ts), and the gate of raw typing (daemon/guard.ts). The verbs and
+// the notices come in their own slices and get the same three pieces from `wire`.
+//
+// Turned off (the store disposed), every hold of this extension and every route goes; the data stays in its file.
+import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { slotTitle } from '../../app/shared/agent-info.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
+import { OwnershipStore, takesByTyping } from './daemon/ownership.ts'
+import { Reconciler } from './daemon/reconcile.ts'
+import { WriteGate } from './daemon/guard.ts'
 
 export { manifest } from './manifest.ts'
 /** The same pure rules the renderer draws from. */
 export { effective } from './rules.ts'
 
-export function activate(_api: TetherDaemon): IDisposable[] {
-  return []
+/** What the next slices of the daemon (verbs, notices, the watch) build on. */
+export interface ForAgentsDaemon {
+  store: OwnershipStore
+  reconciler: Reconciler
+  gate: WriteGate
+  /** Resolves when the reconciler has nothing left to apply. */
+  idle(): Promise<void>
+}
+
+/**
+ * Builds the pieces and hooks them to the door. The listeners land in the extension's store (the door's `own`); the
+ * returned disposable undoes the door's state, and runs after them (it is added last).
+ */
+export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposables: IDisposable[] } {
+  const store = new OwnershipStore(api.objects, api.desks)
+  const reconciler = new Reconciler({ slots: api.slots, attention: api.attention, desks: api.desks, store, log: (m) => api.log(m) })
+  const gate = new WriteGate(store, api.slots)
+  const typingTakes = (slotId: string): void => {
+    if (!takesByTyping(store.effectiveOf(slotId))) return
+    store.take({ pane: slotId }, 'taken', 'typing').catch((e: unknown) => api.log(`tomar ${slotId} digitando falhou: ${(e as Error).message}`))
+  }
+  const forgotten = (slotId: string, name: string): void => {
+    store.markEnded(slotId, name).catch((e: unknown) => api.log(`marcar o fim de ${slotId} falhou: ${(e as Error).message}`))
+  }
+  const disposables: IDisposable[] = [
+    api.objects.onDidChange((e) => reconciler.objectChanged(e)),
+    api.objects.onDidDrop((e) => { if (e.kind === 'pane') reconciler.paneDropped(e.id) }),
+    api.desks.onDidChange((map) => reconciler.deskMapChanged(map)),
+    api.slots.onUserTyped(typingTakes),
+    // The name the struck mark keeps is read here: by the time a pane object drops, its slot is no longer listed.
+    api.onSlot((ev) => { if (ev.kind === 'removed') forgotten(ev.slot.slotId, slotTitle(ev.slot)) }),
+    api.onStarted(() => reconciler.start()),
+    toDisposable(() => { reconciler.undo().catch((e: unknown) => api.log(`desfazer a posse falhou: ${(e as Error).message}`)) }),
+  ]
+  return { forAgents: { store, reconciler, gate, idle: () => reconciler.idle() }, disposables }
+}
+
+export function activate(api: TetherDaemon): IDisposable[] {
+  return wire(api).disposables
 }
