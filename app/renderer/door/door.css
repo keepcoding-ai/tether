@@ -53,3 +53,11 @@
   display: inline-block; width: 7px; height: 7px; margin: 0 1px; border-radius: 1px; transform: rotate(45deg);
   background: hsl(var(--attn-hue, 0) var(--mark-solid-s) var(--mark-solid-l));
 }
+
+/* The same diamond in the panel's status bar, beside the bell, which takes the owner's colour too (the bell is orange only for the person). */
+.status-bar .bell .diamond { display: none; }
+.status-bar .bell.routed { color: hsl(var(--attn-hue, 0) var(--mark-solid-s) var(--mark-solid-l)); gap: 4px; align-items: center; }
+.status-bar .bell.routed .diamond {
+  display: inline-block; width: 7px; height: 7px; margin: 0 2px; border-radius: 1px; transform: rotate(45deg);
+  background: hsl(var(--attn-hue, 0) var(--mark-solid-s) var(--mark-solid-l));
+}

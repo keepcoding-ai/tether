@@ -168,6 +168,15 @@ test('door routed: object data in both hosts and the mark of an attention for th
     const diamond = await routed.evaluate(el => getComputedStyle(el).backgroundColor)
     assert.notEqual(orange, diamond, 'the two marks do not share a colour')
 
+    // The panel's status bar: the diamond and the bell in the owner's colour, not the orange.
+    const headBell = page.locator('.status-bar .bell.routed')
+    await headBell.waitFor({ state: 'attached' })
+    assert.equal(await headBell.count(), 1, 'only the routed panel has the owner-coloured bell')
+    assert.equal(await headBell.evaluate(el => (el as HTMLElement).style.getPropertyValue('--attn-hue')), String(hue), 'the bell takes the hue of the owner')
+    assert.match((await headBell.getAttribute('title')) ?? '', /^Terminou, para Atrium/, 'the bell names the owner')
+    assert.ok(await headBell.locator('.diamond').evaluate(el => getComputedStyle(el).transform !== 'none'), 'the status bar shows the diamond')
+    assert.equal(await headBell.evaluate(el => el.classList.contains('done') || el.classList.contains('waiting')), false, 'not the orange bell')
+
     // The pill counts the common one only.
     await pill(page, 'desk-1').locator('.desk-badge').waitFor()
     assert.equal(await pill(page, 'desk-1').locator('.desk-badge').innerText(), '1', 'the orange count is 1: the routed attention is not counted')

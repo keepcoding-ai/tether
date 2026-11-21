@@ -394,7 +394,8 @@ export class TerminalPanel implements IContentRenderer {
     head.setAttribute('role', 'group'); head.setAttribute('aria-label', 'Barra de status')
     const status = document.createElement('span'); status.className = 'status'; status.setAttribute('role', 'img')
     const bell = document.createElement('span'); bell.className = 'bell'; bell.setAttribute('role', 'img'); bell.hidden = true
-    bell.append(icon('bell'))
+    const diamond = document.createElement('span'); diamond.className = 'diamond'
+    bell.append(diamond, icon('bell'))
     const profile = document.createElement('span'); profile.className = 'info-profile'; profile.hidden = true
     const cwd = document.createElement('span'); cwd.className = 'info-cwd'
     const unsafe = unsafeBadge(true)
@@ -596,9 +597,12 @@ export class TerminalPanel implements IContentRenderer {
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
     const att = this.host.attentionOf?.(this.slotId) ?? { level: s.attention, lines: s.attention === 'waiting' ? ['Esperando você'] : s.attention === 'done' ? ['Terminou'] : [] }
-    const bellTip = att.lines.join('\n')
-    this.head.bell.hidden = !att.level
-    this.head.bell.className = `bell${att.level ? ` ${att.level}` : ''}`
+    // An attention that waits for an agent owner: the diamond and the bell in the owner's colour, in place of the orange (seal-rules.ts routedAttention).
+    const routed = routedAttention(s, id => { const o = this.host.getSlot(id); return o ? panelTitle(o) : undefined }, att.level)
+    const bellTip = routed ? routed.tooltip : att.lines.join('\n')
+    this.head.bell.hidden = !att.level && !routed
+    this.head.bell.className = `bell${att.level ? ` ${att.level}` : routed ? ' routed' : ''}`
+    if (routed) this.head.bell.style.setProperty('--attn-hue', String(routed.hue)); else this.head.bell.style.removeProperty('--attn-hue')
     this.head.bell.title = bellTip
     this.head.bell.setAttribute('aria-label', bellTip)
     if (s.restarting) this.setStatus('starting', 'reiniciando…')
