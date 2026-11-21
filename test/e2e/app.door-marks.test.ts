@@ -91,19 +91,13 @@ test('door marks: a menu row with an unknown icon name draws without an icon and
 const probe = <T>(page: Page, name: string, ...args: unknown[]): Promise<T> =>
   page.evaluate(({ name, args }) => (window.__tether.ext['door-probe']![name] as unknown as (...a: unknown[]) => unknown)(...args) as never, { name, args })
 
-/** door.css is linked from index.html once the shell does it; until then the test lends it, so the geometry and the prints are the real ones. */
-async function ensureDoorCss(page: Page): Promise<boolean> {
-  const linked = await page.evaluate(() => [...document.styleSheets].some(sheet => (sheet.href ?? '').endsWith('door/door.css')))
-  if (!linked) await page.addStyleTag({ path: join(root, 'app', 'renderer', 'door', 'door.css') })
-  return linked
-}
-
 const pill = (page: Page, desk: string) => page.locator(`#desk-switch .seg[data-desk="${desk}"]`)
 const tabOf = (page: Page, paneId: string) => page.locator(`.tether-tab[data-slot="${paneId}"]`)
 
 test('door marks: the desk seal and the tab emblem', { timeout: 300_000 }, async () => {
   await withApp(async (page, home) => {
-    await ensureDoorCss(page)
+    // door.css is linked by the page itself (index.html): the geometry below and the prints are the real ones.
+    assert.ok(await page.evaluate(() => [...document.styleSheets].some(sheet => (sheet.href ?? '').endsWith('door/door.css'))), 'index.html links door.css')
     // Two desks so the pill strip shows, a shell pane and a note.
     await page.keyboard.press('Control+Shift+N')
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
@@ -129,6 +123,21 @@ test('door marks: the desk seal and the tab emblem', { timeout: 300_000 }, async
     assert.equal(await pill(page, 'desk-2').locator('.desk-seal svg').count(), 1, 'the glyph is drawn')
     assert.equal(await pill(page, 'desk-2').locator('.desk-seal').evaluate(el => (el as HTMLElement).style.getPropertyValue('--seal-hue')), String(hue))
     assert.equal(await pill(page, 'desk-2').locator('.cnt').count(), 0, 'a seal is not a count')
+    assert.equal(await pill(page, 'desk-2').locator('.desk-seal .nm').count(), 0, 'no label: the glyph alone')
+    const bareWidth = (await pill(page, 'desk-2').locator('.desk-seal').boundingBox())!.width
+
+    // A label sits beside the glyph, wider than the bare seal, and a long one is cut at a fixed width.
+    await probe(page, 'seal', 'desk-2', { icon: 'puzzle-piece', hue, label: 'Atrium', tooltip: 'Dona: Atrium' })
+    await pill(page, 'desk-2').locator('.desk-seal .nm').waitFor()
+    assert.equal(await pill(page, 'desk-2').locator('.desk-seal .nm').innerText(), 'Atrium')
+    assert.ok((await pill(page, 'desk-2').locator('.desk-seal').boundingBox())!.width > bareWidth, 'the labeled seal is wider than the bare one')
+    await probe(page, 'seal', 'desk-2', { icon: 'puzzle-piece', hue, label: 'Um nome de dono muito, muito mais comprido do que cabe na pílula', tooltip: 'Dona: longa' })
+    await page.waitForFunction(() => document.querySelector('#desk-switch .seg[data-desk="desk-2"] .desk-seal .nm')?.textContent?.startsWith('Um nome'))
+    const cut = await pill(page, 'desk-2').locator('.desk-seal').evaluate(el => ({ w: el.getBoundingClientRect().width, nm: el.querySelector('.nm')!.scrollWidth > el.querySelector('.nm')!.clientWidth }))
+    assert.ok(cut.w <= 150.5, `a long label does not push the other pills (seal ${cut.w}px)`)
+    assert.ok(cut.nm, 'the long label is cut')
+    await probe(page, 'seal', 'desk-2', { icon: 'puzzle-piece', hue, label: 'Atrium', tooltip: 'Dona: Atrium' })
+    await page.waitForFunction(() => document.querySelector('#desk-switch .seg[data-desk="desk-2"] .desk-seal .nm')?.textContent === 'Atrium')
 
     // The orange count does not change: one attention on desk-1 reads 1 before, during and after a seal on that pill.
     await probe(page, 'raiseAttention', shellId)
@@ -167,7 +176,9 @@ test('door marks: the desk seal and the tab emblem', { timeout: 300_000 }, async
     assert.equal(await tabOf(page, shellId).locator('.ext-emblem').count(), 1, 'one emblem again in the first desk')
     assert.equal(await tabOf(page, noteId).locator('.ext-emblem').count(), 1, 'the note kept its emblem')
 
-    // ---- the prints: light and dark, the strip and the tabs ----
+    // ---- the prints: light and dark, the strip (desk-2 with the label, desk-1 without) and the tabs ----
+    await probe(page, 'seal', 'desk-1', { icon: 'puzzle-piece', hue: agentHue('claude-2'), tooltip: 'Sem rótulo' })
+    await pill(page, 'desk-1').locator('.desk-seal').waitFor()
     const dir = process.env.TETHER_MARKS_PRINTS
     if (dir) {
       mkdirSync(dir, { recursive: true })
