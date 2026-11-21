@@ -6,6 +6,9 @@ import type { ContextMenuEntry, DeskSeal, DeskView, PaneInfo, PickSpec, TabEmble
 import type { ExtObjects } from '../../shared/api.ts'
 import type { DeskMap, ObjectKind, SlotState } from '../../../src/daemon/protocol.ts'
 import { toDisposable, type IDisposable } from '../../shared/vscode-lifecycle.ts'
+import type { Layout } from '../layout.ts'
+import { DeskMapSender, deskMapOf } from './desk-map.ts'
+import { applyPaneRequests, type PaneRequestPort } from './pane-requests.ts'
 
 /** The rows an extension's provider gave, or none when it threw (one bad provider never breaks the menu). */
 function collect<A>(providers: Iterable<{ ext: string; fn: (a: A) => ContextMenuEntry[] }>, arg: A, what: string): ContextMenuEntry[] {
@@ -70,7 +73,28 @@ function inertObjects(): ExtObjects {
   }
 }
 
+/** What main.ts gives the host so the daemon's pane requests and the desk map work (absent: both are inert). */
+export interface DoorPort extends Omit<PaneRequestPort, 'resendMap'> {
+  /** The layout as it would be saved now. */
+  layout(): Layout
+  /** The type a pane of that component reports in the desk map ('terminal' for a slot's pane). */
+  paneType(component: string): string
+  systemDeskName(deskId: string): string | undefined
+  sendDeskMap(map: DeskMap): void
+  /** Every slot the app knows. */
+  slots(): Iterable<SlotState>
+}
+
 export class DoorHost {
+  private readonly mapSender: DeskMapSender | undefined
+
+  private readonly port: DoorPort | undefined
+
+  constructor(port?: DoorPort) {
+    this.port = port
+    this.mapSender = port && new DeskMapSender(map => port.sendDeskMap(map))
+  }
+
   private readonly deskMenus = new Set<{ ext: string; fn: (deskId: string) => ContextMenuEntry[] }>()
   private readonly paneMenus = new Set<{ ext: string; fn: (pane: PaneInfo) => ContextMenuEntry[] }>()
   private readonly deskListeners = new Set<() => void>()
@@ -80,13 +104,32 @@ export class DoorHost {
   // ---------- seams main.ts calls ----------
 
   /** A slot's state was applied (the daemon's `state` event), after the pane and the strip were updated. */
-  stateApplied(_slot: SlotState): void {}
+  stateApplied(slot: SlotState): void { if (this.port) applyPaneRequests([slot], { ...this.port, resendMap: () => this.sendMap(true) }) }
 
   /** The slot list was read again (`list`: at start and on every reconnection). */
-  slotsListed(_slots: readonly SlotState[]): void {}
+  slotsListed(slots: readonly SlotState[]): void {
+    this.mapSender?.reconnected()
+    this.restored(slots)
+  }
+
+  /** layout.json was restored (the first connection): the requests that waited for it run, and the map goes. */
+  layoutRestored(): void { if (this.port) this.restored(this.port.slots()) }
+
+  /** The requests, then the map (forced on a reconnection by `reconnected`); nothing before the layout is restored. */
+  private restored(slots: Iterable<SlotState>): void {
+    const port = this.port
+    if (!port || !port.layoutRestored()) return
+    applyPaneRequests(slots, { ...port, resendMap: () => this.sendMap(true) })
+    this.sendMap()
+  }
+
+  private sendMap(force = false): void {
+    const port = this.port
+    if (port) this.mapSender!.offer(deskMapOf(port.layout(), port.paneType, port.systemDeskName), force)
+  }
 
   /** layout.json was just handed to main (the save timer fired, after the layout was restored). */
-  layoutSaved(): void {}
+  layoutSaved(): void { this.sendMap() }
 
   /**
    * The desk strip was drawn again: the queue, the visible desk, a name, a colour, a desk's sleep or its panes may have
