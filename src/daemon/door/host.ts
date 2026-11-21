@@ -8,7 +8,10 @@ import type { LaunchPlan } from '../../agents/types.ts'
 import type { SlotMeta } from '../../core/event.ts'
 import type { SlotState } from '../protocol.ts'
 import { doorUnavailable, type DoorRequestHandler, type DoorSeams, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
+import { DeskService } from './desks.ts'
+import { ObjectService } from './objects.ts'
 import { SlotKeys } from './slot-key.ts'
+import { SlotsService } from './slots.ts'
 import { ENV_SLOT_KEY, type DoorApi, type DoorAttention, type DoorDelivery, type DoorDesks, type DoorObjects, type DoorSlots, type DoorVerbs } from './types.ts'
 import { VerbRegistry } from './verbs.ts'
 
@@ -31,10 +34,24 @@ export class DoorHost implements DoorSeams {
   readonly slotKeys = new SlotKeys()
   /** The contributed verbs: the CLI's `verb-list`/`verb` read it here, and the MCP server (D5) reads the same one. */
   readonly verbs: VerbRegistry
+  /** The desk map (D2): kept in <home>/desks.json, fed by the app's `desk-map`. */
+  readonly desks: DeskService
+  /** The slots service (D1): drives slots through the port, fans `stateChanged` out, answers `read-screen`. */
+  private readonly slotsService: SlotsService
+  /** The per-object data (D3): kept in <home>/objects/<ext>.json, pruned by a forgotten slot and by a desk-map. */
+  readonly objects: ObjectService
 
   constructor(opts: DoorHostOptions) {
     this.opts = opts
     this.verbs = new VerbRegistry({ keys: this.slotKeys, stateOf: (slotId) => this.portRef?.stateOf(slotId) })
+    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks)
+    this.requests.register('read-screen', this.slotsService.handleReadScreen)
+    this.desks = new DeskService({ log: (msg) => this.log(msg) })
+    this.requests.register('desk-map', this.desks.handleMap)
+    this.objects = new ObjectService({ log: (msg) => this.log(msg) })
+    this.requests.register('object-get', this.objects.handleGet)
+    this.requests.register('object-set', this.objects.handleSet)
+    this.desks.onDidChange((map) => { this.objects.handleDeskMap(map).catch((e: unknown) => this.log(`objects: ${(e as Error).message}`)) })
     this.requests.register('verb-list', this.verbs.handleList)
     this.requests.register('verb', this.verbs.handleRun)
   }
@@ -61,6 +78,8 @@ export class DoorHost implements DoorSeams {
   attach(port: SlotPort): void {
     if (this.portRef) throw new Error('a porta do agente já tem um servidor')
     this.portRef = port
+    this.desks.attach(port)
+    this.objects.attach(port)
   }
 
   requestHandler(t: string): DoorRequestHandler | undefined {
@@ -69,7 +88,7 @@ export class DoorHost implements DoorSeams {
 
   decorate(_meta: SlotMeta, _state: SlotState): void {}
 
-  stateChanged(_state: SlotState): void {}
+  stateChanged(state: SlotState): void { this.slotsService.stateChanged(state) }
 
   input(_slotId: string, _data: string, _origin: InputOrigin): void {}
 
@@ -82,33 +101,19 @@ export class DoorHost implements DoorSeams {
 
   exited(slotId: string): void { this.slotKeys.revoke(slotId) }
 
-  forgotten(slotId: string): void { this.slotKeys.revoke(slotId) }
+  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); return this.objects.dropPane(slotId) }
 
   // ---- the extensions' API ---------------------------------------------------------------------
 
   /** The door part of extension `ext`'s TetherDaemon; its registrations land in `own`. */
   apiFor(ext: string, own: DisposableStore): DoorApi {
     const what = (service: string): string => `${service}, extensão ${ext}`
-    const slots: DoorSlots = {
-      create: () => reject(what('slots.create')),
-      write: () => reject(what('slots.write')),
-      keys: () => reject(what('slots.keys')),
-      readScreen: () => { throw doorUnavailable(what('slots.readScreen')) },
-      start: () => reject(what('slots.start')),
-      stop: () => reject(what('slots.stop')),
-      restart: () => reject(what('slots.restart')),
-      forget: () => reject(what('slots.forget')),
-      rename: () => reject(what('slots.rename')),
-      get: () => undefined,
-      list: () => [],
-      onState: () => owned(own),
-      setHeld: () => reject(what('slots.setHeld')),
-    }
+    const slots: DoorSlots = this.slotsService.apiFor(ext, own)
     const desks: DoorDesks = {
-      map: () => undefined,
-      deskOf: () => undefined,
-      onDidChange: () => owned(own),
-      requestPane: () => reject(what('desks.requestPane')),
+      map: () => this.desks.map(),
+      deskOf: (paneId) => this.desks.deskOf(paneId),
+      onDidChange: (listener) => own.add(this.desks.onDidChange(listener)),
+      requestPane: (slotId, deskId) => this.desks.requestPane(slotId, deskId),
     }
     const verbs: DoorVerbs = {
       register: (verb) => own.add(this.verbs.register(ext, verb)),
@@ -128,13 +133,7 @@ export class DoorHost implements DoorSeams {
       routeOf: () => undefined,
       seen: () => { throw doorUnavailable(what('attention.seen')) },
     }
-    const objects: DoorObjects = {
-      get: () => undefined,
-      set: () => reject(what('objects.set')),
-      entries: () => [],
-      onDidChange: () => owned(own),
-      onDidDrop: () => owned(own),
-    }
+    const objects: DoorObjects = this.objects.apiFor(ext, own)
     return { slots, desks, verbs, delivery, attention, objects }
   }
 
