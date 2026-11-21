@@ -4,11 +4,11 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DoorHost } from '../../app/renderer/door/host.ts'
 import { collect, withDeskMenuGroup, withPaneMenuItems } from '../../app/renderer/door/menus.ts'
-import type { ContextMenuEntry, PaneInfo } from '../../app/renderer/ext-api.ts'
+import type { ContextMenuEntry, ContextMenuRow, PaneInfo } from '../../app/renderer/ext-api.ts'
 
 const pane: PaneInfo = { id: 'note:1', type: 'note' }
 const row = (label: string): ContextMenuEntry => ({ icon: 'x', label, run: () => {} })
-const labels = (es: readonly ContextMenuEntry[]): string[] => es.map(e => (e === 'sep' ? '—' : e.label))
+const labels = (es: readonly ContextMenuRow[]): string[] => es.map(e => (e === 'sep' ? '—' : 'heading' in e ? `# ${e.heading}` : e.label))
 
 /** The console error of a provider that threw is expected here; keep the test output clean. */
 function quiet<T>(fn: () => T): { out: T; errors: number } {

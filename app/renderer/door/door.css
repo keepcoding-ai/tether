@@ -67,3 +67,13 @@
   flex: none; width: 7px; height: 7px; margin: 0 3px; border-radius: 1px; transform: rotate(45deg);
   background: hsl(var(--attn-hue, 0) var(--mark-solid-s) var(--mark-solid-l));
 }
+
+/* An extension's submenu row in a context menu (ContextMenuItem.children): the ≡ menu's submenu (menu-submenus.ts), above the menu. */
+#ctx-menu li.sub .sub-arrow { margin-left: auto; width: 13px; height: 13px; }
+#ctx-menu li.sub[data-side="left"] .sub-arrow { transform: scaleX(-1); }
+#ctx-menu li.sub[aria-expanded="true"] { background: var(--bg-hover-2); }
+#ctx-menu ul.submenu {
+  position: fixed; z-index: 71; min-width: 220px; max-width: 360px; margin: 0; padding: 4px; list-style: none; cursor: default; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow); color: var(--fg); font-weight: normal;
+}
+#ctx-menu ul.submenu[hidden] { display: none; }

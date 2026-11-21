@@ -1,10 +1,10 @@
 // The rules of the extensions' menu rows: collecting what the providers give (a provider that throws is dropped, the rest
 // stay) and placing the rows in a desk pill's menu and in a pane's menu. Pure: no DOM, the unit tests load it.
-import type { ContextMenuEntry } from '../ext-api.ts'
+import type { ContextMenuRow } from '../ext-api.ts'
 
 /** The rows an extension's provider gave, or none when it threw (one bad provider never breaks the menu). */
-export function collect<A>(providers: Iterable<{ ext: string; fn: (a: A) => ContextMenuEntry[] }>, arg: A, what: string): ContextMenuEntry[] {
-  const out: ContextMenuEntry[] = []
+export function collect<A>(providers: Iterable<{ ext: string; fn: (a: A) => ContextMenuRow[] }>, arg: A, what: string): ContextMenuRow[] {
+  const out: ContextMenuRow[] = []
   for (const p of [...providers]) {
     try {
       const rows = p.fn(arg)
@@ -53,4 +53,11 @@ export function withPaneMenuItems<E>(entries: readonly E[], extra: readonly E[],
   const lead = before.length && before[before.length - 1] !== sep ? [sep] : []
   const trail = floor.length ? [sep] : []
   return [...before, ...lead, ...rows, ...trail, ...floor]
+}
+
+/** A pane menu with the extensions' top rows as its first group, then a separator. No rows: the menu as it was. */
+export function withPaneMenuTop<E>(entries: readonly E[], top: readonly E[], sep: E): E[] {
+  const rows = tidy(top, sep)
+  if (rows.length === 0) return [...entries]
+  return entries.length ? [...rows, sep, ...entries] : rows
 }

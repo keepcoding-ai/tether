@@ -67,7 +67,7 @@ import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
 import { registerProfileOption } from './profile-options.ts'
 import { ProcsStore } from './procs-store.ts'
-import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, FileOpener, LooseCause, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, ContextMenuRow, FileOpener, LooseCause, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -85,7 +85,7 @@ import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
 import type { DeskView, PaneInfo } from './ext-api.ts'
-import { DoorHost, withDeskMenuGroup, withPaneMenuItems } from './door/host.ts'
+import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop } from './door/host.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
@@ -607,7 +607,7 @@ function padMenuEntries(id: string): MenuEntry[] {
   const items: MenuEntry[] = [{ heading: sidebars?.padTitle(id) ?? id }, ...core]
   // The pad's own items (the explorer's "Seguir" and "Revelar" toggles) come after the core's.
   const own = sidebars?.shownView(id)?.menu?.() ?? []
-  if (own.length) items.push(SEP, ...own.map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName }))
+  if (own.length) items.push(SEP, ...fromExtMenu(own))
   return items
 }
 
@@ -2582,8 +2582,11 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
 
 // ---------- tab context menu ----------
 
-/** `pin`: how the item also shows outside the menu (ext-api MenuPin). `standalone`: it acts without the pane on screen (a closed tab's menu runs it as is). `tip`: tooltip. */
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean; tip?: string; trail?: HTMLElement }
+/**
+ * `pin`: how the item also shows outside the menu (ext-api MenuPin). `standalone`: it acts without the pane on screen (a closed
+ * tab's menu runs it as is). `tip`: tooltip. `children`: a submenu row (menu-submenus.ts), one level; `run` is not called.
+ */
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean; tip?: string; trail?: HTMLElement; children?: MenuEntry[] }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
 /** A line naming what the items under it act on (a pad's title over its items); not an item. */
@@ -2631,7 +2634,10 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     if (refocus && owner?.isConnected) owner.focus()
   }
   const onDoc = (ev: Event): void => { if (!menu.contains(ev.target as Node)) close(false) }
+  // A menu with a submenu row moves like the ≡ menu (menu-submenus.ts: arrows within the focused list, → opens, ← and Esc close).
+  let submenus: ReturnType<typeof attachSubmenus> | undefined
   const onKey = (ev: KeyboardEvent): void => {
+    if (submenus?.handleKey(ev)) return
     const lis = [...menu.querySelectorAll<HTMLElement>('li[role^=menuitem]')]
     const i = lis.indexOf(document.activeElement as HTMLElement)
     if (ev.key === 'Escape') { ev.preventDefault(); close(true) }
@@ -2649,10 +2655,22 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     items = last < 0 ? [...items, SEP, entry] : [...items.slice(0, last), entry, ...items.slice(last)]
   }
   if (padSection) { const id = padSection; padSection = undefined; items = [...items, SEP, ...padMenuEntries(id)] }
-  for (const item of items) {
-    if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep); continue }
-    if ('heading' in item) { const hd = document.createElement('li'); hd.className = 'hd'; hd.setAttribute('role', 'presentation'); hd.textContent = item.heading; menu.append(hd); continue }
+  if (items.some(e => e !== SEP && 'children' in e && e.children)) submenus = attachSubmenus(menu)
+  const rowOf = (item: MenuEntry, sub: boolean): HTMLElement => {
+    if (item === SEP) { const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); return sep }
+    if ('heading' in item) { const hd = document.createElement('li'); hd.className = 'hd'; hd.setAttribute('role', 'presentation'); hd.textContent = item.heading; return hd }
     const li = document.createElement('li'); li.setAttribute('role', item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'); li.tabIndex = -1
+    if (item.children && !sub) {
+      const kids = item.children.filter(c => c === SEP || !('children' in c) || !c.children)
+      li.classList.add('sub'); li.setAttribute('aria-haspopup', 'menu'); li.setAttribute('aria-expanded', 'false')
+      if (item.disabled || !kids.some(c => c !== SEP && !('heading' in c))) li.setAttribute('aria-disabled', 'true')
+      if (item.tip) li.title = item.tip
+      const ul = document.createElement('ul'); ul.className = 'submenu'; ul.setAttribute('role', 'menu'); ul.hidden = true
+      ul.append(...kids.map(c => rowOf(c, true)))
+      li.append(...rowIcon(item.icon), document.createTextNode(item.label), icon('caret-right', 'sub-arrow'), ul)
+      li.addEventListener('click', ev => { ev.stopPropagation(); if (li.getAttribute('aria-disabled') !== 'true') submenus?.handleClick(ev) })
+      return li
+    }
     if (item.checked !== undefined) li.setAttribute('aria-checked', String(item.checked))
     if (item.danger) li.classList.add('danger')
     if (item.disabled) li.setAttribute('aria-disabled', 'true')
@@ -2668,8 +2686,9 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
       // The item left nothing focused (it did not open a dialog or move to a pane): back to the opener.
       if (document.activeElement === document.body && owner?.isConnected) owner.focus()
     })
-    menu.append(li)
+    return li
   }
+  for (const item of items) menu.append(rowOf(item, false))
   document.body.append(menu)
   // Keep it on screen: measure, then clamp to the window.
   const r = menu.getBoundingClientRect()
@@ -2762,12 +2781,19 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
 function basePaneEntries(id: string): MenuEntry[] {
   const slot = slots.get(id)
   const own = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
-  return withPaneMenuItems<MenuEntry>(own, fromExtMenu(door.paneMenuItems(describePane(id))), SEP, e => e !== SEP && 'label' in e && (e.label === LINK_LABEL || isCloseLabel(e.label)))
+  const pane = describePane(id)
+  const withFloor = withPaneMenuItems<MenuEntry>(own, fromExtMenu(door.paneMenuItems(pane)), SEP, e => e !== SEP && 'label' in e && (e.label === LINK_LABEL || isCloseLabel(e.label)))
+  return withPaneMenuTop<MenuEntry>(withFloor, fromExtMenu(door.paneMenuTop(pane)), SEP)
 }
 
-/** An extension's menu rows as the core's menu entries. */
-function fromExtMenu(entries: readonly ContextMenuEntry[]): MenuEntry[] {
-  return entries.map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName })
+/** An extension's menu rows (items, separators, headings, one level of submenu) as the core's menu entries. */
+function fromExtMenu(entries: readonly ContextMenuRow[]): MenuEntry[] {
+  return entries.map((e): MenuEntry => {
+    if (e === 'sep') return SEP
+    if ('heading' in e) return { heading: String(e.heading) }
+    const { children, ...item } = e
+    return { ...item, icon: item.icon as IconName, ...(Array.isArray(children) ? { children: fromExtMenu(children) } : {}) }
+  })
 }
 
 /** An entry's label (none for a separator or a heading). */
@@ -2788,7 +2814,7 @@ function slotMenuEntries(slot: SlotState): MenuEntry[] {
   const fromExtensions: MenuEntry[] = []
   if (slot.kind !== 'shell') {
     for (const provider of [...agentTabMenuProviders]) {
-      try { fromExtensions.push(...provider(slotId).map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName })) } catch (err) { console.error('agents.tabMenu', err) }
+      try { fromExtensions.push(...fromExtMenu(provider(slotId))) } catch (err) { console.error('agents.tabMenu', err) }
     }
     if (fromExtensions.length > 0) fromExtensions.push(SEP)
   }
@@ -4302,7 +4328,7 @@ function activateRendererExtensions(): void {
         describe: paneId => describePane(paneId),
         onDidChangeActive: listener => { activePaneListeners.add(listener); return add(toDisposable(() => { activePaneListeners.delete(listener) })) },
         setEmblem: (paneId, emblem) => door.setEmblem(id, paneId, emblem),
-        tabMenu: provider => add(door.paneMenu(id, provider)),
+        tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),
       },
       desks: {
         list: () => deskViews(),
@@ -4378,7 +4404,7 @@ function activateRendererExtensions(): void {
       },
       menus: {
         app: (item: RegistryMenuItem<CommandContext>) => add(menuRegistry.appendMenuItem(MenuId.App, item as RegistryMenuItem)),
-        context: (x, y, entries: ContextMenuEntry[]) => showContextMenu(x, y, entries.map(e => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName })),
+        context: (x, y, entries: ContextMenuEntry[]) => showContextMenu(x, y, fromExtMenu(entries)),
       },
       layout: { scheduleSave: () => scheduleSave() },
       dialogs: { ask: spec => askDialog(spec) },

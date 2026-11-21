@@ -6,6 +6,7 @@ import { manifest } from './manifest.ts'
 import { marks } from './marks.ts'
 import { menus } from './menus.ts'
 import { objects } from './objects.ts'
+import { ownerMenus } from './owner-menus.ts'
 import { picks } from './picks.ts'
 
 export { manifest }
@@ -16,5 +17,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     ...marks(ui),
     ...picks(ui),
     ...objects(ui),
+    ...ownerMenus(ui),
   ]
 }

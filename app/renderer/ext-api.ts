@@ -71,7 +71,27 @@ export interface PaneInfo {
  * only in the menu.
  */
 export type MenuPin = 'icon' | 'primary' | 'highlight'
-export type ContextMenuEntry = { icon: string; label: string; run(): void; danger?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin } | 'sep'
+/**
+ * A menu item. With `children` it is a submenu row instead: it opens its rows beside the menu (hover, click, → or Enter) and
+ * `run` is not called. One level only: a child's own `children` are ignored. A submenu with no rows is drawn disabled.
+ */
+export interface ContextMenuItem {
+  icon: string
+  label: string
+  run(): void
+  danger?: boolean
+  disabled?: boolean
+  checked?: boolean
+  pin?: MenuPin
+  children?: readonly ContextMenuRow[]
+}
+export type ContextMenuEntry = ContextMenuItem | 'sep'
+/** A line of plain text naming what the rows under it are about ("Dona: Atrium · comanda 4 guias"); not an item, never pinned. */
+export interface ContextMenuHeading { heading: string }
+/** What a menu provider of an extension gives (`panes.tabMenu`, `desks.menu`): items, separators and heading lines. */
+export type ContextMenuRow = ContextMenuEntry | ContextMenuHeading
+/** Where an extension's rows go in a pane's menu: before its floor (the default) or as the menu's first group. */
+export interface TabMenuPlace { place?: 'top' }
 /**
  * Whose eyes a tab menu is for. 'manager': a view that lists panels (open or with their tab closed) apart from their tabs;
  * the menu then starts with how to reach the tab ("Focar guia"; for a closed one "Trazer de volta") and does not activate
@@ -276,10 +296,12 @@ export interface TetherUi {
      */
     setEmblem(paneId: string, emblem: TabEmblem | undefined): void
     /**
-     * Rows this extension puts in the menu of ANY pane, before the menu's floor ("Copiar link do painel", the close). The
-     * provider gets the pane and returns its rows (none: an empty list); it runs each time the menu opens.
+     * Rows this extension puts in the menu of ANY pane, before the menu's floor ("Copiar link do painel", the close), or, with
+     * `place: 'top'`, as the menu's first group (in a manager's menu, after its "Focar guia" and "Fechar guia"). The provider
+     * gets the pane and returns its rows (none: an empty list); it runs each time the menu opens. Headings and submenus are
+     * drawn in the menu; `tabMenuEntries` leaves the headings out.
      */
-    tabMenu(provider: (pane: PaneInfo) => ContextMenuEntry[]): IDisposable
+    tabMenu(provider: (pane: PaneInfo) => ContextMenuRow[], opts?: TabMenuPlace): IDisposable
   }
   /** The queue desks (system desks are `systemDesks`). */
   desks: {
@@ -290,8 +312,8 @@ export interface TetherUi {
     onDidChange(listener: () => void): IDisposable
     /** This extension's seal on a queue desk's pill; `undefined` removes it. It goes with the extension. */
     setSeal(deskId: string, seal: DeskSeal | undefined): void
-    /** This extension's rows in a desk pill's menu, in a group of their own before "Hibernar mesa". */
-    menu(provider: (deskId: string) => ContextMenuEntry[]): IDisposable
+    /** This extension's rows in a desk pill's menu (headings and submenus too), in a group of their own before "Hibernar mesa". */
+    menu(provider: (deskId: string) => ContextMenuRow[]): IDisposable
   }
   /** A list picker, filtered by typing. */
   pick: {

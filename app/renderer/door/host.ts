@@ -2,7 +2,7 @@
 // (state applied, slots listed, layout saved, strip rendered, the two menus, the daemon's `desks` and `object` events) and
 // the TetherUi blocks of the door (desks, pane emblems and menus, pick, objects) are served from here. The rules live in
 // files of their own next to this one; this file wires them and stays free of DOM work at import, so the unit tests load it.
-import type { ContextMenuEntry, DeskSeal, DeskView, PaneInfo, PickSpec, TabEmblem } from '../ext-api.ts'
+import type { ContextMenuRow, DeskSeal, DeskView, PaneInfo, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
 import type { ExtObjects } from '../../shared/api.ts'
 import type { DeskMap, SlotState } from '../../../src/daemon/protocol.ts'
 import { toDisposable, type IDisposable } from '../../shared/vscode-lifecycle.ts'
@@ -49,8 +49,8 @@ export class DoorHost {
     this.mapSender = port && new DeskMapSender(map => port.sendDeskMap(map))
   }
 
-  private readonly deskMenus = new Set<{ ext: string; fn: (deskId: string) => ContextMenuEntry[] }>()
-  private readonly paneMenus = new Set<{ ext: string; fn: (pane: PaneInfo) => ContextMenuEntry[] }>()
+  private readonly deskMenus = new Set<{ ext: string; fn: (deskId: string) => ContextMenuRow[] }>()
+  private readonly paneMenus = new Set<{ ext: string; fn: (pane: PaneInfo) => ContextMenuRow[]; top: boolean }>()
   private readonly deskListeners = new Set<() => void>()
   /** The desks as the last strip drawing showed them. */
   private deskSignature: string | undefined
@@ -125,25 +125,30 @@ export class DoorHost {
   objectEvent(e: ObjectEventBody): void { this.objects.apply(e) }
 
   /** The extensions' rows for a desk pill's menu (empty when none registered). */
-  deskMenuItems(deskId: string): ContextMenuEntry[] {
+  deskMenuItems(deskId: string): ContextMenuRow[] {
     return collect(this.deskMenus, deskId, 'desks.menu')
   }
 
-  /** The extensions' rows for a pane's menu (empty when none registered). */
-  paneMenuItems(pane: PaneInfo | undefined): ContextMenuEntry[] {
-    return pane ? collect(this.paneMenus, pane, 'panes.tabMenu') : []
+  /** The extensions' rows for a pane's menu, before its floor (empty when none registered). */
+  paneMenuItems(pane: PaneInfo | undefined): ContextMenuRow[] {
+    return pane ? collect([...this.paneMenus].filter(p => !p.top), pane, 'panes.tabMenu') : []
+  }
+
+  /** The extensions' rows for the top of a pane's menu (`place: 'top'`; empty when none registered). */
+  paneMenuTop(pane: PaneInfo | undefined): ContextMenuRow[] {
+    return pane ? collect([...this.paneMenus].filter(p => p.top), pane, 'panes.tabMenu') : []
   }
 
   // ---------- what TetherUi serves from here ----------
 
-  deskMenu(ext: string, fn: (deskId: string) => ContextMenuEntry[]): IDisposable {
+  deskMenu(ext: string, fn: (deskId: string) => ContextMenuRow[]): IDisposable {
     const entry = { ext, fn }
     this.deskMenus.add(entry)
     return toDisposable(() => { this.deskMenus.delete(entry) })
   }
 
-  paneMenu(ext: string, fn: (pane: PaneInfo) => ContextMenuEntry[]): IDisposable {
-    const entry = { ext, fn }
+  paneMenu(ext: string, fn: (pane: PaneInfo) => ContextMenuRow[], opts?: TabMenuPlace): IDisposable {
+    const entry = { ext, fn, top: opts?.place === 'top' }
     this.paneMenus.add(entry)
     return toDisposable(() => { this.paneMenus.delete(entry) })
   }
@@ -183,4 +188,4 @@ export class DoorHost {
   objectsFor(ext: string): ExtObjects { return this.objects.apiFor(ext) }
 }
 
-export { withDeskMenuGroup, withPaneMenuItems } from './menus.ts'
+export { withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop } from './menus.ts'
