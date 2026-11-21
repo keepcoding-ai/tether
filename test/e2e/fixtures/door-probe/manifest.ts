@@ -7,6 +7,6 @@ export const manifest: ExtensionManifest = {
   version: '0.0.1',
   displayName: 'Prova da porta',
   description: 'Só para os testes: usa a porta do agente como uma extensão de verdade usaria.',
-  hosts: ['renderer'],
+  hosts: ['main', 'renderer'],
   optional: true,
 }

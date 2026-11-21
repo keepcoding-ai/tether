@@ -5,6 +5,7 @@ import type { IDisposable } from '../../../../app/shared/vscode-lifecycle.ts'
 import { manifest } from './manifest.ts'
 import { marks } from './marks.ts'
 import { menus } from './menus.ts'
+import { objects } from './objects.ts'
 import { picks } from './picks.ts'
 
 export { manifest }
@@ -14,5 +15,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     ...menus(ui),
     ...marks(ui),
     ...picks(ui),
+    ...objects(ui),
   ]
 }
