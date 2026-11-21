@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createXtermLoader, DEFAULT_VENDOR_DIR } from '../../extensions/for-agents/screen/loader.ts'
+import { createXtermLoader, defaultVendorDir } from '../../extensions/for-agents/screen/loader.ts'
 import { auditVendor, VENDOR_ENTRY, VENDOR_PACKAGE_DIR, XTERM_INTEGRITY, XTERM_VERSION, type ScreenVendorManifest } from '../../extensions/for-agents/screen/vendor-rules.ts'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -15,7 +15,7 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 async function withCopy(fn: (dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'tether-for-agents-vendor-'))
   try {
-    await cp(DEFAULT_VENDOR_DIR, dir, { recursive: true })
+    await cp(defaultVendorDir(), dir, { recursive: true })
     await fn(dir)
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -24,15 +24,15 @@ async function withCopy(fn: (dir: string) => Promise<void>): Promise<void> {
 
 describe('o pacote vendorizado da tela', () => {
   test('confere com o manifesto e com as fixações (versão 6.0.0 e integrity do npm)', async () => {
-    assert.deepEqual(await auditVendor(DEFAULT_VENDOR_DIR), [])
-    const m = JSON.parse(await readFile(join(DEFAULT_VENDOR_DIR, 'manifest.json'), 'utf8')) as ScreenVendorManifest
+    assert.deepEqual(await auditVendor(defaultVendorDir()), [])
+    const m = JSON.parse(await readFile(join(defaultVendorDir(), 'manifest.json'), 'utf8')) as ScreenVendorManifest
     assert.equal(m.name, '@xterm/headless')
     assert.equal(m.version, XTERM_VERSION)
     assert.equal(XTERM_VERSION, '6.0.0')
     assert.equal(m.integrity, XTERM_INTEGRITY)
     assert.match(m.integrity, /^sha512-/)
     assert.ok(`${VENDOR_PACKAGE_DIR}/${VENDOR_ENTRY}` in m.files)
-    const pkg = JSON.parse(await readFile(join(DEFAULT_VENDOR_DIR, VENDOR_PACKAGE_DIR, 'package.json'), 'utf8')) as { version: string; dependencies?: unknown }
+    const pkg = JSON.parse(await readFile(join(defaultVendorDir(), VENDOR_PACKAGE_DIR, 'package.json'), 'utf8')) as { version: string; dependencies?: unknown }
     assert.equal(pkg.version, '6.0.0')
     assert.equal(pkg.dependencies, undefined, 'o pacote não traz dependências próprias')
   })
@@ -64,7 +64,7 @@ describe('o pacote vendorizado da tela', () => {
   })
 
   test('nada do que o empacotamento deixa de fora (electron-builder.yml: .md, .map) está no manifesto', async () => {
-    const m = JSON.parse(await readFile(join(DEFAULT_VENDOR_DIR, 'manifest.json'), 'utf8')) as ScreenVendorManifest
+    const m = JSON.parse(await readFile(join(defaultVendorDir(), 'manifest.json'), 'utf8')) as ScreenVendorManifest
     const yml = await readFile(join(ROOT, 'electron-builder.yml'), 'utf8')
     assert.match(yml, /"!\*\*\/\*\.md"/)
     assert.match(yml, /"!\*\*\/\*\.map"/)
@@ -91,7 +91,7 @@ describe('o pacote vendorizado da tela', () => {
 
   test('importado uma vez, só quando pedido, e exporta Terminal; uma falha não fica guardada', async () => {
     let imported = 0
-    const load = createXtermLoader(DEFAULT_VENDOR_DIR, p => { imported++; return import(pathToFileURL(p).href) })
+    const load = createXtermLoader(defaultVendorDir(), p => { imported++; return import(pathToFileURL(p).href) })
     assert.equal(imported, 0, 'criar o carregador não importa nada')
     const [a, b] = await Promise.all([load(), load()])
     assert.equal(imported, 1)

@@ -1,12 +1,14 @@
 // The screen as text (5.4): the raw of an agent's PTY becomes the text a person sees. The samples in test/fixtures/screen/
 // are raw output recorded by the probes, with the text each probe recorded beside it; the reader must give the same text.
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { join, resolve } from 'node:path'
 import { describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { ScreenRead } from '../../src/daemon/protocol.ts'
 import { createScreenReaders, historyString, MAX_READERS, screenString } from '../../extensions/for-agents/screen/index.ts'
-import { createXtermLoader, DEFAULT_VENDOR_DIR } from '../../extensions/for-agents/screen/loader.ts'
+import { createXtermLoader, defaultVendorDir } from '../../extensions/for-agents/screen/loader.ts'
 
 /** A sample: the raw, the text the probe recorded, the PTY size. Stored as JSON so git's line-ending conversion cannot touch the raw's CRs. */
 interface Sample { name: string; raw: string; text: string; cols: number; rows: number }
@@ -183,7 +185,7 @@ describe('a tela como texto: o que o leitor faz', () => {
   })
 
   test('carga preguiçosa: o pacote só é pedido na leitura', async () => {
-    const real = createXtermLoader(DEFAULT_VENDOR_DIR)
+    const real = createXtermLoader(defaultVendorDir())
     let loads = 0
     const readers = createScreenReaders({ load: () => { loads++; return real() } })
     readers.since('x')
@@ -209,5 +211,19 @@ describe('a tela como texto: o que o leitor faz', () => {
     assert.ok(t.history.length > 0 && t.history.length <= 5000)
     assert.ok(ms < 3000, `${ms} ms`)
     readers.dispose()
+  })
+})
+
+describe('o loader dentro do bundle CJS (sem import.meta)', () => {
+  test('carrega sem lançar e acha a pasta vendor só quando pedida', async () => {
+    const { build } = await import('esbuild')
+    const dir = mkdtempSync(join(resolve('.tmp'), 'loader-cjs-'))
+    try {
+      const out = join(dir, 'loader.cjs')
+      await build({ entryPoints: [fileURLToPath(new URL('../../extensions/for-agents/screen/loader.ts', import.meta.url))], bundle: true, platform: 'node', format: 'cjs', outfile: out, logLevel: 'silent', logOverride: { 'empty-import-meta': 'silent' } })
+      const mod = createRequire(import.meta.url)(out) as { createXtermLoader: () => unknown; defaultVendorDir: () => string }
+      assert.equal(typeof mod.createXtermLoader(), 'function')
+      assert.ok(mod.defaultVendorDir().length > 0)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
