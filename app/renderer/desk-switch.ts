@@ -22,8 +22,9 @@
 // the person asked for reduced motion.
 import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
 import { fitDesks, measureKey, overflowDesks, paintKey, pickFromOverflow, structureKey, touchUsed, type LastUsed, type SegView } from './desk-switch-rules.ts'
-import { icon, type IconName } from './icons.ts'
+import { ICON_NAMES, icon, type IconName } from './icons.ts'
 import { pillMark, type Badge } from './seal-rules.ts'
+import { deskSeals, type PlacedSeal } from './door/desk-seal-rules.ts'
 import { clampDragX, dragTargetIndex, fullIndexAfterDrop, passedThreshold } from './desk-drag-rules.ts'
 
 /** What a desk's badge says: how many panes finished (done) or wait for the user (waiting). */
@@ -151,6 +152,8 @@ export class DeskSwitch {
     this.measure.className = 'desk-measure'
     this.measure.setAttribute('aria-hidden', 'true')
     element.append(this.segs, this.more, this.add, this.sleep, this.options, this.measure)
+    // An extension put or took away a seal (door/desk-seal-rules.ts): the widths may change, so it paints like a mark that changed.
+    deskSeals.onChange(() => { if (this.sKey !== undefined) this.render(this.desks, this.active, this.mark) })
     const ro = new ResizeObserver(() => this.schedule())
     ro.observe(bar)
     for (const s of sides) ro.observe(s)
@@ -183,7 +186,7 @@ export class DeskSwitch {
    */
   private refreshMarks(): void {
     const views = this.views()
-    if (measureKey(views) !== this.mKey) { this.schedule(); return }
+    if (this.measureSig(views) !== this.mKey) { this.schedule(); return }
     this.paintSegs(views)
     this.paintMore(views)
   }
@@ -266,7 +269,7 @@ export class DeskSwitch {
     for (const el of this.measure.querySelectorAll<HTMLElement>('.seg[data-desk]')) widths[el.dataset.desk!] = Math.ceil(el.getBoundingClientRect().width)
     const plusWidth = Math.ceil(probe.getBoundingClientRect().width)
     // Hidden window (nothing laid out): the widths are not real, so the next pass measures again.
-    this.mKey = avail === undefined ? undefined : measureKey(views)
+    this.mKey = avail === undefined ? undefined : this.measureSig(views)
     this.visible = avail === undefined
       ? order.filter(id => this.visible.includes(id) || id === this.active)
       : fitDesks({ order, active: this.active, visible: this.visible.filter(id => order.includes(id)), widths, avail, plusWidth, gap: this.gap(), lastUsed: this.lastUsed })
@@ -279,7 +282,7 @@ export class DeskSwitch {
   /** Repaints the visible segments when what they show changed; true when it wrote. */
   private paintSegs(views: readonly SegView[]): boolean {
     const hints = views.map((_, i) => i < 9 ? this.host.hint(i + 1) : '')
-    const pKey = paintKey(this.visible, views, hints)
+    const pKey = `${paintKey(this.visible, views, hints)}|${deskSeals.signature}`
     if (pKey === this.pKey && this.segs.childElementCount === this.visible.length) return false
     this.pKey = pKey
     const shown = new Set(this.visible)
@@ -303,6 +306,9 @@ export class DeskSwitch {
     this.more.title = `Mais ${hidden.length === 1 ? '1 mesa' : `${hidden.length} mesas`}${waiting > 0 ? ` (${waiting} com atenção)` : ''}`
     this.more.setAttribute('aria-label', this.more.title)
   }
+
+  /** What changes a segment's width: the marks, and the seals of the desks (a seal adds a glyph). */
+  private measureSig(views: readonly SegView[]): string { return `${measureKey(views)}|${deskSeals.signature}` }
 
   /** Room for the segments and the "+N", px; undefined when the toolbar is not laid out (hidden window). */
   private room(): number | undefined {
@@ -338,6 +344,8 @@ export class DeskSwitch {
     seg.style.setProperty('--seg-text', t.text)
     const name = document.createElement('span'); name.className = 'seg-name'; name.textContent = d.name
     seg.append(name)
+    const seals = deskSeals.of(d.id)
+    for (const p of seals) seg.append(this.sealGlyph(p))
     const att = v
     const total = att.done + att.waiting
     if (total > 0) {
@@ -358,7 +366,8 @@ export class DeskSwitch {
     seg.setAttribute('aria-label', `${d.name}${total === 0 ? '' : `, ${total} com atenção`}`)
     const go = index < 9 ? ` (${hint})` : ''
     const what = total === 0 ? (v.busy ? '\nEm andamento' : '') : `${att.lines.map(l => `\n${l}`).join('')}\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
-    seg.title = `${d.name}${go}${what}\nDuplo clique renomeia; clique direito: mais opções. Arraste para reordenar.`
+    const sealLines = seals.map(p => p.seal.tooltip).filter(Boolean).map(l => `\n${l}`).join('')
+    seg.title = `${d.name}${go}${what}${sealLines}\nDuplo clique renomeia; clique direito: mais opções. Arraste para reordenar.`
     seg.addEventListener('mousedown', ev => { if (ev.button === 0 && !(ev.target as Element).closest('input')) ev.preventDefault() })
     seg.addEventListener('click', () => { if (this.swallowClick) return; this.host.switchTo(d.id) })
     seg.addEventListener('dblclick', ev => { ev.preventDefault(); if (this.swallowClick) return; this.startRename(d.id) })
@@ -368,6 +377,17 @@ export class DeskSwitch {
     seg.addEventListener('pointercancel', ev => this.pressEnd(ev, false))
     seg.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.host.menu(d.id, ev.clientX, ev.clientY) })
     return seg
+  }
+
+  /** An extension's seal on a pill: a small glyph in the seal's hue (its tooltip joins the pill's own). Not a count, never orange. */
+  private sealGlyph({ ext, seal }: PlacedSeal): HTMLElement {
+    const el = document.createElement('span')
+    el.className = seal.hue === undefined ? 'desk-seal' : 'desk-seal hued'
+    el.dataset.ext = ext
+    if (seal.hue !== undefined) el.style.setProperty('--seal-hue', String(seal.hue))
+    el.setAttribute('aria-hidden', 'true')
+    if ((ICON_NAMES as readonly string[]).includes(seal.icon)) el.append(icon(seal.icon as IconName))
+    return el
   }
 
   /** The desks in the capsule: every queue desk but the hibernated ones (the active desk always shows). */

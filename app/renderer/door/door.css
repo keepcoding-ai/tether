@@ -1,0 +1,43 @@
+/* The marks an extension puts through the agent door: a seal on a desk pill (desk-switch.ts) and emblems on the right of a tab
+   (the `.ext-emblems` of tab-header.ts). The hue is a number (0-359, in general agentHue(slotId): teal to rose) in --seal-hue /
+   --emblem-hue; the theme sets lightness and saturation here, so a hue reads the same on both. Theme tokens only otherwise. */
+:root {
+  --mark-s: 62%;
+  --mark-fg-l: 72%;
+  --mark-bg-a: .18;
+  --mark-line-a: .5;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; }
+}
+:root[data-theme="light"] { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; }
+
+/* The seal on a pill: a small glyph in a round chip, after the name and before any count. Without a hue it takes the pill's text. */
+.seg .desk-seal {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; border-radius: 50%;
+  color: inherit; background: color-mix(in srgb, currentColor 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
+}
+.seg .desk-seal.hued {
+  color: hsl(var(--seal-hue) var(--mark-s) var(--mark-fg-l));
+  background: hsl(var(--seal-hue) var(--mark-s) 50% / var(--mark-bg-a));
+  box-shadow: inset 0 0 0 1px hsl(var(--seal-hue) var(--mark-s) 50% / var(--mark-line-a));
+}
+.seg .desk-seal .ph { width: 11px; height: 11px; }
+
+/* The tab's emblems of extensions: on the right, after the title and before the state marks. Hidden while empty. */
+.tether-tab .ext-emblems { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.tether-tab .ext-emblems[hidden] { display: none; }
+.tether-tab .ext-emblem {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px;
+  color: var(--fg-dim); background: color-mix(in srgb, currentColor 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
+  font: inherit; line-height: 0;
+}
+.tether-tab .ext-emblem.hued {
+  color: hsl(var(--emblem-hue) var(--mark-s) var(--mark-fg-l));
+  background: hsl(var(--emblem-hue) var(--mark-s) 50% / var(--mark-bg-a));
+  box-shadow: inset 0 0 0 1px hsl(var(--emblem-hue) var(--mark-s) 50% / var(--mark-line-a));
+}
+.tether-tab button.ext-emblem { cursor: pointer; }
+.tether-tab button.ext-emblem:hover { background: hsl(var(--emblem-hue, 0) var(--mark-s) 50% / .3); }
+.tether-tab button.ext-emblem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tether-tab .ext-emblem .ph { width: 11px; height: 11px; }
