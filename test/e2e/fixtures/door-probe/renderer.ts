@@ -3,6 +3,7 @@
 import type { TetherUi } from '../../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../../app/shared/vscode-lifecycle.ts'
 import { manifest } from './manifest.ts'
+import { marks } from './marks.ts'
 import { menus } from './menus.ts'
 
 export { manifest }
@@ -10,5 +11,6 @@ export { manifest }
 export function activate(ui: TetherUi): IDisposable[] {
   return [
     ...menus(ui),
+    ...marks(ui),
   ]
 }

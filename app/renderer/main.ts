@@ -44,7 +44,7 @@ import { setupToolbarOverflow } from './toolbar-overflow.ts'
 import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withTabMenuBasics } from './tab-menu-basics.ts'
 import type { SearchTab } from './session-search-rules.ts'
 import { setupSessionSearch, type SessionSearch } from './session-search.ts'
-import { icon, KIND_ICON, type IconName } from './icons.ts'
+import { ICON_NAMES, icon, KIND_ICON, type IconName } from './icons.ts'
 import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
@@ -2601,6 +2601,11 @@ let menuOpener: HTMLElement | undefined
 /** While set, showContextMenu collects its items here instead of showing them (a pane type's menu read as data). */
 let menuCapture: MenuEntry[] | undefined
 
+/** A menu row's icon; a name the app does not have draws no icon (an extension's typo must not take the whole menu down). */
+function rowIcon(name: string): SVGSVGElement[] {
+  return (ICON_NAMES as readonly string[]).includes(name) ? [icon(name as IconName)] : []
+}
+
 /**
  * A floating menu at (x, y), closed by a click anywhere else, Esc, or picking an item. `opener` is the button that
  * opened it: it reads aria-expanded while the menu is up, and Esc (or a pick that leaves nothing focused) gives the
@@ -2648,7 +2653,7 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     if (item.danger) li.classList.add('danger')
     if (item.disabled) li.setAttribute('aria-disabled', 'true')
     if (item.tip) li.title = item.tip
-    li.append(icon(item.icon), document.createTextNode(item.label))
+    li.append(...rowIcon(item.icon), document.createTextNode(item.label))
     if (item.checked) li.append(icon('check', 'ctx-check'))
     if (item.trail) li.append(item.trail)
     if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
