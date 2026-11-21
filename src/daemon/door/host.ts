@@ -9,6 +9,7 @@ import type { SlotMeta } from '../../core/event.ts'
 import type { SlotState } from '../protocol.ts'
 import { doorUnavailable, type DoorRequestHandler, type DoorSeams, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
 import { DeskService } from './desks.ts'
+import { AttentionRouteService } from './attention-route.ts'
 import { ObjectService } from './objects.ts'
 import { SlotKeys } from './slot-key.ts'
 import { SlotsService } from './slots.ts'
@@ -40,6 +41,8 @@ export class DoorHost implements DoorSeams {
   private readonly slotsService: SlotsService
   /** The per-object data (D3): kept in <home>/objects/<ext>.json, pruned by a forgotten slot and by a desk-map. */
   readonly objects: ObjectService
+  /** The rerouted attention (D7): the route is in the slot's meta; the service silences the state at the source. */
+  private readonly attentionService: AttentionRouteService
 
   constructor(opts: DoorHostOptions) {
     this.opts = opts
@@ -48,6 +51,7 @@ export class DoorHost implements DoorSeams {
     this.requests.register('read-screen', this.slotsService.handleReadScreen)
     this.desks = new DeskService({ log: (msg) => this.log(msg) })
     this.requests.register('desk-map', this.desks.handleMap)
+    this.attentionService = new AttentionRouteService(() => this.portRef, (msg) => this.log(msg))
     this.objects = new ObjectService({ log: (msg) => this.log(msg) })
     this.requests.register('object-get', this.objects.handleGet)
     this.requests.register('object-set', this.objects.handleSet)
@@ -86,9 +90,9 @@ export class DoorHost implements DoorSeams {
     return this.handlers.get(t)
   }
 
-  decorate(_meta: SlotMeta, _state: SlotState): void {}
+  decorate(meta: SlotMeta, state: SlotState): void { this.attentionService.decorate(meta, state) }
 
-  stateChanged(state: SlotState): void { this.slotsService.stateChanged(state) }
+  stateChanged(state: SlotState): void { this.attentionService.stateChanged(state); this.slotsService.stateChanged(state) }
 
   input(_slotId: string, _data: string, _origin: InputOrigin): void {}
 
@@ -99,9 +103,9 @@ export class DoorHost implements DoorSeams {
     return { plan: { ...plan, env: { ...plan.env, [ENV_SLOT_KEY]: key } }, revoke: () => this.slotKeys.revoke(slotId, key) }
   }
 
-  exited(slotId: string): void { this.slotKeys.revoke(slotId) }
+  exited(slotId: string): void { this.slotKeys.revoke(slotId); this.attentionService.exited(slotId) }
 
-  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); return this.objects.dropPane(slotId) }
+  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId)]).then(() => undefined) }
 
   // ---- the extensions' API ---------------------------------------------------------------------
 
@@ -127,12 +131,7 @@ export class DoorHost implements DoorSeams {
       onDidDeliver: () => owned(own),
       pathOf: () => 'wait',
     }
-    const attention: DoorAttention = {
-      route: () => reject(what('attention.route')),
-      unroute: () => reject(what('attention.unroute')),
-      routeOf: () => undefined,
-      seen: () => { throw doorUnavailable(what('attention.seen')) },
-    }
+    const attention: DoorAttention = this.attentionService.apiFor(ext, own)
     const objects: DoorObjects = this.objects.apiFor(ext, own)
     return { slots, desks, verbs, delivery, attention, objects }
   }
