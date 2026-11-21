@@ -56,6 +56,8 @@ import { busyWait, DEBUG_BLOCK_MAX_MS } from './debug-block.ts'
 import { procdPipePath, type HostRun } from '../procd/protocol.ts'
 import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
 import { ProcError, WAIT_MAX_MS, type ProcAuthor, type ProcBy } from './procs.ts'
+import { DoorHost } from './door/host.ts'
+import { DoorError, type DoorSeams, type InputOrigin, type SlotCreateInput, type SlotPort } from './door/port.ts'
 
 export const DAEMON_VERSION = '0.3.7'
 
@@ -173,6 +175,8 @@ export interface DaemonOptions {
   /** tetherd's snapshots of profiles.json and settings.json, shared with its extension host. Default: the daemon's own, on its executor. */
   profileStore?: ProfileStore
   userSettings?: UserSettings
+  /** The agent door (door/host.ts): the daemon attaches its SlotPort to it and calls its hooks. Default: a door of its own, inert. */
+  door?: DoorSeams
 }
 
 /** The disk reads `fsProbe` reports: the boot scan of slots/, an events file (whole or from an offset), a slot's marker listing and stats, a run file, the hook's attention and pause reports, a start's folder check. */
@@ -416,6 +420,8 @@ class DaemonImpl implements Daemon {
   private panelHost: PanelHost | undefined
   /** pid of the tether-ptyd last connected to (from its hello). */
   private panelHostPid: number | undefined
+  /** The agent door's hooks (door/port.ts); no-ops while no door service is on. */
+  private readonly door: DoorSeams
 
   constructor(opts: DaemonOptions) {
     this.home = opts.home
@@ -489,6 +495,52 @@ class DaemonImpl implements Daemon {
       sampleSoon: () => this.kickMemory(),
       onData: (name, data) => { for (const c of this.procWatchers.get(name) ?? []) this.send(c, { t: 'proc-data', name, data }) },
     })
+    this.door = opts.door ?? new DoorHost({ log: this.log })
+    this.door.attach(this.slotPort())
+  }
+
+  /** The slot operations the agent door drives: the same methods the pipe's requests run. */
+  private slotPort(): SlotPort {
+    return {
+      create: async ({ meta, ...input }) => this.stateOf(await this.createSlot(input, meta)),
+      start: async (slotId, choice) => {
+        const slot = this.slot(slotId)
+        await this.startSlot(slot, choice)
+        return this.stateOf(slot)
+      },
+      stop: (slotId) => this.stopById(slotId),
+      restart: (slotId) => this.restartById(slotId),
+      forget: (slotId) => this.forgetById(slotId),
+      rename: (slotId, name) => this.renameById(slotId, name),
+      write: (slotId, data, origin) => {
+        const slot = this.slot(slotId)
+        if (!isAlive(slot) && !this.awaitsPty(slot)) throw new DoorError('door-no-pty', `o slot ${slotId} não tem processo rodando`)
+        this.typeInto(slot, data, undefined, 0, origin)
+      },
+      readScreen: (slotId, since) => {
+        const slot = this.slot(slotId)
+        const sb = slot.scrollback
+        const r = since === undefined ? { data: sb.text(), reset: false } : sb.since(since)
+        return { data: r.data, cols: slot.cols, rows: slot.rows, start: sb.start, end: sb.end, reset: r.reset }
+      },
+      stateOf: (slotId) => {
+        const slot = this.slotMap.get(slotId)
+        return slot ? this.stateOf(slot) : undefined
+      },
+      list: () => this.slots(),
+      isAlive: (slotId) => {
+        const slot = this.slotMap.get(slotId)
+        return slot !== undefined && isAlive(slot)
+      },
+      meta: (slotId) => this.slotMap.get(slotId)?.meta,
+      saveMeta: async (slotId) => {
+        const slot = this.slot(slotId)
+        this.saveMeta(slot.meta)
+        await this.store.flush(slotMetaPath(this.home, slotId))
+      },
+      broadcastState: (slotId) => this.broadcastState(this.slot(slotId)),
+      broadcast: (event) => this.broadcast(event),
+    }
   }
 
   /** The portrait of whoever asks for a process act: their slot when it is one of ours, else external (or the app). */
@@ -643,6 +695,11 @@ class DaemonImpl implements Daemon {
       if (endedAt) s.endedAt = endedAt
     } else if (slot.memoryMB !== undefined) s.memoryMB = slot.memoryMB
     if (slot.ronda) s.ronda = { ...slot.ronda, ...(slot.rondaDue ? { due: true } : {}), channel: this.rondaChannel.connected(slot.meta.slotId) ? 'listening' : 'none' }
+    // The agent door's meta fields, mirrored only when set: a slot the door never touched reads exactly as before.
+    if (slot.meta.createdBy) s.createdBy = slot.meta.createdBy
+    if (slot.meta.paneRequest) s.paneRequest = slot.meta.paneRequest
+    if (slot.meta.held) s.held = slot.meta.held
+    this.door.decorate(slot.meta, s)
     return s
   }
 
@@ -747,7 +804,12 @@ class DaemonImpl implements Daemon {
   private broadcastProfiles(): void {
     const profiles = this.profileStore.profiles()
     this.broadcast({ t: 'profiles', profiles })
-    for (const slot of this.slotMap.values()) if (slot.meta.profileId) this.broadcast({ t: 'state', slot: this.stateOf(slot, profiles) })
+    for (const slot of this.slotMap.values()) {
+      if (!slot.meta.profileId) continue
+      const state = this.stateOf(slot, profiles)
+      this.broadcast({ t: 'state', slot: state })
+      this.door.stateChanged(state)
+    }
   }
 
   listening(): boolean {
@@ -1431,13 +1493,22 @@ class DaemonImpl implements Daemon {
     // when this resolves (the CLI reads it as it starts).
     const channel = meta.agent === 'shell' ? undefined : this.channelOf(meta.agent)
     const offer = await this.rondaChannel.prepare(plan, meta.slotId, channel)
-    if (cancelled()) {
+    // The agent door's offer, after the ronda's (it may add its own server to the plan); awaited only when it is a promise.
+    let grant = cancelled() ? undefined : this.door.prepareLaunch(offer.plan, {
+      meta,
+      agent: meta.agent === 'shell' ? undefined : agentRegistry.get(meta.agent),
+      channel,
+      rondaOffered: offer.offered,
+    })
+    if (grant instanceof Promise) grant = await grant
+    if (cancelled() || !grant) {
       if (offer.offered) this.rondaChannel.revoke(meta.slotId, offer.run) // only this grant: a newer launch keeps its own
+      grant?.revoke()
       return
     }
     // From here the spawn holds the seat (no await before it in process; `launching` in the host): a stop waits for it.
     slot.preLaunch = undefined
-    plan = offer.plan
+    plan = grant.plan
     slot.confirmWatch = offer.offered && channel?.confirm ? { spec: channel.confirm, screen: '' } : undefined
     slot.scrollback.clear()
     slot.attention.reset()
@@ -1543,6 +1614,7 @@ class DaemonImpl implements Daemon {
     this.log(`slot ${meta.slotId}: exited (code ${exit.exitCode})`)
     this.forgetRun(meta.slotId)
     this.rondaChannel.revoke(meta.slotId)
+    this.door.exited(meta.slotId)
     slot.confirmWatch = undefined
     if (slot.readyTimer) clearTimeout(slot.readyTimer)
     slot.readyTimer = undefined
@@ -1763,6 +1835,13 @@ class DaemonImpl implements Daemon {
     else slot.pty?.write(data)
   }
 
+  /** Keystrokes for the slot: to its pty (writeInput), to its attention, and to the agent door with who typed them. */
+  private typeInto(slot: Slot, data: string, probe: unknown, arrive: number, origin: InputOrigin): void {
+    this.writeInput(slot, data, probe, arrive)
+    if (slot.attention.input(data)) this.broadcastState(slot)
+    this.door.input(slot.meta.slotId, data, origin)
+  }
+
   private queueInput(slot: Slot, data: string, probe: unknown, arrive: number): void {
     const q = (slot.inputQueue ??= { items: [], bytes: 0 })
     const size = Buffer.byteLength(data)
@@ -1834,6 +1913,7 @@ class DaemonImpl implements Daemon {
     const state = this.stateOf(slot)
     this.broadcast({ t: 'state', slot: state })
     this.noteTabTitle(slot, state)
+    this.door.stateChanged(state)
     // A due ronda goes as soon as the agent turns idle, not at the next retry.
     if (slot.rondaDue && this.rondaBlocker(slot) === undefined) setImmediate(() => this.rondaTick(slot))
   }
@@ -1848,16 +1928,16 @@ class DaemonImpl implements Daemon {
     if (msg.t === 'input') {
       const arrive = msg.probe ? stamp() : 0 // line received: the first daemon stamp
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
-      if (slot && typeof msg.data === 'string') {
-        this.writeInput(slot, msg.data, msg.probe, arrive)
-        if (slot.attention.input(msg.data)) this.broadcastState(slot)
-      }
+      if (slot && typeof msg.data === 'string') this.typeInto(slot, msg.data, msg.probe, arrive, 'user')
       return
     }
     if (msg.t === 'typed') {
       // Already written to the pane in the host by a direct client: only the attention hears it, the PTY is not touched.
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
-      if (slot && typeof msg.data === 'string' && slot.attention.input(msg.data)) this.broadcastState(slot)
+      if (slot && typeof msg.data === 'string') {
+        if (slot.attention.input(msg.data)) this.broadcastState(slot)
+        this.door.input(slot.meta.slotId, msg.data, 'user')
+      }
       return
     }
     const id = (msg as { id?: unknown }).id
@@ -1868,7 +1948,7 @@ class DaemonImpl implements Daemon {
       const label = `req:${String(msg.t)}`
       reply = await perf.timedAsync(`${label}:wall`, () => perf.timed(label, () => this.handle(client, msg as Request)))
     } catch (e) {
-      const err = e instanceof RequestError ? e : new RequestError('bad-request', (e as Error).message)
+      const err = e instanceof RequestError ? e : e instanceof DoorError ? new RequestError(e.code, e.message) : new RequestError('bad-request', (e as Error).message)
       reply = { t: 'error', id, code: err.code, message: err.message }
     }
     this.send(client, reply)
@@ -1895,35 +1975,8 @@ class DaemonImpl implements Daemon {
         }))
         return { t: 'ok', id }
       }
-      case 'create': {
-        if (!isKind(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${String(req.kind)}`)
-        if (req.kind !== 'shell' && !this.adapterOf(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${req.kind} (use ${agentChoices()})`)
-        if (typeof req.cwd !== 'string' || !req.cwd) throw new RequestError('bad-request', 'cwd obrigatório')
-        // Before the id is drawn: nothing awaits between the new slot's id and its entry in the map.
-        const profile = req.profileId !== undefined ? await this.requireProfile(req.profileId) : undefined
-        const cwd = await canonicalDir(req.cwd)
-        const meta: SlotMeta = {
-          v: 1,
-          slotId: this.newSlotId(),
-          agent: req.kind,
-          cwd,
-          args: Array.isArray(req.args) ? req.args.filter((a): a is string => typeof a === 'string') : [],
-          createdAt: new Date().toISOString(),
-        }
-        if (typeof req.name === 'string' && req.name) meta.name = req.name
-        if (profile) {
-          if (profile.agent !== req.kind) throw new RequestError('bad-request', `o perfil "${profile.name}" é de ${profile.agent}, não de ${req.kind}`)
-          snapshotProfile(meta, profile)
-        }
-        assertSlotId(meta.slotId)
-        const slot = this.load(meta)
-        slot.hydrating = Promise.resolve() // brand new: no files yet
-        this.saveMeta(meta)
-        this.broadcastState(slot)
-        await this.store.flush(slotMetaPath(this.home, meta.slotId)) // barrier: on disk before the reply (and before any launch)
-        if (req.start) await this.startSlot(slot, undefined)
-        return { t: 'ok', id, slot: this.stateOf(slot) }
-      }
+      case 'create':
+        return { t: 'ok', id, slot: this.stateOf(await this.createSlot(req)) }
       case 'start': {
         const slot = this.slot(req.slotId)
         await this.startSlot(slot, req.choice === 'new' || req.choice === 'resume' ? req.choice : undefined)
@@ -1954,38 +2007,13 @@ class DaemonImpl implements Daemon {
         this.resize(slot, req.cols, req.rows)
         return { t: 'ok', id }
       }
-      case 'stop': {
-        const slot = this.slot(req.slotId)
-        await this.stopSlot(slot)
-        return { t: 'ok', id, slot: this.stateOf(slot) }
-      }
-      case 'forget': {
-        const slot = this.slot(req.slotId)
-        await this.stopSlot(slot)
-        this.slotMap.delete(slot.meta.slotId)
-        this.bgMarkers.delete(slot.meta.slotId)
-        this.dropInput(slot)
-        this.rondaChannel.revoke(slot.meta.slotId)
-        if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
-        slot.ronda = undefined
-        for (const c of slot.attached) c.attached.delete(slot.meta.slotId)
-        await this.removeSlotFiles(slot.meta.slotId) // barrier: the files are gone before the reply
-        // The slot is gone for good (its pane was closed): extensions drop what they kept with it.
-        this.emitSlot('removed', slot)
-        this.procs.slotGone(slot.meta.slotId)
-        this.broadcast({ t: 'removed', slotId: slot.meta.slotId })
+      case 'stop':
+        return { t: 'ok', id, slot: await this.stopById(req.slotId) }
+      case 'forget':
+        await this.forgetById(req.slotId)
         return { t: 'ok', id }
-      }
-      case 'rename-slot': {
-        const slot = this.slot(req.slotId)
-        if (typeof req.name !== 'string') throw new RequestError('bad-request', 'nome obrigatório')
-        if (req.name) slot.meta.name = req.name
-        else delete slot.meta.name
-        this.saveMeta(slot.meta)
-        this.broadcastState(slot)
-        await this.store.flush(slotMetaPath(this.home, slot.meta.slotId)) // barrier: renamed on disk before the reply
-        return { t: 'ok', id, slot: this.stateOf(slot) }
-      }
+      case 'rename-slot':
+        return { t: 'ok', id, slot: await this.renameById(req.slotId, req.name) }
       case 'shutdown': {
         this.log('shutdown requested')
         setImmediate(() => void this.close().then(() => this.onShutdown?.()))
@@ -2067,17 +2095,8 @@ class DaemonImpl implements Daemon {
         await this.store.flush(slotRondaPath(this.home, slot.meta.slotId)) // barrier: removed before the reply
         return { t: 'ok', id, ronda: null, rondaOutcome: 'off' }
       }
-      case 'restart': {
-        const slot = this.slot(req.slotId)
-        if (!this.adapterOf(slot.meta.agent)?.resumes) throw new RequestError('bad-request', `o ${slot.meta.agent} não retoma sessão: não há como reiniciar o slot ${slot.meta.slotId}`)
-        if (!isAlive(slot)) throw new RequestError('bad-request', `o slot ${slot.meta.slotId} não está rodando`)
-        // Same early refusal as set-profile: nothing is touched when the agent never reported its session.
-        if (slot.status === 'running' && !this.reportedThisRun(slot)) {
-          throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa`)
-        }
-        await this.restartSlot(slot)
-        return { t: 'ok', id, slot: this.stateOf(slot) }
-      }
+      case 'restart':
+        return { t: 'ok', id, slot: await this.restartById(req.slotId) }
       case 'set-profile': {
         const slot = this.slot(req.slotId)
         if (req.profileId !== null && typeof req.profileId !== 'string') throw new RequestError('bad-request', 'profileId obrigatório (ou null para nenhum perfil)')
@@ -2159,9 +2178,98 @@ class DaemonImpl implements Daemon {
       case 'proc-host-stop':
         await this.procAct(() => this.procs.hostStop(req.force === true, req.by, client.kind))
         return { t: 'ok', id }
-      default:
-        throw new RequestError('bad-request', `mensagem desconhecida: ${String((req as { t?: unknown }).t)}`)
+      default: {
+        // Request types the core does not answer itself go to the agent door's registry (door/host.ts).
+        const t = String((req as { t?: unknown }).t)
+        const handler = this.door.requestHandler(t)
+        if (!handler) throw new RequestError('bad-request', `mensagem desconhecida: ${t}`)
+        const body = await handler(req as unknown as { t: string; id: number } & Record<string, unknown>, { client: client.kind })
+        return { ...body, t: 'ok', id }
+      }
     }
+  }
+
+  // ---- slot operations: one body for the pipe's requests and the agent door's SlotPort ------------
+
+  /** `door`: the agent door's meta fields, passed by its SlotPort only (never read from a pipe request). */
+  private async createSlot(req: Omit<SlotCreateInput, 'kind' | 'meta'> & { kind: unknown }, door?: SlotCreateInput['meta']): Promise<Slot> {
+    if (!isKind(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${String(req.kind)}`)
+    if (req.kind !== 'shell' && !this.adapterOf(req.kind)) throw new RequestError('bad-request', `tipo inválido: ${req.kind} (use ${agentChoices()})`)
+    if (typeof req.cwd !== 'string' || !req.cwd) throw new RequestError('bad-request', 'cwd obrigatório')
+    // Before the id is drawn: nothing awaits between the new slot's id and its entry in the map.
+    const profile = req.profileId !== undefined ? await this.requireProfile(req.profileId) : undefined
+    const cwd = await canonicalDir(req.cwd)
+    const meta: SlotMeta = {
+      v: 1,
+      slotId: this.newSlotId(),
+      agent: req.kind,
+      cwd,
+      args: Array.isArray(req.args) ? req.args.filter((a): a is string => typeof a === 'string') : [],
+      createdAt: new Date().toISOString(),
+    }
+    if (typeof req.name === 'string' && req.name) meta.name = req.name
+    if (profile) {
+      if (profile.agent !== req.kind) throw new RequestError('bad-request', `o perfil "${profile.name}" é de ${profile.agent}, não de ${req.kind}`)
+      snapshotProfile(meta, profile)
+    }
+    // The agent door's fields: on disk with the rest, before the reply.
+    if (door) Object.assign(meta, door)
+    assertSlotId(meta.slotId)
+    const slot = this.load(meta)
+    slot.hydrating = Promise.resolve() // brand new: no files yet
+    this.saveMeta(meta)
+    this.broadcastState(slot)
+    await this.store.flush(slotMetaPath(this.home, meta.slotId)) // barrier: on disk before the reply (and before any launch)
+    if (req.start) await this.startSlot(slot, undefined)
+    return slot
+  }
+
+  private async stopById(slotId: unknown): Promise<SlotState> {
+    const slot = this.slot(slotId)
+    await this.stopSlot(slot)
+    return this.stateOf(slot)
+  }
+
+  private async restartById(slotId: unknown): Promise<SlotState> {
+    const slot = this.slot(slotId)
+    if (!this.adapterOf(slot.meta.agent)?.resumes) throw new RequestError('bad-request', `o ${slot.meta.agent} não retoma sessão: não há como reiniciar o slot ${slot.meta.slotId}`)
+    if (!isAlive(slot)) throw new RequestError('bad-request', `o slot ${slot.meta.slotId} não está rodando`)
+    // Same early refusal as set-profile: nothing is touched when the agent never reported its session.
+    if (slot.status === 'running' && !this.reportedThisRun(slot)) {
+      throw new RequestError('unconfirmed', `o ${slot.meta.agent} deste slot não registrou a sessão desta execução: reiniciar agora poderia perder a conversa`)
+    }
+    await this.restartSlot(slot)
+    return this.stateOf(slot)
+  }
+
+  private async forgetById(slotId: unknown): Promise<void> {
+    const slot = this.slot(slotId)
+    await this.stopSlot(slot)
+    this.slotMap.delete(slot.meta.slotId)
+    this.bgMarkers.delete(slot.meta.slotId)
+    this.dropInput(slot)
+    this.rondaChannel.revoke(slot.meta.slotId)
+    const gone = this.door.forgotten(slot.meta.slotId)
+    if (gone) await gone
+    if (slot.rondaTimer) clearTimeout(slot.rondaTimer)
+    slot.ronda = undefined
+    for (const c of slot.attached) c.attached.delete(slot.meta.slotId)
+    await this.removeSlotFiles(slot.meta.slotId) // barrier: the files are gone before the reply
+    // The slot is gone for good (its pane was closed): extensions drop what they kept with it.
+    this.emitSlot('removed', slot)
+    this.procs.slotGone(slot.meta.slotId)
+    this.broadcast({ t: 'removed', slotId: slot.meta.slotId })
+  }
+
+  private async renameById(slotId: unknown, name: unknown): Promise<SlotState> {
+    const slot = this.slot(slotId)
+    if (typeof name !== 'string') throw new RequestError('bad-request', 'nome obrigatório')
+    if (name) slot.meta.name = name
+    else delete slot.meta.name
+    this.saveMeta(slot.meta)
+    this.broadcastState(slot)
+    await this.store.flush(slotMetaPath(this.home, slot.meta.slotId)) // barrier: renamed on disk before the reply
+    return this.stateOf(slot)
   }
 
   /** A profile the memory does not know is looked up again on disk before the request fails (the CLI may have just written it). */

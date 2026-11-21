@@ -16,6 +16,7 @@ import { tetherHome } from '../core/paths.ts'
 import { pingDaemon } from './client.ts'
 import { disabledIn } from '../agents/load.ts'
 import { DaemonExtensionHost } from './ext-host.ts'
+import { DoorHost } from './door/host.ts'
 import { ProfileStore } from '../core/profile.ts'
 import { UserSettings } from '../core/user-settings.ts'
 import { createGuard } from './guard.ts'
@@ -88,12 +89,14 @@ async function main(): Promise<void> {
   const profileStore = new ProfileStore(home, executor, log)
   const userSettings = new UserSettings(home, executor, process.env, log)
   await userSettings.fresh() // the profiles load after the activation: reading them consults the agent registry the extensions fill
-  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledIn(userSettings.get()), profileStore, settings: userSettings, executor })
+  // One agent door, shared: the extensions get its services, the daemon attaches its slot port to it (only the pipe's owner gets this far).
+  const door = new DoorHost({ log })
+  const extHost = new DaemonExtensionHost({ home, log, disabled: disabledIn(userSettings.get()), profileStore, settings: userSettings, executor, door })
   extHost.activate()
 
   let daemon: Daemon
   try {
-    daemon = await startDaemon({ home, pipe, log, backgroundBoot: true, executor, profileStore, userSettings, onShutdown: () => exit('shutdown request'), transformPlan: extHost.transformPlan, onSlot: extHost.emitSlot })
+    daemon = await startDaemon({ home, pipe, log, backgroundBoot: true, executor, profileStore, userSettings, onShutdown: () => exit('shutdown request'), transformPlan: extHost.transformPlan, onSlot: extHost.emitSlot, door })
   } catch (e) {
     const err = e as NodeJS.ErrnoException
     if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {

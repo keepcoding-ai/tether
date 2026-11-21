@@ -17,6 +17,7 @@ import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 import type { Executor } from '../exec/executor.ts'
 import { createExecutorIo, fsIo } from './ext-io.ts'
+import { DoorHost } from './door/host.ts'
 
 type Middleware = (plan: LaunchPlan, slot: SlotMeta, state?: SlotState) => LaunchPlan | Promise<LaunchPlan>
 /** A middleware with the extension that registered it (for the ceiling's log). */
@@ -46,6 +47,8 @@ export interface DaemonHostOptions {
   executor?: Executor
   /** Ceiling per launch middleware (ms). Default PLAN_MIDDLEWARE_TIMEOUT_MS. */
   planTimeoutMs?: number
+  /** The agent door the extensions get (tetherd shares its own with the daemon). Default: an inert one (satellites, bare tests). */
+  door?: DoorHost
 }
 
 export class DaemonExtensionHost implements IDisposable {
@@ -59,9 +62,12 @@ export class DaemonExtensionHost implements IDisposable {
   readonly activated: string[] = []
   readonly failed: { id: string; error: string }[] = []
   private readonly opts: DaemonHostOptions
+  /** The agent door behind each extension's door services; inert unless tetherd's daemon attached its port. */
+  readonly door: DoorHost
 
   constructor(opts: DaemonHostOptions) {
     this.opts = opts
+    this.door = opts.door ?? new DoorHost({ log: opts.log })
   }
 
   activate(): void {
@@ -161,6 +167,7 @@ export class DaemonExtensionHost implements IDisposable {
       if (i >= 0) list.splice(i, 1)
     })
     return {
+      ...this.door.apiFor(id, own),
       id,
       brand: BRAND,
       home,
