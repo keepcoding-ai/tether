@@ -8,8 +8,10 @@ import type { DeskMap, ObjectKind, SlotState } from '../../../src/daemon/protoco
 import { toDisposable, type IDisposable } from '../../shared/vscode-lifecycle.ts'
 import type { Layout } from '../layout.ts'
 import { DeskMapSender, deskMapOf } from './desk-map.ts'
+import { deskSeals } from './desk-seal-rules.ts'
 import { collect } from './menus.ts'
 import { applyPaneRequests, type PaneRequestPort } from './pane-requests.ts'
+import { TabEmblemBoard, TabEmblemPainter } from './tab-emblem-rules.ts'
 
 /** An extension's data store before tetherd's objects are wired: reads are empty, writes are refused. */
 function inertObjects(): ExtObjects {
@@ -47,6 +49,8 @@ export class DoorHost {
 
   constructor(port?: DoorPort) {
     this.port = port
+    this.emblems = new TabEmblemBoard(paneId => this.emblemPainter.repaint(paneId))
+    this.emblemPainter = new TabEmblemPainter(this.emblems)
     this.mapSender = port && new DeskMapSender(map => port.sendDeskMap(map))
   }
 
@@ -153,16 +157,21 @@ export class DoorHost {
     return toDisposable(() => { this.deskListeners.delete(listener) })
   }
 
-  /** An extension's seal on a queue desk's pill. Not drawn yet: the seal board and the pill's drawing come next. */
-  setSeal(_ext: string, _deskId: string, _seal: DeskSeal | undefined): void {}
+  /** An extension's seal on a queue desk's pill: the board is read by the desk switch, which draws again on a change. */
+  setSeal(ext: string, deskId: string, seal: DeskSeal | undefined): void { deskSeals.set(ext, deskId, seal) }
 
-  /** An extension's emblem on a pane's tab (its `.ext-emblems`). Not drawn yet: the emblem board comes next. */
-  setEmblem(_ext: string, _paneId: string, _emblem: TabEmblem | undefined): void {}
+  /** An extension's emblem on a pane's tab (its `.ext-emblems`): the painter fills every tab of that pane, now and when one appears. */
+  setEmblem(ext: string, paneId: string, emblem: TabEmblem | undefined): void { this.emblems.set(ext, paneId, emblem) }
+
+  private readonly emblemPainter: TabEmblemPainter
+  private readonly emblems: TabEmblemBoard
 
   /** Everything an extension put through the door goes with it. */
   removeOwner(ext: string): void {
     for (const e of [...this.deskMenus]) if (e.ext === ext) this.deskMenus.delete(e)
     for (const e of [...this.paneMenus]) if (e.ext === ext) this.paneMenus.delete(e)
+    deskSeals.removeOwner(ext)
+    this.emblems.removeOwner(ext)
   }
 
   /** The list picker. Until it exists, every pick resolves as closed. */
