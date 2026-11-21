@@ -26,8 +26,8 @@ describe('decidePaneRequest', () => {
     assert.deepEqual(decidePaneRequest({ ...base, layoutRestored: false }), { action: 'defer', reason: 'layout-not-restored' })
     assert.deepEqual(decidePaneRequest({ ...base, layoutRestored: false, desk: undefined, hasPane: true }), { action: 'defer', reason: 'layout-not-restored' })
   })
-  test('a desk that is not mounted: ignored, nothing to resend', () => {
-    assert.deepEqual(decidePaneRequest({ ...base, desk: undefined }), { action: 'ignore', reason: 'no-desk', resend: false })
+  test('a desk that is not mounted: ignored, and the map is resent so the daemon clears the request', () => {
+    assert.deepEqual(decidePaneRequest({ ...base, desk: undefined }), { action: 'ignore', reason: 'no-desk', resend: true })
   })
 })
 
@@ -71,6 +71,7 @@ describe('applyPaneRequests', () => {
     applyPaneRequests([slot('a', 'nope')], port)
     assert.deepEqual(port.added, [])
     assert.equal(port.logs.length, 1)
+    assert.equal(port.resent, 1)
   })
 })
 
@@ -78,15 +79,16 @@ describe('DoorHost wiring', () => {
   function hostWith(over: Partial<DoorPort> = {}) {
     const sent: DeskMap[] = []
     const added: string[] = []
+    const slept: string[] = []
     const all = [slot('a', 'd2')]
     const { resendMap: _r, ...rest } = fakePort()
     const port: DoorPort = {
       ...rest, layout: () => emptyLayout(), paneType: c => c, systemDeskName: () => undefined,
-      sendDeskMap: m => { sent.push(m) }, slots: () => all,
+      sendDeskMap: m => { sent.push(m) }, slots: () => all, sleep: id => { slept.push(id) },
       addPane: s => { added.push(s.slotId) },
       ...over,
     }
-    return { door: new DoorHost(port), sent, added }
+    return { door: new DoorHost(port), sent, added, slept }
   }
   test('a list before the restore creates nothing; the restore does, and the map goes', () => {
     let restored = false
@@ -107,6 +109,17 @@ describe('DoorHost wiring', () => {
     assert.equal(sent.length, 1)
     door.slotsListed([])
     assert.equal(sent.length, 2)
+  })
+  test('a pane that enters asleep stays asleep through the process coming up, and is left alone once it runs', () => {
+    const { door, slept } = hostWith({ desk: () => ({ asleep: true }) })
+    door.stateApplied({ ...slot('a', 'd2'), status: 'stopped' } as unknown as SlotState)
+    assert.deepEqual(slept, ['a', 'a'])
+    door.stateApplied({ ...slot('a'), status: 'starting' } as unknown as SlotState)
+    assert.equal(slept.length, 3)
+    door.stateApplied({ ...slot('a'), status: 'running' } as unknown as SlotState)
+    assert.equal(slept.length, 4)
+    door.stateApplied({ ...slot('a'), status: 'running' } as unknown as SlotState)
+    assert.equal(slept.length, 4, 'after the first running state the person decides')
   })
   test('with no port the host stays inert', () => {
     const door = new DoorHost()

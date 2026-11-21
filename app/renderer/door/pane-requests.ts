@@ -15,7 +15,7 @@ export interface PaneRequestInput {
 
 export type PaneRequestDecision =
   | { action: 'create'; deskId: string; asleep: boolean }
-  /** `resend`: the daemon clears the request on a desk map that shows the slot, so a map must go even if it did not change. */
+  /** `resend`: the daemon clears the request on a desk map that shows the slot or lacks the desk, so a map must go even if it did not change. */
   | { action: 'ignore'; reason: 'no-request' | 'has-pane' | 'no-desk'; resend: boolean }
   | { action: 'defer'; reason: 'layout-not-restored' }
 
@@ -23,7 +23,7 @@ export function decidePaneRequest(i: PaneRequestInput): PaneRequestDecision {
   if (!i.deskId) return { action: 'ignore', reason: 'no-request', resend: false }
   if (!i.layoutRestored) return { action: 'defer', reason: 'layout-not-restored' }
   if (i.hasPane) return { action: 'ignore', reason: 'has-pane', resend: true }
-  if (!i.desk) return { action: 'ignore', reason: 'no-desk', resend: false }
+  if (!i.desk) return { action: 'ignore', reason: 'no-desk', resend: true }
   return { action: 'create', deskId: i.deskId, asleep: i.desk.asleep }
 }
 
@@ -58,8 +58,10 @@ export function applyPaneRequests(slots: Iterable<SlotState>, port: PaneRequestP
     })
     if (d.action === 'defer') waiting.push(slot.slotId)
     else if (d.action === 'create') port.addPane(slot, d.deskId, d.asleep)
-    else if (d.reason === 'no-desk') port.log(`painel pedido para ${slot.slotId}: a mesa ${slot.paneRequest.deskId} não existe; o slot fica sem guia`)
-    else if (d.resend) resend = true
+    else {
+      if (d.reason === 'no-desk') port.log(`painel pedido para ${slot.slotId}: a mesa ${slot.paneRequest.deskId} não existe; o slot fica sem guia`)
+      if (d.resend) resend = true
+    }
   }
   if (resend) port.resendMap()
   return waiting

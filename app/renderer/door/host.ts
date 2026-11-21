@@ -81,6 +81,8 @@ export interface DoorPort extends Omit<PaneRequestPort, 'resendMap'> {
   paneType(component: string): string
   systemDeskName(deskId: string): string | undefined
   sendDeskMap(map: DeskMap): void
+  /** Marks the slot's pane asleep (`asleepPanes` and `deskSleptPanes`), saving the layout when that changed something. Its process is not touched. */
+  sleep(slotId: string): void
   /** Every slot the app knows. */
   slots(): Iterable<SlotState>
 }
@@ -89,6 +91,11 @@ export class DoorHost {
   private readonly mapSender: DeskMapSender | undefined
 
   private readonly port: DoorPort | undefined
+  /**
+   * Slots whose pane entered asleep (a hibernated desk) and whose process is still coming up: the core wakes a pane when its
+   * process goes stopped -> starting, and here the process is meant to run, so the sleep is set again until it is running.
+   */
+  private readonly sleepUntilRunning = new Set<string>()
 
   constructor(port?: DoorPort) {
     this.port = port
@@ -104,7 +111,28 @@ export class DoorHost {
   // ---------- seams main.ts calls ----------
 
   /** A slot's state was applied (the daemon's `state` event), after the pane and the strip were updated. */
-  stateApplied(slot: SlotState): void { if (this.port) applyPaneRequests([slot], { ...this.port, resendMap: () => this.sendMap(true) }) }
+  stateApplied(slot: SlotState): void {
+    const port = this.port
+    if (!port) return
+    applyPaneRequests([slot], this.requestPort(port))
+    if (!this.sleepUntilRunning.has(slot.slotId)) return
+    port.sleep(slot.slotId)
+    if (slot.status === 'running') this.sleepUntilRunning.delete(slot.slotId)
+  }
+
+  /** What applying a request needs: the port, the map resend, and the sleep of a pane that enters in a hibernated desk. */
+  private requestPort(port: DoorPort): PaneRequestPort {
+    return {
+      ...port,
+      resendMap: () => this.sendMap(true),
+      addPane: (slot, deskId, asleep) => {
+        port.addPane(slot, deskId, asleep)
+        if (!asleep) return
+        port.sleep(slot.slotId)
+        if (slot.status !== 'running') this.sleepUntilRunning.add(slot.slotId)
+      },
+    }
+  }
 
   /** The slot list was read again (`list`: at start and on every reconnection). */
   slotsListed(slots: readonly SlotState[]): void {
@@ -119,7 +147,7 @@ export class DoorHost {
   private restored(slots: Iterable<SlotState>): void {
     const port = this.port
     if (!port || !port.layoutRestored()) return
-    applyPaneRequests(slots, { ...port, resendMap: () => this.sendMap(true) })
+    applyPaneRequests(slots, this.requestPort(port))
     this.sendMap()
   }
 
