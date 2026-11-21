@@ -40,7 +40,7 @@ export interface ManagerHost {
 }
 
 const PANE_ICON: Record<string, IconName> = { note: 'note-pencil', empty: 'square-half', terminal: 'terminal-window', 'md-preview': 'file-md', 'html-preview': 'file-html', 'browser-web': 'globe-simple' }
-const AGENT_ICON: Record<string, IconName> = { claude: 'brand', soul: 'brand' }
+const AGENT_ICON: Record<string, IconName> = { claude: 'brand', soul: 'brand', hands: 'brand' }
 /** The bar's limit of primaries. */
 const MAX_PRIMARY = 2
 

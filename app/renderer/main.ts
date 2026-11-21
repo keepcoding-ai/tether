@@ -2514,7 +2514,7 @@ function restartMenuEntry(slotId: string): MenuEntry[] {
   const slot = slots.get(slotId)
   if (!slot || slot.kind === 'shell' || !isLiveSlot(slot) || slot.restarting || slot.stopping) return []
   if (slot.canRestart) return [{ icon: 'arrow-clockwise', label: 'Reiniciar agente', run: () => { void restartAgent(slotId) } }]
-  if (slot.kind !== 'claude' && slot.kind !== 'soul') return [] // extension agents: only with the daemon's capability
+  if (slot.kind !== 'claude' && slot.kind !== 'soul' && slot.kind !== 'hands') return [] // extension agents: only with the daemon's capability
   return [{ icon: 'arrow-clockwise', label: 'Reiniciar agente', tip: RESTART_UNREGISTERED_TIP, disabled: true, run: () => {} }]
 }
 

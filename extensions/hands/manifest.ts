@@ -1,14 +1,14 @@
-// The hands as a built-in extension: the soul-cli's client build for the end customers (`bun run build:hands`, bin/hands),
-// beside the soul (the operator's build, for devops). The daemon side registers the agent (adapter, attention, default
-// profile, reserved args, TETHER_HANDS_ARGS) and its doctor check; the renderer side how the app names and draws it.
-// Turned off, its slots stay listed as "Agente indisponível" until it is back on.
+// The hands as a built-in extension: the client the end customers run (bin/hands). The daemon side registers the agent
+// (adapter, attention, default profile, reserved args, TETHER_HANDS_ARGS) and its doctor checks; the renderer side how the
+// app names and draws it. Turned off, its slots stay listed as "Agente indisponível" until it is back on.
+// Modeled on the soul's extension (extensions/soul) and kept apart: the two programs evolve on their own.
 import type { ExtensionManifest } from '../types.ts'
 
 export const manifest: ExtensionManifest = {
   id: 'hands',
   version: '1.0.0',
   displayName: 'hands',
-  description: 'Painéis do hands (o cliente do soul-cli para quem usa os agentes) que retomam a própria sessão.',
+  description: 'Painéis do hands, o cliente dos agentes, que retomam a própria sessão.',
   hosts: ['renderer', 'daemon'],
   optional: true,
 }

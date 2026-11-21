@@ -43,6 +43,7 @@ import pushPin from '@phosphor-icons/core/assets/regular/push-pin.svg'
 import pushPinFill from '@phosphor-icons/core/assets/fill/push-pin-fill.svg'
 import filesIcon from '@phosphor-icons/core/assets/regular/files.svg'
 import ghost from '@phosphor-icons/core/assets/regular/ghost.svg'
+import hand from '@phosphor-icons/core/assets/regular/hand.svg'
 import hourglass from '@phosphor-icons/core/assets/regular/hourglass.svg'
 import info from '@phosphor-icons/core/assets/regular/info.svg'
 import play from '@phosphor-icons/core/assets/regular/play.svg'
@@ -184,6 +185,7 @@ const SVG = {
   'push-pin-fill': pushPinFill,
   files: filesIcon,
   ghost,
+  hand,
   hourglass,
   info,
   play,
