@@ -147,11 +147,13 @@ export class DoorHost implements DoorSeams {
   /** The door part of extension `ext`'s TetherDaemon; its registrations land in `own`. */
   apiFor(ext: string, own: DisposableStore): DoorApi {
     const slots: DoorSlots = this.slotsService.apiFor(ext, own)
+    const desksService = this.desks
     const desks: DoorDesks = {
       map: () => this.desks.map(),
       deskOf: (paneId) => this.desks.deskOf(paneId),
       onDidChange: (listener) => own.add(this.desks.onDidChange(listener)),
       requestPane: (slotId, deskId) => this.desks.requestPane(slotId, deskId),
+      get ready() { return desksService.ready },
     }
     const verbs: DoorVerbs = {
       register: (verb) => own.add(this.verbs.register(ext, verb)),

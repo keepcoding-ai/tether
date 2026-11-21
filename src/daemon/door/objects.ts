@@ -232,7 +232,9 @@ export class ObjectService {
 
   /** The `objects` of extension `ext`: it sees only its own space; its listeners land in `own`. */
   apiFor(ext: string, own: DisposableStore): DoorObjects {
+    const service = this
     return {
+      get ready() { return service.ready },
       get: (kind, id, key) => this.get(ext, kind, id, key),
       set: (kind, id, key, value) => this.set(ext, kind, id, key, value),
       entries: (kind, key) => this.entries(ext, kind, key),

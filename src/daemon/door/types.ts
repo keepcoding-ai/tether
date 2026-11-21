@@ -70,6 +70,8 @@ export interface DoorDesks {
   onDidChange(listener: (map: DeskMap) => void): IDisposable
   /** Asks for a terminal pane for an existing slot (`create` with `desk` does this itself). */
   requestPane(slotId: string, deskId: string): Promise<void>
+  /** Resolves once <home>/desks.json was read (at once in a satellite); `map()` before it may be undefined. */
+  readonly ready: Promise<void>
 }
 
 // ---- 3. verbs --------------------------------------------------------------------------------
@@ -187,6 +189,8 @@ export interface DoorAttention {
 
 /** On the daemon: TetherDaemon.objects. Each extension sees only its own space. */
 export interface DoorObjects {
+  /** Resolves once <home>/objects was read (at once in a satellite); `get`/`entries` before it may answer empty. */
+  readonly ready: Promise<void>
   get<T>(kind: ObjectKind, id: string, key: string): T | undefined
   /** `undefined` deletes the key. Any JSON. Written to <home>/objects/<ext>.json (temp + rename). */
   set(kind: ObjectKind, id: string, key: string, value: unknown): Promise<void>

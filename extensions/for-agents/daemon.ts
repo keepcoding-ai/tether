@@ -29,7 +29,7 @@ export interface ForAgentsDaemon {
  */
 export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposables: IDisposable[] } {
   const store = new OwnershipStore(api.objects, api.desks)
-  const reconciler = new Reconciler({ slots: api.slots, attention: api.attention, desks: api.desks, store, log: (m) => api.log(m) })
+  const reconciler = new Reconciler({ slots: api.slots, attention: api.attention, desks: api.desks, store, log: (m) => api.log(m), ready: () => Promise.all([api.objects.ready, api.desks.ready]) })
   const gate = new WriteGate(store, api.slots)
   const typingTakes = (slotId: string): void => {
     if (!takesByTyping(store.effectiveOf(slotId))) return
@@ -45,7 +45,7 @@ export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposabl
     api.slots.onUserTyped(typingTakes),
     // The name the struck mark keeps is read here: by the time a pane object drops, its slot is no longer listed.
     api.onSlot((ev) => { if (ev.kind === 'removed') forgotten(ev.slot.slotId, slotTitle(ev.slot)) }),
-    api.onStarted(() => reconciler.start()),
+    api.onStarted(() => { reconciler.start().catch((e: unknown) => api.log(`a passada de partida falhou: ${(e as Error).message}`)) }),
     toDisposable(() => { reconciler.undo().catch((e: unknown) => api.log(`desfazer a posse falhou: ${(e as Error).message}`)) }),
   ]
   return { forAgents: { store, reconciler, gate, idle: () => reconciler.idle() }, disposables }

@@ -54,10 +54,16 @@ function fakeAdapter(home: string): AgentAdapter {
 }
 
 /** A tetherd with only for-agents, activated by the real extension host; `wire` is captured to reach its pieces. */
-async function boot(home: string, logs: string[], withExt = true): Promise<Booted> {
+async function boot(home: string, logs: string[], withExt = true, delayObjectsMs = 0): Promise<Booted> {
   let fa: ForAgentsDaemon | undefined
   const entry: ExtensionEntry<TetherDaemon> = { manifest, activate: (api) => { const w = wire(api); fa = w.forAgents; return w.disposables } }
   const door = new DoorHost({ log: (m) => logs.push(m) })
+  if (delayObjectsMs > 0) {
+    // The read of <home>/objects is held back on purpose: the start pass must wait for it.
+    const svc = door.objects as unknown as { load: (home: string) => Promise<void> }
+    const load = svc.load.bind(svc)
+    svc.load = async (h) => { await sleep(delayObjectsMs); return load(h) }
+  }
   const host = new DaemonExtensionHost({ home, log: (m) => logs.push(m), door, extensions: withExt ? [entry] : [] })
   host.activate()
   const daemon = await startDaemon({
@@ -361,6 +367,36 @@ describe('for-agents: a hold of an inactive extension goes at the start', () => 
       assert.equal(b.slots.get(A)?.held, undefined)
       assert.equal(logs.filter((l) => l.includes(`slot ${p1}: posse da extensão inativa ${EXT_ID}`)).length, 1)
       assert.ok(!('held' in (b.slots.get(p1) ?? {})))
+    } finally {
+      b.probe.dispose(); b.rec.close()
+      await b.daemon.close().catch(() => {})
+      await removeHome(home)
+    }
+  })
+})
+
+describe('for-agents: the start pass waits for the data', () => {
+  test('with the objects read late, a given pane keeps its hold', async () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'echo.cjs'), ECHO)
+    const logs: string[] = []
+    let b = await boot(home, logs)
+    try {
+      const make = async (name: string): Promise<string> => {
+        const id = (await b.slots.create({ kind: 'soul', cwd: home, name })).slotId
+        await waitUntil(() => b.slots.readScreen(id).data.includes('READY'), 30_000, `READY in ${name}`)
+        return id
+      }
+      const A = await make('Atrium'), p1 = await make('p1')
+      await b.fa.store.givePane(p1, A); await b.fa.idle()
+      await b.door.objects.flush(); await b.door.desks.flush()
+      b.probe.dispose(); b.rec.close()
+      await b.daemon.close()
+      b = await boot(home, logs, true, 800)
+      await b.fa.idle()
+      assert.deepEqual(b.slots.get(p1)?.held, { ext: EXT_ID, by: A })
+      assert.equal(b.attention.routeOf(p1), A)
+      assert.equal(b.fa.store.effectiveOf(p1).commander, A)
     } finally {
       b.probe.dispose(); b.rec.close()
       await b.daemon.close().catch(() => {})

@@ -22,6 +22,8 @@ export interface ReconcilerDeps {
   desks: DoorDesks
   store: OwnershipStore
   log: (msg: string) => void
+  /** Resolves when what the start pass reads is loaded (the objects and the desk map from disk). Default: at once. */
+  ready?: () => Promise<unknown>
 }
 
 /** What the door should show for one pane of a slot. */
@@ -52,6 +54,9 @@ export class Reconciler {
   private readonly dirty = new Set<string>()
   private draining: Promise<void> | undefined
   private stopped = false
+  /** The start pass waiting for the data to load; `idle` waits for it too. */
+  private starting: Promise<void> | undefined
+  private readonly ready: () => Promise<unknown>
   /** Panes held by another extension: logged once, never touched. */
   private readonly foreignTold = new Set<string>()
 
@@ -61,6 +66,7 @@ export class Reconciler {
     this.desks = deps.desks
     this.store = deps.store
     this.log = deps.log
+    this.ready = deps.ready ?? (() => Promise.resolve())
   }
 
   // ---- what the door should show ----------------------------------------------------------------
@@ -130,7 +136,15 @@ export class Reconciler {
    * The start: the hold and the route are already in the metas; this pass only mends a divergence. It walks what has an
    * owner (panes, and the panes of owned desks) and what the door shows as ours (a hold of this extension, a route).
    */
-  start(): void {
+  start(): Promise<void> {
+    const ready = this.ready()
+    const run: Promise<void> = ready.then(() => { if (!this.stopped) this.pass() }).finally(() => { if (this.starting === run) this.starting = undefined })
+    this.starting = run
+    return run
+  }
+
+  /** The start's walk, once the data is loaded (before that, every pane would look ownerless and lose its hold). */
+  private pass(): void {
     this.store.refreshFrozen()
     const map = this.desks.map()
     if (map) this.prevMap = mapIndex(map)
@@ -167,12 +181,12 @@ export class Reconciler {
 
   /** Resolves when nothing is left to apply (tests, and the callers that want the door settled). */
   async idle(): Promise<void> {
-    while (this.draining) await this.draining
+    while (this.starting || this.draining) await (this.starting ?? this.draining)
   }
 
   /** Applies every pane that has an owner or a hold now, again: the second call of two in a row changes nothing. */
-  reconcileAll(): Promise<void> {
-    this.start()
+  async reconcileAll(): Promise<void> {
+    await this.start()
     return this.idle()
   }
 
