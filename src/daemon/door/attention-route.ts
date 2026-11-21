@@ -114,6 +114,11 @@ export class AttentionRouteService {
       },
       routeOf: (slotId) => this.port()?.meta(slotId)?.attentionTo,
       seen: (slotId) => { live('attention.seen').seen(slotId) },
+      // The route needs nothing here: `decorate` moves the attention the signal sets to `attentionFor` when the owner is live.
+      signal: (slotId, kind) => {
+        if (kind !== 'waiting' && kind !== 'done') throw new DoorError('bad-request', `attention.signal: valor inválido: ${String(kind)}`)
+        live('attention.signal').signal(slotId, kind)
+      },
     }
   }
 

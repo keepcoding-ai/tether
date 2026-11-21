@@ -6,6 +6,8 @@ import type { SlotMeta } from '../../core/event.ts'
 import type { SlotState } from '../protocol.ts'
 import { DoorError, doorUnavailable, type DoorReplyBody, type DoorRequestHandler, type SlotPort } from './port.ts'
 import { keyBytes } from './keys.ts'
+import type { InputOrigin } from './port.ts'
+import { countsAsTyping } from './user-presence.ts'
 import type { DoorSlots, KeyName, SlotCreate, SlotHold } from './types.ts'
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -13,18 +15,39 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /** What the desks service (D2) offers `create`: the pane request for a desk, or `bad-request` when the map is known and the desk is not. */
 export interface PaneRequester { paneRequestFor(deskId: string): { deskId: string } }
 
+/** What `userFree` reads: the delivery's user interlock (UserPresence), at the present moment. */
+export interface UserFreeness { isFree(slotId: string): boolean }
+
 export class SlotsService {
   private readonly port: () => SlotPort | undefined
   private readonly log: (msg: string) => void
   private readonly desks: () => PaneRequester | undefined
   private readonly listeners = new Set<(slot: SlotState) => void>()
+  private readonly typedListeners = new Set<(slotId: string) => void>()
+  /** Held slots whose first user typing of the current held period was already told. `setHeld` takes the slot out. */
+  private readonly typedTold = new Set<string>()
+  private readonly presence: () => UserFreeness | undefined
 
   /** `port` is read at each act: it is undefined in a satellite (and before the server attaches), where every act is `door-unavailable`. */
-  constructor(port: () => SlotPort | undefined, log: (msg: string) => void, desks: () => PaneRequester | undefined = () => undefined) {
+  constructor(port: () => SlotPort | undefined, log: (msg: string) => void, desks: () => PaneRequester | undefined = () => undefined, presence: () => UserFreeness | undefined = () => undefined) {
     this.port = port
     this.log = log
     this.desks = desks
+    this.presence = presence
   }
+
+  /** The server's `input` hook: the person's first typing into a held pane goes to `onUserTyped`, once per held period. */
+  input(slotId: string, data: string, origin: InputOrigin): void {
+    if (origin !== 'user' || this.typedListeners.size === 0 || this.typedTold.has(slotId)) return
+    if (!countsAsTyping(data) || !this.port()?.meta(slotId)?.held) return
+    this.typedTold.add(slotId)
+    for (const listener of [...this.typedListeners]) {
+      try { listener(slotId) } catch (e) { this.log(`door: ouvinte de digitação falhou: ${e instanceof Error ? e.message : String(e)}`) }
+    }
+  }
+
+  /** The slot was forgotten: nothing of it stays here. */
+  forgotten(slotId: string): void { this.typedTold.delete(slotId) }
 
   /** The server's `stateChanged` hook: every listener hears it; one that throws does not silence the others. */
   stateChanged(state: SlotState): void {
@@ -64,7 +87,12 @@ export class SlotsService {
         this.listeners.add(listener)
         return own.add(toDisposable(() => { this.listeners.delete(listener) }))
       },
-      setHeld: (slotId, held) => act('slots.setHeld', (port) => setHeld(port, slotId, held)),
+      setHeld: (slotId, held) => act('slots.setHeld', async (port) => { await setHeld(port, slotId, held); this.typedTold.delete(slotId) }),
+      onUserTyped: (listener) => {
+        this.typedListeners.add(listener)
+        return own.add(toDisposable(() => { this.typedListeners.delete(listener) }))
+      },
+      userFree: (slotId) => this.presence()?.isFree(slotId) ?? true,
     }
   }
 

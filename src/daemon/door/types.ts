@@ -52,6 +52,13 @@ export interface DoorSlots {
   onState(listener: (slot: SlotState) => void): IDisposable
   /** The pane is in an agent's hands; `undefined` gives it back to the user. Persisted in the slot's meta. */
   setHeld(slotId: string, held: SlotHold | undefined): Promise<void>
+  /**
+   * The person's first typing into a held pane, once per held period: a terminal answer (a chunk that starts with ESC) or
+   * the agent's own writes do not count, a pane with no `held` never fires, and each `setHeld` arms it again.
+   */
+  onUserTyped(listener: (slotId: string) => void): IDisposable
+  /** No draft of the person's in the input box and USER_QUIET_MS of silence (the delivery's interlock, read as it is now). */
+  userFree(slotId: string): boolean
 }
 
 // ---- 2. desks --------------------------------------------------------------------------------
@@ -137,7 +144,14 @@ export type DeliveryState =
   | 'queued'   // waiting
   | 'dropped'  // the slot was forgotten before delivery
 
-export interface DeliveryReceipt { id: string; slotId: string; state: DeliveryState; at: string }
+export interface DeliveryReceipt {
+  id: string
+  slotId: string
+  state: DeliveryState
+  at: string
+  /** `typed` only: the text was typed and the Enter was not (the person typed in between); the text stays in the box. */
+  unsent?: true
+}
 
 export interface DoorDelivery {
   /** Turns delivery on for this extension: from then on the `tether` server is offered to agents even with no tool. */
@@ -162,6 +176,11 @@ export interface DoorAttention {
   routeOf(slotId: string): string | undefined
   /** The recipient saw it: clears the rerouted attention (the owner's `seen`). */
   seen(slotId: string): void
+  /**
+   * A conductor tells the core what the engine did not: `waiting` (a permission card on the screen) or `done` (the turn
+   * ended, e.g. after an interrupt). The same core path as the engines' own reports; a route, if any, applies as usual.
+   */
+  signal(slotId: string, kind: 'waiting' | 'done'): void
 }
 
 // ---- 7. per-object data ----------------------------------------------------------------------

@@ -542,6 +542,10 @@ class DaemonImpl implements Daemon {
         const slot = this.slot(slotId)
         if (slot.attention.seen()) this.broadcastState(slot)
       },
+      signal: (slotId, kind) => {
+        const slot = this.slot(slotId)
+        if (slot.attention.hook(kind)) this.broadcastState(slot)
+      },
       broadcastState: (slotId) => this.broadcastState(this.slot(slotId)),
       broadcast: (event) => this.broadcast(event),
     }

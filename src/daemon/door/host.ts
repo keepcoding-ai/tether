@@ -46,7 +46,7 @@ export class DoorHost implements DoorSeams {
   constructor(opts: DoorHostOptions) {
     this.opts = opts
     this.verbs = new VerbRegistry({ keys: this.slotKeys, stateOf: (slotId) => this.portRef?.stateOf(slotId) })
-    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks)
+    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks, () => ({ isFree: (slotId) => this.delivery.presence.isFree(slotId, Date.now()) }))
     this.requests.register('read-screen', this.slotsService.handleReadScreen)
     this.desks = new DeskService({ log: (msg) => this.log(msg) })
     this.requests.register('desk-map', this.desks.handleMap)
@@ -97,7 +97,7 @@ export class DoorHost implements DoorSeams {
 
   stateChanged(state: SlotState): void { this.attentionService.stateChanged(state); this.slotsService.stateChanged(state); this.delivery.stateChanged(state) }
 
-  input(slotId: string, data: string, origin: InputOrigin): void { this.delivery.input(slotId, data, origin) }
+  input(slotId: string, data: string, origin: InputOrigin): void { this.delivery.input(slotId, data, origin); this.slotsService.input(slotId, data, origin) }
 
   /**
    * A new slot key goes into the run's environment, after the profile's env (a profile cannot set it). Then the `tether` MCP
@@ -118,7 +118,7 @@ export class DoorHost implements DoorSeams {
 
   exited(slotId: string): void { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.attentionService.exited(slotId) }
 
-  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId), this.delivery.forgotten(slotId)]).then(() => undefined) }
+  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.slotsService.forgotten(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId), this.delivery.forgotten(slotId)]).then(() => undefined) }
 
   // ---- the extensions' API ---------------------------------------------------------------------
 
