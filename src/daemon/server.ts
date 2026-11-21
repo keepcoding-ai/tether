@@ -16,7 +16,7 @@ import { shellAdapter } from '../agents/shell.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
 import type { AgentName, Binding, RunInfo, SlotMeta, TetherEvent } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
-import { canonicalDir, pausePath, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotRondaPath, slotRunPath, slotsDir } from '../core/paths.ts'
+import { canonicalDir, pausePath, slotAnswerPath, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotRondaPath, slotRunPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
 import { RONDA_MCP_SERVER as RONDA_SERVER_NAME, RondaChannel, showsConfirm, type RondaChannelAgent } from './ronda-channel.ts'
 import type { ChannelConfirm } from '../agents/registry.ts'
@@ -868,7 +868,7 @@ class DaemonImpl implements Daemon {
   private async removeSlotFiles(slotId: string): Promise<void> {
     this.forgotten.add(slotId)
     this.ownRuns.delete(slotId)
-    const paths = [slotMetaPath(this.home, slotId), slotEventsPath(this.home, slotId), slotRunPath(this.home, slotId), slotAttentionPath(this.home, slotId), slotRondaPath(this.home, slotId)]
+    const paths = [slotMetaPath(this.home, slotId), slotEventsPath(this.home, slotId), slotRunPath(this.home, slotId), slotAttentionPath(this.home, slotId), slotAnswerPath(this.home, slotId), slotRondaPath(this.home, slotId)]
     for (const p of paths) this.store.remove(p)
     await Promise.all(paths.map((p) => this.store.flush(p)))
   }

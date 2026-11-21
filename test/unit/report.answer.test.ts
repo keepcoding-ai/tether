@@ -113,3 +113,16 @@ describe('codex hook answer', () => {
     assert.ok(existsSync(join(home, 'slots', 's1.attention')))
   })
 })
+
+describe('the answer file name', () => {
+  test('the reporters and the core spell it the same way', async () => {
+    const { slotAnswerPath } = await import('../../src/core/paths.ts')
+    assert.equal(slotAnswerPath('H', 's1'), join('H', 'slots', 's1.answer.json'))
+    // the reporters wrote `<slot>.answer.json` under `<home>/slots` in the tests above; here the core agrees on the same relative path
+    const home = homes.make()
+    run(CLAUDE, ['Stop'], stop(), { TETHER_HOME: home, TETHER_SLOT_ID: 's1' })
+    run(CODEX, ['notify', notify({ 'last-assistant-message': 'x' })], undefined, { TETHER_HOME: home, TETHER_SLOT_ID: 's2' })
+    assert.ok(existsSync(slotAnswerPath(home, 's1')))
+    assert.ok(existsSync(slotAnswerPath(home, 's2')))
+  })
+})

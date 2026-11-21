@@ -70,6 +70,12 @@ export function slotAttentionPath(home: string, slotId: string): string {
   return join(slotsDir(home), `${slotId}.attention`)
 }
 
+/** The last answer of the slot's agent (Claude Stop / Codex notify), written by the reporters: `{ ts, sessionId?, text, from }`, replaced each turn.
+ * The reporters (`src/report/*.mjs`) cannot import this file and spell the name `<slot>.answer.json` themselves; a test holds both to it. */
+export function slotAnswerPath(home: string, slotId: string): string {
+  return join(slotsDir(home), `${slotId}.answer.json`)
+}
+
 /** The pause batch (one active at a time): <home>/pause.json. */
 export function pausePath(home: string): string {
   return join(home, 'pause.json')
