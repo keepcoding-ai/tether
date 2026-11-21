@@ -1,0 +1,167 @@
+// The desk map of the agent door: the app tells the daemon which panes sit in which desk (`desk-map`), the daemon keeps it in
+// <home>/desks.json (so it answers while the app is closed) and uses it for the `paneRequest` bookkeeping: a slot asked a pane
+// in a desk keeps `paneRequest` until a map shows the slot in some desk. A hibernated desk changes nothing here: the process
+// of a slot asked into it starts at once and only the pane sleeps (the renderer's job).
+import { readFileSync } from 'node:fs'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
+import type { DeskMap, DeskMapDesk } from '../protocol.ts'
+import { DoorError, type DoorReplyBody, type DoorRequestHandler, type SlotPort } from './port.ts'
+import type { DoorDesks } from './types.ts'
+
+export interface DeskServiceOptions {
+  log: (msg: string) => void
+}
+
+export function desksPath(home: string): string {
+  return join(home, 'desks.json')
+}
+
+const isPane = (p: unknown): p is { id: string; type: string } =>
+  typeof p === 'object' && p !== null && typeof (p as { id?: unknown }).id === 'string' && typeof (p as { type?: unknown }).type === 'string'
+
+/** Validates and normalises what the app sent (or what the disk holds); undefined when it is not a desk map. */
+export function parseDeskMap(raw: unknown): DeskMap | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const r = raw as { desks?: unknown; drawer?: unknown }
+  if (!Array.isArray(r.desks) || !Array.isArray(r.drawer) || !r.drawer.every(isPane)) return undefined
+  const desks: DeskMapDesk[] = []
+  for (const d of r.desks) {
+    if (typeof d !== 'object' || d === null) return undefined
+    const x = d as Partial<DeskMapDesk>
+    if (typeof x.id !== 'string' || typeof x.name !== 'string' || (x.kind !== 'queue' && x.kind !== 'system')) return undefined
+    if (!Array.isArray(x.panes) || !x.panes.every(isPane)) return undefined
+    desks.push({ id: x.id, name: x.name, kind: x.kind, ...(x.asleep === true ? { asleep: true as const } : {}), panes: x.panes.map((p) => ({ id: p.id, type: p.type })) })
+  }
+  return { desks, drawer: (r.drawer as { id: string; type: string }[]).map((p) => ({ id: p.id, type: p.type })) }
+}
+
+export class DeskService implements DoorDesks {
+  private readonly log: (msg: string) => void
+  private port: SlotPort | undefined
+  private current: DeskMap | undefined
+  private currentText: string | undefined
+  private byPane = new Map<string, DeskMapDesk>()
+  /** The slots whose terminal pane sits in a desk. */
+  private shownSlots = new Set<string>()
+  private readonly listeners = new Set<(map: DeskMap) => void>()
+  private writing: Promise<void> = Promise.resolve()
+
+  constructor(opts: DeskServiceOptions) {
+    this.log = opts.log
+  }
+
+  /** The server's port arrived: the home is known, so the last map is read from disk. Once. */
+  attach(port: SlotPort): void {
+    this.port = port
+    try {
+      const map = parseDeskMap(JSON.parse(readFileSync(desksPath(port.home), 'utf8')))
+      if (map) this.adopt(map)
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') this.log(`desks.json ilegível, ignorado: ${(e as Error).message}`)
+    }
+  }
+
+  // ---- DoorDesks ---------------------------------------------------------------------------------
+
+  map(): DeskMap | undefined { return this.current }
+
+  deskOf(paneId: string): DeskMapDesk | undefined { return this.byPane.get(paneId) }
+
+  onDidChange(listener: (map: DeskMap) => void): IDisposable {
+    this.listeners.add(listener)
+    return toDisposable(() => { this.listeners.delete(listener) })
+  }
+
+  /** Asks a terminal pane for an existing slot. A slot already shown in a desk is left where it is. */
+  async requestPane(slotId: string, deskId: string): Promise<void> {
+    const port = this.live()
+    const meta = port.meta(slotId)
+    if (!meta) throw new DoorError('unknown-slot', `slot desconhecido: ${slotId}`)
+    const request = this.paneRequestFor(deskId)
+    if (this.shownSlots.has(slotId)) return
+    meta.paneRequest = request
+    await port.saveMeta(slotId)
+    port.broadcastState(slotId)
+  }
+
+  // ---- for the slots service ---------------------------------------------------------------------
+
+  /**
+   * The `paneRequest` a slot born in `deskId` carries. With a known map, an unknown desk is refused (`bad-request`); with no
+   * map yet (the app never ran) the request is kept as asked, and a later map that lacks the desk drops it.
+   */
+  paneRequestFor(deskId: string): { deskId: string } {
+    if (this.current && !this.current.desks.some((d) => d.id === deskId)) throw new DoorError('bad-request', `a mesa ${deskId} não existe`)
+    return { deskId }
+  }
+
+  // ---- the pipe's `desk-map` ---------------------------------------------------------------------
+
+  readonly handleMap: DoorRequestHandler = async (req): Promise<DoorReplyBody> => {
+    const map = parseDeskMap((req as { map?: unknown }).map)
+    if (!map) throw new DoorError('bad-request', 'desk-map precisa de um mapa de mesas válido')
+    const port = this.live()
+    if (this.adopt(map)) {
+      this.persist(port.home)
+      port.broadcast({ t: 'desks', map })
+      for (const l of [...this.listeners]) l(map)
+    }
+    await this.settleRequests(port, map)
+    return {}
+  }
+
+  /** A slot shown in a desk loses its request; a request for a desk the map no longer has is dropped with a log line. */
+  private async settleRequests(port: SlotPort, map: DeskMap): Promise<void> {
+    for (const state of port.list()) {
+      const meta = port.meta(state.slotId)
+      const request = meta?.paneRequest
+      if (!meta || !request) continue
+      const shown = this.shownSlots.has(state.slotId)
+      if (!shown && map.desks.some((d) => d.id === request.deskId)) continue
+      if (!shown) this.log(`door: a mesa ${request.deskId} não existe; o slot ${state.slotId} fica sem guia`)
+      delete meta.paneRequest
+      await port.saveMeta(state.slotId)
+      port.broadcastState(state.slotId)
+    }
+  }
+
+  // ---- internals ---------------------------------------------------------------------------------
+
+  private live(): SlotPort {
+    if (!this.port) throw new DoorError('door-unavailable', 'a porta do agente não está disponível neste processo (desks)')
+    return this.port
+  }
+
+  /** Takes the map as the current one; false when it is the same as before. */
+  private adopt(map: DeskMap): boolean {
+    const text = JSON.stringify(map)
+    if (text === this.currentText) return false
+    this.current = map
+    this.currentText = text
+    this.byPane = new Map()
+    this.shownSlots = new Set()
+    for (const d of map.desks) for (const p of d.panes) { this.byPane.set(p.id, d); if (p.type === 'terminal') this.shownSlots.add(p.id) }
+    return true
+  }
+
+  /** Whole file, temp + rename, one write at a time (the last map wins). */
+  private persist(home: string): void {
+    const text = this.currentText ?? ''
+    this.writing = this.writing.then(async () => {
+      const path = desksPath(home)
+      const tmp = `${path}.${process.pid}.tmp`
+      try {
+        await mkdir(home, { recursive: true })
+        await writeFile(tmp, text + '\n')
+        await rename(tmp, path)
+      } catch (e) {
+        this.log(`door: não gravei desks.json: ${(e as Error).message}`)
+      }
+    })
+  }
+
+  /** Resolves when every map handed to `persist` is on disk. */
+  flush(): Promise<void> { return this.writing }
+}
