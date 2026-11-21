@@ -108,3 +108,36 @@ export const handsSkills: AgentSkills = {
     return { ...plan, env: { ...plan.env, [HANDS_SHARED_FOLDERS_ENV]: value } }
   },
 }
+
+
+/** Splits a command line on whitespace; double or single quotes keep a token whole (no escapes, no $expansion). */
+export function splitCommandLine(line: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let quote: '"' | "'" | undefined
+  let inToken = false
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = undefined
+      else cur += ch
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+      inToken = true
+    } else if (/\s/.test(ch)) {
+      if (inToken) out.push(cur)
+      cur = ''
+      inToken = false
+    } else {
+      cur += ch
+      inToken = true
+    }
+  }
+  if (inToken) out.push(cur)
+  return out
+}
+
+/** `/c/Users/x` (msys) → `C:/Users/x`; anything else is returned as is. */
+export function fromMsysPath(p: string): string {
+  const m = /^\/([a-zA-Z])\/(.*)$/.exec(p)
+  return m ? `${m[1]!.toUpperCase()}:/${m[2]}` : p
+}
