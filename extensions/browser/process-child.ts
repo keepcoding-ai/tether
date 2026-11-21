@@ -275,6 +275,8 @@ async function start(): Promise<void> {
         return { update: message => w.post('noticeUpdate', id, message), resolve: () => w.post('noticeResolve', id), dispose: () => w.post('noticeResolve', id) }
       },
     },
+    // The child has no line to the daemon's object data yet: reads are empty and writes are refused.
+    objects: { get: () => undefined, set: () => Promise.reject(new Error('door-unavailable: objects')), entries: () => [], onDidChange: () => toDisposable(() => {}) },
     shell: { trash: path => w.call('trash', path).then(() => undefined) },
     log: msg => log(`[${browser.manifest.id}] ${msg}`),
   }

@@ -4,25 +4,16 @@
 // files of their own next to this one; this file wires them and stays free of DOM work at import, so the unit tests load it.
 import type { ContextMenuEntry, DeskSeal, DeskView, PaneInfo, PickSpec, TabEmblem } from '../ext-api.ts'
 import type { ExtObjects } from '../../shared/api.ts'
-import type { DeskMap, ObjectKind, SlotState } from '../../../src/daemon/protocol.ts'
+import type { DeskMap, SlotState } from '../../../src/daemon/protocol.ts'
 import { toDisposable, type IDisposable } from '../../shared/vscode-lifecycle.ts'
 import type { Layout } from '../layout.ts'
 import { DeskMapSender, deskMapOf } from './desk-map.ts'
 import { deskSeals } from './desk-seal-rules.ts'
 import { collect } from './menus.ts'
+import { ObjectMirrors, rendererAsk, type DaemonAsk, type ObjectEventBody } from './objects.ts'
 import { Picker } from './picker.ts'
 import { applyPaneRequests, type PaneRequestPort } from './pane-requests.ts'
 import { TabEmblemBoard, TabEmblemPainter } from './tab-emblem-rules.ts'
-
-/** An extension's data store before tetherd's objects are wired: reads are empty, writes are refused. */
-function inertObjects(): ExtObjects {
-  return {
-    get: () => undefined,
-    set: () => Promise.reject(new Error('door-unavailable: objects')),
-    entries: () => [],
-    onDidChange: () => toDisposable(() => {}),
-  }
-}
 
 /** What main.ts gives the host so the daemon's pane requests and the desk map work (absent: both are inert). */
 export interface DoorPort extends Omit<PaneRequestPort, 'resendMap'> {
@@ -42,14 +33,17 @@ export class DoorHost {
   private readonly mapSender: DeskMapSender | undefined
 
   private readonly port: DoorPort | undefined
+  /** The extensions' object data, mirrored from tetherd. */
+  private readonly objects: ObjectMirrors
   /**
    * Slots whose pane entered asleep (a hibernated desk) and whose process is still coming up: the core wakes a pane when its
    * process goes stopped -> starting, and here the process is meant to run, so the sleep is set again until it is running.
    */
   private readonly sleepUntilRunning = new Set<string>()
 
-  constructor(port?: DoorPort) {
+  constructor(port?: DoorPort, ask: DaemonAsk = rendererAsk()) {
     this.port = port
+    this.objects = new ObjectMirrors(ask)
     this.emblems = new TabEmblemBoard(paneId => this.emblemPainter.repaint(paneId))
     this.emblemPainter = new TabEmblemPainter(this.emblems)
     this.mapSender = port && new DeskMapSender(map => port.sendDeskMap(map))
@@ -90,6 +84,7 @@ export class DoorHost {
   /** The slot list was read again (`list`: at start and on every reconnection). */
   slotsListed(slots: readonly SlotState[]): void {
     this.mapSender?.reconnected()
+    void this.objects.reload()
     this.restored(slots)
   }
 
@@ -127,7 +122,7 @@ export class DoorHost {
   desksEvent(_map: DeskMap): void {}
 
   /** The daemon's `object` event. */
-  objectEvent(_e: { ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }): void {}
+  objectEvent(e: ObjectEventBody): void { this.objects.apply(e) }
 
   /** The extensions' rows for a desk pill's menu (empty when none registered). */
   deskMenuItems(deskId: string): ContextMenuEntry[] {
@@ -185,7 +180,7 @@ export class DoorHost {
   }
 
   /** An extension's data on desks and panes. */
-  objectsFor(_ext: string): ExtObjects { return inertObjects() }
+  objectsFor(ext: string): ExtObjects { return this.objects.apiFor(ext) }
 }
 
 export { withDeskMenuGroup, withPaneMenuItems } from './menus.ts'

@@ -163,10 +163,10 @@ export interface TetherMain {
   notices: MainNotices
   /**
    * This extension's data on desks and panes: a mirror of tetherd's store (the truth), the same as the renderer's
-   * TetherUi.objects. Optional only because the Browser's main side runs in a child process with a TetherMain of its own
-   * (extensions/browser/process-child.ts) that does not relay it yet; the core's host always sets it.
+   * TetherUi.objects. The Browser's main side runs in a child process with a TetherMain of its own
+   * (extensions/browser/process-child.ts) that does not relay it yet: there it reads empty and refuses writes.
    */
-  objects?: ExtObjects
+  objects: ExtObjects
   /** The operating system's file shell. `trash` moves a file or folder to the system's trash (Electron's shell.trashItem); it rejects when it cannot. */
   shell: { trash(path: string): Promise<void> }
   /** A line in tether-app.log, prefixed with the extension's id. */

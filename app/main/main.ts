@@ -43,6 +43,7 @@ import { isValidSetting, readExtensionsSettings, settingPath, valueAt, writeExte
 import { EXTENSION_STATE_KEY } from '../shared/ext-migrations.ts'
 import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { extensions as mainExtensions } from '../../extensions/index.main.ts'
+import { DoorObjects } from './door-objects.ts'
 import { MainExtensionHost, type MainHostDeps } from './ext-host.ts'
 import { SurfaceManager } from './surfaces.ts'
 import { SurfaceBridge } from './surface-bridge.ts'
@@ -294,6 +295,7 @@ function connectDaemon(): Promise<void> {
       sendConnection(connectionState())
       void syncSlots(client)
       void syncPause(client)
+      void doorObjects.reload()
       // A restarted daemon has no agents running: a fresh page restores the layout and resumes each slot's session.
       if (reloadOnReconnect) { reloadOnReconnect = false; win?.webContents.reloadIgnoringCache() }
     } catch (err) {
@@ -568,6 +570,7 @@ type Settings = { theme?: unknown; terminal?: unknown; confirmations?: unknown; 
 // Native views over the interface, owned by the extension that creates them (app/main/surfaces.ts).
 const surfaces = new SurfaceManager({ dist: __dirname, window: () => win, ipc: ipcMain, log: msg => appLog(msg) })
 new SurfaceBridge({ surfaces: owner => surfaces.forOwner(owner), window: () => win, ipc: ipcMain, log: msg => appLog(msg), remote: owner => surfaces.remoteFor(owner) })
+const doorObjects = new DoorObjects(body => request(body))
 const extensionHost = new MainExtensionHost(mainExtensions, {
   home,
   userDir: userHome,
@@ -584,6 +587,7 @@ const extensionHost = new MainExtensionHost(mainExtensions, {
   surfaces: owner => surfaces.forOwner(owner),
   agents: agentTracker,
   notices: trayNotices,
+  objects: doorObjects,
 })
 
 // ---------- settings registry (the settings page's channels) ----------
